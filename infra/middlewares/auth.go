@@ -23,7 +23,7 @@ func (m *AuthMiddleware) JwtHandler() fiber.Handler {
 	})
 }
 
-func (m *AuthMiddleware) JwtToken(claims jwt.MapClaims) (string, error) {
+func (m *AuthMiddleware) JwtToken(claims JwtCustomClaims) (string, error) {
 	// Create token
 	jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 

@@ -60,15 +60,18 @@ func (m *GoogleLogin) Callback(c *fiber.Ctx) error {
 	json.Unmarshal(userData, &userJson)
 
 	// Create the Claims
-	claims := jwt.MapClaims{
-		"name":    userJson.Name,
-		"admin":   true,
-		"email":   userJson.Email,
-		"picture": userJson.Picture,
-		"exp":     time.Now().Add(time.Hour * 72).Unix(),
+	claims := &middlewares.JwtCustomClaims{
+		Name:          userJson.Name,
+		Email:         userJson.Email,
+		VerifiedEmail: true,
+		FamilyName:    userJson.FamilyName,
+		Picture:       userJson.Picture,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour * 72)),
+		},
 	}
 
-	t, err := m.auth.JwtToken(claims)
+	t, err := m.auth.JwtToken(*claims)
 	if err != nil {
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}

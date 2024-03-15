@@ -6,7 +6,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/adaptor"
 	"github.com/gofiber/fiber/v2/middleware/cors"
-	"github.com/golang-jwt/jwt/v5"
+	"github.com/mysayasan/kopiv2/apps/mypropsan/controllers"
 	"github.com/mysayasan/kopiv2/infra/login"
 	"github.com/mysayasan/kopiv2/infra/middlewares"
 )
@@ -47,15 +47,9 @@ func main() {
 	app.Get("/github_callback", githubLogin.Callback)
 
 	// Restricted Routes
-	app.Get("/restricted", authMidware.JwtHandler(), restricted)
+
+	controllers.NewAdminApi(app, *authMidware)
 
 	app.Listen(":3000")
 
-}
-
-func restricted(c *fiber.Ctx) error {
-	user := c.Locals("user").(*jwt.Token)
-	claims := user.Claims.(jwt.MapClaims)
-	name := claims["name"].(string)
-	return c.SendString("Welcome " + name)
 }
