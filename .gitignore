@@ -1,0 +1,12 @@
+# Logs
+logs
+*.log
+
+#compiled files
+*.exe
+
+#node_modules
+node_modules
+
+#env
+.env
