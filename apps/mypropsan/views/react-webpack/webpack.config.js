@@ -1,8 +1,8 @@
-const path = require('path');
-const HtmlWebPackPlugin = require('html-webpack-plugin');
-const WorkboxPlugin = require('workbox-webpack-plugin');
-const fs = require('fs');
-const Dotenv = require('dotenv-webpack');
+const path = require('path')
+const HtmlWebPackPlugin = require('html-webpack-plugin')
+// const WorkboxPlugin = require('workbox-webpack-plugin')
+const fs = require('fs')
+// const Dotenv = require('dotenv-webpack')
 const htmlPlugin = new HtmlWebPackPlugin({
   hash: true,
   title: 'MyPropSan',
@@ -10,15 +10,15 @@ const htmlPlugin = new HtmlWebPackPlugin({
   // template: "./src/index.html",
   // filename: "./index.html",
   favicon: './src/assets/favicon.ico'
-});
+})
 
-const workboxPlugin = new WorkboxPlugin.GenerateSW({
-  // these options encourage the ServiceWorkers to get in there fast
-  // and not allow any straggling "old" SWs to hang around
-  clientsClaim: true,
-  skipWaiting: true,
-  maximumFileSizeToCacheInBytes: 100000000
-});
+// const workboxPlugin = new WorkboxPlugin.GenerateSW({
+//   // these options encourage the ServiceWorkers to get in there fast
+//   // and not allow any straggling "old" SWs to hang around
+//   clientsClaim: true,
+//   skipWaiting: true,
+//   maximumFileSizeToCacheInBytes: 100000000
+// })
 
 const CopyPlugin = require('copy-webpack-plugin')
 
@@ -31,10 +31,10 @@ module.exports = {
   },
   plugins: [
     htmlPlugin,
-    new Dotenv({
-      path: './.env', // Path to .env file (this is the default)
-      safe: false, // load .env.example (defaults to "false" which does not use dotenv-safe)
-    }),
+    // new Dotenv({
+    //   path: './.env', // Path to .env file (this is the default)
+    //   safe: false // load .env.example (defaults to "false" which does not use dotenv-safe)
+    // }),
     //workboxPlugin,
     new CopyPlugin({
       patterns: [{ from: 'src/assets', to: 'assets' }]
@@ -76,7 +76,7 @@ module.exports = {
     historyApiFallback: true,
     static: './',
     hot: true,
-    port: 5200,
+    port: 4000,
     allowedHosts: 'all',
     server: {
       type: 'https',
@@ -89,15 +89,14 @@ module.exports = {
     }
   },
   externals: {
-    config: JSON.stringify({
-      appID: '1',
-      ssoUrl: {
-        auth: 'https://localhost:9443/#/authenticate',
-        profile: 'https://localhost:9443/#/me'
-      },
-      authAPIUrl: 'https://localhost:8443',
-      fileAPIUrl: 'https://localhost:8443',
-      appAPIUrl: 'https://localhost:8443'
-    })
+    config: JSON.stringify(
+      process.env.NODE_ENV === 'dev'
+        ? {
+            apiUrl: 'https://localhost:3000'
+          }
+        : {
+            apiUrl: 'https://localhost:3000'
+          }
+    )
   }
 }

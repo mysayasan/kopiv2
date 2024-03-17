@@ -12,12 +12,16 @@ import (
 
 // GithubLogin struct
 type GithubLogin struct {
+	conf OAuth2ConfigModel
 	auth middlewares.AuthMiddleware
 }
 
 // Create GithubLogin
-func NewGithubLogin(auth middlewares.AuthMiddleware) *GithubLogin {
-	return &GithubLogin{}
+func NewGithubLogin(conf OAuth2ConfigModel, auth middlewares.AuthMiddleware) *GithubLogin {
+	return &GithubLogin{
+		conf: conf,
+		auth: auth,
+	}
 }
 
 func (m *GithubLogin) Login(c *fiber.Ctx) error {
@@ -38,7 +42,7 @@ func (m *GithubLogin) Callback(c *fiber.Ctx) error {
 
 	code := c.Query("code")
 
-	githubcon := GithubConfig()
+	githubcon := GithubConfig(m.conf)
 	fmt.Println(code)
 
 	token, err := githubcon.Exchange(context.Background(), code)
@@ -58,7 +62,6 @@ func (m *GithubLogin) Callback(c *fiber.Ctx) error {
 	if err != nil {
 		return c.SendString("JSON Parsing Failed")
 	}
-	fmt.Println(userData)
 
 	return c.SendString(string(userData))
 

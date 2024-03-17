@@ -1,10 +1,6 @@
 package login
 
 import (
-	"log"
-	"os"
-
-	"github.com/joho/godotenv"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/github"
 	"golang.org/x/oauth2/google"
@@ -17,37 +13,24 @@ type Config struct {
 
 var AppConfig Config
 
-func GoogleConfig() oauth2.Config {
-	err := godotenv.Load(".env")
-	if err != nil {
-		log.Fatalf("Some error occured. Err: %s", err)
-	}
-
+func GoogleConfig(conf OAuth2ConfigModel) oauth2.Config {
 	AppConfig.GoogleLoginConfig = oauth2.Config{
-		RedirectURL:  "http://localhost:3000/google_callback",
-		ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
-		ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
-		Scopes: []string{"https://www.googleapis.com/auth/userinfo.email",
-			"https://www.googleapis.com/auth/userinfo.profile"},
-		Endpoint: google.Endpoint,
+		RedirectURL:  conf.RedirectUrl,
+		ClientID:     conf.ClientId,
+		ClientSecret: conf.ClientSecret,
+		Scopes:       conf.Scopes,
+		Endpoint:     google.Endpoint,
 	}
 
 	return AppConfig.GoogleLoginConfig
 }
 
-func GithubConfig() oauth2.Config {
-	err := godotenv.Load(".env")
-	if err != nil {
-		log.Fatalf("Some error occured. Err: %s", err)
-	}
-
+func GithubConfig(conf OAuth2ConfigModel) oauth2.Config {
 	AppConfig.GitHubLoginConfig = oauth2.Config{
-		RedirectURL: "http://localhost:8080/github_callback",
-		ClientID:    os.Getenv("GITHUB_CLIENT_ID"),
-		//RedirectURL: fmt.Sprintf(
-		//	"https://github.com/login/oauth/authorize?scope=user:repo&client_id=%s&redirect_uri=%s", os.Getenv("GITHUB_CLIENT_ID"), "http://localhost:8080/github_callback"),
-		ClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
-		Scopes:       []string{"user", "repo"},
+		RedirectURL:  conf.RedirectUrl,
+		ClientID:     conf.ClientId,
+		ClientSecret: conf.ClientSecret,
+		Scopes:       conf.Scopes,
 		Endpoint:     github.Endpoint,
 	}
 

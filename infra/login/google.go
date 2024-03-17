@@ -14,12 +14,16 @@ import (
 
 // GoogleLogin struct
 type GoogleLogin struct {
+	conf OAuth2ConfigModel
 	auth middlewares.AuthMiddleware
 }
 
 // Create GoogleLogin
-func NewGoogleLogin(auth middlewares.AuthMiddleware) *GoogleLogin {
-	return &GoogleLogin{}
+func NewGoogleLogin(conf OAuth2ConfigModel, auth middlewares.AuthMiddleware) *GoogleLogin {
+	return &GoogleLogin{
+		conf: conf,
+		auth: auth,
+	}
 }
 
 func (m *GoogleLogin) Login(c *fiber.Ctx) error {
@@ -39,7 +43,7 @@ func (m *GoogleLogin) Callback(c *fiber.Ctx) error {
 
 	code := c.Query("code")
 
-	googlecon := GoogleConfig()
+	googlecon := GoogleConfig(m.conf)
 
 	token, err := googlecon.Exchange(context.Background(), code)
 	if err != nil {
@@ -56,11 +60,11 @@ func (m *GoogleLogin) Callback(c *fiber.Ctx) error {
 		return c.SendString("JSON Parsing Failed")
 	}
 
-	var userJson GoogleUserInfo
+	var userJson GoogleUserInfoModel
 	json.Unmarshal(userData, &userJson)
 
 	// Create the Claims
-	claims := &middlewares.JwtCustomClaims{
+	claims := &middlewares.JwtCustomClaimsModel{
 		Name:          userJson.Name,
 		Email:         userJson.Email,
 		VerifiedEmail: true,

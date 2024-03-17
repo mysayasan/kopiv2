@@ -15,19 +15,20 @@ type adminApi struct {
 
 // Create AdminApi
 func NewAdminApi(
-	app *fiber.App,
+	router fiber.Router,
 	auth middlewares.AuthMiddleware) {
 	handler := &adminApi{
 		auth: auth,
 	}
 
-	app.Get("/restricted", auth.JwtHandler(), handler.restricted)
+	group := router.Group("admin")
+	group.Get("/test", auth.JwtHandler(), handler.restricted).Name("test")
 }
 
 func (m *adminApi) restricted(c *fiber.Ctx) error {
 	user := c.Locals("user").(*jwt.Token)
 
-	claims := &middlewares.JwtCustomClaims{}
+	claims := &middlewares.JwtCustomClaimsModel{}
 	tmp, _ := json.Marshal(user.Claims)
 	_ = json.Unmarshal(tmp, claims)
 

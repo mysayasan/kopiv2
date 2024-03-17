@@ -33,4 +33,5 @@ require (
 	github.com/gofiber/contrib/jwt v1.0.8
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/joho/godotenv v1.5.1
+	github.com/lib/pq v1.10.9
 )

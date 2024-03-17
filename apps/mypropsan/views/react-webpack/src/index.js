@@ -1,43 +1,22 @@
-import React from 'react'
-import ReactDOM from 'react-dom/client'
+import * as React from "react";
+import * as ReactDOM from "react-dom/client";
+import config from 'config';
+
 import {
-  Route,
   createBrowserRouter,
   RouterProvider,
-  createRoutesFromElements
-} from 'react-router-dom'
-import Auth0ProviderWithHistory from './auth/auth0-provider-with-history'
+} from "react-router-dom";
+// import "./index.css";
 
-const App = React.lazy(() => import('./app'))
-const Home = React.lazy(() => import('./views/home'))
-const Profile = React.lazy(() => import('./views/profile'))
-
-const root = ReactDOM.createRoot(document.getElementById('app'))
 const router = createBrowserRouter([
   {
-    path: '/',
-    element: <Auth0ProviderWithHistory />,
-    children: [
-      {
-        path: 'home',
-        element: <Home />
-      },
-      {
-        path: 'profile',
-        element: <Profile />
-      }
-    ]
-  }
+    path: "/",
+    element: <div>Hello world!</div>,
+  },
 ]);
 
-// const router = createBrowserRouter(
-//   createRoutesFromElements(<Route path='/' element={<App />}></Route>)
-// )
-
-root.render(
+ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    {/* <Auth0ProviderWithHistory> */}
-      <RouterProvider router={router} />
-    {/* </Auth0ProviderWithHistory> */}
+    <RouterProvider router={router} />
   </React.StrictMode>
-)
+);
