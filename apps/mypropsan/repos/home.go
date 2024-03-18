@@ -3,7 +3,9 @@ package repos
 import (
 	"reflect"
 
+	"github.com/gofiber/fiber/v2/log"
 	_ "github.com/lib/pq"
+	"github.com/mitchellh/mapstructure"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/models"
 	"github.com/mysayasan/kopiv2/infra/db/postgres"
 )
@@ -22,6 +24,21 @@ func NewHomeRepo(dbCrud postgres.IDbCrud) IHomeRepo {
 
 func (m *homeRepo) GetLatest() ([]*models.ResidentPropListModel, uint64, error) {
 	el := reflect.ValueOf(&models.ResidentPropListModel{}).Elem()
-	m.dbCrud.Get(el, "resident_prop")
-	return []*models.ResidentPropListModel{}, 0, nil
+	res, cnt, err := m.dbCrud.Get(el, "resident_prop")
+	if err != nil {
+		return nil, 0, err
+	}
+
+	list := make([]*models.ResidentPropListModel, 0)
+
+	for _, row := range res {
+		var model models.ResidentPropListModel
+		mapstructure.Decode(row, &model)
+		list = append(list, &model)
+	}
+
+	log.Info(list)
+	log.Info(cnt)
+
+	return list, 0, nil
 }
