@@ -9,7 +9,7 @@ import (
 
 	strcase "github.com/iancoleman/strcase"
 	_ "github.com/lib/pq"
-	dbconf "github.com/mysayasan/kopiv2/infra/db"
+	sqldb "github.com/mysayasan/kopiv2/infra/db/sql"
 )
 
 // dbCrud struct
@@ -18,7 +18,7 @@ type dbCrud struct {
 }
 
 // Create new DbCrud
-func NewDbCrud(config dbconf.DbConfigModel) (IDbCrud, error) {
+func NewDbCrud(config sqldb.DbConfigModel) (IDbCrud, error) {
 	conn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s", config.Host, config.Port, config.User, config.Password, config.DbName, config.SslMode)
 	db, err := sql.Open("postgres", conn)
 	if err != nil {
@@ -33,8 +33,7 @@ func NewDbCrud(config dbconf.DbConfigModel) (IDbCrud, error) {
 	}, nil
 }
 
-func (m *dbCrud) Get(props reflect.Value, dataset string) ([]map[string]interface{}, uint64, error) {
-
+func (m *dbCrud) genSqlStr(props reflect.Value, dataset string, limit uint64, offset uint64) string {
 	selCols := []string{}
 
 	for i := 0; i < props.NumField(); i++ {
@@ -45,15 +44,29 @@ func (m *dbCrud) Get(props reflect.Value, dataset string) ([]map[string]interfac
 		// fmt.Printf("%v %v %v\n", varName, varType, varValue)
 	}
 
-	selColsStr := strings.Join(selCols, `, `)
+	selSqlStr := strings.Join(selCols, `, `)
+	res := fmt.Sprintf(`SELECT %s
+	FROM %s`, selSqlStr, dataset)
 
-	rows, err := m.db.Query(fmt.Sprintf(`SELECT %s
-	FROM resident_prop ORDER BY id`, selColsStr))
+	if limit > 0 {
+		res = fmt.Sprintf("%s LIMIT %d", res, limit)
+	}
+
+	if offset > 0 {
+		res = fmt.Sprintf("%s OFFSET %d", res, offset)
+	}
+
+	return res
+}
+
+func (m *dbCrud) Get(model interface{}, dataset string, limit uint64, offset uint64) ([]map[string]interface{}, uint64, error) {
+	props := reflect.ValueOf(model)
+	sqlStr := m.genSqlStr(props, dataset, limit, offset)
+
+	rows, err := m.db.Query(sqlStr)
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
-
 	defer rows.Close()
 
 	cols, err := rows.Columns()

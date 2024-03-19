@@ -1,4 +1,4 @@
-package db
+package sql
 
 // DbConfig
 type DbConfigModel struct {

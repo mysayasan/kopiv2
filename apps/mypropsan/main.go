@@ -11,8 +11,9 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/controllers"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/repos"
+	"github.com/mysayasan/kopiv2/apps/mypropsan/services"
 	"github.com/mysayasan/kopiv2/infra/config"
-	"github.com/mysayasan/kopiv2/infra/db/postgres"
+	"github.com/mysayasan/kopiv2/infra/db/sql/postgres"
 	"github.com/mysayasan/kopiv2/infra/middlewares"
 )
 
@@ -56,19 +57,19 @@ func main() {
 		log.Fatal("error connecting to db")
 	}
 
-	homeRepo := repos.NewHomeRepo(postgresDb)
-
 	// start auth middleware
 	auth := middlewares.NewAuth(appConfig.Jwt.Secret)
 	api := app.Group("api")
 
-	// Login routes
+	// Login module
 	controllers.NewLoginApi(api, appConfig.Login.Google, *auth)
 
-	// Home routes
-	controllers.NewHomeApi(api, *auth, homeRepo)
+	// Home module
+	homeRepo := repos.NewHomeRepo(postgresDb)
+	homeService := services.NewHomeService(homeRepo)
+	controllers.NewHomeApi(api, *auth, homeService)
 
-	// Restricted Routes
+	// Admin module
 	controllers.NewAdminApi(api, *auth)
 
 	// Get api routes

@@ -1,7 +1,7 @@
 package config
 
 import (
-	"github.com/mysayasan/kopiv2/infra/db"
+	sqldb "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/login"
 )
 
@@ -17,5 +17,5 @@ type AppConfigModel struct {
 		CertPath string `json:"cert_path" validate:"required"`
 		KeyPath  string `json:"key_path" validate:"required"`
 	} `json:"tls"`
-	Db db.DbConfigModel `json:"db"`
+	Db sqldb.DbConfigModel `json:"db"`
 }
