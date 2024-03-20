@@ -48,13 +48,30 @@ func (m *dbCrud) genSqlStr(props reflect.Value, dataset string, limit uint64, of
 	res := fmt.Sprintf(`SELECT %s
 	FROM %s`, selSqlStr, dataset)
 
+	rowLimit := ""
+	rowOffset := ""
+
 	if limit > 0 {
-		res = fmt.Sprintf("%s LIMIT %d", res, limit)
+		rowLimit = fmt.Sprintf("LIMIT %d", limit)
 	}
 
 	if offset > 0 {
-		res = fmt.Sprintf("%s OFFSET %d", res, offset)
+		rowOffset = fmt.Sprintf("OFFSET %d", offset)
 	}
+
+	res = fmt.Sprintf(`
+		WITH cte AS (
+			%s
+			)
+			SELECT *
+			FROM  (
+			TABLE  cte
+			%s
+			%s
+			) sub
+			INNER JOIN (SELECT count(*) FROM cte) c(x_rows_cnt) ON true
+	
+		`, res, rowLimit, rowOffset)
 
 	return res
 }
@@ -74,7 +91,12 @@ func (m *dbCrud) Get(model interface{}, dataset string, limit uint64, offset uin
 		return nil, 0, err
 	}
 
-	if len(cols) != props.NumField() {
+	propsCnt := props.NumField()
+	if cols[len(cols)-1] == "x_rows_cnt" {
+		propsCnt += 1
+	}
+
+	if len(cols) != propsCnt {
 		return nil, 0, errors.New("different length between db columns prop field")
 	}
 
@@ -90,7 +112,11 @@ func (m *dbCrud) Get(model interface{}, dataset string, limit uint64, offset uin
 		rowCnt++
 		vals := make([]interface{}, len(cols))
 		for i := 0; i < len(cols); i++ {
-			// vals[i] = reflect.New(props.Type().Field(i).Type.Elem())
+			if cols[i] == "x_rows_cnt" {
+				vals[i] = new(uint64)
+				continue
+			}
+
 			switch props.Field(i).Interface().(type) {
 			case []uint8:
 				{
@@ -145,6 +171,10 @@ func (m *dbCrud) Get(model interface{}, dataset string, limit uint64, offset uin
 
 		for i := 0; i < props.NumField(); i++ {
 			data[props.Type().Field(i).Name] = vals[i]
+		}
+
+		if offset >= limit {
+			rowCnt = *vals[len(vals)-1].(*uint64)
 		}
 
 		result = append(result, data)

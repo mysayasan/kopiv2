@@ -1,7 +1,6 @@
 package repos
 
 import (
-	"github.com/gofiber/fiber/v2/log"
 	_ "github.com/lib/pq"
 	"github.com/mitchellh/mapstructure"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/models"
@@ -21,7 +20,7 @@ func NewHomeRepo(dbCrud postgres.IDbCrud) IHomeRepo {
 }
 
 func (m *homeRepo) GetLatest(limit uint64, offset uint64) ([]*models.ResidentPropListModel, uint64, error) {
-	res, cnt, err := m.dbCrud.Get(models.ResidentPropListModel{}, "resident_prop", limit, offset)
+	res, totalCnt, err := m.dbCrud.Get(models.ResidentPropListModel{}, "resident_prop", limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -34,8 +33,5 @@ func (m *homeRepo) GetLatest(limit uint64, offset uint64) ([]*models.ResidentPro
 		list = append(list, &model)
 	}
 
-	log.Info(list)
-	log.Info(cnt)
-
-	return list, 0, nil
+	return list, totalCnt, nil
 }

@@ -1,10 +1,12 @@
 package controllers
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/services"
+	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/infra/middlewares"
 )
 
@@ -32,10 +34,12 @@ func (m *homeApi) latest(c *fiber.Ctx) error {
 	limit, _ := strconv.ParseUint(c.Query("limit"), 10, 64)
 	offset, _ := strconv.ParseUint(c.Query("offset"), 10, 64)
 
-	res, _, err := m.serv.GetLatest(limit, offset)
+	res, totalCnt, err := m.serv.GetLatest(limit, offset)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).SendString(err.Error())
 	}
 
-	return c.JSON(res)
+	c.Response().Header.Add("X-Rows", fmt.Sprintf("%d", totalCnt))
+
+	return controllers.SendJSON(c, "ok", "", res, limit, offset, totalCnt)
 }

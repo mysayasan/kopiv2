@@ -4,10 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/log"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
+	"github.com/gofiber/fiber/v2/middleware/recover"
+
+	// "github.com/gofiber/storage/sqlite3"
 	"github.com/joho/godotenv"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/controllers"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/repos"
@@ -29,7 +34,23 @@ func main() {
 		}
 	}
 
+	// storage := sqlite3.New()
+
 	app := fiber.New()
+	// Recover from panic
+	app.Use(recover.New())
+	app.Get("/panic", func(c *fiber.Ctx) error {
+		panic("I'm an error")
+	})
+
+	// Limiter
+	app.Use(limiter.New(limiter.Config{
+		Max:               20,
+		Expiration:        30 * time.Second,
+		LimiterMiddleware: limiter.SlidingWindow{},
+		// Storage:           storage,
+	}))
+
 	// app.Use(helmet.New(helmet.Config{
 	// 	ContentTypeNosniff: "nosniff",
 	// 	XSSProtection:      "0",
@@ -60,6 +81,9 @@ func main() {
 	// start auth middleware
 	auth := middlewares.NewAuth(appConfig.Jwt.Secret)
 	api := app.Group("api")
+	api.Use(func(c *fiber.Ctx) error {
+		return c.Next()
+	})
 
 	// Login module
 	controllers.NewLoginApi(api, appConfig.Login.Google, *auth)
