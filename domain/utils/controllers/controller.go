@@ -7,7 +7,7 @@ import (
 )
 
 type Response[T any] struct {
-	Status  string `json:"status"`
+	Status  int    `json:"status"`
 	Message string `json:"message"`
 	Data    struct {
 		Result      T      `json:"result"`
@@ -17,9 +17,9 @@ type Response[T any] struct {
 	} `json:"data"`
 }
 
-func SendJSON(c *fiber.Ctx, status string, message string, data interface{}, limit uint64, offset uint64, totalCnt uint64) error {
+func SendJSON(c *fiber.Ctx, message string, data interface{}, limit uint64, offset uint64, totalCnt uint64) error {
 	var resp Response[interface{}]
-	resp.Status = status
+	resp.Status = 1
 	resp.Message = message
 	resp.Data.Result = data
 	resp.Data.ResCnt = totalCnt

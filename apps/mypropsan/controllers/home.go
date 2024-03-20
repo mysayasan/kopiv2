@@ -41,5 +41,5 @@ func (m *homeApi) latest(c *fiber.Ctx) error {
 
 	c.Response().Header.Add("X-Rows", fmt.Sprintf("%d", totalCnt))
 
-	return controllers.SendJSON(c, "ok", "", res, limit, offset, totalCnt)
+	return controllers.SendJSON(c, "", res, limit, offset, totalCnt)
 }
