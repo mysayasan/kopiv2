@@ -18,7 +18,7 @@ type dbCrud struct {
 }
 
 // Create new DbCrud
-func NewDbCrud(config sqldb.DbConfigModel) (IDbCrud, error) {
+func NewDbCrud(config sqldb.DbConfig) (IDbCrud, error) {
 	conn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s", config.Host, config.Port, config.User, config.Password, config.DbName, config.SslMode)
 	db, err := sql.Open("postgres", conn)
 	if err != nil {
@@ -33,7 +33,7 @@ func NewDbCrud(config sqldb.DbConfigModel) (IDbCrud, error) {
 	}, nil
 }
 
-func (m *dbCrud) genSqlStr(props reflect.Value, dataset string, limit uint64, offset uint64) string {
+func (m *dbCrud) genSqlStr(props reflect.Value, dataset string, limit uint64, offset uint64, filters ...sqldb.Filter) string {
 	selCols := []string{}
 
 	for i := 0; i < props.NumField(); i++ {
@@ -47,6 +47,34 @@ func (m *dbCrud) genSqlStr(props reflect.Value, dataset string, limit uint64, of
 	selSqlStr := strings.Join(selCols, `, `)
 	res := fmt.Sprintf(`SELECT %s
 	FROM %s`, selSqlStr, dataset)
+
+	selFilters := []string{}
+	for _, filter := range filters {
+		if filter.Compare == 1 {
+			rv := reflect.ValueOf(filter.Value)
+			switch rv.Interface().(type) {
+			case int, int16, int32, int64, uint16, uint32, uint64:
+				{
+					fs := fmt.Sprintf("%s = %d", strcase.ToSnake(props.Type().Field(filter.FieldIdx).Name), filter.Value)
+					selFilters = append(selFilters, fs)
+					break
+				}
+			default:
+				{
+					fs := fmt.Sprintf("%s = '%s'", strcase.ToSnake(props.Type().Field(filter.FieldIdx).Name), filter.Value)
+					selFilters = append(selFilters, fs)
+					break
+				}
+			}
+		}
+	}
+
+	if len(selFilters) > 0 {
+		res = fmt.Sprintf(`
+		%s
+		WHERE %s
+		`, res, strings.Join(selFilters, " AND "))
+	}
 
 	rowLimit := ""
 	rowOffset := ""
@@ -76,9 +104,9 @@ func (m *dbCrud) genSqlStr(props reflect.Value, dataset string, limit uint64, of
 	return res
 }
 
-func (m *dbCrud) Get(model interface{}, dataset string, limit uint64, offset uint64) ([]map[string]interface{}, uint64, error) {
+func (m *dbCrud) Get(model interface{}, dataset string, limit uint64, offset uint64, filters ...sqldb.Filter) ([]map[string]interface{}, uint64, error) {
 	props := reflect.ValueOf(model)
-	sqlStr := m.genSqlStr(props, dataset, limit, offset)
+	sqlStr := m.genSqlStr(props, dataset, limit, offset, filters...)
 
 	rows, err := m.db.Query(sqlStr)
 	if err != nil {

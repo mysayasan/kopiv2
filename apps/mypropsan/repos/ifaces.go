@@ -1,8 +1,11 @@
 package repos
 
-import "github.com/mysayasan/kopiv2/apps/mypropsan/models"
+import (
+	"github.com/mysayasan/kopiv2/apps/mypropsan/models"
+	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+)
 
-// IIHomeRepo interface
-type IHomeRepo interface {
-	GetLatest(limit uint64, offset uint64) ([]*models.ResidentPropListModel, uint64, error)
+// IIResidentPropRepo interface
+type IResidentPropRepo interface {
+	GetLatest(limit uint64, offset uint64, filters ...dbsql.Filter) ([]*models.ResidentPropListModel, uint64, error)
 }

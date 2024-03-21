@@ -4,23 +4,24 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/mitchellh/mapstructure"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/models"
+	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/db/sql/postgres"
 )
 
-// homeRepo struct
-type homeRepo struct {
+// residentPropRepo struct
+type residentPropRepo struct {
 	dbCrud postgres.IDbCrud
 }
 
-// Create new IHomeRepo
-func NewHomeRepo(dbCrud postgres.IDbCrud) IHomeRepo {
-	return &homeRepo{
+// Create new IResidentPropRepo
+func NewResidentPropRepo(dbCrud postgres.IDbCrud) IResidentPropRepo {
+	return &residentPropRepo{
 		dbCrud: dbCrud,
 	}
 }
 
-func (m *homeRepo) GetLatest(limit uint64, offset uint64) ([]*models.ResidentPropListModel, uint64, error) {
-	res, totalCnt, err := m.dbCrud.Get(models.ResidentPropListModel{}, "resident_prop", limit, offset)
+func (m *residentPropRepo) GetLatest(limit uint64, offset uint64, filters ...dbsql.Filter) ([]*models.ResidentPropListModel, uint64, error) {
+	res, totalCnt, err := m.dbCrud.Get(models.ResidentPropListModel{}, "resident_prop", limit, offset, filters...)
 	if err != nil {
 		return nil, 0, err
 	}

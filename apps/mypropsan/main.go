@@ -88,9 +88,11 @@ func main() {
 	// Login module
 	controllers.NewLoginApi(api, appConfig.Login.Google, *auth)
 
-	// Home module
-	homeRepo := repos.NewHomeRepo(postgresDb)
-	homeService := services.NewHomeService(homeRepo)
+	// Repo modules
+	residentPropRepo := repos.NewResidentPropRepo(postgresDb)
+
+	// Page Modules
+	homeService := services.NewHomeService(residentPropRepo)
 	controllers.NewHomeApi(api, *auth, homeService)
 
 	// Admin module

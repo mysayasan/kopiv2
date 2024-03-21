@@ -17,5 +17,5 @@ type AppConfigModel struct {
 		CertPath string `json:"cert_path" validate:"required"`
 		KeyPath  string `json:"key_path" validate:"required"`
 	} `json:"tls"`
-	Db sqldb.DbConfigModel `json:"db"`
+	Db sqldb.DbConfig `json:"db"`
 }
