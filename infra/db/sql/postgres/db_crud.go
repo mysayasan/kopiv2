@@ -33,7 +33,7 @@ func NewDbCrud(config sqldb.DbConfig) (IDbCrud, error) {
 	}, nil
 }
 
-func (m *dbCrud) genSqlStr(props reflect.Value, dataset string, limit uint64, offset uint64, filters ...sqldb.Filter) string {
+func (m *dbCrud) genSqlStr(props reflect.Value, dataset string, limit uint64, offset uint64, filters []sqldb.Filter, sorter []sqldb.Sorter) string {
 	selCols := []string{}
 
 	for i := 0; i < props.NumField(); i++ {
@@ -104,9 +104,9 @@ func (m *dbCrud) genSqlStr(props reflect.Value, dataset string, limit uint64, of
 	return res
 }
 
-func (m *dbCrud) Get(model interface{}, dataset string, limit uint64, offset uint64, filters ...sqldb.Filter) ([]map[string]interface{}, uint64, error) {
+func (m *dbCrud) Get(model interface{}, dataset string, limit uint64, offset uint64, filters []sqldb.Filter, sorter []sqldb.Sorter) ([]map[string]interface{}, uint64, error) {
 	props := reflect.ValueOf(model)
-	sqlStr := m.genSqlStr(props, dataset, limit, offset, filters...)
+	sqlStr := m.genSqlStr(props, dataset, limit, offset, filters, nil)
 
 	rows, err := m.db.Query(sqlStr)
 	if err != nil {
