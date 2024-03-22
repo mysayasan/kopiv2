@@ -28,5 +28,17 @@ func (m *homeService) GetLatest(limit uint64, offset uint64) ([]*models.Resident
 	}
 
 	filters = append(filters, filter)
-	return m.repo.GetLatest(limit, offset, nil, nil)
+
+	sorters := []dbsql.Sorter{
+		{
+			FieldIdx: 4,
+			Sort:     2,
+		},
+		{
+			FieldIdx: 1,
+			Sort:     1,
+		},
+	}
+
+	return m.repo.GetLatest(limit, offset, nil, sorters)
 }

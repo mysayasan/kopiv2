@@ -26,9 +26,8 @@ const (
 
 // Sorter
 type Sorter struct {
-	FieldIdx int         `json:"fieldIdx" validate:"required"`
-	Sort     Sort        `json:"sort" validate:"required"`
-	Value    interface{} `json:"value" validate:"required"`
+	FieldIdx int  `json:"fieldIdx" validate:"required"`
+	Sort     Sort `json:"sort" validate:"required"`
 }
 
 type Sort int

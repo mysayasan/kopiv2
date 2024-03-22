@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/gofiber/fiber/v2/log"
 	strcase "github.com/iancoleman/strcase"
 	_ "github.com/lib/pq"
 	sqldb "github.com/mysayasan/kopiv2/infra/db/sql"
@@ -33,7 +34,7 @@ func NewDbCrud(config sqldb.DbConfig) (IDbCrud, error) {
 	}, nil
 }
 
-func (m *dbCrud) genSqlStr(props reflect.Value, dataset string, limit uint64, offset uint64, filters []sqldb.Filter, sorter []sqldb.Sorter) string {
+func (m *dbCrud) genSqlStr(props reflect.Value, dataset string, limit uint64, offset uint64, filters []sqldb.Filter, sorters []sqldb.Sorter) string {
 	selCols := []string{}
 
 	for i := 0; i < props.NumField(); i++ {
@@ -51,8 +52,8 @@ func (m *dbCrud) genSqlStr(props reflect.Value, dataset string, limit uint64, of
 	selFilters := []string{}
 	for _, filter := range filters {
 		if filter.Compare == 1 {
-			rv := reflect.ValueOf(filter.Value)
-			switch rv.Interface().(type) {
+			// rv := reflect.ValueOf(filter.Value)
+			switch props.Field(filter.FieldIdx).Interface().(type) {
 			case int, int16, int32, int64, uint16, uint32, uint64:
 				{
 					fs := fmt.Sprintf("%s = %d", strcase.ToSnake(props.Type().Field(filter.FieldIdx).Name), filter.Value)
@@ -76,6 +77,26 @@ func (m *dbCrud) genSqlStr(props reflect.Value, dataset string, limit uint64, of
 		`, res, strings.Join(selFilters, " AND "))
 	}
 
+	selSorters := []string{}
+	for _, sorter := range sorters {
+		if sorter.Sort == 2 {
+			fs := fmt.Sprintf("%s DESC", strcase.ToSnake(props.Type().Field(sorter.FieldIdx).Name))
+			selSorters = append(selSorters, fs)
+		} else {
+			fs := fmt.Sprintf("%s ASC", strcase.ToSnake(props.Type().Field(sorter.FieldIdx).Name))
+			selSorters = append(selSorters, fs)
+		}
+	}
+
+	if len(selSorters) > 0 {
+		res = fmt.Sprintf(`
+		%s
+		ORDER BY %s
+		`, res, strings.Join(selSorters, ","))
+	}
+
+	log.Info(res)
+
 	rowLimit := ""
 	rowOffset := ""
 
@@ -97,16 +118,16 @@ func (m *dbCrud) genSqlStr(props reflect.Value, dataset string, limit uint64, of
 			%s
 			%s
 			) sub
-			INNER JOIN (SELECT count(*) FROM cte) c(x_rows_cnt) ON true
+			INNER JOIN (SELECT count(*) FROM cte) c(x_rows_cnt) ON true;
 	
 		`, res, rowLimit, rowOffset)
 
 	return res
 }
 
-func (m *dbCrud) Get(model interface{}, dataset string, limit uint64, offset uint64, filters []sqldb.Filter, sorter []sqldb.Sorter) ([]map[string]interface{}, uint64, error) {
+func (m *dbCrud) Get(model interface{}, dataset string, limit uint64, offset uint64, filters []sqldb.Filter, sorters []sqldb.Sorter) ([]map[string]interface{}, uint64, error) {
 	props := reflect.ValueOf(model)
-	sqlStr := m.genSqlStr(props, dataset, limit, offset, filters, nil)
+	sqlStr := m.genSqlStr(props, dataset, limit, offset, filters, sorters)
 
 	rows, err := m.db.Query(sqlStr)
 	if err != nil {
