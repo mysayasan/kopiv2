@@ -7,5 +7,5 @@ import (
 
 // IIResidentPropRepo interface
 type IResidentPropRepo interface {
-	GetLatest(limit uint64, offset uint64, filters []dbsql.Filter, sorter []dbsql.Sorter) ([]*models.ResidentPropViewModel, uint64, error)
+	GetLatest(limit uint64, offset uint64, filters []dbsql.Filter, sorter []dbsql.Sorter) ([]*models.ResidentPropModel, uint64, error)
 }

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 
@@ -19,7 +20,7 @@ type dbCrud struct {
 }
 
 // Create new DbCrud
-func NewDbCrud(config sqldb.DbConfig) (IDbCrud, error) {
+func NewDbCrud(config sqldb.DbConfigModel) (IDbCrud, error) {
 	conn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s", config.Host, config.Port, config.User, config.Password, config.DbName, config.SslMode)
 	db, err := sql.Open("postgres", conn)
 	if err != nil {
@@ -34,10 +35,27 @@ func NewDbCrud(config sqldb.DbConfig) (IDbCrud, error) {
 	}, nil
 }
 
-func (m *dbCrud) genSqlStr(props reflect.Value, dataset string, limit uint64, offset uint64, filters []sqldb.Filter, sorters []sqldb.Sorter) string {
+func (m *dbCrud) genSqlStr(props reflect.Value, dataset []string, limit uint64, offset uint64, filters []sqldb.Filter, sorters []sqldb.Sorter) (int, string) {
 	selCols := []string{}
+	cSqlStr := []string{}
+
+	fmt.Printf(">>>>%s ", props.Kind())
 
 	for i := 0; i < props.NumField(); i++ {
+		field := props.Type().Field(i)
+		if field.Type.Kind() == reflect.Slice {
+			// log.Info(r.Elem().Kind())
+			if len(dataset) > 1 {
+				// fmt.Printf(" >>>> %s", field.Tag.Get("parent"))
+				// fmt.Printf(" >>>> %s", field.Type.Elem())
+				// fmt.Printf(" >>>> %s", field.Type.Kind())
+				_, sqlStr := m.genSqlStr(reflect.Indirect(reflect.New(field.Type.Elem())), dataset[1:], limit, offset, nil, nil)
+				cSqlStr = append(cSqlStr, sqlStr)
+				// fmt.Printf(" >>>> %d <<< %s\n", cSelCols, cSqlStr)
+			}
+			continue
+		}
+
 		selCols = append(selCols, strcase.ToSnake(props.Type().Field(i).Name))
 		// varName := props.Type().Field(i).Name
 		// varType := props.Type().Field(i).Type
@@ -47,7 +65,7 @@ func (m *dbCrud) genSqlStr(props reflect.Value, dataset string, limit uint64, of
 
 	selSqlStr := strings.Join(selCols, `, `)
 	res := fmt.Sprintf(`SELECT %s
-	FROM %s`, selSqlStr, dataset)
+	FROM %s`, selSqlStr, dataset[0])
 
 	selFilters := []string{}
 	for _, filter := range filters {
@@ -95,7 +113,9 @@ func (m *dbCrud) genSqlStr(props reflect.Value, dataset string, limit uint64, of
 		`, res, strings.Join(selSorters, ","))
 	}
 
-	log.Info(res)
+	if os.Getenv("ENVIRONMENT") == "dev" {
+		log.Info(res)
+	}
 
 	rowLimit := ""
 	rowOffset := ""
@@ -122,12 +142,18 @@ func (m *dbCrud) genSqlStr(props reflect.Value, dataset string, limit uint64, of
 	
 		`, res, rowLimit, rowOffset)
 
-	return res
+	for _, sqlStr := range cSqlStr {
+		res = fmt.Sprintf("%s\n%s", res, sqlStr)
+	}
+
+	log.Info(res)
+
+	return len(selCols), res
 }
 
-func (m *dbCrud) Get(model interface{}, dataset string, limit uint64, offset uint64, filters []sqldb.Filter, sorters []sqldb.Sorter) ([]map[string]interface{}, uint64, error) {
+func (m *dbCrud) Get(model interface{}, dataset []string, limit uint64, offset uint64, filters []sqldb.Filter, sorters []sqldb.Sorter) ([]map[string]interface{}, uint64, error) {
 	props := reflect.ValueOf(model)
-	sqlStr := m.genSqlStr(props, dataset, limit, offset, filters, sorters)
+	colCnt, sqlStr := m.genSqlStr(props, dataset, limit, offset, filters, sorters)
 
 	rows, err := m.db.Query(sqlStr)
 	if err != nil {
@@ -140,7 +166,7 @@ func (m *dbCrud) Get(model interface{}, dataset string, limit uint64, offset uin
 		return nil, 0, err
 	}
 
-	propsCnt := props.NumField()
+	propsCnt := colCnt
 	if cols[len(cols)-1] == "x_rows_cnt" {
 		propsCnt += 1
 	}
@@ -165,7 +191,6 @@ func (m *dbCrud) Get(model interface{}, dataset string, limit uint64, offset uin
 				vals[i] = new(uint64)
 				continue
 			}
-
 			switch props.Field(i).Interface().(type) {
 			case []uint8:
 				{

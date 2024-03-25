@@ -1,7 +1,7 @@
 package dbsql
 
-// DbConfig
-type DbConfig struct {
+// DbConfigModel
+type DbConfigModel struct {
 	Host     string `json:"host" validate:"required"`
 	Port     int    `json:"port" validate:"required"`
 	User     string `json:"user" validate:"required"`

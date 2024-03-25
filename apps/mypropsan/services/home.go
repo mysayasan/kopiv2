@@ -19,7 +19,7 @@ func NewHomeService(repo repos.IResidentPropRepo) IHomeService {
 	}
 }
 
-func (m *homeService) GetLatest(limit uint64, offset uint64) ([]*models.ResidentPropViewModel, uint64, error) {
+func (m *homeService) GetLatest(limit uint64, offset uint64) ([]*models.ResidentPropModel, uint64, error) {
 	var filters []dbsql.Filter
 	filter := dbsql.Filter{
 		FieldIdx: 0,
