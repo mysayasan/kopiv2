@@ -17,9 +17,9 @@ import (
 	"github.com/mysayasan/kopiv2/apps/mypropsan/controllers"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/repos"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/services"
+	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 	"github.com/mysayasan/kopiv2/infra/config"
 	"github.com/mysayasan/kopiv2/infra/db/sql/postgres"
-	"github.com/mysayasan/kopiv2/infra/middlewares"
 )
 
 func main() {

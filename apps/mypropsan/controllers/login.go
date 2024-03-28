@@ -2,8 +2,8 @@ package controllers
 
 import (
 	"github.com/gofiber/fiber/v2"
+	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 	"github.com/mysayasan/kopiv2/infra/login"
-	"github.com/mysayasan/kopiv2/infra/middlewares"
 )
 
 // LoginApi struct

@@ -8,8 +8,8 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
-	"github.com/mysayasan/kopiv2/infra/middlewares"
-	"github.com/mysayasan/kopiv2/infra/middlewares/timeout"
+	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
+	"github.com/mysayasan/kopiv2/domain/utils/middlewares/timeout"
 )
 
 // HomeApi struct

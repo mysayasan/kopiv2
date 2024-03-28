@@ -9,7 +9,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/mysayasan/kopiv2/infra/middlewares"
+	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 )
 
 // GoogleLogin struct

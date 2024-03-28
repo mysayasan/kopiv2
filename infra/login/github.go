@@ -7,7 +7,7 @@ import (
 	"net/http"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/mysayasan/kopiv2/infra/middlewares"
+	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 )
 
 // GithubLogin struct
