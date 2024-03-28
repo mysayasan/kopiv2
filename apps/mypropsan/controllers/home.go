@@ -3,11 +3,13 @@ package controllers
 import (
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/infra/middlewares"
+	"github.com/mysayasan/kopiv2/infra/middlewares/timeout"
 )
 
 // HomeApi struct
@@ -27,7 +29,7 @@ func NewHomeApi(
 	}
 
 	group := router.Group("home")
-	group.Get("/latest", handler.latest).Name("latest")
+	group.Get("/latest", timeout.NewWithContext(handler.latest, 2*time.Second)).Name("latest")
 }
 
 func (m *homeApi) latest(c *fiber.Ctx) error {

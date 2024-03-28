@@ -22,21 +22,17 @@ func NewHomeService(repo repos.IResidentPropRepo) IHomeService {
 func (m *homeService) GetLatest(limit uint64, offset uint64) ([]*models.ResidentPropModel, uint64, error) {
 	var filters []dbsql.Filter
 	filter := dbsql.Filter{
-		FieldIdx: 0,
-		Compare:  1,
-		Value:    1,
+		FieldName: "Id",
+		Compare:   1,
+		Value:     1,
 	}
 
 	filters = append(filters, filter)
 
 	sorters := []dbsql.Sorter{
 		{
-			FieldIdx: 4,
-			Sort:     2,
-		},
-		{
-			FieldIdx: 1,
-			Sort:     1,
+			FieldName: "LandAreaSize",
+			Sort:      2,
 		},
 	}
 

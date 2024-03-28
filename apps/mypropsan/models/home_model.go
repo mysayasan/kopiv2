@@ -2,12 +2,12 @@ package models
 
 // ImageGalleryEntity
 type ResidentPropPicModel struct {
-	Id               int64   `json:"id" form:"id" query:"id" validate:"required"`
-	Title            string  `json:"title" form:"title" query:"title" validate:"required"`
-	Description      string  `json:"description" form:"description" query:"description"`
-	ResidentPropId   int64   `json:"residentPropId" form:"residentPropId" query:"residentPropId"`
-	PhysicalFilePath string  `json:"physicalFilePath" form:"physicalFilePath" query:"physicalFilePath"`
-	VirtualFilePath  float64 `json:"virtualFilePath" form:"virtualFilePath" query:"virtualFilePath"`
+	Id               int64  `json:"id" form:"id" query:"id" validate:"required"`
+	Title            string `json:"title" form:"title" query:"title" validate:"required"`
+	Description      string `json:"description" form:"description" query:"description"`
+	ResidentPropId   int64  `json:"residentPropId" form:"residentPropId" query:"residentPropId"`
+	PhysicalFilePath string `json:"physicalFilePath" form:"physicalFilePath" query:"physicalFilePath"`
+	VirtualFilePath  string `json:"virtualFilePath" form:"virtualFilePath" query:"virtualFilePath"`
 }
 
 // ResidentPropModel
@@ -33,5 +33,5 @@ type ResidentPropModel struct {
 	Lon           float64                `json:"lon" form:"lon" query:"lon"`
 	PostedOn      int64                  `json:"postedOn" form:"postedOn" query:"postedOn"`
 	ExpiredOn     int64                  `json:"expiredOn" form:"expiredOn" query:"expiredOn"`
-	Pics          []ResidentPropPicModel `json:"pics" form:"pics" query:"pics" parent:"Id"`
+	Pics          []ResidentPropPicModel `json:"pics" form:"pics" query:"pics" datasrc:"resident_prop_pic" parents:"Id:ResidentPropId"`
 }

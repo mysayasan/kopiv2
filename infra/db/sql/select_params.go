@@ -8,9 +8,9 @@ type Paging struct {
 
 // Filter
 type Filter struct {
-	FieldIdx int         `json:"fieldIdx" validate:"required"`
-	Compare  Compare     `json:"compare" validate:"required"`
-	Value    interface{} `json:"value" validate:"required"`
+	FieldName string      `json:"fieldName" validate:"required"`
+	Compare   Compare     `json:"compare" validate:"required"`
+	Value     interface{} `json:"value" validate:"required"`
 }
 
 type Compare int
@@ -26,8 +26,8 @@ const (
 
 // Sorter
 type Sorter struct {
-	FieldIdx int  `json:"fieldIdx" validate:"required"`
-	Sort     Sort `json:"sort" validate:"required"`
+	FieldName string `json:"fieldName" validate:"required"`
+	Sort      Sort   `json:"sort" validate:"required"`
 }
 
 type Sort int
