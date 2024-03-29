@@ -98,6 +98,9 @@ func main() {
 	// Admin module
 	controllers.NewAdminApi(api, *auth)
 
+	// Upload module
+	controllers.NewUploadApi(api, *auth)
+
 	// Get api routes
 	api.Get("/routes", auth.JwtHandler(), func(c *fiber.Ctx) error {
 		data, _ := json.Marshal(app.GetRoutes(true))

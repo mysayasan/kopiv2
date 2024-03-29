@@ -2,12 +2,9 @@ package models
 
 // ImageGalleryEntity
 type ResidentPropPicModel struct {
-	Id               int64  `json:"id" form:"id" query:"id" validate:"required"`
-	Title            string `json:"title" form:"title" query:"title" validate:"required"`
-	Description      string `json:"description" form:"description" query:"description"`
-	ResidentPropId   int64  `json:"residentPropId" form:"residentPropId" query:"residentPropId"`
-	PhysicalFilePath string `json:"physicalFilePath" form:"physicalFilePath" query:"physicalFilePath"`
-	VirtualFilePath  string `json:"virtualFilePath" form:"virtualFilePath" query:"virtualFilePath"`
+	Id             int64  `json:"id" form:"id" query:"id" validate:"required"`
+	ResidentPropId int64  `json:"residentPropId" form:"residentPropId" query:"residentPropId"`
+	PicUrl         string `json:"picUrl" form:"picUrl" query:"picUrl" validate:"required"`
 }
 
 // ResidentPropModel

@@ -147,8 +147,8 @@ func (m *dbCrud) genSqlStr(props reflect.Value, limit uint64, offset uint64, fil
 	return len(selCols), res
 }
 
-func (m *dbCrud) Get(props reflect.Value, limit uint64, offset uint64, filters []dbsql.Filter, sorters []dbsql.Sorter, datasrc string) ([]map[string]interface{}, uint64, error) {
-	// props := reflect.ValueOf(model)
+func (m *dbCrud) Get(model interface{}, limit uint64, offset uint64, filters []dbsql.Filter, sorters []dbsql.Sorter, datasrc string) ([]map[string]interface{}, uint64, error) {
+	props := reflect.ValueOf(model)
 	colCnt, sqlStr := m.genSqlStr(props, limit, offset, filters, sorters, datasrc)
 
 	rows, err := m.db.Query(sqlStr)
@@ -326,7 +326,7 @@ func (m *dbCrud) Get(props reflect.Value, limit uint64, offset uint64, filters [
 						wg.Add(1)
 						go func(props reflect.Value, filters []dbsql.Filter, cdatsrc string) {
 							defer wg.Done()
-							rows, _, err := m.Get(props, 0, 0, filters, nil, cdatsrc)
+							rows, _, err := m.Get(props.Interface(), 0, 0, filters, nil, cdatsrc)
 							if err == nil {
 								res[field.Name] = rows
 							}
@@ -339,4 +339,14 @@ func (m *dbCrud) Get(props reflect.Value, limit uint64, offset uint64, filters [
 	}
 
 	return result, rowCnt, nil
+}
+
+func (m *dbCrud) GetSingle(model interface{}, datasrc string) (map[string]interface{}, error) {
+	props := reflect.ValueOf(model)
+	rows, _, err := m.Get(props.Interface(), 1, 0, nil, nil, datasrc)
+	if err != nil {
+		return nil, err
+	}
+
+	return rows[1], nil
 }
