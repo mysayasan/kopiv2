@@ -1,6 +1,8 @@
 package services
 
 import (
+	"context"
+
 	_ "github.com/lib/pq"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/models"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/repos"
@@ -19,7 +21,7 @@ func NewHomeService(repo repos.IResidentPropRepo) IHomeService {
 	}
 }
 
-func (m *homeService) GetLatest(limit uint64, offset uint64) ([]*models.ResidentPropModel, uint64, error) {
+func (m *homeService) GetLatest(ctx context.Context, limit uint64, offset uint64) ([]*models.ResidentPropModel, uint64, error) {
 	var filters []dbsql.Filter
 	filter := dbsql.Filter{
 		FieldName: "Id",
@@ -36,5 +38,5 @@ func (m *homeService) GetLatest(limit uint64, offset uint64) ([]*models.Resident
 		},
 	}
 
-	return m.repo.GetLatest(limit, offset, nil, sorters)
+	return m.repo.GetLatest(ctx, limit, offset, nil, sorters)
 }

@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -36,7 +37,112 @@ func NewDbCrud(config dbsql.DbConfigModel) (IDbCrud, error) {
 	}, nil
 }
 
-func (m *dbCrud) genSqlStr(props reflect.Value, limit uint64, offset uint64, filters []dbsql.Filter, sorters []dbsql.Sorter, datasrc string) (int, string) {
+func (m *dbCrud) genInsSqlStr(props reflect.Value, datasrc string) string {
+	if datasrc == "" {
+		propName := strcase.ToSnake(props.Type().Name())
+		temp := strings.Replace(propName, "_entity", "", 1)
+		if temp == propName {
+			temp = strings.Replace(propName, "_model", "", 1)
+		}
+		datasrc = temp
+	}
+
+	selCols := []string{}
+	values := []string{}
+
+	for i := 0; i < props.NumField(); i++ {
+		field := props.Type().Field(i)
+		if field.Type.Kind() == reflect.Slice {
+			if field.Type.Elem().Kind() == reflect.Struct {
+				continue
+			}
+		}
+
+		if field.Tag.Get("autoinc") == "true" {
+			continue
+		}
+
+		selCols = append(selCols, strcase.ToSnake(field.Name))
+
+		val := props.Field(i).Interface()
+		switch val := val.(type) {
+		case []uint8:
+			{
+				values = append(values, fmt.Sprintf("%x", val))
+				break
+			}
+		case int:
+			{
+				values = append(values, fmt.Sprintf("%d", val))
+				break
+			}
+		case int64:
+			{
+				values = append(values, fmt.Sprintf("%d", val))
+				break
+			}
+		case uint64:
+			{
+				values = append(values, fmt.Sprintf("%d", val))
+				break
+			}
+		case float32:
+			{
+				values = append(values, fmt.Sprintf("%f", val))
+				break
+			}
+		case float64:
+			{
+				values = append(values, fmt.Sprintf("%f", val))
+				break
+			}
+		case string:
+			{
+				values = append(values, fmt.Sprintf("'%s'", val))
+				break
+			}
+		case sql.NullString:
+			{
+				if val.Valid {
+					values = append(values, fmt.Sprintf("'%s'", val.String))
+				} else {
+					values = append(values, "")
+				}
+				break
+			}
+		case bool:
+			{
+				values = append(values, fmt.Sprintf("%t", val))
+				break
+			}
+		}
+	}
+
+	res := fmt.Sprintf(`INSERT INTO %s (%s) VALUES (%s)`, datasrc, strings.Join(selCols, `, `), strings.Join(values, `, `))
+
+	return res
+}
+
+func (m *dbCrud) Add(ctx context.Context, model interface{}, datasrc string) (uint64, error) {
+	props := reflect.ValueOf(model)
+	sqlStr := m.genInsSqlStr(props, datasrc)
+
+	log.Info(sqlStr)
+
+	res, err := m.db.ExecContext(ctx, sqlStr)
+	if err != nil {
+		return 0, err
+	}
+
+	lastid, err := res.LastInsertId()
+	if err != nil {
+		lastid = 0
+	}
+
+	return uint64(lastid), nil
+}
+
+func (m *dbCrud) genSelSqlStr(props reflect.Value, limit uint64, offset uint64, filters []dbsql.Filter, sorters []dbsql.Sorter, datasrc string) (int, string) {
 
 	if datasrc == "" {
 		propName := strcase.ToSnake(props.Type().Name())
@@ -147,11 +253,11 @@ func (m *dbCrud) genSqlStr(props reflect.Value, limit uint64, offset uint64, fil
 	return len(selCols), res
 }
 
-func (m *dbCrud) Get(model interface{}, limit uint64, offset uint64, filters []dbsql.Filter, sorters []dbsql.Sorter, datasrc string) ([]map[string]interface{}, uint64, error) {
+func (m *dbCrud) Get(ctx context.Context, model interface{}, limit uint64, offset uint64, filters []dbsql.Filter, sorters []dbsql.Sorter, datasrc string) ([]map[string]interface{}, uint64, error) {
 	props := reflect.ValueOf(model)
-	colCnt, sqlStr := m.genSqlStr(props, limit, offset, filters, sorters, datasrc)
+	colCnt, sqlStr := m.genSelSqlStr(props, limit, offset, filters, sorters, datasrc)
 
-	rows, err := m.db.Query(sqlStr)
+	rows, err := m.db.QueryContext(ctx, sqlStr)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -326,7 +432,7 @@ func (m *dbCrud) Get(model interface{}, limit uint64, offset uint64, filters []d
 						wg.Add(1)
 						go func(props reflect.Value, filters []dbsql.Filter, cdatsrc string) {
 							defer wg.Done()
-							rows, _, err := m.Get(props.Interface(), 0, 0, filters, nil, cdatsrc)
+							rows, _, err := m.Get(ctx, props.Interface(), 0, 0, filters, nil, cdatsrc)
 							if err == nil {
 								res[field.Name] = rows
 							}
@@ -341,9 +447,9 @@ func (m *dbCrud) Get(model interface{}, limit uint64, offset uint64, filters []d
 	return result, rowCnt, nil
 }
 
-func (m *dbCrud) GetSingle(model interface{}, datasrc string) (map[string]interface{}, error) {
+func (m *dbCrud) GetSingle(ctx context.Context, model interface{}, datasrc string) (map[string]interface{}, error) {
 	props := reflect.ValueOf(model)
-	rows, _, err := m.Get(props.Interface(), 1, 0, nil, nil, datasrc)
+	rows, _, err := m.Get(ctx, props.Interface(), 1, 0, nil, nil, datasrc)
 	if err != nil {
 		return nil, err
 	}

@@ -1,8 +1,8 @@
 package entity
 
-// UploadEntity
-type UploadEntity struct {
-	Id          int64  `json:"id" form:"id" query:"id" validate:"required"`
+// StorageEntity
+type StorageEntity struct {
+	Id          int64  `json:"id" form:"id" query:"id" autoinc:"true" validate:"required"`
 	Title       string `json:"title" form:"title" query:"title" validate:"required"`
 	Description string `json:"description" form:"description" query:"description"`
 	Guid        string `json:"guid" form:"guid" query:"guid"`

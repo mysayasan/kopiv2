@@ -90,16 +90,18 @@ func main() {
 
 	// Repo modules
 	residentPropRepo := repos.NewResidentPropRepo(postgresDb)
+	storageRepo := repos.NewStorageRepo(postgresDb)
 
 	// Page Modules
 	homeService := services.NewHomeService(residentPropRepo)
-	controllers.NewHomeApi(api, *auth, homeService)
+	storageService := services.NewStorageService(storageRepo)
 
-	// Admin module
+	// Admin Api
 	controllers.NewAdminApi(api, *auth)
-
-	// Upload module
-	controllers.NewUploadApi(api, *auth)
+	//Home Api
+	controllers.NewHomeApi(api, *auth, homeService)
+	// Storage Api
+	controllers.NewStorageApi(api, *auth, storageService)
 
 	// Get api routes
 	api.Get("/routes", auth.JwtHandler(), func(c *fiber.Ctx) error {

@@ -1,31 +1,39 @@
 package controllers
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/log"
+	"github.com/google/uuid"
+	"github.com/mysayasan/kopiv2/apps/mypropsan/entity"
+	"github.com/mysayasan/kopiv2/apps/mypropsan/services"
+	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 )
 
-// UploadApi struct
-type uploadApi struct {
+// StorageApi struct
+type storageApi struct {
 	auth middlewares.AuthMiddleware
+	serv services.IStorageService
 }
 
-// Create UploadApi
-func NewUploadApi(
+// Create StorageApi
+func NewStorageApi(
 	router fiber.Router,
-	auth middlewares.AuthMiddleware) {
-	handler := &uploadApi{
+	auth middlewares.AuthMiddleware,
+	serv services.IStorageService) {
+	handler := &storageApi{
 		auth: auth,
+		serv: serv,
 	}
 
-	group := router.Group("upload")
-	group.Post("/", auth.JwtHandler(), handler.upload).Name("upload")
+	group := router.Group("storage")
+	group.Post("/upload", auth.JwtHandler(), handler.upload).Name("upload")
 }
 
-func (m *uploadApi) upload(c *fiber.Ctx) error {
+func (m *storageApi) upload(c *fiber.Ctx) error {
 	// user := c.Locals("user").(*jwt.Token)
 
 	// claims := &middlewares.JwtCustomClaimsModel{}
@@ -77,5 +85,19 @@ func (m *uploadApi) upload(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnprocessableEntity).SendString("files not compatible")
 	}
 
-	return nil
+	var model entity.StorageEntity
+	model.Title = "test"
+	model.Description = "test"
+	model.Guid = uuid.New().String()
+
+	ctx := c.UserContext()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	res, err := m.serv.Add(ctx, model)
+	if err != nil {
+		return err
+	}
+
+	return controllers.SendJSON(c, res, 0, 0, 0)
 }

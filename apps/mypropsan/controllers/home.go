@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"time"
@@ -29,14 +30,19 @@ func NewHomeApi(
 	}
 
 	group := router.Group("home")
-	group.Get("/latest", timeout.NewWithContext(handler.latest, 2*time.Second)).Name("latest")
+	group.Get("/latest", timeout.NewWithContext(handler.latest, 6*time.Millisecond)).Name("latest")
 }
 
 func (m *homeApi) latest(c *fiber.Ctx) error {
+
 	limit, _ := strconv.ParseUint(c.Query("limit"), 10, 64)
 	offset, _ := strconv.ParseUint(c.Query("offset"), 10, 64)
 
-	res, totalCnt, err := m.serv.GetLatest(limit, offset)
+	ctx := c.UserContext()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	res, totalCnt, err := m.serv.GetLatest(ctx, limit, offset)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).SendString(err.Error())
 	}
