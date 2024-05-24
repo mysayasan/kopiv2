@@ -2,8 +2,11 @@ package controllers
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -76,7 +79,29 @@ func (m *fileStorageApi) upload(c *fiber.Ctx) error {
 			}
 		}
 
-		guid := uuid.New().String()
+		buf, err := file.Open()
+		if err != nil {
+			return err
+		}
+
+		content, err := io.ReadAll(buf)
+		if err != nil {
+			return err
+		}
+
+		hasher := sha1.New()
+		hasher.Write(content)
+		sha := base64.URLEncoding.EncodeToString(hasher.Sum(nil))
+
+		var model entity.FileStorageEntity
+		model.Title = file.Filename
+		model.Description = file.Filename
+		model.Guid = uuid.New().String()
+		model.MimeType = file.Header["Content-Type"][0]
+		model.VrPath = "/"
+		model.Sha1Chksum = sha
+		model.CreatedBy = claims.Email
+		model.CreatedOn = time.Now().UTC().Unix()
 
 		// Create dir if not exists
 		if _, err := os.Stat(m.path); os.IsNotExist(err) {
@@ -87,21 +112,12 @@ func (m *fileStorageApi) upload(c *fiber.Ctx) error {
 		}
 
 		// Save the files to disk:
-		err := c.SaveFile(file, fmt.Sprintf("%s/%s", m.path, guid))
+		err = c.SaveFile(file, fmt.Sprintf("%s/%s", m.path, model.Guid))
 
 		// Check for errors
 		if err != nil {
 			return err
 		}
-
-		var model entity.FileStorageEntity
-		model.Title = file.Filename
-		model.Description = file.Filename
-		model.Guid = guid
-		model.MimeType = file.Header["Content-Type"][0]
-		model.VrPath = "/"
-		model.CreatedBy = claims.Email
-		model.CreatedOn = time.Now().UTC().Unix()
 
 		ctx := c.UserContext()
 		if ctx == nil {
