@@ -23,8 +23,8 @@ type ResidentPropEntity struct {
 	Lon           float64 `json:"lon" form:"lon" query:"lon"`
 	PostedOn      int64   `json:"postedOn" form:"postedOn" query:"postedOn"`
 	ExpiredOn     int64   `json:"expiredOn" form:"expiredOn" query:"expiredOn"`
-	CreatedBy     int     `json:"createdBy" form:"createdBy" query:"createdBy"`
+	CreatedBy     string  `json:"createdBy" form:"createdBy" query:"createdBy"`
 	CreatedOn     int64   `json:"createdOn" form:"createdOn" query:"createdOn"`
-	UpdatedBy     int     `json:"updatedBy" form:"updatedBy" query:"updatedBy"`
+	UpdatedBy     string  `json:"updatedBy" form:"updatedBy" query:"updatedBy"`
 	UpdatedOn     int64   `json:"updatedOn" form:"updatedOn" query:"updatedOn"`
 }

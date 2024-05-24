@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/log"
@@ -55,11 +56,9 @@ func (m *fileStorageApi) upload(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	// => *multipart.Form
 
 	// Get all files from "documents" key:
 	files := form.File["documents"]
-	// => []*multipart.FileHeader
 
 	cnt := 0
 	// Loop through files:
@@ -101,6 +100,8 @@ func (m *fileStorageApi) upload(c *fiber.Ctx) error {
 		model.Guid = guid
 		model.MimeType = file.Header["Content-Type"][0]
 		model.VrPath = "/"
+		model.CreatedBy = claims.Email
+		model.CreatedOn = time.Now().UTC().Unix()
 
 		ctx := c.UserContext()
 		if ctx == nil {
