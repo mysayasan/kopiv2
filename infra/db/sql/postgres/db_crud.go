@@ -502,14 +502,18 @@ func (m *dbCrud) Get(ctx context.Context, model interface{}, limit uint64, offse
 	return result, rowCnt, nil
 }
 
-func (m *dbCrud) GetSingle(ctx context.Context, model interface{}, datasrc string) (map[string]interface{}, error) {
+func (m *dbCrud) GetSingle(ctx context.Context, model interface{}, filters []dbsql.Filter, datasrc string) (map[string]interface{}, error) {
 	props := reflect.ValueOf(model)
-	rows, _, err := m.Get(ctx, props.Interface(), 1, 0, nil, nil, datasrc)
+	rows, _, err := m.Get(ctx, props.Interface(), 1, 0, filters, nil, datasrc)
 	if err != nil {
 		return nil, err
 	}
 
-	return rows[1], nil
+	if len(rows) > 0 {
+		return rows[0], nil
+	}
+
+	return nil, nil
 }
 
 func (m *dbCrud) BeginTx(ctx context.Context) error {

@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/base64"
@@ -41,6 +42,58 @@ func NewFileStorageApi(
 
 	group := router.Group("file-storage")
 	group.Post("/upload", auth.JwtHandler(), handler.upload).Name("upload")
+	group.Get("/download", auth.JwtHandler(), handler.download).Name("download")
+}
+
+func (m *fileStorageApi) download(c *fiber.Ctx) error {
+	user := c.Locals("user").(*jwt.Token)
+
+	claims := &middlewares.JwtCustomClaimsModel{}
+	tmp, _ := json.Marshal(user.Claims)
+	_ = json.Unmarshal(tmp, claims)
+
+	name := claims.Name
+
+	log.Info(name)
+
+	guid := c.Query("guid")
+
+	ctx := c.UserContext()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	fileInfo, err := m.serv.GetByGuid(ctx, guid)
+	if err != nil {
+		return err
+	}
+
+	log.Info((fileInfo))
+
+	// open input file
+	fi, err := os.Open(fmt.Sprintf("%s/%s", m.path, guid))
+	if err != nil {
+		return err
+	}
+	// close fi on exit and check for its returned error
+	defer func() {
+		if err := fi.Close(); err != nil {
+			return
+		}
+	}()
+
+	content, err := io.ReadAll(fi)
+	if err != nil {
+		return err
+	}
+
+	if len(content) > 0 {
+		c.Set("Content-Type", fileInfo.MimeType)
+		c.SendStream(bytes.NewReader((content)))
+	}
+
+	return nil
+
 }
 
 func (m *fileStorageApi) upload(c *fiber.Ctx) error {
