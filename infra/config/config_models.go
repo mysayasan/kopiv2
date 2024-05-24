@@ -13,9 +13,12 @@ type AppConfigModel struct {
 	Jwt struct {
 		Secret string `json:"secret" validate:"required"`
 	} `json:"jwt"`
+	FileStorage struct {
+		Path string `json:"path"`
+	} `json:"fileStorage"`
 	Tls struct {
-		CertPath string `json:"cert_path" validate:"required"`
-		KeyPath  string `json:"key_path" validate:"required"`
+		CertPath string `json:"certPath" validate:"required"`
+		KeyPath  string `json:"keyPath" validate:"required"`
 	} `json:"tls"`
 	Db sqldb.DbConfigModel `json:"db"`
 }

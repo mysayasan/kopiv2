@@ -30,7 +30,7 @@ func NewHomeApi(
 	}
 
 	group := router.Group("home")
-	group.Get("/latest", timeout.NewWithContext(handler.latest, 6*time.Millisecond)).Name("latest")
+	group.Get("/latest", timeout.NewWithContext(handler.latest, 60*1000*time.Millisecond)).Name("latest")
 }
 
 func (m *homeApi) latest(c *fiber.Ctx) error {

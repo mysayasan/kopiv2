@@ -13,9 +13,12 @@
   "jwt": {
     "secret": "secret"
   },
+  "fileStorage": {
+    "path": "./uploads"
+  },
   "tls": {
-    "cert_path": "./certs/cert.pem",
-    "key_path": "./certs/key.pem"
+    "certPath": "./certs/cert.pem",
+    "keyPath": "./certs/key.pem"
   },
   "db": {
     "host": "192.168.1.58",

@@ -12,7 +12,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 
-	// "github.com/gofiber/storage/sqlite3"
+	// "github.com/gofiber/fileStorage/sqlite3"
 	"github.com/joho/godotenv"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/controllers"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/repos"
@@ -34,7 +34,7 @@ func main() {
 		}
 	}
 
-	// storage := sqlite3.New()
+	// fileStorage := sqlite3.New()
 
 	app := fiber.New()
 	// Recover from panic
@@ -48,7 +48,7 @@ func main() {
 		Max:               20,
 		Expiration:        30 * time.Second,
 		LimiterMiddleware: limiter.SlidingWindow{},
-		// Storage:           storage,
+		// FileStorage:           fileStorage,
 	}))
 
 	// app.Use(helmet.New(helmet.Config{
@@ -90,18 +90,18 @@ func main() {
 
 	// Repo modules
 	residentPropRepo := repos.NewResidentPropRepo(postgresDb)
-	storageRepo := repos.NewStorageRepo(postgresDb)
+	fileStorageRepo := repos.NewFileStorageRepo(postgresDb)
 
 	// Page Modules
 	homeService := services.NewHomeService(residentPropRepo)
-	storageService := services.NewStorageService(storageRepo)
+	fileStorageService := services.NewFileStorageService(fileStorageRepo)
 
 	// Admin Api
 	controllers.NewAdminApi(api, *auth)
 	//Home Api
 	controllers.NewHomeApi(api, *auth, homeService)
-	// Storage Api
-	controllers.NewStorageApi(api, *auth, storageService)
+	// FileStorage Api
+	controllers.NewFileStorageApi(api, *auth, fileStorageService, appConfig.FileStorage.Path)
 
 	// Get api routes
 	api.Get("/routes", auth.JwtHandler(), func(c *fiber.Ctx) error {

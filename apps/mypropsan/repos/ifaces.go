@@ -13,8 +13,9 @@ type IResidentPropRepo interface {
 	GetLatest(ctx context.Context, limit uint64, offset uint64, filters []dbsql.Filter, sorter []dbsql.Sorter) ([]*models.ResidentPropModel, uint64, error)
 }
 
-// IIStorageRepo interface
-type IStorageRepo interface {
-	GetByGuid(ctx context.Context, guid string) (*entity.StorageEntity, error)
-	Add(ctx context.Context, model entity.StorageEntity) (uint64, error)
+// IIFileStorageRepo interface
+type IFileStorageRepo interface {
+	GetByGuid(ctx context.Context, guid string) (*entity.FileStorageEntity, error)
+	Add(ctx context.Context, model entity.FileStorageEntity) (uint64, error)
+	AddMultiple(ctx context.Context, model []entity.FileStorageEntity) (uint64, error)
 }

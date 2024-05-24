@@ -19,6 +19,7 @@ import (
 // dbCrud struct
 type dbCrud struct {
 	db *sql.DB
+	tx *sql.Tx
 }
 
 // Create new DbCrud
@@ -34,10 +35,15 @@ func NewDbCrud(config dbsql.DbConfigModel) (IDbCrud, error) {
 
 	return &dbCrud{
 		db: db,
+		tx: nil,
 	}, nil
 }
 
 func (m *dbCrud) genInsSqlStr(props reflect.Value, datasrc string) string {
+	if props.Type().Kind() == reflect.Slice {
+		log.Info("its a slice")
+	}
+
 	if datasrc == "" {
 		propName := strcase.ToSnake(props.Type().Name())
 		temp := strings.Replace(propName, "_entity", "", 1)
@@ -71,17 +77,12 @@ func (m *dbCrud) genInsSqlStr(props reflect.Value, datasrc string) string {
 				values = append(values, fmt.Sprintf("%x", val))
 				break
 			}
-		case int:
+		case int16, int, int32, int64:
 			{
 				values = append(values, fmt.Sprintf("%d", val))
 				break
 			}
-		case int64:
-			{
-				values = append(values, fmt.Sprintf("%d", val))
-				break
-			}
-		case uint64:
+		case uint16, uint, uint32, uint64:
 			{
 				values = append(values, fmt.Sprintf("%d", val))
 				break
@@ -129,9 +130,19 @@ func (m *dbCrud) Add(ctx context.Context, model interface{}, datasrc string) (ui
 
 	log.Info(sqlStr)
 
-	res, err := m.db.ExecContext(ctx, sqlStr)
-	if err != nil {
-		return 0, err
+	var res sql.Result
+	var err error
+
+	if m.tx != nil {
+		res, err = m.tx.ExecContext(ctx, sqlStr)
+		if err != nil {
+			return 0, err
+		}
+	} else {
+		res, err = m.db.ExecContext(ctx, sqlStr)
+		if err != nil {
+			return 0, err
+		}
 	}
 
 	lastid, err := res.LastInsertId()
@@ -179,7 +190,7 @@ func (m *dbCrud) genSelSqlStr(props reflect.Value, limit uint64, offset uint64, 
 		if filter.Compare == 1 {
 			field := props.FieldByName(filter.FieldName)
 			switch field.Interface().(type) {
-			case int, int16, int32, int64, uint16, uint32, uint64:
+			case int, int16, int32, int64, uint, uint16, uint32, uint64:
 				{
 					fs := fmt.Sprintf("%s = %d", strcase.ToSnake(filter.FieldName), filter.Value)
 					selFilters = append(selFilters, fs)
@@ -257,10 +268,24 @@ func (m *dbCrud) Get(ctx context.Context, model interface{}, limit uint64, offse
 	props := reflect.ValueOf(model)
 	colCnt, sqlStr := m.genSelSqlStr(props, limit, offset, filters, sorters, datasrc)
 
-	rows, err := m.db.QueryContext(ctx, sqlStr)
-	if err != nil {
-		return nil, 0, err
+	rows := &sql.Rows{}
+	var err error
+
+	if m.tx != nil {
+		rows, err = m.tx.QueryContext(ctx, sqlStr)
+		if err != nil {
+			if rbErr := m.tx.Rollback(); rbErr != nil {
+				err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
+				return nil, 0, err
+			}
+		}
+	} else {
+		rows, err = m.db.QueryContext(ctx, sqlStr)
+		if err != nil {
+			return nil, 0, err
+		}
 	}
+
 	defer rows.Close()
 
 	cols, err := rows.Columns()
@@ -299,9 +324,24 @@ func (m *dbCrud) Get(ctx context.Context, model interface{}, limit uint64, offse
 					vals[i] = new([]uint8)
 					break
 				}
-			case int:
+			case int16:
+				{
+					vals[i] = new(int16)
+					break
+				}
+			case uint16:
+				{
+					vals[i] = new(uint16)
+					break
+				}
+			case int, int32:
 				{
 					vals[i] = new(int)
+					break
+				}
+			case uint, uint32:
+				{
+					vals[i] = new(uint)
 					break
 				}
 			case int64:
@@ -382,9 +422,24 @@ func (m *dbCrud) Get(ctx context.Context, model interface{}, limit uint64, offse
 									val = *res[fkeys[0]].(*[]uint8)
 									break
 								}
-							case int:
+							case int16:
+								{
+									val = *res[fkeys[0]].(*int16)
+									break
+								}
+							case uint16:
+								{
+									val = *res[fkeys[0]].(*uint16)
+									break
+								}
+							case int, int32:
 								{
 									val = *res[fkeys[0]].(*int)
+									break
+								}
+							case uint, uint32:
+								{
+									val = *res[fkeys[0]].(*uint)
 									break
 								}
 							case int64:
@@ -430,13 +485,13 @@ func (m *dbCrud) Get(ctx context.Context, model interface{}, limit uint64, offse
 						}
 
 						wg.Add(1)
-						go func(props reflect.Value, filters []dbsql.Filter, cdatsrc string) {
+						go func(res map[string]interface{}, props reflect.Value, filters []dbsql.Filter, cdatsrc string) {
 							defer wg.Done()
 							rows, _, err := m.Get(ctx, props.Interface(), 0, 0, filters, nil, cdatsrc)
 							if err == nil {
 								res[field.Name] = rows
 							}
-						}(reflect.Indirect(reflect.New(field.Type.Elem())), filters, cdatsrc)
+						}(res, reflect.Indirect(reflect.New(field.Type.Elem())), filters, cdatsrc)
 					}
 				}
 			}
@@ -455,4 +510,29 @@ func (m *dbCrud) GetSingle(ctx context.Context, model interface{}, datasrc strin
 	}
 
 	return rows[1], nil
+}
+
+func (m *dbCrud) BeginTx(ctx context.Context) error {
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	m.tx = tx
+	return nil
+}
+
+func (m *dbCrud) RollbackTx() error {
+	err := m.tx.Rollback()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (m *dbCrud) CommitTx() error {
+	err := m.tx.Commit()
+	if err != nil {
+		return err
+	}
+	return nil
 }
