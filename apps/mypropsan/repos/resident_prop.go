@@ -7,7 +7,7 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/mitchellh/mapstructure"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/models"
-	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	"github.com/mysayasan/kopiv2/domain/enums/data"
 	"github.com/mysayasan/kopiv2/infra/db/sql/postgres"
 )
 
@@ -23,7 +23,7 @@ func NewResidentPropRepo(dbCrud postgres.IDbCrud) IResidentPropRepo {
 	}
 }
 
-func (m *residentPropRepo) GetLatest(ctx context.Context, limit uint64, offset uint64, filters []dbsql.Filter, sorter []dbsql.Sorter) ([]*models.ResidentPropModel, uint64, error) {
+func (m *residentPropRepo) GetLatest(ctx context.Context, limit uint64, offset uint64, filters []data.Filter, sorter []data.Sorter) ([]*models.ResidentPropModel, uint64, error) {
 	if err := m.dbCrud.BeginTx(ctx); err != nil {
 		return nil, 0, err
 	}

@@ -5,17 +5,24 @@ import (
 
 	"github.com/mysayasan/kopiv2/apps/mypropsan/entity"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/models"
-	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	"github.com/mysayasan/kopiv2/domain/enums/data"
 )
 
-// IIResidentPropRepo interface
+// IResidentPropRepo interface
 type IResidentPropRepo interface {
-	GetLatest(ctx context.Context, limit uint64, offset uint64, filters []dbsql.Filter, sorter []dbsql.Sorter) ([]*models.ResidentPropModel, uint64, error)
+	GetLatest(ctx context.Context, limit uint64, offset uint64, filters []data.Filter, sorter []data.Sorter) ([]*models.ResidentPropModel, uint64, error)
 }
 
-// IIFileStorageRepo interface
+// IFileStorageRepo interface
 type IFileStorageRepo interface {
 	GetByGuid(ctx context.Context, guid string) (*entity.FileStorageEntity, error)
 	Add(ctx context.Context, model entity.FileStorageEntity) (uint64, error)
 	AddMultiple(ctx context.Context, model []entity.FileStorageEntity) (uint64, error)
+}
+
+// IUserRepo interface
+type IUserRepo interface {
+	GetAll(ctx context.Context, limit uint64, offset uint64, filters []data.Filter, sorter []data.Sorter) ([]*entity.User, uint64, error)
+	GetByEmail(ctx context.Context, email string) (*entity.User, error)
+	Add(ctx context.Context, model entity.User) (uint64, error)
 }

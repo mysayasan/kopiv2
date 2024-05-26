@@ -13,6 +13,7 @@ import (
 	"github.com/gofiber/fiber/v2/log"
 	strcase "github.com/iancoleman/strcase"
 	_ "github.com/lib/pq"
+	"github.com/mysayasan/kopiv2/domain/enums/data"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
 
@@ -153,7 +154,7 @@ func (m *dbCrud) Add(ctx context.Context, model interface{}, datasrc string) (ui
 	return uint64(lastid), nil
 }
 
-func (m *dbCrud) genSelSqlStr(props reflect.Value, limit uint64, offset uint64, filters []dbsql.Filter, sorters []dbsql.Sorter, datasrc string) (int, string) {
+func (m *dbCrud) genSelSqlStr(props reflect.Value, limit uint64, offset uint64, filters []data.Filter, sorters []data.Sorter, datasrc string) (int, string) {
 
 	if datasrc == "" {
 		propName := strcase.ToSnake(props.Type().Name())
@@ -264,7 +265,7 @@ func (m *dbCrud) genSelSqlStr(props reflect.Value, limit uint64, offset uint64, 
 	return len(selCols), res
 }
 
-func (m *dbCrud) Get(ctx context.Context, model interface{}, limit uint64, offset uint64, filters []dbsql.Filter, sorters []dbsql.Sorter, datasrc string) ([]map[string]interface{}, uint64, error) {
+func (m *dbCrud) Get(ctx context.Context, model interface{}, limit uint64, offset uint64, filters []data.Filter, sorters []data.Sorter, datasrc string) ([]map[string]interface{}, uint64, error) {
 	props := reflect.ValueOf(model)
 	colCnt, sqlStr := m.genSelSqlStr(props, limit, offset, filters, sorters, datasrc)
 
@@ -412,7 +413,7 @@ func (m *dbCrud) Get(ctx context.Context, model interface{}, limit uint64, offse
 						cdatsrc := field.Tag.Get("datasrc")
 						pkeys := strings.Split(field.Tag.Get("parents"), ",")
 
-						var filters []dbsql.Filter
+						var filters []data.Filter
 						for _, pkey := range pkeys {
 							fkeys := strings.Split(pkey, ":")
 							var val interface{}
@@ -477,7 +478,7 @@ func (m *dbCrud) Get(ctx context.Context, model interface{}, limit uint64, offse
 									val = *res[fkeys[0]].(*bool)
 								}
 							}
-							filters = append(filters, dbsql.Filter{
+							filters = append(filters, data.Filter{
 								FieldName: fkeys[1],
 								Compare:   1,
 								Value:     val,
@@ -485,7 +486,7 @@ func (m *dbCrud) Get(ctx context.Context, model interface{}, limit uint64, offse
 						}
 
 						wg.Add(1)
-						go func(res map[string]interface{}, props reflect.Value, filters []dbsql.Filter, cdatsrc string) {
+						go func(res map[string]interface{}, props reflect.Value, filters []data.Filter, cdatsrc string) {
 							defer wg.Done()
 							rows, _, err := m.Get(ctx, props.Interface(), 0, 0, filters, nil, cdatsrc)
 							if err == nil {
@@ -502,7 +503,7 @@ func (m *dbCrud) Get(ctx context.Context, model interface{}, limit uint64, offse
 	return result, rowCnt, nil
 }
 
-func (m *dbCrud) GetSingle(ctx context.Context, model interface{}, filters []dbsql.Filter, datasrc string) (map[string]interface{}, error) {
+func (m *dbCrud) GetSingle(ctx context.Context, model interface{}, filters []data.Filter, datasrc string) (map[string]interface{}, error) {
 	props := reflect.ValueOf(model)
 	rows, _, err := m.Get(ctx, props.Interface(), 1, 0, filters, nil, datasrc)
 	if err != nil {

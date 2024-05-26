@@ -6,7 +6,7 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/models"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/repos"
-	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	"github.com/mysayasan/kopiv2/domain/enums/data"
 )
 
 // homeService struct
@@ -22,8 +22,8 @@ func NewHomeService(repo repos.IResidentPropRepo) IHomeService {
 }
 
 func (m *homeService) GetLatest(ctx context.Context, limit uint64, offset uint64) ([]*models.ResidentPropModel, uint64, error) {
-	var filters []dbsql.Filter
-	filter := dbsql.Filter{
+	var filters []data.Filter
+	filter := data.Filter{
 		FieldName: "Id",
 		Compare:   1,
 		Value:     1,
@@ -31,7 +31,7 @@ func (m *homeService) GetLatest(ctx context.Context, limit uint64, offset uint64
 
 	filters = append(filters, filter)
 
-	sorters := []dbsql.Sorter{
+	sorters := []data.Sorter{
 		{
 			FieldName: "LandAreaSize",
 			Sort:      2,
