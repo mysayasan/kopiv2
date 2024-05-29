@@ -38,6 +38,8 @@ func (m *homeApi) latest(c *fiber.Ctx) error {
 	limit, _ := strconv.ParseUint(c.Query("limit"), 10, 64)
 	offset, _ := strconv.ParseUint(c.Query("offset"), 10, 64)
 
+	fmt.Printf("Request from URI : %s \n", c.Request().URI().Host())
+
 	ctx := c.UserContext()
 	if ctx == nil {
 		ctx = context.Background()
