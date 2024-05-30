@@ -128,7 +128,7 @@ func (m *fileStorageApi) upload(c *fiber.Ctx) error {
 			}
 		default:
 			{
-				failedUploads = append(failedUploads, fmt.Sprintf("error %s : file type is not", file.Filename))
+				failedUploads = append(failedUploads, fmt.Sprintf("error %s : file type is not supported", file.Filename))
 				continue
 			}
 		}
@@ -187,8 +187,8 @@ func (m *fileStorageApi) upload(c *fiber.Ctx) error {
 		uploadedFiles = append(uploadedFiles, &model)
 	}
 
-	if len(uploadedFiles) == 0 {
-		return controllers.SendError(c, controllers.ErrUplodFailed, failedUploads, "no files had been uploaded")
+	if len(uploadedFiles) != len(files) {
+		return controllers.SendError(c, controllers.ErrUplodFailed, failedUploads, "some file(s) failed to upload")
 	}
 
 	return controllers.SendJSON(c, uploadedFiles, 0, 0, uint64(len(uploadedFiles)))

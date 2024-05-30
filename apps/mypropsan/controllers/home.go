@@ -46,7 +46,7 @@ func (m *homeApi) latest(c *fiber.Ctx) error {
 	}
 	res, totalCnt, err := m.serv.GetLatest(ctx, limit, offset)
 	if err != nil {
-		return c.Status(fiber.StatusNotFound).SendString(err.Error())
+		return controllers.SendError(c, controllers.ErrNotFound, nil, err.Error())
 	}
 
 	c.Response().Header.Add("X-Rows", fmt.Sprintf("%d", totalCnt))
