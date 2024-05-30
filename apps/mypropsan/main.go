@@ -85,17 +85,18 @@ func main() {
 		return c.Next()
 	})
 
-	// Login module
-	controllers.NewLoginApi(api, appConfig.Login.Google, *auth)
-
 	// Repo modules
+	userRepo := repos.NewUserRepo(postgresDb)
 	residentPropRepo := repos.NewResidentPropRepo(postgresDb)
 	fileStorageRepo := repos.NewFileStorageRepo(postgresDb)
 
 	// Page Modules
+	userService := services.NewUserService(userRepo)
 	homeService := services.NewHomeService(residentPropRepo)
 	fileStorageService := services.NewFileStorageService(fileStorageRepo)
 
+	// Login module
+	controllers.NewLoginApi(api, appConfig.Login.Google, *auth, userService)
 	// Admin Api
 	controllers.NewAdminApi(api, *auth)
 	//Home Api

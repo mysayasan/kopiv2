@@ -21,7 +21,7 @@ type IFileStorageService interface {
 
 // IUserService interface
 type IUserService interface {
-	GetAll(ctx context.Context, limit uint64, offset uint64) ([]*entity.User, uint64, error)
-	GetByEmail(ctx context.Context, email string) (*entity.User, error)
-	Add(ctx context.Context, model entity.User) (uint64, error)
+	GetAll(ctx context.Context, limit uint64, offset uint64) ([]*entity.UserLoginEntity, uint64, error)
+	GetByEmail(ctx context.Context, email string) (*entity.UserLoginEntity, error)
+	Add(ctx context.Context, model entity.UserLoginEntity) (uint64, error)
 }

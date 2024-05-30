@@ -120,7 +120,7 @@ func (m *dbCrud) genInsSqlStr(props reflect.Value, datasrc string) string {
 		}
 	}
 
-	res := fmt.Sprintf(`INSERT INTO %s (%s) VALUES (%s)`, datasrc, strings.Join(selCols, `, `), strings.Join(values, `, `))
+	res := fmt.Sprintf(`INSERT INTO %s (%s) VALUES (%s) RETURNING id`, datasrc, strings.Join(selCols, `, `), strings.Join(values, `, `))
 
 	return res
 }
@@ -131,25 +131,26 @@ func (m *dbCrud) Add(ctx context.Context, model interface{}, datasrc string) (ui
 
 	log.Info(sqlStr)
 
-	var res sql.Result
+	// var res sql.Result
 	var err error
+	lastid := 0
 
 	if m.tx != nil {
-		res, err = m.tx.ExecContext(ctx, sqlStr)
+		err = m.tx.QueryRowContext(ctx, sqlStr).Scan(&lastid)
 		if err != nil {
 			return 0, err
 		}
 	} else {
-		res, err = m.db.ExecContext(ctx, sqlStr)
+		err = m.tx.QueryRowContext(ctx, sqlStr).Scan(&lastid)
 		if err != nil {
 			return 0, err
 		}
 	}
 
-	lastid, err := res.LastInsertId()
-	if err != nil {
-		lastid = 0
-	}
+	// lastid, err := res.LastInsertId()
+	// if err != nil {
+	// 	lastid = 0
+	// }
 
 	return uint64(lastid), nil
 }

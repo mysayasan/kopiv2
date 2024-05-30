@@ -22,7 +22,7 @@ type IFileStorageRepo interface {
 
 // IUserRepo interface
 type IUserRepo interface {
-	GetAll(ctx context.Context, limit uint64, offset uint64, filters []data.Filter, sorter []data.Sorter) ([]*entity.User, uint64, error)
-	GetByEmail(ctx context.Context, email string) (*entity.User, error)
-	Add(ctx context.Context, model entity.User) (uint64, error)
+	GetAll(ctx context.Context, limit uint64, offset uint64, filters []data.Filter, sorter []data.Sorter) ([]*entity.UserLoginEntity, uint64, error)
+	GetByEmail(ctx context.Context, email string) (*entity.UserLoginEntity, error)
+	Add(ctx context.Context, model entity.UserLoginEntity) (uint64, error)
 }
