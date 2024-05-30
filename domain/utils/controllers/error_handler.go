@@ -35,6 +35,8 @@ var (
 	ErrNoChanges = fmt.Errorf("no changes has been made")
 	// ErrStatusUnprocessableEntity
 	ErrStatusUnprocessableEntity = fmt.Errorf("unprocessable entity")
+	// ErrFileNotCompatible
+	ErrUplodFailed = fmt.Errorf("uploads failed")
 )
 
 // GetHttpStatusCode to return Status code

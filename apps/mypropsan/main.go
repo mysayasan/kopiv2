@@ -25,13 +25,15 @@ import (
 func main() {
 	godotenv.Load(".env")
 
-	appConfig, err := config.LoadAppConfiguration("./config_prod.json")
+	appConfig, err := config.LoadAppConfiguration("./config.json")
 	if err != nil {
 		appConfig, err = config.LoadAppConfiguration("./config_dev.json")
-		os.Setenv("ENVIRONMENT", "dev")
 		if err != nil {
 			log.Fatal("no config file found")
 		}
+		os.Setenv("ENVIRONMENT", "dev")
+	} else {
+		os.Setenv("ENVIRONMENT", "prod")
 	}
 
 	// fileStorage := sqlite3.New()

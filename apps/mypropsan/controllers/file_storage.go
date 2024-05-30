@@ -116,30 +116,31 @@ func (m *fileStorageApi) upload(c *fiber.Ctx) error {
 	// Get all files from "documents" key:
 	files := form.File["documents"]
 
-	cnt := 0
+	uploadedFiles := make([]*entity.FileStorageEntity, 0)
+	failedUploads := make([]string, 0)
 	// Loop through files:
 	for _, file := range files {
 		fmt.Println(file.Filename, file.Size, file.Header["Content-Type"][0])
 		switch file.Header["Content-Type"][0] {
 		case "image/jpeg", "image/png", "application/pdf":
 			{
-				cnt += 1
 				break
 			}
 		default:
 			{
+				failedUploads = append(failedUploads, fmt.Sprintf("error %s : file type is not", file.Filename))
 				continue
 			}
 		}
 
 		buf, err := file.Open()
 		if err != nil {
-			return err
+			failedUploads = append(failedUploads, file.Filename)
 		}
 
 		content, err := io.ReadAll(buf)
 		if err != nil {
-			return err
+			failedUploads = append(failedUploads, file.Filename)
 		}
 
 		hasher := sha1.New()
@@ -153,14 +154,14 @@ func (m *fileStorageApi) upload(c *fiber.Ctx) error {
 		model.MimeType = file.Header["Content-Type"][0]
 		model.VrPath = "/"
 		model.Sha1Chksum = sha
-		model.CreatedBy = claims.Email
+		model.CreatedBy = claims.Id
 		model.CreatedOn = time.Now().UTC().Unix()
 
 		// Create dir if not exists
 		if _, err := os.Stat(m.path); os.IsNotExist(err) {
 			err := os.Mkdir(m.path, os.ModePerm)
 			if err != nil {
-				return err
+				failedUploads = append(failedUploads, file.Filename)
 			}
 		}
 
@@ -169,24 +170,26 @@ func (m *fileStorageApi) upload(c *fiber.Ctx) error {
 
 		// Check for errors
 		if err != nil {
-			return err
+			failedUploads = append(failedUploads, file.Filename)
 		}
 
 		ctx := c.UserContext()
 		if ctx == nil {
 			ctx = context.Background()
 		}
-		_, err = m.serv.Add(ctx, model)
+		res, err := m.serv.Add(ctx, model)
 		if err != nil {
-			return err
+			_ = os.Remove(fmt.Sprintf("%s/%s", m.path, model.Guid))
+			failedUploads = append(failedUploads, file.Filename)
 		}
+
+		model.Id = int64(res)
+		uploadedFiles = append(uploadedFiles, &model)
 	}
 
-	log.Info(cnt)
-
-	if cnt == 0 {
-		return c.Status(fiber.StatusUnprocessableEntity).SendString("files not compatible")
+	if len(uploadedFiles) == 0 {
+		return controllers.SendError(c, controllers.ErrUplodFailed, failedUploads, "no files had been uploaded")
 	}
 
-	return controllers.SendJSON(c, cnt, 0, 0, 0)
+	return controllers.SendJSON(c, uploadedFiles, 0, 0, uint64(len(uploadedFiles)))
 }

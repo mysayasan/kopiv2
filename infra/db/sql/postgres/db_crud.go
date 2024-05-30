@@ -532,6 +532,7 @@ func (m *dbCrud) RollbackTx() error {
 	if err != nil {
 		return err
 	}
+	m.tx = nil
 	return nil
 }
 
@@ -540,5 +541,6 @@ func (m *dbCrud) CommitTx() error {
 	if err != nil {
 		return err
 	}
+	m.tx = nil
 	return nil
 }
