@@ -14,9 +14,12 @@ import (
 
 	// "github.com/gofiber/fileStorage/sqlite3"
 	"github.com/joho/godotenv"
-	"github.com/mysayasan/kopiv2/apps/mypropsan/controllers"
+	"github.com/mysayasan/kopiv2/apps/mypropsan/apis"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/repos"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/services"
+	sharedApis "github.com/mysayasan/kopiv2/domain/shared/apis"
+	sharedRepos "github.com/mysayasan/kopiv2/domain/shared/repos"
+	sharedServices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 	"github.com/mysayasan/kopiv2/infra/config"
 	"github.com/mysayasan/kopiv2/infra/db/sql/postgres"
@@ -88,23 +91,23 @@ func main() {
 	})
 
 	// Repo modules
-	userRepo := repos.NewUserRepo(postgresDb)
+	userRepo := sharedRepos.NewUserRepo(postgresDb)
 	residentPropRepo := repos.NewResidentPropRepo(postgresDb)
 	fileStorageRepo := repos.NewFileStorageRepo(postgresDb)
 
 	// Page Modules
-	userService := services.NewUserService(userRepo)
+	userService := sharedServices.NewUserService(userRepo)
 	homeService := services.NewHomeService(residentPropRepo)
 	fileStorageService := services.NewFileStorageService(fileStorageRepo)
 
 	// Login module
-	controllers.NewLoginApi(api, appConfig.Login.Google, *auth, userService)
+	sharedApis.NewLoginApi(api, appConfig.Login.Google, *auth, userService)
 	// Admin Api
-	controllers.NewAdminApi(api, *auth)
+	apis.NewAdminApi(api, *auth)
 	//Home Api
-	controllers.NewHomeApi(api, *auth, homeService)
+	apis.NewHomeApi(api, *auth, homeService)
 	// FileStorage Api
-	controllers.NewFileStorageApi(api, *auth, fileStorageService, appConfig.FileStorage.Path)
+	apis.NewFileStorageApi(api, *auth, fileStorageService, appConfig.FileStorage.Path)
 
 	// Get api routes
 	api.Get("/routes", auth.JwtHandler(), func(c *fiber.Ctx) error {

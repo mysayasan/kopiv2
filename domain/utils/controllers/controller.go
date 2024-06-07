@@ -25,7 +25,7 @@ type ErrResponse[T any] struct {
 	Details T      `json:"details"`
 }
 
-func SendJSON(c *fiber.Ctx, data interface{}, limit uint64, offset uint64, totalCnt uint64, message ...string) error {
+func SendPagingResult(c *fiber.Ctx, data interface{}, limit uint64, offset uint64, totalCnt uint64, message ...string) error {
 	var resp Response[interface{}]
 	resp.Status = 1
 	resp.Message = strings.Join(message, "\n")

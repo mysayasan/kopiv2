@@ -1,4 +1,4 @@
-package entity
+package entities
 
 // User
 type UserLoginEntity struct {

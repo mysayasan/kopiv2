@@ -18,10 +18,3 @@ type IFileStorageService interface {
 	Add(ctx context.Context, model entity.FileStorageEntity) (uint64, error)
 	AddMultiple(ctx context.Context, model []entity.FileStorageEntity) (uint64, error)
 }
-
-// IUserService interface
-type IUserService interface {
-	GetAll(ctx context.Context, limit uint64, offset uint64) ([]*entity.UserLoginEntity, uint64, error)
-	GetByEmail(ctx context.Context, email string) (*entity.UserLoginEntity, error)
-	Add(ctx context.Context, model entity.UserLoginEntity) (uint64, error)
-}

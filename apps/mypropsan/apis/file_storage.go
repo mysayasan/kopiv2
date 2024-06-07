@@ -1,4 +1,4 @@
-package controllers
+package apis
 
 import (
 	"bytes"
@@ -191,5 +191,5 @@ func (m *fileStorageApi) upload(c *fiber.Ctx) error {
 		return controllers.SendError(c, controllers.ErrUplodFailed, failedUploads, "some file(s) failed to upload")
 	}
 
-	return controllers.SendJSON(c, uploadedFiles, 0, 0, uint64(len(uploadedFiles)))
+	return controllers.SendPagingResult(c, uploadedFiles, 0, 0, uint64(len(uploadedFiles)))
 }

@@ -1,4 +1,4 @@
-package controllers
+package apis
 
 import (
 	"encoding/json"

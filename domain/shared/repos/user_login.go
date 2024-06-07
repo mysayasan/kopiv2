@@ -7,7 +7,7 @@ import (
 
 	_ "github.com/lib/pq"
 	"github.com/mitchellh/mapstructure"
-	"github.com/mysayasan/kopiv2/apps/mypropsan/entity"
+	"github.com/mysayasan/kopiv2/domain/entities"
 	"github.com/mysayasan/kopiv2/domain/enums/data"
 	"github.com/mysayasan/kopiv2/infra/db/sql/postgres"
 )
@@ -24,12 +24,12 @@ func NewUserRepo(dbCrud postgres.IDbCrud) IUserRepo {
 	}
 }
 
-func (m *userRepo) GetAll(ctx context.Context, limit uint64, offset uint64, filters []data.Filter, sorter []data.Sorter) ([]*entity.UserLoginEntity, uint64, error) {
+func (m *userRepo) GetAll(ctx context.Context, limit uint64, offset uint64, filters []data.Filter, sorter []data.Sorter) ([]*entities.UserLoginEntity, uint64, error) {
 	if err := m.dbCrud.BeginTx(ctx); err != nil {
 		return nil, 0, err
 	}
 
-	res, totalCnt, err := m.dbCrud.Get(ctx, entity.UserLoginEntity{}, limit, offset, filters, sorter, "")
+	res, totalCnt, err := m.dbCrud.Get(ctx, entities.UserLoginEntity{}, limit, offset, filters, sorter, "")
 	if err != nil {
 		if rbErr := m.dbCrud.RollbackTx(); rbErr != nil {
 			err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
@@ -41,10 +41,10 @@ func (m *userRepo) GetAll(ctx context.Context, limit uint64, offset uint64, filt
 		return nil, 0, err
 	}
 
-	list := make([]*entity.UserLoginEntity, 0)
+	list := make([]*entities.UserLoginEntity, 0)
 
 	for _, row := range res {
-		var model entity.UserLoginEntity
+		var model entities.UserLoginEntity
 		mapstructure.Decode(row, &model)
 		list = append(list, &model)
 	}
@@ -52,7 +52,7 @@ func (m *userRepo) GetAll(ctx context.Context, limit uint64, offset uint64, filt
 	return list, totalCnt, nil
 }
 
-func (m *userRepo) GetByEmail(ctx context.Context, email string) (*entity.UserLoginEntity, error) {
+func (m *userRepo) GetByEmail(ctx context.Context, email string) (*entities.UserLoginEntity, error) {
 	var filters []data.Filter
 	filter := data.Filter{
 		FieldName: "Email",
@@ -62,7 +62,7 @@ func (m *userRepo) GetByEmail(ctx context.Context, email string) (*entity.UserLo
 
 	filters = append(filters, filter)
 
-	res, err := m.dbCrud.GetSingle(ctx, entity.UserLoginEntity{}, filters, "")
+	res, err := m.dbCrud.GetSingle(ctx, entities.UserLoginEntity{}, filters, "")
 	if err != nil {
 		return nil, err
 	}
@@ -71,13 +71,13 @@ func (m *userRepo) GetByEmail(ctx context.Context, email string) (*entity.UserLo
 		return nil, errors.New("not found")
 	}
 
-	var model entity.UserLoginEntity
+	var model entities.UserLoginEntity
 	mapstructure.Decode(res, &model)
 
 	return &model, nil
 }
 
-func (m *userRepo) Add(ctx context.Context, model entity.UserLoginEntity) (uint64, error) {
+func (m *userRepo) Add(ctx context.Context, model entities.UserLoginEntity) (uint64, error) {
 	if err := m.dbCrud.BeginTx(ctx); err != nil {
 		return 0, err
 	}

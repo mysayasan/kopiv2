@@ -1,4 +1,4 @@
-package controllers
+package apis
 
 import (
 	"encoding/json"
@@ -7,8 +7,8 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/mysayasan/kopiv2/apps/mypropsan/entity"
-	"github.com/mysayasan/kopiv2/apps/mypropsan/services"
+	"github.com/mysayasan/kopiv2/domain/entities"
+	"github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 	"github.com/mysayasan/kopiv2/infra/login"
 )
@@ -41,19 +41,34 @@ func NewLoginApi(
 		githubAuth:  githubLogin,
 	}
 
-	group := router.Group("login")
+	groupLogin := router.Group("login")
+	callbackLogin := router.Group("callback")
 
-	group.Get("/google_login", handler.google_login).Name("google_login")
-	group.Get("/google_callback", handler.google_callback).Name("google_callback")
-	group.Get("/github_login", handler.github_login).Name("github_login")
-	group.Get("/github_callback", handler.github_callback).Name("github_callback")
+	groupLogin.Post("/default", handler.defaultLogin).Name("default_login")
+	groupLogin.Get("/google", handler.googleLogin).Name("google_login")
+	callbackLogin.Get("/google", handler.googleCallback).Name("google_callback")
+	groupLogin.Get("/github", handler.githubLogin).Name("github_login")
+	callbackLogin.Get("/github", handler.githubCallback).Name("github_callback")
 }
 
-func (m *loginApi) google_login(c *fiber.Ctx) error {
+func (m *loginApi) defaultLogin(c *fiber.Ctx) error {
+	var model map[string]interface{}
+
+	err := c.BodyParser(&model)
+	if err != nil {
+		return err
+	}
+
+	log.Printf("%s", model)
+
+	return c.SendString("ok")
+}
+
+func (m *loginApi) googleLogin(c *fiber.Ctx) error {
 	return m.googleAuth.Login(c)
 }
 
-func (m *loginApi) google_callback(c *fiber.Ctx) error {
+func (m *loginApi) googleCallback(c *fiber.Ctx) error {
 	userG, err := m.googleAuth.Callback(c)
 	if err != nil {
 		return c.SendString(err.Error())
@@ -65,7 +80,7 @@ func (m *loginApi) google_callback(c *fiber.Ctx) error {
 	}
 
 	if user == nil {
-		user = &entity.UserLoginEntity{
+		user = &entities.UserLoginEntity{
 			Email:     userG.Email,
 			FirstName: userG.GivenName,
 			LastName:  userG.FamilyName,
@@ -113,10 +128,10 @@ func (m *loginApi) google_callback(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"token": t})
 }
 
-func (m *loginApi) github_login(c *fiber.Ctx) error {
+func (m *loginApi) githubLogin(c *fiber.Ctx) error {
 	return m.githubAuth.Login(c)
 }
 
-func (m *loginApi) github_callback(c *fiber.Ctx) error {
+func (m *loginApi) githubCallback(c *fiber.Ctx) error {
 	return m.githubAuth.Callback(c)
 }

@@ -3,7 +3,7 @@
     "google": {
       "client_id": "323260460700-57q1e3pltetn1ku72cac38lqddlnpokd.apps.googleusercontent.com",
       "client_secret": "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",
-      "redirect_url": "https://localhost:3000/api/login/google_callback",
+      "redirect_url": "https://localhost:3000/api/callback/google",
       "scopes": [
         "https://www.googleapis.com/auth/userinfo.email",
         "https://www.googleapis.com/auth/userinfo.profile"

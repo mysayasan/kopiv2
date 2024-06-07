@@ -4,9 +4,9 @@ import (
 	"context"
 
 	_ "github.com/lib/pq"
-	"github.com/mysayasan/kopiv2/apps/mypropsan/entity"
-	"github.com/mysayasan/kopiv2/apps/mypropsan/repos"
+	"github.com/mysayasan/kopiv2/domain/entities"
 	"github.com/mysayasan/kopiv2/domain/enums/data"
+	"github.com/mysayasan/kopiv2/domain/shared/repos"
 )
 
 // userService struct
@@ -21,7 +21,7 @@ func NewUserService(repo repos.IUserRepo) IUserService {
 	}
 }
 
-func (m *userService) GetAll(ctx context.Context, limit uint64, offset uint64) ([]*entity.UserLoginEntity, uint64, error) {
+func (m *userService) GetAll(ctx context.Context, limit uint64, offset uint64) ([]*entities.UserLoginEntity, uint64, error) {
 	sorters := []data.Sorter{
 		{
 			FieldName: "CreatedOn",
@@ -32,10 +32,10 @@ func (m *userService) GetAll(ctx context.Context, limit uint64, offset uint64) (
 	return m.repo.GetAll(ctx, limit, offset, nil, sorters)
 }
 
-func (m *userService) GetByEmail(ctx context.Context, email string) (*entity.UserLoginEntity, error) {
+func (m *userService) GetByEmail(ctx context.Context, email string) (*entities.UserLoginEntity, error) {
 	return m.repo.GetByEmail(ctx, email)
 }
 
-func (m *userService) Add(ctx context.Context, model entity.UserLoginEntity) (uint64, error) {
+func (m *userService) Add(ctx context.Context, model entities.UserLoginEntity) (uint64, error) {
 	return m.repo.Add(ctx, model)
 }
