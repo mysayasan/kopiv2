@@ -49,10 +49,10 @@ func SendPagingResult(c *fiber.Ctx, data interface{}, limit uint64, offset uint6
 	return nil
 }
 
-func SendError(c *fiber.Ctx, err error, data interface{}, message ...string) error {
+func SendError(c *fiber.Ctx, err error, message string, data ...interface{}) error {
 	msg := err.Error()
 	if len(message) > 0 && os.Getenv("ENVIRONMENT") == "dev" {
-		msg = strings.Join(message, "\n")
+		msg = message
 	}
 	var resp ErrResponse[interface{}]
 	resp.Status = 1

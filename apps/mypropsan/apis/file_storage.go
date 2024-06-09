@@ -188,7 +188,7 @@ func (m *fileStorageApi) upload(c *fiber.Ctx) error {
 	}
 
 	if len(uploadedFiles) != len(files) {
-		return controllers.SendError(c, controllers.ErrUplodFailed, failedUploads, "some file(s) failed to upload")
+		return controllers.SendError(c, controllers.ErrUplodFailed, "some file(s) failed to upload", failedUploads)
 	}
 
 	return controllers.SendPagingResult(c, uploadedFiles, 0, 0, uint64(len(uploadedFiles)))

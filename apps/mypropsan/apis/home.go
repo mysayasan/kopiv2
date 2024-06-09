@@ -30,7 +30,8 @@ func NewHomeApi(
 	}
 
 	group := router.Group("home")
-	group.Get("/latest", timeout.NewWithContext(handler.latest, 60*1000*time.Millisecond)).Name("latest")
+	group.Get("/latest", auth.LoggerHandler(), timeout.NewWithContext(handler.latest, 60*1000*time.Millisecond)).Name("latest")
+	group.Post("/new", auth.JwtHandler(), auth.LoggerHandler(), timeout.NewWithContext(handler.new, 60*1000*time.Millisecond)).Name("new")
 }
 
 func (m *homeApi) latest(c *fiber.Ctx) error {
@@ -46,10 +47,14 @@ func (m *homeApi) latest(c *fiber.Ctx) error {
 	}
 	res, totalCnt, err := m.serv.GetLatest(ctx, limit, offset)
 	if err != nil {
-		return controllers.SendError(c, controllers.ErrNotFound, nil, err.Error())
+		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
 	}
 
 	c.Response().Header.Add("X-Rows", fmt.Sprintf("%d", totalCnt))
 
 	return controllers.SendPagingResult(c, res, limit, offset, totalCnt)
+}
+
+func (m *homeApi) new(c *fiber.Ctx) error {
+	return c.SendString("ok")
 }

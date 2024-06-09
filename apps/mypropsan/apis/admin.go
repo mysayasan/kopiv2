@@ -22,7 +22,7 @@ func NewAdminApi(
 	}
 
 	group := router.Group("admin")
-	group.Get("/test", auth.JwtHandler(), handler.restricted).Name("test")
+	group.Get("/test", auth.JwtHandler(), auth.LoggerHandler(), handler.restricted).Name("test")
 }
 
 func (m *adminApi) restricted(c *fiber.Ctx) error {
