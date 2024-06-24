@@ -10,7 +10,8 @@ import (
 
 // AdminApi struct
 type adminApi struct {
-	auth middlewares.AuthMiddleware
+	auth   middlewares.AuthMiddleware
+	apilog middlewares.ApiLogMiddleware
 }
 
 // Create AdminApi
@@ -21,8 +22,10 @@ func NewAdminApi(
 		auth: auth,
 	}
 
+	apilog := *middlewares.NewApiLog()
+
 	group := router.Group("admin")
-	group.Get("/test", auth.JwtHandler(), auth.LoggerHandler(), handler.restricted).Name("test")
+	group.Get("/test", auth.JwtHandler(), apilog.LoggerHandler(), handler.restricted).Name("test")
 }
 
 func (m *adminApi) restricted(c *fiber.Ctx) error {

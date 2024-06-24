@@ -2,10 +2,11 @@ package middlewares
 
 import (
 	"encoding/json"
-	"log"
+	"fmt"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/log"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 )
@@ -15,31 +16,57 @@ type ApiLogMiddleware struct {
 }
 
 // Create NewApiLog
-func NewApiLog(secret string) *AuthMiddleware {
-	return &AuthMiddleware{}
+func NewApiLog() *ApiLogMiddleware {
+	return &ApiLogMiddleware{}
 }
 
-// Jwt Handler
-func (m *AuthMiddleware) LoggerHandler() fiber.Handler {
+// Logger Handler
+func (m *ApiLogMiddleware) LoggerHandler() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		if c.Method() == "POST" {
-			var model map[string]interface{}
-			err := c.BodyParser(&model)
-			if err != nil {
-				return controllers.SendError(c, controllers.ErrBadRequest, "wrong payload")
+		log.Info(c.Method())
+		switch c.Method() {
+		case "POST":
+			{
+				var model map[string]interface{}
+				err := c.BodyParser(&model)
+				if err != nil {
+					return controllers.SendError(c, controllers.ErrBadRequest, "wrong payload")
+				}
+
+				user := c.Locals("user").(*jwt.Token)
+
+				claims := &JwtCustomClaimsModel{}
+				tmp, _ := json.Marshal(user.Claims)
+				_ = json.Unmarshal(tmp, claims)
+
+				model["created_by"] = claims.Id
+				model["created_on"] = time.Now().Unix()
+
+				log.Info(fmt.Sprintf("%s", model))
+				break
 			}
+		case "PUT":
+			{
+				var model map[string]interface{}
+				err := c.BodyParser(&model)
+				if err != nil {
+					return controllers.SendError(c, controllers.ErrBadRequest, "wrong payload")
+				}
 
-			user := c.Locals("user").(*jwt.Token)
+				user := c.Locals("user").(*jwt.Token)
 
-			claims := &JwtCustomClaimsModel{}
-			tmp, _ := json.Marshal(user.Claims)
-			_ = json.Unmarshal(tmp, claims)
+				claims := &JwtCustomClaimsModel{}
+				tmp, _ := json.Marshal(user.Claims)
+				_ = json.Unmarshal(tmp, claims)
 
-			model["created_by"] = claims.Id
-			model["created_on"] = time.Now().Unix()
+				model["updated_by"] = claims.Id
+				model["updated_on"] = time.Now().Unix()
 
-			log.Printf("%s", model)
+				log.Info("%s", model)
+				break
+			}
 		}
-		return nil
+		log.Info("here")
+		return c.Next()
 	}
 }

@@ -29,17 +29,21 @@ func NewHomeApi(
 		serv: serv,
 	}
 
+	apilog := *middlewares.NewApiLog()
+
 	group := router.Group("home")
-	group.Get("/latest", auth.LoggerHandler(), timeout.NewWithContext(handler.latest, 60*1000*time.Millisecond)).Name("latest")
-	group.Post("/new", auth.JwtHandler(), auth.LoggerHandler(), timeout.NewWithContext(handler.new, 60*1000*time.Millisecond)).Name("new")
+	group.Get("/latest", apilog.LoggerHandler(), timeout.NewWithContext(handler.latest, 60*1000*time.Millisecond)).Name("latest")
+	group.Post("/new", auth.JwtHandler(), apilog.LoggerHandler(), timeout.NewWithContext(handler.new, 60*1000*time.Millisecond)).Name("new")
 }
 
 func (m *homeApi) latest(c *fiber.Ctx) error {
 
+	fmt.Printf("Request from URI : %s \n", c.Request().URI().Host())
+
 	limit, _ := strconv.ParseUint(c.Query("limit"), 10, 64)
 	offset, _ := strconv.ParseUint(c.Query("offset"), 10, 64)
 
-	fmt.Printf("Request from URI : %s \n", c.Request().URI().Host())
+	//fmt.Printf("Request from URI : %s \n", c.Request().URI().Host())
 
 	ctx := c.UserContext()
 	if ctx == nil {
@@ -56,5 +60,5 @@ func (m *homeApi) latest(c *fiber.Ctx) error {
 }
 
 func (m *homeApi) new(c *fiber.Ctx) error {
-	return c.SendString("ok")
+	return controllers.SendPagingResult(c, "ok", 0, 0, 1)
 }
