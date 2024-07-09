@@ -24,7 +24,7 @@ func NewUserService(repo repos.IUserRepo) IUserService {
 func (m *userService) GetAll(ctx context.Context, limit uint64, offset uint64) ([]*entities.UserLoginEntity, uint64, error) {
 	sorters := []data.Sorter{
 		{
-			FieldName: "CreatedOn",
+			FieldName: "CreatedAt",
 			Sort:      2,
 		},
 	}

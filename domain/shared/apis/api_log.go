@@ -7,36 +7,35 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/mysayasan/kopiv2/apps/mypropsan/services"
+	"github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares/timeout"
 )
 
-// HomeApi struct
-type homeApi struct {
+// ApiLogApi struct
+type apiLogApi struct {
 	auth middlewares.AuthMiddleware
-	serv services.IHomeService
+	serv services.IApiLogService
 }
 
-// Create HomeApi
-func NewHomeApi(
+// Create ApiLogApi
+func NewApiLogApi(
 	router fiber.Router,
 	auth middlewares.AuthMiddleware,
-	serv services.IHomeService) {
-	handler := &homeApi{
+	serv services.IApiLogService) {
+	handler := &apiLogApi{
 		auth: auth,
 		serv: serv,
 	}
 
 	apilog := *middlewares.NewApiLog()
 
-	group := router.Group("home")
-	group.Get("/latest", apilog.LoggerHandler(), timeout.NewWithContext(handler.latest, 60*1000*time.Millisecond)).Name("latest")
-	group.Post("/new", auth.JwtHandler(), apilog.LoggerHandler(), timeout.NewWithContext(handler.new, 60*1000*time.Millisecond)).Name("new")
+	group := router.Group("log")
+	group.Get("/", apilog.LoggerHandler(), timeout.NewWithContext(handler.getAll, 60*1000*time.Millisecond)).Name("latest")
 }
 
-func (m *homeApi) latest(c *fiber.Ctx) error {
+func (m *apiLogApi) getAll(c *fiber.Ctx) error {
 
 	limit, _ := strconv.ParseUint(c.Query("limit"), 10, 64)
 	offset, _ := strconv.ParseUint(c.Query("offset"), 10, 64)
@@ -45,7 +44,7 @@ func (m *homeApi) latest(c *fiber.Ctx) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	res, totalCnt, err := m.serv.GetLatest(ctx, limit, offset)
+	res, totalCnt, err := m.serv.GetAll(ctx, limit, offset)
 	if err != nil {
 		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
 	}
@@ -53,8 +52,4 @@ func (m *homeApi) latest(c *fiber.Ctx) error {
 	c.Response().Header.Add("X-Rows", fmt.Sprintf("%d", totalCnt))
 
 	return controllers.SendPagingResult(c, res, limit, offset, totalCnt)
-}
-
-func (m *homeApi) new(c *fiber.Ctx) error {
-	return controllers.SendPagingResult(c, "ok", 0, 0, 1)
 }

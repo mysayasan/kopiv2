@@ -13,10 +13,12 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 
 	// "github.com/gofiber/fileStorage/sqlite3"
+	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/joho/godotenv"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/apis"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/repos"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/services"
+	"github.com/mysayasan/kopiv2/domain/entities"
 	sharedApis "github.com/mysayasan/kopiv2/domain/shared/apis"
 	sharedRepos "github.com/mysayasan/kopiv2/domain/shared/repos"
 	sharedServices "github.com/mysayasan/kopiv2/domain/shared/services"
@@ -27,16 +29,18 @@ import (
 
 func main() {
 	godotenv.Load(".env")
+	env := os.Getenv("ENVIRONMENT")
 
-	appConfig, err := config.LoadAppConfiguration("./config.json")
-	if err != nil {
-		appConfig, err = config.LoadAppConfiguration("./config_dev.json")
-		if err != nil {
-			log.Fatal("no config file found")
-		}
-		os.Setenv("ENVIRONMENT", "dev")
+	var appConfig *config.AppConfigModel
+
+	if env == "dev" {
+		appConfig, _ = config.LoadAppConfiguration("./config_dev.json")
 	} else {
-		os.Setenv("ENVIRONMENT", "prod")
+		appConfig, _ = config.LoadAppConfiguration("./config.json")
+	}
+
+	if appConfig == nil {
+		log.Fatal("config file not found")
 	}
 
 	// fileStorage := sqlite3.New()
@@ -65,7 +69,7 @@ func main() {
 		AllowOriginsFunc: func(origin string) bool {
 			return os.Getenv("ENVIRONMENT") == "dev"
 		},
-		// AllowOrigins:  "https://mypropsan.com, https://mypropsan.com.my",
+		AllowOrigins:  appConfig.AllowOrigin,
 		AllowHeaders:  "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization",
 		ExposeHeaders: "X-Cursor",
 		AllowMethods:  "POST, GET, OPTIONS, PUT, DELETE",
@@ -92,22 +96,46 @@ func main() {
 
 	// Repo modules
 	userRepo := sharedRepos.NewUserRepo(postgresDb)
+	apiLogRepo := sharedRepos.NewApiLogRepo(postgresDb)
 	residentPropRepo := repos.NewResidentPropRepo(postgresDb)
 	fileStorageRepo := repos.NewFileStorageRepo(postgresDb)
 
 	// Page Modules
 	userService := sharedServices.NewUserService(userRepo)
+	apiLogService := sharedServices.NewApiLogService(apiLogRepo)
 	homeService := services.NewHomeService(residentPropRepo)
 	fileStorageService := services.NewFileStorageService(fileStorageRepo)
 
 	// Login module
 	sharedApis.NewLoginApi(api, appConfig.Login.Google, *auth, userService)
+	// Api Log module
+	sharedApis.NewApiLogApi(api, *auth, apiLogService)
 	// Admin Api
 	apis.NewAdminApi(api, *auth)
 	//Home Api
 	apis.NewHomeApi(api, *auth, homeService)
 	// FileStorage Api
 	apis.NewFileStorageApi(api, *auth, fileStorageService, appConfig.FileStorage.Path)
+
+	// Callback after log is written
+	app.Use(logger.New(logger.Config{
+		TimeFormat: time.RFC3339Nano,
+		TimeZone:   "Asia/Shanghai",
+		Done: func(c *fiber.Ctx, logString []byte) {
+			if c.Response().StatusCode() != fiber.StatusOK {
+				// log.Info(string(logString))
+				apiLogModel := &entities.ApiLogEntity{}
+				apiLogModel.StatsCode = c.Response().StatusCode()
+				apiLogModel.LogMsg = string(logString)
+				apiLogModel.ClientIpAddrV4 = c.Context().RemoteIP().String()
+				apiLogModel.RequestUrl = string(c.Request().URI().FullURI())
+				_, err := apiLogService.Add(c.Context(), *apiLogModel)
+				if err != nil {
+					log.Error(err.Error())
+				}
+			}
+		},
+	}))
 
 	// Get api routes
 	api.Get("/routes", auth.JwtHandler(), func(c *fiber.Ctx) error {

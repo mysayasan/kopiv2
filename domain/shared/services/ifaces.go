@@ -12,3 +12,9 @@ type IUserService interface {
 	GetByEmail(ctx context.Context, email string) (*entities.UserLoginEntity, error)
 	Add(ctx context.Context, model entities.UserLoginEntity) (uint64, error)
 }
+
+// IApiLogService interface
+type IApiLogService interface {
+	GetAll(ctx context.Context, limit uint64, offset uint64) ([]*entities.ApiLogEntity, uint64, error)
+	Add(ctx context.Context, model entities.ApiLogEntity) (uint64, error)
+}

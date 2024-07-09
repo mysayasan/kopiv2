@@ -23,7 +23,6 @@ func NewApiLog() *ApiLogMiddleware {
 // Logger Handler
 func (m *ApiLogMiddleware) LoggerHandler() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		log.Info(c.Method())
 		switch c.Method() {
 		case "POST":
 			{
@@ -39,8 +38,8 @@ func (m *ApiLogMiddleware) LoggerHandler() fiber.Handler {
 				tmp, _ := json.Marshal(user.Claims)
 				_ = json.Unmarshal(tmp, claims)
 
-				model["created_by"] = claims.Id
-				model["created_on"] = time.Now().Unix()
+				model["createdBy"] = claims.Id
+				model["createdAt"] = time.Now().Unix()
 
 				log.Info(fmt.Sprintf("%s", model))
 				break
@@ -59,14 +58,14 @@ func (m *ApiLogMiddleware) LoggerHandler() fiber.Handler {
 				tmp, _ := json.Marshal(user.Claims)
 				_ = json.Unmarshal(tmp, claims)
 
-				model["updated_by"] = claims.Id
-				model["updated_on"] = time.Now().Unix()
+				model["updatedBy"] = claims.Id
+				model["updatedAt"] = time.Now().Unix()
 
 				log.Info("%s", model)
 				break
 			}
 		}
-		log.Info("here")
+
 		return c.Next()
 	}
 }

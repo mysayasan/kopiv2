@@ -155,7 +155,7 @@ func (m *fileStorageApi) upload(c *fiber.Ctx) error {
 		model.VrPath = "/"
 		model.Sha1Chksum = sha
 		model.CreatedBy = claims.Id
-		model.CreatedOn = time.Now().UTC().Unix()
+		model.CreatedAt = time.Now().UTC().Unix()
 
 		// Create dir if not exists
 		if _, err := os.Stat(m.path); os.IsNotExist(err) {

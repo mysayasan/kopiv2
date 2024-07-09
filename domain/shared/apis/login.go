@@ -89,7 +89,7 @@ func (m *loginApi) googleCallback(c *fiber.Ctx) error {
 			RoleId:    0,
 			IsActive:  true,
 			CreatedBy: 0,
-			CreatedOn: time.Now().Unix(),
+			CreatedAt: time.Now().Unix(),
 		}
 
 		res, err := m.userService.Add(c.Context(), *user)

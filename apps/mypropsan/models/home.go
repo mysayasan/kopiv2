@@ -28,7 +28,7 @@ type ResidentPropModel struct {
 	Postcode      int                    `json:"postcode" form:"postcode" query:"postcode"`
 	Lat           float64                `json:"lat" form:"lat" query:"lat"`
 	Lon           float64                `json:"lon" form:"lon" query:"lon"`
-	PostedOn      int64                  `json:"postedOn" form:"postedOn" query:"postedOn"`
-	ExpiredOn     int64                  `json:"expiredOn" form:"expiredOn" query:"expiredOn"`
+	PostedAt      int64                  `json:"postedAt" form:"postedAt" query:"postedAt"`
+	ExpiredAt     int64                  `json:"expiredAt" form:"expiredAt" query:"expiredAt"`
 	Pics          []ResidentPropPicModel `json:"pics" form:"pics" query:"pics" datasrc:"resident_prop_pic" parents:"Id:ResidentPropId"`
 }

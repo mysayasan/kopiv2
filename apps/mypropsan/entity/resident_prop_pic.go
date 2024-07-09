@@ -6,7 +6,7 @@ type ResidentPropPicEntity struct {
 	ResidentPropId int64  `json:"residentPropId" form:"residentPropId" query:"residentPropId"`
 	PicUrl         string `json:"picUrl" form:"picUrl" query:"picUrl" validate:"required"`
 	CreatedBy      int64  `json:"createdBy" form:"createdBy" query:"createdBy"`
-	CreatedOn      int64  `json:"createdOn" form:"createdOn" query:"createdOn"`
+	CreatedAt      int64  `json:"createdAt" form:"createdAt" query:"createdAt"`
 	UpdatedBy      int64  `json:"updatedBy" form:"updatedBy" query:"updatedBy"`
-	UpdatedOn      int64  `json:"updatedOn" form:"updatedOn" query:"updatedOn"`
+	UpdatedAt      int64  `json:"updatedAt" form:"updatedAt" query:"updatedAt"`
 }

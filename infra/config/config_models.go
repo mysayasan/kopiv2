@@ -14,9 +14,10 @@ type AppConfigModel struct {
 		Secret string `json:"secret" validate:"required"`
 	} `json:"jwt"`
 	FileStorage struct {
-		Path string `json:"path"`
-	} `json:"fileStorage"`
-	Tls struct {
+		Path string `json:"path" validate:"required"`
+	} `json:"fileStorage" validate:"required"`
+	AllowOrigin string `json:"allowOrigins" validate:"required"`
+	Tls         struct {
 		CertPath string `json:"certPath" validate:"required"`
 		KeyPath  string `json:"keyPath" validate:"required"`
 	} `json:"tls"`
