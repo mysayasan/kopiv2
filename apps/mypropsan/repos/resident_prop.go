@@ -28,7 +28,7 @@ func (m *residentPropRepo) GetLatest(ctx context.Context, limit uint64, offset u
 		return nil, 0, err
 	}
 
-	res, totalCnt, err := m.dbCrud.Get(ctx, models.ResidentPropModel{}, limit, offset, filters, sorter, "")
+	res, totalCnt, err := m.dbCrud.Select(ctx, models.ResidentPropModel{}, limit, offset, filters, sorter, "")
 	if err != nil {
 		if rbErr := m.dbCrud.RollbackTx(); rbErr != nil {
 			err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)

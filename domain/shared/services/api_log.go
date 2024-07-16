@@ -32,6 +32,6 @@ func (m *apiLogService) GetAll(ctx context.Context, limit uint64, offset uint64)
 	return m.repo.GetAll(ctx, limit, offset, nil, sorters)
 }
 
-func (m *apiLogService) Add(ctx context.Context, model entities.ApiLogEntity) (uint64, error) {
-	return m.repo.Add(ctx, model)
+func (m *apiLogService) Create(ctx context.Context, model entities.ApiLogEntity) (uint64, error) {
+	return m.repo.Create(ctx, model)
 }

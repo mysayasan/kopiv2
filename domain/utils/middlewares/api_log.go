@@ -2,7 +2,6 @@ package middlewares
 
 import (
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -41,7 +40,9 @@ func (m *ApiLogMiddleware) LoggerHandler() fiber.Handler {
 				model["createdBy"] = claims.Id
 				model["createdAt"] = time.Now().Unix()
 
-				log.Info(fmt.Sprintf("%s", model))
+				modres, _ := json.Marshal(model)
+				log.Info(string(modres))
+				c.Request().SwapBody(modres)
 				break
 			}
 		case "PUT":
@@ -61,7 +62,9 @@ func (m *ApiLogMiddleware) LoggerHandler() fiber.Handler {
 				model["updatedBy"] = claims.Id
 				model["updatedAt"] = time.Now().Unix()
 
-				log.Info("%s", model)
+				modres, _ := json.Marshal(model)
+				log.Info(string(modres))
+				c.Request().SwapBody(modres)
 				break
 			}
 		}

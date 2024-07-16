@@ -36,6 +36,10 @@ func (m *userService) GetByEmail(ctx context.Context, email string) (*entities.U
 	return m.repo.GetByEmail(ctx, email)
 }
 
-func (m *userService) Add(ctx context.Context, model entities.UserLoginEntity) (uint64, error) {
-	return m.repo.Add(ctx, model)
+func (m *userService) Create(ctx context.Context, model entities.UserLoginEntity) (uint64, error) {
+	return m.repo.Create(ctx, model)
+}
+
+func (m *userService) Update(ctx context.Context, model entities.UserLoginEntity) (uint64, error) {
+	return m.repo.Update(ctx, model)
 }

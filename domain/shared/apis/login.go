@@ -92,7 +92,7 @@ func (m *loginApi) googleCallback(c *fiber.Ctx) error {
 			CreatedAt: time.Now().Unix(),
 		}
 
-		res, err := m.userService.Add(c.Context(), *user)
+		res, err := m.userService.Create(c.Context(), *user)
 		if err != nil {
 			log.Printf("%s", err.Error())
 		}

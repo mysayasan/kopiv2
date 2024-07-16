@@ -29,7 +29,7 @@ func (m *userRepo) GetAll(ctx context.Context, limit uint64, offset uint64, filt
 		return nil, 0, err
 	}
 
-	res, totalCnt, err := m.dbCrud.Get(ctx, entities.UserLoginEntity{}, limit, offset, filters, sorter, "")
+	res, totalCnt, err := m.dbCrud.Select(ctx, entities.UserLoginEntity{}, limit, offset, filters, sorter, "")
 	if err != nil {
 		if rbErr := m.dbCrud.RollbackTx(); rbErr != nil {
 			err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
@@ -62,7 +62,7 @@ func (m *userRepo) GetByEmail(ctx context.Context, email string) (*entities.User
 
 	filters = append(filters, filter)
 
-	res, err := m.dbCrud.GetSingle(ctx, entities.UserLoginEntity{}, filters, "")
+	res, err := m.dbCrud.SelectSingle(ctx, entities.UserLoginEntity{}, filters, "")
 	if err != nil {
 		return nil, err
 	}
@@ -77,12 +77,32 @@ func (m *userRepo) GetByEmail(ctx context.Context, email string) (*entities.User
 	return &model, nil
 }
 
-func (m *userRepo) Add(ctx context.Context, model entities.UserLoginEntity) (uint64, error) {
+func (m *userRepo) Create(ctx context.Context, model entities.UserLoginEntity) (uint64, error) {
 	if err := m.dbCrud.BeginTx(ctx); err != nil {
 		return 0, err
 	}
 
-	res, err := m.dbCrud.Add(ctx, model, "")
+	res, err := m.dbCrud.Insert(ctx, model, "")
+	if err != nil {
+		if rbErr := m.dbCrud.RollbackTx(); rbErr != nil {
+			err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
+			return 0, err
+		}
+	}
+
+	if err = m.dbCrud.CommitTx(); err != nil {
+		return 0, err
+	}
+
+	return res, nil
+}
+
+func (m *userRepo) Update(ctx context.Context, model entities.UserLoginEntity) (uint64, error) {
+	if err := m.dbCrud.BeginTx(ctx); err != nil {
+		return 0, err
+	}
+
+	res, err := m.dbCrud.Update(ctx, model, "")
 	if err != nil {
 		if rbErr := m.dbCrud.RollbackTx(); rbErr != nil {
 			err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)

@@ -2,7 +2,7 @@ package entities
 
 // User
 type UserLoginEntity struct {
-	Id        int64  `json:"id" form:"id" query:"id" autoinc:"true" validate:"required"`
+	Id        int64  `json:"id" form:"id" query:"id" autoinc:"true" pkey:"true" validate:"required"`
 	Email     string `json:"email" form:"email" query:"email" validate:"required"`
 	Userpwd   string `json:"userpwd" form:"userpwd" query:"userpwd"`
 	FirstName string `json:"firstName" form:"firstName" query:"firstName"`

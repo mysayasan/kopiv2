@@ -28,7 +28,7 @@ func (m *apiLogRepo) GetAll(ctx context.Context, limit uint64, offset uint64, fi
 		return nil, 0, err
 	}
 
-	res, totalCnt, err := m.dbCrud.Get(ctx, entities.ApiLogEntity{}, limit, offset, filters, sorter, "")
+	res, totalCnt, err := m.dbCrud.Select(ctx, entities.ApiLogEntity{}, limit, offset, filters, sorter, "")
 	if err != nil {
 		if rbErr := m.dbCrud.RollbackTx(); rbErr != nil {
 			err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
@@ -51,12 +51,12 @@ func (m *apiLogRepo) GetAll(ctx context.Context, limit uint64, offset uint64, fi
 	return list, totalCnt, nil
 }
 
-func (m *apiLogRepo) Add(ctx context.Context, model entities.ApiLogEntity) (uint64, error) {
+func (m *apiLogRepo) Create(ctx context.Context, model entities.ApiLogEntity) (uint64, error) {
 	if err := m.dbCrud.BeginTx(ctx); err != nil {
 		return 0, err
 	}
 
-	res, err := m.dbCrud.Add(ctx, model, "")
+	res, err := m.dbCrud.Insert(ctx, model, "")
 	if err != nil {
 		if rbErr := m.dbCrud.RollbackTx(); rbErr != nil {
 			err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)

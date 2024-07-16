@@ -103,10 +103,6 @@ func (m *fileStorageApi) upload(c *fiber.Ctx) error {
 	tmp, _ := json.Marshal(user.Claims)
 	_ = json.Unmarshal(tmp, claims)
 
-	name := claims.Name
-
-	log.Info(name)
-
 	// Parse the multipart form:
 	form, err := c.MultipartForm()
 	if err != nil {
@@ -177,7 +173,7 @@ func (m *fileStorageApi) upload(c *fiber.Ctx) error {
 		if ctx == nil {
 			ctx = context.Background()
 		}
-		res, err := m.serv.Add(ctx, model)
+		res, err := m.serv.Create(ctx, model)
 		if err != nil {
 			_ = os.Remove(fmt.Sprintf("%s/%s", m.path, model.Guid))
 			failedUploads = append(failedUploads, file.Filename)

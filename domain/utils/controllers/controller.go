@@ -8,7 +8,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-type Response[T any] struct {
+type PagingResponse[T any] struct {
 	Status  int    `json:"status"`
 	Message string `json:"message"`
 	Data    struct {
@@ -25,8 +25,14 @@ type ErrResponse[T any] struct {
 	Details T      `json:"details"`
 }
 
+type SingleResponse[T any] struct {
+	Status  int    `json:"status"`
+	Message string `json:"message"`
+	Result  T      `json:"result"`
+}
+
 func SendPagingResult(c *fiber.Ctx, data interface{}, limit uint64, offset uint64, totalCnt uint64, message ...string) error {
-	var resp Response[interface{}]
+	var resp PagingResponse[interface{}]
 	resp.Status = 1
 	resp.Message = strings.Join(message, "\n")
 	resp.Data.Result = data
@@ -40,6 +46,20 @@ func SendPagingResult(c *fiber.Ctx, data interface{}, limit uint64, offset uint6
 			resp.Data.CurrentPage = int((offset / limit) + 1)
 		}
 	}
+
+	err := c.JSON(resp)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func SendSingleResult(c *fiber.Ctx, data interface{}, message ...string) error {
+	var resp SingleResponse[interface{}]
+	resp.Status = 1
+	resp.Message = strings.Join(message, "\n")
+	resp.Result = data
 
 	err := c.JSON(resp)
 	if err != nil {

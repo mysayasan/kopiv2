@@ -33,7 +33,7 @@ func (m *fileStorageRepo) GetByGuid(ctx context.Context, guid string) (*entity.F
 
 	filters = append(filters, filter)
 
-	res, err := m.dbCrud.GetSingle(ctx, entity.FileStorageEntity{}, filters, "")
+	res, err := m.dbCrud.SelectSingle(ctx, entity.FileStorageEntity{}, filters, "")
 	if err != nil {
 		return nil, err
 	}
@@ -44,12 +44,12 @@ func (m *fileStorageRepo) GetByGuid(ctx context.Context, guid string) (*entity.F
 	return &model, nil
 }
 
-func (m *fileStorageRepo) Add(ctx context.Context, model entity.FileStorageEntity) (uint64, error) {
+func (m *fileStorageRepo) Create(ctx context.Context, model entity.FileStorageEntity) (uint64, error) {
 	if err := m.dbCrud.BeginTx(ctx); err != nil {
 		return 0, err
 	}
 
-	res, err := m.dbCrud.Add(ctx, model, "")
+	res, err := m.dbCrud.Insert(ctx, model, "")
 	if err != nil {
 		if rbErr := m.dbCrud.RollbackTx(); rbErr != nil {
 			err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
@@ -64,12 +64,12 @@ func (m *fileStorageRepo) Add(ctx context.Context, model entity.FileStorageEntit
 	return res, nil
 }
 
-func (m *fileStorageRepo) AddMultiple(ctx context.Context, model []entity.FileStorageEntity) (uint64, error) {
+func (m *fileStorageRepo) CreateMultiple(ctx context.Context, model []entity.FileStorageEntity) (uint64, error) {
 	if err := m.dbCrud.BeginTx(ctx); err != nil {
 		return 0, err
 	}
 
-	res, err := m.dbCrud.Add(ctx, model, "")
+	res, err := m.dbCrud.Insert(ctx, model, "")
 	if err != nil {
 		if rbErr := m.dbCrud.RollbackTx(); rbErr != nil {
 			err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)

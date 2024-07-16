@@ -108,6 +108,8 @@ func main() {
 
 	// Login module
 	sharedApis.NewLoginApi(api, appConfig.Login.Google, *auth, userService)
+	// User Module
+	sharedApis.NewUserApi(api, *auth, userService)
 	// Api Log module
 	sharedApis.NewApiLogApi(api, *auth, apiLogService)
 	// Admin Api
@@ -129,7 +131,7 @@ func main() {
 				apiLogModel.LogMsg = string(logString)
 				apiLogModel.ClientIpAddrV4 = c.Context().RemoteIP().String()
 				apiLogModel.RequestUrl = string(c.Request().URI().FullURI())
-				_, err := apiLogService.Add(c.Context(), *apiLogModel)
+				_, err := apiLogService.Create(c.Context(), *apiLogModel)
 				if err != nil {
 					log.Error(err.Error())
 				}

@@ -16,6 +16,6 @@ type IResidentPropRepo interface {
 // IFileStorageRepo interface
 type IFileStorageRepo interface {
 	GetByGuid(ctx context.Context, guid string) (*entity.FileStorageEntity, error)
-	Add(ctx context.Context, model entity.FileStorageEntity) (uint64, error)
-	AddMultiple(ctx context.Context, model []entity.FileStorageEntity) (uint64, error)
+	Create(ctx context.Context, model entity.FileStorageEntity) (uint64, error)
+	CreateMultiple(ctx context.Context, model []entity.FileStorageEntity) (uint64, error)
 }
