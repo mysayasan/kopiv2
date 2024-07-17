@@ -1,7 +1,7 @@
 package entities
 
 // ApiLog
-type ApiLogEntity struct {
+type ApiLog struct {
 	Id             int64  `json:"id" form:"id" query:"id" autoinc:"true" validate:"required"`
 	StatsCode      int    `json:"statsCode" form:"statsCode" query:"statsCode"`
 	LogMsg         string `json:"logMsg" form:"logMsg" query:"logMsg"`

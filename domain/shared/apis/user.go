@@ -31,11 +31,11 @@ func NewUserApi(
 		serv: serv,
 	}
 
-	apilog := *middlewares.NewApiLog()
+	Rbac := *middlewares.NewRbac()
 
 	group := router.Group("user")
 	group.Get("/", timeout.NewWithContext(handler.getAll, 60*1000*time.Millisecond)).Name("get_all")
-	group.Put("/", auth.JwtHandler(), apilog.LoggerHandler(), timeout.NewWithContext(handler.update, 60*1000*time.Millisecond)).Name("update")
+	group.Put("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.update, 60*1000*time.Millisecond)).Name("update")
 }
 
 func (m *userApi) getAll(c *fiber.Ctx) error {
@@ -58,7 +58,7 @@ func (m *userApi) getAll(c *fiber.Ctx) error {
 }
 
 func (m *userApi) update(c *fiber.Ctx) error {
-	body := new(entities.UserLoginEntity)
+	body := new(entities.UserLogin)
 
 	if err := c.BodyParser(body); err != nil {
 		return err

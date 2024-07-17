@@ -24,12 +24,12 @@ func NewUserRepo(dbCrud postgres.IDbCrud) IUserRepo {
 	}
 }
 
-func (m *userRepo) GetAll(ctx context.Context, limit uint64, offset uint64, filters []data.Filter, sorter []data.Sorter) ([]*entities.UserLoginEntity, uint64, error) {
+func (m *userRepo) GetAll(ctx context.Context, limit uint64, offset uint64, filters []data.Filter, sorter []data.Sorter) ([]*entities.UserLogin, uint64, error) {
 	if err := m.dbCrud.BeginTx(ctx); err != nil {
 		return nil, 0, err
 	}
 
-	res, totalCnt, err := m.dbCrud.Select(ctx, entities.UserLoginEntity{}, limit, offset, filters, sorter, "")
+	res, totalCnt, err := m.dbCrud.Select(ctx, entities.UserLogin{}, limit, offset, filters, sorter, "")
 	if err != nil {
 		if rbErr := m.dbCrud.RollbackTx(); rbErr != nil {
 			err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
@@ -41,10 +41,10 @@ func (m *userRepo) GetAll(ctx context.Context, limit uint64, offset uint64, filt
 		return nil, 0, err
 	}
 
-	list := make([]*entities.UserLoginEntity, 0)
+	list := make([]*entities.UserLogin, 0)
 
 	for _, row := range res {
-		var model entities.UserLoginEntity
+		var model entities.UserLogin
 		mapstructure.Decode(row, &model)
 		list = append(list, &model)
 	}
@@ -52,7 +52,7 @@ func (m *userRepo) GetAll(ctx context.Context, limit uint64, offset uint64, filt
 	return list, totalCnt, nil
 }
 
-func (m *userRepo) GetByEmail(ctx context.Context, email string) (*entities.UserLoginEntity, error) {
+func (m *userRepo) GetByEmail(ctx context.Context, email string) (*entities.UserLogin, error) {
 	var filters []data.Filter
 	filter := data.Filter{
 		FieldName: "Email",
@@ -62,7 +62,7 @@ func (m *userRepo) GetByEmail(ctx context.Context, email string) (*entities.User
 
 	filters = append(filters, filter)
 
-	res, err := m.dbCrud.SelectSingle(ctx, entities.UserLoginEntity{}, filters, "")
+	res, err := m.dbCrud.SelectSingle(ctx, entities.UserLogin{}, filters, "")
 	if err != nil {
 		return nil, err
 	}
@@ -71,13 +71,13 @@ func (m *userRepo) GetByEmail(ctx context.Context, email string) (*entities.User
 		return nil, errors.New("not found")
 	}
 
-	var model entities.UserLoginEntity
+	var model entities.UserLogin
 	mapstructure.Decode(res, &model)
 
 	return &model, nil
 }
 
-func (m *userRepo) Create(ctx context.Context, model entities.UserLoginEntity) (uint64, error) {
+func (m *userRepo) Create(ctx context.Context, model entities.UserLogin) (uint64, error) {
 	if err := m.dbCrud.BeginTx(ctx); err != nil {
 		return 0, err
 	}
@@ -97,7 +97,7 @@ func (m *userRepo) Create(ctx context.Context, model entities.UserLoginEntity) (
 	return res, nil
 }
 
-func (m *userRepo) Update(ctx context.Context, model entities.UserLoginEntity) (uint64, error) {
+func (m *userRepo) Update(ctx context.Context, model entities.UserLogin) (uint64, error) {
 	if err := m.dbCrud.BeginTx(ctx); err != nil {
 		return 0, err
 	}

@@ -21,7 +21,7 @@ func NewApiLogService(repo repos.IApiLogRepo) IApiLogService {
 	}
 }
 
-func (m *apiLogService) GetAll(ctx context.Context, limit uint64, offset uint64) ([]*entities.ApiLogEntity, uint64, error) {
+func (m *apiLogService) GetAll(ctx context.Context, limit uint64, offset uint64) ([]*entities.ApiLog, uint64, error) {
 	sorters := []data.Sorter{
 		{
 			FieldName: "CreatedAt",
@@ -32,6 +32,6 @@ func (m *apiLogService) GetAll(ctx context.Context, limit uint64, offset uint64)
 	return m.repo.GetAll(ctx, limit, offset, nil, sorters)
 }
 
-func (m *apiLogService) Create(ctx context.Context, model entities.ApiLogEntity) (uint64, error) {
+func (m *apiLogService) Create(ctx context.Context, model entities.ApiLog) (uint64, error) {
 	return m.repo.Create(ctx, model)
 }

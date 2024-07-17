@@ -6,7 +6,7 @@ import (
 
 	_ "github.com/lib/pq"
 	"github.com/mitchellh/mapstructure"
-	"github.com/mysayasan/kopiv2/apps/mypropsan/entity"
+	"github.com/mysayasan/kopiv2/apps/mypropsan/entities"
 	"github.com/mysayasan/kopiv2/domain/enums/data"
 	"github.com/mysayasan/kopiv2/infra/db/sql/postgres"
 )
@@ -23,7 +23,7 @@ func NewFileStorageRepo(dbCrud postgres.IDbCrud) IFileStorageRepo {
 	}
 }
 
-func (m *fileStorageRepo) GetByGuid(ctx context.Context, guid string) (*entity.FileStorageEntity, error) {
+func (m *fileStorageRepo) GetByGuid(ctx context.Context, guid string) (*entities.FileStorage, error) {
 	var filters []data.Filter
 	filter := data.Filter{
 		FieldName: "Guid",
@@ -33,18 +33,18 @@ func (m *fileStorageRepo) GetByGuid(ctx context.Context, guid string) (*entity.F
 
 	filters = append(filters, filter)
 
-	res, err := m.dbCrud.SelectSingle(ctx, entity.FileStorageEntity{}, filters, "")
+	res, err := m.dbCrud.SelectSingle(ctx, entities.FileStorage{}, filters, "")
 	if err != nil {
 		return nil, err
 	}
 
-	var model entity.FileStorageEntity
+	var model entities.FileStorage
 	mapstructure.Decode(res, &model)
 
 	return &model, nil
 }
 
-func (m *fileStorageRepo) Create(ctx context.Context, model entity.FileStorageEntity) (uint64, error) {
+func (m *fileStorageRepo) Create(ctx context.Context, model entities.FileStorage) (uint64, error) {
 	if err := m.dbCrud.BeginTx(ctx); err != nil {
 		return 0, err
 	}
@@ -64,7 +64,7 @@ func (m *fileStorageRepo) Create(ctx context.Context, model entity.FileStorageEn
 	return res, nil
 }
 
-func (m *fileStorageRepo) CreateMultiple(ctx context.Context, model []entity.FileStorageEntity) (uint64, error) {
+func (m *fileStorageRepo) CreateMultiple(ctx context.Context, model []entities.FileStorage) (uint64, error) {
 	if err := m.dbCrud.BeginTx(ctx); err != nil {
 		return 0, err
 	}

@@ -29,11 +29,11 @@ func NewHomeApi(
 		serv: serv,
 	}
 
-	apilog := *middlewares.NewApiLog()
+	rbac := *middlewares.NewRbac()
 
 	group := router.Group("home")
-	group.Get("/latest", apilog.LoggerHandler(), timeout.NewWithContext(handler.latest, 60*1000*time.Millisecond)).Name("latest")
-	group.Post("/new", auth.JwtHandler(), apilog.LoggerHandler(), timeout.NewWithContext(handler.new, 60*1000*time.Millisecond)).Name("new")
+	group.Get("/latest", rbac.ApiHandler(), timeout.NewWithContext(handler.latest, 60*1000*time.Millisecond)).Name("latest")
+	group.Post("/new", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.new, 60*1000*time.Millisecond)).Name("new")
 }
 
 func (m *homeApi) latest(c *fiber.Ctx) error {

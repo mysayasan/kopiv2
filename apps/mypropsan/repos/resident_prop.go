@@ -23,12 +23,12 @@ func NewResidentPropRepo(dbCrud postgres.IDbCrud) IResidentPropRepo {
 	}
 }
 
-func (m *residentPropRepo) GetLatest(ctx context.Context, limit uint64, offset uint64, filters []data.Filter, sorter []data.Sorter) ([]*models.ResidentPropModel, uint64, error) {
+func (m *residentPropRepo) GetLatest(ctx context.Context, limit uint64, offset uint64, filters []data.Filter, sorter []data.Sorter) ([]*models.ResidentProp, uint64, error) {
 	if err := m.dbCrud.BeginTx(ctx); err != nil {
 		return nil, 0, err
 	}
 
-	res, totalCnt, err := m.dbCrud.Select(ctx, models.ResidentPropModel{}, limit, offset, filters, sorter, "")
+	res, totalCnt, err := m.dbCrud.Select(ctx, models.ResidentProp{}, limit, offset, filters, sorter, "")
 	if err != nil {
 		if rbErr := m.dbCrud.RollbackTx(); rbErr != nil {
 			err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
@@ -40,10 +40,10 @@ func (m *residentPropRepo) GetLatest(ctx context.Context, limit uint64, offset u
 		return nil, 0, err
 	}
 
-	list := make([]*models.ResidentPropModel, 0)
+	list := make([]*models.ResidentProp, 0)
 
 	for _, row := range res {
-		var model models.ResidentPropModel
+		var model models.ResidentProp
 		mapstructure.Decode(row, &model)
 		list = append(list, &model)
 	}

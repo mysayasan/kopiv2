@@ -10,17 +10,17 @@ import (
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 )
 
-// ApiLogMiddleware struct
-type ApiLogMiddleware struct {
+// RbacMiddleware struct
+type RbacMiddleware struct {
 }
 
-// Create NewApiLog
-func NewApiLog() *ApiLogMiddleware {
-	return &ApiLogMiddleware{}
+// Create NewRbac
+func NewRbac() *RbacMiddleware {
+	return &RbacMiddleware{}
 }
 
 // Logger Handler
-func (m *ApiLogMiddleware) LoggerHandler() fiber.Handler {
+func (m *RbacMiddleware) ApiHandler() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		switch c.Method() {
 		case "POST":

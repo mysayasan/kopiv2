@@ -29,10 +29,10 @@ func NewApiLogApi(
 		serv: serv,
 	}
 
-	apilog := *middlewares.NewApiLog()
+	apilog := *middlewares.NewRbac()
 
 	group := router.Group("log")
-	group.Get("/", apilog.LoggerHandler(), timeout.NewWithContext(handler.getAll, 60*1000*time.Millisecond)).Name("latest")
+	group.Get("/", apilog.ApiHandler(), timeout.NewWithContext(handler.getAll, 60*1000*time.Millisecond)).Name("latest")
 }
 
 func (m *apiLogApi) getAll(c *fiber.Ctx) error {

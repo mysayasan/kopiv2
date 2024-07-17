@@ -21,7 +21,7 @@ func NewHomeService(repo repos.IResidentPropRepo) IHomeService {
 	}
 }
 
-func (m *homeService) GetLatest(ctx context.Context, limit uint64, offset uint64) ([]*models.ResidentPropModel, uint64, error) {
+func (m *homeService) GetLatest(ctx context.Context, limit uint64, offset uint64) ([]*models.ResidentProp, uint64, error) {
 	var filters []data.Filter
 	filter := data.Filter{
 		FieldName: "Id",

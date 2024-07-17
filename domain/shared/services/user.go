@@ -21,7 +21,7 @@ func NewUserService(repo repos.IUserRepo) IUserService {
 	}
 }
 
-func (m *userService) GetAll(ctx context.Context, limit uint64, offset uint64) ([]*entities.UserLoginEntity, uint64, error) {
+func (m *userService) GetAll(ctx context.Context, limit uint64, offset uint64) ([]*entities.UserLogin, uint64, error) {
 	sorters := []data.Sorter{
 		{
 			FieldName: "CreatedAt",
@@ -32,14 +32,14 @@ func (m *userService) GetAll(ctx context.Context, limit uint64, offset uint64) (
 	return m.repo.GetAll(ctx, limit, offset, nil, sorters)
 }
 
-func (m *userService) GetByEmail(ctx context.Context, email string) (*entities.UserLoginEntity, error) {
+func (m *userService) GetByEmail(ctx context.Context, email string) (*entities.UserLogin, error) {
 	return m.repo.GetByEmail(ctx, email)
 }
 
-func (m *userService) Create(ctx context.Context, model entities.UserLoginEntity) (uint64, error) {
+func (m *userService) Create(ctx context.Context, model entities.UserLogin) (uint64, error) {
 	return m.repo.Create(ctx, model)
 }
 
-func (m *userService) Update(ctx context.Context, model entities.UserLoginEntity) (uint64, error) {
+func (m *userService) Update(ctx context.Context, model entities.UserLogin) (uint64, error) {
 	return m.repo.Update(ctx, model)
 }

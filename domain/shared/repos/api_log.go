@@ -23,12 +23,12 @@ func NewApiLogRepo(dbCrud postgres.IDbCrud) IApiLogRepo {
 	}
 }
 
-func (m *apiLogRepo) GetAll(ctx context.Context, limit uint64, offset uint64, filters []data.Filter, sorter []data.Sorter) ([]*entities.ApiLogEntity, uint64, error) {
+func (m *apiLogRepo) GetAll(ctx context.Context, limit uint64, offset uint64, filters []data.Filter, sorter []data.Sorter) ([]*entities.ApiLog, uint64, error) {
 	if err := m.dbCrud.BeginTx(ctx); err != nil {
 		return nil, 0, err
 	}
 
-	res, totalCnt, err := m.dbCrud.Select(ctx, entities.ApiLogEntity{}, limit, offset, filters, sorter, "")
+	res, totalCnt, err := m.dbCrud.Select(ctx, entities.ApiLog{}, limit, offset, filters, sorter, "")
 	if err != nil {
 		if rbErr := m.dbCrud.RollbackTx(); rbErr != nil {
 			err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
@@ -40,10 +40,10 @@ func (m *apiLogRepo) GetAll(ctx context.Context, limit uint64, offset uint64, fi
 		return nil, 0, err
 	}
 
-	list := make([]*entities.ApiLogEntity, 0)
+	list := make([]*entities.ApiLog, 0)
 
 	for _, row := range res {
-		var model entities.ApiLogEntity
+		var model entities.ApiLog
 		mapstructure.Decode(row, &model)
 		list = append(list, &model)
 	}
@@ -51,7 +51,7 @@ func (m *apiLogRepo) GetAll(ctx context.Context, limit uint64, offset uint64, fi
 	return list, totalCnt, nil
 }
 
-func (m *apiLogRepo) Create(ctx context.Context, model entities.ApiLogEntity) (uint64, error) {
+func (m *apiLogRepo) Create(ctx context.Context, model entities.ApiLog) (uint64, error) {
 	if err := m.dbCrud.BeginTx(ctx); err != nil {
 		return 0, err
 	}

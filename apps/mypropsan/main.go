@@ -126,7 +126,7 @@ func main() {
 		Done: func(c *fiber.Ctx, logString []byte) {
 			if c.Response().StatusCode() != fiber.StatusOK {
 				// log.Info(string(logString))
-				apiLogModel := &entities.ApiLogEntity{}
+				apiLogModel := &entities.ApiLog{}
 				apiLogModel.StatsCode = c.Response().StatusCode()
 				apiLogModel.LogMsg = string(logString)
 				apiLogModel.ClientIpAddrV4 = c.Context().RemoteIP().String()

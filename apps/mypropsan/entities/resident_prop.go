@@ -1,7 +1,7 @@
-package entity
+package entities
 
-// ResidentPropEntity
-type ResidentPropEntity struct {
+// ResidentProp
+type ResidentProp struct {
 	Id            int64   `json:"id" form:"id" query:"id" validate:"required"`
 	Title         string  `json:"title" form:"title" query:"title" validate:"required"`
 	Description   string  `json:"description" form:"description" query:"description"`

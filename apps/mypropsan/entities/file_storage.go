@@ -1,7 +1,7 @@
-package entity
+package entities
 
-// FileStorageEntity
-type FileStorageEntity struct {
+// FileStorage
+type FileStorage struct {
 	Id          int64  `json:"id" form:"id" query:"id" autoinc:"true" validate:"required"`
 	Title       string `json:"title" form:"title" query:"title" validate:"required"`
 	Description string `json:"description" form:"description" query:"description"`

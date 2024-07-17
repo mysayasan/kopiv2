@@ -15,7 +15,7 @@ import (
 	"github.com/gofiber/fiber/v2/log"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/mysayasan/kopiv2/apps/mypropsan/entity"
+	"github.com/mysayasan/kopiv2/apps/mypropsan/entities"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
@@ -112,7 +112,7 @@ func (m *fileStorageApi) upload(c *fiber.Ctx) error {
 	// Get all files from "documents" key:
 	files := form.File["documents"]
 
-	uploadedFiles := make([]*entity.FileStorageEntity, 0)
+	uploadedFiles := make([]*entities.FileStorage, 0)
 	failedUploads := make([]string, 0)
 	// Loop through files:
 	for _, file := range files {
@@ -143,7 +143,7 @@ func (m *fileStorageApi) upload(c *fiber.Ctx) error {
 		hasher.Write(content)
 		sha := base64.URLEncoding.EncodeToString(hasher.Sum(nil))
 
-		var model entity.FileStorageEntity
+		var model entities.FileStorage
 		model.Title = file.Filename
 		model.Description = file.Filename
 		model.Guid = uuid.New().String()

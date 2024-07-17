@@ -80,7 +80,7 @@ func (m *loginApi) googleCallback(c *fiber.Ctx) error {
 	}
 
 	if user == nil {
-		user = &entities.UserLoginEntity{
+		user = &entities.UserLogin{
 			Email:     userG.Email,
 			FirstName: userG.GivenName,
 			LastName:  userG.FamilyName,
