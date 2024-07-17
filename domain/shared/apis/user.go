@@ -34,7 +34,7 @@ func NewUserApi(
 	Rbac := *middlewares.NewRbac()
 
 	group := router.Group("user")
-	group.Get("/", timeout.NewWithContext(handler.getAll, 60*1000*time.Millisecond)).Name("get_all")
+	group.Get("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.getAll, 60*1000*time.Millisecond)).Name("get_all")
 	group.Put("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.update, 60*1000*time.Millisecond)).Name("update")
 }
 

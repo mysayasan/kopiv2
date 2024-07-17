@@ -672,6 +672,10 @@ func (m *dbCrud) Select(ctx context.Context, model interface{}, limit uint64, of
 		wg.Wait()
 	}
 
+	if os.Getenv("ENVIRONMENT") == "dev" {
+		log.Info(result)
+	}
+
 	return result, rowCnt, nil
 }
 

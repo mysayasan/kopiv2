@@ -81,15 +81,15 @@ func (m *loginApi) googleCallback(c *fiber.Ctx) error {
 
 	if user == nil {
 		user = &entities.UserLogin{
-			Email:     userG.Email,
-			FirstName: userG.GivenName,
-			LastName:  userG.FamilyName,
-			PicUrl:    userG.Picture,
-			GroupId:   0,
-			RoleId:    0,
-			IsActive:  true,
-			CreatedBy: 0,
-			CreatedAt: time.Now().Unix(),
+			Email:       userG.Email,
+			FirstName:   userG.GivenName,
+			LastName:    userG.FamilyName,
+			PicUrl:      userG.Picture,
+			UserGroupId: 0,
+			UserRoleId:  0,
+			IsActive:    true,
+			CreatedBy:   0,
+			CreatedAt:   time.Now().Unix(),
 		}
 
 		res, err := m.userService.Create(c.Context(), *user)
