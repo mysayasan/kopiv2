@@ -102,7 +102,7 @@ func (m *userRepo) Update(ctx context.Context, model entities.UserLogin) (uint64
 		return 0, err
 	}
 
-	res, err := m.dbCrud.Update(ctx, model, "")
+	res, err := m.dbCrud.Update(ctx, model, "", false)
 	if err != nil {
 		if rbErr := m.dbCrud.RollbackTx(); rbErr != nil {
 			err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
