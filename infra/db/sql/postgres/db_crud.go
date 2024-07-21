@@ -54,10 +54,18 @@ func (m *dbCrud) RollbackTx() error {
 }
 
 func (m *dbCrud) CommitTx() error {
+	if m.tx == nil {
+		return nil
+	}
 	err := m.tx.Commit()
 	if err != nil {
 		return err
 	}
+	m.tx = nil
+	return nil
+}
+
+func (m *dbCrud) EndTx() error {
 	m.tx = nil
 	return nil
 }

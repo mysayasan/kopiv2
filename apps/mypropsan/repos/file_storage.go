@@ -55,6 +55,7 @@ func (m *fileStorageRepo) Create(ctx context.Context, model entities.FileStorage
 			err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
 			return 0, err
 		}
+		return 0, err
 	}
 
 	if err = m.dbCrud.CommitTx(); err != nil {
@@ -75,6 +76,7 @@ func (m *fileStorageRepo) CreateMultiple(ctx context.Context, model []entities.F
 			err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
 			return 0, err
 		}
+		return 0, err
 	}
 
 	if err = m.dbCrud.CommitTx(); err != nil {

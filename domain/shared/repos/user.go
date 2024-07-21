@@ -35,6 +35,7 @@ func (m *userRepo) GetAll(ctx context.Context, limit uint64, offset uint64, filt
 			err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
 			return nil, 0, err
 		}
+		return nil, 0, err
 	}
 
 	if err = m.dbCrud.CommitTx(); err != nil {
@@ -88,6 +89,7 @@ func (m *userRepo) Create(ctx context.Context, model entities.UserLogin) (uint64
 			err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
 			return 0, err
 		}
+		return 0, err
 	}
 
 	if err = m.dbCrud.CommitTx(); err != nil {
@@ -108,6 +110,28 @@ func (m *userRepo) Update(ctx context.Context, model entities.UserLogin) (uint64
 			err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
 			return 0, err
 		}
+		return 0, err
+	}
+
+	if err = m.dbCrud.CommitTx(); err != nil {
+		return 0, err
+	}
+
+	return res, nil
+}
+
+func (m *userRepo) Delete(ctx context.Context, model entities.UserLogin) (uint64, error) {
+	if err := m.dbCrud.BeginTx(ctx); err != nil {
+		return 0, err
+	}
+
+	res, err := m.dbCrud.Delete(ctx, model, "", false)
+	if err != nil {
+		if rbErr := m.dbCrud.RollbackTx(); rbErr != nil {
+			err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
+			return 0, err
+		}
+		return 0, err
 	}
 
 	if err = m.dbCrud.CommitTx(); err != nil {

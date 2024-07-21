@@ -34,6 +34,7 @@ func (m *apiLogRepo) GetAll(ctx context.Context, limit uint64, offset uint64, fi
 			err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
 			return nil, 0, err
 		}
+		return nil, 0, err
 	}
 
 	if err = m.dbCrud.CommitTx(); err != nil {
@@ -62,6 +63,7 @@ func (m *apiLogRepo) Create(ctx context.Context, model entities.ApiLog) (uint64,
 			err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
 			return 0, err
 		}
+		return 0, err
 	}
 
 	if err = m.dbCrud.CommitTx(); err != nil {

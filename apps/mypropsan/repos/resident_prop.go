@@ -34,6 +34,7 @@ func (m *residentPropRepo) GetLatest(ctx context.Context, limit uint64, offset u
 			err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
 			return nil, 0, err
 		}
+		return nil, 0, err
 	}
 
 	if err = m.dbCrud.CommitTx(); err != nil {

@@ -2,7 +2,7 @@ package entities
 
 // ResidentProp
 type ResidentProp struct {
-	Id            int64   `json:"id" form:"id" query:"id" validate:"required"`
+	Id            int64   `json:"id" form:"id" query:"id" ignoreOnInsert:"true" pkey:"true" validate:"required"`
 	Title         string  `json:"title" form:"title" query:"title" validate:"required"`
 	Description   string  `json:"description" form:"description" query:"description"`
 	CurrencyCode  string  `json:"currencyCode" form:"currencyCode" query:"currencyCode"`

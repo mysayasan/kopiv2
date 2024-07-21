@@ -36,6 +36,7 @@ func NewUserApi(
 	group := router.Group("user")
 	group.Get("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.getAll, 60*1000*time.Millisecond)).Name("get_all")
 	group.Put("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.update, 60*1000*time.Millisecond)).Name("update")
+	group.Delete("/:id", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.delete, 60*1000*time.Millisecond)).Name("delete")
 }
 
 func (m *userApi) getAll(c *fiber.Ctx) error {
@@ -68,7 +69,20 @@ func (m *userApi) update(c *fiber.Ctx) error {
 
 	res, err := m.serv.Update(c.Context(), *body)
 	if err != nil {
-		return controllers.SendError(c, controllers.ErrInternalServerError, "failed to update")
+		return controllers.SendError(c, controllers.ErrInternalServerError, err.Error())
+	}
+
+	return controllers.SendSingleResult(c, res, "succeed")
+}
+
+func (m *userApi) delete(c *fiber.Ctx) error {
+	param := entities.UserLogin{}
+	c.ParamsParser(&param)
+	log.Info(param)
+
+	res, err := m.serv.Delete(c.Context(), param)
+	if err != nil {
+		return controllers.SendError(c, controllers.ErrInternalServerError, err.Error())
 	}
 
 	return controllers.SendSingleResult(c, res, "succeed")
