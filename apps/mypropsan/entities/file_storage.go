@@ -2,7 +2,7 @@ package entities
 
 // FileStorage
 type FileStorage struct {
-	Id          int64  `json:"id" form:"id" query:"id" ignoreOnInsert:"true" pkey:"true" validate:"required"`
+	Id          int64  `json:"id" form:"id" query:"id" params:"id" ignoreOnInsert:"true" pkey:"true" validate:"required"`
 	Title       string `json:"title" form:"title" query:"title" validate:"required"`
 	Description string `json:"description" form:"description" query:"description"`
 	Guid        string `json:"guid" form:"guid" query:"guid"`

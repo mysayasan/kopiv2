@@ -78,7 +78,6 @@ func (m *userApi) update(c *fiber.Ctx) error {
 func (m *userApi) delete(c *fiber.Ctx) error {
 	param := entities.UserLogin{}
 	c.ParamsParser(&param)
-	log.Info(param)
 
 	res, err := m.serv.Delete(c.Context(), param)
 	if err != nil {

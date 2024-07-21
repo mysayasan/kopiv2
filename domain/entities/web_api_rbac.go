@@ -2,7 +2,7 @@ package entities
 
 // WebApiRbac
 type WebApiRbac struct {
-	Id         int64 `json:"id" form:"id" query:"id" ignoreOnInsert:"true" pkey:"true" validate:"required"`
+	Id         int64 `json:"id" form:"id" query:"id" params:"id" ignoreOnInsert:"true" pkey:"true" validate:"required"`
 	WebApiId   int64 `json:"webApiId" form:"webApiId" query:"webApiId" ukey:"true" validate:"required"`
 	UserRoleId int64 `json:"userRoleId" form:"userRoleId" query:"userRoleId" ukey:"true" validate:"required"`
 	CanGet     bool  `json:"canGet" form:"canGet" query:"canGet"`

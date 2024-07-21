@@ -2,7 +2,7 @@ package entities
 
 // ApiLog
 type ApiLog struct {
-	Id             int64  `json:"id" form:"id" query:"id" ignoreOnInsert:"true" validate:"required"`
+	Id             int64  `json:"id" form:"id" query:"id" params:"id" ignoreOnInsert:"true" validate:"required"`
 	StatsCode      int    `json:"statsCode" form:"statsCode" query:"statsCode"`
 	LogMsg         string `json:"logMsg" form:"logMsg" query:"logMsg"`
 	ClientIpAddrV4 string `json:"clientIpAddrV4" form:"clientIpAddrV4" query:"clientIpAddrV4"`

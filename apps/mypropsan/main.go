@@ -95,7 +95,7 @@ func main() {
 	})
 
 	// Repo modules
-	userRepo := sharedRepos.NewUserRepo(postgresDb)
+	userRepo := sharedRepos.NewUserRepo[entities.UserLogin](postgresDb)
 	apiLogRepo := sharedRepos.NewApiLogRepo(postgresDb)
 	residentPropRepo := repos.NewResidentPropRepo(postgresDb)
 	fileStorageRepo := repos.NewFileStorageRepo(postgresDb)

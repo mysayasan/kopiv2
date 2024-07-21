@@ -2,7 +2,7 @@ package entities
 
 // ResidentPropPic
 type ResidentPropPic struct {
-	Id             int64  `json:"id" form:"id" query:"id" ignoreOnInsert:"true" pkey:"true" validate:"required"`
+	Id             int64  `json:"id" form:"id" query:"id" params:"id" ignoreOnInsert:"true" pkey:"true" validate:"required"`
 	ResidentPropId int64  `json:"residentPropId" form:"residentPropId" query:"residentPropId"`
 	PicUrl         string `json:"picUrl" form:"picUrl" query:"picUrl" validate:"required"`
 	CreatedBy      int64  `json:"createdBy" form:"createdBy" query:"createdBy"`
