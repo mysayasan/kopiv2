@@ -19,7 +19,7 @@ type dbCrud struct {
 }
 
 // Create new DbCrud
-func NewDbCrud(config dbsql.DbConfigModel) (IDbCrud, error) {
+func NewDbCrud(config dbsql.DbConfigModel) (dbsql.IDbCrud, error) {
 	conn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s", config.Host, config.Port, config.User, config.Password, config.DbName, config.SslMode)
 	db, err := sql.Open("postgres", conn)
 	if err != nil {

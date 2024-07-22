@@ -6,18 +6,18 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/mysayasan/kopiv2/domain/entities"
 	"github.com/mysayasan/kopiv2/domain/enums/data"
-	"github.com/mysayasan/kopiv2/domain/shared/repos"
+	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
 
 // apiLogService struct
 type apiLogService struct {
-	repo repos.IApiLogRepo
+	apiRepo dbsql.IGenericRepo[entities.ApiLog]
 }
 
 // Create new IApiLogService
-func NewApiLogService(repo repos.IApiLogRepo) IApiLogService {
+func NewApiLogService(dbCrud dbsql.IDbCrud) IApiLogService {
 	return &apiLogService{
-		repo: repo,
+		apiRepo: dbsql.NewGenericRepo[entities.ApiLog](dbCrud),
 	}
 }
 
@@ -29,9 +29,9 @@ func (m *apiLogService) GetAll(ctx context.Context, limit uint64, offset uint64)
 		},
 	}
 
-	return m.repo.GetAll(ctx, limit, offset, nil, sorters)
+	return m.apiRepo.ReadAll(ctx, limit, offset, nil, sorters)
 }
 
 func (m *apiLogService) Create(ctx context.Context, model entities.ApiLog) (uint64, error) {
-	return m.repo.Create(ctx, model)
+	return m.apiRepo.Create(ctx, model)
 }

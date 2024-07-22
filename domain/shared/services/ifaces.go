@@ -8,7 +8,7 @@ import (
 
 // IUserService interface
 type IUserService interface {
-	GetAll(ctx context.Context, limit uint64, offset uint64) ([]*entities.UserLogin, uint64, error)
+	ReadAll(ctx context.Context, limit uint64, offset uint64) ([]*entities.UserLogin, uint64, error)
 	GetByEmail(ctx context.Context, email string) (*entities.UserLogin, error)
 	Create(ctx context.Context, model entities.UserLogin) (uint64, error)
 	Update(ctx context.Context, model entities.UserLogin) (uint64, error)

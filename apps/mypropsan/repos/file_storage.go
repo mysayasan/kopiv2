@@ -8,16 +8,16 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/entities"
 	"github.com/mysayasan/kopiv2/domain/enums/data"
-	"github.com/mysayasan/kopiv2/infra/db/sql/postgres"
+	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
 
 // fileStorageRepo struct
 type fileStorageRepo struct {
-	dbCrud postgres.IDbCrud
+	dbCrud dbsql.IDbCrud
 }
 
 // Create new IFileStorageRepo
-func NewFileStorageRepo(dbCrud postgres.IDbCrud) IFileStorageRepo {
+func NewFileStorageRepo(dbCrud dbsql.IDbCrud) IFileStorageRepo {
 	return &fileStorageRepo{
 		dbCrud: dbCrud,
 	}

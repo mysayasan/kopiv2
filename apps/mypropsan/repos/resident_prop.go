@@ -8,16 +8,16 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/models"
 	"github.com/mysayasan/kopiv2/domain/enums/data"
-	"github.com/mysayasan/kopiv2/infra/db/sql/postgres"
+	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
 
 // residentPropRepo struct
 type residentPropRepo struct {
-	dbCrud postgres.IDbCrud
+	dbCrud dbsql.IDbCrud
 }
 
 // Create new IResidentPropRepo
-func NewResidentPropRepo(dbCrud postgres.IDbCrud) IResidentPropRepo {
+func NewResidentPropRepo(dbCrud dbsql.IDbCrud) IResidentPropRepo {
 	return &residentPropRepo{
 		dbCrud: dbCrud,
 	}

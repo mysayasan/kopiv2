@@ -24,15 +24,15 @@ type loginApi struct {
 // Create LoginApi
 func NewLoginApi(
 	router fiber.Router,
-	oAuth2Conf login.OAuth2ConfigModel,
+	oAuth2Conf *login.OAuth2ConfigModel,
 	auth middlewares.AuthMiddleware,
 	userService services.IUserService) {
 
-	login.GoogleConfig(oAuth2Conf)
-	login.GithubConfig(oAuth2Conf)
+	login.GoogleConfig(*oAuth2Conf)
+	login.GithubConfig(*oAuth2Conf)
 
-	googleLogin := login.NewGoogleLogin(oAuth2Conf, auth)
-	githubLogin := login.NewGithubLogin(oAuth2Conf, auth)
+	googleLogin := login.NewGoogleLogin(*oAuth2Conf, auth)
+	githubLogin := login.NewGithubLogin(*oAuth2Conf, auth)
 
 	handler := &loginApi{
 		auth:        auth,

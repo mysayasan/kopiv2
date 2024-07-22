@@ -1,4 +1,4 @@
-package repos
+package dbsql
 
 import (
 	"context"
@@ -8,22 +8,21 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/mitchellh/mapstructure"
 	"github.com/mysayasan/kopiv2/domain/enums/data"
-	"github.com/mysayasan/kopiv2/infra/db/sql/postgres"
 )
 
-// userRepo struct
-type userRepo[T any] struct {
-	dbCrud postgres.IDbCrud
+// genericRepo struct
+type genericRepo[T any] struct {
+	dbCrud IDbCrud
 }
 
-// Create new IUserRepo
-func NewUserRepo[T any](dbCrud postgres.IDbCrud) IRepo[T] {
-	return &userRepo[T]{
+// Create new IGenericRepo
+func NewGenericRepo[T any](dbCrud IDbCrud) IGenericRepo[T] {
+	return &genericRepo[T]{
 		dbCrud: dbCrud,
 	}
 }
 
-func (m *userRepo[T]) GetAll(ctx context.Context, limit uint64, offset uint64, filters []data.Filter, sorter []data.Sorter) ([]*T, uint64, error) {
+func (m *genericRepo[T]) ReadAll(ctx context.Context, limit uint64, offset uint64, filters []data.Filter, sorter []data.Sorter) ([]*T, uint64, error) {
 	if err := m.dbCrud.BeginTx(ctx); err != nil {
 		return nil, 0, err
 	}
@@ -53,12 +52,16 @@ func (m *userRepo[T]) GetAll(ctx context.Context, limit uint64, offset uint64, f
 	return list, totalCnt, nil
 }
 
-func (m *userRepo[T]) GetByEmail(ctx context.Context, email string) (*T, error) {
+func (m *genericRepo[T]) ReadByIds(ctx context.Context, id ...uint64) (*T, error) {
+	return nil, nil
+}
+
+func (m *genericRepo[T]) ReadByUids(ctx context.Context, uid ...any) (*T, error) {
 	var filters []data.Filter
 	filter := data.Filter{
 		FieldName: "Email",
 		Compare:   1,
-		Value:     email,
+		Value:     uid[0],
 	}
 
 	filters = append(filters, filter)
@@ -79,7 +82,7 @@ func (m *userRepo[T]) GetByEmail(ctx context.Context, email string) (*T, error) 
 	return &model, nil
 }
 
-func (m *userRepo[T]) Create(ctx context.Context, model T) (uint64, error) {
+func (m *genericRepo[T]) Create(ctx context.Context, model T) (uint64, error) {
 	if err := m.dbCrud.BeginTx(ctx); err != nil {
 		return 0, err
 	}
@@ -100,7 +103,28 @@ func (m *userRepo[T]) Create(ctx context.Context, model T) (uint64, error) {
 	return res, nil
 }
 
-func (m *userRepo[T]) Update(ctx context.Context, model T) (uint64, error) {
+func (m *genericRepo[T]) CreateMultiple(ctx context.Context, models []T) (uint64, error) {
+	if err := m.dbCrud.BeginTx(ctx); err != nil {
+		return 0, err
+	}
+
+	res, err := m.dbCrud.Insert(ctx, models, "")
+	if err != nil {
+		if rbErr := m.dbCrud.RollbackTx(); rbErr != nil {
+			err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
+			return 0, err
+		}
+		return 0, err
+	}
+
+	if err = m.dbCrud.CommitTx(); err != nil {
+		return 0, err
+	}
+
+	return res, nil
+}
+
+func (m *genericRepo[T]) Update(ctx context.Context, model T) (uint64, error) {
 	if err := m.dbCrud.BeginTx(ctx); err != nil {
 		return 0, err
 	}
@@ -121,7 +145,7 @@ func (m *userRepo[T]) Update(ctx context.Context, model T) (uint64, error) {
 	return res, nil
 }
 
-func (m *userRepo[T]) Delete(ctx context.Context, model T) (uint64, error) {
+func (m *genericRepo[T]) Delete(ctx context.Context, model T) (uint64, error) {
 	if err := m.dbCrud.BeginTx(ctx); err != nil {
 		return 0, err
 	}

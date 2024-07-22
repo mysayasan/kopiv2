@@ -16,11 +16,9 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/joho/godotenv"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/apis"
-	"github.com/mysayasan/kopiv2/apps/mypropsan/repos"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/services"
 	"github.com/mysayasan/kopiv2/domain/entities"
 	sharedApis "github.com/mysayasan/kopiv2/domain/shared/apis"
-	sharedRepos "github.com/mysayasan/kopiv2/domain/shared/repos"
 	sharedServices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 	"github.com/mysayasan/kopiv2/infra/config"
@@ -95,19 +93,22 @@ func main() {
 	})
 
 	// Repo modules
-	userRepo := sharedRepos.NewUserRepo[entities.UserLogin](postgresDb)
-	apiLogRepo := sharedRepos.NewApiLogRepo(postgresDb)
-	residentPropRepo := repos.NewResidentPropRepo(postgresDb)
-	fileStorageRepo := repos.NewFileStorageRepo(postgresDb)
+	// userRepo := sharedRepos.NewUserRepo[entities.UserLogin](postgresDb)
+	// apiLogRepo := sharedRepos.NewApiLogRepo(postgresDb)
+	// residentPropRepo := repos.NewResidentPropRepo(postgresDb)
+	// fileStorageRepo := repos.NewFileStorageRepo(postgresDb)
 
 	// Page Modules
-	userService := sharedServices.NewUserService(userRepo)
-	apiLogService := sharedServices.NewApiLogService(apiLogRepo)
-	homeService := services.NewHomeService(residentPropRepo)
-	fileStorageService := services.NewFileStorageService(fileStorageRepo)
+	// userService := sharedServices.NewUserService(userRepo)
+	userService := sharedServices.NewUserService(postgresDb)
+	apiLogService := sharedServices.NewApiLogService(postgresDb)
+	homeService := services.NewHomeService(postgresDb)
+	fileStorageService := services.NewFileStorageService(postgresDb)
 
 	// Login module
-	sharedApis.NewLoginApi(api, appConfig.Login.Google, *auth, userService)
+	if appConfig.Login.Google != nil {
+		sharedApis.NewLoginApi(api, appConfig.Login.Google, *auth, userService)
+	}
 	// User Module
 	sharedApis.NewUserApi(api, *auth, userService)
 	// Api Log module

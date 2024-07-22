@@ -5,29 +5,31 @@ import (
 
 	_ "github.com/lib/pq"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/entities"
-	"github.com/mysayasan/kopiv2/apps/mypropsan/repos"
+	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
 
 // fileStorageService struct
 type fileStorageService struct {
-	repo repos.IFileStorageRepo
+	dbCrud dbsql.IDbCrud
+	fsRepo dbsql.IGenericRepo[entities.FileStorage]
 }
 
 // Create new IFileStorageService
-func NewFileStorageService(repo repos.IFileStorageRepo) IFileStorageService {
+func NewFileStorageService(dbCrud dbsql.IDbCrud) IFileStorageService {
 	return &fileStorageService{
-		repo: repo,
+		dbCrud: dbCrud,
+		fsRepo: dbsql.NewGenericRepo[entities.FileStorage](dbCrud),
 	}
 }
 
 func (m *fileStorageService) GetByGuid(ctx context.Context, guid string) (*entities.FileStorage, error) {
-	return m.repo.GetByGuid(ctx, guid)
+	return m.fsRepo.ReadByUids(ctx, guid)
 }
 
 func (m *fileStorageService) Create(ctx context.Context, model entities.FileStorage) (uint64, error) {
-	return m.repo.Create(ctx, model)
+	return m.fsRepo.Create(ctx, model)
 }
 
 func (m *fileStorageService) CreateMultiple(ctx context.Context, model []entities.FileStorage) (uint64, error) {
-	return m.repo.CreateMultiple(ctx, model)
+	return m.fsRepo.CreateMultiple(ctx, model)
 }
