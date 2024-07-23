@@ -7,7 +7,7 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/mitchellh/mapstructure"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/entities"
-	"github.com/mysayasan/kopiv2/domain/enums/data"
+	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
 
@@ -24,8 +24,8 @@ func NewFileStorageRepo(dbCrud dbsql.IDbCrud) IFileStorageRepo {
 }
 
 func (m *fileStorageRepo) GetByGuid(ctx context.Context, guid string) (*entities.FileStorage, error) {
-	var filters []data.Filter
-	filter := data.Filter{
+	var filters []sqldataenums.Filter
+	filter := sqldataenums.Filter{
 		FieldName: "Guid",
 		Compare:   1,
 		Value:     guid,

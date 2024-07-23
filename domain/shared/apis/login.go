@@ -74,7 +74,7 @@ func (m *loginApi) googleCallback(c *fiber.Ctx) error {
 		return c.SendString(err.Error())
 	}
 
-	user, err := m.userService.GetByEmail(c.Context(), userG.Email)
+	user, err := m.userService.ReadByEmail(c.Context(), userG.Email)
 	if err != nil {
 		log.Printf("%s", err.Error())
 	}

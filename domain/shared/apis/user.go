@@ -35,6 +35,7 @@ func NewUserApi(
 
 	group := router.Group("user")
 	group.Get("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.getAll, 60*1000*time.Millisecond)).Name("get_all")
+	group.Get("/email", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.getByEmail, 60*1000*time.Millisecond)).Name("get_by_email")
 	group.Put("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.update, 60*1000*time.Millisecond)).Name("update")
 	group.Delete("/:id", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.delete, 60*1000*time.Millisecond)).Name("delete")
 }
@@ -56,6 +57,21 @@ func (m *userApi) getAll(c *fiber.Ctx) error {
 	c.Response().Header.Add("X-Rows", fmt.Sprintf("%d", totalCnt))
 
 	return controllers.SendPagingResult(c, res, limit, offset, totalCnt)
+}
+
+func (m *userApi) getByEmail(c *fiber.Ctx) error {
+	usermail := c.Query("email")
+
+	ctx := c.UserContext()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	res, err := m.serv.ReadByEmail(ctx, usermail)
+	if err != nil {
+		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
+	}
+
+	return controllers.SendSingleResult(c, res)
 }
 
 func (m *userApi) update(c *fiber.Ctx) error {

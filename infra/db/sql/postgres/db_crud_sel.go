@@ -13,10 +13,10 @@ import (
 	"github.com/gofiber/fiber/v2/log"
 	strcase "github.com/iancoleman/strcase"
 	_ "github.com/lib/pq"
-	"github.com/mysayasan/kopiv2/domain/enums/data"
+	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 )
 
-func (m *dbCrud) genSelSqlStr(props reflect.Value, limit uint64, offset uint64, filters []data.Filter, sorters []data.Sorter, datasrc string) (int, string) {
+func (m *dbCrud) genSelSqlStr(props reflect.Value, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter, datasrc string) (int, string) {
 
 	if datasrc == "" {
 		propName := strcase.ToSnake(props.Type().Name())
@@ -80,7 +80,7 @@ func (m *dbCrud) genSelSqlStr(props reflect.Value, limit uint64, offset uint64, 
 	return len(selCols), res
 }
 
-func (m *dbCrud) Select(ctx context.Context, model interface{}, limit uint64, offset uint64, filters []data.Filter, sorters []data.Sorter, datasrc string) ([]map[string]interface{}, uint64, error) {
+func (m *dbCrud) Select(ctx context.Context, model interface{}, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter, datasrc string) ([]map[string]interface{}, uint64, error) {
 	props := reflect.ValueOf(model)
 	colCnt, sqlStr := m.genSelSqlStr(props, limit, offset, filters, sorters, datasrc)
 
@@ -228,7 +228,7 @@ func (m *dbCrud) Select(ctx context.Context, model interface{}, limit uint64, of
 						cdatsrc := field.Tag.Get("datasrc")
 						pkeys := strings.Split(field.Tag.Get("parents"), ",")
 
-						var filters []data.Filter
+						var filters []sqldataenums.Filter
 						for _, pkey := range pkeys {
 							fkeys := strings.Split(pkey, ":")
 							var val interface{}
@@ -293,7 +293,7 @@ func (m *dbCrud) Select(ctx context.Context, model interface{}, limit uint64, of
 									val = *res[fkeys[0]].(*bool)
 								}
 							}
-							filters = append(filters, data.Filter{
+							filters = append(filters, sqldataenums.Filter{
 								FieldName: fkeys[1],
 								Compare:   1,
 								Value:     val,
@@ -301,7 +301,7 @@ func (m *dbCrud) Select(ctx context.Context, model interface{}, limit uint64, of
 						}
 
 						wg.Add(1)
-						go func(res map[string]interface{}, props reflect.Value, filters []data.Filter, cdatsrc string) {
+						go func(res map[string]interface{}, props reflect.Value, filters []sqldataenums.Filter, cdatsrc string) {
 							defer wg.Done()
 							rows, _, err := m.Select(ctx, props.Interface(), 0, 0, filters, nil, cdatsrc)
 							if err == nil {
@@ -322,7 +322,7 @@ func (m *dbCrud) Select(ctx context.Context, model interface{}, limit uint64, of
 	return result, rowCnt, nil
 }
 
-func (m *dbCrud) SelectSingle(ctx context.Context, model interface{}, filters []data.Filter, datasrc string) (map[string]interface{}, error) {
+func (m *dbCrud) SelectSingle(ctx context.Context, model interface{}, filters []sqldataenums.Filter, datasrc string) (map[string]interface{}, error) {
 	props := reflect.ValueOf(model)
 	rows, _, err := m.Select(ctx, props.Interface(), 1, 0, filters, nil, datasrc)
 	if err != nil {
@@ -331,6 +331,57 @@ func (m *dbCrud) SelectSingle(ctx context.Context, model interface{}, filters []
 
 	if len(rows) > 0 {
 		return rows[0], nil
+	}
+
+	return nil, nil
+}
+
+func (m *dbCrud) SelectByPKey(ctx context.Context, model interface{}, datasrc string, ids ...uint64) (map[string]interface{}, error) {
+	props := reflect.ValueOf(model)
+
+	filters := m.getFiltersByKeyType(props, 1, ids)
+
+	rows, _, err := m.Select(ctx, props.Interface(), 1, 0, filters, nil, datasrc)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(rows) > 0 {
+		return rows[0], nil
+	}
+
+	return nil, nil
+}
+
+func (m *dbCrud) SelectByUKey(ctx context.Context, model interface{}, datasrc string, uids ...any) (map[string]interface{}, error) {
+	props := reflect.ValueOf(model)
+
+	filters := m.getFiltersByKeyType(props, 2, uids...)
+
+	rows, _, err := m.Select(ctx, props.Interface(), 1, 0, filters, nil, datasrc)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(rows) > 0 {
+		return rows[0], nil
+	}
+
+	return nil, nil
+}
+
+func (m *dbCrud) SelectByFKey(ctx context.Context, model interface{}, datasrc string, fids ...any) ([]map[string]interface{}, error) {
+	props := reflect.ValueOf(model)
+
+	filters := m.getFiltersByKeyType(props, 3, fids...)
+
+	rows, _, err := m.Select(ctx, props.Interface(), 1, 0, filters, nil, datasrc)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(rows) > 0 {
+		return rows, nil
 	}
 
 	return nil, nil

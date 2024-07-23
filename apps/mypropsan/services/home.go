@@ -5,7 +5,7 @@ import (
 
 	_ "github.com/lib/pq"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/models"
-	"github.com/mysayasan/kopiv2/domain/enums/data"
+	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
 
@@ -24,7 +24,7 @@ func NewHomeService(dbCrud dbsql.IDbCrud) IHomeService {
 }
 
 func (m *homeService) GetLatest(ctx context.Context, limit uint64, offset uint64) ([]*models.ResidentProp, uint64, error) {
-	sorters := []data.Sorter{
+	sorters := []sqldataenums.Sorter{
 		{
 			FieldName: "LandAreaSize",
 			Sort:      2,

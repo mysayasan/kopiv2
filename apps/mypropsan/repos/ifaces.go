@@ -5,12 +5,12 @@ import (
 
 	"github.com/mysayasan/kopiv2/apps/mypropsan/entities"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/models"
-	"github.com/mysayasan/kopiv2/domain/enums/data"
+	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 )
 
 // IResidentPropRepo interface
 type IResidentPropRepo interface {
-	GetLatest(ctx context.Context, limit uint64, offset uint64, filters []data.Filter, sorter []data.Sorter) ([]*models.ResidentProp, uint64, error)
+	GetLatest(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorter []sqldataenums.Sorter) ([]*models.ResidentProp, uint64, error)
 }
 
 // IFileStorageRepo interface

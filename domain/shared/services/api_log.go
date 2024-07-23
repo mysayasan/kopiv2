@@ -5,7 +5,7 @@ import (
 
 	_ "github.com/lib/pq"
 	"github.com/mysayasan/kopiv2/domain/entities"
-	"github.com/mysayasan/kopiv2/domain/enums/data"
+	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
 
@@ -22,7 +22,7 @@ func NewApiLogService(dbCrud dbsql.IDbCrud) IApiLogService {
 }
 
 func (m *apiLogService) GetAll(ctx context.Context, limit uint64, offset uint64) ([]*entities.ApiLog, uint64, error) {
-	sorters := []data.Sorter{
+	sorters := []sqldataenums.Sorter{
 		{
 			FieldName: "CreatedAt",
 			Sort:      2,

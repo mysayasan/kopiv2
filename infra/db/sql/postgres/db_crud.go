@@ -8,7 +8,7 @@ import (
 
 	strcase "github.com/iancoleman/strcase"
 	_ "github.com/lib/pq"
-	"github.com/mysayasan/kopiv2/domain/enums/data"
+	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
 
@@ -70,7 +70,7 @@ func (m *dbCrud) EndTx() error {
 	return nil
 }
 
-func (m *dbCrud) genWhereSqlStr(props reflect.Value, filters []data.Filter) []string {
+func (m *dbCrud) genWhereSqlStr(props reflect.Value, filters []sqldataenums.Filter) []string {
 	res := []string{}
 	for _, filter := range filters {
 		if filter.Compare == 1 {
@@ -95,7 +95,7 @@ func (m *dbCrud) genWhereSqlStr(props reflect.Value, filters []data.Filter) []st
 	return res
 }
 
-func (m *dbCrud) genSortSqlStr(sorters []data.Sorter) []string {
+func (m *dbCrud) genSortSqlStr(sorters []sqldataenums.Sorter) []string {
 	res := []string{}
 	for _, sorter := range sorters {
 		// field := props.FieldByName(sorter.FieldName)
@@ -129,4 +129,76 @@ func (m *dbCrud) getCols(props reflect.Value) []string {
 	}
 
 	return res
+}
+
+func (m *dbCrud) getFiltersByKeyType(props reflect.Value, keyType sqldataenums.DBKeyType, keys ...any) []sqldataenums.Filter {
+	filters := make([]sqldataenums.Filter, 0)
+	keyCnt := 0
+	for i := 0; i < props.NumField(); i++ {
+		field := props.Type().Field(i)
+		if field.Type.Kind() == reflect.Slice {
+			if field.Type.Elem().Kind() == reflect.Struct {
+				continue
+			}
+		}
+
+		switch keyType {
+		case sqldataenums.DBKeyType(sqldataenums.Primary):
+			{
+				if field.Tag.Get("pkey") == "true" {
+					val := props.Field(i).Interface()
+					if keyCnt < len(keys) {
+						val = keys[keyCnt]
+						keyCnt++
+					}
+
+					filter := sqldataenums.Filter{
+						FieldName: field.Name,
+						Compare:   1,
+						Value:     val,
+					}
+					filters = append(filters, filter)
+				}
+				break
+			}
+		case sqldataenums.DBKeyType(sqldataenums.Unique):
+			{
+				if field.Tag.Get("ukey") == "true" {
+					val := props.Field(i).Interface()
+					if keyCnt < len(keys) {
+						val = keys[keyCnt]
+						keyCnt++
+					}
+
+					filter := sqldataenums.Filter{
+						FieldName: field.Name,
+						Compare:   1,
+						Value:     val,
+					}
+					filters = append(filters, filter)
+				}
+				break
+			}
+		case sqldataenums.DBKeyType(sqldataenums.Foreign):
+			{
+				if field.Tag.Get("fkey") == "true" {
+					val := props.Field(i).Interface()
+					if keyCnt < len(keys) {
+						val = keys[keyCnt]
+						keyCnt++
+					}
+
+					filter := sqldataenums.Filter{
+						FieldName: field.Name,
+						Compare:   1,
+						Value:     val,
+					}
+					filters = append(filters, filter)
+				}
+				break
+			}
+		}
+	}
+
+	return filters
 }

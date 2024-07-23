@@ -1,4 +1,4 @@
-package data
+package sqldataenums
 
 // Paging
 type Paging struct {
@@ -35,4 +35,12 @@ type Sort int
 const (
 	ASC  Sort = iota + 1 // EnumIndex = 1
 	DESC                 // EnumIndex = 2
+)
+
+type DBKeyType int
+
+const (
+	Primary Sort = iota + 1 // EnumIndex = 1
+	Unique                  // EnumIndex = 2
+	Foreign                 // EnumIndex = 2
 )

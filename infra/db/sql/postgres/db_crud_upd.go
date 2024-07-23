@@ -11,10 +11,10 @@ import (
 	"github.com/gofiber/fiber/v2/log"
 	strcase "github.com/iancoleman/strcase"
 	_ "github.com/lib/pq"
-	"github.com/mysayasan/kopiv2/domain/enums/data"
+	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 )
 
-func (m *dbCrud) genUpdSqlStr(props reflect.Value, datasrc string, filters []data.Filter) string {
+func (m *dbCrud) genUpdSqlStr(props reflect.Value, datasrc string, filters []sqldataenums.Filter) string {
 	if props.Type().Kind() == reflect.Slice {
 		log.Info("its a slice")
 	}
@@ -112,38 +112,98 @@ func (m *dbCrud) genUpdSqlStr(props reflect.Value, datasrc string, filters []dat
 	return res
 }
 
-func (m *dbCrud) Update(ctx context.Context, model interface{}, datasrc string, updByUKey bool) (uint64, error) {
+func (m *dbCrud) UpdateByPKey(ctx context.Context, model interface{}, datasrc string, ids ...uint64) (uint64, error) {
 	props := reflect.ValueOf(model)
 
-	filters := make([]data.Filter, 0)
-	for i := 0; i < props.NumField(); i++ {
-		field := props.Type().Field(i)
-		if field.Type.Kind() == reflect.Slice {
-			if field.Type.Elem().Kind() == reflect.Struct {
-				continue
-			}
+	filters := m.getFiltersByKeyType(props, 1, ids)
+
+	if len(filters) < 1 {
+		return 0, fmt.Errorf("update failed : cant find pkey or ukey in data fields")
+	}
+
+	sqlStr := m.genUpdSqlStr(props, datasrc, filters)
+
+	var err error
+	affect := int64(0)
+
+	if m.tx != nil {
+		res, err := m.tx.ExecContext(ctx, sqlStr)
+		if err != nil {
+			return 0, err
 		}
 
-		if updByUKey {
-			if field.Tag.Get("ukey") == "true" {
-				filter := data.Filter{
-					FieldName: field.Name,
-					Compare:   1,
-					Value:     props.Field(i).Interface(),
-				}
-				filters = append(filters, filter)
-			}
-		} else {
-			if field.Tag.Get("pkey") == "true" {
-				filter := data.Filter{
-					FieldName: field.Name,
-					Compare:   1,
-					Value:     props.Field(i).Interface(),
-				}
-				filters = append(filters, filter)
-			}
+		affect, err = res.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+	} else {
+		res, err := m.db.ExecContext(ctx, sqlStr)
+		if err != nil {
+			return 0, err
+		}
+
+		affect, err = res.RowsAffected()
+		if err != nil {
+			return 0, err
 		}
 	}
+
+	if affect < 1 {
+		err = fmt.Errorf("weird  behaviour. total affected: %d", affect)
+		return 0, err
+	}
+
+	return uint64(affect), nil
+}
+
+func (m *dbCrud) UpdateByUKey(ctx context.Context, model interface{}, datasrc string, uids ...any) (uint64, error) {
+	props := reflect.ValueOf(model)
+
+	filters := m.getFiltersByKeyType(props, 2, uids...)
+
+	if len(filters) < 1 {
+		return 0, fmt.Errorf("update failed : cant find pkey or ukey in data fields")
+	}
+
+	sqlStr := m.genUpdSqlStr(props, datasrc, filters)
+
+	var err error
+	affect := int64(0)
+
+	if m.tx != nil {
+		res, err := m.tx.ExecContext(ctx, sqlStr)
+		if err != nil {
+			return 0, err
+		}
+
+		affect, err = res.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+	} else {
+		res, err := m.db.ExecContext(ctx, sqlStr)
+		if err != nil {
+			return 0, err
+		}
+
+		affect, err = res.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	if affect < 1 {
+		err = fmt.Errorf("weird  behaviour. total affected: %d", affect)
+		return 0, err
+	}
+
+	return uint64(affect), nil
+}
+
+func (m *dbCrud) UpdateByFKey(ctx context.Context, model interface{}, datasrc string, fids ...any) (uint64, error) {
+	props := reflect.ValueOf(model)
+
+	filters := m.getFiltersByKeyType(props, 3, fids...)
 
 	if len(filters) < 1 {
 		return 0, fmt.Errorf("update failed : cant find pkey or ukey in data fields")

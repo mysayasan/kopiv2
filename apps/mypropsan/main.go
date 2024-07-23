@@ -9,7 +9,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/log"
 	"github.com/gofiber/fiber/v2/middleware/cors"
-	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 
 	// "github.com/gofiber/fileStorage/sqlite3"
@@ -32,7 +31,7 @@ func main() {
 	var appConfig *config.AppConfigModel
 
 	if env == "dev" {
-		appConfig, _ = config.LoadAppConfiguration("./config_dev.json")
+		appConfig, _ = config.LoadAppConfiguration("./config.dev.json")
 	} else {
 		appConfig, _ = config.LoadAppConfiguration("./config.json")
 	}
@@ -50,13 +49,12 @@ func main() {
 		panic("I'm an error")
 	})
 
-	// Limiter
-	app.Use(limiter.New(limiter.Config{
-		Max:               20,
-		Expiration:        30 * time.Second,
-		LimiterMiddleware: limiter.SlidingWindow{},
-		// FileStorage:           fileStorage,
-	}))
+	// // Limiter
+	// app.Use(limiter.New(limiter.Config{
+	// 	Max:               30,
+	// 	Expiration:        1 * time.Second,
+	// 	LimiterMiddleware: limiter.SlidingWindow{},
+	// }))
 
 	// app.Use(helmet.New(helmet.Config{
 	// 	ContentTypeNosniff: "nosniff",

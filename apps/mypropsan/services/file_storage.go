@@ -23,7 +23,7 @@ func NewFileStorageService(dbCrud dbsql.IDbCrud) IFileStorageService {
 }
 
 func (m *fileStorageService) GetByGuid(ctx context.Context, guid string) (*entities.FileStorage, error) {
-	return m.fsRepo.ReadByUids(ctx, guid)
+	return m.fsRepo.ReadByUKey(ctx, guid)
 }
 
 func (m *fileStorageService) Create(ctx context.Context, model entities.FileStorage) (uint64, error) {

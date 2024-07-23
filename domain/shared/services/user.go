@@ -5,7 +5,7 @@ import (
 
 	_ "github.com/lib/pq"
 	"github.com/mysayasan/kopiv2/domain/entities"
-	"github.com/mysayasan/kopiv2/domain/enums/data"
+	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
 
@@ -24,7 +24,7 @@ func NewUserService(dbCrud dbsql.IDbCrud) IUserService {
 }
 
 func (m *userService) ReadAll(ctx context.Context, limit uint64, offset uint64) ([]*entities.UserLogin, uint64, error) {
-	sorters := []data.Sorter{
+	sorters := []sqldataenums.Sorter{
 		{
 			FieldName: "CreatedAt",
 			Sort:      2,
@@ -34,9 +34,8 @@ func (m *userService) ReadAll(ctx context.Context, limit uint64, offset uint64) 
 	return m.userRepo.ReadAll(ctx, limit, offset, nil, sorters)
 }
 
-func (m *userService) GetByEmail(ctx context.Context, email string) (*entities.UserLogin, error) {
-	// return m.repo.GetByEmail(ctx, email)
-	return nil, nil
+func (m *userService) ReadByEmail(ctx context.Context, email string) (*entities.UserLogin, error) {
+	return m.userRepo.ReadByUKey(ctx, email)
 }
 
 func (m *userService) Create(ctx context.Context, model entities.UserLogin) (uint64, error) {
