@@ -75,7 +75,7 @@ func SendError(c *fiber.Ctx, err error, message string, data ...interface{}) err
 		msg = message
 	}
 	var resp ErrResponse[interface{}]
-	resp.Status = 1
+	resp.Status = 0
 	resp.Message = msg
 	resp.Details = data
 

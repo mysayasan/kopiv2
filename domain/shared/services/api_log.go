@@ -21,7 +21,7 @@ func NewApiLogService(dbCrud dbsql.IDbCrud) IApiLogService {
 	}
 }
 
-func (m *apiLogService) GetAll(ctx context.Context, limit uint64, offset uint64) ([]*entities.ApiLog, uint64, error) {
+func (m *apiLogService) Read(ctx context.Context, limit uint64, offset uint64) ([]*entities.ApiLog, uint64, error) {
 	sorters := []sqldataenums.Sorter{
 		{
 			FieldName: "CreatedAt",
@@ -29,7 +29,7 @@ func (m *apiLogService) GetAll(ctx context.Context, limit uint64, offset uint64)
 		},
 	}
 
-	return m.apiRepo.ReadAll(ctx, limit, offset, nil, sorters)
+	return m.apiRepo.Read(ctx, limit, offset, nil, sorters, "")
 }
 
 func (m *apiLogService) Create(ctx context.Context, model entities.ApiLog) (uint64, error) {

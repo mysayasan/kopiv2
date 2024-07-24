@@ -20,9 +20,9 @@ func NewGenericRepo[T any](dbCrud IDbCrud) IGenericRepo[T] {
 	}
 }
 
-func (m *genericRepo[T]) ReadAll(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorter []sqldataenums.Sorter) ([]*T, uint64, error) {
+func (m *genericRepo[T]) Read(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorter []sqldataenums.Sorter, datasrc string) ([]*T, uint64, error) {
 	var tmodel = new(T)
-	res, totalCnt, err := m.dbCrud.Select(ctx, *tmodel, limit, offset, filters, sorter, "")
+	res, totalCnt, err := m.dbCrud.Select(ctx, *tmodel, limit, offset, filters, sorter, datasrc)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -38,7 +38,20 @@ func (m *genericRepo[T]) ReadAll(ctx context.Context, limit uint64, offset uint6
 	return list, totalCnt, nil
 }
 
-func (m *genericRepo[T]) ReadByPKey(ctx context.Context, ids ...uint64) (*T, error) {
+func (m *genericRepo[T]) ReadSingle(ctx context.Context, filters []sqldataenums.Filter, datasrc string) (*T, error) {
+	var tmodel = new(T)
+	res, err := m.dbCrud.SelectSingle(ctx, *tmodel, filters, datasrc)
+	if err != nil {
+		return nil, err
+	}
+
+	var model T
+	mapstructure.Decode(res, &model)
+
+	return &model, nil
+}
+
+func (m *genericRepo[T]) ReadById(ctx context.Context, ids ...any) (*T, error) {
 	var tmodel = new(T)
 	res, err := m.dbCrud.SelectByPKey(ctx, *tmodel, "", ids...)
 	if err != nil {
@@ -51,7 +64,7 @@ func (m *genericRepo[T]) ReadByPKey(ctx context.Context, ids ...uint64) (*T, err
 	return &model, nil
 }
 
-func (m *genericRepo[T]) ReadByUKey(ctx context.Context, uids ...any) (*T, error) {
+func (m *genericRepo[T]) ReadByUnique(ctx context.Context, uids ...any) (*T, error) {
 	var tmodel = new(T)
 	res, err := m.dbCrud.SelectByUKey(ctx, *tmodel, "", uids...)
 	if err != nil {
@@ -62,6 +75,23 @@ func (m *genericRepo[T]) ReadByUKey(ctx context.Context, uids ...any) (*T, error
 	mapstructure.Decode(res, &model)
 
 	return &model, nil
+}
+
+func (m *genericRepo[T]) ReadByForeign(ctx context.Context, fids ...any) ([]*T, error) {
+	var tmodel = new(T)
+	res, err := m.dbCrud.SelectByFKey(ctx, *tmodel, "", fids...)
+	if err != nil {
+		return nil, err
+	}
+
+	list := make([]*T, 0)
+
+	for _, row := range res {
+		var model T
+		mapstructure.Decode(row, &model)
+		list = append(list, &model)
+	}
+	return list, nil
 }
 
 func (m *genericRepo[T]) Create(ctx context.Context, model T) (uint64, error) {

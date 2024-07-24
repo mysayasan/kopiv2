@@ -23,7 +23,7 @@ func NewUserService(dbCrud dbsql.IDbCrud) IUserService {
 	}
 }
 
-func (m *userService) ReadAll(ctx context.Context, limit uint64, offset uint64) ([]*entities.UserLogin, uint64, error) {
+func (m *userService) Read(ctx context.Context, limit uint64, offset uint64) ([]*entities.UserLogin, uint64, error) {
 	sorters := []sqldataenums.Sorter{
 		{
 			FieldName: "CreatedAt",
@@ -31,11 +31,11 @@ func (m *userService) ReadAll(ctx context.Context, limit uint64, offset uint64) 
 		},
 	}
 
-	return m.userRepo.ReadAll(ctx, limit, offset, nil, sorters)
+	return m.userRepo.Read(ctx, limit, offset, nil, sorters, "")
 }
 
 func (m *userService) ReadByEmail(ctx context.Context, email string) (*entities.UserLogin, error) {
-	return m.userRepo.ReadByUKey(ctx, email)
+	return m.userRepo.ReadByUnique(ctx, email)
 }
 
 func (m *userService) Create(ctx context.Context, model entities.UserLogin) (uint64, error) {

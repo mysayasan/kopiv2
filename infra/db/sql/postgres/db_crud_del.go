@@ -41,10 +41,10 @@ func (m *dbCrud) genDelSqlStr(props reflect.Value, datasrc string, filters []sql
 	return res
 }
 
-func (m *dbCrud) DeleteByPKey(ctx context.Context, model interface{}, datasrc string, ids ...uint64) (uint64, error) {
+func (m *dbCrud) DeleteByPKey(ctx context.Context, model interface{}, datasrc string, ids ...any) (uint64, error) {
 	props := reflect.ValueOf(model)
 
-	filters := m.getFiltersByKeyType(props, 1, ids)
+	filters := m.getFiltersByKeyType(props, 1, ids...)
 
 	if len(filters) < 1 {
 		return 0, fmt.Errorf("delete failed : cant find pkey or ukey in data fields")

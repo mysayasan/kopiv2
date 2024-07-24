@@ -34,13 +34,13 @@ func NewUserApi(
 	Rbac := *middlewares.NewRbac()
 
 	group := router.Group("user")
-	group.Get("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.getAll, 60*1000*time.Millisecond)).Name("get_all")
+	group.Get("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("get_all")
 	group.Get("/email", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.getByEmail, 60*1000*time.Millisecond)).Name("get_by_email")
-	group.Put("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.update, 60*1000*time.Millisecond)).Name("update")
+	group.Put("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.put, 60*1000*time.Millisecond)).Name("update")
 	group.Delete("/:id", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.delete, 60*1000*time.Millisecond)).Name("delete")
 }
 
-func (m *userApi) getAll(c *fiber.Ctx) error {
+func (m *userApi) get(c *fiber.Ctx) error {
 
 	limit, _ := strconv.ParseUint(c.Query("limit"), 10, 64)
 	offset, _ := strconv.ParseUint(c.Query("offset"), 10, 64)
@@ -49,7 +49,7 @@ func (m *userApi) getAll(c *fiber.Ctx) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	res, totalCnt, err := m.serv.ReadAll(ctx, limit, offset)
+	res, totalCnt, err := m.serv.Read(ctx, limit, offset)
 	if err != nil {
 		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
 	}
@@ -74,7 +74,7 @@ func (m *userApi) getByEmail(c *fiber.Ctx) error {
 	return controllers.SendSingleResult(c, res)
 }
 
-func (m *userApi) update(c *fiber.Ctx) error {
+func (m *userApi) put(c *fiber.Ctx) error {
 	body := new(entities.UserLogin)
 
 	if err := c.BodyParser(body); err != nil {

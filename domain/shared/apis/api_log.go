@@ -32,10 +32,10 @@ func NewApiLogApi(
 	apilog := *middlewares.NewRbac()
 
 	group := router.Group("log")
-	group.Get("/", apilog.ApiHandler(), timeout.NewWithContext(handler.getAll, 60*1000*time.Millisecond)).Name("latest")
+	group.Get("/", apilog.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("latest")
 }
 
-func (m *apiLogApi) getAll(c *fiber.Ctx) error {
+func (m *apiLogApi) get(c *fiber.Ctx) error {
 
 	limit, _ := strconv.ParseUint(c.Query("limit"), 10, 64)
 	offset, _ := strconv.ParseUint(c.Query("offset"), 10, 64)
@@ -44,7 +44,7 @@ func (m *apiLogApi) getAll(c *fiber.Ctx) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	res, totalCnt, err := m.serv.GetAll(ctx, limit, offset)
+	res, totalCnt, err := m.serv.Read(ctx, limit, offset)
 	if err != nil {
 		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
 	}

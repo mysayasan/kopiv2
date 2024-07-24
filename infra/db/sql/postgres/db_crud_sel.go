@@ -218,6 +218,10 @@ func (m *dbCrud) Select(ctx context.Context, model interface{}, limit uint64, of
 		result = append(result, data)
 	}
 
+	if len(result) < 1 {
+		return nil, 0, fmt.Errorf("no result found")
+	}
+
 	if len(result) > 0 {
 		var wg sync.WaitGroup
 		for _, res := range result {
@@ -336,10 +340,10 @@ func (m *dbCrud) SelectSingle(ctx context.Context, model interface{}, filters []
 	return nil, nil
 }
 
-func (m *dbCrud) SelectByPKey(ctx context.Context, model interface{}, datasrc string, ids ...uint64) (map[string]interface{}, error) {
+func (m *dbCrud) SelectByPKey(ctx context.Context, model interface{}, datasrc string, ids ...any) (map[string]interface{}, error) {
 	props := reflect.ValueOf(model)
 
-	filters := m.getFiltersByKeyType(props, 1, ids)
+	filters := m.getFiltersByKeyType(props, 1, ids...)
 
 	rows, _, err := m.Select(ctx, props.Interface(), 1, 0, filters, nil, datasrc)
 	if err != nil {

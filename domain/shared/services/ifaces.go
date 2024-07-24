@@ -8,7 +8,7 @@ import (
 
 // IUserService interface
 type IUserService interface {
-	ReadAll(ctx context.Context, limit uint64, offset uint64) ([]*entities.UserLogin, uint64, error)
+	Read(ctx context.Context, limit uint64, offset uint64) ([]*entities.UserLogin, uint64, error)
 	ReadByEmail(ctx context.Context, email string) (*entities.UserLogin, error)
 	Create(ctx context.Context, model entities.UserLogin) (uint64, error)
 	Update(ctx context.Context, model entities.UserLogin) (uint64, error)
@@ -17,6 +17,6 @@ type IUserService interface {
 
 // IApiLogService interface
 type IApiLogService interface {
-	GetAll(ctx context.Context, limit uint64, offset uint64) ([]*entities.ApiLog, uint64, error)
+	Read(ctx context.Context, limit uint64, offset uint64) ([]*entities.ApiLog, uint64, error)
 	Create(ctx context.Context, model entities.ApiLog) (uint64, error)
 }
