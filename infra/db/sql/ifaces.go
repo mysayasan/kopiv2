@@ -35,5 +35,9 @@ type IGenericRepo[T any] interface {
 	Create(ctx context.Context, model T) (uint64, error)
 	CreateMultiple(ctx context.Context, models []T) (uint64, error)
 	UpdateById(ctx context.Context, model T) (uint64, error)
+	UpdateByUnique(ctx context.Context, model T) (uint64, error)
+	UpdateByForeign(ctx context.Context, model T) (uint64, error)
 	DeleteById(ctx context.Context, id uint64) (uint64, error)
+	DeleteByUnique(ctx context.Context, uids ...any) (uint64, error)
+	DeleteByForeign(ctx context.Context, fids ...any) (uint64, error)
 }

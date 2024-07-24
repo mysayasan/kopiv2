@@ -121,9 +121,47 @@ func (m *genericRepo[T]) UpdateById(ctx context.Context, model T) (uint64, error
 	return res, nil
 }
 
+func (m *genericRepo[T]) UpdateByUnique(ctx context.Context, model T) (uint64, error) {
+	res, err := m.dbCrud.UpdateByUnique(ctx, model, "")
+	if err != nil {
+		return 0, err
+	}
+
+	return res, nil
+}
+
+func (m *genericRepo[T]) UpdateByForeign(ctx context.Context, model T) (uint64, error) {
+	res, err := m.dbCrud.UpdateByForeign(ctx, model, "")
+	if err != nil {
+		return 0, err
+	}
+
+	return res, nil
+}
+
 func (m *genericRepo[T]) DeleteById(ctx context.Context, id uint64) (uint64, error) {
 	tmodel := new(T)
 	res, err := m.dbCrud.DeleteById(ctx, *tmodel, "", id)
+	if err != nil {
+		return 0, err
+	}
+
+	return res, nil
+}
+
+func (m *genericRepo[T]) DeleteByUnique(ctx context.Context, uids ...any) (uint64, error) {
+	tmodel := new(T)
+	res, err := m.dbCrud.DeleteByUnique(ctx, *tmodel, "", uids...)
+	if err != nil {
+		return 0, err
+	}
+
+	return res, nil
+}
+
+func (m *genericRepo[T]) DeleteByForeign(ctx context.Context, fids ...any) (uint64, error) {
+	tmodel := new(T)
+	res, err := m.dbCrud.DeleteByForeign(ctx, *tmodel, "", fids)
 	if err != nil {
 		return 0, err
 	}
