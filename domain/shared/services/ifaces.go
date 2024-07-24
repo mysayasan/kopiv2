@@ -12,7 +12,7 @@ type IUserService interface {
 	ReadByEmail(ctx context.Context, email string) (*entities.UserLogin, error)
 	Create(ctx context.Context, model entities.UserLogin) (uint64, error)
 	Update(ctx context.Context, model entities.UserLogin) (uint64, error)
-	Delete(ctx context.Context, model entities.UserLogin) (uint64, error)
+	Delete(ctx context.Context, id uint64) (uint64, error)
 }
 
 // IApiLogService interface

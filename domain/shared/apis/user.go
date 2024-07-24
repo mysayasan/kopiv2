@@ -92,10 +92,12 @@ func (m *userApi) put(c *fiber.Ctx) error {
 }
 
 func (m *userApi) delete(c *fiber.Ctx) error {
-	param := entities.UserLogin{}
-	c.ParamsParser(&param)
+	id, _ := strconv.ParseUint(c.Params("id"), 10, 64)
+	log.Info(id)
+	// param := entities.UserLogin{}
+	// c.ParamsParser(&param)
 
-	res, err := m.serv.Delete(c.Context(), param)
+	res, err := m.serv.Delete(c.Context(), id)
 	if err != nil {
 		return controllers.SendError(c, controllers.ErrInternalServerError, err.Error())
 	}

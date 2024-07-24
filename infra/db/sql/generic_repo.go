@@ -51,9 +51,9 @@ func (m *genericRepo[T]) ReadSingle(ctx context.Context, filters []sqldataenums.
 	return &model, nil
 }
 
-func (m *genericRepo[T]) ReadById(ctx context.Context, ids ...any) (*T, error) {
+func (m *genericRepo[T]) ReadById(ctx context.Context, id uint64) (*T, error) {
 	var tmodel = new(T)
-	res, err := m.dbCrud.SelectByPKey(ctx, *tmodel, "", ids...)
+	res, err := m.dbCrud.SelectById(ctx, *tmodel, "", id)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +66,7 @@ func (m *genericRepo[T]) ReadById(ctx context.Context, ids ...any) (*T, error) {
 
 func (m *genericRepo[T]) ReadByUnique(ctx context.Context, uids ...any) (*T, error) {
 	var tmodel = new(T)
-	res, err := m.dbCrud.SelectByUKey(ctx, *tmodel, "", uids...)
+	res, err := m.dbCrud.SelectByUnique(ctx, *tmodel, "", uids...)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +79,7 @@ func (m *genericRepo[T]) ReadByUnique(ctx context.Context, uids ...any) (*T, err
 
 func (m *genericRepo[T]) ReadByForeign(ctx context.Context, fids ...any) ([]*T, error) {
 	var tmodel = new(T)
-	res, err := m.dbCrud.SelectByFKey(ctx, *tmodel, "", fids...)
+	res, err := m.dbCrud.SelectByForeign(ctx, *tmodel, "", fids...)
 	if err != nil {
 		return nil, err
 	}
@@ -112,8 +112,8 @@ func (m *genericRepo[T]) CreateMultiple(ctx context.Context, models []T) (uint64
 	return res, nil
 }
 
-func (m *genericRepo[T]) Update(ctx context.Context, model T) (uint64, error) {
-	res, err := m.dbCrud.UpdateByPKey(ctx, model, "")
+func (m *genericRepo[T]) UpdateById(ctx context.Context, model T) (uint64, error) {
+	res, err := m.dbCrud.UpdateById(ctx, model, "")
 	if err != nil {
 		return 0, err
 	}
@@ -121,8 +121,9 @@ func (m *genericRepo[T]) Update(ctx context.Context, model T) (uint64, error) {
 	return res, nil
 }
 
-func (m *genericRepo[T]) Delete(ctx context.Context, model T) (uint64, error) {
-	res, err := m.dbCrud.DeleteByPKey(ctx, model, "")
+func (m *genericRepo[T]) DeleteById(ctx context.Context, id uint64) (uint64, error) {
+	tmodel := new(T)
+	res, err := m.dbCrud.DeleteById(ctx, *tmodel, "", id)
 	if err != nil {
 		return 0, err
 	}

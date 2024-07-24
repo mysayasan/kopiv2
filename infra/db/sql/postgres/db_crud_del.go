@@ -41,10 +41,10 @@ func (m *dbCrud) genDelSqlStr(props reflect.Value, datasrc string, filters []sql
 	return res
 }
 
-func (m *dbCrud) DeleteByPKey(ctx context.Context, model interface{}, datasrc string, ids ...any) (uint64, error) {
+func (m *dbCrud) DeleteById(ctx context.Context, model interface{}, datasrc string, id uint64) (uint64, error) {
 	props := reflect.ValueOf(model)
 
-	filters := m.getFiltersByKeyType(props, 1, ids...)
+	filters := m.getFiltersByKeyType(props, 1, id)
 
 	if len(filters) < 1 {
 		return 0, fmt.Errorf("delete failed : cant find pkey or ukey in data fields")
@@ -85,7 +85,7 @@ func (m *dbCrud) DeleteByPKey(ctx context.Context, model interface{}, datasrc st
 	return uint64(affect), nil
 }
 
-func (m *dbCrud) DeleteByUKey(ctx context.Context, model interface{}, datasrc string, uids ...any) (uint64, error) {
+func (m *dbCrud) DeleteByUnique(ctx context.Context, model interface{}, datasrc string, uids ...any) (uint64, error) {
 	props := reflect.ValueOf(model)
 
 	filters := m.getFiltersByKeyType(props, 2, uids...)
@@ -129,7 +129,7 @@ func (m *dbCrud) DeleteByUKey(ctx context.Context, model interface{}, datasrc st
 	return uint64(affect), nil
 }
 
-func (m *dbCrud) DeleteByFKey(ctx context.Context, model interface{}, datasrc string, fids ...any) (uint64, error) {
+func (m *dbCrud) DeleteByForeign(ctx context.Context, model interface{}, datasrc string, fids ...any) (uint64, error) {
 	props := reflect.ValueOf(model)
 
 	filters := m.getFiltersByKeyType(props, 3, fids...)

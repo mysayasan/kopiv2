@@ -43,9 +43,9 @@ func (m *userService) Create(ctx context.Context, model entities.UserLogin) (uin
 }
 
 func (m *userService) Update(ctx context.Context, model entities.UserLogin) (uint64, error) {
-	return m.userRepo.Update(ctx, model)
+	return m.userRepo.UpdateById(ctx, model)
 }
 
-func (m *userService) Delete(ctx context.Context, model entities.UserLogin) (uint64, error) {
-	return m.userRepo.Delete(ctx, model)
+func (m *userService) Delete(ctx context.Context, id uint64) (uint64, error) {
+	return m.userRepo.DeleteById(ctx, id)
 }

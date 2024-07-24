@@ -340,10 +340,10 @@ func (m *dbCrud) SelectSingle(ctx context.Context, model interface{}, filters []
 	return nil, nil
 }
 
-func (m *dbCrud) SelectByPKey(ctx context.Context, model interface{}, datasrc string, ids ...any) (map[string]interface{}, error) {
+func (m *dbCrud) SelectById(ctx context.Context, model interface{}, datasrc string, id uint64) (map[string]interface{}, error) {
 	props := reflect.ValueOf(model)
 
-	filters := m.getFiltersByKeyType(props, 1, ids...)
+	filters := m.getFiltersByKeyType(props, 1, id)
 
 	rows, _, err := m.Select(ctx, props.Interface(), 1, 0, filters, nil, datasrc)
 	if err != nil {
@@ -357,7 +357,7 @@ func (m *dbCrud) SelectByPKey(ctx context.Context, model interface{}, datasrc st
 	return nil, nil
 }
 
-func (m *dbCrud) SelectByUKey(ctx context.Context, model interface{}, datasrc string, uids ...any) (map[string]interface{}, error) {
+func (m *dbCrud) SelectByUnique(ctx context.Context, model interface{}, datasrc string, uids ...any) (map[string]interface{}, error) {
 	props := reflect.ValueOf(model)
 
 	filters := m.getFiltersByKeyType(props, 2, uids...)
@@ -374,7 +374,7 @@ func (m *dbCrud) SelectByUKey(ctx context.Context, model interface{}, datasrc st
 	return nil, nil
 }
 
-func (m *dbCrud) SelectByFKey(ctx context.Context, model interface{}, datasrc string, fids ...any) ([]map[string]interface{}, error) {
+func (m *dbCrud) SelectByForeign(ctx context.Context, model interface{}, datasrc string, fids ...any) ([]map[string]interface{}, error) {
 	props := reflect.ValueOf(model)
 
 	filters := m.getFiltersByKeyType(props, 3, fids...)
