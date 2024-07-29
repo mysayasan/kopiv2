@@ -39,13 +39,13 @@ func (m *userService) ReadByEmail(ctx context.Context, email string) (*entities.
 }
 
 func (m *userService) Create(ctx context.Context, model entities.UserLogin) (uint64, error) {
-	return m.userRepo.Create(ctx, model)
+	return m.userRepo.Create(ctx, "", model)
 }
 
 func (m *userService) Update(ctx context.Context, model entities.UserLogin) (uint64, error) {
-	return m.userRepo.UpdateById(ctx, model)
+	return m.userRepo.UpdateById(ctx, "", model)
 }
 
 func (m *userService) Delete(ctx context.Context, id uint64) (uint64, error) {
-	return m.userRepo.DeleteById(ctx, id)
+	return m.userRepo.DeleteById(ctx, "", id)
 }

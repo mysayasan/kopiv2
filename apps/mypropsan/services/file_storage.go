@@ -27,9 +27,9 @@ func (m *fileStorageService) GetByGuid(ctx context.Context, guid string) (*entit
 }
 
 func (m *fileStorageService) Create(ctx context.Context, model entities.FileStorage) (uint64, error) {
-	return m.fsRepo.Create(ctx, model)
+	return m.fsRepo.Create(ctx, "", model)
 }
 
 func (m *fileStorageService) CreateMultiple(ctx context.Context, model []entities.FileStorage) (uint64, error) {
-	return m.fsRepo.CreateMultiple(ctx, model)
+	return m.fsRepo.CreateMultiple(ctx, "", model)
 }

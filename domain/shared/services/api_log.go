@@ -33,5 +33,5 @@ func (m *apiLogService) Read(ctx context.Context, limit uint64, offset uint64) (
 }
 
 func (m *apiLogService) Create(ctx context.Context, model entities.ApiLog) (uint64, error) {
-	return m.apiRepo.Create(ctx, model)
+	return m.apiRepo.Create(ctx, "", model)
 }
