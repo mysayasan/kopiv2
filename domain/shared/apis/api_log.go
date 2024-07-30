@@ -44,7 +44,7 @@ func (m *apiLogApi) get(c *fiber.Ctx) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	res, totalCnt, err := m.serv.Read(ctx, limit, offset)
+	res, totalCnt, err := m.serv.Get(ctx, limit, offset)
 	if err != nil {
 		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
 	}

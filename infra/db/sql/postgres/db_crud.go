@@ -131,7 +131,7 @@ func (m *dbCrud) getCols(props reflect.Value) []string {
 	return res
 }
 
-func (m *dbCrud) getFiltersByKeyType(props reflect.Value, keyType sqldataenums.DBKeyType, keys ...any) []sqldataenums.Filter {
+func (m *dbCrud) getFiltersByKeyType(props reflect.Value, keyType sqldataenums.DBKeyType, keyGroup string, keys ...any) []sqldataenums.Filter {
 	filters := make([]sqldataenums.Filter, 0)
 	keyLoopCnt := 0
 	for i := 0; i < props.NumField(); i++ {
@@ -149,7 +149,10 @@ func (m *dbCrud) getFiltersByKeyType(props reflect.Value, keyType sqldataenums.D
 		switch keyType {
 		case sqldataenums.DBKeyType(sqldataenums.Primary):
 			{
-				if field.Tag.Get("pkey") == "true" {
+				if keyGroup == "" {
+					keyGroup = "true"
+				}
+				if field.Tag.Get("pkey") == keyGroup {
 					val := props.Field(i).Interface()
 					if keyLoopCnt < len(keys) {
 						val = keys[keyLoopCnt]
@@ -167,7 +170,7 @@ func (m *dbCrud) getFiltersByKeyType(props reflect.Value, keyType sqldataenums.D
 			}
 		case sqldataenums.DBKeyType(sqldataenums.Unique):
 			{
-				if field.Tag.Get("ukey") == "true" {
+				if field.Tag.Get("ukey") == keyGroup {
 					val := props.Field(i).Interface()
 					if keyLoopCnt < len(keys) {
 						val = keys[keyLoopCnt]
@@ -185,7 +188,7 @@ func (m *dbCrud) getFiltersByKeyType(props reflect.Value, keyType sqldataenums.D
 			}
 		case sqldataenums.DBKeyType(sqldataenums.Foreign):
 			{
-				if field.Tag.Get("fkey") == "true" {
+				if field.Tag.Get("fkey") == keyGroup {
 					val := props.Field(i).Interface()
 					if keyLoopCnt < len(keys) {
 						val = keys[keyLoopCnt]

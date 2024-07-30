@@ -31,5 +31,5 @@ func (m *homeService) GetLatest(ctx context.Context, limit uint64, offset uint64
 		},
 	}
 
-	return m.resPropRepoModel.Read(ctx, limit, offset, nil, sorters, "")
+	return m.resPropRepoModel.Get(ctx, limit, offset, nil, sorters, "")
 }

@@ -97,18 +97,24 @@ func main() {
 	// fileStorageRepo := repos.NewFileStorageRepo(postgresDb)
 
 	// Page Modules
-	// userService := sharedServices.NewUserService(userRepo)
-	userService := sharedServices.NewUserService(postgresDb)
+	// userService := sharedServices.NewUserLoginService(userRepo)
+	userLoginService := sharedServices.NewUserLoginService(postgresDb)
+	userGroupService := sharedServices.NewUserGroupService(postgresDb)
+	userRoleService := sharedServices.NewUserRoleService(postgresDb)
 	apiLogService := sharedServices.NewApiLogService(postgresDb)
 	homeService := services.NewHomeService(postgresDb)
 	fileStorageService := services.NewFileStorageService(postgresDb)
 
 	// Login module
 	if appConfig.Login.Google != nil {
-		sharedApis.NewLoginApi(api, appConfig.Login.Google, *auth, userService)
+		sharedApis.NewLoginApi(api, appConfig.Login.Google, *auth, userLoginService)
 	}
-	// User Module
-	sharedApis.NewUserApi(api, *auth, userService)
+	// User Login Module
+	sharedApis.NewUserLoginApi(api, *auth, userLoginService)
+	// User Group Module
+	sharedApis.NewUserGroupApi(api, *auth, userGroupService)
+	// User Role Module
+	sharedApis.NewUserRoleApi(api, *auth, userRoleService)
 	// Api Log module
 	sharedApis.NewApiLogApi(api, *auth, apiLogService)
 	// Admin Api

@@ -15,32 +15,33 @@ import (
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares/timeout"
 )
 
-// UserApi struct
-type userApi struct {
+// UserRoleApi struct
+type userRoleApi struct {
 	auth middlewares.AuthMiddleware
-	serv services.IUserService
+	serv services.IUserRoleService
 }
 
-// Create UserApi
-func NewUserApi(
+// Create UserRoleApi
+func NewUserRoleApi(
 	router fiber.Router,
 	auth middlewares.AuthMiddleware,
-	serv services.IUserService) {
-	handler := &userApi{
+	serv services.IUserRoleService) {
+	handler := &userRoleApi{
 		auth: auth,
 		serv: serv,
 	}
 
 	Rbac := *middlewares.NewRbac()
 
-	group := router.Group("user")
-	group.Get("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("get_all")
-	group.Get("/email", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.getByEmail, 60*1000*time.Millisecond)).Name("get_by_email")
+	group := router.Group("user/role")
+	group.Get("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("get")
+	group.Get("/group/:id", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.getByGroup, 60*1000*time.Millisecond)).Name("get_by_group")
+	group.Post("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.post, 60*1000*time.Millisecond)).Name("create")
 	group.Put("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.put, 60*1000*time.Millisecond)).Name("update")
 	group.Delete("/:id", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.delete, 60*1000*time.Millisecond)).Name("delete")
 }
 
-func (m *userApi) get(c *fiber.Ctx) error {
+func (m *userRoleApi) get(c *fiber.Ctx) error {
 
 	limit, _ := strconv.ParseUint(c.Query("limit"), 10, 64)
 	offset, _ := strconv.ParseUint(c.Query("offset"), 10, 64)
@@ -49,7 +50,7 @@ func (m *userApi) get(c *fiber.Ctx) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	res, totalCnt, err := m.serv.Read(ctx, limit, offset)
+	res, totalCnt, err := m.serv.Get(ctx, limit, offset)
 	if err != nil {
 		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
 	}
@@ -59,14 +60,14 @@ func (m *userApi) get(c *fiber.Ctx) error {
 	return controllers.SendPagingResult(c, res, limit, offset, totalCnt)
 }
 
-func (m *userApi) getByEmail(c *fiber.Ctx) error {
-	usermail := c.Query("email")
+func (m *userRoleApi) getByGroup(c *fiber.Ctx) error {
+	id, _ := strconv.ParseInt(c.Params("id"), 10, 64)
 
 	ctx := c.UserContext()
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	res, err := m.serv.ReadByEmail(ctx, usermail)
+	res, err := m.serv.GetByGroup(ctx, id)
 	if err != nil {
 		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
 	}
@@ -74,8 +75,25 @@ func (m *userApi) getByEmail(c *fiber.Ctx) error {
 	return controllers.SendSingleResult(c, res)
 }
 
-func (m *userApi) put(c *fiber.Ctx) error {
-	body := new(entities.UserLogin)
+func (m *userRoleApi) post(c *fiber.Ctx) error {
+	body := new(entities.UserRole)
+
+	if err := c.BodyParser(body); err != nil {
+		return err
+	}
+
+	log.Info(fmt.Sprintf("%v", body))
+
+	res, err := m.serv.Create(c.Context(), *body)
+	if err != nil {
+		return controllers.SendError(c, controllers.ErrInternalServerError, err.Error())
+	}
+
+	return controllers.SendSingleResult(c, res, "succeed")
+}
+
+func (m *userRoleApi) put(c *fiber.Ctx) error {
+	body := new(entities.UserRole)
 
 	if err := c.BodyParser(body); err != nil {
 		return err
@@ -91,10 +109,10 @@ func (m *userApi) put(c *fiber.Ctx) error {
 	return controllers.SendSingleResult(c, res, "succeed")
 }
 
-func (m *userApi) delete(c *fiber.Ctx) error {
+func (m *userRoleApi) delete(c *fiber.Ctx) error {
 	id, _ := strconv.ParseUint(c.Params("id"), 10, 64)
 	log.Info(id)
-	// param := entities.UserLogin{}
+	// param := entities.UserRole{}
 	// c.ParamsParser(&param)
 
 	res, err := m.serv.Delete(c.Context(), id)

@@ -115,7 +115,7 @@ func (m *dbCrud) genUpdSqlStr(props reflect.Value, datasrc string, filters []sql
 func (m *dbCrud) UpdateById(ctx context.Context, model interface{}, datasrc string) (uint64, error) {
 	props := reflect.ValueOf(model)
 
-	filters := m.getFiltersByKeyType(props, 1)
+	filters := m.getFiltersByKeyType(props, 1, "true")
 
 	if len(filters) < 1 {
 		return 0, fmt.Errorf("update failed : cant find pkey or ukey in data fields")
@@ -156,10 +156,10 @@ func (m *dbCrud) UpdateById(ctx context.Context, model interface{}, datasrc stri
 	return uint64(affect), nil
 }
 
-func (m *dbCrud) UpdateByUnique(ctx context.Context, model interface{}, datasrc string) (uint64, error) {
+func (m *dbCrud) UpdateByUnique(ctx context.Context, model interface{}, datasrc string, keyGroup string) (uint64, error) {
 	props := reflect.ValueOf(model)
 
-	filters := m.getFiltersByKeyType(props, 2)
+	filters := m.getFiltersByKeyType(props, 2, keyGroup)
 
 	if len(filters) < 1 {
 		return 0, fmt.Errorf("update failed : cant find pkey or ukey in data fields")
@@ -200,10 +200,10 @@ func (m *dbCrud) UpdateByUnique(ctx context.Context, model interface{}, datasrc 
 	return uint64(affect), nil
 }
 
-func (m *dbCrud) UpdateByForeign(ctx context.Context, model interface{}, datasrc string) (uint64, error) {
+func (m *dbCrud) UpdateByForeign(ctx context.Context, model interface{}, datasrc string, keyGroup string) (uint64, error) {
 	props := reflect.ValueOf(model)
 
-	filters := m.getFiltersByKeyType(props, 3)
+	filters := m.getFiltersByKeyType(props, 3, keyGroup)
 
 	if len(filters) < 1 {
 		return 0, fmt.Errorf("update failed : cant find pkey or ukey in data fields")

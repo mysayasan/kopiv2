@@ -16,7 +16,7 @@ import (
 // LoginApi struct
 type loginApi struct {
 	auth        middlewares.AuthMiddleware
-	userService services.IUserService
+	userService services.IUserLoginService
 	googleAuth  *login.GoogleLogin
 	githubAuth  *login.GithubLogin
 }
@@ -26,7 +26,7 @@ func NewLoginApi(
 	router fiber.Router,
 	oAuth2Conf *login.OAuth2ConfigModel,
 	auth middlewares.AuthMiddleware,
-	userService services.IUserService) {
+	userService services.IUserLoginService) {
 
 	login.GoogleConfig(*oAuth2Conf)
 	login.GithubConfig(*oAuth2Conf)
@@ -74,7 +74,7 @@ func (m *loginApi) googleCallback(c *fiber.Ctx) error {
 		return c.SendString(err.Error())
 	}
 
-	user, err := m.userService.ReadByEmail(c.Context(), userG.Email)
+	user, err := m.userService.GetByEmail(c.Context(), userG.Email)
 	if err != nil {
 		log.Printf("%s", err.Error())
 	}
