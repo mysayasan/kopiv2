@@ -102,6 +102,8 @@ func main() {
 	userGroupService := sharedServices.NewUserGroupService(postgresDb)
 	userRoleService := sharedServices.NewUserRoleService(postgresDb)
 	apiLogService := sharedServices.NewApiLogService(postgresDb)
+	apiEndpointService := sharedServices.NewApiEndpointService(postgresDb)
+	apiEndpointRbacService := sharedServices.NewApiEndpointRbacService(postgresDb)
 	homeService := services.NewHomeService(postgresDb)
 	fileStorageService := services.NewFileStorageService(postgresDb)
 
@@ -117,6 +119,10 @@ func main() {
 	sharedApis.NewUserRoleApi(api, *auth, userRoleService)
 	// Api Log module
 	sharedApis.NewApiLogApi(api, *auth, apiLogService)
+	// Api Endpoint module
+	sharedApis.NewApiEndpointApi(api, *auth, apiEndpointService)
+	// Api Endpoint RBAC module
+	sharedApis.NewApiEndpointRbacApi(api, *auth, apiEndpointRbacService)
 	// Admin Api
 	apis.NewAdminApi(api, *auth)
 	//Home Api

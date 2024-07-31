@@ -33,7 +33,7 @@ func NewUserRoleApi(
 
 	Rbac := *middlewares.NewRbac()
 
-	group := router.Group("user/role")
+	group := router.Group("user-role")
 	group.Get("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("get")
 	group.Get("/group/:id", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.getByGroup, 60*1000*time.Millisecond)).Name("get_by_group")
 	group.Post("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.post, 60*1000*time.Millisecond)).Name("create")

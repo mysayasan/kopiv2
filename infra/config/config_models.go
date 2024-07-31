@@ -7,7 +7,7 @@ import (
 
 // App config
 type AppConfigModel struct {
-	Login *struct {
+	Login struct {
 		Google *login.OAuth2ConfigModel `json:"google"`
 	} `json:"login"`
 	Jwt struct {

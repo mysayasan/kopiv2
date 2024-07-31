@@ -32,6 +32,22 @@ type IUserRoleService interface {
 	Delete(ctx context.Context, id uint64) (uint64, error)
 }
 
+// IApiEndpointService interface
+type IApiEndpointService interface {
+	Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.ApiEndpoint, uint64, error)
+	Create(ctx context.Context, model entities.ApiEndpoint) (uint64, error)
+	Update(ctx context.Context, model entities.ApiEndpoint) (uint64, error)
+	Delete(ctx context.Context, id uint64) (uint64, error)
+}
+
+// IApiEndpointRbacService interface
+type IApiEndpointRbacService interface {
+	Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.ApiEndpointRbac, uint64, error)
+	Create(ctx context.Context, model entities.ApiEndpointRbac) (uint64, error)
+	Update(ctx context.Context, model entities.ApiEndpointRbac) (uint64, error)
+	Delete(ctx context.Context, id uint64) (uint64, error)
+}
+
 // IApiLogService interface
 type IApiLogService interface {
 	Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.ApiLog, uint64, error)

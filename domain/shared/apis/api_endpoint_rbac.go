@@ -15,32 +15,32 @@ import (
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares/timeout"
 )
 
-// UserGroupApi struct
-type userGroupApi struct {
+// ApiEndpointRbacApi struct
+type apiEndpointRbacApi struct {
 	auth middlewares.AuthMiddleware
-	serv services.IUserGroupService
+	serv services.IApiEndpointRbacService
 }
 
-// Create UserGroupApi
-func NewUserGroupApi(
+// Create ApiEndpointRbacApi
+func NewApiEndpointRbacApi(
 	router fiber.Router,
 	auth middlewares.AuthMiddleware,
-	serv services.IUserGroupService) {
-	handler := &userGroupApi{
+	serv services.IApiEndpointRbacService) {
+	handler := &apiEndpointRbacApi{
 		auth: auth,
 		serv: serv,
 	}
 
 	Rbac := *middlewares.NewRbac()
 
-	group := router.Group("user-group")
+	group := router.Group("endpoint-rbac")
 	group.Get("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("get")
 	group.Post("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.post, 60*1000*time.Millisecond)).Name("create")
 	group.Put("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.put, 60*1000*time.Millisecond)).Name("update")
 	group.Delete("/:id", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.delete, 60*1000*time.Millisecond)).Name("delete")
 }
 
-func (m *userGroupApi) get(c *fiber.Ctx) error {
+func (m *apiEndpointRbacApi) get(c *fiber.Ctx) error {
 
 	limit, _ := strconv.ParseUint(c.Query("limit"), 10, 64)
 	offset, _ := strconv.ParseUint(c.Query("offset"), 10, 64)
@@ -59,8 +59,8 @@ func (m *userGroupApi) get(c *fiber.Ctx) error {
 	return controllers.SendPagingResult(c, res, limit, offset, totalCnt)
 }
 
-func (m *userGroupApi) post(c *fiber.Ctx) error {
-	body := new(entities.UserGroup)
+func (m *apiEndpointRbacApi) post(c *fiber.Ctx) error {
+	body := new(entities.ApiEndpointRbac)
 
 	if err := c.BodyParser(body); err != nil {
 		return err
@@ -76,8 +76,8 @@ func (m *userGroupApi) post(c *fiber.Ctx) error {
 	return controllers.SendSingleResult(c, res, "succeed")
 }
 
-func (m *userGroupApi) put(c *fiber.Ctx) error {
-	body := new(entities.UserGroup)
+func (m *apiEndpointRbacApi) put(c *fiber.Ctx) error {
+	body := new(entities.ApiEndpointRbac)
 
 	if err := c.BodyParser(body); err != nil {
 		return err
@@ -93,10 +93,10 @@ func (m *userGroupApi) put(c *fiber.Ctx) error {
 	return controllers.SendSingleResult(c, res, "succeed")
 }
 
-func (m *userGroupApi) delete(c *fiber.Ctx) error {
+func (m *apiEndpointRbacApi) delete(c *fiber.Ctx) error {
 	id, _ := strconv.ParseUint(c.Params("id"), 10, 64)
 	log.Info(id)
-	// param := entities.UserGroup{}
+	// param := entities.ApiEndpointRbac{}
 	// c.ParamsParser(&param)
 
 	res, err := m.serv.Delete(c.Context(), id)
