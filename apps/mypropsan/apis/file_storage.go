@@ -65,7 +65,7 @@ func (m *fileStorageApi) download(c *fiber.Ctx) error {
 
 	fileInfo, err := m.serv.GetByGuid(ctx, guid)
 	if err != nil {
-		return err
+		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
 	}
 
 	log.Info((fileInfo))
@@ -73,7 +73,7 @@ func (m *fileStorageApi) download(c *fiber.Ctx) error {
 	// open input file
 	fi, err := os.Open(fmt.Sprintf("%s/%s", m.path, guid))
 	if err != nil {
-		return err
+		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
 	}
 	// close fi on exit and check for its returned error
 	defer func() {
@@ -84,7 +84,7 @@ func (m *fileStorageApi) download(c *fiber.Ctx) error {
 
 	content, err := io.ReadAll(fi)
 	if err != nil {
-		return err
+		return controllers.SendError(c, controllers.ErrInternalServerError, err.Error())
 	}
 
 	if len(content) > 0 {
@@ -106,7 +106,7 @@ func (m *fileStorageApi) upload(c *fiber.Ctx) error {
 	// Parse the multipart form:
 	form, err := c.MultipartForm()
 	if err != nil {
-		return err
+		return controllers.SendError(c, controllers.ErrBadRequest, err.Error())
 	}
 
 	// Get all files from "documents" key:

@@ -63,7 +63,7 @@ func (m *userGroupApi) post(c *fiber.Ctx) error {
 	body := new(entities.UserGroup)
 
 	if err := c.BodyParser(body); err != nil {
-		return err
+		return controllers.SendError(c, controllers.ErrParseFailed, err.Error())
 	}
 
 	log.Info(fmt.Sprintf("%v", body))
@@ -73,14 +73,14 @@ func (m *userGroupApi) post(c *fiber.Ctx) error {
 		return controllers.SendError(c, controllers.ErrInternalServerError, err.Error())
 	}
 
-	return controllers.SendSingleResult(c, res, "succeed")
+	return controllers.SendResult(c, res, "succeed")
 }
 
 func (m *userGroupApi) put(c *fiber.Ctx) error {
 	body := new(entities.UserGroup)
 
 	if err := c.BodyParser(body); err != nil {
-		return err
+		return controllers.SendError(c, controllers.ErrParseFailed, err.Error())
 	}
 
 	log.Info(fmt.Sprintf("%v", body))
@@ -90,7 +90,7 @@ func (m *userGroupApi) put(c *fiber.Ctx) error {
 		return controllers.SendError(c, controllers.ErrInternalServerError, err.Error())
 	}
 
-	return controllers.SendSingleResult(c, res, "succeed")
+	return controllers.SendResult(c, res, "succeed")
 }
 
 func (m *userGroupApi) delete(c *fiber.Ctx) error {
@@ -104,5 +104,5 @@ func (m *userGroupApi) delete(c *fiber.Ctx) error {
 		return controllers.SendError(c, controllers.ErrInternalServerError, err.Error())
 	}
 
-	return controllers.SendSingleResult(c, res, "succeed")
+	return controllers.SendResult(c, res, "succeed")
 }

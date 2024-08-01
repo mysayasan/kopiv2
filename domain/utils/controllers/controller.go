@@ -9,9 +9,9 @@ import (
 )
 
 type PagingResponse[T any] struct {
-	Status  int    `json:"status"`
-	Message string `json:"message"`
-	Data    struct {
+	StatsCode int    `json:"status"`
+	Message   string `json:"message"`
+	Data      struct {
 		Result      T      `json:"result"`
 		ResCnt      uint64 `json:"resCnt"`
 		CurrentPage int    `json:"currentPage"`
@@ -20,20 +20,20 @@ type PagingResponse[T any] struct {
 }
 
 type ErrResponse[T any] struct {
-	Status  int    `json:"status"`
-	Message string `json:"message"`
-	Details T      `json:"details"`
+	StatsCode int    `json:"statsCode"`
+	Message   string `json:"message"`
+	Details   T      `json:"details"`
 }
 
-type SingleResponse[T any] struct {
-	Status  int    `json:"status"`
-	Message string `json:"message"`
-	Result  T      `json:"result"`
+type DefaultResponse[T any] struct {
+	StatsCode int    `json:"statsCode"`
+	Message   string `json:"message"`
+	Result    T      `json:"result"`
 }
 
 func SendPagingResult(c *fiber.Ctx, data interface{}, limit uint64, offset uint64, totalCnt uint64, message ...string) error {
 	var resp PagingResponse[interface{}]
-	resp.Status = 1
+	resp.StatsCode = c.Response().StatusCode()
 	resp.Message = strings.Join(message, "\n")
 	resp.Data.Result = data
 	resp.Data.ResCnt = totalCnt
@@ -55,9 +55,9 @@ func SendPagingResult(c *fiber.Ctx, data interface{}, limit uint64, offset uint6
 	return nil
 }
 
-func SendSingleResult(c *fiber.Ctx, data interface{}, message ...string) error {
-	var resp SingleResponse[interface{}]
-	resp.Status = 1
+func SendResult(c *fiber.Ctx, data interface{}, message ...string) error {
+	var resp DefaultResponse[interface{}]
+	resp.StatsCode = c.Response().StatusCode()
 	resp.Message = strings.Join(message, "\n")
 	resp.Result = data
 
@@ -74,12 +74,13 @@ func SendError(c *fiber.Ctx, err error, message string, data ...interface{}) err
 	if len(message) > 0 && os.Getenv("ENVIRONMENT") == "dev" {
 		msg = message
 	}
+	stats := NewErrorUtils().GetHttpStatusCode(err)
 	var resp ErrResponse[interface{}]
-	resp.Status = 0
+	resp.StatsCode = stats
 	resp.Message = msg
 	resp.Details = data
 
-	err = c.Status(NewErrorUtils().GetHttpStatusCode(err)).JSON(resp)
+	err = c.Status(stats).JSON(resp)
 	if err != nil {
 		return err
 	}

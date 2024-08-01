@@ -72,14 +72,14 @@ func (m *userRoleApi) getByGroup(c *fiber.Ctx) error {
 		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
 	}
 
-	return controllers.SendSingleResult(c, res)
+	return controllers.SendResult(c, res)
 }
 
 func (m *userRoleApi) post(c *fiber.Ctx) error {
 	body := new(entities.UserRole)
 
 	if err := c.BodyParser(body); err != nil {
-		return err
+		return controllers.SendError(c, controllers.ErrParseFailed, err.Error())
 	}
 
 	log.Info(fmt.Sprintf("%v", body))
@@ -89,14 +89,14 @@ func (m *userRoleApi) post(c *fiber.Ctx) error {
 		return controllers.SendError(c, controllers.ErrInternalServerError, err.Error())
 	}
 
-	return controllers.SendSingleResult(c, res, "succeed")
+	return controllers.SendResult(c, res, "succeed")
 }
 
 func (m *userRoleApi) put(c *fiber.Ctx) error {
 	body := new(entities.UserRole)
 
 	if err := c.BodyParser(body); err != nil {
-		return err
+		return controllers.SendError(c, controllers.ErrParseFailed, err.Error())
 	}
 
 	log.Info(fmt.Sprintf("%v", body))
@@ -106,7 +106,7 @@ func (m *userRoleApi) put(c *fiber.Ctx) error {
 		return controllers.SendError(c, controllers.ErrInternalServerError, err.Error())
 	}
 
-	return controllers.SendSingleResult(c, res, "succeed")
+	return controllers.SendResult(c, res, "succeed")
 }
 
 func (m *userRoleApi) delete(c *fiber.Ctx) error {
@@ -120,5 +120,5 @@ func (m *userRoleApi) delete(c *fiber.Ctx) error {
 		return controllers.SendError(c, controllers.ErrInternalServerError, err.Error())
 	}
 
-	return controllers.SendSingleResult(c, res, "succeed")
+	return controllers.SendResult(c, res, "succeed")
 }

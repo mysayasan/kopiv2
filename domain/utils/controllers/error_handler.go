@@ -55,6 +55,8 @@ func (utils *ErrorHandler) GetHttpStatusCode(err error) int {
 		return http.StatusUnauthorized
 	case ErrConflict:
 		return http.StatusConflict
+	case ErrParseFailed:
+		return http.StatusBadRequest
 	default:
 		return http.StatusBadRequest
 	}

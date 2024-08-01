@@ -71,14 +71,14 @@ func (m *userLoginApi) getByEmail(c *fiber.Ctx) error {
 		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
 	}
 
-	return controllers.SendSingleResult(c, res)
+	return controllers.SendResult(c, res)
 }
 
 func (m *userLoginApi) put(c *fiber.Ctx) error {
 	body := new(entities.UserLogin)
 
 	if err := c.BodyParser(body); err != nil {
-		return err
+		return controllers.SendError(c, controllers.ErrParseFailed, err.Error())
 	}
 
 	log.Info(fmt.Sprintf("%v", body))
@@ -88,7 +88,7 @@ func (m *userLoginApi) put(c *fiber.Ctx) error {
 		return controllers.SendError(c, controllers.ErrInternalServerError, err.Error())
 	}
 
-	return controllers.SendSingleResult(c, res, "succeed")
+	return controllers.SendResult(c, res, "succeed")
 }
 
 func (m *userLoginApi) delete(c *fiber.Ctx) error {
@@ -102,5 +102,5 @@ func (m *userLoginApi) delete(c *fiber.Ctx) error {
 		return controllers.SendError(c, controllers.ErrInternalServerError, err.Error())
 	}
 
-	return controllers.SendSingleResult(c, res, "succeed")
+	return controllers.SendResult(c, res, "succeed")
 }

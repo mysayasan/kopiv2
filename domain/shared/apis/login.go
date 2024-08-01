@@ -9,6 +9,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/mysayasan/kopiv2/domain/entities"
 	"github.com/mysayasan/kopiv2/domain/shared/services"
+	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 	"github.com/mysayasan/kopiv2/infra/login"
 )
@@ -56,10 +57,8 @@ func (m *loginApi) defaultLogin(c *fiber.Ctx) error {
 
 	err := c.BodyParser(&model)
 	if err != nil {
-		return err
+		return controllers.SendError(c, controllers.ErrParseFailed, err.Error())
 	}
-
-	log.Printf("%s", model)
 
 	return c.SendString("ok")
 }
