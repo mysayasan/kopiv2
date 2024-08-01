@@ -26,7 +26,7 @@ type IUserGroupService interface {
 // IUserRoleService interface
 type IUserRoleService interface {
 	Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.UserRole, uint64, error)
-	GetByGroup(ctx context.Context, groupId int64) ([]*entities.UserRole, error)
+	GetByGroup(ctx context.Context, groupId uint64) ([]*entities.UserRole, error)
 	Create(ctx context.Context, model entities.UserRole) (uint64, error)
 	Update(ctx context.Context, model entities.UserRole) (uint64, error)
 	Delete(ctx context.Context, id uint64) (uint64, error)
@@ -46,6 +46,7 @@ type IApiEndpointRbacService interface {
 	Create(ctx context.Context, model entities.ApiEndpointRbac) (uint64, error)
 	Update(ctx context.Context, model entities.ApiEndpointRbac) (uint64, error)
 	Delete(ctx context.Context, id uint64) (uint64, error)
+	Validate(ctx context.Context, host string, path string, userRoleId uint64) (*entities.ApiEndpointRbac, error)
 }
 
 // IApiLogService interface

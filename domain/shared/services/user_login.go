@@ -11,15 +11,15 @@ import (
 
 // userLoginService struct
 type userLoginService struct {
-	dbCrud   dbsql.IDbCrud
-	userRepo dbsql.IGenericRepo[entities.UserLogin]
+	dbCrud dbsql.IDbCrud
+	repo   dbsql.IGenericRepo[entities.UserLogin]
 }
 
 // Create new IUserLoginService
 func NewUserLoginService(dbCrud dbsql.IDbCrud) IUserLoginService {
 	return &userLoginService{
-		dbCrud:   dbCrud,
-		userRepo: dbsql.NewGenericRepo[entities.UserLogin](dbCrud),
+		dbCrud: dbCrud,
+		repo:   dbsql.NewGenericRepo[entities.UserLogin](dbCrud),
 	}
 }
 
@@ -31,21 +31,21 @@ func (m *userLoginService) Get(ctx context.Context, limit uint64, offset uint64)
 		},
 	}
 
-	return m.userRepo.Get(ctx, limit, offset, nil, sorters, "")
+	return m.repo.Get(ctx, limit, offset, nil, sorters, "")
 }
 
 func (m *userLoginService) GetByEmail(ctx context.Context, email string) (*entities.UserLogin, error) {
-	return m.userRepo.GetByUnique(ctx, "", "email", email)
+	return m.repo.GetByUnique(ctx, "", "email", email)
 }
 
 func (m *userLoginService) Create(ctx context.Context, model entities.UserLogin) (uint64, error) {
-	return m.userRepo.Create(ctx, "", model)
+	return m.repo.Create(ctx, "", model)
 }
 
 func (m *userLoginService) Update(ctx context.Context, model entities.UserLogin) (uint64, error) {
-	return m.userRepo.UpdateById(ctx, "", model)
+	return m.repo.UpdateById(ctx, "", model)
 }
 
 func (m *userLoginService) Delete(ctx context.Context, id uint64) (uint64, error) {
-	return m.userRepo.DeleteById(ctx, "", id)
+	return m.repo.DeleteById(ctx, "", id)
 }

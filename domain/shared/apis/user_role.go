@@ -67,7 +67,7 @@ func (m *userRoleApi) getByGroup(c *fiber.Ctx) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	res, err := m.serv.GetByGroup(ctx, id)
+	res, err := m.serv.GetByGroup(ctx, uint64(id))
 	if err != nil {
 		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
 	}

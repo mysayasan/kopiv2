@@ -11,15 +11,15 @@ import (
 
 // userGroupService struct
 type userGroupService struct {
-	dbCrud   dbsql.IDbCrud
-	userRepo dbsql.IGenericRepo[entities.UserGroup]
+	dbCrud dbsql.IDbCrud
+	repo   dbsql.IGenericRepo[entities.UserGroup]
 }
 
 // Create new IUserGroupService
 func NewUserGroupService(dbCrud dbsql.IDbCrud) IUserGroupService {
 	return &userGroupService{
-		dbCrud:   dbCrud,
-		userRepo: dbsql.NewGenericRepo[entities.UserGroup](dbCrud),
+		dbCrud: dbCrud,
+		repo:   dbsql.NewGenericRepo[entities.UserGroup](dbCrud),
 	}
 }
 
@@ -31,17 +31,17 @@ func (m *userGroupService) Get(ctx context.Context, limit uint64, offset uint64)
 		},
 	}
 
-	return m.userRepo.Get(ctx, limit, offset, nil, sorters, "")
+	return m.repo.Get(ctx, limit, offset, nil, sorters, "")
 }
 
 func (m *userGroupService) Create(ctx context.Context, model entities.UserGroup) (uint64, error) {
-	return m.userRepo.Create(ctx, "", model)
+	return m.repo.Create(ctx, "", model)
 }
 
 func (m *userGroupService) Update(ctx context.Context, model entities.UserGroup) (uint64, error) {
-	return m.userRepo.UpdateById(ctx, "", model)
+	return m.repo.UpdateById(ctx, "", model)
 }
 
 func (m *userGroupService) Delete(ctx context.Context, id uint64) (uint64, error) {
-	return m.userRepo.DeleteById(ctx, "", id)
+	return m.repo.DeleteById(ctx, "", id)
 }

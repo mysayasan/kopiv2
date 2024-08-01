@@ -8,8 +8,8 @@ type UserLogin struct {
 	FirstName   string `json:"firstName" form:"firstName" query:"firstName"`
 	LastName    string `json:"lastName" form:"lastName" query:"lastName"`
 	PicUrl      string `json:"picUrl" form:"picUrl" query:"picUrl"`
-	UserGroupId int32  `json:"userGroupId" form:"userGroupId" query:"userGroupId"`
-	UserRoleId  int32  `json:"userRoleId" form:"userRoleId" query:"userRoleId"`
+	UserGroupId int64  `json:"userGroupId" form:"userGroupId" query:"userGroupId"`
+	UserRoleId  int64  `json:"userRoleId" form:"userRoleId" query:"userRoleId"`
 	IsActive    bool   `json:"isActive" form:"isActive" query:"isActive"`
 	CreatedBy   int64  `json:"createdBy" form:"createdBy" query:"createdBy"`
 	CreatedAt   int64  `json:"createdAt" form:"createdAt" query:"createdAt"`

@@ -2,12 +2,14 @@ package apis
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/log"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/mysayasan/kopiv2/domain/entities"
 	"github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
@@ -35,6 +37,7 @@ func NewApiEndpointRbacApi(
 
 	group := router.Group("endpoint-rbac")
 	group.Get("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("get")
+	group.Get("validate/me", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.getValidate, 60*1000*time.Millisecond)).Name("get_validate")
 	group.Post("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.post, 60*1000*time.Millisecond)).Name("create")
 	group.Put("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.put, 60*1000*time.Millisecond)).Name("update")
 	group.Delete("/:id", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.delete, 60*1000*time.Millisecond)).Name("delete")
@@ -57,6 +60,32 @@ func (m *apiEndpointRbacApi) get(c *fiber.Ctx) error {
 	c.Response().Header.Add("X-Rows", fmt.Sprintf("%d", totalCnt))
 
 	return controllers.SendPagingResult(c, res, limit, offset, totalCnt)
+}
+
+func (m *apiEndpointRbacApi) getValidate(c *fiber.Ctx) error {
+
+	user := c.Locals("user").(*jwt.Token)
+	claims := &middlewares.JwtCustomClaimsModel{}
+	tmp, err := json.Marshal(user.Claims)
+	if err != nil {
+		return controllers.SendError(c, controllers.ErrParseFailed, err.Error())
+	}
+	_ = json.Unmarshal(tmp, claims)
+
+	host := c.Query("host")
+	path := c.Query("path")
+
+	ctx := c.UserContext()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	res, err := m.serv.Validate(ctx, host, path, uint64(claims.RoleId))
+	if err != nil {
+		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
+	}
+
+	return controllers.SendResult(c, res, "succeed")
 }
 
 func (m *apiEndpointRbacApi) post(c *fiber.Ctx) error {

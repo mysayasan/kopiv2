@@ -115,6 +115,7 @@ func (m *loginApi) googleCallback(c *fiber.Ctx) error {
 		VerifiedEmail: true,
 		FamilyName:    userG.FamilyName,
 		Picture:       userG.Picture,
+		RoleId:        user.UserRoleId,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour * 72)),
 		},

@@ -11,15 +11,15 @@ import (
 
 // apiEndpointService struct
 type apiEndpointService struct {
-	dbCrud   dbsql.IDbCrud
-	userRepo dbsql.IGenericRepo[entities.ApiEndpoint]
+	dbCrud dbsql.IDbCrud
+	repo   dbsql.IGenericRepo[entities.ApiEndpoint]
 }
 
 // Create new IApiEndpointService
 func NewApiEndpointService(dbCrud dbsql.IDbCrud) IApiEndpointService {
 	return &apiEndpointService{
-		dbCrud:   dbCrud,
-		userRepo: dbsql.NewGenericRepo[entities.ApiEndpoint](dbCrud),
+		dbCrud: dbCrud,
+		repo:   dbsql.NewGenericRepo[entities.ApiEndpoint](dbCrud),
 	}
 }
 
@@ -31,17 +31,17 @@ func (m *apiEndpointService) Get(ctx context.Context, limit uint64, offset uint6
 		},
 	}
 
-	return m.userRepo.Get(ctx, limit, offset, nil, sorters, "")
+	return m.repo.Get(ctx, limit, offset, nil, sorters, "")
 }
 
 func (m *apiEndpointService) Create(ctx context.Context, model entities.ApiEndpoint) (uint64, error) {
-	return m.userRepo.Create(ctx, "", model)
+	return m.repo.Create(ctx, "", model)
 }
 
 func (m *apiEndpointService) Update(ctx context.Context, model entities.ApiEndpoint) (uint64, error) {
-	return m.userRepo.UpdateById(ctx, "", model)
+	return m.repo.UpdateById(ctx, "", model)
 }
 
 func (m *apiEndpointService) Delete(ctx context.Context, id uint64) (uint64, error) {
-	return m.userRepo.DeleteById(ctx, "", id)
+	return m.repo.DeleteById(ctx, "", id)
 }
