@@ -31,7 +31,7 @@ func (m *userRoleService) Get(ctx context.Context, limit uint64, offset uint64) 
 		},
 	}
 
-	return m.repo.Get(ctx, limit, offset, nil, sorters, "")
+	return m.repo.Get(ctx, "", limit, offset, nil, sorters)
 }
 
 // GetByGroup implements IUserRoleService.

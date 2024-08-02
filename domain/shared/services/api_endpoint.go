@@ -31,7 +31,7 @@ func (m *apiEndpointService) Get(ctx context.Context, limit uint64, offset uint6
 		},
 	}
 
-	return m.repo.Get(ctx, limit, offset, nil, sorters, "")
+	return m.repo.Get(ctx, "", limit, offset, nil, sorters)
 }
 
 func (m *apiEndpointService) Create(ctx context.Context, model entities.ApiEndpoint) (uint64, error) {

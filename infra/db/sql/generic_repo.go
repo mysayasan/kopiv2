@@ -21,7 +21,7 @@ func NewGenericRepo[T any](dbCrud IDbCrud) IGenericRepo[T] {
 	}
 }
 
-func (m *genericRepo[T]) Get(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorter []sqldataenums.Sorter, datasrc string) ([]*T, uint64, error) {
+func (m *genericRepo[T]) Get(ctx context.Context, datasrc string, limit uint64, offset uint64, filters []sqldataenums.Filter, sorter []sqldataenums.Sorter) ([]*T, uint64, error) {
 	var tmodel = new(T)
 	res, totalCnt, err := m.dbCrud.Select(ctx, *tmodel, limit, offset, filters, sorter, datasrc)
 	if err != nil {
@@ -40,7 +40,7 @@ func (m *genericRepo[T]) Get(ctx context.Context, limit uint64, offset uint64, f
 	return list, totalCnt, nil
 }
 
-func (m *genericRepo[T]) GetSingle(ctx context.Context, filters []sqldataenums.Filter, datasrc string) (*T, error) {
+func (m *genericRepo[T]) GetSingle(ctx context.Context, datasrc string, filters []sqldataenums.Filter) (*T, error) {
 	var tmodel = new(T)
 	res, err := m.dbCrud.SelectSingle(ctx, *tmodel, filters, datasrc)
 	if err != nil {
@@ -95,6 +95,25 @@ func (m *genericRepo[T]) GetByForeign(ctx context.Context, datasrc string, keyGr
 		list = append(list, &model)
 	}
 	return list, nil
+}
+
+func (m *genericRepo[T]) GetJoin(ctx context.Context, datasrc string, joinsrc []string, model interface{}, limit uint64, offset uint64, filters []sqldataenums.Filter, sorter []sqldataenums.Sorter) ([]*any, uint64, error) {
+	var tmodel = new(T)
+	res, totalCnt, err := m.dbCrud.Select(ctx, *tmodel, limit, offset, filters, sorter, datasrc)
+	if err != nil {
+		return nil, 0, fmt.Errorf("data retrieval error")
+	}
+
+	list := make([]*T, 0)
+
+	for _, row := range res {
+		row := row
+		var model T
+		mapstructure.Decode(row, &model)
+		list = append(list, &model)
+	}
+
+	return nil, totalCnt, nil
 }
 
 func (m *genericRepo[T]) Create(ctx context.Context, datasrc string, model T) (uint64, error) {

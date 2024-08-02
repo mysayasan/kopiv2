@@ -31,7 +31,7 @@ func (m *userLoginService) Get(ctx context.Context, limit uint64, offset uint64)
 		},
 	}
 
-	return m.repo.Get(ctx, limit, offset, nil, sorters, "")
+	return m.repo.Get(ctx, "", limit, offset, nil, sorters)
 }
 
 func (m *userLoginService) GetByEmail(ctx context.Context, email string) (*entities.UserLogin, error) {

@@ -31,7 +31,7 @@ func (m *userGroupService) Get(ctx context.Context, limit uint64, offset uint64)
 		},
 	}
 
-	return m.repo.Get(ctx, limit, offset, nil, sorters, "")
+	return m.repo.Get(ctx, "", limit, offset, nil, sorters)
 }
 
 func (m *userGroupService) Create(ctx context.Context, model entities.UserGroup) (uint64, error) {

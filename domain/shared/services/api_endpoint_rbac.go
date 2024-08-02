@@ -33,7 +33,7 @@ func (m *apiEndpointRbacService) Get(ctx context.Context, limit uint64, offset u
 		},
 	}
 
-	return m.repo.Get(ctx, limit, offset, nil, sorters, "")
+	return m.repo.Get(ctx, "", limit, offset, nil, sorters)
 }
 
 func (m *apiEndpointRbacService) GetApiEpByUserRole(ctx context.Context, userRoleId uint64) ([]*entities.ApiEndpoint, error) {

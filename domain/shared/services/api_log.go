@@ -29,7 +29,7 @@ func (m *apiLogService) Get(ctx context.Context, limit uint64, offset uint64) ([
 		},
 	}
 
-	return m.repo.Get(ctx, limit, offset, nil, sorters, "")
+	return m.repo.Get(ctx, "", limit, offset, nil, sorters)
 }
 
 func (m *apiLogService) Create(ctx context.Context, model entities.ApiLog) (uint64, error) {
