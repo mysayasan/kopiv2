@@ -45,6 +45,7 @@ func (m *apiEndpointRbacService) GetApiEpByUserRole(ctx context.Context, userRol
 	res := make([]*entities.ApiEndpoint, 0)
 
 	for _, rbac := range rbacData {
+		rbac := rbac
 		ep, err := m.apiEpRepo.GetById(ctx, "", uint64(rbac.ApiEndpointId))
 		if err == nil {
 			res = append(res, ep)

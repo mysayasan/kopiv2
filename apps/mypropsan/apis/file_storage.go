@@ -117,8 +117,10 @@ func (m *fileStorageApi) upload(c *fiber.Ctx) error {
 
 	uploadedFiles := make([]*entities.FileStorage, 0)
 	failedUploads := make([]string, 0)
+
 	// Loop through files:
 	for _, file := range files {
+		file := file
 		fmt.Println(file.Filename, file.Size, file.Header["Content-Type"][0])
 		switch file.Header["Content-Type"][0] {
 		case "image/jpeg", "image/png", "application/pdf":

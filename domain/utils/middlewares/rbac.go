@@ -45,6 +45,7 @@ func (m *RbacMiddleware) ApiHandler() fiber.Handler {
 		validPath := ""
 
 		for _, userAcc := range userAccs {
+			userAcc := userAcc
 			if userAcc.Host != host || userAcc.Path == "" || len(path) < len(userAcc.Path) {
 				continue
 			}

@@ -31,6 +31,7 @@ func (m *genericRepo[T]) Get(ctx context.Context, limit uint64, offset uint64, f
 	list := make([]*T, 0)
 
 	for _, row := range res {
+		row := row
 		var model T
 		mapstructure.Decode(row, &model)
 		list = append(list, &model)
@@ -88,6 +89,7 @@ func (m *genericRepo[T]) GetByForeign(ctx context.Context, datasrc string, keyGr
 	list := make([]*T, 0)
 
 	for _, row := range res {
+		row := row
 		var model T
 		mapstructure.Decode(row, &model)
 		list = append(list, &model)

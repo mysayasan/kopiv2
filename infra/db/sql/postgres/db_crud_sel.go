@@ -225,6 +225,7 @@ func (m *dbCrud) Select(ctx context.Context, model interface{}, limit uint64, of
 	if len(result) > 0 {
 		var wg sync.WaitGroup
 		for _, res := range result {
+			res := res
 			for i := 0; i < props.NumField(); i++ {
 				field := props.Type().Field(i)
 				if field.Type.Kind() == reflect.Slice {
@@ -234,6 +235,7 @@ func (m *dbCrud) Select(ctx context.Context, model interface{}, limit uint64, of
 
 						var filters []sqldataenums.Filter
 						for _, pkey := range pkeys {
+							pkey := pkey
 							fkeys := strings.Split(pkey, ":")
 							var val interface{}
 							switch props.FieldByName(fkeys[0]).Interface().(type) {

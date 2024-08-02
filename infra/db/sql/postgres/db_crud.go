@@ -73,6 +73,7 @@ func (m *dbCrud) EndTx() error {
 func (m *dbCrud) genWhereSqlStr(props reflect.Value, filters []sqldataenums.Filter) []string {
 	res := []string{}
 	for _, filter := range filters {
+		filter := filter
 		if filter.Compare == 1 {
 			field := props.FieldByName(filter.FieldName)
 			switch field.Interface().(type) {
@@ -98,6 +99,7 @@ func (m *dbCrud) genWhereSqlStr(props reflect.Value, filters []sqldataenums.Filt
 func (m *dbCrud) genSortSqlStr(sorters []sqldataenums.Sorter) []string {
 	res := []string{}
 	for _, sorter := range sorters {
+		sorter := sorter
 		// field := props.FieldByName(sorter.FieldName)
 		if sorter.Sort == 2 {
 			fs := fmt.Sprintf("%s DESC", strcase.ToSnake(sorter.FieldName))
