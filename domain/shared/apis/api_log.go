@@ -16,6 +16,7 @@ import (
 // ApiLogApi struct
 type apiLogApi struct {
 	auth middlewares.AuthMiddleware
+	rbac middlewares.RbacMiddleware
 	serv services.IApiLogService
 }
 
@@ -23,16 +24,16 @@ type apiLogApi struct {
 func NewApiLogApi(
 	router fiber.Router,
 	auth middlewares.AuthMiddleware,
+	rbac middlewares.RbacMiddleware,
 	serv services.IApiLogService) {
 	handler := &apiLogApi{
 		auth: auth,
+		rbac: rbac,
 		serv: serv,
 	}
 
-	apilog := *middlewares.NewRbac()
-
 	group := router.Group("log")
-	group.Get("/", apilog.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("latest")
+	group.Get("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("latest")
 }
 
 func (m *apiLogApi) get(c *fiber.Ctx) error {

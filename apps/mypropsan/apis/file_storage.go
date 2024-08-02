@@ -24,6 +24,7 @@ import (
 // FileStorageApi struct
 type fileStorageApi struct {
 	auth middlewares.AuthMiddleware
+	rbac middlewares.RbacMiddleware
 	serv services.IFileStorageService
 	path string
 }
@@ -32,17 +33,19 @@ type fileStorageApi struct {
 func NewFileStorageApi(
 	router fiber.Router,
 	auth middlewares.AuthMiddleware,
+	rbac middlewares.RbacMiddleware,
 	serv services.IFileStorageService,
 	path string) {
 	handler := &fileStorageApi{
 		auth: auth,
+		rbac: rbac,
 		serv: serv,
 		path: path,
 	}
 
 	group := router.Group("file-storage")
-	group.Post("/upload", auth.JwtHandler(), handler.upload).Name("upload")
-	group.Get("/download", auth.JwtHandler(), handler.download).Name("download")
+	group.Post("/upload", auth.JwtHandler(), rbac.ApiHandler(), handler.upload).Name("upload")
+	group.Get("/download", auth.JwtHandler(), rbac.ApiHandler(), handler.download).Name("download")
 }
 
 func (m *fileStorageApi) download(c *fiber.Ctx) error {

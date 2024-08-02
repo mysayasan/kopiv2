@@ -10,19 +10,19 @@ import (
 
 // AdminApi struct
 type adminApi struct {
-	auth   middlewares.AuthMiddleware
-	apilog middlewares.RbacMiddleware
+	auth middlewares.AuthMiddleware
+	rbac middlewares.RbacMiddleware
 }
 
 // Create AdminApi
 func NewAdminApi(
 	router fiber.Router,
-	auth middlewares.AuthMiddleware) {
+	auth middlewares.AuthMiddleware,
+	rbac middlewares.RbacMiddleware) {
 	handler := &adminApi{
 		auth: auth,
+		rbac: rbac,
 	}
-
-	rbac := *middlewares.NewRbac()
 
 	group := router.Group("admin")
 	group.Get("/test", auth.JwtHandler(), rbac.ApiHandler(), handler.restricted).Name("test")

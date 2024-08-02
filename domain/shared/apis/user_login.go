@@ -18,6 +18,7 @@ import (
 // UserLoginApi struct
 type userLoginApi struct {
 	auth middlewares.AuthMiddleware
+	rbac middlewares.RbacMiddleware
 	serv services.IUserLoginService
 }
 
@@ -25,19 +26,19 @@ type userLoginApi struct {
 func NewUserLoginApi(
 	router fiber.Router,
 	auth middlewares.AuthMiddleware,
+	rbac middlewares.RbacMiddleware,
 	serv services.IUserLoginService) {
 	handler := &userLoginApi{
 		auth: auth,
+		rbac: rbac,
 		serv: serv,
 	}
 
-	Rbac := *middlewares.NewRbac()
-
 	group := router.Group("user-credential")
-	group.Get("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("get_all")
-	group.Get("/email", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.getByEmail, 60*1000*time.Millisecond)).Name("get_by_email")
-	group.Put("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.put, 60*1000*time.Millisecond)).Name("update")
-	group.Delete("/:id", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.delete, 60*1000*time.Millisecond)).Name("delete")
+	group.Get("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("get_all")
+	group.Get("/email", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.getByEmail, 60*1000*time.Millisecond)).Name("get_by_email")
+	group.Put("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.put, 60*1000*time.Millisecond)).Name("update")
+	group.Delete("/:id", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.delete, 60*1000*time.Millisecond)).Name("delete")
 }
 
 func (m *userLoginApi) get(c *fiber.Ctx) error {

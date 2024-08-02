@@ -36,6 +36,24 @@ func (m *apiEndpointRbacService) Get(ctx context.Context, limit uint64, offset u
 	return m.repo.Get(ctx, limit, offset, nil, sorters, "")
 }
 
+func (m *apiEndpointRbacService) GetApiEpByUserRole(ctx context.Context, userRoleId uint64) ([]*entities.ApiEndpoint, error) {
+	rbacData, err := m.repo.GetByForeign(ctx, "", "fkey2", userRoleId)
+	if err != nil {
+		return nil, err
+	}
+
+	res := make([]*entities.ApiEndpoint, 0)
+
+	for _, rbac := range rbacData {
+		ep, err := m.apiEpRepo.GetById(ctx, "", uint64(rbac.ApiEndpointId))
+		if err == nil {
+			res = append(res, ep)
+		}
+	}
+
+	return res, nil
+}
+
 func (m *apiEndpointRbacService) Create(ctx context.Context, model entities.ApiEndpointRbac) (uint64, error) {
 	return m.repo.Create(ctx, "", model)
 }

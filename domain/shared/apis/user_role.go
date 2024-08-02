@@ -19,26 +19,27 @@ import (
 type userRoleApi struct {
 	auth middlewares.AuthMiddleware
 	serv services.IUserRoleService
+	rbac middlewares.RbacMiddleware
 }
 
 // Create UserRoleApi
 func NewUserRoleApi(
 	router fiber.Router,
 	auth middlewares.AuthMiddleware,
+	rbac middlewares.RbacMiddleware,
 	serv services.IUserRoleService) {
 	handler := &userRoleApi{
 		auth: auth,
+		rbac: rbac,
 		serv: serv,
 	}
 
-	Rbac := *middlewares.NewRbac()
-
 	group := router.Group("user-role")
-	group.Get("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("get")
-	group.Get("/group/:id", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.getByGroup, 60*1000*time.Millisecond)).Name("get_by_group")
-	group.Post("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.post, 60*1000*time.Millisecond)).Name("create")
-	group.Put("/", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.put, 60*1000*time.Millisecond)).Name("update")
-	group.Delete("/:id", auth.JwtHandler(), Rbac.ApiHandler(), timeout.NewWithContext(handler.delete, 60*1000*time.Millisecond)).Name("delete")
+	group.Get("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("get")
+	group.Get("/group/:id", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.getByGroup, 60*1000*time.Millisecond)).Name("get_by_group")
+	group.Post("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.post, 60*1000*time.Millisecond)).Name("create")
+	group.Put("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.put, 60*1000*time.Millisecond)).Name("update")
+	group.Delete("/:id", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.delete, 60*1000*time.Millisecond)).Name("delete")
 }
 
 func (m *userRoleApi) get(c *fiber.Ctx) error {

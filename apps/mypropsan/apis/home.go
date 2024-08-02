@@ -16,6 +16,7 @@ import (
 // HomeApi struct
 type homeApi struct {
 	auth middlewares.AuthMiddleware
+	rbac middlewares.RbacMiddleware
 	serv services.IHomeService
 }
 
@@ -23,16 +24,16 @@ type homeApi struct {
 func NewHomeApi(
 	router fiber.Router,
 	auth middlewares.AuthMiddleware,
+	rbac middlewares.RbacMiddleware,
 	serv services.IHomeService) {
 	handler := &homeApi{
 		auth: auth,
+		rbac: rbac,
 		serv: serv,
 	}
 
-	rbac := *middlewares.NewRbac()
-
 	group := router.Group("home")
-	group.Get("/latest", rbac.ApiHandler(), timeout.NewWithContext(handler.latest, 60*1000*time.Millisecond)).Name("latest")
+	group.Get("/latest", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.latest, 60*1000*time.Millisecond)).Name("latest")
 	group.Post("/new", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.new, 60*1000*time.Millisecond)).Name("new")
 }
 

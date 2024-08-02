@@ -90,14 +90,7 @@ func main() {
 		return c.Next()
 	})
 
-	// Repo modules
-	// userRepo := sharedRepos.NewUserRepo[entities.UserLogin](postgresDb)
-	// apiLogRepo := sharedRepos.NewApiLogRepo(postgresDb)
-	// residentPropRepo := repos.NewResidentPropRepo(postgresDb)
-	// fileStorageRepo := repos.NewFileStorageRepo(postgresDb)
-
 	// Page Modules
-	// userService := sharedServices.NewUserLoginService(userRepo)
 	userLoginService := sharedServices.NewUserLoginService(postgresDb)
 	userGroupService := sharedServices.NewUserGroupService(postgresDb)
 	userRoleService := sharedServices.NewUserRoleService(postgresDb)
@@ -107,33 +100,36 @@ func main() {
 	homeService := services.NewHomeService(postgresDb)
 	fileStorageService := services.NewFileStorageService(postgresDb)
 
+	// start rbac middleware
+	rbac := middlewares.NewRbac(apiEndpointRbacService)
+
 	// Login module
 	if appConfig.Login.Google != nil {
 		sharedApis.NewLoginApi(api, appConfig.Login.Google, *auth, userLoginService)
 	}
 	// User Login Module
-	sharedApis.NewUserLoginApi(api, *auth, userLoginService)
+	sharedApis.NewUserLoginApi(api, *auth, *rbac, userLoginService)
 	// User Group Module
-	sharedApis.NewUserGroupApi(api, *auth, userGroupService)
+	sharedApis.NewUserGroupApi(api, *auth, *rbac, userGroupService)
 	// User Role Module
-	sharedApis.NewUserRoleApi(api, *auth, userRoleService)
+	sharedApis.NewUserRoleApi(api, *auth, *rbac, userRoleService)
 	// Api Log module
-	sharedApis.NewApiLogApi(api, *auth, apiLogService)
+	sharedApis.NewApiLogApi(api, *auth, *rbac, apiLogService)
 	// Api Endpoint module
-	sharedApis.NewApiEndpointApi(api, *auth, apiEndpointService)
+	sharedApis.NewApiEndpointApi(api, *auth, *rbac, apiEndpointService)
 	// Api Endpoint RBAC module
-	sharedApis.NewApiEndpointRbacApi(api, *auth, apiEndpointRbacService)
+	sharedApis.NewApiEndpointRbacApi(api, *auth, *rbac, apiEndpointRbacService)
 	// Admin Api
-	apis.NewAdminApi(api, *auth)
+	apis.NewAdminApi(api, *auth, *rbac)
 	//Home Api
-	apis.NewHomeApi(api, *auth, homeService)
+	apis.NewHomeApi(api, *auth, *rbac, homeService)
 	// FileStorage Api
-	apis.NewFileStorageApi(api, *auth, fileStorageService, appConfig.FileStorage.Path)
+	apis.NewFileStorageApi(api, *auth, *rbac, fileStorageService, appConfig.FileStorage.Path)
 
 	// Callback after log is written
 	app.Use(logger.New(logger.Config{
 		TimeFormat: time.RFC3339Nano,
-		TimeZone:   "Asia/Shanghai",
+		TimeZone:   "Asia/Singapore",
 		Done: func(c *fiber.Ctx, logString []byte) {
 			if c.Response().StatusCode() != fiber.StatusOK {
 				// log.Info(string(logString))
