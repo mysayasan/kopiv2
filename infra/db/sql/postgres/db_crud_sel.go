@@ -16,15 +16,26 @@ import (
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 )
 
-func (m *dbCrud) genSelSqlStr(props reflect.Value, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter, datasrc string) (int, string) {
+func (m *dbCrud) genSelSqlStr(props reflect.Value, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter, datasrc string, joinsrc ...string) (int, string) {
 
 	if datasrc == "" {
 		propName := strcase.ToSnake(props.Type().Name())
 		temp := strings.Replace(propName, "_entity", "", 1)
 		if temp == propName {
+			temp = strings.Replace(propName, "_vw_model", "", 1)
+		}
+		if temp == propName {
 			temp = strings.Replace(propName, "_model", "", 1)
 		}
 		datasrc = temp
+	}
+
+	if len(joinsrc) > 0 {
+		datasrc = fmt.Sprintf("%s table0", datasrc)
+		for idx, src := range joinsrc {
+			srcAlias := fmt.Sprintf("table%d", idx+1)
+			datasrc = fmt.Sprintf("%s\n %s", datasrc, m.genJoinSqlStr(props, src, srcAlias))
+		}
 	}
 
 	selCols := m.getCols(props)
@@ -40,7 +51,7 @@ func (m *dbCrud) genSelSqlStr(props reflect.Value, limit uint64, offset uint64, 
 		`, res, strings.Join(selFilters, " AND "))
 	}
 
-	selSorters := m.genSortSqlStr(sorters)
+	selSorters := m.genSortSqlStr(props, sorters)
 	if len(selSorters) > 0 {
 		res = fmt.Sprintf(`
 		%s
@@ -80,9 +91,9 @@ func (m *dbCrud) genSelSqlStr(props reflect.Value, limit uint64, offset uint64, 
 	return len(selCols), res
 }
 
-func (m *dbCrud) Select(ctx context.Context, model interface{}, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter, datasrc string) ([]map[string]interface{}, uint64, error) {
+func (m *dbCrud) Select(ctx context.Context, model interface{}, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter, datasrc string, joinsrc ...string) ([]map[string]interface{}, uint64, error) {
 	props := reflect.ValueOf(model)
-	colCnt, sqlStr := m.genSelSqlStr(props, limit, offset, filters, sorters, datasrc)
+	colCnt, sqlStr := m.genSelSqlStr(props, limit, offset, filters, sorters, datasrc, joinsrc...)
 
 	rows := &sql.Rows{}
 	var err error

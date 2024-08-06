@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"reflect"
+	"strings"
 
 	strcase "github.com/iancoleman/strcase"
 	_ "github.com/lib/pq"
@@ -70,22 +71,65 @@ func (m *dbCrud) EndTx() error {
 	return nil
 }
 
+func (m *dbCrud) genJoinSqlStr(props reflect.Value, srcname string, srcalias string) string {
+	res := ""
+
+	pkeyFieldNm := ""
+	for i := 0; i < props.NumField(); i++ {
+		field := props.Type().Field(i)
+		if field.Type.Kind() == reflect.Slice {
+			if field.Type.Elem().Kind() == reflect.Struct {
+				continue
+			}
+		}
+
+		if field.Tag.Get("pkey") == "true" {
+			pkeyFieldNm = field.Name
+			break
+		}
+	}
+
+	for i := 0; i < props.NumField(); i++ {
+		field := props.Type().Field(i)
+		if field.Type.Kind() == reflect.Slice {
+			if field.Type.Elem().Kind() == reflect.Struct {
+				continue
+			}
+		}
+
+		if strings.EqualFold(field.Tag.Get("tablejoin"), srcalias) {
+			res = fmt.Sprintf("%s\nINNER JOIN %s %s ON table0.%s = %s.%s", res, srcname, srcalias, strcase.ToSnake(field.Name), srcalias, strcase.ToSnake(pkeyFieldNm))
+		}
+	}
+
+	return res
+}
+
 func (m *dbCrud) genWhereSqlStr(props reflect.Value, filters []sqldataenums.Filter) []string {
 	res := []string{}
 	for _, filter := range filters {
 		filter := filter
+		fieldNm := strcase.ToSnake(filter.FieldName)
+		field, ok := props.Type().FieldByName(filter.FieldName)
+		if ok {
+			tblalias := field.Tag.Get("tblalias")
+			if tblalias != "" {
+				fieldNm = fmt.Sprintf("%s.%s", tblalias, fieldNm)
+			}
+		}
+
 		if filter.Compare == 1 {
 			field := props.FieldByName(filter.FieldName)
 			switch field.Interface().(type) {
 			case int, int16, int32, int64, uint, uint16, uint32, uint64:
 				{
-					fs := fmt.Sprintf("%s = %d", strcase.ToSnake(filter.FieldName), filter.Value)
+					fs := fmt.Sprintf("%s = %d", fieldNm, filter.Value)
 					res = append(res, fs)
 					break
 				}
 			default:
 				{
-					fs := fmt.Sprintf("%s = '%s'", strcase.ToSnake(filter.FieldName), filter.Value)
+					fs := fmt.Sprintf("%s = '%s'", fieldNm, filter.Value)
 					res = append(res, fs)
 					break
 				}
@@ -96,16 +140,23 @@ func (m *dbCrud) genWhereSqlStr(props reflect.Value, filters []sqldataenums.Filt
 	return res
 }
 
-func (m *dbCrud) genSortSqlStr(sorters []sqldataenums.Sorter) []string {
+func (m *dbCrud) genSortSqlStr(props reflect.Value, sorters []sqldataenums.Sorter) []string {
 	res := []string{}
 	for _, sorter := range sorters {
 		sorter := sorter
-		// field := props.FieldByName(sorter.FieldName)
+		fieldNm := strcase.ToSnake(sorter.FieldName)
+		field, ok := props.Type().FieldByName(sorter.FieldName)
+		if ok {
+			tblalias := field.Tag.Get("tblalias")
+			if tblalias != "" {
+				fieldNm = fmt.Sprintf("%s.%s", tblalias, fieldNm)
+			}
+		}
 		if sorter.Sort == 2 {
-			fs := fmt.Sprintf("%s DESC", strcase.ToSnake(sorter.FieldName))
+			fs := fmt.Sprintf("%s DESC", fieldNm)
 			res = append(res, fs)
 		} else {
-			fs := fmt.Sprintf("%s ASC", strcase.ToSnake(sorter.FieldName))
+			fs := fmt.Sprintf("%s ASC", fieldNm)
 			res = append(res, fs)
 		}
 	}
@@ -121,6 +172,12 @@ func (m *dbCrud) getCols(props reflect.Value) []string {
 			if field.Type.Elem().Kind() == reflect.Struct {
 				continue
 			}
+		}
+
+		tblalias := field.Tag.Get("tblalias")
+		if tblalias != "" {
+			res = append(res, fmt.Sprintf("%s.%s", tblalias, strcase.ToSnake(field.Name)))
+			continue
 		}
 
 		res = append(res, strcase.ToSnake(field.Name))

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	_ "github.com/lib/pq"
+	"github.com/mitchellh/mapstructure"
 	"github.com/mysayasan/kopiv2/domain/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
@@ -74,4 +75,36 @@ func (m *apiEndpointRbacService) Validate(ctx context.Context, host string, path
 	}
 
 	return m.repo.GetByUnique(ctx, "", "ukey1", apiEp.Id, userRoleId)
+}
+
+func (m *apiEndpointRbacService) GetView(ctx context.Context, userRoleId uint64) ([]*entities.ApiEndpointRbacVwModel, uint64, error) {
+	sorters := []sqldataenums.Sorter{
+		{
+			FieldName: "CreatedAt",
+			Sort:      2,
+		},
+	}
+
+	filters := []sqldataenums.Filter{
+		{
+			FieldName: "UserRoleId",
+			Value:     userRoleId,
+			Compare:   sqldataenums.Equal,
+		},
+	}
+
+	data, total, err := m.repo.GetJoin(ctx, "", entities.ApiEndpointRbacVwModel{}, 0, 0, filters, sorters, "api_endpoint")
+	if err != nil {
+		return nil, 0, err
+	}
+
+	res := make([]*entities.ApiEndpointRbacVwModel, 0)
+	for _, row := range data {
+		row := row
+		var model entities.ApiEndpointRbacVwModel
+		mapstructure.Decode(row, &model)
+		res = append(res, &model)
+	}
+
+	return res, total, nil
 }

@@ -40,6 +40,7 @@ func NewApiEndpointRbacApi(
 	group.Get("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("get")
 	group.Get("validate/me", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.getValidate, 60*1000*time.Millisecond)).Name("get_validate")
 	group.Get("ep/me", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.getApiEpByUserRole, 60*1000*time.Millisecond)).Name("get_validate")
+	group.Get("view/me", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.getView, 60*1000*time.Millisecond)).Name("get_view")
 	group.Post("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.post, 60*1000*time.Millisecond)).Name("create")
 	group.Put("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.put, 60*1000*time.Millisecond)).Name("update")
 	group.Delete("/:id", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.delete, 60*1000*time.Millisecond)).Name("delete")
@@ -62,6 +63,23 @@ func (m *apiEndpointRbacApi) get(c *fiber.Ctx) error {
 	c.Response().Header.Add("X-Rows", fmt.Sprintf("%d", totalCnt))
 
 	return controllers.SendPagingResult(c, res, limit, offset, totalCnt)
+}
+
+func (m *apiEndpointRbacApi) getView(c *fiber.Ctx) error {
+	claims := c.Locals("claims").(*middlewares.JwtCustomClaimsModel)
+
+	ctx := c.UserContext()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	res, totalCnt, err := m.serv.GetView(ctx, uint64(claims.RoleId))
+	if err != nil {
+		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
+	}
+
+	c.Response().Header.Add("X-Rows", fmt.Sprintf("%d", totalCnt))
+
+	return controllers.SendResult(c, res)
 }
 
 func (m *apiEndpointRbacApi) getApiEpByUserRole(c *fiber.Ctx) error {
