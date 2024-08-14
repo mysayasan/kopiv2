@@ -41,25 +41,6 @@ func (m *apiEndpointRbacService) Get(ctx context.Context, limit uint64, offset u
 	return m.repo.Get(ctx, "", limit, offset, nil, sorters)
 }
 
-func (m *apiEndpointRbacService) GetApiEpByUserRole(ctx context.Context, userRoleId uint64) ([]*entities.ApiEndpoint, error) {
-	rbacData, err := m.repo.GetByForeign(ctx, "", "fkey2", userRoleId)
-	if err != nil {
-		return nil, err
-	}
-
-	res := make([]*entities.ApiEndpoint, 0)
-
-	for _, rbac := range rbacData {
-		rbac := rbac
-		ep, err := m.apiEpRepo.GetById(ctx, "", uint64(rbac.ApiEndpointId))
-		if err == nil {
-			res = append(res, ep)
-		}
-	}
-
-	return res, nil
-}
-
 func (m *apiEndpointRbacService) Create(ctx context.Context, model entities.ApiEndpointRbac) (uint64, error) {
 	return m.repo.Create(ctx, "", model)
 }
@@ -81,7 +62,7 @@ func (m *apiEndpointRbacService) Validate(ctx context.Context, host string, path
 	return m.repo.GetByUnique(ctx, "", "ukey1", apiEp.Id, userRoleId)
 }
 
-func (m *apiEndpointRbacService) GetView(ctx context.Context, userId uint64) ([]*entities.ApiEndpointRbacVwModel, uint64, error) {
+func (m *apiEndpointRbacService) GetApiEpByUserRole(ctx context.Context, userId uint64) ([]*entities.ApiEndpointRbacVwModel, uint64, error) {
 	userData, err := m.userLoginRepo.GetById(ctx, "", userId)
 	if err != nil {
 		return nil, 0, err

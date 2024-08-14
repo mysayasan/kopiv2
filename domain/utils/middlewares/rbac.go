@@ -7,6 +7,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/log"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/mysayasan/kopiv2/domain/entities"
 	"github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 )
@@ -36,13 +37,14 @@ func (m *RbacMiddleware) ApiHandler() fiber.Handler {
 		host := string(c.Request().Host())
 		path := string(c.Request().URI().Path())
 
-		userAccs, err := m.apiEpServ.GetApiEpByUserRole(c.Context(), uint64(claims.RoleId))
+		userAccs, _, err := m.apiEpServ.GetApiEpByUserRole(c.Context(), uint64(claims.RoleId))
 		if err != nil {
-			return controllers.SendError(c, controllers.ErrPermission, err.Error())
+			return controllers.SendError(c, controllers.ErrPermission, "limited access to resources")
 		}
 
 		isValid := false
 		validPath := ""
+		var userAccess *entities.ApiEndpointRbacVwModel = nil
 
 		for _, userAcc := range userAccs {
 			userAcc := userAcc
@@ -53,17 +55,13 @@ func (m *RbacMiddleware) ApiHandler() fiber.Handler {
 			validPath = path[0:len(userAcc.Path)]
 			if validPath == userAcc.Path {
 				isValid = true
+				userAccess = userAcc
 				break
 			}
 		}
 
 		if !isValid {
-			return controllers.SendError(c, controllers.ErrPermission, "cant proceed limited access to api")
-		}
-
-		userAccess, err := m.apiEpServ.Validate(c.Context(), host, validPath, uint64(claims.RoleId))
-		if err != nil {
-			return controllers.SendError(c, controllers.ErrPermission, err.Error())
+			return controllers.SendError(c, controllers.ErrPermission, "limited access to resources")
 		}
 
 		switch c.Method() {
