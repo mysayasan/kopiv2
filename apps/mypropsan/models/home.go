@@ -30,5 +30,5 @@ type ResidentProp struct {
 	Lon           float64           `json:"lon" form:"lon" query:"lon"`
 	PostedAt      int64             `json:"postedAt" form:"postedAt" query:"postedAt"`
 	ExpiredAt     int64             `json:"expiredAt" form:"expiredAt" query:"expiredAt"`
-	Pics          []ResidentPropPic `json:"pics" form:"pics" query:"pics" datasrc:"resident_prop_pic" parents:"Id:ResidentPropId"`
+	Pics          []ResidentPropPic `json:"pics" form:"pics" query:"pics" datasrc:"resident_prop_pic" parents:"Id=ResidentPropId"`
 }

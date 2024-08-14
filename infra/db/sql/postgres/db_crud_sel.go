@@ -70,7 +70,8 @@ func (m *dbCrud) genSelSqlStr(props reflect.Value, limit uint64, offset uint64, 
 		rowOffset = fmt.Sprintf("OFFSET %d", offset)
 	}
 
-	res = fmt.Sprintf(`
+	if limit > 1 {
+		res = fmt.Sprintf(`
 		WITH cte AS (
 			%s
 			)
@@ -80,12 +81,15 @@ func (m *dbCrud) genSelSqlStr(props reflect.Value, limit uint64, offset uint64, 
 			%s
 			%s
 			) sub
-			INNER JOIN (SELECT count(*) FROM cte) c(x_rows_cnt) ON true;
-	
+			INNER JOIN (SELECT count(*) FROM cte) c(x_rows_cnt) ON true	
 		`, res, rowLimit, rowOffset)
+	}
+
+	res = fmt.Sprintf("%s;", res)
 
 	if os.Getenv("ENVIRONMENT") == "dev" {
 		log.Info(res)
+		log.Info(selCols)
 	}
 
 	return len(selCols), res
@@ -222,7 +226,7 @@ func (m *dbCrud) Select(ctx context.Context, model interface{}, limit uint64, of
 			data[field.Name] = vals[i]
 		}
 
-		if offset >= limit {
+		if limit > 1 && offset >= limit {
 			rowCnt = *vals[len(vals)-1].(*uint64)
 		}
 
@@ -247,7 +251,7 @@ func (m *dbCrud) Select(ctx context.Context, model interface{}, limit uint64, of
 						var filters []sqldataenums.Filter
 						for _, pkey := range pkeys {
 							pkey := pkey
-							fkeys := strings.Split(pkey, ":")
+							fkeys := strings.Split(pkey, "=")
 							var val interface{}
 							switch props.FieldByName(fkeys[0]).Interface().(type) {
 							case []uint8:
@@ -392,7 +396,7 @@ func (m *dbCrud) SelectByForeign(ctx context.Context, model interface{}, datasrc
 
 	filters := m.getFiltersByKeyType(props, 3, keyGroup, fids...)
 
-	rows, _, err := m.Select(ctx, props.Interface(), 0, 0, filters, nil, datasrc)
+	rows, _, err := m.Select(ctx, props.Interface(), 1, 0, filters, nil, datasrc)
 	if err != nil {
 		return nil, err
 	}

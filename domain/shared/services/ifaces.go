@@ -44,7 +44,7 @@ type IApiEndpointService interface {
 type IApiEndpointRbacService interface {
 	Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.ApiEndpointRbac, uint64, error)
 	GetApiEpByUserRole(ctx context.Context, userRoleId uint64) ([]*entities.ApiEndpoint, error)
-	GetView(ctx context.Context, userRoleId uint64) ([]*entities.ApiEndpointRbacVwModel, uint64, error)
+	GetView(ctx context.Context, userId uint64) ([]*entities.ApiEndpointRbacVwModel, uint64, error)
 	Create(ctx context.Context, model entities.ApiEndpointRbac) (uint64, error)
 	Update(ctx context.Context, model entities.ApiEndpointRbac) (uint64, error)
 	Delete(ctx context.Context, id uint64) (uint64, error)
@@ -55,4 +55,11 @@ type IApiEndpointRbacService interface {
 type IApiLogService interface {
 	Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.ApiLog, uint64, error)
 	Create(ctx context.Context, model entities.ApiLog) (uint64, error)
+}
+
+// IFileStorageService interface
+type IFileStorageService interface {
+	GetByGuid(ctx context.Context, guid string) (*entities.FileStorage, error)
+	Create(ctx context.Context, model entities.FileStorage) (uint64, error)
+	CreateMultiple(ctx context.Context, model []entities.FileStorage) (uint64, error)
 }

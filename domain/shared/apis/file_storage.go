@@ -15,8 +15,8 @@ import (
 	"github.com/gofiber/fiber/v2/log"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/mysayasan/kopiv2/apps/mypropsan/entities"
-	"github.com/mysayasan/kopiv2/apps/mypropsan/services"
+	"github.com/mysayasan/kopiv2/domain/entities"
+	"github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 )

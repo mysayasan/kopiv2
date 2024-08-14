@@ -11,15 +11,13 @@ import (
 
 // homeService struct
 type homeService struct {
-	dbCrud           dbsql.IDbCrud
-	resPropRepoModel dbsql.IGenericRepo[models.ResidentProp]
+	repo dbsql.IGenericRepo[models.ResidentProp]
 }
 
 // Create new IHomeService
-func NewHomeService(dbCrud dbsql.IDbCrud) IHomeService {
+func NewHomeService(repo dbsql.IGenericRepo[models.ResidentProp]) IHomeService {
 	return &homeService{
-		dbCrud:           dbCrud,
-		resPropRepoModel: dbsql.NewGenericRepo[models.ResidentProp](dbCrud),
+		repo: repo,
 	}
 }
 
@@ -31,5 +29,5 @@ func (m *homeService) GetLatest(ctx context.Context, limit uint64, offset uint64
 		},
 	}
 
-	return m.resPropRepoModel.Get(ctx, "", limit, offset, nil, sorters)
+	return m.repo.Get(ctx, "", limit, offset, nil, sorters)
 }

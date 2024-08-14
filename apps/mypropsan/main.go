@@ -15,12 +15,15 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/joho/godotenv"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/apis"
+	"github.com/mysayasan/kopiv2/apps/mypropsan/models"
 	"github.com/mysayasan/kopiv2/apps/mypropsan/services"
 	"github.com/mysayasan/kopiv2/domain/entities"
+	domainEntities "github.com/mysayasan/kopiv2/domain/entities"
 	sharedApis "github.com/mysayasan/kopiv2/domain/shared/apis"
 	sharedServices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 	"github.com/mysayasan/kopiv2/infra/config"
+	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/db/sql/postgres"
 )
 
@@ -90,15 +93,25 @@ func main() {
 		return c.Next()
 	})
 
+	// Create Repo
+	userLoginRepo := dbsql.NewGenericRepo[domainEntities.UserLogin](postgresDb)
+	userGroupRepo := dbsql.NewGenericRepo[domainEntities.UserGroup](postgresDb)
+	userRoleRepo := dbsql.NewGenericRepo[domainEntities.UserRole](postgresDb)
+	apiLogRepo := dbsql.NewGenericRepo[domainEntities.ApiLog](postgresDb)
+	apiEpRepo := dbsql.NewGenericRepo[domainEntities.ApiEndpoint](postgresDb)
+	apiEpRbacRepo := dbsql.NewGenericRepo[domainEntities.ApiEndpointRbac](postgresDb)
+	residentPropRepo := dbsql.NewGenericRepo[models.ResidentProp](postgresDb)
+	fileStorRepo := dbsql.NewGenericRepo[domainEntities.FileStorage](postgresDb)
+
 	// Page Modules
-	userLoginService := sharedServices.NewUserLoginService(postgresDb)
-	userGroupService := sharedServices.NewUserGroupService(postgresDb)
-	userRoleService := sharedServices.NewUserRoleService(postgresDb)
-	apiLogService := sharedServices.NewApiLogService(postgresDb)
-	apiEndpointService := sharedServices.NewApiEndpointService(postgresDb)
-	apiEndpointRbacService := sharedServices.NewApiEndpointRbacService(postgresDb)
-	homeService := services.NewHomeService(postgresDb)
-	fileStorageService := services.NewFileStorageService(postgresDb)
+	userLoginService := sharedServices.NewUserLoginService(userLoginRepo)
+	userGroupService := sharedServices.NewUserGroupService(userGroupRepo)
+	userRoleService := sharedServices.NewUserRoleService(userRoleRepo)
+	apiLogService := sharedServices.NewApiLogService(apiLogRepo)
+	apiEndpointService := sharedServices.NewApiEndpointService(apiEpRepo)
+	apiEndpointRbacService := sharedServices.NewApiEndpointRbacService(apiEpRbacRepo, userLoginRepo, apiEpRepo)
+	homeService := services.NewHomeService(residentPropRepo)
+	fileStorageService := sharedServices.NewFileStorageService(fileStorRepo)
 
 	// start rbac middleware
 	rbac := middlewares.NewRbac(apiEndpointRbacService)
@@ -119,12 +132,12 @@ func main() {
 	sharedApis.NewApiEndpointApi(api, *auth, *rbac, apiEndpointService)
 	// Api Endpoint RBAC module
 	sharedApis.NewApiEndpointRbacApi(api, *auth, *rbac, apiEndpointRbacService)
+	// FileStorage Api
+	sharedApis.NewFileStorageApi(api, *auth, *rbac, fileStorageService, appConfig.FileStorage.Path)
 	// Admin Api
 	apis.NewAdminApi(api, *auth, *rbac)
 	//Home Api
 	apis.NewHomeApi(api, *auth, *rbac, homeService)
-	// FileStorage Api
-	apis.NewFileStorageApi(api, *auth, *rbac, fileStorageService, appConfig.FileStorage.Path)
 
 	// Callback after log is written
 	app.Use(logger.New(logger.Config{

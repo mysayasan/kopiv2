@@ -12,17 +12,21 @@ import (
 
 // apiEndpointRbacService struct
 type apiEndpointRbacService struct {
-	dbCrud    dbsql.IDbCrud
-	repo      dbsql.IGenericRepo[entities.ApiEndpointRbac]
-	apiEpRepo dbsql.IGenericRepo[entities.ApiEndpoint]
+	repo          dbsql.IGenericRepo[entities.ApiEndpointRbac]
+	userLoginRepo dbsql.IGenericRepo[entities.UserLogin]
+	apiEpRepo     dbsql.IGenericRepo[entities.ApiEndpoint]
 }
 
 // Create new IApiEndpointRbacService
-func NewApiEndpointRbacService(dbCrud dbsql.IDbCrud) IApiEndpointRbacService {
+func NewApiEndpointRbacService(
+	repo dbsql.IGenericRepo[entities.ApiEndpointRbac],
+	userLoginRepo dbsql.IGenericRepo[entities.UserLogin],
+	apiEpRepo dbsql.IGenericRepo[entities.ApiEndpoint],
+) IApiEndpointRbacService {
 	return &apiEndpointRbacService{
-		dbCrud:    dbCrud,
-		repo:      dbsql.NewGenericRepo[entities.ApiEndpointRbac](dbCrud),
-		apiEpRepo: dbsql.NewGenericRepo[entities.ApiEndpoint](dbCrud),
+		repo:          repo,
+		userLoginRepo: userLoginRepo,
+		apiEpRepo:     apiEpRepo,
 	}
 }
 
@@ -77,7 +81,12 @@ func (m *apiEndpointRbacService) Validate(ctx context.Context, host string, path
 	return m.repo.GetByUnique(ctx, "", "ukey1", apiEp.Id, userRoleId)
 }
 
-func (m *apiEndpointRbacService) GetView(ctx context.Context, userRoleId uint64) ([]*entities.ApiEndpointRbacVwModel, uint64, error) {
+func (m *apiEndpointRbacService) GetView(ctx context.Context, userId uint64) ([]*entities.ApiEndpointRbacVwModel, uint64, error) {
+	userData, err := m.userLoginRepo.GetById(ctx, "", userId)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	sorters := []sqldataenums.Sorter{
 		{
 			FieldName: "CreatedAt",
@@ -88,7 +97,7 @@ func (m *apiEndpointRbacService) GetView(ctx context.Context, userRoleId uint64)
 	filters := []sqldataenums.Filter{
 		{
 			FieldName: "UserRoleId",
-			Value:     userRoleId,
+			Value:     userData.UserRoleId,
 			Compare:   sqldataenums.Equal,
 		},
 	}

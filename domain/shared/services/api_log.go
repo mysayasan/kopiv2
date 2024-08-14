@@ -15,9 +15,9 @@ type apiLogService struct {
 }
 
 // Create new IApiLogService
-func NewApiLogService(dbCrud dbsql.IDbCrud) IApiLogService {
+func NewApiLogService(repo dbsql.IGenericRepo[entities.ApiLog]) IApiLogService {
 	return &apiLogService{
-		repo: dbsql.NewGenericRepo[entities.ApiLog](dbCrud),
+		repo: repo,
 	}
 }
 

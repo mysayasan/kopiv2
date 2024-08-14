@@ -11,15 +11,13 @@ import (
 
 // apiEndpointService struct
 type apiEndpointService struct {
-	dbCrud dbsql.IDbCrud
-	repo   dbsql.IGenericRepo[entities.ApiEndpoint]
+	repo dbsql.IGenericRepo[entities.ApiEndpoint]
 }
 
 // Create new IApiEndpointService
-func NewApiEndpointService(dbCrud dbsql.IDbCrud) IApiEndpointService {
+func NewApiEndpointService(repo dbsql.IGenericRepo[entities.ApiEndpoint]) IApiEndpointService {
 	return &apiEndpointService{
-		dbCrud: dbCrud,
-		repo:   dbsql.NewGenericRepo[entities.ApiEndpoint](dbCrud),
+		repo: repo,
 	}
 }
 

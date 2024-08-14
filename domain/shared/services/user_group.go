@@ -11,15 +11,13 @@ import (
 
 // userGroupService struct
 type userGroupService struct {
-	dbCrud dbsql.IDbCrud
-	repo   dbsql.IGenericRepo[entities.UserGroup]
+	repo dbsql.IGenericRepo[entities.UserGroup]
 }
 
 // Create new IUserGroupService
-func NewUserGroupService(dbCrud dbsql.IDbCrud) IUserGroupService {
+func NewUserGroupService(repo dbsql.IGenericRepo[entities.UserGroup]) IUserGroupService {
 	return &userGroupService{
-		dbCrud: dbCrud,
-		repo:   dbsql.NewGenericRepo[entities.UserGroup](dbCrud),
+		repo: repo,
 	}
 }
 

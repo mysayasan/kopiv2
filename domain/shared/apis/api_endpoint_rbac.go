@@ -72,7 +72,7 @@ func (m *apiEndpointRbacApi) getView(c *fiber.Ctx) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	res, totalCnt, err := m.serv.GetView(ctx, uint64(claims.RoleId))
+	res, totalCnt, err := m.serv.GetView(ctx, uint64(claims.Id))
 	if err != nil {
 		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
 	}
