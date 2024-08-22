@@ -4,7 +4,7 @@ import (
 	"context"
 
 	_ "github.com/lib/pq"
-	"github.com/mysayasan/kopiv2/apps/mypropsan/models"
+	"github.com/mysayasan/kopiv2/apps/mymatasan/models"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )

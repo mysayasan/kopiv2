@@ -26,7 +26,7 @@
     "port": 5432,
     "user": "postgres",
     "password": "postgres",
-    "db_name": "mypropsandb",
+    "db_name": "mymatasandb",
     "ssl_mode": "disable"
   }
 }

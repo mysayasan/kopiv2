@@ -3,7 +3,7 @@ package services
 import (
 	"context"
 
-	"github.com/mysayasan/kopiv2/apps/mypropsan/models"
+	"github.com/mysayasan/kopiv2/apps/mymatasan/models"
 )
 
 // IHomeService interface

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/mysayasan/kopiv2/apps/mypropsan/services"
+	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares/timeout"

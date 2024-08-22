@@ -5,7 +5,7 @@ const fs = require('fs')
 // const Dotenv = require('dotenv-webpack')
 const htmlPlugin = new HtmlWebPackPlugin({
   hash: true,
-  title: 'MyPropSan',
+  title: 'MyMataSan',
   template: path.resolve(__dirname, 'src', 'index.html'),
   // template: "./src/index.html",
   // filename: "./index.html",
