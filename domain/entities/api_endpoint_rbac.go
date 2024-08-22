@@ -16,8 +16,8 @@ type ApiEndpointRbac struct {
 	UpdatedAt     int64 `json:"updatedAt" form:"updatedAt" query:"updatedAt"`
 }
 
-// ApiEndpointRbacVwModel
-type ApiEndpointRbacVwModel struct {
+// ApiEndpointRbacJoinModel
+type ApiEndpointRbacJoinModel struct {
 	Id            int64  `json:"id" form:"id" query:"id" params:"id" ignoreOnInsert:"true" pkey:"true" tblalias:"table0" validate:"required"`
 	ApiEndpointId int64  `json:"apiEndpointId" form:"apiEndpointId" query:"apiEndpointId" ukey:"ukey1" fkey:"fkey1" tablejoin:"table1" validate:"required"`
 	UserRoleId    int64  `json:"userRoleId" form:"userRoleId" query:"userRoleId" ukey:"ukey1" fkey:"fkey2" validate:"required"`

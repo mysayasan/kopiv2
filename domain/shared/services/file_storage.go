@@ -6,17 +6,23 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/mysayasan/kopiv2/domain/entities"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	memCache "github.com/patrickmn/go-cache"
 )
 
 // fileStorageService struct
 type fileStorageService struct {
-	repo dbsql.IGenericRepo[entities.FileStorage]
+	repo     dbsql.IGenericRepo[entities.FileStorage]
+	memCache *memCache.Cache
 }
 
 // Create new IFileStorageService
-func NewFileStorageService(repo dbsql.IGenericRepo[entities.FileStorage]) IFileStorageService {
+func NewFileStorageService(
+	repo dbsql.IGenericRepo[entities.FileStorage],
+	memCache *memCache.Cache,
+) IFileStorageService {
 	return &fileStorageService{
-		repo: repo,
+		repo:     repo,
+		memCache: memCache,
 	}
 }
 

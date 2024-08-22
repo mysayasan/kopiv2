@@ -25,6 +25,9 @@ func (m *dbCrud) genSelSqlStr(props reflect.Value, limit uint64, offset uint64, 
 			temp = strings.Replace(propName, "_vw_model", "", 1)
 		}
 		if temp == propName {
+			temp = strings.Replace(propName, "_join_model", "", 1)
+		}
+		if temp == propName {
 			temp = strings.Replace(propName, "_model", "", 1)
 		}
 		datasrc = temp
@@ -89,7 +92,6 @@ func (m *dbCrud) genSelSqlStr(props reflect.Value, limit uint64, offset uint64, 
 
 	if os.Getenv("ENVIRONMENT") == "dev" {
 		log.Info(res)
-		log.Info(selCols)
 	}
 
 	return len(selCols), res

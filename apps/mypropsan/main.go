@@ -25,6 +25,7 @@ import (
 	"github.com/mysayasan/kopiv2/infra/config"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/db/sql/postgres"
+	goCache "github.com/patrickmn/go-cache"
 )
 
 func main() {
@@ -86,6 +87,9 @@ func main() {
 		log.Fatal("error connecting to db")
 	}
 
+	// Create cache
+	memCache := goCache.New(10*time.Second, 10*time.Second)
+
 	// start auth middleware
 	auth := middlewares.NewAuth(appConfig.Jwt.Secret)
 	api := app.Group("api")
@@ -103,18 +107,20 @@ func main() {
 	residentPropRepo := dbsql.NewGenericRepo[models.ResidentProp](postgresDb)
 	fileStorRepo := dbsql.NewGenericRepo[domainEntities.FileStorage](postgresDb)
 
-	// Page Modules
-	userLoginService := sharedServices.NewUserLoginService(userLoginRepo)
-	userGroupService := sharedServices.NewUserGroupService(userGroupRepo)
-	userRoleService := sharedServices.NewUserRoleService(userRoleRepo)
-	apiLogService := sharedServices.NewApiLogService(apiLogRepo)
-	apiEndpointService := sharedServices.NewApiEndpointService(apiEpRepo)
-	apiEndpointRbacService := sharedServices.NewApiEndpointRbacService(apiEpRbacRepo, userLoginRepo, apiEpRepo)
+	// Shared services Modules
+	userLoginService := sharedServices.NewUserLoginService(userLoginRepo, memCache)
+	userGroupService := sharedServices.NewUserGroupService(userGroupRepo, memCache)
+	userRoleService := sharedServices.NewUserRoleService(userRoleRepo, memCache)
+	apiLogService := sharedServices.NewApiLogService(apiLogRepo, memCache)
+	apiEndpointService := sharedServices.NewApiEndpointService(apiEpRepo, memCache)
+	apiEndpointRbacService := sharedServices.NewApiEndpointRbacService(apiEpRbacRepo, userLoginRepo, apiEpRepo, memCache)
+	fileStorageService := sharedServices.NewFileStorageService(fileStorRepo, memCache)
+
+	// App services Modules
 	homeService := services.NewHomeService(residentPropRepo)
-	fileStorageService := sharedServices.NewFileStorageService(fileStorRepo)
 
 	// start rbac middleware
-	rbac := middlewares.NewRbac(apiEndpointRbacService)
+	rbac := middlewares.NewRbac(apiEndpointRbacService, memCache)
 
 	// Login module
 	if appConfig.Login.Google != nil {

@@ -7,17 +7,23 @@ import (
 	"github.com/mysayasan/kopiv2/domain/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	memCache "github.com/patrickmn/go-cache"
 )
 
 // apiEndpointService struct
 type apiEndpointService struct {
-	repo dbsql.IGenericRepo[entities.ApiEndpoint]
+	repo     dbsql.IGenericRepo[entities.ApiEndpoint]
+	memCache *memCache.Cache
 }
 
 // Create new IApiEndpointService
-func NewApiEndpointService(repo dbsql.IGenericRepo[entities.ApiEndpoint]) IApiEndpointService {
+func NewApiEndpointService(
+	repo dbsql.IGenericRepo[entities.ApiEndpoint],
+	memCache *memCache.Cache,
+) IApiEndpointService {
 	return &apiEndpointService{
-		repo: repo,
+		repo:     repo,
+		memCache: memCache,
 	}
 }
 

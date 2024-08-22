@@ -7,17 +7,23 @@ import (
 	"github.com/mysayasan/kopiv2/domain/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	memCache "github.com/patrickmn/go-cache"
 )
 
 // userRoleService struct
 type userRoleService struct {
-	repo dbsql.IGenericRepo[entities.UserRole]
+	repo     dbsql.IGenericRepo[entities.UserRole]
+	memCache *memCache.Cache
 }
 
 // Create new IUserRoleService
-func NewUserRoleService(repo dbsql.IGenericRepo[entities.UserRole]) IUserRoleService {
+func NewUserRoleService(
+	repo dbsql.IGenericRepo[entities.UserRole],
+	memCache *memCache.Cache,
+) IUserRoleService {
 	return &userRoleService{
-		repo: repo,
+		repo:     repo,
+		memCache: memCache,
 	}
 }
 

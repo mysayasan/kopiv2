@@ -7,17 +7,23 @@ import (
 	"github.com/mysayasan/kopiv2/domain/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	memCache "github.com/patrickmn/go-cache"
 )
 
 // apiLogService struct
 type apiLogService struct {
-	repo dbsql.IGenericRepo[entities.ApiLog]
+	repo     dbsql.IGenericRepo[entities.ApiLog]
+	memCache *memCache.Cache
 }
 
 // Create new IApiLogService
-func NewApiLogService(repo dbsql.IGenericRepo[entities.ApiLog]) IApiLogService {
+func NewApiLogService(
+	repo dbsql.IGenericRepo[entities.ApiLog],
+	memCache *memCache.Cache,
+) IApiLogService {
 	return &apiLogService{
-		repo: repo,
+		repo:     repo,
+		memCache: memCache,
 	}
 }
 

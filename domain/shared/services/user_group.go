@@ -7,17 +7,23 @@ import (
 	"github.com/mysayasan/kopiv2/domain/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	memCache "github.com/patrickmn/go-cache"
 )
 
 // userGroupService struct
 type userGroupService struct {
-	repo dbsql.IGenericRepo[entities.UserGroup]
+	repo     dbsql.IGenericRepo[entities.UserGroup]
+	memCache *memCache.Cache
 }
 
 // Create new IUserGroupService
-func NewUserGroupService(repo dbsql.IGenericRepo[entities.UserGroup]) IUserGroupService {
+func NewUserGroupService(
+	repo dbsql.IGenericRepo[entities.UserGroup],
+	memCache *memCache.Cache,
+) IUserGroupService {
 	return &userGroupService{
-		repo: repo,
+		repo:     repo,
+		memCache: memCache,
 	}
 }
 

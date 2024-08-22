@@ -43,7 +43,7 @@ type IApiEndpointService interface {
 // IApiEndpointRbacService interface
 type IApiEndpointRbacService interface {
 	Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.ApiEndpointRbac, uint64, error)
-	GetApiEpByUserRole(ctx context.Context, userId uint64) ([]*entities.ApiEndpointRbacVwModel, uint64, error)
+	GetApiEpByUserRole(ctx context.Context, userId uint64) ([]*entities.ApiEndpointRbacJoinModel, uint64, error)
 	Create(ctx context.Context, model entities.ApiEndpointRbac) (uint64, error)
 	Update(ctx context.Context, model entities.ApiEndpointRbac) (uint64, error)
 	Delete(ctx context.Context, id uint64) (uint64, error)

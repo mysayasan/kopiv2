@@ -8,19 +8,26 @@ import (
 	"github.com/gofiber/fiber/v2/log"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/mysayasan/kopiv2/domain/entities"
+	memcacheenums "github.com/mysayasan/kopiv2/domain/enums/memcache"
 	"github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
+	goCache "github.com/patrickmn/go-cache"
 )
 
 // RbacMiddleware struct
 type RbacMiddleware struct {
 	apiEpServ services.IApiEndpointRbacService
+	memCache  *goCache.Cache
 }
 
 // Create NewRbac
-func NewRbac(apiEpServ services.IApiEndpointRbacService) *RbacMiddleware {
+func NewRbac(
+	apiEpServ services.IApiEndpointRbacService,
+	memCache *goCache.Cache,
+) *RbacMiddleware {
 	return &RbacMiddleware{
 		apiEpServ: apiEpServ,
+		memCache:  memCache,
 	}
 }
 
@@ -37,14 +44,23 @@ func (m *RbacMiddleware) ApiHandler() fiber.Handler {
 		host := string(c.Request().Host())
 		path := string(c.Request().URI().Path())
 
-		userAccs, _, err := m.apiEpServ.GetApiEpByUserRole(c.Context(), uint64(claims.RoleId))
-		if err != nil {
+		var userAccs []*entities.ApiEndpointRbacJoinModel
+
+		res, found := m.memCache.Get(memcacheenums.GetString(memcacheenums.Mware_Rbac_GetApiEpByUserRole_Result))
+		if found {
+			userAccs = res.([]*entities.ApiEndpointRbacJoinModel)
+		} else {
+			userAccs, _, _ = m.apiEpServ.GetApiEpByUserRole(c.Context(), uint64(claims.RoleId))
+			m.memCache.Set(memcacheenums.GetString(memcacheenums.Mware_Rbac_GetApiEpByUserRole_Result), userAccs, goCache.DefaultExpiration)
+		}
+
+		if len(userAccs) == 0 {
 			return controllers.SendError(c, controllers.ErrPermission, "limited access to resources")
 		}
 
 		isValid := false
 		validPath := ""
-		var userAccess *entities.ApiEndpointRbacVwModel = nil
+		var userAccess *entities.ApiEndpointRbacJoinModel = nil
 
 		for _, userAcc := range userAccs {
 			userAcc := userAcc
