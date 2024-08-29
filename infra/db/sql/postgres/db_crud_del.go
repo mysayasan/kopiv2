@@ -7,7 +7,6 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/gofiber/fiber/v2/log"
 	strcase "github.com/iancoleman/strcase"
 	_ "github.com/lib/pq"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
@@ -15,7 +14,7 @@ import (
 
 func (m *dbCrud) genDelSqlStr(props reflect.Value, datasrc string, filters []sqldataenums.Filter) string {
 	if props.Type().Kind() == reflect.Slice {
-		log.Info("its a slice")
+		fmt.Println("its a slice")
 	}
 
 	if datasrc == "" {
@@ -35,7 +34,7 @@ func (m *dbCrud) genDelSqlStr(props reflect.Value, datasrc string, filters []sql
 	}
 
 	if os.Getenv("ENVIRONMENT") == "dev" {
-		log.Info(res)
+		fmt.Println(res)
 	}
 
 	return res

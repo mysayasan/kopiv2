@@ -7,40 +7,38 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 )
 
 // GoogleLogin struct
 type GoogleLogin struct {
 	conf OAuth2ConfigModel
-	auth middlewares.AuthMiddleware
+	auth middlewares.AuthMidware
 }
 
 // Create GoogleLogin
-func NewGoogleLogin(conf OAuth2ConfigModel, auth middlewares.AuthMiddleware) *GoogleLogin {
+func NewGoogleLogin(conf OAuth2ConfigModel, auth middlewares.AuthMidware) *GoogleLogin {
 	return &GoogleLogin{
 		conf: conf,
 		auth: auth,
 	}
 }
 
-func (m *GoogleLogin) Login(c *fiber.Ctx) error {
+func (m *GoogleLogin) Login(w http.ResponseWriter, r *http.Request) {
 
 	url := AppConfig.GoogleLoginConfig.AuthCodeURL("randomstate")
 
-	c.Status(fiber.StatusSeeOther)
-	c.Redirect(url)
-	return c.JSON(url)
+	// w.WriteHeader(http.StatusSeeOther)
+	http.Redirect(w, r, url, http.StatusSeeOther)
+	// c.Status(fiber.StatusSeeOther)
+	// c.Redirect(url)
+	// return c.JSON(url)
 }
 
-func (m *GoogleLogin) Callback(c *fiber.Ctx) (*GoogleUserInfoModel, error) {
-	state := c.Query("state")
+func (m *GoogleLogin) Callback(state string, code string) (*GoogleUserInfoModel, error) {
 	if state != "randomstate" {
 		return nil, errors.New("states don't match")
 	}
-
-	code := c.Query("code")
 
 	googlecon := GoogleConfig(m.conf)
 

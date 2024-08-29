@@ -3,30 +3,76 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/log"
-	"github.com/gofiber/fiber/v2/middleware/cors"
-	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/gorilla/mux"
 
 	// "github.com/gofiber/fileStorage/sqlite3"
-	"github.com/gofiber/fiber/v2/middleware/logger"
+
 	"github.com/joho/godotenv"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/apis"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/models"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
 	"github.com/mysayasan/kopiv2/domain/entities"
-	domainEntities "github.com/mysayasan/kopiv2/domain/entities"
 	sharedApis "github.com/mysayasan/kopiv2/domain/shared/apis"
 	sharedServices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
+	ffmpegCam "github.com/mysayasan/kopiv2/infra/camera/ffmpeg"
 	"github.com/mysayasan/kopiv2/infra/config"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/db/sql/postgres"
 	goCache "github.com/patrickmn/go-cache"
 )
+
+// spaHandler implements the http.Handler interface, so we can use it
+// to respond to HTTP requests. The path to the static directory and
+// path to the index file within that static directory are used to
+// serve the SPA in the given static directory.
+type spaHandler struct {
+	staticPath string
+	indexPath  string
+}
+
+// ServeHTTP inspects the URL path to locate a file within the static dir
+// on the SPA handler. If a file is found, it will be served. If not, the
+// file located at the index path on the SPA handler will be served. This
+// is suitable behavior for serving an SPA (single page application).
+func (h spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Join internally call path.Clean to prevent directory traversal
+	path := filepath.Join(h.staticPath, r.URL.Path)
+
+	// check whether a file exists or is a directory at the given path
+	fi, err := os.Stat(path)
+	if os.IsNotExist(err) || fi.IsDir() {
+		// file does not exist or path is a directory, serve index.html
+		http.ServeFile(w, r, filepath.Join(h.staticPath, h.indexPath))
+		return
+	}
+
+	if err != nil {
+		// if we got an error (that wasn't that the file doesn't exist) stating the
+		// file, return a 500 internal server error and stop
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// otherwise, use http.FileServer to serve the static file
+	http.FileServer(http.Dir(h.staticPath)).ServeHTTP(w, r)
+}
+
+func HealthCheckHandler(w http.ResponseWriter, r *http.Request) {
+	// A very simple health check.
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	// In the future we could report back on the status of our DB, or our cache
+	// (e.g. Redis) by performing a simple PING, and include them in the response.
+	io.WriteString(w, `{"alive": true}`)
+}
 
 func main() {
 	godotenv.Load(".env")
@@ -41,71 +87,51 @@ func main() {
 	}
 
 	if appConfig == nil {
-		log.Fatal("config file not found")
+		panic("config file not found")
 	}
 
-	// fileStorage := sqlite3.New()
+	// app := fiber.New()
+	router := mux.NewRouter()
 
-	app := fiber.New()
-	// Recover from panic
-	app.Use(recover.New())
-	app.Get("/panic", func(c *fiber.Ctx) error {
-		panic("I'm an error")
-	})
-
-	// // Limiter
-	// app.Use(limiter.New(limiter.Config{
-	// 	Max:               30,
-	// 	Expiration:        1 * time.Second,
-	// 	LimiterMiddleware: limiter.SlidingWindow{},
+	// app.Use(cors.New(cors.Config{
+	// 	AllowOriginsFunc: func(origin string) bool {
+	// 		return os.Getenv("ENVIRONMENT") == "dev"
+	// 	},
+	// 	AllowOrigins:  appConfig.AllowOrigin,
+	// 	AllowHeaders:  "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization",
+	// 	ExposeHeaders: "X-Cursor",
+	// 	AllowMethods:  "POST, GET, OPTIONS, PUT, DELETE",
 	// }))
 
-	// app.Use(helmet.New(helmet.Config{
-	// 	ContentTypeNosniff: "nosniff",
-	// 	XSSProtection:      "0",
-	// }))
-
-	app.Use(cors.New(cors.Config{
-		AllowOriginsFunc: func(origin string) bool {
-			return os.Getenv("ENVIRONMENT") == "dev"
-		},
-		AllowOrigins:  appConfig.AllowOrigin,
-		AllowHeaders:  "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization",
-		ExposeHeaders: "X-Cursor",
-		AllowMethods:  "POST, GET, OPTIONS, PUT, DELETE",
-	}))
-
-	log.Info(fmt.Sprintf("Running condition = %s", os.Getenv("ENVIRONMENT")))
+	fmt.Printf("Running condition = %s", os.Getenv("ENVIRONMENT"))
 
 	// Implement middleware
 	greetMidware := middlewares.NewGreet()
-	app.Use(greetMidware.Greet)
+	router.Use(greetMidware.GreetHandler)
+	corsMidware := middlewares.NewCors()
+	router.Use(corsMidware.CorsHandler)
+
+	// Implement healthcheck
+	router.HandleFunc("/health", HealthCheckHandler)
 
 	// Create db instance
 	postgresDb, err := postgres.NewDbCrud(appConfig.Db)
 	if err != nil {
-		log.Fatal("error connecting to db")
+		panic("error connecting to db")
 	}
 
 	// Create cache
 	memCache := goCache.New(10*time.Second, 10*time.Second)
 
-	// start auth middleware
-	auth := middlewares.NewAuth(appConfig.Jwt.Secret)
-	api := app.Group("api")
-	api.Use(func(c *fiber.Ctx) error {
-		return c.Next()
-	})
-
 	// Create Repo
-	userLoginRepo := dbsql.NewGenericRepo[domainEntities.UserLogin](postgresDb)
-	userGroupRepo := dbsql.NewGenericRepo[domainEntities.UserGroup](postgresDb)
-	userRoleRepo := dbsql.NewGenericRepo[domainEntities.UserRole](postgresDb)
-	apiLogRepo := dbsql.NewGenericRepo[domainEntities.ApiLog](postgresDb)
-	apiEpRepo := dbsql.NewGenericRepo[domainEntities.ApiEndpoint](postgresDb)
-	apiEpRbacRepo := dbsql.NewGenericRepo[domainEntities.ApiEndpointRbac](postgresDb)
+	userLoginRepo := dbsql.NewGenericRepo[entities.UserLogin](postgresDb)
+	userGroupRepo := dbsql.NewGenericRepo[entities.UserGroup](postgresDb)
+	userRoleRepo := dbsql.NewGenericRepo[entities.UserRole](postgresDb)
+	apiLogRepo := dbsql.NewGenericRepo[entities.ApiLog](postgresDb)
+	apiEpRepo := dbsql.NewGenericRepo[entities.ApiEndpoint](postgresDb)
+	apiEpRbacRepo := dbsql.NewGenericRepo[entities.ApiEndpointRbac](postgresDb)
 	residentPropRepo := dbsql.NewGenericRepo[models.ResidentProp](postgresDb)
-	fileStorRepo := dbsql.NewGenericRepo[domainEntities.FileStorage](postgresDb)
+	fileStorRepo := dbsql.NewGenericRepo[entities.FileStorage](postgresDb)
 
 	// Shared services Modules
 	userLoginService := sharedServices.NewUserLoginService(userLoginRepo, memCache)
@@ -121,6 +147,13 @@ func main() {
 
 	// start rbac middleware
 	rbac := middlewares.NewRbac(apiEndpointRbacService, memCache)
+
+	// start auth middleware
+	auth := middlewares.NewAuth(appConfig.Jwt.Secret)
+
+	// Create api sub-router
+	api := router.PathPrefix("/api").Subrouter()
+	// api.Use(auth.Middleware)
 
 	// Login module
 	if appConfig.Login.Google != nil {
@@ -145,40 +178,52 @@ func main() {
 	//Home Api
 	apis.NewHomeApi(api, *auth, *rbac, homeService)
 
-	// Callback after log is written
-	app.Use(logger.New(logger.Config{
-		TimeFormat: time.RFC3339Nano,
-		TimeZone:   "Asia/Singapore",
-		Done: func(c *fiber.Ctx, logString []byte) {
-			if c.Response().StatusCode() != fiber.StatusOK {
-				// log.Info(string(logString))
-				apiLogModel := &entities.ApiLog{}
-				apiLogModel.StatsCode = c.Response().StatusCode()
-				apiLogModel.LogMsg = string(logString)
-				apiLogModel.ClientIpAddrV4 = c.Context().RemoteIP().String()
-				apiLogModel.RequestUrl = string(c.Request().URI().FullURI())
-				_, err := apiLogService.Create(c.Context(), *apiLogModel)
-				if err != nil {
-					log.Error(err.Error())
-				}
-			}
-		},
-	}))
+	newCam := ffmpegCam.NewNetCam("rtsp://admin:Aziandi220%40@192.168.1.148:554/cam/realmonitor?channel=1&subtype=0&unicast=true&proto=Onvif")
+	camService := services.NewCameraService(newCam)
+	apis.NewCameraApi(api, *auth, *rbac, camService)
 
-	// Get api routes
-	api.Get("/routes", auth.JwtHandler(), func(c *fiber.Ctx) error {
-		data, _ := json.Marshal(app.GetRoutes(true))
-		return c.JSON(string(data))
-	}).Name("routes")
+	// // Callback after log is written
+	// app.Use(logger.New(logger.Config{
+	// 	TimeFormat: time.RFC3339Nano,
+	// 	TimeZone:   "Asia/Singapore",
+	// 	Done: func(c *fiber.Ctx, logString []byte) {
+	// 		if c.Response().StatusCode() != fiber.StatusOK {
+	// 			// fmt.Println(string(logString))
+	// 			apiLogModel := &entities.ApiLog{}
+	// 			apiLogModel.StatsCode = c.Response().StatusCode()
+	// 			apiLogModel.LogMsg = string(logString)
+	// 			apiLogModel.ClientIpAddrV4 = r.Context().RemoteIP().String()
+	// 			apiLogModel.RequestUrl = string(c.Request().URI().FullURI())
+	// 			_, err := apiLogService.Create(r.Context(), *apiLogModel)
+	// 			if err != nil {
+	// 				log.Error(err.Error())
+	// 			}
+	// 		}
+	// 	},
+	// }))
 
-	// Serve static file
-	app.Static("/", "./static")
+	api.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		// an example API handler
+		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	})
 
-	app.Get("/", func(c *fiber.Ctx) error {
-		return c.SendFile("./static/index.html")
-	}).Name("index")
+	spa := spaHandler{staticPath: "static", indexPath: "index.html"}
+	router.PathPrefix("/").Handler(spa)
 
-	// log.Fatal(app.Listen(":3000"))
-	log.Fatal(app.ListenTLS(":3000", appConfig.Tls.CertPath, appConfig.Tls.KeyPath))
+	http.Handle("/", router)
 
+	srv := &http.Server{
+		Handler: router,
+		Addr:    ":3000",
+		// Good practice: enforce timeouts for servers you create!
+		// WriteTimeout: 15 * time.Second,
+		// ReadTimeout:  15 * time.Second,
+	}
+
+	panic(srv.ListenAndServeTLS(appConfig.Tls.CertPath, appConfig.Tls.KeyPath))
+
+	// panic(http.ListenAndServe(":3333", nil))
+
+	// // panic(app.Listen(":3000"))
+	// panic(app.ListenTLS(":3000", appConfig.Tls.CertPath, appConfig.Tls.KeyPath))
 }

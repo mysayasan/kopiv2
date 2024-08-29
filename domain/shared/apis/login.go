@@ -2,12 +2,14 @@ package apis
 
 import (
 	"encoding/json"
-	"log"
+	"fmt"
+	"net/http"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/domain/entities"
+	"github.com/mysayasan/kopiv2/domain/models"
 	"github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
@@ -16,7 +18,7 @@ import (
 
 // LoginApi struct
 type loginApi struct {
-	auth        middlewares.AuthMiddleware
+	auth        middlewares.AuthMidware
 	userService services.IUserLoginService
 	googleAuth  *login.GoogleLogin
 	githubAuth  *login.GithubLogin
@@ -24,9 +26,9 @@ type loginApi struct {
 
 // Create LoginApi
 func NewLoginApi(
-	router fiber.Router,
+	router *mux.Router,
 	oAuth2Conf *login.OAuth2ConfigModel,
-	auth middlewares.AuthMiddleware,
+	auth middlewares.AuthMidware,
 	userService services.IUserLoginService) {
 
 	login.GoogleConfig(*oAuth2Conf)
@@ -42,40 +44,50 @@ func NewLoginApi(
 		githubAuth:  githubLogin,
 	}
 
-	groupLogin := router.Group("login")
-	callbackLogin := router.Group("callback")
+	// Create api sub-router
+	loginGroup := router.PathPrefix("/login").Subrouter()
+	callbackGroup := router.PathPrefix("/callback").Subrouter()
 
-	groupLogin.Post("/default", handler.defaultLogin).Name("default_login")
-	groupLogin.Get("/google", handler.googleLogin).Name("google_login")
-	callbackLogin.Get("/google", handler.googleCallback).Name("google_callback")
-	groupLogin.Get("/github", handler.githubLogin).Name("github_login")
-	callbackLogin.Get("/github", handler.githubCallback).Name("github_callback")
+	loginGroup.HandleFunc("/default", handler.defaultLogin).Methods("GET")
+	loginGroup.HandleFunc("/google", handler.googleLogin).Methods("GET")
+	callbackGroup.HandleFunc("/google", handler.googleCallback).Methods("GET")
+	loginGroup.HandleFunc("/github", handler.githubLogin).Methods("GET")
+	callbackGroup.HandleFunc("/github", handler.githubCallback).Methods("GET")
 }
 
-func (m *loginApi) defaultLogin(c *fiber.Ctx) error {
-	var model map[string]interface{}
+func (m *loginApi) defaultLogin(w http.ResponseWriter, r *http.Request) {
 
-	err := c.BodyParser(&model)
+	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+
+	var body map[string]interface{}
+
+	err := dec.Decode(&body)
 	if err != nil {
-		return controllers.SendError(c, controllers.ErrParseFailed, err.Error())
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
 	}
 
-	return c.SendString("ok")
+	controllers.SendResult(w, "ok")
 }
 
-func (m *loginApi) googleLogin(c *fiber.Ctx) error {
-	return m.googleAuth.Login(c)
+func (m *loginApi) googleLogin(w http.ResponseWriter, r *http.Request) {
+	m.googleAuth.Login(w, r)
 }
 
-func (m *loginApi) googleCallback(c *fiber.Ctx) error {
-	userG, err := m.googleAuth.Callback(c)
+func (m *loginApi) googleCallback(w http.ResponseWriter, r *http.Request) {
+	state := r.URL.Query().Get("state")
+	code := r.URL.Query().Get("code")
+	userG, err := m.googleAuth.Callback(state, code)
 	if err != nil {
-		return c.SendString(err.Error())
+		controllers.SendError(w, controllers.ErrStatusUnprocessableEntity, err.Error())
+		return
 	}
 
-	user, err := m.userService.GetByEmail(c.Context(), userG.Email)
+	user, err := m.userService.GetByEmail(r.Context(), userG.Email)
 	if err != nil {
-		log.Printf("%s", err.Error())
+		fmt.Printf("%s", err.Error())
 	}
 
 	if user == nil {
@@ -90,24 +102,24 @@ func (m *loginApi) googleCallback(c *fiber.Ctx) error {
 			CreatedAt:  time.Now().Unix(),
 		}
 
-		res, err := m.userService.Create(c.Context(), *user)
+		res, err := m.userService.Create(r.Context(), *user)
 		if err != nil {
-			log.Printf("%s", err.Error())
+			fmt.Printf("%s", err.Error())
 		}
 
 		user.Id = int64(res)
-		log.Printf("new user id : %d", res)
+		fmt.Printf("new user id : %d", res)
 	}
 
 	b, err := json.Marshal(user)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err.Error())
 	}
 
-	log.Printf("%s", b)
+	fmt.Printf("%s", b)
 
 	// Create the Claims
-	claims := &middlewares.JwtCustomClaimsModel{
+	claims := &models.JwtCustomClaims{
 		Id:            user.Id,
 		Name:          userG.Name,
 		Email:         userG.Email,
@@ -122,15 +134,17 @@ func (m *loginApi) googleCallback(c *fiber.Ctx) error {
 
 	t, err := m.auth.JwtToken(*claims)
 	if err != nil {
-		return c.SendStatus(fiber.StatusInternalServerError)
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
 	}
-	return c.JSON(fiber.Map{"token": t})
+
+	controllers.SendResult(w, map[string]string{"token": t})
 }
 
-func (m *loginApi) githubLogin(c *fiber.Ctx) error {
-	return m.githubAuth.Login(c)
+func (m *loginApi) githubLogin(w http.ResponseWriter, r *http.Request) {
+	m.githubAuth.Login(w, r)
 }
 
-func (m *loginApi) githubCallback(c *fiber.Ctx) error {
-	return m.githubAuth.Callback(c)
+func (m *loginApi) githubCallback(w http.ResponseWriter, r *http.Request) {
+	_ = m.githubAuth.Callback("state", "code")
 }

@@ -2,20 +2,20 @@ package apis
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/log"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/domain/entities"
+	enumauth "github.com/mysayasan/kopiv2/domain/enums/auth"
+	"github.com/mysayasan/kopiv2/domain/models"
 	"github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
@@ -23,17 +23,17 @@ import (
 
 // FileStorageApi struct
 type fileStorageApi struct {
-	auth middlewares.AuthMiddleware
-	rbac middlewares.RbacMiddleware
+	auth middlewares.AuthMidware
+	rbac middlewares.RbacMidware
 	serv services.IFileStorageService
 	path string
 }
 
 // Create FileStorageApi
 func NewFileStorageApi(
-	router fiber.Router,
-	auth middlewares.AuthMiddleware,
-	rbac middlewares.RbacMiddleware,
+	router *mux.Router,
+	auth middlewares.AuthMidware,
+	rbac middlewares.RbacMidware,
 	serv services.IFileStorageService,
 	path string) {
 	handler := &fileStorageApi{
@@ -43,40 +43,35 @@ func NewFileStorageApi(
 		path: path,
 	}
 
-	group := router.Group("file-storage")
-	group.Post("/upload", auth.JwtHandler(), rbac.ApiHandler(), handler.upload).Name("upload")
-	group.Get("/download", auth.JwtHandler(), rbac.ApiHandler(), handler.download).Name("download")
+	// Create api sub-router
+	group := router.PathPrefix("/file-storage").Subrouter()
+	group.Use(auth.Middleware)
+
+	// Group Handlers
+	group.HandleFunc("/upload", rbac.RbacHandler(handler.upload)).Methods("POST")
+	group.HandleFunc("/download", rbac.RbacHandler(handler.download)).Methods("GET")
+
+	// group := router.Group("file-storage")
+	// group.Post("/upload", auth.JwtHandler(), rbac.ApiHandler(), handler.upload).Name("upload")
+	// group.Get("/download", auth.JwtHandler(), rbac.ApiHandler(), handler.download).Name("download")
 }
 
-func (m *fileStorageApi) download(c *fiber.Ctx) error {
-	user := c.Locals("user").(*jwt.Token)
+func (m *fileStorageApi) download(w http.ResponseWriter, r *http.Request) {
+	guid := r.URL.Query().Get("guid")
 
-	claims := &middlewares.JwtCustomClaimsModel{}
-	tmp, _ := json.Marshal(user.Claims)
-	_ = json.Unmarshal(tmp, claims)
-
-	name := claims.Name
-
-	log.Info(name)
-
-	guid := c.Query("guid")
-
-	ctx := c.UserContext()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	fileInfo, err := m.serv.GetByGuid(ctx, guid)
+	fileInfo, err := m.serv.GetByGuid(r.Context(), guid)
 	if err != nil {
-		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
+		controllers.SendError(w, controllers.ErrNotFound, err.Error())
+		return
 	}
 
-	log.Info((fileInfo))
+	fmt.Printf("%v", fileInfo)
 
 	// open input file
 	fi, err := os.Open(fmt.Sprintf("%s/%s", m.path, guid))
 	if err != nil {
-		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
+		controllers.SendError(w, controllers.ErrNotFound, err.Error())
+		return
 	}
 	// close fi on exit and check for its returned error
 	defer func() {
@@ -87,33 +82,29 @@ func (m *fileStorageApi) download(c *fiber.Ctx) error {
 
 	content, err := io.ReadAll(fi)
 	if err != nil {
-		return controllers.SendError(c, controllers.ErrInternalServerError, err.Error())
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
 	}
 
 	if len(content) > 0 {
-		c.Set("Content-Type", fileInfo.MimeType)
-		c.SendStream(bytes.NewReader((content)))
+		w.Header().Set("Content-Disposition", "attachment; filename=WHATEVER_YOU_WANT")
+		w.Header().Set("Content-Type", r.Header.Get("Content-Type"))
+		io.Copy(w, bytes.NewReader(content))
 	}
-
-	return nil
-
 }
 
-func (m *fileStorageApi) upload(c *fiber.Ctx) error {
-	user := c.Locals("user").(*jwt.Token)
-
-	claims := &middlewares.JwtCustomClaimsModel{}
-	tmp, _ := json.Marshal(user.Claims)
-	_ = json.Unmarshal(tmp, claims)
+func (m *fileStorageApi) upload(w http.ResponseWriter, r *http.Request) {
+	claims := r.Context().Value(enumauth.Claims).(*models.JwtCustomClaims)
 
 	// Parse the multipart form:
-	form, err := c.MultipartForm()
+	err := r.ParseMultipartForm(10 << 20)
 	if err != nil {
-		return controllers.SendError(c, controllers.ErrBadRequest, err.Error())
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
 	}
 
 	// Get all files from "documents" key:
-	files := form.File["documents"]
+	files := r.MultipartForm.File["documents"]
 
 	uploadedFiles := make([]*entities.FileStorage, 0)
 	failedUploads := make([]string, 0)
@@ -166,19 +157,23 @@ func (m *fileStorageApi) upload(c *fiber.Ctx) error {
 			}
 		}
 
-		// Save the files to disk:
-		err = c.SaveFile(file, fmt.Sprintf("%s/%s", m.path, model.Guid))
+		// open and copy files
+		newfile, err := os.OpenFile(fmt.Sprintf("%s/%s", m.path, model.Guid), os.O_WRONLY|os.O_CREATE, os.ModePerm)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode("something went wrong")
+			return
+		}
+		defer newfile.Close()
 
-		// Check for errors
+		// Save the files to disk:
+		// err = c.SaveFile(file, fmt.Sprintf("%s/%s", m.path, model.Guid))
+		_, err = io.Copy(newfile, buf)
 		if err != nil {
 			failedUploads = append(failedUploads, file.Filename)
 		}
 
-		ctx := c.UserContext()
-		if ctx == nil {
-			ctx = context.Background()
-		}
-		res, err := m.serv.Create(ctx, model)
+		res, err := m.serv.Create(r.Context(), model)
 		if err != nil {
 			_ = os.Remove(fmt.Sprintf("%s/%s", m.path, model.Guid))
 			failedUploads = append(failedUploads, file.Filename)
@@ -189,8 +184,9 @@ func (m *fileStorageApi) upload(c *fiber.Ctx) error {
 	}
 
 	if len(uploadedFiles) != len(files) {
-		return controllers.SendError(c, controllers.ErrUplodFailed, "some file(s) failed to upload", failedUploads)
+		controllers.SendError(w, controllers.ErrUplodFailed, "some file(s) failed to upload", failedUploads)
+		return
 	}
 
-	return controllers.SendPagingResult(c, uploadedFiles, 0, 0, uint64(len(uploadedFiles)))
+	controllers.SendPagingResult(w, uploadedFiles, 0, 0, uint64(len(uploadedFiles)))
 }

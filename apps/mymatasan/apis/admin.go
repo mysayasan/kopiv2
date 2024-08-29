@@ -1,40 +1,42 @@
 package apis
 
 import (
-	"encoding/json"
+	"net/http"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/golang-jwt/jwt/v5"
+	"github.com/gorilla/mux"
+	enumauth "github.com/mysayasan/kopiv2/domain/enums/auth"
+	"github.com/mysayasan/kopiv2/domain/models"
+	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 )
 
 // AdminApi struct
 type adminApi struct {
-	auth middlewares.AuthMiddleware
-	rbac middlewares.RbacMiddleware
+	auth middlewares.AuthMidware
+	rbac middlewares.RbacMidware
 }
 
 // Create AdminApi
 func NewAdminApi(
-	router fiber.Router,
-	auth middlewares.AuthMiddleware,
-	rbac middlewares.RbacMiddleware) {
+	router *mux.Router,
+	auth middlewares.AuthMidware,
+	rbac middlewares.RbacMidware) {
 	handler := &adminApi{
 		auth: auth,
 		rbac: rbac,
 	}
 
-	group := router.Group("admin")
-	group.Get("/test", auth.JwtHandler(), rbac.ApiHandler(), handler.restricted).Name("test")
+	// Create api sub-router
+	group := router.PathPrefix("/admin").Subrouter()
+
+	// Group Handlers
+	group.HandleFunc("/test", rbac.RbacHandler(handler.restricted)).Methods("GET")
+
+	// group := router.Group("admin")
+	// group.Get("/test", auth.JwtHandler(), rbac.ApiHandler(), handler.restricted).Name("test")
 }
 
-func (m *adminApi) restricted(c *fiber.Ctx) error {
-	user := c.Locals("user").(*jwt.Token)
-
-	claims := &middlewares.JwtCustomClaimsModel{}
-	tmp, _ := json.Marshal(user.Claims)
-	_ = json.Unmarshal(tmp, claims)
-
-	name := claims.Name
-	return c.SendString("Welcome " + name)
+func (m *adminApi) restricted(w http.ResponseWriter, r *http.Request) {
+	claims := r.Context().Value(enumauth.Claims).(*models.JwtCustomClaims)
+	controllers.SendResult(w, "Welcome "+claims.Name)
 }

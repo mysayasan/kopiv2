@@ -1,32 +1,29 @@
 package apis
 
 import (
-	"context"
-	"fmt"
+	"encoding/json"
+	"net/http"
 	"strconv"
-	"time"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/log"
+	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/domain/entities"
 	"github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
-	"github.com/mysayasan/kopiv2/domain/utils/middlewares/timeout"
 )
 
 // UserLoginApi struct
 type userLoginApi struct {
-	auth middlewares.AuthMiddleware
-	rbac middlewares.RbacMiddleware
+	auth middlewares.AuthMidware
+	rbac middlewares.RbacMidware
 	serv services.IUserLoginService
 }
 
 // Create UserLoginApi
 func NewUserLoginApi(
-	router fiber.Router,
-	auth middlewares.AuthMiddleware,
-	rbac middlewares.RbacMiddleware,
+	router *mux.Router,
+	auth middlewares.AuthMidware,
+	rbac middlewares.RbacMidware,
 	serv services.IUserLoginService) {
 	handler := &userLoginApi{
 		auth: auth,
@@ -34,74 +31,78 @@ func NewUserLoginApi(
 		serv: serv,
 	}
 
-	group := router.Group("user-credential")
-	group.Get("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("get_all")
-	group.Get("/email", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.getByEmail, 60*1000*time.Millisecond)).Name("get_by_email")
-	group.Put("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.put, 60*1000*time.Millisecond)).Name("update")
-	group.Delete("/:id", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.delete, 60*1000*time.Millisecond)).Name("delete")
+	// Create api sub-router
+	group := router.PathPrefix("/user-credential").Subrouter()
+	group.Use(auth.Middleware)
+
+	// Group Handlers
+	group.HandleFunc("", rbac.RbacHandler(handler.get)).Methods("GET")
+	group.HandleFunc("/email", rbac.RbacHandler(handler.getByEmail)).Methods("GET")
+	group.HandleFunc("", rbac.RbacHandler(handler.put)).Methods("PUT")
+	group.HandleFunc("/{id}", rbac.RbacHandler(handler.delete)).Methods("DELETE")
+
+	// group := router.Group("user-credential")
+	// group.Get("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("get_all")
+	// group.Get("/email", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.getByEmail, 60*1000*time.Millisecond)).Name("get_by_email")
+	// group.Put("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.put, 60*1000*time.Millisecond)).Name("update")
+	// group.Delete("/:id", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.delete, 60*1000*time.Millisecond)).Name("delete")
 }
 
-func (m *userLoginApi) get(c *fiber.Ctx) error {
+func (m *userLoginApi) get(w http.ResponseWriter, r *http.Request) {
 
-	limit, _ := strconv.ParseUint(c.Query("limit"), 10, 64)
-	offset, _ := strconv.ParseUint(c.Query("offset"), 10, 64)
+	limit, _ := strconv.ParseUint(r.URL.Query().Get("limit"), 10, 64)
+	offset, _ := strconv.ParseUint(r.URL.Query().Get("offset"), 10, 64)
 
-	ctx := c.UserContext()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	res, totalCnt, err := m.serv.Get(ctx, limit, offset)
+	res, totalCnt, err := m.serv.Get(r.Context(), limit, offset)
 	if err != nil {
-		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
+		controllers.SendError(w, controllers.ErrNotFound, err.Error())
+		return
 	}
 
-	c.Response().Header.Add("X-Rows", fmt.Sprintf("%d", totalCnt))
-
-	return controllers.SendPagingResult(c, res, limit, offset, totalCnt)
+	controllers.SendPagingResult(w, res, limit, offset, totalCnt)
 }
 
-func (m *userLoginApi) getByEmail(c *fiber.Ctx) error {
-	usermail := c.Query("email")
+func (m *userLoginApi) getByEmail(w http.ResponseWriter, r *http.Request) {
+	usermail := r.URL.Query().Get("email")
 
-	ctx := c.UserContext()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	res, err := m.serv.GetByEmail(ctx, usermail)
+	res, err := m.serv.GetByEmail(r.Context(), usermail)
 	if err != nil {
-		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
+		controllers.SendError(w, controllers.ErrNotFound, err.Error())
+		return
 	}
 
-	return controllers.SendResult(c, res)
+	controllers.SendResult(w, res)
 }
 
-func (m *userLoginApi) put(c *fiber.Ctx) error {
+func (m *userLoginApi) put(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+
 	body := new(entities.UserLogin)
-
-	if err := c.BodyParser(body); err != nil {
-		return controllers.SendError(c, controllers.ErrParseFailed, err.Error())
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
 	}
 
-	log.Info(fmt.Sprintf("%v", body))
-
-	res, err := m.serv.Update(c.Context(), *body)
+	res, err := m.serv.Update(r.Context(), *body)
 	if err != nil {
-		return controllers.SendError(c, controllers.ErrInternalServerError, err.Error())
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
 	}
 
-	return controllers.SendResult(c, res, "succeed")
+	controllers.SendResult(w, res, "succeed")
 }
 
-func (m *userLoginApi) delete(c *fiber.Ctx) error {
-	id, _ := strconv.ParseUint(c.Params("id"), 10, 64)
-	log.Info(id)
-	// param := entities.UserLogin{}
-	// c.ParamsParser(&param)
+func (m *userLoginApi) delete(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	id, _ := strconv.ParseUint(params["id"], 10, 64)
 
-	res, err := m.serv.Delete(c.Context(), id)
+	res, err := m.serv.Delete(r.Context(), id)
 	if err != nil {
-		return controllers.SendError(c, controllers.ErrInternalServerError, err.Error())
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
 	}
 
-	return controllers.SendResult(c, res, "succeed")
+	controllers.SendResult(w, res, "succeed")
 }

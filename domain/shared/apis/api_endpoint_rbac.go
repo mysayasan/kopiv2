@@ -1,34 +1,32 @@
 package apis
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strconv"
-	"time"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/log"
-	"github.com/golang-jwt/jwt/v5"
+	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/domain/entities"
+	enumauth "github.com/mysayasan/kopiv2/domain/enums/auth"
+	"github.com/mysayasan/kopiv2/domain/models"
 	"github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
-	"github.com/mysayasan/kopiv2/domain/utils/middlewares/timeout"
 )
 
 // ApiEndpointRbacApi struct
 type apiEndpointRbacApi struct {
-	auth middlewares.AuthMiddleware
-	rbac middlewares.RbacMiddleware
+	auth middlewares.AuthMidware
+	rbac middlewares.RbacMidware
 	serv services.IApiEndpointRbacService
 }
 
 // Create ApiEndpointRbacApi
 func NewApiEndpointRbacApi(
-	router fiber.Router,
-	auth middlewares.AuthMiddleware,
-	rbac middlewares.RbacMiddleware,
+	router *mux.Router,
+	auth middlewares.AuthMidware,
+	rbac middlewares.RbacMidware,
 	serv services.IApiEndpointRbacService) {
 	handler := &apiEndpointRbacApi{
 		auth: auth,
@@ -36,121 +34,124 @@ func NewApiEndpointRbacApi(
 		serv: serv,
 	}
 
-	group := router.Group("endpoint-rbac")
-	group.Get("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("get")
-	group.Get("validate/me", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.getValidate, 60*1000*time.Millisecond)).Name("get_validate")
-	group.Get("ep/me", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.getApiEpByUserRole, 60*1000*time.Millisecond)).Name("get_validate")
-	group.Post("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.post, 60*1000*time.Millisecond)).Name("create")
-	group.Put("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.put, 60*1000*time.Millisecond)).Name("update")
-	group.Delete("/:id", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.delete, 60*1000*time.Millisecond)).Name("delete")
+	// Create api sub-router
+	group := router.PathPrefix("/endpoint-rbac").Subrouter()
+	group.Use(auth.Middleware)
+
+	// Group Handlers
+	group.HandleFunc("", rbac.RbacHandler(handler.get)).Methods("GET")
+	group.HandleFunc("/validate/me", rbac.RbacHandler(handler.getValidate)).Methods("GET")
+	group.HandleFunc("/ep/me", rbac.RbacHandler(handler.getApiEpByUserRole)).Methods("GET")
+	group.HandleFunc("", rbac.RbacHandler(handler.post)).Methods("POST")
+	group.HandleFunc("", rbac.RbacHandler(handler.put)).Methods("PUT")
+	group.HandleFunc("/{id}", rbac.RbacHandler(handler.delete)).Methods("DELETE")
+
+	// group := router.Group("endpoint-rbac")
+	// group.Get("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("get")
+	// group.Get("validate/me", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.getValidate, 60*1000*time.Millisecond)).Name("get_validate")
+	// group.Get("ep/me", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.getApiEpByUserRole, 60*1000*time.Millisecond)).Name("get_validate")
+	// group.Post("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.post, 60*1000*time.Millisecond)).Name("create")
+	// group.Put("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.put, 60*1000*time.Millisecond)).Name("update")
+	// group.Delete("/:id", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.delete, 60*1000*time.Millisecond)).Name("delete")
 }
 
-func (m *apiEndpointRbacApi) get(c *fiber.Ctx) error {
+func (m *apiEndpointRbacApi) get(w http.ResponseWriter, r *http.Request) {
 
-	limit, _ := strconv.ParseUint(c.Query("limit"), 10, 64)
-	offset, _ := strconv.ParseUint(c.Query("offset"), 10, 64)
+	limit, _ := strconv.ParseUint(r.URL.Query().Get("limit"), 10, 64)
+	offset, _ := strconv.ParseUint(r.URL.Query().Get("offset"), 10, 64)
 
-	ctx := c.UserContext()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	res, totalCnt, err := m.serv.Get(ctx, limit, offset)
+	res, totalCnt, err := m.serv.Get(r.Context(), limit, offset)
 	if err != nil {
-		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
+		controllers.SendError(w, controllers.ErrNotFound, err.Error())
+		return
 	}
 
-	c.Response().Header.Add("X-Rows", fmt.Sprintf("%d", totalCnt))
-
-	return controllers.SendPagingResult(c, res, limit, offset, totalCnt)
+	controllers.SendPagingResult(w, res, limit, offset, totalCnt)
 }
 
-func (m *apiEndpointRbacApi) getApiEpByUserRole(c *fiber.Ctx) error {
-	claims := c.Locals("claims").(*middlewares.JwtCustomClaimsModel)
+func (m *apiEndpointRbacApi) getApiEpByUserRole(w http.ResponseWriter, r *http.Request) {
+	claims := r.Context().Value(enumauth.Claims).(*models.JwtCustomClaims)
 
-	ctx := c.UserContext()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	res, totalCnt, err := m.serv.GetApiEpByUserRole(ctx, uint64(claims.Id))
+	res, _, err := m.serv.GetApiEpByUserRole(r.Context(), uint64(claims.Id))
 	if err != nil {
-		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
+		controllers.SendError(w, controllers.ErrNotFound, err.Error())
+		return
 	}
 
-	c.Response().Header.Add("X-Rows", fmt.Sprintf("%d", totalCnt))
-
-	return controllers.SendResult(c, res)
+	controllers.SendResult(w, res)
 }
 
-func (m *apiEndpointRbacApi) getValidate(c *fiber.Ctx) error {
+func (m *apiEndpointRbacApi) getValidate(w http.ResponseWriter, r *http.Request) {
 
-	user := c.Locals("user").(*jwt.Token)
-	claims := &middlewares.JwtCustomClaimsModel{}
-	tmp, err := json.Marshal(user.Claims)
+	claims := r.Context().Value(enumauth.Claims).(*models.JwtCustomClaims)
+
+	host := r.URL.Query().Get("host")
+	path := r.URL.Query().Get("path")
+
+	res, err := m.serv.Validate(r.Context(), host, path, uint64(claims.RoleId))
 	if err != nil {
-		return controllers.SendError(c, controllers.ErrParseFailed, err.Error())
-	}
-	_ = json.Unmarshal(tmp, claims)
-
-	host := c.Query("host")
-	path := c.Query("path")
-
-	ctx := c.UserContext()
-	if ctx == nil {
-		ctx = context.Background()
+		controllers.SendError(w, controllers.ErrNotFound, err.Error())
+		return
 	}
 
-	res, err := m.serv.Validate(ctx, host, path, uint64(claims.RoleId))
-	if err != nil {
-		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
-	}
-
-	return controllers.SendResult(c, res, "succeed")
+	controllers.SendResult(w, res, "succeed")
 }
 
-func (m *apiEndpointRbacApi) post(c *fiber.Ctx) error {
+func (m *apiEndpointRbacApi) post(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+
 	body := new(entities.ApiEndpointRbac)
 
-	if err := c.BodyParser(body); err != nil {
-		return controllers.SendError(c, controllers.ErrParseFailed, err.Error())
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
 	}
 
-	log.Info(fmt.Sprintf("%v", body))
+	fmt.Printf("%v", body)
 
-	res, err := m.serv.Create(c.Context(), *body)
+	res, err := m.serv.Create(r.Context(), *body)
 	if err != nil {
-		return controllers.SendError(c, controllers.ErrInternalServerError, err.Error())
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
 	}
 
-	return controllers.SendResult(c, res, "succeed")
+	controllers.SendResult(w, res, "succeed")
 }
 
-func (m *apiEndpointRbacApi) put(c *fiber.Ctx) error {
+func (m *apiEndpointRbacApi) put(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+
 	body := new(entities.ApiEndpointRbac)
 
-	if err := c.BodyParser(body); err != nil {
-		return controllers.SendError(c, controllers.ErrParseFailed, err.Error())
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
 	}
 
-	log.Info(fmt.Sprintf("%v", body))
+	fmt.Printf("%v", body)
 
-	res, err := m.serv.Update(c.Context(), *body)
+	res, err := m.serv.Update(r.Context(), *body)
 	if err != nil {
-		return controllers.SendError(c, controllers.ErrInternalServerError, err.Error())
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
 	}
 
-	return controllers.SendResult(c, res, "succeed")
+	controllers.SendResult(w, res, "succeed")
 }
 
-func (m *apiEndpointRbacApi) delete(c *fiber.Ctx) error {
-	id, _ := strconv.ParseUint(c.Params("id"), 10, 64)
-	log.Info(id)
-	// param := entities.ApiEndpointRbac{}
-	// c.ParamsParser(&param)
+func (m *apiEndpointRbacApi) delete(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	id, _ := strconv.ParseUint(params["id"], 10, 64)
 
-	res, err := m.serv.Delete(c.Context(), id)
+	res, err := m.serv.Delete(r.Context(), id)
 	if err != nil {
-		return controllers.SendError(c, controllers.ErrInternalServerError, err.Error())
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
 	}
 
-	return controllers.SendResult(c, res, "succeed")
+	controllers.SendResult(w, res, "succeed")
 }

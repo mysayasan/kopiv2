@@ -1,30 +1,27 @@
 package apis
 
 import (
-	"context"
-	"fmt"
+	"net/http"
 	"strconv"
-	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
-	"github.com/mysayasan/kopiv2/domain/utils/middlewares/timeout"
 )
 
 // HomeApi struct
 type homeApi struct {
-	auth middlewares.AuthMiddleware
-	rbac middlewares.RbacMiddleware
+	auth middlewares.AuthMidware
+	rbac middlewares.RbacMidware
 	serv services.IHomeService
 }
 
 // Create HomeApi
 func NewHomeApi(
-	router fiber.Router,
-	auth middlewares.AuthMiddleware,
-	rbac middlewares.RbacMiddleware,
+	router *mux.Router,
+	auth middlewares.AuthMidware,
+	rbac middlewares.RbacMidware,
 	serv services.IHomeService) {
 	handler := &homeApi{
 		auth: auth,
@@ -32,30 +29,32 @@ func NewHomeApi(
 		serv: serv,
 	}
 
-	group := router.Group("home")
-	group.Get("/latest", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.latest, 60*1000*time.Millisecond)).Name("latest")
-	group.Post("/new", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.new, 60*1000*time.Millisecond)).Name("new")
+	// Create api sub-router
+	group := router.PathPrefix("/home").Subrouter()
+
+	// Group Handlers
+	group.HandleFunc("/latest", rbac.RbacHandler(handler.latest)).Methods("GET")
+	group.HandleFunc("/new", rbac.RbacHandler(handler.new)).Methods("POST")
+
+	// group := router.Group("home")
+	// group.Get("/latest", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.latest, 60*1000*time.Millisecond)).Name("latest")
+	// group.Post("/new", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.new, 60*1000*time.Millisecond)).Name("new")
 }
 
-func (m *homeApi) latest(c *fiber.Ctx) error {
+func (m *homeApi) latest(w http.ResponseWriter, r *http.Request) {
 
-	limit, _ := strconv.ParseUint(c.Query("limit"), 10, 64)
-	offset, _ := strconv.ParseUint(c.Query("offset"), 10, 64)
+	limit, _ := strconv.ParseUint(r.URL.Query().Get("limit"), 10, 64)
+	offset, _ := strconv.ParseUint(r.URL.Query().Get("offset"), 10, 64)
 
-	ctx := c.UserContext()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	res, totalCnt, err := m.serv.GetLatest(ctx, limit, offset)
+	res, totalCnt, err := m.serv.GetLatest(r.Context(), limit, offset)
 	if err != nil {
-		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
+		controllers.SendError(w, controllers.ErrNotFound, err.Error())
+		return
 	}
 
-	c.Response().Header.Add("X-Rows", fmt.Sprintf("%d", totalCnt))
-
-	return controllers.SendPagingResult(c, res, limit, offset, totalCnt)
+	controllers.SendPagingResult(w, res, limit, offset, totalCnt)
 }
 
-func (m *homeApi) new(c *fiber.Ctx) error {
-	return controllers.SendPagingResult(c, "ok", 0, 0, 1)
+func (m *homeApi) new(w http.ResponseWriter, r *http.Request) {
+	controllers.SendPagingResult(w, "ok", 0, 0, 1)
 }

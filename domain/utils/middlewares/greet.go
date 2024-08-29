@@ -1,20 +1,20 @@
 package middlewares
 
-import "github.com/gofiber/fiber/v2"
+import "net/http"
 
-// GreetMiddleware struct
-type GreetMiddleware struct {
+// GreetMidware struct
+type GreetMidware struct {
 }
 
 // Init
-func NewGreet() *GreetMiddleware {
-	return &GreetMiddleware{}
+func NewGreet() *GreetMidware {
+	return &GreetMidware{}
 }
 
 // Greet
-func (m *GreetMiddleware) Greet(c *fiber.Ctx) error {
-	c.Set("Server", "r450k")
-
-	// Go to next middleware:
-	return c.Next()
+func (m *GreetMidware) GreetHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Server", "r450k")
+		next.ServeHTTP(w, r)
+	})
 }

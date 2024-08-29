@@ -1,32 +1,30 @@
 package apis
 
 import (
-	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"strconv"
-	"time"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/log"
+	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/domain/entities"
 	"github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
-	"github.com/mysayasan/kopiv2/domain/utils/middlewares/timeout"
 )
 
 // UserGroupApi struct
 type userGroupApi struct {
-	auth middlewares.AuthMiddleware
-	rbac middlewares.RbacMiddleware
+	auth middlewares.AuthMidware
+	rbac middlewares.RbacMidware
 	serv services.IUserGroupService
 }
 
 // Create UserGroupApi
 func NewUserGroupApi(
-	router fiber.Router,
-	auth middlewares.AuthMiddleware,
-	rbac middlewares.RbacMiddleware,
+	router *mux.Router,
+	auth middlewares.AuthMidware,
+	rbac middlewares.RbacMidware,
 	serv services.IUserGroupService) {
 	handler := &userGroupApi{
 		auth: auth,
@@ -34,76 +32,92 @@ func NewUserGroupApi(
 		serv: serv,
 	}
 
-	group := router.Group("user-group")
-	group.Get("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("get")
-	group.Post("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.post, 60*1000*time.Millisecond)).Name("create")
-	group.Put("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.put, 60*1000*time.Millisecond)).Name("update")
-	group.Delete("/:id", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.delete, 60*1000*time.Millisecond)).Name("delete")
+	// Create api sub-router
+	group := router.PathPrefix("/user-group").Subrouter()
+	group.Use(auth.Middleware)
+
+	// Group Handlers
+	group.HandleFunc("", rbac.RbacHandler(handler.get)).Methods("GET")
+	group.HandleFunc("", rbac.RbacHandler(handler.post)).Methods("GET")
+	group.HandleFunc("", rbac.RbacHandler(handler.put)).Methods("PUT")
+	group.HandleFunc("/{id}", rbac.RbacHandler(handler.delete)).Methods("DELETE")
+
+	// group := router.Group("user-group")
+	// group.Get("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("get")
+	// group.Post("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.post, 60*1000*time.Millisecond)).Name("create")
+	// group.Put("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.put, 60*1000*time.Millisecond)).Name("update")
+	// group.Delete("/:id", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.delete, 60*1000*time.Millisecond)).Name("delete")
 }
 
-func (m *userGroupApi) get(c *fiber.Ctx) error {
+func (m *userGroupApi) get(w http.ResponseWriter, r *http.Request) {
 
-	limit, _ := strconv.ParseUint(c.Query("limit"), 10, 64)
-	offset, _ := strconv.ParseUint(c.Query("offset"), 10, 64)
+	limit, _ := strconv.ParseUint(r.URL.Query().Get("limit"), 10, 64)
+	offset, _ := strconv.ParseUint(r.URL.Query().Get("offset"), 10, 64)
 
-	ctx := c.UserContext()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	res, totalCnt, err := m.serv.Get(ctx, limit, offset)
+	res, totalCnt, err := m.serv.Get(r.Context(), limit, offset)
 	if err != nil {
-		return controllers.SendError(c, controllers.ErrNotFound, err.Error())
+		controllers.SendError(w, controllers.ErrNotFound, err.Error())
+		return
 	}
 
-	c.Response().Header.Add("X-Rows", fmt.Sprintf("%d", totalCnt))
-
-	return controllers.SendPagingResult(c, res, limit, offset, totalCnt)
+	controllers.SendPagingResult(w, res, limit, offset, totalCnt)
 }
 
-func (m *userGroupApi) post(c *fiber.Ctx) error {
+func (m *userGroupApi) post(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+
 	body := new(entities.UserGroup)
 
-	if err := c.BodyParser(body); err != nil {
-		return controllers.SendError(c, controllers.ErrParseFailed, err.Error())
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
 	}
 
-	log.Info(fmt.Sprintf("%v", body))
+	fmt.Printf("%v", body)
 
-	res, err := m.serv.Create(c.Context(), *body)
+	res, err := m.serv.Create(r.Context(), *body)
 	if err != nil {
-		return controllers.SendError(c, controllers.ErrInternalServerError, err.Error())
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
 	}
 
-	return controllers.SendResult(c, res, "succeed")
+	controllers.SendResult(w, res, "succeed")
 }
 
-func (m *userGroupApi) put(c *fiber.Ctx) error {
+func (m *userGroupApi) put(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+
 	body := new(entities.UserGroup)
 
-	if err := c.BodyParser(body); err != nil {
-		return controllers.SendError(c, controllers.ErrParseFailed, err.Error())
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
 	}
 
-	log.Info(fmt.Sprintf("%v", body))
+	fmt.Printf("%v", body)
 
-	res, err := m.serv.Update(c.Context(), *body)
+	res, err := m.serv.Update(r.Context(), *body)
 	if err != nil {
-		return controllers.SendError(c, controllers.ErrInternalServerError, err.Error())
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
 	}
 
-	return controllers.SendResult(c, res, "succeed")
+	controllers.SendResult(w, res, "succeed")
 }
 
-func (m *userGroupApi) delete(c *fiber.Ctx) error {
-	id, _ := strconv.ParseUint(c.Params("id"), 10, 64)
-	log.Info(id)
-	// param := entities.UserGroup{}
-	// c.ParamsParser(&param)
+func (m *userGroupApi) delete(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	id, _ := strconv.ParseUint(params["id"], 10, 64)
 
-	res, err := m.serv.Delete(c.Context(), id)
+	res, err := m.serv.Delete(r.Context(), id)
 	if err != nil {
-		return controllers.SendError(c, controllers.ErrInternalServerError, err.Error())
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
 	}
 
-	return controllers.SendResult(c, res, "succeed")
+	controllers.SendResult(w, res, "succeed")
 }

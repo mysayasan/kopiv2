@@ -1,8 +1,8 @@
-package middlewares
+package models
 
 import "github.com/golang-jwt/jwt/v5"
 
-type JwtCustomClaimsModel struct {
+type JwtCustomClaims struct {
 	Id            int64  `json:"id" form:"id" query:"id" validate:"required"`
 	Email         string `json:"email" form:"email" query:"email" validate:"required"`
 	VerifiedEmail bool   `json:"verifiedEmail" form:"verifiedEmail" query:"verifiedEmail"`

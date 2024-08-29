@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/gofiber/fiber/v2/log"
 	strcase "github.com/iancoleman/strcase"
 	_ "github.com/lib/pq"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
@@ -91,7 +90,7 @@ func (m *dbCrud) genSelSqlStr(props reflect.Value, limit uint64, offset uint64, 
 	res = fmt.Sprintf("%s;", res)
 
 	if os.Getenv("ENVIRONMENT") == "dev" {
-		log.Info(res)
+		fmt.Println(res)
 	}
 
 	return len(selCols), res
@@ -339,7 +338,7 @@ func (m *dbCrud) Select(ctx context.Context, model interface{}, limit uint64, of
 	}
 
 	if os.Getenv("ENVIRONMENT") == "dev" {
-		log.Info(result)
+		fmt.Println(result)
 	}
 
 	return result, rowCnt, nil

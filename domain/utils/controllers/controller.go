@@ -1,17 +1,16 @@
 package controllers
 
 import (
+	"encoding/json"
 	"math"
+	"net/http"
 	"os"
 	"strings"
-
-	"github.com/gofiber/fiber/v2"
 )
 
 type PagingResponse[T any] struct {
-	StatsCode int    `json:"status"`
-	Message   string `json:"message"`
-	Data      struct {
+	Message string `json:"message"`
+	Data    struct {
 		Result      T      `json:"result"`
 		ResCnt      uint64 `json:"resCnt"`
 		CurrentPage int    `json:"currentPage"`
@@ -26,15 +25,13 @@ type ErrResponse[T any] struct {
 }
 
 type DefaultResponse[T any] struct {
-	StatsCode int    `json:"statsCode"`
-	Message   string `json:"message"`
-	Result    T      `json:"result"`
+	Message string `json:"message"`
+	Result  T      `json:"result"`
 }
 
-func SendPagingResult(c *fiber.Ctx, data interface{}, limit uint64, offset uint64, totalCnt uint64, message ...string) error {
+func SendPagingResult(w http.ResponseWriter, data interface{}, limit uint64, offset uint64, totalCnt uint64, msgs ...string) error {
 	var resp PagingResponse[interface{}]
-	resp.StatsCode = c.Response().StatusCode()
-	resp.Message = strings.Join(message, "\n")
+	resp.Message = strings.Join(msgs, "\n")
 	resp.Data.Result = data
 	resp.Data.ResCnt = totalCnt
 	resp.Data.CurrentPage = 1
@@ -47,7 +44,9 @@ func SendPagingResult(c *fiber.Ctx, data interface{}, limit uint64, offset uint6
 		}
 	}
 
-	err := c.JSON(resp)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	err := json.NewEncoder(w).Encode(resp)
 	if err != nil {
 		return err
 	}
@@ -55,13 +54,14 @@ func SendPagingResult(c *fiber.Ctx, data interface{}, limit uint64, offset uint6
 	return nil
 }
 
-func SendResult(c *fiber.Ctx, data interface{}, message ...string) error {
+func SendResult(w http.ResponseWriter, data interface{}, msgs ...string) error {
 	var resp DefaultResponse[interface{}]
-	resp.StatsCode = c.Response().StatusCode()
-	resp.Message = strings.Join(message, "\n")
+	resp.Message = strings.Join(msgs, "\n")
 	resp.Result = data
 
-	err := c.JSON(resp)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	err := json.NewEncoder(w).Encode(resp)
 	if err != nil {
 		return err
 	}
@@ -69,7 +69,7 @@ func SendResult(c *fiber.Ctx, data interface{}, message ...string) error {
 	return nil
 }
 
-func SendError(c *fiber.Ctx, err error, message string, data ...interface{}) error {
+func SendError(w http.ResponseWriter, err error, message string, data ...interface{}) error {
 	msg := err.Error()
 	if len(message) > 0 && os.Getenv("ENVIRONMENT") == "dev" {
 		msg = message
@@ -80,7 +80,9 @@ func SendError(c *fiber.Ctx, err error, message string, data ...interface{}) err
 	resp.Message = msg
 	resp.Details = data
 
-	err = c.Status(stats).JSON(resp)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(stats)
+	err = json.NewEncoder(w).Encode(resp)
 	if err != nil {
 		return err
 	}

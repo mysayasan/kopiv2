@@ -8,14 +8,13 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/gofiber/fiber/v2/log"
 	strcase "github.com/iancoleman/strcase"
 	_ "github.com/lib/pq"
 )
 
 func (m *dbCrud) genInsSqlStr(props reflect.Value, datasrc string) string {
 	if props.Type().Kind() == reflect.Slice {
-		log.Info("its a slice")
+		fmt.Println("its a slice")
 	}
 
 	if datasrc == "" {
@@ -96,7 +95,7 @@ func (m *dbCrud) genInsSqlStr(props reflect.Value, datasrc string) string {
 	res := fmt.Sprintf(`INSERT INTO %s (%s) VALUES (%s) RETURNING id`, datasrc, strings.Join(selCols, `, `), strings.Join(values, `, `))
 
 	if os.Getenv("ENVIRONMENT") == "dev" {
-		log.Info(res)
+		fmt.Println(res)
 	}
 
 	return res

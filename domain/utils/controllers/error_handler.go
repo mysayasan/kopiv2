@@ -35,8 +35,10 @@ var (
 	ErrNoChanges = fmt.Errorf("no changes has been made")
 	// ErrStatusUnprocessableEntity
 	ErrStatusUnprocessableEntity = fmt.Errorf("unprocessable entity")
-	// ErrFileNotCompatible
+	// ErrUplodFailed
 	ErrUplodFailed = fmt.Errorf("uploads failed")
+	// ErrFileNotCompatible
+	ErrLimitedAccess = fmt.Errorf("limited access")
 )
 
 // GetHttpStatusCode to return Status code
@@ -57,6 +59,8 @@ func (utils *ErrorHandler) GetHttpStatusCode(err error) int {
 		return http.StatusConflict
 	case ErrParseFailed:
 		return http.StatusBadRequest
+	case ErrLimitedAccess:
+		return http.StatusForbidden
 	default:
 		return http.StatusBadRequest
 	}
