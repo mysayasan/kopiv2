@@ -41,12 +41,6 @@ func NewApiEndpointApi(
 	group.HandleFunc("", rbac.RbacHandler(handler.post)).Methods("POST")
 	group.HandleFunc("", rbac.RbacHandler(handler.put)).Methods("PUT")
 	group.HandleFunc("/{id}", rbac.RbacHandler(handler.delete)).Methods("DELETE")
-
-	// group := router.Group("endpoint")
-	// group.Get("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("get")
-	// group.Post("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.post, 60*1000*time.Millisecond)).Name("create")
-	// group.Put("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.put, 60*1000*time.Millisecond)).Name("update")
-	// group.Delete("/:id", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.delete, 60*1000*time.Millisecond)).Name("delete")
 }
 
 func (m *apiEndpointApi) get(w http.ResponseWriter, r *http.Request) {

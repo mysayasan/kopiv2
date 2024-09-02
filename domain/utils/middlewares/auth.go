@@ -49,13 +49,13 @@ func (m *AuthMidware) Middleware(next http.Handler) http.Handler {
 		}
 
 		if !token.Valid {
-			controllers.SendError(w, controllers.ErrPermission, err.Error())
+			controllers.SendError(w, controllers.ErrPermission, "token not valid")
 			return
 		}
 
 		jwtClaims, ok := token.Claims.(jwt.MapClaims)
 		if !ok {
-			controllers.SendError(w, controllers.ErrPermission, err.Error())
+			controllers.SendError(w, controllers.ErrPermission, "token not valid")
 			return
 		}
 
@@ -64,7 +64,7 @@ func (m *AuthMidware) Middleware(next http.Handler) http.Handler {
 		_ = json.Unmarshal(tmp, claims)
 
 		if claims == (&models.JwtCustomClaims{}) {
-			controllers.SendError(w, controllers.ErrPermission, err.Error())
+			controllers.SendError(w, controllers.ErrPermission, "token not valid")
 			return
 		}
 

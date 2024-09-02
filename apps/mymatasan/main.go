@@ -15,9 +15,10 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/apis"
+	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/models"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
-	"github.com/mysayasan/kopiv2/domain/entities"
+	sharedEntities "github.com/mysayasan/kopiv2/domain/entities"
 	sharedApis "github.com/mysayasan/kopiv2/domain/shared/apis"
 	sharedServices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
@@ -124,14 +125,15 @@ func main() {
 	memCache := goCache.New(10*time.Second, 10*time.Second)
 
 	// Create Repo
-	userLoginRepo := dbsql.NewGenericRepo[entities.UserLogin](postgresDb)
-	userGroupRepo := dbsql.NewGenericRepo[entities.UserGroup](postgresDb)
-	userRoleRepo := dbsql.NewGenericRepo[entities.UserRole](postgresDb)
-	apiLogRepo := dbsql.NewGenericRepo[entities.ApiLog](postgresDb)
-	apiEpRepo := dbsql.NewGenericRepo[entities.ApiEndpoint](postgresDb)
-	apiEpRbacRepo := dbsql.NewGenericRepo[entities.ApiEndpointRbac](postgresDb)
+	userLoginRepo := dbsql.NewGenericRepo[sharedEntities.UserLogin](postgresDb)
+	userGroupRepo := dbsql.NewGenericRepo[sharedEntities.UserGroup](postgresDb)
+	userRoleRepo := dbsql.NewGenericRepo[sharedEntities.UserRole](postgresDb)
+	apiLogRepo := dbsql.NewGenericRepo[sharedEntities.ApiLog](postgresDb)
+	apiEpRepo := dbsql.NewGenericRepo[sharedEntities.ApiEndpoint](postgresDb)
+	apiEpRbacRepo := dbsql.NewGenericRepo[sharedEntities.ApiEndpointRbac](postgresDb)
 	residentPropRepo := dbsql.NewGenericRepo[models.ResidentProp](postgresDb)
-	fileStorRepo := dbsql.NewGenericRepo[entities.FileStorage](postgresDb)
+	fileStorRepo := dbsql.NewGenericRepo[sharedEntities.FileStorage](postgresDb)
+	camStreamRepo := dbsql.NewGenericRepo[entities.CameraStream](postgresDb)
 
 	// Shared services Modules
 	userLoginService := sharedServices.NewUserLoginService(userLoginRepo, memCache)
@@ -178,8 +180,8 @@ func main() {
 	//Home Api
 	apis.NewHomeApi(api, *auth, *rbac, homeService)
 
-	newCam := ffmpegCam.NewNetCam("rtsp://admin:Aziandi220%40@192.168.1.148:554/cam/realmonitor?channel=1&subtype=0&unicast=true&proto=Onvif")
-	camService := services.NewCameraService(newCam)
+	newCam := ffmpegCam.NewNetCam()
+	camService := services.NewCameraStreamService(camStreamRepo, memCache, newCam)
 	apis.NewCameraApi(api, *auth, *rbac, camService)
 
 	// // Callback after log is written

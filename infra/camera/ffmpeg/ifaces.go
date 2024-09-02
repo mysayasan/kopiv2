@@ -4,5 +4,5 @@ import "io"
 
 // INetCam interface
 type INetCam interface {
-	ReadStream() (string, io.ReadCloser, error)
+	ReadMjpeg(uri string) (string, io.ReadCloser, error)
 }

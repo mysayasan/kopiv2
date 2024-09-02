@@ -1,10 +1,12 @@
 package entities
 
-// ResidentPropPic
-type ResidentPropPic struct {
+// CameraStream
+type CameraStream struct {
 	Id             int64  `json:"id" form:"id" query:"id" params:"id" skipWhenInsert:"true" pkey:"true" validate:"required"`
-	ResidentPropId int64  `json:"residentPropId" form:"residentPropId" query:"residentPropId"`
-	PicUrl         string `json:"picUrl" form:"picUrl" query:"picUrl" validate:"required"`
+	Url            string `json:"url" form:"url" query:"url" validate:"required"`
+	StreamProtocol int    `json:"stream_protocol" form:"stream_protocol" query:"stream_protocol"`
+	OutStreamFmt   int    `json:"out_stream_fmt" form:"out_stream_fmt" query:"out_stream_fmt"`
+	IsActive       bool   `json:"isActive" form:"isActive" query:"isActive"`
 	CreatedBy      int64  `json:"createdBy" form:"createdBy" query:"createdBy"`
 	CreatedAt      int64  `json:"createdAt" form:"createdAt" query:"createdAt"`
 	UpdatedBy      int64  `json:"updatedBy" form:"updatedBy" query:"updatedBy"`

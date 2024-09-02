@@ -37,7 +37,7 @@ func (m *dbCrud) genInsSqlStr(props reflect.Value, datasrc string) string {
 			}
 		}
 
-		if field.Tag.Get("ignoreOnInsert") == "true" {
+		if field.Tag.Get("skipWhenInsert") == "true" {
 			continue
 		}
 

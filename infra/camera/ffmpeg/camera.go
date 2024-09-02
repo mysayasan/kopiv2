@@ -7,19 +7,19 @@ import (
 
 // netCam struct
 type netCam struct {
-	uri string
+	// uri string
 }
 
 // Create new INetCam
 func NewNetCam(
-	uri string,
+// uri string,
 ) INetCam {
 	return &netCam{
-		uri: uri,
+		// uri: uri,
 	}
 }
 
-func (m *netCam) ReadStream() (string, io.ReadCloser, error) {
+func (m *netCam) ReadMjpeg(uri string) (string, io.ReadCloser, error) {
 	c := &Config{
 		FFMPEG: filepath.Join(filepath.Dir(`C:\FFMpeg\bin\`), "ffmpeg.exe"),
 		Copy:   true, // do not transcode
@@ -34,5 +34,5 @@ func (m *netCam) ReadStream() (string, io.ReadCloser, error) {
 	}
 
 	encode := Get(c)
-	return encode.GetVideo(m.uri, "SecuritySpyVideoTitle")
+	return encode.GetVideo(uri, "SecuritySpyVideoTitle")
 }

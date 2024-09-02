@@ -4,7 +4,7 @@ import "database/sql"
 
 // UserRole
 type UserRole struct {
-	Id          int64          `json:"id" form:"id" query:"id" params:"id" ignoreOnInsert:"true" pkey:"true" validate:"required"`
+	Id          int64          `json:"id" form:"id" query:"id" params:"id" skipWhenInsert:"true" pkey:"true" validate:"required"`
 	Title       string         `json:"title" form:"title" query:"title" validate:"required"`
 	Description sql.NullString `json:"description" form:"description" query:"description"`
 	ParentId    int64          `json:"parentId" form:"parentId" query:"parentId" fkey:"parent" validate:"required"`

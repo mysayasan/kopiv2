@@ -194,17 +194,18 @@ func (e *Encoder) getVideoHandle(ctx context.Context, input, output, title strin
 		// "-report",
 		// "-v", "16", // log level
 		// "-re",
-		// "-rtsp_transport", "tcp",
+		"-rtsp_transport", "udp",
 		"-i", input,
 		// "-vfracmes", "1",
 		"-c:v", "jpeg",
 		"-f", vidType,
 		// "-filter:v", "scale=720:-1",
 		// "-c:v", vidType,
-		// "-q:v", "1",
+		// "-q:v", "2",
 		//"-map", "0:v",
+		"-preset", "ultrafast",
 		"-vcodec", "mjpeg",
-		// "-tune", "zerolatency",
+		"-tune", "zerolatency",
 		// "-flvflags no_duration_filesize",
 		"-metadata", `title="` + title + `"`,
 		// "-stream_loop", "-1",
@@ -280,26 +281,6 @@ func (e *Encoder) GetVideoContext(ctx context.Context, input, title string) (str
 	if err != nil {
 		return cmdStr, nil, fmt.Errorf("subcommand failed: %w", err)
 	}
-
-	// go func(stdoutpipe io.ReadCloser) {
-	// 	buf := make([]byte, 1024)
-	// 	for {
-	// 		n, err := stdoutpipe.Read(buf)
-	// 		if err == io.EOF {
-	// 			// there is no more data to read
-	// 			break
-	// 		}
-	// 		if err != nil {
-	// 			fmt.Println(err)
-	// 			continue
-	// 		}
-	// 		if n > 0 {
-	// 			uEnc := b64.URLEncoding.EncodeToString([]byte(buf[:n]))
-	// 			fmt.Println(uEnc)
-	// 			// fmt.Print(buf[:n])
-	// 		}
-	// 	}
-	// }(stdoutpipe)
 
 	go func() {
 		if err := cmd.Run(); err != nil {

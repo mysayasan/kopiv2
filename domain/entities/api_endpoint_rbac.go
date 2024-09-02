@@ -2,7 +2,7 @@ package entities
 
 // ApiEndpointRbac
 type ApiEndpointRbac struct {
-	Id            int64 `json:"id" form:"id" query:"id" params:"id" ignoreOnInsert:"true" pkey:"true" validate:"required"`
+	Id            int64 `json:"id" form:"id" query:"id" params:"id" skipWhenInsert:"true" pkey:"true" validate:"required"`
 	ApiEndpointId int64 `json:"apiEndpointId" form:"apiEndpointId" query:"apiEndpointId" ukey:"ukey1" fkey:"fkey1" validate:"required"`
 	UserRoleId    int64 `json:"userRoleId" form:"userRoleId" query:"userRoleId" ukey:"ukey1" fkey:"fkey2" validate:"required"`
 	CanGet        bool  `json:"canGet" form:"canGet" query:"canGet"`
@@ -18,7 +18,7 @@ type ApiEndpointRbac struct {
 
 // ApiEndpointRbacJoinModel
 type ApiEndpointRbacJoinModel struct {
-	Id            int64  `json:"id" form:"id" query:"id" params:"id" ignoreOnInsert:"true" pkey:"true" tblalias:"table0" validate:"required"`
+	Id            int64  `json:"id" form:"id" query:"id" params:"id" skipWhenInsert:"true" pkey:"true" tblalias:"table0" validate:"required"`
 	ApiEndpointId int64  `json:"apiEndpointId" form:"apiEndpointId" query:"apiEndpointId" ukey:"ukey1" fkey:"fkey1" tablejoin:"table1" validate:"required"`
 	UserRoleId    int64  `json:"userRoleId" form:"userRoleId" query:"userRoleId" ukey:"ukey1" fkey:"fkey2" validate:"required"`
 	Host          string `json:"host" form:"host" query:"host" tblalias:"table1"`
