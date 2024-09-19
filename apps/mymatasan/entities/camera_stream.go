@@ -6,6 +6,7 @@ type CameraStream struct {
 	Url            string `json:"url" form:"url" query:"url" validate:"required"`
 	StreamProtocol int    `json:"stream_protocol" form:"stream_protocol" query:"stream_protocol"`
 	OutStreamFmt   int    `json:"out_stream_fmt" form:"out_stream_fmt" query:"out_stream_fmt"`
+	AutoStart      bool   `json:"autoStart" form:"autoStart" query:"autoStart"`
 	IsActive       bool   `json:"isActive" form:"isActive" query:"isActive"`
 	CreatedBy      int64  `json:"createdBy" form:"createdBy" query:"createdBy"`
 	CreatedAt      int64  `json:"createdAt" form:"createdAt" query:"createdAt"`

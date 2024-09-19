@@ -3,8 +3,16 @@ package services
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"image"
+	"image/color"
 	"io"
+	"log"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
 
 	_ "github.com/lib/pq"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
@@ -12,6 +20,7 @@ import (
 	camera "github.com/mysayasan/kopiv2/infra/camera/ffmpeg"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	memCache "github.com/patrickmn/go-cache"
+	"gocv.io/x/gocv"
 )
 
 // cameraStreamService struct
@@ -19,7 +28,9 @@ type cameraStreamService struct {
 	repo         dbsql.IGenericRepo[entities.CameraStream]
 	memCache     *memCache.Cache
 	camffmpeg    camera.INetCam
-	mjpegstreams map[string](chan []byte)
+	nosignalgif  []byte
+	startstreams map[int64](chan []byte)
+	mu           sync.Mutex
 }
 
 // Create new ICameraStreamService
@@ -28,12 +39,35 @@ func NewCameraStreamService(
 	memCache *memCache.Cache,
 	camffmpeg camera.INetCam,
 ) ICameraStreamService {
-	mjpegstreams := make(map[string](chan []byte))
+	// dir, err := filepath.Abs(filepath.Dir(os.Args[0]))
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+
+	startstreams := make(map[int64](chan []byte))
+
+	fi, err := os.Open(filepath.Join("./nosignal.gif"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	// close fi on exit and check for its returned error
+	defer func() {
+		if err := fi.Close(); err != nil {
+			return
+		}
+	}()
+
+	content, err := io.ReadAll(fi)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	return &cameraStreamService{
 		repo:         repo,
 		memCache:     memCache,
 		camffmpeg:    camffmpeg,
-		mjpegstreams: mjpegstreams,
+		nosignalgif:  content,
+		startstreams: startstreams,
 	}
 }
 
@@ -65,59 +99,137 @@ func (m *cameraStreamService) Delete(ctx context.Context, id uint64) (uint64, er
 	return m.repo.DeleteById(ctx, "", id)
 }
 
-func (m *cameraStreamService) ReadMjpeg(ctx context.Context, uri string, vidStream chan []byte) error {
+func (m *cameraStreamService) startMjpegStream(uri string, vidStream chan<- []byte) error {
+	rescnt := 0
+restart:
+	_, readStream, err := m.camffmpeg.ReadMjpeg(uri)
+	if err != nil {
+		return err
+	}
+	defer readStream.Close()
 
-	// create channel
-	if _, ok := m.mjpegstreams[uri]; !ok {
-		m.mjpegstreams[uri] = make(chan []byte)
-		go func() {
-			_, readStream, err := m.camffmpeg.ReadMjpeg(uri)
-			if err != nil {
-				return
-			}
+	fmt.Printf("stream from [%s] is online\n", uri)
 
-			defer readStream.Close()
+	buf := make([]byte, 1024)
+	res := make([]byte, 1024*64)
 
-			buf := make([]byte, 1024)
-			res := make([]byte, 1024*64)
+	// color for the rect when faces detected
+	blue := color.RGBA{0, 0, 255, 0}
 
-			for {
-				n, err := readStream.Read(buf)
-				if err == io.EOF {
-					break
-				}
-				if err != nil {
-					continue
-				}
-				if n > 0 {
-					sbuff := buf[:n]
-					res = append(res, sbuff...)
-					endian := sbuff[len(sbuff)-1]
+	// load classifier to recognize faces
+	classifier := gocv.NewCascadeClassifier()
+	defer classifier.Close()
 
-					if len(sbuff) < 1024 && endian == 0xD9 {
-						res = bytes.Trim(res, "\x00")
-						m.mjpegstreams[uri] <- res
-						res = res[:0]
-					}
-				}
-			}
-
-			close(m.mjpegstreams[uri])
-			fmt.Printf("closed camera stream from uri : %s", uri)
-		}()
+	xmlFile := filepath.Join("./haarcascade_frontalface_alt.xml")
+	if !classifier.Load(xmlFile) {
+		fmt.Printf("Error reading cascade file: %v\n", xmlFile)
+		return fmt.Errorf("error reading cascade file : %v", xmlFile)
 	}
 
 	for {
-		select {
-		case <-ctx.Done():
-			{
-				return nil
+		n, err := readStream.Read(buf)
+		if err == io.EOF {
+			if rescnt < 30 {
+				vidStream <- m.nosignalgif
+				fmt.Printf("stream disruption on [%s], restarting in 10secs\n", uri)
+				time.Sleep(10 * time.Second)
+				rescnt += 1
+				goto restart
 			}
-		case v, ok := <-m.mjpegstreams[uri]:
-			if !ok {
-				break
+			return errors.New("failed to stream")
+		}
+		if err != nil {
+			continue
+		}
+		if n > 0 {
+			sbuff := buf[:n]
+			if len(res) < 1 {
+				startByte := sbuff[0]
+				if len(sbuff) > 1024 && startByte != 0xD8 {
+					continue
+				}
 			}
-			vidStream <- v
+			res = append(res, sbuff...)
+			endian := sbuff[len(sbuff)-1]
+
+			facedetect := false
+
+			if len(sbuff) < 1024 && endian == 0xD9 {
+				res = bytes.Trim(res, "\x00")
+
+				if facedetect {
+					// prepare image matrix
+					mat := gocv.NewMat()
+					defer mat.Close()
+
+					gocv.IMDecodeIntoMat(res, gocv.IMReadAnyColor, &mat)
+
+					if mat.Empty() {
+						continue
+					}
+
+					// detect faces
+					rects := classifier.DetectMultiScale(mat)
+					fmt.Printf("found %d faces\n", len(rects))
+
+					// draw a rectangle around each face on the original image,
+					// along with text identifying as "Human"
+					for _, r := range rects {
+						gocv.Rectangle(&mat, r, blue, 3)
+
+						size := gocv.GetTextSize("Human", gocv.FontHersheyPlain, 1.2, 2)
+						pt := image.Pt(r.Min.X+(r.Min.X/2)-(size.X/2), r.Min.Y-2)
+						gocv.PutText(&mat, "Human", pt, gocv.FontHersheyPlain, 1.2, blue, 2)
+					}
+
+					buff, err := gocv.IMEncode(gocv.JPEGFileExt, mat)
+					if err != nil {
+						continue
+					}
+
+					// vidStream <- res
+					vidStream <- buff.GetBytes()
+					res = res[:0]
+					continue
+				}
+
+				// vidStream <- res
+				vidStream <- res
+				res = res[:0]
+			}
 		}
 	}
+}
+
+func (m *cameraStreamService) StartAllMjpegStream() error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	filters := []sqldataenums.Filter{
+		{
+			FieldName: "AutoStart",
+			Compare:   sqldataenums.Equal,
+			Value:     true,
+		},
+	}
+	streams, _, err := m.repo.Get(ctx, "", 0, 0, filters, nil)
+	if err != nil {
+		return err
+	}
+
+	for _, stream := range streams {
+		if _, ok := m.startstreams[stream.Id]; !ok {
+			m.startstreams[stream.Id] = make(chan []byte)
+
+			go func(ctx context.Context, startStream chan<- []byte) {
+				m.startMjpegStream(stream.Url, startStream)
+			}(ctx, m.startstreams[stream.Id])
+		}
+	}
+
+	return nil
+}
+
+func (m *cameraStreamService) ReadMjpeg(ctx context.Context, id int64) <-chan []byte {
+	return m.startstreams[id]
 }

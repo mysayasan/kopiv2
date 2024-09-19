@@ -182,6 +182,10 @@ func main() {
 
 	newCam := ffmpegCam.NewNetCam()
 	camService := services.NewCameraStreamService(camStreamRepo, memCache, newCam)
+	err = camService.StartAllMjpegStream()
+	if err != nil {
+		fmt.Println(err.Error())
+	}
 	apis.NewCameraApi(api, *auth, *rbac, camService)
 
 	// // Callback after log is written

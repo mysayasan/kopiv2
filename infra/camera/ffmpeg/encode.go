@@ -184,8 +184,8 @@ func (e *Encoder) getVideoHandle(ctx context.Context, input, output, title strin
 
 	vidType := "mov"
 	if output == "-" {
-		// vidType = "mjpeg"
-		vidType = "image2pipe"
+		vidType = "mjpeg"
+		// vidType = "image2pipe"
 	}
 
 	// the order of these values is important.

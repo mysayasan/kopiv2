@@ -24,5 +24,6 @@ type ICameraStreamService interface {
 	Create(ctx context.Context, model entities.CameraStream) (uint64, error)
 	Update(ctx context.Context, model entities.CameraStream) (uint64, error)
 	Delete(ctx context.Context, id uint64) (uint64, error)
-	ReadMjpeg(ctx context.Context, uri string, vidStream chan []byte) error
+	StartAllMjpegStream() error
+	ReadMjpeg(ctx context.Context, id int64) <-chan []byte
 }

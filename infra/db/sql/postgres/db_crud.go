@@ -127,6 +127,12 @@ func (m *dbCrud) genWhereSqlStr(props reflect.Value, filters []sqldataenums.Filt
 					res = append(res, fs)
 					break
 				}
+			case bool:
+				{
+					fs := fmt.Sprintf("%s = '%t'", fieldNm, filter.Value)
+					res = append(res, fs)
+					break
+				}
 			default:
 				{
 					fs := fmt.Sprintf("%s = '%s'", fieldNm, filter.Value)

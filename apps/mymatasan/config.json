@@ -22,7 +22,8 @@
     },
     "allowOrigins": "https://192.168.1.50",
     "db": {
-      "host": "192.168.1.58",
+      // "host": "192.168.1.58",
+      "host": "localhost",
       "port": 5432,
       "user": "postgres",
       "password": "postgres",

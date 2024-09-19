@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"strconv"
+	"sync"
 
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
@@ -21,6 +22,8 @@ type cameraApi struct {
 	rbac    middlewares.RbacMidware
 	serv    services.ICameraStreamService
 	camsess map[uint64](chan []byte)
+	// camactive map[uint64](int)
+	mu sync.Mutex
 }
 
 // Create CameraApi
@@ -30,11 +33,13 @@ func NewCameraApi(
 	rbac middlewares.RbacMidware,
 	serv services.ICameraStreamService) {
 	camsess := make(map[uint64](chan []byte))
+	// camactive := make(map[uint64](int))
 	handler := &cameraApi{
 		auth:    auth,
 		rbac:    rbac,
 		serv:    serv,
 		camsess: camsess,
+		// camactive: camactive,
 	}
 	// Create api sub-router
 	group := router.PathPrefix("/camera").Subrouter()
@@ -64,27 +69,49 @@ func (m *cameraApi) getMjpegStream(w http.ResponseWriter, r *http.Request) {
 		"multipart/x-mixed-replace;boundary=%s",
 		mw.Boundary(),
 	))
-	w.WriteHeader(200)
+	w.WriteHeader(206)
 
-	// create channel
-	if _, ok := m.camsess[id]; !ok {
-		res, err := m.serv.GetById(r.Context(), id)
-		if err != nil {
-			controllers.SendError(w, controllers.ErrNotFound, err.Error())
-			return
-		}
-		m.camsess[id] = make(chan []byte)
-		go m.serv.ReadMjpeg(r.Context(), res.Url, m.camsess[id])
-	}
+	// errChan := make(chan error)
+	// // create channel
+	// if _, ok := m.camsess[id]; !ok {
+	// 	// res, err := m.serv.GetById(ctx, id)
+	// 	// if err != nil {
+	// 	// 	controllers.SendError(w, controllers.ErrNotFound, err.Error())
+	// 	// 	return
+	// 	// }
+	// 	m.camsess[id] = make(chan []byte)
+
+	// 	go func(errChan chan error) {
+	// 		errChan <- m.serv.ReadMjpeg(ctx, int64(id), m.camsess[id])
+	// 	}(errChan)
+	// }
+
+	// // count viewers per camera
+
+	// m.mu.Lock()
+	// m.camactive[id] += 1
+	// m.mu.Unlock()
 
 	for {
 		select {
+		// case err := <-errChan:
+		// 	{
+		// 		fmt.Println(err.Error())
+		// 		m.camactive[id] = 0
+		// 		delete(m.camsess, id)
+		// 		return
+		// 	}
 		case <-ctx.Done():
 			{
-				// delete(m.camsess, id)
+				// m.camactive[id] -= 1
+				// fmt.Printf("cam [%d] has %d active viewers left\n", id, m.camactive[id])
+				// if m.camactive[id] < 1 {
+				// 	m.camactive[id] = 0
+				// 	delete(m.camsess, id)
+				// }
 				return
 			}
-		case v, ok := <-m.camsess[id]:
+		case v, ok := <-m.serv.ReadMjpeg(ctx, int64(id)):
 			if !ok {
 				break
 			}

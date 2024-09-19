@@ -8,12 +8,21 @@ import {
 } from "react-router-dom";
 // import "./index.css";
 
-const router = createBrowserRouter([
+const Home = React.lazy(() => import('./views/Home'));
+const App = React.lazy(() => import('./views/App'));
+
+const routes = [
   {
     path: "/",
-    element: <div>Hello world!</div>,
+    element: <Home />,
   },
-]);
+  {
+    path: "/app",
+    element: <App />,
+  },
+]
+
+const router = createBrowserRouter(routes);
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
