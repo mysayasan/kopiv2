@@ -10,6 +10,7 @@ import (
 	appmodels "github.com/mysayasan/kopiv2/apps/mymatasan/models"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
+	apiaccessenums "github.com/mysayasan/kopiv2/domain/enums/apiaccess"
 	"github.com/mysayasan/kopiv2/infra/apidocs"
 	"github.com/mysayasan/kopiv2/infra/apphost"
 	ffmpegCam "github.com/mysayasan/kopiv2/infra/camera/ffmpeg"
@@ -53,20 +54,27 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		Title       string
 		Description string
 		Path        string
+		AccessTier  apiaccessenums.AccessTier
+		SeedRbac    bool
 	}
 
 	endpoints := []endpointSeed{
-		{Title: "Admin", Description: "admin module access", Path: "/api/admin"},
-		{Title: "Home", Description: "home module access", Path: "/api/home"},
-		{Title: "Camera Stream", Description: "camera stream module access", Path: "/api/camera/stream"},
-		{Title: "File Storage", Description: "file storage module access", Path: "/api/file-storage"},
-		{Title: "Logs", Description: "api log access", Path: "/api/log"},
-		{Title: "Runtime Logs", Description: "runtime log access", Path: "/api/log-service"},
-		{Title: "Endpoints", Description: "endpoint catalog access", Path: "/api/endpoint"},
-		{Title: "Endpoint RBAC", Description: "endpoint access control access", Path: "/api/endpoint-rbac"},
-		{Title: "Cache Service", Description: "cache administration access", Path: "/api/cache-service"},
-		{Title: "User Group", Description: "user group module access", Path: "/api/user-group"},
-		{Title: "User Credential", Description: "user login and role access", Path: "/api/user-credential"},
+		{Title: "API Health", Description: "api namespace health", Path: "/api/health", AccessTier: apiaccessenums.Public},
+		{Title: "Runtime Version", Description: "runtime version access", Path: "/api/version", AccessTier: apiaccessenums.Public},
+		{Title: "Login", Description: "local and OAuth login access", Path: "/api/login", AccessTier: apiaccessenums.Public},
+		{Title: "OAuth Callback", Description: "OAuth callback access", Path: "/api/callback", AccessTier: apiaccessenums.Public},
+		{Title: "Admin", Description: "admin module access", Path: "/api/admin", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
+		{Title: "Home", Description: "home module access", Path: "/api/home", AccessTier: apiaccessenums.AuthOnly, SeedRbac: true},
+		{Title: "Camera Stream", Description: "camera stream module access", Path: "/api/camera/stream", AccessTier: apiaccessenums.AuthOnly, SeedRbac: true},
+		{Title: "File Storage", Description: "file storage module access", Path: "/api/file-storage", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
+		{Title: "File Storage Download", Description: "public file download access", Path: "/api/file-storage/download", AccessTier: apiaccessenums.Public},
+		{Title: "Logs", Description: "api log access", Path: "/api/log", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
+		{Title: "Runtime Logs", Description: "runtime log access", Path: "/api/log-service", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
+		{Title: "Endpoints", Description: "endpoint catalog access", Path: "/api/endpoint", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
+		{Title: "Endpoint RBAC", Description: "endpoint access control access", Path: "/api/endpoint-rbac", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
+		{Title: "Cache Service", Description: "cache administration access", Path: "/api/cache-service", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
+		{Title: "User Group", Description: "user group module access", Path: "/api/user-group", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
+		{Title: "User Credential", Description: "user login and role access", Path: "/api/user-credential", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 	}
 
 	coreDefaults := []string{
@@ -89,10 +97,14 @@ AND NOT EXISTS (SELECT 1 FROM user_login ul WHERE ul.email = 'superadmin');`,
 	coreRbac := make([]string, 0, len(endpoints)*2)
 	for _, endpoint := range endpoints {
 		coreRbac = append(coreRbac,
-			fmt.Sprintf(`INSERT INTO api_endpoint (title, description, host, path, is_active, created_by, created_at, updated_by, updated_at)
-SELECT '%s', '%s', '*', '%s', TRUE, 0, 0, 0, 0
-WHERE NOT EXISTS (SELECT 1 FROM api_endpoint WHERE host = '*' AND path = '%s');`, endpoint.Title, endpoint.Description, endpoint.Path, endpoint.Path),
-			fmt.Sprintf(`INSERT INTO api_endpoint_rbac (api_endpoint_id, user_role_id, can_get, can_post, can_put, can_delete, is_active, created_by, created_at, updated_by, updated_at)
+			fmt.Sprintf(`INSERT INTO api_endpoint (title, description, host, path, access_tier, is_active, created_by, created_at, updated_by, updated_at)
+SELECT '%s', '%s', '*', '%s', %d, TRUE, 0, 0, 0, 0
+WHERE NOT EXISTS (SELECT 1 FROM api_endpoint WHERE host = '*' AND path = '%s');`, endpoint.Title, endpoint.Description, endpoint.Path, endpoint.AccessTier, endpoint.Path),
+			fmt.Sprintf(`UPDATE api_endpoint SET access_tier = %d WHERE host = '*' AND path = '%s' AND (access_tier IS NULL OR access_tier <> %d);`, endpoint.AccessTier, endpoint.Path, endpoint.AccessTier),
+		)
+		if endpoint.SeedRbac {
+			coreRbac = append(coreRbac,
+				fmt.Sprintf(`INSERT INTO api_endpoint_rbac (api_endpoint_id, user_role_id, can_get, can_post, can_put, can_delete, is_active, created_by, created_at, updated_by, updated_at)
 SELECT ae.id, ur.id, TRUE, TRUE, TRUE, TRUE, TRUE, 0, 0, 0, 0
 FROM api_endpoint ae
 JOIN user_role ur ON ur.title = 'superadmin'
@@ -102,7 +114,8 @@ AND NOT EXISTS (
 	SELECT 1 FROM api_endpoint_rbac aep
 	WHERE aep.api_endpoint_id = ae.id AND aep.user_role_id = ur.id
 );`, endpoint.Path),
-		)
+			)
+		}
 	}
 
 	seeders := []bootstrap.Seeder{

@@ -10,6 +10,7 @@ Provides endpoint RBAC data operations and role-access projection for middleware
 - Resolve endpoint access rules by host/path/user role.
 - Build joined role-access list for middleware checks.
 - Invalidate RBAC role-access cache key namespace on create/update/delete.
+- Include endpoint `accessTier` in the joined projection so cached access rows carry endpoint classification metadata.
 
 ## Notes
 

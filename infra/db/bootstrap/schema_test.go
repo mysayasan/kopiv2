@@ -59,6 +59,7 @@ func TestBuildManifestKeepsEntityFieldOrder(t *testing.T) {
 		"description",
 		"host",
 		"path",
+		"access_tier",
 		"is_active",
 		"created_by",
 		"created_at",

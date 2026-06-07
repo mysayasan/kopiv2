@@ -10,6 +10,7 @@ Implements Redis-backed shared cache adapter for multi-instance deployments.
 - Serializes values as JSON payloads for typed cache reads.
 - Supports prefix invalidation using Redis SCAN + DEL.
 - Supports key listing using Redis SCAN with prefix filter and pagination.
+- Supports atomic sliding-window rate-limit decisions using Redis sorted sets.
 - Exposes ping and close lifecycle hooks for readiness and shutdown.
 
 ## Notes

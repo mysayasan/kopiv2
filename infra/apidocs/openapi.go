@@ -434,10 +434,11 @@ func defaultResponses(method string, path string) map[string]openAPIResponse {
 		resp["422"] = jsonResponse("OAuth callback validation failed", "ErrorResponse")
 		return resp
 	case "GET /api/file-storage/download":
-		return map[string]openAPIResponse{"200": binaryResponse("File content")}
+		return withRateLimitResponse(map[string]openAPIResponse{"200": binaryResponse("File content")})
 	case "GET /api/camera/stream/mjpeg/{id}":
 		resp := map[string]openAPIResponse{"206": mjpegResponse("Multipart MJPEG stream")}
 		resp["401"] = jsonResponse("Unauthorized", "ErrorResponse")
+		resp["429"] = jsonResponse("Too many requests", "ErrorResponse")
 		resp["500"] = jsonResponse("Server error", "ErrorResponse")
 		return resp
 	}
@@ -527,7 +528,13 @@ func endpointSuccessSchema(method string, path string) string {
 func withErrorResponse(in map[string]openAPIResponse) map[string]openAPIResponse {
 	in["400"] = jsonResponse("Bad request", "ErrorResponse")
 	in["401"] = jsonResponse("Unauthorized", "ErrorResponse")
+	in["429"] = jsonResponse("Too many requests", "ErrorResponse")
 	in["500"] = jsonResponse("Server error", "ErrorResponse")
+	return in
+}
+
+func withRateLimitResponse(in map[string]openAPIResponse) map[string]openAPIResponse {
+	in["429"] = jsonResponse("Too many requests", "ErrorResponse")
 	return in
 }
 
@@ -841,11 +848,16 @@ func baseComponentSchemas() map[string]openAPISchema {
 				"description": {Type: "string"},
 				"host":        {Type: "string"},
 				"path":        {Type: "string"},
-				"isActive":    {Type: "boolean"},
-				"createdBy":   {Type: "integer", Format: "int64"},
-				"createdAt":   {Type: "integer", Format: "int64"},
-				"updatedBy":   {Type: "integer", Format: "int64"},
-				"updatedAt":   {Type: "integer", Format: "int64"},
+				"accessTier": {
+					Type:        "integer",
+					Format:      "int32",
+					Description: "0=DevOnly, 1=AuthOnly, 2=Public.",
+				},
+				"isActive":  {Type: "boolean"},
+				"createdBy": {Type: "integer", Format: "int64"},
+				"createdAt": {Type: "integer", Format: "int64"},
+				"updatedBy": {Type: "integer", Format: "int64"},
+				"updatedAt": {Type: "integer", Format: "int64"},
 			},
 			Required: []string{"title", "host", "path"},
 		},
@@ -946,12 +958,17 @@ func baseComponentSchemas() map[string]openAPISchema {
 				"userRoleId":    {Type: "integer", Format: "int64"},
 				"host":          {Type: "string"},
 				"path":          {Type: "string"},
-				"canGet":        {Type: "boolean"},
-				"canPost":       {Type: "boolean"},
-				"canPut":        {Type: "boolean"},
-				"canDelete":     {Type: "boolean"},
-				"isActive":      {Type: "boolean"},
-				"createdAt":     {Type: "integer", Format: "int64"},
+				"accessTier": {
+					Type:        "integer",
+					Format:      "int32",
+					Description: "0=DevOnly, 1=AuthOnly, 2=Public.",
+				},
+				"canGet":    {Type: "boolean"},
+				"canPost":   {Type: "boolean"},
+				"canPut":    {Type: "boolean"},
+				"canDelete": {Type: "boolean"},
+				"isActive":  {Type: "boolean"},
+				"createdAt": {Type: "integer", Format: "int64"},
 			},
 		},
 		"ApiLogPayload": {

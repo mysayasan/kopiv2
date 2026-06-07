@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -182,17 +181,6 @@ func pathMatches(allowedPath string, requestPath string) bool {
 		return true
 	}
 	return strings.HasPrefix(requestPath, allowedPath+"/")
-}
-
-func normalizeHost(host string) string {
-	host = strings.TrimSpace(strings.ToLower(host))
-	if host == "*" {
-		return host
-	}
-	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
-		return strings.Trim(strings.ToLower(parsedHost), "[]")
-	}
-	return strings.Trim(host, "[]")
 }
 
 func isJSONContentType(contentType string) bool {

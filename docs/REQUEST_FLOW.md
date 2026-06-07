@@ -11,6 +11,7 @@
 4. For `/api/*` routes:
    - API activity log middleware records the completed request into `api_log`, including elapsed `durationMs`.
    - API telemetry records request count, duration histogram, and slow-request metrics when enabled.
+   - rate-limit middleware classifies the API endpoint tier (`0=DevOnly`, `1=AuthOnly`, `2=Public`) and applies config-driven sliding-window limits.
    - auth middleware reads the HttpOnly session cookie, validates the JWT, and injects claims into context.
    - unsafe authenticated methods (`POST`, `PUT`, `PATCH`, `DELETE`) must send `X-CSRF-Token` matching the readable CSRF cookie.
    - RBAC middleware validates role access for host + path segment boundary + method.
@@ -47,7 +48,7 @@ Shared JSON response helpers include `durationMs`, measured from request middlew
 
 Bootstrap seeding also ensures a default `system` group and `superadmin` role exist before the app becomes ready.
 The default `superadmin` login password is inserted as a bcrypt hash; legacy plain-text passwords still migrate after successful local login.
-It also seeds wildcard-host RBAC endpoint rows for the protected API modules so the default access map is ready on a fresh install.
+It also seeds wildcard-host endpoint rows with `accessTier` metadata and RBAC rows for the protected API modules so the default access map is ready on a fresh install. Protected shared management APIs seed as `DevOnly`.
 
 ## Bootstrap Flow
 

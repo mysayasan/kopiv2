@@ -50,6 +50,14 @@ type AppConfigModel struct {
 			OperationTimeoutMs int    `json:"operationTimeoutMs"`
 		} `json:"redis"`
 	} `json:"cache"`
+	RateLimit struct {
+		Enabled                 bool                     `json:"enabled"`
+		EndpointCacheTTLSeconds int                      `json:"endpointCacheTtlSeconds"`
+		DefaultWindowSeconds    int                      `json:"defaultWindowSeconds"`
+		DevOnly                 RateLimitTierConfigModel `json:"devOnly"`
+		AuthOnly                RateLimitTierConfigModel `json:"authOnly"`
+		Public                  RateLimitTierConfigModel `json:"public"`
+	} `json:"rateLimit"`
 	Transaction struct {
 		LockProvider              string `json:"lockProvider"`
 		LockWaitTimeoutMs         int    `json:"lockWaitTimeoutMs"`
@@ -91,4 +99,10 @@ type AppConfigModel struct {
 		KeyPath  string `json:"keyPath" validate:"required"`
 	} `json:"tls"`
 	Db dbsql.DbConfigModel `json:"db"`
+}
+
+type RateLimitTierConfigModel struct {
+	Enabled       bool `json:"enabled"`
+	Requests      int  `json:"requests"`
+	WindowSeconds int  `json:"windowSeconds"`
 }

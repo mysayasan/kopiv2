@@ -198,4 +198,4 @@ The current app also seeds a minimal core identity dataset on first run:
 - a `system` user group
 - a `superadmin` user role associated with that group
 - a default `superadmin` login account (`superadmin` / `superadmin123`, stored as bcrypt) linked to that role
-- wildcard-host `api_endpoint` and `api_endpoint_rbac` rows for the protected modules, so the default access rules are portable across hosts
+- wildcard-host `api_endpoint` rows with `accessTier` metadata and `api_endpoint_rbac` rows for protected modules, so the default access rules are portable across hosts

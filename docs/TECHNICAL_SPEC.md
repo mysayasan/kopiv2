@@ -44,6 +44,8 @@ The runtime now uses a reusable multi-app launcher pattern:
 - OAuth login providers (Google/GitHub) are optional and do not disable local credential auth when not configured.
 - Local credential passwords are stored as bcrypt hashes, with lazy migration from legacy plain-text values on successful login.
 - Authorization: endpoint-level RBAC based on user role mappings.
+- API endpoint metadata includes `accessTier` (`0=DevOnly`, `1=AuthOnly`, `2=Public`) for route classification. The tier does not replace auth/RBAC; `DevOnly` endpoints still require authorization when registered behind protected handlers.
+- API rate limiting uses a sliding-window counter per endpoint access tier. Redis-backed cache shares counters across instances; in-memory cache is process-local.
 - Secrets:
   - `JWT_SECRET` required.
   - `GOOGLE_CLIENT_SECRET` required when Google login is enabled in config.
@@ -93,7 +95,7 @@ The runtime now uses a reusable multi-app launcher pattern:
 - Safe schema updates are additive only by default.
 - Optional initial data can be supplied through config-driven SQL seed statements when bootstrap seeding is enabled.
 - The app also seeds a minimal core identity dataset (`system` group, `superadmin` role, and first-run `superadmin` login account with bcrypt password storage) during bootstrap.
-- The app seeds wildcard-host RBAC endpoint rows for the protected API modules so first-run permissions work without binding to a specific host name.
+- The app seeds wildcard-host endpoint rows with access tiers and RBAC rows for protected API modules so first-run permissions work without binding to a specific host name. Protected shared management APIs seed as `DevOnly`.
 
 ## Configuration Contract
 
@@ -108,6 +110,7 @@ Environment overrides (runtime):
 - legacy server compatibility: `SERVER_ADDR`, `SERVER_PORTS`, `SERVER_USE_TLS`, `SERVER_ENABLE_TLS`, `SERVER_ENABLE_NON_TLS`
 - db: `DB_ENGINE`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSL_MODE`
 - cache: `CACHE_PROVIDER`, `CACHE_TTL_SECONDS`, `CACHE_KEY_PREFIX`, `REDIS_ADDR`, `REDIS_PASSWORD`, `REDIS_DB`, `REDIS_USE_TLS`, `REDIS_CONNECT_TIMEOUT_MS`, `REDIS_OPERATION_TIMEOUT_MS`
+- rate limit: `RATE_LIMIT_ENABLED`
 - transaction: `TRANSACTION_LOCK_PROVIDER`, `TRANSACTION_LOCK_WAIT_TIMEOUT_MS`, `TRANSACTION_LOCK_LEASE_MS`, `TRANSACTION_OPERATION_TIMEOUT_MS`, `TRANSACTION_STUCK_TIMEOUT_MS`, `TRANSACTION_JOB_WORKER_ENABLED`, `TRANSACTION_JOB_WORKER_FREQUENCY_SECONDS`, `TRANSACTION_MAX_ATTEMPTS`
 - secrets: `JWT_SECRET`, `GOOGLE_CLIENT_SECRET`, `GITHUB_CLIENT_SECRET`
 - logging: `LOG_ENABLED`, `LOG_PATH`, `LOG_MAX_LINE_BYTES`, `LOG_CLEANUP_ENABLED`, `LOG_MAX_RETENTION_DAYS`, `LOG_CLEANUP_FREQUENCY_MINUTES`
@@ -149,6 +152,13 @@ Telemetry config contract (`telemetry` in app config):
 - `prometheus.enabled`: enables the Prometheus text exporter.
 - `prometheus.metricsPath`: route mounted by apphost for metric scrapes.
 - `prometheus.apiDurationThresholdMs`: request duration threshold used by slow API metrics.
+
+Rate limit config contract (`rateLimit` in app config):
+
+- `enabled`: enables sliding-window API rate limiting.
+- `endpointCacheTtlSeconds`: caches endpoint tier metadata to avoid DB reads on every request.
+- `defaultWindowSeconds`: fallback window for tiers that omit `windowSeconds`.
+- `devOnly`, `authOnly`, `public`: per-tier `enabled`, `requests`, and `windowSeconds`.
 
 Transaction config contract (`transaction` in app config):
 

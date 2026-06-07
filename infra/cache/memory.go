@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	goCache "github.com/patrickmn/go-cache"
@@ -12,7 +13,9 @@ import (
 
 // MemoryStore uses process-local go-cache and is useful for local fallback/testing.
 type MemoryStore struct {
-	cache *goCache.Cache
+	cache       *goCache.Cache
+	rateMu      sync.Mutex
+	rateWindows map[string][]int64
 }
 
 func NewMemoryStore(defaultTTL time.Duration, cleanupInterval time.Duration) *MemoryStore {
@@ -23,7 +26,10 @@ func NewMemoryStore(defaultTTL time.Duration, cleanupInterval time.Duration) *Me
 		cleanupInterval = defaultTTL
 	}
 
-	return &MemoryStore{cache: goCache.New(defaultTTL, cleanupInterval)}
+	return &MemoryStore{
+		cache:       goCache.New(defaultTTL, cleanupInterval),
+		rateWindows: make(map[string][]int64),
+	}
 }
 
 func (m *MemoryStore) Get(_ context.Context, key string, dest any) (bool, error) {
@@ -98,6 +104,66 @@ func (m *MemoryStore) ListKeys(_ context.Context, prefix string, limit uint64, o
 	}
 
 	return keys[start:end], total, nil
+}
+
+func (m *MemoryStore) AllowSlidingWindow(_ context.Context, key string, limit int64, window time.Duration, now time.Time) (SlidingWindowResult, error) {
+	if limit <= 0 || window <= 0 {
+		return SlidingWindowResult{Allowed: true, Limit: limit, Remaining: limit}, nil
+	}
+
+	nowMs := now.UnixMilli()
+	cutoffMs := now.Add(-window).UnixMilli()
+
+	m.rateMu.Lock()
+	defer m.rateMu.Unlock()
+
+	rawWindow := m.rateWindows[key]
+	active := rawWindow[:0]
+	for _, ts := range rawWindow {
+		if ts > cutoffMs {
+			active = append(active, ts)
+		}
+	}
+
+	count := int64(len(active))
+	allowed := count < limit
+	if allowed {
+		active = append(active, nowMs)
+		count++
+	}
+
+	if len(active) == 0 {
+		delete(m.rateWindows, key)
+	} else {
+		m.rateWindows[key] = active
+	}
+
+	retryAfter := time.Duration(0)
+	resetAfter := window
+	if len(active) > 0 {
+		resetAt := time.UnixMilli(active[0]).Add(window)
+		resetAfter = resetAt.Sub(now)
+		if resetAfter < 0 {
+			resetAfter = 0
+		}
+		if !allowed {
+			retryAfter = resetAfter
+		}
+	}
+
+	remaining := limit - count
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	return SlidingWindowResult{
+		Allowed:    allowed,
+		Limit:      limit,
+		Count:      count,
+		Remaining:  remaining,
+		RetryAfter: retryAfter,
+		ResetAfter: resetAfter,
+	}, nil
 }
 
 func (m *MemoryStore) Ping(_ context.Context) error {

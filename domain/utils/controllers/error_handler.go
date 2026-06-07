@@ -39,6 +39,8 @@ var (
 	ErrUplodFailed = fmt.Errorf("uploads failed")
 	// ErrFileNotCompatible
 	ErrLimitedAccess = fmt.Errorf("limited access")
+	// ErrRateLimited return
+	ErrRateLimited = fmt.Errorf("too many requests")
 )
 
 // GetHttpStatusCode to return Status code
@@ -61,6 +63,8 @@ func (utils *ErrorHandler) GetHttpStatusCode(err error) int {
 		return http.StatusBadRequest
 	case ErrLimitedAccess:
 		return http.StatusForbidden
+	case ErrRateLimited:
+		return http.StatusTooManyRequests
 	default:
 		return http.StatusBadRequest
 	}

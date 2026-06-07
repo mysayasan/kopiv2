@@ -22,4 +22,5 @@ Base path: `/api/endpoint`
 
 - GET supports paging via `limit` and `offset`.
 - POST/PUT parse JSON with unknown fields rejected.
+- POST/PUT accept `accessTier` (`0=DevOnly`, `1=AuthOnly`, `2=Public`) as endpoint classification metadata.
 - DELETE parses `{id}` from route params.

@@ -66,3 +66,41 @@ func TestMemoryStoreListKeys(t *testing.T) {
 		t.Fatalf("unexpected keys page: %+v", keys)
 	}
 }
+
+func TestMemoryStoreAllowSlidingWindow(t *testing.T) {
+	store := NewMemoryStore(time.Minute, time.Minute)
+	ctx := context.Background()
+	now := time.Unix(100, 0)
+
+	first, err := store.AllowSlidingWindow(ctx, "rate:test", 2, time.Second, now)
+	if err != nil {
+		t.Fatalf("first rate check failed: %v", err)
+	}
+	if !first.Allowed || first.Count != 1 || first.Remaining != 1 {
+		t.Fatalf("unexpected first result: %+v", first)
+	}
+
+	second, err := store.AllowSlidingWindow(ctx, "rate:test", 2, time.Second, now.Add(100*time.Millisecond))
+	if err != nil {
+		t.Fatalf("second rate check failed: %v", err)
+	}
+	if !second.Allowed || second.Count != 2 || second.Remaining != 0 {
+		t.Fatalf("unexpected second result: %+v", second)
+	}
+
+	third, err := store.AllowSlidingWindow(ctx, "rate:test", 2, time.Second, now.Add(200*time.Millisecond))
+	if err != nil {
+		t.Fatalf("third rate check failed: %v", err)
+	}
+	if third.Allowed || third.Count != 2 || third.RetryAfter <= 0 {
+		t.Fatalf("expected third request to be limited, got %+v", third)
+	}
+
+	afterWindow, err := store.AllowSlidingWindow(ctx, "rate:test", 2, time.Second, now.Add(1100*time.Millisecond))
+	if err != nil {
+		t.Fatalf("post-window rate check failed: %v", err)
+	}
+	if !afterWindow.Allowed || afterWindow.Count != 1 {
+		t.Fatalf("expected post-window request to be allowed after old hits expire, got %+v", afterWindow)
+	}
+}

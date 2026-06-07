@@ -5,7 +5,9 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"sort"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -160,6 +162,55 @@ func (r *RedisStore) ListKeys(ctx context.Context, prefix string, limit uint64, 
 	return keys[start:end], total, nil
 }
 
+func (r *RedisStore) AllowSlidingWindow(ctx context.Context, key string, limit int64, window time.Duration, now time.Time) (SlidingWindowResult, error) {
+	if limit <= 0 || window <= 0 {
+		return SlidingWindowResult{Allowed: true, Limit: limit, Remaining: limit}, nil
+	}
+
+	ctx, cancel := r.withTimeout(ctx)
+	defer cancel()
+
+	windowMs := window.Milliseconds()
+	nowMs := now.UnixMilli()
+	cutoffMs := now.Add(-window).UnixMilli()
+	member := strconv.FormatInt(now.UnixNano(), 10) + "-" + strconv.FormatUint(atomic.AddUint64(&redisSlidingWindowNonce, 1), 10)
+
+	values, err := redisSlidingWindowScript.Run(
+		ctx,
+		r.client,
+		[]string{r.prefixedKey(key)},
+		strconv.FormatInt(nowMs, 10),
+		strconv.FormatInt(cutoffMs, 10),
+		strconv.FormatInt(windowMs, 10),
+		strconv.FormatInt(limit, 10),
+		member,
+	).Slice()
+	if err != nil {
+		return SlidingWindowResult{}, err
+	}
+	if len(values) != 4 {
+		return SlidingWindowResult{}, redis.Nil
+	}
+
+	allowed := toInt64(values[0]) == 1
+	count := toInt64(values[1])
+	retryAfterMs := toInt64(values[2])
+	resetAfterMs := toInt64(values[3])
+	remaining := limit - count
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	return SlidingWindowResult{
+		Allowed:    allowed,
+		Limit:      limit,
+		Count:      count,
+		Remaining:  remaining,
+		RetryAfter: time.Duration(retryAfterMs) * time.Millisecond,
+		ResetAfter: time.Duration(resetAfterMs) * time.Millisecond,
+	}, nil
+}
+
 func (r *RedisStore) Ping(ctx context.Context) error {
 	ctx, cancel := r.withTimeout(ctx)
 	defer cancel()
@@ -195,4 +246,53 @@ func (r *RedisStore) withTimeout(ctx context.Context) (context.Context, context.
 		return context.WithCancel(ctx)
 	}
 	return context.WithTimeout(ctx, r.operationTimeout)
+}
+
+var redisSlidingWindowScript = redis.NewScript(`
+local now = tonumber(ARGV[1])
+local cutoff = tonumber(ARGV[2])
+local window = tonumber(ARGV[3])
+local limit = tonumber(ARGV[4])
+local member = ARGV[5]
+
+redis.call("ZREMRANGEBYSCORE", KEYS[1], 0, cutoff)
+
+local count = redis.call("ZCARD", KEYS[1])
+if count >= limit then
+	local oldest = redis.call("ZRANGE", KEYS[1], 0, 0, "WITHSCORES")
+	local retry_after = window
+	if oldest[2] ~= nil then
+		retry_after = math.max(0, tonumber(oldest[2]) + window - now)
+	end
+	redis.call("PEXPIRE", KEYS[1], window)
+	return {0, count, retry_after, retry_after}
+end
+
+redis.call("ZADD", KEYS[1], now, member)
+count = count + 1
+redis.call("PEXPIRE", KEYS[1], window)
+
+local oldest = redis.call("ZRANGE", KEYS[1], 0, 0, "WITHSCORES")
+local reset_after = window
+if oldest[2] ~= nil then
+	reset_after = math.max(0, tonumber(oldest[2]) + window - now)
+end
+
+return {1, count, 0, reset_after}
+`)
+
+var redisSlidingWindowNonce uint64
+
+func toInt64(value any) int64 {
+	switch v := value.(type) {
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	case string:
+		n, _ := strconv.ParseInt(v, 10, 64)
+		return n
+	default:
+		return 0
+	}
 }

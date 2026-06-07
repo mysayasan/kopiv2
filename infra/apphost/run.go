@@ -115,6 +115,7 @@ func Run(app App) error {
 	applyLoggingConfigFromEnv(appConfig)
 	applyApiLogConfigFromEnv(appConfig)
 	applyTelemetryConfigFromEnv(appConfig)
+	applyRateLimitConfigFromEnv(appConfig)
 	if err := applyServerConfigFromEnv(appConfig); err != nil {
 		return err
 	}
@@ -250,6 +251,8 @@ func Run(app App) error {
 		middlewares.WithApiActivityTelemetry(telemetryRecorder),
 	)
 	api.Use(apiActivityLogMidware.Middleware)
+	rateLimitMidware := middlewares.NewRateLimit(apiEndpointService, cacheStore, auth, rateLimitMiddlewareConfig(appConfig))
+	api.Use(rateLimitMidware.Middleware)
 
 	sharedApis.NewVersionApi(api, app.Name(), versionManifest)
 	sharedApis.NewLoginApi(api, appConfig.Login, *auth, userLoginService)
@@ -606,6 +609,46 @@ func applyTelemetryConfigFromEnv(appConfig *config.AppConfigModel) {
 		if ms, err := strconv.ParseInt(v, 10, 64); err == nil && ms >= 0 {
 			appConfig.Telemetry.Prometheus.ApiDurationThresholdMs = ms
 		}
+	}
+}
+
+func applyRateLimitConfigFromEnv(appConfig *config.AppConfigModel) {
+	if v := strings.TrimSpace(os.Getenv("RATE_LIMIT_ENABLED")); v != "" {
+		appConfig.RateLimit.Enabled = getBoolEnv("RATE_LIMIT_ENABLED", appConfig.RateLimit.Enabled)
+	}
+}
+
+func rateLimitMiddlewareConfig(appConfig *config.AppConfigModel) middlewares.RateLimitConfig {
+	defaultWindow := time.Duration(appConfig.RateLimit.DefaultWindowSeconds) * time.Second
+	if defaultWindow <= 0 {
+		defaultWindow = time.Minute
+	}
+	endpointCacheTTL := time.Duration(appConfig.RateLimit.EndpointCacheTTLSeconds) * time.Second
+	if endpointCacheTTL <= 0 {
+		endpointCacheTTL = time.Duration(appConfig.Cache.TTLSeconds) * time.Second
+	}
+	if endpointCacheTTL <= 0 {
+		endpointCacheTTL = 30 * time.Second
+	}
+
+	return middlewares.RateLimitConfig{
+		Enabled:          appConfig.RateLimit.Enabled,
+		EndpointCacheTTL: endpointCacheTTL,
+		DevOnly:          rateLimitTierMiddlewareConfig(appConfig.RateLimit.DevOnly, defaultWindow),
+		AuthOnly:         rateLimitTierMiddlewareConfig(appConfig.RateLimit.AuthOnly, defaultWindow),
+		Public:           rateLimitTierMiddlewareConfig(appConfig.RateLimit.Public, defaultWindow),
+	}
+}
+
+func rateLimitTierMiddlewareConfig(tier config.RateLimitTierConfigModel, defaultWindow time.Duration) middlewares.RateLimitTierConfig {
+	window := time.Duration(tier.WindowSeconds) * time.Second
+	if window <= 0 {
+		window = defaultWindow
+	}
+	return middlewares.RateLimitTierConfig{
+		Enabled:  tier.Enabled,
+		Requests: int64(tier.Requests),
+		Window:   window,
 	}
 }
 

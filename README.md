@@ -58,7 +58,7 @@ High-level flow:
 
 1. Incoming HTTP requests are handled by Gorilla Mux.
 2. Global middleware applies CORS, request logging, and request ID tracing.
-3. API routes under `/api` persist activity and elapsed duration into `api_log`, then protected routes pass through JWT authentication and RBAC authorization.
+3. API routes under `/api` persist activity and elapsed duration into `api_log`, apply access-tier rate limiting, then protected routes pass through JWT authentication and RBAC authorization.
 4. A shared bootstrap engine checks/creates the database and syncs schema from registered entity types before the server starts.
 5. Business services orchestrate repository access and camera stream workers.
 6. Transaction coordination uses Redis (or in-memory fallback for single-process dev) to serialize critical file-storage work with FIFO lock acquisition and stuck-lock telemetry.
@@ -165,6 +165,7 @@ The app fails fast if required secrets are missing.
 | `CACHE_PROVIDER` | Cache backend provider (`default`, `redis`, `inmemory`, or `memory`) | config value |
 | `CACHE_TTL_SECONDS` | Default cache TTL in seconds | config value |
 | `CACHE_KEY_PREFIX` | Global cache key prefix | config value |
+| `RATE_LIMIT_ENABLED` | Enable API sliding-window rate limiting (`true/false`) | config value |
 | `LOG_ENABLED` | Enable runtime file logging (`true/false`) | config value |
 | `LOG_PATH` | Runtime log base path for dated daily files; relative paths resolve from app directory | config value |
 | `LOG_MAX_LINE_BYTES` | Maximum bytes retained per runtime log line | config value |
@@ -209,7 +210,7 @@ The bootstrap seeder also creates a minimal built-in core dataset on first run:
 - `user_group`: `system`
 - `user_role`: `superadmin` linked to the `system` group
 - `user_login`: default superadmin account (`email/username=superadmin`, `password=superadmin123`, stored as bcrypt) linked to the `superadmin` role
-- `api_endpoint` and `api_endpoint_rbac` rows for the protected API modules, using `*` as the host so the defaults work on any deployment address
+- `api_endpoint` and `api_endpoint_rbac` rows for protected API modules, using `*` as the host so the defaults work on any deployment address. Endpoint rows include `accessTier` (`0=DevOnly`, `1=AuthOnly`, `2=Public`); protected shared management APIs seed as `DevOnly`.
 
 Credential policy for user creation:
 
@@ -250,6 +251,14 @@ Telemetry behavior is controlled by `telemetry` in config:
 - `prometheus.enabled`: exposes Prometheus-format metrics.
 - `prometheus.metricsPath`: scrape endpoint path, default `/metrics`.
 - `prometheus.apiDurationThresholdMs`: threshold used for slow API request metrics.
+
+Rate limiting is controlled by `rateLimit` in config:
+
+- `enabled`: enables sliding-window limits for `/api` routes.
+- `endpointCacheTtlSeconds`: caches endpoint access-tier metadata.
+- `defaultWindowSeconds`: fallback window for tier configs.
+- `devOnly`, `authOnly`, `public`: per-tier `enabled`, `requests`, and `windowSeconds`.
+- Redis cache is recommended for production multi-instance deployments so counters are shared.
 
 Transaction coordination behavior is controlled by `transaction` in config:
 
@@ -576,6 +585,7 @@ Before shipping to production, verify:
 Implemented baseline hardening:
 
 - JWT auth + RBAC route protection.
+- Sliding-window API rate limits by endpoint access tier.
 - Request ID propagation via `X-Request-ID`.
 - Structured request and service logging with timing, status code, file persistence, and stdout teeing.
 - HTTP server timeout guards.

@@ -8,7 +8,7 @@ Defines the top-level app configuration model loaded from app config JSON.
 
 - Model optional OAuth provider configuration for Google and GitHub.
 - Model server listener hostnames and explicit TLS/non-TLS ports.
-- Model bootstrap, JWT, file storage, cache, transaction coordination, logging, API log cleanup, telemetry, TLS, and DB settings.
+- Model bootstrap, JWT, file storage, cache, rate limiting, transaction coordination, logging, API log cleanup, telemetry, TLS, and DB settings.
 
 ## Notes
 
@@ -33,6 +33,8 @@ Defines the top-level app configuration model loaded from app config JSON.
 - `telemetry.prometheus.enabled` exposes Prometheus-format metrics.
 - `telemetry.prometheus.metricsPath` controls the metrics scrape route.
 - `telemetry.prometheus.apiDurationThresholdMs` controls slow API request metrics.
+- `rateLimit.enabled` enables API sliding-window rate limiting.
+- `rateLimit.devOnly`, `rateLimit.authOnly`, and `rateLimit.public` configure per-tier request counts and windows.
 - `transaction.lockProvider` selects Redis or in-memory FIFO transaction locking; empty inherits `cache.provider`.
 - `transaction.lockWaitTimeoutMs` bounds queue wait time.
 - `transaction.lockLeaseMs` controls Redis owner lease duration.

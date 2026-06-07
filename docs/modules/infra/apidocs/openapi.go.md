@@ -22,6 +22,7 @@ Provides a shared runtime OpenAPI/Swagger implementation for all app modules.
 - Marks protected `/api/*` routes with cookie session auth security requirements.
 - Adds `X-CSRF-Token` header parameters for unsafe protected methods.
 - Adds path parameters to OpenAPI operation parameters.
+- Documents `429` responses for API routes affected by rate limiting.
 - Supports app-provided metadata and endpoint descriptions through `apidocs.Provider`.
 
 ## Notes

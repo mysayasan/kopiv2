@@ -24,6 +24,7 @@ Implements the reusable runtime host for all app modules.
 - Run shared bootstrap engine using app-provided entities and seeders.
 - Wire global middleware and shared API modules.
 - Wire API activity logging middleware on the `/api` router.
+- Wire sliding-window rate-limit middleware on the `/api` router after API activity logging.
 - Register shared cache-service admin API routes under `/api/cache-service`.
 - Register shared API log API routes under `/api/log`.
 - Register shared runtime log API routes under `/api/log-service`.
@@ -59,6 +60,7 @@ Implements the reusable runtime host for all app modules.
 - `LOG_CLEANUP_ENABLED`, `LOG_MAX_RETENTION_DAYS`, and `LOG_CLEANUP_FREQUENCY_MINUTES` override runtime log cleanup config.
 - `API_LOG_CLEANUP_ENABLED`, `API_LOG_MAX_RETENTION_DAYS`, and `API_LOG_CLEANUP_FREQUENCY_MINUTES` override database-backed API log cleanup config.
 - `TELEMETRY_ENABLED`, `PROMETHEUS_ENABLED`, `PROMETHEUS_METRICS_PATH`, and `PROMETHEUS_API_DURATION_THRESHOLD_MS` override telemetry config.
+- `RATE_LIMIT_ENABLED` overrides API rate limiting.
 - The runtime logger writes JSON lines to stdout and the configured log file so OS-level collectors and the API listing endpoint can use the same log stream.
 - Empty cache provider defaults to `inmemory`; `default` and `memory` are accepted aliases.
 - Empty transaction lock provider inherits `cache.provider`; Redis is recommended for production multi-instance deployments.

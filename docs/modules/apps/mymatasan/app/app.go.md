@@ -21,6 +21,7 @@ Implements the `mymatasan` app module for the shared runtime host.
 - OpenAPI endpoint discovery is automatic; this module enriches summaries/descriptions via `APIDocs()`.
 - Built-in core seed SQL is idempotent and portable for both Postgres and MariaDB engines.
 - Built-in core seeds include the first-run `superadmin` login (`superadmin` / `superadmin123`) mapped to the `superadmin` role with the seeded password stored as bcrypt.
+- Built-in endpoint seeds set `accessTier` values (`0=DevOnly`, `1=AuthOnly`, `2=Public`); protected shared management APIs are seeded as `DevOnly`.
 - API docs metadata now describes local auth endpoints (`POST /api/login/default`, `POST /api/login/default/register`) in addition to optional OAuth endpoints.
 - API docs metadata includes the public runtime version endpoint (`GET /api/version`).
 - API docs metadata includes file-storage sync upload, async upload, ID-based download, inline view, and job status endpoints.
