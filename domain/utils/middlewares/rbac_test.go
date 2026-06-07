@@ -1,7 +1,9 @@
 package middlewares
 
 import (
+	"bytes"
 	"context"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -167,5 +169,46 @@ func TestRbacRejectsPartialPathPrefix(t *testing.T) {
 
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rr.Code)
+	}
+}
+
+func TestRbacAllowsMultipartPostWithoutJSONRewrite(t *testing.T) {
+	service := &fakeApiEndpointRbacService{}
+	m := NewRbac(service, cache.NewMemoryStore(time.Minute, time.Minute), time.Minute)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("documents", "sample.png")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write([]byte("png-content")); err != nil {
+		t.Fatalf("write form file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	handler := m.RbacHandler(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			t.Fatalf("parse multipart form: %v", err)
+		}
+		files := r.MultipartForm.File["documents"]
+		if len(files) != 1 {
+			t.Fatalf("expected one documents file, got %d", len(files))
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/api/admin/upload", &body)
+	req.Host = "example.com"
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req = req.WithContext(context.WithValue(req.Context(), enumauth.Claims, &models.JwtCustomClaims{Id: 1, RoleId: 1}))
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, rr.Code, rr.Body.String())
 	}
 }

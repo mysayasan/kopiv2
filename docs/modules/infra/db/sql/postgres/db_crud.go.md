@@ -8,7 +8,7 @@ PostgreSQL implementation of `IDbCrud`.
 
 - Create and validate DB connection in `NewDbCrud`.
 - Execute ping checks via `Ping(ctx)`.
-- Handle transaction lifecycle.
+- Handle transaction lifecycle, including request-scoped transaction handles through `BeginScopedTx`.
 - Build SQL fragments for joins, filters, sorting, and columns.
 
 ## Connection Contract
@@ -33,3 +33,4 @@ DSN components used:
 
 - Startup calls `db.Ping()` during initialization to fail fast.
 - Readiness checks call `PingContext` at runtime.
+- New transactional service workflows should use scoped transaction handles rather than mutating transaction state on the shared adapter.

@@ -66,6 +66,24 @@ The runtime now uses a reusable multi-app launcher pattern:
 - Shared telemetry can expose Prometheus-format metrics at the configured metrics path.
 - API telemetry records request counts, duration histograms, and slow request counts using a configurable duration threshold.
 
+## Transaction Coordination
+
+- Critical multi-step operations use an application-level FIFO lock before executing the DB/filesystem unit of work.
+- Production multi-instance deployments should use the Redis lock provider.
+- In-memory locking is available only for single-process development or tests.
+- Redis locks use owner tokens and renewable leases so stale owners cannot release another request's lock.
+- Wait timeout removes an abandoned waiter from the FIFO queue.
+- Stuck timeout emits telemetry when a lock is held longer than expected.
+- DB consistency still uses request-scoped `database/sql` transactions; the coordinator serializes access and prevents request races.
+- File-storage uploads are staged first, then metadata insert and final file copy run under the same coordinated transaction workflow with compensation cleanup on failure.
+- Synchronous upload keeps the existing request/response contract for development and simple callers.
+- Async upload creates an `operation_job` row with idempotency key, payload, retry counters, status, deadline, result, and error state.
+- The backend worker recovers stale `running` upload jobs, requeues retryable work, and fails/cleans up exhausted jobs.
+- The async worker still uses the same FIFO coordinator and request-scoped DB transaction when executing each upload job.
+- File metadata carries `securityLvl` and absolute `expiredAt`; upload endpoints can convert countdown expiry fields into `expiredAt` before entering the service.
+- Download authorization is enforced in the file-storage service before reading the physical GUID path.
+- File expiry is enforced immediately on download and by a scheduler that sweeps expired physical files plus metadata in bounded batches.
+
 ## Data and Persistence
 
 - Databases: PostgreSQL and MariaDB.
@@ -90,6 +108,7 @@ Environment overrides (runtime):
 - legacy server compatibility: `SERVER_ADDR`, `SERVER_PORTS`, `SERVER_USE_TLS`, `SERVER_ENABLE_TLS`, `SERVER_ENABLE_NON_TLS`
 - db: `DB_ENGINE`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSL_MODE`
 - cache: `CACHE_PROVIDER`, `CACHE_TTL_SECONDS`, `CACHE_KEY_PREFIX`, `REDIS_ADDR`, `REDIS_PASSWORD`, `REDIS_DB`, `REDIS_USE_TLS`, `REDIS_CONNECT_TIMEOUT_MS`, `REDIS_OPERATION_TIMEOUT_MS`
+- transaction: `TRANSACTION_LOCK_PROVIDER`, `TRANSACTION_LOCK_WAIT_TIMEOUT_MS`, `TRANSACTION_LOCK_LEASE_MS`, `TRANSACTION_OPERATION_TIMEOUT_MS`, `TRANSACTION_STUCK_TIMEOUT_MS`, `TRANSACTION_JOB_WORKER_ENABLED`, `TRANSACTION_JOB_WORKER_FREQUENCY_SECONDS`, `TRANSACTION_MAX_ATTEMPTS`
 - secrets: `JWT_SECRET`, `GOOGLE_CLIENT_SECRET`, `GITHUB_CLIENT_SECRET`
 - logging: `LOG_ENABLED`, `LOG_PATH`, `LOG_MAX_LINE_BYTES`, `LOG_CLEANUP_ENABLED`, `LOG_MAX_RETENTION_DAYS`, `LOG_CLEANUP_FREQUENCY_MINUTES`
 - api log cleanup: `API_LOG_CLEANUP_ENABLED`, `API_LOG_MAX_RETENTION_DAYS`, `API_LOG_CLEANUP_FREQUENCY_MINUTES`
@@ -131,6 +150,24 @@ Telemetry config contract (`telemetry` in app config):
 - `prometheus.metricsPath`: route mounted by apphost for metric scrapes.
 - `prometheus.apiDurationThresholdMs`: request duration threshold used by slow API metrics.
 
+Transaction config contract (`transaction` in app config):
+
+- `lockProvider`: transaction lock backend (`redis`, `memory`, or `inmemory`); empty inherits `cache.provider`.
+- `lockWaitTimeoutMs`: maximum FIFO wait before cancellation.
+- `lockLeaseMs`: Redis owner lease duration; active owners renew before expiry.
+- `operationTimeoutMs`: maximum coordinated operation duration.
+- `stuckTimeoutMs`: lock hold duration that emits stuck telemetry.
+- `jobWorkerEnabled`: enables the backend file-storage upload worker.
+- `jobWorkerFrequencySeconds`: worker polling interval for stale recovery and queued/retrying jobs; defaults to 5 seconds when omitted or invalid.
+- `maxAttempts`: maximum upload job attempts before terminal failure cleanup; defaults to 3 when omitted or invalid.
+
+File storage config contract (`fileStorage` in app config):
+
+- `path`: base directory for staged and committed file objects.
+- `cleanup.enabled`: starts the expired file cleanup scheduler when true.
+- `cleanup.frequencySeconds`: scheduler check interval; defaults to 60 seconds when omitted or invalid.
+- `cleanup.batchSize`: maximum expired file rows removed per scheduler run; defaults to 100 when omitted or invalid.
+
 At least one explicit TLS or non-TLS port must be configured. The same port cannot be assigned to both `tlsPorts` and `nonTlsPorts`. Legacy shared-port mode still rejects simultaneous TLS and non-TLS because HTTP and HTTPS cannot bind the same address simultaneously.
 
 ## Health Contracts
@@ -162,7 +199,9 @@ At least one explicit TLS or non-TLS port must be configured. The same port cann
 - API log endpoints are documented with `log` tag (`GET /api/log`, `DELETE /api/log`).
 - Runtime log endpoints are documented with `log-service` tag (`GET /api/log-service`, `DELETE /api/log-service`).
 - Runtime version endpoint is documented with `system` tag (`GET /api/version`).
+- File-storage sync upload, async upload, download, inline view, and job status endpoints are documented with `file-storage` tag.
 - Shared JSON response wrappers include top-level `durationMs` for elapsed request handling time in milliseconds.
+- Prometheus telemetry includes transaction lock event, wait-duration, and stuck-lock metrics using low-cardinality labels.
 - App modules can provide richer endpoint summaries/descriptions by implementing the shared API docs provider contract.
 
 ## Non-Goals

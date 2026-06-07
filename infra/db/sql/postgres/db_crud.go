@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 
 	strcase "github.com/iancoleman/strcase"
 	_ "github.com/lib/pq"
@@ -15,8 +16,9 @@ import (
 
 // dbCrud struct
 type dbCrud struct {
-	db *sql.DB
-	tx *sql.Tx
+	db   *sql.DB
+	tx   *sql.Tx
+	txMu *sync.Mutex
 }
 
 // Create new DbCrud
@@ -31,18 +33,36 @@ func NewDbCrud(config dbsql.DbConfigModel) (dbsql.IDbCrud, error) {
 	}
 
 	return &dbCrud{
-		db: db,
-		tx: nil,
+		db:   db,
+		tx:   nil,
+		txMu: &sync.Mutex{},
 	}, nil
 }
 
 func (m *dbCrud) BeginTx(ctx context.Context) error {
+	if m.txMu != nil {
+		m.txMu.Lock()
+	}
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
+		if m.txMu != nil {
+			m.txMu.Unlock()
+		}
 		return err
 	}
 	m.tx = tx
 	return nil
+}
+
+func (m *dbCrud) BeginScopedTx(ctx context.Context) (dbsql.IDbCrud, error) {
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &dbCrud{
+		db: m.db,
+		tx: tx,
+	}, nil
 }
 
 func (m *dbCrud) Ping(ctx context.Context) error {
@@ -50,11 +70,17 @@ func (m *dbCrud) Ping(ctx context.Context) error {
 }
 
 func (m *dbCrud) RollbackTx() error {
+	if m.tx == nil {
+		return nil
+	}
 	err := m.tx.Rollback()
 	if err != nil {
 		return err
 	}
 	m.tx = nil
+	if m.txMu != nil {
+		m.txMu.Unlock()
+	}
 	return nil
 }
 
@@ -67,6 +93,9 @@ func (m *dbCrud) CommitTx() error {
 		return err
 	}
 	m.tx = nil
+	if m.txMu != nil {
+		m.txMu.Unlock()
+	}
 	return nil
 }
 

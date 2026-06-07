@@ -14,7 +14,12 @@
     "secret": ""
   },
   "fileStorage": {
-    "path": "./uploads"
+    "path": "./uploads",
+    "cleanup": {
+      "enabled": true,
+      "frequencySeconds": 60,
+      "batchSize": 100
+    }
   },
   "cache": {
     "provider": "redis",
@@ -28,6 +33,16 @@
       "connectTimeoutMs": 2000,
       "operationTimeoutMs": 2000
     }
+  },
+  "transaction": {
+    "lockProvider": "redis",
+    "lockWaitTimeoutMs": 30000,
+    "lockLeaseMs": 10000,
+    "operationTimeoutMs": 30000,
+    "stuckTimeoutMs": 30000,
+    "jobWorkerEnabled": true,
+    "jobWorkerFrequencySeconds": 5,
+    "maxAttempts": 3
   },
   "logging": {
     "enabled": true,

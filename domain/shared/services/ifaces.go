@@ -66,6 +66,36 @@ type IFileStorageService interface {
 	GetByGuid(ctx context.Context, guid string) (*entities.FileStorage, error)
 	Create(ctx context.Context, model entities.FileStorage) (uint64, error)
 	CreateMultiple(ctx context.Context, model []entities.FileStorage) (uint64, error)
+	DownloadById(ctx context.Context, id uint64, actor *FileStorageDownloadActor) (*FileStorageDownload, error)
+	DownloadByIds(ctx context.Context, ids []uint64, actor *FileStorageDownloadActor) ([]*FileStorageDownload, error)
+	StoreUploads(ctx context.Context, uploads []FileStorageUpload) ([]*entities.FileStorage, error)
+	EnqueueUploads(ctx context.Context, uploads []FileStorageUpload, idempotencyKey string) (*entities.OperationJob, error)
+	GetUploadJob(ctx context.Context, id uint64) (*entities.OperationJob, error)
+	ProcessUploadJobs(ctx context.Context, limit uint64) (uint64, error)
+	RecoverStaleUploadJobs(ctx context.Context) (uint64, error)
+	SweepExpiredFiles(ctx context.Context, nowUnix int64, limit uint64) (uint64, error)
+}
+
+// FileStorageUpload is one staged file ready for metadata insert and final move.
+type FileStorageUpload struct {
+	Model     entities.FileStorage
+	TempPath  string
+	FinalPath string
+}
+
+// FileStorageDownload is one stored file ready to stream to a client.
+type FileStorageDownload struct {
+	Model    entities.FileStorage
+	Filename string
+	MimeType string
+	Content  []byte
+}
+
+// FileStorageDownloadActor is the caller identity used for file access checks.
+type FileStorageDownloadActor struct {
+	UserId   int64
+	RoleId   int64
+	IsSystem bool
 }
 
 // ICacheService interface

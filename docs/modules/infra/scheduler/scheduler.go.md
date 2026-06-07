@@ -9,7 +9,8 @@ Provides a small shared periodic task runner for apphost-managed and app-specifi
 - Run a task immediately at startup.
 - Repeat the task on a configured interval.
 - Stop naturally when the supplied context is cancelled during app shutdown.
-- Report task success/failure through the injected runtime logger.
+- Report task failures through the injected runtime logger.
+- Leave successful no-op ticks quiet; tasks can log their own meaningful work counts.
 - Expose a reusable `Scheduler` instance through apphost dependencies.
 
 ## Notes

@@ -27,6 +27,11 @@ type IDbCrud interface {
 	CommitTx() error
 }
 
+// ScopedTxStarter creates transaction-bound CRUD handles for one request.
+type ScopedTxStarter interface {
+	BeginScopedTx(ctx context.Context) (IDbCrud, error)
+}
+
 // IGenericRepo interface
 type IGenericRepo[T any] interface {
 	Get(ctx context.Context, datasrc string, limit uint64, offset uint64, filters []sqldataenums.Filter, sorter []sqldataenums.Sorter) ([]*T, uint64, error)

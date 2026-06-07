@@ -9,12 +9,16 @@ Implements the reusable runtime host for all app modules.
 - Load selected app config from app base directory.
 - Apply secret and DB environment overrides.
 - Apply cache environment overrides.
+- Apply transaction lock environment overrides.
 - Apply logging and API log cleanup environment overrides.
 - Apply telemetry environment overrides.
 - Apply server environment overrides for hostnames and explicit TLS/non-TLS ports.
 - Normalize app-relative paths (TLS, file storage, and logging).
 - Initialize the runtime logger before bootstrap and shared service wiring.
 - Initialize the shared scheduler and expose it through app dependencies.
+- Initialize the shared operation-job repository for durable file-storage uploads.
+- Start the file-storage upload job worker when transaction job worker config is enabled.
+- Start expired file cleanup when `fileStorage.cleanup.enabled` is true.
 - Start scheduled runtime log cleanup when configured.
 - Start scheduled API log cleanup when configured.
 - Run shared bootstrap engine using app-provided entities and seeders.
@@ -27,6 +31,7 @@ Implements the reusable runtime host for all app modules.
 - Initialize Prometheus telemetry when configured and mount the metrics endpoint.
 - Register local credential auth routes (`/api/login/default`, `/api/login/default/register`) regardless of OAuth provider configuration.
 - Build and validate cache provider (`default`, `redis`, `inmemory`, or `memory`) from runtime config.
+- Build and validate transaction lock provider (`redis`, `memory`, or `inmemory`) from runtime config.
 - Register shared Swagger/OpenAPI routes for runtime API documentation.
 - Invoke app-specific route registration.
 - Serve static SPA files from selected app directory.
@@ -56,5 +61,10 @@ Implements the reusable runtime host for all app modules.
 - `TELEMETRY_ENABLED`, `PROMETHEUS_ENABLED`, `PROMETHEUS_METRICS_PATH`, and `PROMETHEUS_API_DURATION_THRESHOLD_MS` override telemetry config.
 - The runtime logger writes JSON lines to stdout and the configured log file so OS-level collectors and the API listing endpoint can use the same log stream.
 - Empty cache provider defaults to `inmemory`; `default` and `memory` are accepted aliases.
+- Empty transaction lock provider inherits `cache.provider`; Redis is recommended for production multi-instance deployments.
+- Transaction lock wait timeout, lease, operation timeout, and stuck timeout can be overridden by `TRANSACTION_LOCK_WAIT_TIMEOUT_MS`, `TRANSACTION_LOCK_LEASE_MS`, `TRANSACTION_OPERATION_TIMEOUT_MS`, and `TRANSACTION_STUCK_TIMEOUT_MS`.
+- File-storage upload worker config can be overridden by `TRANSACTION_JOB_WORKER_ENABLED`, `TRANSACTION_JOB_WORKER_FREQUENCY_SECONDS`, and `TRANSACTION_MAX_ATTEMPTS`.
+- The upload worker recovers stale running jobs before processing queued/retrying jobs and logs recovered/processed counts.
+- The file-storage expiry cleanup scheduler uses `fileStorage.cleanup.frequencySeconds` and `fileStorage.cleanup.batchSize`, and logs only when files are deleted.
 - `GET /api/version` is mounted without auth/RBAC so clients can read app/core versions before login.
 - `GET /metrics` is mounted when telemetry and Prometheus are enabled.

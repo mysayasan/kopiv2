@@ -26,6 +26,7 @@ import (
 	"github.com/mysayasan/kopiv2/infra/apidocs"
 	appcache "github.com/mysayasan/kopiv2/infra/cache"
 	"github.com/mysayasan/kopiv2/infra/config"
+	"github.com/mysayasan/kopiv2/infra/coordination"
 	"github.com/mysayasan/kopiv2/infra/db/bootstrap"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/db/sql/mariadb"
@@ -110,6 +111,7 @@ func Run(app App) error {
 	}
 	applyDbConfigFromEnv(appConfig)
 	applyCacheConfigFromEnv(appConfig)
+	applyTransactionConfigFromEnv(appConfig)
 	applyLoggingConfigFromEnv(appConfig)
 	applyApiLogConfigFromEnv(appConfig)
 	applyTelemetryConfigFromEnv(appConfig)
@@ -182,6 +184,17 @@ func Run(app App) error {
 	}
 	log.Printf("cache provider=%s addr=%s", cacheProvider, appConfig.Cache.Redis.Address)
 
+	telemetryRecorder := buildTelemetryRecorder(router, app.Name(), appConfig, runtimeLogger)
+	txLocker, txLockProvider, err := buildTransactionLocker(app.Name(), appConfig, telemetryRecorder)
+	if err != nil {
+		return err
+	}
+	defer txLocker.Close()
+	if err := txLocker.Ping(context.Background()); err != nil {
+		return fmt.Errorf("transaction lock provider %s not reachable: %w", txLockProvider, err)
+	}
+	log.Printf("transaction lock provider=%s waitTimeoutMs=%d leaseMs=%d stuckTimeoutMs=%d", txLockProvider, transactionLockWaitTimeout(appConfig).Milliseconds(), transactionLockLease(appConfig).Milliseconds(), transactionStuckTimeout(appConfig).Milliseconds())
+
 	router.HandleFunc("/ready", readinessCheckHandler(dbCrud, cacheStore)).Methods("GET")
 
 	userLoginRepo := dbsql.NewGenericRepo[sharedEntities.UserLogin](dbCrud)
@@ -191,6 +204,7 @@ func Run(app App) error {
 	apiEpRepo := dbsql.NewGenericRepo[sharedEntities.ApiEndpoint](dbCrud)
 	apiEpRbacRepo := dbsql.NewGenericRepo[sharedEntities.ApiEndpointRbac](dbCrud)
 	fileStorRepo := dbsql.NewGenericRepo[sharedEntities.FileStorage](dbCrud)
+	operationJobRepo := dbsql.NewGenericRepo[sharedEntities.OperationJob](dbCrud)
 
 	userLoginService := sharedServices.NewUserLoginService(userLoginRepo, cacheStore)
 	userGroupService := sharedServices.NewUserGroupService(userGroupRepo, cacheStore)
@@ -198,7 +212,18 @@ func Run(app App) error {
 	apiLogService := sharedServices.NewApiLogService(apiLogRepo, cacheStore)
 	apiEndpointService := sharedServices.NewApiEndpointService(apiEpRepo, cacheStore)
 	apiEndpointRbacService := sharedServices.NewApiEndpointRbacService(apiEpRbacRepo, userLoginRepo, apiEpRepo, cacheStore)
-	fileStorageService := sharedServices.NewFileStorageService(fileStorRepo, cacheStore)
+	fileStorageService := sharedServices.NewFileStorageService(
+		fileStorRepo,
+		cacheStore,
+		sharedServices.WithFileStorageJobRepo(operationJobRepo),
+		sharedServices.WithFileStorageUserRepo(userLoginRepo),
+		sharedServices.WithFileStorageRoleRepo(userRoleRepo),
+		sharedServices.WithFileStorageTransaction(dbCrud),
+		sharedServices.WithFileStorageLocker(txLocker),
+		sharedServices.WithFileStoragePath(appConfig.FileStorage.Path),
+		sharedServices.WithFileStorageOperationTimeout(transactionOperationTimeout(appConfig)),
+		sharedServices.WithFileStorageMaxAttempts(transactionMaxAttempts(appConfig)),
+	)
 	cacheService := sharedServices.NewCacheService(cacheStore)
 	runtimeLogService := sharedServices.NewRuntimeLogService(runtimeLogger)
 	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
@@ -206,6 +231,8 @@ func Run(app App) error {
 	runtimeScheduler := scheduler.New(schedulerCtx, runtimeLogger)
 	startRuntimeLogCleanupScheduler(runtimeScheduler, appConfig, runtimeLogger, runtimeLogService)
 	startApiLogCleanupScheduler(runtimeScheduler, appConfig, runtimeLogger, apiLogService)
+	startFileStorageCleanupScheduler(runtimeScheduler, appConfig, runtimeLogger, fileStorageService)
+	startFileStorageJobScheduler(runtimeScheduler, appConfig, runtimeLogger, fileStorageService)
 
 	rbacCacheTTL := time.Duration(appConfig.Cache.TTLSeconds) * time.Second
 	rbac := middlewares.NewRbac(apiEndpointRbacService, cacheStore, rbacCacheTTL)
@@ -214,8 +241,6 @@ func Run(app App) error {
 	if err != nil {
 		return fmt.Errorf("error loading version manifest: %w", err)
 	}
-	telemetryRecorder := buildTelemetryRecorder(router, app.Name(), appConfig, runtimeLogger)
-
 	api := router.PathPrefix("/api").Subrouter()
 	apiActivityLogMidware := middlewares.NewApiActivityLog(
 		apiLogService,
@@ -468,6 +493,52 @@ func applyCacheConfigFromEnv(appConfig *config.AppConfigModel) {
 	}
 }
 
+func applyTransactionConfigFromEnv(appConfig *config.AppConfigModel) {
+	if v := strings.TrimSpace(os.Getenv("TRANSACTION_LOCK_PROVIDER")); v != "" {
+		appConfig.Transaction.LockProvider = v
+	}
+
+	if v := strings.TrimSpace(os.Getenv("TRANSACTION_LOCK_WAIT_TIMEOUT_MS")); v != "" {
+		if ms, err := strconv.Atoi(v); err == nil && ms > 0 {
+			appConfig.Transaction.LockWaitTimeoutMs = ms
+		}
+	}
+
+	if v := strings.TrimSpace(os.Getenv("TRANSACTION_LOCK_LEASE_MS")); v != "" {
+		if ms, err := strconv.Atoi(v); err == nil && ms > 0 {
+			appConfig.Transaction.LockLeaseMs = ms
+		}
+	}
+
+	if v := strings.TrimSpace(os.Getenv("TRANSACTION_OPERATION_TIMEOUT_MS")); v != "" {
+		if ms, err := strconv.Atoi(v); err == nil && ms > 0 {
+			appConfig.Transaction.OperationTimeoutMs = ms
+		}
+	}
+
+	if v := strings.TrimSpace(os.Getenv("TRANSACTION_STUCK_TIMEOUT_MS")); v != "" {
+		if ms, err := strconv.Atoi(v); err == nil && ms > 0 {
+			appConfig.Transaction.StuckTimeoutMs = ms
+		}
+	}
+
+	if v := strings.TrimSpace(os.Getenv("TRANSACTION_JOB_WORKER_ENABLED")); v != "" {
+		appConfig.Transaction.JobWorkerEnabled = getBoolEnv("TRANSACTION_JOB_WORKER_ENABLED", appConfig.Transaction.JobWorkerEnabled)
+	}
+
+	if v := strings.TrimSpace(os.Getenv("TRANSACTION_JOB_WORKER_FREQUENCY_SECONDS")); v != "" {
+		if seconds, err := strconv.Atoi(v); err == nil && seconds > 0 {
+			appConfig.Transaction.JobWorkerFrequencySeconds = seconds
+		}
+	}
+
+	if v := strings.TrimSpace(os.Getenv("TRANSACTION_MAX_ATTEMPTS")); v != "" {
+		if attempts, err := strconv.Atoi(v); err == nil && attempts > 0 {
+			appConfig.Transaction.MaxAttempts = attempts
+		}
+	}
+}
+
 func applyLoggingConfigFromEnv(appConfig *config.AppConfigModel) {
 	if v := strings.TrimSpace(os.Getenv("LOG_ENABLED")); v != "" {
 		appConfig.Logging.Enabled = getBoolEnv("LOG_ENABLED", appConfig.Logging.Enabled)
@@ -550,7 +621,7 @@ func buildRuntimeLogger(appName string, baseDir string, appConfig *config.AppCon
 	})
 }
 
-func buildTelemetryRecorder(router *mux.Router, appName string, appConfig *config.AppConfigModel, logger applog.Logger) infraTelemetry.APIRecorder {
+func buildTelemetryRecorder(router *mux.Router, appName string, appConfig *config.AppConfigModel, logger applog.Logger) infraTelemetry.Recorder {
 	if !appConfig.Telemetry.Enabled || !appConfig.Telemetry.Prometheus.Enabled {
 		return infraTelemetry.NewNoopRecorder()
 	}
@@ -624,6 +695,58 @@ func startApiLogCleanupScheduler(runtimeScheduler *scheduler.Scheduler, appConfi
 	})
 }
 
+func startFileStorageJobScheduler(runtimeScheduler *scheduler.Scheduler, appConfig *config.AppConfigModel, logger applog.Logger, fileStorageService sharedServices.IFileStorageService) {
+	if !appConfig.Transaction.JobWorkerEnabled {
+		return
+	}
+
+	frequencySeconds := appConfig.Transaction.JobWorkerFrequencySeconds
+	if frequencySeconds <= 0 {
+		frequencySeconds = 5
+	}
+
+	runtimeScheduler.StartPeriodic("file-storage-job-worker", time.Duration(frequencySeconds)*time.Second, func(taskCtx context.Context) error {
+		recovered, err := fileStorageService.RecoverStaleUploadJobs(taskCtx)
+		if err != nil {
+			return err
+		}
+		processed, err := fileStorageService.ProcessUploadJobs(taskCtx, 10)
+		if err != nil {
+			return err
+		}
+		if logger != nil && (recovered > 0 || processed > 0) {
+			logger.Infof("file-storage-job-worker", "recovered=%d processed=%d", recovered, processed)
+		}
+		return nil
+	})
+}
+
+func startFileStorageCleanupScheduler(runtimeScheduler *scheduler.Scheduler, appConfig *config.AppConfigModel, logger applog.Logger, fileStorageService sharedServices.IFileStorageService) {
+	if !appConfig.FileStorage.Cleanup.Enabled {
+		return
+	}
+
+	frequencySeconds := appConfig.FileStorage.Cleanup.FrequencySeconds
+	if frequencySeconds <= 0 {
+		frequencySeconds = 60
+	}
+	batchSize := uint64(appConfig.FileStorage.Cleanup.BatchSize)
+	if batchSize == 0 {
+		batchSize = 100
+	}
+
+	runtimeScheduler.StartPeriodic("file-storage-expiry-cleanup", time.Duration(frequencySeconds)*time.Second, func(taskCtx context.Context) error {
+		deleted, err := fileStorageService.SweepExpiredFiles(taskCtx, time.Now().UTC().Unix(), batchSize)
+		if err != nil {
+			return err
+		}
+		if logger != nil && deleted > 0 {
+			logger.Infof("file-storage-expiry-cleanup", "deleted=%d", deleted)
+		}
+		return nil
+	})
+}
+
 func buildCacheStore(appConfig *config.AppConfigModel) (appcache.Store, string, error) {
 	provider := strings.TrimSpace(strings.ToLower(appConfig.Cache.Provider))
 	if provider == "" {
@@ -662,6 +785,71 @@ func buildCacheStore(appConfig *config.AppConfigModel) (appcache.Store, string, 
 	default:
 		return nil, "", fmt.Errorf("unsupported cache provider %q", provider)
 	}
+}
+
+func buildTransactionLocker(appName string, appConfig *config.AppConfigModel, recorder infraTelemetry.Recorder) (coordination.Locker, string, error) {
+	provider := strings.TrimSpace(strings.ToLower(appConfig.Transaction.LockProvider))
+	if provider == "" {
+		provider = strings.TrimSpace(strings.ToLower(appConfig.Cache.Provider))
+	}
+	if provider == "" || provider == "default" {
+		provider = "inmemory"
+	}
+
+	cfg := coordination.Config{
+		AppName:        appName,
+		Provider:       provider,
+		KeyPrefix:      appConfig.Cache.KeyPrefix,
+		WaitTimeout:    transactionLockWaitTimeout(appConfig),
+		LeaseTTL:       transactionLockLease(appConfig),
+		StuckTimeout:   transactionStuckTimeout(appConfig),
+		RedisAddress:   appConfig.Cache.Redis.Address,
+		RedisPassword:  appConfig.Cache.Redis.Password,
+		RedisDB:        appConfig.Cache.Redis.DB,
+		RedisUseTLS:    appConfig.Cache.Redis.UseTLS,
+		ConnectTimeout: time.Duration(appConfig.Cache.Redis.ConnectTimeoutMs) * time.Millisecond,
+		CommandTimeout: time.Duration(appConfig.Cache.Redis.OperationTimeoutMs) * time.Millisecond,
+	}
+
+	switch provider {
+	case "inmemory", "memory":
+		cfg.Provider = "memory"
+		return coordination.NewMemoryLocker(cfg, recorder), "memory", nil
+	case "redis":
+		return coordination.NewRedisLocker(cfg, recorder), "redis", nil
+	default:
+		return nil, "", fmt.Errorf("unsupported transaction lock provider %q", provider)
+	}
+}
+
+func transactionLockWaitTimeout(appConfig *config.AppConfigModel) time.Duration {
+	return durationFromMs(appConfig.Transaction.LockWaitTimeoutMs, 30*time.Second)
+}
+
+func transactionLockLease(appConfig *config.AppConfigModel) time.Duration {
+	return durationFromMs(appConfig.Transaction.LockLeaseMs, 10*time.Second)
+}
+
+func transactionOperationTimeout(appConfig *config.AppConfigModel) time.Duration {
+	return durationFromMs(appConfig.Transaction.OperationTimeoutMs, 30*time.Second)
+}
+
+func transactionStuckTimeout(appConfig *config.AppConfigModel) time.Duration {
+	return durationFromMs(appConfig.Transaction.StuckTimeoutMs, 30*time.Second)
+}
+
+func transactionMaxAttempts(appConfig *config.AppConfigModel) int64 {
+	if appConfig.Transaction.MaxAttempts <= 0 {
+		return 3
+	}
+	return int64(appConfig.Transaction.MaxAttempts)
+}
+
+func durationFromMs(value int, fallback time.Duration) time.Duration {
+	if value <= 0 {
+		return fallback
+	}
+	return time.Duration(value) * time.Millisecond
 }
 
 func newDbCrud(cfg dbsql.DbConfigModel) (dbsql.IDbCrud, error) {

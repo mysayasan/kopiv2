@@ -7,7 +7,7 @@ MariaDB implementation of `IDbCrud` for runtime repository operations.
 ## Key Responsibilities
 
 - Open and validate MariaDB connection in `NewDbCrud`.
-- Expose transaction lifecycle methods.
+- Expose transaction lifecycle methods, including request-scoped transaction handles through `BeginScopedTx`.
 - Expose `Ping(ctx)` for readiness checks.
 - Reuse the existing SQL CRUD generation strategy used by shared repositories.
 
@@ -28,3 +28,4 @@ DSN uses:
 - Bootstrap and seed flow now run against MariaDB with dialect-aware SQL in the bootstrap package.
 - SQL filters support equality and range comparisons for list/update/delete operations.
 - Nullable database strings are scanned through `sql.NullString` and normalized to empty Go strings for string entity fields.
+- New transactional service workflows should use scoped transaction handles rather than mutating transaction state on the shared adapter.

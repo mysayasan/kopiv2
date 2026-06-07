@@ -30,7 +30,12 @@ type AppConfigModel struct {
 		Secret string `json:"secret" validate:"required"`
 	} `json:"jwt"`
 	FileStorage struct {
-		Path string `json:"path" validate:"required"`
+		Path    string `json:"path" validate:"required"`
+		Cleanup struct {
+			Enabled          bool `json:"enabled"`
+			FrequencySeconds int  `json:"frequencySeconds"`
+			BatchSize        int  `json:"batchSize"`
+		} `json:"cleanup"`
 	} `json:"fileStorage" validate:"required"`
 	Cache struct {
 		Provider   string `json:"provider"`
@@ -45,6 +50,16 @@ type AppConfigModel struct {
 			OperationTimeoutMs int    `json:"operationTimeoutMs"`
 		} `json:"redis"`
 	} `json:"cache"`
+	Transaction struct {
+		LockProvider              string `json:"lockProvider"`
+		LockWaitTimeoutMs         int    `json:"lockWaitTimeoutMs"`
+		LockLeaseMs               int    `json:"lockLeaseMs"`
+		OperationTimeoutMs        int    `json:"operationTimeoutMs"`
+		StuckTimeoutMs            int    `json:"stuckTimeoutMs"`
+		JobWorkerEnabled          bool   `json:"jobWorkerEnabled"`
+		JobWorkerFrequencySeconds int    `json:"jobWorkerFrequencySeconds"`
+		MaxAttempts               int    `json:"maxAttempts"`
+	} `json:"transaction"`
 	Logging struct {
 		Enabled      bool   `json:"enabled"`
 		Path         string `json:"path"`

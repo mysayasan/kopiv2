@@ -108,6 +108,96 @@ curl http://localhost:3000/metrics
 
 Slow API metrics are emitted when request duration is greater than or equal to `apiDurationThresholdMs`.
 
+Transaction lock metrics are emitted by the file-storage transaction coordinator:
+
+```text
+kopiv2_tx_lock_events_total
+kopiv2_tx_lock_wait_ms
+kopiv2_tx_lock_stuck_total
+```
+
+Use Redis transaction locking for multi-instance deployments:
+
+```json
+"transaction": {
+  "lockProvider": "redis",
+  "lockWaitTimeoutMs": 30000,
+  "lockLeaseMs": 10000,
+  "operationTimeoutMs": 30000,
+  "stuckTimeoutMs": 30000,
+  "jobWorkerEnabled": true,
+  "jobWorkerFrequencySeconds": 5,
+  "maxAttempts": 3
+}
+```
+
+For single-process development only, `lockProvider` can be `memory` or `inmemory`.
+
+Queue file-storage work through the durable backend worker:
+
+```bash
+curl -X POST -b cookies.txt -H "X-CSRF-Token: $CSRF_TOKEN" \
+  -H "Idempotency-Key: upload-20260607-001" \
+  -F "documents=@receipt.pdf;type=application/pdf" \
+  -F "securityLvl=1" \
+  -F "expiresIn=2" \
+  -F "expiresInUnit=month" \
+  "http://localhost:3000/api/file-storage/upload-async"
+```
+
+Check job status:
+
+```bash
+curl -b cookies.txt "http://localhost:3000/api/file-storage/job?id=1"
+```
+
+Use the synchronous upload endpoint only when the caller can safely wait for the complete DB plus file-storage transaction:
+
+```bash
+curl -X POST -b cookies.txt -H "X-CSRF-Token: $CSRF_TOKEN" \
+  -F "documents=@receipt.pdf;type=application/pdf" \
+  -F "securityLvl=3" \
+  "http://localhost:3000/api/file-storage/upload"
+```
+
+File-storage security levels:
+
+- `0` = `SystemOnly`: only internal service callers can retrieve the file.
+- `1` = `Group`: authenticated users whose role belongs to the file owner's group can retrieve the file.
+- `2` = `Role`: authenticated users with the owner's role or an ancestor role can retrieve the file.
+- `3` = `Public`: any caller can retrieve the file, authenticated or not.
+
+Expiry can be supplied either as absolute `expiredAt` Unix seconds or as a countdown with `expiresIn` plus `expiresInUnit`. Countdown units accept `second`, `minute`, `hour`, `day`, `week`, `month`, and `year` with plural and short aliases. Do not send `expiredAt` together with countdown fields. Empty values mean no expiry. Expired files are denied on download and swept by the scheduler configured in `fileStorage.cleanup`:
+
+```json
+"fileStorage": {
+  "path": "./uploads",
+  "cleanup": {
+    "enabled": true,
+    "frequencySeconds": 60,
+    "batchSize": 100
+  }
+}
+```
+
+Download one stored file by metadata ID:
+
+```bash
+curl -b cookies.txt -o receipt.pdf "http://localhost:3000/api/file-storage/download?id=1"
+```
+
+Render one stored image, PDF, or text file inline when the browser supports it:
+
+```bash
+curl -b cookies.txt "http://localhost:3000/api/file-storage/download?id=1&view=true"
+```
+
+Download multiple stored files as a ZIP archive:
+
+```bash
+curl -b cookies.txt -o files.zip "http://localhost:3000/api/file-storage/download?ids=1,2,3"
+```
+
 ## Add a Version Changelog Entry
 
 Create one pending change folder before merging work that should bump runtime version metadata:

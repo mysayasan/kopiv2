@@ -313,6 +313,9 @@ func requiresCookieAuth(path string) bool {
 	if strings.HasPrefix(path, "/api/login") || strings.HasPrefix(path, "/api/callback") || path == "/api/health" {
 		return false
 	}
+	if path == "/api/file-storage/download" {
+		return false
+	}
 	if path == "/api/version" {
 		return false
 	}
@@ -368,12 +371,20 @@ func csrfHeaderParameter() openAPIParameter {
 }
 
 func queryParameter(name string, required bool, description string) openAPIParameter {
+	return typedQueryParameter(name, required, description, "integer")
+}
+
+func stringQueryParameter(name string, required bool, description string) openAPIParameter {
+	return typedQueryParameter(name, required, description, "string")
+}
+
+func typedQueryParameter(name string, required bool, description string, schemaType string) openAPIParameter {
 	var param openAPIParameter
 	param.Name = name
 	param.In = "query"
 	param.Required = required
 	param.Description = description
-	param.Schema.Type = "integer"
+	param.Schema.Type = schemaType
 	return param
 }
 
@@ -506,6 +517,8 @@ func endpointSuccessSchema(method string, path string) string {
 		return "PagingStringResponse"
 	case "POST /api/file-storage/upload":
 		return "PagingFileStorageResponse"
+	case "POST /api/file-storage/upload-async", "GET /api/file-storage/job":
+		return "DefaultOperationJobResponse"
 	}
 
 	return ""
@@ -571,8 +584,14 @@ func enrichOperationWithSchemas(method string, path string, op *openAPIOperation
 		op.RequestBody = jsonRequestBody("UserRolePayload", true)
 	case "PUT /api/user-credential":
 		op.RequestBody = jsonRequestBody("UserCredentialPayload", true)
-	case "POST /api/file-storage/upload":
+	case "POST /api/file-storage/upload", "POST /api/file-storage/upload-async":
 		op.RequestBody = multipartRequestBody("FileUploadRequest", true)
+	case "GET /api/file-storage/download":
+		op.Parameters = append(op.Parameters, queryParameter("id", false, "File storage metadata ID for a single file"))
+		op.Parameters = append(op.Parameters, stringQueryParameter("ids", false, "Comma-separated file storage metadata IDs for a ZIP download"))
+		op.Parameters = append(op.Parameters, typedQueryParameter("view", false, "Set true for inline browser rendering on single-file downloads", "boolean"))
+	case "GET /api/file-storage/job":
+		op.Parameters = append(op.Parameters, queryParameter("id", true, "Operation job ID"))
 	case "POST /api/cache-service/wipe":
 		op.RequestBody = jsonRequestBody("CacheWipeRequest", true)
 	}
@@ -871,6 +890,25 @@ func baseComponentSchemas() map[string]openAPISchema {
 					Type:  "array",
 					Items: &openAPISchema{Type: "string", Format: "binary"},
 				},
+				"securityLvl": {
+					Type:        "integer",
+					Format:      "int32",
+					Description: "0=SystemOnly, 1=Group, 2=Role, 3=Public. Defaults to 0 when omitted.",
+				},
+				"expiredAt": {
+					Type:        "integer",
+					Format:      "int64",
+					Description: "Optional absolute Unix timestamp in seconds. 0 or empty means no expiry. Do not combine with expiresIn.",
+				},
+				"expiresIn": {
+					Type:        "integer",
+					Format:      "int64",
+					Description: "Optional positive countdown amount. Requires expiresInUnit and is converted to expiredAt by the endpoint.",
+				},
+				"expiresInUnit": {
+					Type:        "string",
+					Description: "Countdown unit: second, minute, hour, day, week, month, or year. Plural and short aliases are accepted.",
+				},
 			},
 			Required: []string{"documents"},
 		},
@@ -950,6 +988,25 @@ func baseComponentSchemas() map[string]openAPISchema {
 				"updatedAt":   {Type: "integer", Format: "int64"},
 			},
 		},
+		"OperationJobPayload": {
+			Type: "object",
+			Properties: map[string]openAPISchema{
+				"id":             {Type: "integer", Format: "int64"},
+				"type":           {Type: "string"},
+				"resourceKey":    {Type: "string"},
+				"idempotencyKey": {Type: "string"},
+				"status":         {Type: "string"},
+				"attempt":        {Type: "integer", Format: "int64"},
+				"maxAttempts":    {Type: "integer", Format: "int64"},
+				"result":         {Type: "string"},
+				"lastError":      {Type: "string"},
+				"startedAt":      {Type: "integer", Format: "int64"},
+				"deadlineAt":     {Type: "integer", Format: "int64"},
+				"completedAt":    {Type: "integer", Format: "int64"},
+				"createdAt":      {Type: "integer", Format: "int64"},
+				"updatedAt":      {Type: "integer", Format: "int64"},
+			},
+		},
 		"ResidentPropPicPayload": {
 			Type: "object",
 			Properties: map[string]openAPISchema{
@@ -1000,6 +1057,7 @@ func baseComponentSchemas() map[string]openAPISchema {
 	schemas["DefaultApiEndpointResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("ApiEndpointPayload")})
 	schemas["DefaultApiEndpointRbacResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("ApiEndpointRbacPayload")})
 	schemas["DefaultCameraStreamResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("CameraStreamPayload")})
+	schemas["DefaultOperationJobResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("OperationJobPayload")})
 	schemas["DefaultUserRoleListResponse"] = defaultResponseSchema(openAPISchema{Type: "array", Items: &openAPISchema{Ref: schemaRef("UserRolePayload")}})
 	schemas["DefaultApiEndpointRbacJoinListResponse"] = defaultResponseSchema(openAPISchema{Type: "array", Items: &openAPISchema{Ref: schemaRef("ApiEndpointRbacJoinPayload")}})
 
@@ -1076,6 +1134,13 @@ func swaggerUIHandler(w http.ResponseWriter, _ *http.Request) {
       displayRequestDuration: true,
       docExpansion: 'none',
       withCredentials: true,
+      requestInterceptor: (req) => {
+        if (typeof FormData !== 'undefined' && req.body instanceof FormData && req.headers) {
+          delete req.headers['Content-Type'];
+          delete req.headers['content-type'];
+        }
+        return req;
+      },
     });
   </script>
 </body>

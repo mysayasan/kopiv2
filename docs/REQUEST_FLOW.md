@@ -39,10 +39,11 @@ Shared JSON response helpers include `durationMs`, measured from request middlew
 11. If bootstrap is enabled, create missing database/schema and update the manifest state table.
 12. Build router and middleware chain.
 13. Expose setup status page and JSON endpoint at the configured setup path.
-14. Initialize DB, cache, repositories, embedded version manifest, telemetry recorder, shared API modules, selected app routes, and the shared scheduler for built-in or app-specific jobs.
-15. Register Swagger/OpenAPI routes (`/swagger`, `/swagger/openapi.json`) from the shared docs module.
-16. Start app workers (for example camera autostart).
-17. Start one or more listeners based on host and explicit TLS/non-TLS port lists.
+14. Initialize DB, cache, transaction lock coordinator, repositories, embedded version manifest, telemetry recorder, shared API modules, selected app routes, and the shared scheduler for built-in or app-specific jobs.
+15. Register the durable file-storage upload job repository and start the backend upload worker when `transaction.jobWorkerEnabled=true`.
+16. Register Swagger/OpenAPI routes (`/swagger`, `/swagger/openapi.json`) from the shared docs module.
+17. Start app workers (for example camera autostart).
+18. Start one or more listeners based on host and explicit TLS/non-TLS port lists.
 
 Bootstrap seeding also ensures a default `system` group and `superadmin` role exist before the app becomes ready.
 The default `superadmin` login password is inserted as a bcrypt hash; legacy plain-text passwords still migrate after successful local login.
@@ -77,3 +78,30 @@ It performs:
 4. Frames are parsed from byte stream and pushed to buffered channel.
 5. On transient EOF, sends fallback frame (`nosignal.gif`) and retries up to threshold.
 6. On cancellation, worker exits and channel closes.
+
+## File Storage Upload Transaction Flow
+
+1. Upload API validates multipart files and supported content types.
+2. Upload API parses batch-level `securityLvl` and optional expiry from the multipart form. Expiry can be absolute `expiredAt` or countdown `expiresIn` plus `expiresInUnit`.
+3. Each accepted file is streamed once into the file-storage staging directory while computing its checksum.
+4. If any file fails validation or staging, staged files are removed and no database write is attempted.
+5. Synchronous upload calls the file storage service directly; async upload creates an `operation_job` row and returns job status to the caller.
+6. The backend upload worker recovers stale `running` jobs, then processes queued or retrying jobs in FIFO order.
+7. File storage service acquires the FIFO transaction lock for the `file-storage` resource.
+8. The service opens a request-scoped DB transaction.
+9. For each staged file, metadata is inserted and the staged file is copied into its final GUID path through an atomic final-path swap.
+10. On success, the DB transaction commits, staging files are removed, and the lock is released.
+11. On insert, copy, timeout, or commit failure, the DB transaction rolls back, final files created by the attempt are removed, and the lock is released.
+12. Sync request failures clean staged files immediately. Async job failures keep staged files for retry until `maxAttempts` is exhausted, then clean staging/final paths.
+13. Lock wait timeout, cancellation, acquisition, and stuck lock observations are exported through telemetry.
+
+## File Storage Download and Expiry Flow
+
+1. Download requests use metadata IDs only: `id` for one file or comma-separated `ids` for ZIP output.
+2. The route itself is public so `Public` files can be retrieved without login.
+3. When auth cookies are present, the API passes the caller user and role to the service as a download actor.
+4. The service rejects expired files before reading the physical file.
+5. `SystemOnly` files require an internal service actor, `Group` requires matching owner/actor role group, `Role` allows the owner role or its ancestors, and `Public` allows any caller.
+6. Single-file responses use attachment disposition by default; `view=true` changes the response to inline disposition so browsers can render supported images, PDFs, and text.
+7. ZIP downloads always use attachment disposition.
+8. The expiry scheduler runs every `fileStorage.cleanup.frequencySeconds`, lists up to `fileStorage.cleanup.batchSize` files where `expiredAt <= now`, removes the physical GUID file, then deletes metadata.

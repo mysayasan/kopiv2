@@ -61,9 +61,10 @@ High-level flow:
 3. API routes under `/api` persist activity and elapsed duration into `api_log`, then protected routes pass through JWT authentication and RBAC authorization.
 4. A shared bootstrap engine checks/creates the database and syncs schema from registered entity types before the server starts.
 5. Business services orchestrate repository access and camera stream workers.
-6. Shared cache layer uses Redis (or in-memory fallback) for cross-instance RBAC cache consistency.
-7. PostgreSQL stores persistent entities.
-8. Static SPA assets are served from `apps/mymatasan/static`.
+6. Transaction coordination uses Redis (or in-memory fallback for single-process dev) to serialize critical file-storage work with FIFO lock acquisition and stuck-lock telemetry.
+7. Shared cache layer uses Redis (or in-memory fallback) for cross-instance RBAC cache consistency.
+8. PostgreSQL stores persistent entities.
+9. Static SPA assets are served from `apps/mymatasan/static`.
 
 Main components:
 
@@ -183,6 +184,14 @@ The app fails fast if required secrets are missing.
 | `REDIS_USE_TLS` | Redis TLS mode (`true/false`) | config value |
 | `REDIS_CONNECT_TIMEOUT_MS` | Redis connect timeout in ms | config value |
 | `REDIS_OPERATION_TIMEOUT_MS` | Redis operation timeout in ms | config value |
+| `TRANSACTION_LOCK_PROVIDER` | Transaction lock provider (`redis`, `memory`, or `inmemory`; empty inherits cache provider) | config value |
+| `TRANSACTION_LOCK_WAIT_TIMEOUT_MS` | Maximum time a request waits for a transaction lock | config value |
+| `TRANSACTION_LOCK_LEASE_MS` | Redis lock lease duration, renewed while the owner is active | config value |
+| `TRANSACTION_OPERATION_TIMEOUT_MS` | Maximum runtime for coordinated file-storage transaction work | config value |
+| `TRANSACTION_STUCK_TIMEOUT_MS` | Duration after which a held transaction lock emits stuck telemetry | config value |
+| `TRANSACTION_JOB_WORKER_ENABLED` | Enable durable file-storage upload job worker (`true/false`) | config value |
+| `TRANSACTION_JOB_WORKER_FREQUENCY_SECONDS` | Upload job worker polling interval in seconds | config value |
+| `TRANSACTION_MAX_ATTEMPTS` | Maximum attempts before a durable upload job is failed and cleaned up | config value |
 
 Bootstrap behavior is controlled by `bootstrap` in config:
 
@@ -241,6 +250,28 @@ Telemetry behavior is controlled by `telemetry` in config:
 - `prometheus.enabled`: exposes Prometheus-format metrics.
 - `prometheus.metricsPath`: scrape endpoint path, default `/metrics`.
 - `prometheus.apiDurationThresholdMs`: threshold used for slow API request metrics.
+
+Transaction coordination behavior is controlled by `transaction` in config:
+
+- `lockProvider`: selects lock backend. Empty inherits `cache.provider`; Redis is recommended for multi-instance production.
+- `lockWaitTimeoutMs`: cancels lock wait when FIFO queue acquisition takes too long.
+- `lockLeaseMs`: Redis owner lease duration; owners renew while active.
+- `operationTimeoutMs`: bounds coordinated file-storage transaction work.
+- `stuckTimeoutMs`: emits telemetry when a lock is held longer than expected.
+- `jobWorkerEnabled`: starts the durable file-storage upload worker.
+- `jobWorkerFrequencySeconds`: controls how often the worker recovers stale jobs and processes queued work.
+- `maxAttempts`: caps upload job retries before final failure cleanup.
+
+File storage supports both synchronous and durable async upload boundaries:
+
+- `POST /api/file-storage/upload`: stages files, then runs the DB metadata insert plus final file write in one coordinated request.
+- `POST /api/file-storage/upload-async`: stages files and creates an `operation_job` row for the backend worker.
+- Both upload endpoints accept `securityLvl` (`0=SystemOnly`, `1=Group`, `2=Role`, `3=Public`) and optional expiry via either absolute Unix-second `expiredAt` or countdown `expiresIn` plus `expiresInUnit`; omitted values default to `SystemOnly` and no expiry.
+- `GET /api/file-storage/download?id=<id>` and `GET /api/file-storage/download?ids=<ids>` download by metadata ID only. GUIDs remain internal storage identifiers. Add `view=true` on a single `id` download to render inline in the browser.
+- File-storage cleanup is controlled by `fileStorage.cleanup.enabled`, `fileStorage.cleanup.frequencySeconds`, and `fileStorage.cleanup.batchSize`; expired rows are swept by the runtime scheduler.
+- `GET /api/file-storage/job?id=<id>`: reads upload job status, attempt count, deadlines, result, and last error.
+
+For production multi-instance deployments, use Redis transaction locking and keep the async worker enabled. That makes upload requests short-lived while preserving FIFO execution, retry, stale-job recovery, and cleanup behavior in the backend.
 
 ## Makefile Commands
 
@@ -422,9 +453,14 @@ Initial metrics:
 - `kopiv2_api_request_duration_ms`
 - `kopiv2_api_slow_requests_total`
 - `kopiv2_api_slow_request_duration_ms`
+- `kopiv2_tx_lock_events_total`
+- `kopiv2_tx_lock_wait_ms`
+- `kopiv2_tx_lock_stuck_total`
 
 API metrics use restrained labels: `app`, `method`, route-template `path`, and `status`.
 Slow-request metrics increment only when API duration is greater than or equal to `telemetry.prometheus.apiDurationThresholdMs`.
+Transaction lock metrics use restrained labels: `app`, `provider`, low-cardinality `resource`, and `outcome`.
+Stuck transaction locks and stale async upload jobs are visible through telemetry/logging: lock-level stuck observations increment Prometheus metrics, and recovered/processed upload jobs are logged by the scheduler.
 
 ## Cache Admin Endpoints
 
@@ -469,6 +505,7 @@ Notes:
 - Cache admin endpoints are included in the generated spec (`cache-service` tag) for list, health, and wipe operations.
 - Runtime log listing and monthly deletion are included in the generated spec (`log-service` tag).
 - Runtime version is included in the generated spec (`system` tag).
+- File-storage sync upload, async upload, ID download, inline view, expiry, security level, and job status endpoints are included in the generated spec (`file-storage` tag).
 - Cache wipe is available in both query-based (`DELETE`) and payload-based (`POST /wipe`) contracts.
 - Each app can enrich summaries/descriptions by implementing the shared API docs provider in its app module.
 

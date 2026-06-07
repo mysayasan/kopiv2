@@ -38,6 +38,7 @@ func (m *module) Entities() []any {
 		sharedentities.ApiEndpointRbac{},
 		sharedentities.ApiLog{},
 		sharedentities.FileStorage{},
+		sharedentities.OperationJob{},
 		sharedentities.UserGroup{},
 		sharedentities.UserLogin{},
 		sharedentities.UserRole{},
@@ -357,12 +358,22 @@ func (m *module) APIDocs() apidocs.SpecConfig {
 			},
 			"POST /api/file-storage/upload": {
 				Summary:     "Upload file",
-				Description: "Uploads and stores file metadata.",
+				Description: "Uploads files with metadata, security level, and optional absolute or countdown expiry.",
+				Tags:        []string{"file-storage"},
+			},
+			"POST /api/file-storage/upload-async": {
+				Summary:     "Queue file upload",
+				Description: "Stages upload files with security level and optional absolute or countdown expiry, then creates a durable backend job for asynchronous storage.",
+				Tags:        []string{"file-storage"},
+			},
+			"GET /api/file-storage/job": {
+				Summary:     "Get file upload job",
+				Description: "Returns durable upload job status by id query parameter.",
 				Tags:        []string{"file-storage"},
 			},
 			"GET /api/file-storage/download": {
 				Summary:     "Download file",
-				Description: "Downloads a stored file by guid query parameter.",
+				Description: "Downloads one stored file by metadata id, renders one file inline with view=true, or returns a ZIP archive by comma-separated metadata ids.",
 				Tags:        []string{"file-storage"},
 			},
 			"GET /api/home/latest": {

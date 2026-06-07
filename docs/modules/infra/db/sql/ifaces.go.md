@@ -10,6 +10,9 @@ Defines database abstraction contracts used across the application.
   - low-level CRUD/select primitives
   - transaction controls (`BeginTx`, `RollbackTx`, `CommitTx`)
   - health primitive (`Ping(ctx)`)
+- `ScopedTxStarter`
+  - creates request-scoped transaction-bound CRUD handles
+  - avoids storing active transaction state on shared runtime DB adapters
 - `IGenericRepo[T]`
   - typed repository API for services
   - list/get/create/update/delete operations, including filtered delete for retention cleanup

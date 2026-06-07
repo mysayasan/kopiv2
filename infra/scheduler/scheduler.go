@@ -79,7 +79,4 @@ func (t Task) execute(ctx context.Context) {
 		}
 		return
 	}
-	if t.logger != nil {
-		t.logger.Infof("scheduler", "%s completed", t.name)
-	}
 }

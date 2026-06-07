@@ -5,7 +5,7 @@ type FileStorage struct {
 	Id          int64  `json:"id" form:"id" query:"id" params:"id" skipWhenInsert:"true" pkey:"true" validate:"required"`
 	Title       string `json:"title" form:"title" query:"title" validate:"required"`
 	Description string `json:"description" form:"description" query:"description"`
-	Guid        string `json:"guid" form:"guid" query:"guid"`
+	Guid        string `json:"guid" form:"guid" query:"guid" ukey:"guid"`
 	MimeType    string `json:"mimeType" form:"mimeType" query:"mimeType"`
 	VrPath      string `json:"vrPath" form:"vrPath" query:"vrPath"`
 	Sha1Chksum  string `json:"sha1Chksum" form:"sha1Chksum" query:"sha1Chksum"`

@@ -35,3 +35,32 @@ func TestRecorderCollectsRequestAndSlowMetrics(t *testing.T) {
 		t.Fatalf("duration histogram count missing from output:\n%s", out)
 	}
 }
+
+func TestRecorderCollectsCoordinationMetrics(t *testing.T) {
+	rec := NewRecorder(Config{SlowThresholdMs: 100})
+	rec.ObserveCoordination(telemetry.CoordinationMetric{
+		AppName:  "mymatasan",
+		Provider: "redis",
+		Resource: "file-storage",
+		Outcome:  "acquired",
+		WaitMs:   15,
+	})
+	rec.ObserveCoordination(telemetry.CoordinationMetric{
+		AppName:  "mymatasan",
+		Provider: "redis",
+		Resource: "file-storage",
+		Outcome:  "stuck",
+		WaitMs:   30000,
+	})
+
+	out := rec.Collect()
+	if !strings.Contains(out, `kopiv2_tx_lock_events_total{app="mymatasan",provider="redis",resource="file-storage",outcome="acquired"} 1`) {
+		t.Fatalf("coordination event total missing from output:\n%s", out)
+	}
+	if !strings.Contains(out, `kopiv2_tx_lock_wait_ms_count{app="mymatasan",provider="redis",resource="file-storage",outcome="acquired"} 1`) {
+		t.Fatalf("coordination wait histogram missing from output:\n%s", out)
+	}
+	if !strings.Contains(out, `kopiv2_tx_lock_stuck_total{app="mymatasan",provider="redis",resource="file-storage",outcome="stuck"} 1`) {
+		t.Fatalf("coordination stuck total missing from output:\n%s", out)
+	}
+}

@@ -112,42 +112,46 @@ func (m *RbacMidware) RbacHandler(next http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 
-			var body map[string]interface{}
+			if isJSONContentType(r.Header.Get("Content-Type")) {
+				var body map[string]interface{}
 
-			r.Body = http.MaxBytesReader(w, r.Body, 1048576)
-			dec := json.NewDecoder(r.Body)
-			dec.DisallowUnknownFields()
-			err := dec.Decode(&body)
+				r.Body = http.MaxBytesReader(w, r.Body, 1048576)
+				dec := json.NewDecoder(r.Body)
+				dec.DisallowUnknownFields()
+				err := dec.Decode(&body)
 
-			if err != nil {
-				controllers.SendError(w, controllers.ErrBadRequest, "wrong payload")
-				return
+				if err != nil {
+					controllers.SendError(w, controllers.ErrBadRequest, "wrong payload")
+					return
+				}
+				body["createdBy"] = claims.Id
+				body["createdAt"] = time.Now().Unix()
+
+				modres, _ := json.Marshal(body)
+				r.Body = io.NopCloser(strings.NewReader(string(modres)))
 			}
-			body["createdBy"] = claims.Id
-			body["createdAt"] = time.Now().Unix()
-
-			modres, _ := json.Marshal(body)
-			r.Body = io.NopCloser(strings.NewReader(string(modres)))
 		case "PUT":
 			if !userAccess.CanPut {
 				controllers.SendError(w, controllers.ErrPermission, "cant update due to limited access")
 				return
 			}
 
-			var body map[string]interface{}
-			r.Body = http.MaxBytesReader(w, r.Body, 1048576)
-			dec := json.NewDecoder(r.Body)
-			dec.DisallowUnknownFields()
-			err := dec.Decode(&body)
-			if err != nil {
-				controllers.SendError(w, controllers.ErrBadRequest, "wrong payload")
-				return
-			}
-			body["updatedBy"] = claims.Id
-			body["updatedAt"] = time.Now().Unix()
+			if isJSONContentType(r.Header.Get("Content-Type")) {
+				var body map[string]interface{}
+				r.Body = http.MaxBytesReader(w, r.Body, 1048576)
+				dec := json.NewDecoder(r.Body)
+				dec.DisallowUnknownFields()
+				err := dec.Decode(&body)
+				if err != nil {
+					controllers.SendError(w, controllers.ErrBadRequest, "wrong payload")
+					return
+				}
+				body["updatedBy"] = claims.Id
+				body["updatedAt"] = time.Now().Unix()
 
-			modres, _ := json.Marshal(body)
-			r.Body = io.NopCloser(strings.NewReader(string(modres)))
+				modres, _ := json.Marshal(body)
+				r.Body = io.NopCloser(strings.NewReader(string(modres)))
+			}
 		case "DELETE":
 			if !userAccess.CanDelete {
 				controllers.SendError(w, controllers.ErrPermission, "cant delete due to limited access")
@@ -189,4 +193,12 @@ func normalizeHost(host string) string {
 		return strings.Trim(strings.ToLower(parsedHost), "[]")
 	}
 	return strings.Trim(host, "[]")
+}
+
+func isJSONContentType(contentType string) bool {
+	contentType = strings.ToLower(strings.TrimSpace(contentType))
+	if i := strings.Index(contentType, ";"); i >= 0 {
+		contentType = strings.TrimSpace(contentType[:i])
+	}
+	return contentType == "application/json" || strings.HasSuffix(contentType, "+json")
 }
