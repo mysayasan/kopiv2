@@ -1,0 +1,172 @@
+# Technical Specification
+
+## Scope
+
+`kopiv2` is a Linux-first, lightweight Go backend that provides:
+
+- HTTP API with cookie-backed JWT auth and RBAC enforcement.
+- Camera stream orchestration for MJPEG sources.
+- PostgreSQL persistence using a generic repository layer.
+- Static SPA serving from app assets.
+- Public runtime version reporting with separate core and app SemVer values.
+
+The runtime now uses a reusable multi-app launcher pattern:
+
+- root launcher: `main.go` with `-app <name>`
+- shared startup/runtime host: `infra/apphost`
+- per-app compile target: `cmd/<app>/main.go`
+
+## Runtime Targets
+
+- Primary: Linux hosts (including low-resource deployments).
+- Container runtime: Docker and Docker Compose.
+- Service runtime: systemd unit supported in `deploy/linux`.
+
+## Runtime Characteristics
+
+- Go version: `1.26.4`.
+- App selection:
+  - runtime selection via `go run . -app <name>`
+  - compile selection via `go build ./cmd/<name>`
+- HTTP server defaults:
+  - Read header timeout: `5s`
+  - Read timeout: `15s`
+  - Write timeout: `30s`
+  - Idle timeout: `60s`
+- Graceful shutdown on `SIGINT` and `SIGTERM`.
+- Version manifest: embedded from `infra/versioning/version.json` at build time.
+
+## Security Model
+
+- Authentication: JWT session stored in an HttpOnly cookie.
+- CSRF protection: unsafe authenticated methods (`POST`, `PUT`, `PATCH`, `DELETE`) require `X-CSRF-Token` matching the readable CSRF cookie.
+- Local credential auth endpoints are available under `/api/login/default` (login) and `/api/login/default/register` (register).
+- OAuth login providers (Google/GitHub) are optional and do not disable local credential auth when not configured.
+- Local credential passwords are stored as bcrypt hashes, with lazy migration from legacy plain-text values on successful login.
+- Authorization: endpoint-level RBAC based on user role mappings.
+- Secrets:
+  - `JWT_SECRET` required.
+  - `GOOGLE_CLIENT_SECRET` required when Google login is enabled in config.
+  - `GITHUB_CLIENT_SECRET` required when GitHub login is enabled in config.
+- OAuth redirect state is generated per login request and validated against an HTTP-only state cookie on callback.
+
+## Cache Model
+
+- Cache abstraction is runtime-selected via configuration (`default`, `redis`, `inmemory`, or `memory`).
+- Primary shared cache backend for multi-instance deployments: Redis.
+- `default`, `inmemory`, and `memory` all select the local in-process memory cache.
+- RBAC role access lists are cached by role key and invalidated on endpoint RBAC create/update/delete.
+- Readiness includes cache ping to ensure runtime dependencies are available.
+- Shared admin cache API is exposed under `/api/cache-service` for key listing and controlled wipe operations.
+- API activity is persisted into `api_log` for both authenticated and non-authenticated `/api` requests, including elapsed `durationMs`.
+- Successful cache wipe operations are persisted into API logs for operational audit trail.
+- Shared API log listing and monthly database row deletion are exposed under `/api/log` for authenticated/RBAC-protected operators.
+- Runtime service logs are written as JSON lines to stdout and dated cross-platform log files derived from the configured base path.
+- Shared runtime log listing and monthly log-file deletion are exposed under `/api/log-service` for authenticated/RBAC-protected operators.
+- Shared telemetry can expose Prometheus-format metrics at the configured metrics path.
+- API telemetry records request counts, duration histograms, and slow request counts using a configurable duration threshold.
+
+## Data and Persistence
+
+- Databases: PostgreSQL and MariaDB.
+- Readiness check performs DB ping through `IDbCrud.Ping(ctx)`.
+- Repository layer wraps DB errors with `%w` context for diagnostics.
+- Startup bootstrap uses entity reflection to create missing database objects and store a schema manifest hash.
+- Safe schema updates are additive only by default.
+- Optional initial data can be supplied through config-driven SQL seed statements when bootstrap seeding is enabled.
+- The app also seeds a minimal core identity dataset (`system` group, `superadmin` role, and first-run `superadmin` login account with bcrypt password storage) during bootstrap.
+- The app seeds wildcard-host RBAC endpoint rows for the protected API modules so first-run permissions work without binding to a specific host name.
+
+## Configuration Contract
+
+Config source:
+
+- `ENVIRONMENT=dev` -> `apps/mymatasan/config.dev.json`
+- otherwise -> `apps/mymatasan/config.json`
+
+Environment overrides (runtime):
+
+- server: `SERVER_HOSTNAMES`, `SERVER_TLS_PORTS`, `SERVER_NON_TLS_PORTS`
+- legacy server compatibility: `SERVER_ADDR`, `SERVER_PORTS`, `SERVER_USE_TLS`, `SERVER_ENABLE_TLS`, `SERVER_ENABLE_NON_TLS`
+- db: `DB_ENGINE`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSL_MODE`
+- cache: `CACHE_PROVIDER`, `CACHE_TTL_SECONDS`, `CACHE_KEY_PREFIX`, `REDIS_ADDR`, `REDIS_PASSWORD`, `REDIS_DB`, `REDIS_USE_TLS`, `REDIS_CONNECT_TIMEOUT_MS`, `REDIS_OPERATION_TIMEOUT_MS`
+- secrets: `JWT_SECRET`, `GOOGLE_CLIENT_SECRET`, `GITHUB_CLIENT_SECRET`
+- logging: `LOG_ENABLED`, `LOG_PATH`, `LOG_MAX_LINE_BYTES`, `LOG_CLEANUP_ENABLED`, `LOG_MAX_RETENTION_DAYS`, `LOG_CLEANUP_FREQUENCY_MINUTES`
+- api log cleanup: `API_LOG_CLEANUP_ENABLED`, `API_LOG_MAX_RETENTION_DAYS`, `API_LOG_CLEANUP_FREQUENCY_MINUTES`
+- telemetry: `TELEMETRY_ENABLED`, `PROMETHEUS_ENABLED`, `PROMETHEUS_METRICS_PATH`, `PROMETHEUS_API_DURATION_THRESHOLD_MS`
+
+Server config contract (`server` in app config):
+
+- `hostnames`: host or IP list. Empty or `*` means wildcard bind across NICs.
+- `tlsPorts`: HTTPS listener ports. Empty means no HTTPS listener.
+- `nonTlsPorts`: HTTP listener ports. Empty means no HTTP listener.
+- `ports`, `enableTls`, `enableNonTls`: legacy shared-port mode used only when explicit TLS/non-TLS port lists are empty.
+
+Database config contract (`db` in app config):
+
+- `engine`: DB engine selector (`postgres` or `mariadb`).
+- Runtime DB adapter and bootstrap implementation support both engines.
+
+Logging config contract (`logging` in app config):
+
+- `enabled`: writes runtime log entries to the configured file when true.
+- `path`: log base path. Relative paths are resolved from the selected app directory and dated daily files are derived from this name.
+- `maxLineBytes`: maximum size retained for one listed log message.
+- `cleanup.enabled`: starts the runtime log cleanup scheduler when true.
+- `cleanup.maxRetentionDays`: scheduled cleanup deletes dated files older than this many days.
+- `cleanup.frequencyMinutes`: scheduler check interval. Defaults to `60` minutes when omitted or invalid.
+- Manual month deletion rejects the current month at service level.
+
+API log config contract (`apiLog` in app config):
+
+- `cleanup.enabled`: starts database-backed API log retention cleanup when true.
+- `cleanup.maxRetentionDays`: scheduled cleanup deletes `api_log` rows older than this many days.
+- `cleanup.frequencyMinutes`: scheduler check interval. Defaults to `60` minutes when omitted or invalid.
+- Manual month deletion rejects the current month at service level.
+
+Telemetry config contract (`telemetry` in app config):
+
+- `enabled`: enables shared telemetry wiring.
+- `prometheus.enabled`: enables the Prometheus text exporter.
+- `prometheus.metricsPath`: route mounted by apphost for metric scrapes.
+- `prometheus.apiDurationThresholdMs`: request duration threshold used by slow API metrics.
+
+At least one explicit TLS or non-TLS port must be configured. The same port cannot be assigned to both `tlsPorts` and `nonTlsPorts`. Legacy shared-port mode still rejects simultaneous TLS and non-TLS because HTTP and HTTPS cannot bind the same address simultaneously.
+
+## Health Contracts
+
+- `GET /health`: liveness.
+- `GET /ready`: readiness including DB and cache connectivity.
+- `GET /api/health`: API namespace status.
+- `GET /api/version`: public runtime version for the selected app and shared core.
+- `GET /metrics`: Prometheus metrics endpoint when telemetry is enabled.
+
+## Versioning Model
+
+- Core version and app version are stored separately as standard `major.minor.patch` SemVer values.
+- Core version covers reusable/shared code such as `infra`, `domain`, and shared API/service modules.
+- App version covers the selected app module, such as `apps/mymatasan`.
+- The server loads an embedded manifest from `infra/versioning/version.json`.
+- The runtime endpoint returns only the selected app version plus the core version; it does not expose the full app version map.
+- GitHub Actions consumes pending JSON changelog entries from `changes/pending/.../change.json`, bumps the manifest, and moves processed entries to `changes/applied`.
+
+## API Documentation Contract
+
+- `GET /swagger`: Swagger UI.
+- `GET /swagger/openapi.json`: OpenAPI 3.0 document.
+- Endpoint list is generated from runtime route registration, so shared and app-local APIs are documented from one source.
+- Key endpoints include reusable request/response schema components (`components.schemas`) for FE integration and code generation.
+- Key list/create/update endpoints are mapped to endpoint-specific response wrappers (typed `result` payloads) instead of only generic default/paging contracts.
+- Non-JSON endpoints are explicitly modeled with route-accurate status/content (for example OAuth redirect `302` and MJPEG stream `206 multipart/x-mixed-replace`).
+- Cache admin endpoints are documented with `cache-service` tag (`GET /api/cache-service`, `GET /api/cache-service/health`, `DELETE /api/cache-service`, `POST /api/cache-service/wipe`).
+- API log endpoints are documented with `log` tag (`GET /api/log`, `DELETE /api/log`).
+- Runtime log endpoints are documented with `log-service` tag (`GET /api/log-service`, `DELETE /api/log-service`).
+- Runtime version endpoint is documented with `system` tag (`GET /api/version`).
+- Shared JSON response wrappers include top-level `durationMs` for elapsed request handling time in milliseconds.
+- App modules can provide richer endpoint summaries/descriptions by implementing the shared API docs provider contract.
+
+## Non-Goals
+
+- Not a monolithic framework generator.
+- Not optimized for distributed stream processing across nodes.
+- Not a schema migration framework.

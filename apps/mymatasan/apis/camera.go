@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/textproto"
 	"strconv"
-	"sync"
 
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
@@ -18,12 +17,9 @@ import (
 
 // CameraApi struct
 type cameraApi struct {
-	auth    middlewares.AuthMidware
-	rbac    middlewares.RbacMidware
-	serv    services.ICameraStreamService
-	camsess map[uint64](chan []byte)
-	// camactive map[uint64](int)
-	mu sync.Mutex
+	auth middlewares.AuthMidware
+	rbac middlewares.RbacMidware
+	serv services.ICameraStreamService
 }
 
 // Create CameraApi
@@ -32,27 +28,23 @@ func NewCameraApi(
 	auth middlewares.AuthMidware,
 	rbac middlewares.RbacMidware,
 	serv services.ICameraStreamService) {
-	camsess := make(map[uint64](chan []byte))
-	// camactive := make(map[uint64](int))
 	handler := &cameraApi{
-		auth:    auth,
-		rbac:    rbac,
-		serv:    serv,
-		camsess: camsess,
-		// camactive: camactive,
+		auth: auth,
+		rbac: rbac,
+		serv: serv,
 	}
 	// Create api sub-router
 	group := router.PathPrefix("/camera").Subrouter()
-	// group.Use(auth.Middleware)
+	group.Use(auth.Middleware)
 
 	// Stream Group Handlers
 	streamGroup := group.PathPrefix("/stream").Subrouter()
 
 	streamGroup.HandleFunc("", rbac.RbacHandler(handler.get)).Methods("GET")
-	streamGroup.HandleFunc("", rbac.RbacHandler(handler.post)).Methods("GET")
+	streamGroup.HandleFunc("", rbac.RbacHandler(handler.post)).Methods("POST")
 	streamGroup.HandleFunc("", rbac.RbacHandler(handler.put)).Methods("PUT")
 	streamGroup.HandleFunc("/{id}", rbac.RbacHandler(handler.delete)).Methods("DELETE")
-	streamGroup.HandleFunc("/mjpeg/{id}", handler.getMjpegStream).Methods("GET")
+	streamGroup.HandleFunc("/mjpeg/{id}", rbac.RbacHandler(handler.getMjpegStream)).Methods("GET")
 }
 
 func (m *cameraApi) getMjpegStream(w http.ResponseWriter, r *http.Request) {
@@ -71,49 +63,13 @@ func (m *cameraApi) getMjpegStream(w http.ResponseWriter, r *http.Request) {
 	))
 	w.WriteHeader(206)
 
-	// errChan := make(chan error)
-	// // create channel
-	// if _, ok := m.camsess[id]; !ok {
-	// 	// res, err := m.serv.GetById(ctx, id)
-	// 	// if err != nil {
-	// 	// 	controllers.SendError(w, controllers.ErrNotFound, err.Error())
-	// 	// 	return
-	// 	// }
-	// 	m.camsess[id] = make(chan []byte)
-
-	// 	go func(errChan chan error) {
-	// 		errChan <- m.serv.ReadMjpeg(ctx, int64(id), m.camsess[id])
-	// 	}(errChan)
-	// }
-
-	// // count viewers per camera
-
-	// m.mu.Lock()
-	// m.camactive[id] += 1
-	// m.mu.Unlock()
-
 	for {
 		select {
-		// case err := <-errChan:
-		// 	{
-		// 		fmt.Println(err.Error())
-		// 		m.camactive[id] = 0
-		// 		delete(m.camsess, id)
-		// 		return
-		// 	}
 		case <-ctx.Done():
-			{
-				// m.camactive[id] -= 1
-				// fmt.Printf("cam [%d] has %d active viewers left\n", id, m.camactive[id])
-				// if m.camactive[id] < 1 {
-				// 	m.camactive[id] = 0
-				// 	delete(m.camsess, id)
-				// }
-				return
-			}
+			return
 		case v, ok := <-m.serv.ReadMjpeg(ctx, int64(id)):
 			if !ok {
-				break
+				return
 			}
 			w, _ := mw.CreatePart(textproto.MIMEHeader{
 				"Content-Type": []string{"image/jpeg"},

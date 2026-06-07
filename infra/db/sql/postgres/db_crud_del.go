@@ -40,6 +40,45 @@ func (m *dbCrud) genDelSqlStr(props reflect.Value, datasrc string, filters []sql
 	return res
 }
 
+func (m *dbCrud) Delete(ctx context.Context, model interface{}, datasrc string, filters []sqldataenums.Filter) (uint64, error) {
+	props := reflect.ValueOf(model)
+
+	if len(filters) < 1 {
+		return 0, fmt.Errorf("delete failed : filters are required")
+	}
+
+	sqlStr := m.genDelSqlStr(props, datasrc, filters)
+	if strings.TrimSpace(sqlStr) == "" {
+		return 0, fmt.Errorf("delete failed : filters are required")
+	}
+
+	affect := int64(0)
+
+	if m.tx != nil {
+		res, err := m.tx.ExecContext(ctx, sqlStr)
+		if err != nil {
+			return 0, err
+		}
+
+		affect, err = res.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+	} else {
+		res, err := m.db.ExecContext(ctx, sqlStr)
+		if err != nil {
+			return 0, err
+		}
+
+		affect, err = res.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	return uint64(affect), nil
+}
+
 func (m *dbCrud) DeleteById(ctx context.Context, model interface{}, datasrc string, id uint64) (uint64, error) {
 	props := reflect.ValueOf(model)
 

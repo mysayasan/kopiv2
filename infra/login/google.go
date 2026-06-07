@@ -1,65 +1,74 @@
 package login
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
-	"io"
+	"fmt"
 	"net/http"
 
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
+	"golang.org/x/oauth2"
 )
 
 // GoogleLogin struct
 type GoogleLogin struct {
-	conf OAuth2ConfigModel
+	conf oauth2.Config
 	auth middlewares.AuthMidware
 }
 
 // Create GoogleLogin
 func NewGoogleLogin(conf OAuth2ConfigModel, auth middlewares.AuthMidware) *GoogleLogin {
 	return &GoogleLogin{
-		conf: conf,
+		conf: GoogleConfig(conf),
 		auth: auth,
 	}
 }
 
 func (m *GoogleLogin) Login(w http.ResponseWriter, r *http.Request) {
+	cookie, state, err := NewOAuthState("google", r.TLS != nil)
+	if err != nil {
+		http.Error(w, "oauth state generation failed", http.StatusInternalServerError)
+		return
+	}
 
-	url := AppConfig.GoogleLoginConfig.AuthCodeURL("randomstate")
-
-	// w.WriteHeader(http.StatusSeeOther)
-	http.Redirect(w, r, url, http.StatusSeeOther)
-	// c.Status(fiber.StatusSeeOther)
-	// c.Redirect(url)
-	// return c.JSON(url)
+	http.SetCookie(w, cookie)
+	http.Redirect(w, r, m.conf.AuthCodeURL(state), http.StatusSeeOther)
 }
 
-func (m *GoogleLogin) Callback(state string, code string) (*GoogleUserInfoModel, error) {
-	if state != "randomstate" {
-		return nil, errors.New("states don't match")
+func (m *GoogleLogin) Callback(r *http.Request) (*GoogleUserInfoModel, error) {
+	if err := ValidateOAuthState(r, "google", r.URL.Query().Get("state")); err != nil {
+		return nil, err
 	}
 
-	googlecon := GoogleConfig(m.conf)
-
-	token, err := googlecon.Exchange(context.Background(), code)
+	code := r.URL.Query().Get("code")
+	if code == "" {
+		return nil, errors.New("oauth code is required")
+	}
+	token, err := m.conf.Exchange(r.Context(), code)
 	if err != nil {
-		return nil, errors.New("Code-Token Exchange Failed")
+		return nil, fmt.Errorf("code-token exchange failed: %w", err)
 	}
 
-	resp, err := http.Get("https://www.googleapis.com/oauth2/v2/userinfo?access_token=" + token.AccessToken)
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, "https://www.googleapis.com/oauth2/v2/userinfo", nil)
 	if err != nil {
-		return nil, errors.New("user data fetch failed")
+		return nil, err
 	}
+	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 
-	userData, err := io.ReadAll(resp.Body)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, errors.New("json parsing failed")
+		return nil, fmt.Errorf("user data fetch failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("user data fetch failed with status %d", resp.StatusCode)
 	}
 
 	var userJson GoogleUserInfoModel
-	json.Unmarshal(userData, &userJson)
+	if err := json.NewDecoder(resp.Body).Decode(&userJson); err != nil {
+		return nil, fmt.Errorf("json parsing failed: %w", err)
+	}
 
 	return &userJson, nil
-
 }

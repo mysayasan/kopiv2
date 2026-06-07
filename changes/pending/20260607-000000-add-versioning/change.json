@@ -1,0 +1,6 @@
+{
+  "level": "minor",
+  "scope": "both",
+  "app": "mymatasan",
+  "summary": "Add shared core and app runtime version endpoint"
+}

@@ -2,7 +2,6 @@ package apis
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strconv"
 
@@ -38,15 +37,9 @@ func NewUserGroupApi(
 
 	// Group Handlers
 	group.HandleFunc("", rbac.RbacHandler(handler.get)).Methods("GET")
-	group.HandleFunc("", rbac.RbacHandler(handler.post)).Methods("GET")
+	group.HandleFunc("", rbac.RbacHandler(handler.post)).Methods("POST")
 	group.HandleFunc("", rbac.RbacHandler(handler.put)).Methods("PUT")
 	group.HandleFunc("/{id}", rbac.RbacHandler(handler.delete)).Methods("DELETE")
-
-	// group := router.Group("user-group")
-	// group.Get("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("get")
-	// group.Post("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.post, 60*1000*time.Millisecond)).Name("create")
-	// group.Put("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.put, 60*1000*time.Millisecond)).Name("update")
-	// group.Delete("/:id", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.delete, 60*1000*time.Millisecond)).Name("delete")
 }
 
 func (m *userGroupApi) get(w http.ResponseWriter, r *http.Request) {
@@ -75,8 +68,6 @@ func (m *userGroupApi) post(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Printf("%v", body)
-
 	res, err := m.serv.Create(r.Context(), *body)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
@@ -97,8 +88,6 @@ func (m *userGroupApi) put(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
 		return
 	}
-
-	fmt.Printf("%v", body)
 
 	res, err := m.serv.Update(r.Context(), *body)
 	if err != nil {

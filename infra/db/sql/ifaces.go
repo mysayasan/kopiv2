@@ -17,9 +17,11 @@ type IDbCrud interface {
 	UpdateById(ctx context.Context, model interface{}, datasrc string) (uint64, error)
 	UpdateByUnique(ctx context.Context, model interface{}, datasrc string, keyGroup string) (uint64, error)
 	UpdateByForeign(ctx context.Context, model interface{}, datasrc string, keyGroup string) (uint64, error)
+	Delete(ctx context.Context, model interface{}, datasrc string, filters []sqldataenums.Filter) (uint64, error)
 	DeleteById(ctx context.Context, model interface{}, datasrc string, id uint64) (uint64, error)
 	DeleteByUnique(ctx context.Context, model interface{}, datasrc string, keyGroup string, uids ...any) (uint64, error)
 	DeleteByForeign(ctx context.Context, model interface{}, datasrc string, keyGroup string, fids ...any) (uint64, error)
+	Ping(ctx context.Context) error
 	BeginTx(ctx context.Context) error
 	RollbackTx() error
 	CommitTx() error
@@ -38,6 +40,7 @@ type IGenericRepo[T any] interface {
 	UpdateById(ctx context.Context, datasrc string, model T) (uint64, error)
 	UpdateByUnique(ctx context.Context, datasrc string, keyGroup string, model T) (uint64, error)
 	UpdateByForeign(ctx context.Context, datasrc string, keyGroup string, model T) (uint64, error)
+	Delete(ctx context.Context, datasrc string, filters []sqldataenums.Filter) (uint64, error)
 	DeleteById(ctx context.Context, datasrc string, id uint64) (uint64, error)
 	DeleteByUnique(ctx context.Context, datasrc string, keyGroup string, uids ...any) (uint64, error)
 	DeleteByForeign(ctx context.Context, datasrc string, keyGroup string, fids ...any) (uint64, error)

@@ -2,13 +2,15 @@ package services
 
 import (
 	"context"
+	"log"
 
 	_ "github.com/lib/pq"
 	"github.com/mitchellh/mapstructure"
 	"github.com/mysayasan/kopiv2/domain/entities"
+	memcacheenums "github.com/mysayasan/kopiv2/domain/enums/memcache"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
+	"github.com/mysayasan/kopiv2/infra/cache"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
-	goCache "github.com/patrickmn/go-cache"
 )
 
 // apiEndpointRbacService struct
@@ -16,7 +18,7 @@ type apiEndpointRbacService struct {
 	repo          dbsql.IGenericRepo[entities.ApiEndpointRbac]
 	userLoginRepo dbsql.IGenericRepo[entities.UserLogin]
 	apiEpRepo     dbsql.IGenericRepo[entities.ApiEndpoint]
-	memCache      *goCache.Cache
+	cache         cache.Store
 }
 
 // Create new IApiEndpointRbacService
@@ -24,13 +26,13 @@ func NewApiEndpointRbacService(
 	repo dbsql.IGenericRepo[entities.ApiEndpointRbac],
 	userLoginRepo dbsql.IGenericRepo[entities.UserLogin],
 	apiEpRepo dbsql.IGenericRepo[entities.ApiEndpoint],
-	memCache *goCache.Cache,
+	cacheStore cache.Store,
 ) IApiEndpointRbacService {
 	return &apiEndpointRbacService{
 		repo:          repo,
 		userLoginRepo: userLoginRepo,
 		apiEpRepo:     apiEpRepo,
-		memCache:      memCache,
+		cache:         cacheStore,
 	}
 }
 
@@ -46,21 +48,45 @@ func (m *apiEndpointRbacService) Get(ctx context.Context, limit uint64, offset u
 }
 
 func (m *apiEndpointRbacService) Create(ctx context.Context, model entities.ApiEndpointRbac) (uint64, error) {
-	return m.repo.Create(ctx, "", model)
+	id, err := m.repo.Create(ctx, "", model)
+	if err != nil {
+		return 0, err
+	}
+	if err := m.invalidateRbacAccessCache(ctx); err != nil {
+		log.Printf("rbac cache invalidation warning after create: %v", err)
+	}
+	return id, nil
 }
 
 func (m *apiEndpointRbacService) Update(ctx context.Context, model entities.ApiEndpointRbac) (uint64, error) {
-	return m.repo.UpdateById(ctx, "", model)
+	id, err := m.repo.UpdateById(ctx, "", model)
+	if err != nil {
+		return 0, err
+	}
+	if err := m.invalidateRbacAccessCache(ctx); err != nil {
+		log.Printf("rbac cache invalidation warning after update: %v", err)
+	}
+	return id, nil
 }
 
 func (m *apiEndpointRbacService) Delete(ctx context.Context, id uint64) (uint64, error) {
-	return m.repo.DeleteById(ctx, "", id)
+	deleted, err := m.repo.DeleteById(ctx, "", id)
+	if err != nil {
+		return 0, err
+	}
+	if err := m.invalidateRbacAccessCache(ctx); err != nil {
+		log.Printf("rbac cache invalidation warning after delete: %v", err)
+	}
+	return deleted, nil
 }
 
 func (m *apiEndpointRbacService) Validate(ctx context.Context, host string, path string, userRoleId uint64) (*entities.ApiEndpointRbac, error) {
 	apiEp, err := m.apiEpRepo.GetByUnique(ctx, "", "ukey1", host, path)
 	if err != nil {
-		return nil, err
+		apiEp, err = m.apiEpRepo.GetByUnique(ctx, "", "ukey1", "*", path)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return m.repo.GetByUnique(ctx, "", "ukey1", apiEp.Id, userRoleId)
@@ -101,4 +127,9 @@ func (m *apiEndpointRbacService) GetApiEpByUserRole(ctx context.Context, userId 
 	}
 
 	return res, total, nil
+}
+
+func (m *apiEndpointRbacService) invalidateRbacAccessCache(ctx context.Context) error {
+	prefix := memcacheenums.GetString(memcacheenums.Mware_Rbac_GetApiEpByUserRole_Result) + ":"
+	return m.cache.DeleteByPrefix(ctx, prefix)
 }

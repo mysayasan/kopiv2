@@ -31,14 +31,11 @@ func NewHomeApi(
 
 	// Create api sub-router
 	group := router.PathPrefix("/home").Subrouter()
+	group.Use(auth.Middleware)
 
 	// Group Handlers
 	group.HandleFunc("/latest", rbac.RbacHandler(handler.latest)).Methods("GET")
 	group.HandleFunc("/new", rbac.RbacHandler(handler.new)).Methods("POST")
-
-	// group := router.Group("home")
-	// group.Get("/latest", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.latest, 60*1000*time.Millisecond)).Name("latest")
-	// group.Post("/new", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.new, 60*1000*time.Millisecond)).Name("new")
 }
 
 func (m *homeApi) latest(w http.ResponseWriter, r *http.Request) {

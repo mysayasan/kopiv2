@@ -25,7 +25,7 @@ func (m *genericRepo[T]) Get(ctx context.Context, datasrc string, limit uint64, 
 	var tmodel = new(T)
 	res, totalCnt, err := m.dbCrud.Select(ctx, *tmodel, limit, offset, filters, sorter, datasrc)
 	if err != nil {
-		return nil, 0, fmt.Errorf("data retrieval error")
+		return nil, 0, fmt.Errorf("select list failed: %w", err)
 	}
 
 	list := make([]*T, 0)
@@ -44,7 +44,7 @@ func (m *genericRepo[T]) GetJoin(ctx context.Context, datasrc string, model any,
 
 	res, totalCnt, err := m.dbCrud.Select(ctx, model, limit, offset, filters, sorter, datasrc, joinsrc...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("data retrieval error")
+		return nil, 0, fmt.Errorf("select join failed: %w", err)
 	}
 
 	return res, totalCnt, nil
@@ -54,7 +54,7 @@ func (m *genericRepo[T]) GetSingle(ctx context.Context, datasrc string, filters 
 	var tmodel = new(T)
 	res, err := m.dbCrud.SelectSingle(ctx, *tmodel, filters, datasrc)
 	if err != nil {
-		return nil, fmt.Errorf("data retrieval error")
+		return nil, fmt.Errorf("select single failed: %w", err)
 	}
 
 	var model T
@@ -67,7 +67,7 @@ func (m *genericRepo[T]) GetById(ctx context.Context, datasrc string, id uint64)
 	var tmodel = new(T)
 	res, err := m.dbCrud.SelectById(ctx, *tmodel, datasrc, id)
 	if err != nil {
-		return nil, fmt.Errorf("data retrieval error")
+		return nil, fmt.Errorf("select by id failed: %w", err)
 	}
 
 	var model T
@@ -80,7 +80,7 @@ func (m *genericRepo[T]) GetByUnique(ctx context.Context, datasrc string, keyGro
 	var tmodel = new(T)
 	res, err := m.dbCrud.SelectByUnique(ctx, *tmodel, datasrc, keyGroup, uids...)
 	if err != nil {
-		return nil, fmt.Errorf("data retrieval error")
+		return nil, fmt.Errorf("select by unique failed: %w", err)
 	}
 
 	var model T
@@ -93,7 +93,7 @@ func (m *genericRepo[T]) GetByForeign(ctx context.Context, datasrc string, keyGr
 	var tmodel = new(T)
 	res, err := m.dbCrud.SelectByForeign(ctx, *tmodel, datasrc, keyGroup, fids...)
 	if err != nil {
-		return nil, fmt.Errorf("data retrieval error")
+		return nil, fmt.Errorf("select by foreign failed: %w", err)
 	}
 
 	list := make([]*T, 0)
@@ -110,7 +110,7 @@ func (m *genericRepo[T]) GetByForeign(ctx context.Context, datasrc string, keyGr
 func (m *genericRepo[T]) Create(ctx context.Context, datasrc string, model T) (uint64, error) {
 	res, err := m.dbCrud.Insert(ctx, model, datasrc)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("insert failed: %w", err)
 	}
 
 	return res, nil
@@ -119,7 +119,7 @@ func (m *genericRepo[T]) Create(ctx context.Context, datasrc string, model T) (u
 func (m *genericRepo[T]) CreateMultiple(ctx context.Context, datasrc string, models []T) (uint64, error) {
 	res, err := m.dbCrud.Insert(ctx, models, datasrc)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("bulk insert failed: %w", err)
 	}
 
 	return res, nil
@@ -128,7 +128,7 @@ func (m *genericRepo[T]) CreateMultiple(ctx context.Context, datasrc string, mod
 func (m *genericRepo[T]) UpdateById(ctx context.Context, datasrc string, model T) (uint64, error) {
 	res, err := m.dbCrud.UpdateById(ctx, model, datasrc)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("update by id failed: %w", err)
 	}
 
 	return res, nil
@@ -137,7 +137,7 @@ func (m *genericRepo[T]) UpdateById(ctx context.Context, datasrc string, model T
 func (m *genericRepo[T]) UpdateByUnique(ctx context.Context, datasrc string, keyGroup string, model T) (uint64, error) {
 	res, err := m.dbCrud.UpdateByUnique(ctx, model, datasrc, keyGroup)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("update by unique failed: %w", err)
 	}
 
 	return res, nil
@@ -146,7 +146,17 @@ func (m *genericRepo[T]) UpdateByUnique(ctx context.Context, datasrc string, key
 func (m *genericRepo[T]) UpdateByForeign(ctx context.Context, datasrc string, keyGroup string, model T) (uint64, error) {
 	res, err := m.dbCrud.UpdateByForeign(ctx, model, datasrc, keyGroup)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("update by foreign failed: %w", err)
+	}
+
+	return res, nil
+}
+
+func (m *genericRepo[T]) Delete(ctx context.Context, datasrc string, filters []sqldataenums.Filter) (uint64, error) {
+	tmodel := new(T)
+	res, err := m.dbCrud.Delete(ctx, *tmodel, datasrc, filters)
+	if err != nil {
+		return 0, fmt.Errorf("delete failed: %w", err)
 	}
 
 	return res, nil
@@ -156,7 +166,7 @@ func (m *genericRepo[T]) DeleteById(ctx context.Context, datasrc string, id uint
 	tmodel := new(T)
 	res, err := m.dbCrud.DeleteById(ctx, *tmodel, datasrc, id)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("delete by id failed: %w", err)
 	}
 
 	return res, nil
@@ -166,7 +176,7 @@ func (m *genericRepo[T]) DeleteByUnique(ctx context.Context, datasrc string, key
 	tmodel := new(T)
 	res, err := m.dbCrud.DeleteByUnique(ctx, *tmodel, datasrc, keyGroup, uids...)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("delete by unique failed: %w", err)
 	}
 
 	return res, nil
@@ -174,9 +184,9 @@ func (m *genericRepo[T]) DeleteByUnique(ctx context.Context, datasrc string, key
 
 func (m *genericRepo[T]) DeleteByForeign(ctx context.Context, datasrc string, keyGroup string, fids ...any) (uint64, error) {
 	tmodel := new(T)
-	res, err := m.dbCrud.DeleteByForeign(ctx, *tmodel, datasrc, keyGroup, fids)
+	res, err := m.dbCrud.DeleteByForeign(ctx, *tmodel, datasrc, keyGroup, fids...)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("delete by foreign failed: %w", err)
 	}
 
 	return res, nil

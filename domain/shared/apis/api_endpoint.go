@@ -2,7 +2,6 @@ package apis
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strconv"
 
@@ -69,8 +68,6 @@ func (m *apiEndpointApi) post(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Printf("%v", body)
-
 	res, err := m.serv.Create(r.Context(), *body)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
@@ -91,8 +88,6 @@ func (m *apiEndpointApi) put(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
 		return
 	}
-
-	fmt.Printf("%v", body)
 
 	res, err := m.serv.Update(r.Context(), *body)
 	if err != nil {

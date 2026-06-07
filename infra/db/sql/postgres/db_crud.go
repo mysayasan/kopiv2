@@ -45,6 +45,10 @@ func (m *dbCrud) BeginTx(ctx context.Context) error {
 	return nil
 }
 
+func (m *dbCrud) Ping(ctx context.Context) error {
+	return m.db.PingContext(ctx)
+}
+
 func (m *dbCrud) RollbackTx() error {
 	err := m.tx.Rollback()
 	if err != nil {
@@ -118,32 +122,48 @@ func (m *dbCrud) genWhereSqlStr(props reflect.Value, filters []sqldataenums.Filt
 			}
 		}
 
-		if filter.Compare == 1 {
-			field := props.FieldByName(filter.FieldName)
-			switch field.Interface().(type) {
-			case int, int16, int32, int64, uint, uint16, uint32, uint64:
-				{
-					fs := fmt.Sprintf("%s = %d", fieldNm, filter.Value)
-					res = append(res, fs)
-					break
-				}
-			case bool:
-				{
-					fs := fmt.Sprintf("%s = '%t'", fieldNm, filter.Value)
-					res = append(res, fs)
-					break
-				}
-			default:
-				{
-					fs := fmt.Sprintf("%s = '%s'", fieldNm, filter.Value)
-					res = append(res, fs)
-					break
-				}
-			}
+		op := filterCompareOperator(filter.Compare)
+		if op == "" {
+			continue
+		}
+
+		fieldValue := props.FieldByName(filter.FieldName)
+		if !fieldValue.IsValid() {
+			continue
+		}
+		switch fieldValue.Interface().(type) {
+		case int, int16, int32, int64, uint, uint16, uint32, uint64:
+			fs := fmt.Sprintf("%s %s %d", fieldNm, op, filter.Value)
+			res = append(res, fs)
+		case bool:
+			fs := fmt.Sprintf("%s %s '%t'", fieldNm, op, filter.Value)
+			res = append(res, fs)
+		default:
+			fs := fmt.Sprintf("%s %s '%s'", fieldNm, op, filter.Value)
+			res = append(res, fs)
 		}
 	}
 
 	return res
+}
+
+func filterCompareOperator(compare sqldataenums.Compare) string {
+	switch compare {
+	case sqldataenums.Equal:
+		return "="
+	case sqldataenums.NotEqual:
+		return "<>"
+	case sqldataenums.GreaterThan:
+		return ">"
+	case sqldataenums.LessThan:
+		return "<"
+	case sqldataenums.GreaterThanOrEqualTo:
+		return ">="
+	case sqldataenums.LessThanOrEqualTo:
+		return "<="
+	default:
+		return ""
+	}
 }
 
 func (m *dbCrud) genSortSqlStr(props reflect.Value, sorters []sqldataenums.Sorter) []string {

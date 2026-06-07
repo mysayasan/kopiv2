@@ -1,0 +1,35 @@
+# Module: infra/db/sql/postgres/db_crud.go
+
+## Purpose
+
+PostgreSQL implementation of `IDbCrud`.
+
+## Key Responsibilities
+
+- Create and validate DB connection in `NewDbCrud`.
+- Execute ping checks via `Ping(ctx)`.
+- Handle transaction lifecycle.
+- Build SQL fragments for joins, filters, sorting, and columns.
+
+## Connection Contract
+
+DSN components used:
+
+- host
+- port
+- user
+- password
+- dbname
+- sslmode
+
+## SQL Builder Notes
+
+- Uses struct reflection and tags for mapping.
+- Supports key-based filtering (`pkey`, `ukey`, `fkey`).
+- Generates where/sort expressions from enum-based filter/sorter inputs, including equality and range comparisons.
+- Scans nullable database strings through `sql.NullString` and normalizes NULL values to empty Go strings for string entity fields.
+
+## Operational Notes
+
+- Startup calls `db.Ping()` during initialization to fail fast.
+- Readiness checks call `PingContext` at runtime.

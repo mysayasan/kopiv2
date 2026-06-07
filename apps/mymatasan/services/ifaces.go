@@ -26,4 +26,5 @@ type ICameraStreamService interface {
 	Delete(ctx context.Context, id uint64) (uint64, error)
 	StartAllMjpegStream() error
 	ReadMjpeg(ctx context.Context, id int64) <-chan []byte
+	Shutdown(ctx context.Context) error
 }

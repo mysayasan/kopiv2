@@ -2,7 +2,6 @@ package apis
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strconv"
 
@@ -45,14 +44,6 @@ func NewApiEndpointRbacApi(
 	group.HandleFunc("", rbac.RbacHandler(handler.post)).Methods("POST")
 	group.HandleFunc("", rbac.RbacHandler(handler.put)).Methods("PUT")
 	group.HandleFunc("/{id}", rbac.RbacHandler(handler.delete)).Methods("DELETE")
-
-	// group := router.Group("endpoint-rbac")
-	// group.Get("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("get")
-	// group.Get("validate/me", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.getValidate, 60*1000*time.Millisecond)).Name("get_validate")
-	// group.Get("ep/me", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.getApiEpByUserRole, 60*1000*time.Millisecond)).Name("get_validate")
-	// group.Post("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.post, 60*1000*time.Millisecond)).Name("create")
-	// group.Put("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.put, 60*1000*time.Millisecond)).Name("update")
-	// group.Delete("/:id", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.delete, 60*1000*time.Millisecond)).Name("delete")
 }
 
 func (m *apiEndpointRbacApi) get(w http.ResponseWriter, r *http.Request) {
@@ -109,8 +100,6 @@ func (m *apiEndpointRbacApi) post(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Printf("%v", body)
-
 	res, err := m.serv.Create(r.Context(), *body)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
@@ -131,8 +120,6 @@ func (m *apiEndpointRbacApi) put(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
 		return
 	}
-
-	fmt.Printf("%v", body)
 
 	res, err := m.serv.Update(r.Context(), *body)
 	if err != nil {

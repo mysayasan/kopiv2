@@ -5,46 +5,60 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"image"
-	"image/color"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	_ "github.com/lib/pq"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
+	"github.com/mysayasan/kopiv2/infra/cache"
 	camera "github.com/mysayasan/kopiv2/infra/camera/ffmpeg"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
-	memCache "github.com/patrickmn/go-cache"
-	"gocv.io/x/gocv"
 )
+
+const streamBufferSize = 8
+
+type streamWorker struct {
+	uri    string
+	stream chan []byte
+	cancel context.CancelFunc
+}
 
 // cameraStreamService struct
 type cameraStreamService struct {
-	repo         dbsql.IGenericRepo[entities.CameraStream]
-	memCache     *memCache.Cache
-	camffmpeg    camera.INetCam
-	nosignalgif  []byte
-	startstreams map[int64](chan []byte)
-	mu           sync.Mutex
+	repo        dbsql.IGenericRepo[entities.CameraStream]
+	cache       cache.Store
+	camffmpeg   camera.INetCam
+	logger      serviceLogger
+	nosignalgif []byte
+	workers     map[int64]*streamWorker
+	mu          sync.Mutex
+	wg          sync.WaitGroup
+}
+
+type serviceLogger interface {
+	Infof(source string, format string, args ...any)
+	Warnf(source string, format string, args ...any)
+	Errorf(source string, format string, args ...any)
 }
 
 // Create new ICameraStreamService
 func NewCameraStreamService(
 	repo dbsql.IGenericRepo[entities.CameraStream],
-	memCache *memCache.Cache,
+	cacheStore cache.Store,
 	camffmpeg camera.INetCam,
+	logger ...serviceLogger,
 ) ICameraStreamService {
-	// dir, err := filepath.Abs(filepath.Dir(os.Args[0]))
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-
-	startstreams := make(map[int64](chan []byte))
+	workers := make(map[int64]*streamWorker)
+	var serviceLog serviceLogger
+	if len(logger) > 0 {
+		serviceLog = logger[0]
+	}
 
 	fi, err := os.Open(filepath.Join("./nosignal.gif"))
 	if err != nil {
@@ -63,11 +77,12 @@ func NewCameraStreamService(
 	}
 
 	return &cameraStreamService{
-		repo:         repo,
-		memCache:     memCache,
-		camffmpeg:    camffmpeg,
-		nosignalgif:  content,
-		startstreams: startstreams,
+		repo:        repo,
+		cache:       cacheStore,
+		camffmpeg:   camffmpeg,
+		logger:      serviceLog,
+		nosignalgif: content,
+		workers:     workers,
 	}
 }
 
@@ -99,49 +114,63 @@ func (m *cameraStreamService) Delete(ctx context.Context, id uint64) (uint64, er
 	return m.repo.DeleteById(ctx, "", id)
 }
 
-func (m *cameraStreamService) startMjpegStream(uri string, vidStream chan<- []byte) error {
+func (m *cameraStreamService) startMjpegStream(ctx context.Context, id int64, uri string, vidStream chan<- []byte) error {
 	rescnt := 0
-restart:
-	_, readStream, err := m.camffmpeg.ReadMjpeg(uri)
-	if err != nil {
-		return err
-	}
-	defer readStream.Close()
-
-	fmt.Printf("stream from [%s] is online\n", uri)
-
-	buf := make([]byte, 1024)
-	res := make([]byte, 1024*64)
-
-	// color for the rect when faces detected
-	blue := color.RGBA{0, 0, 255, 0}
-
-	// load classifier to recognize faces
-	classifier := gocv.NewCascadeClassifier()
-	defer classifier.Close()
-
-	xmlFile := filepath.Join("./haarcascade_frontalface_alt.xml")
-	if !classifier.Load(xmlFile) {
-		fmt.Printf("Error reading cascade file: %v\n", xmlFile)
-		return fmt.Errorf("error reading cascade file : %v", xmlFile)
-	}
 
 	for {
-		n, err := readStream.Read(buf)
-		if err == io.EOF {
-			if rescnt < 30 {
-				vidStream <- m.nosignalgif
-				fmt.Printf("stream disruption on [%s], restarting in 10secs\n", uri)
-				time.Sleep(10 * time.Second)
-				rescnt += 1
-				goto restart
-			}
-			return errors.New("failed to stream")
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
 		}
+
+		_, readStream, err := m.camffmpeg.ReadMjpeg(uri)
 		if err != nil {
-			continue
+			return fmt.Errorf("open stream [%d] failed: %w", id, err)
 		}
-		if n > 0 {
+
+		m.infof("stream from [%s] is online", uri)
+
+		buf := make([]byte, 1024)
+		res := make([]byte, 0, 1024*64)
+
+		for {
+			select {
+			case <-ctx.Done():
+				readStream.Close()
+				return nil
+			default:
+			}
+
+			n, err := readStream.Read(buf)
+			if err == io.EOF {
+				readStream.Close()
+				if rescnt < 30 {
+					m.pushFrame(vidStream, m.nosignalgif)
+					m.warnf("stream disruption on [%s], restarting in 10secs", uri)
+
+					timer := time.NewTimer(10 * time.Second)
+					select {
+					case <-ctx.Done():
+						timer.Stop()
+						return nil
+					case <-timer.C:
+					}
+
+					rescnt += 1
+					break
+				}
+				return errors.New("failed to stream")
+			}
+
+			if err != nil {
+				continue
+			}
+
+			if n < 1 {
+				continue
+			}
+
 			sbuff := buf[:n]
 			if len(res) < 1 {
 				startByte := sbuff[0]
@@ -149,52 +178,12 @@ restart:
 					continue
 				}
 			}
+
 			res = append(res, sbuff...)
 			endian := sbuff[len(sbuff)-1]
-
-			facedetect := false
-
 			if len(sbuff) < 1024 && endian == 0xD9 {
 				res = bytes.Trim(res, "\x00")
-
-				if facedetect {
-					// prepare image matrix
-					mat := gocv.NewMat()
-					defer mat.Close()
-
-					gocv.IMDecodeIntoMat(res, gocv.IMReadAnyColor, &mat)
-
-					if mat.Empty() {
-						continue
-					}
-
-					// detect faces
-					rects := classifier.DetectMultiScale(mat)
-					fmt.Printf("found %d faces\n", len(rects))
-
-					// draw a rectangle around each face on the original image,
-					// along with text identifying as "Human"
-					for _, r := range rects {
-						gocv.Rectangle(&mat, r, blue, 3)
-
-						size := gocv.GetTextSize("Human", gocv.FontHersheyPlain, 1.2, 2)
-						pt := image.Pt(r.Min.X+(r.Min.X/2)-(size.X/2), r.Min.Y-2)
-						gocv.PutText(&mat, "Human", pt, gocv.FontHersheyPlain, 1.2, blue, 2)
-					}
-
-					buff, err := gocv.IMEncode(gocv.JPEGFileExt, mat)
-					if err != nil {
-						continue
-					}
-
-					// vidStream <- res
-					vidStream <- buff.GetBytes()
-					res = res[:0]
-					continue
-				}
-
-				// vidStream <- res
-				vidStream <- res
+				m.pushFrame(vidStream, res)
 				res = res[:0]
 			}
 		}
@@ -202,9 +191,6 @@ restart:
 }
 
 func (m *cameraStreamService) StartAllMjpegStream() error {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	filters := []sqldataenums.Filter{
 		{
 			FieldName: "AutoStart",
@@ -212,18 +198,17 @@ func (m *cameraStreamService) StartAllMjpegStream() error {
 			Value:     true,
 		},
 	}
-	streams, _, err := m.repo.Get(ctx, "", 0, 0, filters, nil)
+	streams, _, err := m.repo.Get(context.Background(), "", 0, 0, filters, nil)
 	if err != nil {
+		if isNoResultFoundErr(err) {
+			return nil
+		}
 		return err
 	}
 
 	for _, stream := range streams {
-		if _, ok := m.startstreams[stream.Id]; !ok {
-			m.startstreams[stream.Id] = make(chan []byte)
-
-			go func(ctx context.Context, startStream chan<- []byte) {
-				m.startMjpegStream(stream.Url, startStream)
-			}(ctx, m.startstreams[stream.Id])
+		if _, err := m.ensureWorker(stream.Id, stream.Url); err != nil {
+			m.errorf("failed to autostart stream [%d]: %s", stream.Id, err.Error())
 		}
 	}
 
@@ -231,5 +216,136 @@ func (m *cameraStreamService) StartAllMjpegStream() error {
 }
 
 func (m *cameraStreamService) ReadMjpeg(ctx context.Context, id int64) <-chan []byte {
-	return m.startstreams[id]
+	m.mu.Lock()
+	if worker, ok := m.workers[id]; ok {
+		stream := worker.stream
+		m.mu.Unlock()
+		return stream
+	}
+	m.mu.Unlock()
+
+	cam, err := m.repo.GetById(ctx, "", uint64(id))
+	if err != nil || cam == nil || cam.Url == "" {
+		return m.closedFrameChan()
+	}
+
+	worker, err := m.ensureWorker(id, cam.Url)
+	if err != nil {
+		m.errorf("failed to start stream [%d]: %s", id, err.Error())
+		return m.closedFrameChan()
+	}
+
+	return worker.stream
+}
+
+func (m *cameraStreamService) pushFrame(stream chan<- []byte, frame []byte) {
+	if len(frame) < 1 {
+		return
+	}
+
+	copyFrame := append([]byte(nil), frame...)
+	select {
+	case stream <- copyFrame:
+	default:
+		// Drop frame when the channel is full to keep stream latency stable.
+	}
+}
+
+func isNoResultFoundErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "no result found")
+}
+
+func (m *cameraStreamService) ensureWorker(id int64, uri string) (*streamWorker, error) {
+	m.mu.Lock()
+	if worker, ok := m.workers[id]; ok {
+		m.mu.Unlock()
+		return worker, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	worker := &streamWorker{
+		uri:    uri,
+		stream: make(chan []byte, streamBufferSize),
+		cancel: cancel,
+	}
+	m.workers[id] = worker
+	m.mu.Unlock()
+
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+
+		err := m.startMjpegStream(ctx, id, uri, worker.stream)
+		if err != nil {
+			m.warnf("stream [%d] stopped: %s", id, err.Error())
+		}
+
+		m.mu.Lock()
+		if curr, ok := m.workers[id]; ok && curr == worker {
+			delete(m.workers, id)
+		}
+		close(worker.stream)
+		m.mu.Unlock()
+	}()
+
+	return worker, nil
+}
+
+func (m *cameraStreamService) infof(format string, args ...any) {
+	if m.logger != nil {
+		m.logger.Infof("camera-stream", format, args...)
+		return
+	}
+	fmt.Printf(format+"\n", args...)
+}
+
+func (m *cameraStreamService) warnf(format string, args ...any) {
+	if m.logger != nil {
+		m.logger.Warnf("camera-stream", format, args...)
+		return
+	}
+	fmt.Printf(format+"\n", args...)
+}
+
+func (m *cameraStreamService) errorf(format string, args ...any) {
+	if m.logger != nil {
+		m.logger.Errorf("camera-stream", format, args...)
+		return
+	}
+	fmt.Printf(format+"\n", args...)
+}
+
+func (m *cameraStreamService) closedFrameChan() <-chan []byte {
+	ch := make(chan []byte)
+	close(ch)
+	return ch
+}
+
+func (m *cameraStreamService) Shutdown(ctx context.Context) error {
+	m.mu.Lock()
+	workers := make([]*streamWorker, 0, len(m.workers))
+	for _, worker := range m.workers {
+		workers = append(workers, worker)
+	}
+	m.mu.Unlock()
+
+	for _, worker := range workers {
+		worker.cancel()
+	}
+
+	done := make(chan struct{})
+	go func() {
+		m.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-done:
+		return nil
+	}
 }

@@ -6,24 +6,24 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/mysayasan/kopiv2/domain/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
+	"github.com/mysayasan/kopiv2/infra/cache"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
-	memCache "github.com/patrickmn/go-cache"
 )
 
 // userGroupService struct
 type userGroupService struct {
-	repo     dbsql.IGenericRepo[entities.UserGroup]
-	memCache *memCache.Cache
+	repo  dbsql.IGenericRepo[entities.UserGroup]
+	cache cache.Store
 }
 
 // Create new IUserGroupService
 func NewUserGroupService(
 	repo dbsql.IGenericRepo[entities.UserGroup],
-	memCache *memCache.Cache,
+	cacheStore cache.Store,
 ) IUserGroupService {
 	return &userGroupService{
-		repo:     repo,
-		memCache: memCache,
+		repo:  repo,
+		cache: cacheStore,
 	}
 }
 

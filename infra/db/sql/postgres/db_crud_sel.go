@@ -198,7 +198,7 @@ func (m *dbCrud) Select(ctx context.Context, model interface{}, limit uint64, of
 				}
 			case string:
 				{
-					vals[i] = new(string)
+					vals[i] = new(sql.NullString)
 					break
 				}
 			case sql.NullString:
@@ -224,7 +224,7 @@ func (m *dbCrud) Select(ctx context.Context, model interface{}, limit uint64, of
 
 		for i := 0; i < props.NumField(); i++ {
 			field := props.Type().Field(i)
-			data[field.Name] = vals[i]
+			data[field.Name] = normalizeScannedValue(vals[i], field.Type)
 		}
 
 		if limit > 1 && offset >= limit {
@@ -342,6 +342,18 @@ func (m *dbCrud) Select(ctx context.Context, model interface{}, limit uint64, of
 	}
 
 	return result, rowCnt, nil
+}
+
+func normalizeScannedValue(raw interface{}, fieldType reflect.Type) interface{} {
+	if value, ok := raw.(*sql.NullString); ok && fieldType.Kind() == reflect.String {
+		normalized := ""
+		if value.Valid {
+			normalized = value.String
+		}
+		return &normalized
+	}
+
+	return raw
 }
 
 func (m *dbCrud) SelectSingle(ctx context.Context, model interface{}, filters []sqldataenums.Filter, datasrc string) (map[string]interface{}, error) {

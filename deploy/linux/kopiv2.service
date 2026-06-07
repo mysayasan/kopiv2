@@ -1,0 +1,17 @@
+[Unit]
+Description=kopiv2 service
+After=network.target
+
+[Service]
+Type=simple
+User=kopiv2
+Group=kopiv2
+WorkingDirectory=/opt/kopiv2/apps/mymatasan
+ExecStart=/opt/kopiv2/kopiv2-server
+EnvironmentFile=/etc/kopiv2/kopiv2.env
+Restart=always
+RestartSec=5
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

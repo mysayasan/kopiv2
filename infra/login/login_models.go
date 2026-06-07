@@ -17,3 +17,28 @@ type OAuth2ConfigModel struct {
 	RedirectUrl  string   `json:"redirect_url" validate:"required"`
 	Scopes       []string `json:"scopes" validate:"required"`
 }
+
+type OAuthProvidersConfigModel struct {
+	Google *OAuth2ConfigModel `json:"google"`
+	GitHub *OAuth2ConfigModel `json:"github"`
+}
+
+type GitHubUserInfoModel struct {
+	Id        int64  `json:"id"`
+	Login     string `json:"login"`
+	Email     string `json:"email"`
+	Name      string `json:"name"`
+	AvatarURL string `json:"avatar_url"`
+}
+
+type DefaultLoginRequestModel struct {
+	Username string `json:"username" form:"username" query:"username" validate:"required"`
+	Password string `json:"password" form:"password" query:"password" validate:"required"`
+}
+
+type DefaultRegisterRequestModel struct {
+	Username  string `json:"username" form:"username" query:"username" validate:"required"`
+	Password  string `json:"password" form:"password" query:"password" validate:"required"`
+	FirstName string `json:"firstName" form:"firstName" query:"firstName"`
+	LastName  string `json:"lastName" form:"lastName" query:"lastName"`
+}

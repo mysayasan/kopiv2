@@ -6,24 +6,24 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/mysayasan/kopiv2/domain/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
+	"github.com/mysayasan/kopiv2/infra/cache"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
-	memCache "github.com/patrickmn/go-cache"
 )
 
 // apiEndpointService struct
 type apiEndpointService struct {
-	repo     dbsql.IGenericRepo[entities.ApiEndpoint]
-	memCache *memCache.Cache
+	repo  dbsql.IGenericRepo[entities.ApiEndpoint]
+	cache cache.Store
 }
 
 // Create new IApiEndpointService
 func NewApiEndpointService(
 	repo dbsql.IGenericRepo[entities.ApiEndpoint],
-	memCache *memCache.Cache,
+	cacheStore cache.Store,
 ) IApiEndpointService {
 	return &apiEndpointService{
-		repo:     repo,
-		memCache: memCache,
+		repo:  repo,
+		cache: cacheStore,
 	}
 }
 

@@ -1,0 +1,12 @@
+{
+  "core": {
+    "version": "1.0.0"
+  },
+  "apps": {
+    "mymatasan": {
+      "version": "1.0.0"
+    }
+  },
+  "commit": "",
+  "updatedAt": ""
+}

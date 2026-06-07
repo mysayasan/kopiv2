@@ -1,6 +1,7 @@
 package apis
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -35,6 +36,7 @@ func NewApiLogApi(
 
 	// Group Handlers
 	group.HandleFunc("", rbac.RbacHandler(handler.get)).Methods("GET")
+	group.HandleFunc("", rbac.RbacHandler(handler.deleteByMonth)).Methods("DELETE")
 
 	// group := router.Group("log")
 	// group.Get("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("latest")
@@ -52,4 +54,30 @@ func (m *apiLogApi) get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	controllers.SendPagingResult(w, res, limit, offset, totalCnt)
+}
+
+func (m *apiLogApi) deleteByMonth(w http.ResponseWriter, r *http.Request) {
+	year, err := strconv.Atoi(r.URL.Query().Get("year"))
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, "year is required")
+		return
+	}
+
+	month, err := strconv.Atoi(r.URL.Query().Get("month"))
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, "month is required")
+		return
+	}
+
+	deleted, err := m.serv.DeleteByMonth(r.Context(), year, month)
+	if err != nil {
+		if errors.Is(err, services.ErrCurrentMonthApiLogDelete) {
+			controllers.SendError(w, controllers.ErrLimitedAccess, err.Error())
+			return
+		}
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+
+	controllers.SendResult(w, map[string]uint64{"deleted": deleted}, "api logs deleted")
 }

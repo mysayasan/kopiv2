@@ -9,8 +9,9 @@ import (
 )
 
 type PagingResponse[T any] struct {
-	Message string `json:"message"`
-	Data    struct {
+	Message    string `json:"message"`
+	DurationMs int64  `json:"durationMs"`
+	Data       struct {
 		Result      T      `json:"result"`
 		ResCnt      uint64 `json:"resCnt"`
 		CurrentPage int    `json:"currentPage"`
@@ -19,19 +20,26 @@ type PagingResponse[T any] struct {
 }
 
 type ErrResponse[T any] struct {
-	StatsCode int    `json:"statsCode"`
-	Message   string `json:"message"`
-	Details   T      `json:"details"`
+	StatsCode  int    `json:"statsCode"`
+	Message    string `json:"message"`
+	DurationMs int64  `json:"durationMs"`
+	Details    T      `json:"details"`
 }
 
 type DefaultResponse[T any] struct {
-	Message string `json:"message"`
-	Result  T      `json:"result"`
+	Message    string `json:"message"`
+	DurationMs int64  `json:"durationMs"`
+	Result     T      `json:"result"`
+}
+
+type requestTimer interface {
+	RequestDurationMs() int64
 }
 
 func SendPagingResult(w http.ResponseWriter, data interface{}, limit uint64, offset uint64, totalCnt uint64, msgs ...string) error {
 	var resp PagingResponse[interface{}]
 	resp.Message = strings.Join(msgs, "\n")
+	resp.DurationMs = responseDurationMs(w)
 	resp.Data.Result = data
 	resp.Data.ResCnt = totalCnt
 	resp.Data.CurrentPage = 1
@@ -57,6 +65,7 @@ func SendPagingResult(w http.ResponseWriter, data interface{}, limit uint64, off
 func SendResult(w http.ResponseWriter, data interface{}, msgs ...string) error {
 	var resp DefaultResponse[interface{}]
 	resp.Message = strings.Join(msgs, "\n")
+	resp.DurationMs = responseDurationMs(w)
 	resp.Result = data
 
 	w.Header().Set("Content-Type", "application/json")
@@ -78,6 +87,7 @@ func SendError(w http.ResponseWriter, err error, message string, data ...interfa
 	var resp ErrResponse[interface{}]
 	resp.StatsCode = stats
 	resp.Message = msg
+	resp.DurationMs = responseDurationMs(w)
 	resp.Details = data
 
 	w.Header().Set("Content-Type", "application/json")
@@ -88,4 +98,11 @@ func SendError(w http.ResponseWriter, err error, message string, data ...interfa
 	}
 
 	return nil
+}
+
+func responseDurationMs(w http.ResponseWriter) int64 {
+	if timer, ok := w.(requestTimer); ok {
+		return timer.RequestDurationMs()
+	}
+	return 0
 }

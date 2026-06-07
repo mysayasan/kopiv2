@@ -4,12 +4,15 @@ import (
 	"context"
 
 	"github.com/mysayasan/kopiv2/domain/entities"
+	applog "github.com/mysayasan/kopiv2/infra/logging"
 )
 
 // IUserLoginService interface
 type IUserLoginService interface {
 	Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.UserLogin, uint64, error)
 	GetByEmail(ctx context.Context, email string) (*entities.UserLogin, error)
+	AuthenticateDefault(ctx context.Context, username string, password string) (*entities.UserLogin, error)
+	RegisterLocal(ctx context.Context, model entities.UserLogin) (uint64, error)
 	Create(ctx context.Context, model entities.UserLogin) (uint64, error)
 	Update(ctx context.Context, model entities.UserLogin) (uint64, error)
 	Delete(ctx context.Context, id uint64) (uint64, error)
@@ -54,6 +57,8 @@ type IApiEndpointRbacService interface {
 type IApiLogService interface {
 	Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.ApiLog, uint64, error)
 	Create(ctx context.Context, model entities.ApiLog) (uint64, error)
+	DeleteByMonth(ctx context.Context, year int, month int) (uint64, error)
+	DeleteOlderThan(ctx context.Context, maxRetentionDays int) (uint64, error)
 }
 
 // IFileStorageService interface
@@ -61,4 +66,19 @@ type IFileStorageService interface {
 	GetByGuid(ctx context.Context, guid string) (*entities.FileStorage, error)
 	Create(ctx context.Context, model entities.FileStorage) (uint64, error)
 	CreateMultiple(ctx context.Context, model []entities.FileStorage) (uint64, error)
+}
+
+// ICacheService interface
+type ICacheService interface {
+	ListKeys(ctx context.Context, prefix string, limit uint64, offset uint64) ([]string, uint64, error)
+	WipeByPrefix(ctx context.Context, prefix string) (bool, error)
+	WipeByKey(ctx context.Context, key string) (bool, error)
+	Ping(ctx context.Context) (bool, error)
+}
+
+// IRuntimeLogService interface
+type IRuntimeLogService interface {
+	List(ctx context.Context, limit uint64, offset uint64) ([]applog.Entry, uint64, error)
+	DeleteByMonth(ctx context.Context, year int, month int) (uint64, error)
+	DeleteOlderThan(ctx context.Context, maxRetentionDays int) (uint64, error)
 }

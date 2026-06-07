@@ -1,0 +1,9 @@
+.git
+.gitignore
+**/.DS_Store
+**/node_modules
+**/dist
+**/build
+**/*.log
+apps/mymatasan/uploads/*
+!apps/mymatasan/uploads/.gitkeep

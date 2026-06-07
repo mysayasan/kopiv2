@@ -2,7 +2,7 @@
   "login": {
     "google": {
       "client_id": "323260460700-57q1e3pltetn1ku72cac38lqddlnpokd.apps.googleusercontent.com",
-      "client_secret": "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",
+      "client_secret": "",
       "redirect_url": "https://localhost:3000/api/callback/google",
       "scopes": [
         "https://www.googleapis.com/auth/userinfo.email",
@@ -11,17 +11,71 @@
     }
   },
   "jwt": {
-    "secret": "secret"
+    "secret": ""
   },
   "fileStorage": {
     "path": "./uploads"
+  },
+  "cache": {
+    "provider": "redis",
+    "ttlSeconds": 30,
+    "keyPrefix": "kopiv2",
+    "redis": {
+      "address": "localhost:6379",
+      "password": "Simpnify@123",
+      "db": 0,
+      "useTls": false,
+      "connectTimeoutMs": 2000,
+      "operationTimeoutMs": 2000
+    }
+  },
+  "logging": {
+    "enabled": true,
+    "path": "./logs/mymatasan.log",
+    "maxLineBytes": 8192,
+    "cleanup": {
+      "enabled": false,
+      "maxRetentionDays": 90,
+      "frequencyMinutes": 60
+    }
+  },
+  "apiLog": {
+    "cleanup": {
+      "enabled": false,
+      "maxRetentionDays": 90,
+      "frequencyMinutes": 60
+    }
+  },
+  "telemetry": {
+    "enabled": true,
+    "prometheus": {
+      "enabled": true,
+      "metricsPath": "/metrics",
+      "apiDurationThresholdMs": 1000
+    }
   },
   "tls": {
     "certPath": "./certs/cert.pem",
     "keyPath": "./certs/key.pem"
   },
+  "server": {
+    "hostnames": ["*"],
+    "tlsPorts": [],
+    "nonTlsPorts": [3000]
+  },
   "allowOrigins": "*",
+  "bootstrap": {
+    "enabled": true,
+    "autoCreateDatabase": true,
+    "autoCreateSchema": true,
+    "autoMigrate": true,
+    "autoSeed": true,
+    "allowReset": false,
+    "setupPath": "/setup",
+    "seedStatements": []
+  },
   "db": {
+    "engine": "postgres",
     "host": "localhost",
     "port": 5432,
     "user": "postgres",

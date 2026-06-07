@@ -2,6 +2,7 @@ package dbsql
 
 // DbConfigModel
 type DbConfigModel struct {
+	Engine   string `json:"engine"`
 	Host     string `json:"host" validate:"required"`
 	Port     int    `json:"port" validate:"required"`
 	User     string `json:"user" validate:"required"`
