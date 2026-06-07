@@ -128,6 +128,7 @@ Database config contract (`db` in app config):
 
 - `engine`: DB engine selector (`postgres` or `mariadb`).
 - Runtime DB adapter and bootstrap implementation support both engines.
+- `apps/mymatasan/config.dev.json` defaults PostgreSQL to port `5433`; runtime `DB_PORT` overrides the config value for local or deployed environments.
 
 Logging config contract (`logging` in app config):
 
@@ -204,6 +205,7 @@ At least one explicit TLS or non-TLS port must be configured. The same port cann
 - Endpoint list is generated from runtime route registration, so shared and app-local APIs are documented from one source.
 - Key endpoints include reusable request/response schema components (`components.schemas`) for FE integration and code generation.
 - Key list/create/update endpoints are mapped to endpoint-specific response wrappers (typed `result` payloads) instead of only generic default/paging contracts.
+- Shared DB-backed list endpoints expose `limit`, `offset`, and optional `filters`/`sorters` query parameters so paging can be filtered and ordered in the backend before the response is returned.
 - Non-JSON endpoints are explicitly modeled with route-accurate status/content (for example OAuth redirect `302` and MJPEG stream `206 multipart/x-mixed-replace`).
 - Cache admin endpoints are documented with `cache-service` tag (`GET /api/cache-service`, `GET /api/cache-service/health`, `DELETE /api/cache-service`, `POST /api/cache-service/wipe`).
 - API log endpoints are documented with `log` tag (`GET /api/log`, `DELETE /api/log`).

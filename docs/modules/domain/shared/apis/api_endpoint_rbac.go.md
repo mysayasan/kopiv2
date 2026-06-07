@@ -24,3 +24,10 @@ Base path: `/api/endpoint-rbac`
 
 - `/validate/me`: checks access rule validity for host/path against current user role.
 - `/ep/me`: returns endpoint access mapping for current user.
+
+## List Query Behavior
+
+- `GET /api/endpoint-rbac` supports `limit`, `offset`, `filters`, and `sorters` query parameters.
+- Filter and sorter query values use the shared SQL enum JSON contract from `query_options.go`.
+- Read handlers return shared output DTOs through `IApiEndpointRbacDtoService`, including joined current-user endpoint DTOs.
+- POST/PUT decode shared input DTOs, then project them to `ApiEndpointRbac` entities for service writes.

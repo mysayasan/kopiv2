@@ -39,18 +39,35 @@ func TestSendResultIncludesDurationMs(t *testing.T) {
 func TestSendPagingResultIncludesDurationMs(t *testing.T) {
 	w := timedRecorder{ResponseRecorder: httptest.NewRecorder(), durationMs: 7}
 
-	if err := SendPagingResult(w, []string{"a"}, 10, 0, 1, "succeed"); err != nil {
+	if err := SendPagingResult(w, []string{"a", "b"}, 10, 20, 53, "succeed"); err != nil {
 		t.Fatalf("SendPagingResult failed: %v", err)
 	}
 
 	var resp struct {
 		DurationMs int64 `json:"durationMs"`
+		Data       struct {
+			Limit      uint64 `json:"limit"`
+			Offset     uint64 `json:"offset"`
+			ResCnt     uint64 `json:"resCnt"`
+			TotalCnt   uint64 `json:"totalCnt"`
+			HasNext    bool   `json:"hasNext"`
+			NextOffset uint64 `json:"nextOffset"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
 	if resp.DurationMs != 7 {
 		t.Fatalf("durationMs got %d want 7", resp.DurationMs)
+	}
+	if resp.Data.Limit != 10 || resp.Data.Offset != 20 {
+		t.Fatalf("unexpected paging window limit=%d offset=%d", resp.Data.Limit, resp.Data.Offset)
+	}
+	if resp.Data.ResCnt != 2 || resp.Data.TotalCnt != 53 {
+		t.Fatalf("unexpected paging counts resCnt=%d totalCnt=%d", resp.Data.ResCnt, resp.Data.TotalCnt)
+	}
+	if !resp.Data.HasNext || resp.Data.NextOffset != 22 {
+		t.Fatalf("unexpected next window hasNext=%t nextOffset=%d", resp.Data.HasNext, resp.Data.NextOffset)
 	}
 }
 

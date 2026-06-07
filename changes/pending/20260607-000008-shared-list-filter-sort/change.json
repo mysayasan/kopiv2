@@ -1,0 +1,5 @@
+{
+  "level": "minor",
+  "scope": "core",
+  "summary": "Add backend limit-offset paging, filtering, sorting, and total-count support to shared list APIs"
+}

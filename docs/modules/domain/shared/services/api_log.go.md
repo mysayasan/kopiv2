@@ -7,7 +7,8 @@ Wraps the database-backed API log repository behind a shared domain service.
 ## Responsibilities
 
 - Provide `IApiLogService`.
-- Return paginated API activity log rows ordered by newest first.
+- Return paginated API activity log rows with caller-provided filters and sorters.
+- Use newest-first ordering when callers do not provide sorters.
 - Create API log rows for middleware and audit callers.
 - Persist `durationMs` when callers provide request timing metadata.
 - Delete API logs by calendar month.

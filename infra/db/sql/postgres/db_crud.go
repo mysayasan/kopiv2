@@ -160,20 +160,34 @@ func (m *dbCrud) genWhereSqlStr(props reflect.Value, filters []sqldataenums.Filt
 		if !fieldValue.IsValid() {
 			continue
 		}
-		switch fieldValue.Interface().(type) {
-		case int, int16, int32, int64, uint, uint16, uint32, uint64:
-			fs := fmt.Sprintf("%s %s %d", fieldNm, op, filter.Value)
-			res = append(res, fs)
-		case bool:
-			fs := fmt.Sprintf("%s %s '%t'", fieldNm, op, filter.Value)
-			res = append(res, fs)
-		default:
-			fs := fmt.Sprintf("%s %s '%s'", fieldNm, op, filter.Value)
-			res = append(res, fs)
-		}
+		res = append(res, fmt.Sprintf("%s %s %s", fieldNm, op, sqlFilterValue(fieldValue, filter.Value)))
 	}
 
 	return res
+}
+
+func sqlFilterValue(fieldValue reflect.Value, value any) string {
+	fieldType := fieldValue.Type()
+	for fieldType.Kind() == reflect.Pointer {
+		fieldType = fieldType.Elem()
+	}
+
+	switch fieldType.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return fmt.Sprintf("%v", value)
+	case reflect.Bool:
+		if boolValue, ok := value.(bool); ok {
+			return fmt.Sprintf("'%t'", boolValue)
+		}
+		return fmt.Sprintf("'%t'", strings.EqualFold(fmt.Sprintf("%v", value), "true"))
+	default:
+		return fmt.Sprintf("'%s'", escapeSQLString(fmt.Sprintf("%v", value)))
+	}
+}
+
+func escapeSQLString(value string) string {
+	return strings.ReplaceAll(value, "'", "''")
 }
 
 func filterCompareOperator(compare sqldataenums.Compare) string {

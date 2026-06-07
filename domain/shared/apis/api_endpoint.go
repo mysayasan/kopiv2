@@ -1,12 +1,13 @@
 package apis
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/domain/entities"
+	inputdtos "github.com/mysayasan/kopiv2/domain/shared/dtos/input"
+	outputdtos "github.com/mysayasan/kopiv2/domain/shared/dtos/output"
 	"github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
@@ -16,7 +17,7 @@ import (
 type apiEndpointApi struct {
 	auth middlewares.AuthMidware
 	rbac middlewares.RbacMidware
-	serv services.IApiEndpointService
+	serv services.IApiEndpointDtoService[outputdtos.ApiEndpointDto]
 }
 
 // Create ApiEndpointApi
@@ -24,7 +25,7 @@ func NewApiEndpointApi(
 	router *mux.Router,
 	auth middlewares.AuthMidware,
 	rbac middlewares.RbacMidware,
-	serv services.IApiEndpointService) {
+	serv services.IApiEndpointDtoService[outputdtos.ApiEndpointDto]) {
 	handler := &apiEndpointApi{
 		auth: auth,
 		rbac: rbac,
@@ -44,26 +45,24 @@ func NewApiEndpointApi(
 
 func (m *apiEndpointApi) get(w http.ResponseWriter, r *http.Request) {
 
-	limit, _ := strconv.ParseUint(r.URL.Query().Get("limit"), 10, 64)
-	offset, _ := strconv.ParseUint(r.URL.Query().Get("offset"), 10, 64)
+	opts, err := parseListQueryOptions[entities.ApiEndpoint](r)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
 
-	res, totalCnt, err := m.serv.Get(r.Context(), limit, offset)
+	res, totalCnt, err := m.serv.Get(r.Context(), opts.Limit, opts.Offset, opts.Filters, opts.Sorters)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrNotFound, err.Error())
 		return
 	}
 
-	controllers.SendPagingResult(w, res, limit, offset, totalCnt)
+	controllers.SendPagingResult(w, res, opts.Limit, opts.Offset, totalCnt)
 }
 
 func (m *apiEndpointApi) post(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-
-	body := new(entities.ApiEndpoint)
-
-	if err := dec.Decode(&body); err != nil {
+	body, err := decodeRequestDto[inputdtos.ApiEndpointDto, entities.ApiEndpoint](w, r)
+	if err != nil {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
 		return
 	}
@@ -78,13 +77,8 @@ func (m *apiEndpointApi) post(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *apiEndpointApi) put(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-
-	body := new(entities.ApiEndpoint)
-
-	if err := dec.Decode(&body); err != nil {
+	body, err := decodeRequestDto[inputdtos.ApiEndpointDto, entities.ApiEndpoint](w, r)
+	if err != nil {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
 		return
 	}

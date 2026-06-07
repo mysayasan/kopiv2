@@ -21,6 +21,7 @@ import (
 	"github.com/joho/godotenv"
 	sharedEntities "github.com/mysayasan/kopiv2/domain/entities"
 	sharedApis "github.com/mysayasan/kopiv2/domain/shared/apis"
+	sharedOutputDtos "github.com/mysayasan/kopiv2/domain/shared/dtos/output"
 	sharedServices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 	"github.com/mysayasan/kopiv2/infra/apidocs"
@@ -227,6 +228,14 @@ func Run(app App) error {
 	)
 	cacheService := sharedServices.NewCacheService(cacheStore)
 	runtimeLogService := sharedServices.NewRuntimeLogService(runtimeLogger)
+	userLoginDtoService := sharedServices.NewUserLoginDtoService[sharedOutputDtos.UserLoginDto](userLoginService)
+	userGroupDtoService := sharedServices.NewUserGroupDtoService[sharedOutputDtos.UserGroupDto](userGroupService)
+	userRoleDtoService := sharedServices.NewUserRoleDtoService[sharedOutputDtos.UserRoleDto](userRoleService)
+	apiLogDtoService := sharedServices.NewApiLogDtoService[sharedOutputDtos.ApiLogDto](apiLogService)
+	apiEndpointDtoService := sharedServices.NewApiEndpointDtoService[sharedOutputDtos.ApiEndpointDto](apiEndpointService)
+	apiEndpointRbacDtoService := sharedServices.NewApiEndpointRbacDtoService[sharedOutputDtos.ApiEndpointRbacDto, sharedOutputDtos.ApiEndpointRbacJoinDto](apiEndpointRbacService)
+	fileStorageDtoService := sharedServices.NewFileStorageDtoService[sharedOutputDtos.FileStorageDto, sharedOutputDtos.OperationJobDto](fileStorageService)
+	runtimeLogDtoService := sharedServices.NewRuntimeLogDtoService[sharedOutputDtos.RuntimeLogDto](runtimeLogService)
 	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
 	defer schedulerCancel()
 	runtimeScheduler := scheduler.New(schedulerCtx, runtimeLogger)
@@ -256,15 +265,15 @@ func Run(app App) error {
 
 	sharedApis.NewVersionApi(api, app.Name(), versionManifest)
 	sharedApis.NewLoginApi(api, appConfig.Login, *auth, userLoginService)
-	sharedApis.NewUserLoginApi(api, *auth, *rbac, userLoginService)
-	sharedApis.NewUserGroupApi(api, *auth, *rbac, userGroupService)
-	sharedApis.NewUserRoleApi(api, *auth, *rbac, userRoleService)
-	sharedApis.NewApiLogApi(api, *auth, *rbac, apiLogService)
-	sharedApis.NewApiEndpointApi(api, *auth, *rbac, apiEndpointService)
-	sharedApis.NewApiEndpointRbacApi(api, *auth, *rbac, apiEndpointRbacService)
-	sharedApis.NewFileStorageApi(api, *auth, *rbac, fileStorageService, appConfig.FileStorage.Path)
+	sharedApis.NewUserLoginApi(api, *auth, *rbac, userLoginDtoService)
+	sharedApis.NewUserGroupApi(api, *auth, *rbac, userGroupDtoService)
+	sharedApis.NewUserRoleApi(api, *auth, *rbac, userRoleDtoService)
+	sharedApis.NewApiLogApi(api, *auth, *rbac, apiLogDtoService)
+	sharedApis.NewApiEndpointApi(api, *auth, *rbac, apiEndpointDtoService)
+	sharedApis.NewApiEndpointRbacApi(api, *auth, *rbac, apiEndpointRbacDtoService)
+	sharedApis.NewFileStorageApi(api, *auth, *rbac, fileStorageDtoService, appConfig.FileStorage.Path)
 	sharedApis.NewCacheServiceApi(api, *auth, *rbac, cacheService, apiLogService)
-	sharedApis.NewRuntimeLogApi(api, *auth, *rbac, runtimeLogService)
+	sharedApis.NewRuntimeLogApi(api, *auth, *rbac, runtimeLogDtoService)
 
 	shutdownHook, err := app.RegisterAppRoutes(api, Dependencies{
 		Config:    appConfig,
@@ -272,6 +281,7 @@ func Run(app App) error {
 		Cache:     cacheStore,
 		Auth:      auth,
 		Rbac:      rbac,
+		UserLogin: userLoginService,
 		Logger:    runtimeLogger,
 		Scheduler: runtimeScheduler,
 	})

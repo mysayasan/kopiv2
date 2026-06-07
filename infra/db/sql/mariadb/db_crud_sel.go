@@ -70,6 +70,9 @@ func (m *dbCrud) genSelSqlStr(props reflect.Value, limit uint64, offset uint64, 
 
 	if offset > 0 {
 		rowOffset = fmt.Sprintf("OFFSET %d", offset)
+		if rowLimit == "" {
+			rowLimit = "LIMIT 18446744073709551615"
+		}
 	}
 
 	if rowLimit != "" {
@@ -134,67 +137,7 @@ func (m *dbCrud) Select(ctx context.Context, model interface{}, limit uint64, of
 		rowCnt++
 		vals := make([]interface{}, len(cols))
 		for i := 0; i < len(cols); i++ {
-			switch props.Field(i).Interface().(type) {
-			case []uint8:
-				{
-					vals[i] = new([]uint8)
-					break
-				}
-			case int16:
-				{
-					vals[i] = new(int16)
-					break
-				}
-			case uint16:
-				{
-					vals[i] = new(uint16)
-					break
-				}
-			case int, int32:
-				{
-					vals[i] = new(int)
-					break
-				}
-			case uint, uint32:
-				{
-					vals[i] = new(uint)
-					break
-				}
-			case int64:
-				{
-					vals[i] = new(int64)
-					break
-				}
-			case uint64:
-				{
-					vals[i] = new(uint64)
-					break
-				}
-			case float32:
-				{
-					vals[i] = new(float32)
-					break
-				}
-			case float64:
-				{
-					vals[i] = new(float64)
-					break
-				}
-			case string:
-				{
-					vals[i] = new(sql.NullString)
-					break
-				}
-			case sql.NullString:
-				{
-					vals[i] = new(sql.NullString)
-					break
-				}
-			case bool:
-				{
-					vals[i] = new(bool)
-				}
-			}
+			vals[i] = scanDestinationForField(props.Type().Field(i).Type)
 		}
 
 		err = rows.Scan(
@@ -334,6 +277,48 @@ func normalizeScannedValue(raw interface{}, fieldType reflect.Type) interface{} 
 	}
 
 	return raw
+}
+
+func scanDestinationForField(fieldType reflect.Type) interface{} {
+	if fieldType == reflect.TypeOf(sql.NullString{}) {
+		return new(sql.NullString)
+	}
+	if fieldType.Kind() == reflect.Slice && fieldType.Elem().Kind() == reflect.Uint8 {
+		return new([]uint8)
+	}
+
+	switch fieldType.Kind() {
+	case reflect.Int:
+		return new(int)
+	case reflect.Int8:
+		return new(int8)
+	case reflect.Int16:
+		return new(int16)
+	case reflect.Int32:
+		return new(int32)
+	case reflect.Int64:
+		return new(int64)
+	case reflect.Uint:
+		return new(uint)
+	case reflect.Uint8:
+		return new(uint8)
+	case reflect.Uint16:
+		return new(uint16)
+	case reflect.Uint32:
+		return new(uint32)
+	case reflect.Uint64:
+		return new(uint64)
+	case reflect.Float32:
+		return new(float32)
+	case reflect.Float64:
+		return new(float64)
+	case reflect.String:
+		return new(sql.NullString)
+	case reflect.Bool:
+		return new(bool)
+	default:
+		return new(interface{})
+	}
 }
 
 func (m *dbCrud) SelectSingle(ctx context.Context, model interface{}, filters []sqldataenums.Filter, datasrc string) (map[string]interface{}, error) {

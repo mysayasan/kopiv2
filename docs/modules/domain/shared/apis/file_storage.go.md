@@ -22,6 +22,7 @@ Registers file storage upload, download, and upload-job endpoints.
 - Streams each accepted file once into a staging directory while computing SHA-1 checksum.
 - Rejects the whole batch if any file fails validation or staging.
 - Calls the file storage service to run the coordinated metadata insert and final file write.
+- Returns uploaded file metadata through shared output DTOs.
 - Removes staged files when the request fails before service commit.
 
 ## Async Upload Behavior
@@ -29,12 +30,12 @@ Registers file storage upload, download, and upload-job endpoints.
 - Uses the same staging and validation path as synchronous upload.
 - Creates an `OperationJob` with the optional `Idempotency-Key` request header.
 - Leaves staged files in place after enqueue so the backend worker can process or retry the upload.
-- Returns the durable job row so callers can poll `GET /api/file-storage/job?id=<id>`.
+- Returns the durable job output DTO so callers can poll `GET /api/file-storage/job?id=<id>`.
 
 ## Job Status Behavior
 
 - Requires an `id` query parameter.
-- Returns the upload job status, attempt count, deadline, result, and last error.
+- Returns the upload job output DTO.
 
 ## Download Behavior
 

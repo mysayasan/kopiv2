@@ -4,8 +4,9 @@
 
 1. Provide required environment variables.
 2. Ensure PostgreSQL is reachable.
-3. Use `CACHE_PROVIDER=default` for local in-process memory cache; ensure Redis is reachable only when `CACHE_PROVIDER=redis`.
-3. Run:
+3. `apps/mymatasan/config.dev.json` defaults PostgreSQL to port `5433`; set `DB_PORT` if your local database uses another port.
+4. Use `CACHE_PROVIDER=default` for local in-process memory cache; ensure Redis is reachable only when `CACHE_PROVIDER=redis`.
+5. Run:
 
 ```bash
 go run . -app mymatasan
@@ -249,6 +250,18 @@ http://localhost:3000/swagger/openapi.json
 ```
 
 FE teams can import `/swagger/openapi.json` into API clients/codegen tools.
+
+## Filter Shared List APIs
+
+Shared DB-backed list endpoints accept backend filters and sorters in addition to `limit` and `offset`.
+
+Example:
+
+```bash
+curl "http://localhost:3000/api/log?limit=25&offset=0&filters=%5B%7B%22fieldName%22%3A%22statsCode%22%2C%22compare%22%3A1%2C%22value%22%3A200%7D%5D&sorters=%5B%7B%22fieldName%22%3A%22createdAt%22%2C%22sort%22%3A2%7D%5D"
+```
+
+The JSON filter shape is `{"fieldName":"createdAt","compare":5,"value":1700000000}`. Compare values are `1` equals, `2` not equals, `3` greater than, `4` less than, `5` greater than or equal, and `6` less than or equal. The sorter shape is `{"fieldName":"createdAt","sort":2}` where `1` is ascending and `2` is descending.
 
 ## Cache Admin API
 

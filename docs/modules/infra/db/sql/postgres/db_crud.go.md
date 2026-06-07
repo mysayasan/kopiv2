@@ -27,7 +27,11 @@ DSN components used:
 - Uses struct reflection and tags for mapping.
 - Supports key-based filtering (`pkey`, `ukey`, `fkey`).
 - Generates where/sort expressions from enum-based filter/sorter inputs, including equality and range comparisons.
+- Formats filter values by reflected field kind so defined integer enum fields are treated as numeric values.
+- Escapes single quotes in string filter values before embedding them in generated SQL.
 - Scans nullable database strings through `sql.NullString` and normalizes NULL values to empty Go strings for string entity fields.
+- List selects with `LIMIT` and/or `OFFSET` include a window count column so repositories can return `totalCnt` with the current result window.
+- Scan destinations are derived from reflected field types so defined integer aliases, booleans, floats, byte slices, strings, and `sql.NullString` are handled consistently.
 
 ## Operational Notes
 

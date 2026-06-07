@@ -4,12 +4,13 @@ import (
 	"context"
 
 	"github.com/mysayasan/kopiv2/domain/entities"
+	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	applog "github.com/mysayasan/kopiv2/infra/logging"
 )
 
 // IUserLoginService interface
 type IUserLoginService interface {
-	Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.UserLogin, uint64, error)
+	Get(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.UserLogin, uint64, error)
 	GetByEmail(ctx context.Context, email string) (*entities.UserLogin, error)
 	AuthenticateDefault(ctx context.Context, username string, password string) (*entities.UserLogin, error)
 	RegisterLocal(ctx context.Context, model entities.UserLogin) (uint64, error)
@@ -20,7 +21,7 @@ type IUserLoginService interface {
 
 // IUserGroupService interface
 type IUserGroupService interface {
-	Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.UserGroup, uint64, error)
+	Get(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.UserGroup, uint64, error)
 	Create(ctx context.Context, model entities.UserGroup) (uint64, error)
 	Update(ctx context.Context, model entities.UserGroup) (uint64, error)
 	Delete(ctx context.Context, id uint64) (uint64, error)
@@ -28,7 +29,7 @@ type IUserGroupService interface {
 
 // IUserRoleService interface
 type IUserRoleService interface {
-	Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.UserRole, uint64, error)
+	Get(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.UserRole, uint64, error)
 	GetByGroup(ctx context.Context, groupId uint64) ([]*entities.UserRole, error)
 	Create(ctx context.Context, model entities.UserRole) (uint64, error)
 	Update(ctx context.Context, model entities.UserRole) (uint64, error)
@@ -37,7 +38,7 @@ type IUserRoleService interface {
 
 // IApiEndpointService interface
 type IApiEndpointService interface {
-	Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.ApiEndpoint, uint64, error)
+	Get(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.ApiEndpoint, uint64, error)
 	Create(ctx context.Context, model entities.ApiEndpoint) (uint64, error)
 	Update(ctx context.Context, model entities.ApiEndpoint) (uint64, error)
 	Delete(ctx context.Context, id uint64) (uint64, error)
@@ -45,7 +46,7 @@ type IApiEndpointService interface {
 
 // IApiEndpointRbacService interface
 type IApiEndpointRbacService interface {
-	Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.ApiEndpointRbac, uint64, error)
+	Get(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.ApiEndpointRbac, uint64, error)
 	GetApiEpByUserRole(ctx context.Context, userId uint64) ([]*entities.ApiEndpointRbacJoinModel, uint64, error)
 	Create(ctx context.Context, model entities.ApiEndpointRbac) (uint64, error)
 	Update(ctx context.Context, model entities.ApiEndpointRbac) (uint64, error)
@@ -55,7 +56,7 @@ type IApiEndpointRbacService interface {
 
 // IApiLogService interface
 type IApiLogService interface {
-	Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.ApiLog, uint64, error)
+	Get(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.ApiLog, uint64, error)
 	Create(ctx context.Context, model entities.ApiLog) (uint64, error)
 	DeleteByMonth(ctx context.Context, year int, month int) (uint64, error)
 	DeleteOlderThan(ctx context.Context, maxRetentionDays int) (uint64, error)

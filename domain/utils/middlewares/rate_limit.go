@@ -14,12 +14,13 @@ import (
 	"github.com/mysayasan/kopiv2/domain/entities"
 	apiaccessenums "github.com/mysayasan/kopiv2/domain/enums/apiaccess"
 	memcacheenums "github.com/mysayasan/kopiv2/domain/enums/memcache"
+	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/infra/cache"
 )
 
 type apiEndpointLister interface {
-	Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.ApiEndpoint, uint64, error)
+	Get(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.ApiEndpoint, uint64, error)
 }
 
 type RateLimitTierConfig struct {
@@ -151,7 +152,7 @@ func (m *RateLimitMidware) loadEndpointTiers(ctx context.Context) ([]endpointTie
 		return entries, nil
 	}
 
-	endpoints, _, err := m.endpoints.Get(ctx, 0, 0)
+	endpoints, _, err := m.endpoints.Get(ctx, 0, 0, nil, nil)
 	if err != nil {
 		return nil, err
 	}

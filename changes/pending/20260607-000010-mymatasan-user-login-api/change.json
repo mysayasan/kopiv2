@@ -1,0 +1,6 @@
+{
+  "level": "minor",
+  "scope": "app",
+  "app": "mymatasan",
+  "summary": "Add app-safe user login list and lookup API responses without password hashes"
+}

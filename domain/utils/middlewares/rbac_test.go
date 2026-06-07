@@ -11,6 +11,7 @@ import (
 
 	"github.com/mysayasan/kopiv2/domain/entities"
 	enumauth "github.com/mysayasan/kopiv2/domain/enums/auth"
+	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	"github.com/mysayasan/kopiv2/domain/models"
 	"github.com/mysayasan/kopiv2/infra/cache"
 )
@@ -21,7 +22,7 @@ type fakeApiEndpointRbacService struct {
 
 type wildcardApiEndpointRbacService struct{}
 
-func (m *fakeApiEndpointRbacService) Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.ApiEndpointRbac, uint64, error) {
+func (m *fakeApiEndpointRbacService) Get(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.ApiEndpointRbac, uint64, error) {
 	return nil, 0, nil
 }
 
@@ -59,7 +60,7 @@ func (m *fakeApiEndpointRbacService) Validate(ctx context.Context, host string, 
 	return nil, nil
 }
 
-func (m *wildcardApiEndpointRbacService) Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.ApiEndpointRbac, uint64, error) {
+func (m *wildcardApiEndpointRbacService) Get(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.ApiEndpointRbac, uint64, error) {
 	return nil, 0, nil
 }
 

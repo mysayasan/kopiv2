@@ -33,6 +33,8 @@ func TestBuildSpecIncludesRoutesAndProviderDocs(t *testing.T) {
 	api.HandleFunc("/items/{id}", func(http.ResponseWriter, *http.Request) {}).Methods("GET")
 	api.HandleFunc("/user-group", func(http.ResponseWriter, *http.Request) {}).Methods("GET")
 	api.HandleFunc("/user-group", func(http.ResponseWriter, *http.Request) {}).Methods("POST")
+	api.HandleFunc("/user-login", func(http.ResponseWriter, *http.Request) {}).Methods("GET")
+	api.HandleFunc("/user-login/email", func(http.ResponseWriter, *http.Request) {}).Methods("GET")
 	api.HandleFunc("/cache-service/wipe", func(http.ResponseWriter, *http.Request) {}).Methods("POST")
 	api.HandleFunc("/login/default", func(http.ResponseWriter, *http.Request) {}).Methods("POST")
 	api.HandleFunc("/login/default/register", func(http.ResponseWriter, *http.Request) {}).Methods("POST")
@@ -86,6 +88,22 @@ func TestBuildSpecIncludesRoutesAndProviderDocs(t *testing.T) {
 
 	if _, ok := postOp["requestBody"].(map[string]any); !ok {
 		t.Fatalf("requestBody missing for key endpoint /api/user-group POST")
+	}
+	postRB := postOp["requestBody"].(map[string]any)
+	postRBContent, ok := postRB["content"].(map[string]any)
+	if !ok {
+		t.Fatalf("requestBody content missing for /api/user-group POST")
+	}
+	postRBJSON, ok := postRBContent["application/json"].(map[string]any)
+	if !ok {
+		t.Fatalf("application/json requestBody missing for /api/user-group POST")
+	}
+	postRBSchema, ok := postRBJSON["schema"].(map[string]any)
+	if !ok {
+		t.Fatalf("requestBody schema missing for /api/user-group POST")
+	}
+	if postRBSchema["$ref"] != "#/components/schemas/UserGroupInputDto" {
+		t.Fatalf("unexpected request schema for /api/user-group POST: %v", postRBSchema["$ref"])
 	}
 
 	responses, ok := postOp["responses"].(map[string]any)
@@ -151,6 +169,49 @@ func TestBuildSpecIncludesRoutesAndProviderDocs(t *testing.T) {
 		t.Fatalf("unexpected 200 schema for /api/user-group GET: %v", getRes200Schema["$ref"])
 	}
 
+	requireQueryParameters(t, getOpUG, "limit", "offset", "filters", "sorters")
+
+	appUserLoginPath, ok := paths["/api/user-login"].(map[string]any)
+	if !ok {
+		t.Fatalf("/api/user-login path missing")
+	}
+
+	appUserLoginGet, ok := appUserLoginPath["get"].(map[string]any)
+	if !ok {
+		t.Fatalf("get operation missing for /api/user-login")
+	}
+
+	appUserLoginResponses, ok := appUserLoginGet["responses"].(map[string]any)
+	if !ok {
+		t.Fatalf("responses missing for /api/user-login GET")
+	}
+
+	appUserLogin200, ok := appUserLoginResponses["200"].(map[string]any)
+	if !ok {
+		t.Fatalf("200 response missing for /api/user-login GET")
+	}
+
+	appUserLogin200Content, ok := appUserLogin200["content"].(map[string]any)
+	if !ok {
+		t.Fatalf("content missing for /api/user-login GET")
+	}
+
+	appUserLogin200JSON, ok := appUserLogin200Content["application/json"].(map[string]any)
+	if !ok {
+		t.Fatalf("application/json missing for /api/user-login GET")
+	}
+
+	appUserLogin200Schema, ok := appUserLogin200JSON["schema"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema missing for /api/user-login GET")
+	}
+
+	if appUserLogin200Schema["$ref"] != "#/components/schemas/PagingAppUserLoginResponse" {
+		t.Fatalf("unexpected 200 schema for /api/user-login GET: %v", appUserLogin200Schema["$ref"])
+	}
+
+	requireQueryParameters(t, appUserLoginGet, "limit", "offset", "filters", "sorters")
+
 	components, ok := doc["components"].(map[string]any)
 	if !ok {
 		t.Fatalf("components missing")
@@ -164,6 +225,27 @@ func TestBuildSpecIncludesRoutesAndProviderDocs(t *testing.T) {
 	if _, ok := schemas["UserGroupPayload"]; !ok {
 		t.Fatalf("UserGroupPayload schema missing")
 	}
+	if _, ok := schemas["UserGroupInputDto"]; !ok {
+		t.Fatalf("UserGroupInputDto schema missing")
+	}
+	if _, ok := schemas["UserGroupOutputDto"]; !ok {
+		t.Fatalf("UserGroupOutputDto schema missing")
+	}
+	defaultUserGroupSchema, ok := schemas["DefaultUserGroupResponse"].(map[string]any)
+	if !ok {
+		t.Fatalf("DefaultUserGroupResponse schema missing")
+	}
+	defaultUserGroupProps, ok := defaultUserGroupSchema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("DefaultUserGroupResponse properties missing")
+	}
+	defaultUserGroupResult, ok := defaultUserGroupProps["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("DefaultUserGroupResponse result missing")
+	}
+	if defaultUserGroupResult["$ref"] != "#/components/schemas/UserGroupOutputDto" {
+		t.Fatalf("DefaultUserGroupResponse result should use UserGroupOutputDto, got %v", defaultUserGroupResult["$ref"])
+	}
 
 	if _, ok := schemas["PagingResponse"]; !ok {
 		t.Fatalf("PagingResponse schema missing")
@@ -172,9 +254,50 @@ func TestBuildSpecIncludesRoutesAndProviderDocs(t *testing.T) {
 	if _, ok := schemas["PagingUserGroupResponse"]; !ok {
 		t.Fatalf("PagingUserGroupResponse schema missing")
 	}
+	pagingUserGroupSchema, ok := schemas["PagingUserGroupResponse"].(map[string]any)
+	if !ok {
+		t.Fatalf("PagingUserGroupResponse must be an object schema")
+	}
+	pagingUserGroupProps, ok := pagingUserGroupSchema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("PagingUserGroupResponse properties missing")
+	}
+	pagingUserGroupData, ok := pagingUserGroupProps["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("PagingUserGroupResponse data property missing")
+	}
+	pagingUserGroupDataProps, ok := pagingUserGroupData["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("PagingUserGroupResponse data properties missing")
+	}
+	for _, field := range []string{"limit", "offset", "resCnt", "totalCnt", "hasNext", "nextOffset"} {
+		if _, ok := pagingUserGroupDataProps[field]; !ok {
+			t.Fatalf("PagingUserGroupResponse data field %q missing", field)
+		}
+	}
+	if _, ok := pagingUserGroupDataProps["currentPage"]; ok {
+		t.Fatalf("PagingUserGroupResponse must not expose currentPage")
+	}
+	if _, ok := pagingUserGroupDataProps["totalPage"]; ok {
+		t.Fatalf("PagingUserGroupResponse must not expose totalPage")
+	}
 
 	if _, ok := schemas["DefaultUserGroupResponse"]; !ok {
 		t.Fatalf("DefaultUserGroupResponse schema missing")
+	}
+
+	appUserLoginSchema, ok := schemas["AppUserLoginPayload"].(map[string]any)
+	if !ok {
+		t.Fatalf("AppUserLoginPayload schema missing")
+	}
+
+	appUserLoginProps, ok := appUserLoginSchema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("AppUserLoginPayload properties missing")
+	}
+
+	if _, ok := appUserLoginProps["userpwd"]; ok {
+		t.Fatalf("AppUserLoginPayload must not expose userpwd")
 	}
 
 	if _, ok := schemas["CacheWipeRequest"]; !ok {
@@ -380,5 +503,35 @@ func TestBuildSpecIncludesRoutesAndProviderDocs(t *testing.T) {
 
 	if _, ok := paths["/"]; ok {
 		t.Fatalf("static catch-all path must not be included")
+	}
+}
+
+func requireQueryParameters(t *testing.T, op map[string]any, names ...string) {
+	t.Helper()
+
+	params, ok := op["parameters"].([]any)
+	if !ok {
+		t.Fatalf("parameters missing")
+	}
+
+	found := map[string]bool{}
+	for _, rawParam := range params {
+		param, ok := rawParam.(map[string]any)
+		if !ok {
+			continue
+		}
+		if param["in"] != "query" {
+			continue
+		}
+		name, ok := param["name"].(string)
+		if ok {
+			found[name] = true
+		}
+	}
+
+	for _, name := range names {
+		if !found[name] {
+			t.Fatalf("query parameter %q missing from operation", name)
+		}
 	}
 }

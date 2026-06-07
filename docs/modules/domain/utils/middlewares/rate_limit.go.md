@@ -15,5 +15,6 @@ Applies config-driven sliding-window rate limits to `/api` requests by API acces
 ## Notes
 
 - Rate limiting runs after API activity logging so `429` responses are still persisted in `api_log`.
+- Endpoint tier loading calls the shared endpoint service with empty filters/sorters so it can use the common list service signature.
 - `DevOnly` does not bypass authorization. Dev-only routes still require auth/RBAC when mounted behind protected handlers.
 - Redis should be used in multi-instance production so counters are shared across app instances.

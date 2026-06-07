@@ -6,6 +6,8 @@ import (
 	"strconv"
 
 	"github.com/gorilla/mux"
+	"github.com/mysayasan/kopiv2/domain/entities"
+	outputdtos "github.com/mysayasan/kopiv2/domain/shared/dtos/output"
 	"github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
@@ -15,7 +17,7 @@ import (
 type apiLogApi struct {
 	auth middlewares.AuthMidware
 	rbac middlewares.RbacMidware
-	serv services.IApiLogService
+	serv services.IApiLogDtoService[outputdtos.ApiLogDto]
 }
 
 // Create ApiLogApi
@@ -23,7 +25,7 @@ func NewApiLogApi(
 	router *mux.Router,
 	auth middlewares.AuthMidware,
 	rbac middlewares.RbacMidware,
-	serv services.IApiLogService) {
+	serv services.IApiLogDtoService[outputdtos.ApiLogDto]) {
 	handler := &apiLogApi{
 		auth: auth,
 		rbac: rbac,
@@ -44,16 +46,19 @@ func NewApiLogApi(
 
 func (m *apiLogApi) get(w http.ResponseWriter, r *http.Request) {
 
-	limit, _ := strconv.ParseUint(r.URL.Query().Get("limit"), 10, 64)
-	offset, _ := strconv.ParseUint(r.URL.Query().Get("offset"), 10, 64)
+	opts, err := parseListQueryOptions[entities.ApiLog](r)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
 
-	res, totalCnt, err := m.serv.Get(r.Context(), limit, offset)
+	res, totalCnt, err := m.serv.Get(r.Context(), opts.Limit, opts.Offset, opts.Filters, opts.Sorters)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrNotFound, err.Error())
 		return
 	}
 
-	controllers.SendPagingResult(w, res, limit, offset, totalCnt)
+	controllers.SendPagingResult(w, res, opts.Limit, opts.Offset, totalCnt)
 }
 
 func (m *apiLogApi) deleteByMonth(w http.ResponseWriter, r *http.Request) {

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/gorilla/mux"
+	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 	"github.com/mysayasan/kopiv2/infra/cache"
 	"github.com/mysayasan/kopiv2/infra/config"
@@ -23,6 +24,7 @@ type Dependencies struct {
 	Cache     cache.Store
 	Auth      *middlewares.AuthMidware
 	Rbac      *middlewares.RbacMidware
+	UserLogin sharedservices.IUserLoginService
 	Logger    applog.Logger
 	Scheduler *scheduler.Scheduler
 }

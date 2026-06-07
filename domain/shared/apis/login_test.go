@@ -11,6 +11,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/domain/entities"
+	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	"github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 )
@@ -28,7 +29,7 @@ type fakeUserLoginService struct {
 	lastRegister      *entities.UserLogin
 }
 
-func (f *fakeUserLoginService) Get(_ context.Context, _ uint64, _ uint64) ([]*entities.UserLogin, uint64, error) {
+func (f *fakeUserLoginService) Get(_ context.Context, _ uint64, _ uint64, _ []sqldataenums.Filter, _ []sqldataenums.Sorter) ([]*entities.UserLogin, uint64, error) {
 	return nil, 0, nil
 }
 

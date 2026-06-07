@@ -21,5 +21,9 @@ Base path: `/api/user-credential`
 
 ## Notes
 
+- List GET supports `limit`, `offset`, `filters`, and `sorters` query parameters.
+- Filter and sorter query values use the shared SQL enum JSON contract from `query_options.go`.
+- Read handlers return shared output DTOs through `IUserRoleDtoService`.
+- POST/PUT decode shared input DTOs, then project them to `UserRole` entities for service writes.
 - Group-specific query uses path variable `{id}`.
 - POST/PUT enforce strict JSON decode.

@@ -7,6 +7,7 @@ Provides endpoint RBAC data operations and role-access projection for middleware
 ## Responsibilities
 
 - CRUD operations for endpoint RBAC rows.
+- List endpoint RBAC rows with caller-provided filters and sorters, defaulting to newest-first ordering when sorters are omitted.
 - Resolve endpoint access rules by host/path/user role.
 - Build joined role-access list for middleware checks.
 - Invalidate RBAC role-access cache key namespace on create/update/delete.

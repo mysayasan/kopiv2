@@ -244,6 +244,7 @@ Database behavior is controlled by `db` in config:
 - `engine`: selects DB adapter (`postgres` or `mariadb`).
 - Runtime DB adapter and bootstrap are implemented for both `postgres` and `mariadb`.
 - Core bootstrap seed SQL is dialect-portable for both supported engines.
+- `apps/mymatasan/config.dev.json` defaults PostgreSQL to port `5433`; set `DB_PORT` when your local database listens on a different port.
 
 Telemetry behavior is controlled by `telemetry` in config:
 
@@ -335,6 +336,8 @@ export REDIS_DB=0
 export REDIS_USE_TLS=false
 go run . -app mymatasan
 ```
+
+The dev config file defaults `db.port` to `5433`. The example above overrides it to `5432`; keep whichever port matches your local PostgreSQL.
 
 ## Run with Docker
 
@@ -510,6 +513,7 @@ Notes:
 - Auth-protected `/api/*` routes are marked with cookie session auth in docs, except login/callback and `/api/health`; unsafe methods also require `X-CSRF-Token`.
 - Key endpoints include reusable request/response schema components under `components.schemas`.
 - Key list/create/update endpoints now use endpoint-specific wrapper schemas (for example: `PagingUserGroupResponse`, `DefaultUserGroupResponse`, `PagingCameraStreamResponse`) so FE clients can generate stricter typed models.
+- Shared DB-backed list endpoints document `limit`, `offset`, `filters`, and `sorters` query parameters using the shared SQL enum contract (`compare`: 1 eq, 2 neq, 3 gt, 4 lt, 5 gte, 6 lte; `sort`: 1 asc, 2 desc). Paging responses return offset-window metadata: `limit`, `offset`, `resCnt`, `totalCnt`, `hasNext`, and `nextOffset`.
 - Non-JSON routes are documented with explicit response contracts as well (for example: OAuth login redirects with `302`, MJPEG stream with `206 multipart/x-mixed-replace`, binary file download with `application/octet-stream`).
 - Cache admin endpoints are included in the generated spec (`cache-service` tag) for list, health, and wipe operations.
 - Runtime log listing and monthly deletion are included in the generated spec (`log-service` tag).

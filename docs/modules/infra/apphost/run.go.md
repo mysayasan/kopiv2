@@ -23,6 +23,7 @@ Implements the reusable runtime host for all app modules.
 - Start scheduled API log cleanup when configured.
 - Run shared bootstrap engine using app-provided entities and seeders.
 - Wire global middleware and shared API modules.
+- Create shared DTO service adapters from core shared services before mounting shared API modules.
 - Wire API activity logging middleware on the `/api` router.
 - Wire sliding-window rate-limit middleware on the `/api` router after API activity logging.
 - Register shared cache-service admin API routes under `/api/cache-service`.

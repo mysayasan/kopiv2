@@ -20,6 +20,7 @@ import (
 	enumauth "github.com/mysayasan/kopiv2/domain/enums/auth"
 	filestorageenums "github.com/mysayasan/kopiv2/domain/enums/filestorage"
 	"github.com/mysayasan/kopiv2/domain/models"
+	outputdtos "github.com/mysayasan/kopiv2/domain/shared/dtos/output"
 	"github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
@@ -29,25 +30,8 @@ import (
 type fileStorageApi struct {
 	auth middlewares.AuthMidware
 	rbac middlewares.RbacMidware
-	serv services.IFileStorageService
+	serv services.IFileStorageDtoService[outputdtos.FileStorageDto, outputdtos.OperationJobDto]
 	path string
-}
-
-type fileStorageJobResponse struct {
-	Id             int64  `json:"id"`
-	Type           string `json:"type"`
-	ResourceKey    string `json:"resourceKey"`
-	IdempotencyKey string `json:"idempotencyKey"`
-	Status         string `json:"status"`
-	Attempt        int64  `json:"attempt"`
-	MaxAttempts    int64  `json:"maxAttempts"`
-	Result         string `json:"result,omitempty"`
-	LastError      string `json:"lastError,omitempty"`
-	StartedAt      int64  `json:"startedAt,omitempty"`
-	DeadlineAt     int64  `json:"deadlineAt,omitempty"`
-	CompletedAt    int64  `json:"completedAt,omitempty"`
-	CreatedAt      int64  `json:"createdAt"`
-	UpdatedAt      int64  `json:"updatedAt"`
 }
 
 // Create FileStorageApi
@@ -55,7 +39,7 @@ func NewFileStorageApi(
 	router *mux.Router,
 	auth middlewares.AuthMidware,
 	rbac middlewares.RbacMidware,
-	serv services.IFileStorageService,
+	serv services.IFileStorageDtoService[outputdtos.FileStorageDto, outputdtos.OperationJobDto],
 	path string) {
 	handler := &fileStorageApi{
 		auth: auth,
@@ -192,7 +176,7 @@ func (m *fileStorageApi) uploadAsync(w http.ResponseWriter, r *http.Request) {
 	}
 	cleanupStaged = false
 
-	controllers.SendResult(w, newFileStorageJobResponse(job), "queued")
+	controllers.SendResult(w, job, "queued")
 }
 
 func (m *fileStorageApi) job(w http.ResponseWriter, r *http.Request) {
@@ -209,7 +193,7 @@ func (m *fileStorageApi) job(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	controllers.SendResult(w, newFileStorageJobResponse(job))
+	controllers.SendResult(w, job)
 }
 
 func (m *fileStorageApi) stageUploads(r *http.Request, claims *models.JwtCustomClaims) ([]services.FileStorageUpload, []string, error) {
@@ -309,28 +293,6 @@ func (m *fileStorageApi) stageUploads(r *http.Request, claims *models.JwtCustomC
 	}
 
 	return stagedUploads, failedUploads, nil
-}
-
-func newFileStorageJobResponse(job *entities.OperationJob) *fileStorageJobResponse {
-	if job == nil {
-		return nil
-	}
-	return &fileStorageJobResponse{
-		Id:             job.Id,
-		Type:           job.Type,
-		ResourceKey:    job.ResourceKey,
-		IdempotencyKey: job.IdempotencyKey,
-		Status:         job.Status,
-		Attempt:        job.Attempt,
-		MaxAttempts:    job.MaxAttempts,
-		Result:         job.Result,
-		LastError:      job.LastError,
-		StartedAt:      job.StartedAt,
-		DeadlineAt:     job.DeadlineAt,
-		CompletedAt:    job.CompletedAt,
-		CreatedAt:      job.CreatedAt,
-		UpdatedAt:      job.UpdatedAt,
-	}
 }
 
 func (m *fileStorageApi) downloadActor(r *http.Request) *services.FileStorageDownloadActor {

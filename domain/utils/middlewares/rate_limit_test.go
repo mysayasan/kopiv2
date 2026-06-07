@@ -9,6 +9,7 @@ import (
 
 	"github.com/mysayasan/kopiv2/domain/entities"
 	apiaccessenums "github.com/mysayasan/kopiv2/domain/enums/apiaccess"
+	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	"github.com/mysayasan/kopiv2/infra/cache"
 )
 
@@ -17,7 +18,7 @@ type fakeEndpointTierService struct {
 	calls     int
 }
 
-func (f *fakeEndpointTierService) Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.ApiEndpoint, uint64, error) {
+func (f *fakeEndpointTierService) Get(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.ApiEndpoint, uint64, error) {
 	f.calls++
 	return f.endpoints, uint64(len(f.endpoints)), nil
 }

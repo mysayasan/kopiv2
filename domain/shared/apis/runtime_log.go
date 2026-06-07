@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/gorilla/mux"
+	outputdtos "github.com/mysayasan/kopiv2/domain/shared/dtos/output"
 	"github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
@@ -14,7 +15,7 @@ import (
 type runtimeLogApi struct {
 	auth middlewares.AuthMidware
 	rbac middlewares.RbacMidware
-	serv services.IRuntimeLogService
+	serv services.IRuntimeLogDtoService[outputdtos.RuntimeLogDto]
 }
 
 // Create RuntimeLogApi
@@ -22,7 +23,7 @@ func NewRuntimeLogApi(
 	router *mux.Router,
 	auth middlewares.AuthMidware,
 	rbac middlewares.RbacMidware,
-	serv services.IRuntimeLogService) {
+	serv services.IRuntimeLogDtoService[outputdtos.RuntimeLogDto]) {
 	handler := &runtimeLogApi{
 		auth: auth,
 		rbac: rbac,

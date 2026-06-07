@@ -6,7 +6,8 @@ Implements user credential persistence operations for shared login/user APIs.
 
 ## Responsibilities
 
-- Lists user credential records with default newest-first sorting.
+- Lists user credential records with caller-provided filters and sorters.
+- Uses default newest-first sorting when callers do not provide sorters.
 - Resolves user credentials by unique email.
 - Creates, updates, and deletes user credentials through the shared generic repository.
 - Enforces credential policy for create operations.

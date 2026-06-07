@@ -2,9 +2,9 @@ package controllers
 
 import (
 	"encoding/json"
-	"math"
 	"net/http"
 	"os"
+	"reflect"
 	"strings"
 )
 
@@ -12,10 +12,13 @@ type PagingResponse[T any] struct {
 	Message    string `json:"message"`
 	DurationMs int64  `json:"durationMs"`
 	Data       struct {
-		Result      T      `json:"result"`
-		ResCnt      uint64 `json:"resCnt"`
-		CurrentPage int    `json:"currentPage"`
-		TotalPage   int    `json:"totalPage"`
+		Result     T      `json:"result"`
+		Limit      uint64 `json:"limit"`
+		Offset     uint64 `json:"offset"`
+		ResCnt     uint64 `json:"resCnt"`
+		TotalCnt   uint64 `json:"totalCnt"`
+		HasNext    bool   `json:"hasNext"`
+		NextOffset uint64 `json:"nextOffset"`
 	} `json:"data"`
 }
 
@@ -41,16 +44,18 @@ func SendPagingResult(w http.ResponseWriter, data interface{}, limit uint64, off
 	resp.Message = strings.Join(msgs, "\n")
 	resp.DurationMs = responseDurationMs(w)
 	resp.Data.Result = data
-	resp.Data.ResCnt = totalCnt
-	resp.Data.CurrentPage = 1
-	resp.Data.TotalPage = 1
-
-	if limit > 0 {
-		resp.Data.TotalPage = int(math.Ceil(float64(totalCnt) / float64(limit)))
-		if offset > 0 {
-			resp.Data.CurrentPage = int((offset / limit) + 1)
-		}
+	resp.Data.Limit = limit
+	resp.Data.Offset = offset
+	resp.Data.ResCnt = pageResultCount(data)
+	resp.Data.TotalCnt = totalCnt
+	if resp.Data.ResCnt > 0 {
+		resp.Data.NextOffset = offset + resp.Data.ResCnt
+	} else if limit > 0 {
+		resp.Data.NextOffset = offset + limit
+	} else {
+		resp.Data.NextOffset = offset
 	}
+	resp.Data.HasNext = resp.Data.NextOffset > offset && resp.Data.NextOffset < totalCnt
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -60,6 +65,31 @@ func SendPagingResult(w http.ResponseWriter, data interface{}, limit uint64, off
 	}
 
 	return nil
+}
+
+func pageResultCount(data interface{}) uint64 {
+	if data == nil {
+		return 0
+	}
+
+	switch v := data.(type) {
+	case []interface{}:
+		return uint64(len(v))
+	case []string:
+		return uint64(len(v))
+	}
+
+	val := reflect.ValueOf(data)
+	for val.Kind() == reflect.Pointer {
+		if val.IsNil() {
+			return 0
+		}
+		val = val.Elem()
+	}
+	if val.Kind() == reflect.Slice || val.Kind() == reflect.Array {
+		return uint64(val.Len())
+	}
+	return 1
 }
 
 func SendResult(w http.ResponseWriter, data interface{}, msgs ...string) error {

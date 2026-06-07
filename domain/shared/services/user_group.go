@@ -27,15 +27,17 @@ func NewUserGroupService(
 	}
 }
 
-func (m *userGroupService) Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.UserGroup, uint64, error) {
-	sorters := []sqldataenums.Sorter{
-		{
-			FieldName: "CreatedAt",
-			Sort:      2,
-		},
+func (m *userGroupService) Get(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.UserGroup, uint64, error) {
+	if len(sorters) == 0 {
+		sorters = []sqldataenums.Sorter{
+			{
+				FieldName: "CreatedAt",
+				Sort:      sqldataenums.DESC,
+			},
+		}
 	}
 
-	return m.repo.Get(ctx, "", limit, offset, nil, sorters)
+	return m.repo.Get(ctx, "", limit, offset, filters, sorters)
 }
 
 func (m *userGroupService) Create(ctx context.Context, model entities.UserGroup) (uint64, error) {

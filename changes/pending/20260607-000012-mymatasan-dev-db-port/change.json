@@ -1,0 +1,6 @@
+{
+  "level": "patch",
+  "scope": "app",
+  "app": "mymatasan",
+  "summary": "Update mymatasan dev database port default to 5433"
+}

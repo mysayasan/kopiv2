@@ -92,7 +92,7 @@ func (m *fakeDbCrud) CommitTx() error {
 
 type fakeApiEndpointRbacService struct{}
 
-func (m *fakeApiEndpointRbacService) Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.ApiEndpointRbac, uint64, error) {
+func (m *fakeApiEndpointRbacService) Get(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.ApiEndpointRbac, uint64, error) {
 	return nil, 0, nil
 }
 

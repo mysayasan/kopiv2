@@ -6,11 +6,13 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/apis"
+	outputdtos "github.com/mysayasan/kopiv2/apps/mymatasan/dtos/output"
 	appentities "github.com/mysayasan/kopiv2/apps/mymatasan/entities"
 	appmodels "github.com/mysayasan/kopiv2/apps/mymatasan/models"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
 	apiaccessenums "github.com/mysayasan/kopiv2/domain/enums/apiaccess"
+	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/infra/apidocs"
 	"github.com/mysayasan/kopiv2/infra/apphost"
 	ffmpegCam "github.com/mysayasan/kopiv2/infra/camera/ffmpeg"
@@ -75,6 +77,7 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Cache Service", Description: "cache administration access", Path: "/api/cache-service", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{Title: "User Group", Description: "user group module access", Path: "/api/user-group", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{Title: "User Credential", Description: "user login and role access", Path: "/api/user-credential", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
+		{Title: "User Login", Description: "app user login access", Path: "/api/user-login", AccessTier: apiaccessenums.AuthOnly, SeedRbac: true},
 	}
 
 	coreDefaults := []string{
@@ -137,6 +140,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	homeService := services.NewHomeService(residentPropRepo)
 	newCam := ffmpegCam.NewNetCam()
 	camService := services.NewCameraStreamService(camStreamRepo, deps.Cache, newCam, deps.Logger)
+	userLoginService := sharedservices.NewUserLoginDtoService[outputdtos.UserLoginDto](deps.UserLogin)
 
 	if err := camService.StartAllMjpegStream(); err != nil {
 		return nil, err
@@ -145,6 +149,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewAdminApi(api, *deps.Auth, *deps.Rbac)
 	apis.NewHomeApi(api, *deps.Auth, *deps.Rbac, homeService)
 	apis.NewCameraApi(api, *deps.Auth, *deps.Rbac, camService)
+	apis.NewUserLoginApi(api, *deps.Auth, *deps.Rbac, userLoginService)
 
 	return camService.Shutdown, nil
 }
@@ -238,6 +243,16 @@ func (m *module) APIDocs() apidocs.SpecConfig {
 				Summary:     "Get user by email",
 				Description: "Returns one user credential by email query parameter.",
 				Tags:        []string{"user-credential"},
+			},
+			"GET /api/user-login": {
+				Summary:     "List app user logins",
+				Description: "Returns app-safe paginated user login records without password hashes.",
+				Tags:        []string{"user-login"},
+			},
+			"GET /api/user-login/email": {
+				Summary:     "Get app user login by email",
+				Description: "Returns one app-safe user login record without password hash.",
+				Tags:        []string{"user-login"},
 			},
 			"GET /api/user-credential/group/{id}": {
 				Summary:     "List roles by group",

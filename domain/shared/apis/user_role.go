@@ -1,12 +1,13 @@
 package apis
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/domain/entities"
+	inputdtos "github.com/mysayasan/kopiv2/domain/shared/dtos/input"
+	outputdtos "github.com/mysayasan/kopiv2/domain/shared/dtos/output"
 	"github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
@@ -15,7 +16,7 @@ import (
 // UserRoleApi struct
 type userRoleApi struct {
 	auth middlewares.AuthMidware
-	serv services.IUserRoleService
+	serv services.IUserRoleDtoService[outputdtos.UserRoleDto]
 	rbac middlewares.RbacMidware
 }
 
@@ -24,7 +25,7 @@ func NewUserRoleApi(
 	router *mux.Router,
 	auth middlewares.AuthMidware,
 	rbac middlewares.RbacMidware,
-	serv services.IUserRoleService) {
+	serv services.IUserRoleDtoService[outputdtos.UserRoleDto]) {
 	handler := &userRoleApi{
 		auth: auth,
 		rbac: rbac,
@@ -45,16 +46,19 @@ func NewUserRoleApi(
 
 func (m *userRoleApi) get(w http.ResponseWriter, r *http.Request) {
 
-	limit, _ := strconv.ParseUint(r.URL.Query().Get("limit"), 10, 64)
-	offset, _ := strconv.ParseUint(r.URL.Query().Get("offset"), 10, 64)
+	opts, err := parseListQueryOptions[entities.UserRole](r)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
 
-	res, totalCnt, err := m.serv.Get(r.Context(), limit, offset)
+	res, totalCnt, err := m.serv.Get(r.Context(), opts.Limit, opts.Offset, opts.Filters, opts.Sorters)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrNotFound, err.Error())
 		return
 	}
 
-	controllers.SendPagingResult(w, res, limit, offset, totalCnt)
+	controllers.SendPagingResult(w, res, opts.Limit, opts.Offset, totalCnt)
 }
 
 func (m *userRoleApi) getByGroup(w http.ResponseWriter, r *http.Request) {
@@ -71,12 +75,8 @@ func (m *userRoleApi) getByGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *userRoleApi) post(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-
-	body := new(entities.UserRole)
-	if err := dec.Decode(&body); err != nil {
+	body, err := decodeRequestDto[inputdtos.UserRoleDto, entities.UserRole](w, r)
+	if err != nil {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
 		return
 	}
@@ -91,13 +91,8 @@ func (m *userRoleApi) post(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *userRoleApi) put(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-
-	body := new(entities.UserRole)
-
-	if err := dec.Decode(&body); err != nil {
+	body, err := decodeRequestDto[inputdtos.UserRoleDto, entities.UserRole](w, r)
+	if err != nil {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
 		return
 	}

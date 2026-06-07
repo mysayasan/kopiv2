@@ -27,15 +27,17 @@ func NewUserRoleService(
 	}
 }
 
-func (m *userRoleService) Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.UserRole, uint64, error) {
-	sorters := []sqldataenums.Sorter{
-		{
-			FieldName: "CreatedAt",
-			Sort:      2,
-		},
+func (m *userRoleService) Get(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.UserRole, uint64, error) {
+	if len(sorters) == 0 {
+		sorters = []sqldataenums.Sorter{
+			{
+				FieldName: "CreatedAt",
+				Sort:      sqldataenums.DESC,
+			},
+		}
 	}
 
-	return m.repo.Get(ctx, "", limit, offset, nil, sorters)
+	return m.repo.Get(ctx, "", limit, offset, filters, sorters)
 }
 
 // GetByGroup implements IUserRoleService.

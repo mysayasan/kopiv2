@@ -3,6 +3,7 @@ package dbsql
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	_ "github.com/lib/pq"
 	"github.com/mitchellh/mapstructure"
@@ -25,6 +26,9 @@ func (m *genericRepo[T]) Get(ctx context.Context, datasrc string, limit uint64, 
 	var tmodel = new(T)
 	res, totalCnt, err := m.dbCrud.Select(ctx, *tmodel, limit, offset, filters, sorter, datasrc)
 	if err != nil {
+		if isNoResultErr(err) {
+			return []*T{}, 0, nil
+		}
 		return nil, 0, fmt.Errorf("select list failed: %w", err)
 	}
 
@@ -38,6 +42,13 @@ func (m *genericRepo[T]) Get(ctx context.Context, datasrc string, limit uint64, 
 	}
 
 	return list, totalCnt, nil
+}
+
+func isNoResultErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "no result found")
 }
 
 func (m *genericRepo[T]) GetJoin(ctx context.Context, datasrc string, model any, limit uint64, offset uint64, filters []sqldataenums.Filter, sorter []sqldataenums.Sorter, joinsrc ...string) ([]map[string]any, uint64, error) {

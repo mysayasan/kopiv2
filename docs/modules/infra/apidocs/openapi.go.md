@@ -12,7 +12,9 @@ Provides a shared runtime OpenAPI/Swagger implementation for all app modules.
 - Converts discovered routes into OpenAPI 3.0 path operations.
 - Adds reusable request/response schema components for key endpoints under `components.schemas`.
 - Documents top-level `durationMs` on default, paging, and error JSON response wrappers.
+- Documents paging responses with offset-window metadata: `limit`, `offset`, `resCnt`, `totalCnt`, `hasNext`, and `nextOffset`.
 - Maps key endpoints to endpoint-specific response wrapper schemas (typed `Default*Response` / `Paging*Response`).
+- Maps shared write endpoints to `*InputDto` request schemas and shared read responses to `*OutputDto` result schemas.
 - Models non-JSON routes with explicit status/content contracts (e.g. OAuth redirect status codes and MJPEG streaming media type).
 - Includes cache-service admin endpoint contracts (`GET/DELETE /api/cache-service`, `POST /api/cache-service/wipe`, `GET /api/cache-service/health`).
 - Includes API log endpoint contracts (`GET /api/log`, `DELETE /api/log`).
@@ -22,6 +24,7 @@ Provides a shared runtime OpenAPI/Swagger implementation for all app modules.
 - Marks protected `/api/*` routes with cookie session auth security requirements.
 - Adds `X-CSRF-Token` header parameters for unsafe protected methods.
 - Adds path parameters to OpenAPI operation parameters.
+- Adds `limit`, `offset`, `filters`, and `sorters` query parameters for DB-backed shared paging endpoints.
 - Documents `429` responses for API routes affected by rate limiting.
 - Supports app-provided metadata and endpoint descriptions through `apidocs.Provider`.
 
@@ -33,6 +36,7 @@ Provides a shared runtime OpenAPI/Swagger implementation for all app modules.
 - File-storage download documents `id` for a single binary file, `ids` for ZIP download, and `view` for inline browser rendering.
 - File-storage download is documented without cookie auth so public downloads work from Swagger.
 - File upload multipart schema includes `documents`, `securityLvl`, `expiredAt`, `expiresIn`, and `expiresInUnit`.
-- Operation job responses use `OperationJobPayload` and `DefaultOperationJobResponse`.
+- Operation job responses use `OperationJobOutputDto` and `DefaultOperationJobResponse`.
+- Legacy `*Payload` component names remain as aliases for now while shared endpoints reference DTO-named components.
 - App modules can improve endpoint summaries/descriptions by implementing `APIDocs()`.
 - The Swagger UI is loaded from CDN assets and reads the local `/swagger/openapi.json` document.

@@ -10,6 +10,8 @@ Exposes database-backed API activity logs for authenticated administrators.
 - Mount `DELETE /api/log`.
 - Require auth middleware and RBAC validation.
 - Read `limit` and `offset` query parameters for listing.
+- Read optional `filters` and `sorters` JSON query parameters for DB-backed listing.
+- Return shared output DTOs through `IApiLogDtoService`.
 - Read `year` and `month` query parameters for monthly deletion.
 - Return forbidden when callers try to delete current-month API logs.
 

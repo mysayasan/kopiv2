@@ -479,13 +479,17 @@ func endpointSuccessSchema(method string, path string) string {
 	case "GET /api/endpoint-rbac/ep/me":
 		return "DefaultApiEndpointRbacJoinListResponse"
 	case "GET /api/endpoint-rbac/validate/me":
-		return "DefaultBoolResponse"
+		return "DefaultApiEndpointRbacResponse"
 	case "POST /api/endpoint-rbac", "PUT /api/endpoint-rbac":
 		return "DefaultApiEndpointRbacResponse"
 	case "GET /api/user-credential":
 		return "PagingUserCredentialResponse"
 	case "GET /api/user-credential/email":
 		return "DefaultUserLoginResponse"
+	case "GET /api/user-login":
+		return "PagingAppUserLoginResponse"
+	case "GET /api/user-login/email":
+		return "DefaultAppUserLoginResponse"
 	case "GET /api/user-credential/group/{id}":
 		return "DefaultUserRoleListResponse"
 	case "POST /api/user-credential":
@@ -580,17 +584,17 @@ func enrichOperationWithSchemas(method string, path string, op *openAPIOperation
 	case "POST /api/login/default/register":
 		op.RequestBody = jsonRequestBody("DefaultRegisterRequest", true)
 	case "POST /api/user-group", "PUT /api/user-group":
-		op.RequestBody = jsonRequestBody("UserGroupPayload", true)
+		op.RequestBody = jsonRequestBody("UserGroupInputDto", true)
 	case "POST /api/endpoint", "PUT /api/endpoint":
-		op.RequestBody = jsonRequestBody("ApiEndpointPayload", true)
+		op.RequestBody = jsonRequestBody("ApiEndpointInputDto", true)
 	case "POST /api/endpoint-rbac", "PUT /api/endpoint-rbac":
-		op.RequestBody = jsonRequestBody("ApiEndpointRbacPayload", true)
+		op.RequestBody = jsonRequestBody("ApiEndpointRbacInputDto", true)
 	case "POST /api/camera/stream", "PUT /api/camera/stream":
 		op.RequestBody = jsonRequestBody("CameraStreamPayload", true)
 	case "POST /api/user-credential":
-		op.RequestBody = jsonRequestBody("UserRolePayload", true)
+		op.RequestBody = jsonRequestBody("UserRoleInputDto", true)
 	case "PUT /api/user-credential":
-		op.RequestBody = jsonRequestBody("UserCredentialPayload", true)
+		op.RequestBody = jsonRequestBody("UserCredentialInputDto", true)
 	case "POST /api/file-storage/upload", "POST /api/file-storage/upload-async":
 		op.RequestBody = multipartRequestBody("FileUploadRequest", true)
 	case "GET /api/file-storage/download":
@@ -601,6 +605,20 @@ func enrichOperationWithSchemas(method string, path string, op *openAPIOperation
 		op.Parameters = append(op.Parameters, queryParameter("id", true, "Operation job ID"))
 	case "POST /api/cache-service/wipe":
 		op.RequestBody = jsonRequestBody("CacheWipeRequest", true)
+	}
+
+	if isPagingEndpoint(method, path) {
+		op.Parameters = append(op.Parameters,
+			queryParameter("limit", false, "Maximum number of rows to return. Omit or set 0 for the endpoint default/unbounded behavior."),
+			queryParameter("offset", false, "Number of rows to skip before returning results."),
+		)
+	}
+
+	if isSharedDBPagingEndpoint(method, path) {
+		op.Parameters = append(op.Parameters,
+			stringQueryParameter("filters", false, `JSON filter object or array. Fields use the shared sqldata shape: {"fieldName":"createdAt","compare":5,"value":1700000000}. Compare values: 1 eq, 2 neq, 3 gt, 4 lt, 5 gte, 6 lte.`),
+			stringQueryParameter("sorters", false, `JSON sorter object or array. Fields use the shared sqldata shape: {"fieldName":"createdAt","sort":2}. Sort values: 1 asc, 2 desc.`),
+		)
 	}
 
 	if key == "DELETE /api/log" || key == "DELETE /api/log-service" {
@@ -643,11 +661,30 @@ func isPagingEndpoint(method string, path string) bool {
 	pagingPaths := map[string]struct{}{
 		"/api/user-group":      {},
 		"/api/user-credential": {},
+		"/api/user-login":      {},
 		"/api/endpoint":        {},
 		"/api/endpoint-rbac":   {},
 		"/api/cache-service":   {},
 		"/api/camera/stream":   {},
 		"/api/home/latest":     {},
+		"/api/log":             {},
+	}
+
+	_, ok := pagingPaths[path]
+	return ok
+}
+
+func isSharedDBPagingEndpoint(method string, path string) bool {
+	if !strings.EqualFold(method, "GET") {
+		return false
+	}
+
+	pagingPaths := map[string]struct{}{
+		"/api/user-group":      {},
+		"/api/user-credential": {},
+		"/api/user-login":      {},
+		"/api/endpoint":        {},
+		"/api/endpoint-rbac":   {},
 		"/api/log":             {},
 	}
 
@@ -690,7 +727,7 @@ func baseComponentSchemas() map[string]openAPISchema {
 			},
 			Required: []string{"app", "appVersion", "coreVersion"},
 		},
-		"RuntimeLogEntry": {
+		"RuntimeLogOutputDto": {
 			Type: "object",
 			Properties: map[string]openAPISchema{
 				"timestamp": {Type: "integer", Format: "int64"},
@@ -768,9 +805,12 @@ func baseComponentSchemas() map[string]openAPISchema {
 							Items:       &openAPISchema{Type: "object", AdditionalProperties: true},
 							Description: "Endpoint-specific items",
 						},
-						"resCnt":      {Type: "integer", Format: "int64"},
-						"currentPage": {Type: "integer", Format: "int32"},
-						"totalPage":   {Type: "integer", Format: "int32"},
+						"limit":      {Type: "integer", Format: "int64"},
+						"offset":     {Type: "integer", Format: "int64"},
+						"resCnt":     {Type: "integer", Format: "int64"},
+						"totalCnt":   {Type: "integer", Format: "int64"},
+						"hasNext":    {Type: "boolean"},
+						"nextOffset": {Type: "integer", Format: "int64"},
 					},
 				},
 			},
@@ -788,7 +828,7 @@ func baseComponentSchemas() map[string]openAPISchema {
 				},
 			},
 		},
-		"UserGroupPayload": {
+		"UserGroupOutputDto": {
 			Type: "object",
 			Properties: map[string]openAPISchema{
 				"id":          {Type: "integer", Format: "int64"},
@@ -803,7 +843,7 @@ func baseComponentSchemas() map[string]openAPISchema {
 			},
 			Required: []string{"title", "parentId"},
 		},
-		"UserRolePayload": {
+		"UserRoleOutputDto": {
 			Type: "object",
 			Properties: map[string]openAPISchema{
 				"id":          {Type: "integer", Format: "int64"},
@@ -819,7 +859,7 @@ func baseComponentSchemas() map[string]openAPISchema {
 			},
 			Required: []string{"title", "parentId", "groupId"},
 		},
-		"UserLoginPayload": {
+		"UserLoginOutputDto": {
 			Type: "object",
 			Properties: map[string]openAPISchema{
 				"id":         {Type: "integer", Format: "int64"},
@@ -837,10 +877,27 @@ func baseComponentSchemas() map[string]openAPISchema {
 			},
 			Required: []string{"email"},
 		},
-		"UserCredentialPayload": {
-			OneOf: []openAPISchema{{Ref: schemaRef("UserLoginPayload")}, {Ref: schemaRef("UserRolePayload")}},
+		"AppUserLoginPayload": {
+			Type: "object",
+			Properties: map[string]openAPISchema{
+				"id":         {Type: "integer", Format: "int64"},
+				"email":      {Type: "string", Format: "email"},
+				"firstName":  {Type: "string"},
+				"lastName":   {Type: "string"},
+				"picUrl":     {Type: "string"},
+				"userRoleId": {Type: "integer", Format: "int64"},
+				"isActive":   {Type: "boolean"},
+				"createdBy":  {Type: "integer", Format: "int64"},
+				"createdAt":  {Type: "integer", Format: "int64"},
+				"updatedBy":  {Type: "integer", Format: "int64"},
+				"updatedAt":  {Type: "integer", Format: "int64"},
+			},
+			Required: []string{"email"},
 		},
-		"ApiEndpointPayload": {
+		"UserCredentialOutputDto": {
+			OneOf: []openAPISchema{{Ref: schemaRef("UserLoginOutputDto")}, {Ref: schemaRef("UserRoleOutputDto")}},
+		},
+		"ApiEndpointOutputDto": {
 			Type: "object",
 			Properties: map[string]openAPISchema{
 				"id":          {Type: "integer", Format: "int64"},
@@ -861,7 +918,7 @@ func baseComponentSchemas() map[string]openAPISchema {
 			},
 			Required: []string{"title", "host", "path"},
 		},
-		"ApiEndpointRbacPayload": {
+		"ApiEndpointRbacOutputDto": {
 			Type: "object",
 			Properties: map[string]openAPISchema{
 				"id":            {Type: "integer", Format: "int64"},
@@ -950,7 +1007,7 @@ func baseComponentSchemas() map[string]openAPISchema {
 			},
 			Required: []string{"username", "password"},
 		},
-		"ApiEndpointRbacJoinPayload": {
+		"ApiEndpointRbacJoinOutputDto": {
 			Type: "object",
 			Properties: map[string]openAPISchema{
 				"id":            {Type: "integer", Format: "int64"},
@@ -971,7 +1028,7 @@ func baseComponentSchemas() map[string]openAPISchema {
 				"createdAt": {Type: "integer", Format: "int64"},
 			},
 		},
-		"ApiLogPayload": {
+		"ApiLogOutputDto": {
 			Type: "object",
 			Properties: map[string]openAPISchema{
 				"id":             {Type: "integer", Format: "int64"},
@@ -987,7 +1044,7 @@ func baseComponentSchemas() map[string]openAPISchema {
 				"updatedAt":      {Type: "integer", Format: "int64"},
 			},
 		},
-		"FileStoragePayload": {
+		"FileStorageOutputDto": {
 			Type: "object",
 			Properties: map[string]openAPISchema{
 				"id":          {Type: "integer", Format: "int64"},
@@ -1005,7 +1062,7 @@ func baseComponentSchemas() map[string]openAPISchema {
 				"updatedAt":   {Type: "integer", Format: "int64"},
 			},
 		},
-		"OperationJobPayload": {
+		"OperationJobOutputDto": {
 			Type: "object",
 			Properties: map[string]openAPISchema{
 				"id":             {Type: "integer", Format: "int64"},
@@ -1064,29 +1121,55 @@ func baseComponentSchemas() map[string]openAPISchema {
 		},
 	}
 
+	schemas["UserGroupInputDto"] = schemas["UserGroupOutputDto"]
+	schemas["UserRoleInputDto"] = schemas["UserRoleOutputDto"]
+	schemas["UserLoginInputDto"] = schemas["UserLoginOutputDto"]
+	schemas["UserCredentialInputDto"] = openAPISchema{
+		OneOf: []openAPISchema{{Ref: schemaRef("UserLoginInputDto")}, {Ref: schemaRef("UserRoleInputDto")}},
+	}
+	schemas["ApiEndpointInputDto"] = schemas["ApiEndpointOutputDto"]
+	schemas["ApiEndpointRbacInputDto"] = schemas["ApiEndpointRbacOutputDto"]
+	schemas["ApiLogInputDto"] = schemas["ApiLogOutputDto"]
+	schemas["FileStorageInputDto"] = schemas["FileStorageOutputDto"]
+	schemas["OperationJobInputDto"] = schemas["OperationJobOutputDto"]
+
+	schemas["RuntimeLogEntry"] = schemas["RuntimeLogOutputDto"]
+	schemas["UserGroupPayload"] = schemas["UserGroupOutputDto"]
+	schemas["UserRolePayload"] = schemas["UserRoleOutputDto"]
+	schemas["UserLoginPayload"] = schemas["UserLoginOutputDto"]
+	schemas["UserCredentialPayload"] = schemas["UserCredentialOutputDto"]
+	schemas["ApiEndpointPayload"] = schemas["ApiEndpointOutputDto"]
+	schemas["ApiEndpointRbacPayload"] = schemas["ApiEndpointRbacOutputDto"]
+	schemas["ApiEndpointRbacJoinPayload"] = schemas["ApiEndpointRbacJoinOutputDto"]
+	schemas["ApiLogPayload"] = schemas["ApiLogOutputDto"]
+	schemas["FileStoragePayload"] = schemas["FileStorageOutputDto"]
+	schemas["OperationJobPayload"] = schemas["OperationJobOutputDto"]
+
 	schemas["DefaultStringResponse"] = defaultResponseSchema(openAPISchema{Type: "string"})
 	schemas["DefaultBoolResponse"] = defaultResponseSchema(openAPISchema{Type: "boolean"})
 	schemas["DefaultVersionInfoResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("VersionInfoPayload")})
-	schemas["DefaultUserGroupResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("UserGroupPayload")})
-	schemas["DefaultUserLoginResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("UserLoginPayload")})
-	schemas["DefaultUserRoleResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("UserRolePayload")})
-	schemas["DefaultUserCredentialResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("UserCredentialPayload")})
-	schemas["DefaultApiEndpointResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("ApiEndpointPayload")})
-	schemas["DefaultApiEndpointRbacResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("ApiEndpointRbacPayload")})
+	schemas["DefaultUserGroupResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("UserGroupOutputDto")})
+	schemas["DefaultUserLoginResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("UserLoginOutputDto")})
+	schemas["DefaultAppUserLoginResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("AppUserLoginPayload")})
+	schemas["DefaultUserRoleResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("UserRoleOutputDto")})
+	schemas["DefaultUserCredentialResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("UserCredentialOutputDto")})
+	schemas["DefaultApiEndpointResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("ApiEndpointOutputDto")})
+	schemas["DefaultApiEndpointRbacResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("ApiEndpointRbacOutputDto")})
 	schemas["DefaultCameraStreamResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("CameraStreamPayload")})
-	schemas["DefaultOperationJobResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("OperationJobPayload")})
-	schemas["DefaultUserRoleListResponse"] = defaultResponseSchema(openAPISchema{Type: "array", Items: &openAPISchema{Ref: schemaRef("UserRolePayload")}})
-	schemas["DefaultApiEndpointRbacJoinListResponse"] = defaultResponseSchema(openAPISchema{Type: "array", Items: &openAPISchema{Ref: schemaRef("ApiEndpointRbacJoinPayload")}})
+	schemas["DefaultOperationJobResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("OperationJobOutputDto")})
+	schemas["DefaultUserRoleListResponse"] = defaultResponseSchema(openAPISchema{Type: "array", Items: &openAPISchema{Ref: schemaRef("UserRoleOutputDto")}})
+	schemas["DefaultApiEndpointRbacJoinListResponse"] = defaultResponseSchema(openAPISchema{Type: "array", Items: &openAPISchema{Ref: schemaRef("ApiEndpointRbacJoinOutputDto")}})
 
-	schemas["PagingUserGroupResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("UserGroupPayload")})
-	schemas["PagingUserCredentialResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("UserCredentialPayload")})
-	schemas["PagingApiEndpointResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("ApiEndpointPayload")})
-	schemas["PagingApiEndpointRbacResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("ApiEndpointRbacPayload")})
+	schemas["PagingUserGroupResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("UserGroupOutputDto")})
+	schemas["PagingUserCredentialResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("UserCredentialOutputDto")})
+	schemas["PagingAppUserLoginResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("AppUserLoginPayload")})
+	schemas["PagingApiEndpointResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("ApiEndpointOutputDto")})
+	schemas["PagingApiEndpointRbacResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("ApiEndpointRbacOutputDto")})
 	schemas["PagingCameraStreamResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("CameraStreamPayload")})
 	schemas["PagingHomeLatestResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("ResidentPropPayload")})
-	schemas["PagingApiLogResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("ApiLogPayload")})
-	schemas["PagingRuntimeLogResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("RuntimeLogEntry")})
-	schemas["PagingFileStorageResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("FileStoragePayload")})
+	schemas["PagingApiLogResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("ApiLogOutputDto")})
+	schemas["PagingRuntimeLogResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("RuntimeLogOutputDto")})
+	schemas["PagingFileStorageResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("FileStorageOutputDto")})
 	schemas["PagingStringResponse"] = pagingResponseSchema(openAPISchema{Type: "string"})
 
 	return schemas
@@ -1116,9 +1199,12 @@ func pagingResponseSchema(itemSchema openAPISchema) openAPISchema {
 						Type:  "array",
 						Items: &itemSchema,
 					},
-					"resCnt":      {Type: "integer", Format: "int64"},
-					"currentPage": {Type: "integer", Format: "int32"},
-					"totalPage":   {Type: "integer", Format: "int32"},
+					"limit":      {Type: "integer", Format: "int64"},
+					"offset":     {Type: "integer", Format: "int64"},
+					"resCnt":     {Type: "integer", Format: "int64"},
+					"totalCnt":   {Type: "integer", Format: "int64"},
+					"hasNext":    {Type: "boolean"},
+					"nextOffset": {Type: "integer", Format: "int64"},
 				},
 			},
 		},

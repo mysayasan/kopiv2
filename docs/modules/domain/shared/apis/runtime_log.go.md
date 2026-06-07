@@ -11,6 +11,7 @@ Exposes runtime log listing for authenticated administrators.
 - Require auth middleware and RBAC validation.
 - Read `limit` and `offset` query parameters.
 - Return paginated runtime log entries from the configured logging module.
+- Return shared output DTOs through `IRuntimeLogDtoService`.
 - Delete dated runtime log files by `year` and `month` query parameters.
 - Return forbidden when callers try to delete the current month.
 
