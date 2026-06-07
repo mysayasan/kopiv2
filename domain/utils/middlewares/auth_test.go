@@ -1,12 +1,16 @@
 package middlewares
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	enumauth "github.com/mysayasan/kopiv2/domain/enums/auth"
 	"github.com/mysayasan/kopiv2/domain/models"
+	"github.com/mysayasan/kopiv2/infra/cache"
 )
 
 func TestAuthMiddlewareMissingToken(t *testing.T) {
@@ -212,6 +216,101 @@ func TestIssueAuthCookiesSetsSessionCookies(t *testing.T) {
 	if csrfCookie.HttpOnly || !csrfCookie.Secure || csrfCookie.SameSite != http.SameSiteLaxMode {
 		t.Fatalf("expected secure readable Lax csrf cookie, got %#v", csrfCookie)
 	}
+}
+
+func TestAuthWithConfigValidatesIssuerAudienceAndSessionCache(t *testing.T) {
+	store := cache.NewMemoryStore(time.Minute, time.Minute)
+	auth := NewAuthWithConfig(AuthConfig{
+		Secret:       "test-secret",
+		Issuer:       "myidsan",
+		Audience:     "myidsan,mymatasan",
+		AppCode:      "myidsan",
+		SessionCache: store,
+		SessionTTL:   time.Minute,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "https://example.com/api/login/default", nil)
+	rr := httptest.NewRecorder()
+	err := auth.IssueAuthCookies(rr, req, models.JwtCustomClaims{
+		Id:     42,
+		Email:  "user@example.com",
+		Name:   "user",
+		RoleId: 7,
+	})
+	if err != nil {
+		t.Fatalf("expected no error issuing cookies: %v", err)
+	}
+
+	authCookie := findCookie(rr.Result().Cookies(), SecureAuthCookieName)
+	if authCookie == nil {
+		t.Fatalf("expected auth cookie")
+	}
+
+	claims, err := auth.ClaimsFromToken(req.Context(), authCookie.Value)
+	if err != nil {
+		t.Fatalf("expected token to validate: %v", err)
+	}
+	if claims.Issuer != "myidsan" {
+		t.Fatalf("expected issuer myidsan, got %s", claims.Issuer)
+	}
+	if !claimStringsContain(claims.Audience, "mymatasan") {
+		t.Fatalf("expected mymatasan audience, got %#v", claims.Audience)
+	}
+	if claims.SessionId == "" {
+		t.Fatalf("expected session id")
+	}
+
+	validator := NewAuthWithConfig(AuthConfig{
+		Secret:       "test-secret",
+		Issuer:       "myidsan",
+		Audience:     "mymatasan",
+		SessionCache: store,
+	})
+	if _, err := validator.ClaimsFromToken(req.Context(), authCookie.Value); err != nil {
+		t.Fatalf("expected relying app audience to validate: %v", err)
+	}
+}
+
+func TestAuthWithConfigRejectsWrongAudience(t *testing.T) {
+	issuer := NewAuthWithConfig(AuthConfig{
+		Secret:   "test-secret",
+		Issuer:   "myidsan",
+		Audience: "myidsan",
+	})
+	token, err := issuer.JwtToken(models.JwtCustomClaims{
+		Id:        1,
+		Email:     "user@example.com",
+		Name:      "user",
+		RoleId:    1,
+		AppCode:   "myidsan",
+		SessionId: "sid",
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    "myidsan",
+			Audience:  jwt.ClaimStrings{"myidsan"},
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Minute)),
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to build token: %v", err)
+	}
+
+	validator := NewAuthWithConfig(AuthConfig{
+		Secret:   "test-secret",
+		Issuer:   "myidsan",
+		Audience: "mymatasan",
+	})
+	if _, err := validator.ClaimsFromToken(context.Background(), token); err == nil {
+		t.Fatalf("expected wrong audience to fail")
+	}
+}
+
+func claimStringsContain(values jwt.ClaimStrings, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func findCookie(cookies []*http.Cookie, name string) *http.Cookie {

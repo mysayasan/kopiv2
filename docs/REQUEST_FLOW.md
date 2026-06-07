@@ -14,7 +14,8 @@
    - rate-limit middleware classifies the API endpoint tier (`0=DevOnly`, `1=AuthOnly`, `2=Public`) and applies config-driven sliding-window limits.
    - auth middleware reads the HttpOnly session cookie, validates the JWT, and injects claims into context.
    - unsafe authenticated methods (`POST`, `PUT`, `PATCH`, `DELETE`) must send `X-CSRF-Token` matching the readable CSRF cookie.
-   - RBAC middleware validates role access for host + path segment boundary + method.
+   - auth middleware validates signed JWT, configured issuer/audience, and cache-backed SSO session when a `sid` claim is present.
+   - RBAC middleware validates resource-app scoped role access for host + path segment boundary + method.
 5. Handler decodes payload, calls service, and writes response.
 
 Shared JSON response helpers include `durationMs`, measured from request middleware start time to response serialization.
@@ -27,7 +28,7 @@ Shared JSON response helpers include `durationMs`, measured from request middlew
 
 ## Startup Flow
 
-1. Launcher selects app module (`-app` flag or `cmd/<app>` build target).
+1. Launcher selects app module (`-app` flag or `cmd/<app>` build target), such as `mymatasan` or `myidsan`.
 2. Load `.env`.
 3. Resolve app config file based on `ENVIRONMENT` from the selected app directory.
 4. Apply sensitive config requirements (`JWT_SECRET`, optional Google/GitHub OAuth secrets).
@@ -40,7 +41,7 @@ Shared JSON response helpers include `durationMs`, measured from request middlew
 11. If bootstrap is enabled, create missing database/schema and update the manifest state table.
 12. Build router and middleware chain.
 13. Expose setup status page and JSON endpoint at the configured setup path.
-14. Initialize DB, cache, transaction lock coordinator, repositories, embedded version manifest, telemetry recorder, shared API modules, selected app routes, and the shared scheduler for built-in or app-specific jobs.
+14. Initialize DB, cache, transaction lock coordinator, repositories, embedded version manifest, telemetry recorder, enabled shared API modules, selected app routes, and the shared scheduler for built-in or app-specific jobs.
 15. Register the durable file-storage upload job repository and start the backend upload worker when `transaction.jobWorkerEnabled=true`.
 16. Register Swagger/OpenAPI routes (`/swagger`, `/swagger/openapi.json`) from the shared docs module.
 17. Start app workers (for example camera autostart).
@@ -49,6 +50,8 @@ Shared JSON response helpers include `durationMs`, measured from request middlew
 Bootstrap seeding also ensures a default `system` group and `superadmin` role exist before the app becomes ready.
 The default `superadmin` login password is inserted as a bcrypt hash; legacy plain-text passwords still migrate after successful local login.
 It also seeds wildcard-host endpoint rows with `accessTier` metadata and RBAC rows for the protected API modules so the default access map is ready on a fresh install. Protected shared management APIs seed as `DevOnly`.
+
+`myidsan` uses this same bootstrap flow to seed the identity-provider management surface, app registry, SSO fallback endpoints, and selected relying-app policies. It is the cross-app sign-on and RBAC authority. `mymatasan` does not mount login/user/app-registry/endpoint-management route groups, so its Swagger surface stays focused on camera/resource operations. When Redis is enabled, resource apps can share short-lived session/RBAC cache entries. When only in-memory cache is enabled, resource apps call `myidsan` service APIs (`POST /api/sso/introspect`, `POST /api/sso/authorize`) for token introspection and authorization on local cache misses.
 
 ## Bootstrap Flow
 

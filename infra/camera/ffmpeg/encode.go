@@ -193,29 +193,15 @@ func (e *Encoder) getVideoHandle(ctx context.Context, input, output, title strin
 		e.config.FFMPEG,
 		// "-report",
 		// "-v", "16", // log level
-		// "-re",
 		"-rtsp_transport", "udp",
 		"-i", input,
-		// "-vfracmes", "1",
 		"-c:v", "jpeg",
 		"-f", vidType,
-		// "-filter:v", "scale=720:-1",
-		// "-c:v", vidType,
-		// "-q:v", "2",
-		//"-map", "0:v",
 		"-preset", "ultrafast",
 		"-vcodec", "mjpeg",
 		"-tune", "zerolatency",
-		// "-flvflags no_duration_filesize",
 		"-metadata", `title="` + title + `"`,
-		// "-stream_loop", "-1",
-		//"-y", "-map", "0",
-		// "-q:v", "3",
 	}
-
-	// if e.config.Size > 0 {
-	// 	arg = append(arg, "-fs", strconv.FormatInt(e.config.Size, 10)) //nolint:gomnd,nolintlint
-	// }
 
 	if e.config.Time > 0 {
 		arg = append(arg, "-t", strconv.Itoa(e.config.Time))

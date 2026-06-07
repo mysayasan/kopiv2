@@ -6,13 +6,11 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/apis"
-	outputdtos "github.com/mysayasan/kopiv2/apps/mymatasan/dtos/output"
 	appentities "github.com/mysayasan/kopiv2/apps/mymatasan/entities"
 	appmodels "github.com/mysayasan/kopiv2/apps/mymatasan/models"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
 	apiaccessenums "github.com/mysayasan/kopiv2/domain/enums/apiaccess"
-	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/infra/apidocs"
 	"github.com/mysayasan/kopiv2/infra/apphost"
 	ffmpegCam "github.com/mysayasan/kopiv2/infra/camera/ffmpeg"
@@ -35,6 +33,14 @@ func (m *module) BaseDir() string {
 	return filepath.Join("apps", "mymatasan")
 }
 
+func (m *module) SharedAPIs() apphost.SharedAPIConfig {
+	cfg := apphost.DefaultSharedAPIConfig()
+	cfg.AppRegistry = false
+	cfg.ApiEndpoint = false
+	cfg.ApiEndpointRbac = false
+	return cfg
+}
+
 func (m *module) Entities() []any {
 	return []any{
 		sharedentities.ApiEndpoint{},
@@ -45,6 +51,7 @@ func (m *module) Entities() []any {
 		sharedentities.UserGroup{},
 		sharedentities.UserLogin{},
 		sharedentities.UserRole{},
+		sharedentities.UserSession{},
 		appentities.CameraStream{},
 		appentities.ResidentPropPic{},
 		appmodels.ResidentProp{},
@@ -63,8 +70,6 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 	endpoints := []endpointSeed{
 		{Title: "API Health", Description: "api namespace health", Path: "/api/health", AccessTier: apiaccessenums.Public},
 		{Title: "Runtime Version", Description: "runtime version access", Path: "/api/version", AccessTier: apiaccessenums.Public},
-		{Title: "Login", Description: "local and OAuth login access", Path: "/api/login", AccessTier: apiaccessenums.Public},
-		{Title: "OAuth Callback", Description: "OAuth callback access", Path: "/api/callback", AccessTier: apiaccessenums.Public},
 		{Title: "Admin", Description: "admin module access", Path: "/api/admin", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{Title: "Home", Description: "home module access", Path: "/api/home", AccessTier: apiaccessenums.AuthOnly, SeedRbac: true},
 		{Title: "Camera Stream", Description: "camera stream module access", Path: "/api/camera/stream", AccessTier: apiaccessenums.AuthOnly, SeedRbac: true},
@@ -72,12 +77,7 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "File Storage Download", Description: "public file download access", Path: "/api/file-storage/download", AccessTier: apiaccessenums.Public},
 		{Title: "Logs", Description: "api log access", Path: "/api/log", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{Title: "Runtime Logs", Description: "runtime log access", Path: "/api/log-service", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
-		{Title: "Endpoints", Description: "endpoint catalog access", Path: "/api/endpoint", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
-		{Title: "Endpoint RBAC", Description: "endpoint access control access", Path: "/api/endpoint-rbac", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{Title: "Cache Service", Description: "cache administration access", Path: "/api/cache-service", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
-		{Title: "User Group", Description: "user group module access", Path: "/api/user-group", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
-		{Title: "User Credential", Description: "user login and role access", Path: "/api/user-credential", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
-		{Title: "User Login", Description: "app user login access", Path: "/api/user-login", AccessTier: apiaccessenums.AuthOnly, SeedRbac: true},
 	}
 
 	coreDefaults := []string{
@@ -100,10 +100,10 @@ AND NOT EXISTS (SELECT 1 FROM user_login ul WHERE ul.email = 'superadmin');`,
 	coreRbac := make([]string, 0, len(endpoints)*2)
 	for _, endpoint := range endpoints {
 		coreRbac = append(coreRbac,
-			fmt.Sprintf(`INSERT INTO api_endpoint (title, description, host, path, access_tier, is_active, created_by, created_at, updated_by, updated_at)
-SELECT '%s', '%s', '*', '%s', %d, TRUE, 0, 0, 0, 0
-WHERE NOT EXISTS (SELECT 1 FROM api_endpoint WHERE host = '*' AND path = '%s');`, endpoint.Title, endpoint.Description, endpoint.Path, endpoint.AccessTier, endpoint.Path),
-			fmt.Sprintf(`UPDATE api_endpoint SET access_tier = %d WHERE host = '*' AND path = '%s' AND (access_tier IS NULL OR access_tier <> %d);`, endpoint.AccessTier, endpoint.Path, endpoint.AccessTier),
+			fmt.Sprintf(`INSERT INTO api_endpoint (title, description, app_code, host, path, access_tier, is_active, created_by, created_at, updated_by, updated_at)
+SELECT '%s', '%s', 'mymatasan', '*', '%s', %d, TRUE, 0, 0, 0, 0
+WHERE NOT EXISTS (SELECT 1 FROM api_endpoint WHERE app_code = 'mymatasan' AND host = '*' AND path = '%s');`, endpoint.Title, endpoint.Description, endpoint.Path, endpoint.AccessTier, endpoint.Path),
+			fmt.Sprintf(`UPDATE api_endpoint SET app_code = 'mymatasan', access_tier = %d WHERE host = '*' AND path = '%s' AND ((access_tier IS NULL OR access_tier <> %d) OR app_code IS NULL OR app_code = '');`, endpoint.AccessTier, endpoint.Path, endpoint.AccessTier),
 		)
 		if endpoint.SeedRbac {
 			coreRbac = append(coreRbac,
@@ -140,7 +140,6 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	homeService := services.NewHomeService(residentPropRepo)
 	newCam := ffmpegCam.NewNetCam()
 	camService := services.NewCameraStreamService(camStreamRepo, deps.Cache, newCam, deps.Logger)
-	userLoginService := sharedservices.NewUserLoginDtoService[outputdtos.UserLoginDto](deps.UserLogin)
 
 	if err := camService.StartAllMjpegStream(); err != nil {
 		return nil, err
@@ -149,7 +148,6 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewAdminApi(api, *deps.Auth, *deps.Rbac)
 	apis.NewHomeApi(api, *deps.Auth, *deps.Rbac, homeService)
 	apis.NewCameraApi(api, *deps.Auth, *deps.Rbac, camService)
-	apis.NewUserLoginApi(api, *deps.Auth, *deps.Rbac, userLoginService)
 
 	return camService.Shutdown, nil
 }
@@ -199,101 +197,6 @@ func (m *module) APIDocs() apidocs.SpecConfig {
 				Description: "Returns the running app version and shared core version.",
 				Tags:        []string{"system"},
 			},
-			"GET /api/login/google": {
-				Summary:     "Google login start",
-				Description: "Starts OAuth2 login flow for Google provider.",
-				Tags:        []string{"login"},
-			},
-			"POST /api/login/default": {
-				Summary:     "Default login",
-				Description: "Performs local username/password login and sets the session cookies.",
-				Tags:        []string{"login"},
-			},
-			"POST /api/login/default/register": {
-				Summary:     "Default register",
-				Description: "Creates a local username/password account and sets the session cookies.",
-				Tags:        []string{"login"},
-			},
-			"POST /api/login/default/logout": {
-				Summary:     "Default logout",
-				Description: "Clears the session cookies.",
-				Tags:        []string{"login"},
-			},
-			"GET /api/login/github": {
-				Summary:     "GitHub login start",
-				Description: "Starts OAuth2 login flow for GitHub provider.",
-				Tags:        []string{"login"},
-			},
-			"GET /api/callback/google": {
-				Summary:     "Google login callback",
-				Description: "OAuth2 callback endpoint for Google provider.",
-				Tags:        []string{"login"},
-			},
-			"GET /api/callback/github": {
-				Summary:     "GitHub login callback",
-				Description: "OAuth2 callback endpoint for GitHub provider.",
-				Tags:        []string{"login"},
-			},
-			"GET /api/user-credential": {
-				Summary:     "List user credentials and roles",
-				Description: "Returns paginated user credentials and role records.",
-				Tags:        []string{"user-credential"},
-			},
-			"GET /api/user-credential/email": {
-				Summary:     "Get user by email",
-				Description: "Returns one user credential by email query parameter.",
-				Tags:        []string{"user-credential"},
-			},
-			"GET /api/user-login": {
-				Summary:     "List app user logins",
-				Description: "Returns app-safe paginated user login records without password hashes.",
-				Tags:        []string{"user-login"},
-			},
-			"GET /api/user-login/email": {
-				Summary:     "Get app user login by email",
-				Description: "Returns one app-safe user login record without password hash.",
-				Tags:        []string{"user-login"},
-			},
-			"GET /api/user-credential/group/{id}": {
-				Summary:     "List roles by group",
-				Description: "Returns user roles for selected group ID.",
-				Tags:        []string{"user-credential"},
-			},
-			"GET /api/user-group": {
-				Summary:     "List user groups",
-				Description: "Returns paginated user groups.",
-				Tags:        []string{"user-group"},
-			},
-			"POST /api/user-group": {
-				Summary:     "Create user group",
-				Description: "Creates a new user group.",
-				Tags:        []string{"user-group"},
-			},
-			"PUT /api/user-group": {
-				Summary:     "Update user group",
-				Description: "Updates an existing user group.",
-				Tags:        []string{"user-group"},
-			},
-			"DELETE /api/user-group/{id}": {
-				Summary:     "Delete user group",
-				Description: "Deletes a user group by ID.",
-				Tags:        []string{"user-group"},
-			},
-			"POST /api/user-credential": {
-				Summary:     "Create user role",
-				Description: "Creates a user role under a group.",
-				Tags:        []string{"user-credential"},
-			},
-			"PUT /api/user-credential": {
-				Summary:     "Update user credential or role",
-				Description: "Updates user credential or user role payload by model type.",
-				Tags:        []string{"user-credential"},
-			},
-			"DELETE /api/user-credential/{id}": {
-				Summary:     "Delete user credential",
-				Description: "Deletes a user credential by ID.",
-				Tags:        []string{"user-credential"},
-			},
 			"GET /api/log": {
 				Summary:     "List API logs",
 				Description: "Returns API access logs.",
@@ -333,56 +236,6 @@ func (m *module) APIDocs() apidocs.SpecConfig {
 				Summary:     "Wipe cache by payload",
 				Description: "Deletes cache entries using JSON payload with key, prefix, or wipeAll=true.",
 				Tags:        []string{"cache-service"},
-			},
-			"GET /api/endpoint": {
-				Summary:     "List endpoints",
-				Description: "Returns RBAC endpoint catalog.",
-				Tags:        []string{"endpoint"},
-			},
-			"POST /api/endpoint": {
-				Summary:     "Create endpoint",
-				Description: "Creates a new RBAC endpoint entry.",
-				Tags:        []string{"endpoint"},
-			},
-			"PUT /api/endpoint": {
-				Summary:     "Update endpoint",
-				Description: "Updates an RBAC endpoint entry.",
-				Tags:        []string{"endpoint"},
-			},
-			"DELETE /api/endpoint/{id}": {
-				Summary:     "Delete endpoint",
-				Description: "Deletes an RBAC endpoint entry by ID.",
-				Tags:        []string{"endpoint"},
-			},
-			"GET /api/endpoint-rbac": {
-				Summary:     "List endpoint RBAC",
-				Description: "Returns endpoint RBAC rules.",
-				Tags:        []string{"endpoint-rbac"},
-			},
-			"GET /api/endpoint-rbac/validate/me": {
-				Summary:     "Validate current access",
-				Description: "Validates current user access for endpoint/method query.",
-				Tags:        []string{"endpoint-rbac"},
-			},
-			"GET /api/endpoint-rbac/ep/me": {
-				Summary:     "List current user endpoints",
-				Description: "Returns endpoints available for current user role.",
-				Tags:        []string{"endpoint-rbac"},
-			},
-			"POST /api/endpoint-rbac": {
-				Summary:     "Create endpoint RBAC",
-				Description: "Creates endpoint access rule.",
-				Tags:        []string{"endpoint-rbac"},
-			},
-			"PUT /api/endpoint-rbac": {
-				Summary:     "Update endpoint RBAC",
-				Description: "Updates endpoint access rule.",
-				Tags:        []string{"endpoint-rbac"},
-			},
-			"DELETE /api/endpoint-rbac/{id}": {
-				Summary:     "Delete endpoint RBAC",
-				Description: "Deletes endpoint access rule by ID.",
-				Tags:        []string{"endpoint-rbac"},
 			},
 			"POST /api/file-storage/upload": {
 				Summary:     "Upload file",

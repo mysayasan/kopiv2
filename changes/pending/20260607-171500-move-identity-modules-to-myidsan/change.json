@@ -1,0 +1,6 @@
+{
+  "type": "changed",
+  "scope": "myidsan,shared,apphost",
+  "summary": "Move login and user-management API, DTO, and service packages from shared domain modules into myidsan.",
+  "compatibility": "Resource apps no longer receive identity-management route/service wiring from apphost; myidsan owns login, user, group, and role management APIs."
+}

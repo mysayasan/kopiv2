@@ -19,14 +19,45 @@ type ShutdownFunc func(ctx context.Context) error
 
 // Dependencies are shared runtime components available to each app module.
 type Dependencies struct {
-	Config    *config.AppConfigModel
-	Db        dbsql.IDbCrud
-	Cache     cache.Store
-	Auth      *middlewares.AuthMidware
-	Rbac      *middlewares.RbacMidware
-	UserLogin sharedservices.IUserLoginService
-	Logger    applog.Logger
-	Scheduler *scheduler.Scheduler
+	Config      *config.AppConfigModel
+	Db          dbsql.IDbCrud
+	Cache       cache.Store
+	Auth        *middlewares.AuthMidware
+	Rbac        *middlewares.RbacMidware
+	AppRegistry sharedservices.IAppRegistryService
+	Logger      applog.Logger
+	Scheduler   *scheduler.Scheduler
+}
+
+// SharedAPIConfig controls which shared route groups the host mounts for an app.
+type SharedAPIConfig struct {
+	Version         bool
+	ApiLog          bool
+	AppRegistry     bool
+	ApiEndpoint     bool
+	ApiEndpointRbac bool
+	FileStorage     bool
+	CacheService    bool
+	RuntimeLog      bool
+}
+
+// DefaultSharedAPIConfig enables the full shared management surface.
+func DefaultSharedAPIConfig() SharedAPIConfig {
+	return SharedAPIConfig{
+		Version:         true,
+		ApiLog:          true,
+		AppRegistry:     true,
+		ApiEndpoint:     true,
+		ApiEndpointRbac: true,
+		FileStorage:     true,
+		CacheService:    true,
+		RuntimeLog:      true,
+	}
+}
+
+// SharedAPIConfigurator can be implemented by apps that do not expose every shared route group.
+type SharedAPIConfigurator interface {
+	SharedAPIs() SharedAPIConfig
 }
 
 // App defines the contract for a runnable application module.

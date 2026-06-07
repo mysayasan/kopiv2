@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/mysayasan/kopiv2/infra/config"
+	"github.com/mysayasan/kopiv2/infra/login"
 )
 
 func TestBuildListenerSpecsRejectsSharedTLSAndNonTLSPort(t *testing.T) {
@@ -123,5 +124,25 @@ func TestBuildCacheStoreDefaultProviderUsesInMemory(t *testing.T) {
 
 	if provider != "inmemory" {
 		t.Fatalf("provider got %q want inmemory", provider)
+	}
+}
+
+func TestApplySensitiveConfigRequiresOAuthSecretsWhenProviderConfigured(t *testing.T) {
+	t.Setenv("JWT_SECRET", "")
+	t.Setenv("GOOGLE_CLIENT_SECRET", "")
+
+	cfg := &config.AppConfigModel{
+		Login: &login.OAuthProvidersConfigModel{
+			Google: &login.OAuth2ConfigModel{
+				ClientId:    "google-client",
+				RedirectUrl: "http://localhost/callback",
+				Scopes:      []string{"profile"},
+			},
+		},
+	}
+	cfg.Jwt.Secret = "unit-test-secret"
+
+	if err := applySensitiveConfig(cfg); err == nil {
+		t.Fatalf("expected configured oauth provider to require oauth secret")
 	}
 }

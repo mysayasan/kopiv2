@@ -133,6 +133,38 @@ func TestRbacCachesByRoleId(t *testing.T) {
 	}
 }
 
+func TestRbacCachesByResourceApp(t *testing.T) {
+	service := &fakeApiEndpointRbacService{}
+	store := cache.NewMemoryStore(time.Minute, time.Minute)
+	myidsan := NewRbacWithConfig(service, store, RbacConfig{AppCode: "myidsan", CacheTTL: time.Minute})
+	mymatasan := NewRbacWithConfig(service, store, RbacConfig{AppCode: "mymatasan", CacheTTL: time.Minute})
+
+	call := func(m *RbacMidware) {
+		handler := m.RbacHandler(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+		req := httptest.NewRequest(http.MethodGet, "http://example.com/api/admin/test", nil)
+		req.Host = "example.com"
+		claims := &models.JwtCustomClaims{Id: 10, RoleId: 1, Email: "user@example.com", PolicyVersion: 1}
+		req = req.WithContext(context.WithValue(req.Context(), enumauth.Claims, claims))
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d", http.StatusOK, rr.Code)
+		}
+	}
+
+	call(myidsan)
+	call(myidsan)
+	if got := service.calls[10]; got != 1 {
+		t.Fatalf("expected myidsan cache hit after first lookup, got %d lookups", got)
+	}
+	call(mymatasan)
+	if got := service.calls[10]; got != 2 {
+		t.Fatalf("expected mymatasan to use a separate cache key, got %d lookups", got)
+	}
+}
+
 func TestRbacAllowsWildcardHost(t *testing.T) {
 	service := &wildcardApiEndpointRbacService{}
 	m := NewRbac(service, cache.NewMemoryStore(time.Minute, time.Minute), time.Minute)

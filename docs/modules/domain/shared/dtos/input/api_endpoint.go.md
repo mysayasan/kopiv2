@@ -6,4 +6,4 @@ Defines the shared input DTO for API endpoint create/update payloads.
 
 ## Notes
 
-- Mirrors `entities.ApiEndpoint` for now.
+- Mirrors `entities.ApiEndpoint`; `appCode` is required for app-scoped RBAC endpoint catalogs.

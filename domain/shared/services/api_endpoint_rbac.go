@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"log"
 
 	_ "github.com/lib/pq"
@@ -83,15 +84,38 @@ func (m *apiEndpointRbacService) Delete(ctx context.Context, id uint64) (uint64,
 }
 
 func (m *apiEndpointRbacService) Validate(ctx context.Context, host string, path string, userRoleId uint64) (*entities.ApiEndpointRbac, error) {
-	apiEp, err := m.apiEpRepo.GetByUnique(ctx, "", "ukey1", host, path)
+	apiEp, err := m.getEndpointByHostPath(ctx, host, path)
 	if err != nil {
-		apiEp, err = m.apiEpRepo.GetByUnique(ctx, "", "ukey1", "*", path)
+		apiEp, err = m.getEndpointByHostPath(ctx, "*", path)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	return m.repo.GetByUnique(ctx, "", "ukey1", apiEp.Id, userRoleId)
+}
+
+func (m *apiEndpointRbacService) getEndpointByHostPath(ctx context.Context, host string, path string) (*entities.ApiEndpoint, error) {
+	filters := []sqldataenums.Filter{
+		{
+			FieldName: "Host",
+			Value:     host,
+			Compare:   sqldataenums.Equal,
+		},
+		{
+			FieldName: "Path",
+			Value:     path,
+			Compare:   sqldataenums.Equal,
+		},
+	}
+	endpoints, _, err := m.apiEpRepo.Get(ctx, "", 1, 0, filters, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(endpoints) == 0 {
+		return nil, fmt.Errorf("api endpoint not found")
+	}
+	return endpoints[0], nil
 }
 
 func (m *apiEndpointRbacService) GetApiEpByUserRole(ctx context.Context, userId uint64) ([]*entities.ApiEndpointRbacJoinModel, uint64, error) {

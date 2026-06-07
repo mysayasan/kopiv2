@@ -1,0 +1,6 @@
+{
+  "level": "minor",
+  "scope": "both",
+  "app": "myidsan",
+  "summary": "Add myidsan identity app scaffold with bootstrap seeds and documentation"
+}

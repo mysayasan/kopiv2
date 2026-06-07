@@ -12,11 +12,6 @@ type IHomeService interface {
 	GetLatest(ctx context.Context, limit uint64, offset uint64) ([]*models.ResidentProp, uint64, error)
 }
 
-// // ICameraService interface
-// type ICameraService interface {
-// 	ReadMjpeg(ctx context.Context, uri string, videoStream chan []byte) error
-// }
-
 // ICameraStreamService interface
 type ICameraStreamService interface {
 	Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.CameraStream, uint64, error)

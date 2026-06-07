@@ -313,6 +313,9 @@ func requiresCookieAuth(path string) bool {
 	if strings.HasPrefix(path, "/api/login") || strings.HasPrefix(path, "/api/callback") || path == "/api/health" {
 		return false
 	}
+	if strings.HasPrefix(path, "/api/sso") {
+		return false
+	}
 	if path == "/api/file-storage/download" {
 		return false
 	}
@@ -474,6 +477,14 @@ func endpointSuccessSchema(method string, path string) string {
 		return "PagingApiEndpointResponse"
 	case "POST /api/endpoint", "PUT /api/endpoint":
 		return "DefaultApiEndpointResponse"
+	case "GET /api/app-registry":
+		return "PagingAppRegistryResponse"
+	case "POST /api/app-registry", "PUT /api/app-registry":
+		return "DefaultAppRegistryResponse"
+	case "POST /api/sso/introspect":
+		return "DefaultSSOIntrospectionResponse"
+	case "POST /api/sso/authorize":
+		return "DefaultSSOAuthorizationResponse"
 	case "GET /api/endpoint-rbac":
 		return "PagingApiEndpointRbacResponse"
 	case "GET /api/endpoint-rbac/ep/me":
@@ -587,6 +598,12 @@ func enrichOperationWithSchemas(method string, path string, op *openAPIOperation
 		op.RequestBody = jsonRequestBody("UserGroupInputDto", true)
 	case "POST /api/endpoint", "PUT /api/endpoint":
 		op.RequestBody = jsonRequestBody("ApiEndpointInputDto", true)
+	case "POST /api/app-registry", "PUT /api/app-registry":
+		op.RequestBody = jsonRequestBody("AppRegistryInputDto", true)
+	case "POST /api/sso/introspect":
+		op.RequestBody = jsonRequestBody("SSOIntrospectionRequest", true)
+	case "POST /api/sso/authorize":
+		op.RequestBody = jsonRequestBody("SSOAuthorizationRequest", true)
 	case "POST /api/endpoint-rbac", "PUT /api/endpoint-rbac":
 		op.RequestBody = jsonRequestBody("ApiEndpointRbacInputDto", true)
 	case "POST /api/camera/stream", "PUT /api/camera/stream":
@@ -662,6 +679,7 @@ func isPagingEndpoint(method string, path string) bool {
 		"/api/user-group":      {},
 		"/api/user-credential": {},
 		"/api/user-login":      {},
+		"/api/app-registry":    {},
 		"/api/endpoint":        {},
 		"/api/endpoint-rbac":   {},
 		"/api/cache-service":   {},
@@ -683,6 +701,7 @@ func isSharedDBPagingEndpoint(method string, path string) bool {
 		"/api/user-group":      {},
 		"/api/user-credential": {},
 		"/api/user-login":      {},
+		"/api/app-registry":    {},
 		"/api/endpoint":        {},
 		"/api/endpoint-rbac":   {},
 		"/api/log":             {},
@@ -903,6 +922,7 @@ func baseComponentSchemas() map[string]openAPISchema {
 				"id":          {Type: "integer", Format: "int64"},
 				"title":       {Type: "string"},
 				"description": {Type: "string"},
+				"appCode":     {Type: "string"},
 				"host":        {Type: "string"},
 				"path":        {Type: "string"},
 				"accessTier": {
@@ -916,7 +936,24 @@ func baseComponentSchemas() map[string]openAPISchema {
 				"updatedBy": {Type: "integer", Format: "int64"},
 				"updatedAt": {Type: "integer", Format: "int64"},
 			},
-			Required: []string{"title", "host", "path"},
+			Required: []string{"title", "appCode", "host", "path"},
+		},
+		"AppRegistryOutputDto": {
+			Type: "object",
+			Properties: map[string]openAPISchema{
+				"id":          {Type: "integer", Format: "int64"},
+				"code":        {Type: "string"},
+				"title":       {Type: "string"},
+				"description": {Type: "string"},
+				"baseUrl":     {Type: "string"},
+				"audience":    {Type: "string"},
+				"isActive":    {Type: "boolean"},
+				"createdBy":   {Type: "integer", Format: "int64"},
+				"createdAt":   {Type: "integer", Format: "int64"},
+				"updatedBy":   {Type: "integer", Format: "int64"},
+				"updatedAt":   {Type: "integer", Format: "int64"},
+			},
+			Required: []string{"code", "title", "audience"},
 		},
 		"ApiEndpointRbacOutputDto": {
 			Type: "object",
@@ -989,6 +1026,59 @@ func baseComponentSchemas() map[string]openAPISchema {
 				"wipeAll": {Type: "boolean"},
 			},
 		},
+		"SSOIntrospectionRequest": {
+			Type: "object",
+			Properties: map[string]openAPISchema{
+				"token":    {Type: "string"},
+				"audience": {Type: "string"},
+			},
+			Required: []string{"token"},
+		},
+		"SSOAuthorizationRequest": {
+			Type: "object",
+			Properties: map[string]openAPISchema{
+				"token":    {Type: "string"},
+				"audience": {Type: "string"},
+				"host":     {Type: "string"},
+				"path":     {Type: "string"},
+				"method":   {Type: "string"},
+			},
+			Required: []string{"token", "path", "method"},
+		},
+		"SSOIntrospectionPayload": {
+			Type: "object",
+			Properties: map[string]openAPISchema{
+				"active":        {Type: "boolean"},
+				"userId":        {Type: "integer", Format: "int64"},
+				"roleId":        {Type: "integer", Format: "int64"},
+				"email":         {Type: "string"},
+				"name":          {Type: "string"},
+				"sessionId":     {Type: "string"},
+				"issuer":        {Type: "string"},
+				"audience":      {Type: "array", Items: &openAPISchema{Type: "string"}},
+				"appCode":       {Type: "string"},
+				"policyVersion": {Type: "integer", Format: "int64"},
+				"expiresAt":     {Type: "integer", Format: "int64"},
+				"reason":        {Type: "string"},
+			},
+		},
+		"SSOAuthorizationPayload": {
+			Type: "object",
+			Properties: map[string]openAPISchema{
+				"active":        {Type: "boolean"},
+				"allowed":       {Type: "boolean"},
+				"reason":        {Type: "string"},
+				"userId":        {Type: "integer", Format: "int64"},
+				"roleId":        {Type: "integer", Format: "int64"},
+				"email":         {Type: "string"},
+				"sessionId":     {Type: "string"},
+				"issuer":        {Type: "string"},
+				"audience":      {Type: "array", Items: &openAPISchema{Type: "string"}},
+				"appCode":       {Type: "string"},
+				"policyVersion": {Type: "integer", Format: "int64"},
+				"decision":      {Type: "object", AdditionalProperties: true},
+			},
+		},
 		"DefaultLoginRequest": {
 			Type: "object",
 			Properties: map[string]openAPISchema{
@@ -1013,6 +1103,7 @@ func baseComponentSchemas() map[string]openAPISchema {
 				"id":            {Type: "integer", Format: "int64"},
 				"apiEndpointId": {Type: "integer", Format: "int64"},
 				"userRoleId":    {Type: "integer", Format: "int64"},
+				"appCode":       {Type: "string"},
 				"host":          {Type: "string"},
 				"path":          {Type: "string"},
 				"accessTier": {
@@ -1128,6 +1219,10 @@ func baseComponentSchemas() map[string]openAPISchema {
 		OneOf: []openAPISchema{{Ref: schemaRef("UserLoginInputDto")}, {Ref: schemaRef("UserRoleInputDto")}},
 	}
 	schemas["ApiEndpointInputDto"] = schemas["ApiEndpointOutputDto"]
+	schemas["AppRegistryInputDto"] = schemas["AppRegistryOutputDto"]
+	appRegistryInput := schemas["AppRegistryInputDto"]
+	appRegistryInput.Properties["clientSecret"] = openAPISchema{Type: "string"}
+	schemas["AppRegistryInputDto"] = appRegistryInput
 	schemas["ApiEndpointRbacInputDto"] = schemas["ApiEndpointRbacOutputDto"]
 	schemas["ApiLogInputDto"] = schemas["ApiLogOutputDto"]
 	schemas["FileStorageInputDto"] = schemas["FileStorageOutputDto"]
@@ -1139,6 +1234,7 @@ func baseComponentSchemas() map[string]openAPISchema {
 	schemas["UserLoginPayload"] = schemas["UserLoginOutputDto"]
 	schemas["UserCredentialPayload"] = schemas["UserCredentialOutputDto"]
 	schemas["ApiEndpointPayload"] = schemas["ApiEndpointOutputDto"]
+	schemas["AppRegistryPayload"] = schemas["AppRegistryOutputDto"]
 	schemas["ApiEndpointRbacPayload"] = schemas["ApiEndpointRbacOutputDto"]
 	schemas["ApiEndpointRbacJoinPayload"] = schemas["ApiEndpointRbacJoinOutputDto"]
 	schemas["ApiLogPayload"] = schemas["ApiLogOutputDto"]
@@ -1154,7 +1250,10 @@ func baseComponentSchemas() map[string]openAPISchema {
 	schemas["DefaultUserRoleResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("UserRoleOutputDto")})
 	schemas["DefaultUserCredentialResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("UserCredentialOutputDto")})
 	schemas["DefaultApiEndpointResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("ApiEndpointOutputDto")})
+	schemas["DefaultAppRegistryResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("AppRegistryOutputDto")})
 	schemas["DefaultApiEndpointRbacResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("ApiEndpointRbacOutputDto")})
+	schemas["DefaultSSOIntrospectionResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("SSOIntrospectionPayload")})
+	schemas["DefaultSSOAuthorizationResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("SSOAuthorizationPayload")})
 	schemas["DefaultCameraStreamResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("CameraStreamPayload")})
 	schemas["DefaultOperationJobResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("OperationJobOutputDto")})
 	schemas["DefaultUserRoleListResponse"] = defaultResponseSchema(openAPISchema{Type: "array", Items: &openAPISchema{Ref: schemaRef("UserRoleOutputDto")}})
@@ -1164,6 +1263,7 @@ func baseComponentSchemas() map[string]openAPISchema {
 	schemas["PagingUserCredentialResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("UserCredentialOutputDto")})
 	schemas["PagingAppUserLoginResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("AppUserLoginPayload")})
 	schemas["PagingApiEndpointResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("ApiEndpointOutputDto")})
+	schemas["PagingAppRegistryResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("AppRegistryOutputDto")})
 	schemas["PagingApiEndpointRbacResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("ApiEndpointRbacOutputDto")})
 	schemas["PagingCameraStreamResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("CameraStreamPayload")})
 	schemas["PagingHomeLatestResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("ResidentPropPayload")})

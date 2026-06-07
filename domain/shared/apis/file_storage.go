@@ -59,10 +59,6 @@ func NewFileStorageApi(
 	group.HandleFunc("/upload", rbac.RbacHandler(handler.upload)).Methods("POST")
 	group.HandleFunc("/upload-async", rbac.RbacHandler(handler.uploadAsync)).Methods("POST")
 	group.HandleFunc("/job", rbac.RbacHandler(handler.job)).Methods("GET")
-
-	// group := router.Group("file-storage")
-	// group.Post("/upload", auth.JwtHandler(), rbac.ApiHandler(), handler.upload).Name("upload")
-	// group.Get("/download", auth.JwtHandler(), rbac.ApiHandler(), handler.download).Name("download")
 }
 
 func (m *fileStorageApi) download(w http.ResponseWriter, r *http.Request) {

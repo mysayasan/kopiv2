@@ -1,0 +1,7 @@
+{
+  "id": "20260607-153000-sso-rbac-upgrade",
+  "type": "minor",
+  "scope": "core,myidsan,mymatasan",
+  "summary": "Add app registry, SSO token/session cache, app-scoped RBAC cache, and myidsan introspection/authorization fallback APIs.",
+  "compatibility": "adds app_registry/user_session entities and api_endpoint.app_code; existing databases with older host/path-only endpoint unique indexes may need a manual index migration before storing duplicate paths across apps"
+}

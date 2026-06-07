@@ -9,6 +9,7 @@
 - PostgreSQL persistence using a generic repository layer.
 - Static SPA serving from app assets.
 - Public runtime version reporting with separate core and app SemVer values.
+- A dedicated identity app (`myidsan`) for user management, RBAC administration, and planned SSO authority.
 
 The runtime now uses a reusable multi-app launcher pattern:
 
@@ -28,6 +29,7 @@ The runtime now uses a reusable multi-app launcher pattern:
 - App selection:
   - runtime selection via `go run . -app <name>`
   - compile selection via `go build ./cmd/<name>`
+  - currently registered apps: `mymatasan`, `myidsan`
 - HTTP server defaults:
   - Read header timeout: `5s`
   - Read timeout: `15s`
@@ -40,10 +42,15 @@ The runtime now uses a reusable multi-app launcher pattern:
 
 - Authentication: JWT session stored in an HttpOnly cookie.
 - CSRF protection: unsafe authenticated methods (`POST`, `PUT`, `PATCH`, `DELETE`) require `X-CSRF-Token` matching the readable CSRF cookie.
-- Local credential auth endpoints are available under `/api/login/default` (login) and `/api/login/default/register` (register).
+- Local credential auth endpoints are available under `/api/login/default` (login) and `/api/login/default/register` (register) in `myidsan`; relying/resource apps do not mount login APIs.
 - OAuth login providers (Google/GitHub) are optional and do not disable local credential auth when not configured.
 - Local credential passwords are stored as bcrypt hashes, with lazy migration from legacy plain-text values on successful login.
 - Authorization: endpoint-level RBAC based on user role mappings.
+- `myidsan` is the central policy authority for cross-app SSO. Tokens carry issuer (`iss`), audience (`aud`), expiry, session id (`sid`), resource app code, and policy version. Redis should be used for shared session/RBAC cache in multi-process deployments; in-memory cache requires relying apps to call `myidsan` for introspection and authorization decisions when local cache misses.
+- `mymatasan` is a relying/resource app and does not mount login, user/group/role, app-registry, endpoint, or endpoint-RBAC management APIs. Those management surfaces live in `myidsan`.
+- Registered apps are stored in `app_registry`; endpoint policies are scoped by `api_endpoint.appCode`.
+- `POST /api/sso/introspect` validates token/session state for service-to-service fallback.
+- `POST /api/sso/authorize` validates token/session state and returns an app-scoped RBAC decision for service-to-service fallback.
 - API endpoint metadata includes `accessTier` (`0=DevOnly`, `1=AuthOnly`, `2=Public`) for route classification. The tier does not replace auth/RBAC; `DevOnly` endpoints still require authorization when registered behind protected handlers.
 - API rate limiting uses a sliding-window counter per endpoint access tier. Redis-backed cache shares counters across instances; in-memory cache is process-local.
 - Secrets:
@@ -57,7 +64,8 @@ The runtime now uses a reusable multi-app launcher pattern:
 - Cache abstraction is runtime-selected via configuration (`default`, `redis`, `inmemory`, or `memory`).
 - Primary shared cache backend for multi-instance deployments: Redis.
 - `default`, `inmemory`, and `memory` all select the local in-process memory cache.
-- RBAC role access lists are cached by role key and invalidated on endpoint RBAC create/update/delete.
+- SSO sessions are cached as `sso:session:<sid>`.
+- RBAC role access lists are cached by resource app, role key, and policy version, then invalidated on endpoint or endpoint-RBAC create/update/delete.
 - Readiness includes cache ping to ensure runtime dependencies are available.
 - Shared admin cache API is exposed under `/api/cache-service` for key listing and controlled wipe operations.
 - API activity is persisted into `api_log` for both authenticated and non-authenticated `/api` requests, including elapsed `durationMs`.
@@ -101,8 +109,8 @@ The runtime now uses a reusable multi-app launcher pattern:
 
 Config source:
 
-- `ENVIRONMENT=dev` -> `apps/mymatasan/config.dev.json`
-- otherwise -> `apps/mymatasan/config.json`
+- `ENVIRONMENT=dev` -> `apps/<selected-app>/config.dev.json`
+- otherwise -> `apps/<selected-app>/config.json`
 
 Environment overrides (runtime):
 
@@ -110,6 +118,7 @@ Environment overrides (runtime):
 - legacy server compatibility: `SERVER_ADDR`, `SERVER_PORTS`, `SERVER_USE_TLS`, `SERVER_ENABLE_TLS`, `SERVER_ENABLE_NON_TLS`
 - db: `DB_ENGINE`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSL_MODE`
 - cache: `CACHE_PROVIDER`, `CACHE_TTL_SECONDS`, `CACHE_KEY_PREFIX`, `REDIS_ADDR`, `REDIS_PASSWORD`, `REDIS_DB`, `REDIS_USE_TLS`, `REDIS_CONNECT_TIMEOUT_MS`, `REDIS_OPERATION_TIMEOUT_MS`
+- sso: `SSO_ISSUER`, `SSO_AUDIENCE`, `SSO_SESSION_TTL_SECONDS`, `SSO_POLICY_CACHE_TTL_SECONDS`, `SSO_INTERNAL_TOKEN`
 - rate limit: `RATE_LIMIT_ENABLED`
 - transaction: `TRANSACTION_LOCK_PROVIDER`, `TRANSACTION_LOCK_WAIT_TIMEOUT_MS`, `TRANSACTION_LOCK_LEASE_MS`, `TRANSACTION_OPERATION_TIMEOUT_MS`, `TRANSACTION_STUCK_TIMEOUT_MS`, `TRANSACTION_JOB_WORKER_ENABLED`, `TRANSACTION_JOB_WORKER_FREQUENCY_SECONDS`, `TRANSACTION_MAX_ATTEMPTS`
 - secrets: `JWT_SECRET`, `GOOGLE_CLIENT_SECRET`, `GITHUB_CLIENT_SECRET`
@@ -123,6 +132,12 @@ Server config contract (`server` in app config):
 - `tlsPorts`: HTTPS listener ports. Empty means no HTTPS listener.
 - `nonTlsPorts`: HTTP listener ports. Empty means no HTTP listener.
 - `ports`, `enableTls`, `enableNonTls`: legacy shared-port mode used only when explicit TLS/non-TLS port lists are empty.
+
+TLS config contract (`tls` in app config):
+
+- `certPath`: certificate path used when any HTTPS listener is enabled.
+- `keyPath`: private-key path used when any HTTPS listener is enabled.
+- Relative TLS paths resolve from the selected app directory.
 
 Database config contract (`db` in app config):
 
@@ -179,7 +194,7 @@ File storage config contract (`fileStorage` in app config):
 - `cleanup.frequencySeconds`: scheduler check interval; defaults to 60 seconds when omitted or invalid.
 - `cleanup.batchSize`: maximum expired file rows removed per scheduler run; defaults to 100 when omitted or invalid.
 
-At least one explicit TLS or non-TLS port must be configured. The same port cannot be assigned to both `tlsPorts` and `nonTlsPorts`. Legacy shared-port mode still rejects simultaneous TLS and non-TLS because HTTP and HTTPS cannot bind the same address simultaneously.
+At least one explicit TLS or non-TLS port must be configured. The same port cannot be assigned to both `tlsPorts` and `nonTlsPorts`. Legacy shared-port mode still rejects simultaneous TLS and non-TLS because HTTP and HTTPS cannot bind the same address simultaneously. HTTPS listeners require non-empty certificate and key paths.
 
 ## Health Contracts
 
@@ -193,7 +208,7 @@ At least one explicit TLS or non-TLS port must be configured. The same port cann
 
 - Core version and app version are stored separately as standard `major.minor.patch` SemVer values.
 - Core version covers reusable/shared code such as `infra`, `domain`, and shared API/service modules.
-- App version covers the selected app module, such as `apps/mymatasan`.
+- App version covers the selected app module, such as `apps/mymatasan` or `apps/myidsan`.
 - The server loads an embedded manifest from `infra/versioning/version.json`.
 - The runtime endpoint returns only the selected app version plus the core version; it does not expose the full app version map.
 - GitHub Actions consumes pending JSON changelog entries from `changes/pending/.../change.json`, bumps the manifest, and moves processed entries to `changes/applied`.

@@ -250,10 +250,6 @@ func (m *dbCrud) getCols(props reflect.Value) []string {
 		}
 
 		res = append(res, strcase.ToSnake(field.Name))
-		// varName := props.Type().Field(i).Name
-		// varType := props.Type().Field(i).Type
-		// varValue := props.Field(i).Interface()
-		// fmt.Printf("%v %v %v\n", varName, varType, varValue)
 	}
 
 	return res

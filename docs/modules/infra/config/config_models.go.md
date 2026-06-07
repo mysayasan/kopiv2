@@ -8,13 +8,14 @@ Defines the top-level app configuration model loaded from app config JSON.
 
 - Model optional OAuth provider configuration for Google and GitHub.
 - Model server listener hostnames and explicit TLS/non-TLS ports.
-- Model bootstrap, JWT, file storage, cache, rate limiting, transaction coordination, logging, API log cleanup, telemetry, TLS, and DB settings.
+- Model bootstrap, JWT, SSO, file storage, cache, rate limiting, transaction coordination, logging, API log cleanup, telemetry, TLS, and DB settings.
 
 ## Notes
 
 - `login.google` and `login.github` are independently optional.
 - Apphost requires each configured OAuth provider to have its matching client secret before startup continues.
 - `server.tlsPorts` and `server.nonTlsPorts` are the preferred listener config fields.
+- `tls.certPath` and `tls.keyPath` are required when HTTPS listeners are enabled; relative paths are app-relative.
 - Legacy `server.ports`, `server.enableTls`, and `server.enableNonTls` remain available only as a fallback when explicit port lists are empty.
 - `logging.path` is app-relative unless absolute, and is resolved with Go `filepath` for Windows, Linux, and macOS.
 - `fileStorage.path` is app-relative unless absolute.
@@ -35,6 +36,11 @@ Defines the top-level app configuration model loaded from app config JSON.
 - `telemetry.prometheus.apiDurationThresholdMs` controls slow API request metrics.
 - `rateLimit.enabled` enables API sliding-window rate limiting.
 - `rateLimit.devOnly`, `rateLimit.authOnly`, and `rateLimit.public` configure per-tier request counts and windows.
+- `sso.issuer` configures the expected/issued JWT issuer.
+- `sso.audience` configures comma-separated accepted JWT audiences.
+- `sso.sessionTtlSeconds` controls cookie/session-cache lifetime.
+- `sso.policyCacheTtlSeconds` controls RBAC policy cache lifetime.
+- `sso.internalToken` protects myidsan service-to-service introspection and authorization APIs.
 - `transaction.lockProvider` selects Redis or in-memory FIFO transaction locking; empty inherits `cache.provider`.
 - `transaction.lockWaitTimeoutMs` bounds queue wait time.
 - `transaction.lockLeaseMs` controls Redis owner lease duration.

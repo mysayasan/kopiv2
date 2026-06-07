@@ -37,8 +37,8 @@ func TestBuildManifest(t *testing.T) {
 	if len(apiEndpoint.Unique) != 1 {
 		t.Fatalf("expected one unique index group for api_endpoint, got %d", len(apiEndpoint.Unique))
 	}
-	if len(apiEndpoint.Unique[0].Columns) != 2 {
-		t.Fatalf("expected unique group to contain two columns, got %d", len(apiEndpoint.Unique[0].Columns))
+	if len(apiEndpoint.Unique[0].Columns) != 3 {
+		t.Fatalf("expected unique group to contain three columns, got %d", len(apiEndpoint.Unique[0].Columns))
 	}
 }
 
@@ -57,6 +57,7 @@ func TestBuildManifestKeepsEntityFieldOrder(t *testing.T) {
 		"id",
 		"title",
 		"description",
+		"app_code",
 		"host",
 		"path",
 		"access_tier",

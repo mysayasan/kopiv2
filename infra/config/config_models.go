@@ -29,6 +29,13 @@ type AppConfigModel struct {
 	Jwt struct {
 		Secret string `json:"secret" validate:"required"`
 	} `json:"jwt"`
+	SSO struct {
+		Issuer                string `json:"issuer"`
+		Audience              string `json:"audience"`
+		SessionTTLSeconds     int    `json:"sessionTtlSeconds"`
+		PolicyCacheTTLSeconds int    `json:"policyCacheTtlSeconds"`
+		InternalToken         string `json:"internalToken"`
+	} `json:"sso"`
 	FileStorage struct {
 		Path    string `json:"path" validate:"required"`
 		Cleanup struct {

@@ -11,5 +11,8 @@ type JwtCustomClaims struct {
 	FamilyName    string `json:"familyName" form:"familyName" query:"familyName"`
 	Picture       string `json:"picture" form:"picture" query:"picture"`
 	RoleId        int64  `json:"roleId" form:"roleId" query:"roleId"`
+	SessionId     string `json:"sid" form:"sid" query:"sid"`
+	AppCode       string `json:"appCode" form:"appCode" query:"appCode"`
+	PolicyVersion int64  `json:"policyVersion" form:"policyVersion" query:"policyVersion"`
 	jwt.RegisteredClaims
 }

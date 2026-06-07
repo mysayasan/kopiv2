@@ -183,6 +183,8 @@ Every new app should only need to do this:
 
 That is the standard I recommend for reuse across new apps.
 
+`myidsan` follows this contract as an identity app: it registers identity, app registry, user session, endpoint, RBAC, logging, cache, file-storage, and operation-job entities, then seeds its own identity-management endpoint catalog through app-local seeders.
+
 ## Recommended Next Implementation Step
 
 Build the shared bootstrap engine first, then add a thin setup API and setup page on top of it.
@@ -193,9 +195,15 @@ The first implementation in this repository uses startup bootstrap plus additive
 
 When `autoSeed` is enabled, the engine can execute config-defined SQL seed statements through the shared seeder helper.
 
-The current app also seeds a minimal core identity dataset on first run:
+The current apps also seed a minimal core identity dataset on first run:
 
 - a `system` user group
 - a `superadmin` user role associated with that group
 - a default `superadmin` login account (`superadmin` / `superadmin123`, stored as bcrypt) linked to that role
-- wildcard-host `api_endpoint` rows with `accessTier` metadata and `api_endpoint_rbac` rows for protected modules, so the default access rules are portable across hosts
+- `app_registry` rows for `myidsan` and `mymatasan`
+- `user_session` table for SSO session audit/revocation storage; live session validation currently uses the configured cache provider
+- wildcard-host `api_endpoint` rows with `appCode` and `accessTier` metadata plus `api_endpoint_rbac` rows for protected modules, so the default access rules are portable across hosts
+
+`mymatasan` seeds camera and app-local protected endpoints. `myidsan` seeds identity, user-management, app-registry, endpoint, endpoint-RBAC, cache, log, file-storage administration, SSO fallback endpoints, and selected relying-app policies for `mymatasan`.
+
+Fresh schema bootstrap treats `api_endpoint` uniqueness as app-aware through `appCode + host + path`. Existing databases that previously created a host/path-only unique index may need a manual operator migration before they can store duplicate paths for multiple app codes.

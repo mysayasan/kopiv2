@@ -107,11 +107,13 @@ func Run(app App) error {
 		return err
 	}
 
+	sharedAPIConfig := sharedAPIConfigFor(app)
 	if err := applySensitiveConfig(appConfig); err != nil {
 		return err
 	}
 	applyDbConfigFromEnv(appConfig)
 	applyCacheConfigFromEnv(appConfig)
+	applySSOConfigFromEnv(appConfig)
 	applyTransactionConfigFromEnv(appConfig)
 	applyLoggingConfigFromEnv(appConfig)
 	applyApiLogConfigFromEnv(appConfig)
@@ -200,18 +202,16 @@ func Run(app App) error {
 	router.HandleFunc("/ready", readinessCheckHandler(dbCrud, cacheStore)).Methods("GET")
 
 	userLoginRepo := dbsql.NewGenericRepo[sharedEntities.UserLogin](dbCrud)
-	userGroupRepo := dbsql.NewGenericRepo[sharedEntities.UserGroup](dbCrud)
 	userRoleRepo := dbsql.NewGenericRepo[sharedEntities.UserRole](dbCrud)
 	apiLogRepo := dbsql.NewGenericRepo[sharedEntities.ApiLog](dbCrud)
+	appRegistryRepo := dbsql.NewGenericRepo[sharedEntities.AppRegistry](dbCrud)
 	apiEpRepo := dbsql.NewGenericRepo[sharedEntities.ApiEndpoint](dbCrud)
 	apiEpRbacRepo := dbsql.NewGenericRepo[sharedEntities.ApiEndpointRbac](dbCrud)
 	fileStorRepo := dbsql.NewGenericRepo[sharedEntities.FileStorage](dbCrud)
 	operationJobRepo := dbsql.NewGenericRepo[sharedEntities.OperationJob](dbCrud)
 
-	userLoginService := sharedServices.NewUserLoginService(userLoginRepo, cacheStore)
-	userGroupService := sharedServices.NewUserGroupService(userGroupRepo, cacheStore)
-	userRoleService := sharedServices.NewUserRoleService(userRoleRepo, cacheStore)
 	apiLogService := sharedServices.NewApiLogService(apiLogRepo, cacheStore)
+	appRegistryService := sharedServices.NewAppRegistryService(appRegistryRepo, cacheStore)
 	apiEndpointService := sharedServices.NewApiEndpointService(apiEpRepo, cacheStore)
 	apiEndpointRbacService := sharedServices.NewApiEndpointRbacService(apiEpRbacRepo, userLoginRepo, apiEpRepo, cacheStore)
 	fileStorageService := sharedServices.NewFileStorageService(
@@ -228,10 +228,8 @@ func Run(app App) error {
 	)
 	cacheService := sharedServices.NewCacheService(cacheStore)
 	runtimeLogService := sharedServices.NewRuntimeLogService(runtimeLogger)
-	userLoginDtoService := sharedServices.NewUserLoginDtoService[sharedOutputDtos.UserLoginDto](userLoginService)
-	userGroupDtoService := sharedServices.NewUserGroupDtoService[sharedOutputDtos.UserGroupDto](userGroupService)
-	userRoleDtoService := sharedServices.NewUserRoleDtoService[sharedOutputDtos.UserRoleDto](userRoleService)
 	apiLogDtoService := sharedServices.NewApiLogDtoService[sharedOutputDtos.ApiLogDto](apiLogService)
+	appRegistryDtoService := sharedServices.NewAppRegistryDtoService[sharedOutputDtos.AppRegistryDto](appRegistryService)
 	apiEndpointDtoService := sharedServices.NewApiEndpointDtoService[sharedOutputDtos.ApiEndpointDto](apiEndpointService)
 	apiEndpointRbacDtoService := sharedServices.NewApiEndpointRbacDtoService[sharedOutputDtos.ApiEndpointRbacDto, sharedOutputDtos.ApiEndpointRbacJoinDto](apiEndpointRbacService)
 	fileStorageDtoService := sharedServices.NewFileStorageDtoService[sharedOutputDtos.FileStorageDto, sharedOutputDtos.OperationJobDto](fileStorageService)
@@ -245,8 +243,14 @@ func Run(app App) error {
 	startFileStorageJobScheduler(runtimeScheduler, appConfig, runtimeLogger, fileStorageService)
 
 	rbacCacheTTL := time.Duration(appConfig.Cache.TTLSeconds) * time.Second
-	rbac := middlewares.NewRbac(apiEndpointRbacService, cacheStore, rbacCacheTTL)
-	auth := middlewares.NewAuth(appConfig.Jwt.Secret)
+	if appConfig.SSO.PolicyCacheTTLSeconds > 0 {
+		rbacCacheTTL = time.Duration(appConfig.SSO.PolicyCacheTTLSeconds) * time.Second
+	}
+	rbac := middlewares.NewRbacWithConfig(apiEndpointRbacService, cacheStore, middlewares.RbacConfig{
+		AppCode:  app.Name(),
+		CacheTTL: rbacCacheTTL,
+	})
+	auth := middlewares.NewAuthWithConfig(authMiddlewareConfig(app.Name(), appConfig, cacheStore))
 	versionManifest, err := versioning.LoadDefault()
 	if err != nil {
 		return fmt.Errorf("error loading version manifest: %w", err)
@@ -263,27 +267,40 @@ func Run(app App) error {
 	rateLimitMidware := middlewares.NewRateLimit(apiEndpointService, cacheStore, auth, rateLimitMiddlewareConfig(appConfig))
 	api.Use(rateLimitMidware.Middleware)
 
-	sharedApis.NewVersionApi(api, app.Name(), versionManifest)
-	sharedApis.NewLoginApi(api, appConfig.Login, *auth, userLoginService)
-	sharedApis.NewUserLoginApi(api, *auth, *rbac, userLoginDtoService)
-	sharedApis.NewUserGroupApi(api, *auth, *rbac, userGroupDtoService)
-	sharedApis.NewUserRoleApi(api, *auth, *rbac, userRoleDtoService)
-	sharedApis.NewApiLogApi(api, *auth, *rbac, apiLogDtoService)
-	sharedApis.NewApiEndpointApi(api, *auth, *rbac, apiEndpointDtoService)
-	sharedApis.NewApiEndpointRbacApi(api, *auth, *rbac, apiEndpointRbacDtoService)
-	sharedApis.NewFileStorageApi(api, *auth, *rbac, fileStorageDtoService, appConfig.FileStorage.Path)
-	sharedApis.NewCacheServiceApi(api, *auth, *rbac, cacheService, apiLogService)
-	sharedApis.NewRuntimeLogApi(api, *auth, *rbac, runtimeLogDtoService)
+	if sharedAPIConfig.Version {
+		sharedApis.NewVersionApi(api, app.Name(), versionManifest)
+	}
+	if sharedAPIConfig.ApiLog {
+		sharedApis.NewApiLogApi(api, *auth, *rbac, apiLogDtoService)
+	}
+	if sharedAPIConfig.AppRegistry {
+		sharedApis.NewAppRegistryApi(api, *auth, *rbac, appRegistryDtoService)
+	}
+	if sharedAPIConfig.ApiEndpoint {
+		sharedApis.NewApiEndpointApi(api, *auth, *rbac, apiEndpointDtoService)
+	}
+	if sharedAPIConfig.ApiEndpointRbac {
+		sharedApis.NewApiEndpointRbacApi(api, *auth, *rbac, apiEndpointRbacDtoService)
+	}
+	if sharedAPIConfig.FileStorage {
+		sharedApis.NewFileStorageApi(api, *auth, *rbac, fileStorageDtoService, appConfig.FileStorage.Path)
+	}
+	if sharedAPIConfig.CacheService {
+		sharedApis.NewCacheServiceApi(api, *auth, *rbac, cacheService, apiLogService)
+	}
+	if sharedAPIConfig.RuntimeLog {
+		sharedApis.NewRuntimeLogApi(api, *auth, *rbac, runtimeLogDtoService)
+	}
 
 	shutdownHook, err := app.RegisterAppRoutes(api, Dependencies{
-		Config:    appConfig,
-		Db:        dbCrud,
-		Cache:     cacheStore,
-		Auth:      auth,
-		Rbac:      rbac,
-		UserLogin: userLoginService,
-		Logger:    runtimeLogger,
-		Scheduler: runtimeScheduler,
+		Config:      appConfig,
+		Db:          dbCrud,
+		Cache:       cacheStore,
+		Auth:        auth,
+		Rbac:        rbac,
+		AppRegistry: appRegistryService,
+		Logger:      runtimeLogger,
+		Scheduler:   runtimeScheduler,
 	})
 	if err != nil {
 		return err
@@ -392,6 +409,13 @@ func resolvePath(baseDir string, target string) string {
 		return target
 	}
 	return filepath.Clean(filepath.Join(baseDir, target))
+}
+
+func sharedAPIConfigFor(app App) SharedAPIConfig {
+	if provider, ok := app.(SharedAPIConfigurator); ok {
+		return provider.SharedAPIs()
+	}
+	return DefaultSharedAPIConfig()
 }
 
 func applySensitiveConfig(appConfig *config.AppConfigModel) error {
@@ -503,6 +527,28 @@ func applyCacheConfigFromEnv(appConfig *config.AppConfigModel) {
 		if ms, err := strconv.Atoi(v); err == nil && ms > 0 {
 			appConfig.Cache.Redis.OperationTimeoutMs = ms
 		}
+	}
+}
+
+func applySSOConfigFromEnv(appConfig *config.AppConfigModel) {
+	if v := strings.TrimSpace(os.Getenv("SSO_ISSUER")); v != "" {
+		appConfig.SSO.Issuer = v
+	}
+	if v := strings.TrimSpace(os.Getenv("SSO_AUDIENCE")); v != "" {
+		appConfig.SSO.Audience = v
+	}
+	if v := strings.TrimSpace(os.Getenv("SSO_SESSION_TTL_SECONDS")); v != "" {
+		if seconds, err := strconv.Atoi(v); err == nil && seconds > 0 {
+			appConfig.SSO.SessionTTLSeconds = seconds
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("SSO_POLICY_CACHE_TTL_SECONDS")); v != "" {
+		if seconds, err := strconv.Atoi(v); err == nil && seconds > 0 {
+			appConfig.SSO.PolicyCacheTTLSeconds = seconds
+		}
+	}
+	if v := os.Getenv("SSO_INTERNAL_TOKEN"); v != "" {
+		appConfig.SSO.InternalToken = v
 	}
 }
 
@@ -647,6 +693,31 @@ func rateLimitMiddlewareConfig(appConfig *config.AppConfigModel) middlewares.Rat
 		DevOnly:          rateLimitTierMiddlewareConfig(appConfig.RateLimit.DevOnly, defaultWindow),
 		AuthOnly:         rateLimitTierMiddlewareConfig(appConfig.RateLimit.AuthOnly, defaultWindow),
 		Public:           rateLimitTierMiddlewareConfig(appConfig.RateLimit.Public, defaultWindow),
+	}
+}
+
+func authMiddlewareConfig(appName string, appConfig *config.AppConfigModel, cacheStore appcache.Store) middlewares.AuthConfig {
+	issuer := strings.TrimSpace(appConfig.SSO.Issuer)
+	if issuer == "" {
+		issuer = appName
+	}
+	audience := strings.TrimSpace(appConfig.SSO.Audience)
+	if audience == "" {
+		audience = appName
+	}
+	sessionTTL := time.Duration(appConfig.SSO.SessionTTLSeconds) * time.Second
+	if sessionTTL <= 0 {
+		sessionTTL = 72 * time.Hour
+	}
+
+	return middlewares.AuthConfig{
+		Secret:        appConfig.Jwt.Secret,
+		Issuer:        issuer,
+		Audience:      audience,
+		AppCode:       appName,
+		SessionCache:  cacheStore,
+		SessionTTL:    sessionTTL,
+		PolicyVersion: 1,
 	}
 }
 

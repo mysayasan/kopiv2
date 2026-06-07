@@ -43,7 +43,10 @@ make down
 
 ## Overview
 
-This repository contains a modular backend application located at `apps/mymatasan`.
+This repository contains modular backend applications:
+
+- `apps/mymatasan`: camera, live stream, and video intelligence app.
+- `apps/myidsan`: identity, user management, and RBAC administration app.
 
 Primary goals:
 
@@ -64,7 +67,7 @@ High-level flow:
 6. Transaction coordination uses Redis (or in-memory fallback for single-process dev) to serialize critical file-storage work with FIFO lock acquisition and stuck-lock telemetry.
 7. Shared cache layer uses Redis (or in-memory fallback) for cross-instance RBAC cache consistency.
 8. PostgreSQL stores persistent entities.
-9. Static SPA assets are served from `apps/mymatasan/static`.
+9. Static SPA assets are served from the selected app directory, for example `apps/mymatasan/static` or `apps/myidsan/static`.
 
 Main components:
 
@@ -100,7 +103,8 @@ Relevant top-level layout:
 
 ```text
 .
-|- apps/mymatasan/         # Main app module (HTTP server, APIs, services, static files)
+|- apps/mymatasan/         # Camera, stream, and video intelligence app
+|- apps/myidsan/           # Identity, user management, and RBAC administration app
 |- domain/                 # Domain entities, enums, shared APIs/services
 |- infra/                  # Config, DB, auth login providers, camera adapters
 |- deploy/linux/           # systemd templates
@@ -125,6 +129,8 @@ Base config files:
 
 - `apps/mymatasan/config.json`
 - `apps/mymatasan/config.dev.json`
+- `apps/myidsan/config.json`
+- `apps/myidsan/config.dev.json`
 
 Environment selection:
 
@@ -153,6 +159,11 @@ The app fails fast if required secrets are missing.
 | `SERVER_ADDR` | Legacy single bind address override (`host:port` or `:port`) | none |
 | `SERVER_USE_TLS` | Legacy single mode toggle (`true/false`) | none |
 | `JWT_SECRET` | JWT signing/verification secret | none (required) |
+| `SSO_ISSUER` | Token issuer claim, usually `myidsan` for relying apps | config value |
+| `SSO_AUDIENCE` | Comma-separated accepted token audiences | config value |
+| `SSO_SESSION_TTL_SECONDS` | Session cookie and cache TTL in seconds | config value |
+| `SSO_POLICY_CACHE_TTL_SECONDS` | RBAC policy cache TTL in seconds | config/cache TTL |
+| `SSO_INTERNAL_TOKEN` | Service-to-service token for myidsan SSO fallback APIs | config value |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth client secret | none when enabled |
 | `GITHUB_CLIENT_SECRET` | GitHub OAuth client secret | none when enabled |
 | `DB_HOST` | Override DB host from config file | config value |
@@ -210,7 +221,11 @@ The bootstrap seeder also creates a minimal built-in core dataset on first run:
 - `user_group`: `system`
 - `user_role`: `superadmin` linked to the `system` group
 - `user_login`: default superadmin account (`email/username=superadmin`, `password=superadmin123`, stored as bcrypt) linked to the `superadmin` role
-- `api_endpoint` and `api_endpoint_rbac` rows for protected API modules, using `*` as the host so the defaults work on any deployment address. Endpoint rows include `accessTier` (`0=DevOnly`, `1=AuthOnly`, `2=Public`); protected shared management APIs seed as `DevOnly`.
+- `app_registry` rows for registered SSO apps.
+- `user_session` schema for future audit/revocation storage while the current hot path uses cache-backed sessions.
+- `api_endpoint` and `api_endpoint_rbac` rows for protected API modules, using `*` as the host so the defaults work on any deployment address. Endpoint rows include `appCode` and `accessTier` (`0=DevOnly`, `1=AuthOnly`, `2=Public`); protected shared management APIs seed as `DevOnly`.
+
+`myidsan` seeds the same default identity dataset plus the identity-management endpoint catalog for login, user/group/role, app registry, endpoint, RBAC, cache, log, file-storage administration, and core relying-app policies for `mymatasan`.
 
 Credential policy for user creation:
 
@@ -238,6 +253,7 @@ Server listener behavior is controlled by `server` in config:
 - `ports`, `enableTls`, `enableNonTls`: legacy shared-port mode used only when `tlsPorts` and `nonTlsPorts` are both empty.
 
 At least one of `tlsPorts` or `nonTlsPorts` must contain a port in the explicit-port model. The same port cannot appear in both lists because HTTP and HTTPS cannot bind the same address at the same time.
+When `tlsPorts` is non-empty, `tls.certPath` and `tls.keyPath` must be configured and point to readable files. Relative TLS paths resolve from the selected app directory, for example `apps/myidsan/certs/cert.pem`.
 
 Database behavior is controlled by `db` in config:
 
@@ -337,7 +353,14 @@ export REDIS_USE_TLS=false
 go run . -app mymatasan
 ```
 
+Run the identity app:
+
+```bash
+go run . -app myidsan
+```
+
 The dev config file defaults `db.port` to `5433`. The example above overrides it to `5432`; keep whichever port matches your local PostgreSQL.
+`apps/myidsan/config.dev.json` also defaults PostgreSQL to port `5433`, database `myidsandb`, and HTTP port `3001`. `apps/myidsan/config.json` starts HTTPS on port `3001` and expects `apps/myidsan/certs/cert.pem` and `apps/myidsan/certs/key.pem`.
 
 ## Run with Docker
 
@@ -345,6 +368,12 @@ Build image:
 
 ```bash
 docker build --build-arg APP=mymatasan -t kopiv2:mymatasan .
+```
+
+Build the identity app image:
+
+```bash
+docker build --build-arg APP=myidsan -t kopiv2:myidsan .
 ```
 
 Run container against external PostgreSQL:
@@ -430,6 +459,7 @@ Runtime versioning uses standard SemVer with separate core and app versions:
 
 - `core.version` tracks shared framework/runtime code (`infra`, `domain`, shared APIs/services).
 - `apps.<name>.version` tracks one app module, such as `mymatasan`.
+- `myidsan` is included as its own app version entry.
 
 The public endpoint only returns the running app version and the shared core version:
 
@@ -522,6 +552,22 @@ Notes:
 - Cache wipe is available in both query-based (`DELETE`) and payload-based (`POST /wipe`) contracts.
 - Each app can enrich summaries/descriptions by implementing the shared API docs provider in its app module.
 
+## Identity and SSO Direction
+
+`myidsan` is the identity-provider foundation for single sign-on across `kopiv2` apps. It owns the identity/RBAC management surface, app registry, token issuer settings, cache-backed sessions, and internal introspection/authorization APIs for relying apps.
+
+`mymatasan` is now treated as a relying/resource app: it does not mount local login, user/group/role, app-registry, endpoint, or endpoint-RBAC management APIs. Its Swagger surface stays focused on camera/resource workflows plus operational shared APIs such as version, file storage, logs, and cache service.
+
+SSO flow:
+
+1. Users authenticate at `myidsan`.
+2. `myidsan` issues an HMAC JWT with standard `iss`, multi-value `aud`, `exp`, and an SSO session id (`sid`).
+3. The session is cached under `sso:session:<sid>` using the configured cache provider. Redis shares that session across apps; memory cache is process-local.
+4. Resource apps validate issuer/audience locally and cache RBAC policies by resource app, role, and policy version.
+5. With in-memory cache only, resource apps can call `POST /api/sso/introspect` and `POST /api/sso/authorize` on `myidsan` using `X-Myidsan-Internal-Token` or `Authorization: Bearer <SSO_INTERNAL_TOKEN>`.
+
+`api_endpoint.appCode` scopes RBAC endpoint rows per app. Fresh bootstrap uses `appCode + host + path` as the intended uniqueness shape; older databases that already created the previous host/path unique index may need an operator migration before storing duplicate paths for multiple apps.
+
 ## Testing
 
 Run focused middleware tests:
@@ -613,7 +659,8 @@ Common issues:
   - verify Redis endpoint/password and connectivity when `CACHE_PROVIDER=redis`.
 
 3. TLS startup error:
-  - if `server.tlsPorts` or `SERVER_TLS_PORTS` contains ports, ensure cert/key paths in config are valid.
+  - if `server.tlsPorts` or `SERVER_TLS_PORTS` contains ports, ensure `tls.certPath` and `tls.keyPath` are configured and the files exist.
+  - relative TLS paths resolve from the selected app folder, such as `apps/myidsan/certs`.
   - for plain HTTP local runs, leave `tlsPorts` empty and set `nonTlsPorts` to the desired ports.
 
 4. Startup fails with server port error:

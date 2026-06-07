@@ -39,9 +39,6 @@ func NewApiLogApi(
 	// Group Handlers
 	group.HandleFunc("", rbac.RbacHandler(handler.get)).Methods("GET")
 	group.HandleFunc("", rbac.RbacHandler(handler.deleteByMonth)).Methods("DELETE")
-
-	// group := router.Group("log")
-	// group.Get("/", auth.JwtHandler(), rbac.ApiHandler(), timeout.NewWithContext(handler.get, 60*1000*time.Millisecond)).Name("latest")
 }
 
 func (m *apiLogApi) get(w http.ResponseWriter, r *http.Request) {

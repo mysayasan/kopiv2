@@ -1,6 +1,7 @@
 package middlewares
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log"
@@ -23,6 +24,18 @@ type RbacMidware struct {
 	apiEpServ services.IApiEndpointRbacService
 	cache     cache.Store
 	cacheTTL  time.Duration
+	appCode   string
+}
+
+type RbacConfig struct {
+	AppCode  string
+	CacheTTL time.Duration
+}
+
+type AuthorizationResult struct {
+	Allowed bool                               `json:"allowed"`
+	Reason  string                             `json:"reason"`
+	Matched *entities.ApiEndpointRbacJoinModel `json:"matched,omitempty"`
 }
 
 // Create NewRbac
@@ -31,6 +44,15 @@ func NewRbac(
 	cacheStore cache.Store,
 	cacheTTL time.Duration,
 ) *RbacMidware {
+	return NewRbacWithConfig(apiEpServ, cacheStore, RbacConfig{CacheTTL: cacheTTL})
+}
+
+func NewRbacWithConfig(
+	apiEpServ services.IApiEndpointRbacService,
+	cacheStore cache.Store,
+	cfg RbacConfig,
+) *RbacMidware {
+	cacheTTL := cfg.CacheTTL
 	if cacheTTL <= 0 {
 		cacheTTL = 10 * time.Second
 	}
@@ -39,6 +61,7 @@ func NewRbac(
 		apiEpServ: apiEpServ,
 		cache:     cacheStore,
 		cacheTTL:  cacheTTL,
+		appCode:   strings.TrimSpace(cfg.AppCode),
 	}
 }
 
@@ -53,64 +76,19 @@ func (m *RbacMidware) RbacHandler(next http.HandlerFunc) http.HandlerFunc {
 
 		host := string(r.Host)
 		path := string(r.URL.Path)
-		cacheKey := memcacheenums.GetString(memcacheenums.Mware_Rbac_GetApiEpByUserRole_Result) + ":" + strconv.FormatInt(claims.RoleId, 10)
-
-		var userAccs []*entities.ApiEndpointRbacJoinModel
-
-		found, err := m.cache.Get(r.Context(), cacheKey, &userAccs)
+		decision, err := m.AuthorizeClaims(r.Context(), claims, host, path, r.Method)
 		if err != nil {
-			log.Printf("rbac cache get warning key=%s err=%v", cacheKey, err)
-			found = false
-		}
-
-		if !found {
-			var err error
-			userAccs, _, err = m.apiEpServ.GetApiEpByUserRole(r.Context(), uint64(claims.Id))
-			if err != nil {
-				controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
-				return
-			}
-
-			if err := m.cache.Set(r.Context(), cacheKey, userAccs, m.cacheTTL); err != nil {
-				log.Printf("rbac cache set warning key=%s err=%v", cacheKey, err)
-			}
-		}
-
-		if len(userAccs) == 0 {
-			controllers.SendError(w, controllers.ErrPermission, "limited access to resources")
+			controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 			return
 		}
 
-		isValid := false
-		var userAccess *entities.ApiEndpointRbacJoinModel = nil
-
-		for _, userAcc := range userAccs {
-			if !hostMatches(userAcc.Host, host) || !pathMatches(userAcc.Path, path) {
-				continue
-			}
-
-			isValid = true
-			userAccess = userAcc
-			break
-		}
-
-		if !isValid {
-			controllers.SendError(w, controllers.ErrPermission, "limited access to resources")
+		if !decision.Allowed {
+			controllers.SendError(w, controllers.ErrPermission, decision.Reason)
 			return
 		}
 
-		switch r.Method {
-		case "GET":
-			if !userAccess.CanGet {
-				controllers.SendError(w, controllers.ErrPermission, "cant read due to limited access")
-				return
-			}
+		switch strings.ToUpper(r.Method) {
 		case "POST":
-			if !userAccess.CanPost {
-				controllers.SendError(w, controllers.ErrPermission, "cant create due to limited access")
-				return
-			}
-
 			if isJSONContentType(r.Header.Get("Content-Type")) {
 				var body map[string]interface{}
 
@@ -130,11 +108,6 @@ func (m *RbacMidware) RbacHandler(next http.HandlerFunc) http.HandlerFunc {
 				r.Body = io.NopCloser(strings.NewReader(string(modres)))
 			}
 		case "PUT":
-			if !userAccess.CanPut {
-				controllers.SendError(w, controllers.ErrPermission, "cant update due to limited access")
-				return
-			}
-
 			if isJSONContentType(r.Header.Get("Content-Type")) {
 				var body map[string]interface{}
 				r.Body = http.MaxBytesReader(w, r.Body, 1048576)
@@ -151,17 +124,122 @@ func (m *RbacMidware) RbacHandler(next http.HandlerFunc) http.HandlerFunc {
 				modres, _ := json.Marshal(body)
 				r.Body = io.NopCloser(strings.NewReader(string(modres)))
 			}
-		case "DELETE":
-			if !userAccess.CanDelete {
-				controllers.SendError(w, controllers.ErrPermission, "cant delete due to limited access")
-				return
-			}
-		default:
-			controllers.SendError(w, controllers.ErrPermission, "limited access to resources")
-			return
 		}
 
 		next(w, r)
+	}
+}
+
+func (m *RbacMidware) AuthorizeClaims(ctx context.Context, claims *models.JwtCustomClaims, host string, path string, method string) (*AuthorizationResult, error) {
+	return m.AuthorizeClaimsForApp(ctx, claims, m.appCode, host, path, method)
+}
+
+func (m *RbacMidware) AuthorizeClaimsForApp(ctx context.Context, claims *models.JwtCustomClaims, appCode string, host string, path string, method string) (*AuthorizationResult, error) {
+	if claims == nil || claims.RoleId < 1 {
+		return &AuthorizationResult{Allowed: false, Reason: "token not valid"}, nil
+	}
+
+	userAccs, err := m.getAccessList(ctx, claims, appCode)
+	if err != nil {
+		return nil, err
+	}
+	if len(userAccs) == 0 {
+		return &AuthorizationResult{Allowed: false, Reason: "limited access to resources"}, nil
+	}
+
+	var userAccess *entities.ApiEndpointRbacJoinModel
+	for _, userAcc := range userAccs {
+		if !appMatches(userAcc.AppCode, appCode) || !hostMatches(userAcc.Host, host) || !pathMatches(userAcc.Path, path) {
+			continue
+		}
+		userAccess = userAcc
+		break
+	}
+	if userAccess == nil {
+		return &AuthorizationResult{Allowed: false, Reason: "limited access to resources"}, nil
+	}
+
+	allowed, reason := methodAllowed(userAccess, method)
+	if allowed {
+		reason = "allowed"
+	}
+	return &AuthorizationResult{
+		Allowed: allowed,
+		Reason:  reason,
+		Matched: userAccess,
+	}, nil
+}
+
+func (m *RbacMidware) getAccessList(ctx context.Context, claims *models.JwtCustomClaims, appCode string) ([]*entities.ApiEndpointRbacJoinModel, error) {
+	cacheKey := rbacPolicyCacheKey(claims, appCode)
+	var userAccs []*entities.ApiEndpointRbacJoinModel
+
+	if m.cache != nil {
+		found, err := m.cache.Get(ctx, cacheKey, &userAccs)
+		if err != nil {
+			log.Printf("rbac cache get warning key=%s err=%v", cacheKey, err)
+			found = false
+		}
+		if found {
+			return userAccs, nil
+		}
+	}
+
+	userAccs, _, err := m.apiEpServ.GetApiEpByUserRole(ctx, uint64(claims.Id))
+	if err != nil {
+		return nil, err
+	}
+
+	if m.cache != nil {
+		if err := m.cache.Set(ctx, cacheKey, userAccs, m.cacheTTL); err != nil {
+			log.Printf("rbac cache set warning key=%s err=%v", cacheKey, err)
+		}
+	}
+
+	return userAccs, nil
+}
+
+func rbacPolicyCacheKey(claims *models.JwtCustomClaims, resourceAppCode string) string {
+	appCode := strings.TrimSpace(resourceAppCode)
+	if appCode == "" {
+		appCode = strings.TrimSpace(claims.AppCode)
+		if appCode == "" && len(claims.Audience) > 0 {
+			appCode = strings.TrimSpace(claims.Audience[0])
+		}
+		if appCode == "" {
+			appCode = "default"
+		}
+	}
+	policyVersion := claims.PolicyVersion
+	if policyVersion <= 0 {
+		policyVersion = 1
+	}
+	return strings.Join([]string{
+		memcacheenums.GetString(memcacheenums.Mware_Rbac_GetApiEpByUserRole_Result),
+		appCode,
+		strconv.FormatInt(claims.RoleId, 10),
+		strconv.FormatInt(policyVersion, 10),
+	}, ":")
+}
+
+func appMatches(allowedAppCode string, requestAppCode string) bool {
+	allowedAppCode = strings.TrimSpace(allowedAppCode)
+	requestAppCode = strings.TrimSpace(requestAppCode)
+	return allowedAppCode == "" || requestAppCode == "" || strings.EqualFold(allowedAppCode, requestAppCode)
+}
+
+func methodAllowed(userAccess *entities.ApiEndpointRbacJoinModel, method string) (bool, string) {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case "GET":
+		return userAccess.CanGet, "cant read due to limited access"
+	case "POST":
+		return userAccess.CanPost, "cant create due to limited access"
+	case "PUT":
+		return userAccess.CanPut, "cant update due to limited access"
+	case "DELETE":
+		return userAccess.CanDelete, "cant delete due to limited access"
+	default:
+		return false, "limited access to resources"
 	}
 }
 

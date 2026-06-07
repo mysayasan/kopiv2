@@ -3,6 +3,9 @@
     "version": "1.9.1"
   },
   "apps": {
+    "myidsan": {
+      "version": "1.0.0"
+    },
     "mymatasan": {
       "version": "1.5.1"
     }

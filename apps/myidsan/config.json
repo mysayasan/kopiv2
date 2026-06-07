@@ -1,0 +1,117 @@
+{
+  "jwt": {
+    "secret": "test0123456789"
+  },
+  "sso": {
+    "issuer": "myidsan",
+    "audience": "myidsan,mymatasan",
+    "sessionTtlSeconds": 259200,
+    "policyCacheTtlSeconds": 30,
+    "internalToken": "change-me-in-production"
+  },
+  "fileStorage": {
+    "path": "./uploads",
+    "cleanup": {
+      "enabled": true,
+      "frequencySeconds": 60,
+      "batchSize": 100
+    }
+  },
+  "cache": {
+    "provider": "redis",
+    "ttlSeconds": 30,
+    "keyPrefix": "kopiv2",
+    "redis": {
+      "address": "localhost:6379",
+      "password": "Simpnify@123",
+      "db": 0,
+      "useTls": false,
+      "connectTimeoutMs": 2000,
+      "operationTimeoutMs": 2000
+    }
+  },
+  "rateLimit": {
+    "enabled": true,
+    "endpointCacheTtlSeconds": 30,
+    "defaultWindowSeconds": 60,
+    "devOnly": {
+      "enabled": true,
+      "requests": 300,
+      "windowSeconds": 60
+    },
+    "authOnly": {
+      "enabled": true,
+      "requests": 120,
+      "windowSeconds": 60
+    },
+    "public": {
+      "enabled": true,
+      "requests": 30,
+      "windowSeconds": 60
+    }
+  },
+  "transaction": {
+    "lockProvider": "redis",
+    "lockWaitTimeoutMs": 30000,
+    "lockLeaseMs": 10000,
+    "operationTimeoutMs": 30000,
+    "stuckTimeoutMs": 30000,
+    "jobWorkerEnabled": true,
+    "jobWorkerFrequencySeconds": 5,
+    "maxAttempts": 3
+  },
+  "logging": {
+    "enabled": true,
+    "path": "./logs/myidsan.log",
+    "maxLineBytes": 8192,
+    "cleanup": {
+      "enabled": false,
+      "maxRetentionDays": 90,
+      "frequencyMinutes": 60
+    }
+  },
+  "apiLog": {
+    "cleanup": {
+      "enabled": false,
+      "maxRetentionDays": 90,
+      "frequencyMinutes": 60
+    }
+  },
+  "telemetry": {
+    "enabled": true,
+    "prometheus": {
+      "enabled": true,
+      "metricsPath": "/metrics",
+      "apiDurationThresholdMs": 1000
+    }
+  },
+  "tls": {
+    "certPath": "./certs/cert.pem",
+    "keyPath": "./certs/key.pem"
+  },
+  "server": {
+    "hostnames": ["*"],
+    "tlsPorts": [3001],
+    "nonTlsPorts": []
+  },
+  "allowOrigins": "*",
+  "bootstrap": {
+    "enabled": true,
+    "autoCreateDatabase": true,
+    "autoCreateSchema": true,
+    "autoMigrate": true,
+    "autoSeed": true,
+    "allowReset": false,
+    "setupPath": "/setup",
+    "seedStatements": []
+  },
+  "db": {
+    "engine": "postgres",
+    "host": "localhost",
+    "port": 5433,
+    "user": "postgres",
+    "password": "postgres",
+    "db_name": "myidsandb",
+    "ssl_mode": "disable"
+  }
+}

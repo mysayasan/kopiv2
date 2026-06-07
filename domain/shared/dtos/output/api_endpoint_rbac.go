@@ -21,6 +21,7 @@ type ApiEndpointRbacJoinDto struct {
 	Id            int64                     `json:"id" form:"id" query:"id" params:"id" skipWhenInsert:"true" pkey:"true" tblalias:"table0" validate:"required"`
 	ApiEndpointId int64                     `json:"apiEndpointId" form:"apiEndpointId" query:"apiEndpointId" ukey:"ukey1" fkey:"fkey1" tablejoin:"table1" validate:"required"`
 	UserRoleId    int64                     `json:"userRoleId" form:"userRoleId" query:"userRoleId" ukey:"ukey1" fkey:"fkey2" validate:"required"`
+	AppCode       string                    `json:"appCode" form:"appCode" query:"appCode" tblalias:"table1"`
 	Host          string                    `json:"host" form:"host" query:"host" tblalias:"table1"`
 	Path          string                    `json:"path" form:"path" query:"path" tblalias:"table1"`
 	AccessTier    apiaccessenums.AccessTier `json:"accessTier" form:"accessTier" query:"accessTier" tblalias:"table1"`

@@ -12,16 +12,30 @@
 go run . -app mymatasan
 ```
 
+Run the identity app instead:
+
+```bash
+go run . -app myidsan
+```
+
 Or with make:
 
 ```bash
 make run APP=mymatasan
 ```
 
+```bash
+make run APP=myidsan
+```
+
 Build only one app binary:
 
 ```bash
 make build APP=mymatasan
+```
+
+```bash
+make build APP=myidsan
 ```
 
 ## Run Tests
@@ -43,6 +57,12 @@ RUN_MARIADB_IT=1 go test ./infra/db/bootstrap -run TestBootstrapEnsureMariaDBInt
 
 ```bash
 docker build --build-arg APP=mymatasan -t kopiv2:mymatasan .
+```
+
+Build the identity app image:
+
+```bash
+docker build --build-arg APP=myidsan -t kopiv2:myidsan .
 ```
 
 Run against external DB:
@@ -251,6 +271,54 @@ http://localhost:3000/swagger/openapi.json
 
 FE teams can import `/swagger/openapi.json` into API clients/codegen tools.
 
+For `myidsan`, the default dev URL is:
+
+```text
+http://localhost:3001/swagger
+```
+
+## Identity App
+
+`myidsan` runs its own login, user, group, and role APIs, plus app-registry, endpoint, endpoint-RBAC, cache, log, runtime-log, file-storage, and version APIs as an identity-management app.
+
+Start it locally:
+
+```bash
+export ENVIRONMENT=dev
+export JWT_SECRET=replace-with-strong-secret
+go run . -app myidsan
+```
+
+The dev config defaults to PostgreSQL database `myidsandb` on port `5433`, Redis at `localhost:6379`, and HTTP listener port `3001`.
+The non-dev config starts HTTPS on port `3001`, so place certificates at `apps/myidsan/certs/cert.pem` and `apps/myidsan/certs/key.pem` or change `tls.certPath` and `tls.keyPath`.
+It also sets `sso.issuer=myidsan`, `sso.audience=myidsan,mymatasan`, and a dev-only `sso.internalToken=dev-internal-token`.
+
+Login with the bootstrapped account after first startup:
+
+```bash
+curl -c cookies.txt -H "Content-Type: application/json" \
+  -d '{"username":"superadmin","password":"superadmin123"}' \
+  "http://localhost:3001/api/login/default"
+```
+
+SSO fallback examples:
+
+```bash
+curl -H "Content-Type: application/json" \
+  -H "X-Myidsan-Internal-Token: dev-internal-token" \
+  -d '{"token":"<jwt>","audience":"mymatasan"}' \
+  "http://localhost:3001/api/sso/introspect"
+```
+
+```bash
+curl -H "Content-Type: application/json" \
+  -H "X-Myidsan-Internal-Token: dev-internal-token" \
+  -d '{"token":"<jwt>","audience":"mymatasan","host":"localhost:3000","path":"/api/camera/stream","method":"GET"}' \
+  "http://localhost:3001/api/sso/authorize"
+```
+
+Use Redis for multi-app deployments so session/RBAC cache entries can be shared. Use in-memory cache only for isolated development, or call the fallback APIs above when a relying app cannot see myidsan cache state.
+
 ## Filter Shared List APIs
 
 Shared DB-backed list endpoints accept backend filters and sorters in addition to `limit` and `offset`.
@@ -265,12 +333,12 @@ The JSON filter shape is `{"fieldName":"createdAt","compare":5,"value":170000000
 
 ## Cache Admin API
 
-Login once and store the session cookies:
+Login through `myidsan` and store the session cookies. The issued token includes the `mymatasan` audience in dev config, so the same cookie can be sent to `mymatasan` on localhost:
 
 ```bash
 curl -c cookies.txt -H "Content-Type: application/json" \
   -d '{"username":"superadmin","password":"superadmin123"}' \
-  "http://localhost:3000/api/login/default"
+  "http://localhost:3001/api/login/default"
 ```
 
 For unsafe methods, set `CSRF_TOKEN` to the value of the `kopiv2_csrf` cookie from `cookies.txt` before sending `X-CSRF-Token`.

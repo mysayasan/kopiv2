@@ -9,6 +9,7 @@ Implements the reusable runtime host for all app modules.
 - Load selected app config from app base directory.
 - Apply secret and DB environment overrides.
 - Apply cache environment overrides.
+- Apply SSO environment overrides.
 - Apply transaction lock environment overrides.
 - Apply logging and API log cleanup environment overrides.
 - Apply telemetry environment overrides.
@@ -23,15 +24,17 @@ Implements the reusable runtime host for all app modules.
 - Start scheduled API log cleanup when configured.
 - Run shared bootstrap engine using app-provided entities and seeders.
 - Wire global middleware and shared API modules.
+- Honor app-provided shared API module selection when an app implements `SharedAPIConfigurator`.
 - Create shared DTO service adapters from core shared services before mounting shared API modules.
 - Wire API activity logging middleware on the `/api` router.
 - Wire sliding-window rate-limit middleware on the `/api` router after API activity logging.
 - Register shared cache-service admin API routes under `/api/cache-service`.
+- Register shared app-registry admin API routes under `/api/app-registry`.
 - Register shared API log API routes under `/api/log`.
 - Register shared runtime log API routes under `/api/log-service`.
 - Load the embedded version manifest and register the shared public version endpoint under `/api/version`.
 - Initialize Prometheus telemetry when configured and mount the metrics endpoint.
-- Register local credential auth routes (`/api/login/default`, `/api/login/default/register`) regardless of OAuth provider configuration.
+- Mount shared operational route groups; identity apps such as `myidsan` register login/user routes from their own app package.
 - Build and validate cache provider (`default`, `redis`, `inmemory`, or `memory`) from runtime config.
 - Build and validate transaction lock provider (`redis`, `memory`, or `inmemory`) from runtime config.
 - Register shared Swagger/OpenAPI routes for runtime API documentation.
@@ -45,6 +48,7 @@ Implements the reusable runtime host for all app modules.
 ## Notes
 
 - Shared modules are mounted once in the host; app modules only provide app-specific routes/workers.
+- Apps can disable selected shared modules to keep resource-app API surfaces small; `mymatasan` disables app-registry, endpoint, and endpoint-RBAC management routes, while identity routes live only in `myidsan`.
 - App modules can register app-specific periodic jobs through `deps.Scheduler`.
 - OAuth providers remain optional; disabling Google/GitHub does not disable local credential auth routes.
 - Google and GitHub client secrets can be supplied from environment variables when their providers are configured.
@@ -55,6 +59,7 @@ Implements the reusable runtime host for all app modules.
 - `server.tlsPorts` starts HTTPS listeners and `server.nonTlsPorts` starts HTTP listeners.
 - Empty `tlsPorts` or `nonTlsPorts` means that protocol mode is not started.
 - A port cannot appear in both `server.tlsPorts` and `server.nonTlsPorts`.
+- HTTPS listeners require non-empty `tls.certPath` and `tls.keyPath`; normalized relative paths resolve from the selected app directory.
 - Legacy env compatibility is preserved for `SERVER_ADDR`, `SERVER_PORTS`, `SERVER_USE_TLS`, `SERVER_ENABLE_TLS`, and `SERVER_ENABLE_NON_TLS`.
 - `DB_ENGINE` overrides `db.engine`; runtime DB adapters are available for both `postgres` and `mariadb`.
 - `LOG_ENABLED`, `LOG_PATH`, and `LOG_MAX_LINE_BYTES` override runtime logging config.
@@ -62,6 +67,7 @@ Implements the reusable runtime host for all app modules.
 - `API_LOG_CLEANUP_ENABLED`, `API_LOG_MAX_RETENTION_DAYS`, and `API_LOG_CLEANUP_FREQUENCY_MINUTES` override database-backed API log cleanup config.
 - `TELEMETRY_ENABLED`, `PROMETHEUS_ENABLED`, `PROMETHEUS_METRICS_PATH`, and `PROMETHEUS_API_DURATION_THRESHOLD_MS` override telemetry config.
 - `RATE_LIMIT_ENABLED` overrides API rate limiting.
+- `SSO_ISSUER`, `SSO_AUDIENCE`, `SSO_SESSION_TTL_SECONDS`, `SSO_POLICY_CACHE_TTL_SECONDS`, and `SSO_INTERNAL_TOKEN` override SSO config.
 - The runtime logger writes JSON lines to stdout and the configured log file so OS-level collectors and the API listing endpoint can use the same log stream.
 - Empty cache provider defaults to `inmemory`; `default` and `memory` are accepted aliases.
 - Empty transaction lock provider inherits `cache.provider`; Redis is recommended for production multi-instance deployments.
