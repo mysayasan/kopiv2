@@ -484,6 +484,7 @@ Response shape:
 
 Version bumps are driven by pending changelog entries under `changes/pending/YYYYMMDD-HHMMSS-short-title/change.json`.
 On push to `main`, `.github/workflows/main.yml` runs `go run ./infra/versioning/cmd/versionbump`, updates `infra/versioning/version.json`, and moves processed entries to `changes/applied/`.
+Pending entries support the legacy `level/scope/app` shape and the newer multi-target shape, for example `{"type":"minor","scope":"core,myidsan,mymatasan","summary":"..."}`. `type` is resolved to `major`, `minor`, or `patch`; comma-separated scopes can target core aliases and one or more app names from the manifest.
 
 ## Telemetry
 

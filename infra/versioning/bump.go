@@ -14,10 +14,12 @@ import (
 
 // Change describes one pending version change consumed by the GitHub workflow.
 type Change struct {
-	Level   string `json:"level"`
-	Scope   string `json:"scope"`
-	App     string `json:"app"`
-	Summary string `json:"summary"`
+	Level         string `json:"level"`
+	Type          string `json:"type"`
+	Scope         string `json:"scope"`
+	App           string `json:"app"`
+	Summary       string `json:"summary"`
+	Compatibility string `json:"compatibility"`
 }
 
 // ApplyOptions configures pending changelog consumption.
@@ -135,17 +137,12 @@ func readChange(path string) (Change, error) {
 }
 
 func validateChange(change Change) error {
-	level := strings.ToLower(strings.TrimSpace(change.Level))
-	if level != "major" && level != "minor" && level != "patch" {
-		return fmt.Errorf("level must be major, minor, or patch")
+	if _, err := changeLevel(change); err != nil {
+		return err
 	}
 
-	scope := strings.ToLower(strings.TrimSpace(change.Scope))
-	if scope != "core" && scope != "app" && scope != "both" {
-		return fmt.Errorf("scope must be core, app, or both")
-	}
-	if (scope == "app" || scope == "both") && strings.TrimSpace(change.App) == "" {
-		return fmt.Errorf("app is required when scope is app or both")
+	if strings.TrimSpace(change.Scope) == "" && strings.TrimSpace(change.App) == "" {
+		return fmt.Errorf("scope or app is required")
 	}
 	if strings.TrimSpace(change.Summary) == "" {
 		return fmt.Errorf("summary is required")
@@ -154,10 +151,16 @@ func validateChange(change Change) error {
 }
 
 func applyChange(manifest *Manifest, change Change) error {
-	level := strings.ToLower(strings.TrimSpace(change.Level))
-	scope := strings.ToLower(strings.TrimSpace(change.Scope))
+	level, err := changeLevel(change)
+	if err != nil {
+		return err
+	}
+	targets, err := changeTargets(*manifest, change)
+	if err != nil {
+		return err
+	}
 
-	if scope == "core" || scope == "both" {
+	if targets.Core {
 		next, err := bumpVersion(manifest.Core.Version, level)
 		if err != nil {
 			return err
@@ -165,8 +168,7 @@ func applyChange(manifest *Manifest, change Change) error {
 		manifest.Core.Version = next
 	}
 
-	if scope == "app" || scope == "both" {
-		appName := strings.TrimSpace(change.App)
+	for _, appName := range targets.Apps {
 		if manifest.Apps == nil {
 			manifest.Apps = map[string]Entry{}
 		}
@@ -183,6 +185,115 @@ func applyChange(manifest *Manifest, change Change) error {
 	}
 
 	return manifest.Validate()
+}
+
+type changeTargetSet struct {
+	Core bool
+	Apps []string
+}
+
+func changeLevel(change Change) (string, error) {
+	raw := strings.ToLower(strings.TrimSpace(change.Level))
+	if raw == "" {
+		raw = strings.ToLower(strings.TrimSpace(change.Type))
+	}
+
+	switch raw {
+	case "major", "minor", "patch":
+		return raw, nil
+	case "added", "changed", "removed", "deprecated", "security":
+		return "minor", nil
+	case "fixed", "fix", "docs", "cleanup", "refactor":
+		return "patch", nil
+	default:
+		return "", fmt.Errorf("level/type must resolve to major, minor, or patch")
+	}
+}
+
+func changeTargets(manifest Manifest, change Change) (changeTargetSet, error) {
+	scope := strings.ToLower(strings.TrimSpace(change.Scope))
+	if scope == "" {
+		scope = strings.ToLower(strings.TrimSpace(change.App))
+	}
+
+	switch scope {
+	case "core":
+		return changeTargetSet{Core: true}, nil
+	case "app":
+		appName := strings.TrimSpace(change.App)
+		if appName == "" {
+			return changeTargetSet{}, fmt.Errorf("app is required when scope is app")
+		}
+		return changeTargetSet{Apps: []string{appName}}, nil
+	case "both":
+		appName := strings.TrimSpace(change.App)
+		if appName == "" {
+			return changeTargetSet{}, fmt.Errorf("app is required when scope is both")
+		}
+		return changeTargetSet{Core: true, Apps: []string{appName}}, nil
+	}
+
+	targets := changeTargetSet{}
+	seenApps := map[string]struct{}{}
+	for _, raw := range strings.Split(scope, ",") {
+		token := strings.ToLower(strings.TrimSpace(raw))
+		if token == "" {
+			continue
+		}
+		switch {
+		case isCoreScopeToken(token):
+			targets.Core = true
+		case isIgnoredScopeToken(token):
+			continue
+		case manifestHasApp(manifest, token):
+			if _, ok := seenApps[token]; !ok {
+				targets.Apps = append(targets.Apps, token)
+				seenApps[token] = struct{}{}
+			}
+		default:
+			return changeTargetSet{}, fmt.Errorf("unknown version scope %q", token)
+		}
+	}
+
+	if appName := strings.TrimSpace(change.App); appName != "" {
+		appKey := strings.ToLower(appName)
+		if _, ok := seenApps[appKey]; !ok {
+			targets.Apps = append(targets.Apps, appName)
+		}
+	}
+
+	if !targets.Core && len(targets.Apps) == 0 {
+		return changeTargetSet{}, fmt.Errorf("change does not target core or a known app")
+	}
+	sort.Strings(targets.Apps)
+	return targets, nil
+}
+
+func isCoreScopeToken(token string) bool {
+	switch token {
+	case "core", "shared", "apphost", "infra", "domain", "bootstrap", "config":
+		return true
+	default:
+		return false
+	}
+}
+
+func isIgnoredScopeToken(token string) bool {
+	switch token {
+	case "docs", "documentation", "readme", "cleanup", "tests", "test", "changelog":
+		return true
+	default:
+		return false
+	}
+}
+
+func manifestHasApp(manifest Manifest, appName string) bool {
+	for existing := range manifest.Apps {
+		if strings.EqualFold(existing, appName) {
+			return true
+		}
+	}
+	return false
 }
 
 func bumpVersion(value string, level string) (string, error) {

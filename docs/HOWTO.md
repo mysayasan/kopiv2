@@ -240,6 +240,18 @@ Example app-only patch:
 
 Supported `level` values are `major`, `minor`, and `patch`.
 Supported `scope` values are `core`, `app`, and `both`.
+For multi-app or service-split changes, `type` can be used as a level alias and `scope` can be a comma-separated target list:
+
+```json
+{
+  "type": "minor",
+  "scope": "core,myidsan,mymatasan",
+  "summary": "Add cross-app SSO policy cache"
+}
+```
+
+Supported `type` values that map to version levels include `major`, `minor`, `patch`, `added`, `changed`, `removed`, `deprecated`, `security`, `fixed`, `docs`, `cleanup`, and `refactor`.
+Comma-separated `scope` values can include `core` aliases (`core`, `shared`, `apphost`, `infra`, `domain`, `bootstrap`, `config`) and app names from `infra/versioning/version.json`.
 
 When pushed to `main`, GitHub Actions updates `infra/versioning/version.json` and moves processed entries to `changes/applied`.
 

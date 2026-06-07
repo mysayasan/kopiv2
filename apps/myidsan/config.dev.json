@@ -91,8 +91,8 @@
   },
   "server": {
     "hostnames": ["*"],
-    "tlsPorts": [],
-    "nonTlsPorts": [3001]
+    "tlsPorts": [3001],
+    "nonTlsPorts": []
   },
   "allowOrigins": "*",
   "bootstrap": {

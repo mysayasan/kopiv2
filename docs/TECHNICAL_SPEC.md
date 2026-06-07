@@ -212,6 +212,7 @@ At least one explicit TLS or non-TLS port must be configured. The same port cann
 - The server loads an embedded manifest from `infra/versioning/version.json`.
 - The runtime endpoint returns only the selected app version plus the core version; it does not expose the full app version map.
 - GitHub Actions consumes pending JSON changelog entries from `changes/pending/.../change.json`, bumps the manifest, and moves processed entries to `changes/applied`.
+- Pending changelog entries support the legacy `level/scope/app` shape and a multi-target `type/scope` shape. Multi-target scopes are comma-separated and can include core aliases plus app names from the manifest.
 
 ## API Documentation Contract
 
