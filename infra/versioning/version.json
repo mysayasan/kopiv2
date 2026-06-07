@@ -1,12 +1,12 @@
 {
   "core": {
-    "version": "1.5.0"
+    "version": "1.7.0"
   },
   "apps": {
     "mymatasan": {
-      "version": "1.2.0"
+      "version": "1.4.0"
     }
   },
-  "commit": "e69fd6974f1cc8c8892abc019e58da03af0fe380",
-  "updatedAt": "2026-06-07T09:33:40Z"
+  "commit": "863f645d9334125c3365a3054ef32294f5d8eeac",
+  "updatedAt": "2026-06-07T10:14:48Z"
 }
