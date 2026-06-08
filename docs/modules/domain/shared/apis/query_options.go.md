@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Parses shared list endpoint query options into SQL repository filter and sorter enums.
+Parses reusable list endpoint query options into SQL repository filter and sorter enums.
 
 ## Behavior
 
@@ -13,6 +13,7 @@ Parses shared list endpoint query options into SQL repository filter and sorter 
 - Maps accepted field names back to Go struct field names before passing them to services.
 - Validates compare enum values `1..6` and sorter enum values `1..2`.
 - Coerces filter values to the target entity field type before repository use.
+- Exposes the parser for app-local APIs that follow the same shared list contract.
 
 ## Query Contract
 

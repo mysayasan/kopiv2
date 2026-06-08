@@ -6,7 +6,7 @@
 
 - HTTP API with cookie-backed JWT auth and RBAC enforcement.
 - Camera stream orchestration for MJPEG sources.
-- PostgreSQL persistence using a generic repository layer.
+- SQL persistence using a generic repository layer.
 - Static SPA serving from app assets.
 - Public runtime version reporting with separate core and app SemVer values.
 - A dedicated identity app (`myidsan`) for user management, RBAC administration, and planned SSO authority.
@@ -29,7 +29,7 @@ The runtime now uses a reusable multi-app launcher pattern:
 - App selection:
   - runtime selection via `go run . -app <name>`
   - compile selection via `go build ./cmd/<name>`
-  - currently registered apps: `mymatasan`, `myidsan`
+  - currently registered apps: `mymatasan`, `myidsan`, `myseliasan`
 - HTTP server defaults:
   - Read header timeout: `5s`
   - Read timeout: `15s`
@@ -48,7 +48,10 @@ The runtime now uses a reusable multi-app launcher pattern:
 - Authorization: endpoint-level RBAC based on user role mappings.
 - `myidsan` is the central policy authority for cross-app SSO. Tokens carry issuer (`iss`), audience (`aud`), expiry, session id (`sid`), resource app code, and policy version. Redis should be used for shared session/RBAC cache in multi-process deployments; in-memory cache requires relying apps to call `myidsan` for introspection and authorization decisions when local cache misses.
 - `mymatasan` is a relying/resource app and does not mount login, user/group/role, app-registry, endpoint, or endpoint-RBAC management APIs. Those management surfaces live in `myidsan`.
+- `myseliasan` is a relying control-plane app and has no public landing page. It redirects unauthenticated users to MyIDSan and creates its own local session only after MyIDSan returns a valid authorization code.
 - Registered apps are stored in `app_registry`; endpoint policies are scoped by `api_endpoint.appCode`.
+- Per-client SSO policy is stored in `app_auth_config`, and exact callback allow-list entries are stored in `app_redirect_uri`.
+- Browser cross-app login uses MyIDSan `GET /api/auth/authorize`, `GET|POST /api/auth/login`, and `POST /api/auth/token`.
 - `POST /api/sso/introspect` validates token/session state for service-to-service fallback.
 - `POST /api/sso/authorize` validates token/session state and returns an app-scoped RBAC decision for service-to-service fallback.
 - API endpoint metadata includes `accessTier` (`0=DevOnly`, `1=AuthOnly`, `2=Public`) for route classification. The tier does not replace auth/RBAC; `DevOnly` endpoints still require authorization when registered behind protected handlers.
@@ -97,7 +100,7 @@ The runtime now uses a reusable multi-app launcher pattern:
 
 ## Data and Persistence
 
-- Databases: PostgreSQL and MariaDB.
+- Databases: PostgreSQL, MariaDB, and SQLite.
 - Readiness check performs DB ping through `IDbCrud.Ping(ctx)`.
 - Repository layer wraps DB errors with `%w` context for diagnostics.
 - Startup bootstrap uses entity reflection to create missing database objects and store a schema manifest hash.
@@ -119,7 +122,7 @@ Environment overrides (runtime):
 - legacy server compatibility: `SERVER_ADDR`, `SERVER_PORTS`, `SERVER_USE_TLS`, `SERVER_ENABLE_TLS`, `SERVER_ENABLE_NON_TLS`
 - db: `DB_ENGINE`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSL_MODE`
 - cache: `CACHE_PROVIDER`, `CACHE_TTL_SECONDS`, `CACHE_KEY_PREFIX`, `REDIS_ADDR`, `REDIS_PASSWORD`, `REDIS_DB`, `REDIS_USE_TLS`, `REDIS_CONNECT_TIMEOUT_MS`, `REDIS_OPERATION_TIMEOUT_MS`
-- sso: `SSO_ISSUER`, `SSO_AUDIENCE`, `SSO_SESSION_TTL_SECONDS`, `SSO_POLICY_CACHE_TTL_SECONDS`, `SSO_INTERNAL_TOKEN`
+- sso: `SSO_ISSUER`, `SSO_AUDIENCE`, `SSO_SESSION_TTL_SECONDS`, `SSO_POLICY_CACHE_TTL_SECONDS`, `SSO_INTERNAL_TOKEN`, `SSO_PROVIDER_BASE_URL`, `SSO_CA_CERT_PATH`, `SSO_CLIENT_ID`, `SSO_CLIENT_SECRET`, `SSO_REDIRECT_BASE_URL`, `SSO_REDIRECT_PATH`, `SSO_AUTH_CODE_TTL_SECONDS`, `SSO_ACCESS_TOKEN_TTL_SECONDS`
 - rate limit: `RATE_LIMIT_ENABLED`
 - transaction: `TRANSACTION_LOCK_PROVIDER`, `TRANSACTION_LOCK_WAIT_TIMEOUT_MS`, `TRANSACTION_LOCK_LEASE_MS`, `TRANSACTION_OPERATION_TIMEOUT_MS`, `TRANSACTION_STUCK_TIMEOUT_MS`, `TRANSACTION_JOB_WORKER_ENABLED`, `TRANSACTION_JOB_WORKER_FREQUENCY_SECONDS`, `TRANSACTION_MAX_ATTEMPTS`
 - secrets: `JWT_SECRET`, `GOOGLE_CLIENT_SECRET`, `GITHUB_CLIENT_SECRET`
@@ -142,9 +145,23 @@ TLS config contract (`tls` in app config):
 
 Database config contract (`db` in app config):
 
-- `engine`: DB engine selector (`postgres` or `mariadb`).
-- Runtime DB adapter and bootstrap implementation support both engines.
+- `engine`: DB engine selector (`postgres`, `mariadb`, or `sqlite`).
+- Runtime DB adapter and bootstrap implementation support all three engines.
+- For SQLite, `db_name` is a database file path and relative paths resolve from the selected app directory. `:memory:` is supported for tests/dev experiments only.
+- SQLite is intended for single-process small-device deployments; use PostgreSQL or MariaDB for multi-instance production deployments.
 - `apps/mymatasan/config.dev.json` defaults PostgreSQL to port `5433`; runtime `DB_PORT` overrides the config value for local or deployed environments.
+
+SSO relying-app config contract (`sso` in app config):
+
+- `providerBaseUrl`: MyIDSan public base URL used by browser redirects and server-side token exchange.
+- `caCertPath`: optional PEM CA/certificate bundle for relying-app backend HTTPS calls to MyIDSan; relative paths resolve from the selected app directory.
+- `caCertPath` appends trust roots for the token-exchange HTTP client; it does not disable TLS verification. Hostname, expiry, and certificate-chain validation still apply.
+- `clientId`: relying app client id registered in MyIDSan `app_auth_config`.
+- `clientSecret`: relying app secret; override with `SSO_CLIENT_SECRET` outside local development.
+- `redirectBaseUrl`: relying app public base URL used to build the callback URL sent to MyIDSan. It must match a registered `app_redirect_uri` origin.
+- `redirectPath`: relying app callback path, default `/api/auth/callback`.
+- `authCodeTtlSeconds`: default MyIDSan authorization-code lifetime when a per-client row does not override it.
+- `accessTokenTtlSeconds`: default MyIDSan issued-token lifetime when a per-client row does not override it.
 
 Logging config contract (`logging` in app config):
 

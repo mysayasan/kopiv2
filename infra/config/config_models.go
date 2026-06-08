@@ -35,6 +35,14 @@ type AppConfigModel struct {
 		SessionTTLSeconds     int    `json:"sessionTtlSeconds"`
 		PolicyCacheTTLSeconds int    `json:"policyCacheTtlSeconds"`
 		InternalToken         string `json:"internalToken"`
+		ProviderBaseURL       string `json:"providerBaseUrl"`
+		CACertPath            string `json:"caCertPath"`
+		ClientID              string `json:"clientId"`
+		ClientSecret          string `json:"clientSecret"`
+		RedirectBaseURL       string `json:"redirectBaseUrl"`
+		RedirectPath          string `json:"redirectPath"`
+		AuthCodeTTLSeconds    int    `json:"authCodeTtlSeconds"`
+		AccessTokenTTLSeconds int    `json:"accessTokenTtlSeconds"`
 	} `json:"sso"`
 	FileStorage struct {
 		Path    string `json:"path" validate:"required"`

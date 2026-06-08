@@ -9,6 +9,7 @@ import (
 	outputdtos "github.com/mysayasan/kopiv2/apps/myidsan/dtos/output"
 	"github.com/mysayasan/kopiv2/apps/myidsan/services"
 	"github.com/mysayasan/kopiv2/domain/entities"
+	sharedapis "github.com/mysayasan/kopiv2/domain/shared/apis"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 )
@@ -45,7 +46,7 @@ func NewUserGroupApi(
 
 func (m *userGroupApi) get(w http.ResponseWriter, r *http.Request) {
 
-	opts, err := parseListQueryOptions[entities.UserGroup](r)
+	opts, err := sharedapis.ParseListQueryOptions[entities.UserGroup](r)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
@@ -61,7 +62,7 @@ func (m *userGroupApi) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *userGroupApi) post(w http.ResponseWriter, r *http.Request) {
-	body, err := decodeRequestDto[inputdtos.UserGroupDto, entities.UserGroup](w, r)
+	body, err := sharedapis.DecodeRequestDto[inputdtos.UserGroupDto, entities.UserGroup](w, r)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
 		return
@@ -77,7 +78,7 @@ func (m *userGroupApi) post(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *userGroupApi) put(w http.ResponseWriter, r *http.Request) {
-	body, err := decodeRequestDto[inputdtos.UserGroupDto, entities.UserGroup](w, r)
+	body, err := sharedapis.DecodeRequestDto[inputdtos.UserGroupDto, entities.UserGroup](w, r)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
 		return

@@ -214,11 +214,13 @@ func columnDefinition(column ColumnSpec, create bool, engine string) string {
 	if column.AutoInc && column.PrimaryKey {
 		if engine == "mariadb" {
 			definition = fmt.Sprintf("%s BIGINT AUTO_INCREMENT", quoteIdent(column.Name, engine))
+		} else if engine == "sqlite" {
+			definition = fmt.Sprintf("%s INTEGER PRIMARY KEY AUTOINCREMENT", quoteIdent(column.Name, engine))
 		} else {
 			definition = fmt.Sprintf("%s BIGSERIAL", quoteIdent(column.Name, engine))
 		}
 	}
-	if create && column.PrimaryKey {
+	if create && column.PrimaryKey && !(engine == "sqlite" && column.AutoInc) {
 		definition += " PRIMARY KEY"
 	}
 	if create && !column.Nullable && !column.PrimaryKey {
@@ -240,6 +242,9 @@ func tableDefinition(spec TableSpec, engine string) string {
 		parts = append(parts, columnDefinition(column, true, engine))
 	}
 	for _, uniqueIndex := range spec.Unique {
+		if engine == "sqlite" {
+			continue
+		}
 		columnNames := make([]string, 0, len(uniqueIndex.Columns))
 		for _, columnName := range uniqueIndex.Columns {
 			columnNames = append(columnNames, quoteIdent(columnName, engine))
@@ -250,6 +255,10 @@ func tableDefinition(spec TableSpec, engine string) string {
 }
 
 func existingColumns(ctx context.Context, db *sql.DB, engine string, tableName string) (map[string]struct{}, error) {
+	if engine == "sqlite" {
+		return existingSQLiteColumns(ctx, db, tableName)
+	}
+
 	query := `
 SELECT column_name
 FROM information_schema.columns
@@ -282,7 +291,45 @@ WHERE table_schema = DATABASE() AND table_name = ?
 	return columns, rows.Err()
 }
 
+func existingSQLiteColumns(ctx context.Context, db *sql.DB, tableName string) (map[string]struct{}, error) {
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", quoteIdent(tableName, "sqlite")))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	columns := make(map[string]struct{})
+	for rows.Next() {
+		var cid int
+		var name string
+		var dataType string
+		var notNull int
+		var defaultValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &pk); err != nil {
+			return nil, err
+		}
+		columns[name] = struct{}{}
+	}
+	return columns, rows.Err()
+}
+
 func normalizeSQLType(sqlType string, engine string) string {
+	if engine == "sqlite" {
+		switch strings.ToUpper(strings.TrimSpace(sqlType)) {
+		case "BIGINT", "INTEGER", "SMALLINT":
+			return "INTEGER"
+		case "DOUBLE PRECISION", "REAL":
+			return "REAL"
+		case "BOOLEAN":
+			return "INTEGER"
+		case "TIMESTAMPTZ", "JSON":
+			return "TEXT"
+		default:
+			return sqlType
+		}
+	}
+
 	if engine != "mariadb" {
 		return sqlType
 	}

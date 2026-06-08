@@ -18,3 +18,4 @@ Internal SSO fallback APIs for relying apps that cannot share Redis-backed sessi
 
 - These routes intentionally do not use browser cookie auth or CSRF middleware.
 - Authorization reuses `RbacMidware.AuthorizeClaimsForApp` so fallback decisions match normal protected-route decisions.
+- Browser redirect login for relying apps is handled separately by `apps/myidsan/apis/federated_auth.go`.

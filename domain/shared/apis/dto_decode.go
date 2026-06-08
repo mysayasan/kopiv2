@@ -7,7 +7,7 @@ import (
 	dtoutils "github.com/mysayasan/kopiv2/domain/utils/dtos"
 )
 
-func decodeRequestDto[TDto any, TEntity any](w http.ResponseWriter, r *http.Request) (*TEntity, error) {
+func DecodeRequestDto[TDto any, TEntity any](w http.ResponseWriter, r *http.Request) (*TEntity, error) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
@@ -18,4 +18,8 @@ func decodeRequestDto[TDto any, TEntity any](w http.ResponseWriter, r *http.Requ
 	}
 
 	return dtoutils.Project[TEntity](body)
+}
+
+func decodeRequestDto[TDto any, TEntity any](w http.ResponseWriter, r *http.Request) (*TEntity, error) {
+	return DecodeRequestDto[TDto, TEntity](w, r)
 }

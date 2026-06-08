@@ -53,6 +53,16 @@ It also seeds wildcard-host endpoint rows with `accessTier` metadata and RBAC ro
 
 `myidsan` uses this same bootstrap flow to seed the identity-provider management surface, app registry, SSO fallback endpoints, and selected relying-app policies. It is the cross-app sign-on and RBAC authority. `mymatasan` does not mount login/user/app-registry/endpoint-management route groups, so its Swagger surface stays focused on camera/resource operations. When Redis is enabled, resource apps can share short-lived session/RBAC cache entries. When only in-memory cache is enabled, resource apps call `myidsan` service APIs (`POST /api/sso/introspect`, `POST /api/sso/authorize`) for token introspection and authorization on local cache misses.
 
+## Browser SSO Callback Flow
+
+1. A browser opens a relying app such as `myseliasan`.
+2. Without a local relying-app session, the app redirects to MyIDSan `/api/auth/authorize` with `client_id`, `audience`, exact `redirect_uri`, and state.
+3. MyIDSan validates the client config and redirect URI allow-list. If the browser has no MyIDSan session, it serves `/api/auth/login` and resumes authorization after local credential login.
+4. MyIDSan redirects the browser back to the relying-app callback with a short-lived one-time code and state.
+5. The relying app validates state, then performs a backend HTTPS `POST` to MyIDSan `/api/auth/token` with its client secret.
+6. For HTTPS token exchange, the relying app uses the OS trust store plus optional `sso.caCertPath`/`SSO_CA_CERT_PATH`. This trusts private CA bundles without disabling hostname, expiry, or chain validation.
+7. After a valid token response, the relying app issues its own HttpOnly session cookie and redirects the browser to its app root.
+
 ## Bootstrap Flow
 
 The shared bootstrap engine is called before the DB adapter is used by the rest of the app.

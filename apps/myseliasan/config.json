@@ -1,0 +1,122 @@
+{
+  "jwt": {
+    "secret": "change-me"
+  },
+  "sso": {
+    "issuer": "myidsan",
+    "audience": "myseliasan",
+    "sessionTtlSeconds": 259200,
+    "policyCacheTtlSeconds": 30,
+    "providerBaseUrl": "https://localhost:3001",
+    "caCertPath": "../myidsan/certs/cert.pem",
+    "clientId": "myseliasan",
+    "clientSecret": "dev-myseliasan-secret",
+    "redirectBaseUrl": "https://localhost:3002",
+    "redirectPath": "/api/auth/callback"
+  },
+  "fileStorage": {
+    "path": "./uploads",
+    "cleanup": {
+      "enabled": false,
+      "frequencySeconds": 60,
+      "batchSize": 100
+    }
+  },
+  "cache": {
+    "provider": "default",
+    "ttlSeconds": 30,
+    "keyPrefix": "kopiv2",
+    "redis": {
+      "address": "localhost:6379",
+      "password": "",
+      "db": 0,
+      "useTls": false,
+      "connectTimeoutMs": 2000,
+      "operationTimeoutMs": 2000
+    }
+  },
+  "rateLimit": {
+    "enabled": true,
+    "endpointCacheTtlSeconds": 30,
+    "defaultWindowSeconds": 60,
+    "devOnly": {
+      "enabled": true,
+      "requests": 300,
+      "windowSeconds": 60
+    },
+    "authOnly": {
+      "enabled": true,
+      "requests": 120,
+      "windowSeconds": 60
+    },
+    "public": {
+      "enabled": true,
+      "requests": 30,
+      "windowSeconds": 60
+    }
+  },
+  "transaction": {
+    "lockProvider": "memory",
+    "lockWaitTimeoutMs": 30000,
+    "lockLeaseMs": 10000,
+    "operationTimeoutMs": 30000,
+    "stuckTimeoutMs": 30000,
+    "jobWorkerEnabled": false,
+    "jobWorkerFrequencySeconds": 5,
+    "maxAttempts": 3
+  },
+  "logging": {
+    "enabled": true,
+    "path": "./logs/myseliasan.log",
+    "maxLineBytes": 8192,
+    "cleanup": {
+      "enabled": false,
+      "maxRetentionDays": 90,
+      "frequencyMinutes": 60
+    }
+  },
+  "apiLog": {
+    "cleanup": {
+      "enabled": false,
+      "maxRetentionDays": 90,
+      "frequencyMinutes": 60
+    }
+  },
+  "telemetry": {
+    "enabled": true,
+    "prometheus": {
+      "enabled": true,
+      "metricsPath": "/metrics",
+      "apiDurationThresholdMs": 1000
+    }
+  },
+  "tls": {
+    "certPath": "./certs/cert.pem",
+    "keyPath": "./certs/key.pem"
+  },
+  "server": {
+    "hostnames": ["*"],
+    "tlsPorts": [3002],
+    "nonTlsPorts": []
+  },
+  "allowOrigins": "*",
+  "bootstrap": {
+    "enabled": true,
+    "autoCreateDatabase": true,
+    "autoCreateSchema": true,
+    "autoMigrate": true,
+    "autoSeed": true,
+    "allowReset": false,
+    "setupPath": "/setup",
+    "seedStatements": []
+  },
+  "db": {
+    "engine": "sqlite",
+    "host": "",
+    "port": 0,
+    "user": "",
+    "password": "",
+    "db_name": "./data/myseliasan.db",
+    "ssl_mode": ""
+  }
+}

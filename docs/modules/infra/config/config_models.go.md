@@ -41,6 +41,12 @@ Defines the top-level app configuration model loaded from app config JSON.
 - `sso.sessionTtlSeconds` controls cookie/session-cache lifetime.
 - `sso.policyCacheTtlSeconds` controls RBAC policy cache lifetime.
 - `sso.internalToken` protects myidsan service-to-service introspection and authorization APIs.
+- `sso.providerBaseUrl` points relying apps to MyIDSan for authorization-code login.
+- `sso.caCertPath` optionally points to a PEM CA/certificate bundle used by relying-app backend HTTPS calls to MyIDSan.
+- `sso.clientId` and `sso.clientSecret` configure relying-app token exchange credentials.
+- `sso.redirectBaseUrl` configures the relying-app public callback origin used in authorization requests.
+- `sso.redirectPath` configures the relying-app callback path.
+- `sso.authCodeTtlSeconds` and `sso.accessTokenTtlSeconds` provide MyIDSan defaults when per-client DB config does not override them.
 - `transaction.lockProvider` selects Redis or in-memory FIFO transaction locking; empty inherits `cache.provider`.
 - `transaction.lockWaitTimeoutMs` bounds queue wait time.
 - `transaction.lockLeaseMs` controls Redis owner lease duration.

@@ -4,8 +4,10 @@
   },
   "sso": {
     "issuer": "myidsan",
-    "audience": "myidsan,mymatasan",
+    "audience": "myidsan,mymatasan,myseliasan",
     "sessionTtlSeconds": 259200,
+    "authCodeTtlSeconds": 300,
+    "accessTokenTtlSeconds": 900,
     "policyCacheTtlSeconds": 30,
     "internalToken": "change-me-in-production"
   },

@@ -193,6 +193,10 @@ Build the shared bootstrap engine first, then add a thin setup API and setup pag
 
 The first implementation in this repository uses startup bootstrap plus additive schema reconciliation. It does not drop tables or columns automatically.
 
+Bootstrap supports `db.engine=postgres`, `db.engine=mariadb`, and `db.engine=sqlite`. SQLite uses `db_name` as the database file path and creates the parent directory when `autoCreateDatabase` is enabled. Relative SQLite paths are resolved by apphost from the selected app directory before bootstrap runs.
+
+SQLite follows the same manifest, table, additive-column migration, unique-index, and seeding flow as the server databases, but it is intended for single-process or small-device deployments. Use PostgreSQL or MariaDB when the app is deployed with multiple instances or needs server-database operational controls.
+
 When `autoSeed` is enabled, the engine can execute config-defined SQL seed statements through the shared seeder helper.
 
 The current apps also seed a minimal core identity dataset on first run:
@@ -201,9 +205,12 @@ The current apps also seed a minimal core identity dataset on first run:
 - a `superadmin` user role associated with that group
 - a default `superadmin` login account (`superadmin` / `superadmin123`, stored as bcrypt) linked to that role
 - `app_registry` rows for `myidsan` and `mymatasan`
+- `app_auth_config` and `app_redirect_uri` rows for registered browser relying apps such as `myseliasan`
 - `user_session` table for SSO session audit/revocation storage; live session validation currently uses the configured cache provider
 - wildcard-host `api_endpoint` rows with `appCode`, `accessTier`, and menu `metadata` plus `api_endpoint_rbac` rows for protected modules, so the default access rules and MyIDSan navigation are portable across hosts
 
-`mymatasan` seeds camera and app-local protected endpoints. `myidsan` seeds identity, user-management, app-registry, endpoint, endpoint-RBAC, cache, log, file-storage administration, SSO fallback endpoints, and selected relying-app policies for `mymatasan`.
+`mymatasan` seeds camera and app-local protected endpoints. `myidsan` seeds identity, user-management, app-registry, app-auth-config, app-redirect-uri, endpoint, endpoint-RBAC, cache, log, file-storage administration, SSO fallback endpoints, browser federated-auth endpoints, and selected relying-app policies for `mymatasan` and `myseliasan`.
+
+`myseliasan` seeds only its lightweight local operational endpoint catalog and avoids registering user-management tables. It relies on MyIDSan for identity and receives users through the authorization-code callback flow.
 
 Fresh schema bootstrap treats `api_endpoint` uniqueness as app-aware through `appCode + host + path`. Existing databases that previously created a host/path-only unique index may need a manual operator migration before they can store duplicate paths for multiple app codes.

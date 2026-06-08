@@ -26,7 +26,7 @@ From repository root:
 go run . -app myidsan
 ```
 
-`config.json` starts HTTPS on port `3001`; `config.dev.json` starts plain HTTP on port `3001`.
+`config.json` and `config.dev.json` both start HTTPS on port `3001`.
 Both configs include app-relative TLS paths:
 
 ```text
@@ -35,6 +35,7 @@ apps/myidsan/certs/key.pem
 ```
 
 If `server.tlsPorts` is non-empty, those files must exist or startup will fail before the listener is ready.
+The bundled local development certificate is for `localhost`; replace it with a trusted certificate/key pair before using another host name or a deployment environment.
 
 Or build the app-specific command:
 
@@ -45,7 +46,7 @@ go build ./cmd/myidsan
 Default dev listener:
 
 ```text
-http://localhost:3001
+https://localhost:3001
 ```
 
 Required secret:
@@ -95,7 +96,7 @@ For local frontend iteration:
 npm run start
 ```
 
-The webpack dev server runs on `https://localhost:4001` when the app cert files exist and proxies `/api`, `/swagger`, health, readiness, and metrics requests to `https://localhost:3001`.
+The webpack dev server runs on `https://localhost:4001` when the app cert files exist and proxies `/api`, `/swagger`, health, readiness, and metrics requests to the configured MyIDSan backend, which defaults to `https://localhost:3001` in dev.
 
 ## SSO Flow
 
@@ -108,3 +109,5 @@ The webpack dev server runs on `https://localhost:4001` when the app cert files 
 5. When only in-memory cache is enabled, resource apps call `myidsan` service APIs for introspection and authorization.
 
 Internal fallback requests must include either `X-Myidsan-Internal-Token` or `Authorization: Bearer <token>` matching `sso.internalToken` or `SSO_INTERNAL_TOKEN`.
+
+Browser relying apps such as `myseliasan` use the authorization-code routes under `/api/auth`. MyIDSan validates the registered client, exact callback URL, and requested audience before issuing a one-time code. During callback, the relying app exchanges that code at `POST /api/auth/token`; when this happens over local HTTPS, the relying app must trust the MyIDSan certificate through the OS trust store or its own `sso.caCertPath` setting.

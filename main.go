@@ -9,6 +9,7 @@ import (
 
 	myidsanapp "github.com/mysayasan/kopiv2/apps/myidsan/app"
 	mymatasanapp "github.com/mysayasan/kopiv2/apps/mymatasan/app"
+	myseliasanapp "github.com/mysayasan/kopiv2/apps/myseliasan/app"
 	"github.com/mysayasan/kopiv2/infra/apphost"
 )
 
@@ -17,8 +18,9 @@ func main() {
 	flag.Parse()
 
 	apps := map[string]apphost.App{
-		"myidsan":   myidsanapp.New(),
-		"mymatasan": mymatasanapp.New(),
+		"myidsan":    myidsanapp.New(),
+		"mymatasan":  mymatasanapp.New(),
+		"myseliasan": myseliasanapp.New(),
 	}
 
 	appName := strings.TrimSpace(*selected)

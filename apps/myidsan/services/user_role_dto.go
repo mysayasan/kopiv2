@@ -5,6 +5,7 @@ import (
 
 	"github.com/mysayasan/kopiv2/domain/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
+	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 )
 
 type IUserRoleDtoService[TDto any] interface {
@@ -25,12 +26,12 @@ func NewUserRoleDtoService[TDto any](shared IUserRoleService) IUserRoleDtoServic
 
 func (m *userRoleDtoService[TDto]) Get(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*TDto, uint64, error) {
 	res, totalCnt, err := m.shared.Get(ctx, limit, offset, filters, sorters)
-	return projectSliceResult[TDto](res, totalCnt, err)
+	return sharedservices.ProjectSliceResult[TDto](res, totalCnt, err)
 }
 
 func (m *userRoleDtoService[TDto]) GetByGroup(ctx context.Context, groupId uint64) ([]*TDto, error) {
 	res, err := m.shared.GetByGroup(ctx, groupId)
-	return projectSlice[TDto](res, err)
+	return sharedservices.ProjectSlice[TDto](res, err)
 }
 
 func (m *userRoleDtoService[TDto]) Create(ctx context.Context, model entities.UserRole) (uint64, error) {

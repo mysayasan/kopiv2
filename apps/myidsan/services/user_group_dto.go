@@ -5,6 +5,7 @@ import (
 
 	"github.com/mysayasan/kopiv2/domain/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
+	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 )
 
 type IUserGroupDtoService[TDto any] interface {
@@ -24,7 +25,7 @@ func NewUserGroupDtoService[TDto any](shared IUserGroupService) IUserGroupDtoSer
 
 func (m *userGroupDtoService[TDto]) Get(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*TDto, uint64, error) {
 	res, totalCnt, err := m.shared.Get(ctx, limit, offset, filters, sorters)
-	return projectSliceResult[TDto](res, totalCnt, err)
+	return sharedservices.ProjectSliceResult[TDto](res, totalCnt, err)
 }
 
 func (m *userGroupDtoService[TDto]) Create(ctx context.Context, model entities.UserGroup) (uint64, error) {

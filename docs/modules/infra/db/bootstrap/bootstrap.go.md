@@ -33,4 +33,6 @@ Runs the shared database bootstrap process at application startup.
 - No destructive dropping is performed.
 - Unsafe entity changes are not auto-applied.
 - The engine is designed for startup bootstrap, not an interactive SQL console.
-- Bootstrap currently supports `db.engine=postgres` and `db.engine=mariadb`.
+- Bootstrap currently supports `db.engine=postgres`, `db.engine=mariadb`, and `db.engine=sqlite`.
+- SQLite `db_name` is treated as a database file path; `:memory:` is supported for tests/dev experiments.
+- SQLite uses file existence for database existence checks and initializes the file with the same bootstrap state manifest flow.

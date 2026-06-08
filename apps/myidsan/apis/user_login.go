@@ -9,6 +9,7 @@ import (
 	outputdtos "github.com/mysayasan/kopiv2/apps/myidsan/dtos/output"
 	"github.com/mysayasan/kopiv2/apps/myidsan/services"
 	"github.com/mysayasan/kopiv2/domain/entities"
+	sharedapis "github.com/mysayasan/kopiv2/domain/shared/apis"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 )
@@ -45,7 +46,7 @@ func NewUserLoginApi(
 
 func (m *userLoginApi) get(w http.ResponseWriter, r *http.Request) {
 
-	opts, err := parseListQueryOptions[entities.UserLogin](r)
+	opts, err := sharedapis.ParseListQueryOptions[entities.UserLogin](r)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
@@ -73,7 +74,7 @@ func (m *userLoginApi) getByEmail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *userLoginApi) put(w http.ResponseWriter, r *http.Request) {
-	body, err := decodeRequestDto[inputdtos.UserLoginDto, entities.UserLogin](w, r)
+	body, err := sharedapis.DecodeRequestDto[inputdtos.UserLoginDto, entities.UserLogin](w, r)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
 		return

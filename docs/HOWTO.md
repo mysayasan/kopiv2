@@ -3,7 +3,7 @@
 ## Local Development
 
 1. Provide required environment variables.
-2. Ensure PostgreSQL is reachable.
+2. Ensure the selected DB engine is reachable; SQLite only needs a writable `DB_NAME` path.
 3. `apps/mymatasan/config.dev.json` defaults PostgreSQL to port `5433`; set `DB_PORT` if your local database uses another port.
 4. Use `CACHE_PROVIDER=default` for local in-process memory cache; ensure Redis is reachable only when `CACHE_PROVIDER=redis`.
 5. Run:
@@ -18,6 +18,21 @@ Run the identity app instead:
 go run . -app myidsan
 ```
 
+Run the MySeliaSan control app after MyIDSan is running:
+
+```bash
+export ENVIRONMENT=dev
+export JWT_SECRET=replace-with-strong-secret
+go run . -app myseliasan
+```
+
+Open `https://localhost:3002`. The root page redirects to MyIDSan when no MySeliaSan session exists. Dev config expects MyIDSan at `https://localhost:3001`, client ID `myseliasan`, client secret `dev-myseliasan-secret`, and callback `https://localhost:3002/api/auth/callback`.
+
+For local HTTPS, replace `apps/myidsan/certs/cert.pem`, `apps/myidsan/certs/key.pem`, `apps/myseliasan/certs/cert.pem`, and `apps/myseliasan/certs/key.pem` with certificates signed by a CA trusted by the machine running MySeliaSan. The browser redirect is not enough; MySeliaSan also performs a backend HTTPS call to MyIDSan during `/api/auth/callback`.
+
+If that CA is not installed in the OS trust store, configure MySeliaSan `sso.caCertPath` with a PEM CA bundle path. The default dev value points at `../myidsan/certs/cert.pem`; when using a private CA, replace it with the CA PEM path or override it with `SSO_CA_CERT_PATH`.
+This is intentionally stricter than `insecureSkipVerify`: hostname, expiry, and certificate-chain validation still run. If the callback returns `403 limited access` outside dev mode, check MySeliaSan logs for the hidden token-exchange error; expired or wrong-host certificates commonly surface there.
+
 Or with make:
 
 ```bash
@@ -26,6 +41,10 @@ make run APP=mymatasan
 
 ```bash
 make run APP=myidsan
+```
+
+```bash
+make run APP=myseliasan
 ```
 
 Build only one app binary:
@@ -37,6 +56,24 @@ make build APP=mymatasan
 ```bash
 make build APP=myidsan
 ```
+
+```bash
+make build APP=myseliasan
+```
+
+Use SQLite for a small single-process local run:
+
+```bash
+export ENVIRONMENT=dev
+export JWT_SECRET=replace-with-strong-secret
+export GOOGLE_CLIENT_SECRET=replace-with-google-secret
+export DB_ENGINE=sqlite
+export DB_NAME=./data/kopiv2.db
+export CACHE_PROVIDER=default
+go run . -app mymatasan
+```
+
+For SQLite, `DB_NAME` is the database file path. Relative paths resolve from the selected app directory, so the example above writes under `apps/mymatasan/data/`.
 
 ## Run Tests
 
@@ -286,7 +323,7 @@ FE teams can import `/swagger/openapi.json` into API clients/codegen tools.
 For `myidsan`, the default dev URL is:
 
 ```text
-http://localhost:3001/swagger
+https://localhost:3001/swagger
 ```
 
 ## Identity App
@@ -301,8 +338,8 @@ export JWT_SECRET=replace-with-strong-secret
 go run . -app myidsan
 ```
 
-The dev config defaults to PostgreSQL database `myidsandb` on port `5433`, Redis at `localhost:6379`, and HTTP listener port `3001`.
-The non-dev config starts HTTPS on port `3001`, so place certificates at `apps/myidsan/certs/cert.pem` and `apps/myidsan/certs/key.pem` or change `tls.certPath` and `tls.keyPath`.
+The dev config defaults to PostgreSQL database `myidsandb` on port `5433`, Redis at `localhost:6379`, and HTTPS listener port `3001`.
+Both dev and non-dev configs expect certificates at `apps/myidsan/certs/cert.pem` and `apps/myidsan/certs/key.pem`, unless you change `tls.certPath` and `tls.keyPath`.
 It also sets `sso.issuer=myidsan`, `sso.audience=myidsan,mymatasan`, and a dev-only `sso.internalToken=dev-internal-token`.
 
 Login with the bootstrapped account after first startup:
@@ -310,7 +347,7 @@ Login with the bootstrapped account after first startup:
 ```bash
 curl -c cookies.txt -H "Content-Type: application/json" \
   -d '{"username":"superadmin","password":"superadmin123"}' \
-  "http://localhost:3001/api/login/default"
+  "https://localhost:3001/api/login/default"
 ```
 
 SSO fallback examples:
@@ -319,14 +356,14 @@ SSO fallback examples:
 curl -H "Content-Type: application/json" \
   -H "X-Myidsan-Internal-Token: dev-internal-token" \
   -d '{"token":"<jwt>","audience":"mymatasan"}' \
-  "http://localhost:3001/api/sso/introspect"
+  "https://localhost:3001/api/sso/introspect"
 ```
 
 ```bash
 curl -H "Content-Type: application/json" \
   -H "X-Myidsan-Internal-Token: dev-internal-token" \
   -d '{"token":"<jwt>","audience":"mymatasan","host":"localhost:3000","path":"/api/camera/stream","method":"GET"}' \
-  "http://localhost:3001/api/sso/authorize"
+  "https://localhost:3001/api/sso/authorize"
 ```
 
 Use Redis for multi-app deployments so session/RBAC cache entries can be shared. Use in-memory cache only for isolated development, or call the fallback APIs above when a relying app cannot see myidsan cache state.
@@ -354,7 +391,7 @@ Login through `myidsan` and store the session cookies. The issued token includes
 ```bash
 curl -c cookies.txt -H "Content-Type: application/json" \
   -d '{"username":"superadmin","password":"superadmin123"}' \
-  "http://localhost:3001/api/login/default"
+  "https://localhost:3001/api/login/default"
 ```
 
 For unsafe methods, set `CSRF_TOKEN` to the value of the `kopiv2_csrf` cookie from `cookies.txt` before sending `X-CSRF-Token`.

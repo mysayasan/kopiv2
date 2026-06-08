@@ -9,6 +9,7 @@ import (
 	outputdtos "github.com/mysayasan/kopiv2/apps/myidsan/dtos/output"
 	"github.com/mysayasan/kopiv2/apps/myidsan/services"
 	"github.com/mysayasan/kopiv2/domain/entities"
+	sharedapis "github.com/mysayasan/kopiv2/domain/shared/apis"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 )
@@ -46,7 +47,7 @@ func NewUserRoleApi(
 
 func (m *userRoleApi) get(w http.ResponseWriter, r *http.Request) {
 
-	opts, err := parseListQueryOptions[entities.UserRole](r)
+	opts, err := sharedapis.ParseListQueryOptions[entities.UserRole](r)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
@@ -75,7 +76,7 @@ func (m *userRoleApi) getByGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *userRoleApi) post(w http.ResponseWriter, r *http.Request) {
-	body, err := decodeRequestDto[inputdtos.UserRoleDto, entities.UserRole](w, r)
+	body, err := sharedapis.DecodeRequestDto[inputdtos.UserRoleDto, entities.UserRole](w, r)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
 		return
@@ -91,7 +92,7 @@ func (m *userRoleApi) post(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *userRoleApi) put(w http.ResponseWriter, r *http.Request) {
-	body, err := decodeRequestDto[inputdtos.UserRoleDto, entities.UserRole](w, r)
+	body, err := sharedapis.DecodeRequestDto[inputdtos.UserRoleDto, entities.UserRole](w, r)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
 		return

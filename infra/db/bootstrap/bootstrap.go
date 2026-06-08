@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -13,6 +15,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	_ "modernc.org/sqlite"
 )
 
 const bootstrapStateTable = "bootstrap_schema_state"
@@ -22,8 +25,8 @@ func Ensure(ctx context.Context, opts Options) (*Status, error) {
 	bootstrapConfig := normalizeBootstrapConfig(opts.Bootstrap)
 	status := &Status{AppName: opts.AppName, DatabaseName: opts.Config.DbName}
 	engine := normalizeDbEngine(opts.Config.Engine)
-	if engine != "postgres" && engine != "mariadb" {
-		return nil, fmt.Errorf("bootstrap currently supports only postgres and mariadb, got %q", engine)
+	if engine != "postgres" && engine != "mariadb" && engine != "sqlite" {
+		return nil, fmt.Errorf("bootstrap currently supports postgres, mariadb, and sqlite, got %q", engine)
 	}
 
 	if !bootstrapConfig.Enabled {
@@ -46,6 +49,11 @@ func Ensure(ctx context.Context, opts Options) (*Status, error) {
 
 	if err := db.PingContext(ctx); err != nil {
 		return nil, err
+	}
+	if engine == "sqlite" {
+		if err := configureSQLiteBootstrapDB(ctx, db); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := ensureBootstrapStateTable(ctx, db, engine); err != nil {
@@ -118,6 +126,20 @@ func ensureDatabase(ctx context.Context, cfg dbsql.DbConfigModel, engine string,
 }
 
 func databaseExists(ctx context.Context, cfg dbsql.DbConfigModel, engine string) (bool, error) {
+	if engine == "sqlite" {
+		if strings.TrimSpace(cfg.DbName) == ":memory:" {
+			return true, nil
+		}
+		if strings.TrimSpace(cfg.DbName) == "" {
+			return false, fmt.Errorf("sqlite db_name is required")
+		}
+		_, err := os.Stat(cfg.DbName)
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return err == nil, err
+	}
+
 	adminDB, err := openMaintenanceDB(cfg, engine)
 	if err != nil {
 		return false, err
@@ -137,6 +159,27 @@ func databaseExists(ctx context.Context, cfg dbsql.DbConfigModel, engine string)
 }
 
 func createDatabase(ctx context.Context, cfg dbsql.DbConfigModel, engine string) error {
+	if engine == "sqlite" {
+		dbPath := strings.TrimSpace(cfg.DbName)
+		if dbPath == "" {
+			return fmt.Errorf("sqlite db_name is required")
+		}
+		if dbPath != ":memory:" {
+			if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+				return err
+			}
+		}
+		db, err := openTargetDB(cfg, engine)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		if err := configureSQLiteBootstrapDB(ctx, db); err != nil {
+			return err
+		}
+		return db.PingContext(ctx)
+	}
+
 	adminDB, err := openMaintenanceDB(cfg, engine)
 	if err != nil {
 		return err
@@ -182,9 +225,25 @@ func buildDSN(cfg dbsql.DbConfigModel, databaseName string, engine string) (stri
 			return "mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/?parseTime=true&multiStatements=true", cfg.User, cfg.Password, cfg.Host, cfg.Port)
 		}
 		return "mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true&multiStatements=true", cfg.User, cfg.Password, cfg.Host, cfg.Port, databaseName)
+	case "sqlite":
+		return "sqlite", databaseName
 	default:
 		return "", ""
 	}
+}
+
+func configureSQLiteBootstrapDB(ctx context.Context, db *sql.DB) error {
+	db.SetMaxOpenConns(1)
+	for _, stmt := range []string{
+		"PRAGMA foreign_keys = ON",
+		"PRAGMA journal_mode = WAL",
+		"PRAGMA busy_timeout = 5000",
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func normalizeDbEngine(engine string) string {
@@ -214,6 +273,15 @@ CREATE TABLE IF NOT EXISTS %s (
 	manifest_hash VARCHAR(255) NOT NULL,
 	manifest_json JSON NOT NULL,
 	updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+)
+`, quoteIdent(bootstrapStateTable, engine))
+	case "sqlite":
+		stmt = fmt.Sprintf(`
+CREATE TABLE IF NOT EXISTS %s (
+	app_name TEXT PRIMARY KEY,
+	manifest_hash TEXT NOT NULL,
+	manifest_json TEXT NOT NULL,
+	updated_at INTEGER NOT NULL
 )
 `, quoteIdent(bootstrapStateTable, engine))
 	default:
@@ -258,6 +326,13 @@ INSERT INTO %s (app_name, manifest_hash, manifest_json, updated_at)
 VALUES (?, ?, ?, ?)
 ON DUPLICATE KEY UPDATE manifest_hash = VALUES(manifest_hash), manifest_json = VALUES(manifest_json), updated_at = VALUES(updated_at)
 `, quoteIdent(bootstrapStateTable, engine)), appName, manifestHash, string(manifestBytes), time.Now().UTC())
+	case "sqlite":
+		_, err = db.ExecContext(ctx, fmt.Sprintf(`
+INSERT INTO %s (app_name, manifest_hash, manifest_json, updated_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT (app_name)
+DO UPDATE SET manifest_hash = excluded.manifest_hash, manifest_json = excluded.manifest_json, updated_at = excluded.updated_at
+`, quoteIdent(bootstrapStateTable, engine)), appName, manifestHash, string(manifestBytes), time.Now().UTC().Unix())
 	default:
 		return fmt.Errorf("unsupported db engine %q", engine)
 	}
@@ -310,6 +385,8 @@ func tableExists(ctx context.Context, db *sql.DB, engine string, tableName strin
 		err = db.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, tableName).Scan(&exists)
 	case "mariadb":
 		err = db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?)`, tableName).Scan(&exists)
+	case "sqlite":
+		err = db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)`, tableName).Scan(&exists)
 	default:
 		return false, fmt.Errorf("unsupported db engine %q", engine)
 	}

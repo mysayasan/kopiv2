@@ -1,6 +1,6 @@
 # kopiv2
 
-Lightweight Go backend for Linux-first deployments, including small devices, with JWT auth, RBAC, camera streaming, and PostgreSQL persistence.
+Lightweight Go backend for Linux-first deployments, including small devices, with JWT auth, RBAC, camera streaming, and selectable SQL persistence.
 
 ## Table of Contents
 
@@ -47,6 +47,7 @@ This repository contains modular backend applications:
 
 - `apps/mymatasan`: camera, live stream, and video intelligence app.
 - `apps/myidsan`: identity, user management, and RBAC administration app.
+- `apps/myseliasan`: relying control-plane app for `mymatasan`, authenticated through `myidsan`.
 
 Primary goals:
 
@@ -66,7 +67,7 @@ High-level flow:
 5. Business services orchestrate repository access and camera stream workers.
 6. Transaction coordination uses Redis (or in-memory fallback for single-process dev) to serialize critical file-storage work with FIFO lock acquisition and stuck-lock telemetry.
 7. Shared cache layer uses Redis (or in-memory fallback) for cross-instance RBAC cache consistency.
-8. PostgreSQL stores persistent entities.
+8. The configured SQL engine stores persistent entities.
 9. Static SPA assets are served from the selected app directory, for example `apps/mymatasan/static` or `apps/myidsan/static`.
 
 Main components:
@@ -116,7 +117,7 @@ Relevant top-level layout:
 ## Requirements
 
 - Go 1.26.4
-- PostgreSQL (for readiness and persistent data)
+- PostgreSQL, MariaDB, or SQLite (for readiness and persistent data)
 - Linux runtime target (primary)
 - Optional local tools:
   - Docker and Docker Compose
@@ -164,6 +165,13 @@ The app fails fast if required secrets are missing.
 | `SSO_SESSION_TTL_SECONDS` | Session cookie and cache TTL in seconds | config value |
 | `SSO_POLICY_CACHE_TTL_SECONDS` | RBAC policy cache TTL in seconds | config/cache TTL |
 | `SSO_INTERNAL_TOKEN` | Service-to-service token for myidsan SSO fallback APIs | config value |
+| `SSO_PROVIDER_BASE_URL` | MyIDSan base URL used by relying apps for authorization-code login | config value |
+| `SSO_CA_CERT_PATH` | Optional PEM CA/certificate bundle trusted by relying-app backend calls to MyIDSan | config value |
+| `SSO_CLIENT_ID` | Relying-app SSO client ID | config value |
+| `SSO_CLIENT_SECRET` | Relying-app SSO client secret | config value |
+| `SSO_REDIRECT_PATH` | Relying-app callback path | config value |
+| `SSO_AUTH_CODE_TTL_SECONDS` | MyIDSan authorization-code TTL | config value |
+| `SSO_ACCESS_TOKEN_TTL_SECONDS` | MyIDSan issued token TTL | config value |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth client secret | none when enabled |
 | `GITHUB_CLIENT_SECRET` | GitHub OAuth client secret | none when enabled |
 | `DB_HOST` | Override DB host from config file | config value |
@@ -172,7 +180,7 @@ The app fails fast if required secrets are missing.
 | `DB_PASSWORD` | Override DB password from config file | config value |
 | `DB_NAME` | Override DB name from config file | config value |
 | `DB_SSL_MODE` | Override DB SSL mode from config file | config value |
-| `DB_ENGINE` | Override DB engine from config file (`postgres`/`mariadb`) | `postgres` |
+| `DB_ENGINE` | Override DB engine from config file (`postgres`/`mariadb`/`sqlite`) | `postgres` |
 | `CACHE_PROVIDER` | Cache backend provider (`default`, `redis`, `inmemory`, or `memory`) | config value |
 | `CACHE_TTL_SECONDS` | Default cache TTL in seconds | config value |
 | `CACHE_KEY_PREFIX` | Global cache key prefix | config value |
@@ -225,7 +233,7 @@ The bootstrap seeder also creates a minimal built-in core dataset on first run:
 - `user_session` schema for future audit/revocation storage while the current hot path uses cache-backed sessions.
 - `api_endpoint` and `api_endpoint_rbac` rows for protected API modules, using `*` as the host so the defaults work on any deployment address. Endpoint rows include `appCode` and `accessTier` (`0=DevOnly`, `1=AuthOnly`, `2=Public`); protected shared management APIs seed as `DevOnly`.
 
-`myidsan` seeds the same default identity dataset plus the identity-management endpoint catalog for login, user/group/role, app registry, endpoint, RBAC, cache, log, file-storage administration, and core relying-app policies for `mymatasan`.
+`myidsan` seeds the same default identity dataset plus the identity-management endpoint catalog for login, federated auth, user/group/role, app registry, app auth config, app redirect URI, endpoint, RBAC, cache, log, file-storage administration, and core relying-app policies for `mymatasan` and `myseliasan`.
 
 Credential policy for user creation:
 
@@ -257,10 +265,27 @@ When `tlsPorts` is non-empty, `tls.certPath` and `tls.keyPath` must be configure
 
 Database behavior is controlled by `db` in config:
 
-- `engine`: selects DB adapter (`postgres` or `mariadb`).
-- Runtime DB adapter and bootstrap are implemented for both `postgres` and `mariadb`.
-- Core bootstrap seed SQL is dialect-portable for both supported engines.
+- `engine`: selects DB adapter (`postgres`, `mariadb`, or `sqlite`).
+- Runtime DB adapter and bootstrap are implemented for `postgres`, `mariadb`, and `sqlite`.
+- For SQLite, `db_name` is the database file path; relative paths resolve from the selected app directory. `:memory:` is supported for tests/dev experiments only.
+- SQLite runs through the same CRUD/bootstrap contracts, but it is best for single-process or small-device deployments. Prefer PostgreSQL or MariaDB for multi-instance production workloads.
+- Core bootstrap seed SQL is dialect-portable for supported engines.
 - `apps/mymatasan/config.dev.json` defaults PostgreSQL to port `5433`; set `DB_PORT` when your local database listens on a different port.
+
+MySeliaSan local development:
+
+1. Start MyIDSan at `https://localhost:3001`.
+2. Start MySeliaSan at `https://localhost:3002`.
+3. Open `https://localhost:3002`; the root page redirects to MyIDSan when no MySeliaSan session exists.
+
+For local HTTPS, replace the app cert/key files under `apps/myidsan/certs` and `apps/myseliasan/certs` with certificates signed by a CA trusted by the machine running MySeliaSan. The callback flow includes a backend HTTPS token exchange from MySeliaSan to MyIDSan. If the CA is not in the OS trust store, set `sso.caCertPath` or `SSO_CA_CERT_PATH` in MySeliaSan to a PEM CA bundle; relative paths resolve from `apps/myseliasan`.
+`sso.caCertPath` adds trust roots only for that backend token exchange. It does not skip TLS verification, so expired certificates, wrong hostnames, and invalid chains still fail. Outside dev mode those failures can appear to the browser as `403 limited access`; check MySeliaSan logs for the exact token-exchange error.
+
+```bash
+export ENVIRONMENT=dev
+export JWT_SECRET=replace-with-strong-secret
+go run . -app myseliasan
+```
 
 Telemetry behavior is controlled by `telemetry` in config:
 
@@ -360,7 +385,17 @@ go run . -app myidsan
 ```
 
 The dev config file defaults `db.port` to `5433`. The example above overrides it to `5432`; keep whichever port matches your local PostgreSQL.
-`apps/myidsan/config.dev.json` also defaults PostgreSQL to port `5433`, database `myidsandb`, and HTTP port `3001`. `apps/myidsan/config.json` starts HTTPS on port `3001` and expects `apps/myidsan/certs/cert.pem` and `apps/myidsan/certs/key.pem`.
+`apps/myidsan/config.dev.json` also defaults PostgreSQL to port `5433`, database `myidsandb`, and HTTPS port `3001`. Both MyIDSan configs expect `apps/myidsan/certs/cert.pem` and `apps/myidsan/certs/key.pem`.
+
+For a small single-process local run, switch any app to SQLite with:
+
+```bash
+export DB_ENGINE=sqlite
+export DB_NAME=./data/kopiv2.db
+go run . -app mymatasan
+```
+
+When SQLite is selected, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, and `DB_SSL_MODE` are ignored by the adapter.
 
 ## Run with Docker
 
@@ -555,7 +590,7 @@ Notes:
 
 ## Identity and SSO Direction
 
-`myidsan` is the identity-provider foundation for single sign-on across `kopiv2` apps. It owns the identity/RBAC management surface, app registry, token issuer settings, cache-backed sessions, and internal introspection/authorization APIs for relying apps.
+`myidsan` is the identity-provider foundation for single sign-on across `kopiv2` apps. It owns the identity/RBAC management surface, app registry, app auth config, redirect URI allow-list, token issuer settings, cache-backed sessions, browser authorization-code flow, and internal introspection/authorization APIs for relying apps.
 
 `mymatasan` is now treated as a relying/resource app: it does not mount local login, user/group/role, app-registry, endpoint, or endpoint-RBAC management APIs. Its Swagger surface stays focused on camera/resource workflows plus operational shared APIs such as version, file storage, logs, and cache service.
 
@@ -568,6 +603,14 @@ SSO flow:
 3. The session is cached under `sso:session:<sid>` using the configured cache provider. Redis shares that session across apps; memory cache is process-local.
 4. Resource apps validate issuer/audience locally and cache RBAC policies by resource app, role, and policy version.
 5. With in-memory cache only, resource apps can call `POST /api/sso/introspect` and `POST /api/sso/authorize` on `myidsan` using `X-Myidsan-Internal-Token` or `Authorization: Bearer <SSO_INTERNAL_TOKEN>`.
+
+Browser relying-app flow:
+
+1. A relying app such as `myseliasan` redirects unauthenticated users to `myidsan /api/auth/authorize`.
+2. MyIDSan validates `client_id`, `audience`, and exact `redirect_uri` from `app_auth_config` and `app_redirect_uri`.
+3. If the user is not signed in to MyIDSan, MyIDSan serves `/api/auth/login` and resumes authorization after login.
+4. MyIDSan returns a short-lived one-time code to the relying app callback.
+5. The relying app exchanges the code at `/api/auth/token` using its client secret, then creates its own HttpOnly session cookie.
 
 `api_endpoint.appCode` scopes RBAC endpoint rows per app. Fresh bootstrap uses `appCode + host + path` as the intended uniqueness shape; older databases that already created the previous host/path unique index may need an operator migration before storing duplicate paths for multiple apps.
 
@@ -630,7 +673,7 @@ Before shipping to production, verify:
   - resource limits are set (CPU/memory/file descriptors).
 
 6. Backup and recovery:
-  - PostgreSQL backup schedule is configured and tested.
+  - backup schedule is configured and tested for the selected DB engine.
   - restore drill is validated on staging.
 
 ## Operational Hardening Included
@@ -666,11 +709,17 @@ Common issues:
   - relative TLS paths resolve from the selected app folder, such as `apps/myidsan/certs`.
   - for plain HTTP local runs, leave `tlsPorts` empty and set `nonTlsPorts` to the desired ports.
 
-4. Startup fails with server port error:
+4. MySeliaSan callback returns `403 limited access`:
+  - this is usually a hidden callback/token-exchange error, not MyIDSan endpoint RBAC.
+  - verify `sso.providerBaseUrl`, `sso.redirectBaseUrl`, client id/secret, and exact registered callback URI.
+  - for local HTTPS, verify the MyIDSan cert is not expired, is valid for `localhost`, and is trusted by the MySeliaSan backend through the OS trust store or `sso.caCertPath`/`SSO_CA_CERT_PATH`.
+  - restart both apps after replacing certificate files, because listeners load TLS material at startup.
+
+5. Startup fails with server port error:
   - ensure at least one of `server.tlsPorts` or `server.nonTlsPorts` contains a valid port.
   - ensure the same port is not listed in both `tlsPorts` and `nonTlsPorts`.
   - if using env overrides, set `SERVER_TLS_PORTS` and/or `SERVER_NON_TLS_PORTS` with valid comma-separated integers.
 
-5. Startup fails with camera autostart query error:
+6. Startup fails with camera autostart query error:
   - if no camera rows are marked `AutoStart=true`, startup now continues normally.
   - if you still see camera startup errors, verify camera stream rows and source URLs.

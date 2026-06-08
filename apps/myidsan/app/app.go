@@ -36,6 +36,8 @@ func (m *module) BaseDir() string {
 func (m *module) Entities() []any {
 	return []any{
 		sharedentities.AppRegistry{},
+		sharedentities.AppAuthConfig{},
+		sharedentities.AppRedirectUri{},
 		sharedentities.ApiEndpoint{},
 		sharedentities.ApiEndpointRbac{},
 		sharedentities.ApiLog{},
@@ -94,6 +96,7 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{AppCode: "myidsan", Title: "API Health", Description: "api namespace health", Path: "/api/health", AccessTier: apiaccessenums.Public},
 		{AppCode: "myidsan", Title: "Runtime Version", Description: "runtime version access", Path: "/api/version", AccessTier: apiaccessenums.Public},
 		{AppCode: "myidsan", Title: "Login", Description: "local and OAuth login access", Path: "/api/login", AccessTier: apiaccessenums.Public},
+		{AppCode: "myidsan", Title: "Federated Auth", Description: "cross-app authorization code login access", Path: "/api/auth", AccessTier: apiaccessenums.Public},
 		{AppCode: "myidsan", Title: "OAuth Callback", Description: "OAuth callback access", Path: "/api/callback", AccessTier: apiaccessenums.Public},
 		{AppCode: "myidsan", Title: "File Storage Download", Description: "public file download access", Path: "/api/file-storage/download", AccessTier: apiaccessenums.Public},
 		{AppCode: "myidsan", Title: "File Storage", Description: "identity file storage access", Path: "/api/file-storage", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
@@ -103,6 +106,8 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{AppCode: "myidsan", Title: "Endpoint RBAC", Description: "endpoint access control access", Path: "/api/endpoint-rbac", Metadata: menuMetadata(menuItem{Enabled: true, Id: "rbac", Label: "RBAC", Group: "Access Control", Order: 60, Summary: "Map endpoint permissions to role-specific HTTP methods.", Tone: "green"}), AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{AppCode: "myidsan", Title: "Cache Service", Description: "cache administration access", Path: "/api/cache-service", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{AppCode: "myidsan", Title: "App Registry", Description: "registered SSO app management", Path: "/api/app-registry", Metadata: menuMetadata(menuItem{Enabled: true, Id: "apps", Label: "Apps", Group: "Federation", Order: 40, Summary: "Manage relying apps, audiences, and SSO registration.", Tone: "indigo"}), AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
+		{AppCode: "myidsan", Title: "App Auth Config", Description: "registered SSO client auth policy management", Path: "/api/app-auth-config", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
+		{AppCode: "myidsan", Title: "App Redirect URI", Description: "registered SSO client callback URL management", Path: "/api/app-redirect-uri", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{AppCode: "myidsan", Title: "SSO Introspection", Description: "internal token introspection access", Path: "/api/sso/introspect", AccessTier: apiaccessenums.DevOnly},
 		{AppCode: "myidsan", Title: "SSO Authorization", Description: "internal authorization decision access", Path: "/api/sso/authorize", AccessTier: apiaccessenums.DevOnly},
 		{AppCode: "myidsan", Title: "User Group", Description: "user group module access", Path: "/api/user-group", Metadata: menuMetadata(menuItem{Enabled: true, Id: "groups", Label: "Groups", Group: "Identity", Order: 20, Summary: "Organize identity ownership and hierarchy roots.", Tone: "teal"}), AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
@@ -114,15 +119,56 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{AppCode: "mymatasan", Title: "mymatasan Home", Description: "mymatasan home module access", Path: "/api/home", AccessTier: apiaccessenums.AuthOnly, SeedRbac: true},
 		{AppCode: "mymatasan", Title: "mymatasan Camera Stream", Description: "mymatasan camera stream module access", Path: "/api/camera/stream", AccessTier: apiaccessenums.AuthOnly, SeedRbac: true},
 		{AppCode: "mymatasan", Title: "mymatasan User Login", Description: "mymatasan app user login access", Path: "/api/user-login", AccessTier: apiaccessenums.AuthOnly, SeedRbac: true},
+		{AppCode: "myseliasan", Title: "myseliasan Session", Description: "myseliasan session metadata access", Path: "/api/session", AccessTier: apiaccessenums.AuthOnly, SeedRbac: true},
+		{AppCode: "myseliasan", Title: "myseliasan Auth", Description: "myseliasan relying-app auth callback access", Path: "/api/auth", AccessTier: apiaccessenums.Public},
+		{AppCode: "myseliasan", Title: "myseliasan Version", Description: "myseliasan runtime version access", Path: "/api/version", AccessTier: apiaccessenums.Public},
 	}
 
 	coreDefaults := []string{
 		`INSERT INTO app_registry (code, title, description, base_url, audience, client_secret, is_active, created_by, created_at, updated_by, updated_at)
 SELECT 'myidsan', 'myidsan', 'Identity and SSO authority', 'http://localhost:3001', 'myidsan', '', TRUE, 0, 0, 0, 0
 WHERE NOT EXISTS (SELECT 1 FROM app_registry WHERE code = 'myidsan');`,
+		`UPDATE app_registry
+SET title = 'myidsan', description = 'Identity and SSO authority', base_url = 'http://localhost:3001', audience = 'myidsan', is_active = TRUE, updated_at = 0
+WHERE code = 'myidsan';`,
 		`INSERT INTO app_registry (code, title, description, base_url, audience, client_secret, is_active, created_by, created_at, updated_by, updated_at)
 SELECT 'mymatasan', 'mymatasan', 'Camera and VLMS application', 'http://localhost:3000', 'mymatasan', '', TRUE, 0, 0, 0, 0
 WHERE NOT EXISTS (SELECT 1 FROM app_registry WHERE code = 'mymatasan');`,
+		`UPDATE app_registry
+SET title = 'mymatasan', description = 'Camera and VLMS application', base_url = 'http://localhost:3000', audience = 'mymatasan', is_active = TRUE, updated_at = 0
+WHERE code = 'mymatasan';`,
+		`INSERT INTO app_registry (code, title, description, base_url, audience, client_secret, is_active, created_by, created_at, updated_by, updated_at)
+SELECT 'myseliasan', 'myseliasan', 'Control plane for mymatasan', 'http://localhost:3002', 'myseliasan', '', TRUE, 0, 0, 0, 0
+WHERE NOT EXISTS (SELECT 1 FROM app_registry WHERE code = 'myseliasan');`,
+		`UPDATE app_registry
+SET title = 'myseliasan', description = 'Control plane for mymatasan', base_url = 'http://localhost:3002', audience = 'myseliasan', is_active = TRUE, updated_at = 0
+WHERE code = 'myseliasan';`,
+		`INSERT INTO app_auth_config (app_registry_id, client_id, client_secret_hash, auth_code_ttl_seconds, access_token_ttl_seconds, session_ttl_seconds, refresh_token_ttl_seconds, require_pkce, allow_refresh_token, is_active, created_by, created_at, updated_by, updated_at)
+SELECT ar.id, 'myseliasan', '736c6859eceedb2db6b79b2f96d8e53a714ac644d83ee1dd3b52f89ae55cc274', 300, 900, 259200, 0, FALSE, FALSE, TRUE, 0, 0, 0, 0
+FROM app_registry ar
+WHERE ar.code = 'myseliasan'
+AND NOT EXISTS (SELECT 1 FROM app_auth_config ac WHERE ac.client_id = 'myseliasan');`,
+		`UPDATE app_auth_config
+SET app_registry_id = (SELECT id FROM app_registry WHERE code = 'myseliasan'), client_secret_hash = '736c6859eceedb2db6b79b2f96d8e53a714ac644d83ee1dd3b52f89ae55cc274', auth_code_ttl_seconds = 300, access_token_ttl_seconds = 900, session_ttl_seconds = 259200, refresh_token_ttl_seconds = 0, require_pkce = FALSE, allow_refresh_token = FALSE, is_active = TRUE, updated_at = 0
+WHERE client_id = 'myseliasan';`,
+		`INSERT INTO app_redirect_uri (app_auth_config_id, redirect_uri, is_active, created_by, created_at, updated_by, updated_at)
+SELECT ac.id, 'http://localhost:3002/api/auth/callback', TRUE, 0, 0, 0, 0
+FROM app_auth_config ac
+WHERE ac.client_id = 'myseliasan'
+AND NOT EXISTS (SELECT 1 FROM app_redirect_uri aru WHERE aru.app_auth_config_id = ac.id AND aru.redirect_uri = 'http://localhost:3002/api/auth/callback');`,
+		`UPDATE app_redirect_uri
+SET is_active = TRUE, updated_at = 0
+WHERE app_auth_config_id = (SELECT id FROM app_auth_config WHERE client_id = 'myseliasan')
+AND redirect_uri = 'http://localhost:3002/api/auth/callback';`,
+		`INSERT INTO app_redirect_uri (app_auth_config_id, redirect_uri, is_active, created_by, created_at, updated_by, updated_at)
+SELECT ac.id, 'https://localhost:3002/api/auth/callback', TRUE, 0, 0, 0, 0
+FROM app_auth_config ac
+WHERE ac.client_id = 'myseliasan'
+AND NOT EXISTS (SELECT 1 FROM app_redirect_uri aru WHERE aru.app_auth_config_id = ac.id AND aru.redirect_uri = 'https://localhost:3002/api/auth/callback');`,
+		`UPDATE app_redirect_uri
+SET is_active = TRUE, updated_at = 0
+WHERE app_auth_config_id = (SELECT id FROM app_auth_config WHERE client_id = 'myseliasan')
+AND redirect_uri = 'https://localhost:3002/api/auth/callback';`,
 		`INSERT INTO user_group (title, description, parent_id, is_active, created_by, created_at, updated_by, updated_at)
 SELECT 'system', 'core system group', 0, TRUE, 0, 0, 0, 0
 WHERE NOT EXISTS (SELECT 1 FROM user_group WHERE title = 'system' AND parent_id = 0);`,
@@ -179,6 +225,9 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	userLoginRepo := dbsql.NewGenericRepo[sharedentities.UserLogin](deps.Db)
 	userGroupRepo := dbsql.NewGenericRepo[sharedentities.UserGroup](deps.Db)
 	userRoleRepo := dbsql.NewGenericRepo[sharedentities.UserRole](deps.Db)
+	appRegistryRepo := dbsql.NewGenericRepo[sharedentities.AppRegistry](deps.Db)
+	appAuthConfigRepo := dbsql.NewGenericRepo[sharedentities.AppAuthConfig](deps.Db)
+	appRedirectUriRepo := dbsql.NewGenericRepo[sharedentities.AppRedirectUri](deps.Db)
 
 	userLoginService := services.NewUserLoginService(userLoginRepo, deps.Cache)
 	userGroupService := services.NewUserGroupService(userGroupRepo, deps.Cache)
@@ -192,6 +241,9 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewUserGroupApi(api, *deps.Auth, *deps.Rbac, userGroupDtoService)
 	apis.NewUserRoleApi(api, *deps.Auth, *deps.Rbac, userRoleDtoService)
 	apis.NewSSOApi(api, deps.Config, deps.Auth, deps.Rbac)
+	apis.NewFederatedAuthApi(api, deps.Config, deps.Auth, userLoginService, appRegistryRepo, appAuthConfigRepo, appRedirectUriRepo, deps.Cache)
+	apis.NewAppAuthConfigApi(api, *deps.Auth, *deps.Rbac, appAuthConfigRepo)
+	apis.NewAppRedirectUriApi(api, *deps.Auth, *deps.Rbac, appRedirectUriRepo)
 	return nil, nil
 }
 
@@ -240,6 +292,26 @@ func (m *module) APIDocs() apidocs.SpecConfig {
 				Description: "Clears session cookies.",
 				Tags:        []string{"login"},
 			},
+			"GET /api/auth/authorize": {
+				Summary:     "Authorize relying app",
+				Description: "Starts browser authorization-code login for a registered relying app.",
+				Tags:        []string{"federated-auth"},
+			},
+			"GET /api/auth/login": {
+				Summary:     "Federated login page",
+				Description: "Serves MyIDSan login page used during relying-app authorization.",
+				Tags:        []string{"federated-auth"},
+			},
+			"POST /api/auth/login": {
+				Summary:     "Federated login submit",
+				Description: "Authenticates local credentials and resumes relying-app authorization.",
+				Tags:        []string{"federated-auth"},
+			},
+			"POST /api/auth/token": {
+				Summary:     "Exchange authorization code",
+				Description: "Exchanges a one-time authorization code for relying-app token claims.",
+				Tags:        []string{"federated-auth"},
+			},
 			"GET /api/user-group": {
 				Summary:     "List user groups",
 				Description: "Returns paginated user groups for identity administration.",
@@ -278,6 +350,46 @@ func (m *module) APIDocs() apidocs.SpecConfig {
 			"GET /api/app-registry": {
 				Summary:     "List registered apps",
 				Description: "Returns apps registered for SSO audience and relying-app management.",
+				Tags:        []string{"app-registry"},
+			},
+			"GET /api/app-auth-config": {
+				Summary:     "List app auth configs",
+				Description: "Returns relying-app SSO auth policy with secret hashes redacted.",
+				Tags:        []string{"app-registry"},
+			},
+			"POST /api/app-auth-config": {
+				Summary:     "Create app auth config",
+				Description: "Creates relying-app SSO auth policy and hashes the supplied client secret.",
+				Tags:        []string{"app-registry"},
+			},
+			"PUT /api/app-auth-config": {
+				Summary:     "Update app auth config",
+				Description: "Updates relying-app SSO auth policy.",
+				Tags:        []string{"app-registry"},
+			},
+			"DELETE /api/app-auth-config/{id}": {
+				Summary:     "Delete app auth config",
+				Description: "Deletes relying-app SSO auth policy by ID.",
+				Tags:        []string{"app-registry"},
+			},
+			"GET /api/app-redirect-uri": {
+				Summary:     "List app redirect URIs",
+				Description: "Returns relying-app callback URL allow-list rows.",
+				Tags:        []string{"app-registry"},
+			},
+			"POST /api/app-redirect-uri": {
+				Summary:     "Create app redirect URI",
+				Description: "Creates a relying-app callback URL allow-list row.",
+				Tags:        []string{"app-registry"},
+			},
+			"PUT /api/app-redirect-uri": {
+				Summary:     "Update app redirect URI",
+				Description: "Updates a relying-app callback URL allow-list row.",
+				Tags:        []string{"app-registry"},
+			},
+			"DELETE /api/app-redirect-uri/{id}": {
+				Summary:     "Delete app redirect URI",
+				Description: "Deletes a relying-app callback URL allow-list row by ID.",
 				Tags:        []string{"app-registry"},
 			},
 			"POST /api/sso/introspect": {

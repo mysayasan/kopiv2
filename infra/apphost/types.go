@@ -60,6 +60,11 @@ type SharedAPIConfigurator interface {
 	SharedAPIs() SharedAPIConfig
 }
 
+// WebRouteRegistrar can be implemented by apps that need non-API routes before static assets.
+type WebRouteRegistrar interface {
+	RegisterWebRoutes(router *mux.Router, deps Dependencies) error
+}
+
 // App defines the contract for a runnable application module.
 type App interface {
 	Name() string

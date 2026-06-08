@@ -12,7 +12,7 @@ This folder is the technical documentation set for the mini framework inside thi
 
 Integration coverage note:
 
-- Bootstrap has an opt-in Docker-backed MariaDB integration test in `infra/db/bootstrap/mariadb_integration_test.go`.
+- Bootstrap has an opt-in Docker-backed MariaDB integration test in `infra/db/bootstrap/mariadb_integration_test.go` and a regular SQLite bootstrap test in `infra/db/bootstrap/sqlite_test.go`.
 - Shared OpenAPI/Swagger runtime module is in `infra/apidocs/openapi.go`.
 
 ## Module Docs Convention

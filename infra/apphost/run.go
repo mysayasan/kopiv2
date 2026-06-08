@@ -32,6 +32,7 @@ import (
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/db/sql/mariadb"
 	"github.com/mysayasan/kopiv2/infra/db/sql/postgres"
+	"github.com/mysayasan/kopiv2/infra/db/sql/sqlite"
 	applog "github.com/mysayasan/kopiv2/infra/logging"
 	"github.com/mysayasan/kopiv2/infra/scheduler"
 	infraTelemetry "github.com/mysayasan/kopiv2/infra/telemetry"
@@ -292,7 +293,7 @@ func Run(app App) error {
 		sharedApis.NewRuntimeLogApi(api, *auth, *rbac, runtimeLogDtoService)
 	}
 
-	shutdownHook, err := app.RegisterAppRoutes(api, Dependencies{
+	deps := Dependencies{
 		Config:      appConfig,
 		Db:          dbCrud,
 		Cache:       cacheStore,
@@ -301,9 +302,16 @@ func Run(app App) error {
 		AppRegistry: appRegistryService,
 		Logger:      runtimeLogger,
 		Scheduler:   runtimeScheduler,
-	})
+	}
+
+	shutdownHook, err := app.RegisterAppRoutes(api, deps)
 	if err != nil {
 		return err
+	}
+	if webRoutes, ok := app.(WebRouteRegistrar); ok {
+		if err := webRoutes.RegisterWebRoutes(router, deps); err != nil {
+			return err
+		}
 	}
 
 	api.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -402,6 +410,10 @@ func normalizePathConfig(baseDir string, appConfig *config.AppConfigModel) {
 	appConfig.Logging.Path = resolvePath(baseDir, appConfig.Logging.Path)
 	appConfig.Tls.CertPath = resolvePath(baseDir, appConfig.Tls.CertPath)
 	appConfig.Tls.KeyPath = resolvePath(baseDir, appConfig.Tls.KeyPath)
+	appConfig.SSO.CACertPath = resolvePath(baseDir, appConfig.SSO.CACertPath)
+	if normalizeDbEngine(appConfig.Db.Engine) == "sqlite" && appConfig.Db.DbName != ":memory:" {
+		appConfig.Db.DbName = resolvePath(baseDir, appConfig.Db.DbName)
+	}
 }
 
 func resolvePath(baseDir string, target string) string {
@@ -549,6 +561,34 @@ func applySSOConfigFromEnv(appConfig *config.AppConfigModel) {
 	}
 	if v := os.Getenv("SSO_INTERNAL_TOKEN"); v != "" {
 		appConfig.SSO.InternalToken = v
+	}
+	if v := strings.TrimSpace(os.Getenv("SSO_PROVIDER_BASE_URL")); v != "" {
+		appConfig.SSO.ProviderBaseURL = v
+	}
+	if v := strings.TrimSpace(os.Getenv("SSO_CA_CERT_PATH")); v != "" {
+		appConfig.SSO.CACertPath = v
+	}
+	if v := strings.TrimSpace(os.Getenv("SSO_CLIENT_ID")); v != "" {
+		appConfig.SSO.ClientID = v
+	}
+	if v := os.Getenv("SSO_CLIENT_SECRET"); v != "" {
+		appConfig.SSO.ClientSecret = v
+	}
+	if v := strings.TrimSpace(os.Getenv("SSO_REDIRECT_BASE_URL")); v != "" {
+		appConfig.SSO.RedirectBaseURL = v
+	}
+	if v := strings.TrimSpace(os.Getenv("SSO_REDIRECT_PATH")); v != "" {
+		appConfig.SSO.RedirectPath = v
+	}
+	if v := strings.TrimSpace(os.Getenv("SSO_AUTH_CODE_TTL_SECONDS")); v != "" {
+		if seconds, err := strconv.Atoi(v); err == nil && seconds > 0 {
+			appConfig.SSO.AuthCodeTTLSeconds = seconds
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("SSO_ACCESS_TOKEN_TTL_SECONDS")); v != "" {
+		if seconds, err := strconv.Atoi(v); err == nil && seconds > 0 {
+			appConfig.SSO.AccessTokenTTLSeconds = seconds
+		}
 	}
 }
 
@@ -984,6 +1024,8 @@ func newDbCrud(cfg dbsql.DbConfigModel) (dbsql.IDbCrud, error) {
 		return postgres.NewDbCrud(cfg)
 	case "mariadb":
 		return mariadb.NewDbCrud(cfg)
+	case "sqlite":
+		return sqlite.NewDbCrud(cfg)
 	default:
 		return nil, fmt.Errorf("unsupported db engine %q", engine)
 	}
