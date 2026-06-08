@@ -69,6 +69,53 @@ func TestGenSelSqlStrAppliesOffsetWithoutLimit(t *testing.T) {
 	}
 }
 
+func TestGenSelSqlStrWithJoinSpecsUsesAliasesAndDbCol(t *testing.T) {
+	_, sqlStr := (&dbCrud{}).genSelSqlStrWithJoinSpecs(
+		reflect.ValueOf(entities.ApiEndpointRbacListModel{}),
+		10,
+		0,
+		[]sqldataenums.Filter{{FieldName: "EndpointPath", Compare: sqldataenums.Equal, Value: "/api/users"}},
+		[]sqldataenums.Sorter{{FieldName: "EndpointPath", Sort: sqldataenums.ASC}},
+		"api_endpoint_rbac",
+		dbsql.JoinSpec{Source: "api_endpoint", Alias: "table1"},
+		dbsql.JoinSpec{Source: "user_role", Alias: "table2"},
+	)
+
+	expectedParts := []string{
+		"INNER JOIN api_endpoint table1 ON table0.api_endpoint_id = table1.id",
+		"INNER JOIN user_role table2 ON table0.user_role_id = table2.id",
+		"table1.path",
+		"WHERE table1.path = '/api/users'",
+		"ORDER BY table1.path ASC",
+	}
+	for _, expected := range expectedParts {
+		if !strings.Contains(sqlStr, expected) {
+			t.Fatalf("expected SQL to contain %q, got:\n%s", expected, sqlStr)
+		}
+	}
+}
+
+func TestWriteSqlEscapesStringValues(t *testing.T) {
+	endpoint := entities.ApiEndpoint{
+		Title:    "John's Portal",
+		Metadata: `{"menu":{"label":"John's Portal"}}`,
+		AppCode:  "myidsan",
+		Host:     "*",
+		Path:     "/api/endpoint",
+	}
+	props := reflect.ValueOf(endpoint)
+
+	insertSQL := (&dbCrud{}).genInsSqlStr(props, "")
+	if strings.Contains(insertSQL, "'John's Portal'") || !strings.Contains(insertSQL, "John''s Portal") {
+		t.Fatalf("expected insert SQL to escape apostrophes, got:\n%s", insertSQL)
+	}
+
+	updateSQL := (&dbCrud{}).genUpdSqlStr(props, "", nil)
+	if strings.Contains(updateSQL, "'John's Portal'") || !strings.Contains(updateSQL, "John''s Portal") {
+		t.Fatalf("expected update SQL to escape apostrophes, got:\n%s", updateSQL)
+	}
+}
+
 func TestSmokeSelectApiLogOffsetOnly(t *testing.T) {
 	if os.Getenv("KOPIV2_POSTGRES_SMOKE") != "1" {
 		t.Skip("set KOPIV2_POSTGRES_SMOKE=1 to run against a local Postgres database")

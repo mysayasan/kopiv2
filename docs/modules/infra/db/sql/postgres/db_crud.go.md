@@ -26,6 +26,7 @@ DSN components used:
 
 - Uses struct reflection and tags for mapping.
 - Supports key-based filtering (`pkey`, `ukey`, `fkey`).
+- Supports reusable explicit join specs through `SelectJoin`, including field-level `dbcol` tags for joined projection columns whose DTO names differ from database column names.
 - Generates where/sort expressions from enum-based filter/sorter inputs, including equality and range comparisons.
 - Formats filter values by reflected field kind so defined integer enum fields are treated as numeric values.
 - Escapes single quotes in string filter values before embedding them in generated SQL.

@@ -922,9 +922,13 @@ func baseComponentSchemas() map[string]openAPISchema {
 				"id":          {Type: "integer", Format: "int64"},
 				"title":       {Type: "string"},
 				"description": {Type: "string"},
-				"appCode":     {Type: "string"},
-				"host":        {Type: "string"},
-				"path":        {Type: "string"},
+				"metadata": {
+					Type:        "string",
+					Description: "JSON text for endpoint presentation metadata such as menu placement, label, order, summary, and tone.",
+				},
+				"appCode": {Type: "string"},
+				"host":    {Type: "string"},
+				"path":    {Type: "string"},
 				"accessTier": {
 					Type:        "integer",
 					Format:      "int32",
@@ -970,6 +974,32 @@ func baseComponentSchemas() map[string]openAPISchema {
 				"createdAt":     {Type: "integer", Format: "int64"},
 				"updatedBy":     {Type: "integer", Format: "int64"},
 				"updatedAt":     {Type: "integer", Format: "int64"},
+			},
+			Required: []string{"apiEndpointId", "userRoleId"},
+		},
+		"ApiEndpointRbacListOutputDto": {
+			Type: "object",
+			Properties: map[string]openAPISchema{
+				"id":               {Type: "integer", Format: "int64"},
+				"apiEndpointId":    {Type: "integer", Format: "int64"},
+				"userRoleId":       {Type: "integer", Format: "int64"},
+				"endpointTitle":    {Type: "string"},
+				"endpointAppCode":  {Type: "string"},
+				"endpointHost":     {Type: "string"},
+				"endpointPath":     {Type: "string"},
+				"endpointMetadata": {Type: "string"},
+				"endpointTier": {
+					Type:        "integer",
+					Format:      "int32",
+					Description: "0=DevOnly, 1=AuthOnly, 2=Public.",
+				},
+				"roleTitle": {Type: "string"},
+				"canGet":    {Type: "boolean"},
+				"canPost":   {Type: "boolean"},
+				"canPut":    {Type: "boolean"},
+				"canDelete": {Type: "boolean"},
+				"isActive":  {Type: "boolean"},
+				"createdAt": {Type: "integer", Format: "int64"},
 			},
 			Required: []string{"apiEndpointId", "userRoleId"},
 		},
@@ -1106,6 +1136,10 @@ func baseComponentSchemas() map[string]openAPISchema {
 				"appCode":       {Type: "string"},
 				"host":          {Type: "string"},
 				"path":          {Type: "string"},
+				"metadata": {
+					Type:        "string",
+					Description: "JSON text copied from the joined api_endpoint row for menu and presentation customization.",
+				},
 				"accessTier": {
 					Type:        "integer",
 					Format:      "int32",
@@ -1236,6 +1270,7 @@ func baseComponentSchemas() map[string]openAPISchema {
 	schemas["ApiEndpointPayload"] = schemas["ApiEndpointOutputDto"]
 	schemas["AppRegistryPayload"] = schemas["AppRegistryOutputDto"]
 	schemas["ApiEndpointRbacPayload"] = schemas["ApiEndpointRbacOutputDto"]
+	schemas["ApiEndpointRbacListPayload"] = schemas["ApiEndpointRbacListOutputDto"]
 	schemas["ApiEndpointRbacJoinPayload"] = schemas["ApiEndpointRbacJoinOutputDto"]
 	schemas["ApiLogPayload"] = schemas["ApiLogOutputDto"]
 	schemas["FileStoragePayload"] = schemas["FileStorageOutputDto"]
@@ -1264,7 +1299,7 @@ func baseComponentSchemas() map[string]openAPISchema {
 	schemas["PagingAppUserLoginResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("AppUserLoginPayload")})
 	schemas["PagingApiEndpointResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("ApiEndpointOutputDto")})
 	schemas["PagingAppRegistryResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("AppRegistryOutputDto")})
-	schemas["PagingApiEndpointRbacResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("ApiEndpointRbacOutputDto")})
+	schemas["PagingApiEndpointRbacResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("ApiEndpointRbacListOutputDto")})
 	schemas["PagingCameraStreamResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("CameraStreamPayload")})
 	schemas["PagingHomeLatestResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("ResidentPropPayload")})
 	schemas["PagingApiLogResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("ApiLogOutputDto")})

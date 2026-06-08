@@ -50,6 +50,37 @@ func (m *apiEndpointRbacService) Get(ctx context.Context, limit uint64, offset u
 	return m.repo.Get(ctx, "", limit, offset, filters, sorters)
 }
 
+func (m *apiEndpointRbacService) GetList(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.ApiEndpointRbacListModel, uint64, error) {
+	if len(sorters) == 0 {
+		sorters = []sqldataenums.Sorter{
+			{
+				FieldName: "CreatedAt",
+				Sort:      sqldataenums.DESC,
+			},
+		}
+	}
+
+	data, total, err := m.repo.GetJoinWithSpec(ctx, "api_endpoint_rbac", entities.ApiEndpointRbacListModel{}, limit, offset, filters, sorters,
+		dbsql.JoinSpec{Source: "api_endpoint", Alias: "table1"},
+		dbsql.JoinSpec{Source: "user_role", Alias: "table2"},
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	res := make([]*entities.ApiEndpointRbacListModel, 0)
+	for _, row := range data {
+		row := row
+		var model entities.ApiEndpointRbacListModel
+		if err := mapstructure.Decode(row, &model); err != nil {
+			return nil, 0, fmt.Errorf("decode endpoint rbac list failed: %w", err)
+		}
+		res = append(res, &model)
+	}
+
+	return res, total, nil
+}
+
 func (m *apiEndpointRbacService) Create(ctx context.Context, model entities.ApiEndpointRbac) (uint64, error) {
 	id, err := m.repo.Create(ctx, "", model)
 	if err != nil {

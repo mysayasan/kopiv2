@@ -15,6 +15,7 @@ It owns the identity user, group, role, app registry, endpoint, and RBAC adminis
   - `POST /api/sso/authorize`
 - Redis or in-memory cache selection through the standard cache config.
 - Bootstrap of the default `system` group, `superadmin` role, `superadmin` account, registered apps, and protected identity-management endpoint permissions.
+- React/Webpack identity administration UI under `views/react-webpack`, built into `static` for the Go app host.
 - Runtime OpenAPI documentation at `/swagger`.
 
 ## Run
@@ -52,6 +53,49 @@ Required secret:
 ```bash
 export JWT_SECRET=replace-with-strong-secret
 ```
+
+## Frontend
+
+The MyIDSan frontend follows the lightweight React/Webpack pattern used by `mymatasan`.
+
+From `apps/myidsan/views/react-webpack`:
+
+```bash
+npm install
+npm run build
+```
+
+The production build writes assets into `apps/myidsan/static`, which the Go app host serves as the SPA catch-all.
+
+The UI builds its sidebar from `GET /api/endpoint-rbac/ep/me`. A page appears only when the current user's role has RBAC access to the backing API endpoint and that endpoint's `metadata` contains an enabled `menu` or `menus[]` item for the page. The supported menu metadata fields are `id`, `label`, `group`, `order`, `summary`, `tone`, and optional `code`.
+
+Example endpoint metadata:
+
+```json
+{
+  "menu": {
+    "enabled": true,
+    "id": "users",
+    "label": "Users",
+    "group": "Identity",
+    "order": 10,
+    "summary": "Maintain user access.",
+    "tone": "blue"
+  }
+}
+```
+
+Use `menus[]` when one API endpoint backs multiple UI pages, such as `users` and `roles` through `/api/user-credential`.
+
+CRUD administration tables use the same RBAC source for page and action access. The toolbar enables create, edit, and delete only when the current role has the matching `POST`, `PUT`, or `DELETE` grant for the page endpoint, so row selection cannot bypass a denied action. Table controls are standardized with floating column filter popovers, datatype-aware operators, neutral boolean filters, ordered multi-column sorting, loading feedback, popup editing, and pagination with first, previous, next, last, and goto-page controls. Filter, sort, and page position are remembered in browser cookies per table resource and reset by the table clear control. The active page is also remembered; if the remembered page is no longer allowed by RBAC after refresh, the UI shows the unauthorized access page instead of silently jumping to another module.
+
+For local frontend iteration:
+
+```bash
+npm run start
+```
+
+The webpack dev server runs on `https://localhost:4001` when the app cert files exist and proxies `/api`, `/swagger`, health, readiness, and metrics requests to `https://localhost:3001`.
 
 ## SSO Flow
 

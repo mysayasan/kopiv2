@@ -16,6 +16,7 @@ import (
 	"github.com/mysayasan/kopiv2/domain/models"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 	"github.com/mysayasan/kopiv2/infra/cache"
+	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
 
 type fakeDbCrud struct {
@@ -23,6 +24,10 @@ type fakeDbCrud struct {
 }
 
 func (m *fakeDbCrud) Select(ctx context.Context, model interface{}, limit uint64, offset uint64, filters []sqldataenums.Filter, sorter []sqldataenums.Sorter, datasrc string, joinsrc ...string) ([]map[string]interface{}, uint64, error) {
+	return nil, 0, nil
+}
+
+func (m *fakeDbCrud) SelectJoin(ctx context.Context, model interface{}, limit uint64, offset uint64, filters []sqldataenums.Filter, sorter []sqldataenums.Sorter, datasrc string, joins ...dbsql.JoinSpec) ([]map[string]interface{}, uint64, error) {
 	return nil, 0, nil
 }
 
@@ -93,6 +98,10 @@ func (m *fakeDbCrud) CommitTx() error {
 type fakeApiEndpointRbacService struct{}
 
 func (m *fakeApiEndpointRbacService) Get(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.ApiEndpointRbac, uint64, error) {
+	return nil, 0, nil
+}
+
+func (m *fakeApiEndpointRbacService) GetList(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.ApiEndpointRbacListModel, uint64, error) {
 	return nil, 0, nil
 }
 

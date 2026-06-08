@@ -28,4 +28,4 @@ Sorter JSON shape:
 {"fieldName":"createdAt","sort":2}
 ```
 
-Arrays use the same object shape. Multiple filters are combined by the SQL repository with `AND`.
+Arrays use the same object shape. Multiple filters are combined by the SQL repository with `AND`; multiple sorters are applied in request order.

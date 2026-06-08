@@ -7,6 +7,7 @@ import (
 
 	"github.com/mysayasan/kopiv2/domain/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
+	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -31,6 +32,10 @@ func (f *fakeUserLoginRepo) Get(_ context.Context, _ string, _ uint64, _ uint64,
 }
 
 func (f *fakeUserLoginRepo) GetJoin(_ context.Context, _ string, _ any, _ uint64, _ uint64, _ []sqldataenums.Filter, _ []sqldataenums.Sorter, _ ...string) ([]map[string]any, uint64, error) {
+	return nil, 0, nil
+}
+
+func (f *fakeUserLoginRepo) GetJoinWithSpec(_ context.Context, _ string, _ any, _ uint64, _ uint64, _ []sqldataenums.Filter, _ []sqldataenums.Sorter, _ ...dbsql.JoinSpec) ([]map[string]any, uint64, error) {
 	return nil, 0, nil
 }
 

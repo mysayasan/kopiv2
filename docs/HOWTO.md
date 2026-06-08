@@ -331,6 +331,8 @@ curl -H "Content-Type: application/json" \
 
 Use Redis for multi-app deployments so session/RBAC cache entries can be shared. Use in-memory cache only for isolated development, or call the fallback APIs above when a relying app cannot see myidsan cache state.
 
+The MyIDSan admin UI is served from the app shell and builds its sidebar from `/api/endpoint-rbac/ep/me` plus `api_endpoint.metadata` menu entries. The same RBAC method grants control toolbar actions: `POST` enables create, `PUT` enables edit, and `DELETE` enables delete. Table filter, sort, and page position are remembered per table resource in browser cookies, and the table clear control resets that remembered state. If a refreshed session remembers a page that the current role can no longer access, the UI shows the unauthorized access page.
+
 ## Filter Shared List APIs
 
 Shared DB-backed list endpoints accept backend filters and sorters in addition to `limit` and `offset`.
@@ -342,6 +344,8 @@ curl "http://localhost:3000/api/log?limit=25&offset=0&filters=%5B%7B%22fieldName
 ```
 
 The JSON filter shape is `{"fieldName":"createdAt","compare":5,"value":1700000000}`. Compare values are `1` equals, `2` not equals, `3` greater than, `4` less than, `5` greater than or equal, and `6` less than or equal. The sorter shape is `{"fieldName":"createdAt","sort":2}` where `1` is ascending and `2` is descending.
+
+`filters` and `sorters` may be a JSON object or array. Repeated `filter` and `sorter` query parameters are also accepted. Multiple filters are combined with `AND`, multiple sorters are applied in request order, and boolean filters should be omitted or cleared for the neutral state.
 
 ## Cache Admin API
 

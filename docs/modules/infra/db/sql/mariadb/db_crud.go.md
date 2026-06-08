@@ -27,6 +27,7 @@ DSN uses:
 - This adapter enables `db.engine=mariadb` end-to-end runtime support.
 - Bootstrap and seed flow now run against MariaDB with dialect-aware SQL in the bootstrap package.
 - SQL filters support equality and range comparisons for list/update/delete operations.
+- Joined list projections can use explicit `JoinSpec` aliases and field-level `dbcol` tags when selected DTO field names differ from source table columns.
 - Filter values are formatted by reflected field kind so defined integer enum fields are treated as numeric values.
 - String filter values escape single quotes before being embedded in generated SQL.
 - Nullable database strings are scanned through `sql.NullString` and normalized to empty Go strings for string entity fields.

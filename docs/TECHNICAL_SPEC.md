@@ -52,6 +52,7 @@ The runtime now uses a reusable multi-app launcher pattern:
 - `POST /api/sso/introspect` validates token/session state for service-to-service fallback.
 - `POST /api/sso/authorize` validates token/session state and returns an app-scoped RBAC decision for service-to-service fallback.
 - API endpoint metadata includes `accessTier` (`0=DevOnly`, `1=AuthOnly`, `2=Public`) for route classification. The tier does not replace auth/RBAC; `DevOnly` endpoints still require authorization when registered behind protected handlers.
+- Browser-readable MyIDSan UI cookies are limited to presentation state such as the active page and table filters, sorters, and page position. They are not authentication or authorization material; identity remains in the HttpOnly JWT cookie and server-side RBAC checks.
 - API rate limiting uses a sliding-window counter per endpoint access tier. Redis-backed cache shares counters across instances; in-memory cache is process-local.
 - Secrets:
   - `JWT_SECRET` required.
@@ -221,7 +222,7 @@ At least one explicit TLS or non-TLS port must be configured. The same port cann
 - Endpoint list is generated from runtime route registration, so shared and app-local APIs are documented from one source.
 - Key endpoints include reusable request/response schema components (`components.schemas`) for FE integration and code generation.
 - Key list/create/update endpoints are mapped to endpoint-specific response wrappers (typed `result` payloads) instead of only generic default/paging contracts.
-- Shared DB-backed list endpoints expose `limit`, `offset`, and optional `filters`/`sorters` query parameters so paging can be filtered and ordered in the backend before the response is returned.
+- Shared DB-backed list endpoints expose `limit`, `offset`, and optional `filters`/`sorters` query parameters so paging can be filtered and ordered in the backend before the response is returned. `filters` and `sorters` accept JSON object or array values, with repeated `filter` and `sorter` query parameters also supported. Multiple filters are combined with `AND`; multiple sorters keep the request order.
 - Non-JSON endpoints are explicitly modeled with route-accurate status/content (for example OAuth redirect `302` and MJPEG stream `206 multipart/x-mixed-replace`).
 - Cache admin endpoints are documented with `cache-service` tag (`GET /api/cache-service`, `GET /api/cache-service/health`, `DELETE /api/cache-service`, `POST /api/cache-service/wipe`).
 - API log endpoints are documented with `log` tag (`GET /api/log`, `DELETE /api/log`).

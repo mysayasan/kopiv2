@@ -231,7 +231,7 @@ func Run(app App) error {
 	apiLogDtoService := sharedServices.NewApiLogDtoService[sharedOutputDtos.ApiLogDto](apiLogService)
 	appRegistryDtoService := sharedServices.NewAppRegistryDtoService[sharedOutputDtos.AppRegistryDto](appRegistryService)
 	apiEndpointDtoService := sharedServices.NewApiEndpointDtoService[sharedOutputDtos.ApiEndpointDto](apiEndpointService)
-	apiEndpointRbacDtoService := sharedServices.NewApiEndpointRbacDtoService[sharedOutputDtos.ApiEndpointRbacDto, sharedOutputDtos.ApiEndpointRbacJoinDto](apiEndpointRbacService)
+	apiEndpointRbacDtoService := sharedServices.NewApiEndpointRbacDtoService[sharedOutputDtos.ApiEndpointRbacDto, sharedOutputDtos.ApiEndpointRbacListDto, sharedOutputDtos.ApiEndpointRbacJoinDto](apiEndpointRbacService)
 	fileStorageDtoService := sharedServices.NewFileStorageDtoService[sharedOutputDtos.FileStorageDto, sharedOutputDtos.OperationJobDto](fileStorageService)
 	runtimeLogDtoService := sharedServices.NewRuntimeLogDtoService[sharedOutputDtos.RuntimeLogDto](runtimeLogService)
 	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())

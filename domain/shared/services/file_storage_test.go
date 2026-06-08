@@ -53,6 +53,9 @@ func (f *fakeRootDb) BeginScopedTx(context.Context) (dbsql.IDbCrud, error) {
 func (f *fakeRootDb) Select(context.Context, interface{}, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter, string, ...string) ([]map[string]interface{}, uint64, error) {
 	return nil, 0, nil
 }
+func (f *fakeRootDb) SelectJoin(context.Context, interface{}, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter, string, ...dbsql.JoinSpec) ([]map[string]interface{}, uint64, error) {
+	return nil, 0, nil
+}
 func (f *fakeRootDb) SelectSingle(context.Context, interface{}, []sqldataenums.Filter, string) (map[string]interface{}, error) {
 	return nil, nil
 }
@@ -93,6 +96,9 @@ func (f *fakeRootDb) RollbackTx() error             { return nil }
 func (f *fakeRootDb) CommitTx() error               { return nil }
 
 func (f *fakeTxDb) Select(context.Context, interface{}, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter, string, ...string) ([]map[string]interface{}, uint64, error) {
+	return nil, 0, nil
+}
+func (f *fakeTxDb) SelectJoin(context.Context, interface{}, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter, string, ...dbsql.JoinSpec) ([]map[string]interface{}, uint64, error) {
 	return nil, 0, nil
 }
 func (f *fakeTxDb) SelectSingle(context.Context, interface{}, []sqldataenums.Filter, string) (map[string]interface{}, error) {
@@ -207,6 +213,10 @@ func (f *fakeFileStorageRepo) Get(_ context.Context, _ string, limit uint64, _ u
 func (f *fakeFileStorageRepo) GetJoin(context.Context, string, any, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter, ...string) ([]map[string]any, uint64, error) {
 	return nil, 0, nil
 }
+
+func (f *fakeFileStorageRepo) GetJoinWithSpec(context.Context, string, any, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter, ...dbsql.JoinSpec) ([]map[string]any, uint64, error) {
+	return nil, 0, nil
+}
 func (f *fakeFileStorageRepo) GetSingle(context.Context, string, []sqldataenums.Filter) (*entities.FileStorage, error) {
 	return nil, nil
 }
@@ -311,6 +321,10 @@ func (f *fakeFileStorageUserLoginRepo) Get(context.Context, string, uint64, uint
 func (f *fakeFileStorageUserLoginRepo) GetJoin(context.Context, string, any, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter, ...string) ([]map[string]any, uint64, error) {
 	return nil, 0, nil
 }
+
+func (f *fakeFileStorageUserLoginRepo) GetJoinWithSpec(context.Context, string, any, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter, ...dbsql.JoinSpec) ([]map[string]any, uint64, error) {
+	return nil, 0, nil
+}
 func (f *fakeFileStorageUserLoginRepo) GetSingle(context.Context, string, []sqldataenums.Filter) (*entities.UserLogin, error) {
 	return nil, nil
 }
@@ -359,6 +373,10 @@ func (f *fakeFileStorageUserRoleRepo) Get(context.Context, string, uint64, uint6
 	return nil, 0, nil
 }
 func (f *fakeFileStorageUserRoleRepo) GetJoin(context.Context, string, any, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter, ...string) ([]map[string]any, uint64, error) {
+	return nil, 0, nil
+}
+
+func (f *fakeFileStorageUserRoleRepo) GetJoinWithSpec(context.Context, string, any, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter, ...dbsql.JoinSpec) ([]map[string]any, uint64, error) {
 	return nil, 0, nil
 }
 func (f *fakeFileStorageUserRoleRepo) GetSingle(context.Context, string, []sqldataenums.Filter) (*entities.UserRole, error) {
@@ -427,6 +445,10 @@ func (f *fakeOperationJobRepo) Get(_ context.Context, _ string, limit uint64, _ 
 	return res, total, nil
 }
 func (f *fakeOperationJobRepo) GetJoin(context.Context, string, any, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter, ...string) ([]map[string]any, uint64, error) {
+	return nil, 0, nil
+}
+
+func (f *fakeOperationJobRepo) GetJoinWithSpec(context.Context, string, any, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter, ...dbsql.JoinSpec) ([]map[string]any, uint64, error) {
 	return nil, 0, nil
 }
 func (f *fakeOperationJobRepo) GetSingle(context.Context, string, []sqldataenums.Filter) (*entities.OperationJob, error) {

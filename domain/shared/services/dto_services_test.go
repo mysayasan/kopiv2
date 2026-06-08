@@ -57,12 +57,17 @@ func TestApiEndpointDtoServiceGetReturnsSuppliedDTO(t *testing.T) {
 }
 
 type fakeApiEndpointRbacCoreService struct {
-	rbac []*entities.ApiEndpointRbac
-	join []*entities.ApiEndpointRbacJoinModel
+	rbac     []*entities.ApiEndpointRbac
+	rbacList []*entities.ApiEndpointRbacListModel
+	join     []*entities.ApiEndpointRbacJoinModel
 }
 
 func (m *fakeApiEndpointRbacCoreService) Get(context.Context, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter) ([]*entities.ApiEndpointRbac, uint64, error) {
 	return m.rbac, uint64(len(m.rbac)), nil
+}
+
+func (m *fakeApiEndpointRbacCoreService) GetList(context.Context, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter) ([]*entities.ApiEndpointRbacListModel, uint64, error) {
+	return m.rbacList, uint64(len(m.rbacList)), nil
 }
 
 func (m *fakeApiEndpointRbacCoreService) GetApiEpByUserRole(context.Context, uint64) ([]*entities.ApiEndpointRbacJoinModel, uint64, error) {
@@ -89,9 +94,10 @@ func (m *fakeApiEndpointRbacCoreService) Validate(context.Context, string, strin
 }
 
 func TestApiEndpointRbacDtoServiceGetReturnsSuppliedDTOs(t *testing.T) {
-	service := NewApiEndpointRbacDtoService[sharedAdapterDTO, sharedAdapterDTO](&fakeApiEndpointRbacCoreService{
-		rbac: []*entities.ApiEndpointRbac{{Id: 4, ApiEndpointId: 3}},
-		join: []*entities.ApiEndpointRbacJoinModel{{Id: 4, Host: "*", Path: "/api/home"}},
+	service := NewApiEndpointRbacDtoService[sharedAdapterDTO, sharedAdapterDTO, sharedAdapterDTO](&fakeApiEndpointRbacCoreService{
+		rbac:     []*entities.ApiEndpointRbac{{Id: 4, ApiEndpointId: 3}},
+		rbacList: []*entities.ApiEndpointRbacListModel{{Id: 4, ApiEndpointId: 3, EndpointPath: "/api/home"}},
+		join:     []*entities.ApiEndpointRbacJoinModel{{Id: 4, Host: "*", Path: "/api/home"}},
 	})
 
 	res, totalCnt, err := service.Get(context.Background(), 10, 0, nil, nil)

@@ -1,8 +1,10 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/myidsan/apis"
@@ -52,8 +54,40 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		Title       string
 		Description string
 		Path        string
+		Metadata    string
 		AccessTier  apiaccessenums.AccessTier
 		SeedRbac    bool
+	}
+
+	type menuItem struct {
+		Enabled bool   `json:"enabled"`
+		Id      string `json:"id"`
+		Label   string `json:"label"`
+		Group   string `json:"group"`
+		Order   int    `json:"order"`
+		Summary string `json:"summary"`
+		Tone    string `json:"tone"`
+	}
+
+	menuMetadata := func(items ...menuItem) string {
+		if len(items) == 0 {
+			return ""
+		}
+		if len(items) == 1 {
+			payload := struct {
+				Menu menuItem `json:"menu"`
+			}{Menu: items[0]}
+			data, _ := json.Marshal(payload)
+			return string(data)
+		}
+		payload := struct {
+			Menus []menuItem `json:"menus"`
+		}{Menus: items}
+		data, _ := json.Marshal(payload)
+		return string(data)
+	}
+	sqlString := func(value string) string {
+		return strings.ReplaceAll(value, "'", "''")
 	}
 
 	endpoints := []endpointSeed{
@@ -65,14 +99,17 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{AppCode: "myidsan", Title: "File Storage", Description: "identity file storage access", Path: "/api/file-storage", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{AppCode: "myidsan", Title: "Logs", Description: "api log access", Path: "/api/log", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{AppCode: "myidsan", Title: "Runtime Logs", Description: "runtime log access", Path: "/api/log-service", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
-		{AppCode: "myidsan", Title: "Endpoints", Description: "endpoint catalog access", Path: "/api/endpoint", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
-		{AppCode: "myidsan", Title: "Endpoint RBAC", Description: "endpoint access control access", Path: "/api/endpoint-rbac", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
+		{AppCode: "myidsan", Title: "Endpoints", Description: "endpoint catalog access", Path: "/api/endpoint", Metadata: menuMetadata(menuItem{Enabled: true, Id: "endpoints", Label: "Endpoints", Group: "Access Control", Order: 50, Summary: "Maintain the protected endpoint catalog and menu metadata.", Tone: "steel"}), AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
+		{AppCode: "myidsan", Title: "Endpoint RBAC", Description: "endpoint access control access", Path: "/api/endpoint-rbac", Metadata: menuMetadata(menuItem{Enabled: true, Id: "rbac", Label: "RBAC", Group: "Access Control", Order: 60, Summary: "Map endpoint permissions to role-specific HTTP methods.", Tone: "green"}), AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{AppCode: "myidsan", Title: "Cache Service", Description: "cache administration access", Path: "/api/cache-service", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
-		{AppCode: "myidsan", Title: "App Registry", Description: "registered SSO app management", Path: "/api/app-registry", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
+		{AppCode: "myidsan", Title: "App Registry", Description: "registered SSO app management", Path: "/api/app-registry", Metadata: menuMetadata(menuItem{Enabled: true, Id: "apps", Label: "Apps", Group: "Federation", Order: 40, Summary: "Manage relying apps, audiences, and SSO registration.", Tone: "indigo"}), AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{AppCode: "myidsan", Title: "SSO Introspection", Description: "internal token introspection access", Path: "/api/sso/introspect", AccessTier: apiaccessenums.DevOnly},
 		{AppCode: "myidsan", Title: "SSO Authorization", Description: "internal authorization decision access", Path: "/api/sso/authorize", AccessTier: apiaccessenums.DevOnly},
-		{AppCode: "myidsan", Title: "User Group", Description: "user group module access", Path: "/api/user-group", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
-		{AppCode: "myidsan", Title: "User Credential", Description: "user login and role access", Path: "/api/user-credential", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
+		{AppCode: "myidsan", Title: "User Group", Description: "user group module access", Path: "/api/user-group", Metadata: menuMetadata(menuItem{Enabled: true, Id: "groups", Label: "Groups", Group: "Identity", Order: 20, Summary: "Organize identity ownership and hierarchy roots.", Tone: "teal"}), AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
+		{AppCode: "myidsan", Title: "User Credential", Description: "user login and role access", Path: "/api/user-credential", Metadata: menuMetadata(
+			menuItem{Enabled: true, Id: "users", Label: "Users", Group: "Identity", Order: 10, Summary: "Maintain credentials, profile details, and role assignment.", Tone: "blue"},
+			menuItem{Enabled: true, Id: "roles", Label: "Roles", Group: "Identity", Order: 30, Summary: "Create group-scoped roles and parent role chains.", Tone: "violet"},
+		), AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{AppCode: "mymatasan", Title: "mymatasan Admin", Description: "mymatasan admin module access", Path: "/api/admin", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{AppCode: "mymatasan", Title: "mymatasan Home", Description: "mymatasan home module access", Path: "/api/home", AccessTier: apiaccessenums.AuthOnly, SeedRbac: true},
 		{AppCode: "mymatasan", Title: "mymatasan Camera Stream", Description: "mymatasan camera stream module access", Path: "/api/camera/stream", AccessTier: apiaccessenums.AuthOnly, SeedRbac: true},
@@ -105,10 +142,10 @@ AND NOT EXISTS (SELECT 1 FROM user_login ul WHERE ul.email = 'superadmin');`,
 	coreRbac := make([]string, 0, len(endpoints)*2)
 	for _, endpoint := range endpoints {
 		coreRbac = append(coreRbac,
-			fmt.Sprintf(`INSERT INTO api_endpoint (title, description, app_code, host, path, access_tier, is_active, created_by, created_at, updated_by, updated_at)
-SELECT '%s', '%s', '%s', '*', '%s', %d, TRUE, 0, 0, 0, 0
-WHERE NOT EXISTS (SELECT 1 FROM api_endpoint WHERE app_code = '%s' AND host = '*' AND path = '%s');`, endpoint.Title, endpoint.Description, endpoint.AppCode, endpoint.Path, endpoint.AccessTier, endpoint.AppCode, endpoint.Path),
-			fmt.Sprintf(`UPDATE api_endpoint SET app_code = '%s', access_tier = %d WHERE host = '*' AND path = '%s' AND ((access_tier IS NULL OR access_tier <> %d) OR app_code IS NULL OR app_code = '');`, endpoint.AppCode, endpoint.AccessTier, endpoint.Path, endpoint.AccessTier),
+			fmt.Sprintf(`INSERT INTO api_endpoint (title, description, metadata, app_code, host, path, access_tier, is_active, created_by, created_at, updated_by, updated_at)
+SELECT '%s', '%s', '%s', '%s', '*', '%s', %d, TRUE, 0, 0, 0, 0
+WHERE NOT EXISTS (SELECT 1 FROM api_endpoint WHERE app_code = '%s' AND host = '*' AND path = '%s');`, sqlString(endpoint.Title), sqlString(endpoint.Description), sqlString(endpoint.Metadata), sqlString(endpoint.AppCode), sqlString(endpoint.Path), endpoint.AccessTier, sqlString(endpoint.AppCode), sqlString(endpoint.Path)),
+			fmt.Sprintf(`UPDATE api_endpoint SET app_code = '%s', access_tier = %d, metadata = '%s' WHERE host = '*' AND path = '%s' AND ((access_tier IS NULL OR access_tier <> %d) OR app_code IS NULL OR app_code = '' OR metadata IS NULL OR metadata <> '%s');`, sqlString(endpoint.AppCode), endpoint.AccessTier, sqlString(endpoint.Metadata), sqlString(endpoint.Path), endpoint.AccessTier, sqlString(endpoint.Metadata)),
 		)
 		if endpoint.SeedRbac {
 			coreRbac = append(coreRbac,

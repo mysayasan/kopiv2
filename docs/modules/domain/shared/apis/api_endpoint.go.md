@@ -26,4 +26,5 @@ Base path: `/api/endpoint`
 - POST/PUT decode shared input DTOs, then project them to `ApiEndpoint` entities for service writes.
 - POST/PUT parse JSON with unknown fields rejected.
 - POST/PUT accept `accessTier` (`0=DevOnly`, `1=AuthOnly`, `2=Public`) as endpoint classification metadata.
+- POST/PUT accept `metadata` as JSON text for menu and presentation customization; API authorization still comes from endpoint RBAC rows.
 - DELETE parses `{id}` from route params.

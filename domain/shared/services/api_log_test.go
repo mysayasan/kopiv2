@@ -8,6 +8,7 @@ import (
 
 	"github.com/mysayasan/kopiv2/domain/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
+	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
 
 type fakeApiLogRepo struct {
@@ -20,6 +21,10 @@ func (f *fakeApiLogRepo) Get(_ context.Context, _ string, _ uint64, _ uint64, _ 
 }
 
 func (f *fakeApiLogRepo) GetJoin(_ context.Context, _ string, _ any, _ uint64, _ uint64, _ []sqldataenums.Filter, _ []sqldataenums.Sorter, _ ...string) ([]map[string]any, uint64, error) {
+	return nil, 0, nil
+}
+
+func (f *fakeApiLogRepo) GetJoinWithSpec(_ context.Context, _ string, _ any, _ uint64, _ uint64, _ []sqldataenums.Filter, _ []sqldataenums.Sorter, _ ...dbsql.JoinSpec) ([]map[string]any, uint64, error) {
 	return nil, 0, nil
 }
 

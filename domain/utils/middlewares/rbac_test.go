@@ -26,6 +26,10 @@ func (m *fakeApiEndpointRbacService) Get(ctx context.Context, limit uint64, offs
 	return nil, 0, nil
 }
 
+func (m *fakeApiEndpointRbacService) GetList(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.ApiEndpointRbacListModel, uint64, error) {
+	return nil, 0, nil
+}
+
 func (m *fakeApiEndpointRbacService) GetApiEpByUserRole(ctx context.Context, userId uint64) ([]*entities.ApiEndpointRbacJoinModel, uint64, error) {
 	if m.calls == nil {
 		m.calls = map[uint64]int{}
@@ -61,6 +65,10 @@ func (m *fakeApiEndpointRbacService) Validate(ctx context.Context, host string, 
 }
 
 func (m *wildcardApiEndpointRbacService) Get(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.ApiEndpointRbac, uint64, error) {
+	return nil, 0, nil
+}
+
+func (m *wildcardApiEndpointRbacService) GetList(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.ApiEndpointRbacListModel, uint64, error) {
 	return nil, 0, nil
 }
 

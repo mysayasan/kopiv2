@@ -52,8 +52,16 @@ func isNoResultErr(err error) bool {
 }
 
 func (m *genericRepo[T]) GetJoin(ctx context.Context, datasrc string, model any, limit uint64, offset uint64, filters []sqldataenums.Filter, sorter []sqldataenums.Sorter, joinsrc ...string) ([]map[string]any, uint64, error) {
-
 	res, totalCnt, err := m.dbCrud.Select(ctx, model, limit, offset, filters, sorter, datasrc, joinsrc...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("select join failed: %w", err)
+	}
+
+	return res, totalCnt, nil
+}
+
+func (m *genericRepo[T]) GetJoinWithSpec(ctx context.Context, datasrc string, model any, limit uint64, offset uint64, filters []sqldataenums.Filter, sorter []sqldataenums.Sorter, joins ...JoinSpec) ([]map[string]any, uint64, error) {
+	res, totalCnt, err := m.dbCrud.SelectJoin(ctx, model, limit, offset, filters, sorter, datasrc, joins...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("select join failed: %w", err)
 	}

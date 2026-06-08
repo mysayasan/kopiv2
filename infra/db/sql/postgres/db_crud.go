@@ -138,6 +138,24 @@ func (m *dbCrud) genJoinSqlStr(props reflect.Value, srcname string, srcalias str
 	return res
 }
 
+func joinSpecsFromSources(joinsrc []string) []dbsql.JoinSpec {
+	joins := make([]dbsql.JoinSpec, 0, len(joinsrc))
+	for idx, src := range joinsrc {
+		joins = append(joins, dbsql.JoinSpec{
+			Source: src,
+			Alias:  fmt.Sprintf("table%d", idx+1),
+		})
+	}
+	return joins
+}
+
+func joinFieldColumnName(field reflect.StructField) string {
+	if dbcol := strings.TrimSpace(field.Tag.Get("dbcol")); dbcol != "" {
+		return dbcol
+	}
+	return strcase.ToSnake(field.Name)
+}
+
 func (m *dbCrud) genWhereSqlStr(props reflect.Value, filters []sqldataenums.Filter) []string {
 	res := []string{}
 	for _, filter := range filters {
@@ -145,6 +163,7 @@ func (m *dbCrud) genWhereSqlStr(props reflect.Value, filters []sqldataenums.Filt
 		fieldNm := strcase.ToSnake(filter.FieldName)
 		field, ok := props.Type().FieldByName(filter.FieldName)
 		if ok {
+			fieldNm = joinFieldColumnName(field)
 			tblalias := field.Tag.Get("tblalias")
 			if tblalias != "" {
 				fieldNm = fmt.Sprintf("%s.%s", tblalias, fieldNm)
@@ -216,6 +235,7 @@ func (m *dbCrud) genSortSqlStr(props reflect.Value, sorters []sqldataenums.Sorte
 		fieldNm := strcase.ToSnake(sorter.FieldName)
 		field, ok := props.Type().FieldByName(sorter.FieldName)
 		if ok {
+			fieldNm = joinFieldColumnName(field)
 			tblalias := field.Tag.Get("tblalias")
 			if tblalias != "" {
 				fieldNm = fmt.Sprintf("%s.%s", tblalias, fieldNm)
@@ -245,11 +265,11 @@ func (m *dbCrud) getCols(props reflect.Value) []string {
 
 		tblalias := field.Tag.Get("tblalias")
 		if tblalias != "" {
-			res = append(res, fmt.Sprintf("%s.%s", tblalias, strcase.ToSnake(field.Name)))
+			res = append(res, fmt.Sprintf("%s.%s", tblalias, joinFieldColumnName(field)))
 			continue
 		}
 
-		res = append(res, strcase.ToSnake(field.Name))
+		res = append(res, joinFieldColumnName(field))
 	}
 
 	return res

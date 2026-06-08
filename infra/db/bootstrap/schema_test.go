@@ -57,6 +57,7 @@ func TestBuildManifestKeepsEntityFieldOrder(t *testing.T) {
 		"id",
 		"title",
 		"description",
+		"metadata",
 		"app_code",
 		"host",
 		"path",

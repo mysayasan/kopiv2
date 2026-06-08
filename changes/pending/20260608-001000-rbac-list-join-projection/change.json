@@ -1,0 +1,5 @@
+{
+  "type": "patch",
+  "scope": "core,myidsan",
+  "summary": "Add reusable generic join specs and enrich endpoint RBAC list responses with endpoint and role details"
+}

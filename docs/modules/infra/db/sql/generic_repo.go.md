@@ -14,7 +14,7 @@ Typed repository implementation over `IDbCrud`.
 ## Core Methods
 
 - Read:
-  - `Get`, `GetJoin`, `GetSingle`, `GetById`, `GetByUnique`, `GetByForeign`
+  - `Get`, `GetJoin`, `GetJoinWithSpec`, `GetSingle`, `GetById`, `GetByUnique`, `GetByForeign`
 - Write:
   - `Create`, `CreateMultiple`
   - `UpdateById`, `UpdateByUnique`, `UpdateByForeign`
@@ -24,3 +24,4 @@ Typed repository implementation over `IDbCrud`.
 
 - Standardizes repository behavior across entities.
 - Preserves root cause errors while adding operation context.
+- Allows services to build reusable joined list projections with explicit join aliases through `JoinSpec`.

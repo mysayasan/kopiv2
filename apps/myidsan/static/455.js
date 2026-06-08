@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunkmyidsan_react_webpack=self.webpackChunkmyidsan_react_webpack||[]).push([[455],{455(e,a,c){c.r(a),c.d(a,{default:()=>n}),c(540);var s=c(767),t=c(848);const n=function(){return(0,t.jsx)(s.C5,{to:"/app",replace:!0})}}}]);

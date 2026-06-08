@@ -21,6 +21,10 @@ func (f genericRepoFakeCrud) Select(context.Context, interface{}, uint64, uint64
 	return nil, 0, f.selectErr
 }
 
+func (f genericRepoFakeCrud) SelectJoin(context.Context, interface{}, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter, string, ...JoinSpec) ([]map[string]interface{}, uint64, error) {
+	return nil, 0, f.selectErr
+}
+
 func (f genericRepoFakeCrud) SelectSingle(context.Context, interface{}, []sqldataenums.Filter, string) (map[string]interface{}, error) {
 	return nil, nil
 }

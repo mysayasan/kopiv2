@@ -7,6 +7,7 @@ type ApiEndpoint struct {
 	Id          int64                     `json:"id" form:"id" query:"id" params:"id" skipWhenInsert:"true" pkey:"true" validate:"required"`
 	Title       string                    `json:"title" form:"title" query:"title" validate:"required"`
 	Description string                    `json:"description" form:"description" query:"description"`
+	Metadata    string                    `json:"metadata" form:"metadata" query:"metadata"`
 	AppCode     string                    `json:"appCode" form:"appCode" query:"appCode" ukey:"ukey1" validate:"required"`
 	Host        string                    `json:"host" form:"host" query:"host" ukey:"ukey1" validate:"required"`
 	Path        string                    `json:"path" form:"path" query:"path" ukey:"ukey1" validate:"required"`

@@ -27,6 +27,7 @@ type IAppRegistryService interface {
 // IApiEndpointRbacService interface
 type IApiEndpointRbacService interface {
 	Get(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.ApiEndpointRbac, uint64, error)
+	GetList(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.ApiEndpointRbacListModel, uint64, error)
 	GetApiEpByUserRole(ctx context.Context, userId uint64) ([]*entities.ApiEndpointRbacJoinModel, uint64, error)
 	Create(ctx context.Context, model entities.ApiEndpointRbac) (uint64, error)
 	Update(ctx context.Context, model entities.ApiEndpointRbac) (uint64, error)

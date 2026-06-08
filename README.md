@@ -544,7 +544,7 @@ Notes:
 - Auth-protected `/api/*` routes are marked with cookie session auth in docs, except login/callback and `/api/health`; unsafe methods also require `X-CSRF-Token`.
 - Key endpoints include reusable request/response schema components under `components.schemas`.
 - Key list/create/update endpoints now use endpoint-specific wrapper schemas (for example: `PagingUserGroupResponse`, `DefaultUserGroupResponse`, `PagingCameraStreamResponse`) so FE clients can generate stricter typed models.
-- Shared DB-backed list endpoints document `limit`, `offset`, `filters`, and `sorters` query parameters using the shared SQL enum contract (`compare`: 1 eq, 2 neq, 3 gt, 4 lt, 5 gte, 6 lte; `sort`: 1 asc, 2 desc). Paging responses return offset-window metadata: `limit`, `offset`, `resCnt`, `totalCnt`, `hasNext`, and `nextOffset`.
+- Shared DB-backed list endpoints document `limit`, `offset`, `filters`, and `sorters` query parameters using the shared SQL enum contract (`compare`: 1 eq, 2 neq, 3 gt, 4 lt, 5 gte, 6 lte; `sort`: 1 asc, 2 desc). `filters` and `sorters` accept a JSON object or array; repeated `filter` and `sorter` query parameters are also supported. Multiple filters are combined by `AND`, and multiple sorters are applied in request order. Paging responses return offset-window metadata: `limit`, `offset`, `resCnt`, `totalCnt`, `hasNext`, and `nextOffset`.
 - Non-JSON routes are documented with explicit response contracts as well (for example: OAuth login redirects with `302`, MJPEG stream with `206 multipart/x-mixed-replace`, binary file download with `application/octet-stream`).
 - Cache admin endpoints are included in the generated spec (`cache-service` tag) for list, health, and wipe operations.
 - Runtime log listing and monthly deletion are included in the generated spec (`log-service` tag).
@@ -558,6 +558,8 @@ Notes:
 `myidsan` is the identity-provider foundation for single sign-on across `kopiv2` apps. It owns the identity/RBAC management surface, app registry, token issuer settings, cache-backed sessions, and internal introspection/authorization APIs for relying apps.
 
 `mymatasan` is now treated as a relying/resource app: it does not mount local login, user/group/role, app-registry, endpoint, or endpoint-RBAC management APIs. Its Swagger surface stays focused on camera/resource workflows plus operational shared APIs such as version, file storage, logs, and cache service.
+
+MyIDSan's admin SPA derives navigation from `/api/endpoint-rbac/ep/me` plus endpoint metadata. Page visibility and create, edit, and delete buttons follow the same RBAC method grants; browser-readable cookies remember only presentation state such as active page, filters, sorting, and table page.
 
 SSO flow:
 

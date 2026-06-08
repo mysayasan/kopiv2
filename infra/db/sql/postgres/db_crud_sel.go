@@ -13,10 +13,14 @@ import (
 	strcase "github.com/iancoleman/strcase"
 	_ "github.com/lib/pq"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
+	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
 
 func (m *dbCrud) genSelSqlStr(props reflect.Value, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter, datasrc string, joinsrc ...string) (int, string) {
+	return m.genSelSqlStrWithJoinSpecs(props, limit, offset, filters, sorters, datasrc, joinSpecsFromSources(joinsrc)...)
+}
 
+func (m *dbCrud) genSelSqlStrWithJoinSpecs(props reflect.Value, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter, datasrc string, joins ...dbsql.JoinSpec) (int, string) {
 	if datasrc == "" {
 		propName := strcase.ToSnake(props.Type().Name())
 		temp := strings.Replace(propName, "_entity", "", 1)
@@ -32,11 +36,13 @@ func (m *dbCrud) genSelSqlStr(props reflect.Value, limit uint64, offset uint64, 
 		datasrc = temp
 	}
 
-	if len(joinsrc) > 0 {
+	if len(joins) > 0 {
 		datasrc = fmt.Sprintf("%s table0", datasrc)
-		for idx, src := range joinsrc {
-			srcAlias := fmt.Sprintf("table%d", idx+1)
-			datasrc = fmt.Sprintf("%s\n %s", datasrc, m.genJoinSqlStr(props, src, srcAlias))
+		for _, join := range joins {
+			if strings.TrimSpace(join.Source) == "" || strings.TrimSpace(join.Alias) == "" {
+				continue
+			}
+			datasrc = fmt.Sprintf("%s\n %s", datasrc, m.genJoinSqlStr(props, join.Source, join.Alias))
 		}
 	}
 
@@ -96,10 +102,20 @@ func (m *dbCrud) genSelSqlStr(props reflect.Value, limit uint64, offset uint64, 
 	return len(selCols), res
 }
 
+func (m *dbCrud) SelectJoin(ctx context.Context, model interface{}, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter, datasrc string, joins ...dbsql.JoinSpec) ([]map[string]interface{}, uint64, error) {
+	props := reflect.ValueOf(model)
+	colCnt, sqlStr := m.genSelSqlStrWithJoinSpecs(props, limit, offset, filters, sorters, datasrc, joins...)
+	return m.selectWithSQL(ctx, model, colCnt, sqlStr)
+}
+
 func (m *dbCrud) Select(ctx context.Context, model interface{}, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter, datasrc string, joinsrc ...string) ([]map[string]interface{}, uint64, error) {
 	props := reflect.ValueOf(model)
 	colCnt, sqlStr := m.genSelSqlStr(props, limit, offset, filters, sorters, datasrc, joinsrc...)
+	return m.selectWithSQL(ctx, model, colCnt, sqlStr)
+}
 
+func (m *dbCrud) selectWithSQL(ctx context.Context, model interface{}, colCnt int, sqlStr string) ([]map[string]interface{}, uint64, error) {
+	props := reflect.ValueOf(model)
 	rows := &sql.Rows{}
 	var err error
 

@@ -6,9 +6,16 @@ import (
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 )
 
+// JoinSpec describes one reusable join source for generic list projections.
+type JoinSpec struct {
+	Source string
+	Alias  string
+}
+
 // IDbCrud interface
 type IDbCrud interface {
 	Select(ctx context.Context, model interface{}, limit uint64, offset uint64, filters []sqldataenums.Filter, sorter []sqldataenums.Sorter, datasrc string, joinsrc ...string) ([]map[string]interface{}, uint64, error)
+	SelectJoin(ctx context.Context, model interface{}, limit uint64, offset uint64, filters []sqldataenums.Filter, sorter []sqldataenums.Sorter, datasrc string, joins ...JoinSpec) ([]map[string]interface{}, uint64, error)
 	SelectSingle(ctx context.Context, model interface{}, filters []sqldataenums.Filter, datasrc string) (map[string]interface{}, error)
 	SelectById(ctx context.Context, model interface{}, datasrc string, id uint64) (map[string]interface{}, error)
 	SelectByUnique(ctx context.Context, model interface{}, datasrc string, keyGroup string, uids ...any) (map[string]interface{}, error)
@@ -36,6 +43,7 @@ type ScopedTxStarter interface {
 type IGenericRepo[T any] interface {
 	Get(ctx context.Context, datasrc string, limit uint64, offset uint64, filters []sqldataenums.Filter, sorter []sqldataenums.Sorter) ([]*T, uint64, error)
 	GetJoin(ctx context.Context, datasrc string, model any, limit uint64, offset uint64, filters []sqldataenums.Filter, sorter []sqldataenums.Sorter, joinsrc ...string) ([]map[string]any, uint64, error)
+	GetJoinWithSpec(ctx context.Context, datasrc string, model any, limit uint64, offset uint64, filters []sqldataenums.Filter, sorter []sqldataenums.Sorter, joins ...JoinSpec) ([]map[string]any, uint64, error)
 	GetSingle(ctx context.Context, datasrc string, filters []sqldataenums.Filter) (*T, error)
 	GetById(ctx context.Context, datasrc string, id uint64) (*T, error)
 	GetByUnique(ctx context.Context, datasrc string, keyGroup string, uids ...any) (*T, error)

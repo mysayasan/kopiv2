@@ -8,6 +8,7 @@ Defines database abstraction contracts used across the application.
 
 - `IDbCrud`
   - low-level CRUD/select primitives
+  - `SelectJoin` accepts reusable `JoinSpec` entries when callers need explicit join aliases for projection models
   - transaction controls (`BeginTx`, `RollbackTx`, `CommitTx`)
   - health primitive (`Ping(ctx)`)
 - `ScopedTxStarter`
@@ -15,6 +16,7 @@ Defines database abstraction contracts used across the application.
   - avoids storing active transaction state on shared runtime DB adapters
 - `IGenericRepo[T]`
   - typed repository API for services
+  - `GetJoinWithSpec` exposes explicit join specs while preserving the older `GetJoin` string-source helper
   - list/get/create/update/delete operations, including filtered delete for retention cleanup
 
 ## Design Intent

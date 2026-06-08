@@ -19,7 +19,7 @@ import (
 type apiEndpointRbacApi struct {
 	auth middlewares.AuthMidware
 	rbac middlewares.RbacMidware
-	serv services.IApiEndpointRbacDtoService[outputdtos.ApiEndpointRbacDto, outputdtos.ApiEndpointRbacJoinDto]
+	serv services.IApiEndpointRbacDtoService[outputdtos.ApiEndpointRbacDto, outputdtos.ApiEndpointRbacListDto, outputdtos.ApiEndpointRbacJoinDto]
 }
 
 // Create ApiEndpointRbacApi
@@ -27,7 +27,7 @@ func NewApiEndpointRbacApi(
 	router *mux.Router,
 	auth middlewares.AuthMidware,
 	rbac middlewares.RbacMidware,
-	serv services.IApiEndpointRbacDtoService[outputdtos.ApiEndpointRbacDto, outputdtos.ApiEndpointRbacJoinDto]) {
+	serv services.IApiEndpointRbacDtoService[outputdtos.ApiEndpointRbacDto, outputdtos.ApiEndpointRbacListDto, outputdtos.ApiEndpointRbacJoinDto]) {
 	handler := &apiEndpointRbacApi{
 		auth: auth,
 		rbac: rbac,
@@ -49,7 +49,7 @@ func NewApiEndpointRbacApi(
 
 func (m *apiEndpointRbacApi) get(w http.ResponseWriter, r *http.Request) {
 
-	opts, err := parseListQueryOptions[entities.ApiEndpointRbac](r)
+	opts, err := parseListQueryOptions[outputdtos.ApiEndpointRbacListDto](r)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return

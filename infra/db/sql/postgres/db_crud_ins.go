@@ -72,13 +72,13 @@ func (m *dbCrud) genInsSqlStr(props reflect.Value, datasrc string) string {
 			}
 		case string:
 			{
-				values = append(values, fmt.Sprintf("'%s'", val))
+				values = append(values, fmt.Sprintf("'%s'", escapeSQLString(val)))
 				break
 			}
 		case sql.NullString:
 			{
 				if val.Valid {
-					values = append(values, fmt.Sprintf("'%s'", val.String))
+					values = append(values, fmt.Sprintf("'%s'", escapeSQLString(val.String)))
 				} else {
 					values = append(values, "")
 				}
