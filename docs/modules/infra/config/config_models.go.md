@@ -8,7 +8,7 @@ Defines the top-level app configuration model loaded from app config JSON.
 
 - Model optional OAuth provider configuration for Google and GitHub.
 - Model server listener hostnames and explicit TLS/non-TLS ports.
-- Model bootstrap, JWT, SSO, file storage, cache, rate limiting, transaction coordination, logging, API log cleanup, telemetry, TLS, and DB settings.
+- Model bootstrap, JWT, SSO, local app auth, decoder startup defaults, live stream startup defaults, file storage, cache, rate limiting, transaction coordination, logging, API log cleanup, telemetry, TLS, and DB settings.
 
 ## Notes
 
@@ -47,6 +47,12 @@ Defines the top-level app configuration model loaded from app config JSON.
 - `sso.redirectBaseUrl` configures the relying-app public callback origin used in authorization requests.
 - `sso.redirectPath` configures the relying-app callback path.
 - `sso.authCodeTtlSeconds` and `sso.accessTokenTtlSeconds` provide MyIDSan defaults when per-client DB config does not override them.
+- `localAuth.enabled`, `localAuth.username`, and `localAuth.password` remain in the shared model for legacy standalone credentials; `mymatasan` now uses DB-backed local users instead.
+- `decoder.mjpeg.ffmpegPath` configures the startup default ffmpeg executable used by `mymatasan` MJPEG fallback live view; empty defaults to resolving `ffmpeg` from `PATH`.
+- Legacy `camera.ffmpegPath` remains in the config model only as a migration fallback.
+- `stream.webrtc.enabled` controls whether browser live view attempts WebRTC first; omitted defaults to disabled.
+- `stream.webrtc.iceServers` optionally configures STUN/TURN servers as browser-compatible `urls`, `username`, and `credential` entries.
+- `stream.mjpegFallback.enabled` controls whether the MJPEG endpoint can be used as fallback or primary mode when WebRTC is disabled; omitted defaults to enabled.
 - `transaction.lockProvider` selects Redis or in-memory FIFO transaction locking; empty inherits `cache.provider`.
 - `transaction.lockWaitTimeoutMs` bounds queue wait time.
 - `transaction.lockLeaseMs` controls Redis owner lease duration.

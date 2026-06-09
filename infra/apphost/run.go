@@ -339,10 +339,10 @@ func Run(app App) error {
 		srv := &http.Server{
 			Handler:           router,
 			Addr:              listener.Addr,
-			ReadHeaderTimeout: 5 * time.Second,
-			ReadTimeout:       15 * time.Second,
-			WriteTimeout:      30 * time.Second,
-			IdleTimeout:       60 * time.Second,
+			ReadHeaderTimeout: serverTimeout(appConfig.Server.ReadHeaderTimeoutSeconds, 5),
+			ReadTimeout:       serverTimeout(appConfig.Server.ReadTimeoutSeconds, 15),
+			WriteTimeout:      serverTimeout(appConfig.Server.WriteTimeoutSeconds, 30),
+			IdleTimeout:       serverTimeout(appConfig.Server.IdleTimeoutSeconds, 60),
 		}
 		servers = append(servers, srv)
 
@@ -1155,6 +1155,16 @@ func runServer(srv *http.Server, appConfig *config.AppConfigModel, useTLS bool) 
 		return nil
 	}
 	return err
+}
+
+func serverTimeout(value *int, defaultSeconds int) time.Duration {
+	if value == nil {
+		return time.Duration(defaultSeconds) * time.Second
+	}
+	if *value <= 0 {
+		return 0
+	}
+	return time.Duration(*value) * time.Second
 }
 
 func buildListenerSpecs(appConfig *config.AppConfigModel) ([]listenerSpec, error) {

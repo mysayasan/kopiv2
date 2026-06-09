@@ -9,12 +9,16 @@ import (
 type AppConfigModel struct {
 	Login  *login.OAuthProvidersConfigModel `json:"login"`
 	Server struct {
-		Hostnames    []string `json:"hostnames"`
-		Ports        []int    `json:"ports"`
-		TLSPorts     []int    `json:"tlsPorts"`
-		NonTLSPorts  []int    `json:"nonTlsPorts"`
-		EnableTLS    *bool    `json:"enableTls"`
-		EnableNonTLS *bool    `json:"enableNonTls"`
+		Hostnames                []string `json:"hostnames"`
+		Ports                    []int    `json:"ports"`
+		TLSPorts                 []int    `json:"tlsPorts"`
+		NonTLSPorts              []int    `json:"nonTlsPorts"`
+		EnableTLS                *bool    `json:"enableTls"`
+		EnableNonTLS             *bool    `json:"enableNonTls"`
+		ReadHeaderTimeoutSeconds *int     `json:"readHeaderTimeoutSeconds"`
+		ReadTimeoutSeconds       *int     `json:"readTimeoutSeconds"`
+		WriteTimeoutSeconds      *int     `json:"writeTimeoutSeconds"`
+		IdleTimeoutSeconds       *int     `json:"idleTimeoutSeconds"`
 	} `json:"server"`
 	Bootstrap struct {
 		Enabled            bool     `json:"enabled"`
@@ -44,6 +48,20 @@ type AppConfigModel struct {
 		AuthCodeTTLSeconds    int    `json:"authCodeTtlSeconds"`
 		AccessTokenTTLSeconds int    `json:"accessTokenTtlSeconds"`
 	} `json:"sso"`
+	LocalAuth struct {
+		Enabled  bool   `json:"enabled"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+	} `json:"localAuth"`
+	Camera struct {
+		FFmpegPath string `json:"ffmpegPath"`
+	} `json:"camera"`
+	Decoder struct {
+		MJPEG struct {
+			FFmpegPath string `json:"ffmpegPath"`
+		} `json:"mjpeg"`
+	} `json:"decoder"`
+	Stream      StreamConfigModel `json:"stream"`
 	FileStorage struct {
 		Path    string `json:"path" validate:"required"`
 		Cleanup struct {
@@ -114,6 +132,26 @@ type AppConfigModel struct {
 		KeyPath  string `json:"keyPath" validate:"required"`
 	} `json:"tls"`
 	Db dbsql.DbConfigModel `json:"db"`
+}
+
+type StreamConfigModel struct {
+	WebRTC        WebRTCConfigModel        `json:"webrtc"`
+	MJPEGFallback MJPEGFallbackConfigModel `json:"mjpegFallback"`
+}
+
+type WebRTCConfigModel struct {
+	Enabled    *bool                  `json:"enabled"`
+	ICEServers []WebRTCICEServerModel `json:"iceServers"`
+}
+
+type WebRTCICEServerModel struct {
+	URLs       []string `json:"urls"`
+	Username   string   `json:"username"`
+	Credential string   `json:"credential"`
+}
+
+type MJPEGFallbackConfigModel struct {
+	Enabled *bool `json:"enabled"`
 }
 
 type RateLimitTierConfigModel struct {

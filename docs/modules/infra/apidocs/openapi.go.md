@@ -15,7 +15,7 @@ Provides a shared runtime OpenAPI/Swagger implementation for all app modules.
 - Documents paging responses with offset-window metadata: `limit`, `offset`, `resCnt`, `totalCnt`, `hasNext`, and `nextOffset`.
 - Maps key endpoints to endpoint-specific response wrapper schemas (typed `Default*Response` / `Paging*Response`).
 - Maps shared write endpoints to `*InputDto` request schemas and shared read responses to `*OutputDto` result schemas.
-- Models non-JSON routes with explicit status/content contracts (e.g. OAuth redirect status codes and MJPEG streaming media type).
+- Models non-JSON routes with explicit status/content contracts (e.g. OAuth redirect status codes and binary download media type).
 - Includes cache-service admin endpoint contracts (`GET/DELETE /api/cache-service`, `POST /api/cache-service/wipe`, `GET /api/cache-service/health`).
 - Includes app-registry endpoint contracts (`GET/POST/PUT/DELETE /api/app-registry`).
 - Includes myidsan SSO fallback endpoint contracts (`POST /api/sso/introspect`, `POST /api/sso/authorize`).

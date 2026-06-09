@@ -1,0 +1,5 @@
+{
+  "type": "minor",
+  "scope": "core,mymatasan",
+  "summary": "Add ONVIF snapshot-based MJPEG live view for saved MyMataSan devices."
+}

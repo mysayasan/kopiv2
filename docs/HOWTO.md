@@ -4,8 +4,8 @@
 
 1. Provide required environment variables.
 2. Ensure the selected DB engine is reachable; SQLite only needs a writable `DB_NAME` path.
-3. `apps/mymatasan/config.dev.json` defaults PostgreSQL to port `5433`; set `DB_PORT` if your local database uses another port.
-4. Use `CACHE_PROVIDER=default` for local in-process memory cache; ensure Redis is reachable only when `CACHE_PROVIDER=redis`.
+3. `apps/mymatasan/config.dev.json` defaults to SQLite at `./data/mymatasan.db`.
+4. Use `CACHE_PROVIDER=default` for local in-process memory cache; ensure Redis is reachable only when an app is configured with `CACHE_PROVIDER=redis`.
 5. Run:
 
 ```bash
@@ -61,19 +61,46 @@ make build APP=myidsan
 make build APP=myseliasan
 ```
 
-Use SQLite for a small single-process local run:
+`mymatasan` defaults to SQLite and the in-process default cache for small single-process runs:
 
 ```bash
 export ENVIRONMENT=dev
-export JWT_SECRET=replace-with-strong-secret
-export GOOGLE_CLIENT_SECRET=replace-with-google-secret
-export DB_ENGINE=sqlite
-export DB_NAME=./data/kopiv2.db
-export CACHE_PROVIDER=default
 go run . -app mymatasan
 ```
 
-For SQLite, `DB_NAME` is the database file path. Relative paths resolve from the selected app directory, so the example above writes under `apps/mymatasan/data/`.
+For SQLite, `DB_NAME` is the database file path. Relative paths resolve from the selected app directory, so the default writes under `apps/mymatasan/data/`.
+
+Default local `mymatasan` credentials are seeded into SQLite on first startup:
+
+```text
+admin / Admin123
+```
+
+Manage local users from the Settings page. Passwords are stored as bcrypt hashes, and `mymatasan` prevents deleting or disabling the last active admin user.
+
+MJPEG fallback conversion uses the runtime Decoder setting `decoder.mjpeg.ffmpegPath`. `config.json` provides the startup default, and the Settings page stores live changes in SQLite. The default value can be `ffmpeg`, which resolves from the process `PATH`; set an absolute path such as `C:\ffmpeg\bin\ffmpeg.exe` or `/usr/bin/ffmpeg` when running as a service.
+
+Discover ONVIF devices:
+
+```bash
+curl -u admin:Admin123 -H "Content-Type: application/json" \
+  -d '{"timeoutMs":3000}' \
+  "http://localhost:3000/api/onvif/discover"
+```
+
+Create a MyMataSan AI detection rule for a saved camera:
+
+```bash
+curl -u admin:Admin123 -H "Content-Type: application/json" \
+  -d '{"cameraId":1,"name":"Porch person after hours","detectionType":"person","zonePolygon":"[[0.1,0.1],[0.9,0.1],[0.9,0.8],[0.1,0.8]]","schedulePolicy":"{\"preset\":\"custom\",\"timezone\":\"Asia/Kuala_Lumpur\",\"mode\":\"allow\",\"windows\":[{\"days\":[\"mon\",\"tue\",\"wed\",\"thu\",\"fri\"],\"start\":\"18:00\",\"end\":\"07:00\"}]}","threshold":0.75,"minFrames":3,"cooldownSeconds":30,"soundEnabled":true,"isEnabled":true}' \
+  "http://localhost:3000/api/vision/rules"
+```
+
+Review alert events raised by the monitor:
+
+```bash
+curl -u admin:Admin123 "http://localhost:3000/api/vision/alerts?limit=50&offset=0"
+```
 
 ## Run Tests
 
@@ -102,7 +129,7 @@ Build the identity app image:
 docker build --build-arg APP=myidsan -t kopiv2:myidsan .
 ```
 
-Run against external DB:
+Run standalone MyMataSan with SQLite/default cache:
 
 ```bash
 docker run --rm -p 3000:3000 \
@@ -110,21 +137,9 @@ docker run --rm -p 3000:3000 \
   -e SERVER_HOSTNAMES=* \
   -e SERVER_NON_TLS_PORTS=3000 \
   -e SERVER_TLS_PORTS= \
-  -e JWT_SECRET=replace-with-strong-secret \
-  -e GOOGLE_CLIENT_SECRET=replace-with-google-secret \
-  -e DB_HOST=host.docker.internal \
-  -e DB_PORT=5432 \
-  -e DB_USER=postgres \
-  -e DB_PASSWORD=postgres \
-  -e DB_NAME=mymatasandb \
-  -e DB_SSL_MODE=disable \
+  -e DB_ENGINE=sqlite \
+  -e DB_NAME=./data/mymatasan.db \
   -e CACHE_PROVIDER=default \
-  -e CACHE_TTL_SECONDS=30 \
-  -e CACHE_KEY_PREFIX=kopiv2 \
-  -e REDIS_ADDR=host.docker.internal:6379 \
-  -e REDIS_PASSWORD='Simpnify@123' \
-  -e REDIS_DB=0 \
-  -e REDIS_USE_TLS=false \
   kopiv2:latest
 ```
 
@@ -359,13 +374,6 @@ curl -H "Content-Type: application/json" \
   "https://localhost:3001/api/sso/introspect"
 ```
 
-```bash
-curl -H "Content-Type: application/json" \
-  -H "X-Myidsan-Internal-Token: dev-internal-token" \
-  -d '{"token":"<jwt>","audience":"mymatasan","host":"localhost:3000","path":"/api/camera/stream","method":"GET"}' \
-  "https://localhost:3001/api/sso/authorize"
-```
-
 Use Redis for multi-app deployments so session/RBAC cache entries can be shared. Use in-memory cache only for isolated development, or call the fallback APIs above when a relying app cannot see myidsan cache state.
 
 The MyIDSan admin UI is served from the app shell and builds its sidebar from `/api/endpoint-rbac/ep/me` plus `api_endpoint.metadata` menu entries. The same RBAC method grants control toolbar actions: `POST` enables create, `PUT` enables edit, and `DELETE` enables delete. Table filter, sort, and page position are remembered per table resource in browser cookies, and the table clear control resets that remembered state. If a refreshed session remembers a page that the current role can no longer access, the UI shows the unauthorized access page.
@@ -386,7 +394,7 @@ The JSON filter shape is `{"fieldName":"createdAt","compare":5,"value":170000000
 
 ## Cache Admin API
 
-Login through `myidsan` and store the session cookies. The issued token includes the `mymatasan` audience in dev config, so the same cookie can be sent to `mymatasan` on localhost:
+Login through `myidsan` and store the session cookies for apps that consume MyIDSan SSO and mount the shared cache-service API. `mymatasan` no longer consumes MyIDSan cookies or mounts cache-service; use its local Basic Auth credentials for ONVIF APIs.
 
 ```bash
 curl -c cookies.txt -H "Content-Type: application/json" \

@@ -39,7 +39,6 @@ func TestBuildSpecIncludesRoutesAndProviderDocs(t *testing.T) {
 	api.HandleFunc("/login/default", func(http.ResponseWriter, *http.Request) {}).Methods("POST")
 	api.HandleFunc("/login/default/register", func(http.ResponseWriter, *http.Request) {}).Methods("POST")
 	api.HandleFunc("/login/google", func(http.ResponseWriter, *http.Request) {}).Methods("GET")
-	api.HandleFunc("/camera/stream/mjpeg/{id}", func(http.ResponseWriter, *http.Request) {}).Methods("GET")
 	router.HandleFunc("/health", func(http.ResponseWriter, *http.Request) {})
 	router.PathPrefix("/").HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 
@@ -460,45 +459,6 @@ func TestBuildSpecIncludesRoutesAndProviderDocs(t *testing.T) {
 
 	if _, ok := loginGoogleResponses["302"].(map[string]any); !ok {
 		t.Fatalf("302 response missing for /api/login/google")
-	}
-
-	mjpegPath, ok := paths["/api/camera/stream/mjpeg/{id}"].(map[string]any)
-	if !ok {
-		t.Fatalf("/api/camera/stream/mjpeg/{id} path missing")
-	}
-
-	mjpegGet, ok := mjpegPath["get"].(map[string]any)
-	if !ok {
-		t.Fatalf("get operation missing for /api/camera/stream/mjpeg/{id}")
-	}
-
-	mjpegResponses, ok := mjpegGet["responses"].(map[string]any)
-	if !ok {
-		t.Fatalf("responses missing for /api/camera/stream/mjpeg/{id}")
-	}
-
-	mjpeg206, ok := mjpegResponses["206"].(map[string]any)
-	if !ok {
-		t.Fatalf("206 response missing for /api/camera/stream/mjpeg/{id}")
-	}
-
-	mjpegContent, ok := mjpeg206["content"].(map[string]any)
-	if !ok {
-		t.Fatalf("content missing for 206 /api/camera/stream/mjpeg/{id}")
-	}
-
-	mjpegMedia, ok := mjpegContent["multipart/x-mixed-replace"].(map[string]any)
-	if !ok {
-		t.Fatalf("multipart/x-mixed-replace content missing for /api/camera/stream/mjpeg/{id}")
-	}
-
-	mjpegSchema, ok := mjpegMedia["schema"].(map[string]any)
-	if !ok {
-		t.Fatalf("schema missing for MJPEG 206 content")
-	}
-
-	if mjpegSchema["type"] != "string" || mjpegSchema["format"] != "binary" {
-		t.Fatalf("unexpected MJPEG schema: %v", mjpegSchema)
 	}
 
 	if _, ok := paths["/"]; ok {

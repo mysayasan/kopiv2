@@ -5,7 +5,8 @@
 `kopiv2` is a Linux-first, lightweight Go backend that provides:
 
 - HTTP API with cookie-backed JWT auth and RBAC enforcement.
-- Camera stream orchestration for MJPEG sources.
+- Standalone ONVIF device discovery and RTSP stream probing for camera setup.
+- Reusable visual detection primitives for camera rules, rule-level schedules, motion detection, and alert events.
 - SQL persistence using a generic repository layer.
 - Static SPA serving from app assets.
 - Public runtime version reporting with separate core and app SemVer values.
@@ -47,7 +48,7 @@ The runtime now uses a reusable multi-app launcher pattern:
 - Local credential passwords are stored as bcrypt hashes, with lazy migration from legacy plain-text values on successful login.
 - Authorization: endpoint-level RBAC based on user role mappings.
 - `myidsan` is the central policy authority for cross-app SSO. Tokens carry issuer (`iss`), audience (`aud`), expiry, session id (`sid`), resource app code, and policy version. Redis should be used for shared session/RBAC cache in multi-process deployments; in-memory cache requires relying apps to call `myidsan` for introspection and authorization decisions when local cache misses.
-- `mymatasan` is a relying/resource app and does not mount login, user/group/role, app-registry, endpoint, or endpoint-RBAC management APIs. Those management surfaces live in `myidsan`.
+- `mymatasan` is a standalone device app and does not mount MyIDSan login, SSO browser callback, user/group/role, app-registry, endpoint, endpoint-RBAC, file-storage, log, runtime-log, or cache-service management APIs. App-local ONVIF and vision routes use DB-backed local Basic Auth until the strict `myseliasan` control protocol is defined. Saved-camera browser live view uses configurable RTSP-to-WebRTC H264 forwarding first, with MJPEG fallback retained for compatibility. When WebRTC is disabled, the frontend uses MJPEG directly.
 - `myseliasan` is a relying control-plane app and has no public landing page. It redirects unauthenticated users to MyIDSan and creates its own local session only after MyIDSan returns a valid authorization code.
 - Registered apps are stored in `app_registry`; endpoint policies are scoped by `api_endpoint.appCode`.
 - Per-client SSO policy is stored in `app_auth_config`, and exact callback allow-list entries are stored in `app_redirect_uri`.
@@ -108,6 +109,7 @@ The runtime now uses a reusable multi-app launcher pattern:
 - Optional initial data can be supplied through config-driven SQL seed statements when bootstrap seeding is enabled.
 - The app also seeds a minimal core identity dataset (`system` group, `superadmin` role, and first-run `superadmin` login account with bcrypt password storage) during bootstrap.
 - The app seeds wildcard-host endpoint rows with access tiers and RBAC rows for protected API modules so first-run permissions work without binding to a specific host name. Protected shared management APIs seed as `DevOnly`.
+- `mymatasan` registers app-local `detection_rule` and `alert_event` entities. Detection rules store camera binding, detection type, polygon JSON, per-rule schedule policy JSON, threshold, minimum frames, cooldown, sound setting, enabled state, and last trigger time. Alert events store the triggering rule and camera, label, confidence, polygon, optional bounding box/snapshot path, metadata JSON, acknowledgement fields, and audit timestamps.
 
 ## Configuration Contract
 
@@ -149,7 +151,7 @@ Database config contract (`db` in app config):
 - Runtime DB adapter and bootstrap implementation support all three engines.
 - For SQLite, `db_name` is a database file path and relative paths resolve from the selected app directory. `:memory:` is supported for tests/dev experiments only.
 - SQLite is intended for single-process small-device deployments; use PostgreSQL or MariaDB for multi-instance production deployments.
-- `apps/mymatasan/config.dev.json` defaults PostgreSQL to port `5433`; runtime `DB_PORT` overrides the config value for local or deployed environments.
+- `apps/mymatasan/config.dev.json` defaults to SQLite at `./data/mymatasan.db` with the in-process default cache for standalone small-device deployment.
 
 SSO relying-app config contract (`sso` in app config):
 
@@ -162,6 +164,35 @@ SSO relying-app config contract (`sso` in app config):
 - `redirectPath`: relying app callback path, default `/api/auth/callback`.
 - `authCodeTtlSeconds`: default MyIDSan authorization-code lifetime when a per-client row does not override it.
 - `accessTokenTtlSeconds`: default MyIDSan issued-token lifetime when a per-client row does not override it.
+
+Standalone `mymatasan` local auth contract:
+
+- `mymatasan` uses app-local HTTP Basic Auth backed by the local SQLite database instead of MyIDSan JWT/RBAC.
+- On first startup, the app seeds `admin` / `Admin123` only when no local users exist.
+- Local user passwords are stored as bcrypt hashes.
+- User management is exposed under Settings and `/api/settings/users`.
+- The app prevents deleting, disabling, or demoting the last active admin user.
+
+Decoder startup-default config contract (`decoder` in app config):
+
+- `mjpeg.ffmpegPath`: ffmpeg executable used only by `mymatasan` MJPEG fallback live view. Empty or `ffmpeg` resolves from `PATH`; use an absolute path when running as a service or on systems where `PATH` differs.
+- Legacy `camera.ffmpegPath` is still read as a migration fallback when seeding runtime settings.
+
+Stream startup-default config contract (`stream` in app config):
+
+- `webrtc.enabled`: enables browser WebRTC live view; omitted defaults to disabled.
+- `webrtc.iceServers`: optional STUN/TURN server list with `urls`, `username`, and `credential` fields.
+- `mjpegFallback.enabled`: enables MJPEG fallback and MJPEG-only mode when WebRTC is disabled; omitted defaults to enabled.
+- These config values seed the SQLite-backed runtime settings row on first startup or reset. Settings page changes apply without app restart.
+
+Vision rule schedule contract (`schedulePolicy` on `mymatasan` detection rules):
+
+- Empty schedule policy means the rule is always active.
+- `timezone` accepts an IANA timezone such as `Asia/Kuala_Lumpur`; empty or `local` uses the process local timezone.
+- `mode` accepts `allow` or `deny`. `allow` activates only inside matching windows/ranges. `deny` activates outside matching windows/ranges.
+- `windows` contains weekly windows with optional `days` (`sun` through `sat`) plus `start` and `end` in `HH:MM`. Overnight windows are supported.
+- `dateRanges` contains one or more absolute RFC3339 `start`/`end` ranges.
+- `preset` is optional UI metadata used by the frontend to preserve selections such as `custom` or `range`; backend rule evaluation ignores it.
 
 Logging config contract (`logging` in app config):
 
@@ -240,7 +271,7 @@ At least one explicit TLS or non-TLS port must be configured. The same port cann
 - Key endpoints include reusable request/response schema components (`components.schemas`) for FE integration and code generation.
 - Key list/create/update endpoints are mapped to endpoint-specific response wrappers (typed `result` payloads) instead of only generic default/paging contracts.
 - Shared DB-backed list endpoints expose `limit`, `offset`, and optional `filters`/`sorters` query parameters so paging can be filtered and ordered in the backend before the response is returned. `filters` and `sorters` accept JSON object or array values, with repeated `filter` and `sorter` query parameters also supported. Multiple filters are combined with `AND`; multiple sorters keep the request order.
-- Non-JSON endpoints are explicitly modeled with route-accurate status/content (for example OAuth redirect `302` and MJPEG stream `206 multipart/x-mixed-replace`).
+- Non-JSON endpoints are explicitly modeled with route-accurate status/content (for example OAuth redirect `302` and binary file download `application/octet-stream`).
 - Cache admin endpoints are documented with `cache-service` tag (`GET /api/cache-service`, `GET /api/cache-service/health`, `DELETE /api/cache-service`, `POST /api/cache-service/wipe`).
 - API log endpoints are documented with `log` tag (`GET /api/log`, `DELETE /api/log`).
 - Runtime log endpoints are documented with `log-service` tag (`GET /api/log-service`, `DELETE /api/log-service`).

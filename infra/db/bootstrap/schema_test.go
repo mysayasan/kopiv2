@@ -3,14 +3,19 @@ package bootstrap
 import (
 	"testing"
 
-	appmodels "github.com/mysayasan/kopiv2/apps/mymatasan/models"
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
 )
+
+type sliceFieldFixture struct {
+	Id   int64    `pkey:"true" skipWhenInsert:"true"`
+	Name string   `validate:"required"`
+	Pics []string `json:"pics"`
+}
 
 func TestBuildManifest(t *testing.T) {
 	manifest, hash, err := BuildManifest("mymatasan", []any{
 		sharedentities.ApiEndpoint{},
-		appmodels.ResidentProp{},
+		sliceFieldFixture{},
 	})
 	if err != nil {
 		t.Fatalf("BuildManifest returned error: %v", err)
@@ -105,7 +110,7 @@ func TestBuildManifestCreatesApiLogAutoIncrementPrimaryKey(t *testing.T) {
 }
 
 func TestBuildManifestIgnoresSliceFields(t *testing.T) {
-	manifest, _, err := BuildManifest("mymatasan", []any{appmodels.ResidentProp{}})
+	manifest, _, err := BuildManifest("mymatasan", []any{sliceFieldFixture{}})
 	if err != nil {
 		t.Fatalf("BuildManifest returned error: %v", err)
 	}

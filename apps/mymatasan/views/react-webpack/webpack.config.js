@@ -73,10 +73,10 @@ module.exports = {
     config: JSON.stringify(
       process.env.NODE_ENV === 'dev'
         ? {
-            apiUrl: 'https://localhost:3000'
+            apiUrl: 'http://localhost:3000'
           }
         : {
-            apiUrl: 'https://localhost:3000'
+            apiUrl: 'http://localhost:3000'
           }
     )
   }

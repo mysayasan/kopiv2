@@ -1,21 +1,24 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/apis"
 	appentities "github.com/mysayasan/kopiv2/apps/mymatasan/entities"
-	appmodels "github.com/mysayasan/kopiv2/apps/mymatasan/models"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
 	apiaccessenums "github.com/mysayasan/kopiv2/domain/enums/apiaccess"
 	"github.com/mysayasan/kopiv2/infra/apidocs"
 	"github.com/mysayasan/kopiv2/infra/apphost"
-	ffmpegCam "github.com/mysayasan/kopiv2/infra/camera/ffmpeg"
+	"github.com/mysayasan/kopiv2/infra/config"
 	"github.com/mysayasan/kopiv2/infra/db/bootstrap"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	"github.com/mysayasan/kopiv2/infra/onvif"
+	"github.com/mysayasan/kopiv2/infra/rtsp"
+	"github.com/mysayasan/kopiv2/infra/stream"
 	"github.com/mysayasan/kopiv2/infra/versioning"
 )
 
@@ -34,27 +37,20 @@ func (m *module) BaseDir() string {
 }
 
 func (m *module) SharedAPIs() apphost.SharedAPIConfig {
-	cfg := apphost.DefaultSharedAPIConfig()
-	cfg.AppRegistry = false
-	cfg.ApiEndpoint = false
-	cfg.ApiEndpointRbac = false
-	return cfg
+	return apphost.SharedAPIConfig{
+		Version: true,
+	}
 }
 
 func (m *module) Entities() []any {
 	return []any{
 		sharedentities.ApiEndpoint{},
-		sharedentities.ApiEndpointRbac{},
 		sharedentities.ApiLog{},
-		sharedentities.FileStorage{},
-		sharedentities.OperationJob{},
-		sharedentities.UserGroup{},
-		sharedentities.UserLogin{},
-		sharedentities.UserRole{},
-		sharedentities.UserSession{},
-		appentities.CameraStream{},
-		appentities.ResidentPropPic{},
-		appmodels.ResidentProp{},
+		appentities.OnvifDevice{},
+		appentities.DetectionRule{},
+		appentities.AlertEvent{},
+		appentities.RuntimeSetting{},
+		appentities.LocalUser{},
 	}
 }
 
@@ -64,37 +60,15 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		Description string
 		Path        string
 		AccessTier  apiaccessenums.AccessTier
-		SeedRbac    bool
 	}
 
 	endpoints := []endpointSeed{
 		{Title: "API Health", Description: "api namespace health", Path: "/api/health", AccessTier: apiaccessenums.Public},
 		{Title: "Runtime Version", Description: "runtime version access", Path: "/api/version", AccessTier: apiaccessenums.Public},
-		{Title: "Admin", Description: "admin module access", Path: "/api/admin", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
-		{Title: "Home", Description: "home module access", Path: "/api/home", AccessTier: apiaccessenums.AuthOnly, SeedRbac: true},
-		{Title: "Camera Stream", Description: "camera stream module access", Path: "/api/camera/stream", AccessTier: apiaccessenums.AuthOnly, SeedRbac: true},
-		{Title: "File Storage", Description: "file storage module access", Path: "/api/file-storage", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
-		{Title: "File Storage Download", Description: "public file download access", Path: "/api/file-storage/download", AccessTier: apiaccessenums.Public},
-		{Title: "Logs", Description: "api log access", Path: "/api/log", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
-		{Title: "Runtime Logs", Description: "runtime log access", Path: "/api/log-service", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
-		{Title: "Cache Service", Description: "cache administration access", Path: "/api/cache-service", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
-	}
-
-	coreDefaults := []string{
-		`INSERT INTO user_group (title, description, parent_id, is_active, created_by, created_at, updated_by, updated_at)
-SELECT 'system', 'core system group', 0, TRUE, 0, 0, 0, 0
-WHERE NOT EXISTS (SELECT 1 FROM user_group WHERE title = 'system' AND parent_id = 0);`,
-		`INSERT INTO user_role (title, description, parent_id, group_id, is_active, created_by, created_at, updated_by, updated_at)
-SELECT 'superadmin', 'core administrator role', 0, ug.id, TRUE, 0, 0, 0, 0
-FROM user_group ug
-WHERE ug.title = 'system' AND ug.parent_id = 0
-AND NOT EXISTS (SELECT 1 FROM user_role ur WHERE ur.title = 'superadmin' AND ur.group_id = ug.id);`,
-		`INSERT INTO user_login (email, userpwd, first_name, last_name, user_role_id, is_active, created_by, created_at, updated_by, updated_at)
-SELECT 'superadmin', '$2a$10$ZNX/d.rXCH5QkWkmMdA0jepur7CEEriX3zTiSnSeYr1txq9GIMAou', 'Super', 'Admin', ur.id, TRUE, 0, 0, 0, 0
-FROM user_role ur
-JOIN user_group ug ON ug.id = ur.group_id
-WHERE ur.title = 'superadmin' AND ug.title = 'system'
-AND NOT EXISTS (SELECT 1 FROM user_login ul WHERE ul.email = 'superadmin');`,
+		{Title: "ONVIF Discovery", Description: "local ONVIF discovery and probe access", Path: "/api/onvif", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Vision Rules", Description: "AI detection rules and alert events access", Path: "/api/vision", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Runtime Settings", Description: "runtime decoder and stream settings access", Path: "/api/settings", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Local Users", Description: "standalone mymatasan user management access", Path: "/api/settings/users", AccessTier: apiaccessenums.AuthOnly},
 	}
 
 	coreRbac := make([]string, 0, len(endpoints)*2)
@@ -105,25 +79,10 @@ SELECT '%s', '%s', 'mymatasan', '*', '%s', %d, TRUE, 0, 0, 0, 0
 WHERE NOT EXISTS (SELECT 1 FROM api_endpoint WHERE app_code = 'mymatasan' AND host = '*' AND path = '%s');`, endpoint.Title, endpoint.Description, endpoint.Path, endpoint.AccessTier, endpoint.Path),
 			fmt.Sprintf(`UPDATE api_endpoint SET app_code = 'mymatasan', access_tier = %d WHERE host = '*' AND path = '%s' AND ((access_tier IS NULL OR access_tier <> %d) OR app_code IS NULL OR app_code = '');`, endpoint.AccessTier, endpoint.Path, endpoint.AccessTier),
 		)
-		if endpoint.SeedRbac {
-			coreRbac = append(coreRbac,
-				fmt.Sprintf(`INSERT INTO api_endpoint_rbac (api_endpoint_id, user_role_id, can_get, can_post, can_put, can_delete, is_active, created_by, created_at, updated_by, updated_at)
-SELECT ae.id, ur.id, TRUE, TRUE, TRUE, TRUE, TRUE, 0, 0, 0, 0
-FROM api_endpoint ae
-JOIN user_role ur ON ur.title = 'superadmin'
-JOIN user_group ug ON ug.id = ur.group_id AND ug.title = 'system'
-WHERE ae.host = '*' AND ae.path = '%s'
-AND NOT EXISTS (
-	SELECT 1 FROM api_endpoint_rbac aep
-	WHERE aep.api_endpoint_id = ae.id AND aep.user_role_id = ur.id
-);`, endpoint.Path),
-			)
-		}
 	}
 
 	seeders := []bootstrap.Seeder{
-		bootstrap.NewSQLSeeder("core-defaults", coreDefaults),
-		bootstrap.NewSQLSeeder("core-rbac", coreRbac),
+		bootstrap.NewSQLSeeder("mymatasan-endpoints", coreRbac),
 	}
 
 	if len(seedStatements) > 0 {
@@ -134,22 +93,75 @@ AND NOT EXISTS (
 }
 
 func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (apphost.ShutdownFunc, error) {
-	residentPropRepo := dbsql.NewGenericRepo[appmodels.ResidentProp](deps.Db)
-	camStreamRepo := dbsql.NewGenericRepo[appentities.CameraStream](deps.Db)
+	onvifDeviceRepo := dbsql.NewGenericRepo[appentities.OnvifDevice](deps.Db)
+	detectionRuleRepo := dbsql.NewGenericRepo[appentities.DetectionRule](deps.Db)
+	alertEventRepo := dbsql.NewGenericRepo[appentities.AlertEvent](deps.Db)
+	runtimeSettingsRepo := dbsql.NewGenericRepo[appentities.RuntimeSetting](deps.Db)
+	localUserRepo := dbsql.NewGenericRepo[appentities.LocalUser](deps.Db)
 
-	homeService := services.NewHomeService(residentPropRepo)
-	newCam := ffmpegCam.NewNetCam()
-	camService := services.NewCameraStreamService(camStreamRepo, deps.Cache, newCam, deps.Logger)
-
-	if err := camService.StartAllMjpegStream(); err != nil {
-		return nil, err
+	onvifService := services.NewOnvifDeviceService(onvifDeviceRepo, onvif.NewClient(), rtsp.NewClient())
+	visionService := services.NewVisionService(detectionRuleRepo, alertEventRepo)
+	settingsService := services.NewRuntimeSettingsService(runtimeSettingsRepo, runtimeSettingsFromAppConfig(deps.Config))
+	localUserService := services.NewLocalUserService(localUserRepo)
+	if err := localUserService.EnsureDefaultAdmin(context.Background()); err != nil {
+		return nil, fmt.Errorf("seed local admin user failed: %w", err)
 	}
+	streamManager := stream.NewManager()
 
-	apis.NewAdminApi(api, *deps.Auth, *deps.Rbac)
-	apis.NewHomeApi(api, *deps.Auth, *deps.Rbac, homeService)
-	apis.NewCameraApi(api, *deps.Auth, *deps.Rbac, camService)
+	protected := api.PathPrefix("").Subrouter()
+	protected.Use(apis.NewLocalBasicAuth(localUserService))
+	apis.NewOnvifApi(protected, onvifService, settingsService, streamManager)
+	apis.NewVisionApi(protected, visionService)
+	apis.NewSettingsApi(protected, settingsService, localUserService)
 
-	return camService.Shutdown, nil
+	monitorCtx, stopMonitor := context.WithCancel(context.Background())
+	services.NewVisionMonitor(onvifService, visionService, settingsService).Start(monitorCtx)
+
+	return func(ctx context.Context) error {
+		stopMonitor()
+		return streamManager.Close()
+	}, nil
+}
+
+func runtimeSettingsFromAppConfig(cfg *config.AppConfigModel) services.RuntimeSettings {
+	ffmpegPath := cfg.Decoder.MJPEG.FFmpegPath
+	if ffmpegPath == "" {
+		ffmpegPath = cfg.Camera.FFmpegPath
+	}
+	result := services.RuntimeSettings{
+		Decoder: services.DecoderSettings{
+			MJPEG: services.MJPEGDecoderSettings{
+				FFmpegPath: ffmpegPath,
+			},
+		},
+		Stream: services.StreamSettings{
+			WebRTC: services.WebRTCSettings{
+				Enabled:    boolValue(cfg.Stream.WebRTC.Enabled, false),
+				ICEServers: []stream.ICEServer{},
+			},
+			MJPEGFallback: services.MJPEGFallbackSettings{
+				Enabled: boolValue(cfg.Stream.MJPEGFallback.Enabled, true),
+			},
+		},
+	}
+	for _, server := range cfg.Stream.WebRTC.ICEServers {
+		if len(server.URLs) == 0 {
+			continue
+		}
+		result.Stream.WebRTC.ICEServers = append(result.Stream.WebRTC.ICEServers, stream.ICEServer{
+			URLs:       server.URLs,
+			Username:   server.Username,
+			Credential: server.Credential,
+		})
+	}
+	return result
+}
+
+func boolValue(value *bool, fallback bool) bool {
+	if value == nil {
+		return fallback
+	}
+	return *value
 }
 
 func (m *module) APIDocs() apidocs.SpecConfig {
@@ -197,105 +209,150 @@ func (m *module) APIDocs() apidocs.SpecConfig {
 				Description: "Returns the running app version and shared core version.",
 				Tags:        []string{"system"},
 			},
-			"GET /api/log": {
-				Summary:     "List API logs",
-				Description: "Returns API access logs.",
-				Tags:        []string{"log"},
+			"POST /api/onvif/discover": {
+				Summary:     "Discover ONVIF devices",
+				Description: "Sends a local WS-Discovery probe and returns discovered ONVIF devices.",
+				Tags:        []string{"onvif"},
 			},
-			"DELETE /api/log": {
-				Summary:     "Delete API logs by month",
-				Description: "Deletes database-backed API activity logs for the requested year and month.",
-				Tags:        []string{"log"},
+			"POST /api/onvif/probe": {
+				Summary:     "Probe ONVIF device",
+				Description: "Checks one manually entered IP or ONVIF device-service URL.",
+				Tags:        []string{"onvif"},
 			},
-			"GET /api/log-service": {
-				Summary:     "List runtime logs",
-				Description: "Returns runtime log entries from the configured cross-platform log file.",
-				Tags:        []string{"log-service"},
+			"GET /api/onvif/devices": {
+				Summary:     "List saved ONVIF devices",
+				Description: "Returns saved ONVIF device records with pagination.",
+				Tags:        []string{"onvif"},
 			},
-			"DELETE /api/log-service": {
-				Summary:     "Delete runtime logs by month",
-				Description: "Deletes dated runtime log files for the requested year and month.",
-				Tags:        []string{"log-service"},
+			"GET /api/onvif/stream-config": {
+				Summary:     "Get live-view stream config",
+				Description: "Returns whether browser live view should use WebRTC, MJPEG fallback, and configured WebRTC ICE servers.",
+				Tags:        []string{"stream"},
 			},
-			"GET /api/cache-service": {
-				Summary:     "List cache keys",
-				Description: "Returns paginated cache keys with optional prefix filter.",
-				Tags:        []string{"cache-service"},
+			"GET /api/settings/runtime": {
+				Summary:     "Get runtime settings",
+				Description: "Returns decoder and stream settings persisted in the local database.",
+				Tags:        []string{"settings"},
 			},
-			"GET /api/cache-service/health": {
-				Summary:     "Cache health check",
-				Description: "Checks cache provider connectivity.",
-				Tags:        []string{"cache-service"},
+			"PUT /api/settings/runtime": {
+				Summary:     "Update runtime settings",
+				Description: "Updates decoder and stream settings without restarting the app.",
+				Tags:        []string{"settings"},
 			},
-			"DELETE /api/cache-service": {
-				Summary:     "Wipe cache",
-				Description: "Deletes cache entries by key, prefix, or all with explicit wipeAll=true.",
-				Tags:        []string{"cache-service"},
+			"POST /api/settings/runtime/reset": {
+				Summary:     "Reset runtime settings",
+				Description: "Resets runtime settings to the startup config defaults.",
+				Tags:        []string{"settings"},
 			},
-			"POST /api/cache-service/wipe": {
-				Summary:     "Wipe cache by payload",
-				Description: "Deletes cache entries using JSON payload with key, prefix, or wipeAll=true.",
-				Tags:        []string{"cache-service"},
+			"GET /api/settings/users": {
+				Summary:     "List local users",
+				Description: "Returns standalone mymatasan login users. Admin local user required.",
+				Tags:        []string{"settings"},
 			},
-			"POST /api/file-storage/upload": {
-				Summary:     "Upload file",
-				Description: "Uploads files with metadata, security level, and optional absolute or countdown expiry.",
-				Tags:        []string{"file-storage"},
+			"POST /api/settings/users": {
+				Summary:     "Create local user",
+				Description: "Creates a standalone mymatasan login user with a bcrypt password hash. Admin local user required.",
+				Tags:        []string{"settings"},
 			},
-			"POST /api/file-storage/upload-async": {
-				Summary:     "Queue file upload",
-				Description: "Stages upload files with security level and optional absolute or countdown expiry, then creates a durable backend job for asynchronous storage.",
-				Tags:        []string{"file-storage"},
+			"PUT /api/settings/users/{id}": {
+				Summary:     "Update local user",
+				Description: "Updates username, display name, admin flag, and active flag. Admin local user required.",
+				Tags:        []string{"settings"},
 			},
-			"GET /api/file-storage/job": {
-				Summary:     "Get file upload job",
-				Description: "Returns durable upload job status by id query parameter.",
-				Tags:        []string{"file-storage"},
+			"POST /api/settings/users/{id}/password": {
+				Summary:     "Reset local user password",
+				Description: "Resets a standalone mymatasan user's password. Admin local user required.",
+				Tags:        []string{"settings"},
 			},
-			"GET /api/file-storage/download": {
-				Summary:     "Download file",
-				Description: "Downloads one stored file by metadata id, renders one file inline with view=true, or returns a ZIP archive by comma-separated metadata ids.",
-				Tags:        []string{"file-storage"},
+			"DELETE /api/settings/users/{id}": {
+				Summary:     "Delete local user",
+				Description: "Deletes a standalone mymatasan login user. The last active admin cannot be deleted.",
+				Tags:        []string{"settings"},
 			},
-			"GET /api/home/latest": {
-				Summary:     "Get latest residents",
-				Description: "Returns latest resident data with pagination.",
-				Tags:        []string{"home"},
+			"GET /api/vision/rules": {
+				Summary:     "List AI detection rules",
+				Description: "Returns saved AI detection rules for local cameras.",
+				Tags:        []string{"vision"},
 			},
-			"POST /api/home/new": {
-				Summary:     "Create home record",
-				Description: "Creates a new home entry.",
-				Tags:        []string{"home"},
+			"POST /api/vision/rules": {
+				Summary:     "Save AI detection rule",
+				Description: "Creates or updates a detection rule with target camera, detection type, zone polygon, rule-level schedule policy, threshold, cooldown, and alert options.",
+				Tags:        []string{"vision"},
 			},
-			"GET /api/admin/test": {
-				Summary:     "Admin test endpoint",
-				Description: "Simple authenticated admin test response.",
-				Tags:        []string{"admin"},
+			"DELETE /api/vision/rules/{id}": {
+				Summary:     "Delete AI detection rule",
+				Description: "Deletes a saved AI detection rule by ID.",
+				Tags:        []string{"vision"},
 			},
-			"GET /api/camera/stream": {
-				Summary:     "List camera streams",
-				Description: "Returns camera streams with pagination.",
-				Tags:        []string{"camera"},
+			"GET /api/vision/alerts": {
+				Summary:     "List AI alert events",
+				Description: "Returns AI alert events raised by detection rules.",
+				Tags:        []string{"vision"},
 			},
-			"POST /api/camera/stream": {
-				Summary:     "Create camera stream",
-				Description: "Creates a camera stream configuration.",
-				Tags:        []string{"camera"},
+			"POST /api/vision/alerts": {
+				Summary:     "Create AI alert event",
+				Description: "Creates an alert event for manual tests or detector workers.",
+				Tags:        []string{"vision"},
 			},
-			"PUT /api/camera/stream": {
-				Summary:     "Update camera stream",
-				Description: "Updates camera stream configuration.",
-				Tags:        []string{"camera"},
+			"POST /api/vision/alerts/{id}/ack": {
+				Summary:     "Acknowledge AI alert",
+				Description: "Marks one AI alert event as acknowledged.",
+				Tags:        []string{"vision"},
 			},
-			"DELETE /api/camera/stream/{id}": {
-				Summary:     "Delete camera stream",
-				Description: "Deletes camera stream configuration by ID.",
-				Tags:        []string{"camera"},
+			"POST /api/onvif/devices": {
+				Summary:     "Save ONVIF device",
+				Description: "Creates or updates a saved ONVIF device record by XAddr.",
+				Tags:        []string{"onvif"},
 			},
-			"GET /api/camera/stream/mjpeg/{id}": {
-				Summary:     "MJPEG stream",
-				Description: "Streams multipart MJPEG output for selected camera ID.",
-				Tags:        []string{"camera"},
+			"POST /api/onvif/devices/discovered": {
+				Summary:     "Save discovered ONVIF device",
+				Description: "Creates or updates a saved ONVIF device record from a discovery result.",
+				Tags:        []string{"onvif"},
+			},
+			"POST /api/onvif/devices/{id}/stream-uri": {
+				Summary:     "Resolve RTSP stream URI",
+				Description: "Uses ONVIF media services to resolve a saved device profile to an RTSP URI.",
+				Tags:        []string{"onvif"},
+			},
+			"POST /api/onvif/devices/{id}/camera-password": {
+				Summary:     "Change camera ONVIF password",
+				Description: "Uses ONVIF Device Management SetUser to update the saved camera user's password.",
+				Tags:        []string{"onvif"},
+			},
+			"POST /api/onvif/devices/{id}/rtsp-test": {
+				Summary:     "Probe RTSP stream",
+				Description: "Checks whether the saved RTSP URI can be described and set up.",
+				Tags:        []string{"rtsp"},
+			},
+			"POST /api/onvif/devices/{id}/live-view": {
+				Summary:     "Prepare MJPEG live view",
+				Description: "Resolves and stores the ONVIF snapshot URI used for browser MJPEG live view.",
+				Tags:        []string{"onvif"},
+			},
+			"POST /api/onvif/devices/{id}/ptz/move": {
+				Summary:     "Move PTZ camera",
+				Description: "Uses ONVIF PTZ ContinuousMove for saved cameras that expose PTZ capability.",
+				Tags:        []string{"ptz"},
+			},
+			"POST /api/onvif/devices/{id}/ptz/stop": {
+				Summary:     "Stop PTZ camera",
+				Description: "Uses ONVIF PTZ Stop for saved cameras that expose PTZ capability.",
+				Tags:        []string{"ptz"},
+			},
+			"POST /api/onvif/devices/{id}/webrtc/offer": {
+				Summary:     "Create WebRTC live-view answer",
+				Description: "Answers a browser WebRTC offer and forwards the saved camera H264 RTSP stream as live video.",
+				Tags:        []string{"stream"},
+			},
+			"GET /api/onvif/devices/{id}/live.mjpeg": {
+				Summary:     "MJPEG live view",
+				Description: "Streams a browser-friendly multipart MJPEG view from ONVIF snapshot frames.",
+				Tags:        []string{"onvif"},
+			},
+			"DELETE /api/onvif/devices/{id}": {
+				Summary:     "Delete ONVIF device",
+				Description: "Deletes a saved ONVIF device record by ID.",
+				Tags:        []string{"onvif"},
 			},
 		},
 	}

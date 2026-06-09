@@ -1,24 +1,31 @@
 {
   "jwt": {
-    "secret": ""
+    "secret": "standalone-dev-secret"
   },
-  "sso": {
-    "issuer": "myidsan",
-    "audience": "mymatasan",
-    "sessionTtlSeconds": 259200,
-    "policyCacheTtlSeconds": 30,
-    "internalToken": "dev-internal-token"
+  "decoder": {
+    "mjpeg": {
+      "ffmpegPath": "D:\\github\\mysayasan\\kopiv2\\.tools\\ffmpeg\\ffmpeg-8.1.1-essentials_build\\bin\\ffmpeg.exe"
+    }
+  },
+  "stream": {
+    "webrtc": {
+      "enabled": true,
+      "iceServers": []
+    },
+    "mjpegFallback": {
+      "enabled": true
+    }
   },
   "fileStorage": {
     "path": "./uploads",
     "cleanup": {
-      "enabled": true,
+      "enabled": false,
       "frequencySeconds": 60,
       "batchSize": 100
     }
   },
   "cache": {
-    "provider": "redis",
+    "provider": "default",
     "ttlSeconds": 30,
     "keyPrefix": "kopiv2",
     "redis": {
@@ -51,12 +58,12 @@
     }
   },
   "transaction": {
-    "lockProvider": "redis",
+    "lockProvider": "memory",
     "lockWaitTimeoutMs": 30000,
     "lockLeaseMs": 10000,
     "operationTimeoutMs": 30000,
     "stuckTimeoutMs": 30000,
-    "jobWorkerEnabled": true,
+    "jobWorkerEnabled": false,
     "jobWorkerFrequencySeconds": 5,
     "maxAttempts": 3
   },
@@ -92,7 +99,11 @@
   "server": {
     "hostnames": ["*"],
     "tlsPorts": [],
-    "nonTlsPorts": [3000]
+    "nonTlsPorts": [3000],
+    "readHeaderTimeoutSeconds": 5,
+    "readTimeoutSeconds": 0,
+    "writeTimeoutSeconds": 0,
+    "idleTimeoutSeconds": 120
   },
   "allowOrigins": "*",
   "bootstrap": {
@@ -106,12 +117,12 @@
     "seedStatements": []
   },
   "db": {
-    "engine": "postgres",
-    "host": "localhost",
-    "port": 5433,
-    "user": "postgres",
-    "password": "postgres",
-    "db_name": "mymatasandb",
-    "ssl_mode": "disable"
+    "engine": "sqlite",
+    "host": "",
+    "port": 0,
+    "user": "",
+    "password": "",
+    "db_name": "./data/mymatasan.db",
+    "ssl_mode": ""
   }
 }

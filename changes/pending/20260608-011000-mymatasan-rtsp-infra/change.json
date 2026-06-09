@@ -1,0 +1,5 @@
+{
+  "type": "minor",
+  "scope": "core,mymatasan,myidsan",
+  "summary": "Replace legacy mymatasan camera stream APIs with ONVIF RTSP URI resolution and reusable RTSP probing infra."
+}

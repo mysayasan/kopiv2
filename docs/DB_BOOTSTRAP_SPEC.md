@@ -209,7 +209,7 @@ The current apps also seed a minimal core identity dataset on first run:
 - `user_session` table for SSO session audit/revocation storage; live session validation currently uses the configured cache provider
 - wildcard-host `api_endpoint` rows with `appCode`, `accessTier`, and menu `metadata` plus `api_endpoint_rbac` rows for protected modules, so the default access rules and MyIDSan navigation are portable across hosts
 
-`mymatasan` seeds camera and app-local protected endpoints. `myidsan` seeds identity, user-management, app-registry, app-auth-config, app-redirect-uri, endpoint, endpoint-RBAC, cache, log, file-storage administration, SSO fallback endpoints, browser federated-auth endpoints, and selected relying-app policies for `mymatasan` and `myseliasan`.
+`mymatasan` seeds only standalone endpoint metadata for health/version, ONVIF, settings, local-user, and vision routes. It no longer seeds identity or RBAC rows because app-local routes use DB-backed local Basic Auth. `myidsan` seeds identity, user-management, app-registry, app-auth-config, app-redirect-uri, endpoint, endpoint-RBAC, cache, log, file-storage administration, SSO fallback endpoints, browser federated-auth endpoints, and selected relying-app policies for relying apps such as `myseliasan`.
 
 `myseliasan` seeds only its lightweight local operational endpoint catalog and avoids registering user-management tables. It relies on MyIDSan for identity and receives users through the authorization-code callback flow.
 

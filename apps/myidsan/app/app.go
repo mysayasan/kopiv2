@@ -115,10 +115,6 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 			menuItem{Enabled: true, Id: "users", Label: "Users", Group: "Identity", Order: 10, Summary: "Maintain credentials, profile details, and role assignment.", Tone: "blue"},
 			menuItem{Enabled: true, Id: "roles", Label: "Roles", Group: "Identity", Order: 30, Summary: "Create group-scoped roles and parent role chains.", Tone: "violet"},
 		), AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
-		{AppCode: "mymatasan", Title: "mymatasan Admin", Description: "mymatasan admin module access", Path: "/api/admin", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
-		{AppCode: "mymatasan", Title: "mymatasan Home", Description: "mymatasan home module access", Path: "/api/home", AccessTier: apiaccessenums.AuthOnly, SeedRbac: true},
-		{AppCode: "mymatasan", Title: "mymatasan Camera Stream", Description: "mymatasan camera stream module access", Path: "/api/camera/stream", AccessTier: apiaccessenums.AuthOnly, SeedRbac: true},
-		{AppCode: "mymatasan", Title: "mymatasan User Login", Description: "mymatasan app user login access", Path: "/api/user-login", AccessTier: apiaccessenums.AuthOnly, SeedRbac: true},
 		{AppCode: "myseliasan", Title: "myseliasan Session", Description: "myseliasan session metadata access", Path: "/api/session", AccessTier: apiaccessenums.AuthOnly, SeedRbac: true},
 		{AppCode: "myseliasan", Title: "myseliasan Auth", Description: "myseliasan relying-app auth callback access", Path: "/api/auth", AccessTier: apiaccessenums.Public},
 		{AppCode: "myseliasan", Title: "myseliasan Version", Description: "myseliasan runtime version access", Path: "/api/version", AccessTier: apiaccessenums.Public},
@@ -132,10 +128,10 @@ WHERE NOT EXISTS (SELECT 1 FROM app_registry WHERE code = 'myidsan');`,
 SET title = 'myidsan', description = 'Identity and SSO authority', base_url = 'http://localhost:3001', audience = 'myidsan', is_active = TRUE, updated_at = 0
 WHERE code = 'myidsan';`,
 		`INSERT INTO app_registry (code, title, description, base_url, audience, client_secret, is_active, created_by, created_at, updated_by, updated_at)
-SELECT 'mymatasan', 'mymatasan', 'Camera and VLMS application', 'http://localhost:3000', 'mymatasan', '', TRUE, 0, 0, 0, 0
+SELECT 'mymatasan', 'mymatasan', 'Standalone ONVIF monitoring device app', 'http://localhost:3000', 'mymatasan', '', TRUE, 0, 0, 0, 0
 WHERE NOT EXISTS (SELECT 1 FROM app_registry WHERE code = 'mymatasan');`,
 		`UPDATE app_registry
-SET title = 'mymatasan', description = 'Camera and VLMS application', base_url = 'http://localhost:3000', audience = 'mymatasan', is_active = TRUE, updated_at = 0
+SET title = 'mymatasan', description = 'Standalone ONVIF monitoring device app', base_url = 'http://localhost:3000', audience = 'mymatasan', is_active = TRUE, updated_at = 0
 WHERE code = 'mymatasan';`,
 		`INSERT INTO app_registry (code, title, description, base_url, audience, client_secret, is_active, created_by, created_at, updated_by, updated_at)
 SELECT 'myseliasan', 'myseliasan', 'Control plane for mymatasan', 'http://localhost:3002', 'myseliasan', '', TRUE, 0, 0, 0, 0

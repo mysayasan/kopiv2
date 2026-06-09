@@ -438,12 +438,8 @@ func defaultResponses(method string, path string) map[string]openAPIResponse {
 		return resp
 	case "GET /api/file-storage/download":
 		return withRateLimitResponse(map[string]openAPIResponse{"200": binaryResponse("File content")})
-	case "GET /api/camera/stream/mjpeg/{id}":
-		resp := map[string]openAPIResponse{"206": mjpegResponse("Multipart MJPEG stream")}
-		resp["401"] = jsonResponse("Unauthorized", "ErrorResponse")
-		resp["429"] = jsonResponse("Too many requests", "ErrorResponse")
-		resp["500"] = jsonResponse("Server error", "ErrorResponse")
-		return resp
+	case "GET /api/onvif/devices/{id}/live.mjpeg":
+		return withErrorResponse(map[string]openAPIResponse{"200": multipartMJPEGResponse("Multipart MJPEG live view")})
 	}
 
 	if successSchema := endpointSuccessSchema(method, path); successSchema != "" {
@@ -507,12 +503,6 @@ func endpointSuccessSchema(method string, path string) string {
 		return "DefaultUserRoleResponse"
 	case "PUT /api/user-credential":
 		return "DefaultUserCredentialResponse"
-	case "GET /api/camera/stream":
-		return "PagingCameraStreamResponse"
-	case "POST /api/camera/stream", "PUT /api/camera/stream":
-		return "DefaultCameraStreamResponse"
-	case "GET /api/home/latest":
-		return "PagingHomeLatestResponse"
 	case "GET /api/log":
 		return "PagingApiLogResponse"
 	case "DELETE /api/log":
@@ -527,10 +517,6 @@ func endpointSuccessSchema(method string, path string) string {
 		return "DefaultBoolResponse"
 	case "GET /api/version":
 		return "DefaultVersionInfoResponse"
-	case "GET /api/admin/test":
-		return "DefaultStringResponse"
-	case "POST /api/home/new":
-		return "PagingStringResponse"
 	case "POST /api/file-storage/upload":
 		return "PagingFileStorageResponse"
 	case "POST /api/file-storage/upload-async", "GET /api/file-storage/job":
@@ -575,7 +561,7 @@ func binaryResponse(description string) openAPIResponse {
 	}
 }
 
-func mjpegResponse(description string) openAPIResponse {
+func multipartMJPEGResponse(description string) openAPIResponse {
 	return openAPIResponse{
 		Description: description,
 		Content: map[string]openAPIMediaType{
@@ -606,8 +592,6 @@ func enrichOperationWithSchemas(method string, path string, op *openAPIOperation
 		op.RequestBody = jsonRequestBody("SSOAuthorizationRequest", true)
 	case "POST /api/endpoint-rbac", "PUT /api/endpoint-rbac":
 		op.RequestBody = jsonRequestBody("ApiEndpointRbacInputDto", true)
-	case "POST /api/camera/stream", "PUT /api/camera/stream":
-		op.RequestBody = jsonRequestBody("CameraStreamPayload", true)
 	case "POST /api/user-credential":
 		op.RequestBody = jsonRequestBody("UserRoleInputDto", true)
 	case "PUT /api/user-credential":
@@ -683,8 +667,6 @@ func isPagingEndpoint(method string, path string) bool {
 		"/api/endpoint":        {},
 		"/api/endpoint-rbac":   {},
 		"/api/cache-service":   {},
-		"/api/camera/stream":   {},
-		"/api/home/latest":     {},
 		"/api/log":             {},
 	}
 
@@ -1003,22 +985,6 @@ func baseComponentSchemas() map[string]openAPISchema {
 			},
 			Required: []string{"apiEndpointId", "userRoleId"},
 		},
-		"CameraStreamPayload": {
-			Type: "object",
-			Properties: map[string]openAPISchema{
-				"id":              {Type: "integer", Format: "int64"},
-				"url":             {Type: "string"},
-				"stream_protocol": {Type: "integer", Format: "int32"},
-				"out_stream_fmt":  {Type: "integer", Format: "int32"},
-				"autoStart":       {Type: "boolean"},
-				"isActive":        {Type: "boolean"},
-				"createdBy":       {Type: "integer", Format: "int64"},
-				"createdAt":       {Type: "integer", Format: "int64"},
-				"updatedBy":       {Type: "integer", Format: "int64"},
-				"updatedAt":       {Type: "integer", Format: "int64"},
-			},
-			Required: []string{"url"},
-		},
 		"FileUploadRequest": {
 			Type: "object",
 			Properties: map[string]openAPISchema{
@@ -1206,44 +1172,6 @@ func baseComponentSchemas() map[string]openAPISchema {
 				"updatedAt":      {Type: "integer", Format: "int64"},
 			},
 		},
-		"ResidentPropPicPayload": {
-			Type: "object",
-			Properties: map[string]openAPISchema{
-				"id":             {Type: "integer", Format: "int64"},
-				"residentPropId": {Type: "integer", Format: "int64"},
-				"picUrl":         {Type: "string"},
-			},
-		},
-		"ResidentPropPayload": {
-			Type: "object",
-			Properties: map[string]openAPISchema{
-				"id":            {Type: "integer", Format: "int64"},
-				"title":         {Type: "string"},
-				"description":   {Type: "string"},
-				"currencyCode":  {Type: "string"},
-				"price":         {Type: "number", Format: "double"},
-				"propType":      {Type: "integer", Format: "int32"},
-				"propTitle":     {Type: "integer", Format: "int32"},
-				"landTitle":     {Type: "integer", Format: "int32"},
-				"landTenure":    {Type: "integer", Format: "int32"},
-				"builtUpSize":   {Type: "number", Format: "float"},
-				"landAreaSize":  {Type: "number", Format: "float"},
-				"bedroomCount":  {Type: "integer", Format: "int32"},
-				"bathroomCount": {Type: "integer", Format: "int32"},
-				"countryAbbrev": {Type: "string"},
-				"stateAbbrev":   {Type: "string"},
-				"locode":        {Type: "string"},
-				"postcode":      {Type: "integer", Format: "int32"},
-				"lat":           {Type: "number", Format: "double"},
-				"lon":           {Type: "number", Format: "double"},
-				"postedAt":      {Type: "integer", Format: "int64"},
-				"expiredAt":     {Type: "integer", Format: "int64"},
-				"pics": {
-					Type:  "array",
-					Items: &openAPISchema{Ref: schemaRef("ResidentPropPicPayload")},
-				},
-			},
-		},
 	}
 
 	schemas["UserGroupInputDto"] = schemas["UserGroupOutputDto"]
@@ -1289,7 +1217,6 @@ func baseComponentSchemas() map[string]openAPISchema {
 	schemas["DefaultApiEndpointRbacResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("ApiEndpointRbacOutputDto")})
 	schemas["DefaultSSOIntrospectionResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("SSOIntrospectionPayload")})
 	schemas["DefaultSSOAuthorizationResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("SSOAuthorizationPayload")})
-	schemas["DefaultCameraStreamResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("CameraStreamPayload")})
 	schemas["DefaultOperationJobResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("OperationJobOutputDto")})
 	schemas["DefaultUserRoleListResponse"] = defaultResponseSchema(openAPISchema{Type: "array", Items: &openAPISchema{Ref: schemaRef("UserRoleOutputDto")}})
 	schemas["DefaultApiEndpointRbacJoinListResponse"] = defaultResponseSchema(openAPISchema{Type: "array", Items: &openAPISchema{Ref: schemaRef("ApiEndpointRbacJoinOutputDto")}})
@@ -1300,8 +1227,6 @@ func baseComponentSchemas() map[string]openAPISchema {
 	schemas["PagingApiEndpointResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("ApiEndpointOutputDto")})
 	schemas["PagingAppRegistryResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("AppRegistryOutputDto")})
 	schemas["PagingApiEndpointRbacResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("ApiEndpointRbacListOutputDto")})
-	schemas["PagingCameraStreamResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("CameraStreamPayload")})
-	schemas["PagingHomeLatestResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("ResidentPropPayload")})
 	schemas["PagingApiLogResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("ApiLogOutputDto")})
 	schemas["PagingRuntimeLogResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("RuntimeLogOutputDto")})
 	schemas["PagingFileStorageResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("FileStorageOutputDto")})

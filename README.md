@@ -45,7 +45,7 @@ make down
 
 This repository contains modular backend applications:
 
-- `apps/mymatasan`: camera, live stream, and video intelligence app.
+- `apps/mymatasan`: standalone camera, ONVIF discovery, WebRTC live stream, and video intelligence app for small devices.
 - `apps/myidsan`: identity, user management, and RBAC administration app.
 - `apps/myseliasan`: relying control-plane app for `mymatasan`, authenticated through `myidsan`.
 
@@ -64,10 +64,10 @@ High-level flow:
 2. Global middleware applies CORS, request logging, and request ID tracing.
 3. API routes under `/api` persist activity and elapsed duration into `api_log`, apply access-tier rate limiting, then protected routes pass through JWT authentication and RBAC authorization.
 4. A shared bootstrap engine checks/creates the database and syncs schema from registered entity types before the server starts.
-5. Business services orchestrate repository access and camera stream workers.
-6. Transaction coordination uses Redis (or in-memory fallback for single-process dev) to serialize critical file-storage work with FIFO lock acquisition and stuck-lock telemetry.
-7. Shared cache layer uses Redis (or in-memory fallback) for cross-instance RBAC cache consistency.
-8. The configured SQL engine stores persistent entities.
+5. Business services orchestrate repository access, ONVIF devices, live stream sessions, and app workers such as the MyMataSan vision monitor.
+6. Transaction coordination uses Redis (or in-memory fallback for single-process/dev apps) to serialize critical file-storage work with FIFO lock acquisition and stuck-lock telemetry.
+7. Shared cache layer uses Redis or the in-process default cache depending on the selected app profile.
+8. The configured SQL engine stores persistent entities; `mymatasan` defaults to SQLite for small-device deployment.
 9. Static SPA assets are served from the selected app directory, for example `apps/mymatasan/static` or `apps/myidsan/static`.
 
 Main components:
@@ -77,7 +77,7 @@ Main components:
 - Per-app compile target: `cmd/<app>/main.go`
 - Domain contracts/entities: `domain/`
 - Shared APIs/services/repos: `domain/shared/`
-- Infrastructure adapters (DB/config/login/camera): `infra/`
+- Infrastructure adapters (DB/config/login/ONVIF/RTSP/stream/vision): `infra/`
 - Embedded version manifest and bump tooling: `infra/versioning/`
 
 ## Documentation
@@ -104,7 +104,7 @@ Relevant top-level layout:
 
 ```text
 .
-|- apps/mymatasan/         # Camera, stream, and video intelligence app
+|- apps/mymatasan/         # Camera, WebRTC stream, and video intelligence app
 |- apps/myidsan/           # Identity, user management, and RBAC administration app
 |- domain/                 # Domain entities, enums, shared APIs/services
 |- infra/                  # Config, DB, auth login providers, camera adapters
@@ -140,7 +140,7 @@ Environment selection:
 
 ### Required Secrets
 
-- `JWT_SECRET`
+- `JWT_SECRET` when the selected app config does not already provide `jwt.secret`
 - `GOOGLE_CLIENT_SECRET` (required when Google login config is enabled)
 - `GITHUB_CLIENT_SECRET` (required when GitHub login config is enabled)
 
@@ -246,6 +246,13 @@ Local auth endpoints:
 - `POST /api/login/default/register` for local account registration.
 - Local auth is always available and independent from Google/GitHub OAuth setup.
 
+Standalone MyMataSan auth:
+
+- `mymatasan` app-specific ONVIF, Settings, and Vision APIs use standalone DB-backed HTTP Basic Auth.
+- On first startup, `mymatasan` seeds `admin` / `Admin123` when no local users exist.
+- User management lives under the `Settings` page and `/api/settings/users`.
+- Change the seeded admin password before deploying outside a trusted local network.
+
 Local password storage:
 
 - New local passwords are stored using bcrypt hash.
@@ -270,7 +277,7 @@ Database behavior is controlled by `db` in config:
 - For SQLite, `db_name` is the database file path; relative paths resolve from the selected app directory. `:memory:` is supported for tests/dev experiments only.
 - SQLite runs through the same CRUD/bootstrap contracts, but it is best for single-process or small-device deployments. Prefer PostgreSQL or MariaDB for multi-instance production workloads.
 - Core bootstrap seed SQL is dialect-portable for supported engines.
-- `apps/mymatasan/config.dev.json` defaults PostgreSQL to port `5433`; set `DB_PORT` when your local database listens on a different port.
+- `apps/mymatasan/config.dev.json` defaults to SQLite at `./data/mymatasan.db` with `CACHE_PROVIDER=default` for standalone small-device operation.
 
 MySeliaSan local development:
 
@@ -359,22 +366,9 @@ export ENVIRONMENT=dev
 export SERVER_HOSTNAMES=*
 export SERVER_NON_TLS_PORTS=3000
 export SERVER_TLS_PORTS=
-export JWT_SECRET=replace-with-strong-secret
-export GOOGLE_CLIENT_SECRET=replace-with-google-secret
-export DB_HOST=localhost
-export DB_PORT=5432
-export DB_USER=postgres
-export DB_PASSWORD=postgres
-export DB_NAME=mymatasandb
-export DB_SSL_MODE=disable
-export DB_ENGINE=postgres
 export CACHE_PROVIDER=default
-export CACHE_TTL_SECONDS=30
-export CACHE_KEY_PREFIX=kopiv2
-export REDIS_ADDR=localhost:6379
-export REDIS_PASSWORD='Simpnify@123'
-export REDIS_DB=0
-export REDIS_USE_TLS=false
+export DB_ENGINE=sqlite
+export DB_NAME=./data/mymatasan.db
 go run . -app mymatasan
 ```
 
@@ -411,7 +405,7 @@ Build the identity app image:
 docker build --build-arg APP=myidsan -t kopiv2:myidsan .
 ```
 
-Run container against external PostgreSQL:
+Run standalone MyMataSan with its local SQLite/default-cache profile:
 
 ```bash
 docker run --rm -p 3000:3000 \
@@ -419,21 +413,9 @@ docker run --rm -p 3000:3000 \
   -e SERVER_HOSTNAMES=* \
   -e SERVER_NON_TLS_PORTS=3000 \
   -e SERVER_TLS_PORTS= \
-  -e JWT_SECRET=replace-with-strong-secret \
-  -e GOOGLE_CLIENT_SECRET=replace-with-google-secret \
-  -e DB_HOST=host.docker.internal \
-  -e DB_PORT=5432 \
-  -e DB_USER=postgres \
-  -e DB_PASSWORD=postgres \
-  -e DB_NAME=mymatasandb \
-  -e DB_SSL_MODE=disable \
+  -e DB_ENGINE=sqlite \
+  -e DB_NAME=./data/mymatasan.db \
   -e CACHE_PROVIDER=default \
-  -e CACHE_TTL_SECONDS=30 \
-  -e CACHE_KEY_PREFIX=kopiv2 \
-  -e REDIS_ADDR=host.docker.internal:6379 \
-  -e REDIS_PASSWORD='Simpnify@123' \
-  -e REDIS_DB=0 \
-  -e REDIS_USE_TLS=false \
   kopiv2:latest
 ```
 
@@ -578,9 +560,9 @@ Notes:
 - Standard JSON API responses include top-level `durationMs`, the elapsed request handling time in milliseconds.
 - Auth-protected `/api/*` routes are marked with cookie session auth in docs, except login/callback and `/api/health`; unsafe methods also require `X-CSRF-Token`.
 - Key endpoints include reusable request/response schema components under `components.schemas`.
-- Key list/create/update endpoints now use endpoint-specific wrapper schemas (for example: `PagingUserGroupResponse`, `DefaultUserGroupResponse`, `PagingCameraStreamResponse`) so FE clients can generate stricter typed models.
+- Key list/create/update endpoints now use endpoint-specific wrapper schemas (for example: `PagingUserGroupResponse` and `DefaultUserGroupResponse`) so FE clients can generate stricter typed models.
 - Shared DB-backed list endpoints document `limit`, `offset`, `filters`, and `sorters` query parameters using the shared SQL enum contract (`compare`: 1 eq, 2 neq, 3 gt, 4 lt, 5 gte, 6 lte; `sort`: 1 asc, 2 desc). `filters` and `sorters` accept a JSON object or array; repeated `filter` and `sorter` query parameters are also supported. Multiple filters are combined by `AND`, and multiple sorters are applied in request order. Paging responses return offset-window metadata: `limit`, `offset`, `resCnt`, `totalCnt`, `hasNext`, and `nextOffset`.
-- Non-JSON routes are documented with explicit response contracts as well (for example: OAuth login redirects with `302`, MJPEG stream with `206 multipart/x-mixed-replace`, binary file download with `application/octet-stream`).
+- Non-JSON routes are documented with explicit response contracts as well (for example: OAuth login redirects with `302` and binary file download with `application/octet-stream`).
 - Cache admin endpoints are included in the generated spec (`cache-service` tag) for list, health, and wipe operations.
 - Runtime log listing and monthly deletion are included in the generated spec (`log-service` tag).
 - Runtime version is included in the generated spec (`system` tag).
@@ -592,7 +574,40 @@ Notes:
 
 `myidsan` is the identity-provider foundation for single sign-on across `kopiv2` apps. It owns the identity/RBAC management surface, app registry, app auth config, redirect URI allow-list, token issuer settings, cache-backed sessions, browser authorization-code flow, and internal introspection/authorization APIs for relying apps.
 
-`mymatasan` is now treated as a relying/resource app: it does not mount local login, user/group/role, app-registry, endpoint, or endpoint-RBAC management APIs. Its Swagger surface stays focused on camera/resource workflows plus operational shared APIs such as version, file storage, logs, and cache service.
+`mymatasan` is now treated as a standalone device app: it does not mount MyIDSan login, SSO browser callback, user/group/role, app-registry, endpoint, endpoint-RBAC, file-storage, log, runtime-log, or cache-service management APIs. Its app-specific ONVIF, Settings, and Vision APIs are protected by standalone DB-backed Basic Auth until the stricter MySeliaSan-to-MyMataSan control protocol is defined. Saved-camera live view uses configurable RTSP-to-WebRTC H264 forwarding first, with MJPEG retained as a fallback or primary mode when WebRTC is disabled.
+
+MyMataSan ONVIF endpoints:
+
+- `POST /api/onvif/discover` -> local WS-Discovery scan.
+- `POST /api/onvif/probe` -> manual IP/host/device-service URL probe.
+- `GET /api/onvif/devices` -> list saved ONVIF devices.
+- `GET /api/onvif/stream-config` -> read WebRTC, ICE server, and MJPEG fallback live-view settings.
+- `POST /api/onvif/devices` and `POST /api/onvif/devices/discovered` -> save or update a device by XAddr.
+- `POST /api/onvif/devices/{id}/stream-uri` -> resolve a saved ONVIF device to an RTSP URI.
+- `POST /api/onvif/devices/{id}/camera-password` -> change a camera-local ONVIF user password with Device Management `SetUser`.
+- `POST /api/onvif/devices/{id}/rtsp-test` -> probe the saved RTSP URI and store transport/track metadata.
+- `POST /api/onvif/devices/{id}/live-view` -> resolve saved ONVIF stream and snapshot URIs for browser live view.
+- `POST /api/onvif/devices/{id}/webrtc/offer` -> answer a browser WebRTC offer and forward H264 RTSP RTP packets.
+- `POST /api/onvif/devices/{id}/ptz/move` -> move a saved PTZ-capable camera with ONVIF `ContinuousMove`.
+- `POST /api/onvif/devices/{id}/ptz/stop` -> stop ONVIF PTZ movement.
+- `GET /api/onvif/devices/{id}/live.mjpeg` -> stream RTSP or snapshot frames as browser-friendly MJPEG fallback.
+- `DELETE /api/onvif/devices/{id}` -> remove a saved device.
+- `GET /api/settings/runtime` -> read runtime Decoder and Live Stream settings.
+- `PUT /api/settings/runtime` -> update runtime settings without restarting `mymatasan`.
+- `POST /api/settings/runtime/reset` -> reset runtime settings to startup config defaults.
+- `GET /api/settings/users` -> list local login users.
+- `POST /api/settings/users` -> create a local login user.
+- `PUT /api/settings/users/{id}` -> update username, display name, admin flag, and active flag.
+- `POST /api/settings/users/{id}/password` -> reset a local user's password.
+- `DELETE /api/settings/users/{id}` -> delete a local user.
+- `GET /api/vision/rules` -> list camera detection rules.
+- `POST /api/vision/rules` -> create or update a camera detection rule with detection type, polygon, threshold, cooldown, sound setting, and optional rule-level schedule policy.
+- `DELETE /api/vision/rules/{id}` -> delete a detection rule.
+- `GET /api/vision/alerts` -> list AI alert events.
+- `POST /api/vision/alerts` -> create an alert event for integration checks or detector output.
+- `POST /api/vision/alerts/{id}/ack` -> acknowledge an alert event.
+
+MyMataSan vision rules are camera-first in the frontend. The reusable `infra/vision` package owns the app-neutral rule, alert, schedule, frame, and detector contracts. The current MVP detector compares consecutive JPEG frames inside the configured polygon, applies threshold/min-frame/cooldown settings, and writes alert events that the AI page and live-view tiles can surface.
 
 MyIDSan's admin SPA derives navigation from `/api/endpoint-rbac/ep/me` plus endpoint metadata. Page visibility and create, edit, and delete buttons follow the same RBAC method grants; browser-readable cookies remember only presentation state such as active page, filters, sorting, and table page.
 
@@ -720,6 +735,7 @@ Common issues:
   - ensure the same port is not listed in both `tlsPorts` and `nonTlsPorts`.
   - if using env overrides, set `SERVER_TLS_PORTS` and/or `SERVER_NON_TLS_PORTS` with valid comma-separated integers.
 
-6. Startup fails with camera autostart query error:
-  - if no camera rows are marked `AutoStart=true`, startup now continues normally.
-  - if you still see camera startup errors, verify camera stream rows and source URLs.
+6. Live preview or vision sampling cannot capture frames:
+  - verify the saved device has an RTSP URI or snapshot URI by resolving live view from the camera settings page.
+  - verify `decoder.mjpeg.ffmpegPath` points to a working ffmpeg executable when MJPEG fallback or vision RTSP snapshots are used.
+  - verify the camera credentials are saved when the camera requires authenticated ONVIF, snapshot, or RTSP access.

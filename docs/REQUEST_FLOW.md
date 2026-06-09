@@ -12,10 +12,11 @@
    - API activity log middleware records the completed request into `api_log`, including elapsed `durationMs`.
    - API telemetry records request count, duration histogram, and slow-request metrics when enabled.
    - rate-limit middleware classifies the API endpoint tier (`0=DevOnly`, `1=AuthOnly`, `2=Public`) and applies config-driven sliding-window limits.
-   - auth middleware reads the HttpOnly session cookie, validates the JWT, and injects claims into context.
-   - unsafe authenticated methods (`POST`, `PUT`, `PATCH`, `DELETE`) must send `X-CSRF-Token` matching the readable CSRF cookie.
+   - routes that opt into MyIDSan auth read the HttpOnly session cookie, validate the JWT, and inject claims into context.
+   - unsafe JWT-authenticated methods (`POST`, `PUT`, `PATCH`, `DELETE`) must send `X-CSRF-Token` matching the readable CSRF cookie.
    - auth middleware validates signed JWT, configured issuer/audience, and cache-backed SSO session when a `sid` claim is present.
-   - RBAC middleware validates resource-app scoped role access for host + path segment boundary + method.
+   - RBAC middleware validates resource-app scoped role access for host + path segment boundary + method when the route uses RBAC.
+   - standalone `mymatasan` ONVIF and vision routes use app-local Basic Auth instead of MyIDSan JWT/RBAC.
 5. Handler decodes payload, calls service, and writes response.
 
 Shared JSON response helpers include `durationMs`, measured from request middleware start time to response serialization.
@@ -44,14 +45,14 @@ Shared JSON response helpers include `durationMs`, measured from request middlew
 14. Initialize DB, cache, transaction lock coordinator, repositories, embedded version manifest, telemetry recorder, enabled shared API modules, selected app routes, and the shared scheduler for built-in or app-specific jobs.
 15. Register the durable file-storage upload job repository and start the backend upload worker when `transaction.jobWorkerEnabled=true`.
 16. Register Swagger/OpenAPI routes (`/swagger`, `/swagger/openapi.json`) from the shared docs module.
-17. Start app workers (for example camera autostart).
+17. Start app workers when the selected app registers any.
 18. Start one or more listeners based on host and explicit TLS/non-TLS port lists.
 
 Bootstrap seeding also ensures a default `system` group and `superadmin` role exist before the app becomes ready.
 The default `superadmin` login password is inserted as a bcrypt hash; legacy plain-text passwords still migrate after successful local login.
 It also seeds wildcard-host endpoint rows with `accessTier` metadata and RBAC rows for the protected API modules so the default access map is ready on a fresh install. Protected shared management APIs seed as `DevOnly`.
 
-`myidsan` uses this same bootstrap flow to seed the identity-provider management surface, app registry, SSO fallback endpoints, and selected relying-app policies. It is the cross-app sign-on and RBAC authority. `mymatasan` does not mount login/user/app-registry/endpoint-management route groups, so its Swagger surface stays focused on camera/resource operations. When Redis is enabled, resource apps can share short-lived session/RBAC cache entries. When only in-memory cache is enabled, resource apps call `myidsan` service APIs (`POST /api/sso/introspect`, `POST /api/sso/authorize`) for token introspection and authorization on local cache misses.
+`myidsan` uses this same bootstrap flow to seed the identity-provider management surface, app registry, SSO fallback endpoints, and selected relying-app policies. It is the cross-app sign-on and RBAC authority. `mymatasan` is standalone: it seeds only local endpoint metadata for rate-limit classification and app bootstrap, mounts public version plus app-local ONVIF and vision routes, and protects those app-local routes with Basic Auth from local users.
 
 ## Browser SSO Callback Flow
 
@@ -81,17 +82,29 @@ It performs:
 
 1. Wait for `SIGINT` or `SIGTERM`.
 2. Create shutdown context (`10s`).
-3. Stop camera stream workers via `Shutdown(ctx)`.
+3. Stop any selected-app workers via `Shutdown(ctx)` when one is registered.
 4. Shutdown HTTP server gracefully.
 
-## Camera Stream Worker Flow
+## ONVIF To RTSP Setup Flow
 
-1. `ReadMjpeg(id)` checks active worker map.
-2. If no worker, load camera source and create worker.
-3. Worker loop calls ffmpeg netcam `ReadMjpeg(uri)`.
-4. Frames are parsed from byte stream and pushed to buffered channel.
-5. On transient EOF, sends fallback frame (`nosignal.gif`) and retries up to threshold.
-6. On cancellation, worker exits and channel closes.
+1. `POST /api/onvif/discover` sends WS-Discovery probes on the local network, upserts matching ONVIF devices by XAddr, and returns them enriched with best-effort unauthenticated device information, capabilities, stream URI, and snapshot URI fields when the camera exposes them.
+2. `POST /api/onvif/probe` checks one manually entered host or device-service URL.
+3. `POST /api/onvif/devices/discovered` saves or updates the device record by ONVIF XAddr.
+4. `POST /api/onvif/devices/{id}/stream-uri` calls ONVIF `GetCapabilities`, `GetProfiles`, and `GetStreamUri` to resolve an RTSP URI.
+5. `POST /api/onvif/devices/{id}/rtsp-test` uses `infra/rtsp` to DESCRIBE/SETUP the RTSP URI and save observed transport and track metadata.
+6. `POST /api/onvif/devices/{id}/live-view` resolves ONVIF `GetSnapshotUri` for the same media profile.
+7. `GET /api/onvif/devices/{id}/live.mjpeg` repeatedly fetches JPEG snapshots and emits a browser-friendly multipart MJPEG stream.
+
+## Vision Detection Flow
+
+1. The operator opens the AI page and selects a saved camera from the left navigation.
+2. The page lists that camera's detection rules and opens a live-preview drawing view when the operator creates or edits a rule.
+3. The frontend saves each rule through `POST /api/vision/rules`, including camera ID, detection type, normalized polygon points, threshold, minimum frame count, cooldown, alert sound setting, enabled state, and optional rule-level `schedulePolicy`.
+4. `schedulePolicy` is evaluated per rule. Empty policy means always active; weekly windows and RFC3339 date ranges can either allow detection only inside matches or deny detection during matches.
+5. The MyMataSan vision monitor runs as an app worker, loads enabled rules, filters out rules whose schedule is inactive, groups active rules by camera, and captures a JPEG frame from the saved RTSP URI or snapshot URI.
+6. The reusable `infra/vision` detector compares consecutive frames inside each rule polygon. A detection is raised only when threshold, minimum frame count, and cooldown requirements are satisfied.
+7. Detection results are persisted as `alert_event` rows through `POST /api/vision/alerts` service logic. Diagnostic alert rows are throttled and written when capture or detection fails, or when frames are sampled without crossing the rule threshold.
+8. The AI alert table and live-view camera tiles read alert events so operators can see which monitored camera has recent activity. Operators can acknowledge handled alerts through `POST /api/vision/alerts/{id}/ack`.
 
 ## File Storage Upload Transaction Flow
 
