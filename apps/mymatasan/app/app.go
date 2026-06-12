@@ -52,7 +52,8 @@ func (m *module) Entities() []any {
 	return []any{
 		sharedentities.ApiEndpoint{},
 		sharedentities.ApiLog{},
-		appentities.OnvifDevice{},
+		appentities.Camera{},
+		appentities.CameraOnvif{},
 		appentities.DetectionRule{},
 		appentities.AlertEvent{},
 		appentities.RuntimeSetting{},
@@ -102,7 +103,8 @@ WHERE NOT EXISTS (SELECT 1 FROM api_endpoint WHERE app_code = 'mymatasan' AND ho
 }
 
 func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (apphost.ShutdownFunc, error) {
-	onvifDeviceRepo := dbsql.NewGenericRepo[appentities.OnvifDevice](deps.Db)
+	cameraRepo := dbsql.NewGenericRepo[appentities.Camera](deps.Db)
+	cameraOnvifRepo := dbsql.NewGenericRepo[appentities.CameraOnvif](deps.Db)
 	detectionRuleRepo := dbsql.NewGenericRepo[appentities.DetectionRule](deps.Db)
 	alertEventRepo := dbsql.NewGenericRepo[appentities.AlertEvent](deps.Db)
 	runtimeSettingsRepo := dbsql.NewGenericRepo[appentities.RuntimeSetting](deps.Db)
@@ -110,7 +112,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	recordingSegmentRepo := dbsql.NewGenericRepo[appentities.RecordingSegment](deps.Db)
 	recordingConfigRepo := dbsql.NewGenericRepo[appentities.RecordingConfig](deps.Db)
 
-	onvifService := services.NewOnvifDeviceService(onvifDeviceRepo, onvif.NewClient(), rtsp.NewClient())
+	cameraService := services.NewCameraService(cameraRepo, cameraOnvifRepo, onvif.NewClient(), rtsp.NewClient())
 	visionService := services.NewVisionService(detectionRuleRepo, alertEventRepo)
 	settingsService := services.NewRuntimeSettingsService(runtimeSettingsRepo, runtimeSettingsFromAppConfig(deps.Config))
 	localUserService := services.NewLocalUserService(localUserRepo)
@@ -142,7 +144,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 				// Always fetch device credentials so they can be injected into bare URLs.
 				rtspURI := strings.TrimSpace(cfg.StreamURL)
 				fallbackURI := strings.TrimSpace(cfg.FallbackStreamUrl)
-				if src, err := onvifService.SnapshotSource(context.Background(), uint64(cfg.CameraId)); err == nil {
+				if src, err := cameraService.SnapshotSource(context.Background(), uint64(cfg.CameraId)); err == nil {
 					if rtspURI == "" {
 						rtspURI = src.RTSPURI
 					} else {
@@ -170,10 +172,10 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	protected := api.PathPrefix("").Subrouter()
 	protected.Use(apis.NewLocalBasicAuth(localUserService))
-	apis.NewOnvifApi(protected, onvifService, settingsService, streamManager)
+	apis.NewOnvifApi(protected, cameraService, settingsService, streamManager)
 	apis.NewVisionApi(protected, visionService, recorderManager)
-	apis.NewSettingsApi(protected, settingsService, onvifService, localUserService, visionToolSettingsFromAppConfig(deps.Config))
-	apis.NewRecordingApi(protected, recordingService, recorderManager, onvifService, settingsService)
+	apis.NewSettingsApi(protected, settingsService, cameraService, localUserService, visionToolSettingsFromAppConfig(deps.Config))
+	apis.NewRecordingApi(protected, recordingService, recorderManager, cameraService, settingsService)
 
 	monitorCtx, stopMonitor := context.WithCancel(context.Background())
 	monitorSettings, err := visionMonitorSettingsFromAppConfig(deps.Config)
@@ -184,7 +186,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	}
 	monitorSettings.Recorder = recorderManager
 	if monitorSettings.Enabled {
-		services.NewVisionMonitor(onvifService, visionService, settingsService, monitorSettings).Start(monitorCtx)
+		services.NewVisionMonitor(cameraService, visionService, settingsService, monitorSettings).Start(monitorCtx)
 	}
 
 	// Purge expired segments once at startup, then every 6 hours.

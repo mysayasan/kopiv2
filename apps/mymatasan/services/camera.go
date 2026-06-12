@@ -795,3 +795,21 @@ func firstNonEmpty(values ...string) string {
 	}
 	return ""
 }
+
+// CameraFromDevice converts a discovered onvif.Device into a Camera entity.
+func CameraFromDevice(device onvif.Device, name string, description string) entities.Camera {
+	return entities.Camera{
+		Name:            name,
+		Description:     description,
+		Host:            device.Host,
+		Port:            device.Port,
+		Manufacturer:    device.Manufacturer,
+		Model:           device.Model,
+		FirmwareVersion: device.FirmwareVersion,
+		SerialNumber:    device.SerialNumber,
+		RTSPUrl:    device.RTSPURL,
+		SnapshotURI: device.SnapshotURI,
+		LastSeenAt: device.LastSeenAt,
+		IsActive:        true,
+	}
+}

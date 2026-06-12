@@ -8,86 +8,64 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
 	"github.com/mysayasan/kopiv2/infra/onvif"
 	"github.com/mysayasan/kopiv2/infra/rtsp"
 )
 
-type fakeOnvifDeviceService struct {
+type fakeCameraService struct {
 	discovered []onvif.Device
-	saved      []onvif.Device
-	entities   []entities.OnvifDevice
+	saved      []services.CameraDetail
 }
 
-func (f *fakeOnvifDeviceService) Discover(context.Context, int64) ([]onvif.Device, error) {
+func (f *fakeCameraService) Discover(_ context.Context, _ int64) ([]onvif.Device, error) {
 	return f.discovered, nil
 }
-
-func (f *fakeOnvifDeviceService) Probe(context.Context, string) (*onvif.Device, error) {
-	return nil, nil
-}
-
-func (f *fakeOnvifDeviceService) Get(context.Context, uint64, uint64) ([]*entities.OnvifDevice, uint64, error) {
+func (f *fakeCameraService) Probe(_ context.Context, _ string) (*onvif.Device, error) { return nil, nil }
+func (f *fakeCameraService) Get(_ context.Context, _ uint64, _ uint64) ([]*services.CameraDetail, uint64, error) {
 	return nil, 0, nil
 }
-
-func (f *fakeOnvifDeviceService) Save(_ context.Context, device entities.OnvifDevice) (uint64, error) {
-	f.entities = append(f.entities, device)
-	return uint64(len(f.entities)), nil
+func (f *fakeCameraService) GetById(_ context.Context, _ uint64) (*services.CameraDetail, error) {
+	return nil, nil
 }
-
-func (f *fakeOnvifDeviceService) SaveDiscovered(_ context.Context, device onvif.Device) (uint64, error) {
-	f.saved = append(f.saved, device)
+func (f *fakeCameraService) Save(_ context.Context, detail services.CameraDetail) (uint64, error) {
+	f.saved = append(f.saved, detail)
 	return uint64(len(f.saved)), nil
 }
-
-func (f *fakeOnvifDeviceService) SaveCredentials(context.Context, uint64, onvif.Credentials) (*entities.OnvifDevice, error) {
+func (f *fakeCameraService) SaveCredentials(_ context.Context, _ uint64, _ onvif.Credentials) (*services.CameraDetail, error) {
 	return nil, nil
 }
-
-func (f *fakeOnvifDeviceService) ChangeCameraPassword(context.Context, uint64, services.ChangeCameraPasswordRequest) (*entities.OnvifDevice, error) {
+func (f *fakeCameraService) ChangeCameraPassword(_ context.Context, _ uint64, _ services.ChangeCameraPasswordRequest) (*services.CameraDetail, error) {
 	return nil, nil
 }
-
-func (f *fakeOnvifDeviceService) StreamOptions(context.Context, uint64, onvif.Credentials) (*onvif.StreamOptionsResult, error) {
+func (f *fakeCameraService) StreamOptions(_ context.Context, _ uint64, _ onvif.Credentials) (*onvif.StreamOptionsResult, error) {
 	return nil, nil
 }
-
-func (f *fakeOnvifDeviceService) ResolveStream(context.Context, uint64, services.StreamSelectionRequest) (*entities.OnvifDevice, error) {
+func (f *fakeCameraService) ResolveStream(_ context.Context, _ uint64, _ services.StreamSelectionRequest) (*services.CameraDetail, error) {
 	return nil, nil
 }
-
-func (f *fakeOnvifDeviceService) SetLiveStream(context.Context, uint64, string) (*entities.OnvifDevice, error) {
+func (f *fakeCameraService) SetLiveStream(_ context.Context, _ uint64, _ string) (*services.CameraDetail, error) {
 	return nil, nil
 }
-
-func (f *fakeOnvifDeviceService) ResolveLiveView(context.Context, uint64, onvif.Credentials) (*entities.OnvifDevice, error) {
+func (f *fakeCameraService) ResolveLiveView(_ context.Context, _ uint64, _ onvif.Credentials) (*services.CameraDetail, error) {
 	return nil, nil
 }
-
-func (f *fakeOnvifDeviceService) PTZMove(context.Context, uint64, services.PTZMoveRequest) (*entities.OnvifDevice, error) {
+func (f *fakeCameraService) PTZMove(_ context.Context, _ uint64, _ services.PTZMoveRequest) (*services.CameraDetail, error) {
 	return nil, nil
 }
-
-func (f *fakeOnvifDeviceService) PTZStop(context.Context, uint64) (*entities.OnvifDevice, error) {
+func (f *fakeCameraService) PTZStop(_ context.Context, _ uint64) (*services.CameraDetail, error) {
 	return nil, nil
 }
-
-func (f *fakeOnvifDeviceService) SnapshotSource(context.Context, uint64) (services.SnapshotSource, error) {
+func (f *fakeCameraService) SnapshotSource(_ context.Context, _ uint64) (services.SnapshotSource, error) {
 	return services.SnapshotSource{}, nil
 }
-
-func (f *fakeOnvifDeviceService) TestStream(context.Context, uint64) (*rtsp.ProbeResult, error) {
+func (f *fakeCameraService) TestStream(_ context.Context, _ uint64) (*rtsp.ProbeResult, error) {
 	return nil, nil
 }
-
-func (f *fakeOnvifDeviceService) Delete(context.Context, uint64) (uint64, error) {
-	return 0, nil
-}
+func (f *fakeCameraService) Delete(_ context.Context, _ uint64) (uint64, error) { return 0, nil }
 
 func TestDiscoverDoesNotPersistDiscoveredDevices(t *testing.T) {
-	service := &fakeOnvifDeviceService{
+	service := &fakeCameraService{
 		discovered: []onvif.Device{{
 			Name:    "Gate",
 			Host:    "192.168.1.40",
@@ -106,16 +84,13 @@ func TestDiscoverDoesNotPersistDiscoveredDevices(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
 	}
 	if len(service.saved) != 0 {
-		t.Fatalf("SaveDiscovered count = %d", len(service.saved))
-	}
-	if len(service.entities) != 0 {
-		t.Fatalf("Save count = %d", len(service.entities))
+		t.Fatalf("Save count = %d, want 0", len(service.saved))
 	}
 }
 
 func TestSaveDiscoveredPersistsOnlyPostedDevice(t *testing.T) {
-	service := &fakeOnvifDeviceService{}
-	api := &onvifApi{serv: service}
+	service := &fakeCameraService{}
+	api := &cameraApi{serv: service}
 	body, err := json.Marshal(saveDiscoveredRequest{
 		Device: onvif.Device{
 			Name:    "Gate",
@@ -130,20 +105,20 @@ func TestSaveDiscoveredPersistsOnlyPostedDevice(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/onvif/devices/discovered", strings.NewReader(string(body)))
+	req := httptest.NewRequest(http.MethodPost, "/api/cameras/discovered", strings.NewReader(string(body)))
 	rr := httptest.NewRecorder()
 	api.saveDiscovered(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
 	}
-	if len(service.entities) != 1 {
-		t.Fatalf("Save count = %d", len(service.entities))
+	if len(service.saved) != 1 {
+		t.Fatalf("Save count = %d, want 1", len(service.saved))
 	}
-	if service.entities[0].Name != "Gate" {
-		t.Fatalf("saved name = %q", service.entities[0].Name)
+	if service.saved[0].Name != "Gate" {
+		t.Fatalf("saved name = %q", service.saved[0].Name)
 	}
-	if service.entities[0].RTSPUrl != "rtsp://192.168.1.40/live" {
-		t.Fatalf("saved rtspUrl = %q", service.entities[0].RTSPUrl)
+	if service.saved[0].RTSPUrl != "rtsp://192.168.1.40/live" {
+		t.Fatalf("saved rtspUrl = %q", service.saved[0].RTSPUrl)
 	}
 }
