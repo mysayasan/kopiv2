@@ -1,0 +1,6 @@
+{
+  "type": "minor",
+  "scope": "core,myidsan,myseliasan",
+  "summary": "Add MySeliaSan relying app, MyIDSan authorization-code SSO flow, and trusted local HTTPS token exchange support",
+  "compatibility": "Relying apps can trust a private MyIDSan CA through sso.caCertPath or SSO_CA_CERT_PATH; existing OS trust behavior remains unchanged when no CA path is configured."
+}

@@ -1,0 +1,5 @@
+{
+  "type": "minor",
+  "scope": "mymatasan",
+  "summary": "Fix RTSP recording clip-not-found timezone bug (ffmpeg strftime writes local time, not UTC); add per-camera split-stream config (streamUrl/fallbackStreamUrl) with automatic fallback switching; add recorder live status endpoint; add ONVIF stream profile listing and live-view stream selection endpoints; hot-reload recording config on save without restart; add server-side alert log filtering by cameraId/createdAfter/createdBefore with pagination and today-default date filter in the Alert Log UI"
+}

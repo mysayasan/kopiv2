@@ -1,0 +1,5 @@
+{
+  "type": "minor",
+  "scope": "core,mymatasan",
+  "summary": "Add configurable MyMataSan vision detector routing with persistent YOLO worker support, tuned semantic defaults, animal rules, and line crossing rules"
+}

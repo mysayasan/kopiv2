@@ -1,0 +1,5 @@
+{
+  "type": "minor",
+  "scope": "core,mymatasan",
+  "summary": "Add reusable vision detection primitives and MyMataSan camera rule monitoring with scheduled alerts."
+}

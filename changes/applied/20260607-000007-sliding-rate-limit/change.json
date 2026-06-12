@@ -1,0 +1,6 @@
+{
+  "level": "minor",
+  "scope": "both",
+  "app": "mymatasan",
+  "summary": "Add sliding-window API rate limiting by access tier"
+}

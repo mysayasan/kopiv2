@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MySeliaSan</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <aside class="side-nav">
+    <div class="brand-block">
+      <div class="brand-mark">SE</div>
+      <div>
+        <div class="brand-name">MySeliaSan</div>
+        <div class="brand-subtitle">Mymatasan control</div>
+      </div>
+    </div>
+    <nav>
+      <button class="nav-item active" type="button"><span class="nav-code">DB</span><span class="nav-label">Dashboard</span></button>
+      <button class="nav-item" type="button"><span class="nav-code">MT</span><span class="nav-label">Mymatasan</span></button>
+      <button class="nav-item" type="button"><span class="nav-code">AU</span><span class="nav-label">Authorization</span></button>
+    </nav>
+    <button id="logout" class="logout-button" type="button">Log out</button>
+  </aside>
+  <main class="main-workspace">
+    <header class="page-head">
+      <div>
+        <h1>Dashboard</h1>
+        <p>Authenticated control surface for mymatasan operations.</p>
+      </div>
+      <div id="session-pill" class="session-pill">Checking session</div>
+    </header>
+    <section class="metric-grid">
+      <article>
+        <span>Control Status</span>
+        <strong>Ready</strong>
+      </article>
+      <article>
+        <span>Resource App</span>
+        <strong>mymatasan</strong>
+      </article>
+      <article>
+        <span>Identity Provider</span>
+        <strong>myidsan</strong>
+      </article>
+    </section>
+    <section class="work-panel">
+      <div>
+        <h2>Session</h2>
+        <p id="session-detail">Loading current account.</p>
+      </div>
+      <pre id="claims"></pre>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

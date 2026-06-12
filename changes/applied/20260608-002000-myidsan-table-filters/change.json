@@ -1,0 +1,6 @@
+{
+  "type": "patch",
+  "scope": "myidsan",
+  "summary": "Add RBAC-aware selected-row toolbar actions, remembered table controls, multi-condition floating filters, multi-column sorting, popup editing, editor payload normalization, loading animation, and unauthorized access handling to MyIDSan CRUD tables",
+  "compatibility": "Frontend-only MyIDSan admin UI behavior change; backend list query filtering and sorting remain compatible with the existing shared JSON query contract."
+}

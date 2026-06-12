@@ -1,0 +1,7 @@
+{
+  "level": "minor",
+  "scope": "app",
+  "app": "mymatasan",
+  "summary": "Add runtime decoder tuning, auto-tune, and AI tool readiness checks for MyMataSan",
+  "compatibility": "Existing runtime settings with only decoder.mjpeg.ffmpegPath are normalized with safe defaults. Auto-tune keeps software decode unless hardware support is safely verified. Missing AI tools can fall back to native motion detection when configured."
+}

@@ -1,0 +1,166 @@
+{
+  "jwt": {
+    "secret": "standalone-dev-secret"
+  },
+  "decoder": {
+    "mjpeg": {
+      "ffmpegPath": "D:\\github\\mysayasan\\kopiv2\\.tools\\ffmpeg\\ffmpeg-8.1.1-essentials_build\\bin\\ffmpeg.exe",
+      "quality": 7,
+      "threads": 1
+    },
+    "ffmpeg": {
+      "rtspTransport": "tcp",
+      "hwaccel": "none",
+      "hwaccelDevice": "",
+      "initHwDevice": "",
+      "videoDecoder": "",
+      "probeSize": 1000000,
+      "analyzeDuration": 1000000,
+      "lowDelay": true,
+      "noBuffer": true
+    }
+  },
+  "stream": {
+    "webrtc": {
+      "enabled": true,
+      "iceServers": []
+    },
+    "mjpegFallback": {
+      "enabled": true
+    }
+  },
+  "vision": {
+    "enabled": true,
+    "intervalMs": 2000,
+    "captureTimeoutMs": 12000,
+    "diagnosticCooldownSeconds": 30,
+    "detector": {
+      "mode": "persistent",
+      "command": "python",
+      "args": ["./apps/mymatasan/ai/yolo_worker.py"],
+      "timeoutMs": 8000,
+      "useMotionFallback": true,
+      "useMotionIntrusion": true,
+      "minObjectConfidence": 0.25,
+      "classMap": {
+        "fire": ["fire"],
+        "smoke": ["smoke"],
+        "person": ["person"],
+        "vehicle": ["vehicle", "car", "truck", "bus", "motorcycle", "bicycle"],
+        "animal": ["animal", "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "mouse", "rat", "rabbit", "deer", "goat", "pig", "monkey"],
+        "intrusion": ["person", "vehicle", "car", "truck", "bus", "motorcycle", "bicycle"],
+        "line_crossing": ["person", "vehicle", "car", "truck", "bus", "motorcycle", "bicycle"],
+        "multi_line_crossing": ["person", "vehicle", "car", "truck", "bus", "motorcycle", "bicycle"]
+      }
+    }
+  },
+  "fileStorage": {
+    "path": "./uploads",
+    "cleanup": {
+      "enabled": false,
+      "frequencySeconds": 60,
+      "batchSize": 100
+    }
+  },
+  "cache": {
+    "provider": "default",
+    "ttlSeconds": 30,
+    "keyPrefix": "kopiv2",
+    "redis": {
+      "address": "localhost:6379",
+      "password": "Simpnify@123",
+      "db": 0,
+      "useTls": false,
+      "connectTimeoutMs": 2000,
+      "operationTimeoutMs": 2000
+    }
+  },
+  "rateLimit": {
+    "enabled": true,
+    "endpointCacheTtlSeconds": 30,
+    "defaultWindowSeconds": 60,
+    "devOnly": {
+      "enabled": true,
+      "requests": 300,
+      "windowSeconds": 60
+    },
+    "authOnly": {
+      "enabled": true,
+      "requests": 120,
+      "windowSeconds": 60
+    },
+    "public": {
+      "enabled": true,
+      "requests": 30,
+      "windowSeconds": 60
+    }
+  },
+  "transaction": {
+    "lockProvider": "memory",
+    "lockWaitTimeoutMs": 30000,
+    "lockLeaseMs": 10000,
+    "operationTimeoutMs": 30000,
+    "stuckTimeoutMs": 30000,
+    "jobWorkerEnabled": false,
+    "jobWorkerFrequencySeconds": 5,
+    "maxAttempts": 3
+  },
+  "logging": {
+    "enabled": true,
+    "path": "./logs/mymatasan.log",
+    "maxLineBytes": 8192,
+    "cleanup": {
+      "enabled": false,
+      "maxRetentionDays": 90,
+      "frequencyMinutes": 60
+    }
+  },
+  "apiLog": {
+    "cleanup": {
+      "enabled": false,
+      "maxRetentionDays": 90,
+      "frequencyMinutes": 60
+    }
+  },
+  "telemetry": {
+    "enabled": true,
+    "prometheus": {
+      "enabled": true,
+      "metricsPath": "/metrics",
+      "apiDurationThresholdMs": 1000
+    }
+  },
+  "tls": {
+    "certPath": "./certs/cert.pem",
+    "keyPath": "./certs/key.pem"
+  },
+  "server": {
+    "hostnames": ["*"],
+    "tlsPorts": [],
+    "nonTlsPorts": [3000],
+    "readHeaderTimeoutSeconds": 5,
+    "readTimeoutSeconds": 0,
+    "writeTimeoutSeconds": 0,
+    "idleTimeoutSeconds": 120
+  },
+  "allowOrigins": "*",
+  "bootstrap": {
+    "enabled": true,
+    "autoCreateDatabase": true,
+    "autoCreateSchema": true,
+    "autoMigrate": true,
+    "autoSeed": true,
+    "allowReset": false,
+    "setupPath": "/setup",
+    "seedStatements": []
+  },
+  "db": {
+    "engine": "sqlite",
+    "host": "",
+    "port": 0,
+    "user": "",
+    "password": "",
+    "db_name": "./data/mymatasan.db",
+    "ssl_mode": ""
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "type": "patch",
+  "scope": "core,myidsan",
+  "summary": "Add API endpoint menu metadata and render MyIDSan navigation from endpoint RBAC metadata"
+}

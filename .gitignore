@@ -1,0 +1,27 @@
+# Logs
+logs
+*.log
+
+#compiled files
+*.exe
+
+#node_modules
+node_modules
+
+#env
+.env
+
+#local tools
+.tools/
+
+# mymatasan local detector artifacts
+apps/mymatasan/models/.venv/
+apps/mymatasan/models/__pycache__/
+apps/mymatasan/models/*.pt
+apps/mymatasan/models/*.onnx
+
+# recordings
+recordings/
+
+# logs
+logs/

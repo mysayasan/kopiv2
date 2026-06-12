@@ -1,0 +1,6 @@
+{
+  "type": "minor",
+  "scope": "core,mymatasan",
+  "summary": "Add standalone MyMataSan ONVIF discovery with local auth and SQLite defaults",
+  "compatibility": "MyMataSan no longer mounts MyIDSan Auth/RBAC-protected shared management APIs; use localAuth username/password for app-specific ONVIF APIs."
+}

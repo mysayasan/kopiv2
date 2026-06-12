@@ -1,0 +1,7 @@
+{
+  "id": "20260607-161500-mymatasan-resource-api-surface",
+  "type": "minor",
+  "scope": "mymatasan,apphost",
+  "summary": "Allow apps to disable selected shared API groups and remove mymatasan user, login, app-registry, endpoint, and endpoint-RBAC management routes from its runtime Swagger surface.",
+  "compatibility": "mymatasan no longer exposes local login/OAuth or user-management APIs; use myidsan for identity and RBAC administration"
+}

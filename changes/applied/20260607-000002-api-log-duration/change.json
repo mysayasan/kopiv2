@@ -1,0 +1,5 @@
+{
+  "level": "minor",
+  "scope": "core",
+  "summary": "Persist request duration in API activity logs"
+}

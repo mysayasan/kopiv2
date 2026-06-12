@@ -1,0 +1,65 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: kopiv2-redis
+    command: ["redis-server", "--requirepass", "Simpnify@123"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "Simpnify@123", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: kopiv2-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: mymatasandb
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mymatasandb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - kopiv2_pgdata:/var/lib/postgresql/data
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: kopiv2:week5
+    container_name: kopiv2-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: dev
+      SERVER_USE_TLS: "false"
+      SERVER_ADDR: ":3000"
+      JWT_SECRET: test-secret
+      GOOGLE_CLIENT_SECRET: test-secret
+      CACHE_PROVIDER: redis
+      CACHE_TTL_SECONDS: "30"
+      CACHE_KEY_PREFIX: kopiv2
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: Simpnify@123
+      REDIS_DB: "0"
+      REDIS_USE_TLS: "false"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: mymatasandb
+      DB_SSL_MODE: disable
+    ports:
+      - "3000:3000"
+
+volumes:
+  kopiv2_pgdata:

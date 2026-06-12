@@ -1,0 +1,5 @@
+{
+  "level": "minor",
+  "scope": "core",
+  "summary": "Add SQLite as a shared DB engine for runtime CRUD and bootstrap"
+}

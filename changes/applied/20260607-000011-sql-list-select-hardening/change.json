@@ -1,0 +1,5 @@
+{
+  "level": "patch",
+  "scope": "core",
+  "summary": "Harden SQL list selects for offset windows, total counts, typed scans, and empty results"
+}

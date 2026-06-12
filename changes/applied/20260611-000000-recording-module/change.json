@@ -1,0 +1,5 @@
+{
+  "type": "minor",
+  "scope": "core,mymatasan",
+  "summary": "Add reusable infra/recording module with ring-buffer pre/post-roll clip recording (tick and RTSP modes), per-camera recording config and segment persistence, recording API endpoints, and a Recording tab in the MyMataSan browser UI"
+}

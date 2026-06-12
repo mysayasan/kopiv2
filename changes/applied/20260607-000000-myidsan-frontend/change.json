@@ -1,0 +1,5 @@
+{
+  "type": "patch",
+  "scope": "myidsan",
+  "summary": "Add React Webpack identity administration frontend for auth and RBAC management"
+}

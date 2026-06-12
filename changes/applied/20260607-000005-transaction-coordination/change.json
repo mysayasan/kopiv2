@@ -1,0 +1,6 @@
+{
+  "level": "minor",
+  "scope": "both",
+  "app": "mymatasan",
+  "summary": "Add coordinated file-storage transactions, async upload jobs, secured downloads, and expiry cleanup"
+}

@@ -1,0 +1,5 @@
+{
+  "level": "minor",
+  "scope": "core",
+  "summary": "Move shared APIs to DTO services and document DTO-based OpenAPI request and response schemas"
+}

@@ -1,0 +1,53 @@
+package services
+
+import (
+	"context"
+
+	_ "github.com/lib/pq"
+	"github.com/mysayasan/kopiv2/domain/entities"
+	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
+	"github.com/mysayasan/kopiv2/infra/cache"
+	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+)
+
+// userGroupService struct
+type userGroupService struct {
+	repo  dbsql.IGenericRepo[entities.UserGroup]
+	cache cache.Store
+}
+
+// Create new IUserGroupService
+func NewUserGroupService(
+	repo dbsql.IGenericRepo[entities.UserGroup],
+	cacheStore cache.Store,
+) IUserGroupService {
+	return &userGroupService{
+		repo:  repo,
+		cache: cacheStore,
+	}
+}
+
+func (m *userGroupService) Get(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.UserGroup, uint64, error) {
+	if len(sorters) == 0 {
+		sorters = []sqldataenums.Sorter{
+			{
+				FieldName: "CreatedAt",
+				Sort:      sqldataenums.DESC,
+			},
+		}
+	}
+
+	return m.repo.Get(ctx, "", limit, offset, filters, sorters)
+}
+
+func (m *userGroupService) Create(ctx context.Context, model entities.UserGroup) (uint64, error) {
+	return m.repo.Create(ctx, "", model)
+}
+
+func (m *userGroupService) Update(ctx context.Context, model entities.UserGroup) (uint64, error) {
+	return m.repo.UpdateById(ctx, "", model)
+}
+
+func (m *userGroupService) Delete(ctx context.Context, id uint64) (uint64, error) {
+	return m.repo.DeleteById(ctx, "", id)
+}

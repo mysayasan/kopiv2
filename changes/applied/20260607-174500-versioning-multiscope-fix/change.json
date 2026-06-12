@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "core",
+  "summary": "Allow GitHub version bump workflow to process type-based and multi-target pending changelog entries.",
+  "compatibility": "Legacy level/scope/app pending entries remain supported."
+}

@@ -1,0 +1,58 @@
+package services
+
+import (
+	"context"
+
+	_ "github.com/lib/pq"
+	"github.com/mysayasan/kopiv2/domain/entities"
+	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
+	"github.com/mysayasan/kopiv2/infra/cache"
+	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+)
+
+// userRoleService struct
+type userRoleService struct {
+	repo  dbsql.IGenericRepo[entities.UserRole]
+	cache cache.Store
+}
+
+// Create new IUserRoleService
+func NewUserRoleService(
+	repo dbsql.IGenericRepo[entities.UserRole],
+	cacheStore cache.Store,
+) IUserRoleService {
+	return &userRoleService{
+		repo:  repo,
+		cache: cacheStore,
+	}
+}
+
+func (m *userRoleService) Get(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.UserRole, uint64, error) {
+	if len(sorters) == 0 {
+		sorters = []sqldataenums.Sorter{
+			{
+				FieldName: "CreatedAt",
+				Sort:      sqldataenums.DESC,
+			},
+		}
+	}
+
+	return m.repo.Get(ctx, "", limit, offset, filters, sorters)
+}
+
+// GetByGroup implements IUserRoleService.
+func (m *userRoleService) GetByGroup(ctx context.Context, groupId uint64) ([]*entities.UserRole, error) {
+	return m.repo.GetByForeign(ctx, "", "group", groupId)
+}
+
+func (m *userRoleService) Create(ctx context.Context, model entities.UserRole) (uint64, error) {
+	return m.repo.Create(ctx, "", model)
+}
+
+func (m *userRoleService) Update(ctx context.Context, model entities.UserRole) (uint64, error) {
+	return m.repo.UpdateById(ctx, "", model)
+}
+
+func (m *userRoleService) Delete(ctx context.Context, id uint64) (uint64, error) {
+	return m.repo.DeleteById(ctx, "", id)
+}

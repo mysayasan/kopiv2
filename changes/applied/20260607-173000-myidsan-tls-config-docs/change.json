@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "myidsan,docs,cleanup",
+  "summary": "Document myidsan TLS certificate paths and remove stale commented-out code snippets.",
+  "compatibility": "myidsan non-dev config expects app-relative certificate files under apps/myidsan/certs when HTTPS listeners are enabled."
+}

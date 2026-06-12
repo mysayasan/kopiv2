@@ -1,0 +1,6 @@
+{
+  "level": "patch",
+  "scope": "app",
+  "app": "mymatasan",
+  "summary": "Use default cache provider alias for local in-memory development cache"
+}

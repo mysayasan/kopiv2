@@ -1,0 +1,5 @@
+{
+  "type": "minor",
+  "scope": "mymatasan",
+  "summary": "Add theme dropdown (Light/Dark/Slate) with localStorage persistence; standardise all save forms with loading overlay, dirty-tracking disabled Save button, and Discard Changes button using reusable FormBusyOverlay component; add Best Calibration button for YOLO Inference Tuning (conf=0.20, IOU=0.35, imgsz=640, maxDet=100, augment on); add line-crossing Anything wildcard class (*) that triggers on any YOLO-detected object regardless of label; fix person-detection recording delay by propagating Detection.FrameCapturedAt through the pipeline so extractClip anchors on frame capture time rather than YOLO completion time, preventing empty clips when motion and AI detection run together"
+}
