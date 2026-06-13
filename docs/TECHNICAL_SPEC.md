@@ -48,7 +48,7 @@ The runtime now uses a reusable multi-app launcher pattern:
 - Local credential passwords are stored as bcrypt hashes, with lazy migration from legacy plain-text values on successful login.
 - Authorization: endpoint-level RBAC based on user role mappings.
 - `myidsan` is the central policy authority for cross-app SSO. Tokens carry issuer (`iss`), audience (`aud`), expiry, session id (`sid`), resource app code, and policy version. Redis should be used for shared session/RBAC cache in multi-process deployments; in-memory cache requires relying apps to call `myidsan` for introspection and authorization decisions when local cache misses.
-- `mymatasan` is a standalone device app and does not mount MyIDSan login, SSO browser callback, user/group/role, app-registry, endpoint, endpoint-RBAC, file-storage, log, runtime-log, or cache-service management APIs. App-local ONVIF and vision routes use DB-backed local Basic Auth until the strict `myseliasan` control protocol is defined. Saved-camera browser live view uses configurable RTSP-to-WebRTC H264 forwarding first, with MJPEG fallback retained for compatibility. When WebRTC is disabled, the frontend uses MJPEG directly.
+- `mymatasan` is a standalone device app and does not mount MyIDSan login, SSO browser callback, user/group/role, app-registry, endpoint, endpoint-RBAC, file-storage, log, runtime-log, or cache-service management APIs. App-local ONVIF and vision routes use DB-backed local Basic Auth until the strict `myseliasan` control protocol is defined. Saved-camera browser live view uses configurable RTSP-to-WebRTC H264 forwarding first, with MJPEG fallback retained for compatibility. WebRTC sessions also forward G.711 A-law (PCMA) and µ-law (PCMU) audio tracks when the camera RTSP stream exposes them; browsers decode both natively so no server-side audio transcoding is needed for live view. When WebRTC is disabled, the frontend uses MJPEG directly.
 - `myseliasan` is a relying control-plane app and has no public landing page. It redirects unauthenticated users to MyIDSan and creates its own local session only after MyIDSan returns a valid authorization code.
 - Registered apps are stored in `app_registry`; endpoint policies are scoped by `api_endpoint.appCode`.
 - Per-client SSO policy is stored in `app_auth_config`, and exact callback allow-list entries are stored in `app_redirect_uri`.
@@ -109,7 +109,7 @@ The runtime now uses a reusable multi-app launcher pattern:
 - Optional initial data can be supplied through config-driven SQL seed statements when bootstrap seeding is enabled.
 - The app also seeds a minimal core identity dataset (`system` group, `superadmin` role, and first-run `superadmin` login account with bcrypt password storage) during bootstrap.
 - The app seeds wildcard-host endpoint rows with access tiers and RBAC rows for protected API modules so first-run permissions work without binding to a specific host name. Protected shared management APIs seed as `DevOnly`.
-- `mymatasan` registers app-local `detection_rule` and `alert_event` entities. Detection rules store camera binding, detection type, polygon JSON, optional rule config JSON, per-rule schedule policy JSON, threshold, minimum frames, cooldown, sound setting, enabled state, and last trigger time. Alert events store the triggering rule and camera, label, confidence, polygon, optional bounding box/snapshot path, metadata JSON, acknowledgement fields, and audit timestamps.
+- `mymatasan` registers app-local `detection_rule`, `alert_event`, `recording_config`, and `recording_segment` entities. Detection rules store camera binding, detection type, polygon JSON, optional rule config JSON, per-rule schedule policy JSON, threshold, minimum frames, cooldown, sound setting, enabled state, and last trigger time. Alert events store the triggering rule and camera, label, confidence, polygon, optional bounding box/snapshot path, metadata JSON, acknowledgement fields, and audit timestamps.
 
 ## Configuration Contract
 
@@ -195,6 +195,15 @@ Stream startup-default config contract (`stream` in app config):
 - `webrtc.iceServers`: optional STUN/TURN server list with `urls`, `username`, and `credential` fields.
 - `mjpegFallback.enabled`: enables MJPEG fallback and MJPEG-only mode when WebRTC is disabled; omitted defaults to enabled.
 - These config values seed the SQLite-backed runtime settings row on first startup or reset. Settings page changes apply without app restart.
+
+WebRTC live audio contract:
+
+- When the camera RTSP stream announces a G.711 (PCMA or PCMU) audio media, `infra/stream/rtsp.go` subscribes to it and broadcasts audio RTP packets alongside video packets.
+- `infra/stream/webrtc.go` creates an additional `audio/PCMA` or `audio/PCMU` track in the Pion peer connection when audio packets are available.
+- The browser offer always includes an `a=recvonly` audio transceiver. When the server has no audio track, Pion responds with `a=inactive` and the browser's `ontrack` never fires for audio.
+- The browser frontend routes audio to a dedicated `<audio>` element independent of the `<video>` element, so the video element stays permanently muted (required for browser autoplay policy) while audio is user-controlled via a mute/unmute overlay button.
+- The mute/unmute button appears only when an audio track is received (`ontrack` fires with `kind === "audio"`).
+- Audio play/pause is triggered directly in the button click handler (user gesture context) to satisfy browser autoplay restrictions.
 
 Vision monitor startup config contract (`vision` in `mymatasan` app config):
 

@@ -173,6 +173,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	protected := api.PathPrefix("").Subrouter()
 	protected.Use(apis.NewLocalBasicAuth(localUserService))
 	apis.NewOnvifApi(protected, cameraService, settingsService, streamManager)
+	apis.NewCameraApi(protected, cameraService, settingsService, streamManager)
 	apis.NewVisionApi(protected, visionService, recorderManager)
 	apis.NewSettingsApi(protected, settingsService, cameraService, localUserService, visionToolSettingsFromAppConfig(deps.Config))
 	apis.NewRecordingApi(protected, recordingService, recorderManager, cameraService, settingsService)

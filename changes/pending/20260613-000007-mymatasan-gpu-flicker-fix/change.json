@@ -1,0 +1,5 @@
+{
+  "type": "fixed",
+  "scope": "mymatasan",
+  "summary": "Fix whole-monitor GPU flicker in live tiles by routing audio to a dedicated element and using browser-managed video stream"
+}

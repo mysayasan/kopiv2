@@ -1,0 +1,5 @@
+{
+  "type": "added",
+  "scope": "mymatasan",
+  "summary": "Add circular SVG PTZ D-pad overlay component with directional controls for pan/tilt/zoom"
+}

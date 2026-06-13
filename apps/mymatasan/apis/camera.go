@@ -46,6 +46,11 @@ type cameraPasswordRequest struct {
 	UserLevel       string `json:"userLevel"`
 }
 
+type updateDetailsRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
 type ptzMoveRequest struct {
 	Direction  string  `json:"direction"`
 	Speed      float64 `json:"speed"`
@@ -74,6 +79,7 @@ func NewCameraApi(router *mux.Router, serv services.ICameraService, settings ser
 	group.HandleFunc("/{id}/ptz/stop", handler.ptzStop).Methods("POST")
 	group.HandleFunc("/{id}/webrtc/offer", handler.createWebRTCAnswer).Methods("POST")
 	group.HandleFunc("/{id}/live.mjpeg", handler.liveMJPEG).Methods("GET")
+	group.HandleFunc("/{id}", handler.updateDetails).Methods("PUT")
 	group.HandleFunc("/{id}", handler.delete).Methods("DELETE")
 }
 
@@ -114,6 +120,35 @@ func (a *cameraApi) saveDiscovered(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	controllers.SendResult(w, res, "succeed")
+}
+
+func (a *cameraApi) updateDetails(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	id, err := strconv.ParseUint(params["id"], 10, 64)
+	if err != nil || id == 0 {
+		controllers.SendError(w, controllers.ErrBadRequest, "invalid id")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 65536)
+	var body updateDetailsRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	detail, err := a.serv.GetById(r.Context(), id)
+	if err != nil || detail == nil {
+		controllers.SendError(w, controllers.ErrNotFound, "camera not found")
+		return
+	}
+	detail.Camera.Name = strings.TrimSpace(body.Name)
+	detail.Camera.Description = strings.TrimSpace(body.Description)
+	if _, err := a.serv.Save(r.Context(), *detail); err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, nil, "succeed")
 }
 
 func (a *cameraApi) saveCredentials(w http.ResponseWriter, r *http.Request) {

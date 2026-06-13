@@ -1,0 +1,5 @@
+{
+  "type": "fixed",
+  "scope": "mymatasan",
+  "summary": "Fix liveStreamUrl not persisted in recording config; add entity field and service wiring"
+}

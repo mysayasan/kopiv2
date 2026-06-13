@@ -1,0 +1,5 @@
+{
+  "type": "fixed",
+  "scope": "mymatasan",
+  "summary": "Fix live stream selection reverting to previous value after save in the Recording UI"
+}

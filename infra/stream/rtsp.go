@@ -96,23 +96,27 @@ type rtspSession struct {
 	stopCh   chan struct{}
 	stopOnce sync.Once
 
-	mu          sync.Mutex
-	codec       Codec
-	readyErr    error
-	readyCh     chan struct{}
-	stopped     bool
-	subscribers map[uint64]chan *rtp.Packet
-	nextSubID   uint64
+	mu                 sync.Mutex
+	codec              Codec
+	audioCodec         Codec
+	h264ProfileLevelID string
+	readyErr           error
+	readyCh               chan struct{}
+	stopped               bool
+	subscribers           map[uint64]chan *rtp.Packet
+	audioSubscribers      map[uint64]chan *rtp.Packet
+	nextSubID             uint64
 }
 
 func newRTSPSession(key string, uri string, onStop func()) *rtspSession {
 	return &rtspSession{
-		key:         key,
-		uri:         uri,
-		onStop:      onStop,
-		stopCh:      make(chan struct{}),
-		readyCh:     make(chan struct{}),
-		subscribers: map[uint64]chan *rtp.Packet{},
+		key:              key,
+		uri:              uri,
+		onStop:           onStop,
+		stopCh:           make(chan struct{}),
+		readyCh:          make(chan struct{}),
+		subscribers:      map[uint64]chan *rtp.Packet{},
+		audioSubscribers: map[uint64]chan *rtp.Packet{},
 	}
 }
 
@@ -141,10 +145,19 @@ func (s *rtspSession) subscribe() (*Subscription, error) {
 	packets := make(chan *rtp.Packet, rtspSubscriberBufSize)
 	s.subscribers[id] = packets
 
+	var audioPackets chan *rtp.Packet
+	if s.audioCodec != "" {
+		audioPackets = make(chan *rtp.Packet, rtspSubscriberBufSize)
+		s.audioSubscribers[id] = audioPackets
+	}
+
 	var closeOnce sync.Once
 	return &Subscription{
-		Codec:   s.codec,
-		Packets: packets,
+		Codec:              s.codec,
+		Packets:            packets,
+		AudioCodec:         s.audioCodec,
+		AudioPackets:       audioPackets,
+		H264ProfileLevelID: s.h264ProfileLevelID,
 		Close: func() {
 			closeOnce.Do(func() {
 				s.removeSubscriber(id)
@@ -158,6 +171,10 @@ func (s *rtspSession) removeSubscriber(id uint64) {
 	s.mu.Lock()
 	if packets, ok := s.subscribers[id]; ok {
 		delete(s.subscribers, id)
+		close(packets)
+	}
+	if packets, ok := s.audioSubscribers[id]; ok {
+		delete(s.audioSubscribers, id)
 		close(packets)
 	}
 	shouldStop = len(s.subscribers) == 0
@@ -227,6 +244,16 @@ func (s *rtspSession) run() {
 		return
 	}
 
+	audioMedia, g711Format := firstG711(desc)
+	var audioCodec Codec
+	if g711Format != nil {
+		if g711Format.MULaw {
+			audioCodec = CodecPCMU
+		} else {
+			audioCodec = CodecPCMA
+		}
+	}
+
 	if err := client.SetupAll(desc.BaseURL, desc.Medias); err != nil {
 		s.finish(fmt.Errorf("setup RTSP medias failed: %w", err))
 		return
@@ -235,8 +262,13 @@ func (s *rtspSession) run() {
 	client.OnPacketRTP(media, h264Format, func(pkt *rtp.Packet) {
 		s.broadcast(pkt.Clone())
 	})
+	if audioMedia != nil && g711Format != nil {
+		client.OnPacketRTP(audioMedia, g711Format, func(pkt *rtp.Packet) {
+			s.broadcastAudio(pkt.Clone())
+		})
+	}
 
-	s.markReady(CodecH264)
+	s.markReady(CodecH264, audioCodec, h264ProfileLevelID(h264Format))
 
 	if _, err := client.Play(nil); err != nil {
 		s.finish(fmt.Errorf("play RTSP stream failed: %w", err))
@@ -257,23 +289,57 @@ func (s *rtspSession) run() {
 	}
 }
 
-func firstH264(desc *description.Session) (*description.Media, format.Format) {
+func firstH264(desc *description.Session) (*description.Media, *format.H264) {
 	for _, media := range desc.Medias {
 		for _, forma := range media.Formats {
-			if _, ok := forma.(*format.H264); ok {
-				return media, forma
+			if h264, ok := forma.(*format.H264); ok {
+				return media, h264
 			}
 		}
 	}
 	return nil, nil
 }
 
-func (s *rtspSession) markReady(codec Codec) {
+// h264ProfileLevelID extracts the 6-hex-digit SDP profile-level-id from the SPS
+// embedded in the RTSP DESCRIBE response. Falls back to "42e01f" (Baseline 3.1)
+// when no SPS is present so the SDP remains valid.
+func h264ProfileLevelID(f *format.H264) string {
+	if f != nil && len(f.SPS) >= 4 {
+		return fmt.Sprintf("%02x%02x%02x", f.SPS[1], f.SPS[2], f.SPS[3])
+	}
+	return "42e01f"
+}
+
+func firstG711(desc *description.Session) (*description.Media, *format.G711) {
+	for _, media := range desc.Medias {
+		for _, forma := range media.Formats {
+			if g711, ok := forma.(*format.G711); ok {
+				return media, g711
+			}
+		}
+	}
+	return nil, nil
+}
+
+func (s *rtspSession) markReady(codec Codec, audioCodec Codec, h264ProfileLevelID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.readyErr == nil && s.codec == "" {
 		s.codec = codec
+		s.audioCodec = audioCodec
+		s.h264ProfileLevelID = h264ProfileLevelID
 		close(s.readyCh)
+	}
+}
+
+func (s *rtspSession) broadcastAudio(pkt *rtp.Packet) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, packets := range s.audioSubscribers {
+		select {
+		case packets <- pkt.Clone():
+		default:
+		}
 	}
 }
 
@@ -290,6 +356,10 @@ func (s *rtspSession) finish(err error) {
 	s.stopped = true
 	for id, packets := range s.subscribers {
 		delete(s.subscribers, id)
+		close(packets)
+	}
+	for id, packets := range s.audioSubscribers {
+		delete(s.audioSubscribers, id)
 		close(packets)
 	}
 }

@@ -1,0 +1,5 @@
+{
+  "type": "fixed",
+  "scope": "mymatasan",
+  "summary": "Fix non-monotonic audio timestamps in ffmpeg recording using aresample=async=1 and AAC transcoding"
+}

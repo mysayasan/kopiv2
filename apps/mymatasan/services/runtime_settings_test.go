@@ -91,8 +91,8 @@ func TestAutoTuneRuntimeSettingsSelectsVAAPIForLinuxDevice(t *testing.T) {
 	current := normalizeRuntimeSettings(RuntimeSettings{})
 	current.Decoder.MJPEG.FFmpegPath = "/usr/bin/ffmpeg"
 
-	result := AutoTuneRuntimeSettings(current, []*entities.OnvifDevice{{
-		RTSPTracks: string(tracks),
+	result := AutoTuneRuntimeSettings(current, []*CameraDetail{{
+		Camera: entities.Camera{RTSPTracks: string(tracks)},
 	}}, DecoderAutoTuneEnvironment{
 		GOOS:        "linux",
 		FFmpegPath:  "/usr/bin/ffmpeg",

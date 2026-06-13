@@ -107,6 +107,24 @@ Use `hwaccel: "none"` unless the installed ffmpeg build and device drivers are k
 
 The Settings page Decoder panel includes an Auto Tune action. It inspects saved camera RTSP track metadata and the local `ffmpeg -hwaccels` output, then saves a conservative profile. It keeps `hwaccel: "none"` when ffmpeg is missing, camera RTSP metadata is absent, or the platform hardware decoder cannot be safely verified. Run each camera's RTSP Test first so auto-tune can see whether streams are H264, H265/HEVC, or another codec.
 
+## MyMataSan Live View Audio
+
+When a camera exposes a G.711 (PCMA or PCMU) audio track in its RTSP stream, a speaker icon appears in the bottom-left corner of each live view tile. Click it to unmute audio; click again to mute. The video element stays muted at all times (required for browser autoplay); audio is routed to a separate `<audio>` element.
+
+If no speaker button appears, the camera either has no G.711 audio track or the RTSP stream was captured before audio support was added — reconnect the live tile to re-negotiate the WebRTC session.
+
+## MyMataSan PTZ Control
+
+Live view tiles and the Camera preview panel overlay a circular D-pad (`PTZRing` component) with four directional wedge sectors and a centre stop button. Click a sector to move; click the centre square to stop. The overlay is rendered as SVG with pointer-events layered to allow hover effects independent of the stream video.
+
+## MyMataSan Recording — Stream Selection
+
+In Recording → Stream Configuration:
+- **Detect Streams** queries ONVIF to list all stream profiles.
+- **Live view stream** persists in the `recording_config.live_stream_url` column and is restored across page reloads.
+- **Selecting a stream** (via "Use Selected Stream") automatically enables recording so the user does not need to toggle it separately.
+- **Recording stream** and **Fallback stream** are independent; leaving Recording stream blank uses the Live view stream for recording too.
+
 Discover ONVIF devices:
 
 ```bash

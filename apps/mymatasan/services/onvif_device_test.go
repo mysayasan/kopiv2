@@ -48,8 +48,13 @@ func TestRTSPProbeCandidatesKeepsExistingVIGIStreamPathUnique(t *testing.T) {
 }
 
 func TestResolveStreamPersistsWorkingFallbackCandidate(t *testing.T) {
-	repo := &fakeOnvifRepo{device: entities.OnvifDevice{
-		Id:           7,
+	camRepo := &fakeCameraRepo{camera: entities.Camera{
+		Id:   7,
+		Host: "192.168.1.40",
+	}}
+	ovRepo := &fakeCameraOnvifRepo{ov: entities.CameraOnvif{
+		Id:           1,
+		CameraId:     7,
 		XAddr:        "http://192.168.1.40/onvif/device_service",
 		MediaXAddr:   "http://192.168.1.40/onvif/media_service",
 		Username:     "camera-user",
@@ -61,7 +66,7 @@ func TestResolveStreamPersistsWorkingFallbackCandidate(t *testing.T) {
 		snapshotURI: "http://192.168.1.40/snapshot.jpg",
 	}
 	rtspClient := &fakeResolveRTSPClient{workingPath: "/stream2"}
-	service := NewOnvifDeviceService(repo, client, rtspClient)
+	service := NewCameraService(camRepo, ovRepo, client, rtspClient)
 
 	device, err := service.ResolveStream(context.Background(), 7, StreamSelectionRequest{
 		Credentials:  onvif.Credentials{Username: "camera-user", Password: "camera-password"},
@@ -73,14 +78,14 @@ func TestResolveStreamPersistsWorkingFallbackCandidate(t *testing.T) {
 	if device.RTSPUrl != "rtsp://192.168.1.40:554/stream2" {
 		t.Fatalf("RTSPUrl = %q, want stream2 fallback", device.RTSPUrl)
 	}
-	if repo.device.RTSPUrl != device.RTSPUrl {
-		t.Fatalf("persisted RTSPUrl = %q, want %q", repo.device.RTSPUrl, device.RTSPUrl)
+	if camRepo.camera.RTSPUrl != device.RTSPUrl {
+		t.Fatalf("persisted RTSPUrl = %q, want %q", camRepo.camera.RTSPUrl, device.RTSPUrl)
 	}
-	if repo.device.RTSPStatus != "online" {
-		t.Fatalf("RTSPStatus = %q, want online", repo.device.RTSPStatus)
+	if camRepo.camera.RTSPStatus != "online" {
+		t.Fatalf("RTSPStatus = %q, want online", camRepo.camera.RTSPStatus)
 	}
-	if !strings.Contains(repo.device.RTSPTracks, "H265") {
-		t.Fatalf("RTSPTracks = %q, want marshaled probe tracks", repo.device.RTSPTracks)
+	if !strings.Contains(camRepo.camera.RTSPTracks, "H265") {
+		t.Fatalf("RTSPTracks = %q, want marshaled probe tracks", camRepo.camera.RTSPTracks)
 	}
 	if len(rtspClient.probed) < 2 || !strings.Contains(rtspClient.probed[1], "/stream2") {
 		t.Fatalf("probed candidates = %#v, want fallback stream2 after ONVIF URL", rtspClient.probed)
@@ -88,8 +93,13 @@ func TestResolveStreamPersistsWorkingFallbackCandidate(t *testing.T) {
 }
 
 func TestResolveStreamCanSwitchBackAndForth(t *testing.T) {
-	repo := &fakeOnvifRepo{device: entities.OnvifDevice{
-		Id:           9,
+	camRepo := &fakeCameraRepo{camera: entities.Camera{
+		Id:   9,
+		Host: "192.168.1.40",
+	}}
+	ovRepo := &fakeCameraOnvifRepo{ov: entities.CameraOnvif{
+		Id:           1,
+		CameraId:     9,
 		XAddr:        "http://192.168.1.40/onvif/device_service",
 		MediaXAddr:   "http://192.168.1.40/onvif/media_service",
 		Username:     "camera-user",
@@ -107,7 +117,7 @@ func TestResolveStreamCanSwitchBackAndForth(t *testing.T) {
 		"/stream1": "H265",
 		"/stream2": "H264",
 	}}
-	service := NewOnvifDeviceService(repo, client, rtspClient)
+	service := NewCameraService(camRepo, ovRepo, client, rtspClient)
 
 	main, err := service.ResolveStream(context.Background(), 9, StreamSelectionRequest{ProfileToken: "MainStream"})
 	if err != nil {
@@ -134,75 +144,122 @@ func TestResolveStreamCanSwitchBackAndForth(t *testing.T) {
 	}
 }
 
-type fakeOnvifRepo struct {
-	device entities.OnvifDevice
+// — Fake repos ---------------------------------------------------------------
+
+type fakeCameraRepo struct {
+	camera entities.Camera
 }
 
-func (f *fakeOnvifRepo) Get(context.Context, string, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter) ([]*entities.OnvifDevice, uint64, error) {
+func (f *fakeCameraRepo) Get(context.Context, string, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter) ([]*entities.Camera, uint64, error) {
 	return nil, 0, nil
 }
-
-func (f *fakeOnvifRepo) GetJoin(context.Context, string, any, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter, ...string) ([]map[string]any, uint64, error) {
+func (f *fakeCameraRepo) GetJoin(context.Context, string, any, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter, ...string) ([]map[string]any, uint64, error) {
 	return nil, 0, nil
 }
-
-func (f *fakeOnvifRepo) GetJoinWithSpec(context.Context, string, any, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter, ...dbsql.JoinSpec) ([]map[string]any, uint64, error) {
+func (f *fakeCameraRepo) GetJoinWithSpec(context.Context, string, any, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter, ...dbsql.JoinSpec) ([]map[string]any, uint64, error) {
 	return nil, 0, nil
 }
-
-func (f *fakeOnvifRepo) GetSingle(context.Context, string, []sqldataenums.Filter) (*entities.OnvifDevice, error) {
+func (f *fakeCameraRepo) GetSingle(_ context.Context, _ string, _ []sqldataenums.Filter) (*entities.Camera, error) {
+	return nil, errors.New("no result found")
+}
+func (f *fakeCameraRepo) GetById(_ context.Context, _ string, _ uint64) (*entities.Camera, error) {
+	cam := f.camera
+	return &cam, nil
+}
+func (f *fakeCameraRepo) GetByUnique(_ context.Context, _ string, _ string, _ ...any) (*entities.Camera, error) {
+	return nil, errors.New("no result found")
+}
+func (f *fakeCameraRepo) GetByForeign(_ context.Context, _ string, _ string, _ ...any) ([]*entities.Camera, error) {
 	return nil, nil
 }
-
-func (f *fakeOnvifRepo) GetById(context.Context, string, uint64) (*entities.OnvifDevice, error) {
-	device := f.device
-	return &device, nil
+func (f *fakeCameraRepo) Create(_ context.Context, _ string, m entities.Camera) (uint64, error) {
+	f.camera = m
+	return uint64(m.Id), nil
+}
+func (f *fakeCameraRepo) CreateMultiple(_ context.Context, _ string, _ []entities.Camera) (uint64, error) {
+	return 0, nil
+}
+func (f *fakeCameraRepo) UpdateById(_ context.Context, _ string, m entities.Camera) (uint64, error) {
+	f.camera = m
+	return uint64(m.Id), nil
+}
+func (f *fakeCameraRepo) UpdateByUnique(_ context.Context, _ string, _ string, _ entities.Camera) (uint64, error) {
+	return 0, nil
+}
+func (f *fakeCameraRepo) UpdateByForeign(_ context.Context, _ string, _ string, _ entities.Camera) (uint64, error) {
+	return 0, nil
+}
+func (f *fakeCameraRepo) Delete(_ context.Context, _ string, _ []sqldataenums.Filter) (uint64, error) {
+	return 0, nil
+}
+func (f *fakeCameraRepo) DeleteById(_ context.Context, _ string, _ uint64) (uint64, error) {
+	return 0, nil
+}
+func (f *fakeCameraRepo) DeleteByUnique(_ context.Context, _ string, _ string, _ ...any) (uint64, error) {
+	return 0, nil
+}
+func (f *fakeCameraRepo) DeleteByForeign(_ context.Context, _ string, _ string, _ ...any) (uint64, error) {
+	return 0, nil
 }
 
-func (f *fakeOnvifRepo) GetByUnique(context.Context, string, string, ...any) (*entities.OnvifDevice, error) {
+type fakeCameraOnvifRepo struct {
+	ov entities.CameraOnvif
+}
+
+func (f *fakeCameraOnvifRepo) Get(context.Context, string, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter) ([]*entities.CameraOnvif, uint64, error) {
+	return nil, 0, nil
+}
+func (f *fakeCameraOnvifRepo) GetJoin(context.Context, string, any, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter, ...string) ([]map[string]any, uint64, error) {
+	return nil, 0, nil
+}
+func (f *fakeCameraOnvifRepo) GetJoinWithSpec(context.Context, string, any, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter, ...dbsql.JoinSpec) ([]map[string]any, uint64, error) {
+	return nil, 0, nil
+}
+func (f *fakeCameraOnvifRepo) GetSingle(_ context.Context, _ string, _ []sqldataenums.Filter) (*entities.CameraOnvif, error) {
+	return nil, errors.New("no result found")
+}
+func (f *fakeCameraOnvifRepo) GetById(_ context.Context, _ string, _ uint64) (*entities.CameraOnvif, error) {
+	ov := f.ov
+	return &ov, nil
+}
+func (f *fakeCameraOnvifRepo) GetByUnique(_ context.Context, _ string, _ string, _ ...any) (*entities.CameraOnvif, error) {
+	ov := f.ov
+	return &ov, nil
+}
+func (f *fakeCameraOnvifRepo) GetByForeign(_ context.Context, _ string, _ string, _ ...any) ([]*entities.CameraOnvif, error) {
 	return nil, nil
 }
-
-func (f *fakeOnvifRepo) GetByForeign(context.Context, string, string, ...any) ([]*entities.OnvifDevice, error) {
-	return nil, nil
+func (f *fakeCameraOnvifRepo) Create(_ context.Context, _ string, m entities.CameraOnvif) (uint64, error) {
+	f.ov = m
+	return uint64(m.Id), nil
 }
-
-func (f *fakeOnvifRepo) Create(context.Context, string, entities.OnvifDevice) (uint64, error) {
+func (f *fakeCameraOnvifRepo) CreateMultiple(_ context.Context, _ string, _ []entities.CameraOnvif) (uint64, error) {
+	return 0, nil
+}
+func (f *fakeCameraOnvifRepo) UpdateById(_ context.Context, _ string, m entities.CameraOnvif) (uint64, error) {
+	f.ov = m
+	return uint64(m.Id), nil
+}
+func (f *fakeCameraOnvifRepo) UpdateByUnique(_ context.Context, _ string, _ string, _ entities.CameraOnvif) (uint64, error) {
+	return 0, nil
+}
+func (f *fakeCameraOnvifRepo) UpdateByForeign(_ context.Context, _ string, _ string, _ entities.CameraOnvif) (uint64, error) {
+	return 0, nil
+}
+func (f *fakeCameraOnvifRepo) Delete(_ context.Context, _ string, _ []sqldataenums.Filter) (uint64, error) {
+	return 0, nil
+}
+func (f *fakeCameraOnvifRepo) DeleteById(_ context.Context, _ string, _ uint64) (uint64, error) {
+	return 0, nil
+}
+func (f *fakeCameraOnvifRepo) DeleteByUnique(_ context.Context, _ string, _ string, _ ...any) (uint64, error) {
+	return 0, nil
+}
+func (f *fakeCameraOnvifRepo) DeleteByForeign(_ context.Context, _ string, _ string, _ ...any) (uint64, error) {
 	return 0, nil
 }
 
-func (f *fakeOnvifRepo) CreateMultiple(context.Context, string, []entities.OnvifDevice) (uint64, error) {
-	return 0, nil
-}
-
-func (f *fakeOnvifRepo) UpdateById(_ context.Context, _ string, model entities.OnvifDevice) (uint64, error) {
-	f.device = model
-	return uint64(model.Id), nil
-}
-
-func (f *fakeOnvifRepo) UpdateByUnique(context.Context, string, string, entities.OnvifDevice) (uint64, error) {
-	return 0, nil
-}
-
-func (f *fakeOnvifRepo) UpdateByForeign(context.Context, string, string, entities.OnvifDevice) (uint64, error) {
-	return 0, nil
-}
-
-func (f *fakeOnvifRepo) Delete(context.Context, string, []sqldataenums.Filter) (uint64, error) {
-	return 0, nil
-}
-
-func (f *fakeOnvifRepo) DeleteById(context.Context, string, uint64) (uint64, error) {
-	return 0, nil
-}
-
-func (f *fakeOnvifRepo) DeleteByUnique(context.Context, string, string, ...any) (uint64, error) {
-	return 0, nil
-}
-
-func (f *fakeOnvifRepo) DeleteByForeign(context.Context, string, string, ...any) (uint64, error) {
-	return 0, nil
-}
+// — Fake ONVIF and RTSP clients ----------------------------------------------
 
 type fakeResolveStreamClient struct {
 	rtspURL     string
@@ -213,15 +270,12 @@ type fakeResolveStreamClient struct {
 func (f *fakeResolveStreamClient) Discover(context.Context, time.Duration) ([]onvif.Device, error) {
 	return nil, nil
 }
-
 func (f *fakeResolveStreamClient) Probe(context.Context, string) (*onvif.Device, error) {
 	return nil, nil
 }
-
 func (f *fakeResolveStreamClient) GetCapabilities(context.Context, string, onvif.Credentials) (*onvif.CapabilitiesResult, error) {
 	return &onvif.CapabilitiesResult{MediaXAddr: "http://192.168.1.40/onvif/media_service"}, nil
 }
-
 func (f *fakeResolveStreamClient) GetStreamURI(_ context.Context, req onvif.StreamURIRequest) (*onvif.StreamURIResult, error) {
 	rtspURL := f.rtspURL
 	if f.streams != nil && f.streams[req.ProfileToken] != "" {
@@ -229,26 +283,17 @@ func (f *fakeResolveStreamClient) GetStreamURI(_ context.Context, req onvif.Stre
 	}
 	return &onvif.StreamURIResult{MediaXAddr: req.MediaServiceURL, ProfileToken: req.ProfileToken, RTSPURL: rtspURL}, nil
 }
-
 func (f *fakeResolveStreamClient) GetStreamOptions(context.Context, onvif.StreamURIRequest) (*onvif.StreamOptionsResult, error) {
 	return nil, nil
 }
-
 func (f *fakeResolveStreamClient) GetSnapshotURI(_ context.Context, req onvif.StreamURIRequest) (*onvif.SnapshotURIResult, error) {
 	return &onvif.SnapshotURIResult{MediaXAddr: req.MediaServiceURL, ProfileToken: req.ProfileToken, SnapshotURI: f.snapshotURI}, nil
 }
-
 func (f *fakeResolveStreamClient) ChangeUserPassword(context.Context, onvif.ChangeUserPasswordRequest) error {
 	return nil
 }
-
-func (f *fakeResolveStreamClient) PTZMove(context.Context, onvif.PTZMoveRequest) error {
-	return nil
-}
-
-func (f *fakeResolveStreamClient) PTZStop(context.Context, onvif.PTZMoveRequest) error {
-	return nil
-}
+func (f *fakeResolveStreamClient) PTZMove(context.Context, onvif.PTZMoveRequest) error { return nil }
+func (f *fakeResolveStreamClient) PTZStop(context.Context, onvif.PTZMoveRequest) error { return nil }
 
 type fakeResolveRTSPClient struct {
 	workingPath   string

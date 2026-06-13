@@ -25,6 +25,8 @@ const icoSvg = {
   download:    '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
   'check-ok':  '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>',
   wand:        '<path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72"/><path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/><path d="M21 16h-4"/><path d="M11 3H9"/>',
+  'volume-2':  '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>',
+  'volume-x':  '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>',
   key:         '<circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/>',
   wifi:        '<path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>',
   sun:         '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>',
@@ -473,7 +475,7 @@ function liveSource(id, options = {}) {
   if (options.preferSnapshot) {
     params.set('preferSnapshot', '1');
   }
-  return `${apiBase()}/api/onvif/devices/${id}/live.mjpeg?${params.toString()}`;
+  return `${apiBase()}/api/cameras/${id}/live.mjpeg?${params.toString()}`;
 }
 
 function fallbackLiveSource(id) {
@@ -940,7 +942,7 @@ async function createWebRTCAnswer(deviceId, offer, authHeader) {
   if (authHeader) {
     headers.Authorization = authHeader;
   }
-  const response = await fetch(`${apiBase()}/api/onvif/devices/${deviceId}/webrtc/offer`, {
+  const response = await fetch(`${apiBase()}/api/cameras/${deviceId}/webrtc/offer`, {
     method: 'POST',
     credentials: 'include',
     headers,
@@ -1022,10 +1024,13 @@ function Message({ value }) {
   return <div className="status-line">{value}</div>;
 }
 
-function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTracks, streamKey }) {
+function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTracks, streamKey, startDelayMs = 0 }) {
   const videoRef = useRef(null);
+  const audioRef = useRef(null);
   const [state, setState] = useState('Connecting');
   const [fallbackSrc, setFallbackSrc] = useState('');
+  const [hasAudio, setHasAudio] = useState(false);
+  const [muted, setMuted] = useState(true);
 
   useEffect(() => {
     if (!deviceId) {
@@ -1034,6 +1039,8 @@ function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTracks, s
     const configValue = normalizeStreamConfig(streamConfig);
     const forceMJPEG = shouldUseMJPEGForTracks(rtspTracks);
     setFallbackSrc('');
+    setHasAudio(false);
+    setMuted(true);
     setState(forceMJPEG || !configValue.webrtc.enabled ? 'MJPEG' : 'Connecting');
 
     if (forceMJPEG) {
@@ -1070,22 +1077,36 @@ function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTracks, s
     async function connect() {
       try {
         pc.addTransceiver('video', { direction: 'recvonly' });
+        pc.addTransceiver('audio', { direction: 'recvonly' });
         pc.ontrack = (event) => {
-          if (cancelled || !videoRef.current) {
-            return;
+          if (cancelled) return;
+          if (event.track.kind === 'video' && videoRef.current) {
+            // Use the browser-managed stream directly; avoids re-initialising the
+            // GPU decode pipeline that a custom MediaStream can trigger on Windows.
+            const stream = event.streams[0] || new MediaStream([event.track]);
+            videoRef.current.srcObject = stream;
+            videoRef.current.play().catch(() => {});
+            setState('Live');
+          } else if (event.track.kind === 'audio' && audioRef.current) {
+            setHasAudio(true);
+            // Route audio to a dedicated element so the video element stays muted
+            // (required for autoPlay) while audio is user-controlled independently.
+            audioRef.current.srcObject = new MediaStream([event.track]);
           }
-          const stream = event.streams[0] || new MediaStream([event.track]);
-          videoRef.current.srcObject = stream;
-          videoRef.current.play().catch(() => {});
-          setState('Live');
         };
         pc.onconnectionstatechange = () => {
-          if (['failed', 'disconnected', 'closed'].includes(pc.connectionState) && !cancelled) {
+          if (cancelled) return;
+          const cs = pc.connectionState;
+          if (cs === 'disconnected') {
+            // Transient — ICE may recover; keep the video element alive and
+            // show a status hint instead of switching to MJPEG fallback.
+            setState('Reconnecting…');
+          } else if (cs === 'failed' || cs === 'closed') {
             if (configValue.mjpegFallback.enabled) {
               setState('MJPEG fallback');
               setFallbackSrc(fallbackLiveSource(deviceId));
             } else {
-              setState(`WebRTC ${pc.connectionState}`);
+              setState(`WebRTC ${cs}`);
             }
           }
         };
@@ -1111,17 +1132,44 @@ function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTracks, s
       }
     }
 
-    connect();
+    // Stagger GPU decode session creation across tiles so the hardware decoder
+    // is not asked to initialise multiple sessions simultaneously, which can
+    // trigger a Windows GPU TDR (monitor blackout) on some driver versions.
+    let startTimer = null;
+    if (startDelayMs > 0) {
+      startTimer = setTimeout(connect, startDelayMs);
+    } else {
+      connect();
+    }
 
     return () => {
       cancelled = true;
+      if (startTimer !== null) clearTimeout(startTimer);
       if (videoRef.current?.srcObject) {
         videoRef.current.srcObject.getTracks().forEach((track) => track.stop());
         videoRef.current.srcObject = null;
       }
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.srcObject = null;
+      }
       pc.close();
     };
-  }, [deviceId, authHeader, streamConfig, rtspTracks, streamKey]);
+  }, [deviceId, authHeader, streamConfig, rtspTracks, streamKey, startDelayMs]);
+
+  function toggleMute() {
+    setMuted((prev) => {
+      const next = !prev;
+      if (audioRef.current) {
+        if (next) {
+          audioRef.current.pause();
+        } else {
+          audioRef.current.play().catch(() => {});
+        }
+      }
+      return next;
+    });
+  }
 
   return (
     <div className="live-frame">
@@ -1130,7 +1178,19 @@ function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTracks, s
       ) : (
         <video ref={videoRef} autoPlay muted playsInline aria-label={`${title} live view`} />
       )}
+      <audio ref={audioRef} playsInline style={{ display: 'none' }} />
       <span className="stream-state">{state}</span>
+      {hasAudio && (
+        <button
+          type="button"
+          className="audio-mute-btn"
+          onClick={toggleMute}
+          aria-label={muted ? 'Unmute audio' : 'Mute audio'}
+          title={muted ? 'Unmute audio' : 'Mute audio'}
+        >
+          <Ico n={muted ? 'volume-x' : 'volume-2'} sz={14} />
+        </button>
+      )}
     </div>
   );
 }
@@ -1731,6 +1791,7 @@ function ViewsTab({
                   streamConfig={streamConfig}
                   rtspTracks={tile.rtspTracks}
                   streamKey={`${tile.rtspUrl || ''}:${tile.rtspTracks || ''}`}
+                  startDelayMs={idx * 700}
                 />
                 {latestAlert ? (
                   <button type="button" className="tile-ai-banner" onClick={() => onOpenAlerts(tile.id)}>
@@ -1739,22 +1800,13 @@ function ViewsTab({
                   </button>
                 ) : null}
                 {tile.ptzSupported ? (
-                  <div className="ptz-pad" aria-label={`${tile.title} PTZ controls`}>
-                    <button type="button" onClick={() => onPTZMove(tile.id, 'up')} disabled={busy} aria-label="PTZ Up">
-                      <Ico n="arr-up" sz={13} />
-                    </button>
-                    <button type="button" onClick={() => onPTZMove(tile.id, 'left')} disabled={busy} aria-label="PTZ Left">
-                      <Ico n="arr-left" sz={13} />
-                    </button>
-                    <button type="button" className="quiet" onClick={() => onPTZStop(tile.id)} disabled={busy} aria-label="PTZ Stop">
-                      <Ico n="stop" sz={13} />
-                    </button>
-                    <button type="button" onClick={() => onPTZMove(tile.id, 'right')} disabled={busy} aria-label="PTZ Right">
-                      <Ico n="arr-right" sz={13} />
-                    </button>
-                    <button type="button" onClick={() => onPTZMove(tile.id, 'down')} disabled={busy} aria-label="PTZ Down">
-                      <Ico n="arr-down" sz={13} />
-                    </button>
+                  <div className="ptz-ring-overlay">
+                    <PTZRing
+                      busy={busy}
+                      size={100}
+                      onMove={(dir) => onPTZMove(tile.id, dir)}
+                      onStop={() => onPTZStop(tile.id)}
+                    />
                   </div>
                 ) : null}
               </>
@@ -2150,6 +2202,87 @@ function SavedDeviceNav({ devices, selectedId, onSelect }) {
   );
 }
 
+// Circular D-pad PTZ controller. Renders as an inline SVG; parent is responsible for positioning.
+function PTZRing({ busy, size, onMove, onStop }) {
+  const sz = size || 140;
+  // All path geometry is authored for a 200×200 viewBox then scaled by SVG.
+  const ro = 94;                    // outer ring radius
+  const ri = 35;                    // inner (stop) circle radius
+  const d  = ro / Math.SQRT2;      // ≈ 66.47 — outer ring diagonal intersection
+  const di = ri / Math.SQRT2;      // ≈ 24.75 — inner ring diagonal intersection
+  const cx = 100, cy = 100;
+
+  // Annular sector paths: inner-arc CW (sweep=1) then outer-arc CCW (sweep=0)
+  const UP    = `M ${cx-di} ${cy-di} A ${ri} ${ri} 0 0 1 ${cx+di} ${cy-di} L ${cx+d} ${cy-d} A ${ro} ${ro} 0 0 0 ${cx-d} ${cy-d} Z`;
+  const RIGHT = `M ${cx+di} ${cy-di} A ${ri} ${ri} 0 0 1 ${cx+di} ${cy+di} L ${cx+d} ${cy+d} A ${ro} ${ro} 0 0 0 ${cx+d} ${cy-d} Z`;
+  const DOWN  = `M ${cx+di} ${cy+di} A ${ri} ${ri} 0 0 1 ${cx-di} ${cy+di} L ${cx-d} ${cy+d} A ${ro} ${ro} 0 0 0 ${cx+d} ${cy+d} Z`;
+  const LEFT  = `M ${cx-di} ${cy+di} A ${ri} ${ri} 0 0 1 ${cx-di} ${cy-di} L ${cx-d} ${cy-d} A ${ro} ${ro} 0 0 0 ${cx-d} ${cy+d} Z`;
+
+  // Block arrow icons (filled), centered in each sector at r≈64.5
+  const A_UP    = 'M 100 24 L 112 40 L 106 40 L 106 48 L 94 48 L 94 40 L 88 40 Z';
+  const A_RIGHT = 'M 176 100 L 160 88 L 160 94 L 152 94 L 152 106 L 160 106 L 160 112 Z';
+  const A_DOWN  = 'M 100 176 L 88 160 L 94 160 L 94 152 L 106 152 L 106 160 L 112 160 Z';
+  const A_LEFT  = 'M 24 100 L 40 112 L 40 106 L 48 106 L 48 94 L 40 94 L 40 88 Z';
+
+  const cls = `ptz-sector${busy ? ' ptz-sector-busy' : ''}`;
+
+  function sector(d, label, dir) {
+    return (
+      <path
+        key={dir}
+        d={d}
+        className={cls}
+        role="button"
+        aria-label={label}
+        tabIndex={busy ? -1 : 0}
+        onClick={busy ? undefined : () => onMove(dir)}
+        onKeyDown={(e) => !busy && e.key === 'Enter' && onMove(dir)}
+      />
+    );
+  }
+
+  return (
+    <svg
+      viewBox="0 0 200 200"
+      width={sz}
+      height={sz}
+      className={`ptz-ring${busy ? ' ptz-ring-busy' : ''}`}
+      aria-label="PTZ controls"
+    >
+      {/* Interactive sectors — bottom layer so hover fill stays under structural lines */}
+      {sector(UP,    'PTZ Up',    'up')}
+      {sector(RIGHT, 'PTZ Right', 'right')}
+      {sector(DOWN,  'PTZ Down',  'down')}
+      {sector(LEFT,  'PTZ Left',  'left')}
+      {/* Center stop */}
+      <circle
+        cx={cx} cy={cy} r={ri}
+        className={cls}
+        role="button"
+        aria-label="PTZ Stop"
+        tabIndex={busy ? -1 : 0}
+        onClick={busy ? undefined : onStop}
+        onKeyDown={(e) => !busy && e.key === 'Enter' && onStop()}
+      />
+
+      {/* Visual layer — drawn on top; pointer-events disabled so clicks pass through */}
+      <g pointerEvents="none" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx={cx} cy={cy} r={ro} fill="none" stroke="currentColor" strokeWidth="1.5" />
+        <circle cx={cx} cy={cy} r={ri} fill="none" stroke="currentColor" strokeWidth="1.5" />
+        <line x1={cx-di} y1={cy-di} x2={cx-d} y2={cy-d} stroke="currentColor" strokeWidth="1.5" />
+        <line x1={cx+di} y1={cy-di} x2={cx+d} y2={cy-d} stroke="currentColor" strokeWidth="1.5" />
+        <line x1={cx+di} y1={cy+di} x2={cx+d} y2={cy+d} stroke="currentColor" strokeWidth="1.5" />
+        <line x1={cx-di} y1={cy+di} x2={cx-d} y2={cy+d} stroke="currentColor" strokeWidth="1.5" />
+        <path d={A_UP}    fill="currentColor" />
+        <path d={A_RIGHT} fill="currentColor" />
+        <path d={A_DOWN}  fill="currentColor" />
+        <path d={A_LEFT}  fill="currentColor" />
+        <rect x="89" y="89" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.5" />
+      </g>
+    </svg>
+  );
+}
+
 function CameraPreviewPanel({ preview, busy, authHeader, streamConfig, onClose, onAdd, onPTZMove, onPTZStop }) {
   if (!preview) {
     return null;
@@ -2165,35 +2298,28 @@ function CameraPreviewPanel({ preview, busy, authHeader, streamConfig, onClose, 
           Close
         </button>
       </header>
-      <LiveViewport
-        key={`${preview.id}:${preview.device?.rtspUrl || ''}:${preview.device?.rtspTracks || ''}`}
-        deviceId={preview.id}
-        title={preview.title}
-        authHeader={authHeader}
-        streamConfig={streamConfig}
-        rtspTracks={preview.device?.rtspTracks}
-        streamKey={`${preview.device?.rtspUrl || ''}:${preview.device?.rtspTracks || ''}`}
-      />
-      <div className="preview-actions">
+      <div className="preview-viewport">
+        <LiveViewport
+          key={`${preview.id}:${preview.device?.rtspUrl || ''}:${preview.device?.rtspTracks || ''}`}
+          deviceId={preview.id}
+          title={preview.title}
+          authHeader={authHeader}
+          streamConfig={streamConfig}
+          rtspTracks={preview.device?.rtspTracks}
+          streamKey={`${preview.device?.rtspUrl || ''}:${preview.device?.rtspTracks || ''}`}
+        />
         {preview.ptzSupported ? (
-          <div className="preview-ptz-controls" aria-label={`${preview.title} PTZ controls`}>
-            <button type="button" onClick={() => onPTZMove(preview.id, 'up')} disabled={busy}>
-              Up
-            </button>
-            <button type="button" onClick={() => onPTZMove(preview.id, 'left')} disabled={busy}>
-              Left
-            </button>
-            <button type="button" className="quiet" onClick={() => onPTZStop(preview.id)} disabled={busy}>
-              Stop
-            </button>
-            <button type="button" onClick={() => onPTZMove(preview.id, 'right')} disabled={busy}>
-              Right
-            </button>
-            <button type="button" onClick={() => onPTZMove(preview.id, 'down')} disabled={busy}>
-              Down
-            </button>
+          <div className="ptz-ring-overlay">
+            <PTZRing
+              busy={busy}
+              size={150}
+              onMove={(dir) => onPTZMove(preview.id, dir)}
+              onStop={() => onPTZStop(preview.id)}
+            />
           </div>
         ) : null}
+      </div>
+      <div className="preview-actions">
         <div className="action-row">
           <button type="button" className="quiet" onClick={() => onAdd(preview.device)} disabled={busy || !preview.device}>
             <span className="btn-icon"><Ico n="plus" /> Add to Live Views</span>
@@ -4020,7 +4146,7 @@ function RecordingTab({ saved, segments, configs, busy, authHeader, onSaveConfig
   useEffect(() => {
     const existing = configs.find((c) => Number(c.cameraId) === effectiveCameraId);
     const currentLiveUrl = selectedCamera?.rtspUrl || '';
-    setConfigDraft(existing ? { ...existing, liveStreamUrl: currentLiveUrl } : { ...defaultDraft, liveStreamUrl: currentLiveUrl });
+    setConfigDraft(existing ? { ...existing, liveStreamUrl: existing.liveStreamUrl || currentLiveUrl } : { ...defaultDraft, liveStreamUrl: currentLiveUrl });
     setAllBrowseSegments([]);
     setBrowseLoaded(false);
     setTimelineSelectedMin(null);
@@ -4806,7 +4932,7 @@ export default function App() {
     try {
       await loadRuntimeSettings();
       await loadDecoderGpuDevices({ quiet: true });
-      const result = await request('/api/onvif/devices?limit=100&offset=0');
+      const result = await request('/api/cameras?limit=100&offset=0');
       const devices = Array.isArray(result) ? result : [];
       const orderedDevices = orderedSavedCameras(devices);
       setVisionRuleDraft((current) => ({ ...current, cameraId: current.cameraId || orderedDevices[0]?.id || '' }));
@@ -4843,7 +4969,7 @@ export default function App() {
     try {
       await loadRuntimeSettings();
       await loadDecoderGpuDevices({ quiet: true });
-      const result = await request('/api/onvif/devices?limit=100&offset=0');
+      const result = await request('/api/cameras?limit=100&offset=0');
       const devices = Array.isArray(result) ? result : [];
       const orderedDevices = orderedSavedCameras(devices);
       const preference = readLiveViewsCookie(viewLayout);
@@ -5573,7 +5699,7 @@ export default function App() {
     // Strip frontend-only fields that the backend struct doesn't accept.
     const { _discoveryMethods, _openPorts, ...deviceData } = device;
     try {
-      await request('/api/onvif/devices/discovered', {
+      await request('/api/cameras/discovered', {
         method: 'POST',
         body: JSON.stringify({
           ...deviceData,
@@ -5594,13 +5720,10 @@ export default function App() {
     const draft = deviceDrafts[device.id] || { name: device.name || '', description: device.description || '' };
     setBusy(true);
     setMessage('');
-    const { _discoveryMethods, _openPorts, ...deviceData } = device;
     try {
-      await request('/api/onvif/devices', {
-        method: 'POST',
+      await request(`/api/cameras/${device.id}`, {
+        method: 'PUT',
         body: JSON.stringify({
-          ...deviceData,
-          hasPassword: undefined,
           name: (draft.name || '').trim() || cameraTitle(device),
           description: (draft.description || '').trim(),
         }),
@@ -5658,7 +5781,7 @@ export default function App() {
       setMessage('');
     }
     try {
-      const result = await request(`/api/onvif/devices/${device.id}/credentials`, {
+      const result = await request(`/api/cameras/${device.id}/credentials`, {
         method: 'POST',
         body: JSON.stringify(cameraCredentials),
       });
@@ -5690,7 +5813,7 @@ export default function App() {
     setBusy(true);
     setMessage('');
     try {
-      const result = await request(`/api/onvif/devices/${device.id}/camera-password`, {
+      const result = await request(`/api/cameras/${device.id}/camera-password`, {
         method: 'POST',
         body: JSON.stringify({
           targetUsername: (draft.targetUsername || '').trim() || device.username,
@@ -5716,7 +5839,7 @@ export default function App() {
   async function movePTZ(deviceId, direction) {
     setMessage('');
     try {
-      await request(`/api/onvif/devices/${deviceId}/ptz/move`, {
+      await request(`/api/cameras/${deviceId}/ptz/move`, {
         method: 'POST',
         body: JSON.stringify({ direction, speed: 0.35, durationMs: 350 }),
       });
@@ -5728,7 +5851,7 @@ export default function App() {
   async function stopPTZ(deviceId) {
     setMessage('');
     try {
-      await request(`/api/onvif/devices/${deviceId}/ptz/stop`, { method: 'POST' });
+      await request(`/api/cameras/${deviceId}/ptz/stop`, { method: 'POST' });
     } catch (err) {
       setMessage(err.message);
     }
@@ -5738,7 +5861,7 @@ export default function App() {
     setBusy(true);
     setMessage('');
     try {
-      const result = await request(`/api/onvif/devices/${device.id}/stream-options`, {
+      const result = await request(`/api/cameras/${device.id}/stream-options`, {
         method: 'POST',
         body: JSON.stringify(credentialsFor(device)),
       });
@@ -5764,7 +5887,7 @@ export default function App() {
     setBusy(true);
     setMessage('');
     try {
-      const result = await request(`/api/onvif/devices/${device.id}/stream-uri`, {
+      const result = await request(`/api/cameras/${device.id}/stream-uri`, {
         method: 'POST',
         body: JSON.stringify({
           ...credentialsFor(device),
@@ -5791,7 +5914,41 @@ export default function App() {
         };
       });
       applyDeviceUpdate(result);
-      setMessage(`${streamOptionLabel(option)} saved.`);
+
+      // Auto-enable recording when a stream is first selected or recording was disabled.
+      const existingConfig = recordingConfigs.find((c) => Number(c.cameraId) === Number(device.id));
+      if (!existingConfig?.enabled) {
+        const streamUrl = result?.rtspUrl || option.rtspUrl || '';
+        const configToSave = {
+          cameraId: device.id,
+          enabled: true,
+          preRollSec:       existingConfig?.preRollSec       ?? 30,
+          postRollSec:      existingConfig?.postRollSec      ?? 10,
+          storagePath:      existingConfig?.storagePath      ?? 'recordings',
+          retentionDays:    existingConfig?.retentionDays    ?? 7,
+          segmentMinutes:   existingConfig?.segmentMinutes   ?? 15,
+          liveStreamUrl:    existingConfig?.liveStreamUrl    ?? '',
+          streamUrl,
+          fallbackStreamUrl: existingConfig?.fallbackStreamUrl ?? '',
+        };
+        try {
+          const recResult = await request('/api/recording/config', {
+            method: 'PUT',
+            body: JSON.stringify(configToSave),
+          });
+          const savedCfg = recResult?.config || recResult;
+          setRecordingConfigs((current) => {
+            const rest = current.filter((c) => Number(c.cameraId) !== Number(device.id));
+            return savedCfg ? [...rest, savedCfg] : rest;
+          });
+          setMessage(`${streamOptionLabel(option)} saved. Recording enabled automatically.`);
+        } catch (_) {
+          setMessage(`${streamOptionLabel(option)} saved. Recording auto-enable failed — configure it in the Recording tab.`);
+        }
+      } else {
+        setMessage(`${streamOptionLabel(option)} saved.`);
+      }
+
       await refresh({ quiet: true });
     } catch (err) {
       setMessage(err.message);
@@ -5803,7 +5960,7 @@ export default function App() {
     setBusy(true);
     setMessage('');
     try {
-      const result = await request(`/api/onvif/devices/${device.id}/rtsp-test`, { method: 'POST' });
+      const result = await request(`/api/cameras/${device.id}/rtsp-test`, { method: 'POST' });
       const tracks = result.tracks || [];
       const suffix = tracks.length && !hasH264VideoTrack(tracks)
         ? ' No H264 video track; live view will use MJPEG fallback.'
@@ -5821,7 +5978,7 @@ export default function App() {
     if (cameraCredentials.username || cameraCredentials.password) {
       await saveCredentials(device, { quiet: true });
     }
-    const result = await request(`/api/onvif/devices/${device.id}/live-view`, {
+    const result = await request(`/api/cameras/${device.id}/live-view`, {
       method: 'POST',
       body: JSON.stringify(cameraCredentials),
     });
@@ -5888,7 +6045,7 @@ export default function App() {
     setBusy(true);
     setMessage('');
     try {
-      await request(`/api/onvif/devices/${id}`, { method: 'DELETE' });
+      await request(`/api/cameras/${id}`, { method: 'DELETE' });
       setMessage('Camera removed.');
       setViewTilesWithCookie((current) => current.filter((tile) => tile.id !== id));
       setPreview((current) => (current?.id === id ? null : current));
@@ -6482,29 +6639,68 @@ label {
   font-weight: 700;
 }
 
-.ptz-pad {
+.audio-mute-btn {
+  position: absolute;
+  left: 8px;
+  bottom: 36px;
+  z-index: 2;
+  background: rgba(15, 23, 33, 0.72);
+  color: #ffffff;
+  border: none;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s;
+}
+
+.audio-mute-btn:hover {
+  background: rgba(15, 23, 33, 0.92);
+}
+
+.ptz-ring-overlay {
   position: absolute;
   right: 8px;
   bottom: 8px;
   z-index: 2;
-  display: grid;
-  grid-template-columns: repeat(3, 48px);
-  gap: 4px;
-  padding: 6px;
-  border-radius: 8px;
-  background: rgba(15, 23, 33, 0.7);
 }
 
-.ptz-pad button {
-  min-height: 28px;
-  padding: 0 6px;
-  border-color: rgba(255, 255, 255, 0.28);
-  font-size: 11px;
+.preview-viewport .ptz-ring-overlay {
+  right: 14px;
+  bottom: 14px;
 }
 
-.ptz-pad button:first-child,
-.ptz-pad button:last-child {
-  grid-column: 2;
+.ptz-ring {
+  display: block;
+  color: rgba(255, 255, 255, 0.88);
+  filter: drop-shadow(0 1px 6px rgba(0, 0, 0, 0.72));
+}
+
+.ptz-sector {
+  fill: transparent;
+  cursor: pointer;
+  outline: none;
+  transition: fill 0.1s;
+}
+
+.ptz-sector:hover {
+  fill: rgba(255, 255, 255, 0.14);
+}
+
+.ptz-sector:focus-visible {
+  fill: rgba(255, 255, 255, 0.18);
+}
+
+.ptz-sector-busy {
+  pointer-events: none;
+}
+
+.ptz-ring-busy {
+  opacity: 0.45;
 }
 
 .tile-header {
@@ -6822,28 +7018,22 @@ label {
   font-size: 13px;
 }
 
-.preview-panel .live-frame {
+.preview-viewport {
+  position: relative;
   width: min(100%, 860px);
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+.preview-panel .live-frame {
+  width: 100%;
   aspect-ratio: 16 / 9;
   border: 1px solid var(--border-soft);
-  border-radius: 8px;
 }
 
 .preview-actions {
   display: grid;
   gap: 10px;
-}
-
-.preview-ptz-controls {
-  width: min(100%, 360px);
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.preview-ptz-controls button:first-child,
-.preview-ptz-controls button:last-child {
-  grid-column: 2;
 }
 
 .device-section > header {

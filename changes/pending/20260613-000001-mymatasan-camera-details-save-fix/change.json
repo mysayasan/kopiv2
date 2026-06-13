@@ -1,0 +1,5 @@
+{
+  "type": "fixed",
+  "scope": "mymatasan",
+  "summary": "Fix camera details not saving correctly via PUT /cameras/{id}"
+}

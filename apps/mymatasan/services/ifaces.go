@@ -222,6 +222,7 @@ type SaveRecordingConfigRequest struct {
 	StoragePath    string `json:"storagePath"`
 	RetentionDays  int    `json:"retentionDays"`
 	SegmentMinutes int    `json:"segmentMinutes"`
+	LiveStreamUrl     string `json:"liveStreamUrl"`
 	StreamURL         string `json:"streamUrl"`
 	FallbackStreamUrl string `json:"fallbackStreamUrl"`
 }

@@ -1,0 +1,5 @@
+{
+  "type": "added",
+  "scope": "mymatasan",
+  "summary": "Add WebRTC live audio forwarding (PCMA/PCMU) with mute/unmute button in the live view"
+}

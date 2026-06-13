@@ -10,6 +10,7 @@ type RecordingConfig struct {
 	StoragePath    string `json:"storagePath" form:"storagePath" query:"storagePath"`
 	RetentionDays  int    `json:"retentionDays" form:"retentionDays" query:"retentionDays"`
 	SegmentMinutes int    `json:"segmentMinutes" form:"segmentMinutes" query:"segmentMinutes"`
+	LiveStreamUrl     string `json:"liveStreamUrl" form:"liveStreamUrl" query:"liveStreamUrl"`
 	StreamURL         string `json:"streamUrl" form:"streamUrl" query:"streamUrl"`
 	FallbackStreamUrl string `json:"fallbackStreamUrl" form:"fallbackStreamUrl" query:"fallbackStreamUrl"`
 	CreatedAt      int64  `json:"createdAt" form:"createdAt" query:"createdAt"`

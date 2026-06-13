@@ -1,0 +1,5 @@
+{
+  "type": "added",
+  "scope": "mymatasan",
+  "summary": "Auto-enable recording when a live stream is selected in the Recording UI"
+}

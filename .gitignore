@@ -20,8 +20,8 @@ apps/mymatasan/models/__pycache__/
 apps/mymatasan/models/*.pt
 apps/mymatasan/models/*.onnx
 
-# recordings
-recordings/
+# ignore recordings on the root of the project
+/recordings/
 
 # logs
 logs/

@@ -181,11 +181,9 @@ func (s *cameraService) SaveCredentials(ctx context.Context, id uint64, credenti
 	if credentials.Password != "" {
 		detail.Password = credentials.Password
 	}
-	if err := s.refreshCapabilities(ctx, detail, onvif.Credentials{Username: detail.Username, Password: detail.Password}); err != nil {
-		if strings.TrimSpace(detail.MediaXAddr) == "" {
-			return nil, err
-		}
-	}
+	// Best-effort: update MediaXAddr/PTZ capabilities. Ignore failure so credentials
+	// are always persisted even when GetCapabilities requires auth first (chicken-and-egg).
+	_ = s.refreshCapabilities(ctx, detail, onvif.Credentials{Username: detail.Username, Password: detail.Password})
 	if err := s.saveDetail(ctx, detail); err != nil {
 		return nil, err
 	}
@@ -238,6 +236,9 @@ func (s *cameraService) StreamOptions(ctx context.Context, id uint64, credential
 	}
 	if credentials.Password == "" {
 		credentials.Password = detail.Password
+	}
+	if strings.TrimSpace(detail.XAddr) != "" && credentials.Username == "" && credentials.Password == "" {
+		return nil, errors.New("camera credentials required: save username and password in the Credentials panel first")
 	}
 	_ = s.refreshCapabilities(ctx, detail, credentials)
 	res, err := s.client.GetStreamOptions(ctx, onvif.StreamURIRequest{
@@ -785,6 +786,13 @@ func ptzVelocity(direction string, speed float64) (float64, float64, float64, er
 	default:
 		return 0, 0, 0, fmt.Errorf("unsupported PTZ direction %q", direction)
 	}
+}
+
+func isNoResultFoundErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "no result found")
 }
 
 func firstNonEmpty(values ...string) string {

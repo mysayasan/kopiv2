@@ -99,7 +99,7 @@ func (m *Manager) CreateWebRTCAnswerWithOptions(ctx context.Context, source Sour
 		})
 	}
 
-	track, err := webrtc.NewTrackLocalStaticRTP(codecCapability(sub.Codec), "video", source.ID)
+	track, err := webrtc.NewTrackLocalStaticRTP(codecCapability(sub), "video", source.ID)
 	if err != nil {
 		closePeer()
 		return nil, fmt.Errorf("create video track failed: %w", err)
@@ -109,11 +109,27 @@ func (m *Manager) CreateWebRTCAnswerWithOptions(ctx context.Context, source Sour
 		closePeer()
 		return nil, fmt.Errorf("add video track failed: %w", err)
 	}
-
 	go drainRTCP(sender)
+
+	var audioTrack *webrtc.TrackLocalStaticRTP
+	if sub.AudioPackets != nil && sub.AudioCodec != "" {
+		audioTrack, err = webrtc.NewTrackLocalStaticRTP(audioCodecCapability(sub.AudioCodec), "audio", source.ID+"-audio")
+		if err != nil {
+			closePeer()
+			return nil, fmt.Errorf("create audio track failed: %w", err)
+		}
+		audioSender, err := pc.AddTrack(audioTrack)
+		if err != nil {
+			closePeer()
+			return nil, fmt.Errorf("add audio track failed: %w", err)
+		}
+		go drainRTCP(audioSender)
+	}
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+		// Disconnected is transient — ICE may recover without tearing down the
+		// subscription. Only close on permanent terminal states.
 		switch state {
-		case webrtc.PeerConnectionStateClosed, webrtc.PeerConnectionStateDisconnected, webrtc.PeerConnectionStateFailed:
+		case webrtc.PeerConnectionStateClosed, webrtc.PeerConnectionStateFailed:
 			closePeer()
 		}
 	})
@@ -145,7 +161,7 @@ func (m *Manager) CreateWebRTCAnswerWithOptions(ctx context.Context, source Sour
 		return nil, setupCtx.Err()
 	}
 
-	go pumpRTP(sub, track, closePeer)
+	go pumpRTP(sub, track, audioTrack, closePeer)
 	local := pc.LocalDescription()
 	if local == nil {
 		closePeer()
@@ -192,22 +208,45 @@ func (m *Manager) subscribeWithContext(ctx context.Context, source Source) (*Sub
 	}
 }
 
-func codecCapability(codec Codec) webrtc.RTPCodecCapability {
-	switch codec {
-	case CodecH264:
-		return webrtc.RTPCodecCapability{
-			MimeType:     webrtc.MimeTypeH264,
-			ClockRate:    90000,
-			SDPFmtpLine:  "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f",
-			RTCPFeedback: []webrtc.RTCPFeedback{{Type: "nack"}, {Type: "nack", Parameter: "pli"}},
-		}
-	default:
-		return webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: 90000}
+// codecCapability builds the H264 RTP codec capability using the actual
+// profile-level-id and packetization-mode from the camera's RTSP SPS so the
+// browser hardware decoder is initialised with a profile that matches the
+// bitstream it will receive. A mismatch (e.g. advertising Baseline 3.1 while
+// the camera sends High 4.0) can force the decoder to reinitialise mid-stream,
+// which on Windows triggers a GPU driver TDR (monitor blackout).
+func codecCapability(sub *Subscription) webrtc.RTPCodecCapability {
+	profileLevelID := sub.H264ProfileLevelID
+	if profileLevelID == "" {
+		profileLevelID = "42e01f"
+	}
+	// packetization-mode=1 (non-interleaved: STAP-A + FU-A) is the WebRTC
+	// standard and must be fixed regardless of what the camera RTSP SDP declares.
+	// Mode 0 ("single NAL unit only") would cause FU-A fragments for large frames
+	// to be dropped by the browser decoder, producing garbled / sliding-frame
+	// decode artifacts.
+	fmtp := fmt.Sprintf(
+		"level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=%s",
+		profileLevelID,
+	)
+	return webrtc.RTPCodecCapability{
+		MimeType:     webrtc.MimeTypeH264,
+		ClockRate:    90000,
+		SDPFmtpLine:  fmtp,
+		RTCPFeedback: []webrtc.RTCPFeedback{{Type: "nack"}, {Type: "nack", Parameter: "pli"}},
 	}
 }
 
-func pumpRTP(sub *Subscription, track *webrtc.TrackLocalStaticRTP, closePeer func()) {
+func pumpRTP(sub *Subscription, track *webrtc.TrackLocalStaticRTP, audioTrack *webrtc.TrackLocalStaticRTP, closePeer func()) {
 	defer closePeer()
+	if audioTrack != nil && sub.AudioPackets != nil {
+		go func() {
+			for pkt := range sub.AudioPackets {
+				if pkt != nil {
+					_ = audioTrack.WriteRTP(pkt)
+				}
+			}
+		}()
+	}
 	for pkt := range sub.Packets {
 		if pkt == nil {
 			continue
@@ -218,6 +257,15 @@ func pumpRTP(sub *Subscription, track *webrtc.TrackLocalStaticRTP, closePeer fun
 			}
 			return
 		}
+	}
+}
+
+func audioCodecCapability(codec Codec) webrtc.RTPCodecCapability {
+	switch codec {
+	case CodecPCMU:
+		return webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypePCMU, ClockRate: 8000, Channels: 1}
+	default:
+		return webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypePCMA, ClockRate: 8000, Channels: 1}
 	}
 }
 

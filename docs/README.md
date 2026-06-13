@@ -6,7 +6,7 @@ This folder is the technical documentation set for the mini framework inside thi
 
 - `TECHNICAL_SPEC.md`: system-level specification and constraints.
 - `REQUEST_FLOW.md`: request lifecycle and runtime flow.
-- `HOWTO.md`: runbooks and operational procedures.
+- `HOWTO.md`: runbooks and operational procedures (includes MyMataSan live audio, PTZ, and recording stream selection).
 - `DB_BOOTSTRAP_SPEC.md`: shared code-first database bootstrap design.
 - `modules/`: module documentation separated by source filename.
 

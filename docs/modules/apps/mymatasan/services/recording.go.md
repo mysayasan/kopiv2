@@ -10,8 +10,8 @@ Implements `IRecordingService`, persisting per-camera recording configs and clip
 - Create a segment row from a `recording.SegmentResult` produced by the infra recorder.
 - Delete a segment row and remove the corresponding file from disk.
 - Fetch, create, and update per-camera `RecordingConfig` rows; upsert by camera ID.
-- Validate mode (`tick` or `rtsp`) on save; normalize empty mode to `tick`.
-- Purge segments older than the camera's configured `RetentionDays` by iterating all enabled configs, querying segments by `CreatedAt < cutoff`, deleting files, and removing rows.
+- Persist all config fields including `LiveStreamUrl`, `StreamURL`, and `FallbackStreamUrl` on save.
+- Purge segments older than the camera's configured `RetentionDays` by iterating all enabled configs, querying segments by `StartedAt < cutoff`, deleting files, and removing rows.
 
 ## Notes
 
@@ -19,3 +19,4 @@ Implements `IRecordingService`, persisting per-camera recording configs and clip
 - File removal in `DeleteSegment` and `PurgeOldSegments` uses `os.Remove`; missing-file errors are silently ignored to avoid blocking row cleanup.
 - `GetConfig` returns `nil, nil` when no config exists for the requested camera ID rather than an error, allowing callers to detect a first-time save.
 - `PurgeOldSegments` is designed to be called on a schedule (e.g., at startup and periodically); it is not called automatically by the service.
+- `LiveStreamUrl` is saved and returned in the API response so the Recording UI can restore the selected live stream across page reloads without reverting to the camera's default RTSP URL.

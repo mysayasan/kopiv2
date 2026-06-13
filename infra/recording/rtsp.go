@@ -151,7 +151,13 @@ func (r *rtspRecorder) runFFmpeg(ctx context.Context, ffmpegPath, transport stri
 			"-rtsp_transport", transport,
 			"-fflags", "+genpts",
 			"-i", uri,
-			"-c", "copy",
+			"-c:v", "copy",
+			// Transcode audio to AAC so all codecs (pcm_alaw, G.726, etc.)
+			// are muxed as a native MPEG-TS stream type. aresample=async=1
+			// compensates for cameras that send non-monotonic audio timestamps,
+			// which would otherwise cause "Queue input is backward in time" errors.
+			"-c:a", "aac",
+			"-af", "aresample=async=1",
 			"-f", "segment",
 			"-segment_time", fmt.Sprintf("%d", segSec),
 			"-strftime", "1",
@@ -193,15 +199,13 @@ func (r *rtspRecorder) runFFmpeg(ctx context.Context, ffmpegPath, transport stri
 				sc := bufio.NewScanner(stderr)
 				for sc.Scan() {
 					line := strings.TrimSpace(sc.Text())
-					if line == "" {
+					if line == "" || isNoisyFFmpegWarning(line) {
 						continue
 					}
 					log.Printf("recording rtsp cam%d ffmpeg: %s", r.cfg.CameraId, line)
-					if !isNoisyFFmpegWarning(line) {
-						r.mu.Lock()
-						r.lastErrMsg = line
-						r.mu.Unlock()
-					}
+					r.mu.Lock()
+					r.lastErrMsg = line
+					r.mu.Unlock()
 				}
 			}()
 		}
@@ -520,10 +524,12 @@ func isNoisyFFmpegWarning(line string) bool {
 		"Non-monotonic DTS",
 		"Timestamps are unset",
 		"This is deprecated and will stop working",
-		"changing to 1. This may result",
+		"This may result in incorrect timestamps",
 		"Fix your code to set the timestamps",
 		"starts with a non keyframe",
 		"DTS discontinuity",
+		"is muxed as a private data stream",
+		"Queue input is backward in time",
 	}
 	for _, s := range noisy {
 		if strings.Contains(line, s) {
