@@ -65,6 +65,15 @@ type WebRouteRegistrar interface {
 	RegisterWebRoutes(router *mux.Router, deps Dependencies) error
 }
 
+// ReadinessReporter can be implemented by an app module to add extra status
+// fields to the /ready payload (e.g. machine and camera health). The values are
+// advisory and do NOT change the ready/not-ready verdict — that stays gated on
+// the hard dependencies (database, cache) so a full disk or an offline camera
+// never makes an orchestrator stop routing traffic to an otherwise-serving node.
+type ReadinessReporter interface {
+	ReadinessStatus(ctx context.Context) map[string]string
+}
+
 // App defines the contract for a runnable application module.
 type App interface {
 	Name() string

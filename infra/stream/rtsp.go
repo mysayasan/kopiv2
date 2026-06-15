@@ -21,6 +21,12 @@ const (
 	rtspWriteTimeout       = 10 * time.Second
 	rtspUDPInitialTimeout  = 2 * time.Second
 	rtspUDPReadBufferBytes = 2 * 1024 * 1024
+	// gopCacheMaxPackets bounds the per-session group-of-pictures cache used to
+	// prime late-joining subscribers with a keyframe. When a GOP exceeds this
+	// (a camera with an unusually long keyframe interval), priming is skipped
+	// for that GOP and the subscriber waits for the next keyframe, rather than
+	// being primed with an incomplete GOP that would still slide.
+	gopCacheMaxPackets = 1024
 )
 
 // RTSPConnector shares one RTSP reader per camera URI and fans RTP packets out
@@ -101,11 +107,19 @@ type rtspSession struct {
 	audioCodec         Codec
 	h264ProfileLevelID string
 	readyErr           error
-	readyCh               chan struct{}
-	stopped               bool
-	subscribers           map[uint64]chan *rtp.Packet
-	audioSubscribers      map[uint64]chan *rtp.Packet
-	nextSubID             uint64
+	readyCh            chan struct{}
+	stopped            bool
+	subscribers        map[uint64]chan *rtp.Packet
+	audioSubscribers   map[uint64]chan *rtp.Packet
+	nextSubID          uint64
+
+	// gop holds the current group-of-pictures (most recent keyframe onward) so a
+	// late subscriber can be primed and start decoding on a keyframe. haveKeyframe
+	// is false until the first keyframe is seen; gopOverflow disables caching for
+	// an over-long GOP until the next keyframe resets it.
+	gop          []*rtp.Packet
+	haveKeyframe bool
+	gopOverflow  bool
 }
 
 func newRTSPSession(key string, uri string, onStop func()) *rtspSession {
@@ -145,6 +159,15 @@ func (s *rtspSession) subscribe() (*Subscription, error) {
 	packets := make(chan *rtp.Packet, rtspSubscriberBufSize)
 	s.subscribers[id] = packets
 
+	// Snapshot the current GOP atomically with registration: the next broadcast
+	// (holding the same lock) appends to the channel, so the live stream resumes
+	// exactly where this backlog ends — no gap, no duplicated packet.
+	var backlog []*rtp.Packet
+	if len(s.gop) > 0 {
+		backlog = make([]*rtp.Packet, len(s.gop))
+		copy(backlog, s.gop)
+	}
+
 	var audioPackets chan *rtp.Packet
 	if s.audioCodec != "" {
 		audioPackets = make(chan *rtp.Packet, rtspSubscriberBufSize)
@@ -158,6 +181,7 @@ func (s *rtspSession) subscribe() (*Subscription, error) {
 		AudioCodec:         s.audioCodec,
 		AudioPackets:       audioPackets,
 		H264ProfileLevelID: s.h264ProfileLevelID,
+		Backlog:            backlog,
 		Close: func() {
 			closeOnce.Do(func() {
 				s.removeSubscriber(id)
@@ -367,6 +391,7 @@ func (s *rtspSession) finish(err error) {
 func (s *rtspSession) broadcast(pkt *rtp.Packet) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.cacheForGOP(pkt)
 	for _, packets := range s.subscribers {
 		select {
 		case packets <- pkt.Clone():
@@ -374,4 +399,64 @@ func (s *rtspSession) broadcast(pkt *rtp.Packet) {
 			// Drop stale packets for slow browsers; live view should stay current.
 		}
 	}
+}
+
+// cacheForGOP maintains the current group-of-pictures for late-subscriber
+// priming. pkt is already a session-owned clone. A fresh slice is allocated on
+// each keyframe so snapshots taken by subscribers are never mutated underneath
+// them.
+func (s *rtspSession) cacheForGOP(pkt *rtp.Packet) {
+	if pkt == nil {
+		return
+	}
+	if h264IsKeyframeStart(pkt.Payload) {
+		s.gop = []*rtp.Packet{pkt}
+		s.haveKeyframe = true
+		s.gopOverflow = false
+		return
+	}
+	if !s.haveKeyframe || s.gopOverflow {
+		return
+	}
+	if len(s.gop) >= gopCacheMaxPackets {
+		// GOP too large to replay cleanly; drop it and wait for the next keyframe.
+		s.gop = nil
+		s.haveKeyframe = false
+		s.gopOverflow = true
+		return
+	}
+	s.gop = append(s.gop, pkt)
+}
+
+// h264IsKeyframeStart reports whether an H264 RTP payload begins a keyframe
+// access unit — i.e. it carries (or starts) an SPS (NAL type 7) or IDR slice
+// (type 5), across single-NAL, STAP-A aggregated, and FU-A fragmented packets.
+func h264IsKeyframeStart(payload []byte) bool {
+	if len(payload) < 1 {
+		return false
+	}
+	switch nalType := payload[0] & 0x1f; nalType {
+	case 5, 7: // single NAL unit: IDR slice or SPS
+		return true
+	case 24: // STAP-A: one or more aggregated NAL units
+		off := 1
+		for off+2 <= len(payload) {
+			size := int(payload[off])<<8 | int(payload[off+1])
+			off += 2
+			if size == 0 || off+size > len(payload) {
+				break
+			}
+			if t := payload[off] & 0x1f; t == 5 || t == 7 {
+				return true
+			}
+			off += size
+		}
+	case 28: // FU-A: only the start fragment marks the access unit boundary
+		if len(payload) >= 2 && payload[1]&0x80 != 0 {
+			if t := payload[1] & 0x1f; t == 5 || t == 7 {
+				return true
+			}
+		}
+	}
+	return false
 }

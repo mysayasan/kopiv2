@@ -75,9 +75,9 @@ type sadpProbe struct {
 // sadpProbeMatch handles both the flat format and the nested DeviceDescription format
 // used by different Hikvision firmware versions.
 type sadpProbeMatch struct {
-	XMLName xml.Name    `xml:"ProbeMatch"`
-	Uuid    string      `xml:"Uuid"`
-	Types   string      `xml:"Types"`
+	XMLName xml.Name `xml:"ProbeMatch"`
+	Uuid    string   `xml:"Uuid"`
+	Types   string   `xml:"Types"`
 	// Flat fields (newer firmware).
 	DeviceType      string `xml:"DeviceType"`
 	Manufacturer    string `xml:"Manufacturer"`

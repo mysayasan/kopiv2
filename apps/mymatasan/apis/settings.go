@@ -11,22 +11,35 @@ import (
 )
 
 type settingsApi struct {
-	serv       services.IRuntimeSettingsService
-	camera     services.ICameraService
-	userServ   services.ILocalUserService
-	visionTool services.VisionToolSettings
+	serv           services.IRuntimeSettingsService
+	camera         services.ICameraService
+	userServ       services.ILocalUserService
+	notifServ      services.INotificationSettingsService
+	healthServ     services.IHealthSettingsService
+	machineHealth  services.IMachineHealthSettingsService
+	machineMetrics services.IMachineMetricsProvider
+	visionTool     services.VisionToolSettings
 }
 
 // NewSettingsApi registers runtime settings routes.
-func NewSettingsApi(router *mux.Router, serv services.IRuntimeSettingsService, camera services.ICameraService, userServ services.ILocalUserService, visionTool services.VisionToolSettings) {
-	handler := &settingsApi{serv: serv, camera: camera, userServ: userServ, visionTool: visionTool}
+func NewSettingsApi(router *mux.Router, serv services.IRuntimeSettingsService, camera services.ICameraService, userServ services.ILocalUserService, notifServ services.INotificationSettingsService, healthServ services.IHealthSettingsService, machineHealth services.IMachineHealthSettingsService, machineMetrics services.IMachineMetricsProvider, visionTool services.VisionToolSettings) {
+	handler := &settingsApi{serv: serv, camera: camera, userServ: userServ, notifServ: notifServ, healthServ: healthServ, machineHealth: machineHealth, machineMetrics: machineMetrics, visionTool: visionTool}
 	group := router.PathPrefix("/settings").Subrouter()
 
 	group.HandleFunc("/runtime", handler.getRuntime).Methods("GET")
 	group.HandleFunc("/runtime", handler.saveRuntime).Methods("PUT")
 	group.HandleFunc("/runtime/auto-tune", handler.autoTuneRuntime).Methods("POST")
+	group.HandleFunc("/runtime/capture-auto-config", handler.captureAutoConfig).Methods("POST")
 	group.HandleFunc("/runtime/gpu-devices", handler.runtimeGPUDevices).Methods("GET")
 	group.HandleFunc("/runtime/reset", handler.resetRuntime).Methods("POST")
+	group.HandleFunc("/notification", handler.getNotification).Methods("GET")
+	group.HandleFunc("/notification", handler.saveNotification).Methods("PUT")
+	group.HandleFunc("/notification/test", handler.testNotification).Methods("POST")
+	group.HandleFunc("/health", handler.getHealth).Methods("GET")
+	group.HandleFunc("/health", handler.saveHealth).Methods("PUT")
+	group.HandleFunc("/machine-health", handler.getMachineHealth).Methods("GET")
+	group.HandleFunc("/machine-health", handler.saveMachineHealth).Methods("PUT")
+	group.HandleFunc("/machine-health/metrics", handler.getMachineMetrics).Methods("GET")
 	group.HandleFunc("/vision/ai-tool/status", handler.visionAIToolStatus).Methods("GET")
 	group.HandleFunc("/vision/ai-tool/install", handler.visionAIToolInstall).Methods("POST")
 	group.HandleFunc("/users", handler.listUsers).Methods("GET")
@@ -94,6 +107,103 @@ func (a *settingsApi) resetRuntime(w http.ResponseWriter, r *http.Request) {
 	controllers.SendResult(w, settings, "succeed")
 }
 
+func (a *settingsApi) getNotification(w http.ResponseWriter, r *http.Request) {
+	settings, err := a.notifServ.Get(r.Context())
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, settings, "succeed")
+}
+
+func (a *settingsApi) saveNotification(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
+	var body services.NotificationSettings
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	settings, err := a.notifServ.Save(r.Context(), body)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, settings, "succeed")
+}
+
+func (a *settingsApi) testNotification(w http.ResponseWriter, r *http.Request) {
+	severity := r.URL.Query().Get("severity")
+	if err := a.notifServ.Test(r.Context(), severity); err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, map[string]string{"status": "dispatched"}, "succeed")
+}
+
+func (a *settingsApi) getHealth(w http.ResponseWriter, r *http.Request) {
+	settings, err := a.healthServ.Get(r.Context())
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, settings, "succeed")
+}
+
+func (a *settingsApi) saveHealth(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+	var body services.HealthSettings
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	settings, err := a.healthServ.Save(r.Context(), body)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, settings, "succeed")
+}
+
+func (a *settingsApi) getMachineHealth(w http.ResponseWriter, r *http.Request) {
+	settings, err := a.machineHealth.Get(r.Context())
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, settings, "succeed")
+}
+
+func (a *settingsApi) saveMachineHealth(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+	var body services.MachineHealthSettings
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	settings, err := a.machineHealth.Save(r.Context(), body)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, settings, "succeed")
+}
+
+// getMachineMetrics returns a one-shot snapshot of current host CPU/memory/disk
+// usage for the live readout and "Check now" button.
+func (a *settingsApi) getMachineMetrics(w http.ResponseWriter, r *http.Request) {
+	if a.machineMetrics == nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, "machine metrics unavailable")
+		return
+	}
+	controllers.SendResult(w, a.machineMetrics.Sample(r.Context()), "succeed")
+}
+
 func (a *settingsApi) autoTuneRuntime(w http.ResponseWriter, r *http.Request) {
 	settings, err := a.serv.Get(r.Context())
 	if err != nil {
@@ -116,6 +226,30 @@ func (a *settingsApi) autoTuneRuntime(w http.ResponseWriter, r *http.Request) {
 	result.Applied = true
 	result.Settings = saved
 	controllers.SendResult(w, result, "succeed")
+}
+
+// captureAutoConfig derives Vision.Capture frame-sourcing params from detected
+// hardware (GPU presence + saved camera count), saves them, and returns the
+// updated runtime settings. It does not change capture behavior — Phase 0 only.
+func (a *settingsApi) captureAutoConfig(w http.ResponseWriter, r *http.Request) {
+	settings, err := a.serv.Get(r.Context())
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	devices, _, err := a.camera.Get(r.Context(), 1000, 0)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	env := services.DetectDecoderAutoTuneEnvironment(r.Context(), settings.Decoder.MJPEG.FFmpegPath)
+	tuned := services.AutoConfigCaptureSettings(settings, len(devices), env)
+	saved, err := a.serv.Save(r.Context(), tuned)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, saved, "succeed")
 }
 
 func (a *settingsApi) listUsers(w http.ResponseWriter, r *http.Request) {

@@ -16,12 +16,12 @@ type recorder interface {
 
 // CameraStatus reports the live state of one camera's recorder.
 type CameraStatus struct {
-	CameraId      int64  `json:"cameraId"`
-	Mode          string `json:"mode"`
-	State         string `json:"state"`         // "streaming" | "stopped" | "error"
-	FFmpegRunning   bool   `json:"ffmpegRunning"`   // true while the ffmpeg process is alive
-	LiveFiles       int    `json:"liveFiles"`       // number of segment files currently on disk
-	LiveDir         string `json:"liveDir"`         // absolute path to the live segment directory
+	CameraId        int64  `json:"cameraId"`
+	Mode            string `json:"mode"`
+	State           string `json:"state"`         // "streaming" | "stopped" | "error"
+	FFmpegRunning   bool   `json:"ffmpegRunning"` // true while the ffmpeg process is alive
+	LiveFiles       int    `json:"liveFiles"`     // number of segment files currently on disk
+	LiveDir         string `json:"liveDir"`       // absolute path to the live segment directory
 	LastError       string `json:"lastError,omitempty"`
 	ActiveStreamURL string `json:"activeStreamUrl,omitempty"` // URL currently being recorded
 	UsingFallback   bool   `json:"usingFallback,omitempty"`   // true when fallback stream is active
@@ -39,15 +39,20 @@ type statusProvider interface {
 type Manager struct {
 	mu        sync.RWMutex
 	recorders map[int64]recorder
-	sink      SegmentSink
-	ctx       context.Context
-	cancel    context.CancelFunc
+	// configs retains the last enabled config per camera so recorders can be
+	// stopped and restarted on pause/resume without losing their settings.
+	configs map[int64]RecorderConfig
+	paused  bool
+	sink    SegmentSink
+	ctx     context.Context
+	cancel  context.CancelFunc
 }
 
 func NewManager(sink SegmentSink) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Manager{
 		recorders: map[int64]recorder{},
+		configs:   map[int64]RecorderConfig{},
 		sink:      sink,
 		ctx:       ctx,
 		cancel:    cancel,
@@ -65,10 +70,20 @@ func (m *Manager) Configure(cfg RecorderConfig) error {
 		delete(m.recorders, cfg.CameraId)
 	}
 	if !cfg.Enabled {
+		delete(m.configs, cfg.CameraId)
 		return nil
 	}
 	if strings.TrimSpace(cfg.RTSPURI) == "" {
+		delete(m.configs, cfg.CameraId)
 		log.Printf("recording: cam%d has no RTSP URI — NVR recording skipped", cfg.CameraId)
+		return nil
+	}
+
+	// Remember the config so a paused recorder can be restarted on resume.
+	m.configs[cfg.CameraId] = cfg
+	if m.paused {
+		// Recording is paused (e.g. by the machine-health disk guard); defer the
+		// actual ffmpeg start until Resume.
 		return nil
 	}
 
@@ -78,6 +93,54 @@ func (m *Manager) Configure(cfg RecorderConfig) error {
 	}
 	m.recorders[cfg.CameraId] = r
 	return nil
+}
+
+// Pause stops every running recorder's ffmpeg without forgetting its config, so
+// no new NVR segments are written until Resume. Used by the machine-health disk
+// guard to stop a near-full volume from filling completely (which would break all
+// writes, including the database). It is idempotent.
+func (m *Manager) Pause() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.paused {
+		return
+	}
+	m.paused = true
+	for id, r := range m.recorders {
+		r.Close()
+		delete(m.recorders, id)
+	}
+	log.Printf("recording: paused (machine-health disk guard) — %d recorder configs retained", len(m.configs))
+}
+
+// Resume restarts the recorders for all retained configs after a Pause. It is
+// idempotent and a no-op when not paused.
+func (m *Manager) Resume() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.paused {
+		return
+	}
+	m.paused = false
+	for id, cfg := range m.configs {
+		if _, ok := m.recorders[id]; ok {
+			continue
+		}
+		r := newRTSPRecorder(cfg, m.sink)
+		if err := r.Start(m.ctx); err != nil {
+			log.Printf("recording: cam%d resume failed: %v", id, err)
+			continue
+		}
+		m.recorders[id] = r
+	}
+	log.Printf("recording: resumed — %d recorders restarted", len(m.recorders))
+}
+
+// IsPaused reports whether recording is currently paused.
+func (m *Manager) IsPaused() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.paused
 }
 
 // WriteFrame is a no-op in NVR mode; kept so the vision monitor compile-path is unchanged.

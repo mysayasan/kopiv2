@@ -12,6 +12,7 @@ type AlertEvent struct {
 	BoundingBox    string  `json:"boundingBox" form:"boundingBox" query:"boundingBox"`
 	SnapshotPath   string  `json:"snapshotPath" form:"snapshotPath" query:"snapshotPath"`
 	Metadata       string  `json:"metadata" form:"metadata" query:"metadata"`
+	IsDiagnostic   bool    `json:"isDiagnostic" form:"isDiagnostic" query:"isDiagnostic"`
 	IsAcknowledged bool    `json:"isAcknowledged" form:"isAcknowledged" query:"isAcknowledged"`
 	AcknowledgedBy int64   `json:"acknowledgedBy" form:"acknowledgedBy" query:"acknowledgedBy"`
 	AcknowledgedAt int64   `json:"acknowledgedAt" form:"acknowledgedAt" query:"acknowledgedAt"`

@@ -32,7 +32,7 @@
   "vision": {
     "enabled": true,
     "intervalMs": 2000,
-    "captureTimeoutMs": 12000,
+    "captureTimeoutMs": 5000,
     "diagnosticCooldownSeconds": 30,
     "detector": {
       "mode": "persistent",
@@ -53,6 +53,30 @@
         "multi_line_crossing": ["person", "vehicle", "car", "truck", "bus", "motorcycle", "bicycle"]
       }
     }
+  },
+  "health": {
+    "enabled": true,
+    "intervalMs": 30000,
+    "timeoutMs": 5000,
+    "failureThreshold": 3,
+    "recoveryThreshold": 2
+  },
+  "notification": {
+    "webhook": {
+      "enabled": false,
+      "url": "",
+      "minSeverity": "warning"
+    },
+    "telegram": {
+      "enabled": false,
+      "botToken": "",
+      "chatId": "",
+      "minSeverity": "warning"
+    },
+    "sseClientBuffer": 16,
+    "retentionDays": 30,
+    "purgeIntervalHours": 6,
+    "purgeReadOnly": false
   },
   "fileStorage": {
     "path": "./uploads",

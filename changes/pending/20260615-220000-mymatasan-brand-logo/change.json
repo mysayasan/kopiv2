@@ -1,0 +1,6 @@
+{
+  "type": "changed",
+  "scope": "mymatasan",
+  "summary": "Replace the top-bar 'MyMataSan' text with a left-aligned brand logo: an inline-SVG sea-green line-art shield holding a watchful eye + checkmark, with the rounded lowercase 'mymatasan' wordmark (Quicksand) underneath, matching the provided sample",
+  "compatibility": "Frontend-only. Loads the Quicksand Google Font via the index.html template (CDN); the wordmark has a system-font fallback."
+}

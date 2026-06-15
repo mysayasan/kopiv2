@@ -26,7 +26,7 @@ type RecorderConfig struct {
 // SegmentResult is produced when a video segment is written to disk.
 type SegmentResult struct {
 	CameraId  int64
-	AlertId   int64  // 0 for continuous segments; alert ID for event clips
+	AlertId   int64 // 0 for continuous segments; alert ID for event clips
 	FilePath  string
 	StartedAt int64
 	EndedAt   int64

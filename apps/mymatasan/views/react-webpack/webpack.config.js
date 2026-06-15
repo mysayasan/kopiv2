@@ -2,7 +2,9 @@ const path = require('path')
 const HtmlWebPackPlugin = require('html-webpack-plugin')
 const fs = require('fs')
 const htmlPlugin = new HtmlWebPackPlugin({
-  hash: true,
+  // Cache-busting comes from [contenthash] filenames below, which also covers
+  // runtime-loaded split chunks (the `?hash` query did not), so a content change
+  // always yields a new URL and browsers never serve a stale chunk.
   title: 'MyMataSan',
   template: path.resolve(__dirname, 'src', 'index.html'),
   favicon: './src/assets/favicon.ico'
@@ -14,7 +16,10 @@ module.exports = {
   entry: { index: path.resolve(__dirname, 'src', 'index.js') },
   output: {
     path: path.resolve(__dirname, '../../static'),
-    publicPath: '/'
+    publicPath: '/',
+    filename: '[name].[contenthash:8].js',
+    chunkFilename: '[name].[contenthash:8].js',
+    clean: true
   },
   plugins: [
     htmlPlugin,
@@ -25,8 +30,8 @@ module.exports = {
   module: {
     rules: [
       {
-        test: /\.(s*)css$/,
-        use: ['style-loader', 'css-loader', 'sass-loader']
+        test: /\.css$/,
+        use: ['style-loader', 'css-loader']
       },
       {
         test: /\.js$/,

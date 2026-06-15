@@ -111,18 +111,18 @@ type Frame struct {
 
 // Detection is one detector result before it is persisted as an alert event.
 type Detection struct {
-	RuleId          int64   `json:"ruleId"`
-	CameraId        int64   `json:"cameraId"`
-	DetectionType   string  `json:"detectionType"`
-	Label           string  `json:"label"`
-	Confidence      float64 `json:"confidence"`
-	ZonePolygon     string  `json:"zonePolygon"`
-	BoundingBox     string  `json:"boundingBox"`
-	Metadata        string  `json:"metadata"`
+	RuleId        int64   `json:"ruleId"`
+	CameraId      int64   `json:"cameraId"`
+	DetectionType string  `json:"detectionType"`
+	Label         string  `json:"label"`
+	Confidence    float64 `json:"confidence"`
+	ZonePolygon   string  `json:"zonePolygon"`
+	BoundingBox   string  `json:"boundingBox"`
+	Metadata      string  `json:"metadata"`
 	// FrameCapturedAt is the Unix timestamp (seconds) of the frame that produced
 	// this detection. It is set by each Detect implementation and must be used as
 	// the recording trigger anchor so that YOLO latency does not shift the clip window.
-	FrameCapturedAt int64   `json:"frameCapturedAt"`
+	FrameCapturedAt int64 `json:"frameCapturedAt"`
 }
 
 // Detector is implemented by reusable AI backends such as fire, person, or intrusion detectors.

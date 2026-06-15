@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "mymatasan",
+  "summary": "Live view tiles fail fast for offline cameras: when the health monitor reports a camera offline, the tile shows an 'Offline' placeholder immediately instead of hanging on WebRTC/MJPEG timeouts against the dead RTSP stream, and auto-recovers to live when health flips back online",
+  "compatibility": "Frontend-only. Uses the existing per-camera health status (refreshed every 15s and on the notification SSE stream); no backend change."
+}

@@ -26,13 +26,14 @@ IMGSZ_RAW = os.environ.get("MYMATASAN_YOLO_IMGSZ", "").strip()
 IMGSZ = int(IMGSZ_RAW) if IMGSZ_RAW else None
 IOU_RAW = os.environ.get("MYMATASAN_YOLO_IOU", "").strip()
 IOU = float(IOU_RAW) if IOU_RAW else None
+# Temporary diagnostic: when set, log every frame's raw detections to stderr so
+# we can see what YOLO actually returns (label + confidence) before any
+# threshold/zone/streak gating in Go. Set MYMATASAN_YOLO_DEBUG=1 to enable.
+DEBUG = os.environ.get("MYMATASAN_YOLO_DEBUG", "").strip() not in ("", "0", "false", "False")
 
 # Whether CUDA is available on this host — detected once after model load.
 # False on Raspberry Pi, True on Jetson/desktop GPU.
 _HAS_CUDA: bool = False
-
-# Per-camera saved tracker objects: camera_id -> tracker
-_camera_trackers: dict[int, Any] = {}
 
 
 def _check_cuda() -> bool:
@@ -56,36 +57,6 @@ def _label(names: Any, cls_id: int) -> str:
     if isinstance(names, list) and 0 <= cls_id < len(names):
         return str(names[cls_id]).lower()
     return str(cls_id)
-
-
-def _restore_tracker(model: Any, camera_id: int) -> None:
-    """Swap in this camera's saved ByteTrack state before calling model.track()."""
-    predictor = getattr(model, "predictor", None)
-    if predictor is None:
-        return
-    saved = _camera_trackers.get(camera_id)
-    if saved is not None:
-        trackers = getattr(predictor, "trackers", None)
-        if trackers is not None:
-            if len(trackers) > 0:
-                trackers[0] = saved
-            else:
-                trackers.append(saved)
-    else:
-        # New camera — reset so ByteTrack initialises fresh rather than
-        # inheriting the previous camera's tracker state.
-        if hasattr(predictor, "trackers"):
-            predictor.trackers = []
-
-
-def _save_tracker(model: Any, camera_id: int) -> None:
-    """Persist the updated ByteTrack state after model.track()."""
-    predictor = getattr(model, "predictor", None)
-    if predictor is None:
-        return
-    trackers = getattr(predictor, "trackers", None)
-    if trackers and len(trackers) > 0:
-        _camera_trackers[camera_id] = trackers[0]
 
 
 def _detect(model: Any, request: dict[str, Any]) -> list[dict[str, Any]]:
@@ -134,20 +105,17 @@ def _detect(model: Any, request: dict[str, Any]) -> list[dict[str, Any]]:
         if eff_max_det:
             kwargs["max_det"] = eff_max_det
 
+        # Plain predict (no ByteTrack). The previous per-camera tracker-swap
+        # raised "list index out of range" on every frame because one model
+        # instance cannot hold persistent per-source tracker state when frames
+        # from multiple cameras are interleaved — so it already fell back to
+        # predict 100% of the time while still paying the failed-track cost (and
+        # breaking cameras where the fallback also tripped). Detection rules
+        # (person/intrusion/animal) do not use track IDs, and the line-crossing
+        # detector does its own centroid tracking, so predict is the correct,
+        # reliable choice here.
         with contextlib.redirect_stdout(sys.stderr):
-            try:
-                _restore_tracker(model, camera_id)
-                results = model.track(
-                    tmp_path,
-                    tracker="bytetrack.yaml",
-                    persist=True,
-                    **kwargs,
-                )
-                _save_tracker(model, camera_id)
-            except Exception as exc:
-                # Fall back to plain predict if ByteTrack is unavailable or fails.
-                print(f"bytetrack failed, falling back to predict: {exc}", file=sys.stderr, flush=True)
-                results = model.predict(tmp_path, **kwargs)
+            results = model.predict(tmp_path, **kwargs)
     finally:
         if tmp_path:
             Path(tmp_path).unlink(missing_ok=True)
@@ -193,6 +161,18 @@ def _detect(model: Any, request: dict[str, Any]) -> list[dict[str, Any]]:
                     "metadata": metadata,
                 }
             )
+
+    if DEBUG:
+        if detections:
+            summary = ", ".join(
+                f"{d['label']}:{d['confidence']:.2f}"
+                f"@({d['box']['x']+d['box']['w']/2:.2f},{d['box']['y']+d['box']['h']/2:.2f})"
+                for d in detections
+            )
+        else:
+            summary = "none"
+        print(f"yolo-debug cam{camera_id}: {summary}", file=sys.stderr, flush=True)
+
     return detections
 
 

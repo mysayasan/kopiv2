@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "mymatasan",
+  "summary": "Add MYMATASAN_LINE_DEBUG env-gated per-sample line-crossing trace (candidates/matches, rejections, track match new-vs-continued, crossing intersects/direction/cooldown) for diagnosing rules that do not trigger",
+  "compatibility": "Off by default; set MYMATASAN_LINE_DEBUG=1 at launch to enable stderr trace lines."
+}

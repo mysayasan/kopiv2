@@ -117,17 +117,17 @@ func (s *recordingService) SaveConfig(ctx context.Context, req SaveRecordingConf
 	}
 
 	cfg := entities.RecordingConfig{
-		CameraId:       req.CameraId,
-		Enabled:        req.Enabled,
-		PreRollSec:     req.PreRollSec,
-		PostRollSec:    req.PostRollSec,
-		StoragePath:    strings.TrimSpace(req.StoragePath),
-		RetentionDays:  req.RetentionDays,
-		SegmentMinutes: req.SegmentMinutes,
+		CameraId:          req.CameraId,
+		Enabled:           req.Enabled,
+		PreRollSec:        req.PreRollSec,
+		PostRollSec:       req.PostRollSec,
+		StoragePath:       strings.TrimSpace(req.StoragePath),
+		RetentionDays:     req.RetentionDays,
+		SegmentMinutes:    req.SegmentMinutes,
 		LiveStreamUrl:     strings.TrimSpace(req.LiveStreamUrl),
 		StreamURL:         strings.TrimSpace(req.StreamURL),
 		FallbackStreamUrl: strings.TrimSpace(req.FallbackStreamUrl),
-		UpdatedAt:      now,
+		UpdatedAt:         now,
 	}
 
 	if existing != nil {

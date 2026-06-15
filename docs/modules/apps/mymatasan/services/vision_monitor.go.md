@@ -13,6 +13,7 @@ Runs the MyMataSan background vision monitor that samples saved cameras and pers
 - Forward every captured JPEG frame to the `recording.Manager` via `WriteFrame` so the ring buffer stays populated for pre-roll capture.
 - Run the configured reusable `infra/vision` detector against each captured frame and active camera rule set.
 - Persist detector results as alert events.
+- Publish each actionable alert as a notification via `NotifyVisionAlert`, resolving the triggering rule name (`ruleNameByID`), attaching the captured JPEG frame as the snapshot image, and applying the runtime `vision.alertNotification` field-inclusion config read from settings per sample.
 - On a successful alert creation, call `recording.Manager.TriggerEvent(cameraId, alertId, detection.FrameCapturedAt)` to start post-roll clip collection anchored to when the frame was captured, not when the detector finished processing it. This eliminates the YOLO latency shift that previously caused recordings to capture empty frames after the subject had already left.
 - Emit throttled diagnostic alert events for capture failures, detector failures, and successful samples with no threshold-crossing detection.
 

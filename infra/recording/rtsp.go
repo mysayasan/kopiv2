@@ -156,8 +156,16 @@ func (r *rtspRecorder) runFFmpeg(ctx context.Context, ffmpegPath, transport stri
 			// are muxed as a native MPEG-TS stream type. aresample=async=1
 			// compensates for cameras that send non-monotonic audio timestamps,
 			// which would otherwise cause "Queue input is backward in time" errors.
+			//
+			// osr=48000 resamples to a standard 48 kHz: cameras that send
+			// low-rate audio (e.g. 8 kHz G.711) otherwise exceed the AAC
+			// per-frame bit budget ("Too many bits > 6144 per frame requested,
+			// clamping to max"), which clamps the audio and surfaces as a
+			// spurious recorder error in the UI. A bounded -b:a keeps the
+			// requested bitrate within the per-frame budget at 48 kHz.
 			"-c:a", "aac",
-			"-af", "aresample=async=1",
+			"-b:a", "96k",
+			"-af", "aresample=async=1:osr=48000",
 			"-f", "segment",
 			"-segment_time", fmt.Sprintf("%d", segSec),
 			"-strftime", "1",
@@ -171,6 +179,10 @@ func (r *rtspRecorder) runFFmpeg(ctx context.Context, ffmpegPath, transport stri
 	currentURI := r.cfg.RTSPURI
 	usingFallback := false
 	failCount := 0
+	// quickFailStreak counts consecutive quick failures across stream switches
+	// (failCount is reset by the fallback switch, so it cannot drive backoff).
+	// It only resets after a healthy run, and governs the restart backoff.
+	quickFailStreak := 0
 
 	for {
 		if ctx.Err() != nil {
@@ -222,8 +234,10 @@ func (r *rtspRecorder) runFFmpeg(ctx context.Context, ffmpegPath, transport stri
 		// Only count as an unstable failure when the process ran for less than 10 s.
 		if time.Since(started) < 10*time.Second {
 			failCount++
+			quickFailStreak++
 		} else {
 			failCount = 0
+			quickFailStreak = 0
 		}
 
 		// After 2 quick failures switch streams (primary → fallback → primary …).
@@ -240,8 +254,25 @@ func (r *rtspRecorder) runFFmpeg(ctx context.Context, ffmpegPath, transport stri
 			failCount = 0
 		}
 
-		log.Printf("recording rtsp cam%d: ffmpeg exited; restarting in 3 s", r.cfg.CameraId)
-		time.Sleep(3 * time.Second)
+		// Adaptive restart backoff. A camera that streamed healthily and then
+		// dropped is most likely a transient blip — reconnect fast (1 s) so the
+		// gap of permanently-lost footage (which shows up as skipped time on the
+		// playback timeline) stays small. A camera that keeps failing quickly
+		// (bad URI, auth failure, hard-down) backs off so we don't hammer it or
+		// flood the logs.
+		restartDelay := time.Second
+		switch {
+		case quickFailStreak >= 5:
+			restartDelay = 15 * time.Second
+		case quickFailStreak >= 2:
+			restartDelay = 5 * time.Second
+		}
+		log.Printf("recording rtsp cam%d: ffmpeg exited; restarting in %s", r.cfg.CameraId, restartDelay)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(restartDelay):
+		}
 	}
 }
 
@@ -291,6 +322,9 @@ func (r *rtspRecorder) saveCompletedSegments(ctx context.Context, saved map[stri
 			if err != nil || fi.Size() == 0 {
 				continue
 			}
+			if ffmpegPath, ferr := resolveFFmpeg(r.cfg.FFmpegPath); ferr == nil {
+				endedAt = segmentEndedAt(ffmpegPath, f.path, f.startedAt, endedAt)
+			}
 			if r.sink != nil {
 				if err := r.sink.SaveSegment(ctx, SegmentResult{
 					CameraId:  r.cfg.CameraId,
@@ -336,6 +370,9 @@ func (r *rtspRecorder) remuxSegment(f liveSegInfo, endedAt int64) {
 	if err != nil || fi.Size() == 0 {
 		return
 	}
+	// Use the actual media duration; the inferred endedAt overstates segments
+	// that were cut short by an ffmpeg restart.
+	endedAt = segmentEndedAt(ffmpegPath, mp4Path, f.startedAt, endedAt)
 	if r.sink != nil {
 		if err := r.sink.SaveSegment(context.Background(), SegmentResult{
 			CameraId:  r.cfg.CameraId,
@@ -477,12 +514,17 @@ func (r *rtspRecorder) extractClip(alertId int64, triggerAt time.Time, postWait 
 		log.Printf("recording rtsp cam%d alert%d: %v", r.cfg.CameraId, alertId, err)
 		return
 	}
+	// -ss is placed BEFORE -i (input seeking) on purpose: with -c copy, ffmpeg
+	// then snaps the cut to the nearest keyframe at or before the requested
+	// offset, so the clip always begins on a keyframe. Output-side seeking
+	// (-ss after -i) would start the clip on whatever packet follows the offset
+	// — often a non-keyframe — which slides/smears until the next IDR.
 	args := []string{
 		"-hide_banner", "-loglevel", "warning",
 		"-fflags", "+genpts",
+		"-ss", fmt.Sprintf("%.3f", ssOffset.Seconds()),
 		"-f", "concat", "-safe", "0",
 		"-i", filepath.ToSlash(listPath),
-		"-ss", fmt.Sprintf("%.3f", ssOffset.Seconds()),
 		"-t", fmt.Sprintf("%.3f", duration.Seconds()),
 		"-c", "copy",
 		"-movflags", "+faststart",
@@ -530,6 +572,9 @@ func isNoisyFFmpegWarning(line string) bool {
 		"DTS discontinuity",
 		"is muxed as a private data stream",
 		"Queue input is backward in time",
+		// AAC encoder clamps the per-frame bitrate for low-rate audio; benign
+		// once the stream is resampled, but old/edge cases should not alarm.
+		"Too many bits",
 	}
 	for _, s := range noisy {
 		if strings.Contains(line, s) {

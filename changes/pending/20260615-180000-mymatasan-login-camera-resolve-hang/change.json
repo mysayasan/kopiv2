@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "mymatasan",
+  "summary": "Fix login hanging on an offline camera while resolving live view. Login no longer blocks on per-camera live-view resolution (tiles render immediately and refine in the background), known-offline cameras skip ONVIF/live-view probing entirely, and the SaveCredentials/ResolveLiveView ONVIF probe calls are bounded with an 8s sub-context so an unreachable camera cannot stack per-call timeouts (the DB write still uses the request context so credentials persist)",
+  "compatibility": "Frontend + camera-service hardening; no API or schema change."
+}

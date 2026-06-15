@@ -42,7 +42,10 @@ Declares service contracts for app-specific domain.
 
 - `SaveRecordingConfigRequest` — carries `CameraId`, `Enabled`, `PreRollSec`, `PostRollSec`, `StoragePath`, `RetentionDays`, `SegmentMinutes`, `StreamURL` (recording stream override), `FallbackStreamUrl` (fallback RTSP URI).
 - `VisionMonitorSettings` — carries startup-only monitor enablement, interval, capture timeout, diagnostic cooldown, detector implementation, and a `*recording.Manager` pointer.
-- `RuntimeSettings` — carries runtime-editable decoder and stream settings.
+- `RuntimeSettings` — carries runtime-editable decoder, stream, and vision settings.
+- `VisionSettings` — `Yolo` inference overrides, `Capture` frame-sourcing config, and `AlertNotification *AlertNotificationSettings`.
+- `AlertNotificationSettings` — which detection-alert fields/media (`includeRuleName`, `includeLabel`, `includeConfidence`, `includeBoundingBox`, `includeZonePolygon`, `includeSnapshot`) populate the notification payload. Pointer: nil = include everything.
+- `VisionAlertOptions` — extra per-alert notification context (`RuleName`, `Snapshot []byte`, `Fields *AlertNotificationSettings`) passed to `NotifyVisionAlert`.
 
 ## Why It Matters
 

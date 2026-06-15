@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -73,7 +74,27 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, `{"alive": true}`)
 }
 
-func readinessCheckHandler(db dbsql.IDbCrud, cacheStore appcache.Store) http.HandlerFunc {
+// readinessHolder lets the app's ReadinessReporter be attached after route
+// registration (app services are built later in RegisterAppRoutes) while the
+// /ready handler is mounted early. Safe for concurrent use.
+type readinessHolder struct {
+	mu       sync.RWMutex
+	reporter ReadinessReporter
+}
+
+func (h *readinessHolder) set(r ReadinessReporter) {
+	h.mu.Lock()
+	h.reporter = r
+	h.mu.Unlock()
+}
+
+func (h *readinessHolder) get() ReadinessReporter {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.reporter
+}
+
+func readinessCheckHandler(db dbsql.IDbCrud, cacheStore appcache.Store, extra *readinessHolder) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
@@ -92,9 +113,23 @@ func readinessCheckHandler(db dbsql.IDbCrud, cacheStore appcache.Store) http.Han
 			return
 		}
 
+		payload := map[string]any{"ok": true, "db": "up", "cache": "up"}
+		// Merge app-provided advisory status (e.g. machine, cameras). These never
+		// flip ok/HTTP status — readiness stays gated on db + cache only.
+		if extra != nil {
+			if reporter := extra.get(); reporter != nil {
+				for key, value := range reporter.ReadinessStatus(ctx) {
+					if key == "ok" || key == "db" || key == "cache" {
+						continue
+					}
+					payload[key] = value
+				}
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]any{"ok": true, "db": "up", "cache": "up"})
+		json.NewEncoder(w).Encode(payload)
 	}
 }
 
@@ -200,7 +235,8 @@ func Run(app App) error {
 	}
 	log.Printf("transaction lock provider=%s waitTimeoutMs=%d leaseMs=%d stuckTimeoutMs=%d", txLockProvider, transactionLockWaitTimeout(appConfig).Milliseconds(), transactionLockLease(appConfig).Milliseconds(), transactionStuckTimeout(appConfig).Milliseconds())
 
-	router.HandleFunc("/ready", readinessCheckHandler(dbCrud, cacheStore)).Methods("GET")
+	readyHolder := &readinessHolder{}
+	router.HandleFunc("/ready", readinessCheckHandler(dbCrud, cacheStore, readyHolder)).Methods("GET")
 
 	userLoginRepo := dbsql.NewGenericRepo[sharedEntities.UserLogin](dbCrud)
 	userRoleRepo := dbsql.NewGenericRepo[sharedEntities.UserRole](dbCrud)
@@ -307,6 +343,11 @@ func Run(app App) error {
 	shutdownHook, err := app.RegisterAppRoutes(api, deps)
 	if err != nil {
 		return err
+	}
+	// App services (e.g. health monitors) are constructed during RegisterAppRoutes;
+	// attach the reporter now so /ready can include their advisory status.
+	if reporter, ok := app.(ReadinessReporter); ok {
+		readyHolder.set(reporter)
 	}
 	if webRoutes, ok := app.(WebRouteRegistrar); ok {
 		if err := webRoutes.RegisterWebRoutes(router, deps); err != nil {

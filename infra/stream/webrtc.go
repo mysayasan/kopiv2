@@ -247,6 +247,21 @@ func pumpRTP(sub *Subscription, track *webrtc.TrackLocalStaticRTP, audioTrack *w
 			}
 		}()
 	}
+	// Replay the cached GOP first so the browser decoder initialises on a
+	// keyframe before the live stream resumes. Packets are session-owned and
+	// shared across subscribers, so clone before writing (WriteRTP rewrites the
+	// header SSRC/payload type per peer).
+	for _, pkt := range sub.Backlog {
+		if pkt == nil {
+			continue
+		}
+		if err := track.WriteRTP(pkt.Clone()); err != nil {
+			if errors.Is(err, io.ErrClosedPipe) {
+				return
+			}
+			return
+		}
+	}
 	for pkt := range sub.Packets {
 		if pkt == nil {
 			continue

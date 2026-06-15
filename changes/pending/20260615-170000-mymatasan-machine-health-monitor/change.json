@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "mymatasan",
+  "summary": "Add machine (host) health monitoring: samples CPU/memory/disk via gopsutil, raises debounced warning/critical + recovery notifications under the system category, and runs automatic disk mitigation — early retention purge, then pause/resume NVR recording — so a full volume cannot break recordings/snapshots/the database. Adds a Settings -> Machine Health tab with live readout + Check now, runtime-editable thresholds/mitigation, GET/PUT /api/settings/machine-health, and GET /api/settings/machine-health/metrics",
+  "compatibility": "Adds github.com/shirou/gopsutil/v3. Settings persist under a new machineHealth key (seeded with safe defaults). Auto-monitors the volumes the app writes to (working dir, recordings, logs) plus user-defined paths. Recording pause means footage is not captured while a disk sits above the pause threshold until it recovers below the resume threshold."
+}

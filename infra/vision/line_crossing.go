@@ -3,9 +3,26 @@ package vision
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
+	"os"
 	"strings"
 )
+
+// lineDebug gates verbose per-sample tracing of the line-crossing pipeline.
+// Enable by launching the server with MYMATASAN_LINE_DEBUG=1. Trace lines are
+// written to stderr (prefix "line-debug"). Mirrors MYMATASAN_YOLO_DEBUG in the
+// YOLO worker. Diagnostic only — remove the env to silence it.
+var lineDebug = func() bool {
+	v := strings.TrimSpace(os.Getenv("MYMATASAN_LINE_DEBUG"))
+	return v != "" && v != "0" && !strings.EqualFold(v, "false")
+}()
+
+func lineLog(format string, args ...any) {
+	if lineDebug {
+		log.Printf("line-debug "+format, args...)
+	}
+}
 
 const (
 	defaultLineMaxTrackDistance      = 0.25
@@ -162,6 +179,8 @@ func (d *ObjectRuleDetector) detectLineCrossing(rule DetectionRule, candidates [
 	ruleState.cleanup(now, cfg.TrackTTLSeconds)
 
 	matches := d.lineMatches(rule, cfg, candidates)
+	lineLog("cam=%d rule=%d(%q) candidates=%d matches=%d tracks=%d dir=%s maxDist=%.3f ttl=%ds",
+		rule.CameraId, rule.Id, rule.Name, len(candidates), len(matches), len(ruleState.tracks), cfg.Direction, cfg.MaxTrackDistance, cfg.TrackTTLSeconds)
 	if len(matches) == 0 {
 		return nil, nil
 	}
@@ -182,8 +201,13 @@ func (d *ObjectRuleDetector) detectLineCrossing(rule DetectionRule, candidates [
 		track.lastSeen = now
 		track.seen++
 		if isNew {
+			lineLog("cam=%d rule=%d NEW track=%d label=%s conf=%.2f center=(%.3f,%.3f) — need a 2nd matched sample on the other side of the line to fire",
+				rule.CameraId, rule.Id, track.id, match.candidate.Label, match.candidate.Confidence, match.center.X, match.center.Y)
 			continue
 		}
+		lineLog("cam=%d rule=%d track=%d label=%s conf=%.2f prev=(%.3f,%.3f) curr=(%.3f,%.3f) moved=%.3f",
+			rule.CameraId, rule.Id, track.id, match.candidate.Label, match.candidate.Confidence,
+			previous.X, previous.Y, match.center.X, match.center.Y, pointDistance(previous, match.center))
 
 		detection, crossed := d.lineCrossingDetection(rule, cfg, state, track, match.candidate, previous, now, cooldown)
 		if crossed {
@@ -207,14 +231,18 @@ func (d *ObjectRuleDetector) lineMatches(rule DetectionRule, cfg lineCrossingCon
 	for _, candidate := range candidates {
 		candidate.Label = strings.ToLower(strings.TrimSpace(candidate.Label))
 		if candidate.Label == "" || candidate.Confidence < minConfidence {
+			lineLog("cam=%d rule=%d REJECT label=%q conf=%.2f < min=%.2f (raise nothing — lower the rule threshold or move closer)",
+				rule.CameraId, rule.Id, candidate.Label, candidate.Confidence, minConfidence)
 			continue
 		}
 		if !d.lineLabelAllowed(rule, cfg, candidate.Label) {
+			lineLog("cam=%d rule=%d REJECT label=%q not in allowed classes %v", rule.CameraId, rule.Id, candidate.Label, cfg.Classes)
 			continue
 		}
 		candidate.Box = normalizeBox(candidate.Box)
 		center := boxCenter(candidate.Box)
 		if !pointInPolygon(center.X, center.Y, zone) {
+			lineLog("cam=%d rule=%d REJECT label=%q center=(%.3f,%.3f) outside zone polygon", rule.CameraId, rule.Id, candidate.Label, center.X, center.Y)
 			continue
 		}
 		result = append(result, lineMatch{candidate: candidate, center: center})
@@ -238,12 +266,19 @@ func (d *ObjectRuleDetector) lineCrossingDetection(rule DetectionRule, cfg lineC
 	switch normalizedDetectionType(rule.DetectionType) {
 	case DetectionLineCrossing:
 		for index, line := range cfg.Lines {
-			if !crossedLine(previous, track.center, line, cfg.Direction) {
+			intersects := segmentsIntersect(previous, track.center, line.A, line.B)
+			crossed := crossedLine(previous, track.center, line, cfg.Direction)
+			lineLog("cam=%d rule=%d evalLine id=%s A=(%.3f,%.3f) B=(%.3f,%.3f) intersects=%v dirMatch=%v crossed=%v",
+				rule.CameraId, rule.Id, line.ID, line.A.X, line.A.Y, line.B.X, line.B.Y,
+				intersects, directionMatches(previous, track.center, line, cfg.Direction), crossed)
+			if !crossed {
 				continue
 			}
 			if !ruleCooldownElapsed(state, rule.Id, now, cooldown) {
+				lineLog("cam=%d rule=%d CROSSED but suppressed by cooldown (%ds)", rule.CameraId, rule.Id, cooldown)
 				return Detection{}, false
 			}
+			lineLog("cam=%d rule=%d *** CROSSED line=%s — firing alert ***", rule.CameraId, rule.Id, line.ID)
 			state.lastTriggered[rule.Id] = now
 			return buildLineCrossingDetection(rule, candidate, track, line, index, 1, "line-crossing-detector"), true
 		}

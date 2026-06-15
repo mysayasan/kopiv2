@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "mymatasan",
+  "summary": "Add on-demand camera health probe (POST /api/cameras/health/refresh) that concurrently checks all cameras' reachability under a short capped timeout and returns fresh status; the web app calls it right after login so offline cameras (and their blank live-view tiles) resolve within ~3s instead of waiting for the debounced background sweep. N offline cameras cost ~one timeout window, not N",
+  "compatibility": "Reuses the health monitor's TCP-first/RTSP-fallback probe; persists the latest status to the camera badge but leaves the debounced offline/recovery notification state machine untouched."
+}

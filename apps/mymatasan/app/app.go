@@ -15,11 +15,13 @@ import (
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
 	apiaccessenums "github.com/mysayasan/kopiv2/domain/enums/apiaccess"
+	"github.com/mysayasan/kopiv2/domain/notification"
 	"github.com/mysayasan/kopiv2/infra/apidocs"
 	"github.com/mysayasan/kopiv2/infra/apphost"
 	"github.com/mysayasan/kopiv2/infra/config"
 	"github.com/mysayasan/kopiv2/infra/db/bootstrap"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	applog "github.com/mysayasan/kopiv2/infra/logging"
 	"github.com/mysayasan/kopiv2/infra/onvif"
 	"github.com/mysayasan/kopiv2/infra/recording"
 	"github.com/mysayasan/kopiv2/infra/rtsp"
@@ -28,10 +30,28 @@ import (
 	"github.com/mysayasan/kopiv2/infra/vision"
 )
 
-type module struct{}
+type module struct {
+	// Health monitors, captured during RegisterAppRoutes so ReadinessStatus can
+	// report their advisory state in the /ready payload.
+	cameraHealth  *services.CameraHealthMonitor
+	machineHealth *services.MachineHealthMonitor
+}
 
 func New() apphost.App {
 	return &module{}
+}
+
+// ReadinessStatus contributes machine and camera health to the shared /ready
+// endpoint (advisory only — it does not affect the ready/not-ready verdict).
+func (m *module) ReadinessStatus(_ context.Context) map[string]string {
+	out := map[string]string{}
+	if m.machineHealth != nil {
+		out["machine"] = m.machineHealth.ReadinessStatus()
+	}
+	if m.cameraHealth != nil {
+		out["cameras"] = m.cameraHealth.ReadinessStatus()
+	}
+	return out
 }
 
 func (m *module) Name() string {
@@ -60,6 +80,7 @@ func (m *module) Entities() []any {
 		appentities.LocalUser{},
 		appentities.RecordingSegment{},
 		appentities.RecordingConfig{},
+		sharedentities.Notification{},
 	}
 }
 
@@ -79,6 +100,7 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Runtime Settings", Description: "runtime decoder and stream settings access", Path: "/api/settings", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Local Users", Description: "standalone mymatasan user management access", Path: "/api/settings/users", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Recording", Description: "video recording segments and per-camera recording config access", Path: "/api/recording", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Notifications", Description: "unified notification feed and live stream access", Path: "/api/notifications", AccessTier: apiaccessenums.AuthOnly},
 	}
 
 	coreRbac := make([]string, 0, len(endpoints)*2)
@@ -93,6 +115,22 @@ WHERE NOT EXISTS (SELECT 1 FROM api_endpoint WHERE app_code = 'mymatasan' AND ho
 
 	seeders := []bootstrap.Seeder{
 		bootstrap.NewSQLSeeder("mymatasan-endpoints", coreRbac),
+		// Backfill the is_diagnostic flag for alert rows created before the column
+		// existed. ALTER TABLE ADD COLUMN leaves existing rows NULL, which the bool
+		// row scanner cannot read, so every NULL must be set to a concrete value:
+		// diagnostic samples to TRUE, everything else to FALSE. The IS NULL guard
+		// makes both statements a no-op once applied.
+		bootstrap.NewSQLSeeder("mymatasan-alert-diagnostic-backfill", []string{
+			`UPDATE alert_event SET is_diagnostic = TRUE WHERE is_diagnostic IS NULL AND metadata LIKE '%"diagnostic":true%';`,
+			`UPDATE alert_event SET is_diagnostic = FALSE WHERE is_diagnostic IS NULL;`,
+		}),
+		// The camera health columns are added via ALTER TABLE, which leaves existing
+		// rows NULL. The int64 row scanner cannot read a NULL bigint, so backfill
+		// last_health_check_at to 0; health_status is NULL-safe but normalized too.
+		bootstrap.NewSQLSeeder("mymatasan-camera-health-backfill", []string{
+			`UPDATE camera SET last_health_check_at = 0 WHERE last_health_check_at IS NULL;`,
+			`UPDATE camera SET health_status = '' WHERE health_status IS NULL;`,
+		}),
 	}
 
 	if len(seedStatements) > 0 {
@@ -117,6 +155,25 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	settingsService := services.NewRuntimeSettingsService(runtimeSettingsRepo, runtimeSettingsFromAppConfig(deps.Config))
 	localUserService := services.NewLocalUserService(localUserRepo)
 	recordingService := services.NewRecordingService(recordingSegmentRepo, recordingConfigRepo)
+	notificationRepo := dbsql.NewGenericRepo[sharedentities.Notification](deps.Db)
+	notificationService := notification.NewService(notificationRepo, notificationOptionsFromAppConfig(deps.Config, deps.Logger))
+	notificationSettingsService := services.NewNotificationSettingsService(
+		runtimeSettingsRepo,
+		notificationService,
+		notificationSettingsDefaultsFromAppConfig(deps.Config),
+	)
+	healthSettingsService := services.NewHealthSettingsService(
+		runtimeSettingsRepo,
+		healthSettingsDefaultsFromAppConfig(deps.Config),
+	)
+	machineHealthSettingsService := services.NewMachineHealthSettingsService(
+		runtimeSettingsRepo,
+		services.DefaultMachineHealthSettings(),
+	)
+	// Load persisted notification delivery settings and apply them to the hub.
+	if err := notificationSettingsService.Sync(context.Background()); err != nil {
+		deps.Logger.Warnf("mymatasan.notification", "load notification settings failed: %v", err)
+	}
 	if err := localUserService.EnsureDefaultAdmin(context.Background()); err != nil {
 		return nil, fmt.Errorf("seed local admin user failed: %w", err)
 	}
@@ -170,13 +227,40 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		wg.Wait()
 	}
 
+	// Built before route registration so the camera API can expose an on-demand
+	// health probe; started later alongside the other background monitors.
+	cameraHealthMonitor := services.NewCameraHealthMonitor(cameraService, rtsp.NewClient(), healthSettingsService, notificationService)
+	m.cameraHealth = cameraHealthMonitor
+
+	// Host (machine) health monitor: samples CPU/memory/disk and runs disk
+	// mitigation. Auto-monitored volumes are the ones the app writes to — the
+	// working dir, the snapshot/recordings dir, the log dir, and each camera's
+	// recording storage path — plus any custom paths from settings.
+	machineAutoPaths := []string{"."}
+	if sd := strings.TrimSpace(deps.Config.Vision.SnapshotDir); sd != "" {
+		machineAutoPaths = append(machineAutoPaths, sd)
+	}
+	if lp := strings.TrimSpace(deps.Config.Logging.Path); lp != "" {
+		machineAutoPaths = append(machineAutoPaths, filepath.Dir(lp))
+	}
+	if recConfigs, err := recordingService.ListConfigs(context.Background()); err == nil {
+		for _, rc := range recConfigs {
+			if rc != nil && strings.TrimSpace(rc.StoragePath) != "" {
+				machineAutoPaths = append(machineAutoPaths, rc.StoragePath)
+			}
+		}
+	}
+	machineHealthMonitor := services.NewMachineHealthMonitor(machineHealthSettingsService, notificationService, recorderManager, recordingService, machineAutoPaths)
+	m.machineHealth = machineHealthMonitor
+
 	protected := api.PathPrefix("").Subrouter()
 	protected.Use(apis.NewLocalBasicAuth(localUserService))
 	apis.NewOnvifApi(protected, cameraService, settingsService, streamManager)
-	apis.NewCameraApi(protected, cameraService, settingsService, streamManager)
-	apis.NewVisionApi(protected, visionService, recorderManager)
-	apis.NewSettingsApi(protected, settingsService, cameraService, localUserService, visionToolSettingsFromAppConfig(deps.Config))
+	apis.NewCameraApi(protected, cameraService, settingsService, streamManager, cameraHealthMonitor)
+	apis.NewVisionApi(protected, visionService, recorderManager, notificationService, cameraService, settingsService)
+	apis.NewSettingsApi(protected, settingsService, cameraService, localUserService, notificationSettingsService, healthSettingsService, machineHealthSettingsService, machineHealthMonitor, visionToolSettingsFromAppConfig(deps.Config))
 	apis.NewRecordingApi(protected, recordingService, recorderManager, cameraService, settingsService)
+	apis.NewNotificationApi(protected, notificationService)
 
 	monitorCtx, stopMonitor := context.WithCancel(context.Background())
 	monitorSettings, err := visionMonitorSettingsFromAppConfig(deps.Config)
@@ -186,9 +270,22 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		return nil, err
 	}
 	monitorSettings.Recorder = recorderManager
+	monitorSettings.Notifier = notificationService
 	if monitorSettings.Enabled {
 		services.NewVisionMonitor(cameraService, visionService, settingsService, monitorSettings).Start(monitorCtx)
 	}
+
+	// Camera health monitor: probes camera reachability and raises offline/recovery
+	// notifications. Independent of the vision monitor; shares the same lifecycle.
+	// It reads its settings live from healthSettingsService each sweep, so enabling
+	// or retuning it from the Settings UI takes effect without a restart — there is
+	// no startup Enabled gate.
+	cameraHealthMonitor.Start(monitorCtx)
+
+	// Host health monitor: samples CPU/memory/disk live, raises threshold
+	// notifications, and runs disk mitigation (early purge + pause/resume
+	// recording). Reads its settings live, so it can be retuned without a restart.
+	machineHealthMonitor.Start(monitorCtx)
 
 	// Purge expired segments once at startup, then every 6 hours.
 	go func() {
@@ -205,14 +302,88 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		}
 	}()
 
+	// Purge expired notifications once at startup, then on a configured interval.
+	// Retention (days / onlyRead) is read live from the notification settings each
+	// run, so changes made in the UI take effect without a restart.
+	{
+		interval := time.Duration(deps.Config.Notification.PurgeIntervalHours) * time.Hour
+		if interval <= 0 {
+			interval = 6 * time.Hour
+		}
+		go func() {
+			purge := func() {
+				days, onlyRead := notificationSettingsService.Retention(monitorCtx)
+				if days <= 0 {
+					return
+				}
+				if deleted, err := notificationService.PurgeOlderThanDays(monitorCtx, days, onlyRead); err != nil {
+					deps.Logger.Warnf("mymatasan.notification", "notification purge failed: %v", err)
+				} else if deleted > 0 {
+					deps.Logger.Infof("mymatasan.notification", "purged %d expired notifications", deleted)
+				}
+			}
+			purge()
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					purge()
+				case <-monitorCtx.Done():
+					return
+				}
+			}
+		}()
+	}
+
 	return func(ctx context.Context) error {
 		stopMonitor()
 		recorderManager.Close()
+		_ = notificationService.Close(ctx)
 		if closer, ok := monitorSettings.Detector.(io.Closer); ok {
 			_ = closer.Close()
 		}
 		return streamManager.Close()
 	}, nil
+}
+
+// notificationOptionsFromAppConfig builds always-on notification options. The
+// outbound delivery channels (webhook, telegram) are applied separately from the
+// persisted, runtime-editable notification settings.
+func notificationOptionsFromAppConfig(cfg *config.AppConfigModel, logger applog.Logger) notification.Options {
+	return notification.Options{
+		Logger:          logger,
+		SSEClientBuffer: cfg.Notification.SSEClientBuffer,
+	}
+}
+
+// notificationSettingsDefaultsFromAppConfig maps the config.json notification
+// block into the default runtime-editable notification settings. These seed the
+// persisted settings on first run; thereafter the UI-edited copy wins.
+func notificationSettingsDefaultsFromAppConfig(cfg *config.AppConfigModel) services.NotificationSettings {
+	n := cfg.Notification
+	retentionInterval := n.PurgeIntervalHours
+	if retentionInterval <= 0 {
+		retentionInterval = 6
+	}
+	return services.NotificationSettings{
+		Webhook: services.NotificationWebhookSettings{
+			Enabled:     boolValue(n.Webhook.Enabled, false),
+			URL:         strings.TrimSpace(n.Webhook.URL),
+			MinSeverity: n.Webhook.MinSeverity,
+		},
+		Telegram: services.NotificationTelegramSettings{
+			Enabled:     boolValue(n.Telegram.Enabled, false),
+			BotToken:    strings.TrimSpace(n.Telegram.BotToken),
+			ChatId:      strings.TrimSpace(n.Telegram.ChatId),
+			MinSeverity: n.Telegram.MinSeverity,
+		},
+		Retention: services.NotificationRetentionSettings{
+			Days:          n.RetentionDays,
+			OnlyRead:      n.PurgeReadOnly,
+			IntervalHours: retentionInterval,
+		},
+	}
 }
 
 func runtimeSettingsFromAppConfig(cfg *config.AppConfigModel) services.RuntimeSettings {
@@ -279,6 +450,20 @@ func visionMonitorSettingsFromAppConfig(cfg *config.AppConfigModel) (services.Vi
 		SnapshotDir:               snapshotDir,
 		Detector:                  detector,
 	}, nil
+}
+
+// healthSettingsDefaultsFromAppConfig maps the config.json health block into the
+// default runtime-editable health settings. These seed the persisted settings on
+// first run; thereafter the UI-edited copy wins.
+func healthSettingsDefaultsFromAppConfig(cfg *config.AppConfigModel) services.HealthSettings {
+	h := cfg.Health
+	return services.HealthSettings{
+		Enabled:           boolValue(h.Enabled, true),
+		IntervalMs:        h.IntervalMs,
+		TimeoutMs:         h.TimeoutMs,
+		FailureThreshold:  h.FailureThreshold,
+		RecoveryThreshold: h.RecoveryThreshold,
+	}
 }
 
 func visionToolSettingsFromAppConfig(cfg *config.AppConfigModel) services.VisionToolSettings {
@@ -465,6 +650,31 @@ func (m *module) APIDocs() apidocs.SpecConfig {
 				Description: "Resets runtime settings to the startup config defaults.",
 				Tags:        []string{"settings"},
 			},
+			"GET /api/settings/notification": {
+				Summary:     "Get notification settings",
+				Description: "Returns runtime-editable notification delivery settings (webhook, telegram, retention).",
+				Tags:        []string{"settings"},
+			},
+			"PUT /api/settings/notification": {
+				Summary:     "Update notification settings",
+				Description: "Updates notification delivery settings and reconfigures the live delivery channels without a restart.",
+				Tags:        []string{"settings"},
+			},
+			"POST /api/settings/notification/test": {
+				Summary:     "Send test notification",
+				Description: "Dispatches a test notification at the given severity so webhook/telegram configuration can be verified.",
+				Tags:        []string{"settings"},
+			},
+			"GET /api/settings/health": {
+				Summary:     "Get camera health settings",
+				Description: "Returns the runtime-editable camera health monitor settings (enabled, interval, timeout, failure/recovery thresholds).",
+				Tags:        []string{"settings"},
+			},
+			"PUT /api/settings/health": {
+				Summary:     "Update camera health settings",
+				Description: "Updates the camera health monitor settings; the monitor reads them live on the next sweep, so changes apply without a restart.",
+				Tags:        []string{"settings"},
+			},
 			"GET /api/settings/vision/ai-tool/status": {
 				Summary:     "Check AI tool readiness",
 				Description: "Checks the configured external AI detector command, Python packages, worker script, model file, and native fallback status.",
@@ -524,6 +734,26 @@ func (m *module) APIDocs() apidocs.SpecConfig {
 				Summary:     "Acknowledge AI alert",
 				Description: "Marks one AI alert event as acknowledged.",
 				Tags:        []string{"vision"},
+			},
+			"GET /api/notifications": {
+				Summary:     "List notifications",
+				Description: "Returns the unified notification feed (vision alerts, health checks, system events). Supports paging, cameraId, and unread filters.",
+				Tags:        []string{"notification"},
+			},
+			"GET /api/notifications/stream": {
+				Summary:     "Stream notifications (SSE)",
+				Description: "Server-Sent Events stream that pushes new notifications to connected clients in real time.",
+				Tags:        []string{"notification"},
+			},
+			"POST /api/notifications/{id}/read": {
+				Summary:     "Mark notification read",
+				Description: "Marks one notification as read by the current user.",
+				Tags:        []string{"notification"},
+			},
+			"POST /api/notifications/purge": {
+				Summary:     "Purge old notifications",
+				Description: "Deletes notifications older than the olderThanDays query parameter. Set onlyRead=true to keep unread notifications.",
+				Tags:        []string{"notification"},
 			},
 			"POST /api/onvif/devices": {
 				Summary:     "Save ONVIF device",

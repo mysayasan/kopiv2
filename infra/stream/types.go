@@ -43,12 +43,19 @@ type SessionDescription struct {
 // H264ProfileLevelID is the 6-hex-digit SDP fmtp value derived from the camera's
 // H264 SPS (e.g. "640028" for High 4.0). Empty string means the camera SPS was
 // absent from the RTSP DESCRIBE response; the WebRTC layer falls back to "42e01f".
+// Backlog holds a snapshot of the current video GOP (from the most recent
+// keyframe up to the moment of subscription). The WebRTC layer writes it to the
+// peer before draining Packets so a late-joining browser starts decoding on a
+// keyframe instead of mid-GOP — which would otherwise slide/smear until the
+// camera's next IDR. It is captured atomically with subscriber registration, so
+// there is no gap or overlap between the backlog and the first live packet.
 type Subscription struct {
 	Codec              Codec
 	Packets            <-chan *rtp.Packet
 	AudioCodec         Codec
 	AudioPackets       <-chan *rtp.Packet
 	H264ProfileLevelID string
+	Backlog            []*rtp.Packet
 	Close              func()
 }
 

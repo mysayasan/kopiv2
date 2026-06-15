@@ -10,7 +10,9 @@ Manages SQLite-backed runtime settings for `mymatasan`.
 - Read and save decoder and live stream settings as one JSON payload.
 - Reset runtime settings to startup defaults.
 - Normalize legacy decoder payloads so older rows with only `decoder.mjpeg.ffmpegPath` receive safe ffmpeg tuning defaults.
-- Validate decoder transport, hardware acceleration mode, optional decoder name, and ICE server URL entries before saving.
+- Seed and clamp the `vision.capture` block (frame-sourcing mode + interval/width/timeout/fps/staleLimit) with SAFE FIXED defaults that never probe hardware; the `vision.yolo` inference overrides; and the `vision.alertNotification` field-inclusion config.
+- Treat a nil `vision.alertNotification` (legacy rows / never configured) as "include everything" via `defaultAlertNotificationSettings()`; an explicit struct with fields set to false is preserved so operators can trim the notification payload.
+- Validate decoder transport, hardware acceleration mode, optional decoder name, capture mode, and ICE server URL entries before saving.
 - Provide focused reads for decoder and stream callers.
 - Convert runtime decoder settings into `infra/rtsp.MJPEGOptions` for live MJPEG and vision frame capture.
 - Build decoder auto-tune recommendations from saved camera RTSP metadata and ffmpeg hardware-acceleration capability checks.

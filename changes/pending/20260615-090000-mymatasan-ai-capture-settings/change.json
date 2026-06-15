@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "mymatasan",
+  "summary": "Add runtime AI frame-capture settings (mode/interval/frameWidth/standalone/siphon) with a Settings Capture card and hardware-aware Auto Config button (Phase 0; monitor still standalone)",
+  "compatibility": "New vision.capture runtime settings seed safe fixed defaults on first read; no migration required. POST /api/settings/runtime/capture-auto-config derives values from detected GPU/CPU and camera count."
+}

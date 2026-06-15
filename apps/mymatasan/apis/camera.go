@@ -24,6 +24,7 @@ type cameraApi struct {
 	serv          services.ICameraService
 	settings      services.IRuntimeSettingsService
 	streamManager *stream.Manager
+	healthProber  services.ICameraHealthProber
 }
 
 type saveDiscoveredRequest struct {
@@ -63,11 +64,12 @@ type webRTCOfferRequest struct {
 }
 
 // NewCameraApi registers camera CRUD, streaming, and PTZ routes under /cameras.
-func NewCameraApi(router *mux.Router, serv services.ICameraService, settings services.IRuntimeSettingsService, streamManager *stream.Manager) {
-	handler := &cameraApi{serv: serv, settings: settings, streamManager: streamManager}
+func NewCameraApi(router *mux.Router, serv services.ICameraService, settings services.IRuntimeSettingsService, streamManager *stream.Manager, healthProber services.ICameraHealthProber) {
+	handler := &cameraApi{serv: serv, settings: settings, streamManager: streamManager, healthProber: healthProber}
 	group := router.PathPrefix("/cameras").Subrouter()
 
 	group.HandleFunc("", handler.get).Methods("GET")
+	group.HandleFunc("/health/refresh", handler.refreshHealth).Methods("POST")
 	group.HandleFunc("/discovered", handler.saveDiscovered).Methods("POST")
 	group.HandleFunc("/{id}/credentials", handler.saveCredentials).Methods("POST")
 	group.HandleFunc("/{id}/camera-password", handler.changeCameraPassword).Methods("POST")
@@ -94,6 +96,18 @@ func (a *cameraApi) get(w http.ResponseWriter, r *http.Request) {
 	controllers.SendPagingResult(w, res, limit, offset, totalCnt)
 }
 
+// refreshHealth runs an immediate concurrent reachability probe of all cameras
+// and returns fresh per-camera status, so the UI can flag offline cameras at
+// login without waiting for the debounced background sweep.
+func (a *cameraApi) refreshHealth(w http.ResponseWriter, r *http.Request) {
+	if a.healthProber == nil {
+		controllers.SendResult(w, []services.CameraHealthSnapshot{}, "succeed")
+		return
+	}
+	results := a.healthProber.ProbeAllNow(r.Context())
+	controllers.SendResult(w, results, "succeed")
+}
+
 func (a *cameraApi) saveDiscovered(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
 	var body saveDiscoveredRequest
@@ -104,7 +118,7 @@ func (a *cameraApi) saveDiscovered(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	detail := services.CameraDetail{
-		Camera: services.CameraFromDevice(body.Device, body.Name, body.Description),
+		Camera:       services.CameraFromDevice(body.Device, body.Name, body.Description),
 		XAddr:        body.XAddr,
 		Types:        strings.Join(body.Types, " "),
 		Scopes:       strings.Join(body.Scopes, " "),

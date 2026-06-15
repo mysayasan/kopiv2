@@ -1,0 +1,6 @@
+{
+  "type": "changed",
+  "scope": "mymatasan",
+  "summary": "Declutter the topbar by collapsing the primary module tabs (Live Views, Cameras, AI, Recording, Settings) into a single dropdown styled like the theme dropdown; the trigger shows the active module",
+  "compatibility": "Frontend-only; same navigation targets, just a compact dropdown instead of a row of tab buttons."
+}

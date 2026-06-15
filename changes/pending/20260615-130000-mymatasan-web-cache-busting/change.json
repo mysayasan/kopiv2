@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "mymatasan",
+  "summary": "Fix blank/stuck-loading SPA after rebuilds: use content-hashed webpack output filenames ([name].[contenthash].js) so runtime-loaded split chunks (e.g. the app-code chunk) are cache-busted too. The previous [name].js + HtmlWebpackPlugin hash:true only busted HTML-injected entry scripts, so browsers served a stale app chunk that mismatched the fresh runtime and the app failed to mount",
+  "compatibility": "Frontend build-config change only; the Go SPA handler serves whatever index.html references from disk. After deploying, do one hard refresh (Ctrl+Shift+R) to pick up the new index.html; thereafter cache-busting is automatic."
+}

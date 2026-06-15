@@ -249,7 +249,6 @@ func (a *recordingApi) setLiveStream(w http.ResponseWriter, r *http.Request) {
 	controllers.SendResult(w, device, "succeed")
 }
 
-
 func readRecordingID(w http.ResponseWriter, r *http.Request) (uint64, bool) {
 	id, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
 	if err != nil || id == 0 {

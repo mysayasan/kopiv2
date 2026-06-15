@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "core,mymatasan",
+  "summary": "Include machine and camera health in the /ready service-readiness payload. Adds an apphost ReadinessReporter app interface so app modules can contribute advisory status fields; mymatasan reports machine (host CPU/mem/disk: ok/warning/critical) and cameras (ok or 'degraded (N offline)') from the in-memory monitor state. Advisory only — the ready/not-ready verdict stays gated on db + cache. Updates the ReadyResponse OpenAPI schema (which was also missing cache)",
+  "compatibility": "Shared /ready handler gains an optional reporter; apps that do not implement ReadinessReporter are unaffected. /ready now returns extra advisory fields (machine, cameras) for mymatasan but still 200/503 based only on db + cache."
+}

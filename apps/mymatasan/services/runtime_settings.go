@@ -25,6 +25,18 @@ const (
 	defaultDecoderAnalyzeDuration = 1000000
 )
 
+// Vision.Capture built-in defaults. These are SAFE FIXED values seeded at boot;
+// they never probe hardware. The Auto Config button overwrites them after running
+// hardware detection. 0 in any field means "use the built-in default below".
+const (
+	defaultCaptureMode          = "auto"
+	defaultCaptureIntervalMs    = 2000
+	defaultCaptureFrameWidth    = 640
+	defaultCaptureTimeoutMs     = 5000
+	defaultCaptureSiphonFps     = 1
+	defaultCaptureSiphonStaleMs = 4000
+)
+
 var decoderNamePattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 
 type runtimeSettingsService struct {
@@ -177,7 +189,41 @@ func normalizeRuntimeSettings(settings RuntimeSettings) RuntimeSettings {
 	if settings.Vision.Yolo.MaxDet < 0 {
 		settings.Vision.Yolo.MaxDet = 0
 	}
+	settings.Vision.Capture = normalizeCaptureSettings(settings.Vision.Capture)
+	if settings.Vision.AlertNotification == nil {
+		settings.Vision.AlertNotification = defaultAlertNotificationSettings()
+	}
 	return settings
+}
+
+// defaultAlertNotificationSettings returns the all-inclusive default: every field
+// and the snapshot image are added to the alert notification. Seeded by
+// createDefaults and substituted whenever the stored value is absent.
+func defaultAlertNotificationSettings() *AlertNotificationSettings {
+	return &AlertNotificationSettings{
+		IncludeRuleName:    true,
+		IncludeLabel:       true,
+		IncludeConfidence:  true,
+		IncludeBoundingBox: true,
+		IncludeZonePolygon: true,
+		IncludeSnapshot:    true,
+	}
+}
+
+// normalizeCaptureSettings clamps the frame-sourcing params and seeds the safe
+// fixed defaults for any zero/invalid field. This is how createDefaults ends up
+// with SAFE FIXED defaults without probing hardware.
+func normalizeCaptureSettings(c CaptureSettings) CaptureSettings {
+	c.Mode = strings.ToLower(strings.TrimSpace(c.Mode))
+	if !validCaptureMode(c.Mode) {
+		c.Mode = defaultCaptureMode
+	}
+	c.IntervalMs = normalizeInt(c.IntervalMs, defaultCaptureIntervalMs, 250, 60000)
+	c.FrameWidth = normalizeInt(c.FrameWidth, defaultCaptureFrameWidth, 160, 1920)
+	c.Standalone.CaptureTimeoutMs = normalizeInt(c.Standalone.CaptureTimeoutMs, defaultCaptureTimeoutMs, 500, 60000)
+	c.Siphon.Fps = normalizeInt(c.Siphon.Fps, defaultCaptureSiphonFps, 1, 30)
+	c.Siphon.StaleLimitMs = normalizeInt(c.Siphon.StaleLimitMs, defaultCaptureSiphonStaleMs, 500, 120000)
+	return c
 }
 
 func boolPointerValue(value *bool, fallback bool) bool {
@@ -202,6 +248,9 @@ func validateRuntimeSettings(settings RuntimeSettings) error {
 	}
 	if settings.Decoder.FFmpeg.VideoDecoder != "" && !decoderNamePattern.MatchString(settings.Decoder.FFmpeg.VideoDecoder) {
 		return fmt.Errorf("decoder.ffmpeg.videoDecoder may only contain letters, numbers, and underscores")
+	}
+	if !validCaptureMode(settings.Vision.Capture.Mode) {
+		return fmt.Errorf("vision.capture.mode must be one of auto, siphon, or standalone")
 	}
 	for idx, server := range settings.Stream.WebRTC.ICEServers {
 		if len(server.URLs) == 0 {
@@ -245,6 +294,15 @@ func normalizeInt(value int, fallback int, minValue int, maxValue int) int {
 func validDecoderRTSPTransport(value string) bool {
 	switch value {
 	case "tcp", "udp", "udp_multicast", "http", "https":
+		return true
+	default:
+		return false
+	}
+}
+
+func validCaptureMode(value string) bool {
+	switch value {
+	case "auto", "siphon", "standalone":
 		return true
 	default:
 		return false

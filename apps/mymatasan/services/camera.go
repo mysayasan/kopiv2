@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
@@ -15,6 +16,13 @@ import (
 	"github.com/mysayasan/kopiv2/infra/onvif"
 	"github.com/mysayasan/kopiv2/infra/rtsp"
 )
+
+// cameraProbeTimeout bounds the ONVIF probe portion of credential/live-view
+// resolution so an offline or slow camera cannot stack several per-call HTTP
+// timeouts (15–30s) and hang the request. The database write that follows uses
+// the original request context, so persistence still succeeds when the probe is
+// cancelled.
+const cameraProbeTimeout = 8 * time.Second
 
 type onvifClient interface {
 	Discover(ctx context.Context, timeout time.Duration) ([]onvif.Device, error)
@@ -33,7 +41,20 @@ type cameraService struct {
 	onvifRepo  dbsql.IGenericRepo[entities.CameraOnvif]
 	client     onvifClient
 	rtspClient rtsp.Client
+	nameMu     sync.Mutex
+	nameCache  map[int64]cachedCameraName
 }
+
+// cachedCameraName memoizes a camera's resolved display name so callers (e.g. the
+// vision monitor, which resolves a name per detection) do not hit the database
+// every time. Entries are invalidated on any camera write, so renames reflect
+// immediately; the TTL is only a backstop against out-of-band database changes.
+type cachedCameraName struct {
+	name string
+	at   int64 // unix seconds when cached
+}
+
+const cameraNameCacheTTL = 30 * time.Minute
 
 // NewCameraService creates a service that manages cameras across all protocols.
 func NewCameraService(
@@ -47,7 +68,49 @@ func NewCameraService(
 		onvifRepo:  onvifRepo,
 		client:     client,
 		rtspClient: rtspClient,
+		nameCache:  map[int64]cachedCameraName{},
 	}
+}
+
+// DisplayName returns the camera's human-readable name, served from a cache that
+// is invalidated whenever the camera is written.
+func (s *cameraService) DisplayName(ctx context.Context, id int64) string {
+	if id <= 0 {
+		return ""
+	}
+	now := time.Now().Unix()
+	ttl := int64(cameraNameCacheTTL.Seconds())
+
+	s.nameMu.Lock()
+	if cached, ok := s.nameCache[id]; ok && now-cached.at < ttl {
+		s.nameMu.Unlock()
+		return cached.name
+	}
+	s.nameMu.Unlock()
+
+	// Only the Camera row is needed (name/model/host); skip the ONVIF lookup.
+	cam, err := s.cameraRepo.GetById(ctx, "", uint64(id))
+	if err != nil || cam == nil {
+		// Don't cache failures; retry on the next call.
+		return ""
+	}
+	name := CameraDisplayName(cam.Name, cam.Model, cam.Host)
+
+	s.nameMu.Lock()
+	s.nameCache[id] = cachedCameraName{name: name, at: now}
+	s.nameMu.Unlock()
+	return name
+}
+
+// invalidateName drops a camera's cached display name so the next DisplayName
+// call re-reads it from the database.
+func (s *cameraService) invalidateName(id int64) {
+	if id <= 0 {
+		return
+	}
+	s.nameMu.Lock()
+	delete(s.nameCache, id)
+	s.nameMu.Unlock()
 }
 
 // — Discovery ----------------------------------------------------------------
@@ -167,6 +230,7 @@ func (s *cameraService) Save(ctx context.Context, detail CameraDetail) (uint64, 
 		}
 	}
 
+	s.invalidateName(cam.Id)
 	return uint64(cam.Id), nil
 }
 
@@ -183,7 +247,10 @@ func (s *cameraService) SaveCredentials(ctx context.Context, id uint64, credenti
 	}
 	// Best-effort: update MediaXAddr/PTZ capabilities. Ignore failure so credentials
 	// are always persisted even when GetCapabilities requires auth first (chicken-and-egg).
-	_ = s.refreshCapabilities(ctx, detail, onvif.Credentials{Username: detail.Username, Password: detail.Password})
+	// Bounded so an unreachable camera cannot hang the request.
+	probeCtx, cancel := context.WithTimeout(ctx, cameraProbeTimeout)
+	_ = s.refreshCapabilities(probeCtx, detail, onvif.Credentials{Username: detail.Username, Password: detail.Password})
+	cancel()
 	if err := s.saveDetail(ctx, detail); err != nil {
 		return nil, err
 	}
@@ -362,9 +429,13 @@ func (s *cameraService) ResolveLiveView(ctx context.Context, id uint64, credenti
 	if credentials.Password == "" {
 		credentials.Password = detail.Password
 	}
-	_ = s.refreshCapabilities(ctx, detail, credentials)
+	// Bound the ONVIF probe calls so an unreachable camera cannot stack per-call
+	// timeouts and hang the request; the DB write below uses the original context.
+	probeCtx, cancelProbe := context.WithTimeout(ctx, cameraProbeTimeout)
+	defer cancelProbe()
+	_ = s.refreshCapabilities(probeCtx, detail, credentials)
 
-	snapshot, snapshotErr := s.client.GetSnapshotURI(ctx, onvif.StreamURIRequest{
+	snapshot, snapshotErr := s.client.GetSnapshotURI(probeCtx, onvif.StreamURIRequest{
 		DeviceServiceURL: detail.XAddr,
 		MediaServiceURL:  detail.MediaXAddr,
 		ProfileToken:     detail.ProfileToken,
@@ -373,7 +444,7 @@ func (s *cameraService) ResolveLiveView(ctx context.Context, id uint64, credenti
 	var streamErr error
 	if strings.TrimSpace(detail.Camera.RTSPUrl) == "" {
 		var stream *onvif.StreamURIResult
-		stream, streamErr = s.client.GetStreamURI(ctx, onvif.StreamURIRequest{
+		stream, streamErr = s.client.GetStreamURI(probeCtx, onvif.StreamURIRequest{
 			DeviceServiceURL: detail.XAddr,
 			MediaServiceURL:  detail.MediaXAddr,
 			ProfileToken:     detail.ProfileToken,
@@ -509,6 +580,33 @@ func (s *cameraService) PTZStop(ctx context.Context, id uint64) (*CameraDetail, 
 	return detail, nil
 }
 
+// — Health -------------------------------------------------------------------
+
+// UpdateHealth persists a camera's live reachability state recorded by the
+// health monitor. On an "online" status it also advances LastSeenAt. Only the
+// camera row is touched (no ONVIF child row), and the name cache is left intact
+// since none of these fields feed the display name.
+func (s *cameraService) UpdateHealth(ctx context.Context, id int64, status string, checkedAt int64) error {
+	if id <= 0 {
+		return errors.New("id is required")
+	}
+	cam, err := s.cameraRepo.GetById(ctx, "", uint64(id))
+	if err != nil {
+		return err
+	}
+	if cam == nil {
+		return errors.New("camera not found")
+	}
+	cam.HealthStatus = status
+	cam.LastHealthCheckAt = checkedAt
+	if status == "online" {
+		cam.LastSeenAt = checkedAt
+	}
+	cam.UpdatedAt = time.Now().UTC().Unix()
+	_, err = s.cameraRepo.UpdateById(ctx, "", *cam)
+	return err
+}
+
 // — Delete -------------------------------------------------------------------
 
 func (s *cameraService) Delete(ctx context.Context, id uint64) (uint64, error) {
@@ -516,6 +614,7 @@ func (s *cameraService) Delete(ctx context.Context, id uint64) (uint64, error) {
 	if ov, err := s.onvifRepo.GetByUnique(ctx, "", "camera_id", int64(id)); err == nil && ov != nil {
 		_, _ = s.onvifRepo.DeleteById(ctx, "", uint64(ov.Id))
 	}
+	s.invalidateName(int64(id))
 	return s.cameraRepo.DeleteById(ctx, "", id)
 }
 
@@ -558,6 +657,7 @@ func (s *cameraService) saveDetail(ctx context.Context, detail *CameraDetail) er
 	if _, err := s.cameraRepo.UpdateById(ctx, "", detail.Camera); err != nil {
 		return err
 	}
+	s.invalidateName(detail.Camera.Id)
 	if strings.TrimSpace(detail.XAddr) == "" {
 		return nil
 	}
@@ -815,9 +915,9 @@ func CameraFromDevice(device onvif.Device, name string, description string) enti
 		Model:           device.Model,
 		FirmwareVersion: device.FirmwareVersion,
 		SerialNumber:    device.SerialNumber,
-		RTSPUrl:    device.RTSPURL,
-		SnapshotURI: device.SnapshotURI,
-		LastSeenAt: device.LastSeenAt,
+		RTSPUrl:         device.RTSPURL,
+		SnapshotURI:     device.SnapshotURI,
+		LastSeenAt:      device.LastSeenAt,
 		IsActive:        true,
 	}
 }

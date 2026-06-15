@@ -26,8 +26,10 @@ type VisionMonitor struct {
 	settings    IRuntimeSettingsService
 	detector    vision.Detector
 	recorder    *recording.Manager
+	notifier    INotificationPublisher
 	client      *http.Client
 	interval    time.Duration
+	refresh     time.Duration
 	timeout     time.Duration
 	diagCD      time.Duration
 	snapshotDir string
@@ -52,14 +54,23 @@ func NewVisionMonitor(camera ICameraService, visionService IVisionService, setti
 	if diagCooldown <= 0 {
 		diagCooldown = 30 * time.Second
 	}
+	// Cameras are reconciled (rules/schedule/inference re-read, samplers
+	// started/stopped) on this cadence; it is independent of the per-camera
+	// sampling interval and only needs to be responsive to rule edits.
+	refresh := 5 * time.Second
+	if refresh > interval {
+		refresh = interval
+	}
 	return &VisionMonitor{
 		camera:      camera,
 		vision:      visionService,
 		settings:    settings,
 		detector:    detector,
 		recorder:    monitor.Recorder,
+		notifier:    monitor.Notifier,
 		client:      &http.Client{Timeout: 8 * time.Second},
 		interval:    interval,
+		refresh:     refresh,
 		timeout:     timeout,
 		diagCD:      diagCooldown,
 		snapshotDir: monitor.SnapshotDir,
@@ -72,6 +83,17 @@ func (m *VisionMonitor) Start(ctx context.Context) {
 }
 
 func (m *VisionMonitor) run(ctx context.Context) {
+	// Each camera samples on its own goroutine/timer so a slow or failing
+	// camera (e.g. an RTSP source that hits the capture timeout every frame)
+	// cannot throttle the sampling cadence of the healthy ones. A reconcile
+	// loop keeps the running samplers in sync with the active detection rules.
+	samplers := map[int64]*cameraSampler{}
+	defer func() {
+		for _, s := range samplers {
+			s.cancel()
+		}
+	}()
+
 	timer := time.NewTimer(1 * time.Second)
 	defer timer.Stop()
 	for {
@@ -79,83 +101,172 @@ func (m *VisionMonitor) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-timer.C:
-			m.tick(ctx)
-			timer.Reset(m.interval)
+			m.reconcileSamplers(ctx, samplers)
+			timer.Reset(m.refresh)
 		}
 	}
 }
 
-func (m *VisionMonitor) tick(ctx context.Context) {
+// reconcileSamplers starts a sampler for each camera that has active rules,
+// updates the rules/inference of running samplers, and stops samplers whose
+// camera no longer has any active rule.
+func (m *VisionMonitor) reconcileSamplers(ctx context.Context, samplers map[int64]*cameraSampler) {
 	rules, _, err := m.vision.GetRules(ctx, 1000, 0)
 	if err != nil {
 		return
 	}
 	byCamera := activeRulesByCamera(rules, time.Now().UTC())
 
-	// Read YOLO inference settings once per tick and attach to every frame.
+	// Read YOLO inference settings once per reconcile and attach to every frame.
 	inference := vision.InferenceParams{}
 	if settings, err := m.settings.Get(ctx); err == nil {
 		inference = YoloInferenceParamsFromSettings(settings.Vision.Yolo)
 	}
 
-	// Capture all cameras concurrently so a slow camera doesn't delay others.
-	// Detection still serialises naturally on the motion detector's internal mutex.
-	var wg sync.WaitGroup
 	for cameraID, cameraRules := range byCamera {
-		if ctx.Err() != nil {
-			break
+		if s, ok := samplers[cameraID]; ok {
+			s.setState(cameraRules, inference)
+			continue
 		}
-		wg.Add(1)
-		go func(cameraID int64, cameraRules []vision.DetectionRule) {
-			defer wg.Done()
-			frameCtx, cancel := context.WithTimeout(ctx, m.timeout)
-			frame, err := m.captureFrame(frameCtx, cameraID)
-			cancel()
-			frame.Inference = inference
-			if err != nil {
-				m.emitDiagnostics(ctx, cameraRules, "capture_failed", err.Error(), map[string]any{
-					"cameraId": cameraID,
-				})
-				return
-			}
-			if m.recorder != nil {
-				m.recorder.WriteFrame(cameraID, frame.Data, frame.CapturedAt)
-			}
-			detections, err := m.detector.Detect(ctx, frame, cameraRules)
-			if err != nil {
-				m.emitDiagnostics(ctx, cameraRules, "detect_failed", err.Error(), map[string]any{
-					"cameraId":   cameraID,
-					"capturedAt": frame.CapturedAt,
-				})
-				return
-			}
-			if len(detections) == 0 {
-				m.emitDiagnostics(ctx, cameraRules, "sampled", "frame captured; no detection above threshold", map[string]any{
-					"cameraId":   cameraID,
-					"capturedAt": frame.CapturedAt,
-					"format":     frame.Format,
-				})
-			}
-			snapPath := m.saveSnapshot(cameraID, frame.Data, frame.CapturedAt)
-			for _, detection := range detections {
-				alert, _ := m.vision.CreateAlert(ctx, AlertEventRequest{
-					RuleId:        detection.RuleId,
-					CameraId:      detection.CameraId,
-					DetectionType: detection.DetectionType,
-					Label:         detection.Label,
-					Confidence:    detection.Confidence,
-					ZonePolygon:   detection.ZonePolygon,
-					BoundingBox:   detection.BoundingBox,
-					SnapshotPath:  snapPath,
-					Metadata:      detection.Metadata,
-				}, 0)
-				if m.recorder != nil && alert != nil {
-					m.recorder.TriggerEvent(detection.CameraId, alert.Id, detection.FrameCapturedAt)
-				}
-			}
-		}(cameraID, cameraRules)
+		sctx, cancel := context.WithCancel(ctx)
+		s := &cameraSampler{monitor: m, cameraID: cameraID, cancel: cancel}
+		s.setState(cameraRules, inference)
+		samplers[cameraID] = s
+		go s.loop(sctx)
 	}
-	wg.Wait()
+	for cameraID, s := range samplers {
+		if _, ok := byCamera[cameraID]; !ok {
+			s.cancel()
+			delete(samplers, cameraID)
+		}
+	}
+}
+
+// cameraSampler runs an independent capture→detect→alert loop for one camera.
+type cameraSampler struct {
+	monitor  *VisionMonitor
+	cameraID int64
+	cancel   context.CancelFunc
+
+	mu        sync.Mutex
+	rules     []vision.DetectionRule
+	inference vision.InferenceParams
+}
+
+func (s *cameraSampler) setState(rules []vision.DetectionRule, inference vision.InferenceParams) {
+	s.mu.Lock()
+	s.rules = rules
+	s.inference = inference
+	s.mu.Unlock()
+}
+
+func (s *cameraSampler) state() ([]vision.DetectionRule, vision.InferenceParams) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rules, s.inference
+}
+
+func (s *cameraSampler) loop(ctx context.Context) {
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			rules, inference := s.state()
+			s.monitor.sampleCamera(ctx, s.cameraID, rules, inference)
+			timer.Reset(s.monitor.interval)
+		}
+	}
+}
+
+// sampleCamera captures one frame from a camera, runs detection against its
+// rules, and raises alerts. It is the per-camera body of the sampling loop.
+func (m *VisionMonitor) sampleCamera(ctx context.Context, cameraID int64, cameraRules []vision.DetectionRule, inference vision.InferenceParams) {
+	if len(cameraRules) == 0 {
+		return
+	}
+	frameCtx, cancel := context.WithTimeout(ctx, m.timeout)
+	frame, err := m.captureFrame(frameCtx, cameraID)
+	cancel()
+	frame.Inference = inference
+	if err != nil {
+		m.emitDiagnostics(ctx, cameraRules, "capture_failed", err.Error(), map[string]any{
+			"cameraId": cameraID,
+		})
+		return
+	}
+	if m.recorder != nil {
+		m.recorder.WriteFrame(cameraID, frame.Data, frame.CapturedAt)
+	}
+	detections, err := m.detector.Detect(ctx, frame, cameraRules)
+	if err != nil {
+		m.emitDiagnostics(ctx, cameraRules, "detect_failed", err.Error(), map[string]any{
+			"cameraId":   cameraID,
+			"capturedAt": frame.CapturedAt,
+		})
+		return
+	}
+	if len(detections) == 0 {
+		m.emitDiagnostics(ctx, cameraRules, "sampled", "frame captured; no detection above threshold", map[string]any{
+			"cameraId":   cameraID,
+			"capturedAt": frame.CapturedAt,
+			"format":     frame.Format,
+		})
+	}
+	snapPath := m.saveSnapshot(cameraID, frame.Data, frame.CapturedAt)
+	// Resolve the camera's display name and the alert-notification field config
+	// once per sample so notifications carry the real name and the user's chosen
+	// fields/image instead of recomputing per detection.
+	cameraName := ""
+	var notifyFields *AlertNotificationSettings
+	if len(detections) > 0 {
+		cameraName = m.cameraDisplayName(ctx, cameraID)
+		notifyFields = m.alertNotificationFields(ctx)
+	}
+	for _, detection := range detections {
+		alert, _ := m.vision.CreateAlert(ctx, AlertEventRequest{
+			RuleId:        detection.RuleId,
+			CameraId:      detection.CameraId,
+			DetectionType: detection.DetectionType,
+			Label:         detection.Label,
+			Confidence:    detection.Confidence,
+			ZonePolygon:   detection.ZonePolygon,
+			BoundingBox:   detection.BoundingBox,
+			SnapshotPath:  snapPath,
+			Metadata:      detection.Metadata,
+		}, 0)
+		if m.recorder != nil && alert != nil {
+			m.recorder.TriggerEvent(detection.CameraId, alert.Id, detection.FrameCapturedAt)
+		}
+		NotifyVisionAlert(ctx, m.notifier, alert, cameraName, VisionAlertOptions{
+			RuleName: ruleNameByID(cameraRules, detection.RuleId),
+			Snapshot: BuildAlertSnapshot(frame.Data, detection.BoundingBox, detection.Metadata, detection.DetectionType, notifyFields),
+			Fields:   notifyFields,
+		})
+	}
+}
+
+// alertNotificationFields reads the runtime-editable field-inclusion config that
+// governs what each detection alert contributes to its notification. On error it
+// returns nil, which NotifyVisionAlert treats as "include everything".
+func (m *VisionMonitor) alertNotificationFields(ctx context.Context) *AlertNotificationSettings {
+	settings, err := m.settings.Get(ctx)
+	if err != nil {
+		return nil
+	}
+	return settings.Vision.AlertNotification
+}
+
+// ruleNameByID returns the name of the rule with the given id, or "" if absent.
+func ruleNameByID(rules []vision.DetectionRule, id int64) string {
+	for _, rule := range rules {
+		if rule.Id == id {
+			return rule.Name
+		}
+	}
+	return ""
 }
 
 func (m *VisionMonitor) emitDiagnostics(ctx context.Context, rules []vision.DetectionRule, status string, message string, extra map[string]any) {
@@ -227,6 +338,16 @@ func activeRulesByCamera(rules []*entities.DetectionRule, now time.Time) map[int
 		result[rule.CameraId] = append(result[rule.CameraId], spec)
 	}
 	return result
+}
+
+// cameraDisplayName resolves a camera's human-readable name. The camera service
+// caches and invalidates names on write, so this stays cheap even with many
+// cameras and reflects renames immediately.
+func (m *VisionMonitor) cameraDisplayName(ctx context.Context, cameraID int64) string {
+	if m.camera == nil {
+		return ""
+	}
+	return m.camera.DisplayName(ctx, cameraID)
 }
 
 func (m *VisionMonitor) saveSnapshot(cameraID int64, data []byte, capturedAt int64) string {

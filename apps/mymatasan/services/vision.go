@@ -63,7 +63,7 @@ func (s *visionService) DeleteRule(ctx context.Context, id uint64) (uint64, erro
 	return s.rules.DeleteById(ctx, "", id)
 }
 
-func (s *visionService) GetAlerts(ctx context.Context, limit uint64, offset uint64, cameraId int64, createdAfter int64, createdBefore int64) ([]*entities.AlertEvent, uint64, error) {
+func (s *visionService) GetAlerts(ctx context.Context, limit uint64, offset uint64, cameraId int64, createdAfter int64, createdBefore int64, ruleId int64, status string) ([]*entities.AlertEvent, uint64, error) {
 	var filters []sqldataenums.Filter
 	if cameraId > 0 {
 		filters = append(filters, sqldataenums.Filter{FieldName: "CameraId", Compare: sqldataenums.Equal, Value: cameraId})
@@ -73,6 +73,21 @@ func (s *visionService) GetAlerts(ctx context.Context, limit uint64, offset uint
 	}
 	if createdBefore > 0 {
 		filters = append(filters, sqldataenums.Filter{FieldName: "CreatedAt", Compare: sqldataenums.LessThan, Value: createdBefore})
+	}
+	if ruleId > 0 {
+		filters = append(filters, sqldataenums.Filter{FieldName: "RuleId", Compare: sqldataenums.Equal, Value: ruleId})
+	}
+	switch status {
+	case "active":
+		// Real, unacknowledged detections (exclude diagnostics).
+		filters = append(filters,
+			sqldataenums.Filter{FieldName: "IsAcknowledged", Compare: sqldataenums.Equal, Value: false},
+			sqldataenums.Filter{FieldName: "IsDiagnostic", Compare: sqldataenums.Equal, Value: false},
+		)
+	case "acknowledged":
+		filters = append(filters, sqldataenums.Filter{FieldName: "IsAcknowledged", Compare: sqldataenums.Equal, Value: true})
+	case "diagnostic":
+		filters = append(filters, sqldataenums.Filter{FieldName: "IsDiagnostic", Compare: sqldataenums.Equal, Value: true})
 	}
 	sorters := []sqldataenums.Sorter{{FieldName: "CreatedAt", Sort: sqldataenums.DESC}}
 	return s.alerts.Get(ctx, "", limit, offset, filters, sorters)
@@ -88,6 +103,7 @@ func (s *visionService) CreateAlert(ctx context.Context, req AlertEventRequest, 
 		return nil, err
 	}
 	alert := alertEventEntity(spec)
+	alert.IsDiagnostic = isDiagnosticMetadata(alert.Metadata)
 	now := time.Now().UTC().Unix()
 	alert.CreatedBy = userId
 	alert.CreatedAt = now

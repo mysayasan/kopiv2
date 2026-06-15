@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "infra,mymatasan",
+  "summary": "Enrich AI alert notifications with rule name + snapshot image and a runtime field-inclusion config (vision.alertNotification); Telegram delivers the snapshot via sendPhoto, webhook embeds it as base64. Adds a non-persisted notification Attachment so persistence/SSE/log skip the image",
+  "compatibility": "vision.alertNotification defaults to including all fields and the snapshot when unset (legacy rows unaffected). NewVisionApi gained a runtime-settings dependency so the manual create-alert path honors the config."
+}

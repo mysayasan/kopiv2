@@ -107,12 +107,6 @@ func (d *ObjectRuleDetector) Detect(ctx context.Context, frame Frame, rules []De
 			continue
 		}
 		candidate, matched := d.bestCandidate(rule, candidates)
-		if matched {
-			state.hitsByRule[rule.Id]++
-		} else {
-			state.hitsByRule[rule.Id] = 0
-			continue
-		}
 
 		minFrames := rule.MinFrames
 		if minFrames <= 0 {
@@ -122,6 +116,25 @@ func (d *ObjectRuleDetector) Detect(ctx context.Context, frame Frame, rules []De
 		if cooldown <= 0 {
 			cooldown = DefaultDetectionCooldown
 		}
+
+		if matched {
+			// Cap the streak at minFrames so it triggers promptly and clears
+			// within minFrames misses once the object leaves.
+			if state.hitsByRule[rule.Id] < minFrames {
+				state.hitsByRule[rule.Id]++
+			}
+		} else {
+			// Decay instead of hard-resetting to 0. A single dropped frame
+			// (YOLO confidence flicker, brief occlusion, person at the frame
+			// edge) should not wipe accumulated evidence — at realistic sample
+			// rates that means the alert never fires even while the object is
+			// continuously present.
+			if state.hitsByRule[rule.Id] > 0 {
+				state.hitsByRule[rule.Id]--
+			}
+			continue
+		}
+
 		if state.hitsByRule[rule.Id] < minFrames {
 			continue
 		}

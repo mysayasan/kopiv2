@@ -314,6 +314,10 @@ func normalizeScannedValue(raw interface{}, fieldType reflect.Type) interface{} 
 		}
 		return &normalized
 	}
+	if value, ok := raw.(*sql.NullBool); ok && fieldType.Kind() == reflect.Bool {
+		normalized := value.Valid && value.Bool
+		return &normalized
+	}
 
 	return raw
 }
@@ -354,7 +358,9 @@ func scanDestinationForField(fieldType reflect.Type) interface{} {
 	case reflect.String:
 		return new(sql.NullString)
 	case reflect.Bool:
-		return new(bool)
+		// Use NullBool so columns added via ALTER TABLE (NULL on existing rows)
+		// scan without error; normalizeScannedValue maps NULL to false.
+		return new(sql.NullBool)
 	default:
 		return new(interface{})
 	}

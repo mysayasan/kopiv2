@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "core",
+  "summary": "Fix Server-Sent Events endpoints (e.g. /api/notifications/stream) returning HTTP 500 'streaming unsupported' and the browser EventSource reconnecting in a loop. The request-log/api-activity-log statusWriter wrapper embedded the http.ResponseWriter interface and so hid the concrete writer's Flush; it now implements http.Flusher by forwarding Flush to the underlying writer",
+  "compatibility": "Shared middleware fix; benefits every app's streaming endpoints. No API or behavior change for non-streaming requests."
+}

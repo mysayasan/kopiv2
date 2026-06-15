@@ -1,0 +1,6 @@
+{
+  "type": "changed",
+  "scope": "mymatasan",
+  "summary": "Move per-camera recording configuration to the Cameras page (new Recording secondary tab) so the Recording page is view-only (event clips + all recordings). RecordingTab gains a mode prop (view/config); the config half renders in Cameras via a slot to avoid a circular import. Also tidy the Cameras page: stable per-camera tab-panel height, neutralize nested-workspace padding, and fix a hardcoded description color that broke dark theme",
+  "compatibility": "Frontend-only reorganization; same recording config/segment APIs. Recording config now lives under Cameras -> Recording; the Recording page shows recordings only."
+}

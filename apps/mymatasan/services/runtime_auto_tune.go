@@ -16,15 +16,15 @@ import (
 )
 
 type DecoderAutoTuneEnvironment struct {
-	GOOS        string                 `json:"goos"`
-	FFmpegFound bool                   `json:"ffmpegFound"`
-	FFmpegPath  string                 `json:"ffmpegPath"`
-	FFmpegSource string                `json:"ffmpegSource"`
-	HWAccels    []string               `json:"hwaccels"`
-	FFmpegError string                 `json:"ffmpegError"`
-	VAAPIDevice string                 `json:"vaapiDevice"`
-	GPUDevices  DecoderGPUDeviceResult `json:"gpuDevices"`
-	InContainer bool                   `json:"inContainer"`
+	GOOS         string                 `json:"goos"`
+	FFmpegFound  bool                   `json:"ffmpegFound"`
+	FFmpegPath   string                 `json:"ffmpegPath"`
+	FFmpegSource string                 `json:"ffmpegSource"`
+	HWAccels     []string               `json:"hwaccels"`
+	FFmpegError  string                 `json:"ffmpegError"`
+	VAAPIDevice  string                 `json:"vaapiDevice"`
+	GPUDevices   DecoderGPUDeviceResult `json:"gpuDevices"`
+	InContainer  bool                   `json:"inContainer"`
 }
 
 type RuntimeAutoTuneResult struct {
@@ -182,6 +182,50 @@ func AutoTuneRuntimeSettings(current RuntimeSettings, devices []*CameraDetail, e
 		Observations: observations,
 		Settings:     normalizeRuntimeSettings(tuned),
 	}
+}
+
+// AutoConfigCaptureSettings derives the Vision.Capture frame-sourcing params from
+// detected hardware (GPU presence + saved camera count) with a safe fixed fallback.
+// It mutates only the Capture block of current and returns the normalized settings.
+//
+// Decision table:
+//   - GPU present     -> intervalMs 1000, siphon.fps 2, frameWidth 640
+//   - CPU-only        -> intervalMs 2000, siphon.fps 1, frameWidth 640
+//   - CPU + >=4 cams  -> intervalMs 3000, siphon.fps 1, frameWidth 640
+//
+// A failed/empty hardware probe yields no GPU devices, which falls through to the
+// CPU-only branch — identical to the seeded fixed defaults, so detection failure
+// safely "keeps fixed defaults". Always: captureTimeoutMs 5000,
+// staleLimitMs = 2*intervalMs, fps >= ceil(1000/intervalMs).
+func AutoConfigCaptureSettings(current RuntimeSettings, cameraCount int, env DecoderAutoTuneEnvironment) RuntimeSettings {
+	tuned := normalizeRuntimeSettings(current)
+	capture := tuned.Vision.Capture
+
+	gpuPresent := len(env.GPUDevices.Devices) > 0
+	switch {
+	case gpuPresent:
+		capture.IntervalMs = 1000
+		capture.Siphon.Fps = 2
+		capture.FrameWidth = 640
+	case cameraCount >= 4:
+		capture.IntervalMs = 3000
+		capture.Siphon.Fps = 1
+		capture.FrameWidth = 640
+	default:
+		capture.IntervalMs = 2000
+		capture.Siphon.Fps = 1
+		capture.FrameWidth = 640
+	}
+	capture.Standalone.CaptureTimeoutMs = 5000
+	capture.Siphon.StaleLimitMs = 2 * capture.IntervalMs
+	// Siphon must sample at least as fast as the detection interval demands.
+	minFps := (1000 + capture.IntervalMs - 1) / capture.IntervalMs
+	if capture.Siphon.Fps < minFps {
+		capture.Siphon.Fps = minFps
+	}
+
+	tuned.Vision.Capture = capture
+	return normalizeRuntimeSettings(tuned)
 }
 
 func parseFFmpegHWAccels(output string) []string {

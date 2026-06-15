@@ -17,7 +17,14 @@ type Camera struct {
 	RTSPTransport     string `json:"rtspTransport" form:"rtspTransport" query:"rtspTransport"`
 	RTSPTracks        string `json:"rtspTracks" form:"rtspTracks" query:"rtspTracks"`
 	LastStreamCheckAt int64  `json:"lastStreamCheckAt" form:"lastStreamCheckAt" query:"lastStreamCheckAt"`
-	LastSeenAt        int64  `json:"lastSeenAt" form:"lastSeenAt" query:"lastSeenAt"`
+	// HealthStatus is the live reachability state set by the camera health monitor:
+	// "online", "offline", or "" (not yet checked). Distinct from RTSPStatus, which
+	// is stream-resolution state, not live liveness.
+	HealthStatus string `json:"healthStatus" form:"healthStatus" query:"healthStatus"`
+	// LastHealthCheckAt is the unix timestamp (seconds) of the last health-state
+	// change recorded by the monitor.
+	LastHealthCheckAt int64 `json:"lastHealthCheckAt" form:"lastHealthCheckAt" query:"lastHealthCheckAt"`
+	LastSeenAt        int64 `json:"lastSeenAt" form:"lastSeenAt" query:"lastSeenAt"`
 	DiscoveryMethods  string `json:"discoveryMethods" form:"discoveryMethods" query:"discoveryMethods"`
 	IsActive          bool   `json:"isActive" form:"isActive" query:"isActive"`
 	CreatedBy         int64  `json:"createdBy" form:"createdBy" query:"createdBy"`

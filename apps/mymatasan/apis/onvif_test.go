@@ -21,7 +21,9 @@ type fakeCameraService struct {
 func (f *fakeCameraService) Discover(_ context.Context, _ int64) ([]onvif.Device, error) {
 	return f.discovered, nil
 }
-func (f *fakeCameraService) Probe(_ context.Context, _ string) (*onvif.Device, error) { return nil, nil }
+func (f *fakeCameraService) Probe(_ context.Context, _ string) (*onvif.Device, error) {
+	return nil, nil
+}
 func (f *fakeCameraService) Get(_ context.Context, _ uint64, _ uint64) ([]*services.CameraDetail, uint64, error) {
 	return nil, 0, nil
 }
@@ -61,6 +63,10 @@ func (f *fakeCameraService) SnapshotSource(_ context.Context, _ uint64) (service
 }
 func (f *fakeCameraService) TestStream(_ context.Context, _ uint64) (*rtsp.ProbeResult, error) {
 	return nil, nil
+}
+func (f *fakeCameraService) DisplayName(_ context.Context, _ int64) string { return "" }
+func (f *fakeCameraService) UpdateHealth(_ context.Context, _ int64, _ string, _ int64) error {
+	return nil
 }
 func (f *fakeCameraService) Delete(_ context.Context, _ uint64) (uint64, error) { return 0, nil }
 

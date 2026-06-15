@@ -622,6 +622,7 @@ MyMataSan ONVIF endpoints:
 - `GET /api/settings/runtime` -> read runtime Decoder and Live Stream settings.
 - `PUT /api/settings/runtime` -> update runtime settings without restarting `mymatasan`.
 - `POST /api/settings/runtime/auto-tune` -> inspect saved camera RTSP metadata and local ffmpeg capabilities, then apply conservative decoder settings.
+- `POST /api/settings/runtime/capture-auto-config` -> detect local hardware (GPU presence + saved camera count) and apply recommended AI frame-capture parameters (interval, frame width, siphon fps, stale limit).
 - `GET /api/settings/runtime/gpu-devices` -> list selectable local GPU/device values for decoder hardware acceleration.
 - `POST /api/settings/runtime/reset` -> reset runtime settings to startup config defaults.
 - `GET /api/settings/vision/ai-tool/status` -> check configured AI detector command, Python packages, worker script, model file, and native fallback readiness.
@@ -630,6 +631,9 @@ MyMataSan ONVIF endpoints:
 - `PUT /api/settings/users/{id}` -> update username, display name, admin flag, and active flag.
 - `POST /api/settings/users/{id}/password` -> reset a local user's password.
 - `DELETE /api/settings/users/{id}` -> delete a local user.
+- `POST /api/cameras/health/refresh` -> run an immediate concurrent reachability probe of every camera and return fresh per-camera status; called by the web app at login so offline cameras are flagged within a couple of seconds instead of waiting for the background health sweep.
+- `GET /api/settings/machine-health` / `PUT /api/settings/machine-health` -> read/update host (machine) health monitor settings: CPU/memory/disk warn+critical thresholds, sampling/debounce, monitored disk paths, and disk mitigation (early purge + pause/resume recording).
+- `GET /api/settings/machine-health/metrics` -> one-shot snapshot of current host CPU/memory/disk usage (powers the live readout and "Check now" button).
 - `GET /api/vision/rules` -> list camera detection rules.
 - `POST /api/vision/rules` -> create or update a camera detection rule with detection type, polygon, optional `ruleConfig`, threshold, cooldown, sound setting, and optional rule-level schedule policy.
 - `DELETE /api/vision/rules/{id}` -> delete a detection rule.
@@ -638,6 +642,8 @@ MyMataSan ONVIF endpoints:
 - `POST /api/vision/alerts/{id}/ack` -> acknowledge an alert event.
 
 MyMataSan vision rules are camera-first in the frontend. The reusable `infra/vision` package owns the app-neutral rule, alert, schedule, frame, and detector contracts. The default motion detector compares consecutive JPEG frames inside the configured polygon and provides native motion-centroid line crossing when an external AI tool is unavailable. `external`, `hybrid`, and `persistent` modes can route semantic fire, smoke, person, vehicle, animal, intrusion, line-crossing, and multi-line-crossing rules through object candidates returned by a configured detector process. Persistent mode is intended for model runtimes such as YOLO where loading the model per frame would be too expensive. All modes apply threshold, polygon or crossing-line geometry, minimum-frame, sequence, and cooldown settings before writing alert events that the AI page and live-view tiles can surface.
+
+AI detection alerts are also delivered as notifications (webhook, Telegram, and the in-app feed). The notification carries the triggering rule name (used as the title) and the detection snapshot image — Telegram receives it as an uploaded photo via `sendPhoto`, and the webhook payload embeds it as base64 (`snapshotBase64`) so receivers that cannot reach the authenticated snapshot endpoint still get the image. When the bounding-box field is enabled, the detection box and object-label tag are drawn onto the snapshot before delivery so it matches the AI Log detail view. The snapshot endpoint stays raw by default for the in-app overlay; `GET /api/vision/alerts/{id}/snapshot?annotated=1` returns the boxed image on demand (used by the Log detail "Download with box" button). A runtime-editable `vision.alertNotification` config (Settings → AI → "Alert Notification Fields") toggles which fields and media each alert contributes: rule name, object label, confidence, bounding box, zone polygon, and the snapshot image. Identifiers (alert id, rule id, camera) are always included. The background monitor and the manual `POST /api/vision/alerts` path both honor this config.
 
 MyIDSan's admin SPA derives navigation from `/api/endpoint-rbac/ep/me` plus endpoint metadata. Page visibility and create, edit, and delete buttons follow the same RBAC method grants; browser-readable cookies remember only presentation state such as active page, filters, sorting, and table page.
 

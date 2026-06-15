@@ -36,6 +36,17 @@ func (w *statusWriter) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
+// Flush forwards to the underlying ResponseWriter so streaming responses keep
+// working through this wrapper. Without it, embedding the http.ResponseWriter
+// interface hides the concrete writer's Flush, so handlers that assert
+// w.(http.Flusher) — notably the Server-Sent Events notification stream — fail
+// with a 500 and the browser's EventSource reconnects in a loop.
+func (w *statusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 func (w *statusWriter) RequestDurationMs() int64 {
 	if w == nil || w.start.IsZero() {
 		return 0

@@ -705,10 +705,13 @@ func baseComponentSchemas() map[string]openAPISchema {
 		"ReadyResponse": {
 			Type: "object",
 			Properties: map[string]openAPISchema{
-				"ok": {Type: "boolean"},
-				"db": {Type: "string"},
+				"ok":      {Type: "boolean"},
+				"db":      {Type: "string", Description: "Database connectivity: up/down."},
+				"cache":   {Type: "string", Description: "Cache connectivity: up/down/unknown."},
+				"machine": {Type: "string", Description: "Advisory host health summary when the app reports it (ok/warning/critical). Does not affect the ready verdict."},
+				"cameras": {Type: "string", Description: "Advisory camera health summary when the app reports it (ok, or 'degraded (N offline)'). Does not affect the ready verdict."},
 			},
-			Required: []string{"ok", "db"},
+			Required: []string{"ok", "db", "cache"},
 		},
 		"ApiHealthResponse": {
 			Type: "object",

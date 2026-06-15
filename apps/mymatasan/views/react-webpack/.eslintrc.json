@@ -1,0 +1,27 @@
+{
+  "root": true,
+  "parser": "@babel/eslint-parser",
+  "parserOptions": {
+    "requireConfigFile": false,
+    "ecmaVersion": "latest",
+    "sourceType": "module",
+    "ecmaFeatures": { "jsx": true },
+    "babelOptions": {
+      "presets": [["@babel/preset-react", { "runtime": "automatic" }]]
+    }
+  },
+  "env": {
+    "browser": true,
+    "es2021": true
+  },
+  "settings": {
+    "react": { "version": "detect" }
+  },
+  "plugins": ["unused-imports", "react"],
+  "rules": {
+    "no-undef": "error",
+    "unused-imports/no-unused-imports": "error",
+    "react/jsx-uses-vars": "error",
+    "react/jsx-uses-react": "off"
+  }
+}

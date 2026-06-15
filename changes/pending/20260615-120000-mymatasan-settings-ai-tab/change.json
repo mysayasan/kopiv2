@@ -1,0 +1,6 @@
+{
+  "type": "changed",
+  "scope": "mymatasan",
+  "summary": "Split Settings → Runtime into a dedicated 'AI' side-nav tab: move YOLO Inference Tuning, Capture, Alert Notification Fields, and AI Tool cards out of Runtime (which keeps Decoder, Live Stream, ICE Servers). Both tabs edit the same runtime settings object via shared Save/Discard/Reset",
+  "compatibility": "Frontend-only reorganization; no backend, schema, or API change. Settings still persist through the single PUT /api/settings/runtime."
+}

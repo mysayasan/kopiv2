@@ -2,8 +2,11 @@ package services
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
+	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
+	"github.com/mysayasan/kopiv2/domain/notification"
 	"github.com/mysayasan/kopiv2/infra/onvif"
 	"github.com/mysayasan/kopiv2/infra/recording"
 	"github.com/mysayasan/kopiv2/infra/rtsp"
@@ -61,6 +64,13 @@ type ICameraService interface {
 	PTZStop(ctx context.Context, id uint64) (*CameraDetail, error)
 	SnapshotSource(ctx context.Context, id uint64) (SnapshotSource, error)
 	TestStream(ctx context.Context, id uint64) (*rtsp.ProbeResult, error)
+	// DisplayName returns the camera's human-readable name (name/model/host),
+	// cached and invalidated on save so renames reflect immediately. Returns ""
+	// when it cannot be resolved.
+	DisplayName(ctx context.Context, id int64) string
+	// UpdateHealth persists the live reachability state recorded by the camera
+	// health monitor. status is "online"/"offline"; checkedAt is a unix timestamp.
+	UpdateHealth(ctx context.Context, id int64, status string, checkedAt int64) error
 	Delete(ctx context.Context, id uint64) (uint64, error)
 }
 
@@ -91,6 +101,7 @@ type VisionMonitorSettings struct {
 	SnapshotDir               string
 	Detector                  vision.Detector
 	Recorder                  *recording.Manager
+	Notifier                  INotificationPublisher
 }
 
 // RuntimeSettings contains runtime-editable mymatasan settings.
@@ -102,7 +113,61 @@ type RuntimeSettings struct {
 
 // VisionSettings holds AI detection tuning parameters that can be changed at runtime.
 type VisionSettings struct {
-	Yolo YoloInferenceSettings `json:"yolo"`
+	Yolo              YoloInferenceSettings      `json:"yolo"`
+	Capture           CaptureSettings            `json:"capture"`
+	AlertNotification *AlertNotificationSettings `json:"alertNotification"`
+}
+
+// AlertNotificationSettings controls which fields and media a detection alert
+// contributes to the notification payload (webhook, telegram, persisted meta).
+// A nil value (legacy settings saved before this existed, or never configured)
+// means "include everything" — see defaultAlertNotificationSettings. An explicit
+// struct with fields set to false is respected, so the user can trim the payload.
+type AlertNotificationSettings struct {
+	// IncludeRuleName adds the triggering rule's name (used as the alert title).
+	IncludeRuleName bool `json:"includeRuleName"`
+	// IncludeLabel adds the detected object label (e.g. "person").
+	IncludeLabel bool `json:"includeLabel"`
+	// IncludeConfidence adds the detection confidence (and the body percentage).
+	IncludeConfidence bool `json:"includeConfidence"`
+	// IncludeBoundingBox adds the detection bounding box JSON.
+	IncludeBoundingBox bool `json:"includeBoundingBox"`
+	// IncludeZonePolygon adds the rule's zone polygon JSON.
+	IncludeZonePolygon bool `json:"includeZonePolygon"`
+	// IncludeSnapshot attaches the snapshot image (Telegram photo / webhook base64).
+	IncludeSnapshot bool `json:"includeSnapshot"`
+}
+
+// CaptureSettings controls how the AI detector sources frames per camera.
+// Zero values mean "use the built-in default" (same convention as Yolo).
+type CaptureSettings struct {
+	// Mode selects the frame source: "auto" (siphon when fresh, else standalone),
+	// "siphon" (read decoded frames off the recorder), or "standalone" (AI opens
+	// its own one-frame RTSP grab). Empty = "auto".
+	Mode string `json:"mode"`
+	// IntervalMs is the per-camera sampling interval in milliseconds (0 = default).
+	IntervalMs int `json:"intervalMs"`
+	// FrameWidth is the downscaled frame width in pixels fed to detection (0 = default).
+	FrameWidth int `json:"frameWidth"`
+	// Standalone holds parameters used only in standalone capture.
+	Standalone CaptureStandaloneSettings `json:"standalone"`
+	// Siphon holds parameters used only when reading frames off the recorder.
+	Siphon CaptureSiphonSettings `json:"siphon"`
+}
+
+// CaptureStandaloneSettings tunes the standalone (self-opened RTSP) frame source.
+type CaptureStandaloneSettings struct {
+	// CaptureTimeoutMs bounds a standalone one-frame RTSP grab (0 = default).
+	CaptureTimeoutMs int `json:"captureTimeoutMs"`
+}
+
+// CaptureSiphonSettings tunes the siphon (recorder tee) frame source.
+type CaptureSiphonSettings struct {
+	// Fps is the recorder tee sampling rate in frames per second (0 = default).
+	Fps int `json:"fps"`
+	// StaleLimitMs is how old a siphoned frame may be (ms) before auto mode falls
+	// back to standalone (0 = default).
+	StaleLimitMs int `json:"staleLimitMs"`
 }
 
 // YoloInferenceSettings holds YOLO inference overrides applied per frame.
@@ -215,13 +280,13 @@ type ILocalUserService interface {
 
 // SaveRecordingConfigRequest is the request body for creating or updating a per-camera NVR recording config.
 type SaveRecordingConfigRequest struct {
-	CameraId       int64  `json:"cameraId"`
-	Enabled        bool   `json:"enabled"`
-	PreRollSec     int    `json:"preRollSec"`
-	PostRollSec    int    `json:"postRollSec"`
-	StoragePath    string `json:"storagePath"`
-	RetentionDays  int    `json:"retentionDays"`
-	SegmentMinutes int    `json:"segmentMinutes"`
+	CameraId          int64  `json:"cameraId"`
+	Enabled           bool   `json:"enabled"`
+	PreRollSec        int    `json:"preRollSec"`
+	PostRollSec       int    `json:"postRollSec"`
+	StoragePath       string `json:"storagePath"`
+	RetentionDays     int    `json:"retentionDays"`
+	SegmentMinutes    int    `json:"segmentMinutes"`
 	LiveStreamUrl     string `json:"liveStreamUrl"`
 	StreamURL         string `json:"streamUrl"`
 	FallbackStreamUrl string `json:"fallbackStreamUrl"`
@@ -246,8 +311,68 @@ type IVisionService interface {
 	GetRules(ctx context.Context, limit uint64, offset uint64) ([]*entities.DetectionRule, uint64, error)
 	SaveRule(ctx context.Context, req DetectionRuleRequest, userId int64) (*entities.DetectionRule, error)
 	DeleteRule(ctx context.Context, id uint64) (uint64, error)
-	GetAlerts(ctx context.Context, limit uint64, offset uint64, cameraId int64, createdAfter int64, createdBefore int64) ([]*entities.AlertEvent, uint64, error)
+	GetAlerts(ctx context.Context, limit uint64, offset uint64, cameraId int64, createdAfter int64, createdBefore int64, ruleId int64, status string) ([]*entities.AlertEvent, uint64, error)
 	GetAlertById(ctx context.Context, id uint64) (*entities.AlertEvent, error)
 	CreateAlert(ctx context.Context, req AlertEventRequest, userId int64) (*entities.AlertEvent, error)
 	AcknowledgeAlert(ctx context.Context, id uint64, userId int64) (*entities.AlertEvent, error)
+}
+
+// INotificationService is the unified notification feed: it publishes events to
+// the hub and exposes persisted history plus the live SSE stream. The domain
+// notification.Service satisfies it.
+type INotificationService interface {
+	INotificationPublisher
+	List(ctx context.Context, limit, offset uint64, cameraId int64, unreadOnly bool) ([]*sharedentities.Notification, uint64, error)
+	MarkRead(ctx context.Context, id uint64, userId int64) (*sharedentities.Notification, error)
+	Purge(ctx context.Context, olderThan int64, onlyRead bool) (int, error)
+	PurgeOlderThanDays(ctx context.Context, days int, onlyRead bool) (int, error)
+	Configure(cfg notification.ChannelConfig)
+	StreamHandler() http.Handler
+	Close(ctx context.Context) error
+}
+
+// ICameraHealthProber runs an on-demand reachability probe of every active
+// camera and returns fresh per-camera status, used for immediate checks (e.g. at
+// login) without waiting for the debounced background sweep. *CameraHealthMonitor
+// satisfies it.
+type ICameraHealthProber interface {
+	ProbeAllNow(ctx context.Context) []CameraHealthSnapshot
+}
+
+// IHealthSettingsService manages the runtime-editable camera health monitor
+// settings persisted in the database. The monitor reads these live on every
+// sweep, so changes made in the UI take effect without a restart.
+type IHealthSettingsService interface {
+	Get(ctx context.Context) (HealthSettings, error)
+	Save(ctx context.Context, settings HealthSettings) (HealthSettings, error)
+}
+
+// IMachineHealthSettingsService manages the runtime-editable host (machine)
+// health monitor settings (CPU/memory/disk thresholds + disk mitigation)
+// persisted in the database. The monitor reads them live on every sample.
+type IMachineHealthSettingsService interface {
+	Get(ctx context.Context) (MachineHealthSettings, error)
+	Save(ctx context.Context, settings MachineHealthSettings) (MachineHealthSettings, error)
+}
+
+// IMachineMetricsProvider returns a one-shot snapshot of current host metrics,
+// used by the live readout / "Check now" button in the Settings UI.
+type IMachineMetricsProvider interface {
+	Sample(ctx context.Context) MachineMetrics
+}
+
+// INotificationSettingsService manages the runtime-editable notification
+// delivery settings (webhook, telegram, retention) persisted in the database.
+type INotificationSettingsService interface {
+	Get(ctx context.Context) (NotificationSettings, error)
+	Save(ctx context.Context, settings NotificationSettings) (NotificationSettings, error)
+	// Sync loads persisted settings and applies them to the live notification
+	// hub. Called once at startup.
+	Sync(ctx context.Context) error
+	// Retention returns the current purge retention (days, onlyRead). days <= 0
+	// means the periodic purge is disabled.
+	Retention(ctx context.Context) (days int, onlyRead bool)
+	// Test dispatches a test notification at the given severity so the user can
+	// verify their webhook/telegram configuration.
+	Test(ctx context.Context, severity string) error
 }

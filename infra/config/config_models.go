@@ -74,9 +74,11 @@ type AppConfigModel struct {
 			NoBuffer        *bool  `json:"noBuffer"`
 		} `json:"ffmpeg"`
 	} `json:"decoder"`
-	Stream      StreamConfigModel `json:"stream"`
-	Vision      VisionConfigModel `json:"vision"`
-	FileStorage struct {
+	Stream       StreamConfigModel       `json:"stream"`
+	Vision       VisionConfigModel       `json:"vision"`
+	Health       HealthConfigModel       `json:"health"`
+	Notification NotificationConfigModel `json:"notification"`
+	FileStorage  struct {
 		Path    string `json:"path" validate:"required"`
 		Cleanup struct {
 			Enabled          bool `json:"enabled"`
@@ -166,6 +168,52 @@ type WebRTCICEServerModel struct {
 
 type MJPEGFallbackConfigModel struct {
 	Enabled *bool `json:"enabled"`
+}
+
+// NotificationConfigModel holds startup defaults for the unified notification
+// feed. These seed the runtime-editable notification settings persisted in the
+// database (the UI edits that persisted copy, like decoder/vision settings).
+type NotificationConfigModel struct {
+	Webhook         NotificationWebhookConfigModel  `json:"webhook"`
+	Telegram        NotificationTelegramConfigModel `json:"telegram"`
+	SSEClientBuffer int                             `json:"sseClientBuffer"`
+	// RetentionDays purges notifications older than this many days (0 disables
+	// the periodic purge). Defaults applied by the app when unset.
+	RetentionDays int `json:"retentionDays"`
+	// PurgeIntervalHours is how often the periodic purge runs (defaults to 6h).
+	PurgeIntervalHours int `json:"purgeIntervalHours"`
+	// PurgeReadOnly keeps unread notifications regardless of age when true.
+	PurgeReadOnly bool `json:"purgeReadOnly"`
+}
+
+type NotificationWebhookConfigModel struct {
+	Enabled     *bool             `json:"enabled"`
+	URL         string            `json:"url"`
+	MinSeverity string            `json:"minSeverity"`
+	QueueSize   int               `json:"queueSize"`
+	Headers     map[string]string `json:"headers"`
+}
+
+type NotificationTelegramConfigModel struct {
+	Enabled     *bool  `json:"enabled"`
+	BotToken    string `json:"botToken"`
+	ChatId      string `json:"chatId"`
+	MinSeverity string `json:"minSeverity"`
+	QueueSize   int    `json:"queueSize"`
+}
+
+// HealthConfigModel holds startup settings for the camera health monitor, which
+// probes camera reachability and raises online/offline notifications.
+type HealthConfigModel struct {
+	Enabled *bool `json:"enabled"`
+	// IntervalMs is the gap between full reachability sweeps.
+	IntervalMs int `json:"intervalMs"`
+	// TimeoutMs is the per-probe deadline (TCP dial and RTSP deep-check).
+	TimeoutMs int `json:"timeoutMs"`
+	// FailureThreshold is the consecutive failed probes before declaring offline.
+	FailureThreshold int `json:"failureThreshold"`
+	// RecoveryThreshold is the consecutive successful probes before declaring online.
+	RecoveryThreshold int `json:"recoveryThreshold"`
 }
 
 type VisionConfigModel struct {

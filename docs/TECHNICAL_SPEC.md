@@ -221,6 +221,20 @@ Vision monitor startup config contract (`vision` in `mymatasan` app config):
 - `detector.classMap`: maps rule detection types to model labels, including semantic aliases such as `animal` -> `cat`, `dog`, and other model labels.
 - YOLO-backed CCTV rules should use empirical rule thresholds. MyMataSan UI defaults semantic rules to `threshold: 0.35` and `minFrames: 2`; reusable infra defaults remain `0.75` and `3` when a caller omits rule values.
 
+Vision runtime settings contract (DB-backed, edited in Settings → AI, applied without restart):
+
+- `vision.yolo`: per-frame inference overrides (conf, iou, augment, imgsz, half, maxDet); zero means "use the worker env default".
+- `vision.capture`: AI frame-sourcing config — `mode` (`auto`/`siphon`/`standalone`), shared `intervalMs`/`frameWidth`, `standalone.captureTimeoutMs`, `siphon.fps`/`siphon.staleLimitMs`. Zero fields use safe fixed built-in defaults; `POST /api/settings/runtime/capture-auto-config` derives values from detected GPU/CPU and saved camera count.
+- `vision.alertNotification`: which detection-alert fields/media populate the notification payload — `includeRuleName`, `includeLabel`, `includeConfidence`, `includeBoundingBox`, `includeZonePolygon`, `includeSnapshot`. A nil/unset value (legacy rows) means include everything; an explicit struct with false fields is preserved.
+
+Vision notification delivery contract:
+
+- Actionable AI alerts are published to the in-app feed plus enabled outbound channels (webhook, Telegram). The triggering rule name is the notification title; the captured snapshot is delivered to Telegram via `sendPhoto` (uploaded photo) and embedded in the webhook payload as base64 (`snapshotBase64`/`snapshotContentType`/`snapshotFilename`).
+- When the bounding-box field is enabled, the detection box and object-label tag are drawn onto the snapshot image server-side (`vision.AnnotateJPEG`) so the delivered picture matches the AI Log detail overlay; the in-app log view itself still renders the box as a frontend overlay on the raw image.
+- `GET /api/vision/alerts/{id}/snapshot` returns the raw frame by default (so the UI can draw its own overlay); the opt-in `?annotated=1` query returns the same image with the detection box drawn in, used by the Log detail "Download with box" action and any download/share that should carry the box.
+- The snapshot rides on a non-persisted notification attachment, so persistence, SSE, and log channels skip the image bytes; only media-capable outbound channels include it.
+- Both the background monitor and the manual `POST /api/vision/alerts` path apply the `vision.alertNotification` field config.
+
 Vision line-crossing rule config contract (`ruleConfig` on `mymatasan` detection rules):
 
 - `line_crossing`: object-backed rule that triggers when a tracked object center crosses any configured line.
@@ -231,6 +245,13 @@ Vision line-crossing rule config contract (`ruleConfig` on `mymatasan` detection
 - `maxTrackDistance`: normalized maximum center distance for frame-to-frame track matching; omitted defaults to `0.25`.
 - `trackTtlSeconds`: seconds before an unseen track expires; omitted defaults to ten seconds.
 - `lines`: ordered list of one to five line entries, each with `id` and two normalized points: `{"id":"start","points":[[0.35,0.2],[0.35,0.8]]}`.
+
+Machine (host) health monitor contract (DB-backed `machineHealth` settings, edited in Settings → Machine Health, applied live):
+
+- Samples host CPU, memory, and disk usage on `intervalMs` via gopsutil. Disk volumes monitored are auto-detected from the paths the app writes to (working dir, recordings/snapshot dir, log dir, per-camera recording storage) plus any user-defined `disk.paths`, deduplicated per underlying volume.
+- Each metric has `warnPercent`/`criticalPercent`. A debounced state machine raises a Warning/Critical notification (system category) only after `sustainedSamples` consecutive breaching samples, and a recovery notice after `recoverySamples` consecutive normal samples — mirroring the camera health monitor's debounce.
+- Disk mitigation (`mitigation.enabled`): at `purgeAtPercent` it triggers an immediate retention purge of expired recordings (throttled to once per 10 min); at `pauseRecordingAtPercent` it pauses NVR recording (recorder stops writing new segments) to stop the volume filling completely; recording resumes once the disk drops below `resumePercent`. Footage is not captured while paused.
+- Normalization keeps `criticalPercent > warnPercent` and `resumePercent < pauseRecordingAtPercent`. The recorder exposes `Pause()`/`Resume()`/`IsPaused()`; resume restarts recorders from their retained configs.
 
 Vision rule schedule contract (`schedulePolicy` on `mymatasan` detection rules):
 

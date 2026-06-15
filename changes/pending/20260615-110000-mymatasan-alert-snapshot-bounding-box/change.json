@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "infra,mymatasan",
+  "summary": "Draw the detection bounding box + object-label tag onto AI alert notification snapshots server-side (vision.AnnotateJPEG) so webhook/Telegram images match the AI Log detail overlay; add opt-in GET /api/vision/alerts/{id}/snapshot?annotated=1 and a Log detail 'Download with box' button. Default snapshot stays raw for the frontend overlay",
+  "compatibility": "Adds golang.org/x/image as a direct dependency for image annotation. Box drawing is skipped when the alert has no bounding box or the bounding-box field is disabled."
+}
