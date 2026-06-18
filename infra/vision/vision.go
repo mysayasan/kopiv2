@@ -20,6 +20,8 @@ const (
 	DetectionPerson            = "person"
 	DetectionVehicle           = "vehicle"
 	DetectionAnimal            = "animal"
+	DetectionPresence          = "presence"
+	DetectionCrowd             = "crowd"
 	DetectionIntrusion         = "intrusion"
 	DetectionLineCrossing      = "line_crossing"
 	DetectionMultiLineCrossing = "multi_line_crossing"
@@ -192,6 +194,9 @@ func ValidateDetectionRule(rule DetectionRule) error {
 		return err
 	}
 	if err := validateLineCrossingRule(rule); err != nil {
+		return err
+	}
+	if err := validateCrowdRule(rule); err != nil {
 		return err
 	}
 	return ValidateSchedulePolicy(rule.SchedulePolicy)

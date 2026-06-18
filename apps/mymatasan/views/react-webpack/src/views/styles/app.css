@@ -1388,6 +1388,791 @@ dd {
   padding: 0 8px;
 }
 
+/* Two-axis rule editor: grouped Target class picker */
+.class-target-group {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 6px;
+  margin-top: 4px;
+}
+.class-target-group-label {
+  grid-column: 1 / -1;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted, #888);
+}
+
+/* Object Classes registry list */
+.class-registry-list {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.class-registry-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-panel);
+  border-radius: 6px;
+  background: var(--bg-surface);
+}
+.class-registry-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.class-registry-actions .danger {
+  color: var(--danger, #c0392b);
+}
+
+/* Training tab */
+.training-header {
+  margin-bottom: 16px;
+}
+.training-eyebrow {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent, #2e9e6b);
+  margin-bottom: 2px;
+}
+.training-header h1 {
+  margin: 0 0 4px;
+}
+.training-header p {
+  margin: 0;
+  color: var(--text-muted, #888);
+}
+.training-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) 2fr;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .training-grid { grid-template-columns: 1fr; }
+}
+/* Object Classes editor: chips, badges, member editor */
+.class-registry-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.class-source-badge {
+  display: inline-block;
+  align-self: flex-start;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-muted, #1b1b1b);
+  color: var(--text-muted, #94a3b8);
+}
+.class-source-badge.trained { background: rgba(46, 158, 107, 0.18); color: var(--accent, #2e9e6b); }
+.class-source-badge.group { background: rgba(59, 130, 246, 0.18); color: #3b82f6; }
+.class-source-badge.inactive { background: rgba(224, 163, 46, 0.18); color: #e0a32e; }
+/* Trained target not produced by the active model: visible but de-emphasized. */
+.check-row.class-inactive { opacity: 0.6; }
+.class-inactive-tag { color: #e0a32e; font-size: 0.78rem; }
+.class-member-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0;
+}
+/* Group-member picker: content-sized pills that wrap, instead of the fixed
+   7-column day grid (which misaligned the checkbox/label and left odd gaps). */
+.class-option-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.class-option-grid .check-row.class-option {
+  align-items: center;
+  min-height: 38px;
+  border: 1px solid var(--border-panel);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  padding: 0 12px;
+}
+/* Searchable, grouped label picker: filter box + collapsible groups of chips so
+   the category editor stays usable even with thousands of stock labels. */
+.class-label-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.class-label-search {
+  width: 100%;
+}
+.class-label-groups {
+  max-height: 280px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-right: 4px;
+}
+.class-label-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.class-label-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 4px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+.class-label-group-head:disabled {
+  cursor: default;
+}
+.class-label-group-head .status-pill {
+  margin-left: auto;
+}
+.class-label-caret {
+  width: 12px;
+  color: var(--text-secondary, #8aa);
+  font-size: 0.75rem;
+}
+/* Trained labels stand out from stock ones in the picker. */
+.chip-suggest-btn.is-trained {
+  border-style: solid;
+  border-color: var(--accent-warn, #e0a32e);
+  color: var(--accent-warn, #e0a32e);
+}
+.chip-tag {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: rgba(224, 163, 46, 0.18);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-panel);
+  font-size: 0.82rem;
+}
+.chip-static { background: var(--bg-muted, #1b1b1b); }
+.chip-remove {
+  min-height: 0;
+  padding: 0 2px;
+  border: none;
+  background: none;
+  color: var(--text-muted, #94a3b8);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.chip-remove:hover { color: var(--danger, #c0392b); }
+.chip-add {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.chip-add input { flex: 1; }
+.chip-suggest { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.chip-suggest-btn {
+  min-height: 0;
+  padding: 3px 10px;
+  border-radius: 14px;
+  border: 1px dashed var(--accent, #2e9e6b);
+  background: none;
+  color: var(--accent, #2e9e6b);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+/* AI page section sub-nav (Detection Rules / Object Classes) — uses the app's
+   standard active/quiet button styles for consistency. */
+.vision-subnav {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+/* Training step tabs */
+.training-steps-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--border-panel);
+}
+.training-step-tab {
+  padding: 8px 16px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-muted, #94a3b8);
+  font-weight: 600;
+  cursor: pointer;
+}
+.training-step-tab:hover {
+  color: var(--text, #e2e8f0);
+}
+.training-step-tab.is-active {
+  color: var(--accent, #2e9e6b);
+  border-bottom-color: var(--accent, #2e9e6b);
+}
+.training-context-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 14px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-panel);
+  border-radius: 8px;
+  background: var(--bg-surface);
+}
+.training-context-bar label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.82rem;
+}
+.training-dataset-row.is-active {
+  border-color: var(--accent, #2e9e6b);
+}
+.training-dataset-pick {
+  flex: 1;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  padding: 0;
+}
+.training-image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+  margin: 8px 0 16px;
+}
+/* Divider between the dataset images and the "Add from recent alerts" section. */
+.training-divider {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-panel);
+}
+.training-image-cell {
+  border: 1px solid var(--border-panel);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-surface);
+}
+.training-image-cell img,
+.training-thumb-empty {
+  display: block;
+  width: 100%;
+  height: 90px;
+  object-fit: cover;
+  background: var(--bg-muted, #1b1b1b);
+}
+.training-image-open {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+.training-image-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  font-size: 0.7rem;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+}
+
+/* Box annotation editor */
+.annotator-dialog {
+  width: min(1180px, 96vw);
+  /* Cap to the viewport; the left box list is the internally-scrolling region. */
+  max-height: 92vh;
+  border-radius: 14px;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.7);
+}
+
+/* Object-class new/edit popup: same dialog chrome as the image-labelling modal,
+   sized for a form, with the form body scrolling when it gets tall (e.g. a group
+   with many member checkboxes). The compound selector outranks the base
+   `.video-dialog { width: 100%; max-width: min(900px, 100%) }` (defined later in
+   this file) so the form isn't stretched to the full video width. */
+.video-dialog.class-editor-dialog {
+  width: min(560px, 96vw);
+  max-width: min(560px, 96vw);
+  max-height: 90vh;
+}
+.class-editor-form {
+  border-top: none;
+  padding: 18px 20px;
+  margin: 0;
+  min-height: 0;
+  overflow: auto;
+}
+.annotator-dialog > * {
+  flex-shrink: 0;
+}
+/* Bigger, bolder header per a clean dialog style. */
+.annotator-dialog .video-dialog-header {
+  padding: 18px 24px;
+}
+.annotator-dialog .video-dialog-title {
+  font-size: 19px;
+  font-weight: 700;
+}
+.annotator-dialog > .annotator-steps,
+.annotator-dialog > .annotator-intro {
+  display: block;
+  margin: 16px 24px 0;
+}
+.annotator-dialog > .annotator-warn {
+  margin: 8px 24px 0;
+}
+.annotator-dialog > .action-row {
+  margin: 12px 24px 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-panel);
+}
+/* Two-column body: box list (left) + image & controls (right). */
+.annotator-body {
+  display: flex;
+  gap: 16px;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 14px 24px 0;
+}
+.annotator-sidebar {
+  width: 320px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--border-panel);
+  border-radius: 8px;
+  background: var(--bg-surface);
+}
+.annotator-sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-panel);
+}
+.annotator-sidebar-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.check-row.compact {
+  min-height: 0;
+  gap: 4px;
+  font-size: 0.8rem;
+}
+.annotator-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* The image must not stretch in the flex column, or the SVG box overlay maps to
+   the stretched container width instead of the image. Centre it and clip the
+   overlay to the image bounds. */
+.annotator-canvas {
+  align-self: center;
+  margin: 0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.annotator-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.annotator-toolbar label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.82rem;
+}
+.annotator-addclass {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.annotator-canvas {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  margin: 6px auto;
+  line-height: 0;
+  cursor: crosshair;
+  user-select: none;
+}
+.annotator-canvas img {
+  display: block;
+  max-width: 100%;
+  max-height: 62vh;
+}
+.annotator-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+/* On-image label captions (HTML, so text isn't distorted by the SVG scaling). */
+.anno-label-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  line-height: normal;
+}
+/* Colours: you-drew = blue, auto-labeled = yellow, selected = green. */
+.anno-label {
+  position: absolute;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #3b82f6;
+  color: #fff;
+  white-space: nowrap;
+  max-width: 96%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.anno-label.auto { background: #e0a32e; }
+.anno-label.selected { background: #2e9e6b; }
+.anno-box {
+  fill: rgba(59, 130, 246, 0.12);
+  stroke: #3b82f6;
+  stroke-width: 2;
+}
+.anno-box.auto {
+  stroke: #e0a32e;
+  fill: rgba(224, 163, 46, 0.12);
+}
+.anno-box.selected {
+  stroke: #2e9e6b;
+  fill: rgba(46, 158, 107, 0.2);
+  stroke-width: 3;
+}
+.anno-box.drawing {
+  stroke-dasharray: 4 3;
+  fill: rgba(59, 130, 246, 0.1);
+}
+
+/* Annotation editor: guidance, legend, box list */
+.annotator-dirty {
+  color: #e0a32e;
+  font-weight: 600;
+  font-size: 0.85em;
+}
+.annotator-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  list-style: none;
+  border: 1px solid var(--border-panel);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  font-size: 0.82rem;
+}
+.annotator-legend {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.78rem;
+  color: var(--text-muted, #94a3b8);
+  margin: 6px 0;
+}
+.annotator-legend-keys {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.anno-swatch {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  margin-right: 5px;
+  vertical-align: -1px;
+  border: 2px solid #3b82f6;
+  background: rgba(59, 130, 246, 0.2);
+}
+.anno-swatch.auto { border-color: #e0a32e; background: rgba(224, 163, 46, 0.2); }
+.anno-swatch.selected { border-color: #2e9e6b; background: rgba(46, 158, 107, 0.25); }
+.annotator-boxlist {
+  display: grid;
+  gap: 6px;
+  /* Fills the sidebar's remaining height and scrolls internally. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  align-content: start;
+  padding: 8px;
+}
+.annotator-box-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid var(--border-panel);
+  border-radius: 6px;
+  background: var(--bg-surface);
+}
+.annotator-box-row.is-selected {
+  border-color: #2e9e6b;
+}
+.annotator-box-row select,
+.annotator-box-row .annotator-box-name {
+  flex: 1;
+  min-width: 0;
+}
+/* The row checkbox must not pick up the global full-width/38px input sizing. */
+.annotator-box-row input[type="checkbox"] {
+  width: 18px;
+  min-width: 18px;
+  min-height: 18px;
+  margin: 0;
+  padding: 0;
+  flex-shrink: 0;
+}
+.annotator-box-row .anno-swatch {
+  flex-shrink: 0;
+}
+.annotator-warn {
+  color: #e0a32e;
+  margin-top: 8px;
+}
+.training-image-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px;
+  gap: 6px;
+}
+.status-pill.ok {
+  background: var(--accent-bg, rgba(46, 158, 107, 0.15));
+  color: var(--accent, #2e9e6b);
+}
+
+/* Importer: filters + paging */
+.training-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin: 8px 0;
+}
+.training-filter-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.82rem;
+}
+.training-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+.training-active-banner {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--accent, #2e9e6b);
+  border-radius: 8px;
+  background: var(--accent-bg, rgba(46, 158, 107, 0.12));
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+.training-active-banner svg { vertical-align: -2px; margin-right: 4px; }
+.training-progress {
+  margin-top: 6px;
+  height: 6px;
+  width: 100%;
+  border-radius: 3px;
+  background: var(--bg-muted, #1b1b1b);
+  overflow: hidden;
+}
+.training-progress-bar {
+  height: 100%;
+  background: var(--accent, #2e9e6b);
+  transition: width 0.4s ease;
+}
+
+/* In-app GPU dependency installer */
+.install-deps {
+  margin: 8px 0;
+  padding: 12px;
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 8px;
+  background: var(--bg-muted, #161616);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.install-deps .action-row {
+  align-items: center;
+}
+/* ConsoleLog: reusable terminal-style streamed-output box (see components/console.js). */
+.console-log {
+  border: 1px solid #1d1d1d;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #0c0c0c;
+}
+.console-log-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #181818;
+  border-bottom: 1px solid #242424;
+}
+.console-log-dots {
+  display: inline-flex;
+  gap: 5px;
+}
+.console-log-dots i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #3a3a3a;
+}
+.console-log-dots i:nth-child(1) { background: #ff5f56; }
+.console-log-dots i:nth-child(2) { background: #ffbd2e; }
+.console-log-dots i:nth-child(3) { background: #27c93f; }
+.console-log-title {
+  color: #cfcfcf;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.console-log-status {
+  margin-left: auto;
+  color: #27c93f;
+  font-size: 11px;
+}
+.console-log-body {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px 10px;
+  color: #c8c8c8;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.console-log-cursor {
+  display: inline-block;
+  color: #27c93f;
+  animation: console-blink 1s steps(2, start) infinite;
+}
+@keyframes console-blink {
+  to { visibility: hidden; }
+}
+
+/* Importer: alert rows with thumbnail + preview */
+.training-alert-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+.training-alert-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-panel);
+  border-radius: 6px;
+  background: var(--bg-surface);
+}
+.training-alert-thumb {
+  flex-shrink: 0;
+  width: 80px;
+  height: 50px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--bg-muted, #1b1b1b);
+}
+.training-alert-thumb img,
+.training-alert-thumb .training-thumb-empty {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.training-alert-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.training-alert-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+/* Modal media: snapshot fallback fills the dialog body like the video player */
+.video-dialog-body img {
+  max-width: 100%;
+  max-height: 70vh;
+  display: block;
+  margin: 0 auto;
+}
+
 .vision-list {
   display: grid;
   gap: 10px;

@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "infra,mymatasan",
+  "summary": "Add a 'crowd' detection type: fires when at least minCount people (default 2) are detected inside the zone in a single frame. New shared vision logic (crowd.go) reusing the existing zone/threshold/minFrames/cooldown machinery, plus a Crowd rule type with a 'Minimum people' field in the vision rule editor.",
+  "compatibility": "Backward compatible. New ruleConfig shape {\"minCount\": N} (N >= 2); existing rules unaffected. Crowd counts the 'person' class by default."
+}

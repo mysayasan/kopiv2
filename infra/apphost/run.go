@@ -331,6 +331,7 @@ func Run(app App) error {
 
 	deps := Dependencies{
 		Config:      appConfig,
+		ConfigPath:  configFilePath(baseDir),
 		Db:          dbCrud,
 		Cache:       cacheStore,
 		Auth:        auth,
@@ -429,13 +430,19 @@ func Run(app App) error {
 	return nil
 }
 
-func loadConfig(baseDir string) (*config.AppConfigModel, error) {
+// configFilePath returns the absolute path of the config file the host loads for
+// this baseDir, honouring the dev override. Apps use it (via Dependencies) to
+// persist runtime config changes back to the same file.
+func configFilePath(baseDir string) string {
 	configFile := "config.json"
 	if os.Getenv("ENVIRONMENT") == "dev" {
 		configFile = "config.dev.json"
 	}
+	return filepath.Join(baseDir, configFile)
+}
 
-	appConfig, err := config.LoadAppConfiguration(filepath.Join(baseDir, configFile))
+func loadConfig(baseDir string) (*config.AppConfigModel, error) {
+	appConfig, err := config.LoadAppConfiguration(configFilePath(baseDir))
 	if err != nil {
 		return nil, err
 	}

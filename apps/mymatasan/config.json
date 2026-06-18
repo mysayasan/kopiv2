@@ -36,7 +36,7 @@
     "diagnosticCooldownSeconds": 30,
     "detector": {
       "mode": "persistent",
-      "command": "python",
+      "command": "C:\\Users\\muham\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
       "args": ["./apps/mymatasan/ai/yolo_worker.py"],
       "timeoutMs": 8000,
       "useMotionFallback": true,

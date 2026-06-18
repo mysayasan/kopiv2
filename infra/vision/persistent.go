@@ -34,6 +34,10 @@ type PersistentObjectDetector struct {
 	stdin      io.WriteCloser
 	stdoutPipe io.ReadCloser
 	stdout     *bufio.Reader
+	// paused stops the worker and prevents it relaunching, so an external process
+	// (e.g. the in-app dependency installer) can replace PyTorch files the running
+	// worker would otherwise hold locked on Windows.
+	paused bool
 }
 
 func NewPersistentObjectDetector(opts PersistentObjectDetectorOptions) (*PersistentObjectDetector, error) {
@@ -66,6 +70,10 @@ func (d *PersistentObjectDetector) DetectObjects(ctx context.Context, frame Fram
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
+
+	if d.paused {
+		return nil, nil
+	}
 
 	if err := d.startLocked(); err != nil {
 		return nil, err
@@ -130,6 +138,32 @@ func (d *PersistentObjectDetector) Close() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.stopLocked()
+}
+
+// Reload stops the worker process so the next inference relaunches it. The worker
+// re-reads the active-model pointer on startup, so this hot-swaps the loaded
+// model after the training "activate" action rewrites that pointer.
+func (d *PersistentObjectDetector) Reload() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.stopLocked()
+}
+
+// Pause stops the worker and blocks it from relaunching until Resume is called.
+// While paused, DetectObjects is a no-op (returns no candidates) so the live
+// monitor keeps running without re-locking the model files mid-install.
+func (d *PersistentObjectDetector) Pause() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.paused = true
+	_ = d.stopLocked()
+}
+
+// Resume re-enables the worker; the next DetectObjects relaunches it.
+func (d *PersistentObjectDetector) Resume() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.paused = false
 }
 
 func (d *PersistentObjectDetector) startLocked() error {

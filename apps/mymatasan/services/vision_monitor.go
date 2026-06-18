@@ -25,6 +25,7 @@ type VisionMonitor struct {
 	vision      IVisionService
 	settings    IRuntimeSettingsService
 	detector    vision.Detector
+	resolver    ClassResolver
 	recorder    *recording.Manager
 	notifier    INotificationPublisher
 	client      *http.Client
@@ -66,6 +67,7 @@ func NewVisionMonitor(camera ICameraService, visionService IVisionService, setti
 		vision:      visionService,
 		settings:    settings,
 		detector:    detector,
+		resolver:    monitor.Resolver,
 		recorder:    monitor.Recorder,
 		notifier:    monitor.Notifier,
 		client:      &http.Client{Timeout: 8 * time.Second},
@@ -124,6 +126,7 @@ func (m *VisionMonitor) reconcileSamplers(ctx context.Context, samplers map[int6
 	}
 
 	for cameraID, cameraRules := range byCamera {
+		cameraRules = m.resolveRuleClasses(ctx, cameraRules)
 		if s, ok := samplers[cameraID]; ok {
 			s.setState(cameraRules, inference)
 			continue
@@ -257,6 +260,56 @@ func (m *VisionMonitor) alertNotificationFields(ctx context.Context) *AlertNotif
 		return nil
 	}
 	return settings.Vision.AlertNotification
+}
+
+// resolveRuleClasses rewrites each rule's ruleConfig.classes from registry slugs
+// (categories/groups) to concrete model labels so the app-neutral detector never
+// needs to know about the class registry. Rules without a classes list (legacy
+// person/vehicle/animal rules) pass through untouched and keep using the static
+// classMap. Group edits in the registry take effect on the next reconcile.
+func (m *VisionMonitor) resolveRuleClasses(ctx context.Context, rules []vision.DetectionRule) []vision.DetectionRule {
+	if m.resolver == nil || len(rules) == 0 {
+		return rules
+	}
+	for i := range rules {
+		cfg := strings.TrimSpace(rules[i].RuleConfig)
+		if cfg == "" {
+			continue
+		}
+		var raw map[string]any
+		if err := json.Unmarshal([]byte(cfg), &raw); err != nil {
+			continue
+		}
+		slugs := toStringSlice(raw["classes"])
+		if len(slugs) == 0 {
+			continue
+		}
+		resolved := m.resolver.ResolveLabels(ctx, slugs)
+		raw["classes"] = resolved
+		if encoded, err := json.Marshal(raw); err == nil {
+			rules[i].RuleConfig = string(encoded)
+		}
+	}
+	return rules
+}
+
+// toStringSlice coerces a decoded JSON value into a string slice, tolerating the
+// []any that encoding/json produces for arrays.
+func toStringSlice(value any) []string {
+	switch v := value.(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 // ruleNameByID returns the name of the rule with the given id, or "" if absent.

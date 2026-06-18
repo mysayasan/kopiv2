@@ -120,6 +120,7 @@ export function TopBar({ activeTab, busy, onTab, onRefresh, onLogout, alerts, sa
     { id: 'views',     label: 'Live Views', icon: 'monitor' },
     { id: 'cameras',   label: 'Cameras',    icon: 'camera'  },
     { id: 'ai',        label: 'AI',         icon: 'cpu'     },
+    { id: 'training',  label: 'Training',   icon: 'folder'  },
     { id: 'recording', label: 'Recording',  icon: 'film'    },
     { id: 'settings',  label: 'Settings',   icon: 'sliders' },
   ];

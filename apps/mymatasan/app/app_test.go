@@ -17,11 +17,18 @@ func TestMymatasanSharedAPIsExposeOnlyPublicVersion(t *testing.T) {
 	}
 }
 
-func TestVisionDetectorDefaultsToMotion(t *testing.T) {
-	detector, err := visionDetectorFromAppConfig(&config.AppConfigModel{})
+// buildAndWrapDetector mirrors RegisterAppRoutes: build the shared object backend
+// (nil on failure / motion mode) then wrap it into the live monitor detector.
+func buildAndWrapDetector(cfg *config.AppConfigModel) vision.Detector {
+	backend, err := buildTrainingObjectDetector(cfg.Vision.Detector)
 	if err != nil {
-		t.Fatalf("visionDetectorFromAppConfig() error = %v", err)
+		backend = nil
 	}
+	return wrapMonitorDetector(cfg, backend)
+}
+
+func TestVisionDetectorDefaultsToMotion(t *testing.T) {
+	detector := buildAndWrapDetector(&config.AppConfigModel{})
 	if _, ok := detector.(*vision.MotionDetector); !ok {
 		t.Fatalf("detector = %T, want *vision.MotionDetector", detector)
 	}
@@ -32,12 +39,8 @@ func TestHybridVisionDetectorFallsBackToMotionWhenCommandMissing(t *testing.T) {
 	cfg.Vision.Detector.Mode = vision.DetectorModeHybrid
 	cfg.Vision.Detector.Command = "definitely-missing-ai-tool"
 
-	detector, err := visionDetectorFromAppConfig(cfg)
-	if err != nil {
-		t.Fatalf("visionDetectorFromAppConfig() error = %v", err)
-	}
-	if _, ok := detector.(*vision.MotionDetector); !ok {
-		t.Fatalf("detector = %T, want *vision.MotionDetector", detector)
+	if _, ok := buildAndWrapDetector(cfg).(*vision.MotionDetector); !ok {
+		t.Fatalf("hybrid with missing command should fall back to motion")
 	}
 }
 
@@ -46,11 +49,7 @@ func TestPersistentVisionDetectorFallsBackToMotionWhenCommandMissing(t *testing.
 	cfg.Vision.Detector.Mode = vision.DetectorModePersistent
 	cfg.Vision.Detector.Command = "definitely-missing-ai-tool"
 
-	detector, err := visionDetectorFromAppConfig(cfg)
-	if err != nil {
-		t.Fatalf("visionDetectorFromAppConfig() error = %v", err)
-	}
-	if _, ok := detector.(*vision.MotionDetector); !ok {
-		t.Fatalf("detector = %T, want *vision.MotionDetector", detector)
+	if _, ok := buildAndWrapDetector(cfg).(*vision.MotionDetector); !ok {
+		t.Fatalf("persistent with missing command should fall back to motion")
 	}
 }

@@ -25,6 +25,15 @@ type Box struct {
 	H float64 `json:"h"`
 }
 
+// MetaBox is one detection's box plus its label and confidence, recorded in an
+// alert's metadata "boxes" list so a snapshot can outline and label each detection
+// (e.g. every crowd member) with its own confidence.
+type MetaBox struct {
+	Box
+	Label      string  `json:"label,omitempty"`
+	Confidence float64 `json:"confidence,omitempty"`
+}
+
 type ObjectCandidate struct {
 	Label      string         `json:"label"`
 	Confidence float64        `json:"confidence"`
@@ -106,7 +115,19 @@ func (d *ObjectRuleDetector) Detect(ctx context.Context, frame Frame, rules []De
 			detections = append(detections, lineDetections...)
 			continue
 		}
-		candidate, matched := d.bestCandidate(rule, candidates)
+		var candidate ObjectCandidate
+		var matched bool
+		crowdCount := 0
+		var crowdBoxes []MetaBox
+		if isCrowdType(rule.DetectionType) {
+			cfg, err := parseCrowdConfig(rule)
+			if err != nil {
+				return nil, err
+			}
+			candidate, crowdCount, matched, crowdBoxes = d.crowdMatch(rule, cfg, candidates)
+		} else {
+			candidate, matched = d.bestCandidate(rule, candidates)
+		}
 
 		minFrames := rule.MinFrames
 		if minFrames <= 0 {
@@ -144,16 +165,27 @@ func (d *ObjectRuleDetector) Detect(ctx context.Context, frame Frame, rules []De
 		state.lastTriggered[rule.Id] = now
 
 		boundingBox, _ := json.Marshal(candidate.Box)
-		metadata, _ := json.Marshal(map[string]any{
+		meta := map[string]any{
 			"source":      d.source,
 			"objectLabel": candidate.Label,
 			"objectMeta":  candidate.Metadata,
-		})
+		}
+		label := detectionLabel(rule.DetectionType, candidate.Label)
+		if crowdCount > 0 {
+			meta["crowdCount"] = crowdCount
+			// Carry every qualifying box so the alert snapshot outlines each crowd
+			// member, not only the representative one.
+			if len(crowdBoxes) > 0 {
+				meta["boxes"] = crowdBoxes
+			}
+			label = crowdLabel(candidate.Label, crowdCount)
+		}
+		metadata, _ := json.Marshal(meta)
 		detections = append(detections, Detection{
 			RuleId:        rule.Id,
 			CameraId:      rule.CameraId,
 			DetectionType: rule.DetectionType,
-			Label:         detectionLabel(rule.DetectionType, candidate.Label),
+			Label:         label,
 			Confidence:    candidate.Confidence,
 			ZonePolygon:   rule.ZonePolygon,
 			BoundingBox:   string(boundingBox),
@@ -190,7 +222,7 @@ func (d *ObjectRuleDetector) bestCandidate(rule DetectionRule, candidates []Obje
 		if candidate.Label == "" || candidate.Confidence < minConfidence {
 			continue
 		}
-		if !d.labelAllowed(rule.DetectionType, candidate.Label) {
+		if !d.ruleLabelAllowed(rule, candidate.Label) {
 			continue
 		}
 		box := normalizeBox(candidate.Box)
@@ -204,6 +236,41 @@ func (d *ObjectRuleDetector) bestCandidate(rule DetectionRule, candidates []Obje
 		}
 	}
 	return best, matched
+}
+
+// ruleLabelAllowed decides whether a candidate label satisfies a rule's target
+// classes. When the rule carries an explicit class list in ruleConfig (the
+// two-axis "Target" — already resolved to raw model labels by the caller), that
+// list wins and "*" means "any object". Legacy rules with no ruleConfig.classes
+// fall back to the static classMap keyed by detectionType, so existing
+// person/vehicle/animal/fire/smoke rules keep working unchanged.
+func (d *ObjectRuleDetector) ruleLabelAllowed(rule DetectionRule, label string) bool {
+	classes := parseRuleClasses(rule.RuleConfig)
+	if len(classes) > 0 {
+		for _, class := range classes {
+			if class == "*" || class == label {
+				return true
+			}
+		}
+		return false
+	}
+	return d.labelAllowed(rule.DetectionType, label)
+}
+
+// parseRuleClasses extracts a generic {"classes":[...]} target list from a rule
+// config. It returns nil when the config is empty or has no classes, so the
+// caller falls back to the static classMap.
+func parseRuleClasses(ruleConfig string) []string {
+	if strings.TrimSpace(ruleConfig) == "" {
+		return nil
+	}
+	var cfg struct {
+		Classes []string `json:"classes"`
+	}
+	if err := json.Unmarshal([]byte(ruleConfig), &cfg); err != nil {
+		return nil
+	}
+	return normalizeStringList(cfg.Classes)
 }
 
 func (d *ObjectRuleDetector) labelAllowed(detectionType string, label string) bool {
@@ -229,6 +296,7 @@ func normalizeClassMap(raw map[string][]string) map[string]map[string]bool {
 		DetectionPerson:            {DetectionPerson},
 		DetectionVehicle:           vehicleClasses,
 		DetectionAnimal:            animalClasses,
+		DetectionCrowd:             {DetectionPerson},
 		DetectionIntrusion:         append([]string{"person"}, vehicleClasses...),
 		DetectionLineCrossing:      append([]string{"person"}, vehicleClasses...),
 		DetectionMultiLineCrossing: append([]string{"person"}, vehicleClasses...),

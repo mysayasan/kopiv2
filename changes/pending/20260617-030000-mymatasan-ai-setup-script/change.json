@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "mymatasan",
+  "summary": "One-click in-app GPU dependency installer on Models -> Train in-app: an 'Install GPU support' button runs the bundled platform setup script (apps/mymatasan/ai/setup.ps1 on Windows, setup.sh on Linux/macOS/Pi) from inside the app. The backend first verifies the hardware is CUDA-capable (nvidia-smi), then pauses the detector worker (so pip can replace PyTorch's locked DLLs on Windows), installs the CUDA PyTorch build + ultralytics + OpenCV into the app's Python, streams a live log via a polled status endpoint, and refreshes capability when done. New PersistentObjectDetector Pause/Resume; new MachineCapability fields hasGpu/gpu/canInstall; new POST/GET /api/training/setup-deps. The scripts remain runnable standalone too. Capability check now distinguishes a CPU-only torch build from a missing GPU and reports torch/CUDA build + device.",
+  "compatibility": "Additive. The installer button only appears on a CUDA-capable host; GPU-less machines (incl. Raspberry Pi) are told to use Export instead. Resolves the common case where torch installed as the CPU build reports 'CPU only' despite an NVIDIA GPU. A server restart is required after install for the worker to load the GPU build."
+}

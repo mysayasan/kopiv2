@@ -20,6 +20,7 @@ type ShutdownFunc func(ctx context.Context) error
 // Dependencies are shared runtime components available to each app module.
 type Dependencies struct {
 	Config      *config.AppConfigModel
+	ConfigPath  string
 	Db          dbsql.IDbCrud
 	Cache       cache.Store
 	Auth        *middlewares.AuthMidware

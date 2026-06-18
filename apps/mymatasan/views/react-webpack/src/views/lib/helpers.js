@@ -1,5 +1,5 @@
 import config from 'config';
-import { defaultDecoderConfig, defaultYoloConfig, defaultCaptureConfig, defaultAlertNotificationConfig, defaultMachineHealthSettings, defaultZonePoints, defaultVisionThreshold, defaultVisionMinFrames, lineDetectionTypes, defaultLineClasses, maxCrossingLines, weekdayScheduleDays, weekendScheduleDays, allScheduleDays, liveViewsCookieName, liveViewLayouts, defaultLiveViewLayout } from './constants';
+import { defaultDecoderConfig, defaultYoloConfig, defaultCaptureConfig, defaultAlertNotificationConfig, defaultMachineHealthSettings, defaultZonePoints, defaultVisionThreshold, defaultVisionMinFrames, lineDetectionTypes, defaultLineClasses, maxCrossingLines, defaultCrowdMinCount, weekdayScheduleDays, weekendScheduleDays, allScheduleDays, liveViewsCookieName, liveViewLayouts, defaultLiveViewLayout } from './constants';
 
 // normalizeLayout returns a known Live View layout id, defaulting unknown values.
 export function normalizeLayout(id) {
@@ -471,6 +471,35 @@ export function isLineDetectionType(value) {
   return lineDetectionTypes.includes(value);
 }
 
+export function isCrowdDetectionType(value) {
+  return value === 'crowd';
+}
+
+export function defaultCrowdRuleConfig() {
+  return { minCount: defaultCrowdMinCount };
+}
+
+export function normalizeCrowdConfig(config) {
+  const source = config && typeof config === 'object' ? config : {};
+  const minCount = Math.max(2, Math.min(100, Math.round(Number(source.minCount) || defaultCrowdMinCount)));
+  return { minCount };
+}
+
+export function parseCrowdRuleConfig(value) {
+  if (!value) {
+    return defaultCrowdRuleConfig();
+  }
+  try {
+    return normalizeCrowdConfig(JSON.parse(value));
+  } catch (_) {
+    return defaultCrowdRuleConfig();
+  }
+}
+
+export function crowdRuleConfigText(config) {
+  return JSON.stringify(normalizeCrowdConfig(config), null, 2);
+}
+
 export function defaultLineRuleConfig(type = 'line_crossing') {
   const lines =
     type === 'multi_line_crossing'
@@ -539,14 +568,135 @@ export function lineCountFromRule(rule) {
   return `${config.lines.length} line${config.lines.length === 1 ? '' : 's'}`;
 }
 
+// ---- Two-axis rule model: Mode (how) + Target classes (what) ----
+
+// detectionModes are the fixed "how" behaviors. The "what" is the target class
+// list, sourced from the class registry.
+export const detectionModes = [
+  ['presence', 'Presence'],
+  ['crowd', 'Crowd / count'],
+  ['intrusion', 'Intrusion (zone)'],
+  ['line_crossing', 'Line crossing'],
+  ['multi_line_crossing', 'Multi-line crossing'],
+];
+
+// Legacy single-object detection types map to presence mode with that class as
+// the sole target, so existing rules open correctly in the two-axis editor.
+export const legacyPresenceTypes = ['fire', 'smoke', 'person', 'vehicle', 'animal'];
+const legacyTypeTargets = {
+  fire: ['fire'],
+  smoke: ['smoke'],
+  person: ['person'],
+  vehicle: ['vehicle'],
+  animal: ['animal'],
+  intrusion: ['person', 'vehicle'],
+};
+
+export function modeFromDetectionType(type) {
+  const value = String(type || '').toLowerCase();
+  if (value === 'presence' || legacyPresenceTypes.includes(value)) {
+    return 'presence';
+  }
+  if (['crowd', 'intrusion', 'line_crossing', 'multi_line_crossing'].includes(value)) {
+    return value;
+  }
+  return 'presence';
+}
+
+export function detectionTypeForMode(mode) {
+  return mode === 'presence' ? 'presence' : mode;
+}
+
+// targetClassesFromRule returns the rule's selected class slugs, falling back to
+// the legacy classMap defaults for old rules that carried the class in the type.
+export function targetClassesFromRule(rule) {
+  const fromConfig = parseRuleClasses(rule?.ruleConfig);
+  if (fromConfig.length) {
+    return fromConfig;
+  }
+  const type = String(rule?.detectionType || '').toLowerCase();
+  if (legacyTypeTargets[type]) {
+    return [...legacyTypeTargets[type]];
+  }
+  if (type && type !== 'presence' && !['crowd', 'line_crossing', 'multi_line_crossing'].includes(type)) {
+    return [type];
+  }
+  return [];
+}
+
+function parseRuleClasses(value) {
+  if (!value) {
+    return [];
+  }
+  try {
+    const cfg = JSON.parse(value);
+    return Array.isArray(cfg?.classes)
+      ? cfg.classes.map((c) => String(c).trim().toLowerCase()).filter(Boolean)
+      : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+// buildRuleConfigForMode produces the ruleConfig JSON string for a given mode and
+// target classes, preserving mode-specific fields (crowd minCount, line geometry)
+// from the existing config.
+export function buildRuleConfigForMode(mode, targetClasses, existingConfig) {
+  const classes = (targetClasses || []).map((c) => String(c).trim().toLowerCase()).filter(Boolean);
+  if (mode === 'line_crossing' || mode === 'multi_line_crossing') {
+    const cfg = normalizeLineConfig(parseLineRuleConfig(existingConfig, mode), mode);
+    cfg.classes = classes.length ? classes : defaultLineClasses;
+    return lineRuleConfigText(cfg, mode);
+  }
+  if (mode === 'crowd') {
+    const cfg = parseCrowdRuleConfig(existingConfig);
+    return JSON.stringify({ minCount: cfg.minCount, classes }, null, 2);
+  }
+  // presence / intrusion
+  return JSON.stringify({ classes }, null, 2);
+}
+
+// ---- Class registry helpers ----
+
+// groupedClassOptions buckets registry classes for the Target picker. Disabled
+// rows are dropped. Each bucket is [label, items[]].
+export function groupedClassOptions(classes) {
+  const buckets = { object: [], hazard: [], group: [] };
+  (classes || []).forEach((cls) => {
+    if (cls.isEnabled === false) {
+      return;
+    }
+    const kind = ['object', 'hazard', 'group'].includes(cls.kind) ? cls.kind : 'object';
+    buckets[kind].push(cls);
+  });
+  return [
+    ['Objects', buckets.object],
+    ['Hazards', buckets.hazard],
+    ['Groups', buckets.group],
+  ].filter(([, items]) => items.length);
+}
+
+export function classDisplayName(classes, slug) {
+  const match = (classes || []).find((cls) => cls.name === slug);
+  return match?.displayName || titleizeSlug(slug);
+}
+
+function titleizeSlug(slug) {
+  return String(slug || '')
+    .split(/[_\-\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 export function defaultVisionRuleDraft(cameraId = '') {
   return {
     id: 0,
     cameraId: cameraId || '',
     name: '',
-    detectionType: 'fire',
+    detectionType: 'presence',
     zonePolygon: defaultZonePolygon,
-    ruleConfig: '',
+    ruleConfig: JSON.stringify({ classes: ['person'] }),
     schedulePolicy: '',
     threshold: defaultVisionThreshold,
     minFrames: defaultVisionMinFrames,

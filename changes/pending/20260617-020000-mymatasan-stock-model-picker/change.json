@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "mymatasan",
+  "summary": "Settings → AI now has a Stock (base) model picker: choose yolo11n/s/m/l/x (or a custom .pt path) and Download & apply. Known variants are auto-downloaded via ultralytics, written to a stock-model pointer file the YOLO worker reads on (re)start, and the worker is reloaded to apply. New /api/training/stock-model (GET/POST) + service GetStockModel/SetStockModel/downloadStockModel; the worker's _stock_model_path now resolves MYMATASAN_YOLO_MODEL → stock pointer (MYMATASAN_STOCK_MODEL_FILE) → bundled yolo11n.pt.",
+  "compatibility": "Additive; default stays yolo11n.pt. Larger models are much slower (especially CPU/Raspberry Pi) and the device needs one-time internet access to download a variant (then cached). Custom path must be a local .pt on the server."
+}

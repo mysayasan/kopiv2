@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import './styles/app.css';
 import { Message } from './components/ui';
 import { THEMES, emptyLogin, defaultStreamConfig, defaultRuntimeSettings, defaultNewUser, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings, defaultVisionThreshold, defaultVisionMinFrames } from './lib/constants';
-import {readLiveViewsCookie,saveLiveViewsCookie,layoutCapacity,normalizeLayout,unwrap,errorMessage,apiBase,parseMetadata,cameraTitle,normalizeScanDevice,orderedSavedCameras,isActionableVisionAlert,latestAlertsByCamera,sameCamera,liveSource,normalizeRuntimeSettings,normalizeMachineHealthSettings,defaultZonePolygon,isLineDetectionType,defaultLineRuleConfig,parseLineRuleConfig,lineRuleConfigText,defaultVisionRuleDraft,playAlertSound,hasH264VideoTrack,streamOptionLabel } from './lib/helpers';
+import {readLiveViewsCookie,saveLiveViewsCookie,layoutCapacity,normalizeLayout,unwrap,errorMessage,apiBase,parseMetadata,cameraTitle,normalizeScanDevice,orderedSavedCameras,isActionableVisionAlert,latestAlertsByCamera,sameCamera,liveSource,normalizeRuntimeSettings,normalizeMachineHealthSettings,defaultZonePolygon,isLineDetectionType,defaultLineRuleConfig,lineRuleConfigText,defaultVisionRuleDraft,playAlertSound,hasH264VideoTrack,streamOptionLabel } from './lib/helpers';
 import { LoginPage, TopBar } from './components/layout';
 import { ViewsTab, CamerasTab } from './components/cameras';
 import { VisionTab } from './components/vision';
+import { TrainingTab } from './components/training';
 import { SettingsTab } from './components/settings';
 import { RecordingTab } from './components/recording';
 
@@ -77,6 +78,9 @@ export default function App() {
   const [passwordDrafts, setPasswordDrafts] = useState({});
   const [visionRules, setVisionRules] = useState([]);
   const [visionAlerts, setVisionAlerts] = useState([]);
+  const [visionClasses, setVisionClasses] = useState([]);
+  const [visionLabels, setVisionLabels] = useState([]);
+  const [activeModelClasses, setActiveModelClasses] = useState([]);
   const [visionRuleDraft, setVisionRuleDraft] = useState(defaultVisionRuleDraft());
   const [recordingSegments, setRecordingSegments] = useState([]);
   const [recordingConfigs, setRecordingConfigs] = useState([]);
@@ -503,20 +507,42 @@ export default function App() {
     }
   }
 
+  // Loads the active model's class labels so the rule "Detect" picker and the
+  // Object Classes list can flag which trained classes the active model actually
+  // produces (only one model is active at a time).
+  async function loadActiveModelClasses() {
+    try {
+      const result = await request('/api/training/models');
+      const items = Array.isArray(result) ? result : result?.items || [];
+      const active = items.find((m) => m.isActive);
+      let cls = [];
+      if (active) { try { cls = JSON.parse(active.classes || '[]'); } catch (_) { cls = []; } }
+      setActiveModelClasses(cls.map((c) => String(c).toLowerCase()));
+    } catch (_) {
+      setActiveModelClasses([]);
+    }
+  }
+
   async function loadVision({ quiet = false, notifyNew = false } = {}) {
     if (!quiet) {
       setBusy(true);
       setMessage('');
     }
     try {
-      const [rulesResult, alertsResult] = await Promise.all([
+      const [rulesResult, alertsResult, classesResult, labelsResult] = await Promise.all([
         request('/api/vision/rules?limit=100&offset=0'),
         request('/api/vision/alerts?limit=100&offset=0'),
+        request('/api/vision/classes'),
+        request('/api/vision/labels'),
       ]);
       const rules = Array.isArray(rulesResult) ? rulesResult : rulesResult?.items || [];
       const alerts = Array.isArray(alertsResult) ? alertsResult : alertsResult?.items || [];
+      const classes = Array.isArray(classesResult) ? classesResult : classesResult?.items || [];
+      const labels = Array.isArray(labelsResult) ? labelsResult : labelsResult?.items || [];
       setVisionRules(rules);
       setVisionAlerts(alerts);
+      setVisionClasses(classes);
+      setVisionLabels(labels);
       const seen = seenVisionAlertIdsRef.current;
       const newActiveAlerts = alerts.filter((alert) => alert?.id && !alert.isAcknowledged && !seen.has(alert.id));
       alerts.forEach((alert) => {
@@ -565,6 +591,7 @@ export default function App() {
       return undefined;
     }
     loadVision({ quiet: true }).catch(() => {});
+    loadActiveModelClasses();
     // Fallback poll. The unified notification SSE stream below delivers new
     // events in real time; this slower interval reconciles acknowledgements and
     // covers the case where the stream is unavailable (e.g. cross-origin dev).
@@ -901,15 +928,12 @@ export default function App() {
     setBusy(true);
     setMessage('');
     try {
-      const payload = {
-        ...visionRuleDraft,
-        ruleConfig: isLineDetectionType(visionRuleDraft.detectionType)
-          ? lineRuleConfigText(parseLineRuleConfig(visionRuleDraft.ruleConfig, visionRuleDraft.detectionType), visionRuleDraft.detectionType)
-          : '',
-      };
+      // The two-axis editor maintains a mode-correct ruleConfig (target classes
+      // for presence/crowd/intrusion, geometry + classes for line modes), so send
+      // it as-is rather than stripping it.
       await request('/api/vision/rules', {
         method: 'POST',
-        body: JSON.stringify(payload),
+        body: JSON.stringify(visionRuleDraft),
       });
       setVisionRuleDraft(defaultVisionRuleDraft(visionRuleDraft.cameraId || orderedSavedCameras(saved)[0]?.id));
       await loadVision({ quiet: true });
@@ -926,7 +950,7 @@ export default function App() {
       id: rule.id,
       cameraId: rule.cameraId || '',
       name: rule.name || '',
-      detectionType: rule.detectionType || 'fire',
+      detectionType: rule.detectionType || 'presence',
       zonePolygon: rule.zonePolygon || defaultZonePolygon,
       ruleConfig: rule.ruleConfig || (isLineDetectionType(rule.detectionType) ? lineRuleConfigText(defaultLineRuleConfig(rule.detectionType), rule.detectionType) : ''),
       schedulePolicy: rule.schedulePolicy || '',
@@ -949,6 +973,37 @@ export default function App() {
       await request(`/api/vision/rules/${id}`, { method: 'DELETE' });
       await loadVision({ quiet: true });
       setMessage('AI detection rule deleted.');
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveVisionClass(payload) {
+    setBusy(true);
+    setMessage('');
+    try {
+      await request('/api/vision/classes', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      await loadVision({ quiet: true });
+      setMessage('Object class saved.');
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteVisionClass(id) {
+    setBusy(true);
+    setMessage('');
+    try {
+      await request(`/api/vision/classes/${id}`, { method: 'DELETE' });
+      await loadVision({ quiet: true });
+      setMessage('Object class deleted.');
     } catch (err) {
       setMessage(err.message);
     } finally {
@@ -1730,12 +1785,17 @@ export default function App() {
           saved={saved}
           rules={visionRules}
           alerts={visionAlerts}
+          classes={visionClasses}
+          labelCatalog={visionLabels}
+          activeModelClasses={activeModelClasses}
           ruleDraft={visionRuleDraft}
           busy={busy}
           authHeader={authHeader}
           streamConfig={streamConfig}
           onRuleDraft={setVisionRuleDraft}
           onSaveRule={saveVisionRule}
+          onSaveClass={saveVisionClass}
+          onDeleteClass={deleteVisionClass}
           onEditRule={editVisionRule}
           onDeleteRule={deleteVisionRule}
           onTriggerTestAlert={triggerTestAlert}
@@ -1745,10 +1805,16 @@ export default function App() {
         />
       ) : null}
 
+      {activeTab === 'training' ? (
+        <TrainingTab authHeader={authHeader} cameras={saved} onMessage={setMessage} onModelActivated={() => { loadVision({ quiet: true }); loadActiveModelClasses(); }} />
+      ) : null}
+
       {activeTab === 'settings' ? (
         <SettingsTab
           settingsNav={settingsNav}
           settings={runtimeSettings}
+          authHeader={authHeader}
+          onMessage={setMessage}
           users={users}
           newUser={newUser}
           passwordDrafts={passwordDrafts}

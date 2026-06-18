@@ -111,6 +111,7 @@ export const defaultZonePoints = [
 export const defaultVisionThreshold = 0.35;
 export const defaultVisionMinFrames = 2;
 export const lineDetectionTypes = ['line_crossing', 'multi_line_crossing'];
+export const defaultCrowdMinCount = 2;
 export const lineClassOptions = ['person', 'vehicle', 'car', 'truck', 'bus', 'motorcycle', 'bicycle', 'animal', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'mouse', 'rat'];
 export const defaultLineClasses = ['person'];
 export const maxCrossingLines = 5;

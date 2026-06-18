@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
@@ -63,10 +64,13 @@ func (s *visionService) DeleteRule(ctx context.Context, id uint64) (uint64, erro
 	return s.rules.DeleteById(ctx, "", id)
 }
 
-func (s *visionService) GetAlerts(ctx context.Context, limit uint64, offset uint64, cameraId int64, createdAfter int64, createdBefore int64, ruleId int64, status string) ([]*entities.AlertEvent, uint64, error) {
+func (s *visionService) GetAlerts(ctx context.Context, limit uint64, offset uint64, cameraId int64, createdAfter int64, createdBefore int64, ruleId int64, status string, detectionType string) ([]*entities.AlertEvent, uint64, error) {
 	var filters []sqldataenums.Filter
 	if cameraId > 0 {
 		filters = append(filters, sqldataenums.Filter{FieldName: "CameraId", Compare: sqldataenums.Equal, Value: cameraId})
+	}
+	if dt := strings.ToLower(strings.TrimSpace(detectionType)); dt != "" {
+		filters = append(filters, sqldataenums.Filter{FieldName: "DetectionType", Compare: sqldataenums.Equal, Value: dt})
 	}
 	if createdAfter > 0 {
 		filters = append(filters, sqldataenums.Filter{FieldName: "CreatedAt", Compare: sqldataenums.GreaterThanOrEqualTo, Value: createdAfter})

@@ -1,0 +1,6 @@
+{
+  "type": "changed",
+  "scope": "mymatasan",
+  "summary": "Custom models now run in PARALLEL with the stock model instead of replacing it. The YOLO worker always loads the stock model (yolo11n / MYMATASAN_YOLO_MODEL) and, when a custom model is active, also loads it from the active-model pointer; it runs both per frame and merges detections (same-label boxes with IoU>0.55 de-duplicated, different labels kept). Activating a custom model therefore ADDS its classes on top of stock detection; only one custom model runs at a time (activating another switches; Deactivate reverts to stock-only). UI/messages/README updated to reflect 'runs alongside stock' and the one-custom-at-a-time rule; the rule Detect picker and Object Classes list already mark trained classes the active model doesn't produce as inactive.",
+  "compatibility": "Behavior change: a custom model no longer disables stock detection. Running two models is slower per frame (each frame inferenced twice) — most noticeable on CPU-only devices. A custom-model load failure does not take down stock detection."
+}

@@ -10,6 +10,9 @@ It is designed to run on small devices such as Raspberry Pi or Jetson-style micr
 - ONVIF discovery, manual probe, saved-device list, save, camera password change, PTZ move/stop, stream option listing, selected stream URI resolution, RTSP test, WebRTC live view, MJPEG fallback, and delete endpoints under `/api/onvif`.
 - Camera-first AI detection rules and alert events under `/api/vision`, backed by reusable `infra/vision` rule, schedule, motion, external-object, line-crossing, multi-line-crossing, and hybrid detection primitives.
 - Line-crossing rules support an **Anything** wildcard class (`"*"`) that triggers on any detected YOLO object regardless of label, in addition to the named class list.
+- **Crowd** detection: a rule mode that fires when at least `minCount` people (default 2) are in the zone in a single frame.
+- **Two-axis rule model**: a detection rule is now a **Mode** (presence, crowd, intrusion, line crossing, multi-line crossing) plus a **target class list** chosen from a data-driven **detection class registry** under `/api/vision/classes` (built-in classes + user-defined groups + trained classes). Legacy single-object rules (`person`/`vehicle`/`animal`/`fire`/`smoke`) still work and open in the new editor.
+- **Custom model training** under `/api/training`: build labeled image datasets (upload or import from alert snapshots), draw/correct bounding boxes in-browser, auto-label with the running model, export a YOLO dataset zip, train a custom model (in-app on a GPU, or offline), import a `best.pt`, and **activate** it to hot-swap the live detector and register its classes for rules.
 - YOLO Inference Tuning in Settings includes a **Best Calibration** button that applies recommended defaults (conf=0.20, IOU=0.35, imgsz=640, maxDet=100, augment on).
 - Alert log with server-side filtering by camera ID and unix-timestamp date range; the browser UI defaults to today's alerts and pages 20 at a time.
 - NVR recording under `/api/recording`: RTSP-mode rolling `.ts` segment buffer with event-triggered MP4 clip extraction; tick-mode JPEG ring buffer for low-resource devices. Config hot-reload without restart. Live recorder status endpoint.
@@ -148,15 +151,35 @@ Vision monitoring is configured from the startup `vision` block. `motion` mode i
       "line_crossing": ["person", "vehicle", "car", "truck", "bus", "motorcycle", "bicycle"],
       "multi_line_crossing": ["person", "vehicle", "car", "truck", "bus", "motorcycle", "bicycle"]
     }
+  },
+  "training": {
+    "dataDir": ""
   }
 }
 ```
 
-Install the YOLO worker dependencies in the Python environment used by the app:
+`vision.training.dataDir` is the on-disk root for custom-model training datasets, exported YOLO datasets, and trained model weights. When empty it defaults to a `training` sibling of `snapshotDir` (so all AI artifacts live under the volume the machine-health monitor watches). The `classMap` above seeds the built-in detection classes on first run; thereafter the class registry (`/api/vision/classes`) is the source of truth and is editable in the UI. See **Custom Model Training API** below.
+
+**Easiest (GPU hosts):** on a machine with an NVIDIA GPU, open **Models → Train in-app** and click **Install GPU support**. The app verifies the GPU is CUDA-capable, pauses detection (so PyTorch's files aren't locked), installs the CUDA PyTorch build into its own Python, and shows a live log — no terminal needed. Restart the server when it finishes.
+
+Otherwise, install the YOLO worker dependencies in the Python environment used by the app. The bundled setup script auto-detects an NVIDIA GPU and installs the matching PyTorch build (CUDA when a GPU is present, otherwise CPU) plus ultralytics and OpenCV:
+
+```bash
+# Windows (PowerShell)
+powershell -ExecutionPolicy Bypass -File apps/mymatasan/ai/setup.ps1
+# Linux / macOS / Raspberry Pi
+apps/mymatasan/ai/setup.sh
+```
+
+Run it with the **same Python** the app launches the detector with (`vision.detector.command`, usually `python`). Pass an explicit interpreter or CUDA wheel tag if needed: `setup.ps1 -Python C:\path\python.exe -Cuda cu121` / `setup.sh /usr/bin/python3 cu121`.
+
+Or install manually:
 
 ```bash
 python -m pip install -r apps/mymatasan/ai/requirements-yolo.txt
 ```
+
+> In-app training (Models → Train) needs the **CUDA build** of PyTorch to use a GPU. The default `pip install torch` (and what ultralytics pulls) is often the CPU-only build (`+cpu`), which can't use the GPU — the setup script installs the CUDA build automatically when a GPU is detected. The Train-in-app panel reports the detected PyTorch/CUDA state.
 
 MyMataSan keeps ML runtime files under `apps/mymatasan/ai` to avoid confusing them with Go/domain object models such as `domain/models`.
 
@@ -575,3 +598,102 @@ curl -u admin:Admin123 -X POST "http://localhost:3000/api/vision/alerts/1/ack"
 The monitor captures JPEG frames from the saved camera RTSP or snapshot source, applies the configured detector, then applies threshold/min-frame/cooldown settings before persisting alert events. When `vision.detector.mode` is `external`, `hybrid`, or `persistent`, object candidates from the configured detector process are matched to rule types, zone polygons, thresholds, min-frame counts, line-crossing state, and cooldowns before alert persistence.
 
 Each detection result carries the **frame capture timestamp** (`FrameCapturedAt`), which is passed through to the recording manager as the clip anchor. This means the pre-roll/post-roll window is always centred on when the subject was visible in the frame, not on when YOLO finished processing it. Without this, YOLO's inference latency (100–500 ms per frame) caused recordings to start after the subject had already left, producing empty clips when motion and person detection were both enabled.
+
+### Detection class registry and the two-axis rule model
+
+A detection rule has two independent axes:
+
+- **Mode** (the `detectionType` field) — *how* to detect: `presence`, `crowd`, `intrusion`, `line_crossing`, `multi_line_crossing`.
+- **Target classes** (`ruleConfig.classes`) — *what* to detect, chosen from the **class registry**.
+
+The class registry decouples object classes from rule modes so trained/custom classes are first-class. Built-in classes (`person`, `vehicle`, `animal`, `fire`, `smoke`) are seeded from the configured `classMap` on first run. You can also create **groups** (e.g. `delivery = courier + van`) that expand to their members, and **trained** classes are added automatically when a custom model is activated. At rule-load time the monitor resolves each rule's target slugs (categories/groups) to concrete model labels, so the app-neutral detector never needs to know about the registry.
+
+```bash
+# List registry classes (built-in, trained, and groups)
+curl -u admin:Admin123 "http://localhost:3000/api/vision/classes"
+
+# Create a group
+curl -u admin:Admin123 -H "Content-Type: application/json" \
+  -d '{"name":"delivery","displayName":"Delivery","kind":"group","members":["courier","van"]}' \
+  "http://localhost:3000/api/vision/classes"
+```
+
+A presence rule that watches one or more registry classes stores them in `ruleConfig.classes` and uses `detectionType:"presence"`:
+
+```bash
+curl -u admin:Admin123 -H "Content-Type: application/json" \
+  -d '{"cameraId":1,"name":"Courier at gate","detectionType":"presence","zonePolygon":"[[0.1,0.1],[0.9,0.1],[0.9,0.9],[0.1,0.9]]","ruleConfig":"{\"classes\":[\"courier\"]}","threshold":0.4,"minFrames":2,"cooldownSeconds":30,"isEnabled":true}' \
+  "http://localhost:3000/api/vision/rules"
+```
+
+A crowd rule fires when at least `minCount` people are in the zone in a single frame:
+
+```bash
+curl -u admin:Admin123 -H "Content-Type: application/json" \
+  -d '{"cameraId":1,"name":"Crowd in lobby","detectionType":"crowd","zonePolygon":"[[0,0],[1,0],[1,1],[0,1]]","ruleConfig":"{\"minCount\":3,\"classes\":[\"person\"]}","threshold":0.4,"minFrames":2,"cooldownSeconds":30,"isEnabled":true}' \
+  "http://localhost:3000/api/vision/rules"
+```
+
+## Custom Model Training API
+
+The **Training** tab (and `/api/training`) lets you teach the detector new object classes end to end: collect images → label → train → activate. All routes use the same local Basic Auth. Training artifacts are stored under `vision.training.dataDir` (defaults to a `training` sibling of `snapshotDir`).
+
+The workflow has three steps in the UI (mirrored by the API):
+
+1. **Datasets** — a dataset is a named collection of labeled images for one set of classes.
+2. **Images & Labels** — upload JPEGs or import alert snapshots (which arrive pre-labeled from the alert's detection box), then draw/move/delete bounding boxes and assign a class per box in the in-browser editor. **Auto-label** runs the active detector on an image and fills boxes for you to correct. Classes you assign are saved back onto the dataset.
+3. **Models** — **Train** the dataset (in-app when a CUDA GPU is present, or **Export** a YOLO zip to train elsewhere), then **Activate** a model.
+
+```bash
+# Datasets
+curl -u admin:Admin123 "http://localhost:3000/api/training/datasets"
+curl -u admin:Admin123 -H "Content-Type: application/json" \
+  -d '{"name":"Couriers","classes":["courier","van"]}' \
+  "http://localhost:3000/api/training/datasets"
+
+# Add images: multipart upload, or import an existing alert snapshot (pre-labeled)
+curl -u admin:Admin123 -F "file=@frame.jpg" "http://localhost:3000/api/training/datasets/1/images/upload"
+curl -u admin:Admin123 -H "Content-Type: application/json" \
+  -d '{"alertId":42}' "http://localhost:3000/api/training/datasets/1/images/from-alert"
+
+# Label: save boxes (normalized top-left x,y + w,h), or auto-label with the active model
+curl -u admin:Admin123 -X PUT -H "Content-Type: application/json" \
+  -d '{"annotations":[{"className":"courier","x":0.3,"y":0.25,"w":0.2,"h":0.4,"source":"manual"}]}' \
+  "http://localhost:3000/api/training/images/7/annotations"
+curl -u admin:Admin123 -X POST "http://localhost:3000/api/training/images/7/autolabel"
+
+# Export a YOLO dataset zip (data.yaml + images/labels train/val split) to train elsewhere
+curl -u admin:Admin123 -OJ "http://localhost:3000/api/training/datasets/1/export"
+
+# Check in-app training capability (Python / ultralytics / CUDA)
+curl -u admin:Admin123 "http://localhost:3000/api/training/capability"
+
+# Stock (base) model — Settings → AI also exposes this as a dropdown
+curl -u admin:Admin123 "http://localhost:3000/api/training/stock-model"
+curl -u admin:Admin123 -H "Content-Type: application/json" \
+  -d '{"model":"yolo11s.pt"}' "http://localhost:3000/api/training/stock-model"
+
+# Train in-app (background job; poll the models list for progress/status)
+curl -u admin:Admin123 -H "Content-Type: application/json" \
+  -d '{"datasetId":1,"epochs":50,"imgsz":640}' "http://localhost:3000/api/training/models"
+
+# Import a best.pt trained offline
+curl -u admin:Admin123 -F "file=@best.pt" -F "name=Couriers v1" -F "classes=courier,van" \
+  "http://localhost:3000/api/training/models/import"
+
+# Activate a model — hot-swaps the live detector and registers its classes
+curl -u admin:Admin123 -X POST "http://localhost:3000/api/training/models/3/activate"
+
+# Revert to the stock model (so the active custom model can be deleted)
+curl -u admin:Admin123 -X POST "http://localhost:3000/api/training/models/deactivate"
+```
+
+The active model cannot be deleted while in use — **Deactivate** first (reverts the worker to the bundled `yolo11n.pt`), then delete.
+
+**Hot-swap mechanism.** Activation writes the model's weights path to an active-model pointer file that the YOLO worker reads on (re)start (`MYMATASAN_ACTIVE_MODEL_FILE`, default `active_model.txt` next to the worker script). The persistent worker is then restarted so the next inference loads the new weights. The model's classes are upserted into the class registry so they appear in the rule target picker immediately.
+
+**Using a trained model in the AI tab.** Once activated, the model's classes show up in the **Detect (what)** target picker when you create or edit a rule, so you can build rules on your custom classes just like built-in ones.
+
+> **Parallel stock + custom.** The stock model (`yolo11n.pt`, or `MYMATASAN_YOLO_MODEL`) **always runs**. Activating a custom model runs it **alongside** stock — the worker loads both, runs both per frame, and merges their detections (same-label overlaps are de-duplicated). So a custom model trained only on `papa` **adds** `papa` detection on top of the stock `person`/`vehicle`/`animal`/… detection rather than replacing it. **Only one** custom model runs at a time — activating another switches to it; **Deactivate** reverts to stock-only. Running two models is somewhat slower per frame (each frame is inferenced twice), which matters most on CPU-only devices.
+
+**In-app training requirements.** In-app training needs `python` + `ultralytics` (the same Python the detector uses). The **Train** button is disabled when these are missing and warns when only a CPU is available — CPU training is impractically slow, so export and train on a GPU instead. One training run executes at a time. The bundled trainer is `apps/mymatasan/ai/train_worker.py`.

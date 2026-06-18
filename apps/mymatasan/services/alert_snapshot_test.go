@@ -5,6 +5,8 @@ import (
 	"image"
 	"image/jpeg"
 	"testing"
+
+	"github.com/mysayasan/kopiv2/infra/vision"
 )
 
 func tinyJPEG(t *testing.T) []byte {
@@ -49,6 +51,41 @@ func TestBuildAlertSnapshotGating(t *testing.T) {
 	// Empty image -> nil.
 	if got := BuildAlertSnapshot(nil, box, meta, "person", nil); got != nil {
 		t.Error("empty image should return nil")
+	}
+}
+
+func TestBuildAlertSnapshotDrawsAllCrowdBoxes(t *testing.T) {
+	img := tinyJPEG(t)
+	primary := `{"x":0.1,"y":0.1,"w":0.2,"h":0.2}`
+	// Crowd alert: metadata carries every qualifying box with label + confidence.
+	crowdMeta := `{"objectLabel":"person","crowdCount":3,"boxes":[` +
+		`{"x":0.1,"y":0.1,"w":0.2,"h":0.2,"label":"person","confidence":0.92},` +
+		`{"x":0.4,"y":0.4,"w":0.2,"h":0.2,"label":"person","confidence":0.81},` +
+		`{"x":0.7,"y":0.1,"w":0.2,"h":0.2,"label":"person","confidence":0.7}]}`
+
+	drawn := BuildAlertSnapshot(img, primary, crowdMeta, "crowd", nil)
+	if bytes.Equal(drawn, img) {
+		t.Fatal("crowd snapshot should be annotated")
+	}
+	if _, err := jpeg.Decode(bytes.NewReader(drawn)); err != nil {
+		t.Fatalf("annotated image not valid jpeg: %v", err)
+	}
+
+	// boxesFromMetadata returns every box; a single-box alert returns none.
+	boxes := boxesFromMetadata(crowdMeta)
+	if len(boxes) != 3 {
+		t.Fatalf("boxesFromMetadata = %d, want 3", len(boxes))
+	}
+	if got := boxesFromMetadata(`{"objectLabel":"person"}`); len(got) != 0 {
+		t.Fatalf("boxesFromMetadata (no boxes) = %d, want 0", len(got))
+	}
+
+	// Per-box label renders the box's own confidence; empty box falls back.
+	if got := boxLabel(boxes[0], "Crowd"); got != "Person 92%" {
+		t.Fatalf("boxLabel = %q, want %q", got, "Person 92%")
+	}
+	if got := boxLabel(vision.MetaBox{}, "Crowd"); got != "Crowd" {
+		t.Fatalf("boxLabel fallback = %q, want %q", got, "Crowd")
 	}
 }
 

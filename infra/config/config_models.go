@@ -223,6 +223,14 @@ type VisionConfigModel struct {
 	DiagnosticCooldownSeconds int                       `json:"diagnosticCooldownSeconds"`
 	SnapshotDir               string                    `json:"snapshotDir"`
 	Detector                  VisionDetectorConfigModel `json:"detector"`
+	Training                  VisionTrainingConfigModel `json:"training"`
+}
+
+// VisionTrainingConfigModel configures the custom-model training subsystem
+// (datasets, labeled images, trained models). DataDir is the on-disk root for
+// dataset images, exported YOLO datasets, and trained model weights.
+type VisionTrainingConfigModel struct {
+	DataDir string `json:"dataDir"`
 }
 
 type VisionDetectorConfigModel struct {

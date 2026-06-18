@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -30,6 +31,16 @@ func BuildAlertSnapshot(image []byte, boundingBox, metadata, detectionType strin
 	if fields != nil && !fields.IncludeBoundingBox {
 		return image
 	}
+	label := alertBoxLabel(metadata, detectionType)
+	// Crowd alerts carry every qualifying box in metadata; draw them all so the
+	// snapshot outlines each member, each tagged with its own confidence.
+	if boxes := boxesFromMetadata(metadata); len(boxes) > 0 {
+		annotated := make([]vision.AnnotatedBox, 0, len(boxes))
+		for _, b := range boxes {
+			annotated = append(annotated, vision.AnnotatedBox{Box: b.Box, Label: boxLabel(b, label)})
+		}
+		return vision.AnnotateJPEG(image, annotated, 85)
+	}
 	if strings.TrimSpace(boundingBox) == "" {
 		return image
 	}
@@ -37,7 +48,37 @@ func BuildAlertSnapshot(image []byte, boundingBox, metadata, detectionType strin
 	if err := json.Unmarshal([]byte(boundingBox), &box); err != nil {
 		return image
 	}
-	return vision.AnnotateJPEG(image, []vision.AnnotatedBox{{Box: box, Label: alertBoxLabel(metadata, detectionType)}}, 85)
+	return vision.AnnotateJPEG(image, []vision.AnnotatedBox{{Box: box, Label: label}}, 85)
+}
+
+// boxesFromMetadata extracts the optional "boxes" list an alert's metadata carries
+// (crowd alerts record every qualifying box with its label + confidence), or nil
+// when absent/unparseable.
+func boxesFromMetadata(metadata string) []vision.MetaBox {
+	if strings.TrimSpace(metadata) == "" {
+		return nil
+	}
+	var parsed struct {
+		Boxes []vision.MetaBox `json:"boxes"`
+	}
+	if err := json.Unmarshal([]byte(metadata), &parsed); err != nil {
+		return nil
+	}
+	return parsed.Boxes
+}
+
+// boxLabel renders a per-box tag from its own label + confidence (e.g.
+// "Person 92%"), falling back to the alert's label when the box has none.
+func boxLabel(b vision.MetaBox, fallback string) string {
+	name := strings.TrimSpace(b.Label)
+	if name == "" {
+		return fallback
+	}
+	name = strings.ToUpper(name[:1]) + name[1:]
+	if b.Confidence > 0 {
+		return fmt.Sprintf("%s %d%%", name, int(math.Round(b.Confidence*100)))
+	}
+	return name
 }
 
 // alertBoxLabel derives the box tag text: the detected object label from the

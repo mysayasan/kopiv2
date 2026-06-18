@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "infra,mymatasan",
+  "summary": "Phase 0 of custom detection: a detection class registry (DetectionClass entity + /api/vision/classes CRUD) decouples the 'what' (object classes, extensible) from the 'how' (mode) axis of a rule. Built-in classes seed from the configured classMap; user-defined groups compose classes. The rule editor is now two-axis: a fixed Mode select (presence/crowd/intrusion/line/multi-line) plus a searchable Target class picker, replacing the hardcoded detection-type dropdown. New 'presence' mode reads target classes from ruleConfig.classes; the vision monitor resolves registry slugs/groups to model labels at rule-load time, keeping the detector registry-agnostic.",
+  "compatibility": "Backward compatible. Legacy single-object rules (person/vehicle/animal/fire/smoke) still resolve via the static classMap and open correctly in the two-axis editor. No forced DB migration; the detection_class table is auto-created and built-ins seeded on first run."
+}

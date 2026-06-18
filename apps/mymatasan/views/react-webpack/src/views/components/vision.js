@@ -2,21 +2,35 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Ico } from './icons';
 import { FormBusyOverlay } from './ui';
 import { useSnapshotBlob } from '../hooks';
-import { lineClassOptions, defaultLineClasses, scheduleDayOptions } from '../lib/constants';
-import {todayDateString,apiBase,fieldValue,formatTimestamp,parseMetadata,formatPercent,parseBoundingBox,formatSourceLabel,cameraTitle,orderedSavedCameras,parseZonePolygon,defaultZonePolygon,isLineDetectionType,normalizeLineConfig,parseLineRuleConfig,lineRuleConfigText,lineCountFromRule,defaultVisionRuleDraft,weeklySchedulePolicy,rangeSchedulePolicy,schedulePresetPolicy,scheduleDraftFromPolicy,scheduleSummary } from '../lib/helpers';
+import { scheduleDayOptions } from '../lib/constants';
+import {todayDateString,apiBase,fieldValue,formatTimestamp,parseMetadata,formatPercent,parseBoundingBox,formatSourceLabel,cameraTitle,orderedSavedCameras,parseZonePolygon,defaultZonePolygon,normalizeLineConfig,parseLineRuleConfig,lineRuleConfigText,lineCountFromRule,parseCrowdRuleConfig,detectionModes,modeFromDetectionType,detectionTypeForMode,targetClassesFromRule,buildRuleConfigForMode,groupedClassOptions,classDisplayName,defaultVisionRuleDraft,weeklySchedulePolicy,rangeSchedulePolicy,schedulePresetPolicy,scheduleDraftFromPolicy,scheduleSummary } from '../lib/helpers';
 import { ZoneDrawingPreview, LineDrawingPreview } from './previews';
 import { SavedDeviceNav } from './cameras';
+
+// classIsLive reports whether a registry class can actually be detected right
+// now: built-ins/groups always show as usable, while a trained class is "live"
+// only when the active model produces one of its labels.
+function classIsLive(cls, activeModelClasses) {
+  if (!cls || cls.source !== 'trained') return true;
+  const active = activeModelClasses || [];
+  return (cls.memberList || []).some((label) => active.includes(String(label).toLowerCase()));
+}
 
 export function VisionTab({
   saved,
   rules,
   alerts,
+  classes,
+  labelCatalog,
+  activeModelClasses,
   ruleDraft,
   busy,
   authHeader,
   streamConfig,
   onRuleDraft,
   onSaveRule,
+  onSaveClass,
+  onDeleteClass,
   onEditRule,
   onDeleteRule,
   onTriggerTestAlert,
@@ -33,11 +47,17 @@ export function VisionTab({
   const selectedAlerts = selectedCamera
     ? alerts.filter((alert) => Number(alert.cameraId) === Number(selectedCamera.id))
     : alerts;
-  const lineRule = isLineDetectionType(ruleDraft.detectionType);
-  const lineRuleConfig = parseLineRuleConfig(ruleDraft.ruleConfig, ruleDraft.detectionType);
+  const mode = modeFromDetectionType(ruleDraft.detectionType);
+  const lineRule = mode === 'line_crossing' || mode === 'multi_line_crossing';
+  const crowdRule = mode === 'crowd';
+  const lineRuleConfig = parseLineRuleConfig(ruleDraft.ruleConfig, mode === 'multi_line_crossing' ? 'multi_line_crossing' : 'line_crossing');
+  const crowdRuleConfig = parseCrowdRuleConfig(ruleDraft.ruleConfig);
+  const targetClasses = targetClassesFromRule(ruleDraft);
+  const classGroups = groupedClassOptions(classes);
   const selectedZonePoints = parseZonePolygon(ruleDraft.zonePolygon);
   const scheduleDraft = scheduleDraftFromPolicy(ruleDraft.schedulePolicy);
   const [logSelectedAlertId, setLogSelectedAlertId] = useState(null);
+  const [aiView, setAiView] = useState('rules');
 
   // Alert Log — self-contained server-paged state
   const logPageSize = 20;
@@ -139,20 +159,38 @@ export function VisionTab({
     onRuleDraft({ ...ruleDraft, schedulePolicy: rangeSchedulePolicy(next) });
   }
 
-  function changeDetectionType(detectionType) {
-    const next = { ...ruleDraft, detectionType };
-    if (isLineDetectionType(detectionType)) {
-      next.ruleConfig = lineRuleConfigText(parseLineRuleConfig(ruleDraft.ruleConfig, detectionType), detectionType);
-      next.zonePolygon = ruleDraft.zonePolygon || defaultZonePolygon;
+  // changeMode switches the detection behavior, preserving the chosen target
+  // classes and seeding mode-specific config (line geometry, crowd minCount).
+  function changeMode(nextMode) {
+    const detectionType = detectionTypeForMode(nextMode);
+    const ruleConfig = buildRuleConfigForMode(nextMode, targetClasses, ruleDraft.ruleConfig);
+    onRuleDraft({ ...ruleDraft, detectionType, ruleConfig, zonePolygon: ruleDraft.zonePolygon || defaultZonePolygon });
+  }
+
+  // changeTargets rewrites the rule's target class list within the current mode.
+  function changeTargets(nextTargets) {
+    onRuleDraft({ ...ruleDraft, ruleConfig: buildRuleConfigForMode(mode, nextTargets, ruleDraft.ruleConfig) });
+  }
+
+  function toggleTarget(slug, checked) {
+    const current = new Set(targetClasses.filter((c) => c !== '*'));
+    if (checked) {
+      current.add(slug);
     } else {
-      next.ruleConfig = '';
+      current.delete(slug);
     }
-    onRuleDraft(next);
+    changeTargets(Array.from(current));
   }
 
   function changeLineConfig(patch) {
-    const next = normalizeLineConfig({ ...lineRuleConfig, ...patch }, ruleDraft.detectionType);
-    onRuleDraft({ ...ruleDraft, ruleConfig: lineRuleConfigText(next, ruleDraft.detectionType) });
+    const type = mode === 'multi_line_crossing' ? 'multi_line_crossing' : 'line_crossing';
+    const next = normalizeLineConfig({ ...lineRuleConfig, ...patch }, type);
+    onRuleDraft({ ...ruleDraft, ruleConfig: lineRuleConfigText(next, type) });
+  }
+
+  function changeCrowdConfig(patch) {
+    const minCount = patch.minCount != null ? patch.minCount : crowdRuleConfig.minCount;
+    onRuleDraft({ ...ruleDraft, ruleConfig: buildRuleConfigForMode('crowd', targetClasses, JSON.stringify({ minCount })) });
   }
 
   function toggleScheduleDay(day) {
@@ -174,13 +212,27 @@ export function VisionTab({
       <div className="toolbar">
         <div>
           <h2 className="section-title">AI Detection</h2>
-          <p className="section-subtitle">Camera rules and alert events.</p>
+          <p className="section-subtitle">{aiView === 'classes' ? 'Object classes used by detection rules.' : 'Camera rules and alert events.'}</p>
         </div>
         <button type="button" className="quiet" onClick={onReload} disabled={busy}>
           <span className="btn-icon"><Ico n="reload" /> Reload</span>
         </button>
       </div>
 
+      <nav className="vision-subnav" aria-label="AI section">
+        <button type="button" className={aiView === 'rules' ? 'active' : 'quiet'} onClick={() => setAiView('rules')}>
+          <span className="btn-icon"><Ico n="list" /> Detection Rules</span>
+        </button>
+        <button type="button" className={aiView === 'classes' ? 'active' : 'quiet'} onClick={() => setAiView('classes')}>
+          <span className="btn-icon"><Ico n="grid2" /> Object Classes</span>
+        </button>
+      </nav>
+
+      {aiView === 'classes' ? (
+        <ObjectClassesPanel classes={classes} labelCatalog={labelCatalog} activeModelClasses={activeModelClasses} busy={busy} onSaveClass={onSaveClass} onDeleteClass={onDeleteClass} />
+      ) : null}
+
+      {aiView === 'rules' ? (
       <section className="saved-browser vision-browser">
         <SavedDeviceNav devices={saved} selectedId={selectedCamera?.id} onSelect={selectCamera} />
         <main className="saved-detail">
@@ -214,22 +266,55 @@ export function VisionTab({
                       />
                     </label>
                     <label>
-                      Detection type
-                      <select
-                        value={ruleDraft.detectionType}
-                        onChange={(event) => changeDetectionType(event.target.value)}
-                      >
-                        <option value="fire">Fire</option>
-                        <option value="smoke">Smoke</option>
-                        <option value="person">Person</option>
-                        <option value="vehicle">Vehicle</option>
-                        <option value="animal">Animal</option>
-                        <option value="intrusion">Intrusion</option>
-                        <option value="line_crossing">Line crossing</option>
-                        <option value="multi_line_crossing">Multi-line crossing</option>
+                      Mode (how)
+                      <select value={mode} onChange={(event) => changeMode(event.target.value)}>
+                        {detectionModes.map(([value, label]) => (
+                          <option key={value} value={value}>{label}</option>
+                        ))}
                       </select>
                     </label>
                   </div>
+                  <section className="schedule-panel">
+                    <header>
+                      <h3>Detect (what)</h3>
+                      <span className="status-pill">
+                        {targetClasses.includes('*') ? 'anything' : `${targetClasses.length} selected`}
+                      </span>
+                    </header>
+                    <span className="field-hint">Pick the object classes this rule watches. Manage classes and groups in Object Classes below.</span>
+                    <div className="schedule-days">
+                      <label className="check-row line-class-any">
+                        <input
+                          type="checkbox"
+                          checked={targetClasses.includes('*')}
+                          onChange={(event) => changeTargets(event.target.checked ? ['*'] : ['person'])}
+                        />
+                        <strong>Anything</strong> — any detected object
+                      </label>
+                      {!targetClasses.includes('*') && classGroups.map(([groupLabel, items]) => (
+                        <div key={groupLabel} className="class-target-group">
+                          <strong className="class-target-group-label">{groupLabel}</strong>
+                          {items.map((cls) => {
+                            const live = classIsLive(cls, activeModelClasses);
+                            return (
+                              <label className={`check-row${live ? '' : ' class-inactive'}`} key={cls.name}>
+                                <input
+                                  type="checkbox"
+                                  checked={targetClasses.includes(cls.name)}
+                                  onChange={(event) => toggleTarget(cls.name, event.target.checked)}
+                                />
+                                {cls.displayName || classDisplayName(classes, cls.name)}
+                                {!live ? <span className="class-inactive-tag"> · model not active</span> : null}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      ))}
+                      {classGroups.length === 0 ? (
+                        <span className="field-hint">No object classes yet — add one in Object Classes below.</span>
+                      ) : null}
+                    </div>
+                  </section>
                   <div className="metadata-row">
                     <label>
                       Threshold
@@ -376,45 +461,38 @@ export function VisionTab({
                       </>
                     ) : null}
                   </section>
+                  {crowdRule ? (
+                    <section className="schedule-panel">
+                      <header>
+                        <h3>Crowd Threshold</h3>
+                        <span className="status-pill">{crowdRuleConfig.minCount}+ people</span>
+                      </header>
+                      <span className="field-hint">
+                        Fires when at least this many people are detected inside the zone in a single frame.
+                        Each person must meet the confidence threshold above.
+                      </span>
+                      <div className="metadata-row">
+                        <label>
+                          Minimum people
+                          <input
+                            type="number"
+                            min="2"
+                            max="100"
+                            step="1"
+                            value={crowdRuleConfig.minCount}
+                            onChange={(event) => changeCrowdConfig({ minCount: Number(event.target.value) })}
+                          />
+                        </label>
+                      </div>
+                    </section>
+                  ) : null}
                   {lineRule ? (
                     <>
                       <section className="schedule-panel">
                         <header>
-                          <h3>Object Classes</h3>
-                          <span className="status-pill">
-                            {lineRuleConfig.classes.includes('*') ? 'any' : lineRuleConfig.classes.length}
-                          </span>
+                          <h3>Line Direction</h3>
+                          <span className="status-pill">{lineRuleConfig.direction}</span>
                         </header>
-                        <div className="schedule-days">
-                          <label className="check-row line-class-any">
-                            <input
-                              type="checkbox"
-                              checked={lineRuleConfig.classes.includes('*')}
-                              onChange={(event) => {
-                                changeLineConfig({ classes: event.target.checked ? ['*'] : defaultLineClasses });
-                              }}
-                            />
-                            <strong>Anything</strong> — any object
-                          </label>
-                          {!lineRuleConfig.classes.includes('*') && lineClassOptions.map((label) => (
-                            <label className="check-row" key={label}>
-                              <input
-                                type="checkbox"
-                                checked={lineRuleConfig.classes.includes(label)}
-                                onChange={(event) => {
-                                  const current = new Set(lineRuleConfig.classes);
-                                  if (event.target.checked) {
-                                    current.add(label);
-                                  } else {
-                                    current.delete(label);
-                                  }
-                                  changeLineConfig({ classes: Array.from(current) });
-                                }}
-                              />
-                              {label}
-                            </label>
-                          ))}
-                        </div>
                         <div className="metadata-row">
                           <label>
                             Direction
@@ -424,7 +502,7 @@ export function VisionTab({
                               <option value="reverse">Reverse side</option>
                             </select>
                           </label>
-                          {ruleDraft.detectionType === 'multi_line_crossing' ? (
+                          {mode === 'multi_line_crossing' ? (
                             <label>
                               Max seconds between lines
                               <input
@@ -476,7 +554,7 @@ export function VisionTab({
                     </label>
                   </div>
                   <div className="action-row">
-                    <button type="submit" disabled={busy || (!lineRule && selectedZonePoints.length < 3) || (lineRule && lineRuleConfig.lines.length < (ruleDraft.detectionType === 'multi_line_crossing' ? 2 : 1))}>
+                    <button type="submit" disabled={busy || targetClasses.length < 1 || (!lineRule && selectedZonePoints.length < 3) || (lineRule && lineRuleConfig.lines.length < (mode === 'multi_line_crossing' ? 2 : 1))}>
                       <span className="btn-icon"><Ico n="save" /> Save Rule</span>
                     </button>
                     <button
@@ -652,6 +730,7 @@ export function VisionTab({
           )}
         </main>
       </section>
+      ) : null}
       {(() => {
         const logSelectedAlert = logAlerts.find((a) => Number(a.id) === Number(logSelectedAlertId)) || null;
         if (!logSelectedAlert) return null;
@@ -665,6 +744,362 @@ export function VisionTab({
           />
         );
       })()}
+    </section>
+  );
+}
+
+// ObjectClassesPanel manages the detection class registry. A "category" (object
+// or hazard) maps a friendly name to one or more raw model labels; a "group"
+// bundles several categories. Trained labels (e.g. "papa") can be folded into an
+// existing category so they aren't a top-level sibling of Person/Vehicle/Animal.
+const emptyClassDraft = { id: 0, name: '', displayName: '', kind: 'object', members: [], source: 'object' };
+const kindLabels = { object: 'Object category', hazard: 'Hazard category', group: 'Group of categories' };
+
+function classSlug(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
+}
+
+// normalizeLabel canonicalizes a RAW model label: lowercased, trimmed, internal
+// whitespace collapsed — but spaces are PRESERVED (the detector emits labels like
+// "cell phone", so underscoring them would stop them matching). Distinct from
+// classSlug, which underscores to make a category id.
+function normalizeLabel(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function titleizeLabel(value) {
+  return normalizeLabel(value).replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// Picker group that holds the active custom model's labels, pinned to the top so
+// user-trained labels (papa, oven, …) are easy to find among the stock catalog.
+const TRAINED_GROUP = 'Custom model';
+
+function ObjectClassesPanel({ classes, labelCatalog, activeModelClasses, busy, onSaveClass, onDeleteClass }) {
+  const [draft, setDraft] = useState(emptyClassDraft);
+  const [labelInput, setLabelInput] = useState('');
+  // The new/edit form lives in a modal (matching the image-labelling popup) so the
+  // class list stays the focus; opening it seeds the draft, closing resets it.
+  const [editorOpen, setEditorOpen] = useState(false);
+  // Collapsed label groups in the picker (by group name). Empty = all expanded.
+  const [collapsedGroups, setCollapsedGroups] = useState(() => new Set());
+  const isNew = !draft.id;
+  const isGroup = draft.kind === 'group';
+
+  // Categories selectable as group members (everything that isn't a group).
+  const selectableMembers = (classes || []).filter((cls) => cls.kind !== 'group' && cls.name !== draft.name);
+  // The label catalog (from /api/vision/labels) is the source of pickable labels,
+  // each carrying a group + source. Fall back to deriving a flat list from the
+  // registry if the catalog endpoint returned nothing, so the picker still works.
+  const knownLabels = Array.from(new Set([
+    ...(classes || [])
+      .filter((cls) => cls.kind !== 'group')
+      .flatMap((cls) => (Array.isArray(cls.memberList) ? cls.memberList : [])),
+    ...(activeModelClasses || []),
+  ].map((label) => normalizeLabel(label)).filter(Boolean))).sort();
+  const baseCatalog = Array.isArray(labelCatalog) && labelCatalog.length
+    ? labelCatalog
+    : knownLabels.map((label) => ({ label, display: label, source: 'stock', group: 'Labels' }));
+  // The backend catalog is registry-derived, so the ACTIVE custom model's labels
+  // (papa, oven, …) aren't in it until they're mapped to a category. Merge them in
+  // from activeModelClasses under a pinned "Custom model" group so they're always
+  // offered — and remain detectable, since only an active model produces them.
+  const catalog = (() => {
+    const byLabel = new Map(baseCatalog.map((entry) => [entry.label, { ...entry }]));
+    (activeModelClasses || []).forEach((raw) => {
+      const label = normalizeLabel(raw);
+      if (!label) return;
+      const existing = byLabel.get(label);
+      byLabel.set(label, {
+        label,
+        display: (existing && existing.display) || titleizeLabel(label),
+        source: 'trained',
+        group: TRAINED_GROUP,
+      });
+    });
+    return Array.from(byLabel.values());
+  })();
+
+  // Labels not already in this draft, filtered by the search box (matches label or
+  // display), then grouped for browsing. Picking from these avoids typos.
+  const labelQuery = labelInput.trim().toLowerCase();
+  const availableEntries = catalog.filter((entry) => entry && !draft.members.includes(entry.label));
+  const matchingEntries = labelQuery
+    ? availableEntries.filter((entry) =>
+        entry.label.toLowerCase().includes(labelQuery)
+        || String(entry.display || '').toLowerCase().includes(labelQuery))
+    : availableEntries;
+  const groupedEntries = Array.from(
+    matchingEntries.reduce((map, entry) => {
+      const group = entry.group || 'Other';
+      if (!map.has(group)) map.set(group, []);
+      map.get(group).push(entry);
+      return map;
+    }, new Map()).entries(),
+  )
+    .map(([group, entries]) => [group, entries.sort((a, b) => String(a.display || a.label).localeCompare(String(b.display || b.label)))])
+    .sort((a, b) => {
+      // Pin the active custom model's labels to the top, then alphabetical.
+      if (a[0] === TRAINED_GROUP) return -1;
+      if (b[0] === TRAINED_GROUP) return 1;
+      return a[0].localeCompare(b[0]);
+    });
+  const searching = Boolean(labelQuery);
+  // The typed term can be added as a brand-new label only when it isn't already a
+  // known label or an existing member (keeps typo-prone free entry behind intent).
+  const customLabel = normalizeLabel(labelInput);
+  const knownLabelSet = new Set(catalog.map((entry) => entry.label));
+  const customAddable = Boolean(customLabel) && !knownLabelSet.has(customLabel) && !draft.members.includes(customLabel);
+
+  function editClass(cls) {
+    setLabelInput('');
+    setDraft({
+      id: cls.id,
+      name: cls.name,
+      displayName: cls.displayName || cls.name,
+      kind: cls.kind || 'object',
+      members: Array.isArray(cls.memberList) ? cls.memberList : [],
+      source: cls.source || 'object',
+    });
+    setEditorOpen(true);
+  }
+
+  function openNew() { setLabelInput(''); setDraft(emptyClassDraft); setEditorOpen(true); }
+  function closeEditor() { setLabelInput(''); setDraft(emptyClassDraft); setEditorOpen(false); }
+
+  // Close the modal on Escape, mirroring the image-labelling dialog.
+  useEffect(() => {
+    if (!editorOpen) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') closeEditor(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [editorOpen]);
+
+  function toggleMember(slug, checked) {
+    const current = new Set(draft.members);
+    if (checked) current.add(slug); else current.delete(slug);
+    setDraft({ ...draft, members: Array.from(current) });
+  }
+
+  function addLabel(label) {
+    const value = normalizeLabel(label);
+    if (!value) return;
+    if (!draft.members.includes(value)) setDraft({ ...draft, members: [...draft.members, value] });
+    setLabelInput('');
+  }
+
+  function toggleGroup(group) {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(group)) next.delete(group); else next.add(group);
+      return next;
+    });
+  }
+
+  function removeLabel(label) {
+    setDraft({ ...draft, members: draft.members.filter((m) => m !== label) });
+  }
+
+  function submit(event) {
+    event.preventDefault();
+    const display = draft.displayName.trim();
+    if (!display) return;
+    const members = isGroup
+      ? draft.members
+      : (draft.members.length ? draft.members : [classSlug(display)]);
+    onSaveClass({
+      id: draft.id,
+      // For a new class the name (slug) is derived from the display name; existing
+      // classes keep their slug.
+      name: isNew ? classSlug(display) : draft.name,
+      displayName: display,
+      kind: draft.kind,
+      members,
+      source: draft.source,
+    });
+    closeEditor();
+  }
+
+  return (
+    <section className="settings-panel">
+      <header>
+        <h2>Object Classes</h2>
+        <span className="status-pill">{(classes || []).length}</span>
+      </header>
+      <span className="field-hint">
+        These are the <strong>targets</strong> you pick in a rule's <strong>Detect</strong> list. A <strong>category</strong>
+        {' '}(e.g. Person, Vehicle) maps a friendly name to the raw labels your model outputs. A <strong>group</strong> bundles
+        several categories. <strong>Tip:</strong> to file a trained label like <code>papa</code> under an existing category,
+        click <strong>Edit</strong> on that category and add the label there — it won't appear as its own top-level class.
+      </span>
+
+      <div className="action-row">
+        <button type="button" onClick={openNew} disabled={busy}>
+          <span className="btn-icon"><Ico n="plus" /> Add category or group</span>
+        </button>
+      </div>
+
+      <ul className="class-registry-list">
+        {(classes || []).map((cls) => (
+          <li key={cls.id} className="class-registry-row">
+            <div className="class-registry-info">
+              <strong>{cls.displayName || cls.name}</strong>
+              <span className={`class-source-badge ${cls.source}`}>{cls.source}</span>
+              {cls.source === 'trained' && !classIsLive(cls, activeModelClasses) ? (
+                <span className="class-source-badge inactive">model not active</span>
+              ) : null}
+              <div className="chip-list">
+                {(cls.memberList || []).length
+                  ? (cls.memberList || []).map((m) => <span key={m} className="chip chip-static">{m}</span>)
+                  : <span className="field-hint">no labels</span>}
+              </div>
+            </div>
+            <div className="class-registry-actions">
+              <button type="button" className="quiet" onClick={() => editClass(cls)} disabled={busy}>Edit</button>
+              {cls.source !== 'builtin' ? (
+                <button type="button" className="quiet danger" onClick={() => onDeleteClass(cls.id)} disabled={busy}>Delete</button>
+              ) : null}
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      {editorOpen ? (
+      <div className="video-overlay" onClick={closeEditor}>
+      <div className="video-dialog class-editor-dialog" onClick={(e) => e.stopPropagation()}>
+        <div className="video-dialog-header">
+          <span className="video-dialog-title">{isNew ? 'New category or group' : `Edit "${draft.displayName || draft.name}"`}</span>
+          <button type="button" className="video-dialog-close" onClick={closeEditor} aria-label="Close">✕</button>
+        </div>
+      <form className="vision-rule-form class-editor-form" onSubmit={submit}>
+        <div className="metadata-row">
+          <label>
+            Name
+            <input
+              value={draft.displayName}
+              onChange={(event) => setDraft({ ...draft, displayName: event.target.value })}
+              placeholder="e.g. Person, Delivery"
+              disabled={busy || draft.source === 'builtin'}
+            />
+            {!isNew ? <span className="field-hint">id: {draft.name}</span> : null}
+          </label>
+          <label>
+            Type
+            <select
+              value={draft.kind}
+              onChange={(event) => setDraft({ ...draft, kind: event.target.value })}
+              disabled={busy || draft.source === 'builtin'}
+            >
+              <option value="object">{kindLabels.object}</option>
+              <option value="hazard">{kindLabels.hazard}</option>
+              <option value="group">{kindLabels.group}</option>
+            </select>
+          </label>
+        </div>
+
+        {isGroup ? (
+          <div className="class-member-editor">
+            <strong>Categories in this group</strong>
+            <span className="field-hint">A rule targeting this group matches any of the selected categories.</span>
+            <div className="class-option-grid">
+              {selectableMembers.map((cls) => (
+                <label className="check-row class-option" key={cls.name}>
+                  <input
+                    type="checkbox"
+                    checked={draft.members.includes(cls.name)}
+                    onChange={(event) => toggleMember(cls.name, event.target.checked)}
+                  />
+                  {cls.displayName || cls.name}
+                </label>
+              ))}
+              {selectableMembers.length === 0 ? <span className="field-hint">No categories to group yet — create some first.</span> : null}
+            </div>
+          </div>
+        ) : (
+          <div className="class-member-editor">
+            <strong>Model labels in this category</strong>
+            <span className="field-hint">
+              The raw labels your models output. A rule targeting this category matches any of them (e.g. Vehicle = car, truck, bus).
+              <strong> Search and pick from the list</strong> — a label only detects something if a model that produces it is active, and a
+              mistyped name never matches. New trained labels (from the <strong>Training</strong> tab) appear here once their model is active.
+            </span>
+
+            {draft.members.length ? (
+              <div className="chip-list">
+                {draft.members.map((label) => (
+                  <span key={label} className="chip">
+                    {label}
+                    <button type="button" className="chip-remove" onClick={() => removeLabel(label)} aria-label={`Remove ${label}`} disabled={busy}>×</button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="class-label-picker">
+              <input
+                className="class-label-search"
+                value={labelInput}
+                onChange={(event) => setLabelInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter') return;
+                  event.preventDefault();
+                  if (matchingEntries.length === 1) addLabel(matchingEntries[0].label);
+                  else if (customAddable) addLabel(labelInput);
+                }}
+                placeholder={catalog.length ? `Search ${catalog.length} labels, or type a new one…` : 'Type a label…'}
+                disabled={busy}
+              />
+              <div className="class-label-groups">
+                {groupedEntries.map(([group, entries]) => {
+                  const open = searching || !collapsedGroups.has(group);
+                  const shown = entries.slice(0, 50);
+                  return (
+                    <div className="class-label-group" key={group}>
+                      <button type="button" className="class-label-group-head" onClick={() => toggleGroup(group)} disabled={searching}>
+                        <span className="class-label-caret">{open ? '▾' : '▸'}</span>
+                        <strong>{group}</strong>
+                        <span className="status-pill">{entries.length}</span>
+                      </button>
+                      {open ? (
+                        <div className="chip-list">
+                          {shown.map((entry) => (
+                            <button type="button" key={entry.label} className={`chip chip-suggest-btn${entry.source === 'trained' ? ' is-trained' : ''}`} onClick={() => addLabel(entry.label)} disabled={busy} title={entry.label}>
+                              + {entry.display || entry.label}
+                              {entry.source === 'trained' ? <span className="chip-tag">trained</span> : null}
+                            </button>
+                          ))}
+                          {entries.length > shown.length ? (
+                            <span className="field-hint">+{entries.length - shown.length} more — search to narrow.</span>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+                {availableEntries.length === 0
+                  ? <span className="field-hint">Every known label is already in this category.</span> : null}
+                {availableEntries.length > 0 && matchingEntries.length === 0 && !customAddable
+                  ? <span className="field-hint">No known labels match.</span> : null}
+              </div>
+              {customAddable ? (
+                <button type="button" className="quiet" onClick={() => addLabel(labelInput)} disabled={busy}>
+                  <span className="btn-icon"><Ico n="plus" /> Add “{labelInput.trim()}” as a custom label</span>
+                </button>
+              ) : null}
+            </div>
+          </div>
+        )}
+
+        <div className="action-row">
+          <button type="submit" disabled={busy || !draft.displayName.trim()}>
+            <span className="btn-icon"><Ico n="save" /> Save</span>
+          </button>
+          <button type="button" className="quiet" onClick={closeEditor} disabled={busy}>Cancel</button>
+        </div>
+      </form>
+      </div>
+      </div>
+      ) : null}
     </section>
   );
 }

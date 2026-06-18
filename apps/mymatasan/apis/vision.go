@@ -16,15 +16,16 @@ import (
 
 type visionApi struct {
 	serv     services.IVisionService
+	classes  services.IDetectionClassService
 	recorder *recording.Manager
 	notifier services.INotificationPublisher
 	camera   services.ICameraService
 	settings services.IRuntimeSettingsService
 }
 
-// NewVisionApi registers AI detection rule and alert routes.
-func NewVisionApi(router *mux.Router, serv services.IVisionService, recorder *recording.Manager, notifier services.INotificationPublisher, camera services.ICameraService, settings services.IRuntimeSettingsService) {
-	handler := &visionApi{serv: serv, recorder: recorder, notifier: notifier, camera: camera, settings: settings}
+// NewVisionApi registers AI detection rule, alert, and class-registry routes.
+func NewVisionApi(router *mux.Router, serv services.IVisionService, classes services.IDetectionClassService, recorder *recording.Manager, notifier services.INotificationPublisher, camera services.ICameraService, settings services.IRuntimeSettingsService) {
+	handler := &visionApi{serv: serv, classes: classes, recorder: recorder, notifier: notifier, camera: camera, settings: settings}
 	group := router.PathPrefix("/vision").Subrouter()
 
 	group.HandleFunc("/rules", handler.listRules).Methods("GET")
@@ -34,6 +35,76 @@ func NewVisionApi(router *mux.Router, serv services.IVisionService, recorder *re
 	group.HandleFunc("/alerts", handler.createAlert).Methods("POST")
 	group.HandleFunc("/alerts/{id}/snapshot", handler.getAlertSnapshot).Methods("GET")
 	group.HandleFunc("/alerts/{id}/ack", handler.acknowledgeAlert).Methods("POST")
+	group.HandleFunc("/classes", handler.listClasses).Methods("GET")
+	group.HandleFunc("/classes", handler.saveClass).Methods("POST")
+	group.HandleFunc("/classes/{id}", handler.deleteClass).Methods("DELETE")
+	group.HandleFunc("/labels", handler.listLabelCatalog).Methods("GET")
+}
+
+// listLabelCatalog returns every raw label the detector can emit, tagged with its
+// source and group so the Object Classes picker can group + search at scale.
+func (a *visionApi) listLabelCatalog(w http.ResponseWriter, r *http.Request) {
+	if a.classes == nil {
+		controllers.SendResult(w, map[string]any{"items": []any{}}, "succeed")
+		return
+	}
+	items, err := a.classes.LabelCatalog(r.Context())
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, map[string]any{"items": items}, "succeed")
+}
+
+func (a *visionApi) listClasses(w http.ResponseWriter, r *http.Request) {
+	if a.classes == nil {
+		controllers.SendResult(w, map[string]any{"items": []any{}}, "succeed")
+		return
+	}
+	items, err := a.classes.List(r.Context())
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, map[string]any{"items": items}, "succeed")
+}
+
+func (a *visionApi) saveClass(w http.ResponseWriter, r *http.Request) {
+	if a.classes == nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, "class registry unavailable")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1*1024*1024)
+	var body services.DetectionClassRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	class, err := a.classes.Save(r.Context(), body, localUserID(r))
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, class, "succeed")
+}
+
+func (a *visionApi) deleteClass(w http.ResponseWriter, r *http.Request) {
+	if a.classes == nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, "class registry unavailable")
+		return
+	}
+	id, ok := readID(w, r)
+	if !ok {
+		return
+	}
+	count, err := a.classes.Delete(r.Context(), id)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, map[string]uint64{"deleted": count}, "succeed")
 }
 
 func (a *visionApi) listRules(w http.ResponseWriter, r *http.Request) {
@@ -86,7 +157,8 @@ func (a *visionApi) listAlerts(w http.ResponseWriter, r *http.Request) {
 	createdBefore := parseInt64Query(r, "createdBefore")
 	ruleId := parseInt64Query(r, "ruleId")
 	status := r.URL.Query().Get("status")
-	alerts, total, err := a.serv.GetAlerts(r.Context(), limit, offset, cameraId, createdAfter, createdBefore, ruleId, status)
+	detectionType := r.URL.Query().Get("detectionType")
+	alerts, total, err := a.serv.GetAlerts(r.Context(), limit, offset, cameraId, createdAfter, createdBefore, ruleId, status, detectionType)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return

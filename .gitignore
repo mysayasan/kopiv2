@@ -22,6 +22,7 @@ apps/mymatasan/models/*.onnx
 
 # ignore recordings on the root of the project
 /recordings/
+/runs/
 
 # logs
 logs/

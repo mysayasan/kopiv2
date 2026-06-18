@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -76,6 +77,10 @@ func (m *module) Entities() []any {
 		appentities.CameraOnvif{},
 		appentities.DetectionRule{},
 		appentities.AlertEvent{},
+		appentities.DetectionClass{},
+		appentities.TrainingDataset{},
+		appentities.TrainingImage{},
+		appentities.TrainingModel{},
 		appentities.RuntimeSetting{},
 		appentities.LocalUser{},
 		appentities.RecordingSegment{},
@@ -100,6 +105,7 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Runtime Settings", Description: "runtime decoder and stream settings access", Path: "/api/settings", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Local Users", Description: "standalone mymatasan user management access", Path: "/api/settings/users", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Recording", Description: "video recording segments and per-camera recording config access", Path: "/api/recording", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "AI Training", Description: "custom-model training datasets and labeled images access", Path: "/api/training", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Notifications", Description: "unified notification feed and live stream access", Path: "/api/notifications", AccessTier: apiaccessenums.AuthOnly},
 	}
 
@@ -145,6 +151,9 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	cameraOnvifRepo := dbsql.NewGenericRepo[appentities.CameraOnvif](deps.Db)
 	detectionRuleRepo := dbsql.NewGenericRepo[appentities.DetectionRule](deps.Db)
 	alertEventRepo := dbsql.NewGenericRepo[appentities.AlertEvent](deps.Db)
+	detectionClassRepo := dbsql.NewGenericRepo[appentities.DetectionClass](deps.Db)
+	trainingDatasetRepo := dbsql.NewGenericRepo[appentities.TrainingDataset](deps.Db)
+	trainingImageRepo := dbsql.NewGenericRepo[appentities.TrainingImage](deps.Db)
 	runtimeSettingsRepo := dbsql.NewGenericRepo[appentities.RuntimeSetting](deps.Db)
 	localUserRepo := dbsql.NewGenericRepo[appentities.LocalUser](deps.Db)
 	recordingSegmentRepo := dbsql.NewGenericRepo[appentities.RecordingSegment](deps.Db)
@@ -152,6 +161,37 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	cameraService := services.NewCameraService(cameraRepo, cameraOnvifRepo, onvif.NewClient(), rtsp.NewClient())
 	visionService := services.NewVisionService(detectionRuleRepo, alertEventRepo)
+	detectionClassService := services.NewDetectionClassService(detectionClassRepo)
+	if err := detectionClassService.EnsureBuiltins(context.Background(), deps.Config.Vision.Detector.ClassMap); err != nil {
+		deps.Logger.Warnf("mymatasan.vision", "seed detection classes failed: %v", err)
+	}
+	// Build the object-detection backend once and share it between the live
+	// monitor and the training auto-labeler. The YOLO worker reads the active-model
+	// pointer file (set via env) so a trained/imported model can be hot-swapped.
+	trainingDir := trainingDataDir(deps.Config)
+	activeModelFile, _ := filepath.Abs(filepath.Join(trainingDir, "active_model.txt"))
+	_ = os.Setenv("MYMATASAN_ACTIVE_MODEL_FILE", activeModelFile)
+	stockModelFile, _ := filepath.Abs(filepath.Join(trainingDir, "stock_model.txt"))
+	_ = os.Setenv("MYMATASAN_STOCK_MODEL_FILE", stockModelFile)
+	objectBackend, backendErr := buildTrainingObjectDetector(deps.Config.Vision.Detector)
+	if backendErr != nil {
+		deps.Logger.Warnf("mymatasan.vision", "object detector backend unavailable (%v); auto-label and custom models are disabled", backendErr)
+		objectBackend = nil
+	}
+	trainingModelRepo := dbsql.NewGenericRepo[appentities.TrainingModel](deps.Db)
+	trainingService := services.NewTrainingService(
+		trainingDatasetRepo,
+		trainingImageRepo,
+		trainingModelRepo,
+		visionService,
+		detectionClassService,
+		trainingDir,
+		activeModelFile,
+		stockModelFile,
+		objectBackend,
+		deps.Config.Vision.Detector.MinObjectConfidence,
+		trainingRunConfigFromAppConfig(deps.Config, deps.ConfigPath),
+	)
 	settingsService := services.NewRuntimeSettingsService(runtimeSettingsRepo, runtimeSettingsFromAppConfig(deps.Config))
 	localUserService := services.NewLocalUserService(localUserRepo)
 	recordingService := services.NewRecordingService(recordingSegmentRepo, recordingConfigRepo)
@@ -257,20 +297,18 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	protected.Use(apis.NewLocalBasicAuth(localUserService))
 	apis.NewOnvifApi(protected, cameraService, settingsService, streamManager)
 	apis.NewCameraApi(protected, cameraService, settingsService, streamManager, cameraHealthMonitor)
-	apis.NewVisionApi(protected, visionService, recorderManager, notificationService, cameraService, settingsService)
+	apis.NewVisionApi(protected, visionService, detectionClassService, recorderManager, notificationService, cameraService, settingsService)
+	apis.NewTrainingApi(protected, trainingService)
 	apis.NewSettingsApi(protected, settingsService, cameraService, localUserService, notificationSettingsService, healthSettingsService, machineHealthSettingsService, machineHealthMonitor, visionToolSettingsFromAppConfig(deps.Config))
 	apis.NewRecordingApi(protected, recordingService, recorderManager, cameraService, settingsService)
 	apis.NewNotificationApi(protected, notificationService)
 
 	monitorCtx, stopMonitor := context.WithCancel(context.Background())
-	monitorSettings, err := visionMonitorSettingsFromAppConfig(deps.Config)
-	if err != nil {
-		stopMonitor()
-		recorderManager.Close()
-		return nil, err
-	}
+	monitorSettings := visionMonitorSettingsFromAppConfig(deps.Config)
+	monitorSettings.Detector = wrapMonitorDetector(deps.Config, objectBackend)
 	monitorSettings.Recorder = recorderManager
 	monitorSettings.Notifier = notificationService
+	monitorSettings.Resolver = detectionClassService
 	if monitorSettings.Enabled {
 		services.NewVisionMonitor(cameraService, visionService, settingsService, monitorSettings).Start(monitorCtx)
 	}
@@ -341,6 +379,9 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		recorderManager.Close()
 		_ = notificationService.Close(ctx)
 		if closer, ok := monitorSettings.Detector.(io.Closer); ok {
+			_ = closer.Close()
+		}
+		if closer, ok := trainingService.(io.Closer); ok {
 			_ = closer.Close()
 		}
 		return streamManager.Close()
@@ -433,11 +474,10 @@ func runtimeSettingsFromAppConfig(cfg *config.AppConfigModel) services.RuntimeSe
 	return result
 }
 
-func visionMonitorSettingsFromAppConfig(cfg *config.AppConfigModel) (services.VisionMonitorSettings, error) {
-	detector, err := visionDetectorFromAppConfig(cfg)
-	if err != nil {
-		return services.VisionMonitorSettings{}, err
-	}
+// visionMonitorSettingsFromAppConfig builds the monitor settings WITHOUT the
+// detector; the caller assigns Detector from the shared object backend via
+// wrapMonitorDetector so the same backend serves live detection and auto-label.
+func visionMonitorSettingsFromAppConfig(cfg *config.AppConfigModel) services.VisionMonitorSettings {
 	snapshotDir := cfg.Vision.SnapshotDir
 	if snapshotDir == "" {
 		snapshotDir = "recordings"
@@ -448,8 +488,7 @@ func visionMonitorSettingsFromAppConfig(cfg *config.AppConfigModel) (services.Vi
 		CaptureTimeout:            int64(cfg.Vision.CaptureTimeoutMs),
 		DiagnosticCooldownSeconds: int64(cfg.Vision.DiagnosticCooldownSeconds),
 		SnapshotDir:               snapshotDir,
-		Detector:                  detector,
-	}, nil
+	}
 }
 
 // healthSettingsDefaultsFromAppConfig maps the config.json health block into the
@@ -466,6 +505,41 @@ func healthSettingsDefaultsFromAppConfig(cfg *config.AppConfigModel) services.He
 	}
 }
 
+// trainingDataDir resolves the on-disk root for training datasets and models.
+// It defaults to a "training" sibling of the snapshot dir so all AI artifacts
+// live together under the same volume the machine health monitor watches.
+func trainingDataDir(cfg *config.AppConfigModel) string {
+	if dir := strings.TrimSpace(cfg.Vision.Training.DataDir); dir != "" {
+		return dir
+	}
+	base := strings.TrimSpace(cfg.Vision.SnapshotDir)
+	if base == "" {
+		base = "recordings"
+	}
+	return filepath.Join(base, "training")
+}
+
+// trainingRunConfigFromAppConfig derives the in-app trainer config: the Python
+// command (shared with the detector) and the train_worker.py / base weights that
+// sit next to the configured YOLO worker script.
+func trainingRunConfigFromAppConfig(cfg *config.AppConfigModel, configPath string) services.TrainingRunConfig {
+	detectorCfg := cfg.Vision.Detector
+	workerScript := ""
+	for _, arg := range detectorCfg.Args {
+		if strings.HasSuffix(strings.ToLower(strings.TrimSpace(arg)), ".py") {
+			workerScript = strings.TrimSpace(arg)
+			break
+		}
+	}
+	cfgOut := services.TrainingRunConfig{PythonCmd: detectorCfg.Command, ConfigFile: configPath}
+	if workerScript != "" {
+		dir := filepath.Dir(workerScript)
+		cfgOut.TrainScript = filepath.Join(dir, "train_worker.py")
+		cfgOut.BaseModel = filepath.Join(dir, "yolo11n.pt")
+	}
+	return cfgOut
+}
+
 func visionToolSettingsFromAppConfig(cfg *config.AppConfigModel) services.VisionToolSettings {
 	detectorCfg := cfg.Vision.Detector
 	return services.VisionToolSettings{
@@ -477,80 +551,72 @@ func visionToolSettingsFromAppConfig(cfg *config.AppConfigModel) services.Vision
 	}
 }
 
-func visionDetectorFromAppConfig(cfg *config.AppConfigModel) (vision.Detector, error) {
+// buildTrainingObjectDetector builds the raw object-detection backend used to
+// auto-label training images. It mirrors the backend selection in
+// visionDetectorFromAppConfig but returns the unwrapped ObjectDetector (no rule
+// mapping / motion dispatch). Auto-label requires an external/persistent object
+// detector; motion mode has no object backend.
+func buildTrainingObjectDetector(detectorCfg config.VisionDetectorConfigModel) (vision.ObjectDetector, error) {
+	mode := strings.ToLower(strings.TrimSpace(detectorCfg.Mode))
+	timeout := time.Duration(detectorCfg.TimeoutMs) * time.Millisecond
+	switch mode {
+	case vision.DetectorModeExternal, vision.DetectorModeHybrid:
+		return vision.NewExternalObjectDetector(vision.ExternalObjectDetectorOptions{
+			Command: detectorCfg.Command,
+			Args:    detectorCfg.Args,
+			Timeout: timeout,
+		})
+	case vision.DetectorModePersistent, "externalpersistent", "external-persistent", "external_persistent":
+		return vision.NewPersistentObjectDetector(vision.PersistentObjectDetectorOptions{
+			Command: detectorCfg.Command,
+			Args:    detectorCfg.Args,
+			Timeout: timeout,
+		})
+	default:
+		return nil, fmt.Errorf("auto-label requires an external or persistent object detector (current mode %q)", detectorCfg.Mode)
+	}
+}
+
+// wrapMonitorDetector wraps the shared object backend into the live monitor's
+// detector: rule mapping via ObjectRuleDetector, plus optional motion-intrusion
+// dispatch. A nil backend (motion mode, or backend build failure) falls back to
+// the native motion detector.
+func wrapMonitorDetector(cfg *config.AppConfigModel, backend vision.ObjectDetector) vision.Detector {
 	detectorCfg := cfg.Vision.Detector
 	mode := strings.ToLower(strings.TrimSpace(detectorCfg.Mode))
 	if mode == "" {
 		mode = vision.DetectorModeMotion
 	}
 	motionDetector := vision.NewMotionDetector()
-	useMotionFallback := boolValue(detectorCfg.UseMotionFallback, true)
-	useMotionIntrusion := boolValue(detectorCfg.UseMotionIntrusion, true)
-
-	switch mode {
-	case vision.DetectorModeMotion:
-		return motionDetector, nil
-	case vision.DetectorModeExternal, vision.DetectorModeHybrid:
-		external, err := vision.NewExternalObjectDetector(vision.ExternalObjectDetectorOptions{
-			Command: detectorCfg.Command,
-			Args:    detectorCfg.Args,
-			Timeout: time.Duration(detectorCfg.TimeoutMs) * time.Millisecond,
-		})
-		if err != nil {
-			if useMotionFallback {
-				return motionDetector, nil
-			}
-			return nil, err
-		}
-		objectDetector := vision.NewObjectRuleDetector(external, vision.ObjectRuleDetectorOptions{
-			ClassMap:            detectorCfg.ClassMap,
-			MinObjectConfidence: detectorCfg.MinObjectConfidence,
-			Source:              "external-object-detector",
-		})
-		if mode == vision.DetectorModeExternal {
-			return objectDetector, nil
-		}
-		motionTypes := []string{}
-		if useMotionIntrusion {
-			motionTypes = append(motionTypes, vision.DetectionIntrusion)
-		}
-		return vision.NewDispatchDetector(vision.DispatchDetectorOptions{
-			Object:      objectDetector,
-			Motion:      motionDetector,
-			MotionTypes: motionTypes,
-		}), nil
-	case vision.DetectorModePersistent, "externalpersistent", "external-persistent", "external_persistent":
-		persistent, err := vision.NewPersistentObjectDetector(vision.PersistentObjectDetectorOptions{
-			Command: detectorCfg.Command,
-			Args:    detectorCfg.Args,
-			Timeout: time.Duration(detectorCfg.TimeoutMs) * time.Millisecond,
-		})
-		if err != nil {
-			if useMotionFallback {
-				return motionDetector, nil
-			}
-			return nil, err
-		}
-		objectDetector := vision.NewObjectRuleDetector(persistent, vision.ObjectRuleDetectorOptions{
-			ClassMap:            detectorCfg.ClassMap,
-			MinObjectConfidence: detectorCfg.MinObjectConfidence,
-			Source:              "persistent-yolo-detector",
-		})
-		motionTypes := []string{}
-		if useMotionIntrusion {
-			motionTypes = append(motionTypes, vision.DetectionIntrusion)
-		}
-		if len(motionTypes) == 0 {
-			return objectDetector, nil
-		}
-		return vision.NewDispatchDetector(vision.DispatchDetectorOptions{
-			Object:      objectDetector,
-			Motion:      motionDetector,
-			MotionTypes: motionTypes,
-		}), nil
-	default:
-		return nil, fmt.Errorf("unsupported vision detector mode %q", detectorCfg.Mode)
+	if mode == vision.DetectorModeMotion || backend == nil {
+		return motionDetector
 	}
+
+	source := "persistent-yolo-detector"
+	if mode == vision.DetectorModeExternal || mode == vision.DetectorModeHybrid {
+		source = "external-object-detector"
+	}
+	objectDetector := vision.NewObjectRuleDetector(backend, vision.ObjectRuleDetectorOptions{
+		ClassMap:            detectorCfg.ClassMap,
+		MinObjectConfidence: detectorCfg.MinObjectConfidence,
+		Source:              source,
+	})
+	// External (non-persistent) mode historically ran object-only, no motion dispatch.
+	if mode == vision.DetectorModeExternal {
+		return objectDetector
+	}
+	motionTypes := []string{}
+	if boolValue(detectorCfg.UseMotionIntrusion, true) {
+		motionTypes = append(motionTypes, vision.DetectionIntrusion)
+	}
+	if len(motionTypes) == 0 {
+		return objectDetector
+	}
+	return vision.NewDispatchDetector(vision.DispatchDetectorOptions{
+		Object:      objectDetector,
+		Motion:      motionDetector,
+		MotionTypes: motionTypes,
+	})
 }
 
 func boolValue(value *bool, fallback bool) bool {

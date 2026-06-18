@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "infra,mymatasan",
+  "summary": "Phase 3 of custom detection: dataset export + model registry + activation. Export a dataset as a YOLO zip (images/labels train/val split + data.yaml) for offline/GPU training; import the resulting best.pt into a model registry; Activate a model to hot-swap the running detector to it and register its classes so rules can target them. The YOLO worker now reads an active-model pointer file (MYMATASAN_ACTIVE_MODEL_FILE) so activation takes effect by restarting the worker; PersistentObjectDetector gained Reload(). The object-detection backend is now built once and SHARED by the live monitor and the training auto-labeler (replaces Phase 2's lazy per-feature backend), via wrapMonitorDetector. New TrainingModel entity + /api/training endpoints (export download, models list/import(multipart)/activate/delete). Frontend: Export-dataset button + a Models panel (import best.pt, list with active badge/classes, Activate/Delete).",
+  "compatibility": "Additive; tables auto-create. Activation persists across restarts via the pointer file. Auto-label/custom models require external or persistent detector mode (motion mode disables them). In-app training (Phase 4) not yet built — train offline and import."
+}

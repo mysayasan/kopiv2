@@ -102,6 +102,7 @@ type VisionMonitorSettings struct {
 	Detector                  vision.Detector
 	Recorder                  *recording.Manager
 	Notifier                  INotificationPublisher
+	Resolver                  ClassResolver
 }
 
 // RuntimeSettings contains runtime-editable mymatasan settings.
@@ -311,10 +312,40 @@ type IVisionService interface {
 	GetRules(ctx context.Context, limit uint64, offset uint64) ([]*entities.DetectionRule, uint64, error)
 	SaveRule(ctx context.Context, req DetectionRuleRequest, userId int64) (*entities.DetectionRule, error)
 	DeleteRule(ctx context.Context, id uint64) (uint64, error)
-	GetAlerts(ctx context.Context, limit uint64, offset uint64, cameraId int64, createdAfter int64, createdBefore int64, ruleId int64, status string) ([]*entities.AlertEvent, uint64, error)
+	GetAlerts(ctx context.Context, limit uint64, offset uint64, cameraId int64, createdAfter int64, createdBefore int64, ruleId int64, status string, detectionType string) ([]*entities.AlertEvent, uint64, error)
 	GetAlertById(ctx context.Context, id uint64) (*entities.AlertEvent, error)
 	CreateAlert(ctx context.Context, req AlertEventRequest, userId int64) (*entities.AlertEvent, error)
 	AcknowledgeAlert(ctx context.Context, id uint64, userId int64) (*entities.AlertEvent, error)
+}
+
+// ITrainingService manages custom-model training datasets and their labeled
+// images (Phase 1: collection). Annotation editing, export, and training land in
+// later phases.
+type ITrainingService interface {
+	ListDatasets(ctx context.Context) ([]*entities.TrainingDataset, error)
+	GetDataset(ctx context.Context, id uint64) (*entities.TrainingDataset, error)
+	SaveDataset(ctx context.Context, req TrainingDatasetRequest, userId int64) (*entities.TrainingDataset, error)
+	DeleteDataset(ctx context.Context, id uint64) (uint64, error)
+	ListImages(ctx context.Context, datasetId int64) ([]*entities.TrainingImage, error)
+	GetImage(ctx context.Context, id uint64) (*entities.TrainingImage, error)
+	StoreUpload(ctx context.Context, datasetId int64, data []byte, userId int64) (*entities.TrainingImage, error)
+	AddFromAlert(ctx context.Context, datasetId int64, alertId int64, userId int64) (*entities.TrainingImage, error)
+	SaveAnnotations(ctx context.Context, imageId int64, annotations []TrainingAnnotation, userId int64) (*entities.TrainingImage, error)
+	AutoLabel(ctx context.Context, imageId int64, userId int64) (*entities.TrainingImage, error)
+	DeleteImage(ctx context.Context, id uint64) (uint64, error)
+	ExportZip(ctx context.Context, datasetId int64) (string, error)
+	ListModels(ctx context.Context) ([]*entities.TrainingModel, error)
+	GetModel(ctx context.Context, id uint64) (*entities.TrainingModel, error)
+	ImportModel(ctx context.Context, req ImportModelRequest, weights []byte, userId int64) (*entities.TrainingModel, error)
+	ActivateModel(ctx context.Context, id uint64, userId int64) (*entities.TrainingModel, error)
+	DeactivateModel(ctx context.Context, userId int64) error
+	DeleteModel(ctx context.Context, id uint64) (uint64, error)
+	MachineCapability(ctx context.Context) MachineCapability
+	StartTraining(ctx context.Context, req StartTrainingRequest, userId int64) (*entities.TrainingModel, error)
+	StartDepsSetup(ctx context.Context) error
+	DepsSetupStatus() DepsSetupState
+	GetStockModel(ctx context.Context) StockModelInfo
+	SetStockModel(ctx context.Context, model string, userId int64) error
 }
 
 // INotificationService is the unified notification feed: it publishes events to

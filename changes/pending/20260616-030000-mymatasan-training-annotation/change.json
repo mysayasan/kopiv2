@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "mymatasan",
+  "summary": "Phase 2 of custom detection: image annotation + auto-label. New PUT /api/training/images/{id}/annotations (save validated, normalized boxes) and POST /api/training/images/{id}/autolabel (runs the object detector on the image and stores its boxes as 'auto' annotations the user can correct). The detector backend for auto-label is built lazily (only spawns a YOLO worker when first used) and closed on shutdown. New in-browser box editor: draw/move/delete boxes over the image (SVG overlay, normalized coords), assign a class per box, run auto-label, and save; opened by clicking a dataset image. Image cells show a box-count badge and labeled/unlabeled status.",
+  "compatibility": "Additive. Auto-label requires the detector to be in external or persistent mode; in motion mode it reports that auto-label is unavailable. Annotations stored as JSON on TrainingImage (already present from Phase 1)."
+}

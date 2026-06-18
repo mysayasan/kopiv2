@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "infra,mymatasan",
+  "summary": "Phase 1 of custom detection: training dataset collection. New TrainingDataset + TrainingImage entities, a training service (dataset CRUD, image upload with JPEG dimension probing, add-from-alert that seeds a box annotation from the alert's bounding box, delete with file cleanup, live image/labeled counts), and /api/training endpoints including a multipart image upload and an authed image-file serve. New 'Training' top-bar tab with dataset create/list, an image grid with JPEG upload, and an 'Add from recent alerts' importer. Storage root configured via vision.training.dataDir (defaults to a 'training' sibling of snapshotDir).",
+  "compatibility": "Additive. New tables auto-create on first run; no migration. Annotation editing, auto-label, export, and training arrive in later phases."
+}

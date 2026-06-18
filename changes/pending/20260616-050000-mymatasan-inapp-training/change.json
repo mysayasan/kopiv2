@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "mymatasan",
+  "summary": "Phase 4 of custom detection: in-app training. New ai/train_worker.py runs ultralytics .train() on an exported dataset and streams JSON progress to stdout (ultralytics noise redirected to stderr). training_runner.go adds StartTraining (one run at a time: exports the dataset, launches the worker, parses per-epoch progress, copies best.pt, records status/metrics) and MachineCapability (probes Python/ultralytics/CUDA). New endpoints POST /api/training/models (start a run) and GET /api/training/capability. TrainingModel gained a progress field. Frontend Models tab: a Train-in-app panel (epochs/image-size, CUDA-gated Train button with capability hint, Export-instead fallback) plus a live progress bar and mAP/metrics in the model list, with polling while a run is active.",
+  "compatibility": "Additive; progress column auto-migrates. In-app training requires Python + ultralytics; the Train button is disabled when unavailable and warns when only CPU is present (CPU training is very slow — export to a GPU instead). One training run at a time."
+}

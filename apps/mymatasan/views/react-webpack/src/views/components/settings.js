@@ -2,11 +2,108 @@ import { useState, useEffect } from 'react';
 import { Ico } from './icons';
 import { FormBusyOverlay, FieldTitle } from './ui';
 import { defaultYoloConfig, bestYoloDefaults, defaultCaptureConfig, captureModeOptions, defaultAlertNotificationConfig, alertNotificationFields, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings } from '../lib/constants';
-import {iceUrlsText,textToIceUrls,decoderTransportOptions,decoderHWAccelOptions } from '../lib/helpers';
+import {iceUrlsText,textToIceUrls,decoderTransportOptions,decoderHWAccelOptions,apiBase } from '../lib/helpers';
+
+// stockModelHints describes the speed/accuracy trade-off of each base model.
+const stockModelHints = {
+  'yolo11n.pt': 'Nano — fastest, least accurate (default; best for CPU / Raspberry Pi)',
+  'yolo11s.pt': 'Small — a bit slower, more accurate',
+  'yolo11m.pt': 'Medium — noticeably slower; GPU recommended',
+  'yolo11l.pt': 'Large — slow on CPU; GPU recommended',
+  'yolo11x.pt': 'Extra-large — slowest, most accurate; GPU strongly recommended',
+};
+
+// StockModelPanel picks the always-on base detection model. Known variants are
+// downloaded from the net by ultralytics; a custom path can also be used.
+function StockModelPanel({ authHeader, onMessage }) {
+  const [info, setInfo] = useState({ current: 'yolo11n.pt', options: [] });
+  const [choice, setChoice] = useState('');
+  const [customPath, setCustomPath] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function api(path, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    if (authHeader) headers.Authorization = authHeader;
+    if (options.body) headers['Content-Type'] = 'application/json';
+    const resp = await fetch(`${apiBase()}${path}`, { credentials: 'include', ...options, headers });
+    const text = await resp.text();
+    let payload = null;
+    if (text) { try { payload = JSON.parse(text); } catch (_) { payload = { message: text }; } }
+    if (!resp.ok) throw new Error(payload?.message || payload?.data?.message || `Request failed (${resp.status})`);
+    return payload?.data?.result ?? payload?.result ?? payload;
+  }
+
+  async function load() {
+    try {
+      const result = await api('/api/training/stock-model');
+      setInfo({ current: result?.current || 'yolo11n.pt', options: Array.isArray(result?.options) ? result.options : [] });
+      setChoice(result?.current || 'yolo11n.pt');
+    } catch (_) { /* best effort */ }
+  }
+  useEffect(() => { load(); }, [authHeader]);
+
+  async function apply() {
+    const model = choice === '__custom__' ? customPath.trim() : choice;
+    if (!model) { if (onMessage) onMessage('Choose a model or enter a custom path.'); return; }
+    setBusy(true);
+    if (onMessage) onMessage('Applying base model (downloading if needed)…');
+    try {
+      const result = await api('/api/training/stock-model', { method: 'POST', body: JSON.stringify({ model }) });
+      setInfo({ current: result?.current || model, options: info.options });
+      if (onMessage) onMessage(`Base model set to ${result?.current || model}. Detection reloaded.`);
+    } catch (err) {
+      if (onMessage) onMessage(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const dirty = choice !== '__custom__' ? choice !== info.current : customPath.trim() !== '';
+
+  return (
+    <section className="settings-panel span-two">
+      <header>
+        <h2>
+          <FieldTitle info="The always-on base detection model. It detects the general COCO classes (person, vehicle, animal, …) and runs in parallel with any activated custom model. Larger variants are more accurate but much slower — on CPU/Raspberry Pi stick to nano or small.">
+            Stock (base) model
+          </FieldTitle>
+        </h2>
+        <span className="status-pill">{info.current}</span>
+      </header>
+      <p className="settings-hint">
+        Bigger models are more accurate but slower (each frame is inferenced once per active model). Known variants are
+        downloaded from the internet on first use, then cached — the device needs internet access for that one-time download.
+      </p>
+      <div className="settings-field-grid">
+        <label>
+          Model
+          <select value={choice} onChange={(e) => setChoice(e.target.value)} disabled={busy}>
+            {info.options.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+            <option value="__custom__">Custom path…</option>
+          </select>
+          <span className="field-hint">{choice === '__custom__' ? 'Point to a local .pt file on the server.' : (stockModelHints[choice] || '')}</span>
+        </label>
+        {choice === '__custom__' ? (
+          <label>
+            Custom .pt path
+            <input value={customPath} onChange={(e) => setCustomPath(e.target.value)} placeholder="/path/to/model.pt" disabled={busy} />
+          </label>
+        ) : null}
+      </div>
+      <div className="settings-actions">
+        <button type="button" onClick={apply} disabled={busy || !dirty}>
+          <span className="btn-icon"><Ico n="download" /> Download &amp; apply</span>
+        </button>
+      </div>
+    </section>
+  );
+}
 
 export function SettingsTab({
   settingsNav,
   settings,
+  authHeader,
+  onMessage,
   users,
   newUser,
   passwordDrafts,
@@ -388,6 +485,7 @@ export function SettingsTab({
         </>)}
 
         {settingsNav === 'ai' && (<>
+        <StockModelPanel authHeader={authHeader} onMessage={onMessage} />
         <section className="settings-panel span-two">
           <header>
             <h2>
