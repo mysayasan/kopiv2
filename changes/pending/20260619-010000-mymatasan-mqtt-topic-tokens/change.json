@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "mymatasan",
+  "summary": "MQTT topic templating now resolves more tokens and never leaves empty topic levels. expandTopicTemplate falls back to the notification's own fields (cameraId, category, severity, refId, id) when a token isn't in the payload data — previously only data keys resolved, so {{cameraId}} was always empty (cameraId is a top-level field, not in data). It also collapses levels left by tokens that resolve to nothing: matasan/alerts/{{cameraId}} with no camera (e.g. the Settings Test button, which publishes a system notification with no camera) now publishes to matasan/alerts, not matasan/alerts/. The MQTT Topic field gained an info tooltip listing the supported tokens. Custom-field templating is unaffected (it already used a richer per-alert context that includes cameraId).",
+  "compatibility": "Backward compatible. Topics without {{ }} are untouched. Topics whose tokens previously resolved keep the same result; only previously-empty tokens (e.g. {{cameraId}}) now resolve or collapse instead of leaving a blank level."
+}

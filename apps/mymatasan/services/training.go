@@ -17,6 +17,7 @@ import (
 
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
+	"github.com/mysayasan/kopiv2/infra/atrest"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/vision"
 )
@@ -65,7 +66,9 @@ type trainingService struct {
 	detector      vision.ObjectDetector
 	minConfidence float64
 	trainCfg      TrainingRunConfig
-	now           func() time.Time
+	// cipher (optional) encrypts dataset images at rest. nil = plaintext.
+	cipher *atrest.Cipher
+	now    func() time.Time
 
 	trainMu  sync.Mutex
 	training bool
@@ -93,6 +96,7 @@ func NewTrainingService(
 	detector vision.ObjectDetector,
 	minConfidence float64,
 	trainCfg TrainingRunConfig,
+	cipher *atrest.Cipher,
 ) ITrainingService {
 	dir := strings.TrimSpace(dataDir)
 	if dir == "" {
@@ -113,8 +117,48 @@ func NewTrainingService(
 		detector:        detector,
 		minConfidence:   minConfidence,
 		trainCfg:        trainCfg,
+		cipher:          cipher,
 		now:             time.Now,
 	}
+}
+
+// encryptImage / decryptImage apply encryption-at-rest to dataset image bytes when a
+// cipher is configured (nil = plaintext). decryptImage passes legacy plaintext through.
+func (s *trainingService) encryptImage(data []byte) []byte {
+	if s.cipher == nil {
+		return data
+	}
+	if enc, err := s.cipher.EncryptBytes(data); err == nil {
+		return enc
+	}
+	return data
+}
+
+func (s *trainingService) decryptImage(data []byte) []byte {
+	if s.cipher == nil {
+		return data
+	}
+	if dec, err := s.cipher.DecryptBytes(data); err == nil {
+		return dec
+	}
+	return data
+}
+
+// GetImageBytes reads a dataset image and decrypts it (legacy plaintext passes
+// through), so callers/serving never see ciphertext.
+func (s *trainingService) GetImageBytes(ctx context.Context, id uint64) ([]byte, error) {
+	img, err := s.images.GetById(ctx, "", id)
+	if err != nil {
+		return nil, err
+	}
+	if img == nil || strings.TrimSpace(img.FilePath) == "" {
+		return nil, errors.New("image file is missing")
+	}
+	data, err := os.ReadFile(img.FilePath)
+	if err != nil {
+		return nil, err
+	}
+	return s.decryptImage(data), nil
 }
 
 func (s *trainingService) objectDetector() (vision.ObjectDetector, error) {
@@ -222,6 +266,7 @@ func (s *trainingService) AddFromAlert(ctx context.Context, datasetId int64, ale
 	if err != nil {
 		return nil, fmt.Errorf("read alert snapshot: %w", err)
 	}
+	data = s.decryptImage(data) // alert snapshots are encrypted at rest
 	var seed []TrainingAnnotation
 	if ann := annotationFromAlert(alert); ann != nil {
 		seed = []TrainingAnnotation{*ann}
@@ -287,6 +332,7 @@ func (s *trainingService) AutoLabel(ctx context.Context, imageId int64, userId i
 	if err != nil {
 		return nil, fmt.Errorf("read image: %w", err)
 	}
+	data = s.decryptImage(data)
 	detector, err := s.objectDetector()
 	if err != nil {
 		return nil, err
@@ -416,7 +462,7 @@ func (s *trainingService) storeImage(ctx context.Context, datasetId int64, data 
 		return nil, err
 	}
 	path := filepath.Join(dir, fmt.Sprintf("%d.jpg", row.Id))
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, s.encryptImage(data), 0o644); err != nil {
 		_, _ = s.images.DeleteById(ctx, "", id)
 		return nil, err
 	}

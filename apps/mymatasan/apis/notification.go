@@ -28,8 +28,10 @@ func (a *notificationApi) list(w http.ResponseWriter, r *http.Request) {
 	limit, offset := readPaging(r)
 	cameraId := parseInt64Query(r, "cameraId")
 	unreadOnly := r.URL.Query().Get("unread") == "true"
+	category := r.URL.Query().Get("category")
+	source := r.URL.Query().Get("source")
 
-	items, total, err := a.serv.List(r.Context(), limit, offset, cameraId, unreadOnly)
+	items, total, err := a.serv.List(r.Context(), limit, offset, cameraId, unreadOnly, category, source)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return

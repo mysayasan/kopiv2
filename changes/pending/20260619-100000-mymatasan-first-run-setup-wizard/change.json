@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "mymatasan",
+  "summary": "First-run setup wizard guides a fresh install through onboarding: Welcome/account (optional password change) -> Capacity (run the calibration benchmark / show estimated camera count) -> Add camera (scan ONVIF, enter the camera's credentials, save) -> Recording & AI (one-click enable continuous recording + person-detection alerts for the added cameras) -> Done. Completion is persisted via a new key-value flag (services.SetupStateService, stored in the runtime_setting table) exposed by GET /api/setup/state and POST /api/setup/complete. The wizard auto-shows for an admin on first run (and after the forced password change) until completed or skipped; on finish it auto-loads every camera into Live Views with the grid auto-sized to the count.",
+  "compatibility": "Additive; the wizard only appears when setup is not yet completed and the user is an admin (non-admins never see it). The flag lives in the runtime_setting table (no schema migration). Delete the setup.state row to re-trigger the wizard for testing."
+}

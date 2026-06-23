@@ -710,6 +710,46 @@ func (s *trainingService) downloadStockModel(name string) (string, error) {
 	return "", errors.New("download finished but the model file was not found")
 }
 
+// readModelLabels loads a YOLO .pt via ultralytics and returns its embedded
+// class names (model.names), in class-index order, lowercased. These are the
+// exact raw labels the worker will emit, so importing can auto-register them
+// instead of relying on the user typing matching strings. Best-effort: returns
+// an error if Python/ultralytics is unavailable or the file can't be read, in
+// which case the caller falls back to any user-supplied classes.
+func (s *trainingService) readModelLabels(weightsPath string) ([]string, error) {
+	py := strings.TrimSpace(s.trainCfg.PythonCmd)
+	if py == "" {
+		return nil, errors.New("python is not configured")
+	}
+	// Load under redirect_stdout(stderr) to swallow ultralytics' banner; the
+	// final marker line prints to the restored real stdout. The weights path is
+	// passed as argv to avoid quoting Windows backslashes into the script.
+	script := "import sys, json, contextlib\n" +
+		"with contextlib.redirect_stdout(sys.stderr):\n" +
+		" from ultralytics import YOLO\n" +
+		" names = YOLO(sys.argv[1]).names\n" +
+		"vals = [names[k] for k in sorted(names)] if isinstance(names, dict) else list(names)\n" +
+		"print('LABELS:' + json.dumps([str(v).strip().lower() for v in vals]))\n"
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, py, "-c", script, weightsPath).Output()
+	if err != nil {
+		return nil, fmt.Errorf("could not read model labels: %v", err)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "LABELS:") {
+			continue
+		}
+		var labels []string
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "LABELS:")), &labels); err != nil {
+			return nil, fmt.Errorf("could not parse model labels: %v", err)
+		}
+		return labels, nil
+	}
+	return nil, errors.New("model labels not found in worker output")
+}
+
 func (s *trainingService) reloadDetector() {
 	if r, ok := s.detector.(interface{ Reload() error }); ok {
 		_ = r.Reload()

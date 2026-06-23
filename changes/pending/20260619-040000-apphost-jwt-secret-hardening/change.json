@@ -1,0 +1,6 @@
+{
+  "type": "security",
+  "scope": "apphost",
+  "summary": "Startup now refuses to run on a weak JWT secret. applySensitiveConfig (infra/apphost/run.go) treats an empty, too-short (<16 char), or known-placeholder secret (e.g. change-me, standalone-change-me, test0123456789) as unsafe and, unless JWT_SECRET is set in the environment, auto-generates a 32-byte CSPRNG base64url secret and surgically rewrites just the jwt.secret value in the config file (preserving the file's formatting and key order) with a warning. JWT_SECRET env still overrides and skips generation. Shared across all apps (mymatasan/myidsan/myseliasan), each of which ships a placeholder and will self-upgrade its config.json on next run.",
+  "compatibility": "Affects all apps using the shared host. Apps with a strong jwt.secret or a JWT_SECRET env var are unaffected. Apps still on a placeholder secret get a one-time config.json rewrite (expect a diff). mymatasan's local session cookie is sha256-based, not JWT, so rotating the JWT secret does not invalidate mymatasan logins."
+}

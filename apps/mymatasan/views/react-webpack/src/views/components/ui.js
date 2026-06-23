@@ -139,10 +139,61 @@ export function Tracks({ value }) {
   );
 }
 
-export function Message({ value }) {
+export function Message({ value, floating = false }) {
   if (!value) {
     return null;
   }
-  return <div className="status-line">{value}</div>;
+  return <div className={`status-line${floating ? ' status-line--floating' : ''}`}>{value}</div>;
+}
+
+// Toast is a single auto-dismissing notification. It schedules its own removal so
+// new toasts pushed onto the stack don't reset each other's timers. Hovering pauses
+// the timer so a message can be read; it can also be dismissed manually.
+function Toast({ id, text, duration = 3000, onDismiss }) {
+  const [leaving, setLeaving] = useState(false);
+  const timerRef = useRef(null);
+
+  const start = () => {
+    clearTimeout(timerRef.current);
+    timerRef.current = window.setTimeout(() => setLeaving(true), duration);
+  };
+  useEffect(() => {
+    start();
+    return () => clearTimeout(timerRef.current);
+    // eslint-disable-next-line
+  }, []);
+
+  // Remove from the stack only after the leave transition finishes.
+  const handleEnd = () => { if (leaving) onDismiss(id); };
+
+  return (
+    <div
+      className={`toast${leaving ? ' toast--leaving' : ''}`}
+      role="status"
+      aria-live="polite"
+      onMouseEnter={() => clearTimeout(timerRef.current)}
+      onMouseLeave={start}
+      onTransitionEnd={handleEnd}
+    >
+      <span className="toast-text">{text}</span>
+      <button type="button" className="toast-close" aria-label="Dismiss" onClick={() => setLeaving(true)}>
+        <Ico n="x" sz={13} />
+      </button>
+    </div>
+  );
+}
+
+// ToastStack renders the top-right stack of toasts. Newest appears at the top.
+export function ToastStack({ toasts, onDismiss }) {
+  if (!toasts || toasts.length === 0) {
+    return null;
+  }
+  return (
+    <div className="toast-stack" aria-live="polite">
+      {toasts.map((t) => (
+        <Toast key={t.id} id={t.id} text={t.text} onDismiss={onDismiss} />
+      ))}
+    </div>
+  );
 }
 

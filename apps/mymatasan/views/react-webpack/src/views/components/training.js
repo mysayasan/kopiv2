@@ -741,11 +741,15 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
       form.append('file', file);
       form.append('name', modelDraft.name);
       form.append('classes', modelDraft.classes);
-      await api('/api/training/models/import', authHeader, { method: 'POST', body: form });
+      const model = await api('/api/training/models/import', authHeader, { method: 'POST', body: form });
       setModelDraft({ name: '', classes: '' });
       if (modelFileRef.current) modelFileRef.current.value = '';
       await loadModels();
-    }, 'Model imported.');
+      const cls = modelClasses(model);
+      notify(cls.length
+        ? `Model imported — detected classes: ${cls.join(', ')}. Activate it to start detecting them.`
+        : 'Model imported. Activate it to start detecting its classes.');
+    });
   }
 
   function startTraining() {
@@ -768,7 +772,7 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
       if (onModelActivated) onModelActivated();
       const cls = modelClasses(model);
       notify(cls.length
-        ? `Model activated — it now runs alongside the stock model. Its classes (${cls.join(', ')}) are selectable in the AI tab → Detection Rules → "Detect".`
+        ? `Model activated — it now runs alongside the stock model and detects: ${cls.join(', ')}. Add a rule in the AI tab → Detection Rules → "Detect" targeting those (known hazards like fire/smoke fold into the built-in Fire/Smoke categories).`
         : 'Model activated — it now runs alongside the stock model.');
     });
   }
@@ -881,8 +885,9 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
               <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Couriers" disabled={busy} />
             </label>
             <label>
-              Classes (comma-separated)
-              <input value={draft.classes} onChange={(e) => setDraft({ ...draft, classes: e.target.value })} placeholder="courier, van" disabled={busy} />
+              Classes (optional)
+              <input value={draft.classes} onChange={(e) => setDraft({ ...draft, classes: e.target.value })} placeholder="leave blank — collected as you label" disabled={busy} />
+              <span className="field-hint">You don&apos;t need these up front. Every label you assign to a box is added to the dataset automatically, and only classes you actually box are used for training. Pre-fill only to get them as type-ahead suggestions in each box&apos;s label field while annotating.</span>
             </label>
             <label>
               Description
@@ -1109,13 +1114,14 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
               <input value={modelDraft.name} onChange={(e) => setModelDraft({ ...modelDraft, name: e.target.value })} placeholder="Couriers v1" disabled={busy} />
             </label>
             <label>
-              Classes (comma-separated)
-              <input value={modelDraft.classes} onChange={(e) => setModelDraft({ ...modelDraft, classes: e.target.value })} placeholder="courier, van" disabled={busy} />
+              Classes (optional)
+              <input value={modelDraft.classes} onChange={(e) => setModelDraft({ ...modelDraft, classes: e.target.value })} placeholder="auto-detected from the model" disabled={busy} />
             </label>
           </div>
           <label>
             Weights file (.pt)
             <input ref={modelFileRef} type="file" accept=".pt" disabled={busy} />
+            <span className="field-hint">Classes are read from the model file automatically — leave the field blank unless the read fails (no Python on this host), then list them as a fallback.</span>
           </label>
           <div className="action-row">
             <button type="submit" disabled={busy || !modelDraft.name.trim()}>

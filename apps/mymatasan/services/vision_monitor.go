@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
+	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/recording"
-	"github.com/mysayasan/kopiv2/infra/rtsp"
 	"github.com/mysayasan/kopiv2/infra/vision"
 )
 
@@ -28,7 +28,11 @@ type VisionMonitor struct {
 	resolver    ClassResolver
 	recorder    *recording.Manager
 	notifier    INotificationPublisher
+	notifDests  INotificationDestinationsProvider
 	client      *http.Client
+	source      *DetectionSource
+	detectCfg   func(ctx context.Context, cameraID int64) (recording.RecorderConfig, bool)
+	snapCipher  *atrest.Cipher
 	interval    time.Duration
 	refresh     time.Duration
 	timeout     time.Duration
@@ -62,6 +66,7 @@ func NewVisionMonitor(camera ICameraService, visionService IVisionService, setti
 	if refresh > interval {
 		refresh = interval
 	}
+	client := &http.Client{Timeout: 8 * time.Second}
 	return &VisionMonitor{
 		camera:      camera,
 		vision:      visionService,
@@ -70,7 +75,11 @@ func NewVisionMonitor(camera ICameraService, visionService IVisionService, setti
 		resolver:    monitor.Resolver,
 		recorder:    monitor.Recorder,
 		notifier:    monitor.Notifier,
-		client:      &http.Client{Timeout: 8 * time.Second},
+		notifDests:  monitor.NotificationDestinations,
+		client:      client,
+		source:      NewDetectionSource(camera, monitor.Recorder, settings, client),
+		detectCfg:   monitor.DetectStreamConfig,
+		snapCipher:  monitor.SnapshotCipher,
 		interval:    interval,
 		refresh:     refresh,
 		timeout:     timeout,
@@ -119,14 +128,19 @@ func (m *VisionMonitor) reconcileSamplers(ctx context.Context, samplers map[int6
 	}
 	byCamera := activeRulesByCamera(rules, time.Now().UTC())
 
-	// Read YOLO inference settings once per reconcile and attach to every frame.
+	// Read YOLO inference + capture settings once per reconcile.
 	inference := vision.InferenceParams{}
+	captureMode := "auto"
 	if settings, err := m.settings.Get(ctx); err == nil {
 		inference = YoloInferenceParamsFromSettings(settings.Vision.Yolo)
+		if mode := strings.ToLower(strings.TrimSpace(settings.Vision.Capture.Mode)); mode != "" {
+			captureMode = mode
+		}
 	}
 
 	for cameraID, cameraRules := range byCamera {
 		cameraRules = m.resolveRuleClasses(ctx, cameraRules)
+		m.reconcileDetectionStream(cameraID, captureMode)
 		if s, ok := samplers[cameraID]; ok {
 			s.setState(cameraRules, inference)
 			continue
@@ -141,7 +155,43 @@ func (m *VisionMonitor) reconcileSamplers(ctx context.Context, samplers map[int6
 		if _, ok := byCamera[cameraID]; !ok {
 			s.cancel()
 			delete(samplers, cameraID)
+			// Camera no longer has active rules — tear down any detect-only stream.
+			if m.recorder != nil {
+				m.recorder.StopDetectionStream(cameraID)
+			}
 		}
+	}
+}
+
+// reconcileDetectionStream keeps a camera's detection-only frame stream in sync
+// with the active capture mode. In siphon/auto modes a camera that has active rules
+// but NO running NVR recorder gets a persistent detect-only stream so the AI reads
+// continuous fresh frames instead of slow one-shot RTSP grabs. In standalone mode,
+// or when NVR recording is running (its own siphon tee serves the detector), any
+// detect-only stream is stopped.
+func (m *VisionMonitor) reconcileDetectionStream(cameraID int64, captureMode string) {
+	if m.recorder == nil || m.detectCfg == nil {
+		return
+	}
+	wantStream := captureMode == "auto" || captureMode == "siphon"
+	if wantStream {
+		// A running NVR recorder already feeds the siphon buffer; only start a
+		// detect-only stream when the camera is not being recorded.
+		if _, _, _, recording := m.recorder.RecordingSource(cameraID); recording {
+			wantStream = false
+		}
+	}
+	if !wantStream {
+		m.recorder.StopDetectionStream(cameraID)
+		return
+	}
+	cfg, ok := m.detectCfg(context.Background(), cameraID)
+	if !ok {
+		return
+	}
+	cfg.CameraId = cameraID
+	if err := m.recorder.EnsureDetectionStream(cfg); err != nil {
+		m.recorder.StopDetectionStream(cameraID)
 	}
 }
 
@@ -223,10 +273,12 @@ func (m *VisionMonitor) sampleCamera(ctx context.Context, cameraID int64, camera
 	// once per sample so notifications carry the real name and the user's chosen
 	// fields/image instead of recomputing per detection.
 	cameraName := ""
-	var notifyFields *AlertNotificationSettings
+	var notifyDestinations []NotificationDestination
 	if len(detections) > 0 {
 		cameraName = m.cameraDisplayName(ctx, cameraID)
-		notifyFields = m.alertNotificationFields(ctx)
+		if m.notifDests != nil {
+			notifyDestinations = m.notifDests.Destinations(ctx)
+		}
 	}
 	for _, detection := range detections {
 		alert, _ := m.vision.CreateAlert(ctx, AlertEventRequest{
@@ -244,22 +296,12 @@ func (m *VisionMonitor) sampleCamera(ctx context.Context, cameraID int64, camera
 			m.recorder.TriggerEvent(detection.CameraId, alert.Id, detection.FrameCapturedAt)
 		}
 		NotifyVisionAlert(ctx, m.notifier, alert, cameraName, VisionAlertOptions{
-			RuleName: ruleNameByID(cameraRules, detection.RuleId),
-			Snapshot: BuildAlertSnapshot(frame.Data, detection.BoundingBox, detection.Metadata, detection.DetectionType, notifyFields),
-			Fields:   notifyFields,
+			RuleName:         ruleNameByID(cameraRules, detection.RuleId),
+			RawImage:         frame.Data,
+			Destinations:     notifyDestinations,
+			RuleDestinations: ruleDestinationsByID(cameraRules, detection.RuleId),
 		})
 	}
-}
-
-// alertNotificationFields reads the runtime-editable field-inclusion config that
-// governs what each detection alert contributes to its notification. On error it
-// returns nil, which NotifyVisionAlert treats as "include everything".
-func (m *VisionMonitor) alertNotificationFields(ctx context.Context) *AlertNotificationSettings {
-	settings, err := m.settings.Get(ctx)
-	if err != nil {
-		return nil
-	}
-	return settings.Vision.AlertNotification
 }
 
 // resolveRuleClasses rewrites each rule's ruleConfig.classes from registry slugs
@@ -320,6 +362,32 @@ func ruleNameByID(rules []vision.DetectionRule, id int64) string {
 		}
 	}
 	return ""
+}
+
+// ruleDestinationsByID returns the destination ids a rule routes its alerts to,
+// read from its ruleConfig.destinations. Empty/absent means "all destinations".
+func ruleDestinationsByID(rules []vision.DetectionRule, id int64) []string {
+	for _, rule := range rules {
+		if rule.Id == id {
+			return ParseRuleDestinations(rule.RuleConfig)
+		}
+	}
+	return nil
+}
+
+// ParseRuleDestinations extracts the destinations list from a rule's ruleConfig
+// JSON, or nil when absent/unparseable.
+func ParseRuleDestinations(ruleConfig string) []string {
+	if strings.TrimSpace(ruleConfig) == "" {
+		return nil
+	}
+	var parsed struct {
+		Destinations []string `json:"destinations"`
+	}
+	if err := json.Unmarshal([]byte(ruleConfig), &parsed); err != nil {
+		return nil
+	}
+	return parsed.Destinations
 }
 
 func (m *VisionMonitor) emitDiagnostics(ctx context.Context, rules []vision.DetectionRule, status string, message string, extra map[string]any) {
@@ -411,6 +479,14 @@ func (m *VisionMonitor) saveSnapshot(cameraID int64, data []byte, capturedAt int
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return ""
 	}
+	// Encrypt the snapshot at rest when a cipher is configured, so a factory reset can
+	// crypto-erase it. Readers detect the header and decrypt (legacy plaintext passes
+	// through). Fall back to plaintext if encryption unexpectedly fails.
+	if m.snapCipher != nil {
+		if enc, err := m.snapCipher.EncryptBytes(data); err == nil {
+			data = enc
+		}
+	}
 	path := filepath.Join(dir, fmt.Sprintf("snap_%d.jpg", capturedAt))
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return ""
@@ -418,51 +494,21 @@ func (m *VisionMonitor) saveSnapshot(cameraID int64, data []byte, capturedAt int
 	return path
 }
 
+// captureFrame resolves a detection frame for the camera via the shared
+// DetectionSource, which honors the configured capture mode (standalone / siphon
+// / auto) and pins all modes to the recording stream when the camera records.
 func (m *VisionMonitor) captureFrame(ctx context.Context, cameraID int64) (vision.Frame, error) {
-	source, err := m.camera.SnapshotSource(ctx, uint64(cameraID))
-	if err != nil {
-		return vision.Frame{}, err
-	}
-	var data []byte
-	if strings.TrimSpace(source.RTSPURI) != "" {
-		settings, err := m.settings.Decoder(ctx)
-		if err != nil {
-			return vision.Frame{}, err
-		}
-		mjpegOptions := MJPEGOptionsFromDecoderSettings(settings)
-		mjpegOptions.MaxWidth = 640
-		data, err = rtsp.CaptureJPEG(ctx, source.RTSPURI, mjpegOptions)
-		if err != nil {
-			// RTSP capture failed (codec incompatibility, stream unreachable, etc.).
-			// Fall back to the HTTP snapshot URI so cameras that can't do RTSP
-			// (e.g. MJPEG-only devices whose live view falls back to snapshot polling)
-			// still get frames written to the recorder ring buffer.
-			if strings.TrimSpace(source.URI) == "" {
-				return vision.Frame{}, fmt.Errorf("rtsp capture failed and no snapshot uri available: %w", err)
-			}
-			rtspErr := err
-			data, err = m.fetchSnapshot(ctx, source)
-			if err != nil {
-				return vision.Frame{}, fmt.Errorf("rtsp capture failed (%v); snapshot fallback also failed: %w", rtspErr, err)
-			}
-		}
-	} else if strings.TrimSpace(source.URI) != "" {
-		data, err = m.fetchSnapshot(ctx, source)
-		if err != nil {
-			return vision.Frame{}, err
-		}
-	} else {
-		return vision.Frame{}, fmt.Errorf("camera has no snapshot or rtsp source")
-	}
-	return vision.Frame{
-		CameraId:   cameraID,
-		Data:       data,
-		Format:     "jpeg",
-		CapturedAt: time.Now().UTC().Unix(),
-	}, nil
+	return m.source.Capture(ctx, cameraID)
 }
 
 func (m *VisionMonitor) fetchSnapshot(ctx context.Context, source SnapshotSource) ([]byte, error) {
+	return fetchSnapshotJPEG(ctx, m.client, source)
+}
+
+// fetchSnapshotJPEG fetches a single JPEG from a camera's HTTP snapshot URI,
+// extracting the first frame when the camera returns an MJPEG multipart stream.
+// Shared by the live monitor and the detection-source resolver.
+func fetchSnapshotJPEG(ctx context.Context, client *http.Client, source SnapshotSource) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, source.URI, nil)
 	if err != nil {
 		return nil, err
@@ -471,7 +517,7 @@ func (m *VisionMonitor) fetchSnapshot(ctx context.Context, source SnapshotSource
 		req.SetBasicAuth(source.Username, source.Password)
 	}
 	req.Header.Set("Accept", "image/jpeg,*/*")
-	resp, err := m.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -479,8 +525,6 @@ func (m *VisionMonitor) fetchSnapshot(ctx context.Context, source SnapshotSource
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("snapshot returned %s", resp.Status)
 	}
-	// Some cameras return a live MJPEG multipart stream from their snapshot endpoint.
-	// Parse and extract only the first JPEG frame so ffmpeg gets valid input.
 	if strings.HasPrefix(resp.Header.Get("Content-Type"), "multipart/") {
 		return fetchMJPEGFrame(resp.Body)
 	}

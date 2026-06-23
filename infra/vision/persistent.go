@@ -61,10 +61,22 @@ func NewPersistentObjectDetector(opts PersistentObjectDetectorOptions) (*Persist
 }
 
 func (d *PersistentObjectDetector) DetectObjects(ctx context.Context, frame Frame) ([]ObjectCandidate, error) {
+	return d.detect(ctx, frame, d.timeout)
+}
+
+// WarmupDetect runs a single inference bounded only by ctx, bypassing the per-frame
+// timeout. A cold worker launch + model load (especially GPU/CUDA init) can take far
+// longer than the normal per-frame budget; warming up under that short cap would kill
+// the worker mid-load and never complete. Used by capacity calibration before timing.
+func (d *PersistentObjectDetector) WarmupDetect(ctx context.Context, frame Frame) ([]ObjectCandidate, error) {
+	return d.detect(ctx, frame, 0)
+}
+
+func (d *PersistentObjectDetector) detect(ctx context.Context, frame Frame, timeout time.Duration) ([]ObjectCandidate, error) {
 	runCtx := ctx
 	cancel := func() {}
-	if d.timeout > 0 {
-		runCtx, cancel = context.WithTimeout(ctx, d.timeout)
+	if timeout > 0 {
+		runCtx, cancel = context.WithTimeout(ctx, timeout)
 	}
 	defer cancel()
 

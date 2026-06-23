@@ -1,0 +1,6 @@
+{
+  "type": "changed",
+  "scope": "mymatasan",
+  "summary": "AI → Detection Rules: mode-specific config boxes now appear directly above the 'Detect (what)' box (right after the Mode selector) instead of at the bottom of the form under Schedule. The Crowd Threshold (minimum people) box and the Line Direction box move up next to the Mode they belong to, so the rule reads top-to-bottom as how → mode options → what → thresholds → routing → schedule. The large zone/line drawing canvas (ZoneDrawingPreview / LineDrawingPreview) stays near the bottom by the submit action. Also reworded the crowd hint ('confidence threshold' instead of '...above') since it no longer sits below the threshold input.",
+  "compatibility": "Frontend layout only; no change to the rule data or behavior."
+}

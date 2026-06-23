@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import './styles/app.css';
-import { Message } from './components/ui';
+import { ToastStack } from './components/ui';
 import { THEMES, emptyLogin, defaultStreamConfig, defaultRuntimeSettings, defaultNewUser, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings, defaultVisionThreshold, defaultVisionMinFrames } from './lib/constants';
-import {readLiveViewsCookie,saveLiveViewsCookie,layoutCapacity,normalizeLayout,unwrap,errorMessage,apiBase,parseMetadata,cameraTitle,normalizeScanDevice,orderedSavedCameras,isActionableVisionAlert,latestAlertsByCamera,sameCamera,liveSource,normalizeRuntimeSettings,normalizeMachineHealthSettings,defaultZonePolygon,isLineDetectionType,defaultLineRuleConfig,lineRuleConfigText,defaultVisionRuleDraft,playAlertSound,hasH264VideoTrack,streamOptionLabel } from './lib/helpers';
-import { LoginPage, TopBar } from './components/layout';
+import {readLiveViewsCookie,saveLiveViewsCookie,bestLiveViewLayout,unwrap,errorMessage,apiBase,parseMetadata,cameraTitle,normalizeScanDevice,orderedSavedCameras,isActionableVisionAlert,latestAlertsByCamera,sameCamera,liveSource,normalizeRuntimeSettings,normalizeMachineHealthSettings,defaultZonePolygon,isLineDetectionType,defaultLineRuleConfig,lineRuleConfigText,defaultVisionRuleDraft,playAlertSound,hasH264VideoTrack,streamOptionLabel,isVisionAlertNotification } from './lib/helpers';
+import { LoginPage, ChangePasswordPage, TopBar } from './components/layout';
+import { SetupWizard } from './components/setup';
 import { ViewsTab, CamerasTab } from './components/cameras';
 import { VisionTab } from './components/vision';
 import { TrainingTab } from './components/training';
 import { SettingsTab } from './components/settings';
 import { RecordingTab } from './components/recording';
+import { NotificationsTab } from './components/notifications';
+import { SecureWipeCountdown, ResetProgressOverlay } from './components/securewipe';
 
 
 export default function App() {
@@ -26,7 +29,24 @@ export default function App() {
     try { localStorage.setItem('mymatasan_theme', t); } catch (_) {}
   }
   const [credentials, setCredentials] = useState(emptyLogin);
+  // credentialsRef always holds the latest credentials so request() builds its
+  // Basic-auth header from current values even right after a password change,
+  // before React re-renders (a stale header would fail auth and trip the lockout).
+  const credentialsRef = useRef(credentials);
+  // Refs used by request() to handle a background 401 (expired session) cleanly:
+  // authenticatedRef avoids firing during a login attempt; sessionExpiredRef makes it
+  // fire once; resetActiveRef suppresses it during a factory reset / restart (where
+  // 401s are expected and the dedicated overlay handles the reload).
+  const authenticatedRef = useRef(false);
+  const sessionExpiredRef = useRef(false);
+  const resetActiveRef = useRef(false);
   const [authenticated, setAuthenticated] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [passwordChangeRequired, setPasswordChangeRequired] = useState(false);
+  // Epoch ms until which login is locked (0 = not locked); drives the countdown.
+  const [lockoutUntil, setLockoutUntil] = useState(0);
+  // First-run setup wizard: shown to an admin until setup is completed/dismissed.
+  const [setupNeeded, setSetupNeeded] = useState(false);
   const [activeTab, setActiveTab] = useState('views');
   const [settingsNav, setSettingsNav] = useState('runtime');
   const [cameraNav, setCameraNav] = useState('probe');
@@ -49,6 +69,11 @@ export default function App() {
   const [discovered, setDiscovered] = useState([]);
   const [saveDrafts, setSaveDrafts] = useState({});
   const [message, setMessage] = useState('');
+  // Main-app status toasts (top-right, auto-dismissing). The single `message`
+  // string above is bridged into this stack for the authenticated app; login/setup
+  // still render `message` inline.
+  const [toasts, setToasts] = useState([]);
+  const toastIdRef = useRef(0);
   const [busy, setBusy] = useState(false);
   const [deviceDrafts, setDeviceDrafts] = useState({});
   const [deviceCredentials, setDeviceCredentials] = useState({});
@@ -75,6 +100,10 @@ export default function App() {
   const [machineHealthSettings, setMachineHealthSettings] = useState(defaultMachineHealthSettings);
   const [savedMachineHealthSettings, setSavedMachineHealthSettings] = useState(defaultMachineHealthSettings);
   const [machineMetrics, setMachineMetrics] = useState(null);
+  const [capacity, setCapacity] = useState(null);
+  const [resetAllowed, setResetAllowed] = useState(false);
+  const [wipeCountdown, setWipeCountdown] = useState(false);
+  const [resetProgress, setResetProgress] = useState(null);
   const [passwordDrafts, setPasswordDrafts] = useState({});
   const [visionRules, setVisionRules] = useState([]);
   const [visionAlerts, setVisionAlerts] = useState([]);
@@ -86,11 +115,23 @@ export default function App() {
   const [recordingConfigs, setRecordingConfigs] = useState([]);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifUnread, setNotifUnread] = useState(0);
-  const [recordingFocusCameraId, setRecordingFocusCameraId] = useState(0);
-  const [recordingFocusAlertId, setRecordingFocusAlertId] = useState(0);
+  // Unified notification feed (AI detections, camera/machine health, login
+  // security, ...) backing the topbar bell. Loaded unread-only from the shared
+  // /api/notifications store; notifUnread mirrors the server's total unread.
+  const [notifications, setNotifications] = useState([]);
+  const loadNotificationsRef = useRef(null);
+  // Bumped whenever the unread feed actually changes (new arrivals, reads), so the
+  // Notifications page can auto-refresh in step with the bell rather than staying
+  // stale on its own independently-fetched list.
+  const [notifVersion, setNotifVersion] = useState(0);
+  const notifSigRef = useRef('');
+  // Username a login-security notification deep-links to, so the Users settings
+  // highlights the account that was targeted.
+  const [focusUsername, setFocusUsername] = useState('');
+  // Notification id the page should scroll to/highlight after a dropdown click.
+  const [notifFocusId, setNotifFocusId] = useState(0);
   const [seenInRecordingIds, setSeenInRecordingIds] = useState(new Set());
   const seenVisionAlertIdsRef = useRef(new Set());
-  const initialNotifDoneRef = useRef(false);
   const loadVisionRef = useRef(null);
   const activeVisionAlertsByCamera = useMemo(() => latestAlertsByCamera(visionAlerts), [visionAlerts]);
   const tileAlertsByCamera = useMemo(() => {
@@ -106,6 +147,27 @@ export default function App() {
     () => new Set(visionAlerts.filter((a) => !a.isAcknowledged && !parseMetadata(a.metadata).diagnostic).map((a) => Number(a.id))),
     [visionAlerts],
   );
+  // Map of alertId → its recorded clip segment, so the Notifications page can
+  // offer (and play) "View clip" only when footage exists.
+  const clipByAlertId = useMemo(() => {
+    const map = new Map();
+    (recordingSegments || []).forEach((s) => {
+      const alertId = Number(s.alertId);
+      if (alertId > 0 && !map.has(alertId)) {
+        map.set(alertId, s);
+      }
+    });
+    return map;
+  }, [recordingSegments]);
+
+  useEffect(() => {
+    credentialsRef.current = credentials;
+  }, [credentials]);
+
+  useEffect(() => {
+    authenticatedRef.current = authenticated;
+    if (authenticated) sessionExpiredRef.current = false;
+  }, [authenticated]);
 
   const authHeader = useMemo(() => {
     if (!credentials.username && !credentials.password) {
@@ -119,8 +181,9 @@ export default function App() {
       'Content-Type': 'application/json',
       ...(options.headers || {}),
     };
-    if (authHeader) {
-      headers.Authorization = authHeader;
+    const creds = credentialsRef.current;
+    if (creds && (creds.username || creds.password)) {
+      headers.Authorization = `Basic ${btoa(`${creds.username}:${creds.password}`)}`;
     }
     const response = await fetch(`${apiBase()}${path}`, {
       ...options,
@@ -137,7 +200,26 @@ export default function App() {
       }
     }
     if (!response.ok) {
-      throw new Error(errorMessage(payload, `Request failed with ${response.status}`));
+      // A 401 on a normal request after we were logged in means the session expired
+      // (password-change-required is 403 and lockout is 429, so they're not caught
+      // here). Drop to the login screen with a friendly note instead of leaving the
+      // user staring at a broken page. Suppressed during a factory reset / restart,
+      // and never during the login/auth calls themselves.
+      if (
+        response.status === 401 &&
+        authenticatedRef.current &&
+        !resetActiveRef.current &&
+        !sessionExpiredRef.current &&
+        !path.startsWith('/api/auth')
+      ) {
+        sessionExpiredRef.current = true;
+        logout();
+        setMessage('Your session has expired. Please sign in again.');
+      }
+      const error = new Error(errorMessage(payload, `Request failed with ${response.status}`));
+      error.status = response.status;
+      error.retryAfter = Number((payload && payload.retryAfterSeconds) || response.headers.get('Retry-After')) || 0;
+      throw error;
     }
     return unwrap(payload);
   }
@@ -233,6 +315,51 @@ export default function App() {
     }
     setBusy(true);
     setMessage('');
+    let session;
+    try {
+      // A single authenticated probe verifies the credentials and reveals the
+      // user's role and whether a forced password change is pending.
+      session = await request('/api/auth/session');
+    } catch (err) {
+      if (err.status === 429 && err.retryAfter > 0) {
+        setLockoutUntil(Date.now() + err.retryAfter * 1000);
+        setMessage('');
+      } else {
+        setMessage(err.status === 401 ? 'Invalid username or password.' : err.message);
+      }
+      setBusy(false);
+      return;
+    }
+    const adminUser = Boolean(session && session.isAdmin);
+    setIsAdmin(adminUser);
+    if (session && session.mustChangePassword) {
+      setPasswordChangeRequired(true);
+      setBusy(false);
+      return;
+    }
+    await enterAppOrWizard(adminUser);
+  }
+
+  // enterAppOrWizard loads the app, then shows the first-run wizard if setup is
+  // pending and the user is an admin (only admins can perform setup).
+  async function enterAppOrWizard(adminUser) {
+    await enterApp();
+    if (!adminUser) return;
+    try {
+      const setup = await request('/api/setup/state');
+      if (setup && !setup.completed) {
+        setSetupNeeded(true);
+      }
+    } catch (_) {
+      // Setup state is best-effort; never block entry on it.
+    }
+  }
+
+  // enterApp loads the landing data and reveals the app shell. Shared by the
+  // normal login path and the forced password-change completion.
+  async function enterApp() {
+    setBusy(true);
+    setMessage('');
     try {
       await loadRuntimeSettings();
       await loadDecoderGpuDevices({ quiet: true });
@@ -250,6 +377,7 @@ export default function App() {
       setViewTiles(initialTiles);
       saveLiveViewsCookie(preference.layout, initialTiles);
       setAuthenticated(true);
+      setPasswordChangeRequired(false);
       setActiveTab('views');
       setMessage('');
       // Kick off an immediate health probe (non-blocking) so offline cameras are
@@ -270,8 +398,35 @@ export default function App() {
     }
   }
 
+  // completePasswordChange sets a new password for the must-change user, then
+  // enters the app. The stored credential is updated synchronously (via the ref)
+  // so the very next request replays the new password rather than the stale one.
+  async function completePasswordChange({ currentPassword, newPassword }) {
+    setBusy(true);
+    setMessage('');
+    try {
+      await request('/api/auth/change-password', {
+        method: 'POST',
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      const nextCredentials = { ...credentialsRef.current, password: newPassword };
+      credentialsRef.current = nextCredentials;
+      setCredentials(nextCredentials);
+    } catch (err) {
+      setMessage(err.message);
+      setBusy(false);
+      return;
+    }
+    // A forced change is always a first login — show the wizard if setup is pending.
+    await enterAppOrWizard(isAdmin);
+  }
+
   function logout() {
     setAuthenticated(false);
+    setIsAdmin(false);
+    setPasswordChangeRequired(false);
+    setLockoutUntil(0);
+    setSetupNeeded(false);
     setCredentials(emptyLogin);
     setSaved([]);
     setDiscovered([]);
@@ -294,11 +449,10 @@ export default function App() {
     setRecordingConfigs([]);
     setNotifOpen(false);
     setNotifUnread(0);
-    setRecordingFocusCameraId(0);
-    setRecordingFocusAlertId(0);
+    setNotifications([]);
+    setFocusUsername('');
     setSeenInRecordingIds(new Set());
     seenVisionAlertIdsRef.current = new Set();
-    initialNotifDoneRef.current = false;
     setMessage('');
   }
 
@@ -360,6 +514,7 @@ export default function App() {
         webhook: { ...defaultNotificationSettings.webhook, ...(result?.webhook || {}) },
         telegram: { ...defaultNotificationSettings.telegram, ...(result?.telegram || {}) },
         retention: { ...defaultNotificationSettings.retention, ...(result?.retention || {}) },
+        destinations: Array.isArray(result?.destinations) ? result.destinations : [],
       };
       setNotificationSettings(merged);
       setSavedNotificationSettings(merged);
@@ -389,6 +544,7 @@ export default function App() {
         webhook: { ...defaultNotificationSettings.webhook, ...(result?.webhook || {}) },
         telegram: { ...defaultNotificationSettings.telegram, ...(result?.telegram || {}) },
         retention: { ...defaultNotificationSettings.retention, ...(result?.retention || {}) },
+        destinations: Array.isArray(result?.destinations) ? result.destinations : [],
       };
       setNotificationSettings(merged);
       setSavedNotificationSettings(merged);
@@ -407,6 +563,23 @@ export default function App() {
       // Send a high-severity test so it passes any minimum-severity filter.
       await request('/api/settings/notification/test?severity=critical', { method: 'POST' });
       setMessage(`Test notification dispatched${channel ? ` to ${channel}` : ''}. Check your ${channel || 'channel'}.`);
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function purgeExpiredNotifications({ days, onlyRead } = {}) {
+    if (!(days > 0)) return;
+    setBusy(true);
+    setMessage('');
+    try {
+      const params = new URLSearchParams({ olderThanDays: String(days) });
+      if (onlyRead) params.set('onlyRead', 'true');
+      const result = await request(`/api/notifications/purge?${params.toString()}`, { method: 'POST' });
+      const deleted = Number(result?.deleted) || 0;
+      setMessage(deleted > 0 ? `Purged ${deleted} expired detection${deleted === 1 ? '' : 's'}.` : 'No expired detections to purge.');
     } catch (err) {
       setMessage(err.message);
     } finally {
@@ -507,6 +680,370 @@ export default function App() {
     }
   }
 
+  // estimateCapacity asks the backend how many cameras this host can process,
+  // based on detected hardware and (once cameras run) live load.
+  async function estimateCapacity() {
+    setBusy(true);
+    try {
+      const result = await request('/api/capacity');
+      setCapacity(result || null);
+      return result;
+    } catch (err) {
+      setMessage(err.message);
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // calibrateCapacity benchmarks the detector on this host for an accurate
+  // cold-start estimate (no cameras needed). Slow on first run (model load).
+  async function calibrateCapacity() {
+    setBusy(true);
+    setMessage('Calibrating detector… this can take several seconds.');
+    try {
+      const result = await request('/api/capacity/calibrate', { method: 'POST' });
+      setCapacity(result || null);
+      setMessage('Calibration complete.');
+      return result;
+    } catch (err) {
+      setMessage(err.message);
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // --- Secure Wipe & Reset (factory reset) ---
+
+  // loadResetState checks whether factory reset is enabled (bootstrap.allowReset) so
+  // the Danger Zone button only appears when the deployment permits it.
+  async function loadResetState() {
+    try {
+      const result = await request('/api/system/reset/state');
+      setResetAllowed(!!result?.allowed);
+    } catch {
+      setResetAllowed(false);
+    }
+  }
+
+  // startSecureWipe begins the reset, then polls progress. When the server restarts,
+  // progress polling fails; once /health recovers we reload into the fresh first-run
+  // state (the setup wizard reappears since all users were wiped).
+  async function startSecureWipe() {
+    resetActiveRef.current = true; // expected 401s during the wipe shouldn't flip to login
+    setWipeCountdown(false);
+    try {
+      const progress = await request('/api/system/reset', { method: 'POST' });
+      setResetProgress(progress || { stage: 'erasing', percent: 0, message: 'Starting…', running: true });
+      pollResetProgress();
+    } catch (err) {
+      setResetProgress({ stage: 'failed', percent: 0, error: err.message });
+    }
+  }
+
+  function pollResetProgress() {
+    let phase = 'progress';
+    let healthWasDown = false;
+    const id = setInterval(async () => {
+      if (phase === 'progress') {
+        try {
+          const progress = await request('/api/system/reset/progress');
+          setResetProgress(progress);
+          if (progress?.stage === 'failed') { clearInterval(id); return; }
+          if (progress?.stage === 'restarting') phase = 'restarting';
+        } catch {
+          // Progress endpoint unreachable/401 — the database has been wiped and the
+          // server is finishing the secure overwrite + restart. Show a clean state
+          // instead of leaving the bar frozen on the last DB-backed reading.
+          phase = 'restarting';
+          setResetProgress({ stage: 'restarting', percent: 100, message: 'Finalizing & restarting…', running: true });
+        }
+        return;
+      }
+      // Restarting: wait for the server to drop, then come back, then reload.
+      try {
+        const health = await fetch(`${apiBase()}/health`, { cache: 'no-store' });
+        if (!health.ok) throw new Error('down');
+        if (healthWasDown) { clearInterval(id); window.location.reload(); }
+      } catch {
+        healthWasDown = true;
+      }
+    }, 1000);
+  }
+
+  // --- First-run setup wizard handlers ---
+
+  // wizardChangePassword changes the password from inside the wizard without
+  // re-entering the app (keeps the stored credential in sync for later requests).
+  async function wizardChangePassword({ currentPassword, newPassword }) {
+    setBusy(true);
+    setMessage('');
+    try {
+      await request('/api/auth/change-password', {
+        method: 'POST',
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      const nextCredentials = { ...credentialsRef.current, password: newPassword };
+      credentialsRef.current = nextCredentials;
+      setCredentials(nextCredentials);
+      setMessage('Password updated.');
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // wizardEnableRecordingAll turns on continuous recording for every saved camera
+  // with sensible defaults (7-day retention). storagePath defaults to 'recordings'.
+  async function wizardEnableRecordingAll(storagePath) {
+    const path = (storagePath || '').trim() || 'recordings';
+    for (const cam of saved) {
+      await saveRecordingConfig({
+        cameraId: cam.id,
+        enabled: true,
+        preRollSec: 30,
+        postRollSec: 10,
+        storagePath: path,
+        retentionDays: 7,
+        segmentMinutes: 15,
+        liveStreamUrl: '',
+        streamUrl: '',
+        fallbackStreamUrl: '',
+      });
+    }
+  }
+
+  // getDiskInfo returns the host volumes (mountpoint + usedPercent) so the wizard can
+  // warn when the recording disk is nearly full.
+  async function getDiskInfo() {
+    try {
+      const sample = await request('/api/settings/machine-health/metrics');
+      return Array.isArray(sample?.disks) ? sample.disks : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  // wizardAddDestination appends one notification destination and saves it, so the
+  // person-alert rule has somewhere to deliver. Merges over current settings.
+  async function wizardAddDestination(dest) {
+    setBusy(true);
+    setMessage('');
+    try {
+      const next = {
+        ...notificationSettings,
+        destinations: [...(notificationSettings.destinations || []), dest],
+      };
+      const result = await request('/api/settings/notification', { method: 'PUT', body: JSON.stringify(next) });
+      const merged = { ...next, destinations: Array.isArray(result?.destinations) ? result.destinations : next.destinations };
+      setNotificationSettings(merged);
+      setSavedNotificationSettings(merged);
+      setMessage('Notification destination saved.');
+      return merged.destinations;
+    } catch (err) {
+      setMessage(err.message);
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // wizardAddPersonRuleAll adds a person-detection alert rule to every saved camera.
+  async function wizardAddPersonRuleAll() {
+    setBusy(true);
+    setMessage('');
+    try {
+      for (const cam of saved) {
+        await request('/api/vision/rules', {
+          method: 'POST',
+          body: JSON.stringify({ ...defaultVisionRuleDraft(cam.id), name: 'Person alert' }),
+        });
+      }
+      await loadVision({ quiet: true });
+      setMessage('Person alerts added.');
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // wizardAddCamera saves a discovered camera and, when supplied, its credentials
+  // (ONVIF cameras need a login before their RTSP stream resolves), then refreshes.
+  async function wizardAddCamera(device, creds = {}) {
+    setBusy(true);
+    setMessage('');
+    try {
+      const { _discoveryMethods, _openPorts, ...deviceData } = device;
+      const name = (creds.name || '').trim() || cameraTitle(device);
+      const newId = await request('/api/cameras/discovered', {
+        method: 'POST',
+        body: JSON.stringify({ ...deviceData, name, description: '' }),
+      });
+      if (newId && (creds.username || creds.password)) {
+        await request(`/api/cameras/${newId}/credentials`, {
+          method: 'POST',
+          body: JSON.stringify({ username: creds.username || '', password: creds.password || '' }),
+        });
+      }
+      await refresh({ quiet: true });
+      setMessage('Camera added.');
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // finishSetup marks the wizard complete so it does not show again, then lands on
+  // Live Views showing the cameras just added.
+  async function finishSetup() {
+    try {
+      await request('/api/setup/complete', { method: 'POST' });
+    } catch (_) {
+      // Best-effort; even if persistence fails, don't trap the user in the wizard.
+    }
+    // Auto-load every camera into Live Views with the grid auto-sized to the
+    // count (ignoring any prior tile selection), resolving live URIs in the
+    // background. Without this the cameras only show in the saved list, not tiles.
+    const devices = orderedSavedCameras(saved);
+    if (devices.length > 0) {
+      const layout = bestLiveViewLayout(devices.length);
+      const preference = { layout, hasPreference: false, ids: devices.map((d) => d.id) };
+      const initialTiles = initialTilesFromDevices(devices, preference);
+      setViewLayout(layout);
+      setViewTiles(initialTiles);
+      saveLiveViewsCookie(layout, initialTiles);
+      resolvedTilesFromDevices(devices, preference)
+        .then((resolved) => {
+          setViewTiles(resolved);
+          saveLiveViewsCookie(layout, resolved);
+        })
+        .catch(() => {});
+    }
+    try { window.localStorage.removeItem('setupStep'); } catch (_) {}
+    setActiveTab('views');
+    setSetupNeeded(false);
+  }
+
+  // restartApp asks the server to relaunch (so startup-only config like a new ffmpeg
+  // path or freshly installed deps takes effect), then polls until it is back and
+  // reloads the page. The wizard persists its step in localStorage, so it resumes
+  // where it left off after the reload.
+  async function restartApp() {
+    resetActiveRef.current = true; // suppress session-expiry handling during the restart
+    setMessage('Restarting…');
+    try {
+      await request('/api/system/restart', { method: 'POST' });
+    } catch (_) {
+      // The relaunch can drop the in-flight response; treat that as success and poll.
+    }
+    // Give the process a moment to exit, then poll /health until the new one answers.
+    await new Promise((r) => setTimeout(r, 2000));
+    const deadline = Date.now() + 120000;
+    for (;;) {
+      try {
+        const resp = await fetch(`${apiBase()}/health`, { cache: 'no-store' });
+        if (resp.ok) break;
+      } catch (_) {
+        // server still down — keep waiting
+      }
+      if (Date.now() > deadline) break;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    window.location.reload();
+  }
+
+  // --- Setup wizard pre-flight handlers (ffmpeg / AI / system) ---
+
+  // pollJob polls a status endpoint until its `status` field is done/failed (or a
+  // timeout), returning the final state. Used for the ffmpeg and GPU-deps installers,
+  // which run in the background server-side.
+  async function pollJob(path, { timeoutMs = 20 * 60 * 1000, intervalMs = 2000 } = {}) {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      let state = null;
+      try { state = await request(path); } catch (_) { /* keep polling */ }
+      const status = state?.status;
+      if (status === 'done' || status === 'failed') return state;
+      if (Date.now() > deadline) return state || { status: 'failed', log: 'Timed out.' };
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+  }
+
+  async function getFfmpegStatus() {
+    try { return await request('/api/settings/decoder/status'); } catch (_) { return null; }
+  }
+
+  // installFfmpeg downloads ffmpeg (background job), then auto-tunes the decoder.
+  // Returns the final install state so the wizard can flag "restart recommended".
+  async function installFfmpeg() {
+    setBusy(true);
+    setMessage('Downloading ffmpeg…');
+    try {
+      await request('/api/settings/decoder/ffmpeg/install', { method: 'POST' });
+      const state = await pollJob('/api/settings/decoder/ffmpeg/install/status');
+      if (state?.status === 'done') {
+        try { await request('/api/settings/runtime/auto-tune', { method: 'POST' }); } catch (_) {}
+        setMessage('ffmpeg installed. Restart to apply it everywhere.');
+      } else {
+        setMessage(`ffmpeg install failed: ${state?.log || 'unknown error'}`);
+      }
+      return state;
+    } catch (err) {
+      setMessage(err.message);
+      return { status: 'failed', log: err.message };
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function getAiCapability() {
+    try { return await request('/api/training/capability'); } catch (_) { return null; }
+  }
+
+  // installAiDeps runs the in-app GPU/Python dependency installer (background job).
+  async function installAiDeps() {
+    setBusy(true);
+    setMessage('Installing AI dependencies… this can take several minutes.');
+    try {
+      await request('/api/training/setup-deps', { method: 'POST' });
+      const state = await pollJob('/api/training/setup-deps');
+      setMessage(state?.status === 'done' ? 'AI dependencies installed. Restart to apply.' : `Install failed: ${state?.log || 'unknown error'}`);
+      return state;
+    } catch (err) {
+      setMessage(err.message);
+      return { status: 'failed', log: err.message };
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function getStockModel() {
+    try { return await request('/api/training/stock-model'); } catch (_) { return null; }
+  }
+
+  async function applyStockModel(model) {
+    setBusy(true);
+    setMessage('Downloading and applying model…');
+    try {
+      const result = await request('/api/training/stock-model', { method: 'POST', body: JSON.stringify({ model }) });
+      setMessage(`Model set to ${result?.current || model}.`);
+      return result;
+    } catch (err) {
+      setMessage(err.message);
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function getSystemTime() {
+    try { return await request('/api/system/time'); } catch (_) { return null; }
+  }
+
   // Loads the active model's class labels so the rule "Detect" picker and the
   // Object Classes list can flag which trained classes the active model actually
   // produces (only one model is active at a time).
@@ -531,7 +1068,10 @@ export default function App() {
     try {
       const [rulesResult, alertsResult, classesResult, labelsResult] = await Promise.all([
         request('/api/vision/rules?limit=100&offset=0'),
-        request('/api/vision/alerts?limit=100&offset=0'),
+        // Real detections only (status=detections excludes the periodic vision-
+        // monitor diagnostics). Without this, diagnostics flood the bounded window
+        // and evict real alerts, emptying the events panel while the badge lingers.
+        request('/api/vision/alerts?status=detections&limit=100&offset=0'),
         request('/api/vision/classes'),
         request('/api/vision/labels'),
       ]);
@@ -543,6 +1083,9 @@ export default function App() {
       setVisionAlerts(alerts);
       setVisionClasses(classes);
       setVisionLabels(labels);
+      // The unread badge is owned by the unified notification feed; loadVision
+      // only needs the new-alert set to decide whether to chime. Diagnostics
+      // never become notifications, so they are excluded from the sound trigger.
       const seen = seenVisionAlertIdsRef.current;
       const newActiveAlerts = alerts.filter((alert) => alert?.id && !alert.isAcknowledged && !seen.has(alert.id));
       alerts.forEach((alert) => {
@@ -550,23 +1093,14 @@ export default function App() {
           seen.add(alert.id);
         }
       });
-      if (!notifyNew && !initialNotifDoneRef.current) {
-        initialNotifDoneRef.current = true;
-        const existingUnread = newActiveAlerts.filter((a) => !parseMetadata(a.metadata).diagnostic).length;
-        if (existingUnread > 0) setNotifUnread(existingUnread);
-      }
-      if (notifyNew && newActiveAlerts.length > 0) {
-        const realNew = newActiveAlerts.filter((a) => !parseMetadata(a.metadata).diagnostic);
-        if (realNew.length > 0) setNotifUnread((n) => n + realNew.length);
-        if (newActiveAlerts.some((alert) => {
-          if (parseMetadata(alert.metadata).diagnostic) {
-            return false;
-          }
-          const rule = rules.find((item) => Number(item.id) === Number(alert.ruleId));
-          return !rule || rule.soundEnabled;
-        })) {
-          playAlertSound();
+      if (notifyNew && newActiveAlerts.some((alert) => {
+        if (parseMetadata(alert.metadata).diagnostic) {
+          return false;
         }
+        const rule = rules.find((item) => Number(item.id) === Number(alert.ruleId));
+        return !rule || rule.soundEnabled;
+      })) {
+        playAlertSound();
       }
       if (!quiet) {
         setMessage('AI rules and alerts loaded.');
@@ -586,17 +1120,96 @@ export default function App() {
   // set up once per session) always calls the current closure.
   loadVisionRef.current = loadVision;
 
+  // loadNotifications refreshes the unified bell feed: the newest unread
+  // notifications from every source, plus the server's total unread for the badge.
+  async function loadNotifications({ quiet = true } = {}) {
+    try {
+      const result = await request('/api/notifications?unread=true&limit=30&offset=0');
+      const items = Array.isArray(result) ? result : result?.items || [];
+      const total = typeof result?.total === 'number' ? result.total : items.length;
+      setNotifications(items);
+      setNotifUnread(total);
+      // Signal the Notifications page to re-fetch only when the feed truly changed
+      // (count or newest id), so a quiet 15s poll doesn't reload it needlessly.
+      const signature = `${total}:${items[0]?.id || 0}`;
+      if (signature !== notifSigRef.current) {
+        notifSigRef.current = signature;
+        setNotifVersion((v) => v + 1);
+      }
+      return items;
+    } catch (err) {
+      if (!quiet) {
+        setMessage(err.message);
+      }
+      return [];
+    }
+  }
+  loadNotificationsRef.current = loadNotifications;
+
+  // markNotificationRead dismisses one notification: optimistically drop it from
+  // the feed and decrement the badge, then persist and reconcile.
+  async function markNotificationRead(id) {
+    if (!id) {
+      return;
+    }
+    setNotifications((current) => current.filter((n) => Number(n.id) !== Number(id)));
+    setNotifUnread((n) => Math.max(0, n - 1));
+    try {
+      await request(`/api/notifications/${id}/read`, { method: 'POST' });
+    } catch (_) {
+      /* best-effort; the next reload reconciles */
+    }
+    loadNotifications({ quiet: true }).catch(() => {});
+  }
+
+  // handleNotificationClick (topbar bell): every click opens the dedicated
+  // Notifications page focused on the clicked entry. A non-detection click also
+  // dismisses it from the bell (a plain click handles it); AI detections stay in
+  // the list until acknowledged on the page.
+  function openNotificationsPage() {
+    setActiveTab('notifications');
+    loadNotifications({ quiet: true }).catch(() => {});
+    // Enrich AI rows (full alert metadata) and detect which alerts have clips.
+    loadVision({ quiet: true }).catch(() => {});
+    loadRecording({ quiet: true }).catch(() => {});
+  }
+
+  function handleNotificationClick(notif) {
+    if (!notif) {
+      return;
+    }
+    setNotifOpen(false);
+    setNotifFocusId(Number(notif.id));
+    openNotificationsPage();
+    if (!isVisionAlertNotification(notif)) {
+      markNotificationRead(notif.id);
+      return;
+    }
+    // AI detection: if its alert was already acknowledged, the notification is a
+    // leftover with no Acknowledge action — dismiss it so it can't get stuck.
+    const alert = visionAlerts.find((a) => Number(a.id) === Number(notif.refId));
+    if (alert && alert.isAcknowledged) {
+      markNotificationRead(notif.id);
+    }
+  }
+
   useEffect(() => {
     if (!authenticated) {
       return undefined;
     }
     loadVision({ quiet: true }).catch(() => {});
+    loadNotifications({ quiet: true }).catch(() => {});
     loadActiveModelClasses();
+    // Load notification settings so the rule editor's per-rule routing knows the
+    // configured delivery destinations (also refreshed when the Notifications
+    // settings section is opened).
+    loadNotificationSettings({ quiet: true }).catch(() => {});
     // Fallback poll. The unified notification SSE stream below delivers new
     // events in real time; this slower interval reconciles acknowledgements and
     // covers the case where the stream is unavailable (e.g. cross-origin dev).
     const id = window.setInterval(() => {
       loadVision({ quiet: true, notifyNew: true }).catch(() => {});
+      loadNotifications({ quiet: true }).catch(() => {});
       refreshCameraHealth();
     }, 15000);
     return () => window.clearInterval(id);
@@ -624,6 +1237,9 @@ export default function App() {
         if (loadVisionRef.current) {
           loadVisionRef.current({ quiet: true, notifyNew: true }).catch(() => {});
         }
+        if (loadNotificationsRef.current) {
+          loadNotificationsRef.current({ quiet: true }).catch(() => {});
+        }
         refreshCameraHealth();
       });
       // On error EventSource retries automatically; we only force a clean
@@ -642,11 +1258,25 @@ export default function App() {
     };
   }, [authenticated]);
 
-  function openCameraRecording(cameraId, alertId) {
-    setRecordingFocusCameraId(Number(cameraId));
-    setRecordingFocusAlertId(Number(alertId) || 0);
-    setActiveTab('recording');
-    loadRecording({ quiet: true }).catch(() => {});
+  // Bridge the main app's status `message` into the top-right toast stack: each
+  // new message becomes a toast that self-dismisses after a few seconds, and the
+  // message is cleared immediately so repeated/identical messages still fire (and
+  // login/setup, which render `message` inline, are unaffected). Each toast carries
+  // a unique incrementing id so they stack rather than replace one another.
+  useEffect(() => {
+    if (!authenticated || setupNeeded || !message) {
+      return;
+    }
+    const id = ++toastIdRef.current;
+    const text = message;
+    setToasts((list) => [{ id, text }, ...list].slice(0, 5));
+    setMessage('');
+  }, [authenticated, setupNeeded, message]);
+
+  // openCameraAlerts clears a camera's live-tile alert banner (marking its alerts
+  // seen) and opens the Notifications page, where its detections can be reviewed,
+  // acknowledged, and played. Replaces the old jump to Recording's Event Clips.
+  function openCameraAlerts(cameraId) {
     setSeenInRecordingIds((prev) => {
       const next = new Set(prev);
       visionAlerts
@@ -654,6 +1284,7 @@ export default function App() {
         .forEach((a) => next.add(a.id));
       return next;
     });
+    openNotificationsPage();
   }
 
   async function saveRuntimeSettings(event) {
@@ -801,6 +1432,22 @@ export default function App() {
       await request(`/api/recording/segments/${id}`, { method: 'DELETE' });
       setRecordingSegments((current) => current.filter((s) => Number(s.id) !== Number(id)));
       setMessage('Clip deleted.');
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function purgeExpiredRecordings() {
+    setBusy(true);
+    setMessage('');
+    try {
+      const result = await request('/api/recording/segments/purge', { method: 'POST' });
+      const deleted = Number(result?.deleted) || 0;
+      // Reflect the deletions; a full reload keeps paging/totals honest.
+      await loadRecording({ quiet: true });
+      setMessage(deleted > 0 ? `Purged ${deleted} expired clip${deleted === 1 ? '' : 's'}.` : 'No expired clips to purge.');
     } catch (err) {
       setMessage(err.message);
     } finally {
@@ -1029,19 +1676,16 @@ export default function App() {
       });
       if (alert?.id) {
         seenVisionAlertIdsRef.current.add(alert.id);
-        // Test alerts bypass the poll-based counter path, so increment manually.
-        if (!parseMetadata(alert.metadata || '{}').diagnostic) {
-          setNotifUnread((n) => n + 1);
-        }
       }
       setVisionAlerts((current) => [alert, ...current]);
+      // The test alert publishes a real notification server-side; pull it into
+      // the bell feed immediately.
+      loadNotifications({ quiet: true }).catch(() => {});
       if (rule.soundEnabled) {
         playAlertSound();
       }
-      setMessage('Test alert created. Navigating to Recording…');
-      if (alert?.id && rule.cameraId) {
-        openCameraRecording(rule.cameraId, alert.id);
-      }
+      setMessage('Test alert created. Opening Notifications…');
+      openNotificationsPage();
     } catch (err) {
       setMessage(err.message);
     } finally {
@@ -1063,17 +1707,25 @@ export default function App() {
   }
 
   async function acknowledgeAlert(id) {
+    // Optimistically mark it acknowledged so it drops out of the active lists
+    // right away instead of lingering until the reload round-trip.
+    setVisionAlerts((current) => current.map((a) => (Number(a.id) === Number(id) ? { ...a, isAcknowledged: true } : a)));
+    // Acknowledging a detection also dismisses its bell notification, so the
+    // unified feed and the recording view stay in sync.
+    const linked = notifications.find((n) => isVisionAlertNotification(n) && Number(n.refId) === Number(id));
+    if (linked) {
+      markNotificationRead(linked.id);
+    }
     setBusy(true);
     setMessage('');
     try {
-      const target = visionAlerts.find((a) => Number(a.id) === Number(id));
-      const wasCountable = target && !target.isAcknowledged && !parseMetadata(target.metadata || '{}').diagnostic;
       await request(`/api/vision/alerts/${id}/ack`, { method: 'POST' });
       await loadVision({ quiet: true });
-      if (wasCountable) setNotifUnread((n) => Math.max(0, n - 1));
       setMessage('Alert acknowledged.');
     } catch (err) {
       setMessage(err.message);
+      // Re-sync so a failed ack doesn't leave the optimistic change stuck.
+      loadVision({ quiet: true }).catch(() => {});
     } finally {
       setBusy(false);
     }
@@ -1169,6 +1821,7 @@ export default function App() {
       loadHealthSettings({ quiet: true }).catch(() => {});
     } else if (section === 'machine') {
       loadMachineHealthSettings({ quiet: true }).catch(() => {});
+      loadResetState();
     }
   }
 
@@ -1313,12 +1966,12 @@ export default function App() {
   // live-view resolution) so the landing page can render immediately; the live
   // URIs are refined in the background by resolvedTilesFromDevices.
   function initialTilesFromDevices(devices, preference) {
-    const layout = normalizeLayout(preference.layout);
-    const maxTiles = layoutCapacity(layout);
+    // Keep every selected camera as a tile; the Views grid paginates them, so the
+    // tile set is no longer capped to the layout capacity.
     const devicesById = new Map(devices.map((device) => [Number(device.id), device]));
     const targets = preference.hasPreference
-      ? preference.ids.map((id) => devicesById.get(Number(id))).filter(Boolean).slice(0, maxTiles)
-      : devices.slice(0, maxTiles);
+      ? preference.ids.map((id) => devicesById.get(Number(id))).filter(Boolean)
+      : devices;
     return targets.map((device) => ({
       ...tileFromDevice(device),
       title: cameraTitle(device),
@@ -1327,12 +1980,10 @@ export default function App() {
   }
 
   async function resolvedTilesFromDevices(devices, preference = readLiveViewsCookie(viewLayout)) {
-    const layout = normalizeLayout(preference.layout);
-    const maxTiles = layoutCapacity(layout);
     const devicesById = new Map(devices.map((device) => [Number(device.id), device]));
     const targets = preference.hasPreference
-      ? preference.ids.map((id) => devicesById.get(Number(id))).filter(Boolean).slice(0, maxTiles)
-      : devices.slice(0, maxTiles);
+      ? preference.ids.map((id) => devicesById.get(Number(id))).filter(Boolean)
+      : devices;
     const results = await Promise.allSettled(targets.map((device) => ensureLiveView(device)));
     const failed = results.filter((result) => result.status === 'rejected').length;
     if (failed > 0) {
@@ -1592,13 +2243,9 @@ export default function App() {
   }
 
   async function addToViews(device) {
-    const maxTiles = layoutCapacity(viewLayout);
+    // No capacity cap: the grid is a per-page size and paging shows any overflow,
+    // so adding a camera beyond the current page just lands on a new page.
     if (viewTiles.some((tile) => tile.id === device.id)) {
-      setActiveTab('views');
-      return;
-    }
-    if (viewTiles.length >= maxTiles) {
-      setMessage(`${viewLayout} view is full.`);
       setActiveTab('views');
       return;
     }
@@ -1646,21 +2293,69 @@ export default function App() {
   if (!authenticated) {
     return (
       <div>
+        {passwordChangeRequired ? (
+          <ChangePasswordPage
+            busy={busy}
+            message={message}
+            onSubmit={completePasswordChange}
+            onCancel={logout}
+          />
+        ) : (
           <LoginPage
-          credentials={credentials}
-          busy={busy}
-          message={message}
-          onChange={setCredentials}
-          onSubmit={login}
-        />
+            credentials={credentials}
+            busy={busy}
+            message={message}
+            lockoutUntil={lockoutUntil}
+            onChange={setCredentials}
+            onSubmit={login}
+          />
+        )}
       </div>
+    );
+  }
+
+  if (setupNeeded) {
+    return (
+      <SetupWizard
+        username={credentials.username}
+        busy={busy}
+        message={message}
+        capacity={capacity}
+        saved={saved}
+        discovered={discovered}
+        onChangePassword={wizardChangePassword}
+        onEstimateCapacity={estimateCapacity}
+        onCalibrateCapacity={calibrateCapacity}
+        onScan={() => scan('onvif')}
+        onAddCamera={wizardAddCamera}
+        onEnableRecordingAll={wizardEnableRecordingAll}
+        onAddPersonRuleAll={wizardAddPersonRuleAll}
+        onRestart={restartApp}
+        onFinish={finishSetup}
+        onFfmpegStatus={getFfmpegStatus}
+        onInstallFfmpeg={installFfmpeg}
+        onAiCapability={getAiCapability}
+        onInstallAiDeps={installAiDeps}
+        onStockModel={getStockModel}
+        onApplyStockModel={applyStockModel}
+        onSystemTime={getSystemTime}
+        onDiskInfo={getDiskInfo}
+        onAddDestination={wizardAddDestination}
+      />
     );
   }
 
   return (
     <main className="app-shell">
+      {wipeCountdown ? (
+        <SecureWipeCountdown onCancel={() => setWipeCountdown(false)} onProceed={startSecureWipe} />
+      ) : null}
+      {resetProgress ? (
+        <ResetProgressOverlay progress={resetProgress} onDismiss={() => setResetProgress(null)} />
+      ) : null}
       <TopBar
         activeTab={activeTab}
+        isAdmin={isAdmin}
         busy={busy}
         onTab={(tab) => {
           setActiveTab(tab);
@@ -1670,22 +2365,28 @@ export default function App() {
           if (tab === 'ai') {
             loadVision({ quiet: true }).catch(() => {});
           }
-          if (tab === 'recording') {
+          // Cameras hosts the per-camera Recording/Stream config tabs, which read
+          // recordingConfigs — keep them fresh when entering either tab.
+          if (tab === 'recording' || tab === 'cameras') {
+            loadRecording({ quiet: true }).catch(() => {});
+          }
+          if (tab === 'notifications') {
+            loadNotifications({ quiet: true }).catch(() => {});
+            loadVision({ quiet: true }).catch(() => {});
             loadRecording({ quiet: true }).catch(() => {});
           }
         }}
         onRefresh={() => refresh()}
         onLogout={logout}
-        alerts={visionAlerts}
-        savedDevices={saved}
+        notifications={notifications}
         notifOpen={notifOpen}
         notifUnread={notifUnread}
-        onNotifToggle={() => { setNotifOpen((o) => !o); setNotifUnread(0); }}
-        onNotifClick={(cameraId, alertId) => { setNotifOpen(false); openCameraRecording(cameraId, alertId); }}
+        onNotifToggle={() => setNotifOpen((o) => !o)}
+        onNotifClick={handleNotificationClick}
         theme={theme}
         onThemeChange={changeTheme}
       />
-      <Message value={message} />
+      <ToastStack toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((t) => t.id !== id))} />
 
       {activeTab === 'views' ? (
         <ViewsTab
@@ -1699,7 +2400,9 @@ export default function App() {
           streamConfig={streamConfig}
           onLayout={(value) => {
             setViewLayout(value);
-            setViewTilesWithCookie((current) => current.slice(0, layoutCapacity(value)), value);
+            // The grid is a per-page size now, not a cap — keep every tile and let
+            // paging show the overflow (re-persist the cookie with the new layout).
+            setViewTilesWithCookie((current) => current, value);
           }}
           onAdd={addToViews}
           onRemove={(id) => setViewTilesWithCookie((current) => current.filter((tile) => tile.id !== id))}
@@ -1707,7 +2410,7 @@ export default function App() {
           onDragTile={setDraggedTileId}
           onPTZMove={movePTZ}
           onPTZStop={stopPTZ}
-          onOpenAlerts={openCameraRecording}
+          onOpenAlerts={openCameraAlerts}
         />
       ) : null}
 
@@ -1730,9 +2433,6 @@ export default function App() {
           saveDrafts={saveDrafts}
           onCameraNav={(nav) => {
             setCameraNav(nav);
-            if (nav === 'recording') {
-              loadRecording({ quiet: true }).catch(() => {});
-            }
           }}
           onManualAddress={setManualAddress}
           onTimeout={setTimeoutMs}
@@ -1759,24 +2459,9 @@ export default function App() {
           onPTZStop={stopPTZ}
           onRemove={removeDevice}
           onClosePreview={() => setPreview(null)}
-          recordingConfigSlot={
-            <RecordingTab
-              mode="config"
-              saved={saved}
-              segments={recordingSegments}
-              configs={recordingConfigs}
-              busy={busy}
-              authHeader={authHeader}
-              onSaveConfig={saveRecordingConfig}
-              onDeleteSegment={deleteRecordingSegment}
-              onReload={() => loadRecording()}
-              focusCameraId={recordingFocusCameraId}
-              focusAlertId={recordingFocusAlertId}
-              unacknowledgedAlertIds={unacknowledgedAlertIds}
-              onAcknowledgeAlert={acknowledgeAlert}
-              alerts={visionAlerts}
-            />
-          }
+          recordingConfigs={recordingConfigs}
+          onSaveRecordingConfig={saveRecordingConfig}
+          canManage={isAdmin}
         />
       ) : null}
 
@@ -1788,6 +2473,7 @@ export default function App() {
           classes={visionClasses}
           labelCatalog={visionLabels}
           activeModelClasses={activeModelClasses}
+          destinations={notificationSettings.destinations}
           ruleDraft={visionRuleDraft}
           busy={busy}
           authHeader={authHeader}
@@ -1827,6 +2513,7 @@ export default function App() {
           onReset={resetRuntimeSettings}
           onAutoTune={autoTuneRuntimeSettings}
           autoTuneResult={runtimeAutoTune}
+          onRestart={restartApp}
           onCaptureAutoConfig={captureAutoConfig}
           gpuDevices={decoderGpuDevices}
           onCheckVisionTool={checkVisionTool}
@@ -1834,6 +2521,7 @@ export default function App() {
           onInstallPackages={installVisionPackages}
           visionInstallResult={visionInstallResult}
           onLoadUsers={() => loadUsers()}
+          focusUsername={focusUsername}
           onNewUser={setNewUser}
           onCreateUser={createUser}
           onEditUser={editUser}
@@ -1847,6 +2535,7 @@ export default function App() {
           onSaveNotification={saveNotificationSettings}
           onDiscardNotification={() => setNotificationSettings(savedNotificationSettings)}
           onTestNotification={testNotificationChannel}
+          onPurgeNotifications={purgeExpiredNotifications}
           healthSettings={healthSettings}
           healthHasChanges={JSON.stringify(healthSettings) !== JSON.stringify(savedHealthSettings)}
           onHealthChange={setHealthSettings}
@@ -1859,24 +2548,45 @@ export default function App() {
           onDiscardMachineHealth={() => setMachineHealthSettings(savedMachineHealthSettings)}
           machineMetrics={machineMetrics}
           onRefreshMachineMetrics={loadMachineMetrics}
+          capacity={capacity}
+          onEstimateCapacity={estimateCapacity}
+          onCalibrateCapacity={calibrateCapacity}
+          resetAllowed={resetAllowed}
+          onSecureWipe={() => setWipeCountdown(true)}
         />
       ) : null}
 
       {activeTab === 'recording' ? (
         <RecordingTab
+          canManage={isAdmin}
           saved={saved}
           segments={recordingSegments}
-          configs={recordingConfigs}
           busy={busy}
           authHeader={authHeader}
-          onSaveConfig={saveRecordingConfig}
           onDeleteSegment={deleteRecordingSegment}
+          onPurgeExpired={purgeExpiredRecordings}
           onReload={() => loadRecording()}
-          focusCameraId={recordingFocusCameraId}
-          focusAlertId={recordingFocusAlertId}
           unacknowledgedAlertIds={unacknowledgedAlertIds}
           onAcknowledgeAlert={acknowledgeAlert}
           alerts={visionAlerts}
+        />
+      ) : null}
+
+      {activeTab === 'notifications' ? (
+        <NotificationsTab
+          authHeader={authHeader}
+          isAdmin={isAdmin}
+          saved={saved}
+          visionAlerts={visionAlerts}
+          visionRules={visionRules}
+          clipByAlertId={clipByAlertId}
+          focusId={notifFocusId}
+          refreshSignal={notifVersion}
+          onAcknowledgeAlert={acknowledgeAlert}
+          onMarkRead={markNotificationRead}
+          onMessage={setMessage}
+          onOpenSettingsSection={(section) => { setActiveTab('settings'); openSettingsSection(section); }}
+          onOpenUser={(username) => { setFocusUsername(username); setActiveTab('settings'); openSettingsSection('users'); }}
         />
       ) : null}
     </main>

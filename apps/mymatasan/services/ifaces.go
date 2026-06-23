@@ -7,6 +7,7 @@ import (
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
 	"github.com/mysayasan/kopiv2/domain/notification"
+	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/onvif"
 	"github.com/mysayasan/kopiv2/infra/recording"
 	"github.com/mysayasan/kopiv2/infra/rtsp"
@@ -102,7 +103,23 @@ type VisionMonitorSettings struct {
 	Detector                  vision.Detector
 	Recorder                  *recording.Manager
 	Notifier                  INotificationPublisher
+	NotificationDestinations  INotificationDestinationsProvider
 	Resolver                  ClassResolver
+	// SnapshotCipher (optional) encrypts alert snapshot images at rest. nil = plaintext.
+	SnapshotCipher *atrest.Cipher
+	// DetectStreamConfig resolves the per-camera RecorderConfig used to run a
+	// detection-only frame stream when NVR recording is off (siphon/auto modes).
+	// Returns ok=false when the camera has no usable stream. Injected by app wiring
+	// so the monitor reuses the exact stream/credential/ffmpeg resolution as the
+	// recorder. When nil, the monitor never starts detection-only streams.
+	DetectStreamConfig func(ctx context.Context, cameraID int64) (recording.RecorderConfig, bool)
+}
+
+// INotificationDestinationsProvider supplies the configured delivery destinations
+// so the vision-alert path can render and route a tailored payload per
+// destination. Satisfied by INotificationSettingsService.
+type INotificationDestinationsProvider interface {
+	Destinations(ctx context.Context) []NotificationDestination
 }
 
 // RuntimeSettings contains runtime-editable mymatasan settings.
@@ -232,19 +249,27 @@ type MJPEGFallbackSettings struct {
 
 // AuthenticatedUser is the local user identity attached to authenticated requests.
 type AuthenticatedUser struct {
-	Id          int64  `json:"id"`
-	Username    string `json:"username"`
-	DisplayName string `json:"displayName"`
-	IsAdmin     bool   `json:"isAdmin"`
-	SessionHash string `json:"-"`
+	Id                 int64  `json:"id"`
+	Username           string `json:"username"`
+	DisplayName        string `json:"displayName"`
+	IsAdmin            bool   `json:"isAdmin"`
+	MustChangePassword bool   `json:"mustChangePassword"`
+	SessionHash        string `json:"-"`
 }
 
 type CreateLocalUserRequest struct {
-	Username    string `json:"username"`
-	Password    string `json:"password"`
-	DisplayName string `json:"displayName"`
-	IsAdmin     bool   `json:"isAdmin"`
-	IsActive    bool   `json:"isActive"`
+	Username           string `json:"username"`
+	Password           string `json:"password"`
+	DisplayName        string `json:"displayName"`
+	IsAdmin            bool   `json:"isAdmin"`
+	IsActive           bool   `json:"isActive"`
+	MustChangePassword bool   `json:"mustChangePassword"`
+}
+
+// ChangeLocalUserPasswordRequest is the self-service password change body.
+type ChangeLocalUserPasswordRequest struct {
+	CurrentPassword string `json:"currentPassword"`
+	NewPassword     string `json:"newPassword"`
 }
 
 type UpdateLocalUserRequest struct {
@@ -276,6 +301,7 @@ type ILocalUserService interface {
 	Create(ctx context.Context, req CreateLocalUserRequest) (*entities.LocalUser, error)
 	Update(ctx context.Context, id uint64, req UpdateLocalUserRequest) (*entities.LocalUser, error)
 	ResetPassword(ctx context.Context, id uint64, password string) (*entities.LocalUser, error)
+	ChangePassword(ctx context.Context, userId int64, currentPassword string, newPassword string) (*AuthenticatedUser, error)
 	Delete(ctx context.Context, id uint64) (uint64, error)
 }
 
@@ -328,6 +354,7 @@ type ITrainingService interface {
 	DeleteDataset(ctx context.Context, id uint64) (uint64, error)
 	ListImages(ctx context.Context, datasetId int64) ([]*entities.TrainingImage, error)
 	GetImage(ctx context.Context, id uint64) (*entities.TrainingImage, error)
+	GetImageBytes(ctx context.Context, id uint64) ([]byte, error)
 	StoreUpload(ctx context.Context, datasetId int64, data []byte, userId int64) (*entities.TrainingImage, error)
 	AddFromAlert(ctx context.Context, datasetId int64, alertId int64, userId int64) (*entities.TrainingImage, error)
 	SaveAnnotations(ctx context.Context, imageId int64, annotations []TrainingAnnotation, userId int64) (*entities.TrainingImage, error)
@@ -353,8 +380,9 @@ type ITrainingService interface {
 // notification.Service satisfies it.
 type INotificationService interface {
 	INotificationPublisher
-	List(ctx context.Context, limit, offset uint64, cameraId int64, unreadOnly bool) ([]*sharedentities.Notification, uint64, error)
+	List(ctx context.Context, limit, offset uint64, cameraId int64, unreadOnly bool, category, source string) ([]*sharedentities.Notification, uint64, error)
 	MarkRead(ctx context.Context, id uint64, userId int64) (*sharedentities.Notification, error)
+	MarkReadByRef(ctx context.Context, refType string, refId int64, userId int64) (int, error)
 	Purge(ctx context.Context, olderThan int64, onlyRead bool) (int, error)
 	PurgeOlderThanDays(ctx context.Context, days int, onlyRead bool) (int, error)
 	Configure(cfg notification.ChannelConfig)
@@ -397,6 +425,9 @@ type IMachineMetricsProvider interface {
 type INotificationSettingsService interface {
 	Get(ctx context.Context) (NotificationSettings, error)
 	Save(ctx context.Context, settings NotificationSettings) (NotificationSettings, error)
+	// Destinations returns the configured delivery destinations (for
+	// per-destination alert rendering). Implements INotificationDestinationsProvider.
+	Destinations(ctx context.Context) []NotificationDestination
 	// Sync loads persisted settings and applies them to the live notification
 	// hub. Called once at startup.
 	Sync(ctx context.Context) error

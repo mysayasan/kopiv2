@@ -1,0 +1,6 @@
+{
+  "type": "changed",
+  "scope": "mymatasan",
+  "summary": "Settings -> Users was rebuilt to the app's standard settings layout. The cramped multi-column rows are replaced by two settings-panel cards ('Add user' + 'Users') with fields in the standard field grid, and the user list rendered as cards (.user-card) with a labelled head showing the display name plus Admin / Active / 'Password change pending' badges, an edit field grid, and an actions row — mirroring the notification-destination card standard. Password inputs use the shared PasswordField (eye reveal).",
+  "compatibility": "Presentation only. Same user create / update / password-reset / delete endpoints and behaviour (including the last-active-admin guard)."
+}

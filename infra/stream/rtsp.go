@@ -1,8 +1,13 @@
 package stream
 
 import (
+	"bufio"
+	"context"
 	"errors"
 	"fmt"
+	"log"
+	"net"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -32,13 +37,15 @@ const (
 // RTSPConnector shares one RTSP reader per camera URI and fans RTP packets out
 // to browser WebRTC peer subscriptions.
 type RTSPConnector struct {
-	mu       sync.Mutex
-	sessions map[string]*rtspSession
+	mu         sync.Mutex
+	sessions   map[string]*rtspSession
+	ffmpegPath string
 }
 
-// NewRTSPConnector creates the default camera stream connector.
-func NewRTSPConnector() *RTSPConnector {
-	return &RTSPConnector{sessions: map[string]*rtspSession{}}
+// NewRTSPConnector creates the default camera stream connector. ffmpegPath enables
+// transcoding non-G.711 camera audio to Opus for live view (empty = disabled).
+func NewRTSPConnector(ffmpegPath string) *RTSPConnector {
+	return &RTSPConnector{sessions: map[string]*rtspSession{}, ffmpegPath: strings.TrimSpace(ffmpegPath)}
 }
 
 func (c *RTSPConnector) Subscribe(source Source) (*Subscription, error) {
@@ -58,7 +65,7 @@ func (c *RTSPConnector) Subscribe(source Source) (*Subscription, error) {
 		if session != nil && !session.isStopped() && session.uri != source.URI {
 			replaced = session
 		}
-		session = newRTSPSession(key, source.URI, func() {
+		session = newRTSPSession(key, source.URI, c.ffmpegPath, func() {
 			c.remove(key, session)
 		})
 		c.sessions[key] = session
@@ -96,11 +103,12 @@ func (c *RTSPConnector) remove(key string, target *rtspSession) {
 }
 
 type rtspSession struct {
-	key      string
-	uri      string
-	onStop   func()
-	stopCh   chan struct{}
-	stopOnce sync.Once
+	key        string
+	uri        string
+	ffmpegPath string
+	onStop     func()
+	stopCh     chan struct{}
+	stopOnce   sync.Once
 
 	mu                 sync.Mutex
 	codec              Codec
@@ -122,10 +130,11 @@ type rtspSession struct {
 	gopOverflow  bool
 }
 
-func newRTSPSession(key string, uri string, onStop func()) *rtspSession {
+func newRTSPSession(key string, uri string, ffmpegPath string, onStop func()) *rtspSession {
 	return &rtspSession{
 		key:              key,
 		uri:              uri,
+		ffmpegPath:       ffmpegPath,
 		onStop:           onStop,
 		stopCh:           make(chan struct{}),
 		readyCh:          make(chan struct{}),
@@ -270,15 +279,29 @@ func (s *rtspSession) run() {
 
 	audioMedia, g711Format := firstG711(desc)
 	var audioCodec Codec
+	transcodeAudio := false
 	if g711Format != nil {
+		// G.711 is browser-native — forward its RTP unchanged (no transcode).
 		if g711Format.MULaw {
 			audioCodec = CodecPCMU
 		} else {
 			audioCodec = CodecPCMA
 		}
+	} else if s.ffmpegPath != "" && firstAudioMedia(desc) != nil {
+		// Non-G.711 audio (AAC, etc.): transcode to Opus via ffmpeg so live view
+		// has sound regardless of the camera's codec. gortsplib handles video only;
+		// a separate ffmpeg leg pulls + transcodes the audio.
+		audioCodec = CodecOpus
+		transcodeAudio = true
 	}
 
-	if err := client.SetupAll(desc.BaseURL, desc.Medias); err != nil {
+	// When transcoding, set up only the video media here; the audio is handled by
+	// the ffmpeg transcoder, so gortsplib should not also pull the audio track.
+	mediasToSetup := desc.Medias
+	if transcodeAudio {
+		mediasToSetup = []*description.Media{media}
+	}
+	if err := client.SetupAll(desc.BaseURL, mediasToSetup); err != nil {
 		s.finish(fmt.Errorf("setup RTSP medias failed: %w", err))
 		return
 	}
@@ -293,6 +316,10 @@ func (s *rtspSession) run() {
 	}
 
 	s.markReady(CodecH264, audioCodec, h264ProfileLevelID(h264Format))
+
+	if transcodeAudio {
+		go s.runAudioTranscoder()
+	}
 
 	if _, err := client.Play(nil); err != nil {
 		s.finish(fmt.Errorf("play RTSP stream failed: %w", err))
@@ -343,6 +370,100 @@ func firstG711(desc *description.Session) (*description.Media, *format.G711) {
 		}
 	}
 	return nil, nil
+}
+
+// firstAudioMedia returns the first audio media of any codec (AAC, G.726, etc.).
+func firstAudioMedia(desc *description.Session) *description.Media {
+	for _, media := range desc.Medias {
+		if media.Type == description.MediaTypeAudio {
+			return media
+		}
+	}
+	return nil
+}
+
+// runAudioTranscoder pulls the camera's (non-G.711) audio with a dedicated ffmpeg
+// process, transcodes it to Opus, and emits RTP to a loopback UDP port whose
+// packets are broadcast to audio subscribers as Opus. It restarts ffmpeg on
+// failure and exits when the session stops. A transcoder failure only costs live
+// audio for this camera (never the video path), so it is best-effort.
+func (s *rtspSession) runAudioTranscoder() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		select {
+		case <-s.stopCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		log.Printf("stream %s: audio transcode listen failed: %v", s.key, err)
+		return
+	}
+	defer conn.Close()
+	go func() {
+		<-ctx.Done()
+		conn.Close()
+	}()
+	port := conn.LocalAddr().(*net.UDPAddr).Port
+
+	// Reader: drain ffmpeg's Opus RTP into the audio broadcast until the socket
+	// closes (on session stop).
+	go func() {
+		buf := make([]byte, 1600)
+		for {
+			n, err := conn.Read(buf)
+			if err != nil {
+				return
+			}
+			pkt := &rtp.Packet{}
+			if pkt.Unmarshal(buf[:n]) != nil {
+				continue
+			}
+			s.broadcastAudio(pkt)
+		}
+	}()
+
+	for ctx.Err() == nil {
+		args := []string{
+			"-hide_banner", "-loglevel", "error",
+			"-fflags", "+nobuffer", "-flags", "low_delay",
+			"-rtsp_transport", "tcp",
+			"-allowed_media_types", "audio",
+			"-i", s.uri,
+			"-vn",
+			"-c:a", "libopus",
+			"-ar", "48000", "-ac", "2", "-b:a", "64k",
+			"-application", "lowdelay",
+			"-payload_type", "111",
+			"-f", "rtp",
+			fmt.Sprintf("rtp://127.0.0.1:%d", port),
+		}
+		cmd := exec.CommandContext(ctx, s.ffmpegPath, args...)
+		if stderr, perr := cmd.StderrPipe(); perr == nil {
+			go func() {
+				sc := bufio.NewScanner(stderr)
+				for sc.Scan() {
+					if line := strings.TrimSpace(sc.Text()); line != "" {
+						log.Printf("stream %s audio ffmpeg: %s", s.key, line)
+					}
+				}
+			}()
+		}
+		_ = cmd.Run()
+		if ctx.Err() != nil {
+			return
+		}
+		// Brief backoff before reconnecting (camera hiccup / transient failure).
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(3 * time.Second):
+		}
+	}
 }
 
 func (s *rtspSession) markReady(codec Codec, audioCodec Codec, h264ProfileLevelID string) {

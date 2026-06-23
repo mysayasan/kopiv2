@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "mymatasan",
+  "summary": "Notification destinations — Phase 1 (data model + migration, no delivery change). Adds a NotificationDestination model (id, name, type webhook|telegram, enabled, minSeverity, target url/botToken+chatId, per-destination Fields toggles, and static CustomFields key/values) and a Destinations list on NotificationSettings. normalizeNotificationSettings seeds the list once from the legacy single Webhook/Telegram settings (migrateLegacyDestinations) and normalizes it; validateNotificationSettings now also validates destinations. Lays the groundwork for per-destination field selection (e.g. one destination without the snapshot image) and custom static payload fields. The live notification hub is UNCHANGED in this phase — notificationChannelConfig still delivers via the legacy singletons; the destination list is persisted but not yet consumed.",
+  "compatibility": "No behavior change. Existing installs keep delivering via the legacy webhook/telegram singletons; the migrated destination list is shadow data until the Phase 2 hub refactor. Fresh/unconfigured installs migrate to an empty list. Per-destination Fields default to nil = include-everything, matching current global behavior."
+}

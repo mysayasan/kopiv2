@@ -88,6 +88,11 @@ func (s *visionService) GetAlerts(ctx context.Context, limit uint64, offset uint
 			sqldataenums.Filter{FieldName: "IsAcknowledged", Compare: sqldataenums.Equal, Value: false},
 			sqldataenums.Filter{FieldName: "IsDiagnostic", Compare: sqldataenums.Equal, Value: false},
 		)
+	case "detections":
+		// All real detections regardless of acknowledgement (exclude diagnostics).
+		// The events feed and recording timeline use this so periodic "sampled"
+		// diagnostics can never evict real alerts from a bounded result window.
+		filters = append(filters, sqldataenums.Filter{FieldName: "IsDiagnostic", Compare: sqldataenums.Equal, Value: false})
 	case "acknowledged":
 		filters = append(filters, sqldataenums.Filter{FieldName: "IsAcknowledged", Compare: sqldataenums.Equal, Value: true})
 	case "diagnostic":

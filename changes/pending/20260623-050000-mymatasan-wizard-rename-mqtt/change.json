@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "mymatasan",
+  "summary": "First-run setup wizard improvements. The Add Camera step now lets the user rename a discovered camera before adding it: an editable 'Camera name' field (pre-filled with the discovered title) flows through onAddCamera -> wizardAddCamera, which uses the trimmed name (falling back to the discovered title if cleared) when POSTing /api/cameras/discovered, instead of always using the auto title. The Alerts step's delivery-destination picker now offers MQTT (broker URL + topic) alongside Webhook and Telegram; the destination is built from the shared defaultDestination('mqtt') shape so it matches the full Settings -> Notifications schema, with a hint that authentication and TLS client certificates are configured later in Settings.",
+  "compatibility": "Additive wizard UI only. MQTT destinations created in the wizard cover broker URL + topic; brokers requiring auth/TLS client certs need finishing in Settings -> Notifications before they connect."
+}

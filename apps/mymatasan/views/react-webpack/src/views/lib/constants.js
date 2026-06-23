@@ -73,6 +73,49 @@ export const alertNotificationFields = [
   ['includeZonePolygon', 'Zone polygon', 'The rule zone polygon (JSON).'],
   ['includeSnapshot', 'Snapshot image', 'Attach the snapshot — Telegram photo, webhook base64.'],
 ];
+// Maps each AI-field toggle to the payload Data key it produces, so the UI can
+// disable a toggle when a destination's custom field overrides that key.
+export const alertFieldDataKeys = {
+  includeRuleName: 'ruleName',
+  includeLabel: 'label',
+  includeConfidence: 'confidence',
+  includeBoundingBox: 'boundingBox',
+  includeZonePolygon: 'zonePolygon',
+  includeSnapshot: 'snapshotPath',
+};
+// Built-in identifier keys always present in the payload; a custom field of the
+// same key overrides them (custom wins).
+export const builtinPayloadKeys = ['alertId', 'ruleId', 'cameraName', 'detectionType'];
+// Notification categories a destination can subscribe to (value, label, help).
+// Values match the Go category constants.
+export const notificationCategories = [
+  ['vision.alert', 'AI detection alerts', 'Person, vehicle, fire, line-crossing, crowd, etc.'],
+  ['health.check', 'Health (camera + machine)', 'Camera offline/online and machine CPU/memory/disk alerts.'],
+  ['system', 'System', 'General system events and the Test button.'],
+];
+// defaultDestination builds a blank destination of the given type. id is left
+// empty so the backend assigns one on save.
+export function defaultDestination(type = 'webhook') {
+  const name = type === 'telegram' ? 'Telegram' : type === 'mqtt' ? 'MQTT' : 'Webhook';
+  return {
+    id: '',
+    name,
+    type,
+    enabled: true,
+    minSeverity: 'warning',
+    url: '',
+    botToken: '',
+    chatId: '',
+    categories: [], // empty = all categories
+    fields: null, // null = include everything
+    snapshotMode: 'inline', // inline (bytes) | link (reference only)
+    customFields: [],
+    mqtt: {
+      brokerUrl: '', topic: '', clientId: '', qos: 1, retain: false,
+      username: '', password: '', caCert: '', clientCert: '', clientKey: '', insecureSkipVerify: false,
+    },
+  };
+}
 export const defaultRuntimeSettings = {
   decoder: defaultDecoderConfig,
   stream: defaultStreamConfig,
@@ -83,6 +126,7 @@ export const defaultNotificationSettings = {
   webhook: { enabled: false, url: '', minSeverity: 'warning' },
   telegram: { enabled: false, botToken: '', chatId: '', minSeverity: 'warning' },
   retention: { days: 30, onlyRead: false, intervalHours: 6 },
+  destinations: [],
 };
 export const defaultHealthSettings = {
   enabled: true,
@@ -129,11 +173,14 @@ export const weekendScheduleDays = ['sat', 'sun'];
 export const allScheduleDays = scheduleDayOptions.map(([id]) => id);
 export const liveViewsCookieName = 'mymatasan_live_views';
 // Live View grid layouts, in (columns × rows) order. Tile capacity is cols × rows.
+// Landscape-oriented grids (cols ≥ rows) that fit widescreen monitors and 16:9
+// video. The grid is a per-page size, not a cap — paging shows any overflow.
 export const liveViewLayouts = [
+  { id: '1x1', cols: 1, rows: 1, label: '1×1' },
   { id: '2x2', cols: 2, rows: 2, label: '2×2' },
-  { id: '2x4', cols: 2, rows: 4, label: '2×4' },
+  { id: '3x2', cols: 3, rows: 2, label: '3×2' },
   { id: '3x3', cols: 3, rows: 3, label: '3×3' },
-  { id: '3x4', cols: 3, rows: 4, label: '3×4' },
+  { id: '4x3', cols: 4, rows: 3, label: '4×3' },
   { id: '4x4', cols: 4, rows: 4, label: '4×4' },
 ];
 export const defaultLiveViewLayout = '2x2';

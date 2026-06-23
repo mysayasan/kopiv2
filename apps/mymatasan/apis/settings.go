@@ -19,16 +19,23 @@ type settingsApi struct {
 	machineHealth  services.IMachineHealthSettingsService
 	machineMetrics services.IMachineMetricsProvider
 	visionTool     services.VisionToolSettings
+	ffmpeg         *services.FFmpegInstaller
+	browseRoots    []string
 }
 
-// NewSettingsApi registers runtime settings routes.
-func NewSettingsApi(router *mux.Router, serv services.IRuntimeSettingsService, camera services.ICameraService, userServ services.ILocalUserService, notifServ services.INotificationSettingsService, healthServ services.IHealthSettingsService, machineHealth services.IMachineHealthSettingsService, machineMetrics services.IMachineMetricsProvider, visionTool services.VisionToolSettings) {
-	handler := &settingsApi{serv: serv, camera: camera, userServ: userServ, notifServ: notifServ, healthServ: healthServ, machineHealth: machineHealth, machineMetrics: machineMetrics, visionTool: visionTool}
+// NewSettingsApi registers runtime settings routes. browseRoots are extra
+// site-specific directories the file picker may browse (config decoder.browseRoots).
+func NewSettingsApi(router *mux.Router, serv services.IRuntimeSettingsService, camera services.ICameraService, userServ services.ILocalUserService, notifServ services.INotificationSettingsService, healthServ services.IHealthSettingsService, machineHealth services.IMachineHealthSettingsService, machineMetrics services.IMachineMetricsProvider, visionTool services.VisionToolSettings, ffmpeg *services.FFmpegInstaller, browseRoots []string) {
+	handler := &settingsApi{serv: serv, camera: camera, userServ: userServ, notifServ: notifServ, healthServ: healthServ, machineHealth: machineHealth, machineMetrics: machineMetrics, visionTool: visionTool, ffmpeg: ffmpeg, browseRoots: browseRoots}
 	group := router.PathPrefix("/settings").Subrouter()
 
 	group.HandleFunc("/runtime", handler.getRuntime).Methods("GET")
 	group.HandleFunc("/runtime", handler.saveRuntime).Methods("PUT")
 	group.HandleFunc("/runtime/auto-tune", handler.autoTuneRuntime).Methods("POST")
+	group.HandleFunc("/decoder/status", handler.decoderStatus).Methods("GET")
+	group.HandleFunc("/fs/browse", handler.browseFilesystem).Methods("GET")
+	group.HandleFunc("/decoder/ffmpeg/install", handler.ffmpegInstall).Methods("POST")
+	group.HandleFunc("/decoder/ffmpeg/install/status", handler.ffmpegInstallStatus).Methods("GET")
 	group.HandleFunc("/runtime/capture-auto-config", handler.captureAutoConfig).Methods("POST")
 	group.HandleFunc("/runtime/gpu-devices", handler.runtimeGPUDevices).Methods("GET")
 	group.HandleFunc("/runtime/reset", handler.resetRuntime).Methods("POST")
@@ -64,6 +71,20 @@ func (a *settingsApi) visionAIToolInstall(w http.ResponseWriter, r *http.Request
 		return
 	}
 	result := services.InstallPythonPackages(r.Context(), a.visionTool, body.Packages)
+	controllers.SendResult(w, result, "succeed")
+}
+
+// browseFilesystem returns a single directory level for the server-side file
+// picker (used to choose the ffmpeg binary). Admin-gated and read-only.
+func (a *settingsApi) browseFilesystem(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	result, err := services.BrowseDirectory(r.URL.Query().Get("path"), a.browseRoots)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
 	controllers.SendResult(w, result, "succeed")
 }
 
@@ -202,6 +223,38 @@ func (a *settingsApi) getMachineMetrics(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	controllers.SendResult(w, a.machineMetrics.Sample(r.Context()), "succeed")
+}
+
+// decoderStatus reports whether a usable ffmpeg is available (found/path/version),
+// so the setup wizard can decide whether to offer the download.
+func (a *settingsApi) decoderStatus(w http.ResponseWriter, r *http.Request) {
+	if a.ffmpeg == nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, "ffmpeg installer unavailable")
+		return
+	}
+	controllers.SendResult(w, a.ffmpeg.FFmpegStatus(r.Context()), "succeed")
+}
+
+// ffmpegInstall kicks off a background ffmpeg download/install and returns the initial
+// status; the client polls /decoder/ffmpeg/install/status. Admin-gated (a write).
+func (a *settingsApi) ffmpegInstall(w http.ResponseWriter, r *http.Request) {
+	if a.ffmpeg == nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, "ffmpeg installer unavailable")
+		return
+	}
+	if err := a.ffmpeg.StartInstall(r.Context()); err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, a.ffmpeg.InstallStatus(), "succeed")
+}
+
+func (a *settingsApi) ffmpegInstallStatus(w http.ResponseWriter, r *http.Request) {
+	if a.ffmpeg == nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, "ffmpeg installer unavailable")
+		return
+	}
+	controllers.SendResult(w, a.ffmpeg.InstallStatus(), "succeed")
 }
 
 func (a *settingsApi) autoTuneRuntime(w http.ResponseWriter, r *http.Request) {

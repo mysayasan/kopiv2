@@ -2,6 +2,8 @@ package apphost
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -137,6 +140,16 @@ func readinessCheckHandler(db dbsql.IDbCrud, cacheStore appcache.Store, extra *r
 func Run(app App) error {
 	godotenv.Load(".env")
 
+	// When relaunched by a previous instance's self-restart (Windows detached child),
+	// wait briefly so that instance has fully exited and released the listen port before
+	// we try to bind it. Unset so it doesn't propagate to any future restart.
+	if ms := strings.TrimSpace(os.Getenv("KOPIV2_RESTART_DELAY_MS")); ms != "" {
+		os.Unsetenv("KOPIV2_RESTART_DELAY_MS")
+		if d, perr := strconv.Atoi(ms); perr == nil && d > 0 && d <= 30000 {
+			time.Sleep(time.Duration(d) * time.Millisecond)
+		}
+	}
+
 	baseDir := filepath.Clean(app.BaseDir())
 	appConfig, err := loadConfig(baseDir)
 	if err != nil {
@@ -144,7 +157,7 @@ func Run(app App) error {
 	}
 
 	sharedAPIConfig := sharedAPIConfigFor(app)
-	if err := applySensitiveConfig(appConfig); err != nil {
+	if err := applySensitiveConfig(appConfig, configFilePath(baseDir)); err != nil {
 		return err
 	}
 	applyDbConfigFromEnv(appConfig)
@@ -329,6 +342,13 @@ func Run(app App) error {
 		sharedApis.NewRuntimeLogApi(api, *auth, *rbac, runtimeLogDtoService)
 	}
 
+	// restarter lets app modules request a graceful restart (factory reset today,
+	// self-update later). It cancels restartCtx, which the run loop selects on, then
+	// the post-shutdown path relaunches a fresh process from the on-disk executable.
+	restartCtx, restartCancel := context.WithCancel(context.Background())
+	defer restartCancel()
+	restarter := &appRestarter{cancel: restartCancel}
+
 	deps := Dependencies{
 		Config:      appConfig,
 		ConfigPath:  configFilePath(baseDir),
@@ -339,6 +359,7 @@ func Run(app App) error {
 		AppRegistry: appRegistryService,
 		Logger:      runtimeLogger,
 		Scheduler:   runtimeScheduler,
+		Restarter:   restarter,
 	}
 
 	shutdownHook, err := app.RegisterAppRoutes(api, deps)
@@ -402,6 +423,7 @@ func Run(app App) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	relaunch := false
 	select {
 	case err := <-errChan:
 		if err != nil {
@@ -410,14 +432,30 @@ func Run(app App) error {
 		return nil
 	case <-ctx.Done():
 		log.Println("shutdown signal received")
+	case <-restartCtx.Done():
+		relaunch = true
+		log.Printf("restart requested: %s", restarter.Reason())
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// Run the shutdown hook bounded by shutdownCtx, in a goroutine, so a hook step that
+	// blocks (e.g. a service touching a just-dropped database during a factory reset, or
+	// a stuck stream teardown) can never wedge the shutdown/relaunch. On timeout we log
+	// and push on — the process is going down or relaunching regardless.
 	if shutdownHook != nil {
-		if err := shutdownHook(shutdownCtx); err != nil {
-			log.Printf("app shutdown warning: %v", err)
+		done := make(chan struct{})
+		go func() {
+			if err := shutdownHook(shutdownCtx); err != nil {
+				log.Printf("app shutdown warning: %v", err)
+			}
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-shutdownCtx.Done():
+			log.Printf("app shutdown hook timed out; proceeding with %s", map[bool]string{true: "relaunch", false: "exit"}[relaunch])
 		}
 	}
 
@@ -427,7 +465,65 @@ func Run(app App) error {
 		}
 	}
 
+	if relaunch {
+		if supervisedRestart() {
+			// Under a process supervisor (systemd, launchd, a Windows service, Docker
+			// `restart: unless-stopped`), the most reliable cross-platform restart is to
+			// exit and let the supervisor relaunch us. Self-relaunch here would race the
+			// supervisor and double-start. Exit NON-ZERO (restartExitCode) so supervisors
+			// that only relaunch on failure (e.g. WinSW <onfailure>) restart us, while a
+			// normal `systemctl stop` / `docker stop` (exit 0 below) is left stopped.
+			log.Printf("restart requested; exiting (code %d) for the process supervisor to relaunch (KOPIV2_SUPERVISED)", restartExitCode)
+			os.Exit(restartExitCode)
+		}
+		// No supervisor (bare/dev run): relaunch ourselves. On Unix this re-execs in
+		// place (reliable, no port hand-off race, no double start); on Windows it spawns
+		// a detached child and this process exits.
+		if err := relaunchSelf(); err != nil {
+			log.Printf("relaunch failed (%v); exiting — run under a process supervisor (systemd/launchd/Windows service/Docker) or set KOPIV2_SUPERVISED=1 to restart reliably", err)
+		}
+	}
+
 	return nil
+}
+
+// restartExitCode is the non-zero exit code used for a supervised restart, so a
+// supervisor relaunches the app while a normal stop (exit 0) leaves it stopped.
+const restartExitCode = 70
+
+// supervisedRestart reports whether the app is managed by a process supervisor that
+// will relaunch it on exit, so a restart should be a clean exit rather than a
+// self-relaunch. Enabled via KOPIV2_SUPERVISED (1/true/yes).
+func supervisedRestart() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("KOPIV2_SUPERVISED")))
+	return v == "1" || v == "true" || v == "yes"
+}
+
+// appRestarter implements Restarter by cancelling the run loop's restart context.
+// The first call wins; later calls are ignored so concurrent triggers can't race.
+type appRestarter struct {
+	once   sync.Once
+	cancel context.CancelFunc
+	mu     sync.Mutex
+	reason string
+}
+
+func (r *appRestarter) Restart(reason string) {
+	r.once.Do(func() {
+		r.mu.Lock()
+		r.reason = reason
+		r.mu.Unlock()
+		r.cancel()
+	})
+}
+
+func (r *appRestarter) Reason() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.reason == "" {
+		return "unspecified"
+	}
+	return r.reason
 }
 
 // configFilePath returns the absolute path of the config file the host loads for
@@ -478,10 +574,24 @@ func sharedAPIConfigFor(app App) SharedAPIConfig {
 	return DefaultSharedAPIConfig()
 }
 
-func applySensitiveConfig(appConfig *config.AppConfigModel) error {
-	jwtSecret := os.Getenv("JWT_SECRET")
-	if jwtSecret != "" {
+func applySensitiveConfig(appConfig *config.AppConfigModel, configPath string) error {
+	if jwtSecret := os.Getenv("JWT_SECRET"); jwtSecret != "" {
 		appConfig.Jwt.Secret = jwtSecret
+	} else if isWeakJWTSecret(appConfig.Jwt.Secret) {
+		// Refuse to run on an unset/placeholder secret. Generate a strong random
+		// one, persist it back to the config file so it survives restarts, and use
+		// it for this run regardless of whether the write succeeds.
+		generated, err := generateRandomSecret(32)
+		if err != nil {
+			return fmt.Errorf("generate jwt secret: %w", err)
+		}
+		old := strings.TrimSpace(appConfig.Jwt.Secret)
+		appConfig.Jwt.Secret = generated
+		if err := persistJWTSecret(configPath, generated); err != nil {
+			log.Printf("WARNING: insecure JWT secret %q replaced with a generated one for this run, but it could not be persisted (%v); it will change on restart — set JWT_SECRET or jwt.secret to a strong value", old, err)
+		} else {
+			log.Printf("WARNING: insecure JWT secret %q replaced with a strong generated secret and saved to %s", old, configPath)
+		}
 	}
 
 	if appConfig.Jwt.Secret == "" {
@@ -510,6 +620,61 @@ func applySensitiveConfig(appConfig *config.AppConfigModel) error {
 	}
 
 	return nil
+}
+
+// weakJWTSecrets are placeholder values shipped in example configs that must
+// never reach production. Compared case-insensitively against the trimmed value.
+var weakJWTSecrets = map[string]struct{}{
+	"change-me":            {},
+	"changeme":             {},
+	"standalone-change-me": {},
+	"please-change-me":     {},
+	"your-secret-here":     {},
+	"secret":               {},
+	"test0123456789":       {},
+}
+
+// isWeakJWTSecret reports whether a JWT secret is unsafe to run with: empty, too
+// short to resist brute force, or a known placeholder.
+func isWeakJWTSecret(secret string) bool {
+	s := strings.TrimSpace(secret)
+	if len(s) < 16 {
+		return true
+	}
+	_, weak := weakJWTSecrets[strings.ToLower(s)]
+	return weak
+}
+
+// generateRandomSecret returns a URL-safe base64 string of nBytes of CSPRNG
+// entropy (no padding, so it is JSON- and regex-replacement-safe).
+func generateRandomSecret(nBytes int) (string, error) {
+	buf := make([]byte, nBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+// jwtSecretPattern captures the value of jwt.secret so it can be rewritten in
+// place without reformatting the rest of the config file. The jwt object holds
+// only the secret, so a non-greedy scan within its braces is unambiguous.
+var jwtSecretPattern = regexp.MustCompile(`("jwt"\s*:\s*\{[^{}]*?"secret"\s*:\s*")([^"]*)(")`)
+
+// persistJWTSecret surgically replaces the jwt.secret value in the config file on
+// disk, preserving the file's existing formatting and key order.
+func persistJWTSecret(configPath, newSecret string) error {
+	if strings.TrimSpace(configPath) == "" {
+		return errors.New("no config path")
+	}
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		return err
+	}
+	if !jwtSecretPattern.Match(raw) {
+		return errors.New("jwt.secret not found in config file")
+	}
+	updated := jwtSecretPattern.ReplaceAll(raw, []byte("${1}"+newSecret+"${3}"))
+	return os.WriteFile(configPath, updated, 0o600)
 }
 
 func applyDbConfigFromEnv(appConfig *config.AppConfigModel) {

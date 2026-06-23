@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/mysayasan/kopiv2/domain/notification"
 	"github.com/mysayasan/kopiv2/infra/apidocs"
 	"github.com/mysayasan/kopiv2/infra/apphost"
+	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/config"
 	"github.com/mysayasan/kopiv2/infra/db/bootstrap"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
@@ -178,6 +180,26 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		deps.Logger.Warnf("mymatasan.vision", "object detector backend unavailable (%v); auto-label and custom models are disabled", backendErr)
 		objectBackend = nil
 	}
+	// Encryption-at-rest key store (crypto-erase). Default ON. The key lives OUTSIDE the
+	// media roots so the factory reset destroys it explicitly (KeyStore.Destroy) — the
+	// instant, device-independent secure wipe — rather than as part of the media delete.
+	// A nil cipher (disabled) means write plaintext + read with legacy passthrough.
+	var atrestKeyStore *atrest.KeyStore
+	var atrestCipher *atrest.Cipher
+	if boolValue(deps.Config.Security.EncryptAtRest, true) {
+		keyPath := strings.TrimSpace(deps.Config.Security.KeyPath)
+		if keyPath == "" {
+			keyPath, _ = filepath.Abs(filepath.Join("secret", "atrest.key"))
+		}
+		ks, err := atrest.LoadOrCreate(keyPath)
+		if err != nil {
+			return nil, fmt.Errorf("encryption-at-rest key: %w", err)
+		}
+		atrestKeyStore = ks
+		atrestCipher = ks.Cipher()
+		log.Printf("encryption-at-rest enabled (key %s)", keyPath)
+	}
+
 	trainingModelRepo := dbsql.NewGenericRepo[appentities.TrainingModel](deps.Db)
 	trainingService := services.NewTrainingService(
 		trainingDatasetRepo,
@@ -191,10 +213,13 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		objectBackend,
 		deps.Config.Vision.Detector.MinObjectConfidence,
 		trainingRunConfigFromAppConfig(deps.Config, deps.ConfigPath),
+		atrestCipher,
 	)
 	settingsService := services.NewRuntimeSettingsService(runtimeSettingsRepo, runtimeSettingsFromAppConfig(deps.Config))
+	setupStateService := services.NewSetupStateService(runtimeSettingsRepo)
 	localUserService := services.NewLocalUserService(localUserRepo)
-	recordingService := services.NewRecordingService(recordingSegmentRepo, recordingConfigRepo)
+	shredPasses := resolveShredPasses(deps.Config)
+	recordingService := services.NewRecordingService(recordingSegmentRepo, recordingConfigRepo, shredPasses)
 	notificationRepo := dbsql.NewGenericRepo[sharedentities.Notification](deps.Db)
 	notificationService := notification.NewService(notificationRepo, notificationOptionsFromAppConfig(deps.Config, deps.Logger))
 	notificationSettingsService := services.NewNotificationSettingsService(
@@ -217,8 +242,6 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	if err := localUserService.EnsureDefaultAdmin(context.Background()); err != nil {
 		return nil, fmt.Errorf("seed local admin user failed: %w", err)
 	}
-	streamManager := stream.NewManager()
-
 	// Resolve ffmpeg path and RTSP transport from persisted settings.
 	ffmpegPath := ""
 	rtspTransport := ""
@@ -227,10 +250,16 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		rtspTransport = dec.FFmpeg.RTSPTransport
 	}
 
+	// ffmpegPath lets the live-view bridge transcode non-G.711 camera audio (AAC,
+	// etc.) to Opus so live view has sound regardless of the camera's codec.
+	streamManager := stream.NewManagerWithOptions(stream.Options{FFmpegPath: ffmpegPath})
+
 	// Build the recording manager from persisted per-camera configs.
 	// Each camera is configured in its own goroutine so RTSP URI lookups and
 	// ffmpeg process launches happen in parallel across all cameras.
 	recorderManager := recording.NewManager(recordingService)
+	siphonFPS, siphonWidth := services.SiphonTeeParams(settingsService)
+	siphonHWAccel, siphonHWDevice, siphonInitHWDevice, siphonVideoDecoder := services.SiphonDecoderParams(settingsService)
 	if cfgs, err := recordingService.ListConfigs(context.Background()); err == nil {
 		var wg sync.WaitGroup
 		for _, cfg := range cfgs {
@@ -261,6 +290,14 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 					FallbackRTSPURI: fallbackURI,
 					SegmentMinutes:  cfg.SegmentMinutes,
 					RetentionDays:   cfg.RetentionDays,
+					SiphonFPS:       siphonFPS,
+					SiphonWidth:     siphonWidth,
+					HWAccel:         siphonHWAccel,
+					HWAccelDevice:   siphonHWDevice,
+					InitHWDevice:    siphonInitHWDevice,
+					VideoDecoder:    siphonVideoDecoder,
+					ShredPasses:     shredPasses,
+					Cipher:          atrestCipher,
 				})
 			}(cfg)
 		}
@@ -293,23 +330,129 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	machineHealthMonitor := services.NewMachineHealthMonitor(machineHealthSettingsService, notificationService, recorderManager, recordingService, machineAutoPaths)
 	m.machineHealth = machineHealthMonitor
 
+	loginGuard := apis.NewLoginGuard(loginGuardConfigFromAppConfig(deps.Config))
+	var loginLockoutNotifier services.INotificationPublisher
+	if deps.Config.LoginSecurity.NotifyOnLockout {
+		loginLockoutNotifier = notificationService
+	}
+
 	protected := api.PathPrefix("").Subrouter()
-	protected.Use(apis.NewLocalBasicAuth(localUserService))
+	protected.Use(apis.NewLocalBasicAuth(localUserService, loginGuard, loginLockoutNotifier))
+	// Non-admins are read-only (plus a small viewer allow-list); admins get full
+	// access. Registered after auth so the authenticated user is in context.
+	protected.Use(apis.NewRequireAdminForWrites())
+	apis.NewLocalAuthApi(protected, localUserService)
 	apis.NewOnvifApi(protected, cameraService, settingsService, streamManager)
 	apis.NewCameraApi(protected, cameraService, settingsService, streamManager, cameraHealthMonitor)
-	apis.NewVisionApi(protected, visionService, detectionClassService, recorderManager, notificationService, cameraService, settingsService)
+	apis.NewVisionApi(protected, visionService, detectionClassService, recorderManager, notificationService, cameraService, settingsService, notificationSettingsService, atrestCipher)
 	apis.NewTrainingApi(protected, trainingService)
-	apis.NewSettingsApi(protected, settingsService, cameraService, localUserService, notificationSettingsService, healthSettingsService, machineHealthSettingsService, machineHealthMonitor, visionToolSettingsFromAppConfig(deps.Config))
-	apis.NewRecordingApi(protected, recordingService, recorderManager, cameraService, settingsService)
+	ffmpegBinDir, _ := filepath.Abs("bin")
+	ffmpegInstaller := services.NewFFmpegInstaller(ffmpegBinDir, settingsService)
+	apis.NewSettingsApi(protected, settingsService, cameraService, localUserService, notificationSettingsService, healthSettingsService, machineHealthSettingsService, machineHealthMonitor, visionToolSettingsFromAppConfig(deps.Config), ffmpegInstaller, deps.Config.Decoder.BrowseRoots)
+	apis.NewRecordingApi(protected, recordingService, recorderManager, cameraService, settingsService, atrestCipher)
 	apis.NewNotificationApi(protected, notificationService)
+	apis.NewCapacityApi(protected, cameraService, settingsService, machineHealthMonitor, recordingService, objectBackend)
+	apis.NewSetupApi(protected, setupStateService)
+
+	// Factory reset ("Secure Wipe & Reset"): shred all media, drop + rebuild + reseed
+	// the database (honouring the configured engine), then restart into first-run
+	// state. Runtime settings reset naturally because they live in the dropped DB.
+	// Gated by bootstrap.allowReset; the restart primitive (deps.Restarter) is shared
+	// with future self-update.
+	resetMediaPaths := func(ctx context.Context) []string {
+		paths := []string{}
+		if sd := strings.TrimSpace(deps.Config.Vision.SnapshotDir); sd != "" {
+			paths = append(paths, sd)
+		}
+		if trainingDir != "" {
+			paths = append(paths, trainingDir)
+		}
+		if fp := strings.TrimSpace(deps.Config.FileStorage.Path); fp != "" {
+			paths = append(paths, fp)
+		}
+		if cfgs, err := recordingService.ListConfigs(ctx); err == nil {
+			for _, c := range cfgs {
+				if c != nil && strings.TrimSpace(c.StoragePath) != "" {
+					paths = append(paths, c.StoragePath)
+				}
+			}
+		}
+		return paths
+	}
 
 	monitorCtx, stopMonitor := context.WithCancel(context.Background())
 	monitorSettings := visionMonitorSettingsFromAppConfig(deps.Config)
 	monitorSettings.Detector = wrapMonitorDetector(deps.Config, objectBackend)
 	monitorSettings.Recorder = recorderManager
 	monitorSettings.Notifier = notificationService
+	monitorSettings.NotificationDestinations = notificationSettingsService
 	monitorSettings.Resolver = detectionClassService
+	monitorSettings.SnapshotCipher = atrestCipher
+	// Resolver for the detection-only frame stream the monitor runs when a camera
+	// has AI rules but NVR recording is off (siphon/auto). It reuses the same stream
+	// selection + credential injection + siphon params as the real recorder so the
+	// AI sees the same stream it would record. Prefers the detection/recording stream,
+	// then the configured live-view stream, then the camera's discovered RTSP URI.
+	monitorSettings.DetectStreamConfig = func(ctx context.Context, cameraID int64) (recording.RecorderConfig, bool) {
+		var streamURL, fallbackURL, liveURL string
+		if rcfg, err := recordingService.GetConfig(ctx, cameraID); err == nil && rcfg != nil {
+			streamURL = strings.TrimSpace(rcfg.StreamURL)
+			fallbackURL = strings.TrimSpace(rcfg.FallbackStreamUrl)
+			liveURL = strings.TrimSpace(rcfg.LiveStreamUrl)
+		}
+		var username, password, discovered string
+		if src, err := cameraService.SnapshotSource(ctx, uint64(cameraID)); err == nil {
+			username, password, discovered = src.Username, src.Password, src.RTSPURI
+		}
+		pick := streamURL
+		if pick == "" {
+			pick = liveURL
+		}
+		rtspURI := discovered
+		if pick != "" {
+			rtspURI = services.RTSPURIWithCredentials(pick, username, password)
+		}
+		if strings.TrimSpace(rtspURI) == "" {
+			return recording.RecorderConfig{}, false
+		}
+		fallbackURI := ""
+		if fallbackURL != "" {
+			fallbackURI = services.RTSPURIWithCredentials(fallbackURL, username, password)
+		}
+		siphonFPS, siphonWidth := services.SiphonTeeParams(settingsService)
+		hwaccel, hwDevice, initHWDevice, videoDecoder := services.SiphonDecoderParams(settingsService)
+		return recording.RecorderConfig{
+			CameraId:        cameraID,
+			Enabled:         true,
+			DetectOnly:      true,
+			FFmpegPath:      ffmpegPath,
+			RTSPTransport:   rtspTransport,
+			RTSPURI:         rtspURI,
+			FallbackRTSPURI: fallbackURI,
+			SiphonFPS:       siphonFPS,
+			SiphonWidth:     siphonWidth,
+			HWAccel:         hwaccel,
+			HWAccelDevice:   hwDevice,
+			InitHWDevice:    initHWDevice,
+			VideoDecoder:    videoDecoder,
+		}, true
+	}
 	if monitorSettings.Enabled {
+		// Warm the detector model once at startup, uncapped, so the first live-detection
+		// inference doesn't hit the per-frame timeout on a cold GPU/CUDA model load —
+		// which would kill and restart the worker in a loop and never warm. Runs in the
+		// background so boot isn't blocked by the (potentially 10–15s) model load.
+		if objectBackend != nil {
+			go func() {
+				warmCtx, cancel := context.WithTimeout(monitorCtx, 120*time.Second)
+				defer cancel()
+				if err := services.WarmupInference(warmCtx, objectBackend); err != nil {
+					log.Printf("vision: detector warmup failed (live detection will warm on first inference): %v", err)
+				} else {
+					log.Printf("vision: detector model warmed up")
+				}
+			}()
+		}
 		services.NewVisionMonitor(cameraService, visionService, settingsService, monitorSettings).Start(monitorCtx)
 	}
 
@@ -324,6 +467,41 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// notifications, and runs disk mitigation (early purge + pause/resume
 	// recording). Reads its settings live, so it can be retuned without a restart.
 	machineHealthMonitor.Start(monitorCtx)
+
+	// Factory reset (Secure Wipe & Reset). Built here — after the monitors and
+	// recorder exist — so its StopServices hook can quiesce them before wiping: the
+	// recorder's ffmpeg holds the live .ts segment open (and keeps writing), which
+	// otherwise leaves files behind and stalls the shred on a near-full disk.
+	systemResetService := services.NewSystemResetService(services.SystemResetConfig{
+		CollectMediaPaths: resetMediaPaths,
+		ShredPasses:       shredPasses,
+		BootstrapOpts: bootstrap.Options{
+			AppName: m.Name(),
+			Config:  deps.Config.Db,
+			Bootstrap: bootstrap.BootstrapConfig{
+				Enabled:            deps.Config.Bootstrap.Enabled,
+				AutoCreateDatabase: deps.Config.Bootstrap.AutoCreateDatabase,
+				AutoCreateSchema:   deps.Config.Bootstrap.AutoCreateSchema,
+				AutoMigrate:        deps.Config.Bootstrap.AutoMigrate,
+				AutoSeed:           deps.Config.Bootstrap.AutoSeed,
+				AllowReset:         deps.Config.Bootstrap.AllowReset,
+				SetupPath:          deps.Config.Bootstrap.SetupPath,
+				SeedStatements:     deps.Config.Bootstrap.SeedStatements,
+			},
+			Entities: m.Entities(),
+			Seeders:  m.Seeders(deps.Config.Bootstrap.SeedStatements),
+		},
+		Restarter: deps.Restarter,
+		KeyStore:  atrestKeyStore,
+		StopServices: func() {
+			stopMonitor()           // vision + camera/host health monitors + purge loops
+			recorderManager.Close() // kills ffmpeg, releasing the open .ts segments
+			if c, ok := objectBackend.(io.Closer); ok {
+				_ = c.Close() // stops the detector worker process
+			}
+		},
+	})
+	apis.NewSystemApi(protected, systemResetService, deps.Restarter)
 
 	// Purge expired segments once at startup, then every 6 hours.
 	go func() {
@@ -386,6 +564,21 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		}
 		return streamManager.Close()
 	}, nil
+}
+
+// loginGuardConfigFromAppConfig maps the config.json loginSecurity block into the
+// failed-login guard config. Numeric tunables left at zero are filled with safe
+// defaults inside the guard.
+func loginGuardConfigFromAppConfig(cfg *config.AppConfigModel) apis.LoginGuardConfig {
+	ls := cfg.LoginSecurity
+	return apis.LoginGuardConfig{
+		Enabled:     ls.Enabled,
+		MaxAttempts: ls.MaxAttempts,
+		Window:      time.Duration(ls.WindowSeconds) * time.Second,
+		BaseLockout: time.Duration(ls.LockoutSeconds) * time.Second,
+		MaxLockout:  time.Duration(ls.LockoutMaxSeconds) * time.Second,
+		FailedDelay: time.Duration(ls.FailedDelayMs) * time.Millisecond,
+	}
 }
 
 // notificationOptionsFromAppConfig builds always-on notification options. The
@@ -503,6 +696,21 @@ func healthSettingsDefaultsFromAppConfig(cfg *config.AppConfigModel) services.He
 		FailureThreshold:  h.FailureThreshold,
 		RecoveryThreshold: h.RecoveryThreshold,
 	}
+}
+
+// resolveShredPasses decides how many secure-overwrite passes to apply when
+// deleting recorded footage. Shredding is on by default (DefaultShredPasses);
+// recording.shred.enabled=false disables it (plain delete), and a positive
+// recording.shred.passes overrides the count.
+func resolveShredPasses(cfg *config.AppConfigModel) int {
+	s := cfg.Recording.Shred
+	if s.Enabled != nil && !*s.Enabled {
+		return 0
+	}
+	if s.Passes > 0 {
+		return s.Passes
+	}
+	return recording.DefaultShredPasses
 }
 
 // trainingDataDir resolves the on-disk root for training datasets and models.
@@ -714,6 +922,26 @@ func (m *module) APIDocs() apidocs.SpecConfig {
 			"POST /api/settings/runtime/reset": {
 				Summary:     "Reset runtime settings",
 				Description: "Resets runtime settings to the startup config defaults.",
+				Tags:        []string{"settings"},
+			},
+			"GET /api/settings/decoder/status": {
+				Summary:     "ffmpeg availability",
+				Description: "Reports whether a usable ffmpeg is found (found, path, version) for the FFmpeg-path status indicator and setup wizard.",
+				Tags:        []string{"settings"},
+			},
+			"POST /api/settings/decoder/ffmpeg/install": {
+				Summary:     "Install ffmpeg",
+				Description: "Starts the background in-app ffmpeg download/installer and returns its initial state. Admin only.",
+				Tags:        []string{"settings"},
+			},
+			"GET /api/settings/decoder/ffmpeg/install/status": {
+				Summary:     "ffmpeg install status",
+				Description: "Polls the background ffmpeg install job (running, status, log, path, supported).",
+				Tags:        []string{"settings"},
+			},
+			"GET /api/settings/fs/browse": {
+				Summary:     "Browse server filesystem",
+				Description: "Admin-only, read-only directory picker used to choose the ffmpeg binary; lists one directory level confined to a whitelist of roots.",
 				Tags:        []string{"settings"},
 			},
 			"GET /api/settings/notification": {

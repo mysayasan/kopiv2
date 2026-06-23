@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "mymatasan",
+  "summary": "The YOLO detector worker (apps/mymatasan/ai/yolo_worker.py) no longer prints a KeyboardInterrupt traceback when the app is stopped with Ctrl+C. Ctrl+C delivers SIGINT to the whole process group, including the Python worker subprocess; the stdin read loop and the __main__ entrypoint now catch KeyboardInterrupt and exit cleanly (the loop returns 0; a SIGINT during model load exits 130) instead of dumping an unhandled-exception stack trace.",
+  "compatibility": "Backward compatible; shutdown-only cosmetic fix. No change to detection behaviour."
+}

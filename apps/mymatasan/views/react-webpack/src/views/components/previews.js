@@ -1,7 +1,64 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Ico } from './icons';
 import { maxCrossingLines } from '../lib/constants';
-import {cameraTitle,fallbackLiveSource,normalizeStreamConfig,roundedPoint,zonePolygonText,parseZonePolygon,normalizeLineConfig,waitForIceGathering,createWebRTCAnswer,shouldUseMJPEGForTracks } from '../lib/helpers';
+import {fallbackLiveSource,normalizeStreamConfig,roundedPoint,zonePolygonText,parseZonePolygon,normalizeLineConfig,waitForIceGathering,createWebRTCAnswer,shouldUseMJPEGForTracks,apiBase } from '../lib/helpers';
+
+// DetectionFrameBackdrop shows the exact frame the AI detector samples for a
+// camera (honoring the capture mode / recording stream). Zones and lines are drawn
+// on this so "what you draw on" equals "what gets detected" — even when the
+// recording and live streams differ. object-fit:fill preserves the normalized
+// (0–1) coordinate mapping the overlay uses.
+//
+// The next frame is preloaded and only swapped in once decoded (double-buffering)
+// so the background never blanks/blinks, and refresh PAUSES while the user is
+// dragging a point so the scene stays stable mid-draw. This is a pure UI display
+// (a cheap re-read of the cached siphon frame) — it never affects detection.
+function DetectionFrameBackdrop({ cameraId, paused }) {
+  const [src, setSrc] = useState('');
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
+
+  useEffect(() => {
+    if (!cameraId) {
+      setSrc('');
+      return undefined;
+    }
+    let cancelled = false;
+    const base = `${apiBase()}/api/vision/cameras/${cameraId}/frame`;
+    const loadNext = () => {
+      if (pausedRef.current) {
+        return;
+      }
+      const next = `${base}?t=${Date.now()}`;
+      const img = new Image();
+      img.onload = () => {
+        if (!cancelled) setSrc(next);
+      };
+      img.src = next;
+    };
+    loadNext();
+    const id = setInterval(loadNext, 700);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [cameraId]);
+
+  if (!cameraId) {
+    return null;
+  }
+  if (!src) {
+    return <div className="detection-frame-backdrop detection-frame-loading" />;
+  }
+  return (
+    <img
+      className="detection-frame-backdrop"
+      src={src}
+      alt="Detection frame"
+      draggable={false}
+    />
+  );
+}
 
 export function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTracks, healthStatus, streamKey, startDelayMs = 0 }) {
   const videoRef = useRef(null);
@@ -237,18 +294,14 @@ export function ZoneDrawingPreview({ camera, polygonValue, onPolygon, authHeader
         <h3>Detection Zone</h3>
         <span className="status-pill">{points.length} points</span>
       </header>
+      <p className="zone-drawer-hint">
+        This preview is a periodic snapshot (it may look choppy and pauses while you drag) — that&apos;s the preview
+        only. Detection runs at full rate on the same frames, so your zone has no effect on detection speed or accuracy.
+      </p>
       <div className={camera ? 'zone-live' : 'zone-live empty-zone'}>
         {camera ? (
           <>
-            <LiveViewport
-              key={`${camera.id}:${camera.rtspUrl || ''}:${camera.rtspTracks || ''}`}
-              deviceId={camera.id}
-              title={cameraTitle(camera)}
-              authHeader={authHeader}
-              streamConfig={streamConfig}
-              rtspTracks={camera.rtspTracks}
-              streamKey={`${camera.rtspUrl || ''}:${camera.rtspTracks || ''}`}
-            />
+            <DetectionFrameBackdrop cameraId={camera.id} paused={draggingIndex !== null} />
             <div
               ref={overlayRef}
               className="zone-overlay"
@@ -376,18 +429,14 @@ export function LineDrawingPreview({ camera, config, detectionType, onConfig, au
         <h3>{detectionType === 'multi_line_crossing' ? 'Crossing Sequence' : 'Crossing Line'}</h3>
         <span className="status-pill">{lines.length}/{maxLines} lines</span>
       </header>
+      <p className="zone-drawer-hint">
+        This preview is a periodic snapshot (it may look choppy and pauses while you drag) — that&apos;s the preview
+        only. Detection runs at full rate on the same frames, so your line has no effect on detection speed or accuracy.
+      </p>
       <div className={camera ? 'zone-live' : 'zone-live empty-zone'}>
         {camera ? (
           <>
-            <LiveViewport
-              key={`${camera.id}:${camera.rtspUrl || ''}:${camera.rtspTracks || ''}`}
-              deviceId={camera.id}
-              title={cameraTitle(camera)}
-              authHeader={authHeader}
-              streamConfig={streamConfig}
-              rtspTracks={camera.rtspTracks}
-              streamKey={`${camera.rtspUrl || ''}:${camera.rtspTracks || ''}`}
-            />
+            <DetectionFrameBackdrop cameraId={camera.id} paused={dragging !== null} />
             <div
               ref={overlayRef}
               className="zone-overlay"

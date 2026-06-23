@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "mymatasan",
+  "summary": "The alert list the UI reads as 'real events' no longer empties itself over time. The vision monitor writes a diagnostic 'sampled' alert per rule every diagnosticCooldownSeconds on no-detection frames; the frontend fetched /api/vision/alerts?limit=100 with no status filter, so those high-volume diagnostics flooded the bounded 100-row window and evicted real detections (the panel filters diagnostics client-side, so it went blank while the unread badge lingered). Fix: GetAlerts gained a status=detections filter (excludes diagnostics, preserves ack state so the recording timeline still resolves acked alerts) and loadVision now uses it; the unread badge is clamped to the actionable-alert count each poll. The panel was also reworked to show the rule name as the topic and the object/crowd/confidence detail as the body.",
+  "compatibility": "Backward compatible; GetAlerts adds an optional status filter (existing unfiltered queries are unchanged). Any bounded alert-list fetch meant to show real events should pass status=detections to avoid diagnostic flooding."
+}

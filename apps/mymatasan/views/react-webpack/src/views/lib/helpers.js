@@ -27,6 +27,15 @@ export function layoutRows(id) {
   return layoutSpec(id).rows;
 }
 
+// bestLiveViewLayout picks the smallest layout whose capacity holds `count`
+// cameras, so the grid auto-sizes to how many cameras you have. Falls back to the
+// largest layout when there are more cameras than any single grid can show.
+export function bestLiveViewLayout(count) {
+  const sorted = [...liveViewLayouts].sort((a, b) => a.cols * a.rows - b.cols * b.rows);
+  const fit = sorted.find((layout) => layout.cols * layout.rows >= count);
+  return (fit || sorted[sorted.length - 1]).id;
+}
+
 export function readCookie(name) {
   if (typeof document === 'undefined') {
     return '';
@@ -85,6 +94,37 @@ export function segmentFilename(seg) {
 export function detectionTypeLabel(type) {
   const map = { motion: 'Motion', intrusion: 'Intrusion', fire: 'Fire', line_crossing: 'Line crossing', multi_line_crossing: 'Multi-line crossing' };
   return map[type] || (type ? type.replace(/_/g, ' ') : 'Event');
+}
+
+// The notification feed unifies every event source. These map a stored
+// notification's source/category to a short human kind shown in the dropdown.
+export const notificationSourceLabels = {
+  'vision-monitor': 'AI Detection',
+  'camera-health-monitor': 'Camera Health',
+  'machine-health-monitor': 'Machine Health',
+  'local-auth': 'Login Security',
+  settings: 'Settings',
+};
+
+export const notificationCategoryLabels = {
+  'vision.alert': 'AI Detection',
+  'health.check': 'Camera Health',
+  system: 'System',
+};
+
+// notificationKind returns the short label for a notification's origin, preferring
+// the specific source (machine vs camera health) over the coarse category.
+export function notificationKind(notif) {
+  if (!notif) {
+    return 'Notification';
+  }
+  return notificationSourceLabels[notif.source] || notificationCategoryLabels[notif.category] || 'Notification';
+}
+
+// isVisionAlertNotification reports whether a notification is an AI detection that
+// links back to an AlertEvent (so a click can deep-link into the recording clip).
+export function isVisionAlertNotification(notif) {
+  return notif?.refType === 'alert_event' && Number(notif?.refId) > 0;
 }
 
 export function todayDateString() {
@@ -654,6 +694,35 @@ export function buildRuleConfigForMode(mode, targetClasses, existingConfig) {
   }
   // presence / intrusion
   return JSON.stringify({ classes }, null, 2);
+}
+
+// ruleDestinationsFromConfig reads the per-rule routing list (ruleConfig.destinations)
+// — the notification destination ids this rule's alerts go to. Empty = all.
+export function ruleDestinationsFromConfig(ruleConfig) {
+  try {
+    const cfg = JSON.parse(ruleConfig || '{}');
+    return Array.isArray(cfg.destinations) ? cfg.destinations.map(String) : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+// applyRuleDestinations returns the ruleConfig JSON with its destinations key set
+// to the given ids (or removed when empty), preserving all other config fields.
+export function applyRuleDestinations(ruleConfig, destinationIds) {
+  let cfg;
+  try {
+    cfg = JSON.parse(ruleConfig || '{}');
+  } catch (_) {
+    cfg = {};
+  }
+  const ids = (destinationIds || []).map(String).filter(Boolean);
+  if (ids.length) {
+    cfg.destinations = ids;
+  } else {
+    delete cfg.destinations;
+  }
+  return JSON.stringify(cfg, null, 2);
 }
 
 // ---- Class registry helpers ----

@@ -3,8 +3,6 @@ package notification
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -68,25 +66,10 @@ type webhookSender struct {
 	logger  Logger
 }
 
-// webhookPayload is the wire shape POSTed to the configured endpoint. It embeds
-// the Notification (whose Attachment field is json:"-") and, when an attachment
-// is present, adds the media inline as base64 so receivers that cannot reach the
-// authenticated snapshot endpoint still get the image.
-type webhookPayload struct {
-	Notification
-	SnapshotBase64      string `json:"snapshotBase64,omitempty"`
-	SnapshotContentType string `json:"snapshotContentType,omitempty"`
-	SnapshotFilename    string `json:"snapshotFilename,omitempty"`
-}
-
 func (w *webhookSender) post(n Notification) {
-	payload := webhookPayload{Notification: n}
-	if n.Attachment != nil && len(n.Attachment.Data) > 0 {
-		payload.SnapshotBase64 = base64.StdEncoding.EncodeToString(n.Attachment.Data)
-		payload.SnapshotContentType = n.Attachment.ContentType
-		payload.SnapshotFilename = n.Attachment.Filename
-	}
-	body, err := json.Marshal(payload)
+	// Shared canonical JSON (Notification + base64 snapshot when attached) — the
+	// same shape the MQTT channel publishes. See notificationJSON.
+	body, err := notificationJSON(n)
 	if err != nil {
 		warn(w.logger, "notification.webhook", "marshal failed: %v", err)
 		return

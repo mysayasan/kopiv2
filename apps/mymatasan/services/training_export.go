@@ -123,6 +123,7 @@ func (s *trainingService) buildExportDir(ctx context.Context, datasetId int64) (
 		if err != nil {
 			continue
 		}
+		data = s.decryptImage(data) // images are encrypted at rest; export plaintext for the trainer
 		for _, a := range anns {
 			used[a.ClassName] = true
 		}
@@ -263,6 +264,15 @@ func (s *trainingService) ImportModel(ctx context.Context, req ImportModelReques
 		return nil, err
 	}
 	row.FilePath = path
+
+	// Auto-detect the model's real embedded labels so the user doesn't have to
+	// type them (and can't mistype a mismatch). These are authoritative — they
+	// are exactly what the worker emits — so they override any typed classes.
+	// Best-effort: if Python/ultralytics isn't available, keep the typed list.
+	if labels, lerr := s.readModelLabels(path); lerr == nil && len(labels) > 0 {
+		row.Classes = string(mustJSON(normalizeMembers(labels, false)))
+	}
+
 	if _, err := s.models.UpdateById(ctx, modelTable, row); err != nil {
 		return nil, err
 	}

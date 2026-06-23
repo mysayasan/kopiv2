@@ -13,7 +13,10 @@ Defines the app module contract used by the shared runtime host.
   - app-specific route registration (`RegisterAppRoutes`)
 - `Dependencies`
   - shared runtime dependencies passed into app modules
-  - includes shared runtime primitives such as database, cache, auth, RBAC, app registry, logger, and scheduler
+  - includes shared runtime primitives such as database, cache, auth, RBAC, app registry, logger, scheduler, and `Restarter`
+- `Restarter`
+  - one-method primitive (`Restart(reason string)`) that gracefully restarts the process: it triggers the host's normal shutdown sequence and then relaunches a fresh instance from the current on-disk executable
+  - general-purpose — used by the `mymatasan` factory reset and intended for self-update (swap the binary, then call `Restart`); the first call wins, later calls are no-ops
 - `SharedAPIConfig`
   - controls which shared route groups the host mounts for a selected app
 - `SharedAPIConfigurator`

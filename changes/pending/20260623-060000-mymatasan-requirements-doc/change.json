@@ -1,0 +1,5 @@
+{
+  "type": "docs",
+  "scope": "mymatasan,docs",
+  "summary": "Added docs/REQUIREMENTS.md — minimal / optimal / maximum system requirements to run MyMataSan, tied to the actual workloads: platform & OS (Windows/Linux/macOS, x86-64/ARM64, Raspberry Pi to GPU server), software dependencies (ffmpeg conditional, SQLite/Postgres/MariaDB, in-memory/Redis cache, Python 3.9-3.13 + ultralytics for YOLO, NVIDIA+CUDA build of PyTorch for scale/training), three hardware tiers with rough camera counts grounded in the capacity estimator's model, per-function requirements (live view/MJPEG, audio transcode, recording modes, AI/motion, training, encryption-at-rest, notifications, secure wipe), network/camera needs, and a recordings storage-sizing formula. Points readers at the in-app Capacity estimator/calibration as the authoritative per-host sizing."
+}

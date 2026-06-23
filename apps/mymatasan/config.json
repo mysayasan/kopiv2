@@ -1,8 +1,18 @@
 {
   "jwt": {
-    "secret": "standalone-change-me"
+    "secret": "-LTiwB7MO8H_zStaebzs3ZC1rHoDnJnuUWM1w3izKok"
+  },
+  "loginSecurity": {
+    "enabled": true,
+    "maxAttempts": 5,
+    "windowSeconds": 300,
+    "lockoutSeconds": 60,
+    "lockoutMaxSeconds": 900,
+    "failedDelayMs": 500,
+    "notifyOnLockout": true
   },
   "decoder": {
+    "browseRoots": [],
     "mjpeg": {
       "ffmpegPath": "D:\\github\\mysayasan\\kopiv2\\.tools\\ffmpeg\\ffmpeg-8.1.1-essentials_build\\bin\\ffmpeg.exe",
       "quality": 7,
@@ -111,7 +121,7 @@
     "authOnly": {
       "enabled": true,
       "requests": 120,
-      "windowSeconds": 60
+      "windowSeconds": 20
     },
     "public": {
       "enabled": true,
@@ -178,7 +188,7 @@
     "autoCreateSchema": true,
     "autoMigrate": true,
     "autoSeed": true,
-    "allowReset": false,
+    "allowReset": true,
     "setupPath": "/setup",
     "seedStatements": []
   },

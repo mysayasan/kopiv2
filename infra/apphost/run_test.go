@@ -1,6 +1,9 @@
 package apphost
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mysayasan/kopiv2/infra/config"
@@ -142,7 +145,57 @@ func TestApplySensitiveConfigRequiresOAuthSecretsWhenProviderConfigured(t *testi
 	}
 	cfg.Jwt.Secret = "unit-test-secret"
 
-	if err := applySensitiveConfig(cfg); err == nil {
+	if err := applySensitiveConfig(cfg, ""); err == nil {
 		t.Fatalf("expected configured oauth provider to require oauth secret")
+	}
+}
+
+func TestApplySensitiveConfigReplacesWeakJWTSecret(t *testing.T) {
+	t.Setenv("JWT_SECRET", "")
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	const original = "{\n  \"jwt\": {\n    \"secret\": \"standalone-change-me\"\n  },\n  \"server\": {}\n}\n"
+	if err := os.WriteFile(configPath, []byte(original), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg := &config.AppConfigModel{}
+	cfg.Jwt.Secret = "standalone-change-me"
+
+	if err := applySensitiveConfig(cfg, configPath); err != nil {
+		t.Fatalf("applySensitiveConfig: %v", err)
+	}
+	if isWeakJWTSecret(cfg.Jwt.Secret) {
+		t.Fatalf("secret still weak after hardening: %q", cfg.Jwt.Secret)
+	}
+
+	saved, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if strings.Contains(string(saved), "standalone-change-me") {
+		t.Fatal("placeholder secret still present in config file")
+	}
+	if !strings.Contains(string(saved), cfg.Jwt.Secret) {
+		t.Fatal("generated secret was not persisted to config file")
+	}
+	// The surgical rewrite must leave the rest of the file intact.
+	if !strings.Contains(string(saved), "\"server\": {}") {
+		t.Fatal("surgical rewrite damaged the rest of the config file")
+	}
+}
+
+func TestApplySensitiveConfigKeepsEnvJWTSecret(t *testing.T) {
+	t.Setenv("JWT_SECRET", "an-explicitly-strong-env-secret")
+
+	cfg := &config.AppConfigModel{}
+	cfg.Jwt.Secret = "standalone-change-me"
+
+	if err := applySensitiveConfig(cfg, ""); err != nil {
+		t.Fatalf("applySensitiveConfig: %v", err)
+	}
+	if cfg.Jwt.Secret != "an-explicitly-strong-env-secret" {
+		t.Fatalf("env secret not applied: %q", cfg.Jwt.Secret)
 	}
 }

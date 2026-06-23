@@ -53,11 +53,31 @@ type AppConfigModel struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	} `json:"localAuth"`
+	// LoginSecurity throttles failed sign-in attempts to blunt brute-force /
+	// credential-stuffing against the standalone local-user login. Failures are
+	// tracked per source IP; once MaxAttempts within WindowSeconds is hit, that IP
+	// is locked, with the lockout doubling on each repeat up to LockoutMaxSeconds
+	// (escalating backoff). FailedDelayMs adds a small constant delay to every
+	// failed attempt to slow online guessing.
+	LoginSecurity struct {
+		Enabled           bool `json:"enabled"`
+		MaxAttempts       int  `json:"maxAttempts"`
+		WindowSeconds     int  `json:"windowSeconds"`
+		LockoutSeconds    int  `json:"lockoutSeconds"`
+		LockoutMaxSeconds int  `json:"lockoutMaxSeconds"`
+		FailedDelayMs     int  `json:"failedDelayMs"`
+		NotifyOnLockout   bool `json:"notifyOnLockout"`
+	} `json:"loginSecurity"`
 	Camera struct {
 		FFmpegPath string `json:"ffmpegPath"`
 	} `json:"camera"`
 	Decoder struct {
-		MJPEG struct {
+		// BrowseRoots are extra directories the server-side file picker (used to
+		// choose the ffmpeg binary in Settings → Runtime) may browse, on top of the
+		// built-in defaults (app dir + bin/, user home, common install locations).
+		// Use this for site-specific install paths, e.g. "/data/ffmpeg".
+		BrowseRoots []string `json:"browseRoots"`
+		MJPEG       struct {
 			FFmpegPath string `json:"ffmpegPath"`
 			Quality    int    `json:"quality"`
 			Threads    int    `json:"threads"`
@@ -78,7 +98,15 @@ type AppConfigModel struct {
 	Vision       VisionConfigModel       `json:"vision"`
 	Health       HealthConfigModel       `json:"health"`
 	Notification NotificationConfigModel `json:"notification"`
-	FileStorage  struct {
+	Recording    RecordingConfigModel    `json:"recording"`
+	// Security configures encryption-at-rest. When enabled (default), recordings,
+	// snapshots, alert images, and training/uploaded files are encrypted on disk with
+	// a master key, so a factory reset can crypto-erase them by destroying the key.
+	Security struct {
+		EncryptAtRest *bool  `json:"encryptAtRest"`
+		KeyPath       string `json:"keyPath"`
+	} `json:"security"`
+	FileStorage struct {
 		Path    string `json:"path" validate:"required"`
 		Cleanup struct {
 			Enabled          bool `json:"enabled"`
@@ -214,6 +242,17 @@ type HealthConfigModel struct {
 	FailureThreshold int `json:"failureThreshold"`
 	// RecoveryThreshold is the consecutive successful probes before declaring online.
 	RecoveryThreshold int `json:"recoveryThreshold"`
+}
+
+// RecordingConfigModel holds global NVR recording options that aren't per-camera.
+type RecordingConfigModel struct {
+	// Shred securely overwrites recorded segments before deleting them, so footage
+	// can't be trivially recovered from disk. Enabled by default (see resolution in
+	// the app wiring); set Enabled to false for plain, faster deletes.
+	Shred struct {
+		Enabled *bool `json:"enabled"`
+		Passes  int   `json:"passes"`
+	} `json:"shred"`
 }
 
 type VisionConfigModel struct {

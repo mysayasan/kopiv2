@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "mymatasan",
+  "summary": "Settings gains a 'Version & Health' tab (new SystemStatusPanel) that surfaces the running software version and live service health by polling the existing public endpoints: GET /api/version (app + shared-core version, commit, build time), GET /api/health (API namespaces), GET /health (liveness), and GET /ready (readiness, including the advisory db/cache/machine/cameras fields the app merges in). Health pills show OK/Down/Ready states and the readiness payload's advisory keys are spread into their own pills (green for up/ok). The panel also has a 'Restart app' button that reuses the first-run wizard's restart-and-reload flow (POST /api/system/restart -> poll /health until the relaunched process answers -> reload), so any startup-only config change can be applied from one place. Read-only otherwise; no backend changes were needed.",
+  "compatibility": "Additive UI only. The four endpoints already existed; the tab just consumes them. The Restart button is shown only when the restart handler is wired."
+}

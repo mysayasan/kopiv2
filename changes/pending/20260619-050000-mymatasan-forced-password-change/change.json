@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "mymatasan",
+  "summary": "The default admin can no longer keep the shipped Admin123 password. New LocalUser.MustChangePassword flag, seeded true for the default admin; EnsureDefaultAdmin also flags an EXISTING admin still on the default at startup, and reads an optional LOCAL_ADMIN_PASSWORD env var to provision a strong password up front (skipping the forced change). New self-service endpoints (apis/local_auth_api.go): GET /api/auth/session (returns the identity + mustChangePassword + isAdmin) and POST /api/auth/change-password (verifies current password, enforces >=8 chars and != current/default, clears the flag, rotates the session cookie). The auth middleware gates a flagged user to those two routes only, returning 403 password_change_required (machine-readable JSON) for everything else. The SPA renders a forced ChangePasswordPage on first login and updates the stored credential synchronously so the next request uses the new password. ResetPassword also clears the flag.",
+  "compatibility": "New DB column must_change_password is added via autoMigrate (runs before the admin seed). Fresh installs and existing installs still on Admin123 are forced through one password change; installs with a custom admin password are unaffected. Set LOCAL_ADMIN_PASSWORD before first run to skip the forced change entirely."
+}

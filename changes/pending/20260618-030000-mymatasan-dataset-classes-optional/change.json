@@ -1,0 +1,6 @@
+{
+  "type": "changed",
+  "scope": "mymatasan",
+  "summary": "Training → Datasets: the 'Classes' field on dataset creation is now clearly marked optional with a hint explaining classes are collected automatically from the labels you assign to boxes (and only boxed classes are used for training). No behavior change — the backend already required only a name, and annotation already unions assigned labels into the dataset; this just stops the field from looking mandatory and seeding upfront-typing confusion. The field remains available to pre-seed the annotator's label dropdown.",
+  "compatibility": "Frontend-only label/placeholder/hint change. Dataset creation already accepted an empty class list."
+}

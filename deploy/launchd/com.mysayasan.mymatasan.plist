@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- launchd daemon for MyMataSan (macOS).
+
+  Install:
+    sudo cp deploy/launchd/com.mysayasan.mymatasan.plist /Library/LaunchDaemons/
+    # edit the paths below to match your install
+    sudo launchctl load -w /Library/LaunchDaemons/com.mysayasan.mymatasan.plist
+    # logs: /usr/local/mymatasan/logs/stdout.log / stderr.log
+
+  KeepAlive + KOPIV2_SUPERVISED=1 means an in-app factory reset / self-update exits
+  cleanly and launchd relaunches it.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mysayasan.mymatasan</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/mymatasan/mymatasan</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/usr/local/mymatasan</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>KOPIV2_SUPERVISED</key>
+        <string>1</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/usr/local/mymatasan/logs/stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/usr/local/mymatasan/logs/stderr.log</string>
+</dict>
+</plist>

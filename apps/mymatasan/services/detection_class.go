@@ -100,6 +100,36 @@ var builtinSeed = []struct {
 	{"smoke", "Smoke", "cloud", ClassKindHazard},
 }
 
+// labelSynonyms maps a built-in canonical class to the raw label strings a
+// third-party model might emit for the same concept. When an imported/trained
+// model's label matches a synonym, UpsertTrained folds it into that canonical
+// class's members (e.g. a fire model emitting "flame" lights up the Fire hazard)
+// instead of registering it as a disconnected standalone class. Canonical names
+// must match a builtinSeed entry. Add rows here as new hazard models surface
+// new label spellings. Matching is exact on the normalized (lowercased) label.
+var labelSynonyms = map[string][]string{
+	"fire":  {"fire", "flame", "flames", "wildfire", "bonfire", "burning"},
+	"smoke": {"smoke", "smoking", "smog", "white smoke", "black smoke", "dark smoke", "grey smoke", "gray smoke"},
+}
+
+// canonicalLabelIndex is the reverse of labelSynonyms (synonym label → canonical
+// class name), built once at startup. Keys are normalized to match the labels
+// the worker emits (lowercased, spaces preserved).
+var canonicalLabelIndex = buildCanonicalLabelIndex()
+
+func buildCanonicalLabelIndex() map[string]string {
+	idx := map[string]string{}
+	for canon, syns := range labelSynonyms {
+		for _, syn := range syns {
+			key := strings.ToLower(strings.TrimSpace(syn))
+			if key != "" {
+				idx[key] = canon
+			}
+		}
+	}
+	return idx
+}
+
 func (s *detectionClassService) List(ctx context.Context) ([]*DetectionClassView, error) {
 	rows, _, err := s.repo.Get(ctx, "", 1000, 0, nil, []sqldataenums.Sorter{{FieldName: "Name", Sort: sqldataenums.ASC}})
 	if err != nil {
@@ -364,21 +394,42 @@ func (s *detectionClassService) UpsertTrained(ctx context.Context, labels []stri
 	if err != nil {
 		return err
 	}
-	existing := map[string]bool{}
+	byName := map[string]*entities.DetectionClass{}
+	// memberOf tracks every raw label already mapped under some class, so a label
+	// that's already a member (or a known synonym we previously folded in) isn't
+	// duplicated or re-registered.
+	memberOf := map[string]bool{}
 	for _, row := range rows {
-		existing[row.Name] = true
+		byName[row.Name] = row
+		for _, m := range decodeMembers(row.Members) {
+			memberOf[m] = true
+		}
 	}
 	now := s.now().UTC().Unix()
+	dirty := map[string]*entities.DetectionClass{} // canonical classes we appended to
 	for _, label := range normalizeMembers(labels, false) {
-		if existing[label] {
-			continue
+		if memberOf[label] || byName[label] != nil {
+			continue // already mapped (as a member, or as its own class)
 		}
-		membersJSON, _ := json.Marshal([]string{label})
+		// Fold a known synonym into its canonical built-in class when that class
+		// exists — e.g. an imported fire model emitting "flame" extends Fire's
+		// members rather than creating a separate "Flame" category.
+		if canon := canonicalLabelIndex[label]; canon != "" {
+			if target := byName[canon]; target != nil {
+				target.Members = mustMembersJSON(append(decodeMembers(target.Members), label))
+				target.UpdatedBy = userId
+				target.UpdatedAt = now
+				dirty[target.Name] = target
+				memberOf[label] = true
+				continue
+			}
+		}
+		// No canonical match: register the label as its own trained class.
 		row := entities.DetectionClass{
 			Name:        label,
 			DisplayName: titleizeSlug(label),
 			Kind:        ClassKindObject,
-			Members:     string(membersJSON),
+			Members:     mustMembersJSON([]string{label}),
 			Source:      ClassSourceTrained,
 			IsEnabled:   true,
 			CreatedBy:   userId,
@@ -389,9 +440,22 @@ func (s *detectionClassService) UpsertTrained(ctx context.Context, labels []stri
 		if _, err := s.repo.Create(ctx, "", row); err != nil {
 			return err
 		}
-		existing[label] = true
+		byName[label] = &row
+		memberOf[label] = true
+	}
+	for _, row := range dirty {
+		if _, err := s.repo.UpdateById(ctx, "", *row); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// mustMembersJSON marshals a normalized member list to the JSON string stored in
+// DetectionClass.Members.
+func mustMembersJSON(members []string) string {
+	b, _ := json.Marshal(normalizeMembers(members, false))
+	return string(b)
 }
 
 func (s *detectionClassService) ResolveLabels(ctx context.Context, slugs []string) []string {

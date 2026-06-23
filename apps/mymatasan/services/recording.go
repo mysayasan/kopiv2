@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"time"
 
@@ -16,13 +15,17 @@ import (
 type recordingService struct {
 	segments dbsql.IGenericRepo[entities.RecordingSegment]
 	configs  dbsql.IGenericRepo[entities.RecordingConfig]
+	// shredPasses > 0 securely overwrites segment files before deleting them; 0 =
+	// plain delete. Applies to manual deletes and the retention purge.
+	shredPasses int
 }
 
 func NewRecordingService(
 	segmentRepo dbsql.IGenericRepo[entities.RecordingSegment],
 	configRepo dbsql.IGenericRepo[entities.RecordingConfig],
+	shredPasses int,
 ) IRecordingService {
-	return &recordingService{segments: segmentRepo, configs: configRepo}
+	return &recordingService{segments: segmentRepo, configs: configRepo, shredPasses: shredPasses}
 }
 
 func (s *recordingService) GetSegments(ctx context.Context, limit, offset uint64, cameraId, alertId, startedAfter, startedBefore int64) ([]*entities.RecordingSegment, uint64, error) {
@@ -80,7 +83,7 @@ func (s *recordingService) DeleteSegment(ctx context.Context, id uint64) error {
 		return err
 	}
 	if p := strings.TrimSpace(seg.FilePath); p != "" {
-		_ = os.Remove(p)
+		_ = recording.SecureRemove(p, s.shredPasses)
 	}
 	return nil
 }
@@ -169,7 +172,7 @@ func (s *recordingService) PurgeOldSegments(ctx context.Context) (int, error) {
 		}
 		for _, seg := range segs {
 			if p := strings.TrimSpace(seg.FilePath); p != "" {
-				_ = os.Remove(p)
+				_ = recording.SecureRemove(p, s.shredPasses)
 			}
 			if _, err := s.segments.DeleteById(ctx, "", uint64(seg.Id)); err == nil {
 				deleted++

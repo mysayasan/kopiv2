@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "mymatasan",
+  "summary": "Live-view WebRTC now has sound for cameras whose audio is not G.711. Previously the bridge only forwarded G.711 (PCMU/PCMA) audio as RTP pass-through, so a camera sending AAC (common on Dahua/Lechange/Imou) had no live audio at all (recording was unaffected because the NVR ffmpeg transcodes any codec to AAC). The infra/stream bridge now detects non-G.711 audio and runs a dedicated ffmpeg leg that pulls only the camera audio, transcodes it to Opus, and emits RTP to a loopback socket that is broadcast to subscribers as an Opus WebRTC track (new CodecOpus + Options.FFmpegPath, threaded from the configured decoder ffmpeg path). G.711 cameras keep the zero-overhead pass-through.",
+  "compatibility": "Backward compatible. The transcode path activates only for non-G.711 audio cameras (which had no live audio before), so there is zero regression risk for G.711 / no-audio cameras, and a transcode failure only costs live audio for that one camera (never the video path). Requires an ffmpeg executable (the configured decoder path); empty path disables transcoding (non-G.711 cameras get no live audio, as before). Adds a second RTSP connection per active non-G.711 camera (video via the bridge, audio via ffmpeg)."
+}

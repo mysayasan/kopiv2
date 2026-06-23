@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
 	"strings"
 	"time"
 
@@ -113,18 +114,29 @@ func objectLabelFromMetadata(metadata string) string {
 }
 
 // INotificationPublisher is the slice of the notification service the app uses
-// to emit events. The domain *notification.Service satisfies it.
+// to emit events. The domain *notification.Service satisfies it. Publish stores +
+// streams + fans to destinations (generic path); DeliverTo sends a tailored
+// payload to one destination only (per-destination vision-alert path).
 type INotificationPublisher interface {
 	Publish(ctx context.Context, n notification.Notification) notification.Notification
+	DeliverTo(ctx context.Context, destinationId string, n notification.Notification)
 }
 
 // VisionAlertOptions carries the extra per-alert context the notification needs
-// beyond the persisted AlertEvent: the triggering rule's name, the snapshot image
-// bytes, and the field-inclusion config. Fields is nil-safe (nil = include all).
+// beyond the persisted AlertEvent: the triggering rule's name, the RAW snapshot
+// frame (each destination renders its own annotated/cropped copy via
+// BuildAlertSnapshot using its own field config), and the delivery destinations.
+// Fields is the legacy/global default used for the stored canonical notification
+// (nil = include all). Destinations drives per-destination tailored delivery.
 type VisionAlertOptions struct {
 	RuleName string
-	Snapshot []byte
+	RawImage []byte
 	Fields   *AlertNotificationSettings
+	// Destinations is the full set of configured delivery destinations.
+	Destinations []NotificationDestination
+	// RuleDestinations restricts delivery to these destination ids (per-rule
+	// routing). Empty/nil means the rule routes to ALL destinations.
+	RuleDestinations []string
 }
 
 // NotifyVisionAlert publishes a notification for a persisted AI detection alert.
@@ -140,19 +152,52 @@ func NotifyVisionAlert(ctx context.Context, publisher INotificationPublisher, al
 	if isDiagnosticMetadata(alert.Metadata) {
 		return
 	}
-	publisher.Publish(ctx, buildVisionAlertNotification(alert, cameraName, opts))
+	ruleName := strings.TrimSpace(opts.RuleName)
+
+	// One canonical notification is persisted + streamed (in-app feed) per alert,
+	// rendered with all fields so the feed stays complete. Internal=true keeps it
+	// out of outbound delivery — each destination receives its own tailored copy.
+	canonical := renderVisionAlert(alert, cameraName, ruleName, defaultAlertNotificationSettings(), nil, nil, SnapshotModeInline)
+	canonical.Internal = true
+	publisher.Publish(ctx, canonical)
+
+	// Deliver a separately rendered payload to each enabled destination that
+	// subscribes to vision alerts: its own field toggles, its own snapshot
+	// rendering, and its custom fields merged on top (custom wins).
+	for _, d := range opts.Destinations {
+		if !d.Enabled || !d.AllowsCategory(notification.CategoryVisionAlert) {
+			continue
+		}
+		// Per-rule routing: when the rule names destinations, deliver only to those.
+		if len(opts.RuleDestinations) > 0 && !containsString(opts.RuleDestinations, d.Id) {
+			continue
+		}
+		n := renderVisionAlert(alert, cameraName, ruleName, d.Fields, opts.RawImage, d.CustomFields, d.SnapshotMode)
+		publisher.DeliverTo(ctx, d.Id, n)
+	}
 }
 
-// buildVisionAlertNotification maps an AlertEvent into a unified notification.
-// The configured fields (opts.Fields, defaulting to all-inclusive) decide which
-// detection details land in the Data map and whether the snapshot image is
-// attached for media-capable channels.
-func buildVisionAlertNotification(alert *entities.AlertEvent, cameraName string, opts VisionAlertOptions) notification.Notification {
-	fields := opts.Fields
+// containsString reports whether v is in list.
+func containsString(list []string, v string) bool {
+	for _, item := range list {
+		if item == v {
+			return true
+		}
+	}
+	return false
+}
+
+// renderVisionAlert maps an AlertEvent into a notification for one recipient. The
+// fields config (nil = all-inclusive) decides which detection details land in the
+// Data map and whether a snapshot is attached; rawImage is the raw frame that
+// BuildAlertSnapshot annotates/strips per the same fields; customFields are merged
+// last so a custom key overrides the built-in field of the same name (custom wins).
+// snapshotMode "link" suppresses the image bytes (the payload still carries the
+// snapshot link + path) so the recipient fetches the image itself.
+func renderVisionAlert(alert *entities.AlertEvent, cameraName, ruleName string, fields *AlertNotificationSettings, rawImage []byte, customFields []NotificationCustomField, snapshotMode string) notification.Notification {
 	if fields == nil {
 		fields = defaultAlertNotificationSettings()
 	}
-	ruleName := strings.TrimSpace(opts.RuleName)
 
 	label := alert.Label
 	if label == "" {
@@ -205,6 +250,16 @@ func buildVisionAlertNotification(alert *entities.AlertEvent, cameraName string,
 		data["snapshotPath"] = alert.SnapshotPath
 	}
 
+	// Custom fields are merged last and OVERRIDE any built-in field of the same
+	// key (custom wins). The UI disables the corresponding AI-field toggle so the
+	// user can see the stock field has been bypassed. Values may use {{token}}
+	// placeholders expanded from this alert's context. The expanded lines are also
+	// appended to the body so they show in text-only channels (e.g. Telegram only
+	// renders Title+Body, not the structured Data map a webhook receives).
+	if lines := appendCustomFields(data, customFields, alertTemplateContext(alert, ruleName, camera)); len(lines) > 0 {
+		body = body + "\n" + strings.Join(lines, "\n")
+	}
+
 	n := notification.Notification{
 		Category: notification.CategoryVisionAlert,
 		Severity: notification.Critical,
@@ -217,14 +272,72 @@ func buildVisionAlertNotification(alert *entities.AlertEvent, cameraName string,
 		Link:     fmt.Sprintf("/api/vision/alerts/%d/snapshot", alert.Id),
 		Data:     data,
 	}
-	if fields.IncludeSnapshot && len(opts.Snapshot) > 0 {
-		n.Attachment = &notification.Attachment{
-			Filename:    fmt.Sprintf("alert-%d.jpg", alert.Id),
-			ContentType: "image/jpeg",
-			Data:        opts.Snapshot,
+	// Render the snapshot for this recipient from the raw frame using its own
+	// field config (annotated, raw, or omitted), and attach the bytes — unless the
+	// destination wants link-only delivery, where the payload's link + snapshotPath
+	// reference the image instead (no bytes embedded).
+	if !strings.EqualFold(snapshotMode, SnapshotModeLink) {
+		if snap := BuildAlertSnapshot(rawImage, alert.BoundingBox, alert.Metadata, alert.DetectionType, fields); len(snap) > 0 {
+			n.Attachment = &notification.Attachment{
+				Filename:    fmt.Sprintf("alert-%d.jpg", alert.Id),
+				ContentType: "image/jpeg",
+				Data:        snap,
+			}
 		}
 	}
 	return n
+}
+
+// appendCustomFields writes each static custom field into the payload data,
+// overwriting any existing (built-in) key of the same name so custom fields take
+// priority. Each value's {{token}} placeholders are expanded from ctx. It returns
+// the expanded "key: value" lines (in order) so callers can also surface them in
+// text-only channels. Empty keys are ignored.
+func appendCustomFields(data map[string]any, customFields []NotificationCustomField, ctx map[string]string) []string {
+	var lines []string
+	for _, f := range customFields {
+		key := strings.TrimSpace(f.Key)
+		if key == "" {
+			continue
+		}
+		val := expandTemplate(f.Value, ctx)
+		data[key] = val
+		lines = append(lines, key+": "+val)
+	}
+	return lines
+}
+
+// templateToken matches {{ token }} placeholders in a custom field value.
+var templateToken = regexp.MustCompile(`\{\{\s*([\w.]+)\s*\}\}`)
+
+// expandTemplate replaces {{token}} placeholders with values from ctx. Unknown
+// tokens expand to empty so a stray placeholder never leaks into the payload.
+func expandTemplate(value string, ctx map[string]string) string {
+	if !strings.Contains(value, "{{") {
+		return value
+	}
+	return templateToken.ReplaceAllStringFunc(value, func(match string) string {
+		sub := templateToken.FindStringSubmatch(match)
+		if len(sub) < 2 {
+			return ""
+		}
+		return ctx[sub[1]]
+	})
+}
+
+// alertTemplateContext builds the token values available to custom-field
+// templates for a vision alert (e.g. {{ruleName}}, {{cameraName}}).
+func alertTemplateContext(alert *entities.AlertEvent, ruleName, cameraName string) map[string]string {
+	return map[string]string{
+		"ruleName":      ruleName,
+		"cameraName":    cameraName,
+		"label":         alert.Label,
+		"detectionType": alert.DetectionType,
+		"confidence":    fmt.Sprintf("%.0f%%", alert.Confidence*100),
+		"alertId":       fmt.Sprintf("%d", alert.Id),
+		"ruleId":        fmt.Sprintf("%d", alert.RuleId),
+		"cameraId":      fmt.Sprintf("%d", alert.CameraId),
+	}
 }
 
 // NotifyCameraOffline publishes a critical notification when the health monitor
@@ -292,6 +405,49 @@ func buildCameraHealthNotification(cam *CameraDetail, cameraName string, recover
 			"offlineFor": offlineFor,
 		},
 	}
+}
+
+// AuthLockoutInfo describes a triggered failed-login lockout for notification.
+type AuthLockoutInfo struct {
+	// Username is the account that was being targeted ("" if none supplied).
+	Username string
+	// IP is the source address that tripped the lockout.
+	IP string
+	// LockSeconds is how long the lockout lasts.
+	LockSeconds int
+}
+
+// NotifyAuthLockout publishes a critical system event when repeated failed
+// sign-ins trip a lockout, so the operator (and any subscribed webhook/Telegram
+// destination) is warned of a possible break-in attempt. A nil publisher is a
+// no-op.
+func NotifyAuthLockout(ctx context.Context, publisher INotificationPublisher, info AuthLockoutInfo) {
+	if publisher == nil {
+		return
+	}
+	who := strings.TrimSpace(info.Username)
+	if who == "" {
+		who = "an unknown account"
+	} else {
+		who = fmt.Sprintf("%q", who)
+	}
+	source := strings.TrimSpace(info.IP)
+	if source == "" {
+		source = "an unknown address"
+	}
+	body := fmt.Sprintf("Repeated failed sign-ins for %s from %s — login locked for %s.", who, source, formatHealthDuration(int64(info.LockSeconds)))
+	publisher.Publish(ctx, notification.Notification{
+		Category: notification.CategorySystem,
+		Severity: notification.Critical,
+		Title:    "Failed login lockout",
+		Body:     body,
+		Source:   "local-auth",
+		Data: map[string]any{
+			"username":    strings.TrimSpace(info.Username),
+			"ip":          source,
+			"lockSeconds": info.LockSeconds,
+		},
+	})
 }
 
 // formatHealthDuration renders a downtime in seconds as a compact human string.

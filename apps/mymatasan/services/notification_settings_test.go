@@ -66,14 +66,29 @@ func TestNormalizeNotificationSettingsDefaults(t *testing.T) {
 }
 
 func TestNotificationChannelConfigMapping(t *testing.T) {
-	cfg := notificationChannelConfig(NotificationSettings{
+	// Normalize first so the legacy singletons migrate into the destination list,
+	// which is what notificationChannelConfig now maps to domain destinations.
+	s := normalizeNotificationSettings(NotificationSettings{
 		Webhook:  NotificationWebhookSettings{Enabled: true, URL: "https://x", MinSeverity: "critical"},
 		Telegram: NotificationTelegramSettings{Enabled: true, BotToken: "t", ChatId: "c", MinSeverity: "info"},
 	})
-	if !cfg.Webhook.Enabled || cfg.Webhook.URL != "https://x" || cfg.Webhook.MinSeverity != notification.Critical {
-		t.Errorf("webhook mapping wrong: %+v", cfg.Webhook)
+	cfg := notificationChannelConfig(s)
+	if len(cfg.Destinations) != 2 {
+		t.Fatalf("expected 2 destinations, got %d: %+v", len(cfg.Destinations), cfg.Destinations)
 	}
-	if !cfg.Telegram.Enabled || cfg.Telegram.ChatID != "c" || cfg.Telegram.MinSeverity != notification.Info {
-		t.Errorf("telegram mapping wrong: %+v", cfg.Telegram)
+	var web, tel *notification.DestinationConfig
+	for i := range cfg.Destinations {
+		switch cfg.Destinations[i].Type {
+		case DestinationTypeWebhook:
+			web = &cfg.Destinations[i]
+		case DestinationTypeTelegram:
+			tel = &cfg.Destinations[i]
+		}
+	}
+	if web == nil || web.URL != "https://x" || web.MinSeverity != notification.Critical {
+		t.Errorf("webhook destination wrong: %+v", web)
+	}
+	if tel == nil || tel.ChatID != "c" || tel.MinSeverity != notification.Info {
+		t.Errorf("telegram destination wrong: %+v", tel)
 	}
 }

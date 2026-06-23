@@ -11,6 +11,8 @@ Defines the shared contracts and configuration types for the reusable recording 
   - `RTSPURI` — primary RTSP stream used for recording
   - `FallbackRTSPURI` — alternative RTSP stream tried after 2 consecutive quick failures of the primary; empty disables fallback switching
   - `RTSPTransport`, `PreRollSec`, `PostRollSec`, `SegmentMinutes`, `RetentionDays`
+  - `SiphonFPS`, `SiphonWidth` — optional decoded-frame tee for the AI detector
+  - `ShredPasses` — secure-overwrite pass count applied to segment files on retention purge (`>0` shreds; `0` = plain delete)
 - `FrameEntry` — one captured JPEG frame with its Unix-second capture timestamp; the atomic unit held in the ring buffer.
 - `SegmentResult` — produced by a recorder after a clip is written to disk; carries camera ID, alert ID, file path, start/end timestamps, and file size.
 - `SegmentSink` — interface implemented by apps to persist segment metadata; decouples the infra recorder from any app-specific storage layer.

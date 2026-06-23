@@ -1,0 +1,6 @@
+{
+  "type": "changed",
+  "scope": "mymatasan",
+  "summary": "Live Views grid size is now a per-page size, not a hard cap. Previously the layout capacity limited how many cameras could be tiled ('view is full'), and switching to a smaller grid dropped the excess cameras. Now all selected cameras are kept and shown a page at a time, with a pager in the toolbar (and Left/Right arrow keys, which also work in fullscreen where the toolbar is hidden); changing the grid re-paginates instead of removing cameras. The layout set was changed to landscape-oriented grids (1x1, 2x2, 3x2, 3x3, 4x3, 4x4) that fit widescreen monitors and 16:9 video, replacing the awkward portrait 2x4/3x4. The setup wizard auto-sizes the grid to the camera count on finish. Minor UI polish: the live-tile speaker/mute button is now a proper circle, and the detection-frame preview double-buffers (no blink), refreshes faster, and freezes while you drag a zone/line point.",
+  "compatibility": "Backward compatible. Saved Live View cookies that referenced the removed 2x4/3x4 layouts fall back to the 2x2 default; all previously selected cameras are retained (no longer truncated to the grid)."
+}

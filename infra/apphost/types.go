@@ -17,6 +17,16 @@ import (
 // ShutdownFunc is called during graceful shutdown when app-specific workers exist.
 type ShutdownFunc func(ctx context.Context) error
 
+// Restarter gracefully restarts the running process: it triggers the host's normal
+// shutdown sequence (stopping app workers and HTTP servers) and then relaunches a
+// fresh instance from the current on-disk executable. It is a general primitive —
+// used by the factory reset today and intended for self-update later (where the
+// on-disk binary is swapped before calling Restart). Calling it more than once is a
+// no-op; the first reason wins.
+type Restarter interface {
+	Restart(reason string)
+}
+
 // Dependencies are shared runtime components available to each app module.
 type Dependencies struct {
 	Config      *config.AppConfigModel
@@ -28,6 +38,8 @@ type Dependencies struct {
 	AppRegistry sharedservices.IAppRegistryService
 	Logger      applog.Logger
 	Scheduler   *scheduler.Scheduler
+	// Restarter gracefully restarts the process (factory reset, future self-update).
+	Restarter Restarter
 }
 
 // SharedAPIConfig controls which shared route groups the host mounts for an app.

@@ -11,23 +11,31 @@ import (
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
+	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/recording"
 )
 
 type visionApi struct {
-	serv     services.IVisionService
-	classes  services.IDetectionClassService
-	recorder *recording.Manager
-	notifier services.INotificationPublisher
-	camera   services.ICameraService
-	settings services.IRuntimeSettingsService
+	serv      services.IVisionService
+	classes   services.IDetectionClassService
+	recorder  *recording.Manager
+	notifier  services.INotificationService
+	camera    services.ICameraService
+	settings  services.IRuntimeSettingsService
+	notifDest services.INotificationDestinationsProvider
+	source    *services.DetectionSource
+	cipher    *atrest.Cipher
 }
 
 // NewVisionApi registers AI detection rule, alert, and class-registry routes.
-func NewVisionApi(router *mux.Router, serv services.IVisionService, classes services.IDetectionClassService, recorder *recording.Manager, notifier services.INotificationPublisher, camera services.ICameraService, settings services.IRuntimeSettingsService) {
-	handler := &visionApi{serv: serv, classes: classes, recorder: recorder, notifier: notifier, camera: camera, settings: settings}
+func NewVisionApi(router *mux.Router, serv services.IVisionService, classes services.IDetectionClassService, recorder *recording.Manager, notifier services.INotificationService, camera services.ICameraService, settings services.IRuntimeSettingsService, notifDest services.INotificationDestinationsProvider, cipher *atrest.Cipher) {
+	handler := &visionApi{serv: serv, classes: classes, recorder: recorder, notifier: notifier, camera: camera, settings: settings, notifDest: notifDest, cipher: cipher,
+		source: services.NewDetectionSource(camera, recorder, settings, nil)}
 	group := router.PathPrefix("/vision").Subrouter()
 
+	// The exact frame the detector samples for a camera (honors capture mode), so
+	// the rule-editor draws zones/lines on the same pixels that get detected.
+	group.HandleFunc("/cameras/{id}/frame", handler.detectionFrame).Methods("GET")
 	group.HandleFunc("/rules", handler.listRules).Methods("GET")
 	group.HandleFunc("/rules", handler.saveRule).Methods("POST")
 	group.HandleFunc("/rules/{id}", handler.deleteRule).Methods("DELETE")
@@ -39,6 +47,29 @@ func NewVisionApi(router *mux.Router, serv services.IVisionService, classes serv
 	group.HandleFunc("/classes", handler.saveClass).Methods("POST")
 	group.HandleFunc("/classes/{id}", handler.deleteClass).Methods("DELETE")
 	group.HandleFunc("/labels", handler.listLabelCatalog).Methods("GET")
+}
+
+// detectionFrame returns, as a JPEG, the exact frame the AI detector would sample
+// for the camera under the active capture mode (siphon / standalone / auto). The
+// rule editor draws zones and lines on this so the geometry always matches what
+// the detector actually sees.
+func (a *visionApi) detectionFrame(w http.ResponseWriter, r *http.Request) {
+	id, ok := readID(w, r)
+	if !ok {
+		return
+	}
+	if a.source == nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, "detection source unavailable")
+		return
+	}
+	frame, err := a.source.Capture(r.Context(), int64(id))
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(frame.Data)
 }
 
 // listLabelCatalog returns every raw label the detector can emit, tagged with its
@@ -200,56 +231,65 @@ func (a *visionApi) createAlert(w http.ResponseWriter, r *http.Request) {
 }
 
 // alertOptions builds the notification options for an alert raised through the
-// API: it applies the configured field inclusion, resolves the rule name, and
-// loads the snapshot image from disk when the snapshot field is enabled. This
-// gives the manual create-alert path parity with the background monitor.
+// API: it resolves the rule name, loads the raw snapshot frame from disk (each
+// destination renders its own copy), and supplies the delivery destinations.
+// This gives the manual create-alert path parity with the background monitor.
 func (a *visionApi) alertOptions(ctx context.Context, alert *entities.AlertEvent) services.VisionAlertOptions {
 	opts := services.VisionAlertOptions{}
 	if alert == nil {
 		return opts
 	}
-	fields := a.alertNotificationFields(ctx)
-	opts.Fields = fields
-	opts.RuleName = a.ruleName(ctx, alert.RuleId)
-	includeSnapshot := fields == nil || fields.IncludeSnapshot
-	if includeSnapshot && alert.SnapshotPath != "" {
-		if data, err := os.ReadFile(alert.SnapshotPath); err == nil {
-			// Draw the detection box onto the image (when configured) so the
-			// notification matches the AI Log detail overlay.
-			opts.Snapshot = services.BuildAlertSnapshot(data, alert.BoundingBox, alert.Metadata, alert.DetectionType, fields)
+	name, ruleDests := a.ruleInfo(ctx, alert.RuleId)
+	opts.RuleName = name
+	opts.RuleDestinations = ruleDests
+	if a.notifDest != nil {
+		opts.Destinations = a.notifDest.Destinations(ctx)
+	}
+	// Load the raw frame once; renderVisionAlert annotates/strips/omits it per
+	// each destination's own field config.
+	if alert.SnapshotPath != "" {
+		if data, err := a.readSnapshot(alert.SnapshotPath); err == nil {
+			opts.RawImage = data
 		}
 	}
 	return opts
 }
 
-// alertNotificationFields reads the runtime-editable field-inclusion config. A
-// nil return means "include everything" (matching NotifyVisionAlert's default).
-func (a *visionApi) alertNotificationFields(ctx context.Context) *services.AlertNotificationSettings {
-	if a.settings == nil {
-		return nil
-	}
-	settings, err := a.settings.Get(ctx)
-	if err != nil {
-		return nil
-	}
-	return settings.Vision.AlertNotification
-}
-
 // ruleName resolves a detection rule's name by id, or "" when unavailable.
 func (a *visionApi) ruleName(ctx context.Context, ruleID int64) string {
+	name, _ := a.ruleInfo(ctx, ruleID)
+	return name
+}
+
+// ruleInfo resolves a detection rule's name and its per-rule destination routing
+// (ruleConfig.destinations) by id. Returns ("", nil) when unavailable.
+func (a *visionApi) ruleInfo(ctx context.Context, ruleID int64) (string, []string) {
 	if a.serv == nil || ruleID <= 0 {
-		return ""
+		return "", nil
 	}
 	rules, _, err := a.serv.GetRules(ctx, 1000, 0)
 	if err != nil {
-		return ""
+		return "", nil
 	}
 	for _, rule := range rules {
 		if rule != nil && rule.Id == ruleID {
-			return rule.Name
+			return rule.Name, services.ParseRuleDestinations(rule.RuleConfig)
 		}
 	}
-	return ""
+	return "", nil
+}
+
+// readSnapshot reads a stored alert snapshot, decrypting it when encryption-at-rest is
+// enabled. Legacy plaintext snapshots (written before encryption) pass through unchanged.
+func (a *visionApi) readSnapshot(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if a.cipher != nil {
+		return a.cipher.DecryptBytes(data)
+	}
+	return data, nil
 }
 
 func (a *visionApi) getAlertSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -262,7 +302,7 @@ func (a *visionApi) getAlertSnapshot(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	data, err := os.ReadFile(alert.SnapshotPath)
+	data, err := a.readSnapshot(alert.SnapshotPath)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -294,10 +334,16 @@ func (a *visionApi) acknowledgeAlert(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	alert, err := a.serv.AcknowledgeAlert(r.Context(), id, localUserID(r))
+	userID := localUserID(r)
+	alert, err := a.serv.AcknowledgeAlert(r.Context(), id, userID)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
+	}
+	// Acknowledging the detection also dismisses its bell notification so the
+	// unified feed can't keep showing an event the operator has already handled.
+	if a.notifier != nil && alert != nil {
+		_, _ = a.notifier.MarkReadByRef(r.Context(), "alert_event", alert.Id, userID)
 	}
 	controllers.SendResult(w, alert, "succeed")
 }

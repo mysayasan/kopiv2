@@ -1,0 +1,6 @@
+{
+  "type": "changed",
+  "scope": "mymatasan",
+  "summary": "Replaced the main app's single floating status line with a top-right toast stack (new ToastStack/Toast in components/ui.js). Status messages now appear as stacking toasts that each self-dismiss after 3 seconds (the timer pauses on hover and a manual close button is provided), newest on top, capped at 5 so rapid sequences don't pile up indefinitely. This is wired without touching the ~80 existing setMessage(...) call sites: a small bridge effect in App.js turns each new message into a toast (unique incrementing id, so identical consecutive messages still fire) and clears the message string immediately. Login and first-run setup screens keep their existing inline messages.",
+  "compatibility": "UI behaviour change only. Messages that used to linger ~5s in a centered banner now toast top-right for 3s and stack. All success/error/progress notes still flow through setMessage."
+}

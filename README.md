@@ -220,7 +220,7 @@ Bootstrap behavior is controlled by `bootstrap` in config:
 - `autoCreateSchema`: create missing tables and columns
 - `autoMigrate`: apply safe additive migrations
 - `autoSeed`: run seed providers if registered
-- `allowReset`: reserved for dev-only destructive operations
+- `allowReset`: enables destructive reset (default false). In `mymatasan` it gates the **Secure Wipe & Reset** factory reset (`bootstrap.Reset` + `POST /api/system/reset`), which crypto-erases the at-rest key, erases all media, drops/rebuilds the database, and TRIM/scrubs the freed space (see `security.encryptAtRest` and `infra/atrest`)
 - `setupPath`: reserved for bootstrap/setup UI routing
 - `seedStatements`: optional SQL statements executed as initial data when `autoSeed` is enabled
 
@@ -248,10 +248,10 @@ Local auth endpoints:
 
 Standalone MyMataSan auth:
 
-- `mymatasan` app-specific ONVIF, Settings, and Vision APIs use standalone DB-backed HTTP Basic Auth.
-- On first startup, `mymatasan` seeds `admin` / `Admin123` when no local users exist.
+- `mymatasan` app-specific ONVIF, Settings, and Vision APIs use standalone DB-backed HTTP Basic Auth (plus a session cookie for media elements).
+- On first startup, `mymatasan` seeds `admin` / `Admin123` when no local users exist, and **forces a password change on first login** (set `LOCAL_ADMIN_PASSWORD` to provision a strong password and skip the prompt).
+- Failed logins are **rate-limited per source IP** with escalating backoff (`loginSecurity` config); **role-based access** makes admins full-control while non-admin local users are view-only + acknowledge.
 - User management lives under the `Settings` page and `/api/settings/users`.
-- Change the seeded admin password before deploying outside a trusted local network.
 
 Local password storage:
 
@@ -625,6 +625,9 @@ MyMataSan ONVIF endpoints:
 - `POST /api/settings/runtime/capture-auto-config` -> detect local hardware (GPU presence + saved camera count) and apply recommended AI frame-capture parameters (interval, frame width, siphon fps, stale limit).
 - `GET /api/settings/runtime/gpu-devices` -> list selectable local GPU/device values for decoder hardware acceleration.
 - `POST /api/settings/runtime/reset` -> reset runtime settings to startup config defaults.
+- `GET /api/settings/decoder/status` -> report whether a usable ffmpeg is available (`found`, `path`, `version`); powers the FFmpeg-path status icon/Check button and the setup wizard's video-engine check.
+- `POST /api/settings/decoder/ffmpeg/install` / `GET /api/settings/decoder/ffmpeg/install/status` -> run and poll the in-app ffmpeg download/installer (admin-only); on success the resolved path is persisted into runtime settings.
+- `GET /api/settings/fs/browse` -> admin-only, read-only server-side directory picker (used to choose the ffmpeg binary); returns one directory level confined to a whitelist of roots (app dir + `bin/`, user home, OS install locations, plus `decoder.browseRoots`).
 - `GET /api/settings/vision/ai-tool/status` -> check configured AI detector command, Python packages, worker script, model file, and native fallback readiness.
 - `GET /api/settings/users` -> list local login users.
 - `POST /api/settings/users` -> create a local login user.
@@ -773,5 +776,5 @@ Common issues:
 
 6. Live preview or vision sampling cannot capture frames:
   - verify the saved device has an RTSP URI or snapshot URI by resolving live view from the camera settings page.
-  - verify `decoder.mjpeg.ffmpegPath` points to a working ffmpeg executable when MJPEG fallback or vision RTSP snapshots are used, and keep hardware decoder settings on `hwaccel: "none"` until the target ffmpeg build and GPU drivers are confirmed.
+  - verify `decoder.mjpeg.ffmpegPath` points to a working ffmpeg executable when MJPEG fallback or vision RTSP snapshots are used, and keep hardware decoder settings on `hwaccel: "none"` until the target ffmpeg build and GPU drivers are confirmed. Settings → Runtime → Decoder shows whether ffmpeg is found (status icon + Check), offers an in-app **Download ffmpeg** installer when it is missing, and a **folder icon** to browse for the binary; the Settings → Version & Health tab confirms liveness/readiness at a glance.
   - verify the camera credentials are saved when the camera requires authenticated ONVIF, snapshot, or RTSP access.

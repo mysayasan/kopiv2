@@ -1,0 +1,6 @@
+{
+  "type": "changed",
+  "scope": "mymatasan",
+  "summary": "Realigned the Settings -> Runtime -> Decoder field grid. The FFmpeg path field and the GPU/device field now span the full two-column width via a reusable .field-span-two utility, so RTSP transport and the remaining fields flow cleanly beneath the path field. The GPU/device field has variable height (an observations hint and a conditional manual-entry input) that previously made its grid row taller than its neighbour and left a visible gap under align-items:end; giving it its own full-width row fixes the misalignment. Also added a generic [data-tip] CSS balloon tooltip utility (used by the ffmpeg status icon) for nicer hover/focus popovers.",
+  "compatibility": "Cosmetic layout only; no settings or API changes."
+}

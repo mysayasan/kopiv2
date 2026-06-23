@@ -1,7 +1,10 @@
 import React from 'react';
 import { apiBase } from './lib/helpers';
 
-export function useSnapshotBlob(alertId, authHeader) {
+// useSnapshotBlob fetches an alert's snapshot as an object URL. Pass
+// annotated=true to get the server-drawn version (detection boxes + labels), used
+// by the notification row thumbnails so the event screenshot shows what fired.
+export function useSnapshotBlob(alertId, authHeader, annotated = false) {
   const [url, setUrl] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState(false);
@@ -13,7 +16,8 @@ export function useSnapshotBlob(alertId, authHeader) {
     setError(false);
     setUrl(null);
     const headers = authHeader ? { Authorization: authHeader } : {};
-    fetch(`${apiBase()}/api/vision/alerts/${alertId}/snapshot`, { credentials: 'include', headers })
+    const suffix = annotated ? '?annotated=1' : '';
+    fetch(`${apiBase()}/api/vision/alerts/${alertId}/snapshot${suffix}`, { credentials: 'include', headers })
       .then((r) => { if (!r.ok) throw new Error(r.status); return r.blob(); })
       .then((blob) => {
         if (revoked) return;
@@ -26,7 +30,7 @@ export function useSnapshotBlob(alertId, authHeader) {
       revoked = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [alertId, authHeader]);
+  }, [alertId, authHeader, annotated]);
   return { url, loading, error };
 }
 

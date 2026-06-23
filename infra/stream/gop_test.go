@@ -33,7 +33,7 @@ func TestH264IsKeyframeStart(t *testing.T) {
 }
 
 func TestSessionPrimesLateSubscriberFromKeyframe(t *testing.T) {
-	s := newRTSPSession("cam", "rtsp://camera/live", nil)
+	s := newRTSPSession("cam", "rtsp://camera/live", "", nil)
 	s.markReady(CodecH264, "", "42e01f")
 
 	// A P-frame arriving before any keyframe must not be cached.
@@ -60,7 +60,7 @@ func TestSessionPrimesLateSubscriberFromKeyframe(t *testing.T) {
 }
 
 func TestSessionKeyframeResetsGOP(t *testing.T) {
-	s := newRTSPSession("cam", "rtsp://camera/live", nil)
+	s := newRTSPSession("cam", "rtsp://camera/live", "", nil)
 	s.markReady(CodecH264, "", "42e01f")
 
 	s.broadcast(&rtp.Packet{Header: rtp.Header{SequenceNumber: 10}, Payload: []byte{0x65, 0x88}})
@@ -83,7 +83,7 @@ func TestSessionKeyframeResetsGOP(t *testing.T) {
 }
 
 func TestSessionNoBacklogWithoutKeyframe(t *testing.T) {
-	s := newRTSPSession("cam", "rtsp://camera/live", nil)
+	s := newRTSPSession("cam", "rtsp://camera/live", "", nil)
 	s.markReady(CodecH264, "", "42e01f")
 
 	s.broadcast(&rtp.Packet{Header: rtp.Header{SequenceNumber: 1}, Payload: []byte{0x61, 0x00}})

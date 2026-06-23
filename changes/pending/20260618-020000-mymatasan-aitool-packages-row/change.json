@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "mymatasan",
+  "summary": "Settings → AI Tool → Check AI Tool now shows explicit 'Python' (version) and 'AI packages' rows in the status grid, with a per-package ✓/✗ breakdown naming ultralytics, cv2, and torch — so users can confirm at a glance whether ultralytics is installed without parsing the observations list. The existing 'Install missing packages' button (auto-pip-installs the non-manual packages, i.e. ultralytics/opencv) already appears when any are missing; no backend change. Surfaces the same readiness that gates import-time label auto-detection and in-app training.",
+  "compatibility": "Frontend-only display addition; reads existing pythonVersion/packagesAvailable/missingPackages fields already returned by the vision-tool check."
+}

@@ -379,12 +379,7 @@ func (a *trainingApi) getImageFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	image, err := a.serv.GetImage(r.Context(), id)
-	if err != nil || image == nil || image.FilePath == "" {
-		http.NotFound(w, r)
-		return
-	}
-	data, err := os.ReadFile(image.FilePath)
+	data, err := a.serv.GetImageBytes(r.Context(), id)
 	if err != nil {
 		http.NotFound(w, r)
 		return

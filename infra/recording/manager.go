@@ -34,6 +34,39 @@ type statusProvider interface {
 	cameraStatus() CameraStatus
 }
 
+// siphonProvider is the optional capability a recorder implements to expose its
+// latest decoded frame and the stream it records, for the AI detector.
+type siphonProvider interface {
+	latestFrame() ([]byte, int64, bool)
+	recordingSource() (string, string, string)
+}
+
+// LatestFrame returns the most recent siphoned JPEG frame for a camera (decoded
+// off the recording stream) and the unix second it was captured. ok is false when
+// the camera has no running recorder or no frame yet.
+func (m *Manager) LatestFrame(cameraId int64) ([]byte, int64, bool) {
+	m.mu.RLock()
+	rec := m.recorders[cameraId]
+	m.mu.RUnlock()
+	if sp, ok := rec.(siphonProvider); ok {
+		return sp.latestFrame()
+	}
+	return nil, 0, false
+}
+
+// RecordingSource returns the recording stream URI/fallback/transport for a
+// camera (so the detector can grab a standalone frame from the same stream it
+// records). ok is false when the camera has no enabled recording config.
+func (m *Manager) RecordingSource(cameraId int64) (uri, fallback, transport string, ok bool) {
+	m.mu.RLock()
+	cfg, has := m.configs[cameraId]
+	m.mu.RUnlock()
+	if !has || strings.TrimSpace(cfg.RTSPURI) == "" {
+		return "", "", "", false
+	}
+	return cfg.RTSPURI, cfg.FallbackRTSPURI, cfg.RTSPTransport, true
+}
+
 // Manager holds per-camera recorders and dispatches alert events.
 // It is safe for concurrent use.
 type Manager struct {
@@ -42,20 +75,25 @@ type Manager struct {
 	// configs retains the last enabled config per camera so recorders can be
 	// stopped and restarted on pause/resume without losing their settings.
 	configs map[int64]RecorderConfig
-	paused  bool
-	sink    SegmentSink
-	ctx     context.Context
-	cancel  context.CancelFunc
+	// detectStreams marks which recorders are detect-only AI frame sources (started
+	// via EnsureDetectionStream) rather than real NVR recorders, so they can be
+	// torn down independently and never confused with a recording recorder.
+	detectStreams map[int64]bool
+	paused        bool
+	sink          SegmentSink
+	ctx           context.Context
+	cancel        context.CancelFunc
 }
 
 func NewManager(sink SegmentSink) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Manager{
-		recorders: map[int64]recorder{},
-		configs:   map[int64]RecorderConfig{},
-		sink:      sink,
-		ctx:       ctx,
-		cancel:    cancel,
+		recorders:     map[int64]recorder{},
+		configs:       map[int64]RecorderConfig{},
+		detectStreams: map[int64]bool{},
+		sink:          sink,
+		ctx:           ctx,
+		cancel:        cancel,
 	}
 }
 
@@ -68,6 +106,9 @@ func (m *Manager) Configure(cfg RecorderConfig) error {
 	if old, ok := m.recorders[cfg.CameraId]; ok {
 		old.Close()
 		delete(m.recorders, cfg.CameraId)
+		// A real recording recorder supersedes any detect-only stream for this
+		// camera — its own siphon tee serves the AI detector.
+		delete(m.detectStreams, cfg.CameraId)
 	}
 	if !cfg.Enabled {
 		delete(m.configs, cfg.CameraId)
@@ -95,6 +136,55 @@ func (m *Manager) Configure(cfg RecorderConfig) error {
 	return nil
 }
 
+// EnsureDetectionStream starts a detect-only recorder for a camera so the AI
+// detector gets a continuous siphoned frame stream even when NVR recording is
+// disabled. It is a no-op when a recorder already exists for the camera (a real
+// recording recorder always wins, and an existing detect-only stream is kept).
+// It is idempotent and safe to call every reconcile tick.
+func (m *Manager) EnsureDetectionStream(cfg RecorderConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if strings.TrimSpace(cfg.RTSPURI) == "" {
+		return nil
+	}
+	if _, ok := m.recorders[cfg.CameraId]; ok {
+		// Already recording or already detecting — nothing to do.
+		return nil
+	}
+	if m.paused {
+		// Disk guard is active; honour it and start nothing.
+		return nil
+	}
+
+	cfg.Enabled = true
+	cfg.DetectOnly = true
+	r := newRTSPRecorder(cfg, m.sink)
+	if err := r.Start(m.ctx); err != nil {
+		return err
+	}
+	m.recorders[cfg.CameraId] = r
+	m.detectStreams[cfg.CameraId] = true
+	log.Printf("recording: cam%d detect-only stream started (AI frame source, recording off)", cfg.CameraId)
+	return nil
+}
+
+// StopDetectionStream stops a camera's detect-only stream. It never touches a real
+// NVR recording recorder. It is idempotent.
+func (m *Manager) StopDetectionStream(cameraId int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.detectStreams[cameraId] {
+		return
+	}
+	if r, ok := m.recorders[cameraId]; ok {
+		r.Close()
+		delete(m.recorders, cameraId)
+	}
+	delete(m.detectStreams, cameraId)
+	log.Printf("recording: cam%d detect-only stream stopped", cameraId)
+}
+
 // Pause stops every running recorder's ffmpeg without forgetting its config, so
 // no new NVR segments are written until Resume. Used by the machine-health disk
 // guard to stop a near-full volume from filling completely (which would break all
@@ -109,6 +199,9 @@ func (m *Manager) Pause() {
 	for id, r := range m.recorders {
 		r.Close()
 		delete(m.recorders, id)
+		// Detect-only streams aren't config-retained (the vision monitor re-creates
+		// them on its next reconcile once paused clears), so forget them here.
+		delete(m.detectStreams, id)
 	}
 	log.Printf("recording: paused (machine-health disk guard) — %d recorder configs retained", len(m.configs))
 }

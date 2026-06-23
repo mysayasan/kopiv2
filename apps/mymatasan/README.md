@@ -6,7 +6,11 @@ It is designed to run on small devices such as Raspberry Pi or Jetson-style micr
 
 ## Current Scope
 
-- Standalone DB-backed local Basic Auth with a first-run `admin` / `Admin123` seed.
+- Standalone DB-backed local Basic Auth with a first-run `admin` / `Admin123` seed, **forced password change** off the default on first login, **failed-login lockout** (escalating backoff + countdown), and **role-based access** (admin = full control; non-admin = view-only + acknowledge).
+- **First-run setup wizard** (password → capacity → add camera → recording + alerts) and a **camera-capacity estimator** (`/api/capacity`) that tells you how many cameras the host can handle.
+- **Encryption at rest** (default on): recordings, snapshots, and training images are AES-256-GCM encrypted on disk so the factory reset can **crypto-erase** them by destroying the key.
+- **Secure Wipe & Reset** (factory reset: crypto-erase key + erase media + drop/rebuild DB + TRIM/scrub + restart) behind `bootstrap.allowReset`, plus secure multi-pass **shredding** of deleted footage.
+- **Unified notification feed** (topbar bell + Notifications page) across AI detection, camera/machine health, and login security; per-event acknowledge, annotated screenshot, and in-page clip playback.
 - ONVIF discovery, manual probe, saved-device list, save, camera password change, PTZ move/stop, stream option listing, selected stream URI resolution, RTSP test, WebRTC live view, MJPEG fallback, and delete endpoints under `/api/onvif`.
 - Camera-first AI detection rules and alert events under `/api/vision`, backed by reusable `infra/vision` rule, schedule, motion, external-object, line-crossing, multi-line-crossing, and hybrid detection primitives.
 - Line-crossing rules support an **Anything** wildcard class (`"*"`) that triggers on any detected YOLO object regardless of label, in addition to the named class list.
@@ -19,7 +23,9 @@ It is designed to run on small devices such as Raspberry Pi or Jetson-style micr
 - Per-camera split-stream configuration: separate `streamUrl` (recording) and live-view URI with `fallbackStreamUrl` automatic switching after repeated connection failures.
 - ONVIF stream profile listing and live-view stream selection under `/api/recording/streams`.
 - RTSP stream validation through the reusable `infra/rtsp` module.
-- Shared RTSP-to-WebRTC sessions through the reusable `infra/stream` module.
+- Shared RTSP-to-WebRTC sessions through the reusable `infra/stream` module, with **G.711 pass-through and AAC→Opus audio transcoding** so live view has sound regardless of the camera's audio codec.
+- **AI capture modes** (`standalone` / `siphon` / `auto`): `siphon`/`auto` read decoded frames off the recorder (the recording stream) via a tee; the rule-editor preview draws on the exact frame the detector samples (`GET /api/vision/cameras/{id}/frame`).
+- **Live Views paging**: the grid (1×1 / 2×2 / 3×2 / 3×3 / 4×3 / 4×4) is a per-page size, not a cap — all selected cameras are kept and paged through (toolbar pager + arrow keys, works in fullscreen).
 - Shared public version and Swagger APIs from the shared app host.
 - Runtime Decoder, Live Stream, and local user management settings backed by SQLite.
 - Default cache provider is in-process memory.
@@ -56,6 +62,7 @@ WebRTC live view requires the selected camera RTSP stream to expose an H.264 vid
 
 ```json
 "decoder": {
+  "browseRoots": [],
   "mjpeg": {
     "ffmpegPath": "ffmpeg",
     "quality": 7,
@@ -86,7 +93,11 @@ WebRTC live view requires the selected camera RTSP stream to expose an H.264 vid
 
 Use an absolute path when the service process cannot find ffmpeg from `PATH`, for example `C:\\ffmpeg\\bin\\ffmpeg.exe` on Windows or `/usr/bin/ffmpeg` on Linux. The decoder runtime settings expose conservative ffmpeg tuning knobs: RTSP transport, hardware decode mode, GPU/device selection, optional decoder name, probing/analyze limits, low-latency flags, MJPEG quality, and thread count. Hardware modes such as `vaapi`, `cuda`, `qsv`, `d3d11va`, and `videotoolbox` require a matching ffmpeg build, driver, and camera codec support; leave `hwaccel` as `none` for CPU software decode.
 
+The **FFmpeg path** field in Settings → Runtime → Decoder shows a live status icon (green tick / red cross, with a hover tooltip giving the detected version+path or why it is missing) and a **Check** button (`GET /api/settings/decoder/status`). When ffmpeg is not found, a **Download ffmpeg** button runs the same in-app installer the first-run wizard uses (`POST /api/settings/decoder/ffmpeg/install`, polled via `/install/status`) and a **Restart now** button applies it. A **folder icon inside the input** opens a server-side file picker (`GET /api/settings/fs/browse`) so you can pick the binary instead of typing the path. The picker is **admin-only, read-only**, and sandboxed to a whitelist of roots: the app directory + `bin/`, the user home, OS-specific common install locations (Windows `ProgramFiles`/`ProgramData`/`LOCALAPPDATA`/`C:\\ffmpeg`; macOS Homebrew/MacPorts/`Applications`; Linux `/usr/bin`, `/usr/local/bin`, `/opt`, `/snap/bin`, `/bin`), plus any paths you add to the `decoder.browseRoots` config array. You can still type any absolute path manually.
+
 The **GPU/device** field in the Settings UI shows a dropdown populated from the detected device list. Choose a device from the list or select **Manual entry…** to type a custom value (useful for non-standard ffmpeg device identifiers). Clicking **Auto Tune** sets the GPU/device automatically based on detected hardware.
+
+A **Version & Health** tab in Settings surfaces the running app/shared-core version (and commit/build) from `GET /api/version` plus live liveness/readiness/API-namespace health from `GET /health`, `GET /ready`, and `GET /api/health`, with a **Restart app** button that relaunches the process and reloads once it is back. Status messages across the app appear as **top-right toasts** that auto-dismiss after a few seconds and stack.
 
 Local users are stored in SQLite with bcrypt password hashes. The Settings page provides user create, update, password reset, and delete actions. The app prevents deleting or disabling the last active admin user.
 
@@ -231,6 +242,55 @@ The Settings → YOLO Inference Tuning section includes a **Best Calibration** b
 | Max detections | 100 | Reasonable cap for typical scenes |
 | Augment (TTA) | on | Biggest single accuracy boost for hard-to-detect poses |
 | Half precision | off | No benefit on CPU; safe to enable on CUDA GPU |
+
+## Security & Access
+
+MyMataSan is an internet-of-things appliance, so the auth defaults are hardened:
+
+- **Forced first-login password change.** The default `admin` / `Admin123` cannot stay in use — the seeded admin (and an existing admin still on the default) is flagged `must change password`. Until it is changed, the user is gated to `GET /api/auth/session` and `POST /api/auth/change-password` (everything else returns `403 password_change_required`). Set `LOCAL_ADMIN_PASSWORD` before first run to provision a strong password and skip the prompt.
+- **Failed-login lockout.** After `loginSecurity.maxAttempts` failures from one IP within `windowSeconds`, that IP is locked with an escalating (doubling) backoff up to `lockoutMaxSeconds`; locked requests return `429` + `Retry-After`, the login page shows a countdown, and a lockout trips a Critical notification. Tunables live in the `loginSecurity` config block.
+- **Role-based access.** Admins have full control; non-admin users are **view-only + acknowledge** — they can watch Live Views, browse/play Recordings, see Notifications, and acknowledge alerts, but every other mutating request returns `403` (enforced server-side, secure by default). Non-admins only see the Live Views, Recording, and Notifications tabs.
+- **JWT secret hardening (shared host).** On startup an empty/placeholder/too-short `jwt.secret` is auto-replaced with a generated 32-byte secret written back into the config file (or supply `JWT_SECRET`). The mymatasan session cookie is sha256-based, not JWT, so rotating the secret does not log local users out.
+
+```bash
+# Who am I + must-change/role flags
+curl -u admin:Admin123 "http://localhost:3000/api/auth/session"
+# Change your own password (clears the must-change flag, rotates the session cookie)
+curl -u admin:Admin123 -X POST -H "Content-Type: application/json" \
+  -d '{"currentPassword":"Admin123","newPassword":"a-strong-passphrase"}' \
+  "http://localhost:3000/api/auth/change-password"
+```
+
+## Setup wizard & camera capacity
+
+On a fresh install an admin is walked through a **setup wizard** (Welcome/password → System check → AI → Capacity → Add camera → Recording → Alerts → Done), persisted via `GET /api/setup/state` and `POST /api/setup/complete`; it shows until completed or skipped and auto-tiles the added cameras on finish. The **Add camera** step lets you rename a discovered camera (editable name, defaulting to the discovered title) before adding it, and the **Alerts** step can attach a delivery destination — **Webhook, Telegram, or MQTT** (broker URL + topic; advanced auth/TLS is configured later in Settings → Notifications). The **System check** step also offers the in-app ffmpeg installer when no video engine is found.
+
+The **camera-capacity estimator** answers "how many cameras can this host handle?" It models AI inference (CPU/GPU), memory, and live-view decode, reports the limiting resource, and treats recording as a rolling buffer: rather than zeroing the camera count on a small disk (footage auto-purges), it caps cameras at a **~1-day minimum-retention floor** and reports the retention actually achievable at the recommended count — balancing cameras against retention. The AI figure sharpens through three tiers — a static spec-sheet model, a live extrapolation from real CPU load once cameras run, and a **calibrated** figure from a real detector benchmark:
+
+```bash
+curl -u admin:Admin123 "http://localhost:3000/api/capacity"            # estimate
+curl -u admin:Admin123 -X POST "http://localhost:3000/api/capacity/calibrate"  # benchmark the detector (best run idle)
+```
+
+The estimate and a **Run calibration** button are surfaced on the Settings → Machine Health card (and reused by the wizard).
+
+## Encryption at rest
+
+Recordings, snapshots/alert images, and training dataset images are **encrypted on disk** by default (AES-256-GCM chunked streaming, reusable `infra/atrest` module) with a master key stored outside the media roots. This makes the factory reset's wipe **guaranteed and device-independent**: destroying the key (**crypto-erase**) renders all ciphertext instantly unrecoverable regardless of size or storage medium, which plain overwrite cannot promise on SSD/NVMe. Toggle via the `security` config block (`encryptAtRest`, default `true`; `keyPath`, default `secret/atrest.key`). With encryption off, data is written as plaintext; pre-existing plaintext files are always read transparently (magic-detect passthrough), so the setting flips cleanly with no migration. Model `.pt` weights stay plaintext (the Python worker reads them directly).
+
+## Secure Wipe & Reset
+
+A **factory reset** returns the appliance to a clean state. Ordered so the irreversible work survives an interrupt, it: stops camera services → **destroys the at-rest encryption key (crypto-erase)** → fast-erases all media (snapshots, training data, uploads, per-camera recordings — instant unlink) → drops and rebuilds the database (schema + stock seed) → securely scrubs the freed disk space (per-volume TRIM/discard then a best-effort, time-budgeted random overwrite for HDDs) → restarts the process. It is **disabled by default** and hidden unless `bootstrap.allowReset` is `true`; it is irreversible and does not touch `config.json` (runtime settings live in the DB and reset with it). Deleted footage during normal operation is also shredded by default, controlled by the `recording.shred` config block (`enabled`, `passes`, default 3).
+
+As a security measure the wipe is **intentionally unstoppable and best-effort**: the Postgres drop uses `DROP DATABASE ... WITH (FORCE)` to evict any connection still holding the database, and the orchestrator records a stage problem (an un-erasable file, a failed key destroy, a database-wipe error) as a non-fatal *warning* rather than aborting — it always drives to a restart (which re-runs bootstrap and can finish an interrupted rebuild). The real wipe guarantees are the crypto-erase and the instant unlink; TRIM + free-space scrub are defense-in-depth (no overwrite reliably erases original cells on flash). In the UI the button lives in a **Danger Zone** on Settings → Machine Health, behind a 10-second auto-proceed countdown (cancel to stop), then a full-screen progress overlay that polls progress and reloads once the restarted server's health recovers.
+
+```bash
+curl -u admin:Admin123 "http://localhost:3000/api/system/reset/state"      # is reset allowed?
+curl -u admin:Admin123 -X POST "http://localhost:3000/api/system/reset"    # wipe + reset + restart
+curl -u admin:Admin123 "http://localhost:3000/api/system/reset/progress"   # in-flight progress
+```
+
+Docker deployments need a restart policy so the post-reset relaunch comes back up; bare-metal relaunches itself.
 
 ## ONVIF API
 
@@ -501,13 +561,19 @@ curl -u admin:Admin123 -o clip.mp4 \
   "http://localhost:3000/api/recording/segments/1/download"
 ```
 
-Delete a clip (removes the DB row and the file on disk):
+Delete a clip (removes the DB row and the file on disk; the file is securely shredded when `recording.shred` is enabled):
 
 ```bash
 curl -u admin:Admin123 -X DELETE "http://localhost:3000/api/recording/segments/1"
 ```
 
-The Recording tab in the browser UI shows the per-camera config form, the live recorder status panel, and lists clips with inline download and delete buttons.
+Purge expired clips on demand — deletes only segments already past each camera's `retentionDays` (the same safe sweep the disk-mitigation job runs automatically), returning the count removed:
+
+```bash
+curl -u admin:Admin123 -X POST "http://localhost:3000/api/recording/segments/purge"
+```
+
+The Recording tab in the browser UI shows the per-camera config form, the live recorder status panel, lists clips with inline download and delete buttons, and (for admins) a **Purge expired** button.
 
 ## Vision API
 
@@ -697,3 +763,77 @@ The active model cannot be deleted while in use — **Deactivate** first (revert
 > **Parallel stock + custom.** The stock model (`yolo11n.pt`, or `MYMATASAN_YOLO_MODEL`) **always runs**. Activating a custom model runs it **alongside** stock — the worker loads both, runs both per frame, and merges their detections (same-label overlaps are de-duplicated). So a custom model trained only on `papa` **adds** `papa` detection on top of the stock `person`/`vehicle`/`animal`/… detection rather than replacing it. **Only one** custom model runs at a time — activating another switches to it; **Deactivate** reverts to stock-only. Running two models is somewhat slower per frame (each frame is inferenced twice), which matters most on CPU-only devices.
 
 **In-app training requirements.** In-app training needs `python` + `ultralytics` (the same Python the detector uses). The **Train** button is disabled when these are missing and warns when only a CPU is available — CPU training is impractically slow, so export and train on a GPU instead. One training run executes at a time. The bundled trainer is `apps/mymatasan/ai/train_worker.py`.
+
+## Notifications
+
+Every source — AI detection, camera health, machine health, and login security — funnels into one persisted notification store. The **topbar bell** and a dedicated **Notifications page** read it via `GET /api/notifications`: the bell badge is server-truth unread, and clicking an entry opens the Notifications page focused on it. AI rows are rich — annotated event screenshot, detection fields, **Acknowledge**, and in-page **clip playback** when a recording segment exists; acknowledging an alert dismisses its notification at the source (`notifier.MarkReadByRef`). Diagnostics never become notifications, so the feed is inherently diagnostic-free.
+
+```bash
+curl -u admin:Admin123 "http://localhost:3000/api/notifications?unread=true&limit=30"
+curl -u admin:Admin123 -X POST "http://localhost:3000/api/notifications/1/read"
+```
+
+Old notifications are purged automatically on the configured **Retention** (Settings → Notifications: days, "only delete read", interval). The same purge can be run on demand — `olderThanDays` is required and `onlyRead=true` keeps unread entries — surfaced as a **Purge expired now** button in that settings panel:
+
+```bash
+curl -u admin:Admin123 -X POST "http://localhost:3000/api/notifications/purge?olderThanDays=30&onlyRead=true"
+```
+
+### Outbound delivery destinations
+
+Notifications are also delivered **per destination**. In **Settings → Notifications** you add any number of delivery destinations (**webhook**, **Telegram**, or **MQTT**), each with its own:
+
+- **Enabled** flag and **minimum severity** floor.
+- **Receives** — a category subscription: AI detection alerts (`vision.alert`), Health (`health.check`, camera offline + machine health), and System (`system`).
+- **Detection fields** — which detection details a vision alert includes.
+- **Snapshot delivery** — `Inline` embeds the image (webhook/MQTT base64, Telegram photo) or `Link only` sends just the reference (`link` + `data.snapshotPath`) so the consumer fetches it — keeps payloads/broker messages small.
+- **Custom fields** — static key/value pairs added to the payload. A custom field **overrides** a built-in field of the same key (the matching detection-field toggle is then disabled). Values may use `{{token}}` templates: `{{ruleName}}`, `{{cameraName}}`, `{{label}}`, `{{confidence}}`, `{{detectionType}}`, `{{alertId}}`, `{{ruleId}}`, `{{cameraId}}`.
+
+The in-app notification feed always records one entry per alert in full; destinations receive separately rendered copies. **Per-rule routing:** a detection rule's **Notification routing** panel picks which destinations its alerts go to (none selected = all).
+
+### MQTT
+
+MQTT is the industrial transport: each notification is published as the same JSON payload (see below) to a broker topic. Per destination you configure the **broker URL** (`tcp://host:1883` or `ssl://host:8883`), **topic**, optional **client id**, **QoS** (0/1/2, default 1), and **retain**. Auth is **username/password** and/or **TLS** — paste PEM contents for the CA certificate and, for mutual-TLS (client-certificate auth), the client certificate + key. The broker connects in the background with automatic reconnect, so a broker that is briefly unreachable never blocks delivery.
+
+The **topic may be templated** with `{{token}}` placeholders (e.g. `matasan/alerts/{{cameraName}}/{{label}}`). Tokens resolve from the payload `data` (`cameraName`, `alertId`, `ruleId`, `detectionType`, plus `label`/`confidence`/`ruleName` when those detection fields are enabled), falling back to the notification's own fields `cameraId`, `category`, `severity`, `refId`, `id`. A token that resolves to nothing leaves **no empty level** — `matasan/alerts/{{cameraId}}` with no camera (e.g. the Test button) publishes to `matasan/alerts`, not `matasan/alerts/`. (Wildcards `#`/`+` are subscribe-side only; you never publish to them.)
+
+### Webhook payload
+
+Each notification is POSTed as a single JSON object. The core `Notification` fields are at the top level; detection details and custom fields are under `data`. When a snapshot is included it is inlined as base64 (so receivers that cannot reach the auth-protected snapshot endpoint still get the image).
+
+```json
+{
+  "id": "9f2c1a7e-4b3d-4f9a-8c21-6e0b1d4a7f55",
+  "category": "vision.alert",
+  "severity": "critical",
+  "title": "Fire detected — Kitchen",
+  "body": "Front Gate • fire • 92% confidence\nsite: Front Gate",
+  "source": "vision-monitor",
+  "cameraId": 3,
+  "refType": "alert_event",
+  "refId": 481,
+  "link": "/api/vision/alerts/481/snapshot",
+  "data": {
+    "alertId": 481,
+    "ruleId": 12,
+    "cameraName": "Front Gate",
+    "detectionType": "presence",
+    "ruleName": "Fire detected — Kitchen",
+    "label": "fire",
+    "confidence": 0.92,
+    "boundingBox": "[0.41,0.22,0.18,0.30]",
+    "zonePolygon": "[[0.1,0.1],[0.9,0.1],[0.9,0.9],[0.1,0.9]]",
+    "snapshotPath": "recordings/cam3/snapshots/481.jpg",
+    "site": "Front Gate"
+  },
+  "createdAt": 1781779140,
+  "snapshotBase64": "/9j/4AAQSkZJRgABAQAA...(base64 JPEG)...",
+  "snapshotContentType": "image/jpeg",
+  "snapshotFilename": "alert-481.jpg"
+}
+```
+
+Notes:
+- Identifiers (`data.alertId/ruleId/cameraName/detectionType`) are always present; the other `data.*` keys and the `snapshot*` fields appear only when that destination enables them.
+- `boundingBox` and `zonePolygon` are JSON **strings** (parse them as nested JSON on the receiving end).
+- Custom fields appear in `data` **and** as `key: value` lines appended to `body`, so text-only channels (Telegram) display them too.

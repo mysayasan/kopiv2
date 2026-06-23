@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "mymatasan",
+  "summary": "Wrong credentials no longer let a user in via a stale session cookie. NewLocalBasicAuth previously, on a wrong Basic credential, recorded a lockout failure and then fell through to the session-cookie check — so a stale-but-valid cookie from a prior login silently authenticated the request. The SPA then appeared logged in as the old user while every request re-failed the wrong Basic credential and piled failures toward the lockout threshold. Fix: explicit Basic credentials are now authoritative — a wrong Basic credential returns 401 immediately and does NOT fall back to the cookie. Cookie fallback applies only when NO Basic header is sent (e.g. <img>/<video> media elements that cannot set one). The SPA now surfaces 'Invalid username or password.' and stops, recording one failure per attempt instead of dozens.",
+  "compatibility": "Backward compatible for correct credentials and for media (no-Basic-header) requests, which still use the cookie. A client sending an explicitly wrong Basic credential now gets 401 (previously could ride a cookie). Regression test added: TestLocalBasicAuthWrongBasicDoesNotRideCookie."
+}

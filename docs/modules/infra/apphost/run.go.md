@@ -44,6 +44,7 @@ Implements the reusable runtime host for all app modules.
 - Build listener matrix from server hostnames and TLS/non-TLS port lists.
 - Start one or more HTTP servers for the configured listener ports.
 - Manage multi-listener lifecycle and graceful shutdown.
+- Provide a `Restarter` (via `Dependencies.Restarter`) that app modules call to request a graceful restart; the run loop selects on its cancel, runs the normal shutdown, then relaunches a fresh process from the on-disk executable (`relaunchSelf`).
 - Select DB adapter from `db.engine` with environment override support.
 
 ## Notes
@@ -57,6 +58,7 @@ Implements the reusable runtime host for all app modules.
 - Swagger/OpenAPI docs are served from `/swagger` and `/swagger/openapi.json`.
 - Readiness checks include DB and cache dependency checks.
 - App worker shutdown is invoked before HTTP server shutdown when provided.
+- `Restarter.Restart(reason)` cancels the run loop, runs the same graceful shutdown, then `relaunchSelf()` starts a detached copy of the executable (same args/env/cwd) before the process exits — so bare-metal relaunches itself and supervised deployments (docker restart policy, systemd, a Windows service) relaunch on the clean exit. It is also the intended primitive for self-update.
 - Hostname wildcard (`*` or empty hostname) maps to bind-all interfaces.
 - `server.tlsPorts` starts HTTPS listeners and `server.nonTlsPorts` starts HTTP listeners.
 - Empty `tlsPorts` or `nonTlsPorts` means that protocol mode is not started.

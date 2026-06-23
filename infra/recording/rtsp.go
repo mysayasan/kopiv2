@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -12,7 +13,21 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mysayasan/kopiv2/infra/atrest"
 )
+
+// fileIsEncrypted reports whether path begins with the atrest header magic.
+func fileIsEncrypted(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	head := make([]byte, atrest.HeaderLen)
+	n, _ := io.ReadFull(f, head)
+	return atrest.IsEncrypted(head[:n])
+}
 
 // segTimeFormat is the strftime/Go time layout used for live segment filenames.
 const segTimeFormat = "20060102_150405"
@@ -42,6 +57,16 @@ type rtspRecorder struct {
 	lastErrMsg      string
 	activeStreamURL string // primary or fallback, whichever is currently in use
 	usingFallback   bool
+	// hwAccelOff is set at runtime after the hardware decoder fails repeatedly (most
+	// often the GPU is out of NVDEC decode sessions); the tee then falls back to
+	// software decode for this camera so detection keeps working.
+	hwAccelOff bool
+
+	// Siphon latest-frame buffer: the most recent decoded JPEG teed off the
+	// recording ffmpeg, for the AI detector to read off the recording stream.
+	frameMu     sync.RWMutex
+	lastFrame   []byte
+	lastFrameAt int64 // unix seconds the frame was decoded
 }
 
 func newRTSPRecorder(cfg RecorderConfig, sink SegmentSink) *rtspRecorder {
@@ -50,11 +75,78 @@ func newRTSPRecorder(cfg RecorderConfig, sink SegmentSink) *rtspRecorder {
 
 func (r *rtspRecorder) WriteFrame(_ []byte, _ int64) {}
 
+// readSiphonFrames drains the MJPEG image2pipe output, splitting the concatenated
+// JPEG stream on SOI (FF D8) / EOI (FF D9) markers and keeping only the most
+// recent complete frame. It always reads to completion so the pipe never blocks
+// the recording ffmpeg.
+func (r *rtspRecorder) readSiphonFrames(stdout io.ReadCloser) {
+	defer stdout.Close()
+	br := bufio.NewReaderSize(stdout, 1<<16)
+	const maxFrame = 4 << 20
+	var buf []byte
+	inFrame := false
+	var prev byte
+	for {
+		b, err := br.ReadByte()
+		if err != nil {
+			return
+		}
+		if inFrame {
+			buf = append(buf, b)
+			if prev == 0xFF && b == 0xD9 { // EOI: complete frame
+				frame := make([]byte, len(buf))
+				copy(frame, buf)
+				r.frameMu.Lock()
+				r.lastFrame = frame
+				r.lastFrameAt = time.Now().Unix()
+				r.frameMu.Unlock()
+				inFrame, prev = false, 0
+				buf = buf[:0]
+				continue
+			}
+			if len(buf) > maxFrame { // runaway guard
+				inFrame, prev = false, 0
+				buf = buf[:0]
+				continue
+			}
+		} else if prev == 0xFF && b == 0xD8 { // SOI: frame start
+			inFrame = true
+			buf = append(buf[:0], 0xFF, 0xD8)
+		}
+		prev = b
+	}
+}
+
+// latestFrame returns a copy of the most recent siphoned JPEG frame and the unix
+// second it was decoded, or ok=false when no frame has been captured yet.
+func (r *rtspRecorder) latestFrame() ([]byte, int64, bool) {
+	r.frameMu.RLock()
+	defer r.frameMu.RUnlock()
+	if len(r.lastFrame) == 0 {
+		return nil, 0, false
+	}
+	out := make([]byte, len(r.lastFrame))
+	copy(out, r.lastFrame)
+	return out, r.lastFrameAt, true
+}
+
+// recordingSource returns the recording stream URI, fallback URI, and transport so
+// the detector can grab a standalone frame from the same stream it records.
+func (r *rtspRecorder) recordingSource() (string, string, string) {
+	return r.cfg.RTSPURI, r.cfg.FallbackRTSPURI, r.cfg.RTSPTransport
+}
+
 // TriggerEvent waits for the post-roll window then slices an event clip from
 // the already-recorded live segments. frameCapturedAt is the Unix second
 // timestamp of the frame that triggered the alert; the clip window is anchored
 // to that moment so YOLO inference latency does not shift the recording.
 func (r *rtspRecorder) TriggerEvent(alertId int64, frameCapturedAt int64) {
+	// Detect-only recorders keep no segments, so there is nothing to slice into an
+	// event clip — the alert simply has no recorded footage (expected when NVR
+	// recording is off).
+	if r.cfg.DetectOnly {
+		return
+	}
 	post := postRoll(r.cfg)
 	triggerAt := time.Now().UTC()
 	if frameCapturedAt > 0 {
@@ -73,7 +165,12 @@ func (r *rtspRecorder) Close() {
 }
 
 func (r *rtspRecorder) cameraStatus() CameraStatus {
-	segs := r.listLiveSegments()
+	// Detect-only recorders write no segments, so skip the live-dir scan and report
+	// zero files with a distinct mode so the recordings UI shows no phantom segments.
+	var segs []liveSegInfo
+	if !r.cfg.DetectOnly {
+		segs = r.listLiveSegments()
+	}
 	r.mu.Lock()
 	running := r.ffmpegRunning
 	errMsg := r.lastErrMsg
@@ -88,9 +185,13 @@ func (r *rtspRecorder) cameraStatus() CameraStatus {
 		state = "error"
 	}
 
+	mode := "rtsp"
+	if r.cfg.DetectOnly {
+		mode = "detect"
+	}
 	return CameraStatus{
 		CameraId:           r.cfg.CameraId,
-		Mode:               "rtsp",
+		Mode:               mode,
 		State:              state,
 		FFmpegRunning:      running,
 		LiveFiles:          len(segs),
@@ -117,9 +218,13 @@ func (r *rtspRecorder) Start(ctx context.Context) error {
 	r.liveDir = filepath.Join(absStorage, fmt.Sprintf("cam%d", r.cfg.CameraId), "live")
 	r.clipDir = filepath.Join(absStorage, fmt.Sprintf("cam%d", r.cfg.CameraId), "clips")
 
-	for _, d := range []string{r.liveDir, r.clipDir} {
-		if err := os.MkdirAll(d, 0755); err != nil {
-			return fmt.Errorf("recording: mkdir %s: %w", d, err)
+	// Detect-only recorders never write segments or clips, so there is no need to
+	// create the storage directories.
+	if !r.cfg.DetectOnly {
+		for _, d := range []string{r.liveDir, r.clipDir} {
+			if err := os.MkdirAll(d, 0755); err != nil {
+				return fmt.Errorf("recording: mkdir %s: %w", d, err)
+			}
 		}
 	}
 
@@ -135,44 +240,145 @@ func (r *rtspRecorder) Start(ctx context.Context) error {
 	}
 
 	go r.runFFmpeg(recCtx, ffmpegPath, transport, segSec)
-	go r.watchSegments(recCtx)
-	if r.cfg.RetentionDays > 0 {
-		go r.purgeOldFiles(recCtx)
+	// Detect-only recorders produce no segment files, so the segment watcher and
+	// retention purge have nothing to do.
+	if !r.cfg.DetectOnly {
+		go r.watchSegments(recCtx)
+		if r.cfg.RetentionDays > 0 {
+			go r.purgeOldFiles(recCtx)
+		}
 	}
 	return nil
+}
+
+// buildFFmpegArgs assembles the ffmpeg argument list for one recorder run. A normal
+// recorder emits the siphon MJPEG tee (when siphonFPS>0) followed by the copy-mux
+// segment output; a detect-only recorder emits ONLY the tee — no segment muxer, no
+// audio transcode, no segment files. Pure (no I/O) so the arg shape is unit-testable.
+func (r *rtspRecorder) buildFFmpegArgs(uri, transport string, segSec int, pattern string, siphonFPS, siphonWidth int) []string {
+	// Detect-only recorders exist solely to feed the siphon tee, so force it on even
+	// when no explicit fps was configured.
+	if r.cfg.DetectOnly && siphonFPS <= 0 {
+		siphonFPS = 1
+	}
+	args := []string{
+		"-hide_banner", "-loglevel", "warning",
+		"-rtsp_transport", transport,
+		"-fflags", "+genpts",
+	}
+	// Hardware-accelerate the tee's decode when configured. These are input options
+	// (before -i) so they only affect outputs that decode — the MJPEG tee — while the
+	// -c:v copy segment output keeps using the raw packets. Only emitted when the tee
+	// is active; a copy-only run never decodes, so paying hwaccel init would be waste.
+	if siphonFPS > 0 {
+		args = append(args, r.hwAccelInputArgs()...)
+	}
+	args = append(args, "-i", uri)
+	// Siphon tee: a second output decodes the video to downscaled MJPEG frames
+	// at SiphonFPS on stdout, which a reader goroutine drains into the latest-
+	// frame buffer. Placed before the segment output so the segment output stays
+	// the process's primary concern; the segment output still uses stream copy.
+	if siphonFPS > 0 {
+		args = append(args,
+			"-map", "0:v:0",
+			"-an",
+			"-r", fmt.Sprintf("%d", siphonFPS),
+			"-vf", fmt.Sprintf("scale=%d:-2", siphonWidth),
+			"-q:v", "7",
+			"-f", "image2pipe",
+			"-vcodec", "mjpeg",
+			"pipe:1",
+		)
+	}
+	// Detect-only: the MJPEG tee is the only output — no NVR segment muxer, no
+	// audio transcode, no segment files.
+	if r.cfg.DetectOnly {
+		return args
+	}
+	args = append(args,
+		"-c:v", "copy",
+		// Transcode audio to AAC so all codecs (pcm_alaw, G.726, etc.)
+		// are muxed as a native MPEG-TS stream type. aresample=async=1
+		// compensates for cameras that send non-monotonic audio timestamps,
+		// which would otherwise cause "Queue input is backward in time" errors.
+		//
+		// osr=48000 resamples to a standard 48 kHz: cameras that send
+		// low-rate audio (e.g. 8 kHz G.711) otherwise exceed the AAC
+		// per-frame bit budget ("Too many bits > 6144 per frame requested,
+		// clamping to max"), which clamps the audio and surfaces as a
+		// spurious recorder error in the UI. A bounded -b:a keeps the
+		// requested bitrate within the per-frame budget at 48 kHz.
+		"-c:a", "aac",
+		"-b:a", "96k",
+		"-af", "aresample=async=1:osr=48000",
+		"-f", "segment",
+		"-segment_time", fmt.Sprintf("%d", segSec),
+		"-strftime", "1",
+		"-segment_format", "mpegts",
+		"-reset_timestamps", "1",
+		pattern,
+	)
+	return args
+}
+
+// hwAccelInputArgs returns the ffmpeg input-side hardware-decode options for the
+// siphon tee, mirroring infra/rtsp's baseFFmpegArgs so the recorder accelerates its
+// decode the same way the live/standalone paths do. Empty / "none" HWAccel yields no
+// args (software decode). Order matches ffmpeg's expectations: device init, hwaccel,
+// hwaccel device, then explicit decoder — all before -i.
+func (r *rtspRecorder) hwAccelInputArgs() []string {
+	// Software-decode fallback engaged after repeated hardware-decode failures.
+	r.mu.Lock()
+	off := r.hwAccelOff
+	r.mu.Unlock()
+	if off {
+		return nil
+	}
+	var args []string
+	if initDevice := strings.TrimSpace(r.cfg.InitHWDevice); initDevice != "" {
+		args = append(args, "-init_hw_device", initDevice)
+	}
+	hwaccel := strings.TrimSpace(r.cfg.HWAccel)
+	useHWAccel := hwaccel != "" && !strings.EqualFold(hwaccel, "none")
+	if useHWAccel {
+		args = append(args, "-hwaccel", strings.ToLower(hwaccel))
+		if device := strings.TrimSpace(r.cfg.HWAccelDevice); device != "" {
+			args = append(args, "-hwaccel_device", device)
+		}
+	}
+	if decoder := strings.TrimSpace(r.cfg.VideoDecoder); decoder != "" {
+		args = append(args, "-c:v", decoder)
+	}
+	return args
+}
+
+// usesHWAccel reports whether the config requests hardware decode (an hwaccel other
+// than none, or an explicit decoder), i.e. whether a software fallback is meaningful.
+func (r *rtspRecorder) usesHWAccel() bool {
+	hwaccel := strings.TrimSpace(r.cfg.HWAccel)
+	if hwaccel != "" && !strings.EqualFold(hwaccel, "none") {
+		return true
+	}
+	return strings.TrimSpace(r.cfg.VideoDecoder) != ""
 }
 
 func (r *rtspRecorder) runFFmpeg(ctx context.Context, ffmpegPath, transport string, segSec int) {
 	pattern := filepath.ToSlash(filepath.Join(r.liveDir, "%Y%m%d_%H%M%S.ts"))
 
+	siphonFPS := r.cfg.SiphonFPS
+	siphonWidth := r.cfg.SiphonWidth
+	if siphonWidth <= 0 {
+		siphonWidth = defaultSiphonWidth
+	}
+	// Detect-only recorders feed the siphon tee unconditionally; force the fps on so
+	// the stdout-pipe gating below opens the pipe and the drain goroutine runs.
+	// buildFFmpegArgs applies the same default, so the arg list stays consistent.
+	if r.cfg.DetectOnly && siphonFPS <= 0 {
+		siphonFPS = 1
+	}
+
 	buildArgs := func(uri string) []string {
-		return []string{
-			"-hide_banner", "-loglevel", "warning",
-			"-rtsp_transport", transport,
-			"-fflags", "+genpts",
-			"-i", uri,
-			"-c:v", "copy",
-			// Transcode audio to AAC so all codecs (pcm_alaw, G.726, etc.)
-			// are muxed as a native MPEG-TS stream type. aresample=async=1
-			// compensates for cameras that send non-monotonic audio timestamps,
-			// which would otherwise cause "Queue input is backward in time" errors.
-			//
-			// osr=48000 resamples to a standard 48 kHz: cameras that send
-			// low-rate audio (e.g. 8 kHz G.711) otherwise exceed the AAC
-			// per-frame bit budget ("Too many bits > 6144 per frame requested,
-			// clamping to max"), which clamps the audio and surfaces as a
-			// spurious recorder error in the UI. A bounded -b:a keeps the
-			// requested bitrate within the per-frame budget at 48 kHz.
-			"-c:a", "aac",
-			"-b:a", "96k",
-			"-af", "aresample=async=1:osr=48000",
-			"-f", "segment",
-			"-segment_time", fmt.Sprintf("%d", segSec),
-			"-strftime", "1",
-			"-segment_format", "mpegts",
-			"-reset_timestamps", "1",
-			pattern,
-		}
+		return r.buildFFmpegArgs(uri, transport, segSec, pattern, siphonFPS, siphonWidth)
 	}
 
 	// Track which URI is active and switch to the fallback after repeated quick failures.
@@ -190,6 +396,10 @@ func (r *rtspRecorder) runFFmpeg(ctx context.Context, ffmpegPath, transport stri
 		}
 		cmd := exec.CommandContext(ctx, ffmpegPath, buildArgs(currentURI)...)
 		stderr, _ := cmd.StderrPipe()
+		var stdout io.ReadCloser
+		if siphonFPS > 0 {
+			stdout, _ = cmd.StdoutPipe()
+		}
 		if err := cmd.Start(); err != nil {
 			r.mu.Lock()
 			r.ffmpegRunning = false
@@ -221,6 +431,11 @@ func (r *rtspRecorder) runFFmpeg(ctx context.Context, ffmpegPath, transport stri
 				}
 			}()
 		}
+		// Continuously drain the siphon MJPEG pipe so ffmpeg never blocks on it,
+		// keeping only the latest decoded frame for the AI detector.
+		if stdout != nil {
+			go r.readSiphonFrames(stdout)
+		}
 
 		started := time.Now()
 		_ = cmd.Wait()
@@ -238,6 +453,24 @@ func (r *rtspRecorder) runFFmpeg(ctx context.Context, ffmpegPath, transport stri
 		} else {
 			failCount = 0
 			quickFailStreak = 0
+		}
+
+		// After repeated quick failures with hardware decode active, fall back to
+		// software decode for this camera. The GPU running out of NVDEC decode sessions
+		// (consumer cards cap concurrent sessions) is the most likely cause when many
+		// cameras siphon with hwaccel on; a restart loop would otherwise yield no
+		// detection frames at all. Tried before the stream switch so we don't blame a
+		// healthy fallback stream for a GPU-session problem.
+		if quickFailStreak >= hwAccelFallbackFailures && r.usesHWAccel() {
+			r.mu.Lock()
+			alreadyOff := r.hwAccelOff
+			r.hwAccelOff = true
+			r.mu.Unlock()
+			if !alreadyOff {
+				log.Printf("recording rtsp cam%d: %d quick failures with hardware decode; falling back to software decode (GPU may be out of decode sessions)", r.cfg.CameraId, quickFailStreak)
+				quickFailStreak = 0
+				failCount = 0
+			}
 		}
 
 		// After 2 quick failures switch streams (primary → fallback → primary …).
@@ -345,6 +578,17 @@ func (r *rtspRecorder) saveCompletedSegments(ctx context.Context, saved map[stri
 // The original TS is deleted after a successful remux.
 func (r *rtspRecorder) remuxSegment(f liveSegInfo, endedAt int64) {
 	mp4Path := filepath.Join(r.liveDir, f.stem+".mp4")
+
+	// Skip empty segments. When the RTSP stream stalls or drops at a segment
+	// boundary, ffmpeg's segment muxer still creates the .ts file but writes no
+	// data. Handing a 0-byte file to ffmpeg only produces an "Invalid data found"
+	// error and leaves the file behind, so discard it quietly instead.
+	if fi, statErr := os.Stat(f.tsPath); statErr == nil && fi.Size() == 0 {
+		log.Printf("recording rtsp cam%d: skipping empty segment %s (no stream data)", r.cfg.CameraId, f.stem)
+		_ = os.Remove(f.tsPath)
+		return
+	}
+
 	ffmpegPath, err := resolveFFmpeg(r.cfg.FFmpegPath)
 	if err != nil {
 		log.Printf("recording rtsp cam%d: remux ffmpeg not found: %v", r.cfg.CameraId, err)
@@ -371,8 +615,20 @@ func (r *rtspRecorder) remuxSegment(f liveSegInfo, endedAt int64) {
 		return
 	}
 	// Use the actual media duration; the inferred endedAt overstates segments
-	// that were cut short by an ffmpeg restart.
+	// that were cut short by an ffmpeg restart. (Probe BEFORE encryption — ffprobe
+	// needs the plaintext mp4.)
 	endedAt = segmentEndedAt(ffmpegPath, mp4Path, f.startedAt, endedAt)
+
+	// Encrypt the finalized segment at rest so it can be crypto-erased. Done after the
+	// duration probe; the on-disk size becomes the ciphertext size (correct for disk
+	// accounting). Playback decrypts on the fly.
+	if r.cfg.Cipher != nil {
+		if err := r.cfg.Cipher.EncryptFileInPlace(mp4Path); err != nil {
+			log.Printf("recording rtsp cam%d: encrypt segment %s: %v", r.cfg.CameraId, f.stem, err)
+		} else if efi, statErr := os.Stat(mp4Path); statErr == nil {
+			fi = efi
+		}
+	}
 	if r.sink != nil {
 		if err := r.sink.SaveSegment(context.Background(), SegmentResult{
 			CameraId:  r.cfg.CameraId,
@@ -489,10 +745,28 @@ func (r *rtspRecorder) extractClip(alertId int64, triggerAt time.Time, postWait 
 		return
 	}
 
+	// Finalized .mp4 segments are encrypted at rest; ffmpeg can't read them, so decrypt
+	// each to a temp file and concat those. Plaintext (.ts / legacy) are used directly.
+	var clipTemps []func()
+	defer func() {
+		for _, c := range clipTemps {
+			c()
+		}
+	}()
+
 	listPath := filepath.Join(r.clipDir, fmt.Sprintf("clip_%d.txt", alertId))
 	var sb strings.Builder
 	for _, s := range selected {
-		abs, _ := filepath.Abs(s.path)
+		p := s.path
+		if r.cfg.Cipher != nil && fileIsEncrypted(s.path) {
+			if tmp, cleanup, derr := r.cfg.Cipher.DecryptToTempFile(s.path); derr == nil {
+				p = tmp
+				clipTemps = append(clipTemps, cleanup)
+			} else {
+				log.Printf("recording rtsp cam%d alert%d: decrypt segment %s: %v", r.cfg.CameraId, alertId, s.stem, derr)
+			}
+		}
+		abs, _ := filepath.Abs(p)
 		// Forward slashes required by ffmpeg concat demuxer on all platforms.
 		fmt.Fprintf(&sb, "file '%s'\n", filepath.ToSlash(abs))
 	}
@@ -543,6 +817,15 @@ func (r *rtspRecorder) extractClip(alertId int64, triggerAt time.Time, postWait 
 	if err != nil || fi.Size() == 0 {
 		log.Printf("recording rtsp cam%d alert%d: clip output missing or empty", r.cfg.CameraId, alertId)
 		return
+	}
+
+	// Encrypt the event clip at rest too (same as recorded segments).
+	if r.cfg.Cipher != nil {
+		if err := r.cfg.Cipher.EncryptFileInPlace(outputPath); err != nil {
+			log.Printf("recording rtsp cam%d alert%d: encrypt clip: %v", r.cfg.CameraId, alertId, err)
+		} else if efi, statErr := os.Stat(outputPath); statErr == nil {
+			fi = efi
+		}
 	}
 
 	if r.sink != nil {
@@ -601,9 +884,11 @@ func (r *rtspRecorder) purgeOldFiles(ctx context.Context) {
 			cutoff := time.Now().AddDate(0, 0, -r.cfg.RetentionDays)
 			for _, f := range r.listLiveSegments() {
 				if time.Unix(f.startedAt, 0).Before(cutoff) {
-					_ = os.Remove(f.path)
+					// Retention purge is a real deletion of footage, so honour the
+					// shred setting (overwrite before unlink) rather than a plain remove.
+					_ = SecureRemove(f.path, r.cfg.ShredPasses)
 					if f.tsPath != "" {
-						_ = os.Remove(f.tsPath)
+						_ = SecureRemove(f.tsPath, r.cfg.ShredPasses)
 					}
 				}
 			}

@@ -34,12 +34,17 @@ services:
       dockerfile: Dockerfile
     image: kopiv2:week5
     container_name: kopiv2-app
+    # Docker is the process supervisor: a factory reset / self-update exits cleanly and
+    # this policy relaunches the container. KOPIV2_SUPERVISED tells the app to exit for
+    # restart rather than self-relaunch (which would race the supervisor).
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     environment:
+      KOPIV2_SUPERVISED: "1"
       ENVIRONMENT: dev
       SERVER_USE_TLS: "false"
       SERVER_ADDR: ":3000"

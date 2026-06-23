@@ -27,7 +27,7 @@ func NewManager() *Manager {
 
 // NewManagerWithOptions creates a stream manager with runtime WebRTC options.
 func NewManagerWithOptions(opts Options) *Manager {
-	manager := NewManagerWithConnector(NewRTSPConnector())
+	manager := NewManagerWithConnector(NewRTSPConnector(opts.FFmpegPath))
 	manager.ice = webRTCICEServers(opts.ICEServers)
 	return manager
 }
@@ -279,6 +279,8 @@ func audioCodecCapability(codec Codec) webrtc.RTPCodecCapability {
 	switch codec {
 	case CodecPCMU:
 		return webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypePCMU, ClockRate: 8000, Channels: 1}
+	case CodecOpus:
+		return webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2}
 	default:
 		return webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypePCMA, ClockRate: 8000, Channels: 1}
 	}

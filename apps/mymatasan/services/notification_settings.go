@@ -21,6 +21,10 @@ type NotificationSettings struct {
 	Webhook   NotificationWebhookSettings   `json:"webhook"`
 	Telegram  NotificationTelegramSettings  `json:"telegram"`
 	Retention NotificationRetentionSettings `json:"retention"`
+	// Destinations is the per-destination delivery list (Phase 1: persisted +
+	// migrated from the Webhook/Telegram singletons; the live hub still delivers
+	// via those singletons until the Phase 2 refactor consumes this list).
+	Destinations []NotificationDestination `json:"destinations,omitempty"`
 }
 
 type NotificationWebhookSettings struct {
@@ -112,6 +116,16 @@ func (s *notificationSettingsService) Save(ctx context.Context, settings Notific
 	return settings, nil
 }
 
+// Destinations returns the configured delivery destinations for per-destination
+// alert rendering. On error it returns nil (no external delivery).
+func (s *notificationSettingsService) Destinations(ctx context.Context) []NotificationDestination {
+	settings, err := s.Get(ctx)
+	if err != nil {
+		return nil
+	}
+	return settings.Destinations
+}
+
 func (s *notificationSettingsService) Sync(ctx context.Context) error {
 	settings, err := s.Get(ctx)
 	if err != nil {
@@ -146,21 +160,46 @@ func (s *notificationSettingsService) Test(ctx context.Context, severity string)
 }
 
 // notificationChannelConfig maps persisted settings into the domain channel
-// configuration applied to the hub.
+// configuration applied to the hub. Delivery is per-destination: each enabled
+// destination becomes a filtered outbound channel (own severity floor + category
+// subscription). The legacy Webhook/Telegram singletons are migrated into the
+// destination list by normalizeNotificationSettings, so they are not mapped here.
 func notificationChannelConfig(s NotificationSettings) notification.ChannelConfig {
-	return notification.ChannelConfig{
-		Webhook: notification.WebhookConfig{
-			Enabled:     s.Webhook.Enabled,
-			URL:         s.Webhook.URL,
-			MinSeverity: parseNotificationSeverity(s.Webhook.MinSeverity),
-		},
-		Telegram: notification.TelegramConfig{
-			Enabled:     s.Telegram.Enabled,
-			BotToken:    s.Telegram.BotToken,
-			ChatID:      s.Telegram.ChatId,
-			MinSeverity: parseNotificationSeverity(s.Telegram.MinSeverity),
-		},
+	cfg := notification.ChannelConfig{}
+	for _, d := range s.Destinations {
+		if !d.Enabled {
+			continue
+		}
+		dc := notification.DestinationConfig{
+			Id:          d.Id,
+			Type:        d.Type,
+			MinSeverity: parseNotificationSeverity(d.MinSeverity),
+			Categories:  d.Categories,
+		}
+		switch d.Type {
+		case DestinationTypeWebhook:
+			dc.URL = d.URL
+		case DestinationTypeTelegram:
+			dc.BotToken = d.BotToken
+			dc.ChatID = d.ChatId
+		case DestinationTypeMqtt:
+			dc.Mqtt = notification.MqttDestinationConfig{
+				BrokerURL:          d.Mqtt.BrokerURL,
+				Topic:              d.Mqtt.Topic,
+				ClientID:           d.Mqtt.ClientId,
+				QoS:                byte(d.Mqtt.Qos),
+				Retain:             d.Mqtt.Retain,
+				Username:           d.Mqtt.Username,
+				Password:           d.Mqtt.Password,
+				CACert:             d.Mqtt.CaCert,
+				ClientCert:         d.Mqtt.ClientCert,
+				ClientKey:          d.Mqtt.ClientKey,
+				InsecureSkipVerify: d.Mqtt.InsecureSkipVerify,
+			}
+		}
+		cfg.Destinations = append(cfg.Destinations, dc)
 	}
+	return cfg
 }
 
 func normalizeNotificationSettings(s NotificationSettings) NotificationSettings {
@@ -175,6 +214,13 @@ func normalizeNotificationSettings(s NotificationSettings) NotificationSettings 
 	if s.Retention.IntervalHours <= 0 {
 		s.Retention.IntervalHours = 6
 	}
+	// Seed the destination list from the legacy singletons the first time (before
+	// any destinations are stored), then normalize. Delivery is unaffected in
+	// Phase 1 — notificationChannelConfig still reads Webhook/Telegram.
+	if len(s.Destinations) == 0 {
+		s.Destinations = migrateLegacyDestinations(s)
+	}
+	s.Destinations = normalizeDestinations(s.Destinations)
 	return s
 }
 
@@ -192,6 +238,9 @@ func validateNotificationSettings(s NotificationSettings) error {
 		if s.Telegram.BotToken == "" || s.Telegram.ChatId == "" {
 			return fmt.Errorf("telegram botToken and chatId are required when the telegram channel is enabled")
 		}
+	}
+	if err := validateDestinations(s.Destinations); err != nil {
+		return err
 	}
 	return nil
 }

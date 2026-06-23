@@ -1,42 +1,26 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Ico } from './icons';
-import {formatFileSize,segmentDuration,segmentFilename,detectionTypeLabel,todayDateString,apiBase,formatTimestamp,cameraTitle,orderedSavedCameras } from '../lib/helpers';
+import {formatFileSize,segmentDuration,segmentFilename,detectionTypeLabel,todayDateString,apiBase,formatTimestamp,orderedSavedCameras } from '../lib/helpers';
 import { SavedDeviceNav } from './cameras';
 
-// mode controls which half renders: "view" (default) shows the recordings viewer
-// (event clips + all recordings), "config" shows the per-camera recording
-// configuration. The config half lives on the Cameras page; the Recording page is
-// view-only.
-export function RecordingTab({ mode = 'view', saved, segments, configs, busy, authHeader, onSaveConfig, onDeleteSegment, onReload, focusCameraId, focusAlertId, unacknowledgedAlertIds, onAcknowledgeAlert, alerts }) {
-  const showConfig = mode === 'config';
-  const showView = mode !== 'config';
+// RecordingTab is the full-width recordings browser: per-camera date timeline, segment
+// list, and playback. Per-camera recording config and stream URLs now live in the
+// Saved-camera panel (CameraRecordingConfig / CameraStreamConfig).
+export function RecordingTab({ canManage = true, saved, segments, busy, authHeader, onDeleteSegment, onPurgeExpired, onReload, focusCameraId, unacknowledgedAlertIds, onAcknowledgeAlert, alerts }) {
   const orderedSaved = useMemo(() => orderedSavedCameras(saved), [saved]);
   const [selectedCameraId, setSelectedCameraId] = useState(0);
-  const [recordingSubTab, setRecordingSubTab] = useState('events');
-  const focusedRowRef = useRef(null);
   const onReloadRef = useRef(onReload);
   useEffect(() => { onReloadRef.current = onReload; });
   const effectiveCameraId = selectedCameraId || Number(orderedSaved[0]?.id) || 0;
   const selectedCamera = saved.find((d) => Number(d.id) === effectiveCameraId) || orderedSaved[0] || null;
-  const eventClips = useMemo(
-    () => segments.filter((s) => Number(s.cameraId) === effectiveCameraId && Number(s.alertId) > 0),
-    [segments, effectiveCameraId],
-  );
   const alertById = useMemo(
     () => new Map((alerts || []).map((a) => [Number(a.id), a])),
     [alerts],
   );
-  const defaultDraft = useMemo(
-    () => ({ cameraId: effectiveCameraId, enabled: false, preRollSec: 30, postRollSec: 10, storagePath: 'recordings', retentionDays: 7, segmentMinutes: 15, liveStreamUrl: '', streamUrl: '', fallbackStreamUrl: '' }),
-    [effectiveCameraId],
-  );
-  const [configDraft, setConfigDraft] = useState(defaultDraft);
   const [downloading, setDownloading] = useState(null);
   const [playingSegment, setPlayingSegment] = useState(null);
   const [videoUrl, setVideoUrl] = useState(null);
   const [loadingVideo, setLoadingVideo] = useState(false);
-  const [awaitAttempts, setAwaitAttempts] = useState(0);
-  const maxAwaitAttempts = 12;
 
   // All Recordings browse state
   const [browseDate, setBrowseDate] = useState(todayDateString);
@@ -49,84 +33,9 @@ export function RecordingTab({ mode = 'view', saved, segments, configs, busy, au
   const timelineBarRef = useRef(null);
   const segmentRefsMap = useRef({});
 
-  // Recorder status
-  const [recorderStatuses, setRecorderStatuses] = useState([]);
-  const recorderStatusRef = useRef(null);
-
-  const fetchRecorderStatus = useCallback(async () => {
-    try {
-      const headers = authHeader ? { Authorization: authHeader } : {};
-      const resp = await fetch(`${apiBase()}/api/recording/status`, { credentials: 'include', headers });
-      if (!resp.ok) return;
-      const payload = await resp.json();
-      const items = payload?.data?.result ?? payload?.result ?? payload;
-      setRecorderStatuses(Array.isArray(items) ? items : []);
-    } catch (_) {}
-  }, [authHeader]);
-
-  useEffect(() => {
-    fetchRecorderStatus();
-    const id = setInterval(fetchRecorderStatus, 10000);
-    recorderStatusRef.current = id;
-    return () => clearInterval(id);
-  }, [fetchRecorderStatus]);
-
-  // ONVIF stream profiles for the selected camera
-  const [streamProfiles, setStreamProfiles] = useState(null); // null = not loaded
-  const [streamProfilesLoading, setStreamProfilesLoading] = useState(false);
-  const [streamProfilesError, setStreamProfilesError] = useState('');
-
-  const fetchStreamProfiles = useCallback(async () => {
-    if (!effectiveCameraId) return;
-    setStreamProfilesLoading(true);
-    setStreamProfilesError('');
-    try {
-      const headers = authHeader ? { Authorization: authHeader } : {};
-      const resp = await fetch(`${apiBase()}/api/recording/streams/${effectiveCameraId}`, { credentials: 'include', headers });
-      if (!resp.ok) throw new Error(`${resp.status}`);
-      const payload = await resp.json();
-      const result = payload?.data?.result ?? payload?.result ?? payload;
-      setStreamProfiles(result || null);
-    } catch (e) {
-      setStreamProfilesError(e.message || 'Failed to load streams');
-      setStreamProfiles(null);
-    } finally {
-      setStreamProfilesLoading(false);
-    }
-  }, [effectiveCameraId, authHeader]);
-
-  // Reset stream profiles when camera changes
-  useEffect(() => {
-    setStreamProfiles(null);
-    setStreamProfilesError('');
-  }, [effectiveCameraId]);
-
-  const isAwaitingClip = Boolean(focusAlertId) &&
-    (!focusCameraId || Number(effectiveCameraId) === Number(focusCameraId)) &&
-    eventClips.every((s) => Number(s.alertId) !== Number(focusAlertId));
-
   useEffect(() => {
     if (focusCameraId) setSelectedCameraId(Number(focusCameraId));
   }, [focusCameraId]);
-
-  useEffect(() => {
-    setAwaitAttempts(0);
-  }, [focusAlertId]);
-
-  useEffect(() => {
-    if (!isAwaitingClip || awaitAttempts >= maxAwaitAttempts) return;
-    const id = setTimeout(() => {
-      onReloadRef.current();
-      setAwaitAttempts((n) => n + 1);
-    }, 5000);
-    return () => clearTimeout(id);
-  }, [isAwaitingClip, awaitAttempts]);
-
-  useEffect(() => {
-    if (focusedRowRef.current) {
-      focusedRowRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }
-  }, [focusAlertId, eventClips]);
 
   useEffect(() => {
     if (!playingSegment) return;
@@ -134,12 +43,6 @@ export function RecordingTab({ mode = 'view', saved, segments, configs, busy, au
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [playingSegment]);
-
-  useEffect(() => {
-    const existing = configs.find((c) => Number(c.cameraId) === effectiveCameraId);
-    const currentLiveUrl = selectedCamera?.rtspUrl || '';
-    setConfigDraft(existing ? { ...existing, liveStreamUrl: existing.liveStreamUrl || currentLiveUrl } : { ...defaultDraft, liveStreamUrl: currentLiveUrl });
-  }, [effectiveCameraId, configs, selectedCamera]);
 
   // Reset browse state only when the selected camera actually changes — not on
   // every background reload (which re-creates the configs/selectedCamera refs and
@@ -150,36 +53,6 @@ export function RecordingTab({ mode = 'view', saved, segments, configs, busy, au
     setTimelineSelectedMin(null);
     setBrowseDate(todayDateString());
   }, [effectiveCameraId]);
-
-  async function applyLiveStream(rtspUrl) {
-    if (!rtspUrl || !effectiveCameraId) return;
-    try {
-      const headers = { 'Content-Type': 'application/json', ...(authHeader ? { Authorization: authHeader } : {}) };
-      const resp = await fetch(`${apiBase()}/api/recording/streams/${effectiveCameraId}/live`, {
-        method: 'POST',
-        credentials: 'include',
-        headers,
-        body: JSON.stringify({ rtspUrl }),
-      });
-      if (!resp.ok) throw new Error(`${resp.status}`);
-      await fetchStreamProfiles();
-    } catch (e) {
-      alert(`Failed to apply live stream: ${e.message}`);
-    }
-  }
-
-  async function autoConfigureStreams() {
-    if (!streamProfiles?.options?.length) return;
-    const opts = streamProfiles.options;
-    if (opts.length >= 2) {
-      // Main stream → live view, sub-stream → recording
-      setConfigDraft((d) => ({ ...d, liveStreamUrl: opts[0].rtspUrl, streamUrl: opts[1].rtspUrl, fallbackStreamUrl: opts[0].rtspUrl }));
-    } else if (opts.length === 1) {
-      // Only one stream — use it for everything
-      setConfigDraft((d) => ({ ...d, liveStreamUrl: opts[0].rtspUrl, streamUrl: '', fallbackStreamUrl: '' }));
-      alert('Only one stream profile found. Both live and recording will use the same stream.');
-    }
-  }
 
   const loadBrowseSegments = useCallback(async () => {
     if (!effectiveCameraId || !browseDate) return;
@@ -208,9 +81,8 @@ export function RecordingTab({ mode = 'view', saved, segments, configs, busy, au
   }, [effectiveCameraId, browseDate, authHeader]);
 
   useEffect(() => {
-    if (recordingSubTab !== 'browse') return;
     loadBrowseSegments();
-  }, [loadBrowseSegments, recordingSubTab]);
+  }, [loadBrowseSegments]);
 
   function handleTimelineClick(e) {
     if (!timelineBarRef.current) return;
@@ -305,7 +177,6 @@ export function RecordingTab({ mode = 'view', saved, segments, configs, busy, au
       <div
         key={seg.id}
         ref={(el) => {
-          if (isFocused) focusedRowRef.current = el;
           if (opts.segRef) opts.segRef(el);
         }}
         className={`segment-row${isFocused ? ' focused' : ''}${extraClass ? ` ${extraClass}` : ''}`}
@@ -344,9 +215,11 @@ export function RecordingTab({ mode = 'view', saved, segments, configs, busy, au
           <button type="button" className="quiet" disabled={downloading === seg.id} onClick={() => downloadSegment(seg)}>
             <span className="btn-icon"><Ico n="download" /> {downloading === seg.id ? 'Downloading…' : 'Download'}</span>
           </button>
-          <button type="button" className="quiet danger-text" disabled={busy} onClick={() => onDeleteSegment(seg.id)}>
-            <span className="btn-icon"><Ico n="trash" /> Delete</span>
-          </button>
+          {canManage ? (
+            <button type="button" className="quiet danger-text" disabled={busy} onClick={() => onDeleteSegment(seg.id)}>
+              <span className="btn-icon"><Ico n="trash" /> Delete</span>
+            </button>
+          ) : null}
         </div>
       </div>
     );
@@ -356,18 +229,29 @@ export function RecordingTab({ mode = 'view', saved, segments, configs, busy, au
     <section className="workspace">
       <div className="toolbar">
         <div>
-          <h2 className="section-title">{showConfig ? 'Recording Settings' : 'Recordings'}</h2>
-          <p className="section-subtitle">
-            {showConfig
-              ? 'Per-camera NVR recording configuration.'
-              : 'Continuous NVR recording with event clip extraction.'}
-          </p>
+          <h2 className="section-title">Recordings</h2>
+          <p className="section-subtitle">Continuous NVR recording with event clip extraction.</p>
         </div>
-        {showView ? (
+        <div className="toolbar-actions">
+          {canManage && onPurgeExpired ? (
+            <button
+              type="button"
+              className="quiet"
+              disabled={busy}
+              title="Delete recordings already older than each camera's retention. In-retention footage is kept."
+              onClick={() => {
+                if (window.confirm('Delete all recordings already past their retention period? Footage still within retention is kept.')) {
+                  onPurgeExpired();
+                }
+              }}
+            >
+              <span className="btn-icon"><Ico n="trash" /> Purge expired</span>
+            </button>
+          ) : null}
           <button type="button" className="quiet" onClick={onReload} disabled={busy}>
             <span className="btn-icon"><Ico n="reload" /> Reload</span>
           </button>
-        ) : null}
+        </div>
       </div>
 
       <section className="saved-browser">
@@ -376,255 +260,8 @@ export function RecordingTab({ mode = 'view', saved, segments, configs, busy, au
         <main className="saved-detail">
           {selectedCamera ? (
             <div className="recording-layout">
-              {showConfig && (
               <section className="settings-panel">
-                <header>
-                  <div>
-                    <h2>{cameraTitle(selectedCamera)}</h2>
-                    <p className="section-subtitle">{selectedCamera.host || selectedCamera.xAddr || 'Saved camera'}</p>
-                  </div>
-                  <span className={`status-pill${configDraft.enabled ? ' online' : ''}`}>
-                    {configDraft.enabled ? 'Recording on' : 'Recording off'}
-                  </span>
-                </header>
-
-                <div className="recording-config-grid">
-                  <label className="field-label">
-                    <span>Segment length (minutes)</span>
-                    <input
-                      type="number" min="1" max="60"
-                      value={configDraft.segmentMinutes || 15}
-                      onChange={(e) => setConfigDraft({ ...configDraft, segmentMinutes: Number(e.target.value) })}
-                    />
-                  </label>
-                  <label className="field-label">
-                    <span>Pre-roll (seconds)</span>
-                    <input
-                      type="number" min="5" max="120"
-                      value={configDraft.preRollSec}
-                      onChange={(e) => setConfigDraft({ ...configDraft, preRollSec: Number(e.target.value) })}
-                    />
-                  </label>
-                  <label className="field-label">
-                    <span>Post-roll (seconds)</span>
-                    <input
-                      type="number" min="3" max="120"
-                      value={configDraft.postRollSec}
-                      onChange={(e) => setConfigDraft({ ...configDraft, postRollSec: Number(e.target.value) })}
-                    />
-                  </label>
-                  <label className="field-label">
-                    <span>Retention (days)</span>
-                    <input
-                      type="number" min="1" max="365"
-                      value={configDraft.retentionDays || 7}
-                      onChange={(e) => setConfigDraft({ ...configDraft, retentionDays: Number(e.target.value) })}
-                    />
-                  </label>
-                  <label className="field-label">
-                    <span>Storage path</span>
-                    <input
-                      type="text"
-                      value={configDraft.storagePath || ''}
-                      onChange={(e) => setConfigDraft({ ...configDraft, storagePath: e.target.value })}
-                      placeholder="recordings"
-                    />
-                  </label>
-                </div>
-
-                {/* Stream Configuration */}
-                <details style={{marginTop:'12px'}}>
-                  <summary style={{cursor:'pointer', fontSize:'13px', fontWeight:'600', userSelect:'none', padding:'4px 0'}}>
-                    Stream Configuration
-                    {configDraft.streamUrl ? <span style={{marginLeft:'8px', fontSize:'11px', color:'var(--text-muted,#94a3b8)', fontWeight:'normal'}}>custom recording stream set</span> : null}
-                  </summary>
-                  <div style={{marginTop:'10px', display:'flex', flexDirection:'column', gap:'10px'}}>
-                    {/* Auto-detect + auto-configure */}
-                    <div style={{display:'flex', gap:'8px', alignItems:'center'}}>
-                      <button type="button" className="quiet" style={{fontSize:'12px'}} onClick={fetchStreamProfiles} disabled={streamProfilesLoading}>
-                        {streamProfilesLoading ? 'Loading streams…' : 'Detect streams'}
-                      </button>
-                      {streamProfiles?.options?.length >= 2 && (
-                        <button type="button" className="quiet" style={{fontSize:'12px'}} onClick={autoConfigureStreams}>
-                          Auto-configure (main→live, sub→recording)
-                        </button>
-                      )}
-                      {streamProfilesError && <span style={{fontSize:'12px', color:'#ef4444'}}>{streamProfilesError}</span>}
-                    </div>
-
-                    {/* Live view stream */}
-                    <label className="field-label" style={{gap:'4px'}}>
-                      <span style={{fontSize:'12px', fontWeight:'600'}}>Live view stream</span>
-                      {streamProfiles?.options?.length > 0 && (
-                        <div style={{display:'flex', gap:'6px', flexWrap:'wrap', marginBottom:'4px'}}>
-                          {streamProfiles.options.map((opt) => {
-                            const url = opt.rtspUrl || '';
-                            const isCurrent = configDraft.liveStreamUrl === url;
-                            const label = `${opt.name || opt.Name || opt.profileToken} — ${opt.encoding || opt.Encoding} ${opt.width || opt.Width}×${opt.height || opt.Height}`;
-                            return (
-                              <button key={opt.profileToken || opt.ProfileToken} type="button" className={`quiet${isCurrent ? ' active' : ''}`} style={{fontSize:'11px'}}
-                                onClick={() => setConfigDraft((d) => ({ ...d, liveStreamUrl: url }))} title={url}>
-                                {isCurrent ? '✓ ' : ''}{label}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                      <input type="text" value={configDraft.liveStreamUrl || ''} onChange={(e) => setConfigDraft({ ...configDraft, liveStreamUrl: e.target.value })}
-                        placeholder="rtsp://user:pass@ip/stream1" />
-                    </label>
-
-                    {/* Recording stream */}
-                    <label className="field-label" style={{gap:'4px'}}>
-                      <span style={{fontSize:'12px', fontWeight:'600'}}>Recording stream <span style={{fontWeight:'normal', color:'var(--text-muted,#94a3b8)'}}>(leave blank to use live-view stream)</span></span>
-                      {streamProfiles?.options?.length > 0 && (
-                        <div style={{display:'flex', gap:'6px', flexWrap:'wrap', marginBottom:'4px'}}>
-                          {streamProfiles.options.map((opt) => {
-                            const url = opt.rtspUrl || '';
-                            const isCurrent = configDraft.streamUrl === url;
-                            const label = `${opt.name || opt.Name || opt.profileToken} — ${opt.encoding || opt.Encoding} ${opt.width || opt.Width}×${opt.height || opt.Height}`;
-                            return (
-                              <button key={opt.profileToken || opt.ProfileToken} type="button" className={`quiet${isCurrent ? ' active' : ''}`} style={{fontSize:'11px'}}
-                                onClick={() => setConfigDraft((d) => ({ ...d, streamUrl: url }))} title={url}>
-                                {isCurrent ? '✓ ' : ''}{label}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                      <input type="text" value={configDraft.streamUrl || ''} onChange={(e) => setConfigDraft({ ...configDraft, streamUrl: e.target.value })}
-                        placeholder="rtsp://user:pass@ip/stream2" />
-                    </label>
-
-                    {/* Fallback stream */}
-                    <label className="field-label" style={{gap:'4px'}}>
-                      <span style={{fontSize:'12px', fontWeight:'600'}}>Fallback recording stream <span style={{fontWeight:'normal', color:'var(--text-muted,#94a3b8)'}}>(tried after 2 quick failures of the primary)</span></span>
-                      {streamProfiles?.options?.length > 0 && (
-                        <div style={{display:'flex', gap:'6px', flexWrap:'wrap', marginBottom:'4px'}}>
-                          {streamProfiles.options.map((opt) => {
-                            const url = opt.rtspUrl || '';
-                            const isCurrent = configDraft.fallbackStreamUrl === url;
-                            const label = `${opt.name || opt.Name || opt.profileToken} — ${opt.encoding || opt.Encoding} ${opt.width || opt.Width}×${opt.height || opt.Height}`;
-                            return (
-                              <button key={opt.profileToken || opt.ProfileToken} type="button" className={`quiet${isCurrent ? ' active' : ''}`} style={{fontSize:'11px'}}
-                                onClick={() => setConfigDraft((d) => ({ ...d, fallbackStreamUrl: url }))} title={url}>
-                                {isCurrent ? '✓ ' : ''}{label}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                      <input type="text" value={configDraft.fallbackStreamUrl || ''} onChange={(e) => setConfigDraft({ ...configDraft, fallbackStreamUrl: e.target.value })}
-                        placeholder="rtsp://user:pass@ip/stream1  (optional)" />
-                    </label>
-                  </div>
-                </details>
-
-                <div className="settings-actions">
-                  <label className="check-row">
-                    <input
-                      type="checkbox"
-                      checked={!!configDraft.enabled}
-                      onChange={(e) => setConfigDraft({ ...configDraft, enabled: e.target.checked })}
-                    />
-                    Enable recording for this camera
-                  </label>
-                  <button type="button" onClick={async () => {
-                    const newLive = (configDraft.liveStreamUrl || '').trim();
-                    const prevLive = (selectedCamera?.rtspUrl || '').trim();
-                    if (newLive && newLive !== prevLive) {
-                      await applyLiveStream(newLive);
-                    }
-                    onSaveConfig(configDraft);
-                  }} disabled={busy}>
-                    <span className="btn-icon"><Ico n="save" /> Save config</span>
-                  </button>
-                </div>
-
-                {/* Recorder status panel */}
                 {(() => {
-                  const rs = recorderStatuses.find((s) => Number(s.cameraId) === effectiveCameraId);
-                  if (rs) {
-                    const isOk = rs.state === 'streaming';
-                    const isErr = rs.state === 'error';
-                    return (
-                      <div style={{marginTop: '12px', padding: '10px 12px', borderRadius: '6px', background: isOk ? 'rgba(34,197,94,0.1)' : isErr ? 'rgba(239,68,68,0.1)' : 'rgba(148,163,184,0.1)', border: `1px solid ${isOk ? 'rgba(34,197,94,0.3)' : isErr ? 'rgba(239,68,68,0.3)' : 'rgba(148,163,184,0.3)'}`}}>
-                        <div style={{display:'flex', alignItems:'center', gap:'8px', marginBottom: rs.lastError || rs.liveDir ? '6px' : '0'}}>
-                          <span style={{width:'8px', height:'8px', borderRadius:'50%', background: isOk ? '#22c55e' : isErr ? '#ef4444' : '#94a3b8', display:'inline-block', flexShrink:0}} />
-                          <strong style={{fontSize:'13px'}}>{isOk ? 'Recording active' : isErr ? 'Recorder error' : 'Recorder stopped'}</strong>
-                          <span style={{fontSize:'12px', color:'var(--text-muted, #94a3b8)', marginLeft:'auto'}}>{rs.liveFiles} live segment{rs.liveFiles !== 1 ? 's' : ''}</span>
-                          <button type="button" className="quiet" style={{fontSize:'11px', padding:'2px 6px'}} onClick={fetchRecorderStatus}>↻</button>
-                        </div>
-                        {rs.liveDir && <div style={{fontSize:'11px', color:'var(--text-muted, #94a3b8)', wordBreak:'break-all'}}>{rs.liveDir}</div>}
-                        {rs.activeStreamUrl && <div style={{fontSize:'11px', color:'var(--text-muted, #94a3b8)', wordBreak:'break-all', marginTop:'2px'}}>
-                          {rs.usingFallback ? '⚠ Fallback: ' : 'Stream: '}{rs.activeStreamUrl}
-                        </div>}
-                        {rs.lastError && <div style={{fontSize:'12px', color:'#ef4444', marginTop:'4px', wordBreak:'break-all'}}>{rs.lastError}</div>}
-                      </div>
-                    );
-                  }
-                  if (configDraft.enabled) {
-                    return (
-                      <div style={{marginTop: '12px', padding: '10px 12px', borderRadius: '6px', background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.3)'}}>
-                        <div style={{display:'flex', alignItems:'center', gap:'8px'}}>
-                          <span style={{width:'8px', height:'8px', borderRadius:'50%', background:'#eab308', display:'inline-block', flexShrink:0}} />
-                          <strong style={{fontSize:'13px'}}>No active recorder</strong>
-                          <button type="button" className="quiet" style={{fontSize:'11px', padding:'2px 6px', marginLeft:'auto'}} onClick={fetchRecorderStatus}>↻</button>
-                        </div>
-                        <div style={{fontSize:'12px', color:'var(--text-muted, #94a3b8)', marginTop:'4px'}}>Recording is enabled but no recorder is running. Ensure the camera has an RTSP URI configured and the storage path is writable. Check server logs for details.</div>
-                      </div>
-                    );
-                  }
-                  return null;
-                })()}
-              </section>
-              )}
-
-              {showView && (
-              <section className="settings-panel">
-                <nav className="secondary-tabs" style={{marginBottom: '12px'}} aria-label="Recording view">
-                  <button type="button" className={recordingSubTab === 'events' ? 'active' : 'quiet'} onClick={() => setRecordingSubTab('events')}>
-                    <span className="btn-icon"><Ico n="list" /> Event Clips</span>
-                  </button>
-                  <button type="button" className={recordingSubTab === 'browse' ? 'active' : 'quiet'} onClick={() => setRecordingSubTab('browse')}>
-                    <span className="btn-icon"><Ico n="folder" /> All Recordings</span>
-                  </button>
-                </nav>
-
-                {recordingSubTab === 'events' && (
-                  <>
-                    <header>
-                      <h2>Event Clips</h2>
-                      <span className="status-pill">{eventClips.length}</span>
-                    </header>
-
-                    {isAwaitingClip && awaitAttempts < maxAwaitAttempts && (
-                      <div className="recording-pending">
-                        <span className="recording-pending-dot" />
-                        Recording in progress for Alert #{focusAlertId} — checking for clip every 5 s
-                        {awaitAttempts > 0 ? ` (${awaitAttempts}/${maxAwaitAttempts})` : '…'}
-                      </div>
-                    )}
-                    {isAwaitingClip && awaitAttempts >= maxAwaitAttempts && (
-                      <div className="recording-pending recording-pending--timeout">
-                        Clip not found after 60 s for Alert #{focusAlertId}. Check that recording is enabled and the storage path is writable, then click Reload.
-                      </div>
-                    )}
-
-                    {eventClips.length === 0 ? (
-                      <p className="empty-hint">No event clips yet. Enable recording and trigger an alert to capture a clip.</p>
-                    ) : (
-                      <div className="segment-list">
-                        {eventClips.map((seg) => {
-                          const isFocused = focusAlertId && Number(seg.alertId) === Number(focusAlertId);
-                          return renderSegmentRow(seg, isFocused);
-                        })}
-                      </div>
-                    )}
-                  </>
-                )}
-
-                {recordingSubTab === 'browse' && (() => {
                   const dayStartSec = browseDate ? new Date(browseDate + 'T00:00:00').getTime() / 1000 : 0;
                   const MINS_IN_DAY = 24 * 60;
                   const continuousSegs = allBrowseSegments.filter((s) => !s.alertId || Number(s.alertId) === 0);
@@ -773,7 +410,6 @@ export function RecordingTab({ mode = 'view', saved, segments, configs, busy, au
                   );
                 })()}
               </section>
-              )}
             </div>
           ) : (
             <p className="empty-hint">No cameras saved. Add a camera in the Cameras tab first.</p>
@@ -808,6 +444,319 @@ export function RecordingTab({ mode = 'view', saved, segments, configs, busy, au
         </div>
         );
       })()}
+    </section>
+  );
+}
+
+// configDraftFor builds the full recording-config shape for a camera from its existing
+// config (or sane defaults), so the per-camera Recording and Stream tabs — which both
+// edit the SAME entity — always submit a complete config and never wipe each other's
+// fields. liveFallback seeds the live-view URL from the camera's RTSP when unset.
+function configDraftFor(existing, cameraId, liveFallback = '') {
+  return {
+    cameraId,
+    enabled: existing?.enabled ?? false,
+    preRollSec: existing?.preRollSec ?? 30,
+    postRollSec: existing?.postRollSec ?? 10,
+    storagePath: existing?.storagePath ?? 'recordings',
+    retentionDays: existing?.retentionDays ?? 7,
+    segmentMinutes: existing?.segmentMinutes ?? 15,
+    liveStreamUrl: existing?.liveStreamUrl || liveFallback || '',
+    streamUrl: existing?.streamUrl ?? '',
+    fallbackStreamUrl: existing?.fallbackStreamUrl ?? '',
+  };
+}
+
+// CameraRecordingConfig is the per-camera NVR recording settings form shown in the
+// Saved-camera panel's Recording tab. Stream URLs live in the Stream tab; this form
+// preserves them on save by merging over the camera's existing config. It also polls
+// the recorder status so the user gets immediate feedback after enabling recording.
+export function CameraRecordingConfig({ device, configs, busy, canManage = true, authHeader, onSaveConfig }) {
+  const cameraId = Number(device?.id) || 0;
+  const existing = useMemo(
+    () => (configs || []).find((c) => Number(c.cameraId) === cameraId) || null,
+    [configs, cameraId],
+  );
+  const [draft, setDraft] = useState(() => configDraftFor(existing, cameraId));
+  useEffect(() => { setDraft(configDraftFor(existing, cameraId)); }, [existing, cameraId]);
+
+  const [statuses, setStatuses] = useState([]);
+  const fetchStatus = useCallback(async () => {
+    try {
+      const headers = authHeader ? { Authorization: authHeader } : {};
+      const resp = await fetch(`${apiBase()}/api/recording/status`, { credentials: 'include', headers });
+      if (!resp.ok) return;
+      const payload = await resp.json();
+      const items = payload?.data?.result ?? payload?.result ?? payload;
+      setStatuses(Array.isArray(items) ? items : []);
+    } catch (_) {}
+  }, [authHeader]);
+  useEffect(() => {
+    fetchStatus();
+    const id = setInterval(fetchStatus, 10000);
+    return () => clearInterval(id);
+  }, [fetchStatus]);
+
+  function save() {
+    // Base on the existing entity so the Stream tab's URLs are preserved, then apply
+    // this form's recording fields.
+    onSaveConfig({
+      ...configDraftFor(existing, cameraId),
+      enabled: draft.enabled,
+      preRollSec: draft.preRollSec,
+      postRollSec: draft.postRollSec,
+      retentionDays: draft.retentionDays,
+      segmentMinutes: draft.segmentMinutes,
+      storagePath: draft.storagePath,
+    });
+  }
+
+  const rs = statuses.find((s) => Number(s.cameraId) === cameraId);
+
+  return (
+    <section className="saved-tab-panel">
+      <div className="recording-config-grid">
+        <label className="field-label">
+          <span>Segment length (minutes)</span>
+          <input type="number" min="1" max="60" value={draft.segmentMinutes || 15}
+            onChange={(e) => setDraft({ ...draft, segmentMinutes: Number(e.target.value) })} />
+        </label>
+        <label className="field-label">
+          <span>Pre-roll (seconds)</span>
+          <input type="number" min="5" max="120" value={draft.preRollSec}
+            onChange={(e) => setDraft({ ...draft, preRollSec: Number(e.target.value) })} />
+        </label>
+        <label className="field-label">
+          <span>Post-roll (seconds)</span>
+          <input type="number" min="3" max="120" value={draft.postRollSec}
+            onChange={(e) => setDraft({ ...draft, postRollSec: Number(e.target.value) })} />
+        </label>
+        <label className="field-label">
+          <span>Retention (days)</span>
+          <input type="number" min="1" max="365" value={draft.retentionDays || 7}
+            onChange={(e) => setDraft({ ...draft, retentionDays: Number(e.target.value) })} />
+        </label>
+        <label className="field-label">
+          <span>Storage path</span>
+          <input type="text" value={draft.storagePath || ''} placeholder="recordings"
+            onChange={(e) => setDraft({ ...draft, storagePath: e.target.value })} />
+        </label>
+      </div>
+
+      <div className="settings-actions">
+        <label className="check-row">
+          <input type="checkbox" checked={!!draft.enabled} disabled={!canManage}
+            onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} />
+          Enable recording for this camera
+        </label>
+        <button type="button" onClick={save} disabled={busy || !canManage}>
+          <span className="btn-icon"><Ico n="save" /> Save config</span>
+        </button>
+      </div>
+
+      {/* Recorder status feedback */}
+      {(() => {
+        if (rs) {
+          const isOk = rs.state === 'streaming';
+          const isErr = rs.state === 'error';
+          return (
+            <div style={{marginTop: '12px', padding: '10px 12px', borderRadius: '6px', background: isOk ? 'rgba(34,197,94,0.1)' : isErr ? 'rgba(239,68,68,0.1)' : 'rgba(148,163,184,0.1)', border: `1px solid ${isOk ? 'rgba(34,197,94,0.3)' : isErr ? 'rgba(239,68,68,0.3)' : 'rgba(148,163,184,0.3)'}`}}>
+              <div style={{display:'flex', alignItems:'center', gap:'8px', marginBottom: rs.lastError || rs.liveDir ? '6px' : '0'}}>
+                <span style={{width:'8px', height:'8px', borderRadius:'50%', background: isOk ? '#22c55e' : isErr ? '#ef4444' : '#94a3b8', display:'inline-block', flexShrink:0}} />
+                <strong style={{fontSize:'13px'}}>{isOk ? 'Recording active' : isErr ? 'Recorder error' : 'Recorder stopped'}</strong>
+                <span style={{fontSize:'12px', color:'var(--text-muted, #94a3b8)', marginLeft:'auto'}}>{rs.liveFiles} live segment{rs.liveFiles !== 1 ? 's' : ''}</span>
+                <button type="button" className="quiet" style={{fontSize:'11px', padding:'2px 6px'}} onClick={fetchStatus}>↻</button>
+              </div>
+              {rs.liveDir && <div style={{fontSize:'11px', color:'var(--text-muted, #94a3b8)', wordBreak:'break-all'}}>{rs.liveDir}</div>}
+              {rs.activeStreamUrl && <div style={{fontSize:'11px', color:'var(--text-muted, #94a3b8)', wordBreak:'break-all', marginTop:'2px'}}>
+                {rs.usingFallback ? '⚠ Fallback: ' : 'Stream: '}{rs.activeStreamUrl}
+              </div>}
+              {rs.lastError && <div style={{fontSize:'12px', color:'#ef4444', marginTop:'4px', wordBreak:'break-all'}}>{rs.lastError}</div>}
+            </div>
+          );
+        }
+        if (draft.enabled) {
+          return (
+            <div style={{marginTop: '12px', padding: '10px 12px', borderRadius: '6px', background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.3)'}}>
+              <div style={{display:'flex', alignItems:'center', gap:'8px'}}>
+                <span style={{width:'8px', height:'8px', borderRadius:'50%', background:'#eab308', display:'inline-block', flexShrink:0}} />
+                <strong style={{fontSize:'13px'}}>No active recorder</strong>
+                <button type="button" className="quiet" style={{fontSize:'11px', padding:'2px 6px', marginLeft:'auto'}} onClick={fetchStatus}>↻</button>
+              </div>
+              <div style={{fontSize:'12px', color:'var(--text-muted, #94a3b8)', marginTop:'4px'}}>Recording is enabled but no recorder is running. Make sure a stream is set in the Stream tab and the storage path is writable; check server logs for details.</div>
+            </div>
+          );
+        }
+        return null;
+      })()}
+    </section>
+  );
+}
+
+// CameraStreamConfig is the per-camera stream-URL editor shown in the Saved-camera
+// panel's Stream tab: live-view, detection/recording, and fallback URLs. These streams
+// feed BOTH AI detection (even when recording is off) and recording when enabled. It
+// preserves the camera's recording settings on save by merging over the existing config.
+export function CameraStreamConfig({ device, configs, busy, authHeader, canManage = true, onSaveConfig }) {
+  const cameraId = Number(device?.id) || 0;
+  const liveFallback = device?.rtspUrl || '';
+  const existing = useMemo(
+    () => (configs || []).find((c) => Number(c.cameraId) === cameraId) || null,
+    [configs, cameraId],
+  );
+  const [draft, setDraft] = useState(() => configDraftFor(existing, cameraId, liveFallback));
+  useEffect(() => { setDraft(configDraftFor(existing, cameraId, liveFallback)); }, [existing, cameraId, liveFallback]);
+
+  const [streamProfiles, setStreamProfiles] = useState(null);
+  const [streamProfilesLoading, setStreamProfilesLoading] = useState(false);
+  const [streamProfilesError, setStreamProfilesError] = useState('');
+  useEffect(() => { setStreamProfiles(null); setStreamProfilesError(''); }, [cameraId]);
+
+  const fetchStreamProfiles = useCallback(async () => {
+    if (!cameraId) return;
+    setStreamProfilesLoading(true);
+    setStreamProfilesError('');
+    try {
+      const headers = authHeader ? { Authorization: authHeader } : {};
+      const resp = await fetch(`${apiBase()}/api/recording/streams/${cameraId}`, { credentials: 'include', headers });
+      if (!resp.ok) throw new Error(`${resp.status}`);
+      const payload = await resp.json();
+      const result = payload?.data?.result ?? payload?.result ?? payload;
+      setStreamProfiles(result || null);
+    } catch (e) {
+      setStreamProfilesError(e.message || 'Failed to load streams');
+      setStreamProfiles(null);
+    } finally {
+      setStreamProfilesLoading(false);
+    }
+  }, [cameraId, authHeader]);
+
+  async function applyLiveStream(rtspUrl) {
+    if (!rtspUrl || !cameraId) return;
+    try {
+      const headers = { 'Content-Type': 'application/json', ...(authHeader ? { Authorization: authHeader } : {}) };
+      const resp = await fetch(`${apiBase()}/api/recording/streams/${cameraId}/live`, {
+        method: 'POST', credentials: 'include', headers, body: JSON.stringify({ rtspUrl }),
+      });
+      if (!resp.ok) throw new Error(`${resp.status}`);
+      await fetchStreamProfiles();
+    } catch (e) {
+      alert(`Failed to apply live stream: ${e.message}`);
+    }
+  }
+
+  function autoConfigureStreams() {
+    const opts = streamProfiles?.options;
+    if (!opts?.length) return;
+    if (opts.length >= 2) {
+      setDraft((d) => ({ ...d, liveStreamUrl: opts[0].rtspUrl, streamUrl: opts[1].rtspUrl, fallbackStreamUrl: opts[0].rtspUrl }));
+    } else {
+      setDraft((d) => ({ ...d, liveStreamUrl: opts[0].rtspUrl, streamUrl: '', fallbackStreamUrl: '' }));
+      alert('Only one stream profile found. Both live and detection/recording will use the same stream.');
+    }
+  }
+
+  // See note in the prior RecordingTab implementation: zone/line geometry is normalized
+  // (0–1), so resolution differences are fine — only a different aspect ratio shifts zones.
+  const aspectMismatch = (() => {
+    const opts = streamProfiles?.options;
+    if (!opts?.length) return false;
+    const liveUrl = draft.liveStreamUrl || '';
+    const detectUrl = draft.streamUrl || '';
+    if (!liveUrl || !detectUrl || liveUrl === detectUrl) return false;
+    const ratioFor = (url) => {
+      const opt = opts.find((o) => (o.rtspUrl || '') === url);
+      const w = Number(opt?.width || opt?.Width);
+      const h = Number(opt?.height || opt?.Height);
+      if (!w || !h) return null;
+      return w / h;
+    };
+    const a = ratioFor(liveUrl);
+    const b = ratioFor(detectUrl);
+    if (a == null || b == null) return false;
+    return Math.abs(a - b) > 0.05;
+  })();
+
+  async function save() {
+    const newLive = (draft.liveStreamUrl || '').trim();
+    const prevLive = (device?.rtspUrl || '').trim();
+    if (newLive && newLive !== prevLive) {
+      await applyLiveStream(newLive);
+    }
+    onSaveConfig({
+      ...configDraftFor(existing, cameraId, liveFallback),
+      liveStreamUrl: draft.liveStreamUrl,
+      streamUrl: draft.streamUrl,
+      fallbackStreamUrl: draft.fallbackStreamUrl,
+    });
+  }
+
+  const profileChips = (selectedUrl, onPick) => (
+    streamProfiles?.options?.length > 0 ? (
+      <div style={{display:'flex', gap:'6px', flexWrap:'wrap', marginBottom:'4px'}}>
+        {streamProfiles.options.map((opt) => {
+          const url = opt.rtspUrl || '';
+          const isCurrent = selectedUrl === url;
+          const label = `${opt.name || opt.Name || opt.profileToken} — ${opt.encoding || opt.Encoding} ${opt.width || opt.Width}×${opt.height || opt.Height}`;
+          return (
+            <button key={opt.profileToken || opt.ProfileToken} type="button" className={`quiet${isCurrent ? ' active' : ''}`} style={{fontSize:'11px'}}
+              onClick={() => onPick(url)} title={url}>
+              {isCurrent ? '✓ ' : ''}{label}
+            </button>
+          );
+        })}
+      </div>
+    ) : null
+  );
+
+  return (
+    <section className="saved-tab-panel" style={{display:'flex', flexDirection:'column', gap:'10px'}}>
+      <p style={{margin:0, fontSize:'12px', color:'var(--text-muted,#94a3b8)'}}>
+        These streams are used for both AI detection and, when enabled, recording — they apply even with recording off.
+      </p>
+      <div style={{display:'flex', gap:'8px', alignItems:'center'}}>
+        <button type="button" className="quiet" style={{fontSize:'12px'}} onClick={fetchStreamProfiles} disabled={streamProfilesLoading}>
+          {streamProfilesLoading ? 'Loading streams…' : 'Detect streams'}
+        </button>
+        {streamProfiles?.options?.length >= 2 && (
+          <button type="button" className="quiet" style={{fontSize:'12px'}} onClick={autoConfigureStreams}>
+            Auto-configure (main→live, sub→detection/recording)
+          </button>
+        )}
+        {streamProfilesError && <span style={{fontSize:'12px', color:'#ef4444'}}>{streamProfilesError}</span>}
+      </div>
+      {aspectMismatch && (
+        <p style={{margin:0, fontSize:'12px', color:'#f59e0b'}}>
+          ⚠ The detection/recording stream framing differs from the live-view stream (different aspect ratio). Detection zones and crossing lines are drawn on the detection stream — re-check them in the rule editor if you switch streams.
+        </p>
+      )}
+
+      <label className="field-label" style={{gap:'4px'}}>
+        <span style={{fontSize:'12px', fontWeight:'600'}}>Live view stream</span>
+        {profileChips(draft.liveStreamUrl, (url) => setDraft((d) => ({ ...d, liveStreamUrl: url })))}
+        <input type="text" value={draft.liveStreamUrl || ''} placeholder="rtsp://user:pass@ip/stream1"
+          onChange={(e) => setDraft({ ...draft, liveStreamUrl: e.target.value })} />
+      </label>
+
+      <label className="field-label" style={{gap:'4px'}}>
+        <span style={{fontSize:'12px', fontWeight:'600'}}>Detection / recording stream <span style={{fontWeight:'normal', color:'var(--text-muted,#94a3b8)'}}>(used for AI detection and, when enabled, recording; leave blank to use the live-view stream)</span></span>
+        {profileChips(draft.streamUrl, (url) => setDraft((d) => ({ ...d, streamUrl: url })))}
+        <input type="text" value={draft.streamUrl || ''} placeholder="rtsp://user:pass@ip/stream2"
+          onChange={(e) => setDraft({ ...draft, streamUrl: e.target.value })} />
+      </label>
+
+      <label className="field-label" style={{gap:'4px'}}>
+        <span style={{fontSize:'12px', fontWeight:'600'}}>Fallback stream <span style={{fontWeight:'normal', color:'var(--text-muted,#94a3b8)'}}>(tried after 2 quick failures of the primary)</span></span>
+        {profileChips(draft.fallbackStreamUrl, (url) => setDraft((d) => ({ ...d, fallbackStreamUrl: url })))}
+        <input type="text" value={draft.fallbackStreamUrl || ''} placeholder="rtsp://user:pass@ip/stream1  (optional)"
+          onChange={(e) => setDraft({ ...draft, fallbackStreamUrl: e.target.value })} />
+      </label>
+
+      <div className="settings-actions">
+        <button type="button" onClick={save} disabled={busy || !canManage}>
+          <span className="btn-icon"><Ico n="save" /> Save streams</span>
+        </button>
+      </div>
     </section>
   );
 }

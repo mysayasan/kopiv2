@@ -12,6 +12,9 @@ const (
 	CodecPCMA Codec = "pcma"
 	// CodecPCMU is G.711 µ-law audio (RTP PT=0), natively supported by all browsers.
 	CodecPCMU Codec = "pcmu"
+	// CodecOpus is Opus audio, produced by transcoding a camera's non-G.711 audio
+	// (AAC, etc.) so live view has sound regardless of the camera's audio codec.
+	CodecOpus Codec = "opus"
 )
 
 // Source identifies one camera stream.
@@ -23,6 +26,10 @@ type Source struct {
 // Options controls WebRTC session setup.
 type Options struct {
 	ICEServers []ICEServer
+	// FFmpegPath is used to transcode non-G.711 camera audio (AAC, etc.) to Opus
+	// for live view. Empty disables transcoding (non-G.711 cameras get no live
+	// audio, as before).
+	FFmpegPath string
 }
 
 // ICEServer describes one STUN/TURN server exposed to WebRTC peers.

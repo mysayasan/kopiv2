@@ -136,9 +136,133 @@ button.danger-text {
   color: var(--danger-text);
 }
 
+button.danger-solid {
+  border-color: #b91c1c;
+  background: #dc2626;
+  color: #fff;
+}
+
+button.danger-solid:hover:not(:disabled) {
+  background: #b91c1c;
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+/* --- Danger Zone (factory reset) --- */
+.settings-panel.danger-zone {
+  border: 1px solid rgba(220, 38, 38, 0.5);
+  background: rgba(220, 38, 38, 0.06);
+}
+
+.settings-panel.danger-zone h2 {
+  color: #dc2626;
+}
+
+/* --- Secure Wipe confirmation modal --- */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+  padding: 16px;
+}
+
+.modal-card {
+  background: var(--bg-surface);
+  border-radius: 12px;
+  padding: 20px 22px;
+  max-width: min(520px, 100%);
+  width: 100%;
+  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.55);
+}
+
+.modal-card.danger-modal {
+  border: 1px solid rgba(220, 38, 38, 0.5);
+}
+
+.modal-card h2 {
+  margin-top: 0;
+  color: #dc2626;
+}
+
+.modal-card .wipe-countdown {
+  font-size: 15px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+/* --- Blocking reset progress overlay --- */
+.reset-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+  padding: 16px;
+}
+
+.reset-overlay-card {
+  background: var(--bg-surface);
+  border-radius: 12px;
+  padding: 26px 28px;
+  max-width: min(520px, 100%);
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.6);
+}
+
+.reset-overlay-card h2 {
+  margin-top: 0;
+  color: #dc2626;
+}
+
+.reset-progress-bar {
+  height: 14px;
+  border-radius: 7px;
+  background: var(--bg-subtle2, rgba(127, 127, 127, 0.18));
+  overflow: hidden;
+  margin: 12px 0 8px;
+}
+
+.reset-progress-fill {
+  height: 100%;
+  background: #dc2626;
+  transition: width 0.4s ease;
+}
+
+.reset-progress-pct {
+  font-size: 28px;
+  font-weight: 700;
+  margin: 4px 0;
+}
+
+.reset-progress-msg {
+  margin: 4px 0 10px;
+}
+
+.reset-error {
+  color: var(--danger-text, #dc2626);
+  word-break: break-word;
+}
+
+.reset-warning {
+  color: #d97706;
+  font-size: 13px;
+  word-break: break-word;
+  margin: 4px 0 10px;
 }
 
 input,
@@ -205,13 +329,17 @@ label {
 
 .login-screen {
   min-height: 100vh;
-  display: grid;
-  place-items: center;
+  display: flex;
   padding: 24px;
+  box-sizing: border-box;
 }
 
+/* margin:auto inside a flex container centers the panel when there's room and
+   lets it scroll from the top when the viewport is too short — so username,
+   password, and Sign In are always reachable (no clipped, unscrollable form). */
 .login-panel {
   position: relative;
+  margin: auto;
   width: min(100%, 380px);
   display: grid;
   gap: 16px;
@@ -253,10 +381,320 @@ label {
   color: #4e9d6e;
 }
 
+/* On the login page the mark replaces the old MyMataSan heading, so it is
+   centered and the wordmark scales up to match the larger glyph. */
+.login-brand {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+}
+
+.brand-logo--login {
+  justify-self: center;
+  gap: 6px;
+}
+
+.brand-logo--login .brand-wordmark {
+  font-size: 34px;
+  letter-spacing: 0.5px;
+}
+
 .login-panel p,
 .topbar p {
   margin: 6px 0 0;
   color: var(--text-faint);
+}
+
+/* Lockout countdown shown on the login panel after too many failed attempts. */
+.login-lockout {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(199, 123, 34, 0.14);
+  border: 1px solid rgba(199, 123, 34, 0.4);
+  color: #c77b22;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+/* Inline guidance on the forced password-change panel. */
+.login-note {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-elevated, rgba(127, 127, 127, 0.1));
+  border: 1px solid var(--border-panel);
+  color: var(--text-faint);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* First-run setup wizard (shares the centered .login-screen backdrop). */
+.setup-wizard {
+  position: relative;
+  margin: auto;
+  width: min(100%, 560px);
+  display: grid;
+  gap: 18px;
+  border: 1px solid var(--border-panel);
+  border-radius: 10px;
+  background: var(--bg-surface);
+  padding: 24px;
+  box-shadow: 0 12px 30px var(--shadow-panel);
+}
+
+.setup-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.setup-skip {
+  font-size: 13px;
+}
+
+.setup-steps {
+  display: flex;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  gap: 6px;
+  justify-content: space-between;
+}
+
+.setup-step-dot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.setup-step-num {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--border-panel);
+  background: var(--bg-subtle);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.setup-step-dot.active .setup-step-num {
+  border-color: var(--accent, #2d7ff9);
+  color: var(--accent, #2d7ff9);
+}
+
+.setup-step-dot.done .setup-step-num {
+  background: var(--accent, #2d7ff9);
+  border-color: var(--accent, #2d7ff9);
+  color: #fff;
+}
+
+.setup-step-dot.active .setup-step-label {
+  color: var(--text-primary);
+}
+
+.setup-body {
+  min-height: 200px;
+}
+
+.setup-pane {
+  display: grid;
+  gap: 12px;
+}
+
+.setup-pane h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.setup-pane p {
+  margin: 0;
+  color: var(--text-secondary, var(--text-faint));
+  line-height: 1.5;
+}
+
+.setup-account {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.setup-pw-form {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-panel);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+
+.setup-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.setup-field {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0;
+}
+
+.setup-field > span {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.setup-field input,
+.setup-field select {
+  width: 100%;
+}
+
+.setup-dest {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-panel);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+
+.saved-tab-divider {
+  border: none;
+  border-top: 1px solid var(--border-panel);
+  margin: 16px 0;
+}
+
+.setup-capacity {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 0;
+}
+
+.setup-found-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.setup-found-row-wrap {
+  border: 1px solid var(--border-panel);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  overflow: hidden;
+}
+
+.setup-found-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+}
+
+.setup-found-name {
+  display: flex;
+  flex-direction: column;
+}
+
+.setup-cred-form {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--border-panel);
+  background: var(--bg-elevated, rgba(127, 127, 127, 0.06));
+}
+
+.setup-cred-add {
+  width: 100%;
+  justify-content: center;
+}
+
+.setup-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-panel);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+
+.setup-toggle-row strong {
+  display: block;
+}
+
+.setup-done {
+  justify-items: center;
+  text-align: center;
+  color: var(--accent, #2d7ff9);
+}
+
+.setup-summary {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  color: var(--text-primary);
+}
+
+.setup-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Password input with an in-field reveal toggle: the button sits over the right
+   edge of the input and the input reserves room for it. */
+.password-field {
+  position: relative;
+  display: block;
+}
+
+.password-field input {
+  width: 100%;
+  padding-right: 40px;
+}
+
+.password-reveal {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.password-reveal:hover {
+  color: var(--text-primary);
+  background: var(--bg-elevated, rgba(127, 127, 127, 0.12));
 }
 
 .app-shell {
@@ -298,6 +736,85 @@ label {
   margin: 16px 0 0;
 }
 
+/* Floating variant (main app): overlays the top of the workspace instead of
+   pushing content down, residing in the gap under the header. 70% opaque (with a
+   slight blur) so content shows faintly through; auto-dismissed by App after 5s. */
+.status-line--floating {
+  position: fixed;
+  top: 88px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 300;
+  margin: 0;
+  width: min(720px, calc(100vw - 32px));
+  border-radius: 8px;
+  box-shadow: 0 8px 24px var(--shadow-panel);
+  background: var(--warn-bg);
+  background: color-mix(in srgb, var(--warn-bg) 70%, transparent);
+  backdrop-filter: blur(3px);
+}
+
+/* Top-right toast stack: status messages surface here in the main app, newest on
+   top, each auto-dismissing after a few seconds. */
+.toast-stack {
+  position: fixed;
+  top: 76px;
+  right: 16px;
+  z-index: 400;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px;
+  border-radius: 8px;
+  border-left: 4px solid var(--warn-border);
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  box-shadow: 0 8px 24px var(--shadow-panel);
+  font-size: 13px;
+  line-height: 1.4;
+  opacity: 1;
+  transform: translateX(0);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.toast--leaving {
+  opacity: 0;
+  transform: translateX(12px);
+}
+
+.toast-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.toast-close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  margin: -2px -2px 0 0;
+  background: transparent;
+  border: none;
+  color: inherit;
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+.toast-close:hover {
+  opacity: 1;
+}
+
 .workspace {
   display: grid;
   gap: 16px;
@@ -315,6 +832,12 @@ label {
   display: flex;
   justify-content: space-between;
   gap: 12px;
+  align-items: center;
+}
+
+.toolbar-actions {
+  display: flex;
+  gap: 8px;
   align-items: center;
 }
 
@@ -344,6 +867,22 @@ label {
   /* Column count is driven by the selected layout (cols × rows); set inline as
      a custom property so media queries below can still cap it on small screens. */
   grid-template-columns: repeat(var(--view-cols, 2), minmax(0, 1fr));
+}
+
+/* Live-view pager: flip between pages of cameras when there are more than the
+   current grid holds. */
+.view-pager {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.view-pager-label {
+  min-width: 44px;
+  text-align: center;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary, var(--text-faint));
 }
 
 /* Maximize a single tile: hide the others and let the chosen tile span the whole
@@ -447,6 +986,29 @@ label {
   background: var(--bg-video);
 }
 
+/* The detection-frame backdrop must FILL the container (not letterbox), so the
+   overlay's normalized 0–1 coordinates map exactly onto the frame the AI samples
+   — what you draw on is what gets detected, regardless of camera aspect ratio. */
+.zone-live img.detection-frame-backdrop {
+  object-fit: fill;
+}
+
+/* Placeholder shown until the first detection frame decodes (avoids a flash). */
+.detection-frame-loading {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-video);
+}
+
+/* Reassurance note under the zone/line editor headers: the choppy preview is
+   display-only and does not affect detection. */
+.zone-drawer-hint {
+  margin: 0 0 4px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
 .live-offline {
   position: absolute;
   inset: 0;
@@ -493,6 +1055,10 @@ label {
   border-radius: 50%;
   width: 28px;
   height: 28px;
+  /* Override the base button min-height (38px), which otherwise stretches this
+     into a 28×38 oval instead of a circle. */
+  min-height: 0;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1156,6 +1722,245 @@ dd {
   align-items: end;
 }
 
+/* Makes a label in a 2-column settings grid span the full width. */
+.field-span-two {
+  grid-column: 1 / -1;
+}
+
+.ffmpeg-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ffmpeg-input-row .input-with-icon {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* An input with a trailing action icon (e.g. Browse) rendered inside it. */
+.input-with-icon {
+  position: relative;
+  display: block;
+}
+
+.input-with-icon input {
+  width: 100%;
+  padding-right: 34px;
+}
+
+.input-icon-btn {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.input-icon-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-subtle2);
+}
+
+/* --- Server-side file picker modal --- */
+.modal-card.file-browser {
+  max-width: min(560px, 100%);
+  display: flex;
+  flex-direction: column;
+  max-height: min(70vh, 560px);
+}
+
+.file-browser-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.file-browser-head h2 {
+  margin: 0;
+  font-size: 17px;
+  color: var(--text-primary);
+}
+
+.file-browser-head .icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.file-browser-head .icon-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-subtle2);
+}
+
+.file-browser-path {
+  margin-top: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: var(--bg-subtle2);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-browser-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  margin-top: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+
+.file-browser-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.file-row {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border-soft);
+  padding: 8px 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.file-row:hover {
+  background: var(--bg-subtle2);
+  color: var(--text-primary);
+}
+
+.file-row.is-dir {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.file-browser-hint {
+  margin: 10px 0 0;
+}
+
+.ffmpeg-check-btn {
+  flex: 0 0 auto;
+}
+
+/* Status icon between the input and the Check button: green tick when ffmpeg is
+   found, red cross when missing, neutral while checking. */
+.ffmpeg-status-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  cursor: help;
+  color: var(--text-muted);
+}
+
+.ffmpeg-status-icon.ok {
+  background: var(--ok-bg);
+  color: var(--ok-text);
+}
+
+.ffmpeg-status-icon.bad {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+.ffmpeg-status-icon.pending {
+  opacity: 0.7;
+}
+
+.ffmpeg-status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.ffmpeg-status-error {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+/* Balloon tooltip shown on hover/focus of any [data-tip] element. */
+[data-tip] {
+  position: relative;
+}
+
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%) translateY(4px);
+  width: max-content;
+  max-width: 260px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: var(--tooltip-bg, #1f2430);
+  color: var(--tooltip-text, #f4f6fb);
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 400;
+  text-align: left;
+  white-space: normal;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 40;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+[data-tip]::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 3px);
+  transform: translateX(-50%) translateY(4px);
+  border: 5px solid transparent;
+  border-top-color: var(--tooltip-bg, #1f2430);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 40;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after,
+[data-tip]:hover::before,
+[data-tip]:focus-visible::before {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
 .auto-tune-result {
   display: grid;
   gap: 8px;
@@ -1289,6 +2094,137 @@ dd {
   align-self: center;
 }
 
+/* Camera capacity estimate card */
+.capacity-headline {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 0 10px;
+}
+
+.capacity-number {
+  font-size: 48px;
+  font-weight: 760;
+  line-height: 1;
+  color: var(--accent, #2d7ff9);
+}
+
+.capacity-headline-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.capacity-caption {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.capacity-badge {
+  align-self: flex-start;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.capacity-badge--measured {
+  color: #2f9e64;
+  background: rgba(47, 158, 100, 0.15);
+}
+
+.capacity-badge--calibrated {
+  color: var(--accent, #2d7ff9);
+  background: rgba(45, 127, 249, 0.15);
+}
+
+.capacity-badge--estimated {
+  color: #c77b22;
+  background: rgba(199, 123, 34, 0.16);
+}
+
+.capacity-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.capacity-retention {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  border: 1px solid transparent;
+}
+
+.capacity-retention .btn-icon {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.capacity-retention--warn {
+  background: rgba(217, 119, 6, 0.1);
+  border-color: rgba(217, 119, 6, 0.4);
+}
+
+.capacity-retention--warn .btn-icon {
+  color: #d97706;
+}
+
+.capacity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.capacity-card {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  border: 1px solid transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.capacity-card--limit {
+  border-color: var(--accent, #2d7ff9);
+}
+
+.capacity-card dt {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.capacity-card dd {
+  margin: 0;
+  font-size: 15px;
+}
+
+.capacity-assumptions {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.capacity-assumptions summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.capacity-assumptions ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+
 .settings-panel header {
   display: flex;
   justify-content: space-between;
@@ -1299,6 +2235,12 @@ dd {
 .settings-panel h2 {
   margin: 0;
   font-size: 18px;
+}
+
+.settings-header-actions {
+  display: inline-flex;
+  gap: 8px;
+  flex: 0 0 auto;
 }
 
 .vision-layout {
@@ -2656,23 +3598,75 @@ dd {
   padding-top: 12px;
 }
 
-.user-create-row,
-.user-row {
-  display: grid;
-  grid-template-columns: minmax(140px, 1fr) minmax(160px, 1fr) minmax(160px, 1fr) auto auto;
-  gap: 10px;
-  align-items: end;
-}
-
 .user-list {
   display: grid;
   gap: 12px;
 }
 
-.user-row {
-  grid-template-columns: minmax(130px, 1fr) minmax(150px, 1fr) auto auto minmax(150px, 1fr) auto;
-  border-top: 1px solid var(--border-subtle);
-  padding-top: 12px;
+/* User cards follow the entity-card standard (cf. .dest-card): a labelled head
+   with status badges, a standard field grid, then an actions row. */
+.user-card {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--border-panel);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  padding: 14px;
+}
+
+/* Highlight the account a login-security notification deep-links to. */
+.user-card--focused {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.user-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--text-primary);
+}
+
+.user-card-name {
+  font-weight: 600;
+  font-size: 15px;
+  margin-right: 4px;
+}
+
+.user-badge {
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.user-badge--admin {
+  color: var(--accent, #2d7ff9);
+  background: rgba(45, 127, 249, 0.14);
+}
+
+.user-badge--active {
+  color: #2f9e64;
+  background: rgba(47, 158, 100, 0.15);
+}
+
+.user-badge--inactive {
+  color: var(--text-faint);
+  background: rgba(127, 127, 127, 0.16);
+}
+
+.user-badge--warn {
+  color: #c77b22;
+  background: rgba(199, 123, 34, 0.16);
+}
+
+.user-card-toggles {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
 }
 
 .user-actions {
@@ -2697,8 +3691,6 @@ dd {
   .settings-layout,
   .settings-field-grid,
   .ice-row,
-  .user-create-row,
-  .user-row,
   .vision-row,
   .event-grid,
   .tool-status-grid,
@@ -3235,6 +4227,54 @@ dd {
   color: var(--text-primary);
 }
 
+.notif-topic {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+/* Severity dot before a notification title. */
+.notif-sev {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.notif-sev--info {
+  background: var(--accent);
+}
+
+.notif-sev--warning {
+  background: var(--warn-color, #e8a000);
+}
+
+.notif-sev--critical {
+  background: var(--danger-color, #d9534f);
+}
+
+.notif-detail {
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-line;
+}
+
+.notif-meta-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 1px;
+}
+
 .notif-camera {
   font-size: 12px;
   color: var(--text-link);
@@ -3243,6 +4283,356 @@ dd {
 .notif-time {
   font-size: 11px;
   color: var(--text-faint);
+}
+
+/* ---- Dedicated Notifications page ---- */
+.notifications-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  /* Match the header→content gap other tabs get from .workspace, so the floating
+     status-line has room to reside under the header instead of sitting flush. */
+  margin-top: 18px;
+}
+
+.notifications-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.notifications-headings {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.notifications-desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-faint);
+  max-width: 68ch;
+}
+
+.notifications-sentinel {
+  height: 1px;
+}
+
+.notifications-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.seg-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border-divider);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.seg-toggle button {
+  border: none;
+  border-radius: 0;
+  padding: 6px 14px;
+  font-size: 13px;
+}
+
+.seg-toggle button.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.notifications-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  border: 1px solid var(--border-divider);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 5px 13px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chip--active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.notifications-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Unread: raised surface, bold accent edge, full-strength text. */
+.notification-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-panel);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  box-shadow: 0 1px 3px var(--shadow-panel);
+}
+
+.notification-row .notification-title-row strong {
+  font-weight: 700;
+}
+
+/* Read: recessed, no accent edge, dimmed and lighter — clearly "done".
+   Keep the 4px left border width (color transparent) so rows don't shift. */
+.notification-row.is-read {
+  border-color: var(--border-divider);
+  border-left-color: transparent;
+  background: var(--bg-subtle);
+  box-shadow: none;
+  opacity: 0.66;
+}
+
+.notification-row.is-read .notification-title-row strong {
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.notification-row.is-read .notification-kind {
+  opacity: 0.8;
+}
+
+.notification-row.focused {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.notification-snap {
+  flex-shrink: 0;
+  width: 132px;
+  height: 84px;
+  border: none;
+  padding: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-in;
+}
+
+.notification-snap:disabled {
+  cursor: default;
+}
+
+.notification-snap img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.15s ease;
+}
+
+.notification-snap:not(:disabled):hover img {
+  transform: scale(1.05);
+}
+
+/* Snapshot lightbox with zoom + pan. */
+.image-zoom-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1150;
+  padding: 16px;
+}
+
+.image-zoom-dialog {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: min(1100px, 96vw);
+  max-height: 92vh;
+  background: var(--bg-surface);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+}
+
+.image-zoom-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-divider);
+}
+
+.image-zoom-level {
+  min-width: 50px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.image-zoom-spacer {
+  flex: 1;
+}
+
+.image-zoom-close {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 17px;
+  line-height: 1;
+  color: var(--text-secondary);
+}
+
+.image-zoom-close:hover {
+  color: var(--text-primary);
+}
+
+.image-zoom-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+}
+
+.image-zoom-body img {
+  max-width: 100%;
+  max-height: 84vh;
+  object-fit: contain;
+  user-select: none;
+  transform-origin: center center;
+  will-change: transform;
+}
+
+.notification-snap-ph {
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+.notification-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.notification-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.notification-title-row strong {
+  font-size: 14px;
+}
+
+.notification-kind {
+  font-size: 11px;
+  color: var(--text-faint);
+  border: 1px solid var(--border-divider);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.notification-sub {
+  font-size: 12px;
+  color: var(--text-link);
+}
+
+.notification-sub--body {
+  color: var(--text-secondary);
+  white-space: pre-line;
+}
+
+.notification-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 2px 0 0;
+}
+
+.notification-fields > div {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.notification-fields dt {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.notification-fields dd {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.notification-fields dd.cap {
+  text-transform: capitalize;
+}
+
+.notification-meta {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.notification-actions {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.notifications-more {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0 8px;
+}
+
+.notification-noclip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-faint);
+  font-style: italic;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .notification-row {
+    flex-direction: column;
+  }
+  .notification-snap {
+    width: 100%;
+    height: 150px;
+  }
+  .notification-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
 }
 
 @media (max-width: 980px) {
@@ -3499,4 +4889,63 @@ button .btn-icon {
 
 @keyframes form-busy-spin {
   to { transform: rotate(360deg); }
+}
+
+/* Notification delivery destinations (Settings → Notifications) */
+.dest-card {
+  border: 1px solid var(--border-panel);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+  background: var(--bg-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.dest-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.dest-card-head .dest-name {
+  flex: 1 1 160px;
+  min-width: 120px;
+}
+.dest-card-head .check-row.compact {
+  margin: 0;
+  white-space: nowrap;
+}
+.dest-group {
+  border: 1px solid var(--border-panel);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 0;
+}
+.dest-group > legend {
+  padding: 0 6px;
+  font-size: 0.82rem;
+  opacity: 0.85;
+}
+.dest-custom-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.dest-custom-row > input {
+  flex: 1 1 120px;
+  min-width: 90px;
+}
+.dest-sample > summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  color: var(--text-link);
+  user-select: none;
+}
+.dest-sample > pre {
+  max-height: 280px;
+  overflow: auto;
+  margin-top: 6px;
 }

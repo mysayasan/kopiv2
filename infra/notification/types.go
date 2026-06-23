@@ -99,6 +99,12 @@ type Notification struct {
 	// Attachment is optional binary media delivered only to media-capable outbound
 	// channels. It is json:"-" so persistence, SSE, and log channels skip it.
 	Attachment *Attachment `json:"-"`
+	// Internal marks a notification that should be persisted/streamed (store, log,
+	// SSE) but NOT delivered to outbound destination channels. Used for the
+	// canonical copy of a vision alert, whose external delivery is handled by
+	// separately rendered per-destination copies. It is json:"-" so it never
+	// leaks into stored metadata or the SSE stream.
+	Internal bool `json:"-"`
 	// CreatedAt is a unix timestamp (seconds). If zero, the hub fills it.
 	CreatedAt int64 `json:"createdAt"`
 }

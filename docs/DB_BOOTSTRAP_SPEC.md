@@ -158,6 +158,18 @@ The app can redirect to the setup page when bootstrap mode is active.
 - Never expose raw SQL execution from the browser.
 - Never infer schema from entities without an explicit registry boundary.
 
+## Factory Reset (`bootstrap.Reset`)
+
+`Reset(ctx, Options)` performs a destructive, deliberate factory reset, gated by `allowReset` (returns an error when it is false, so a stock deployment cannot be wiped by accident). It:
+
+1. **Drops the whole database**, honouring the configured engine:
+   - **postgres** — best-effort `pg_terminate_backend` of other sessions (errors ignored), then `DROP DATABASE IF EXISTS <db> WITH (FORCE)` so any remaining connection is evicted (PG13+); falls back to a plain `DROP DATABASE` for older servers.
+   - **mariadb** — `DROP DATABASE IF EXISTS <db>`.
+   - **sqlite** — deletes the database file and its `-wal` / `-shm` / `-journal` sidecars.
+2. **Re-runs `Ensure()`** with the create/migrate/seed flags forced on, recreating the schema and re-seeding stock data from a clean slate.
+
+The caller stops anything holding a connection/file handle first and restarts the process afterwards (the live connection pool is invalid once the database is dropped). In `mymatasan` this is orchestrated by `services.SystemResetService` (shred media → `Reset` → restart via `apphost.Restarter`) behind `POST /api/system/reset`. The reset is best-effort: a wipe error is reported as a warning and the process still restarts, which re-runs bootstrap and can complete an interrupted rebuild.
+
 ## Config Proposal
 
 Suggested config keys in `config.json`:

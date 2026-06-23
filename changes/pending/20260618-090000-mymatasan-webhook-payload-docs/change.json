@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "mymatasan",
+  "summary": "Documented the webhook notification payload. Added a 'Notifications' section to the mymatasan README covering per-destination delivery (categories, fields, custom fields + templating, per-rule routing) with an annotated sample webhook JSON body. In-app, each webhook destination card in Settings → Notifications now has a collapsible 'Sample payload' disclosure showing the JSON shape so integrators can see it without leaving the app.",
+  "compatibility": "Documentation/UI only; no behavior change."
+}

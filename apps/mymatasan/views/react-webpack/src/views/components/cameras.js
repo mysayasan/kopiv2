@@ -4,6 +4,8 @@ import { FormBusyOverlay, InfoButton, Tracks, LayoutDropdown } from './ui';
 import { defaultDeviceCredentials } from '../lib/constants';
 import {fieldValue,formatTimestamp,cameraTitle,cameraDescription,orderedSavedCameras,sameCamera,streamOptionLabel,layoutCapacity,layoutColumns,layoutRows } from '../lib/helpers';
 import { LiveViewport } from './previews';
+import { PasswordField } from './layout';
+import { CameraRecordingConfig, CameraStreamConfig } from './recording';
 
 // healthPillProps maps a camera's live health status into a pill class and label.
 // The status-pill online/offline/unknown classes are shared with the RTSP pill.
@@ -144,7 +146,37 @@ export function ViewsTab({
   const tileCount = layoutCapacity(layout);
   const columns = layoutColumns(layout);
   const rows = layoutRows(layout);
-  const tiles = [...viewTiles.slice(0, tileCount)];
+
+  // The grid size is a per-page size, not a cap: all selected cameras are kept
+  // and shown `tileCount` at a time, so changing the grid re-paginates instead of
+  // dropping cameras.
+  const pageCount = Math.max(1, Math.ceil(viewTiles.length / tileCount));
+  const [page, setPage] = useState(0);
+  useEffect(() => {
+    if (page > pageCount - 1) {
+      setPage(Math.max(0, pageCount - 1));
+    }
+  }, [page, pageCount]);
+  // Left/Right arrows page through cameras — the only way to page while in
+  // fullscreen, where the toolbar pager is hidden. Ignored while typing.
+  useEffect(() => {
+    function onKey(event) {
+      const tag = event.target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+        return;
+      }
+      if (event.key === 'ArrowRight') {
+        setPage((p) => Math.min(pageCount - 1, p + 1));
+      } else if (event.key === 'ArrowLeft') {
+        setPage((p) => Math.max(0, p - 1));
+      }
+    }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [pageCount]);
+  const safePage = Math.min(page, pageCount - 1);
+  const pageStart = safePage * tileCount;
+  const tiles = [...viewTiles.slice(pageStart, pageStart + tileCount)];
   while (tiles.length < tileCount) {
     tiles.push(null);
   }
@@ -195,6 +227,17 @@ export function ViewsTab({
       <div className="toolbar">
         <div className="segmented">
           <LayoutDropdown layout={layout} onLayout={onLayout} />
+          {pageCount > 1 ? (
+            <div className="view-pager" role="group" aria-label="Live view pages">
+              <button type="button" className="quiet" onClick={() => setPage(safePage - 1)} disabled={safePage <= 0} aria-label="Previous page">
+                <Ico n="arr-left" sz={14} />
+              </button>
+              <span className="view-pager-label">{safePage + 1} / {pageCount}</span>
+              <button type="button" className="quiet" onClick={() => setPage(safePage + 1)} disabled={safePage >= pageCount - 1} aria-label="Next page">
+                <Ico n="arr-right" sz={14} />
+              </button>
+            </div>
+          ) : null}
           <button type="button" className="quiet" onClick={toggleFullscreen} title="Fullscreen (Esc to exit)">
             <span className="btn-icon"><Ico n="maximize" /> Fullscreen</span>
           </button>
@@ -232,7 +275,7 @@ export function ViewsTab({
                 return;
               }
               event.dataTransfer.effectAllowed = 'move';
-              event.dataTransfer.setData('text/plain', String(idx));
+              event.dataTransfer.setData('text/plain', String(pageStart + idx));
               onDragTile(tile.id);
             }}
             onDragEnd={() => onDragTile(null)}
@@ -248,7 +291,7 @@ export function ViewsTab({
               }
               event.preventDefault();
               const from = Number(event.dataTransfer.getData('text/plain'));
-              onMove(from, idx);
+              onMove(from, pageStart + idx);
               onDragTile(null);
             }}
           >
@@ -456,6 +499,10 @@ export function SavedCameraRow({
   onPreview,
   onAdd,
   onRemove,
+  recordingConfigs,
+  onSaveRecordingConfig,
+  authHeader,
+  canManage = true,
 }) {
   const [activePanel, setActivePanel] = useState('details');
   const localDetails = detailDraft || { name: device.name || '', description: device.description || '' };
@@ -492,6 +539,7 @@ export function SavedCameraRow({
           ['details', 'Details'],
           ['access', 'Access'],
           ['stream', 'Stream'],
+          ['recording', 'Recording'],
           ['onvif', 'ONVIF'],
         ].map(([id, label]) => (
           <button
@@ -564,10 +612,9 @@ export function SavedCameraRow({
             </label>
             <label>
               Camera password
-              <input
+              <PasswordField
                 value={localCred.password}
-                onChange={(event) => onCredential(device.id, { ...localCred, password: event.target.value })}
-                type="password"
+                onChange={(password) => onCredential(device.id, { ...localCred, password })}
                 autoComplete="off"
                 placeholder={device.hasPassword ? 'Saved password kept' : ''}
               />
@@ -596,10 +643,9 @@ export function SavedCameraRow({
             </label>
             <label>
               New ONVIF password
-              <input
+              <PasswordField
                 value={localPasswordDraft.newPassword}
-                onChange={(event) => onPasswordDraft(device.id, { ...localPasswordDraft, newPassword: event.target.value })}
-                type="password"
+                onChange={(newPassword) => onPasswordDraft(device.id, { ...localPasswordDraft, newPassword })}
                 autoComplete="new-password"
               />
             </label>
@@ -667,7 +713,27 @@ export function SavedCameraRow({
               <span className="btn-icon"><Ico n="plus" /> Add to Live Views</span>
             </button>
           </div>
+          <hr className="saved-tab-divider" />
+          <CameraStreamConfig
+            device={device}
+            configs={recordingConfigs}
+            busy={busy}
+            authHeader={authHeader}
+            canManage={canManage}
+            onSaveConfig={onSaveRecordingConfig}
+          />
         </section>
+      ) : null}
+
+      {activePanel === 'recording' ? (
+        <CameraRecordingConfig
+          device={device}
+          configs={recordingConfigs}
+          busy={busy}
+          authHeader={authHeader}
+          canManage={canManage}
+          onSaveConfig={onSaveRecordingConfig}
+        />
       ) : null}
 
       {activePanel === 'onvif' ? (
@@ -875,7 +941,9 @@ export function CamerasTab({
   onPTZStop,
   onRemove,
   onClosePreview,
-  recordingConfigSlot,
+  recordingConfigs,
+  onSaveRecordingConfig,
+  canManage = true,
 }) {
   const [selectedSavedId, setSelectedSavedId] = useState(null);
   const [scanProtocol, setScanProtocol] = useState('all');
@@ -907,16 +975,10 @@ export function CamerasTab({
           <button type="button" className={cameraNav === 'saved' ? 'active' : 'quiet'} onClick={() => onCameraNav('saved')}>
             <span className="btn-icon"><Ico n="camera" /> Saved</span>
           </button>
-          <button type="button" className={cameraNav === 'recording' ? 'active' : 'quiet'} onClick={() => onCameraNav('recording')}>
-            <span className="btn-icon"><Ico n="film" /> Recording</span>
-          </button>
         </nav>
       </div>
 
-      {cameraNav === 'recording' ? (
-        recordingConfigSlot
-      ) : (
-        <>
+      <>
           <div className="camera-tab-header">
             <h2 className="section-title">{cameraNav === 'probe' ? 'Discover Cameras' : 'Saved Cameras'}</h2>
             <p className="section-subtitle">
@@ -1012,6 +1074,10 @@ export function CamerasTab({
                   onPreview={onPreview}
                   onAdd={onAddToViews}
                   onRemove={onRemove}
+                  recordingConfigs={recordingConfigs}
+                  onSaveRecordingConfig={onSaveRecordingConfig}
+                  authHeader={authHeader}
+                  canManage={canManage}
                 />
                 <CameraPreviewPanel
                   preview={selectedPreview}
@@ -1034,7 +1100,6 @@ export function CamerasTab({
         </section>
           )}
         </>
-      )}
     </section>
   );
 }

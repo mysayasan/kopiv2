@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Ico } from './icons';
 import { FormBusyOverlay, FieldTitle } from './ui';
-import { defaultYoloConfig, bestYoloDefaults, defaultCaptureConfig, captureModeOptions, defaultAlertNotificationConfig, alertNotificationFields, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings } from '../lib/constants';
+import { PasswordField } from './layout';
+import { defaultYoloConfig, bestYoloDefaults, defaultCaptureConfig, captureModeOptions, defaultAlertNotificationConfig, alertNotificationFields, alertFieldDataKeys, builtinPayloadKeys, notificationCategories, defaultDestination, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings } from '../lib/constants';
 import {iceUrlsText,textToIceUrls,decoderTransportOptions,decoderHWAccelOptions,apiBase } from '../lib/helpers';
 
 // stockModelHints describes the speed/accuracy trade-off of each base model.
@@ -99,6 +100,352 @@ function StockModelPanel({ authHeader, onMessage }) {
   );
 }
 
+// FileBrowserModal is a server-side directory picker. It navigates the host
+// filesystem via GET /settings/fs/browse, lets the user drill into folders and
+// click a file to select it, and returns the chosen absolute path. Used to pick the
+// ffmpeg binary without typing a path. Admin-gated server-side.
+function FileBrowserModal({ authHeader, initialPath, onSelect, onClose }) {
+  const [listing, setListing] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  async function browse(path) {
+    setLoading(true);
+    setError(null);
+    try {
+      const headers = {};
+      if (authHeader) headers.Authorization = authHeader;
+      const resp = await fetch(`${apiBase()}/api/settings/fs/browse?path=${encodeURIComponent(path || '')}`, { credentials: 'include', headers });
+      const text = await resp.text();
+      let payload = null;
+      if (text) { try { payload = JSON.parse(text); } catch (_) { payload = { message: text }; } }
+      if (!resp.ok) throw new Error(payload?.message || payload?.data?.message || `Request failed (${resp.status})`);
+      setListing(payload?.data?.result ?? payload?.result ?? payload);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+  // Seed from the directory of the current value so the user starts somewhere useful.
+  useEffect(() => { browse(initialPath || ''); /* eslint-disable-next-line */ }, []);
+
+  const entries = listing?.entries || [];
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-card file-browser" onClick={(e) => e.stopPropagation()}>
+        <header className="file-browser-head">
+          <h2><span className="btn-icon"><Ico n="folder" /> Choose ffmpeg</span></h2>
+          <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}><Ico n="x" /></button>
+        </header>
+        <div className="file-browser-path" title={listing?.path || ''}>{listing?.path || 'Allowed locations'}</div>
+        <div className="file-browser-list">
+          {loading ? (
+            <p className="field-hint">Loading…</p>
+          ) : error ? (
+            <p className="field-hint danger-text">{error}</p>
+          ) : (
+            <ul>
+              {listing && listing.parent !== undefined ? (
+                <li>
+                  <button type="button" className="file-row" onClick={() => browse(listing.parent)} disabled={!listing.path}>
+                    <span className="btn-icon"><Ico n="arr-up" /> ..</span>
+                  </button>
+                </li>
+              ) : null}
+              {entries.map((item) => (
+                <li key={item.path}>
+                  <button
+                    type="button"
+                    className={`file-row${item.dir ? ' is-dir' : ''}`}
+                    onClick={() => (item.dir ? browse(item.path) : onSelect(item.path))}
+                  >
+                    <span className="btn-icon"><Ico n={item.dir ? 'folder' : 'film'} /> {item.name}</span>
+                  </button>
+                </li>
+              ))}
+              {entries.length === 0 ? <li><span className="field-hint">Empty folder.</span></li> : null}
+            </ul>
+          )}
+        </div>
+        <p className="field-hint file-browser-hint">Click a folder to open it, or a file to select it.</p>
+      </div>
+    </div>
+  );
+}
+
+// FfmpegInstallControl shows whether a usable ffmpeg is available and, when it is
+// not found, offers an in-app download (the same background installer the first-run
+// wizard uses). ffmpeg is required for live view, recording, and AI frame capture,
+// so this lets an operator fix a missing video engine without leaving Settings.
+// Endpoints: GET /decoder/status, POST /decoder/ffmpeg/install (+ /install/status).
+function FfmpegInstallControl({ authHeader, value, onChangePath, onMessage, onRestart, onInstalledPath }) {
+  const [status, setStatus] = useState(undefined); // undefined = loading
+  const [installing, setInstalling] = useState(false);
+  const [installed, setInstalled] = useState(false);
+  const [failure, setFailure] = useState(null);
+  const [browsing, setBrowsing] = useState(false);
+
+  async function api(path, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    if (authHeader) headers.Authorization = authHeader;
+    const resp = await fetch(`${apiBase()}${path}`, { credentials: 'include', ...options, headers });
+    const text = await resp.text();
+    let payload = null;
+    if (text) { try { payload = JSON.parse(text); } catch (_) { payload = { message: text }; } }
+    if (!resp.ok) throw new Error(payload?.message || payload?.data?.message || `Request failed (${resp.status})`);
+    return payload?.data?.result ?? payload?.result ?? payload;
+  }
+
+  async function check() {
+    try { setStatus(await api('/api/settings/decoder/status')); }
+    catch (_) { setStatus(null); }
+  }
+  useEffect(() => { check(); }, [authHeader]);
+
+  async function download() {
+    setInstalling(true);
+    setFailure(null);
+    if (onMessage) onMessage('Downloading ffmpeg…');
+    try {
+      await api('/api/settings/decoder/ffmpeg/install', { method: 'POST' });
+      // Poll the background job until it finishes.
+      const deadline = Date.now() + 180000;
+      let state = null;
+      for (;;) {
+        state = await api('/api/settings/decoder/ffmpeg/install/status');
+        if (state?.status === 'done' || state?.status === 'failed') break;
+        if (Date.now() > deadline) { state = { status: 'failed', log: 'Timed out.' }; break; }
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+      if (state?.status === 'done') {
+        setInstalled(true);
+        if (state.path && onInstalledPath) onInstalledPath(state.path);
+        if (onMessage) onMessage('ffmpeg installed. Restart the app to apply it everywhere.');
+        await check();
+      } else {
+        setFailure(state || { status: 'failed' });
+        if (onMessage) onMessage(`ffmpeg install failed: ${state?.log || 'unknown error'}`);
+      }
+    } catch (err) {
+      setFailure({ status: 'failed', log: err.message });
+      if (onMessage) onMessage(err.message);
+    } finally {
+      setInstalling(false);
+    }
+  }
+
+  // Status icon shown between the input and Check button. The detail (version,
+  // path, or why it matters) lives in a hover/focus balloon so the row stays tidy.
+  const found = status?.found;
+  const tip = status === undefined ? 'Checking for ffmpeg…'
+    : found ? `ffmpeg found${status.version ? ` — ${status.version}` : status.path ? ` — ${status.path}` : ''}${installed ? ' (restart to apply)' : ''}`
+    : 'ffmpeg not found — required for live view, recording, and AI capture. Use Download to install it, or set the path manually.';
+  const iconState = status === undefined ? 'pending' : found ? 'ok' : 'bad';
+
+  return (
+    <>
+      <div className="ffmpeg-input-row">
+        <div className="input-with-icon">
+          <input
+            value={value}
+            onChange={(e) => onChangePath(e.target.value)}
+            placeholder="ffmpeg"
+            autoComplete="off"
+          />
+          <button
+            type="button"
+            className="input-icon-btn"
+            onClick={() => setBrowsing(true)}
+            title="Browse for the ffmpeg binary"
+            aria-label="Browse for the ffmpeg binary"
+          >
+            <Ico n="folder" sz={15} />
+          </button>
+        </div>
+        <span
+          className={`ffmpeg-status-icon ${iconState}`}
+          data-tip={tip}
+          tabIndex={0}
+          role="img"
+          aria-label={tip}
+        >
+          <Ico n={status === undefined ? 'reload' : found ? 'check-ok' : 'x'} sz={15} />
+        </span>
+        <button type="button" className="quiet ffmpeg-check-btn" onClick={check} disabled={installing}>
+          <span className="btn-icon"><Ico n="reload" /> Check</span>
+        </button>
+      </div>
+      {(status && !status.found && !installed) || (installed && onRestart) || failure ? (
+        <div className="ffmpeg-status-actions">
+          {status && !status.found && !installed ? (
+            <button type="button" onClick={download} disabled={installing}>
+              <span className="btn-icon"><Ico n="download" /> {installing ? 'Downloading…' : 'Download ffmpeg'}</span>
+            </button>
+          ) : null}
+          {installed && onRestart ? (
+            <button type="button" onClick={() => onRestart()} disabled={installing}>
+              <span className="btn-icon"><Ico n="reload" /> Restart now</span>
+            </button>
+          ) : null}
+          {failure ? (
+            <p className="field-hint danger-text ffmpeg-status-error">
+              {failure.supported === false
+                ? 'Automatic download isn’t available for this platform — install ffmpeg manually and set its path above.'
+                : 'Download failed — install ffmpeg manually and set its path above.'}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      {browsing ? (
+        <FileBrowserModal
+          authHeader={authHeader}
+          initialPath={value}
+          onSelect={(path) => { onChangePath(path); setBrowsing(false); }}
+          onClose={() => setBrowsing(false)}
+        />
+      ) : null}
+    </>
+  );
+}
+
+// SystemStatusPanel shows the running software version and live service health by
+// polling the public version/health/liveness/readiness endpoints. It is read-only:
+// it confirms what build is running and whether the API, database, cache, and the
+// app's own monitors report healthy. Endpoints:
+//   GET /api/version  — runtime version (SendResult envelope)
+//   GET /api/health   — API namespaces health  {"ok": true}
+//   GET /health       — service liveness        {"alive": true}
+//   GET /ready        — service readiness        {"ok", "db", "cache", ...advisory}
+function SystemStatusPanel({ authHeader, onRestart }) {
+  const [restarting, setRestarting] = useState(false);
+  const [version, setVersion] = useState(null);
+  const [apiHealth, setApiHealth] = useState(null);
+  const [live, setLive] = useState(null);
+  const [ready, setReady] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [checkedAt, setCheckedAt] = useState(null);
+
+  async function probe(path) {
+    const headers = {};
+    if (authHeader) headers.Authorization = authHeader;
+    const resp = await fetch(`${apiBase()}${path}`, { credentials: 'include', headers });
+    const text = await resp.text();
+    let payload = null;
+    if (text) { try { payload = JSON.parse(text); } catch (_) { payload = { message: text }; } }
+    const body = payload?.data?.result ?? payload?.result ?? payload;
+    return { ok: resp.ok, status: resp.status, body };
+  }
+
+  async function load() {
+    setBusy(true);
+    const fail = (e) => ({ ok: false, status: 0, body: { message: e?.message || 'unreachable' } });
+    const [v, h, l, r] = await Promise.all([
+      probe('/api/version').catch(fail),
+      probe('/api/health').catch(fail),
+      probe('/health').catch(fail),
+      probe('/ready').catch(fail),
+    ]);
+    setVersion(v); setApiHealth(h); setLive(l); setReady(r);
+    setCheckedAt(new Date());
+    setBusy(false);
+  }
+  useEffect(() => { load(); }, [authHeader]);
+
+  function pill(ok, label) {
+    return <strong className={`status-pill ${ok ? 'online' : 'offline'}`}>{label}</strong>;
+  }
+  // readyExtras surfaces the advisory keys (db, cache, machine, cameras, …) that
+  // /ready merges in beyond the ok verdict, so operators see what's degraded.
+  const readyExtras = ready?.body && typeof ready.body === 'object'
+    ? Object.entries(ready.body).filter(([k]) => k !== 'ok')
+    : [];
+  const ver = version?.ok && version?.body && typeof version.body === 'object' ? version.body : null;
+
+  return (
+    <div className="settings-layout">
+      <FormBusyOverlay busy={busy} />
+      <section className="settings-panel span-two">
+        <header>
+          <h2><span className="btn-icon"><Ico n="monitor" /> Software version</span></h2>
+          <div className="settings-header-actions">
+            <button type="button" className="quiet" onClick={load} disabled={busy || restarting}>
+              <span className="btn-icon"><Ico n="reload" /> Refresh</span>
+            </button>
+            {onRestart ? (
+              <button type="button" className="quiet" onClick={() => { setRestarting(true); onRestart(); }} disabled={restarting}>
+                <span className="btn-icon"><Ico n="reload" /> {restarting ? 'Restarting…' : 'Restart app'}</span>
+              </button>
+            ) : null}
+          </div>
+        </header>
+        {ver ? (
+          <div className="machine-metrics">
+            <div className="machine-metric-card">
+              <dt>Application</dt>
+              <dd><strong className="status-pill">{ver.app || '—'}</strong></dd>
+              <span className="field-hint">v{ver.appVersion || '—'}</span>
+            </div>
+            <div className="machine-metric-card">
+              <dt>Shared core</dt>
+              <dd><strong className="status-pill">v{ver.coreVersion || '—'}</strong></dd>
+            </div>
+            {ver.commit ? (
+              <div className="machine-metric-card">
+                <dt>Commit</dt>
+                <dd><strong className="status-pill">{String(ver.commit).slice(0, 12)}</strong></dd>
+              </div>
+            ) : null}
+            {ver.updatedAt ? (
+              <div className="machine-metric-card">
+                <dt>Built</dt>
+                <dd><strong className="status-pill">{ver.updatedAt}</strong></dd>
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <p className="settings-hint">Version unavailable{version?.body?.message ? ` — ${version.body.message}` : ''}.</p>
+        )}
+      </section>
+
+      <section className="settings-panel span-two">
+        <header>
+          <h2><span className="btn-icon"><Ico n="wifi" /> Service health</span></h2>
+          {checkedAt ? <span className="field-hint">Checked {checkedAt.toLocaleTimeString()}</span> : null}
+        </header>
+        <p className="settings-hint">
+          Liveness confirms the process is responding; readiness additionally checks the database and cache are
+          reachable. The app's own monitors (machine, cameras) appear as advisory readiness fields — they never
+          block readiness, but a degraded value is worth investigating.
+        </p>
+        <div className="machine-metrics">
+          <div className="machine-metric-card">
+            <dt>API namespaces</dt>
+            <dd>{pill(apiHealth?.ok && apiHealth?.body?.ok !== false, apiHealth?.ok ? 'OK' : 'Down')}</dd>
+            <span className="field-hint">/api/health</span>
+          </div>
+          <div className="machine-metric-card">
+            <dt>Liveness</dt>
+            <dd>{pill(live?.ok && live?.body?.alive !== false, live?.ok ? 'Alive' : 'Down')}</dd>
+            <span className="field-hint">/health</span>
+          </div>
+          <div className="machine-metric-card">
+            <dt>Readiness</dt>
+            <dd>{pill(ready?.ok && ready?.body?.ok === true, ready?.ok && ready?.body?.ok === true ? 'Ready' : 'Not ready')}</dd>
+            <span className="field-hint">/ready</span>
+          </div>
+          {readyExtras.map(([key, val]) => (
+            <div className="machine-metric-card" key={key}>
+              <dt>{key.charAt(0).toUpperCase() + key.slice(1)}</dt>
+              <dd>{pill(String(val).toLowerCase() === 'up' || String(val).toLowerCase() === 'ok', String(val))}</dd>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export function SettingsTab({
   settingsNav,
   settings,
@@ -116,6 +463,7 @@ export function SettingsTab({
   onReset,
   onAutoTune,
   autoTuneResult,
+  onRestart,
   onCaptureAutoConfig,
   gpuDevices,
   onCheckVisionTool,
@@ -123,6 +471,7 @@ export function SettingsTab({
   onInstallPackages,
   visionInstallResult,
   onLoadUsers,
+  focusUsername,
   onNewUser,
   onCreateUser,
   onEditUser,
@@ -136,6 +485,7 @@ export function SettingsTab({
   onSaveNotification,
   onDiscardNotification,
   onTestNotification,
+  onPurgeNotifications,
   healthSettings,
   healthHasChanges,
   onHealthChange,
@@ -148,13 +498,17 @@ export function SettingsTab({
   onDiscardMachineHealth,
   machineMetrics,
   onRefreshMachineMetrics,
+  capacity,
+  onEstimateCapacity,
+  onCalibrateCapacity,
+  resetAllowed,
+  onSecureWipe,
 }) {
   const iceServers = settings.stream.webrtc.iceServers || [];
   const capture = { ...defaultCaptureConfig, ...(settings.vision?.capture || {}),
     standalone: { ...defaultCaptureConfig.standalone, ...(settings.vision?.capture?.standalone || {}) },
     siphon: { ...defaultCaptureConfig.siphon, ...(settings.vision?.capture?.siphon || {}) } };
   const captureAuto = capture.mode === 'auto';
-  const alertNotification = { ...defaultAlertNotificationConfig, ...(settings.vision?.alertNotification || {}) };
   const gpuDeviceOptions = Array.isArray(gpuDevices?.devices) ? gpuDevices.devices : [];
   const selectedGpuDeviceIndex = gpuDeviceOptions.findIndex(
     (item) =>
@@ -170,6 +524,14 @@ export function SettingsTab({
     }
   }, [gpuDeviceSelectValue]);
   const effectiveGpuSelectValue = showManualGpuInput ? '__manual__' : gpuDeviceSelectValue;
+  // When a login-security notification deep-links here, scroll the targeted
+  // user's card into view and highlight it.
+  const focusedUserRef = useRef(null);
+  useEffect(() => {
+    if (settingsNav === 'users' && focusUsername && focusedUserRef.current) {
+      focusedUserRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [settingsNav, focusUsername, users]);
   function update(mutator) {
     onChange(mutator(settings));
   }
@@ -237,15 +599,6 @@ export function SettingsTab({
       };
     });
   }
-  function updateAlertNotification(patch) {
-    update((current) => ({
-      ...current,
-      vision: {
-        ...current.vision,
-        alertNotification: { ...defaultAlertNotificationConfig, ...(current.vision?.alertNotification || {}), ...patch },
-      },
-    }));
-  }
   function updateFFmpegDecoder(patch) {
     update((current) => ({
       ...current,
@@ -297,6 +650,9 @@ export function SettingsTab({
         <button type="button" className={settingsNav === 'users' ? 'active' : 'quiet'} onClick={() => onSettingsNav('users')}>
           <span className="btn-icon"><Ico n="user" /> Users</span>
         </button>
+        <button type="button" className={settingsNav === 'system' ? 'active' : 'quiet'} onClick={() => onSettingsNav('system')}>
+          <span className="btn-icon"><Ico n="monitor" /> Version &amp; Health</span>
+        </button>
       </aside>
 
       <div className="settings-content">
@@ -324,15 +680,17 @@ export function SettingsTab({
             </div>
           ) : null}
           <div className="settings-field-grid">
-          <label>
+          <label className="field-span-two">
             <FieldTitle info="Executable used for RTSP-to-MJPEG fallback and RTSP frame capture. Leave as ffmpeg to resolve from PATH, or use an absolute service-safe path.">
               FFmpeg path
             </FieldTitle>
-            <input
+            <FfmpegInstallControl
+              authHeader={authHeader}
               value={settings.decoder.mjpeg.ffmpegPath}
-              onChange={(event) => updateMJPEGDecoder({ ffmpegPath: event.target.value })}
-              placeholder="ffmpeg"
-              autoComplete="off"
+              onChangePath={(path) => updateMJPEGDecoder({ ffmpegPath: path })}
+              onMessage={onMessage}
+              onRestart={onRestart}
+              onInstalledPath={(path) => updateMJPEGDecoder({ ffmpegPath: path })}
             />
           </label>
           <label>
@@ -348,7 +706,7 @@ export function SettingsTab({
             </select>
           </label>
           <label>
-            <FieldTitle info="Hardware acceleration mode for ffmpeg decoding. None uses CPU software decode; auto lets ffmpeg choose; platform-specific modes need matching ffmpeg build, drivers, and hardware.">
+            <FieldTitle info="Hardware acceleration mode for ffmpeg decoding — applies to live view, standalone AI capture, and the continuous detection/recording siphon decode (offloading it from the CPU). None uses CPU software decode; auto lets ffmpeg choose; platform-specific modes need matching ffmpeg build, drivers, and hardware.">
               Hardware decode
             </FieldTitle>
             <select value={settings.decoder.ffmpeg.hwaccel} onChange={(event) => updateFFmpegDecoder({ hwaccel: event.target.value })}>
@@ -359,7 +717,7 @@ export function SettingsTab({
               ))}
             </select>
           </label>
-          <label>
+          <label className="field-span-two">
             <FieldTitle info="Optional hardware device or GPU index passed to ffmpeg hwaccel_device, such as 0, 1, or /dev/dri/renderD128 depending on platform.">
               GPU/device
             </FieldTitle>
@@ -585,30 +943,7 @@ export function SettingsTab({
         <section className="settings-panel span-two">
           <header>
             <h2>
-              <FieldTitle info="Choose which detection-alert fields and media are included in notifications (webhook, Telegram, and the persisted notification meta). Identifiers (alert id, rule id, camera) are always included.">
-                Alert Notification Fields
-              </FieldTitle>
-            </h2>
-          </header>
-          <p className="settings-hint">Applies to AI detection alerts raised by the background monitor. The snapshot is delivered as a Telegram photo and base64 in the webhook payload.</p>
-          <div className="settings-field-grid">
-            {alertNotificationFields.map(([key, label, help]) => (
-              <label className="check-row" key={key}>
-                <input
-                  type="checkbox"
-                  checked={alertNotification[key] === true}
-                  onChange={(event) => updateAlertNotification({ [key]: event.target.checked })}
-                />
-                <FieldTitle info={help}>{label}</FieldTitle>
-              </label>
-            ))}
-          </div>
-        </section>
-
-        <section className="settings-panel span-two">
-          <header>
-            <h2>
-              <FieldTitle info="Controls how the AI detector sources frames per camera. Auto siphons decoded frames off the recorder when they are fresh and falls back to a standalone RTSP grab otherwise. Changing capture behavior ships in a later phase; these values are stored now.">
+              <FieldTitle info="Controls how the AI detector sources frames per camera. Auto and Siphon keep a continuous decoded stream feeding the detector — off the recorder when recording is on, or off a dedicated detection-only stream when recording is off — so detection stays immediate. Standalone opens a fresh one-frame RTSP grab each interval (slower; ~2–3s per frame). For critical/industrial use pick Auto (default) or Siphon.">
                 Capture
               </FieldTitle>
               {capture.mode === 'auto' ? <span className="auto-badge">Auto</span> : null}
@@ -625,7 +960,7 @@ export function SettingsTab({
           </header>
           <div className="settings-field-grid">
             <label>
-              <FieldTitle info="Frame source. Auto: siphon off the recorder when a recent frame is available, else standalone. Siphon: always read decoded frames off the recorder. Standalone: AI always opens its own one-frame RTSP grab from the live stream.">
+              <FieldTitle info="Frame source. Auto: read fresh decoded frames off the continuous stream (recorder when recording is on, else a dedicated detection-only stream), falling back to a one-shot grab only if no frame is ready yet. Siphon: always read off the continuous stream. Standalone: AI opens its own one-frame RTSP grab each interval (slower). Auto/Siphon give immediate detection even with recording off.">
                 Mode
               </FieldTitle>
               <select value={capture.mode} onChange={(event) => updateCapture({ mode: event.target.value })}>
@@ -736,6 +1071,21 @@ export function SettingsTab({
                 <div>
                   <dt>AI ready</dt>
                   <dd>{visionToolStatus.available ? 'Yes' : 'No'}</dd>
+                </div>
+                <div>
+                  <dt>Python</dt>
+                  <dd>{visionToolStatus.pythonVersion || 'Not detected'}</dd>
+                </div>
+                <div>
+                  <dt>AI packages</dt>
+                  <dd>{(() => {
+                    if (visionToolStatus.packagesAvailable) return '✓ ultralytics  ✓ cv2  ✓ torch';
+                    const missing = visionToolStatus.missingPackages || [];
+                    if (missing.length) {
+                      return ['ultralytics', 'cv2', 'torch'].map((p) => `${missing.includes(p) ? '✗' : '✓'} ${p}`).join('  ');
+                    }
+                    return visionToolStatus.packageError || 'Not checked';
+                  })()}</dd>
                 </div>
                 <div>
                   <dt>Native fallback</dt>
@@ -894,10 +1244,9 @@ export function SettingsTab({
                 </label>
                 <label>
                   Credential
-                  <input
+                  <PasswordField
                     value={server.credential || ''}
-                    onChange={(event) => updateIceServer(index, { credential: event.target.value })}
-                    type="password"
+                    onChange={(credential) => updateIceServer(index, { credential })}
                     autoComplete="off"
                   />
                 </label>
@@ -941,118 +1290,149 @@ export function SettingsTab({
         ) : null}
 
         {settingsNav === 'users' ? (
+          <div className="settings-layout">
           <section className="settings-panel span-two">
-        <header>
-          <h2>Users</h2>
-          <button type="button" className="quiet" onClick={onLoadUsers} disabled={busy}>
-            Reload
-          </button>
-        </header>
-        <form className="user-create-row" onSubmit={onCreateUser}>
-          <label>
-            Username
-            <input
-              value={newUser.username}
-              onChange={(event) => onNewUser({ ...newUser, username: event.target.value })}
-              autoComplete="off"
-              required
-            />
-          </label>
-          <label>
-            Display name
-            <input
-              value={newUser.displayName}
-              onChange={(event) => onNewUser({ ...newUser, displayName: event.target.value })}
-              autoComplete="off"
-            />
-          </label>
-          <label>
-            Password
-            <input
-              value={newUser.password}
-              onChange={(event) => onNewUser({ ...newUser, password: event.target.value })}
-              type="password"
-              autoComplete="new-password"
-              required
-            />
-          </label>
-          <label className="check-row">
-            <input
-              type="checkbox"
-              checked={newUser.isAdmin}
-              onChange={(event) => onNewUser({ ...newUser, isAdmin: event.target.checked })}
-            />
-            Admin
-          </label>
-          <button type="submit" disabled={busy}>
-            <span className="btn-icon"><Ico n="user-plus" /> Add User</span>
-          </button>
-        </form>
-        <div className="user-list">
-          {users.length === 0 ? <p className="empty">No local users loaded.</p> : null}
-          {users.map((user) => (
-            <article className="user-row" key={user.id || user.username}>
-              <label>
-                Username
-                <input
-                  value={user.username || ''}
-                  onChange={(event) => onEditUser(user.id, { username: event.target.value })}
-                  autoComplete="off"
-                />
-              </label>
-              <label>
-                Display name
-                <input
-                  value={user.displayName || ''}
-                  onChange={(event) => onEditUser(user.id, { displayName: event.target.value })}
-                  autoComplete="off"
-                />
-              </label>
-              <label className="check-row">
-                <input
-                  type="checkbox"
-                  checked={Boolean(user.isAdmin)}
-                  onChange={(event) => onEditUser(user.id, { isAdmin: event.target.checked })}
-                />
-                Admin
-              </label>
-              <label className="check-row">
-                <input
-                  type="checkbox"
-                  checked={Boolean(user.isActive)}
-                  onChange={(event) => onEditUser(user.id, { isActive: event.target.checked })}
-                />
-                Active
-              </label>
-              <label>
-                New password
-                <input
-                  value={passwordDrafts[user.id] || ''}
-                  onChange={(event) => onPasswordDraft(user.id, event.target.value)}
-                  type="password"
-                  autoComplete="new-password"
-                />
-              </label>
-              <div className="user-actions">
-                <button type="button" onClick={() => onUpdateUser(user)} disabled={busy}>
-                  <span className="btn-icon"><Ico n="save" /> Save</span>
-                </button>
-                <button
-                  type="button"
-                  className="quiet"
-                  onClick={() => onResetPassword(user)}
-                  disabled={busy || !(passwordDrafts[user.id] || '').trim()}
-                >
-                  <span className="btn-icon"><Ico n="key" /> Reset Password</span>
-                </button>
-                <button type="button" className="quiet danger-text" onClick={() => onDeleteUser(user)} disabled={busy}>
-                  <span className="btn-icon"><Ico n="trash" /> Delete</span>
+            <header>
+              <h2>Add user</h2>
+            </header>
+            <p className="settings-hint">Create a local sign-in account. Admins can manage users and settings; non-admins get view access.</p>
+            <form onSubmit={onCreateUser}>
+              <div className="settings-field-grid">
+                <label>
+                  Username
+                  <input
+                    value={newUser.username}
+                    onChange={(event) => onNewUser({ ...newUser, username: event.target.value })}
+                    autoComplete="off"
+                    required
+                  />
+                </label>
+                <label>
+                  Display name
+                  <input
+                    value={newUser.displayName}
+                    onChange={(event) => onNewUser({ ...newUser, displayName: event.target.value })}
+                    autoComplete="off"
+                  />
+                </label>
+                <label>
+                  Password
+                  <PasswordField
+                    value={newUser.password}
+                    onChange={(password) => onNewUser({ ...newUser, password })}
+                    autoComplete="new-password"
+                  />
+                </label>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={newUser.isAdmin}
+                    onChange={(event) => onNewUser({ ...newUser, isAdmin: event.target.checked })}
+                  />
+                  Administrator
+                </label>
+              </div>
+              <div className="settings-actions">
+                <button type="submit" disabled={busy}>
+                  <span className="btn-icon"><Ico n="user-plus" /> Add User</span>
                 </button>
               </div>
-            </article>
-          ))}
-        </div>
+            </form>
           </section>
+
+          <section className="settings-panel span-two">
+            <header>
+              <h2>Users</h2>
+              <button type="button" className="quiet" onClick={onLoadUsers} disabled={busy}>
+                <span className="btn-icon"><Ico n="refresh" /> Reload</span>
+              </button>
+            </header>
+            <div className="user-list">
+              {users.length === 0 ? <p className="empty">No local users loaded.</p> : null}
+              {users.map((user) => {
+                const isFocused = focusUsername && user.username === focusUsername;
+                return (
+                <article
+                  className={`user-card${isFocused ? ' user-card--focused' : ''}`}
+                  key={user.id || user.username}
+                  ref={isFocused ? focusedUserRef : null}
+                >
+                  <div className="user-card-head">
+                    <Ico n="user" sz={16} />
+                    <span className="user-card-name">{user.displayName || user.username}</span>
+                    {user.isAdmin ? <span className="user-badge user-badge--admin">Admin</span> : null}
+                    <span className={`user-badge ${user.isActive ? 'user-badge--active' : 'user-badge--inactive'}`}>
+                      {user.isActive ? 'Active' : 'Inactive'}
+                    </span>
+                    {user.mustChangePassword ? <span className="user-badge user-badge--warn">Password change pending</span> : null}
+                  </div>
+                  <div className="settings-field-grid">
+                    <label>
+                      Username
+                      <input
+                        value={user.username || ''}
+                        onChange={(event) => onEditUser(user.id, { username: event.target.value })}
+                        autoComplete="off"
+                      />
+                    </label>
+                    <label>
+                      Display name
+                      <input
+                        value={user.displayName || ''}
+                        onChange={(event) => onEditUser(user.id, { displayName: event.target.value })}
+                        autoComplete="off"
+                      />
+                    </label>
+                    <label>
+                      New password
+                      <PasswordField
+                        value={passwordDrafts[user.id] || ''}
+                        onChange={(password) => onPasswordDraft(user.id, password)}
+                        autoComplete="new-password"
+                        placeholder="Leave blank to keep current"
+                      />
+                    </label>
+                    <div className="user-card-toggles">
+                      <label className="check-row">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(user.isAdmin)}
+                          onChange={(event) => onEditUser(user.id, { isAdmin: event.target.checked })}
+                        />
+                        Administrator
+                      </label>
+                      <label className="check-row">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(user.isActive)}
+                          onChange={(event) => onEditUser(user.id, { isActive: event.target.checked })}
+                        />
+                        Active
+                      </label>
+                    </div>
+                  </div>
+                  <div className="user-actions">
+                    <button type="button" onClick={() => onUpdateUser(user)} disabled={busy}>
+                      <span className="btn-icon"><Ico n="save" /> Save</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="quiet"
+                      onClick={() => onResetPassword(user)}
+                      disabled={busy || !(passwordDrafts[user.id] || '').trim()}
+                    >
+                      <span className="btn-icon"><Ico n="key" /> Reset Password</span>
+                    </button>
+                    <button type="button" className="quiet danger-text" onClick={() => onDeleteUser(user)} disabled={busy}>
+                      <span className="btn-icon"><Ico n="trash" /> Delete</span>
+                    </button>
+                  </div>
+                </article>
+                );
+              })}
+            </div>
+          </section>
+          </div>
         ) : null}
 
         {settingsNav === 'notifications' ? (
@@ -1064,6 +1444,7 @@ export function SettingsTab({
             onSave={onSaveNotification}
             onDiscard={onDiscardNotification}
             onTest={onTestNotification}
+            onPurgeExpired={onPurgeNotifications}
           />
         ) : null}
 
@@ -1088,7 +1469,16 @@ export function SettingsTab({
             onSave={onSaveMachineHealth}
             onDiscard={onDiscardMachineHealth}
             onRefreshMetrics={onRefreshMachineMetrics}
+            capacity={capacity}
+            onEstimateCapacity={onEstimateCapacity}
+            onCalibrateCapacity={onCalibrateCapacity}
+            resetAllowed={resetAllowed}
+            onSecureWipe={onSecureWipe}
           />
+        ) : null}
+
+        {settingsNav === 'system' ? (
+          <SystemStatusPanel authHeader={authHeader} onRestart={onRestart} />
         ) : null}
       </div>
     </section>
@@ -1101,112 +1491,85 @@ export const SEVERITY_OPTIONS = [
   { value: 'critical', label: 'Critical only' },
 ];
 
-export function NotificationSettingsPanel({ settings, busy, hasChanges, onChange, onSave, onDiscard, onTest }) {
-  const webhook = settings.webhook || defaultNotificationSettings.webhook;
-  const telegram = settings.telegram || defaultNotificationSettings.telegram;
+export function NotificationSettingsPanel({ settings, busy, hasChanges, onChange, onSave, onDiscard, onTest, onPurgeExpired }) {
   const retention = settings.retention || defaultNotificationSettings.retention;
+  const destinations = Array.isArray(settings.destinations) ? settings.destinations : [];
   function patch(section, values) {
     onChange({ ...settings, [section]: { ...settings[section], ...values } });
+  }
+  function setDestinations(next) {
+    onChange({ ...settings, destinations: next });
+  }
+  function addDestination(type) {
+    setDestinations([...destinations, defaultDestination(type)]);
+  }
+  function updateDestination(index, values) {
+    setDestinations(destinations.map((d, i) => (i === index ? { ...d, ...values } : d)));
+  }
+  function removeDestination(index) {
+    setDestinations(destinations.filter((_, i) => i !== index));
   }
   return (
     <form className="settings-layout" onSubmit={onSave}>
       <FormBusyOverlay busy={busy} />
 
-      <section className="settings-panel">
+      <section className="settings-panel span-two">
         <header>
-          <h2><span className="btn-icon"><Ico n="wifi" /> Webhook</span></h2>
-          <label className="check-row">
-            <input
-              type="checkbox"
-              checked={webhook.enabled}
-              onChange={(event) => patch('webhook', { enabled: event.target.checked })}
-            />
-            Enabled
-          </label>
+          <h2><span className="btn-icon"><Ico n="send" /> Delivery Destinations</span></h2>
+          <button type="button" className="quiet" onClick={() => onTest('destinations')} disabled={busy}>
+            <span className="btn-icon"><Ico n="send" /> Send Test</span>
+          </button>
         </header>
-        <p className="settings-hint">POSTs each notification as JSON to your endpoint (Slack, Discord, n8n, custom).</p>
-        <label>
-          Webhook URL
-          <input
-            value={webhook.url}
-            onChange={(event) => patch('webhook', { url: event.target.value })}
-            placeholder="https://hooks.example.com/..."
-            type="url"
-            autoComplete="off"
-            disabled={!webhook.enabled}
+        <p className="settings-hint">
+          Each destination delivers independently — its own channel, severity floor, which notification types it
+          receives, which detection fields it includes, and custom fields. The in-app feed always shows every alert in
+          full. Test sends a <strong>System</strong> notification to destinations subscribed to it.
+        </p>
+        {destinations.length === 0 ? (
+          <p className="settings-hint">No destinations yet — add a webhook or Telegram below.</p>
+        ) : null}
+        {destinations.map((dest, index) => (
+          <DestinationCard
+            key={dest.id || `new-${index}`}
+            dest={dest}
+            busy={busy}
+            onChange={(values) => updateDestination(index, values)}
+            onRemove={() => removeDestination(index)}
           />
-        </label>
-        <label>
-          Minimum severity
-          <select
-            value={webhook.minSeverity}
-            onChange={(event) => patch('webhook', { minSeverity: event.target.value })}
-            disabled={!webhook.enabled}
-          >
-            {SEVERITY_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-        </label>
-        <button type="button" className="quiet" onClick={() => onTest('webhook')} disabled={busy || !webhook.enabled}>
-          <span className="btn-icon"><Ico n="send" /> Send Test</span>
-        </button>
-      </section>
-
-      <section className="settings-panel">
-        <header>
-          <h2><span className="btn-icon"><Ico n="send" /> Telegram</span></h2>
-          <label className="check-row">
-            <input
-              type="checkbox"
-              checked={telegram.enabled}
-              onChange={(event) => patch('telegram', { enabled: event.target.checked })}
-            />
-            Enabled
-          </label>
-        </header>
-        <p className="settings-hint">Sends alerts to a Telegram chat via a bot. Create a bot with @BotFather, then get your chat id.</p>
-        <label>
-          Bot token
-          <input
-            value={telegram.botToken}
-            onChange={(event) => patch('telegram', { botToken: event.target.value })}
-            placeholder="123456:ABC-DEF..."
-            type="password"
-            autoComplete="off"
-            disabled={!telegram.enabled}
-          />
-        </label>
-        <label>
-          Chat ID
-          <input
-            value={telegram.chatId}
-            onChange={(event) => patch('telegram', { chatId: event.target.value })}
-            placeholder="-1001234567890"
-            autoComplete="off"
-            disabled={!telegram.enabled}
-          />
-        </label>
-        <label>
-          Minimum severity
-          <select
-            value={telegram.minSeverity}
-            onChange={(event) => patch('telegram', { minSeverity: event.target.value })}
-            disabled={!telegram.enabled}
-          >
-            {SEVERITY_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-        </label>
-        <button type="button" className="quiet" onClick={() => onTest('telegram')} disabled={busy || !telegram.enabled}>
-          <span className="btn-icon"><Ico n="send" /> Send Test</span>
-        </button>
+        ))}
+        <div className="action-row">
+          <button type="button" className="quiet" onClick={() => addDestination('webhook')} disabled={busy}>
+            <span className="btn-icon"><Ico n="wifi" /> Add webhook</span>
+          </button>
+          <button type="button" className="quiet" onClick={() => addDestination('telegram')} disabled={busy}>
+            <span className="btn-icon"><Ico n="send" /> Add Telegram</span>
+          </button>
+          <button type="button" className="quiet" onClick={() => addDestination('mqtt')} disabled={busy}>
+            <span className="btn-icon"><Ico n="wifi" /> Add MQTT</span>
+          </button>
+        </div>
       </section>
 
       <section className="settings-panel span-two">
         <header>
           <h2><span className="btn-icon"><Ico n="trash" /> Retention</span></h2>
+          {onPurgeExpired ? (
+            <button
+              type="button"
+              className="quiet"
+              disabled={busy || !(retention.days > 0)}
+              title={retention.days > 0
+                ? `Delete AI detections older than ${retention.days} day(s) now${retention.onlyRead ? ' (read only)' : ''}.`
+                : 'Set a retention of at least 1 day to purge.'}
+              onClick={() => {
+                if (window.confirm(`Delete AI detections older than ${retention.days} day(s)${retention.onlyRead ? ' that have been read' : ''}? This cannot be undone.`)) {
+                  onPurgeExpired({ days: retention.days, onlyRead: !!retention.onlyRead });
+                }
+              }}
+            >
+              <span className="btn-icon"><Ico n="trash" /> Purge expired now</span>
+            </button>
+          ) : null}
         </header>
         <p className="settings-hint">Old notifications are purged automatically. The in-app feed and live stream are always on and need no configuration.</p>
         <div className="settings-grid">
@@ -1250,6 +1613,261 @@ export function NotificationSettingsPanel({ settings, busy, hasChanges, onChange
         </button>
       </div>
     </form>
+  );
+}
+
+// WEBHOOK_PAYLOAD_SAMPLE is an illustrative webhook body shown in the destination
+// card so integrators see the shape without leaving the app. Snapshot/base64 and
+// the per-destination data.* keys appear only when that destination enables them.
+const WEBHOOK_PAYLOAD_SAMPLE = `{
+  "id": "9f2c1a7e-…",
+  "category": "vision.alert",
+  "severity": "critical",
+  "title": "Fire detected — Kitchen",
+  "body": "Front Gate • fire • 92% confidence\\nsite: Front Gate",
+  "source": "vision-monitor",
+  "cameraId": 3,
+  "refType": "alert_event",
+  "refId": 481,
+  "link": "/api/vision/alerts/481/snapshot",
+  "data": {
+    "alertId": 481,
+    "ruleId": 12,
+    "cameraName": "Front Gate",
+    "detectionType": "presence",
+    "ruleName": "Fire detected — Kitchen",
+    "label": "fire",
+    "confidence": 0.92,
+    "boundingBox": "[0.41,0.22,0.18,0.30]",
+    "zonePolygon": "[[0.1,0.1],[0.9,0.1],[0.9,0.9],[0.1,0.9]]",
+    "snapshotPath": "recordings/cam3/snapshots/481.jpg",
+    "site": "Front Gate"
+  },
+  "createdAt": 1781779140,
+  "snapshotBase64": "/9j/4AAQSkZJRgABAQAA…",
+  "snapshotContentType": "image/jpeg",
+  "snapshotFilename": "alert-481.jpg"
+}`;
+
+// DestinationCard edits one notification destination: its channel/target,
+// severity floor, category subscription, per-destination detection fields, and
+// static custom fields. When a custom field key collides with a built-in/AI
+// field, that field's toggle is disabled so the user sees the stock field is
+// bypassed (custom wins).
+function DestinationCard({ dest, busy, onChange, onRemove }) {
+  const isMqtt = dest.type === 'mqtt';
+  const isTelegram = dest.type === 'telegram';
+  const fields = dest.fields || defaultAlertNotificationConfig;
+  const categories = Array.isArray(dest.categories) ? dest.categories : [];
+  const customFields = Array.isArray(dest.customFields) ? dest.customFields : [];
+  const mqtt = dest.mqtt || {};
+  const disabled = busy || dest.enabled === false;
+  // Payload keys claimed by custom fields, used to disable the matching toggles.
+  const customKeys = new Set(customFields.map((f) => String(f.key || '').trim()).filter(Boolean));
+  const reservedKeys = new Set([...builtinPayloadKeys, ...Object.values(alertFieldDataKeys)]);
+
+  function setField(key, value) {
+    onChange({ fields: { ...fields, [key]: value } });
+  }
+  function setMqtt(values) {
+    onChange({ mqtt: { ...mqtt, ...values } });
+  }
+  function toggleCategory(cat, on) {
+    const next = on
+      ? Array.from(new Set([...categories, cat]))
+      : categories.filter((c) => c !== cat);
+    onChange({ categories: next });
+  }
+  function setCustom(index, values) {
+    onChange({ customFields: customFields.map((f, i) => (i === index ? { ...f, ...values } : f)) });
+  }
+
+  return (
+    <div className="dest-card">
+      <div className="dest-card-head">
+        <input
+          className="dest-name"
+          value={dest.name || ''}
+          onChange={(event) => onChange({ name: event.target.value })}
+          placeholder="Destination name"
+          disabled={busy}
+        />
+        <span className={`class-source-badge ${dest.type}`}>{dest.type}</span>
+        <label className="check-row compact">
+          <input type="checkbox" checked={dest.enabled !== false} onChange={(event) => onChange({ enabled: event.target.checked })} disabled={busy} />
+          Enabled
+        </label>
+        <button type="button" className="quiet danger" onClick={onRemove} disabled={busy}>Remove</button>
+      </div>
+
+      {isMqtt ? (
+        <>
+          <div className="settings-grid">
+            <label>
+              Broker URL
+              <input value={mqtt.brokerUrl || ''} onChange={(event) => setMqtt({ brokerUrl: event.target.value })} placeholder="ssl://broker.example.com:8883" autoComplete="off" disabled={disabled} />
+            </label>
+            <label>
+              <FieldTitle info="Publish topic. Supports {{token}} placeholders from the payload data (cameraName, alertId, ruleId, detectionType, and label/confidence/ruleName when those fields are enabled) plus cameraId, category, severity. A token that resolves to nothing collapses its level (e.g. .../{{cameraId}} on a Test → no trailing slash).">
+                Topic
+              </FieldTitle>
+              <input value={mqtt.topic || ''} onChange={(event) => setMqtt({ topic: event.target.value })} placeholder="matasan/alerts/{'{{cameraName}}'}" autoComplete="off" disabled={disabled} />
+            </label>
+            <label>
+              Client ID
+              <input value={mqtt.clientId || ''} onChange={(event) => setMqtt({ clientId: event.target.value })} placeholder="mymatasan-1 (optional)" autoComplete="off" disabled={disabled} />
+            </label>
+            <label>
+              QoS
+              <select value={Number(mqtt.qos ?? 1)} onChange={(event) => setMqtt({ qos: Number(event.target.value) })} disabled={disabled}>
+                <option value={0}>0 — at most once</option>
+                <option value={1}>1 — at least once</option>
+                <option value={2}>2 — exactly once</option>
+              </select>
+            </label>
+            <label>
+              Username
+              <input value={mqtt.username || ''} onChange={(event) => setMqtt({ username: event.target.value })} autoComplete="off" disabled={disabled} />
+            </label>
+            <label>
+              Password
+              <PasswordField value={mqtt.password || ''} onChange={(password) => setMqtt({ password })} autoComplete="off" disabled={disabled} />
+            </label>
+          </div>
+          <label className="check-row">
+            <input type="checkbox" checked={Boolean(mqtt.retain)} onChange={(event) => setMqtt({ retain: event.target.checked })} disabled={disabled} />
+            Retain last message on the topic
+          </label>
+          <fieldset className="dest-group">
+            <legend>
+              <FieldTitle info="TLS for ssl:// brokers. Paste PEM contents. CA verifies the broker; client certificate + key enable mutual-TLS (client-certificate auth).">
+                TLS / client certificate
+              </FieldTitle>
+            </legend>
+            <label>
+              CA certificate (PEM)
+              <textarea rows="3" value={mqtt.caCert || ''} onChange={(event) => setMqtt({ caCert: event.target.value })} placeholder="-----BEGIN CERTIFICATE-----" disabled={disabled} />
+            </label>
+            <div className="settings-grid">
+              <label>
+                Client certificate (PEM)
+                <textarea rows="3" value={mqtt.clientCert || ''} onChange={(event) => setMqtt({ clientCert: event.target.value })} placeholder="-----BEGIN CERTIFICATE-----" disabled={disabled} />
+              </label>
+              <label>
+                Client key (PEM)
+                <textarea rows="3" value={mqtt.clientKey || ''} onChange={(event) => setMqtt({ clientKey: event.target.value })} placeholder="-----BEGIN PRIVATE KEY-----" disabled={disabled} />
+              </label>
+            </div>
+            <label className="check-row">
+              <input type="checkbox" checked={Boolean(mqtt.insecureSkipVerify)} onChange={(event) => setMqtt({ insecureSkipVerify: event.target.checked })} disabled={disabled} />
+              Skip broker certificate verification (insecure)
+            </label>
+          </fieldset>
+          <details className="dest-sample">
+            <summary>Sample payload</summary>
+            <pre className="install-output">{WEBHOOK_PAYLOAD_SAMPLE}</pre>
+          </details>
+        </>
+      ) : isTelegram ? (
+        <div className="settings-grid">
+          <label>
+            Bot token
+            <PasswordField value={dest.botToken || ''} onChange={(botToken) => onChange({ botToken })} placeholder="123456:ABC-DEF..." autoComplete="off" disabled={disabled} />
+          </label>
+          <label>
+            Chat ID
+            <input value={dest.chatId || ''} onChange={(event) => onChange({ chatId: event.target.value })} placeholder="-1001234567890" autoComplete="off" disabled={disabled} />
+          </label>
+        </div>
+      ) : (
+        <>
+          <label>
+            Webhook URL
+            <input value={dest.url || ''} onChange={(event) => onChange({ url: event.target.value })} type="url" placeholder="https://hooks.example.com/..." autoComplete="off" disabled={disabled} />
+          </label>
+          <details className="dest-sample">
+            <summary>Sample payload</summary>
+            <pre className="install-output">{WEBHOOK_PAYLOAD_SAMPLE}</pre>
+          </details>
+        </>
+      )}
+
+      <label>
+        Minimum severity
+        <select value={dest.minSeverity || 'warning'} onChange={(event) => onChange({ minSeverity: event.target.value })} disabled={disabled}>
+          {SEVERITY_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+      </label>
+
+      <fieldset className="dest-group">
+        <legend>Receives</legend>
+        {notificationCategories.map(([value, label, help]) => (
+          <label className="check-row" key={value} title={help}>
+            <input
+              type="checkbox"
+              checked={categories.length === 0 || categories.includes(value)}
+              onChange={(event) => toggleCategory(value, event.target.checked)}
+              disabled={busy}
+            />
+            {label}
+          </label>
+        ))}
+        <span className="field-hint">None checked = all notification types.</span>
+      </fieldset>
+
+      <fieldset className="dest-group">
+        <legend>Detection fields (AI alerts)</legend>
+        {alertNotificationFields.map(([key, label, help]) => {
+          const overridden = customKeys.has(alertFieldDataKeys[key]);
+          return (
+            <label className="check-row" key={key} title={overridden ? `Overridden by a custom field named "${alertFieldDataKeys[key]}"` : help}>
+              <input
+                type="checkbox"
+                checked={!overridden && fields[key] !== false}
+                onChange={(event) => setField(key, event.target.checked)}
+                disabled={busy || overridden}
+              />
+              {label}{overridden ? ' — overridden by custom field' : ''}
+            </label>
+          );
+        })}
+      </fieldset>
+
+      {!customKeys.has(alertFieldDataKeys.includeSnapshot) && fields.includeSnapshot !== false ? (
+        <label>
+          Snapshot delivery
+          <select value={dest.snapshotMode === 'link' ? 'link' : 'inline'} onChange={(event) => onChange({ snapshotMode: event.target.value })} disabled={busy}>
+            <option value="inline">Inline — embed the image</option>
+            <option value="link">Link only — reference, no bytes</option>
+          </select>
+          <span className="field-hint">Inline embeds the image (webhook/MQTT base64, Telegram photo). Link only sends a reference (smaller payloads); the consumer fetches the image itself.</span>
+        </label>
+      ) : null}
+
+      <fieldset className="dest-group">
+        <legend>
+          <FieldTitle info="Key/value pairs added to the payload. A custom field overrides a built-in field of the same key. Values may use templates: {{ruleName}}, {{cameraName}}, {{label}}, {{confidence}}, {{detectionType}}, {{alertId}}, {{ruleId}}, {{cameraId}}.">
+            Custom fields
+          </FieldTitle>
+        </legend>
+        {customFields.map((field, index) => {
+          const collides = reservedKeys.has(String(field.key || '').trim());
+          return (
+            <div className="dest-custom-row" key={index}>
+              <input value={field.key || ''} onChange={(event) => setCustom(index, { key: event.target.value })} placeholder="key" disabled={busy} />
+              <input value={field.value || ''} onChange={(event) => setCustom(index, { value: event.target.value })} placeholder="value" disabled={busy} />
+              <button type="button" className="quiet danger" onClick={() => onChange({ customFields: customFields.filter((_, i) => i !== index) })} disabled={busy} aria-label="Remove field">✕</button>
+              {collides ? <span className="field-hint">overrides built-in “{String(field.key).trim()}”</span> : null}
+            </div>
+          );
+        })}
+        <button type="button" className="quiet" onClick={() => onChange({ customFields: [...customFields, { key: '', value: '' }] })} disabled={busy}>
+          <span className="btn-icon"><Ico n="plus" /> Add field</span>
+        </button>
+      </fieldset>
+    </div>
   );
 }
 
@@ -1369,7 +1987,39 @@ function machineLevelClass(percent, warn, critical) {
   return 'online';
 }
 
-export function MachineHealthSettingsPanel({ settings, busy, hasChanges, metrics, onChange, onSave, onDiscard, onRefreshMetrics }) {
+const capacityLimitLabels = { cpu: 'CPU', gpu: 'GPU', disk: 'disk space', memory: 'memory' };
+
+// formatRetentionDays renders an estimated retention span readably: minutes/hours
+// below a day, otherwise days.
+export function formatRetentionDays(days) {
+  if (!days || days <= 0) return '—';
+  if (days < 1) {
+    const hours = days * 24;
+    if (hours < 1) return `${Math.round(hours * 60)} min`;
+    return `${hours.toFixed(1)} hours`;
+  }
+  return `${days < 10 ? days.toFixed(1) : Math.round(days)} days`;
+}
+
+// CapacityRetentionNote shows the recording retention achievable at the estimated
+// camera count — disk shortens retention rather than blocking cameras.
+export function CapacityRetentionNote({ capacity }) {
+  if (!capacity || !capacity.configuredRetentionDays) return null;
+  const constrained = capacity.retentionConstrained;
+  return (
+    <div className={`capacity-retention${constrained ? ' capacity-retention--warn' : ''}`}>
+      <span className="btn-icon"><Ico n={constrained ? 'warning' : 'trash'} /></span>
+      <span>
+        At {capacity.estimatedMax} cameras, recording keeps about{' '}
+        <strong>{formatRetentionDays(capacity.achievableRetentionDays)}</strong> of footage
+        {' '}(target {capacity.configuredRetentionDays} days).
+        {constrained ? ' Oldest footage auto-purges — lower the bitrate or add storage to keep more.' : ''}
+      </span>
+    </div>
+  );
+}
+
+export function MachineHealthSettingsPanel({ settings, busy, hasChanges, metrics, onChange, onSave, onDiscard, onRefreshMetrics, capacity, onEstimateCapacity, onCalibrateCapacity, resetAllowed, onSecureWipe }) {
   const d = defaultMachineHealthSettings;
   const value = {
     ...d,
@@ -1390,6 +2040,60 @@ export function MachineHealthSettingsPanel({ settings, busy, hasChanges, metrics
   return (
     <form className="settings-layout" onSubmit={onSave}>
       <FormBusyOverlay busy={busy} />
+
+      <section className="settings-panel span-two">
+        <header>
+          <h2><span className="btn-icon"><Ico n="cpu" /> Camera Capacity Estimate</span></h2>
+          <div className="capacity-actions">
+            <button type="button" className="quiet" onClick={() => onCalibrateCapacity && onCalibrateCapacity()} disabled={busy} title="Benchmark the detector on this machine for an accurate estimate before any camera is added.">
+              <span className="btn-icon"><Ico n="wand" /> Run calibration</span>
+            </button>
+            <button type="button" className="quiet" onClick={() => onEstimateCapacity && onEstimateCapacity()} disabled={busy}>
+              <span className="btn-icon"><Ico n="reload" /> Estimate</span>
+            </button>
+          </div>
+        </header>
+        <p className="settings-hint">
+          A guide to how many cameras this host can process, from detected hardware
+          {capacity?.confidence === 'measured' ? ' and current live load' : capacity?.confidence === 'calibrated' ? ' and a detector benchmark' : ''}. The total is the tightest continuous
+          workload (AI detection, recording, memory); live view is on-demand and not counted.
+          Run calibration for an accurate number before adding cameras.
+        </p>
+        {capacity ? (
+          <>
+            <div className="capacity-headline">
+              <span className="capacity-number">{capacity.estimatedMax}</span>
+              <div className="capacity-headline-meta">
+                <span className="capacity-caption">estimated cameras</span>
+                <span className={`capacity-badge capacity-badge--${capacity.confidence}`}>
+                  {capacity.confidence === 'measured' ? 'Measured from live load' : capacity.confidence === 'calibrated' ? 'Calibrated on this host' : 'Ballpark estimate'}
+                </span>
+                {capacity.limitingWorkload ? (
+                  <span className="field-hint">Limited by {capacityLimitLabels[(capacity.workloads || []).find((w) => w.name === capacity.limitingWorkload)?.limit] || capacity.limitingWorkload}</span>
+                ) : null}
+              </div>
+            </div>
+            <CapacityRetentionNote capacity={capacity} />
+            <div className="capacity-grid">
+              {(capacity.workloads || []).map((wl) => (
+                <div className={`capacity-card${wl.name === capacity.limitingWorkload ? ' capacity-card--limit' : ''}`} key={wl.name}>
+                  <dt>{wl.label}{!wl.continuous ? ' *' : ''}</dt>
+                  <dd><strong>{wl.maxCameras}</strong> cameras</dd>
+                  <span className="field-hint">{wl.note}</span>
+                </div>
+              ))}
+            </div>
+            {Array.isArray(capacity.assumptions) && capacity.assumptions.length > 0 ? (
+              <details className="capacity-assumptions">
+                <summary>Assumptions &amp; method</summary>
+                <ul>{capacity.assumptions.map((a, i) => <li key={i}>{a}</li>)}</ul>
+              </details>
+            ) : null}
+          </>
+        ) : (
+          <p className="empty">Click <strong>Estimate</strong> to gauge capacity for this machine.</p>
+        )}
+      </section>
 
       <section className="settings-panel span-two">
         <header>
@@ -1518,6 +2222,22 @@ export function MachineHealthSettingsPanel({ settings, busy, hasChanges, metrics
           <span className="btn-icon"><Ico n="undo" /> Discard Changes</span>
         </button>
       </div>
+
+      {resetAllowed && onSecureWipe ? (
+        <section className="settings-panel span-two danger-zone">
+          <header>
+            <h2><span className="btn-icon"><Ico n="warning" /> Danger Zone</span></h2>
+          </header>
+          <p className="settings-hint">
+            <strong>Secure Wipe &amp; Reset</strong> permanently shreds every recording, snapshot, training dataset and
+            upload, drops and rebuilds the database, and restarts the system back to first-run defaults. Runtime settings
+            return to defaults. <strong>This cannot be undone.</strong>
+          </p>
+          <button type="button" className="danger-solid" onClick={onSecureWipe} disabled={busy}>
+            <span className="btn-icon"><Ico n="warning" /> Secure Wipe &amp; Reset</span>
+          </button>
+        </section>
+      ) : null}
     </form>
   );
 }

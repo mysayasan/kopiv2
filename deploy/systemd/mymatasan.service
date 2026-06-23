@@ -1,0 +1,31 @@
+# systemd unit for MyMataSan (Linux, incl. Raspberry Pi OS / Debian / Ubuntu).
+#
+# Install:
+#   sudo cp deploy/systemd/mymatasan.service /etc/systemd/system/
+#   # edit WorkingDirectory/ExecStart/User below to match your install
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now mymatasan
+#   journalctl -u mymatasan -f      # view logs
+#
+# Restart=always + KOPIV2_SUPERVISED=1 means an in-app factory reset / self-update
+# exits cleanly and systemd relaunches it.
+
+[Unit]
+Description=MyMataSan NVR
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Where config.json, the recordings dir, and the secret/ key live:
+WorkingDirectory=/opt/mymatasan
+ExecStart=/opt/mymatasan/mymatasan
+Environment=KOPIV2_SUPERVISED=1
+Restart=always
+RestartSec=2
+# Recommended: run as a dedicated unprivileged user that owns WorkingDirectory.
+# User=mymatasan
+# Group=mymatasan
+
+[Install]
+WantedBy=multi-user.target

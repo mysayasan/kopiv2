@@ -1,0 +1,35 @@
+<!-- WinSW service wrapper for MyMataSan (Windows).
+
+  A Go console app isn't a native Windows service, so wrap it with WinSW (or NSSM).
+
+  WinSW (recommended):
+    1. Download WinSW (https://github.com/winsw/winsw), put WinSW.exe next to the app
+       and rename it mymatasan-service.exe.
+    2. Put this file next to it as mymatasan-service.xml (same base name).
+    3. Edit the <executable> / <workingdirectory> paths below.
+    4. Run (elevated):  mymatasan-service.exe install   then   mymatasan-service.exe start
+       Logs land next to the exe; manage via services.msc.
+
+  NSSM alternative:
+    nssm install MyMataSan "C:\mymatasan\mymatasan.exe"
+    nssm set MyMataSan AppDirectory "C:\mymatasan"
+    nssm set MyMataSan AppEnvironmentExtra KOPIV2_SUPERVISED=1
+    nssm set MyMataSan AppExit Default Restart
+    nssm start MyMataSan
+
+  onfailure restart + KOPIV2_SUPERVISED=1 means an in-app factory reset / self-update
+  exits cleanly and the service control manager relaunches it.
+-->
+<service>
+  <id>mymatasan</id>
+  <name>MyMataSan NVR</name>
+  <description>MyMataSan camera monitor / NVR.</description>
+  <executable>C:\mymatasan\mymatasan.exe</executable>
+  <workingdirectory>C:\mymatasan</workingdirectory>
+  <env name="KOPIV2_SUPERVISED" value="1"/>
+  <onfailure action="restart" delay="2 sec"/>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+</service>

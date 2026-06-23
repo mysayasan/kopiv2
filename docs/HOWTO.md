@@ -107,11 +107,21 @@ Use `hwaccel: "none"` unless the installed ffmpeg build and device drivers are k
 
 The Settings page Decoder panel includes an Auto Tune action. It inspects saved camera RTSP track metadata and the local `ffmpeg -hwaccels` output, then saves a conservative profile. It keeps `hwaccel: "none"` when ffmpeg is missing, camera RTSP metadata is absent, or the platform hardware decoder cannot be safely verified. Run each camera's RTSP Test first so auto-tune can see whether streams are H264, H265/HEVC, or another codec.
 
+The Decoder panel's **FFmpeg path** field also helps you get ffmpeg in place without leaving Settings:
+
+- A status icon (green tick / red cross with a hover tooltip) and a **Check** button report whether a usable ffmpeg is found (`GET /api/settings/decoder/status`).
+- When it is not found, a **Download ffmpeg** button runs the same in-app installer the first-run wizard uses (`POST /api/settings/decoder/ffmpeg/install`, polled via `/install/status`); on success it fills in the installed path and offers **Restart now** to apply it.
+- A **folder icon inside the input** opens a server-side file picker (`GET /api/settings/fs/browse`) so you can browse to the binary instead of typing the path. It is admin-only, read-only, and confined to a whitelist of roots (app dir + `bin/`, user home, OS common install locations, plus any added via the `decoder.browseRoots` config array). To allow a non-standard location such as `/data/ffmpeg`, add it to `decoder.browseRoots`; you can also type any absolute path directly.
+
+The **Version & Health** tab in Settings shows the running app/shared-core version and live liveness/readiness/API-namespace health (`/api/version`, `/health`, `/ready`, `/api/health`), and has a **Restart app** button that relaunches the process and reloads when it is back — handy after installing ffmpeg or changing startup-only config.
+
 ## MyMataSan Live View Audio
 
-When a camera exposes a G.711 (PCMA or PCMU) audio track in its RTSP stream, a speaker icon appears in the bottom-left corner of each live view tile. Click it to unmute audio; click again to mute. The video element stays muted at all times (required for browser autoplay); audio is routed to a separate `<audio>` element.
+When a camera exposes an audio track in its RTSP stream, a speaker icon appears in the bottom-left corner of each live view tile. Click it to unmute audio; click again to mute. The video element stays muted at all times (required for browser autoplay); audio is routed to a separate `<audio>` element.
 
-If no speaker button appears, the camera either has no G.711 audio track or the RTSP stream was captured before audio support was added — reconnect the live tile to re-negotiate the WebRTC session.
+G.711 (PCMA/PCMU) audio is forwarded to the browser unchanged (browsers decode it natively). For cameras whose audio is **not** G.711 — most commonly **AAC** on Dahua/Lechange/Imou and similar — a dedicated ffmpeg leg transcodes the audio to **Opus** in real time so live view still has sound. This needs a working ffmpeg executable (the configured decoder ffmpeg path); if the path is empty, non-G.711 cameras get video without audio. The transcoder opens a second RTSP connection to the camera (video via the WebRTC bridge, audio via ffmpeg).
+
+If no speaker button appears, the camera has no audio track at all, the configured ffmpeg path can't transcode a non-G.711 codec, or the tile was opened before audio support — reconnect the live tile to re-negotiate the WebRTC session.
 
 ## MyMataSan PTZ Control
 

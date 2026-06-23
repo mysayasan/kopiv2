@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "mymatasan",
+  "summary": "Custom fields now appear in Telegram notifications. They were only written to the notification Data map, which the webhook channel serializes into its JSON payload but the Telegram channel ignores (telegramText renders only Title + Body). The per-destination vision-alert render now also appends each expanded custom field as a 'key: value' line to the notification Body, so text-only channels (Telegram) show them while the webhook still gets them structured in Data. appendCustomFields replaces mergeCustomFields, returning the display lines.",
+  "compatibility": "Backward compatible. Webhook payloads are unchanged except their body text now lists the custom fields too (they remain in Data as before). Destinations with no custom fields are unaffected."
+}

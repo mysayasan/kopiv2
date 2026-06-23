@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -41,15 +42,51 @@ func (s *localUserService) EnsureDefaultAdmin(ctx context.Context) error {
 		return err
 	}
 	if total > 0 {
-		return nil
+		// An install already exists: don't seed, but if the admin is still on the
+		// shipped default password, force a change so old installs are protected too.
+		return s.flagDefaultAdminPassword(ctx)
+	}
+	// First run: seed the admin. An explicit LOCAL_ADMIN_PASSWORD provisions a
+	// strong password up front and skips the forced-change dance; otherwise the
+	// shipped default is seeded and flagged must-change.
+	password := strings.TrimSpace(os.Getenv("LOCAL_ADMIN_PASSWORD"))
+	mustChange := false
+	if password == "" {
+		password = defaultLocalAdminPassword
+		mustChange = true
 	}
 	_, err = s.Create(ctx, CreateLocalUserRequest{
-		Username:    defaultLocalAdminUsername,
-		Password:    defaultLocalAdminPassword,
-		DisplayName: "Administrator",
-		IsAdmin:     true,
-		IsActive:    true,
+		Username:           defaultLocalAdminUsername,
+		Password:           password,
+		DisplayName:        "Administrator",
+		IsAdmin:            true,
+		IsActive:           true,
+		MustChangePassword: mustChange,
 	})
+	return err
+}
+
+// flagDefaultAdminPassword sets MustChangePassword on the seeded admin when it is
+// still using the shipped default credential, so existing installs are nudged off
+// it on next login. A non-default password, or an already-flagged admin, is left
+// untouched.
+func (s *localUserService) flagDefaultAdminPassword(ctx context.Context) error {
+	user, err := s.repo.GetByUnique(ctx, "", "username", defaultLocalAdminUsername)
+	if err != nil {
+		if isNoResultFoundErr(err) {
+			return nil
+		}
+		return err
+	}
+	if user == nil || user.MustChangePassword {
+		return nil
+	}
+	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(defaultLocalAdminPassword)) != nil {
+		return nil
+	}
+	user.MustChangePassword = true
+	user.UpdatedAt = time.Now().UTC().Unix()
+	_, err = s.repo.UpdateById(ctx, "", *user)
 	return err
 }
 
@@ -141,13 +178,14 @@ func (s *localUserService) Create(ctx context.Context, req CreateLocalUserReques
 	}
 	now := time.Now().UTC().Unix()
 	model := entities.LocalUser{
-		Username:     username,
-		PasswordHash: hashed,
-		DisplayName:  strings.TrimSpace(req.DisplayName),
-		IsAdmin:      req.IsAdmin,
-		IsActive:     req.IsActive,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		Username:           username,
+		PasswordHash:       hashed,
+		DisplayName:        strings.TrimSpace(req.DisplayName),
+		IsAdmin:            req.IsAdmin,
+		IsActive:           req.IsActive,
+		MustChangePassword: req.MustChangePassword,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 	id, err := s.repo.Create(ctx, "", model)
 	if err != nil {
@@ -207,11 +245,57 @@ func (s *localUserService) ResetPassword(ctx context.Context, id uint64, passwor
 		return nil, err
 	}
 	user.PasswordHash = hashed
+	// An admin deliberately setting a password clears any forced-change flag.
+	user.MustChangePassword = false
 	user.UpdatedAt = time.Now().UTC().Unix()
 	if _, err := s.repo.UpdateById(ctx, "", *user); err != nil {
 		return nil, err
 	}
 	return user, nil
+}
+
+// ChangePassword is the authenticated user's self-service password change. It
+// verifies the current password, enforces the new password rules, clears the
+// forced-change flag, and returns a fresh identity (with a rotated session hash).
+func (s *localUserService) ChangePassword(ctx context.Context, userId int64, currentPassword string, newPassword string) (*AuthenticatedUser, error) {
+	currentPassword = strings.TrimSpace(currentPassword)
+	newPassword = strings.TrimSpace(newPassword)
+	if currentPassword == "" || newPassword == "" {
+		return nil, errors.New("current and new password are required")
+	}
+	if len(newPassword) < 8 {
+		return nil, errors.New("new password must be at least 8 characters")
+	}
+	if newPassword == currentPassword {
+		return nil, errors.New("new password must differ from the current password")
+	}
+	if newPassword == defaultLocalAdminPassword {
+		return nil, errors.New("choose a password other than the default")
+	}
+	user, err := s.repo.GetById(ctx, "", uint64(userId))
+	if err != nil {
+		if isNoResultFoundErr(err) {
+			return nil, ErrLocalUserInvalidCredential
+		}
+		return nil, err
+	}
+	if user == nil || !user.IsActive {
+		return nil, ErrLocalUserInvalidCredential
+	}
+	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(currentPassword)) != nil {
+		return nil, ErrLocalUserInvalidCredential
+	}
+	hashed, err := hashLocalPassword(newPassword)
+	if err != nil {
+		return nil, err
+	}
+	user.PasswordHash = hashed
+	user.MustChangePassword = false
+	user.UpdatedAt = time.Now().UTC().Unix()
+	if _, err := s.repo.UpdateById(ctx, "", *user); err != nil {
+		return nil, err
+	}
+	return localUserIdentity(user), nil
 }
 
 func (s *localUserService) Delete(ctx context.Context, id uint64) (uint64, error) {
@@ -249,11 +333,12 @@ func normalizeUsername(username string) string {
 
 func localUserIdentity(user *entities.LocalUser) *AuthenticatedUser {
 	return &AuthenticatedUser{
-		Id:          user.Id,
-		Username:    user.Username,
-		DisplayName: user.DisplayName,
-		IsAdmin:     user.IsAdmin,
-		SessionHash: localSessionHash(user),
+		Id:                 user.Id,
+		Username:           user.Username,
+		DisplayName:        user.DisplayName,
+		IsAdmin:            user.IsAdmin,
+		MustChangePassword: user.MustChangePassword,
+		SessionHash:        localSessionHash(user),
 	}
 }
 

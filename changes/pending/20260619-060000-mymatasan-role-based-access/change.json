@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "mymatasan",
+  "summary": "Real admin vs non-admin authorization. Previously isAdmin only gated the Users section; non-admins could change every other setting/camera/rule. New middleware apis.NewRequireAdminForWrites, registered after NewLocalBasicAuth, enforces: admins -> everything; everyone -> GET/HEAD/OPTIONS; non-admins -> only a small viewer write allow-list (change-password, live-view, webrtc/offer, health/refresh, alert ack, notification mark-read). Every other mutating request returns 403 (secure by default — new mutating routes are admin-only until allow-listed). Frontend tracks the logged-in user's role from /api/auth/session and hides admin-only module tabs, so a non-admin sees only Live Views, Recording, and Notifications, with acknowledge still available; the per-segment recording Delete is hidden for viewers.",
+  "compatibility": "Tightens authorization: non-admin local users that previously could change settings/cameras/rules now get 403 on those mutations (this was the intended behaviour; the old open access was a gap). Admin users are unaffected. PTZ move/stop is admin-only for now."
+}

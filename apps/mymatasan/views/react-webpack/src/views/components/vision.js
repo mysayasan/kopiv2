@@ -3,7 +3,7 @@ import { Ico } from './icons';
 import { FormBusyOverlay } from './ui';
 import { useSnapshotBlob } from '../hooks';
 import { scheduleDayOptions } from '../lib/constants';
-import {todayDateString,apiBase,fieldValue,formatTimestamp,parseMetadata,formatPercent,parseBoundingBox,formatSourceLabel,cameraTitle,orderedSavedCameras,parseZonePolygon,defaultZonePolygon,normalizeLineConfig,parseLineRuleConfig,lineRuleConfigText,lineCountFromRule,parseCrowdRuleConfig,detectionModes,modeFromDetectionType,detectionTypeForMode,targetClassesFromRule,buildRuleConfigForMode,groupedClassOptions,classDisplayName,defaultVisionRuleDraft,weeklySchedulePolicy,rangeSchedulePolicy,schedulePresetPolicy,scheduleDraftFromPolicy,scheduleSummary } from '../lib/helpers';
+import {todayDateString,apiBase,fieldValue,formatTimestamp,parseMetadata,formatPercent,parseBoundingBox,formatSourceLabel,cameraTitle,orderedSavedCameras,parseZonePolygon,defaultZonePolygon,normalizeLineConfig,parseLineRuleConfig,lineRuleConfigText,lineCountFromRule,parseCrowdRuleConfig,detectionModes,modeFromDetectionType,detectionTypeForMode,targetClassesFromRule,buildRuleConfigForMode,ruleDestinationsFromConfig,applyRuleDestinations,groupedClassOptions,classDisplayName,defaultVisionRuleDraft,weeklySchedulePolicy,rangeSchedulePolicy,schedulePresetPolicy,scheduleDraftFromPolicy,scheduleSummary } from '../lib/helpers';
 import { ZoneDrawingPreview, LineDrawingPreview } from './previews';
 import { SavedDeviceNav } from './cameras';
 
@@ -23,6 +23,7 @@ export function VisionTab({
   classes,
   labelCatalog,
   activeModelClasses,
+  destinations,
   ruleDraft,
   busy,
   authHeader,
@@ -53,6 +54,8 @@ export function VisionTab({
   const lineRuleConfig = parseLineRuleConfig(ruleDraft.ruleConfig, mode === 'multi_line_crossing' ? 'multi_line_crossing' : 'line_crossing');
   const crowdRuleConfig = parseCrowdRuleConfig(ruleDraft.ruleConfig);
   const targetClasses = targetClassesFromRule(ruleDraft);
+  const ruleDestinations = ruleDestinationsFromConfig(ruleDraft.ruleConfig);
+  const destinationOptions = (destinations || []).filter((d) => d && d.id);
   const classGroups = groupedClassOptions(classes);
   const selectedZonePoints = parseZonePolygon(ruleDraft.zonePolygon);
   const scheduleDraft = scheduleDraftFromPolicy(ruleDraft.schedulePolicy);
@@ -163,13 +166,24 @@ export function VisionTab({
   // classes and seeding mode-specific config (line geometry, crowd minCount).
   function changeMode(nextMode) {
     const detectionType = detectionTypeForMode(nextMode);
-    const ruleConfig = buildRuleConfigForMode(nextMode, targetClasses, ruleDraft.ruleConfig);
+    const ruleConfig = applyRuleDestinations(buildRuleConfigForMode(nextMode, targetClasses, ruleDraft.ruleConfig), ruleDestinations);
     onRuleDraft({ ...ruleDraft, detectionType, ruleConfig, zonePolygon: ruleDraft.zonePolygon || defaultZonePolygon });
   }
 
   // changeTargets rewrites the rule's target class list within the current mode.
   function changeTargets(nextTargets) {
-    onRuleDraft({ ...ruleDraft, ruleConfig: buildRuleConfigForMode(mode, nextTargets, ruleDraft.ruleConfig) });
+    onRuleDraft({ ...ruleDraft, ruleConfig: applyRuleDestinations(buildRuleConfigForMode(mode, nextTargets, ruleDraft.ruleConfig), ruleDestinations) });
+  }
+
+  // changeDestinations sets the per-rule routing (which destinations this rule's
+  // alerts go to). Empty selection = route to all destinations.
+  function changeDestinations(nextIds) {
+    onRuleDraft({ ...ruleDraft, ruleConfig: applyRuleDestinations(ruleDraft.ruleConfig, nextIds) });
+  }
+  function toggleDestination(id, checked) {
+    const next = new Set(ruleDestinations);
+    if (checked) next.add(id); else next.delete(id);
+    changeDestinations(Array.from(next));
   }
 
   function toggleTarget(slug, checked) {
@@ -185,12 +199,12 @@ export function VisionTab({
   function changeLineConfig(patch) {
     const type = mode === 'multi_line_crossing' ? 'multi_line_crossing' : 'line_crossing';
     const next = normalizeLineConfig({ ...lineRuleConfig, ...patch }, type);
-    onRuleDraft({ ...ruleDraft, ruleConfig: lineRuleConfigText(next, type) });
+    onRuleDraft({ ...ruleDraft, ruleConfig: applyRuleDestinations(lineRuleConfigText(next, type), ruleDestinations) });
   }
 
   function changeCrowdConfig(patch) {
     const minCount = patch.minCount != null ? patch.minCount : crowdRuleConfig.minCount;
-    onRuleDraft({ ...ruleDraft, ruleConfig: buildRuleConfigForMode('crowd', targetClasses, JSON.stringify({ minCount })) });
+    onRuleDraft({ ...ruleDraft, ruleConfig: applyRuleDestinations(buildRuleConfigForMode('crowd', targetClasses, JSON.stringify({ minCount })), ruleDestinations) });
   }
 
   function toggleScheduleDay(day) {
@@ -274,6 +288,60 @@ export function VisionTab({
                       </select>
                     </label>
                   </div>
+                  {crowdRule ? (
+                    <section className="schedule-panel">
+                      <header>
+                        <h3>Crowd Threshold</h3>
+                        <span className="status-pill">{crowdRuleConfig.minCount}+ people</span>
+                      </header>
+                      <span className="field-hint">
+                        Fires when at least this many people are detected inside the zone in a single frame.
+                        Each person must meet the confidence threshold.
+                      </span>
+                      <div className="metadata-row">
+                        <label>
+                          Minimum people
+                          <input
+                            type="number"
+                            min="2"
+                            max="100"
+                            step="1"
+                            value={crowdRuleConfig.minCount}
+                            onChange={(event) => changeCrowdConfig({ minCount: Number(event.target.value) })}
+                          />
+                        </label>
+                      </div>
+                    </section>
+                  ) : null}
+                  {lineRule ? (
+                    <section className="schedule-panel">
+                      <header>
+                        <h3>Line Direction</h3>
+                        <span className="status-pill">{lineRuleConfig.direction}</span>
+                      </header>
+                      <div className="metadata-row">
+                        <label>
+                          Direction
+                          <select value={lineRuleConfig.direction} onChange={(event) => changeLineConfig({ direction: event.target.value })}>
+                            <option value="both">Either direction</option>
+                            <option value="forward">Forward side</option>
+                            <option value="reverse">Reverse side</option>
+                          </select>
+                        </label>
+                        {mode === 'multi_line_crossing' ? (
+                          <label>
+                            Max seconds between lines
+                            <input
+                              type="number"
+                              min="1"
+                              value={lineRuleConfig.maxSecondsBetweenLines}
+                              onChange={(event) => changeLineConfig({ maxSecondsBetweenLines: Number(event.target.value) })}
+                            />
+                          </label>
+                        ) : null}
+                      </div>
+                    </section>
+                  ) : null}
                   <section className="schedule-panel">
                     <header>
                       <h3>Detect (what)</h3>
@@ -346,6 +414,31 @@ export function VisionTab({
                       onChange={(event) => onRuleDraft({ ...ruleDraft, cooldownSeconds: Number(event.target.value) })}
                     />
                   </label>
+                  <section className="schedule-panel">
+                    <header>
+                      <h3>Notification routing</h3>
+                      <span className="status-pill">{ruleDestinations.length === 0 ? 'All destinations' : `${ruleDestinations.length} selected`}</span>
+                    </header>
+                    {destinationOptions.length === 0 ? (
+                      <p className="field-hint">No delivery destinations configured yet — add them in Settings → Notifications. Until then, alerts reach every destination.</p>
+                    ) : (
+                      <>
+                        <p className="field-hint">Choose which destinations receive this rule&apos;s alerts. None selected = all destinations.</p>
+                        <div className="schedule-days" aria-label="Notification destinations">
+                          {destinationOptions.map((d) => (
+                            <label className="check-row" key={d.id}>
+                              <input
+                                type="checkbox"
+                                checked={ruleDestinations.includes(String(d.id))}
+                                onChange={(event) => toggleDestination(String(d.id), event.target.checked)}
+                              />
+                              {d.name || d.type}{d.enabled === false ? ' (disabled)' : ''}
+                            </label>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </section>
                   <section className="schedule-panel">
                     <header>
                       <h3>Schedule</h3>
@@ -461,70 +554,16 @@ export function VisionTab({
                       </>
                     ) : null}
                   </section>
-                  {crowdRule ? (
-                    <section className="schedule-panel">
-                      <header>
-                        <h3>Crowd Threshold</h3>
-                        <span className="status-pill">{crowdRuleConfig.minCount}+ people</span>
-                      </header>
-                      <span className="field-hint">
-                        Fires when at least this many people are detected inside the zone in a single frame.
-                        Each person must meet the confidence threshold above.
-                      </span>
-                      <div className="metadata-row">
-                        <label>
-                          Minimum people
-                          <input
-                            type="number"
-                            min="2"
-                            max="100"
-                            step="1"
-                            value={crowdRuleConfig.minCount}
-                            onChange={(event) => changeCrowdConfig({ minCount: Number(event.target.value) })}
-                          />
-                        </label>
-                      </div>
-                    </section>
-                  ) : null}
                   {lineRule ? (
-                    <>
-                      <section className="schedule-panel">
-                        <header>
-                          <h3>Line Direction</h3>
-                          <span className="status-pill">{lineRuleConfig.direction}</span>
-                        </header>
-                        <div className="metadata-row">
-                          <label>
-                            Direction
-                            <select value={lineRuleConfig.direction} onChange={(event) => changeLineConfig({ direction: event.target.value })}>
-                              <option value="both">Either direction</option>
-                              <option value="forward">Forward side</option>
-                              <option value="reverse">Reverse side</option>
-                            </select>
-                          </label>
-                          {mode === 'multi_line_crossing' ? (
-                            <label>
-                              Max seconds between lines
-                              <input
-                                type="number"
-                                min="1"
-                                value={lineRuleConfig.maxSecondsBetweenLines}
-                                onChange={(event) => changeLineConfig({ maxSecondsBetweenLines: Number(event.target.value) })}
-                              />
-                            </label>
-                          ) : null}
-                        </div>
-                      </section>
-                      <LineDrawingPreview
-                        camera={selectedCamera}
-                        config={lineRuleConfig}
-                        detectionType={ruleDraft.detectionType}
-                        authHeader={authHeader}
-                        streamConfig={streamConfig}
-                        disabled={busy}
-                        onConfig={changeLineConfig}
-                      />
-                    </>
+                    <LineDrawingPreview
+                      camera={selectedCamera}
+                      config={lineRuleConfig}
+                      detectionType={ruleDraft.detectionType}
+                      authHeader={authHeader}
+                      streamConfig={streamConfig}
+                      disabled={busy}
+                      onConfig={changeLineConfig}
+                    />
                   ) : (
                     <ZoneDrawingPreview
                       camera={selectedCamera}

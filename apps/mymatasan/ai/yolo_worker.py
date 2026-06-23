@@ -271,17 +271,28 @@ def main() -> int:
         flush=True,
     )
 
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            request = json.loads(line)
-            _write(_detect(stock_model, custom_model, request))
-        except Exception as exc:
-            _write({"error": str(exc)})
+    try:
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                request = json.loads(line)
+                _write(_detect(stock_model, custom_model, request))
+            except Exception as exc:
+                _write({"error": str(exc)})
+    except KeyboardInterrupt:
+        # Ctrl+C in the terminal sends SIGINT to the whole process group, hitting
+        # this worker too. Exit quietly rather than dumping a traceback — the Go
+        # parent shuts us down by closing stdin anyway.
+        pass
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        # SIGINT before/outside the read loop (e.g. during model load) — exit with
+        # the conventional 130 instead of an unhandled-exception traceback.
+        raise SystemExit(130)

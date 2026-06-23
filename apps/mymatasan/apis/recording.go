@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
+	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/onvif"
 	"github.com/mysayasan/kopiv2/infra/recording"
 )
@@ -23,14 +24,16 @@ type recordingApi struct {
 	recorder *recording.Manager
 	camera   services.ICameraService
 	settings services.IRuntimeSettingsService
+	cipher   *atrest.Cipher
 }
 
 // NewRecordingApi registers recording routes under /recording.
-func NewRecordingApi(router *mux.Router, serv services.IRecordingService, recorder *recording.Manager, camera services.ICameraService, settings services.IRuntimeSettingsService) {
-	h := &recordingApi{serv: serv, recorder: recorder, camera: camera, settings: settings}
+func NewRecordingApi(router *mux.Router, serv services.IRecordingService, recorder *recording.Manager, camera services.ICameraService, settings services.IRuntimeSettingsService, cipher *atrest.Cipher) {
+	h := &recordingApi{serv: serv, recorder: recorder, camera: camera, settings: settings, cipher: cipher}
 	g := router.PathPrefix("/recording").Subrouter()
 
 	g.HandleFunc("/segments", h.listSegments).Methods("GET")
+	g.HandleFunc("/segments/purge", h.purgeExpired).Methods("POST")
 	g.HandleFunc("/segments/{id}", h.deleteSegment).Methods("DELETE")
 	g.HandleFunc("/segments/{id}/download", h.downloadSegment).Methods("GET")
 	g.HandleFunc("/config", h.listConfigs).Methods("GET")
@@ -57,6 +60,18 @@ func (a *recordingApi) listSegments(w http.ResponseWriter, r *http.Request) {
 		"items": segs,
 		"total": total,
 	}, "succeed")
+}
+
+// purgeExpired runs the retention purge on demand: deletes recorded segments that
+// are already older than each camera's configured retention (the same safe sweep
+// the auto-job runs). It never touches in-retention footage. Returns the count.
+func (a *recordingApi) purgeExpired(w http.ResponseWriter, r *http.Request) {
+	deleted, err := a.serv.PurgeOldSegments(r.Context())
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, map[string]int{"deleted": deleted}, "succeed")
 }
 
 func (a *recordingApi) deleteSegment(w http.ResponseWriter, r *http.Request) {
@@ -95,6 +110,19 @@ func (a *recordingApi) downloadSegment(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "video/mp4")
 	w.Header().Set("Content-Disposition", `inline; filename="`+filepath.Base(seg.FilePath)+`"`)
+
+	// When encryption-at-rest is on, decrypt-stream the segment (the stored FileSize is
+	// the ciphertext size, so Content-Length is omitted — the player streams it whole,
+	// matching today's no-range behavior). Legacy plaintext passes straight through.
+	if a.cipher != nil {
+		src, derr := a.cipher.MaybeDecryptingReader(f)
+		if derr != nil {
+			controllers.SendError(w, controllers.ErrInternalServerError, "decrypt failed")
+			return
+		}
+		io.Copy(w, src)
+		return
+	}
 	if seg.FileSize > 0 {
 		w.Header().Set("Content-Length", strconv.FormatInt(seg.FileSize, 10))
 	}
@@ -165,21 +193,32 @@ func (a *recordingApi) saveConfig(w http.ResponseWriter, r *http.Request) {
 		if rtspURI == "" && cfg.Enabled {
 			recorderWarning = "camera has no RTSP URI — recording will not start until an RTSP URI is configured on the camera or a Stream URL override is set"
 			log.Printf("recording: cam%d enabled but has no RTSP URI", cfg.CameraId)
-		} else if cerr := a.recorder.Configure(recording.RecorderConfig{
-			CameraId:        cfg.CameraId,
-			Enabled:         cfg.Enabled,
-			PreRollSec:      cfg.PreRollSec,
-			PostRollSec:     cfg.PostRollSec,
-			StoragePath:     cfg.StoragePath,
-			FFmpegPath:      ffmpegPath,
-			RTSPTransport:   rtspTransport,
-			RTSPURI:         rtspURI,
-			FallbackRTSPURI: fallbackURI,
-			SegmentMinutes:  cfg.SegmentMinutes,
-			RetentionDays:   cfg.RetentionDays,
-		}); cerr != nil {
-			recorderWarning = cerr.Error()
-			log.Printf("recording: configure cam%d: %v", cfg.CameraId, cerr)
+		} else {
+			siphonFPS, siphonWidth := services.SiphonTeeParams(a.settings)
+			siphonHWAccel, siphonHWDevice, siphonInitHWDevice, siphonVideoDecoder := services.SiphonDecoderParams(a.settings)
+			if cerr := a.recorder.Configure(recording.RecorderConfig{
+				CameraId:        cfg.CameraId,
+				Enabled:         cfg.Enabled,
+				PreRollSec:      cfg.PreRollSec,
+				PostRollSec:     cfg.PostRollSec,
+				StoragePath:     cfg.StoragePath,
+				FFmpegPath:      ffmpegPath,
+				RTSPTransport:   rtspTransport,
+				RTSPURI:         rtspURI,
+				FallbackRTSPURI: fallbackURI,
+				SegmentMinutes:  cfg.SegmentMinutes,
+				RetentionDays:   cfg.RetentionDays,
+				SiphonFPS:       siphonFPS,
+				SiphonWidth:     siphonWidth,
+				HWAccel:         siphonHWAccel,
+				HWAccelDevice:   siphonHWDevice,
+				InitHWDevice:    siphonInitHWDevice,
+				VideoDecoder:    siphonVideoDecoder,
+				Cipher:          a.cipher,
+			}); cerr != nil {
+				recorderWarning = cerr.Error()
+				log.Printf("recording: configure cam%d: %v", cfg.CameraId, cerr)
+			}
 		}
 	}
 

@@ -1,0 +1,6 @@
+{
+  "type": "changed",
+  "scope": "mymatasan",
+  "summary": "Login page now shows the BrandLogo mark + wordmark (replacing the plain MyMataSan heading), and password fields gained an in-field reveal (eye) toggle. The toggle is factored into a reusable PasswordField component (layout.js) that is now the app's standard password input — used on the login screen, the forced password-change screen, the setup wizard, the Users add/edit/reset-password fields, and the camera/ICE/MQTT/Telegram credential fields. PasswordField supports a disabled state for channel fields that toggle off. Zero raw type=password inputs remain.",
+  "compatibility": "Purely presentational/UX. No API or data changes; existing password entry behaviour is unchanged apart from the optional show/hide control."
+}

@@ -8,9 +8,13 @@ type LocalUser struct {
 	DisplayName  string `json:"displayName" form:"displayName" query:"displayName"`
 	IsAdmin      bool   `json:"isAdmin" form:"isAdmin" query:"isAdmin"`
 	IsActive     bool   `json:"isActive" form:"isActive" query:"isActive"`
-	LastLoginAt  int64  `json:"lastLoginAt" form:"lastLoginAt" query:"lastLoginAt"`
-	CreatedBy    int64  `json:"createdBy" form:"createdBy" query:"createdBy"`
-	CreatedAt    int64  `json:"createdAt" form:"createdAt" query:"createdAt"`
-	UpdatedBy    int64  `json:"updatedBy" form:"updatedBy" query:"updatedBy"`
-	UpdatedAt    int64  `json:"updatedAt" form:"updatedAt" query:"updatedAt"`
+	// MustChangePassword forces the user through a password change before any
+	// other route is reachable. Seeded true for the default admin so the shipped
+	// credentials cannot remain in use.
+	MustChangePassword bool  `json:"mustChangePassword" form:"mustChangePassword" query:"mustChangePassword"`
+	LastLoginAt        int64 `json:"lastLoginAt" form:"lastLoginAt" query:"lastLoginAt"`
+	CreatedBy          int64 `json:"createdBy" form:"createdBy" query:"createdBy"`
+	CreatedAt          int64 `json:"createdAt" form:"createdAt" query:"createdAt"`
+	UpdatedBy          int64 `json:"updatedBy" form:"updatedBy" query:"updatedBy"`
+	UpdatedAt          int64 `json:"updatedAt" form:"updatedAt" query:"updatedAt"`
 }
