@@ -2461,6 +2461,7 @@ export default function App() {
           onClosePreview={() => setPreview(null)}
           recordingConfigs={recordingConfigs}
           onSaveRecordingConfig={saveRecordingConfig}
+          onMessage={setMessage}
           canManage={isAdmin}
         />
       ) : null}

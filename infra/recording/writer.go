@@ -69,6 +69,30 @@ func probeDurationSeconds(ffprobePath, file string) float64 {
 	return seconds
 }
 
+// probeVideoCodec returns the first video stream's codec name (e.g. "h264",
+// "hevc") for file, or "" when it cannot be determined. Used at remux time for
+// copy mode, where the on-disk codec is whatever the camera sent, so the playback
+// path can later decide whether the browser needs a transcode.
+func probeVideoCodec(ffmpegPath, file string) string {
+	ffprobePath := resolveFFprobe(ffmpegPath)
+	if strings.TrimSpace(ffprobePath) == "" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, ffprobePath,
+		"-v", "error",
+		"-select_streams", "v:0",
+		"-show_entries", "stream=codec_name",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		file,
+	).Output()
+	if err != nil {
+		return ""
+	}
+	return canonicalCodec(strings.TrimSpace(string(out)))
+}
+
 // segmentEndedAt returns startedAt plus the segment's true media duration when
 // it can be probed, otherwise the inferred fallback (derived from the next
 // segment's start time). Probing keeps the stored duration accurate even when

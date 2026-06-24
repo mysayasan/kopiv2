@@ -26,7 +26,7 @@ Implements the RTSP-mode per-camera recorder that runs a dedicated ffmpeg segmen
 - On `TriggerEvent(alertId, frameCapturedAt)`: use `frameCapturedAt` as the clip anchor to compensate for YOLO inference latency; fall back to `time.Now()` when zero. Wait for post-roll, then select `.ts` segments covering `[frameCapturedAt − preRollSec, frameCapturedAt + postRollSec]`.
 - Write a concat list and run a second ffmpeg pass with `-fflags +genpts`, `-ss`, `-t`, and `-movflags +faststart` to extract and remux the clip as MP4.
 - Notify the `SegmentSink` with the resulting `SegmentResult`.
-- Watch completed segments, remux each `.ts` to MP4 with `ffmpeg -c copy`, persist to DB, and delete the source `.ts` after a successful DB save.
+- Watch completed segments and remux each `.ts` to MP4, persist to DB, and delete the source `.ts` after a successful DB save. The remux is `-c copy` by default; when the at-rest storage codec is `h264`/`hevc` (`RecorderConfig.RecordCodec`) it re-encodes the video on the GPU via NVENC — prepending the hardware-decode input options and acquiring a slot from the shared NVENC semaphore (`infra/recording/encode.go`) so concurrent remuxes never oversubscribe the card; the `.ts` is already on disk, so waiting only delays finalize and never drops footage. The segment's on-disk codec is recorded on `SegmentResult.Codec` (known when re-encoding; probed via `probeVideoCodec` in copy mode). Live capture and event clips always stay stream-copy.
 - Expose `CameraStatus` including `state`, `ffmpegRunning`, `liveFiles`, `liveDir`, `lastError`, `activeStreamUrl`, `usingFallback`, ring-buffer frame count, and ring-buffer capacity.
 
 ## Notes

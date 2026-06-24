@@ -13,7 +13,8 @@ Manages SQLite-backed runtime settings for `mymatasan`.
 - Seed and clamp the `vision.capture` block (frame-sourcing mode + interval/width/timeout/fps/staleLimit) with SAFE FIXED defaults that never probe hardware; the `vision.yolo` inference overrides; and the `vision.alertNotification` field-inclusion config.
 - Treat a nil `vision.alertNotification` (legacy rows / never configured) as "include everything" via `defaultAlertNotificationSettings()`; an explicit struct with fields set to false is preserved so operators can trim the notification payload.
 - Validate decoder transport, hardware acceleration mode, optional decoder name, capture mode, and ICE server URL entries before saving.
-- Provide focused reads for decoder and stream callers.
+- Provide focused reads for decoder, stream, and recording callers (`Decoder`, `Stream`, `Recording`).
+- Seed and clamp the `recording.storage` block (`normalizeRecordingStorage`): the at-rest codec defaults to `copy` (clamped to `copy`/`h264`/`hevc`), the NVENC CQ quality to a sane range, and the concurrent-encode cap to ≥0. App startup reads this to size the NVENC semaphore and seed the recorder codec; the recording-config save path reads it live so a UI change applies on the next per-camera (re)configure.
 - Convert runtime decoder settings into `infra/rtsp.MJPEGOptions` for live MJPEG and vision frame capture.
 - Build decoder auto-tune recommendations from saved camera RTSP metadata and ffmpeg hardware-acceleration capability checks.
 

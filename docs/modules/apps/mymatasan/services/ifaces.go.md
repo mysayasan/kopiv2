@@ -17,7 +17,10 @@ Declares service contracts for app-specific domain.
 - `IRuntimeSettingsService`
   - `Get(ctx)` and `Save(ctx, settings)` for SQLite-backed runtime settings
   - `Reset(ctx)` to restore startup config defaults
-  - `Stream(ctx)` and `Decoder(ctx)` for focused runtime reads
+  - `Stream(ctx)`, `Decoder(ctx)`, and `Recording(ctx)` for focused runtime reads
+- `ICameraService` (selected)
+  - `GetCameraEncoder(ctx, id)` — reads the camera's current ONVIF video encoder config
+  - `ApplyCameraEncoder(ctx, id, ApplyCameraEncoderRequest)` — pushes a recording codec + bitrate cap to the camera's encoder via ONVIF (Phase 3 camera-side compression)
 - `ILocalUserService`
   - `EnsureDefaultAdmin(ctx)` seeds the first standalone admin account
   - `Authenticate(ctx, username, password)` validates Basic Auth credentials
@@ -42,7 +45,9 @@ Declares service contracts for app-specific domain.
 
 - `SaveRecordingConfigRequest` — carries `CameraId`, `Enabled`, `PreRollSec`, `PostRollSec`, `StoragePath`, `RetentionDays`, `SegmentMinutes`, `StreamURL` (recording stream override), `FallbackStreamUrl` (fallback RTSP URI).
 - `VisionMonitorSettings` — carries startup-only monitor enablement, interval, capture timeout, diagnostic cooldown, detector implementation, and a `*recording.Manager` pointer.
-- `RuntimeSettings` — carries runtime-editable decoder, stream, and vision settings.
+- `RuntimeSettings` — carries runtime-editable decoder, stream, vision, and recording settings.
+- `RecordingSettings` / `RecordingStorageSettings` — at-rest recording storage: `Storage.Codec` (`copy`/`h264`/`hevc`), `Storage.Quality` (NVENC CQ), `Storage.MaxConcurrentEncodes` (shared NVENC session cap). Default codec `copy`.
+- `ApplyCameraEncoderRequest` — `Encoding` (`h264`/`h265`) + `BitrateLimitKbps` (≤0 keeps the camera's current bitrate) pushed to the camera encoder.
 - `VisionSettings` — `Yolo` inference overrides, `Capture` frame-sourcing config, and `AlertNotification *AlertNotificationSettings`.
 - `AlertNotificationSettings` — which detection-alert fields/media (`includeRuleName`, `includeLabel`, `includeConfidence`, `includeBoundingBox`, `includeZonePolygon`, `includeSnapshot`) populate the notification payload. Pointer: nil = include everything.
 - `VisionAlertOptions` — extra per-alert notification context (`RuleName`, `Snapshot []byte`, `Fields *AlertNotificationSettings`) passed to `NotifyVisionAlert`.

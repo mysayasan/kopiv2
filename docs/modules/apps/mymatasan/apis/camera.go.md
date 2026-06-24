@@ -13,6 +13,14 @@ Exposes HTTP endpoints for camera (ONVIF device) management in the MyMataSan app
 | GET    | `/api/cameras/{id}`     | `getById`        | Returns one camera by ID. |
 | PUT    | `/api/cameras/{id}`     | `updateDetails`  | Updates `name` and `description` only; preserves all other camera fields. |
 | DELETE | `/api/cameras/{id}`     | `delete`         | Deletes a saved camera. |
+| GET    | `/api/cameras/{id}/encoder` | `getEncoder` | Reads the camera's current ONVIF video encoder config (codec, resolution, fps, bitrate) for its recording profile. |
+| POST   | `/api/cameras/{id}/encoder` | `applyEncoder` | Pushes a recording codec (`h264`/`h265`) + optional `bitrateLimitKbps` to the camera's own encoder via ONVIF (zero host cost; host stays stream-copy). |
+
+(PTZ, stream-options, stream-uri, live-view, webrtc, and password routes are also registered here.)
+
+## Camera-side encoder (getEncoder / applyEncoder)
+
+`applyEncoder` accepts `{ "encoding": "h264"|"h265", "bitrateLimitKbps": int }` and calls `ICameraService.ApplyCameraEncoder`, which resolves the camera's ONVIF device/media/profile and applies + verifies the change (Media2-first, Media1 fallback — see `infra/onvif/encoder.go`). On failure both handlers pass the **descriptive error itself** to `SendError` (not the generic `ErrBadRequest`), so the camera's real reason — e.g. "the camera did not apply H265 — it kept H264 …" — reaches the client instead of a bare "bad request".
 
 ## updateDetails
 

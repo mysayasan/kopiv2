@@ -63,6 +63,11 @@ type webRTCOfferRequest struct {
 	SDP  string `json:"sdp"`
 }
 
+type cameraEncoderRequest struct {
+	Encoding         string `json:"encoding"`
+	BitrateLimitKbps int    `json:"bitrateLimitKbps"`
+}
+
 // NewCameraApi registers camera CRUD, streaming, and PTZ routes under /cameras.
 func NewCameraApi(router *mux.Router, serv services.ICameraService, settings services.IRuntimeSettingsService, streamManager *stream.Manager, healthProber services.ICameraHealthProber) {
 	handler := &cameraApi{serv: serv, settings: settings, streamManager: streamManager, healthProber: healthProber}
@@ -79,6 +84,8 @@ func NewCameraApi(router *mux.Router, serv services.ICameraService, settings ser
 	group.HandleFunc("/{id}/live-view", handler.resolveLiveView).Methods("POST")
 	group.HandleFunc("/{id}/ptz/move", handler.ptzMove).Methods("POST")
 	group.HandleFunc("/{id}/ptz/stop", handler.ptzStop).Methods("POST")
+	group.HandleFunc("/{id}/encoder", handler.getEncoder).Methods("GET")
+	group.HandleFunc("/{id}/encoder", handler.applyEncoder).Methods("POST")
 	group.HandleFunc("/{id}/webrtc/offer", handler.createWebRTCAnswer).Methods("POST")
 	group.HandleFunc("/{id}/live.mjpeg", handler.liveMJPEG).Methods("GET")
 	group.HandleFunc("/{id}", handler.updateDetails).Methods("PUT")
@@ -339,6 +346,49 @@ func (a *cameraApi) ptzStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	controllers.SendResult(w, res, "succeed")
+}
+
+// getEncoder reads the camera's current ONVIF video encoder configuration so the UI
+// can show the live codec/bitrate/resolution for the recording profile.
+func (a *cameraApi) getEncoder(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	id, _ := strconv.ParseUint(params["id"], 10, 64)
+	cfg, err := a.serv.GetCameraEncoder(r.Context(), id)
+	if err != nil {
+		// Pass the descriptive error itself so the camera's actual reason reaches the
+		// client (SendError only surfaces the generic status text otherwise).
+		controllers.SendError(w, err, err.Error())
+		return
+	}
+	controllers.SendResult(w, cfg, "succeed")
+}
+
+// applyEncoder pushes a recording codec (+ optional bitrate cap) to the camera's
+// encoder via ONVIF — the zero-host-cost compression lever (camera encodes smaller
+// H.265; the host keeps recording with -c copy).
+func (a *cameraApi) applyEncoder(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
+	params := mux.Vars(r)
+	id, _ := strconv.ParseUint(params["id"], 10, 64)
+
+	var body cameraEncoderRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	cfg, err := a.serv.ApplyCameraEncoder(r.Context(), id, services.ApplyCameraEncoderRequest{
+		Encoding:         body.Encoding,
+		BitrateLimitKbps: body.BitrateLimitKbps,
+	})
+	if err != nil {
+		// Surface the camera's actual reason (e.g. "did not apply H265 — it kept H264")
+		// rather than the generic "bad request" text.
+		controllers.SendError(w, err, err.Error())
+		return
+	}
+	controllers.SendResult(w, cfg, "succeed")
 }
 
 func (a *cameraApi) createWebRTCAnswer(w http.ResponseWriter, r *http.Request) {

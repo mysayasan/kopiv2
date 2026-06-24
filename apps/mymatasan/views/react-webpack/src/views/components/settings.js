@@ -608,6 +608,15 @@ export function SettingsTab({
       },
     }));
   }
+  function updateRecordingStorage(patch) {
+    update((current) => ({
+      ...current,
+      recording: {
+        ...(current.recording || {}),
+        storage: { ...((current.recording && current.recording.storage) || {}), ...patch },
+      },
+    }));
+  }
   function selectGPUDevice(value) {
     if (value === '__default__') {
       updateFFmpegDecoder({ hwaccelDevice: '' });
@@ -839,6 +848,58 @@ export function SettingsTab({
             </FieldTitle>
           </label>
           </div>
+        </section>
+
+        <section className="settings-panel span-two">
+          <header>
+            <h2>
+              <FieldTitle info="How recorded NVR segments are stored on disk. 'Copy' keeps the camera's native codec with no re-encode (default; existing installs unchanged). 'H.264'/'H.265' re-encode each segment once at remux time on the GPU (NVENC) to shrink it — live capture and event clips always stay stream-copy. For the smallest footage with zero host cost, set the camera's own encoder to H.265 in the camera's Recording tab instead.">
+                Recording storage (compression)
+              </FieldTitle>
+            </h2>
+          </header>
+          <div className="settings-grid">
+            <label>
+              <FieldTitle info="At-rest video codec. Copy: store the camera's codec unchanged (no host CPU/GPU). H.265 (HEVC): ~40-60% smaller, re-encoded on the GPU once per segment; browsers that can't decode HEVC are transcoded to H.264 on playback. H.264: smaller than copy for high-bitrate cameras, plays everywhere.">
+                Storage codec
+              </FieldTitle>
+              <select
+                value={(settings.recording && settings.recording.storage && settings.recording.storage.codec) || 'copy'}
+                onChange={(event) => updateRecordingStorage({ codec: event.target.value })}
+              >
+                <option value="copy">Copy (no re-encode — default)</option>
+                <option value="hevc">H.265 / HEVC (smallest)</option>
+                <option value="h264">H.264 (compatible)</option>
+              </select>
+            </label>
+            <label>
+              <FieldTitle info="NVENC constant-quality (CQ) target used when re-encoding. Lower = better quality and larger files; 23-28 is typical. 0 uses the built-in default (26). Ignored in Copy mode.">
+                Re-encode quality (CQ)
+              </FieldTitle>
+              <input
+                type="number"
+                min="0"
+                max="51"
+                value={(settings.recording && settings.recording.storage && settings.recording.storage.quality) || 0}
+                onChange={(event) => updateRecordingStorage({ quality: Number(event.target.value) })}
+              />
+            </label>
+            <label>
+              <FieldTitle info="Maximum simultaneous GPU (NVENC) encode sessions shared by remux-time re-encoding and playback transcode. Match your GPU's session cap so it is never oversubscribed. 0 uses the default (2).">
+                Max concurrent GPU encodes
+              </FieldTitle>
+              <input
+                type="number"
+                min="0"
+                max="8"
+                value={(settings.recording && settings.recording.storage && settings.recording.storage.maxConcurrentEncodes) || 0}
+                onChange={(event) => updateRecordingStorage({ maxConcurrentEncodes: Number(event.target.value) })}
+              />
+            </label>
+          </div>
+          <p className="field-hint" style={{marginTop:'8px'}}>
+            Codec/quality changes apply to newly recorded segments after you re-save a camera's recording config or restart the server. The concurrency limit applies on restart.
+          </p>
         </section>
         </>)}
 

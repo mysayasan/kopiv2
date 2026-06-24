@@ -13,8 +13,10 @@ Defines the shared contracts and configuration types for the reusable recording 
   - `RTSPTransport`, `PreRollSec`, `PostRollSec`, `SegmentMinutes`, `RetentionDays`
   - `SiphonFPS`, `SiphonWidth` — optional decoded-frame tee for the AI detector
   - `ShredPasses` — secure-overwrite pass count applied to segment files on retention purge (`>0` shreds; `0` = plain delete)
+  - `RecordCodec` — at-rest video codec for finalized segments: `""`/`copy` (store the camera's native codec, no re-encode — default), `h264`, or `hevc` (re-encode once at remux time on the GPU). Live capture and event clips always stay stream-copy.
+  - `RecordQuality` — NVENC constant-quality (CQ) target used when re-encoding (`0` = default 26)
 - `FrameEntry` — one captured JPEG frame with its Unix-second capture timestamp; the atomic unit held in the ring buffer.
-- `SegmentResult` — produced by a recorder after a clip is written to disk; carries camera ID, alert ID, file path, start/end timestamps, and file size.
+- `SegmentResult` — produced by a recorder after a clip is written to disk; carries camera ID, alert ID, file path, start/end timestamps, file size, and `Codec` (the on-disk video codec, e.g. `h264`/`hevc`, so playback knows whether it must transcode for the browser without re-probing).
 - `SegmentSink` — interface implemented by apps to persist segment metadata; decouples the infra recorder from any app-specific storage layer.
 
 ## Notes

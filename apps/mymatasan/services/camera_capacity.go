@@ -59,6 +59,15 @@ const (
 	// H.264) when nothing better is known.
 	defaultRecordBitrateKbps = 4000
 
+	// nvencEncodeRealtimeFactor is how much faster than realtime one NVENC session
+	// encodes a recorded segment at remux (encode is offline, not playback-paced). One
+	// session therefore services this many cameras' continuous recording within each
+	// segment window. Conservative for modern NVIDIA encoders.
+	nvencEncodeRealtimeFactor = 8.0
+	// defaultNVENCSessions mirrors the recording package's default NVENC concurrency
+	// when none is configured (recording.defaultNVENCConcurrency).
+	defaultNVENCSessions = 2
+
 	// minRetentionFloorDays is the least recording retention the capacity estimate
 	// plans for. Disk caps the camera count at this floor rather than at the full
 	// configured retention, so a small disk shortens retention instead of zeroing
@@ -92,6 +101,11 @@ type CameraCapacityInput struct {
 	RecordingEnabled     bool
 	RetentionDays        int
 	PerCameraBitrateKbps int
+	// RecordReencode is true when the at-rest storage codec re-encodes segments on
+	// the host GPU (codec h264/hevc rather than copy). MaxConcurrentEncodes is the
+	// configured NVENC session cap (0 = default). These add a GPU-encode ceiling.
+	RecordReencode       bool
+	MaxConcurrentEncodes int
 	// CaptureMode is the AI frame-source mode ("auto" | "siphon" | "standalone";
 	// empty = auto). siphon/auto keep a continuous per-camera decode (counted as the
 	// detection-decode workload); standalone uses cheaper one-shot grabs.
@@ -238,6 +252,25 @@ func EstimateCameraCapacity(in CameraCapacityInput) CameraCapacityEstimate {
 		}
 	}
 
+	// --- Recording re-encode (host GPU, optional) ---
+	// When the at-rest codec re-encodes (h264/hevc), each segment is encoded once on
+	// the GPU at remux, gated by the NVENC semaphore. Encode is offline and faster
+	// than realtime, so one session services several cameras per segment window; the
+	// ceiling is sessions × realtime-factor. The NVENC encoders need an NVIDIA GPU, so
+	// re-encode configured without a GPU is a misconfiguration (reported as 0).
+	reencodeMax := -1
+	reencodeSessions := in.MaxConcurrentEncodes
+	if reencodeSessions <= 0 {
+		reencodeSessions = defaultNVENCSessions
+	}
+	if in.RecordReencode && in.RecordingEnabled {
+		if in.GPUPresent {
+			reencodeMax = clampNonNeg(int(math.Floor(float64(reencodeSessions) * nvencEncodeRealtimeFactor)))
+		} else {
+			reencodeMax = 0
+		}
+	}
+
 	// --- Memory ---
 	memMax := -1
 	if in.MemoryTotalBytes > 0 {
@@ -314,6 +347,21 @@ func EstimateCameraCapacity(in CameraCapacityInput) CameraCapacityEstimate {
 			Name: "recording", Label: "Recording", MaxCameras: recMax, Limit: "disk",
 			Note: fmt.Sprintf("Max cameras that keep at least ~%s of footage on free disk; more would shorten retention (oldest auto-purges).", humanizeDays(floorDays)), Continuous: true,
 		})
+	}
+	if reencodeMax >= 0 {
+		if in.GPUPresent {
+			workloads = append(workloads, CameraCapacityWorkload{
+				Name: "reencode", Label: "Recording re-encode (GPU)", MaxCameras: reencodeMax, Limit: "gpu",
+				Note: "Host GPU re-encodes each segment once at remux (storage codec is not Copy). Encode is offline and gated so it never blocks recording.", Continuous: true,
+			})
+			assumptions = append(assumptions, fmt.Sprintf("Recording re-encode: %d NVENC session(s) × ~%.0f× realtime ≈ %d cameras; encode runs once per segment at remux, queued so it never blocks recording.", reencodeSessions, nvencEncodeRealtimeFactor, reencodeMax))
+		} else {
+			workloads = append(workloads, CameraCapacityWorkload{
+				Name: "reencode", Label: "Recording re-encode (GPU)", MaxCameras: 0, Limit: "gpu",
+				Note: "Storage codec re-encodes segments but no NVIDIA GPU was detected — NVENC encode will fail. Switch the storage codec to Copy, or use camera-side H.265.", Continuous: true,
+			})
+			assumptions = append(assumptions, "Recording re-encode is enabled but no GPU is present; host NVENC encode will fail — use the Copy storage codec or push H.265 from the camera instead.")
+		}
 	}
 	if memMax >= 0 {
 		workloads = append(workloads, CameraCapacityWorkload{

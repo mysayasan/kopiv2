@@ -56,6 +56,16 @@ type RecorderConfig struct {
 	// ShredPasses > 0 securely overwrites segment files this many times before
 	// removing them (see ShredFile); 0 = plain delete.
 	ShredPasses int
+	// RecordCodec selects the on-disk video codec for finalized segments:
+	// "" / "copy" stores the camera's native codec (no re-encode, the historical
+	// behaviour); "h264" or "hevc" re-encode each segment ONCE at remux time on the
+	// GPU (NVENC) to shrink it. Live capture and event clips always stay stream-copy;
+	// only the background remux re-encodes, gated by a shared NVENC semaphore so
+	// recording is never blocked.
+	RecordCodec string
+	// RecordQuality is the NVENC constant-quality (CQ) target used when re-encoding
+	// (lower = better quality / larger file; ~23-28 typical). 0 = default.
+	RecordQuality int
 	// Cipher (optional) encrypts finalized recording segments at rest so they can be
 	// crypto-erased. nil = plaintext. The live .ts and the in-progress remux are
 	// briefly plaintext until the segment is finalized.
@@ -70,6 +80,10 @@ type SegmentResult struct {
 	StartedAt int64
 	EndedAt   int64
 	FileSize  int64
+	// Codec is the on-disk video codec of the finalized segment (e.g. "h264",
+	// "hevc"), recorded so the playback path knows whether it must transcode for the
+	// browser without re-probing the (encrypted) file. Empty when unknown.
+	Codec string
 }
 
 // SegmentSink is implemented by apps to persist segment metadata.

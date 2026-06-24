@@ -124,6 +124,14 @@ func (s *runtimeSettingsService) Decoder(ctx context.Context) (DecoderSettings, 
 	return settings.Decoder, nil
 }
 
+func (s *runtimeSettingsService) Recording(ctx context.Context) (RecordingSettings, error) {
+	settings, err := s.Get(ctx)
+	if err != nil {
+		return RecordingSettings{}, err
+	}
+	return settings.Recording, nil
+}
+
 func (s *runtimeSettingsService) createDefaults(ctx context.Context) (RuntimeSettings, error) {
 	return s.Save(ctx, s.defaults)
 }
@@ -193,7 +201,29 @@ func normalizeRuntimeSettings(settings RuntimeSettings) RuntimeSettings {
 	if settings.Vision.AlertNotification == nil {
 		settings.Vision.AlertNotification = defaultAlertNotificationSettings()
 	}
+	settings.Recording.Storage = normalizeRecordingStorage(settings.Recording.Storage)
 	return settings
+}
+
+// normalizeRecordingStorage clamps the at-rest codec to a known value (defaulting
+// to "copy" — no re-encode), the CQ quality to a sane range, and the NVENC
+// concurrency to >= 0 (0 = use the recording package default).
+func normalizeRecordingStorage(s RecordingStorageSettings) RecordingStorageSettings {
+	switch strings.ToLower(strings.TrimSpace(s.Codec)) {
+	case "h264", "hevc":
+		s.Codec = strings.ToLower(strings.TrimSpace(s.Codec))
+	default:
+		s.Codec = "copy"
+	}
+	if s.Quality != 0 {
+		s.Quality = normalizeInt(s.Quality, 0, 1, 51)
+	}
+	if s.MaxConcurrentEncodes < 0 {
+		s.MaxConcurrentEncodes = 0
+	} else if s.MaxConcurrentEncodes > 8 {
+		s.MaxConcurrentEncodes = 8
+	}
+	return s
 }
 
 // defaultAlertNotificationSettings returns the all-inclusive default: every field

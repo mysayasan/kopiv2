@@ -3,6 +3,34 @@ import { Ico } from './icons';
 import {formatFileSize,segmentDuration,segmentFilename,detectionTypeLabel,todayDateString,apiBase,formatTimestamp,orderedSavedCameras } from '../lib/helpers';
 import { SavedDeviceNav } from './cameras';
 
+// hevcPlaybackSupported reports whether this browser can decode HEVC in a plain
+// <video> element. Chrome/Edge (with OS HW support) and Safari return a non-empty
+// canPlayType; Firefox returns "". Memoized — the answer is fixed per session.
+let _hevcSupport = null;
+function hevcPlaybackSupported() {
+  if (_hevcSupport !== null) return _hevcSupport;
+  try {
+    const v = document.createElement('video');
+    _hevcSupport = !!(v.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"')
+      || v.canPlayType('video/mp4; codecs="hev1.1.6.L93.B0"'));
+  } catch (_) {
+    _hevcSupport = false;
+  }
+  return _hevcSupport;
+}
+
+// segmentPlaybackUrl builds the segment serve URL, asking the server to transcode
+// HEVC→H.264 on the fly ONLY when the segment is stored as HEVC and this browser
+// can't decode it. Browsers that can play HEVC (and all non-HEVC segments) stream
+// the stored bytes untouched, so they incur no server-side transcode cost.
+function segmentPlaybackUrl(seg) {
+  const base = `${apiBase()}/api/recording/segments/${seg.id}/download`;
+  if (String(seg?.codec).toLowerCase() === 'hevc' && !hevcPlaybackSupported()) {
+    return `${base}?transcode=h264`;
+  }
+  return base;
+}
+
 // RecordingTab is the full-width recordings browser: per-camera date timeline, segment
 // list, and playback. Per-camera recording config and stream URLs now live in the
 // Saved-camera panel (CameraRecordingConfig / CameraStreamConfig).
@@ -146,7 +174,7 @@ export function RecordingTab({ canManage = true, saved, segments, busy, authHead
     setLoadingVideo(true);
     try {
       const headers = authHeader ? { Authorization: authHeader } : {};
-      const resp = await fetch(`${apiBase()}/api/recording/segments/${seg.id}/download`, {
+      const resp = await fetch(segmentPlaybackUrl(seg), {
         credentials: 'include',
         headers,
       });
@@ -471,7 +499,8 @@ function configDraftFor(existing, cameraId, liveFallback = '') {
 // Saved-camera panel's Recording tab. Stream URLs live in the Stream tab; this form
 // preserves them on save by merging over the camera's existing config. It also polls
 // the recorder status so the user gets immediate feedback after enabling recording.
-export function CameraRecordingConfig({ device, configs, busy, canManage = true, authHeader, onSaveConfig }) {
+export function CameraRecordingConfig({ device, configs, busy, canManage = true, authHeader, onSaveConfig, onMessage }) {
+  const notify = useCallback((msg) => { if (onMessage && msg) onMessage(msg); }, [onMessage]);
   const cameraId = Number(device?.id) || 0;
   const existing = useMemo(
     () => (configs || []).find((c) => Number(c.cameraId) === cameraId) || null,
@@ -509,6 +538,64 @@ export function CameraRecordingConfig({ device, configs, busy, canManage = true,
       segmentMinutes: draft.segmentMinutes,
       storagePath: draft.storagePath,
     });
+  }
+
+  // — Camera-side recording quality (Phase 3): push H.265 + a bitrate cap to the
+  // camera's own encoder via ONVIF. This shrinks footage at the source with zero
+  // host CPU/GPU cost; the recorder just stream-copies whatever the camera sends.
+  const [encoder, setEncoder] = useState(null);
+  const [encoderBusy, setEncoderBusy] = useState(false);
+  const [encoderCodec, setEncoderCodec] = useState('h265');
+  const [encoderKbps, setEncoderKbps] = useState('');
+  useEffect(() => { setEncoder(null); setEncoderKbps(''); setEncoderCodec('h265'); }, [cameraId]);
+
+  // syncEncoderControls mirrors the camera's actual encoder state into the form
+  // inputs so the controls always reflect what the camera really has.
+  function syncEncoderControls(cfg) {
+    setEncoder(cfg || null);
+    if (cfg?.encoding) setEncoderCodec(/265|hevc/i.test(cfg.encoding) ? 'h265' : 'h264');
+    if (cfg?.bitrateLimit) setEncoderKbps(String(cfg.bitrateLimit));
+  }
+
+  const loadEncoder = useCallback(async () => {
+    if (!cameraId) return;
+    setEncoderBusy(true);
+    try {
+      const headers = authHeader ? { Authorization: authHeader } : {};
+      const resp = await fetch(`${apiBase()}/api/cameras/${cameraId}/encoder`, { credentials: 'include', headers });
+      const payload = await resp.json().catch(() => null);
+      if (!resp.ok) throw new Error(payload?.message || payload?.error || `${resp.status}`);
+      const cfg = payload?.data?.result ?? payload?.result ?? payload;
+      syncEncoderControls(cfg);
+    } catch (e) {
+      setEncoder(null);
+      notify(`Could not read camera encoder (camera may not be ONVIF-managed): ${e.message}`);
+    } finally {
+      setEncoderBusy(false);
+    }
+  }, [cameraId, authHeader, notify]);
+
+  async function applyEncoder() {
+    if (!cameraId) return;
+    setEncoderBusy(true);
+    try {
+      const headers = { 'Content-Type': 'application/json', ...(authHeader ? { Authorization: authHeader } : {}) };
+      const body = { encoding: encoderCodec, bitrateLimitKbps: Number(encoderKbps) || 0 };
+      const resp = await fetch(`${apiBase()}/api/cameras/${cameraId}/encoder`, {
+        method: 'POST', credentials: 'include', headers, body: JSON.stringify(body),
+      });
+      const payload = await resp.json().catch(() => null);
+      // The server verifies the change by re-reading from the camera; a rejection
+      // comes back as an error carrying the camera's actual codec in the message.
+      if (!resp.ok) throw new Error(payload?.message || payload?.error || `${resp.status}`);
+      const cfg = payload?.data?.result ?? payload?.result ?? payload;
+      syncEncoderControls(cfg);
+      notify(`Camera now encoding ${cfg?.encoding || encoderCodec.toUpperCase()}${cfg?.bitrateLimit ? ` at ${cfg.bitrateLimit} kbps` : ''}. New recordings use this; existing footage is unchanged.`);
+    } catch (e) {
+      notify(`Camera quality not applied: ${e.message || 'apply failed'}`);
+    } finally {
+      setEncoderBusy(false);
+    }
   }
 
   const rs = statuses.find((s) => Number(s.cameraId) === cameraId);
@@ -589,6 +676,49 @@ export function CameraRecordingConfig({ device, configs, busy, canManage = true,
         }
         return null;
       })()}
+
+      {/* Camera-side recording quality (ONVIF): the zero host-cost way to shrink
+          footage — the camera encodes H.265 at a capped bitrate and the recorder
+          stream-copies it. */}
+      <div className="camera-encoder-section" style={{marginTop:'16px', paddingTop:'12px', borderTop:'1px solid var(--border, rgba(148,163,184,0.2))'}}>
+        <div style={{display:'flex', alignItems:'center', gap:'8px', marginBottom:'8px'}}>
+          <strong style={{fontSize:'13px'}}>Camera-side quality (ONVIF)</strong>
+          <button type="button" className="quiet" style={{fontSize:'11px', padding:'2px 8px', marginLeft:'auto'}} onClick={loadEncoder} disabled={encoderBusy}>
+            {encoderBusy ? '…' : (encoder ? '↻ Refresh' : 'Read from camera')}
+          </button>
+        </div>
+        <p style={{fontSize:'12px', color:'var(--text-muted, #94a3b8)', margin:'0 0 8px'}}>
+          Pushes the codec and a bitrate cap to the camera's own encoder. The smallest footage with no host CPU/GPU cost. Requires an ONVIF camera that allows encoder changes.
+        </p>
+        {encoder && (
+          <div style={{fontSize:'12px', color:'var(--text-muted, #94a3b8)', marginBottom:'8px'}}>
+            Current: <strong>{encoder.encoding || '?'}</strong>
+            {encoder.width ? ` · ${encoder.width}×${encoder.height}` : ''}
+            {encoder.frameRateLimit ? ` · ${encoder.frameRateLimit} fps` : ''}
+            {encoder.bitrateLimit ? ` · ${encoder.bitrateLimit} kbps` : ''}
+          </div>
+        )}
+        <div className="recording-config-grid">
+          <label className="field-label">
+            <span>Codec</span>
+            <select value={encoderCodec} disabled={!canManage} onChange={(e) => setEncoderCodec(e.target.value)}>
+              <option value="h265">H.265 (HEVC) — smallest</option>
+              <option value="h264">H.264 — most compatible</option>
+            </select>
+          </label>
+          <label className="field-label">
+            <span>Bitrate cap (kbps, 0 = keep)</span>
+            <input type="number" min="0" max="20000" step="256" value={encoderKbps}
+              placeholder="e.g. 2048" disabled={!canManage}
+              onChange={(e) => setEncoderKbps(e.target.value)} />
+          </label>
+        </div>
+        <div className="settings-actions" style={{marginTop:'14px', justifyContent:'flex-start'}}>
+          <button type="button" onClick={applyEncoder} disabled={encoderBusy || !canManage}>
+            <span className="btn-icon"><Ico n="save" /> {encoderBusy ? 'Applying…' : 'Apply to camera'}</span>
+          </button>
+        </div>
+      </div>
     </section>
   );
 }

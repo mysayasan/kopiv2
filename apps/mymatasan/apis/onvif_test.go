@@ -58,6 +58,12 @@ func (f *fakeCameraService) PTZMove(_ context.Context, _ uint64, _ services.PTZM
 func (f *fakeCameraService) PTZStop(_ context.Context, _ uint64) (*services.CameraDetail, error) {
 	return nil, nil
 }
+func (f *fakeCameraService) GetCameraEncoder(_ context.Context, _ uint64) (*onvif.VideoEncoderConfig, error) {
+	return nil, nil
+}
+func (f *fakeCameraService) ApplyCameraEncoder(_ context.Context, _ uint64, _ services.ApplyCameraEncoderRequest) (*onvif.VideoEncoderConfig, error) {
+	return nil, nil
+}
 func (f *fakeCameraService) SnapshotSource(_ context.Context, _ uint64) (services.SnapshotSource, error) {
 	return services.SnapshotSource{}, nil
 }

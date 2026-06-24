@@ -20,6 +20,7 @@ It is designed to run on small devices such as Raspberry Pi or Jetson-style micr
 - YOLO Inference Tuning in Settings includes a **Best Calibration** button that applies recommended defaults (conf=0.20, IOU=0.35, imgsz=640, maxDet=100, augment on).
 - Alert log with server-side filtering by camera ID and unix-timestamp date range; the browser UI defaults to today's alerts and pages 20 at a time.
 - NVR recording under `/api/recording`: RTSP-mode rolling `.ts` segment buffer with event-triggered MP4 clip extraction; tick-mode JPEG ring buffer for low-resource devices. Config hot-reload without restart. Live recorder status endpoint.
+- **Recording compression** (Settings → Recording, default off): shrink footage without hurting performance. Optionally re-encode segments to **H.265/H.264 once on the GPU (NVENC) at remux** (live capture and clips stay stream-copy; a shared NVENC semaphore queues encodes so recording never blocks); browsers that can't decode HEVC get an **on-the-fly HEVC→H.264 playback transcode**. A per-camera **Camera-side quality (ONVIF)** control can instead push H.265 + a bitrate cap to the camera's own encoder (zero host cost; host stream-copies). The capacity estimator accounts for the GPU encode load.
 - Per-camera split-stream configuration: separate `streamUrl` (recording) and live-view URI with `fallbackStreamUrl` automatic switching after repeated connection failures.
 - ONVIF stream profile listing and live-view stream selection under `/api/recording/streams`.
 - RTSP stream validation through the reusable `infra/rtsp` module.

@@ -19,7 +19,7 @@ Provides a lightweight ONVIF client for local device discovery, manual device-se
 - Resolve JPEG snapshot URIs with ONVIF `GetSnapshotUri`.
 - Change camera-local ONVIF user passwords with Device Management `SetUser`.
 - Move and stop PTZ cameras with ONVIF `ContinuousMove` and `Stop`.
-- Add WS-Security UsernameToken digest headers when camera credentials are supplied.
+- Add WS-Security UsernameToken digest headers when camera credentials are supplied. The shared `soapEnvelope` declares the `tds`, `trt` (ver10 media), `tr2` (ver20 media), `tptz`, and `tt` namespaces; `tr2` supports the Media2 video-encoder set used by `encoder.go` for H.265 changes.
 
 ## Notes
 

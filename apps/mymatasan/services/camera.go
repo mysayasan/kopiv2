@@ -34,6 +34,8 @@ type onvifClient interface {
 	ChangeUserPassword(ctx context.Context, req onvif.ChangeUserPasswordRequest) error
 	PTZMove(ctx context.Context, req onvif.PTZMoveRequest) error
 	PTZStop(ctx context.Context, req onvif.PTZMoveRequest) error
+	GetVideoEncoderConfig(ctx context.Context, req onvif.StreamURIRequest) (*onvif.VideoEncoderConfig, error)
+	ConfigureRecording(ctx context.Context, req onvif.ConfigureRecordingRequest) (*onvif.VideoEncoderConfig, error)
 }
 
 type cameraService struct {
@@ -578,6 +580,53 @@ func (s *cameraService) PTZStop(ctx context.Context, id uint64) (*CameraDetail, 
 		return nil, err
 	}
 	return detail, nil
+}
+
+// — Camera-side recording encoder (Phase 3: zero host-cost compression) -------
+
+// GetCameraEncoder reads the camera's current video encoder configuration for its
+// recording profile via ONVIF, so the UI can show the live codec/bitrate/resolution.
+func (s *cameraService) GetCameraEncoder(ctx context.Context, id uint64) (*onvif.VideoEncoderConfig, error) {
+	detail, err := s.loadDetail(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(detail.XAddr) == "" {
+		return nil, errors.New("camera is not ONVIF-managed; cannot read encoder settings")
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, cameraProbeTimeout)
+	defer cancel()
+	return s.client.GetVideoEncoderConfig(probeCtx, onvif.StreamURIRequest{
+		DeviceServiceURL: detail.XAddr,
+		MediaServiceURL:  detail.MediaXAddr,
+		ProfileToken:     detail.ProfileToken,
+		Credentials:      onvif.Credentials{Username: detail.Username, Password: detail.Password},
+	})
+}
+
+// ApplyCameraEncoder pushes a recording codec (h264/h265) and optional bitrate cap
+// to the camera's encoder via ONVIF. This is the zero-host-cost compression lever:
+// the camera encodes smaller H.265, the host keeps recording with -c copy. Returns
+// the resulting encoder config. Best-effort — cameras that can't be reconfigured
+// surface the camera's own error.
+func (s *cameraService) ApplyCameraEncoder(ctx context.Context, id uint64, req ApplyCameraEncoderRequest) (*onvif.VideoEncoderConfig, error) {
+	detail, err := s.loadDetail(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(detail.XAddr) == "" {
+		return nil, errors.New("camera is not ONVIF-managed; cannot change encoder settings")
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, cameraProbeTimeout)
+	defer cancel()
+	return s.client.ConfigureRecording(probeCtx, onvif.ConfigureRecordingRequest{
+		DeviceServiceURL: detail.XAddr,
+		MediaServiceURL:  detail.MediaXAddr,
+		ProfileToken:     detail.ProfileToken,
+		Credentials:      onvif.Credentials{Username: detail.Username, Password: detail.Password},
+		Encoding:         req.Encoding,
+		BitrateLimitKbps: req.BitrateLimitKbps,
+	})
 }
 
 // — Health -------------------------------------------------------------------

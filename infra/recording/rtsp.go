@@ -595,16 +595,34 @@ func (r *rtspRecorder) remuxSegment(f liveSegInfo, endedAt int64) {
 		return
 	}
 
-	args := []string{
-		"-hide_banner", "-loglevel", "error",
-		"-fflags", "+genpts",
-		"-i", filepath.ToSlash(f.tsPath),
-		"-c", "copy",
-		"-movflags", "+faststart",
-		"-y", filepath.ToSlash(mp4Path),
+	// Storage codec: "copy" (default) streams the camera's native video through
+	// unchanged; "h264"/"hevc" re-encode the video once here, on the GPU, to shrink
+	// the segment. Re-encoding decodes the input, so it needs the same hardware-decode
+	// input options the siphon tee uses; copy never decodes and takes none.
+	videoArgs, storedCodec := remuxVideoArgs(r.cfg.RecordCodec, r.cfg.RecordQuality)
+	args := []string{"-hide_banner", "-loglevel", "error", "-fflags", "+genpts"}
+	encoding := reencodes(r.cfg.RecordCodec)
+	if encoding {
+		args = append(args, r.hwAccelInputArgs()...)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	args = append(args, "-i", filepath.ToSlash(f.tsPath))
+	args = append(args, videoArgs...)
+	args = append(args, "-movflags", "+faststart", "-y", filepath.ToSlash(mp4Path))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
+	// GPU re-encode is gated by the shared NVENC semaphore so concurrent remuxes (and
+	// playback transcodes) never exceed the card's session cap. The .ts is already on
+	// disk, so blocking here only delays finalize — it can't drop footage. Stream copy
+	// is cheap and takes no slot.
+	if encoding {
+		release, acqErr := AcquireNVENC(ctx)
+		if acqErr != nil {
+			log.Printf("recording rtsp cam%d: remux %s: nvenc acquire: %v", r.cfg.CameraId, f.stem, acqErr)
+			return
+		}
+		defer release()
+	}
 	if out, err := exec.CommandContext(ctx, ffmpegPath, args...).CombinedOutput(); err != nil {
 		log.Printf("recording rtsp cam%d: remux %s: %v: %s", r.cfg.CameraId, f.stem, err, out)
 		return
@@ -618,6 +636,13 @@ func (r *rtspRecorder) remuxSegment(f liveSegInfo, endedAt int64) {
 	// that were cut short by an ffmpeg restart. (Probe BEFORE encryption — ffprobe
 	// needs the plaintext mp4.)
 	endedAt = segmentEndedAt(ffmpegPath, mp4Path, f.startedAt, endedAt)
+
+	// Record the on-disk video codec so the playback path can decide whether to
+	// transcode for the browser without re-probing the encrypted file. When we
+	// re-encoded we already know it; in copy mode probe the (still plaintext) mp4.
+	if storedCodec == "" {
+		storedCodec = probeVideoCodec(ffmpegPath, mp4Path)
+	}
 
 	// Encrypt the finalized segment at rest so it can be crypto-erased. Done after the
 	// duration probe; the on-disk size becomes the ciphertext size (correct for disk
@@ -637,6 +662,7 @@ func (r *rtspRecorder) remuxSegment(f liveSegInfo, endedAt int64) {
 			StartedAt: f.startedAt,
 			EndedAt:   endedAt,
 			FileSize:  fi.Size(),
+			Codec:     storedCodec,
 		}); err != nil {
 			log.Printf("recording rtsp cam%d: save remuxed segment %s: %v", r.cfg.CameraId, f.stem, err)
 		}

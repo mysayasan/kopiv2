@@ -219,6 +219,14 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	setupStateService := services.NewSetupStateService(runtimeSettingsRepo)
 	localUserService := services.NewLocalUserService(localUserRepo)
 	shredPasses := resolveShredPasses(deps.Config)
+	// At-rest recording codec is runtime-editable (Settings → Recording); read the
+	// effective value (seeded from config) so a UI change survives restart.
+	recSettings, _ := settingsService.Recording(context.Background())
+	recStorage := recSettings.Storage
+	recordCodec, recordQuality := recStorage.Codec, recStorage.Quality
+	// Size the shared NVENC semaphore before any recorder starts so remux-time
+	// re-encoding (and playback transcode) never oversubscribes the GPU.
+	recording.SetNVENCConcurrency(recStorage.MaxConcurrentEncodes)
 	recordingService := services.NewRecordingService(recordingSegmentRepo, recordingConfigRepo, shredPasses)
 	notificationRepo := dbsql.NewGenericRepo[sharedentities.Notification](deps.Db)
 	notificationService := notification.NewService(notificationRepo, notificationOptionsFromAppConfig(deps.Config, deps.Logger))
@@ -297,6 +305,8 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 					InitHWDevice:    siphonInitHWDevice,
 					VideoDecoder:    siphonVideoDecoder,
 					ShredPasses:     shredPasses,
+					RecordCodec:     recordCodec,
+					RecordQuality:   recordQuality,
 					Cipher:          atrestCipher,
 				})
 			}(cfg)
@@ -651,6 +661,13 @@ func runtimeSettingsFromAppConfig(cfg *config.AppConfigModel) services.RuntimeSe
 			},
 			MJPEGFallback: services.MJPEGFallbackSettings{
 				Enabled: boolValue(cfg.Stream.MJPEGFallback.Enabled, true),
+			},
+		},
+		Recording: services.RecordingSettings{
+			Storage: services.RecordingStorageSettings{
+				Codec:                cfg.Recording.Storage.Codec,
+				Quality:              cfg.Recording.Storage.Quality,
+				MaxConcurrentEncodes: cfg.Recording.Storage.MaxConcurrentEncodes,
 			},
 		},
 	}

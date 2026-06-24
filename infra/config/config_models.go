@@ -253,6 +253,22 @@ type RecordingConfigModel struct {
 		Enabled *bool `json:"enabled"`
 		Passes  int   `json:"passes"`
 	} `json:"shred"`
+	// Storage controls the on-disk video codec for finalized segments. Default
+	// (Codec "" / "copy") stores the camera's native codec with no re-encode, so
+	// existing installs are unchanged. "h264"/"hevc" re-encode each segment once at
+	// remux time on the GPU to shrink it; live capture and event clips always stay
+	// stream-copy.
+	Storage struct {
+		// Codec: "copy" (default), "h264", or "hevc".
+		Codec string `json:"codec"`
+		// Quality is the NVENC constant-quality (CQ) target when re-encoding
+		// (lower = better/larger; ~23-28 typical). 0 = default.
+		Quality int `json:"quality"`
+		// MaxConcurrentEncodes caps simultaneous NVENC sessions shared by remux-time
+		// re-encoding and playback transcode, matching the GPU's session limit. 0 =
+		// default.
+		MaxConcurrentEncodes int `json:"maxConcurrentEncodes"`
+	} `json:"storage"`
 }
 
 type VisionConfigModel struct {

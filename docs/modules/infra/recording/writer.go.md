@@ -10,6 +10,7 @@ Encodes a slice of JPEG frames into an MP4 file by piping them to ffmpeg's `imag
 - Concatenate all JPEG bytes into a single stdin pipe and drive an ffmpeg process that decodes MJPEG and re-encodes to H.264 (`libx264`, `yuv420p`, `faststart`).
 - Report the combined ffmpeg stderr output on failure for diagnostics.
 - Resolve the ffmpeg executable path from the configured value or system `PATH`.
+- `probeDurationSeconds` / `segmentEndedAt` derive a segment's true media duration via ffprobe; `probeVideoCodec` returns the first video stream's codec name (`h264`/`hevc`) so the remux path can record the on-disk codec in `copy` mode (where the codec is whatever the camera sent) without a second tool.
 
 ## Notes
 

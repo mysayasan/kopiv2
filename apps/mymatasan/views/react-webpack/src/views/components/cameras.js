@@ -479,6 +479,9 @@ export function DiscoveredDevices({ devices, saved, busy, drafts, onDraft, onSav
 
 export function SavedCameraRow({
   device,
+  activePanel,
+  onPanelChange,
+  onMessage,
   busy,
   detailDraft,
   credentials,
@@ -504,7 +507,6 @@ export function SavedCameraRow({
   authHeader,
   canManage = true,
 }) {
-  const [activePanel, setActivePanel] = useState('details');
   const localDetails = detailDraft || { name: device.name || '', description: device.description || '' };
   const localCred = credentials || { username: device.username || '', password: '' };
   const savedDetails = { name: device.name || '', description: device.description || '' };
@@ -516,10 +518,6 @@ export function SavedCameraRow({
   const options = Array.isArray(streamOptions?.options) ? streamOptions.options : [];
   const selectedToken = selectedStreamToken || device.profileToken || streamOptions?.selectedProfileToken || options[0]?.profileToken || '';
   const selectedOption = options.find((option) => option.profileToken === selectedToken) || null;
-
-  useEffect(() => {
-    setActivePanel('details');
-  }, [device.id]);
 
   return (
     <article className="device-card">
@@ -546,7 +544,7 @@ export function SavedCameraRow({
             type="button"
             key={id}
             className={activePanel === id ? 'active' : 'quiet'}
-            onClick={() => setActivePanel(id)}
+            onClick={() => onPanelChange(id)}
           >
             {label}
           </button>
@@ -733,6 +731,7 @@ export function SavedCameraRow({
           authHeader={authHeader}
           canManage={canManage}
           onSaveConfig={onSaveRecordingConfig}
+          onMessage={onMessage}
         />
       ) : null}
 
@@ -943,10 +942,14 @@ export function CamerasTab({
   onClosePreview,
   recordingConfigs,
   onSaveRecordingConfig,
+  onMessage,
   canManage = true,
 }) {
   const [selectedSavedId, setSelectedSavedId] = useState(null);
   const [scanProtocol, setScanProtocol] = useState('all');
+  // Held at this level (not inside SavedCameraRow, which remounts per camera) so the
+  // open settings tab persists when switching between cameras in the left panel.
+  const [savedPanel, setSavedPanel] = useState('details');
   const orderedSaved = useMemo(() => orderedSavedCameras(saved), [saved]);
   const selectedSaved =
     saved.find((device) => Number(device.id) === Number(selectedSavedId)) || orderedSaved[0] || null;
@@ -1054,6 +1057,9 @@ export function CamerasTab({
                 <SavedCameraRow
                   key={selectedSaved.id || selectedSaved.xAddr}
                   device={selectedSaved}
+                  activePanel={savedPanel}
+                  onPanelChange={setSavedPanel}
+                  onMessage={onMessage}
                   busy={busy}
                   detailDraft={detailDraftsById[selectedSaved.id] || { name: selectedSaved.name || '', description: selectedSaved.description || '' }}
                   credentials={credentialsById[selectedSaved.id] || { ...defaultDeviceCredentials, username: selectedSaved.username || '' }}

@@ -68,6 +68,7 @@ func (s *recordingService) SaveSegment(ctx context.Context, seg recording.Segmen
 		StartedAt: seg.StartedAt,
 		EndedAt:   seg.EndedAt,
 		FileSize:  seg.FileSize,
+		Codec:     seg.Codec,
 		CreatedAt: now,
 	}
 	_, err := s.segments.Create(ctx, "", entity)

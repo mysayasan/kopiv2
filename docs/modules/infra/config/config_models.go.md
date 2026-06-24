@@ -18,6 +18,7 @@ Defines the top-level app configuration model loaded from app config JSON.
 - `tls.certPath` and `tls.keyPath` are required when HTTPS listeners are enabled; relative paths are app-relative.
 - Legacy `server.ports`, `server.enableTls`, and `server.enableNonTls` remain available only as a fallback when explicit port lists are empty.
 - `logging.path` is app-relative unless absolute, and is resolved with Go `filepath` for Windows, Linux, and macOS.
+- `recording.shred.*` configures secure-overwrite of deleted footage; `recording.storage.{codec,quality,maxConcurrentEncodes}` seeds the at-rest recording codec defaults (codec default `copy` = no host re-encode) which are then runtime-editable via Settings → Recording.
 - `fileStorage.path` is app-relative unless absolute.
 - `fileStorage.cleanup.enabled` starts the expired file cleanup scheduler.
 - `fileStorage.cleanup.frequencySeconds` controls scheduler check frequency and defaults to 60 seconds in apphost.

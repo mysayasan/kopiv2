@@ -10,7 +10,7 @@ Exposes HTTP endpoints for managing per-camera recording configs, downloading or
 |----------|--------------------------------------------|-------------|
 | `GET`    | `/api/recording/segments`                  | List recorded clips with optional `cameraId`, `alertId`, `startedAfter`, `startedBefore` query filters and `limit`/`offset` paging. |
 | `DELETE` | `/api/recording/segments/{id}`             | Delete a clip by ID (removes the DB row and the file on disk). |
-| `GET`    | `/api/recording/segments/{id}/download`    | Stream the MP4 file to the browser with `Content-Type: video/mp4`. |
+| `GET`    | `/api/recording/segments/{id}/download`    | Stream the MP4 file to the browser with `Content-Type: video/mp4`. Accepts `?transcode=h264`: when the segment is stored as HEVC and the request asks for h264 (the player sets this only for browsers that can't decode HEVC), the decrypted stream is transcoded HEVC→H.264 on the fly (fragmented MP4, via the shared NVENC semaphore). Capable browsers and non-HEVC segments stream the stored bytes untouched. |
 | `GET`    | `/api/recording/config`                    | List all per-camera recording configs. |
 | `GET`    | `/api/recording/config/{cameraId}`         | Fetch the recording config for one camera. |
 | `PUT`    | `/api/recording/config`                    | Create or update the recording config for a camera (see below). |
@@ -68,5 +68,6 @@ Body: `{"rtspUrl": "rtsp://..."}`. Updates the camera's configured live-view RTS
 
 - All routes are mounted under the protected subrouter and require local Basic Auth.
 - The download endpoint opens the file by path stored in the segment row; if the file has been deleted manually it returns a `400` error.
-- `Content-Length` is set from the stored `FileSize` when non-zero, enabling browser progress bars.
+- `Content-Length` is set from the stored `FileSize` only on the plaintext pass-through path (not when decrypting or transcoding, which stream without a known length).
+- The at-rest storage codec used when (re)configuring a recorder is read live from runtime settings (`IRuntimeSettingsService.Recording()`) on each `PUT /api/recording/config`, so a Settings → Recording change applies the next time a camera's config is saved.
 - `parseInt64Query` is a shared helper defined in this file; used by both recording and vision handlers in the same `apis` package.

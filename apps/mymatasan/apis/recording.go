@@ -108,25 +108,54 @@ func (a *recordingApi) downloadSegment(w http.ResponseWriter, r *http.Request) {
 	}
 	defer f.Close()
 
-	w.Header().Set("Content-Type", "video/mp4")
-	w.Header().Set("Content-Disposition", `inline; filename="`+filepath.Base(seg.FilePath)+`"`)
-
-	// When encryption-at-rest is on, decrypt-stream the segment (the stored FileSize is
-	// the ciphertext size, so Content-Length is omitted — the player streams it whole,
-	// matching today's no-range behavior). Legacy plaintext passes straight through.
+	// Source reader: decrypt on the fly when encryption-at-rest is on, else the raw
+	// file. The stored FileSize is the ciphertext size, so Content-Length is only set
+	// for the plaintext pass-through path (no decrypt, no transcode).
+	var src io.Reader = f
+	plaintextPassthrough := true
 	if a.cipher != nil {
-		src, derr := a.cipher.MaybeDecryptingReader(f)
+		dr, derr := a.cipher.MaybeDecryptingReader(f)
 		if derr != nil {
 			controllers.SendError(w, controllers.ErrInternalServerError, "decrypt failed")
 			return
 		}
-		io.Copy(w, src)
+		src = dr
+		plaintextPassthrough = false
+	}
+
+	w.Header().Set("Content-Type", "video/mp4")
+	w.Header().Set("Content-Disposition", `inline; filename="`+filepath.Base(seg.FilePath)+`"`)
+
+	// HEVC-on-disk playback for browsers that can't decode it: the player appends
+	// ?transcode=h264 when its <video> element can't play hev1/hvc1 (Firefox, older
+	// browsers). Transcode the (decrypted) stream to H.264 fragmented MP4 on the fly
+	// through the shared NVENC semaphore. Capable browsers omit the flag and stream
+	// the stored bytes untouched, so they pay nothing.
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("transcode")), "h264") &&
+		strings.EqualFold(seg.Codec, "hevc") {
+		if err := recording.TranscodeH264(r.Context(), a.recordFFmpegPath(r), src, w); err != nil {
+			log.Printf("recording: transcode segment %d to h264: %v", seg.Id, err)
+		}
 		return
 	}
-	if seg.FileSize > 0 {
+
+	if plaintextPassthrough && seg.FileSize > 0 {
 		w.Header().Set("Content-Length", strconv.FormatInt(seg.FileSize, 10))
 	}
-	io.Copy(w, f)
+	io.Copy(w, src)
+}
+
+// recordFFmpegPath resolves the ffmpeg binary the serve-time transcode should use,
+// mirroring the recorder's source (runtime decoder settings). Empty falls back to
+// PATH inside the recording package.
+func (a *recordingApi) recordFFmpegPath(r *http.Request) string {
+	if a.settings == nil {
+		return ""
+	}
+	if dec, err := a.settings.Decoder(r.Context()); err == nil {
+		return dec.MJPEG.FFmpegPath
+	}
+	return ""
 }
 
 func (a *recordingApi) listConfigs(w http.ResponseWriter, r *http.Request) {
@@ -196,6 +225,9 @@ func (a *recordingApi) saveConfig(w http.ResponseWriter, r *http.Request) {
 		} else {
 			siphonFPS, siphonWidth := services.SiphonTeeParams(a.settings)
 			siphonHWAccel, siphonHWDevice, siphonInitHWDevice, siphonVideoDecoder := services.SiphonDecoderParams(a.settings)
+			// Read the at-rest codec live so a Settings → Recording change takes effect
+			// the next time any camera's recording config is saved.
+			recStorage, _ := a.settings.Recording(r.Context())
 			if cerr := a.recorder.Configure(recording.RecorderConfig{
 				CameraId:        cfg.CameraId,
 				Enabled:         cfg.Enabled,
@@ -214,6 +246,8 @@ func (a *recordingApi) saveConfig(w http.ResponseWriter, r *http.Request) {
 				HWAccelDevice:   siphonHWDevice,
 				InitHWDevice:    siphonInitHWDevice,
 				VideoDecoder:    siphonVideoDecoder,
+				RecordCodec:     recStorage.Storage.Codec,
+				RecordQuality:   recStorage.Storage.Quality,
 				Cipher:          a.cipher,
 			}); cerr != nil {
 				recorderWarning = cerr.Error()

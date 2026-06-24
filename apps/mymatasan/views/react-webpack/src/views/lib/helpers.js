@@ -1,5 +1,5 @@
 import config from 'config';
-import { defaultDecoderConfig, defaultYoloConfig, defaultCaptureConfig, defaultAlertNotificationConfig, defaultMachineHealthSettings, defaultZonePoints, defaultVisionThreshold, defaultVisionMinFrames, lineDetectionTypes, defaultLineClasses, maxCrossingLines, defaultCrowdMinCount, weekdayScheduleDays, weekendScheduleDays, allScheduleDays, liveViewsCookieName, liveViewLayouts, defaultLiveViewLayout } from './constants';
+import { defaultDecoderConfig, defaultYoloConfig, defaultCaptureConfig, defaultAlertNotificationConfig, defaultRecordingConfig, defaultMachineHealthSettings, defaultZonePoints, defaultVisionThreshold, defaultVisionMinFrames, lineDetectionTypes, defaultLineClasses, maxCrossingLines, defaultCrowdMinCount, weekdayScheduleDays, weekendScheduleDays, allScheduleDays, liveViewsCookieName, liveViewLayouts, defaultLiveViewLayout } from './constants';
 
 // normalizeLayout returns a known Live View layout id, defaulting unknown values.
 export function normalizeLayout(id) {
@@ -453,6 +453,15 @@ export function normalizeRuntimeSettings(value) {
         },
       },
       alertNotification,
+    },
+    recording: {
+      storage: {
+        codec: ['copy', 'h264', 'hevc'].includes(value?.recording?.storage?.codec)
+          ? value.recording.storage.codec
+          : defaultRecordingConfig.storage.codec,
+        quality: numberOrDefault(value?.recording?.storage?.quality, defaultRecordingConfig.storage.quality),
+        maxConcurrentEncodes: numberOrDefault(value?.recording?.storage?.maxConcurrentEncodes, defaultRecordingConfig.storage.maxConcurrentEncodes),
+      },
     },
   };
 }

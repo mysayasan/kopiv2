@@ -136,6 +136,14 @@ func (a *capacityApi) buildInput(ctx context.Context) (services.CameraCapacityIn
 		}
 	}
 
+	// Host-side at-rest re-encoding adds a GPU encode ceiling; reflect the configured
+	// storage codec + NVENC concurrency so the estimate accounts for it.
+	switch strings.ToLower(strings.TrimSpace(settings.Recording.Storage.Codec)) {
+	case "h264", "hevc":
+		in.RecordReencode = true
+	}
+	in.MaxConcurrentEncodes = settings.Recording.Storage.MaxConcurrentEncodes
+
 	a.mu.Lock()
 	if a.calibration != nil {
 		in.MeasuredInferenceMs = a.calibration.InferenceMs

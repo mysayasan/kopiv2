@@ -15,10 +15,11 @@ Declares the `RecordingSegment` entity that persists metadata for one recorded v
 | `StartedAt` | int64  | Unix seconds; beginning of the recorded window (trigger time minus pre-roll). |
 | `EndedAt`   | int64  | Unix seconds; end of the recorded window (trigger time plus post-roll). |
 | `FileSize`  | int64  | File size in bytes after encoding. |
+| `Codec`     | string | On-disk video codec (`h264`/`hevc`); empty for legacy rows. The playback path reads it to decide whether the browser needs an on-the-fly transcode. |
 | `CreatedAt` | int64  | Unix seconds; row insertion time. |
 
 ## Notes
 
-- The bootstrap schema creates the `recording_segment` table automatically on first startup.
+- The bootstrap schema creates the `recording_segment` table automatically on first startup; the additive `codec` column is reconciled onto existing installs by the bootstrap drift check.
 - `FilePath` is used by the download endpoint to open and stream the file; the delete endpoint removes both the row and the file.
 - `AlertId` is zero when the clip was not triggered by a detector alert (reserved for future manual recording).

@@ -294,6 +294,12 @@ func (f *fakeResolveStreamClient) ChangeUserPassword(context.Context, onvif.Chan
 }
 func (f *fakeResolveStreamClient) PTZMove(context.Context, onvif.PTZMoveRequest) error { return nil }
 func (f *fakeResolveStreamClient) PTZStop(context.Context, onvif.PTZMoveRequest) error { return nil }
+func (f *fakeResolveStreamClient) GetVideoEncoderConfig(context.Context, onvif.StreamURIRequest) (*onvif.VideoEncoderConfig, error) {
+	return nil, nil
+}
+func (f *fakeResolveStreamClient) ConfigureRecording(context.Context, onvif.ConfigureRecordingRequest) (*onvif.VideoEncoderConfig, error) {
+	return nil, nil
+}
 
 type fakeResolveRTSPClient struct {
 	workingPath   string

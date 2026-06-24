@@ -63,6 +63,8 @@ type ICameraService interface {
 	ResolveLiveView(ctx context.Context, id uint64, credentials onvif.Credentials) (*CameraDetail, error)
 	PTZMove(ctx context.Context, id uint64, req PTZMoveRequest) (*CameraDetail, error)
 	PTZStop(ctx context.Context, id uint64) (*CameraDetail, error)
+	GetCameraEncoder(ctx context.Context, id uint64) (*onvif.VideoEncoderConfig, error)
+	ApplyCameraEncoder(ctx context.Context, id uint64, req ApplyCameraEncoderRequest) (*onvif.VideoEncoderConfig, error)
 	SnapshotSource(ctx context.Context, id uint64) (SnapshotSource, error)
 	TestStream(ctx context.Context, id uint64) (*rtsp.ProbeResult, error)
 	// DisplayName returns the camera's human-readable name (name/model/host),
@@ -87,6 +89,14 @@ type PTZMoveRequest struct {
 	Direction  string  `json:"direction"`
 	Speed      float64 `json:"speed"`
 	DurationMs int64   `json:"durationMs"`
+}
+
+// ApplyCameraEncoderRequest pushes a recording codec + optional bitrate cap to the
+// camera encoder via ONVIF (Phase 3 camera-side compression). Encoding is "h264" or
+// "h265"; BitrateLimitKbps <= 0 leaves the camera's current bitrate unchanged.
+type ApplyCameraEncoderRequest struct {
+	Encoding         string `json:"encoding"`
+	BitrateLimitKbps int    `json:"bitrateLimitKbps"`
 }
 
 type DetectionRuleRequest = vision.DetectionRuleRequest
@@ -124,9 +134,31 @@ type INotificationDestinationsProvider interface {
 
 // RuntimeSettings contains runtime-editable mymatasan settings.
 type RuntimeSettings struct {
-	Decoder DecoderSettings `json:"decoder"`
-	Stream  StreamSettings  `json:"stream"`
-	Vision  VisionSettings  `json:"vision"`
+	Decoder   DecoderSettings   `json:"decoder"`
+	Stream    StreamSettings    `json:"stream"`
+	Vision    VisionSettings    `json:"vision"`
+	Recording RecordingSettings `json:"recording"`
+}
+
+// RecordingSettings holds runtime-editable NVR recording settings. Storage controls
+// the at-rest video codec; changes take effect on the next per-camera recorder
+// (re)configure or a restart, matching how decoder settings propagate.
+type RecordingSettings struct {
+	Storage RecordingStorageSettings `json:"storage"`
+}
+
+// RecordingStorageSettings controls how recorded segments are stored on disk.
+type RecordingStorageSettings struct {
+	// Codec is the at-rest video codec: "copy" (default — store the camera's native
+	// codec, no re-encode), "h264", or "hevc" (re-encode each segment once at remux
+	// on the GPU to shrink it).
+	Codec string `json:"codec"`
+	// Quality is the NVENC constant-quality (CQ) target when re-encoding (lower =
+	// better/larger; ~23-28 typical). 0 = default.
+	Quality int `json:"quality"`
+	// MaxConcurrentEncodes caps simultaneous NVENC sessions shared by remux-time
+	// re-encoding and playback transcode. 0 = default.
+	MaxConcurrentEncodes int `json:"maxConcurrentEncodes"`
 }
 
 // VisionSettings holds AI detection tuning parameters that can be changed at runtime.
@@ -290,6 +322,7 @@ type IRuntimeSettingsService interface {
 	Reset(ctx context.Context) (RuntimeSettings, error)
 	Stream(ctx context.Context) (StreamSettings, error)
 	Decoder(ctx context.Context) (DecoderSettings, error)
+	Recording(ctx context.Context) (RecordingSettings, error)
 }
 
 // ILocalUserService manages standalone mymatasan login users.

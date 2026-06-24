@@ -116,10 +116,16 @@ export function defaultDestination(type = 'webhook') {
     },
   };
 }
+// Recording storage (at-rest compression) defaults; mirror Go RecordingStorageSettings.
+// codec "copy" = store the camera's native codec with no host re-encode.
+export const defaultRecordingConfig = {
+  storage: { codec: 'copy', quality: 0, maxConcurrentEncodes: 0 },
+};
 export const defaultRuntimeSettings = {
   decoder: defaultDecoderConfig,
   stream: defaultStreamConfig,
   vision: { yolo: defaultYoloConfig, capture: defaultCaptureConfig, alertNotification: defaultAlertNotificationConfig },
+  recording: defaultRecordingConfig,
 };
 export const defaultNewUser = { username: '', displayName: '', password: '', isAdmin: false, isActive: true };
 export const defaultNotificationSettings = {

@@ -9,5 +9,8 @@ type RecordingSegment struct {
 	StartedAt int64  `json:"startedAt" form:"startedAt" query:"startedAt"`
 	EndedAt   int64  `json:"endedAt" form:"endedAt" query:"endedAt"`
 	FileSize  int64  `json:"fileSize" form:"fileSize" query:"fileSize"`
+	// Codec is the on-disk video codec (e.g. "h264", "hevc"); empty for legacy rows.
+	// The playback path reads it to decide whether the browser needs a transcode.
+	Codec     string `json:"codec" form:"codec" query:"codec"`
 	CreatedAt int64  `json:"createdAt" form:"createdAt" query:"createdAt"`
 }
