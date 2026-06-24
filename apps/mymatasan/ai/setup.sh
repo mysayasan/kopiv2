@@ -22,8 +22,15 @@
 
 set -e
 
-PYTHON="${1:-python3}"
-CUDA="${2:-}"
+# Optional license-plate OCR extra: pass --lpr (in any position). Positional
+# Python/CUDA args are collected ignoring the flag so it can appear anywhere.
+LPR=""
+POSITIONAL=()
+for arg in "$@"; do
+  if [ "$arg" = "--lpr" ]; then LPR="1"; else POSITIONAL+=("$arg"); fi
+done
+PYTHON="${POSITIONAL[0]:-python3}"
+CUDA="${POSITIONAL[1]:-}"
 
 echo "== MyMataSan AI setup =="
 
@@ -138,6 +145,17 @@ fi
 
 echo "Installing ultralytics + OpenCV..."
 "$PYTHON" -m pip install --upgrade ultralytics opencv-python
+
+# Optional license-plate (LPR) OCR backend — only when --lpr is passed.
+if [ -n "$LPR" ]; then
+  echo "Installing license-plate OCR dependencies (easyocr)..."
+  LPR_REQ="$(dirname "$0")/requirements-lpr.txt"
+  if [ -f "$LPR_REQ" ]; then
+    "$PYTHON" -m pip install --upgrade -r "$LPR_REQ"
+  else
+    "$PYTHON" -m pip install --upgrade easyocr opencv-python numpy
+  fi
+fi
 
 # --- Verify + report ----------------------------------------------------------
 echo "Verifying..."

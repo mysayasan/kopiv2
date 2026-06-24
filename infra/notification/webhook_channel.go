@@ -3,6 +3,7 @@ package notification
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -55,7 +56,7 @@ func NewWebhookChannel(opts WebhookOptions) Channel {
 		client:  client,
 		logger:  opts.Logger,
 	}
-	return newAsyncSender("webhook", opts.MinSeverity, opts.QueueSize, w.post)
+	return newAsyncSender("webhook", opts.MinSeverity, opts.QueueSize, w.post, opts.Logger)
 }
 
 type webhookSender struct {
@@ -66,20 +67,21 @@ type webhookSender struct {
 	logger  Logger
 }
 
-func (w *webhookSender) post(n Notification) {
+// post delivers one notification. It returns a (retryable) error on a transient
+// failure so the async worker can retry; marshal/build failures are wrapped as
+// permanent since retrying cannot fix them. Final logging is done by the worker.
+func (w *webhookSender) post(n Notification) error {
 	// Shared canonical JSON (Notification + base64 snapshot when attached) — the
 	// same shape the MQTT channel publishes. See notificationJSON.
 	body, err := notificationJSON(n)
 	if err != nil {
-		warn(w.logger, "notification.webhook", "marshal failed: %v", err)
-		return
+		return permanent(fmt.Errorf("marshal failed: %w", err))
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), w.client.Timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, w.method, w.url, bytes.NewReader(body))
 	if err != nil {
-		warn(w.logger, "notification.webhook", "build request failed: %v", err)
-		return
+		return permanent(fmt.Errorf("build request failed: %w", err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	for k, v := range w.headers {
@@ -87,13 +89,13 @@ func (w *webhookSender) post(n Notification) {
 	}
 	resp, err := w.client.Do(req)
 	if err != nil {
-		warn(w.logger, "notification.webhook", "post failed: %v", err)
-		return
+		return fmt.Errorf("post failed: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		warn(w.logger, "notification.webhook", "post returned %s", resp.Status)
+		return fmt.Errorf("post returned %s", resp.Status)
 	}
+	return nil
 }
 
 // noopChannel is a disabled channel that silently accepts notifications.

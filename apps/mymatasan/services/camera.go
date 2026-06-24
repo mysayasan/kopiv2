@@ -45,6 +45,8 @@ type cameraService struct {
 	rtspClient rtsp.Client
 	nameMu     sync.Mutex
 	nameCache  map[int64]cachedCameraName
+	lprCapMu   sync.Mutex
+	lprCapById map[int64]cachedLPRCapability
 }
 
 // cachedCameraName memoizes a camera's resolved display name so callers (e.g. the
@@ -71,6 +73,98 @@ func NewCameraService(
 		client:     client,
 		rtspClient: rtspClient,
 		nameCache:  map[int64]cachedCameraName{},
+		lprCapById: map[int64]cachedLPRCapability{},
+	}
+}
+
+// minLPRWidth is the source width (px) below which license plates are effectively
+// unreadable; a camera whose highest profile is narrower than this is reported as
+// not LPR-capable so the UI can hide the option.
+const minLPRWidth = 1280
+
+// lprCapabilityCacheTTL bounds how long a resolved capability is reused before the
+// ONVIF profiles are re-read. Resolutions rarely change, so this can be generous;
+// it keeps the per-frame LPR capture path from making an ONVIF call every sample.
+const lprCapabilityCacheTTL = 15 * time.Minute
+
+type cachedLPRCapability struct {
+	cap LPRCapabilityResult
+	at  int64
+}
+
+// LPRCapability reports whether a camera can supply frames legible enough for
+// license-plate recognition and, when ONVIF profiles are readable, the RTSP URL of
+// its highest-resolution profile (so LPR capture can auto-pick it). The result is
+// cached so the per-frame capture path never makes a live ONVIF call. Non-ONVIF
+// cameras (no profile data) are reported Supported with Onvif=false and no
+// auto-pick URL, so the option stays available but capture uses the existing stream.
+func (s *cameraService) LPRCapability(ctx context.Context, id int64) LPRCapabilityResult {
+	if id <= 0 {
+		return LPRCapabilityResult{}
+	}
+	now := time.Now().Unix()
+	ttl := int64(lprCapabilityCacheTTL.Seconds())
+	s.lprCapMu.Lock()
+	if cached, ok := s.lprCapById[id]; ok && now-cached.at < ttl {
+		s.lprCapMu.Unlock()
+		return cached.cap
+	}
+	s.lprCapMu.Unlock()
+
+	result := s.resolveLPRCapability(ctx, id)
+	s.lprCapMu.Lock()
+	s.lprCapById[id] = cachedLPRCapability{cap: result, at: now}
+	s.lprCapMu.Unlock()
+	return result
+}
+
+func (s *cameraService) resolveLPRCapability(ctx context.Context, id int64) LPRCapabilityResult {
+	detail, err := s.loadDetail(ctx, uint64(id))
+	if err != nil || detail == nil {
+		return LPRCapabilityResult{Supported: false, Detail: "camera not found"}
+	}
+	// No ONVIF endpoint → we cannot read resolutions. Keep LPR available but flag
+	// that the resolution is unknown and we cannot auto-pick a high-res stream.
+	if strings.TrimSpace(detail.XAddr) == "" {
+		return LPRCapabilityResult{
+			Supported: true,
+			Onvif:     false,
+			Detail:    "non-ONVIF camera: resolution unknown — ensure its stream is high-resolution",
+		}
+	}
+	credentials := onvif.Credentials{Username: detail.Username, Password: detail.Password}
+	res, err := s.client.GetStreamOptions(ctx, onvif.StreamURIRequest{
+		DeviceServiceURL: detail.XAddr,
+		MediaServiceURL:  detail.MediaXAddr,
+		ProfileToken:     detail.ProfileToken,
+		Credentials:      credentials,
+	})
+	if err != nil || res == nil || len(res.Options) == 0 {
+		// Probe failed (offline/credentials) — don't block LPR, just can't auto-pick.
+		return LPRCapabilityResult{
+			Supported: true,
+			Onvif:     false,
+			Detail:    "could not read camera profiles — using the existing stream",
+		}
+	}
+	best := res.Options[0]
+	for _, opt := range res.Options {
+		if opt.Width*opt.Height > best.Width*best.Height {
+			best = opt
+		}
+	}
+	supported := best.Width >= minLPRWidth
+	detailMsg := fmt.Sprintf("highest profile %dx%d", best.Width, best.Height)
+	if !supported {
+		detailMsg += " — too low for reliable plate reading"
+	}
+	return LPRCapabilityResult{
+		Supported: supported,
+		Onvif:     true,
+		Width:     best.Width,
+		Height:    best.Height,
+		RTSPURL:   strings.TrimSpace(best.RTSPURL),
+		Detail:    detailMsg,
 	}
 }
 
@@ -113,6 +207,11 @@ func (s *cameraService) invalidateName(id int64) {
 	s.nameMu.Lock()
 	delete(s.nameCache, id)
 	s.nameMu.Unlock()
+	// A camera write may change stream profiles/credentials, so drop the cached LPR
+	// capability too — it is re-resolved (ONVIF) on the next request.
+	s.lprCapMu.Lock()
+	delete(s.lprCapById, id)
+	s.lprCapMu.Unlock()
 }
 
 // — Discovery ----------------------------------------------------------------

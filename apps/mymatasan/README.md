@@ -15,7 +15,8 @@ It is designed to run on small devices such as Raspberry Pi or Jetson-style micr
 - Camera-first AI detection rules and alert events under `/api/vision`, backed by reusable `infra/vision` rule, schedule, motion, external-object, line-crossing, multi-line-crossing, and hybrid detection primitives.
 - Line-crossing rules support an **Anything** wildcard class (`"*"`) that triggers on any detected YOLO object regardless of label, in addition to the named class list.
 - **Crowd** detection: a rule mode that fires when at least `minCount` people (default 2) are in the zone in a single frame.
-- **Two-axis rule model**: a detection rule is now a **Mode** (presence, crowd, intrusion, line crossing, multi-line crossing) plus a **target class list** chosen from a data-driven **detection class registry** under `/api/vision/classes` (built-in classes + user-defined groups + trained classes). Legacy single-object rules (`person`/`vehicle`/`animal`/`fire`/`smoke`) still work and open in the new editor.
+- **License-plate recognition (LPR)**: a rule mode (`detectionType: "lpr"`) that runs a second-stage plate detector + OCR on a dedicated high-resolution frame (default 1920 px wide) and fires on any readable plate or only on a watchlist (`matchMode: any/include/exclude`). Fuzzy watchlist matching (Levenshtein ≤ 1) absorbs common single-character OCR errors. Plate text, vehicle type, color, and watchlist flag ride the alert metadata and appear in notification templates (`{{plate}}`, `{{vehicleType}}`, `{{color}}`, `{{watchlisted}}`). Manage the plate-detector model and OCR dependencies from **Settings → AI** or via the `/api/training/lpr-model` endpoints.
+- **Two-axis rule model**: a detection rule is now a **Mode** (presence, crowd, intrusion, line crossing, multi-line crossing, lpr) plus a **target class list** chosen from a data-driven **detection class registry** under `/api/vision/classes` (built-in classes + user-defined groups + trained classes). Legacy single-object rules (`person`/`vehicle`/`animal`/`fire`/`smoke`) still work and open in the new editor.
 - **Custom model training** under `/api/training`: build labeled image datasets (upload or import from alert snapshots), draw/correct bounding boxes in-browser, auto-label with the running model, export a YOLO dataset zip, train a custom model (in-app on a GPU, or offline), import a `best.pt`, and **activate** it to hot-swap the live detector and register its classes for rules.
 - YOLO Inference Tuning in Settings includes a **Best Calibration** button that applies recommended defaults (conf=0.20, IOU=0.35, imgsz=640, maxDet=100, augment on).
 - Alert log with server-side filtering by camera ID and unix-timestamp date range; the browser UI defaults to today's alerts and pages 20 at a time.
@@ -185,7 +186,20 @@ apps/mymatasan/ai/setup.sh
 
 Run it with the **same Python** the app launches the detector with (`vision.detector.command`, usually `python`). Pass an explicit interpreter or CUDA wheel tag if needed: `setup.ps1 -Python C:\path\python.exe -Cuda cu121` / `setup.sh /usr/bin/python3 cu121`.
 
-Or install manually:
+To also install the LPR OCR dependencies (`easyocr`, `opencv-python`, `numpy`) in one pass, add the `-Lpr` flag (PowerShell) or `--lpr` flag (shell):
+
+```bash
+powershell -ExecutionPolicy Bypass -File apps/mymatasan/ai/setup.ps1 -Lpr
+apps/mymatasan/ai/setup.sh --lpr
+```
+
+Or install them separately (CPU-only, no GPU required):
+
+```bash
+python -m pip install -r apps/mymatasan/ai/requirements-lpr.txt
+```
+
+Or install core YOLO deps only:
 
 ```bash
 python -m pip install -r apps/mymatasan/ai/requirements-yolo.txt
@@ -701,6 +715,53 @@ curl -u admin:Admin123 -H "Content-Type: application/json" \
   "http://localhost:3000/api/vision/rules"
 ```
 
+### License-plate recognition (LPR)
+
+LPR rules use `detectionType:"lpr"` and a `ruleConfig` JSON object. They require a plate-detector model to be active (Settings → AI → License Plate Model); OCR is provided by `easyocr` (install-deps from the same panel).
+
+```bash
+# Fire on any readable plate
+curl -u admin:Admin123 -H "Content-Type: application/json" \
+  -d '{"cameraId":1,"name":"Gate plate log","detectionType":"lpr","ruleConfig":"{\"matchMode\":\"any\"}","cooldownSeconds":10,"isEnabled":true}' \
+  "http://localhost:3000/api/vision/rules"
+
+# Fire only on plates in the watchlist (VIP/fleet)
+curl -u admin:Admin123 -H "Content-Type: application/json" \
+  -d '{"cameraId":1,"name":"VIP arrival","detectionType":"lpr","ruleConfig":"{\"matchMode\":\"include\",\"plates\":[\"WXY1234\",\"ABC999\"]}","cooldownSeconds":30,"isEnabled":true}' \
+  "http://localhost:3000/api/vision/rules"
+
+# Fire on any plate NOT in the allowed list (unknown vehicle at gate)
+curl -u admin:Admin123 -H "Content-Type: application/json" \
+  -d '{"cameraId":1,"name":"Unknown vehicle","detectionType":"lpr","ruleConfig":"{\"matchMode\":\"exclude\",\"plates\":[\"KnownCar1\",\"KnownCar2\"]}","cooldownSeconds":30,"isEnabled":true}' \
+  "http://localhost:3000/api/vision/rules"
+```
+
+`ruleConfig` keys for LPR:
+
+| Key | Default | Notes |
+|---|---|---|
+| `matchMode` | `"any"` (no plates) or `"include"` (with plates) | `any`, `include`, or `exclude`. |
+| `plates` | `[]` | Watchlist; entries are normalized to uppercase alphanumerics (`"WXY 1234"` → `"WXY1234"`). |
+| `minOcrConfidence` | `0.5` | OCR reads below this floor are ignored. |
+| `plateLabel` | `"license plate"` | Override when a custom plate model uses a different class name. |
+
+LPR alert metadata includes `plate`, `vehicleType`, `color`, `ocrConfidence`, and `watchlisted`; notification templates can reference `{{plate}}`, `{{vehicleType}}`, `{{color}}`, and `{{watchlisted}}`.
+
+Check whether the camera has sufficient resolution for LPR (requires an ONVIF camera; result is cached 15 min):
+
+```bash
+curl -u admin:Admin123 "http://localhost:3000/api/cameras/1/lpr-capability"
+```
+
+Purge alert events (e.g. to clean up a backlog of diagnostic rows):
+
+```bash
+# Purge only diagnostic alerts older than 7 days
+curl -u admin:Admin123 -X POST "http://localhost:3000/api/vision/alerts/purge?days=7&onlyDiagnostics=true"
+# Purge ALL alerts older than 30 days (real detections included)
+curl -u admin:Admin123 -X POST "http://localhost:3000/api/vision/alerts/purge?days=30"
+```
+
 ## Custom Model Training API
 
 The **Training** tab (and `/api/training`) lets you teach the detector new object classes end to end: collect images → label → train → activate. All routes use the same local Basic Auth. Training artifacts are stored under `vision.training.dataDir` (defaults to a `training` sibling of `snapshotDir`).
@@ -765,6 +826,40 @@ The active model cannot be deleted while in use — **Deactivate** first (revert
 
 **In-app training requirements.** In-app training needs `python` + `ultralytics` (the same Python the detector uses). The **Train** button is disabled when these are missing and warns when only a CPU is available — CPU training is impractically slow, so export and train on a GPU instead. One training run executes at a time. The bundled trainer is `apps/mymatasan/ai/train_worker.py`.
 
+### License-plate model management
+
+A **License Plate Model** card in **Settings → AI** manages the optional second-stage plate-detector model (separate from the stock/custom general model). Use it to:
+
+- Select a curated model from the catalog (YOLOv11 nano/small plate finetunes, downloaded from Hugging Face) or paste any https URL.
+- Upload your own `.pt` plate-detector file.
+- Deactivate the plate model (disables LPR OCR).
+- Install OCR dependencies (`easyocr`, `opencv-python`, `numpy`) via the in-app installer (streams progress to the same log as GPU setup; CPU-only, no GPU required).
+
+```bash
+# Current plate model info + catalog + OCR readiness
+curl -u admin:Admin123 "http://localhost:3000/api/training/lpr-model"
+
+# Select a catalog model (downloads from Hugging Face, stores under <dataDir>/lpr/)
+curl -u admin:Admin123 -H "Content-Type: application/json" \
+  -d '{"model":"yolo11n-license-plate"}' "http://localhost:3000/api/training/lpr-model"
+
+# Select by URL
+curl -u admin:Admin123 -H "Content-Type: application/json" \
+  -d '{"model":"https://example.com/myplate.pt"}' "http://localhost:3000/api/training/lpr-model"
+
+# Upload a plate model file
+curl -u admin:Admin123 -F "file=@plate.pt" -F "name=myplate" \
+  "http://localhost:3000/api/training/lpr-model/import"
+
+# Deactivate (disables the plate-localization + OCR stage)
+curl -u admin:Admin123 -X POST "http://localhost:3000/api/training/lpr-model/deactivate"
+
+# Install OCR dependencies (poll GET /api/training/setup-deps/status for progress)
+curl -u admin:Admin123 -X POST "http://localhost:3000/api/training/lpr-model/install-deps"
+```
+
+The plate model path is written to `lpr_model.txt` (next to `active_model.txt`) and the YOLO worker reads it via `MYMATASAN_LPR_MODEL_FILE`. OCR readiness is probed with `importlib.util.find_spec('easyocr')` so the probe is fast (no torch import). A plate model can be active even when OCR deps are not yet installed — plates will be localized but not read until deps are present.
+
 ## Notifications
 
 Every source — AI detection, camera health, machine health, and login security — funnels into one persisted notification store. The **topbar bell** and a dedicated **Notifications page** read it via `GET /api/notifications`: the bell badge is server-truth unread, and clicking an entry opens the Notifications page focused on it. AI rows are rich — annotated event screenshot, detection fields, **Acknowledge**, and in-page **clip playback** when a recording segment exists; acknowledging an alert dismisses its notification at the source (`notifier.MarkReadByRef`). Diagnostics never become notifications, so the feed is inherently diagnostic-free.
@@ -788,13 +883,15 @@ Notifications are also delivered **per destination**. In **Settings → Notifica
 - **Receives** — a category subscription: AI detection alerts (`vision.alert`), Health (`health.check`, camera offline + machine health), and System (`system`).
 - **Detection fields** — which detection details a vision alert includes.
 - **Snapshot delivery** — `Inline` embeds the image (webhook/MQTT base64, Telegram photo) or `Link only` sends just the reference (`link` + `data.snapshotPath`) so the consumer fetches it — keeps payloads/broker messages small.
-- **Custom fields** — static key/value pairs added to the payload. A custom field **overrides** a built-in field of the same key (the matching detection-field toggle is then disabled). Values may use `{{token}}` templates: `{{ruleName}}`, `{{cameraName}}`, `{{label}}`, `{{confidence}}`, `{{detectionType}}`, `{{alertId}}`, `{{ruleId}}`, `{{cameraId}}`.
+- **Custom fields** — static key/value pairs added to the payload. A custom field **overrides** a built-in field of the same key (the matching detection-field toggle is then disabled). Values may use `{{token}}` templates: `{{ruleName}}`, `{{cameraName}}`, `{{label}}`, `{{confidence}}`, `{{detectionType}}`, `{{alertId}}`, `{{ruleId}}`, `{{cameraId}}`. For LPR alerts, additionally: `{{plate}}`, `{{vehicleType}}`, `{{color}}`, `{{watchlisted}}` (empty string on non-LPR alerts).
 
 The in-app notification feed always records one entry per alert in full; destinations receive separately rendered copies. **Per-rule routing:** a detection rule's **Notification routing** panel picks which destinations its alerts go to (none selected = all).
 
+**Cold-start delivery reliability.** All outbound channels (webhook, Telegram, MQTT) now retry transient failures on a short backoff schedule (1 s → 3 s → 6 s, total ≤ 10 s) before dropping a notification. This prevents the first alert after boot from being silently lost when the network, DNS, or MQTT broker is still coming up. Marshal/build failures are marked permanent and not retried.
+
 ### MQTT
 
-MQTT is the industrial transport: each notification is published as the same JSON payload (see below) to a broker topic. Per destination you configure the **broker URL** (`tcp://host:1883` or `ssl://host:8883`), **topic**, optional **client id**, **QoS** (0/1/2, default 1), and **retain**. Auth is **username/password** and/or **TLS** — paste PEM contents for the CA certificate and, for mutual-TLS (client-certificate auth), the client certificate + key. The broker connects in the background with automatic reconnect, so a broker that is briefly unreachable never blocks delivery.
+MQTT is the industrial transport: each notification is published as the same JSON payload (see below) to a broker topic. Per destination you configure the **broker URL** (`tcp://host:1883` or `ssl://host:8883`), **topic**, optional **client id**, **QoS** (0/1/2, default 1), and **retain**. Auth is **username/password** and/or **TLS** — paste PEM contents for the CA certificate and, for mutual-TLS (client-certificate auth), the client certificate + key. The broker connects in the background with automatic reconnect; the first publish also waits for the initial broker connect to complete so the cold-start race (event fires before the TCP handshake finishes) no longer drops the first message.
 
 The **topic may be templated** with `{{token}}` placeholders (e.g. `matasan/alerts/{{cameraName}}/{{label}}`). Tokens resolve from the payload `data` (`cameraName`, `alertId`, `ruleId`, `detectionType`, plus `label`/`confidence`/`ruleName` when those detection fields are enabled), falling back to the notification's own fields `cameraId`, `category`, `severity`, `refId`, `id`. A token that resolves to nothing leaves **no empty level** — `matasan/alerts/{{cameraId}}` with no camera (e.g. the Test button) publishes to `matasan/alerts`, not `matasan/alerts/`. (Wildcards `#`/`+` are subscribe-side only; you never publish to them.)
 

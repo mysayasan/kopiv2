@@ -87,18 +87,21 @@ func NewMqttChannel(opts MqttOptions) Channel {
 
 	client := mqtt.NewClient(co)
 	// Connect in the background; ConnectRetry keeps trying if the broker is down.
-	client.Connect()
+	// The token is retained so the first publish can wait for the initial connect
+	// to complete instead of racing it (the cold-start drop this channel had).
+	connectToken := client.Connect()
 
 	s := &mqttSender{
-		client:  client,
-		topic:   strings.TrimSpace(opts.Topic),
-		qos:     qos,
-		retain:  opts.Retain,
-		timeout: timeout,
-		logger:  opts.Logger,
+		client:       client,
+		connectToken: connectToken,
+		topic:        strings.TrimSpace(opts.Topic),
+		qos:          qos,
+		retain:       opts.Retain,
+		timeout:      timeout,
+		logger:       opts.Logger,
 	}
 	return &mqttChannel{
-		asyncSender: newAsyncSender("mqtt", opts.MinSeverity, opts.QueueSize, s.publish),
+		asyncSender: newAsyncSender("mqtt", opts.MinSeverity, opts.QueueSize, s.publish, opts.Logger),
 		client:      client,
 	}
 }
@@ -119,29 +122,46 @@ func (c *mqttChannel) Close() error {
 }
 
 type mqttSender struct {
-	client  mqtt.Client
-	topic   string
-	qos     byte
-	retain  bool
-	timeout time.Duration
-	logger  Logger
+	client       mqtt.Client
+	connectToken mqtt.Token
+	topic        string
+	qos          byte
+	retain       bool
+	timeout      time.Duration
+	logger       Logger
 }
 
-func (s *mqttSender) publish(n Notification) {
+// publish renders and publishes one notification. It returns a (retryable) error
+// when the broker is not yet connected or the publish fails/times out, so the
+// async worker retries on its backoff schedule — covering the cold-start window
+// where the first event fires before the initial broker connect has completed.
+// Marshal failures are permanent (retrying cannot fix them).
+func (s *mqttSender) publish(n Notification) error {
 	payload, err := notificationJSON(n)
 	if err != nil {
-		warn(s.logger, "notification.mqtt", "marshal failed: %v", err)
-		return
+		return permanent(fmt.Errorf("marshal failed: %w", err))
+	}
+	// Wait for the initial connect to finish before the first publish; without
+	// this the very first event after boot can be published into a not-yet-open
+	// connection and dropped. ConnectRetry keeps re-dialing in the background, so
+	// returning an error here lets the worker retry until the broker is up.
+	if !s.client.IsConnected() {
+		if s.connectToken != nil {
+			s.connectToken.WaitTimeout(s.timeout)
+		}
+		if !s.client.IsConnected() {
+			return fmt.Errorf("broker not connected yet")
+		}
 	}
 	topic := expandTopicTemplate(s.topic, n)
 	token := s.client.Publish(topic, s.qos, s.retain, payload)
 	if !token.WaitTimeout(s.timeout) {
-		warn(s.logger, "notification.mqtt", "publish to %q timed out", topic)
-		return
+		return fmt.Errorf("publish to %q timed out", topic)
 	}
 	if err := token.Error(); err != nil {
-		warn(s.logger, "notification.mqtt", "publish to %q failed: %v", topic, err)
+		return fmt.Errorf("publish to %q failed: %w", topic, err)
 	}
+	return nil
 }
 
 // mqttTLSConfig builds a *tls.Config from the PEM materials, or nil when none are

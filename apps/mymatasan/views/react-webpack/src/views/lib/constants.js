@@ -86,6 +86,23 @@ export const alertFieldDataKeys = {
 // Built-in identifier keys always present in the payload; a custom field of the
 // same key overrides them (custom wins).
 export const builtinPayloadKeys = ['alertId', 'ruleId', 'cameraName', 'detectionType'];
+// notificationTemplateTokens lists every {{token}} a custom field value can use,
+// grouped for the in-UI reference helper so users don't have to guess. These must
+// match the server's alertTemplateContext (services/notification.go).
+export const notificationTemplateTokens = [
+  { token: 'cameraName', group: 'Always', desc: 'Camera display name' },
+  { token: 'cameraId', group: 'Always', desc: 'Camera numeric id' },
+  { token: 'detectionType', group: 'Always', desc: 'Rule type, e.g. lpr, presence, crowd' },
+  { token: 'alertId', group: 'Always', desc: 'This alert’s id' },
+  { token: 'ruleId', group: 'Always', desc: 'Triggering rule id' },
+  { token: 'ruleName', group: 'Always', desc: 'Triggering rule name' },
+  { token: 'label', group: 'Detection', desc: 'Detected object / alert label' },
+  { token: 'confidence', group: 'Detection', desc: 'Confidence % (OCR read % for plates)' },
+  { token: 'plate', group: 'License plate', desc: 'Recognized plate number' },
+  { token: 'vehicleType', group: 'License plate', desc: 'car / truck / bus / motorcycle' },
+  { token: 'color', group: 'License plate', desc: 'Vehicle color, when detected' },
+  { token: 'watchlisted', group: 'License plate', desc: 'true if the plate is on the rule’s list' },
+];
 // Notification categories a destination can subscribe to (value, label, help).
 // Values match the Go category constants.
 export const notificationCategories = [
@@ -162,6 +179,8 @@ export const defaultVisionThreshold = 0.35;
 export const defaultVisionMinFrames = 2;
 export const lineDetectionTypes = ['line_crossing', 'multi_line_crossing'];
 export const defaultCrowdMinCount = 2;
+// defaultMinOcrConfidence is the minimum OCR read confidence an LPR rule acts on.
+export const defaultMinOcrConfidence = 0.5;
 export const lineClassOptions = ['person', 'vehicle', 'car', 'truck', 'bus', 'motorcycle', 'bicycle', 'animal', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'mouse', 'rat'];
 export const defaultLineClasses = ['person'];
 export const maxCrossingLines = 5;

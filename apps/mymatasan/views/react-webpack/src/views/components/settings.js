@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { Ico } from './icons';
-import { FormBusyOverlay, FieldTitle } from './ui';
+import { FormBusyOverlay, FieldTitle, AccordionList, AccordionItem } from './ui';
+import { ConsoleLog } from './console';
 import { PasswordField } from './layout';
-import { defaultYoloConfig, bestYoloDefaults, defaultCaptureConfig, captureModeOptions, defaultAlertNotificationConfig, alertNotificationFields, alertFieldDataKeys, builtinPayloadKeys, notificationCategories, defaultDestination, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings } from '../lib/constants';
+import { defaultYoloConfig, bestYoloDefaults, defaultCaptureConfig, captureModeOptions, defaultAlertNotificationConfig, alertNotificationFields, alertFieldDataKeys, builtinPayloadKeys, notificationCategories, notificationTemplateTokens, defaultDestination, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings } from '../lib/constants';
 import {iceUrlsText,textToIceUrls,decoderTransportOptions,decoderHWAccelOptions,apiBase } from '../lib/helpers';
 
 // stockModelHints describes the speed/accuracy trade-off of each base model.
@@ -95,6 +96,193 @@ function StockModelPanel({ authHeader, onMessage }) {
         <button type="button" onClick={apply} disabled={busy || !dirty}>
           <span className="btn-icon"><Ico n="download" /> Download &amp; apply</span>
         </button>
+      </div>
+    </section>
+  );
+}
+
+// LPRModelPanel manages the optional license-plate (LPR) detector — a separate
+// second-stage model from the stock/custom general detectors. It offers both the
+// "automated" path (a curated catalog or any https URL the app downloads) and the
+// "manual" path (upload a .pt). Plate models are third-party, so unlike the stock
+// picker they download from an explicit URL rather than by ultralytics name.
+function LPRModelPanel({ authHeader, onMessage }) {
+  const [info, setInfo] = useState({ current: '', path: '', options: [], ocrReady: false });
+  const [choice, setChoice] = useState('');
+  const [customValue, setCustomValue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [installingOcr, setInstallingOcr] = useState(false);
+  const [ocrLog, setOcrLog] = useState('');
+  const fileRef = useRef(null);
+
+  async function api(path, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    if (authHeader) headers.Authorization = authHeader;
+    if (options.body && !(options.body instanceof FormData)) headers['Content-Type'] = 'application/json';
+    const resp = await fetch(`${apiBase()}${path}`, { credentials: 'include', ...options, headers });
+    const text = await resp.text();
+    let payload = null;
+    if (text) { try { payload = JSON.parse(text); } catch (_) { payload = { message: text }; } }
+    if (!resp.ok) throw new Error(payload?.message || payload?.data?.message || `Request failed (${resp.status})`);
+    return payload?.data?.result ?? payload?.result ?? payload;
+  }
+
+  async function load() {
+    try {
+      const result = await api('/api/training/lpr-model');
+      setInfo({ current: result?.current || '', path: result?.path || '', options: Array.isArray(result?.options) ? result.options : [], ocrReady: !!result?.ocrReady });
+      setChoice(result?.options?.[0]?.name || '__url__');
+    } catch (_) { /* best effort */ }
+  }
+  useEffect(() => { load(); }, [authHeader]);
+
+  // Install the OCR dependency (easyocr) in-app, streaming the install log just
+  // like the GPU dependency installer. Polls the shared installer status endpoint.
+  async function installOcr() {
+    if (installingOcr) return;
+    setInstallingOcr(true);
+    if (onMessage) onMessage('Installing OCR dependencies — this can take a few minutes…');
+    try {
+      const st = await api('/api/training/lpr-model/install-deps', { method: 'POST' });
+      setOcrLog(st?.log || '');
+    } catch (err) {
+      setInstallingOcr(false);
+      if (onMessage) onMessage(err.message);
+    }
+  }
+  useEffect(() => {
+    if (!installingOcr) return undefined;
+    const id = window.setInterval(async () => {
+      try {
+        const st = await api('/api/training/setup-deps');
+        setOcrLog(st?.log || '');
+        if (!st?.running) {
+          window.clearInterval(id);
+          setInstallingOcr(false);
+          await load();
+          if (onMessage) onMessage(st?.status === 'done'
+            ? 'OCR dependencies installed. Plate reading is now available.'
+            : 'OCR install finished with errors — see the log.');
+        }
+      } catch (_) { /* keep polling */ }
+    }, 3000);
+    return () => window.clearInterval(id);
+  }, [installingOcr]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function apply() {
+    const model = choice === '__url__' || choice === '__path__' ? customValue.trim() : choice;
+    if (!model) { if (onMessage) onMessage('Choose a catalog model, or paste a URL / server path.'); return; }
+    setBusy(true);
+    if (onMessage) onMessage('Applying plate model (downloading if needed)…');
+    try {
+      const result = await api('/api/training/lpr-model', { method: 'POST', body: JSON.stringify({ model }) });
+      setInfo({ current: result?.current || '', path: result?.path || '', options: info.options });
+      if (onMessage) onMessage(`Plate model set to ${result?.current || model}. Detection reloaded.`);
+    } catch (err) {
+      if (onMessage) onMessage(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function upload(file) {
+    if (!file) return;
+    setBusy(true);
+    if (onMessage) onMessage(`Uploading ${file.name}…`);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('name', file.name);
+      const result = await api('/api/training/lpr-model/import', { method: 'POST', body: form });
+      setInfo({ current: result?.current || file.name, path: result?.path || '', options: info.options });
+      if (onMessage) onMessage(`Plate model ${result?.current || file.name} uploaded and activated.`);
+    } catch (err) {
+      if (onMessage) onMessage(err.message);
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  }
+
+  async function deactivate() {
+    setBusy(true);
+    try {
+      const result = await api('/api/training/lpr-model/deactivate', { method: 'POST' });
+      setInfo({ current: result?.current || '', path: result?.path || '', options: info.options });
+      if (onMessage) onMessage('Plate model disabled. License-plate recognition is off.');
+    } catch (err) {
+      if (onMessage) onMessage(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const active = !!info.current;
+  const selectedOpt = info.options.find((o) => o.name === choice);
+
+  return (
+    <section className="settings-panel span-two">
+      <header>
+        <h2>
+          <FieldTitle info="The optional license-plate (LPR) detector. When set, cameras with a License Plate rule run a second stage that localizes plates, OCRs them, and reads the vehicle's type/color. This is a separate model from the stock/custom detectors and only runs on cameras that have an LPR rule.">
+            License Plate Model (LPR)
+          </FieldTitle>
+        </h2>
+        <span className="status-pill">{active ? info.current : 'disabled'}</span>
+      </header>
+      <p className="settings-hint">
+        Pick a plate detector from the catalog, paste a direct <code>.pt</code> URL, or upload your own. The model is
+        downloaded once and cached. Plate recognition also needs the OCR dependencies installed (see Version &amp; Health).
+      </p>
+      <div className="settings-field-grid">
+        <label>
+          Plate model
+          <select value={choice} onChange={(e) => setChoice(e.target.value)} disabled={busy}>
+            {info.options.map((opt) => <option key={opt.name} value={opt.name}>{opt.name}</option>)}
+            <option value="__url__">Download from URL…</option>
+            <option value="__path__">Local .pt path on server…</option>
+          </select>
+          <span className="field-hint">
+            {choice === '__url__' ? 'Paste a direct https link to a .pt plate model.'
+              : choice === '__path__' ? 'Absolute path to a .pt file already on the server.'
+              : (selectedOpt?.description || '')}
+          </span>
+        </label>
+        {(choice === '__url__' || choice === '__path__') ? (
+          <label>
+            {choice === '__url__' ? 'Model URL' : 'Server .pt path'}
+            <input value={customValue} onChange={(e) => setCustomValue(e.target.value)} placeholder={choice === '__url__' ? 'https://…/best.pt' : '/path/to/plate.pt'} disabled={busy} />
+          </label>
+        ) : null}
+      </div>
+      <div className="settings-actions">
+        <button type="button" onClick={apply} disabled={busy}>
+          <span className="btn-icon"><Ico n="download" /> Download &amp; apply</span>
+        </button>
+        <button type="button" className="quiet" onClick={() => fileRef.current && fileRef.current.click()} disabled={busy}>
+          <span className="btn-icon"><Ico n="plus" /> Upload .pt</span>
+        </button>
+        {active ? (
+          <button type="button" className="quiet danger" onClick={deactivate} disabled={busy}>
+            <span className="btn-icon"><Ico n="x" /> Disable LPR</span>
+          </button>
+        ) : null}
+        <input ref={fileRef} type="file" accept=".pt" style={{ display: 'none' }} onChange={(e) => upload(e.target.files?.[0])} />
+      </div>
+      <div className="install-deps" style={{ marginTop: '12px' }}>
+        <div className="metadata-row" style={{ alignItems: 'center', gap: '10px' }}>
+          <span className={`status-pill ${info.ocrReady ? 'ok' : 'offline'}`}>
+            OCR engine: {info.ocrReady ? 'installed ✓' : 'not installed'}
+          </span>
+          <button type="button" className="quiet" onClick={installOcr} disabled={installingOcr || busy}>
+            <span className="btn-icon"><Ico n="download" /> {info.ocrReady ? 'Reinstall OCR engine' : 'Install OCR engine (easyocr)'}</span>
+          </button>
+        </div>
+        <span className="field-hint">
+          Downloading a plate model is only half of it — plate <em>text</em> is read by the OCR engine (easyocr).
+          Install it here once; the worker reloads automatically when it finishes.
+        </span>
+        {ocrLog ? <ConsoleLog title="OCR dependency install" log={ocrLog} running={installingOcr} /> : null}
       </div>
     </section>
   );
@@ -905,6 +1093,7 @@ export function SettingsTab({
 
         {settingsNav === 'ai' && (<>
         <StockModelPanel authHeader={authHeader} onMessage={onMessage} />
+        <LPRModelPanel authHeader={authHeader} onMessage={onMessage} />
         <section className="settings-panel span-two">
           <header>
             <h2>
@@ -1555,6 +1744,9 @@ export const SEVERITY_OPTIONS = [
 export function NotificationSettingsPanel({ settings, busy, hasChanges, onChange, onSave, onDiscard, onTest, onPurgeExpired }) {
   const retention = settings.retention || defaultNotificationSettings.retention;
   const destinations = Array.isArray(settings.destinations) ? settings.destinations : [];
+  // Which destination's form is expanded (accordion — one open at a time).
+  // Tracked by index since new destinations have no id until saved.
+  const [openIndex, setOpenIndex] = useState(null);
   function patch(section, values) {
     onChange({ ...settings, [section]: { ...settings[section], ...values } });
   }
@@ -1563,12 +1755,14 @@ export function NotificationSettingsPanel({ settings, busy, hasChanges, onChange
   }
   function addDestination(type) {
     setDestinations([...destinations, defaultDestination(type)]);
+    setOpenIndex(destinations.length); // open the newly added row
   }
   function updateDestination(index, values) {
     setDestinations(destinations.map((d, i) => (i === index ? { ...d, ...values } : d)));
   }
   function removeDestination(index) {
     setDestinations(destinations.filter((_, i) => i !== index));
+    setOpenIndex(null);
   }
   return (
     <form className="settings-layout" onSubmit={onSave}>
@@ -1587,17 +1781,23 @@ export function NotificationSettingsPanel({ settings, busy, hasChanges, onChange
           full. Test sends a <strong>System</strong> notification to destinations subscribed to it.
         </p>
         {destinations.length === 0 ? (
-          <p className="settings-hint">No destinations yet — add a webhook or Telegram below.</p>
+          <p className="settings-hint">No destinations yet — add a webhook, Telegram, or MQTT target below.</p>
         ) : null}
-        {destinations.map((dest, index) => (
-          <DestinationCard
-            key={dest.id || `new-${index}`}
-            dest={dest}
-            busy={busy}
-            onChange={(values) => updateDestination(index, values)}
-            onRemove={() => removeDestination(index)}
-          />
-        ))}
+        {destinations.length > 0 ? (
+          <AccordionList>
+            {destinations.map((dest, index) => (
+              <DestinationItem
+                key={dest.id || `new-${index}`}
+                dest={dest}
+                busy={busy}
+                open={openIndex === index}
+                onToggleOpen={() => setOpenIndex(openIndex === index ? null : index)}
+                onChange={(values) => updateDestination(index, values)}
+                onRemove={() => removeDestination(index)}
+              />
+            ))}
+          </AccordionList>
+        ) : null}
         <div className="action-row">
           <button type="button" className="quiet" onClick={() => addDestination('webhook')} disabled={busy}>
             <span className="btn-icon"><Ico n="wifi" /> Add webhook</span>
@@ -1710,12 +1910,69 @@ const WEBHOOK_PAYLOAD_SAMPLE = `{
   "snapshotFilename": "alert-481.jpg"
 }`;
 
+// destinationTarget renders a one-line summary of where a destination delivers,
+// shown in the collapsed accordion row so the target is visible without opening
+// the form.
+function destinationTarget(dest) {
+  if (dest.type === 'mqtt') {
+    const mqtt = dest.mqtt || {};
+    if (mqtt.brokerUrl) return `${mqtt.brokerUrl}${mqtt.topic ? ` → ${mqtt.topic}` : ''}`;
+    return 'No broker set';
+  }
+  if (dest.type === 'telegram') {
+    return dest.chatId ? `Chat ${dest.chatId}` : 'No chat set';
+  }
+  return dest.url || 'No URL set';
+}
+
+// DestinationItem is one accordion row in the destinations list: a compact,
+// always-visible summary (name, type, target, enabled toggle, remove) that
+// expands to the full editing form (DestinationCard) when clicked. Built on the
+// shared AccordionItem so it matches every other list editor.
+function DestinationItem({ dest, busy, open, onToggleOpen, onChange, onRemove }) {
+  const enabled = dest.enabled !== false;
+  const summary = (
+    <>
+      <span className="accordion-title">{dest.name || titleizeType(dest.type)}</span>
+      <span className={`class-source-badge ${dest.type}`}>{dest.type}</span>
+      <span className="accordion-muted">{destinationTarget(dest)}</span>
+      {!enabled ? <span className="accordion-tag">disabled</span> : null}
+    </>
+  );
+  const actions = (
+    <>
+      <label className="check-row compact" title="Enable or disable delivery to this destination">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(event) => onChange({ enabled: event.target.checked })}
+          disabled={busy}
+        />
+        Enabled
+      </label>
+      <button type="button" className="quiet danger" onClick={onRemove} disabled={busy}>Remove</button>
+    </>
+  );
+  return (
+    <AccordionItem open={open} onToggle={onToggleOpen} summary={summary} actions={actions}>
+      <DestinationCard dest={dest} busy={busy} onChange={onChange} />
+    </AccordionItem>
+  );
+}
+
+// titleizeType gives a readable fallback name for a destination with no name set.
+function titleizeType(type) {
+  if (type === 'telegram') return 'Telegram';
+  if (type === 'mqtt') return 'MQTT';
+  return 'Webhook';
+}
+
 // DestinationCard edits one notification destination: its channel/target,
 // severity floor, category subscription, per-destination detection fields, and
 // static custom fields. When a custom field key collides with a built-in/AI
 // field, that field's toggle is disabled so the user sees the stock field is
 // bypassed (custom wins).
-function DestinationCard({ dest, busy, onChange, onRemove }) {
+function DestinationCard({ dest, busy, onChange }) {
   const isMqtt = dest.type === 'mqtt';
   const isTelegram = dest.type === 'telegram';
   const fields = dest.fields || defaultAlertNotificationConfig;
@@ -1745,7 +2002,8 @@ function DestinationCard({ dest, busy, onChange, onRemove }) {
 
   return (
     <div className="dest-card">
-      <div className="dest-card-head">
+      <label className="dest-name-field">
+        Name
         <input
           className="dest-name"
           value={dest.name || ''}
@@ -1753,13 +2011,7 @@ function DestinationCard({ dest, busy, onChange, onRemove }) {
           placeholder="Destination name"
           disabled={busy}
         />
-        <span className={`class-source-badge ${dest.type}`}>{dest.type}</span>
-        <label className="check-row compact">
-          <input type="checkbox" checked={dest.enabled !== false} onChange={(event) => onChange({ enabled: event.target.checked })} disabled={busy} />
-          Enabled
-        </label>
-        <button type="button" className="quiet danger" onClick={onRemove} disabled={busy}>Remove</button>
-      </div>
+      </label>
 
       {isMqtt ? (
         <>
@@ -1769,7 +2021,7 @@ function DestinationCard({ dest, busy, onChange, onRemove }) {
               <input value={mqtt.brokerUrl || ''} onChange={(event) => setMqtt({ brokerUrl: event.target.value })} placeholder="ssl://broker.example.com:8883" autoComplete="off" disabled={disabled} />
             </label>
             <label>
-              <FieldTitle info="Publish topic. Supports {{token}} placeholders from the payload data (cameraName, alertId, ruleId, detectionType, and label/confidence/ruleName when those fields are enabled) plus cameraId, category, severity. A token that resolves to nothing collapses its level (e.g. .../{{cameraId}} on a Test → no trailing slash).">
+              <FieldTitle info="Publish topic. Supports {{token}} placeholders from the payload data (cameraName, alertId, ruleId, detectionType, and label/confidence/ruleName when those fields are enabled; plate/vehicleType/color on license-plate alerts) plus cameraId, category, severity. A token that resolves to nothing collapses its level (e.g. .../{{cameraId}} on a Test → no trailing slash).">
                 Topic
               </FieldTitle>
               <input value={mqtt.topic || ''} onChange={(event) => setMqtt({ topic: event.target.value })} placeholder="matasan/alerts/{'{{cameraName}}'}" autoComplete="off" disabled={disabled} />
@@ -1894,6 +2146,11 @@ function DestinationCard({ dest, busy, onChange, onRemove }) {
             </label>
           );
         })}
+        <span className="field-hint">
+          License-plate (LPR) alerts also automatically include the <strong>plate number</strong>, and the
+          <strong> vehicle type</strong> &amp; <strong>color</strong> when detected — in both the message and the
+          payload (<code>plate</code>, <code>vehicleType</code>, <code>color</code>). No toggle needed.
+        </span>
       </fieldset>
 
       {!customKeys.has(alertFieldDataKeys.includeSnapshot) && fields.includeSnapshot !== false ? (
@@ -1909,7 +2166,7 @@ function DestinationCard({ dest, busy, onChange, onRemove }) {
 
       <fieldset className="dest-group">
         <legend>
-          <FieldTitle info="Key/value pairs added to the payload. A custom field overrides a built-in field of the same key. Values may use templates: {{ruleName}}, {{cameraName}}, {{label}}, {{confidence}}, {{detectionType}}, {{alertId}}, {{ruleId}}, {{cameraId}}.">
+          <FieldTitle info="Key/value pairs added to the payload. A custom field overrides a built-in field of the same key. Values may use templates: {{ruleName}}, {{cameraName}}, {{label}}, {{confidence}}, {{detectionType}}, {{alertId}}, {{ruleId}}, {{cameraId}}, and for license-plate alerts {{plate}}, {{vehicleType}}, {{color}}, {{watchlisted}}.">
             Custom fields
           </FieldTitle>
         </legend>
@@ -1927,7 +2184,46 @@ function DestinationCard({ dest, busy, onChange, onRemove }) {
         <button type="button" className="quiet" onClick={() => onChange({ customFields: [...customFields, { key: '', value: '' }] })} disabled={busy}>
           <span className="btn-icon"><Ico n="plus" /> Add field</span>
         </button>
+        <TemplateTokenHelp />
       </fieldset>
+    </div>
+  );
+}
+
+// TemplateTokenHelp renders the available {{token}} placeholders so users don't
+// have to guess them. Clicking a token copies "{{token}}" to the clipboard and
+// shows brief inline feedback (self-contained — no parent props needed).
+function TemplateTokenHelp() {
+  const [copied, setCopied] = useState('');
+  const groups = notificationTemplateTokens.reduce((acc, t) => {
+    (acc[t.group] = acc[t.group] || []).push(t);
+    return acc;
+  }, {});
+  async function copy(token) {
+    const text = `{{${token}}}`;
+    try { await navigator.clipboard.writeText(text); } catch (_) { /* clipboard may be blocked */ }
+    setCopied(token);
+    window.setTimeout(() => setCopied(''), 1200);
+  }
+  return (
+    <div className="template-token-help">
+      <span className="field-hint">Available placeholders (click to copy) — a token that resolves to nothing is left out of the payload:</span>
+      {Object.entries(groups).map(([group, tokens]) => (
+        <div key={group} className="token-group">
+          <strong className="token-group-label">{group}:</strong>
+          {tokens.map((t) => (
+            <button
+              key={t.token}
+              type="button"
+              className={`token-chip${copied === t.token ? ' copied' : ''}`}
+              title={t.desc}
+              onClick={() => copy(t.token)}
+            >
+              {copied === t.token ? 'copied ✓' : `{{${t.token}}}`}
+            </button>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }

@@ -14,6 +14,13 @@ Maps MyMataSan domain events (AI detection alerts, camera health transitions) in
 - `BuildAlertSnapshot(image, boundingBox, metadata, detectionType, fields)` — returns the snapshot bytes to attach: nil when the snapshot field is off; the raw image when the bounding-box field is off; otherwise the image with the detection box + object-label tag drawn on via `vision.AnnotateJPEG`, so the notification picture matches the AI Log detail overlay (which draws the box as a frontend overlay on the raw image).
 - `NotifyCameraOffline` / `NotifyCameraRecovered` — publish camera health-check notifications with downtime context.
 
+## LPR fields in rendered alerts
+
+`renderVisionAlert` calls `plateInfoFromMetadata` to extract `plate`, `vehicleType`, `color`, and `watchlisted` from the alert's top-level metadata (promoted there by `infra/vision/object.go`). When `plate` is non-empty:
+- If the label is not shown in the body (`!fields.IncludeLabel`), a `"• plate WXY1234 (white car)"` line is appended so the plate text always reaches text-only destinations (Telegram).
+- `plate`, `watchlisted`, and (when present) `vehicleType` / `color` are added to the structured `data` map for webhook/MQTT consumers.
+- Template context gains `{{plate}}`, `{{vehicleType}}`, `{{color}}`, and `{{watchlisted}}` tokens; on non-LPR alerts these resolve to the empty string.
+
 ## Notes
 
 - `VisionAlertOptions` carries `RuleName`, `Snapshot []byte`, and `Fields *AlertNotificationSettings`. A nil `Fields` means "include everything" (matches the runtime default).

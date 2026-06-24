@@ -15,6 +15,7 @@ Exposes HTTP endpoints for camera (ONVIF device) management in the MyMataSan app
 | DELETE | `/api/cameras/{id}`     | `delete`         | Deletes a saved camera. |
 | GET    | `/api/cameras/{id}/encoder` | `getEncoder` | Reads the camera's current ONVIF video encoder config (codec, resolution, fps, bitrate) for its recording profile. |
 | POST   | `/api/cameras/{id}/encoder` | `applyEncoder` | Pushes a recording codec (`h264`/`h265`) + optional `bitrateLimitKbps` to the camera's own encoder via ONVIF (zero host cost; host stays stream-copy). |
+| GET    | `/api/cameras/{id}/lpr-capability` | `lprCapability` | Returns `LPRCapabilityResult` — whether the camera can supply plate-legible frames and (when ONVIF profiles are readable) the highest-resolution profile's RTSP URL for auto-pick capture. Best-effort and cached server-side (15 min TTL). |
 
 (PTZ, stream-options, stream-uri, live-view, webrtc, and password routes are also registered here.)
 

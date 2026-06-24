@@ -68,8 +68,41 @@ def _custom_model_path() -> str:
     return ""
 
 
+def _lpr_model_path() -> str:
+    """The optional license-plate (LPR/ALPR) detector, taken from the LPR pointer
+    file (written by Settings -> AI -> License Plate Model) in priority:
+
+    1. MYMATASAN_LPR_MODEL env (explicit override, file path).
+    2. The LPR pointer file (MYMATASAN_LPR_MODEL_FILE env or lpr_model.txt next to
+       this script) — its content is a local .pt path chosen/downloaded in the UI.
+
+    Returns "" when no plate model is configured (LPR disabled). When set to a YOLO
+    .pt trained to localize plates, the worker runs a second stage on frames that
+    request it (request "lpr": true) — crop each plate at full resolution, OCR it,
+    infer the enclosing vehicle's type/color, and emit a "license plate" candidate
+    carrying {plate, ocrConfidence, vehicleType, color} in metadata.
+    """
+    explicit = os.environ.get("MYMATASAN_LPR_MODEL", "").strip()
+    if explicit and Path(explicit).is_file():
+        return explicit
+    pointer = os.environ.get("MYMATASAN_LPR_MODEL_FILE", "").strip()
+    pointer_path = Path(pointer) if pointer else (SCRIPT_DIR / "lpr_model.txt")
+    try:
+        if pointer_path.is_file():
+            chosen = pointer_path.read_text(encoding="utf-8").strip()
+            if chosen and Path(chosen).is_file():
+                return chosen
+    except OSError:
+        pass
+    return ""
+
+
 STOCK_MODEL_PATH = _stock_model_path()
 CUSTOM_MODEL_PATH = _custom_model_path()
+LPR_MODEL_PATH = _lpr_model_path()
+# OCR backend confidence is read per-character/line; this floors what we emit so a
+# blurry partial read is reported as "" (no plate) rather than a wrong string.
+LPR_OCR_MIN_CONF = float(os.environ.get("MYMATASAN_LPR_OCR_MIN_CONF", "0.3"))
 CONFIDENCE = float(os.environ.get("MYMATASAN_YOLO_CONF", "0.25"))
 DEVICE = os.environ.get("MYMATASAN_YOLO_DEVICE", "").strip()
 IMGSZ_RAW = os.environ.get("MYMATASAN_YOLO_IMGSZ", "").strip()
@@ -203,7 +236,180 @@ def _merge(stock_dets: list[dict[str, Any]], custom_dets: list[dict[str, Any]]) 
     return kept
 
 
-def _detect(stock_model: Any, custom_model: Any, request: dict[str, Any]) -> list[dict[str, Any]]:
+# --- License-plate (LPR) stage -------------------------------------------------
+#
+# Everything below is lazy and guarded: if the plate model or OCR backend is
+# missing or errors, the LPR stage disables itself and stock/custom detection are
+# unaffected. Plate detection localizes; OCR reads; color/vehicle-type enrich.
+
+_OCR_READER: Any = None
+_OCR_DISABLED = False
+_VEHICLE_LABELS = {"car", "truck", "bus", "motorcycle", "motorbike", "van"}
+
+
+def _ocr_reader() -> Any:
+    """Lazily build an OCR reader, preferring fast_plate_ocr, then easyocr.
+    Returns None (and disables further attempts) if neither is importable."""
+    global _OCR_READER, _OCR_DISABLED
+    if _OCR_DISABLED:
+        return None
+    if _OCR_READER is not None:
+        return _OCR_READER
+    # easyocr is the most common general backend; the recognizer is created once
+    # and reused. GPU is used automatically when torch reports CUDA.
+    try:
+        import easyocr  # type: ignore
+
+        _OCR_READER = easyocr.Reader(["en"], gpu=_HAS_CUDA, verbose=False)
+        return _OCR_READER
+    except Exception as exc:  # pragma: no cover - depends on host deps
+        print(f"lpr: OCR backend unavailable, plate text disabled: {exc}", file=sys.stderr, flush=True)
+        _OCR_DISABLED = True
+        return None
+
+
+def _ocr_plate(crop: Any) -> tuple[str, float]:
+    """OCR a cropped plate image (numpy BGR). Returns (text, confidence) with text
+    upper-cased and stripped to alphanumerics; ("", 0.0) when unreadable."""
+    reader = _ocr_reader()
+    if reader is None or crop is None or crop.size == 0:
+        return "", 0.0
+    try:
+        results = reader.readtext(crop)
+    except Exception:
+        return "", 0.0
+    best_text, best_conf = "", 0.0
+    for item in results:
+        # easyocr returns (bbox, text, confidence)
+        text = "".join(ch for ch in str(item[1]).upper() if ch.isalnum())
+        conf = float(item[2]) if len(item) > 2 else 0.0
+        if text and conf >= best_conf:
+            best_text, best_conf = text, conf
+    if best_conf < LPR_OCR_MIN_CONF:
+        return "", 0.0
+    return best_text, best_conf
+
+
+# Coarse HSV ranges → color names. Plate/vehicle color only needs to be roughly
+# right ("a white car"), so a small lookup beats a model here.
+def _vehicle_color(crop: Any) -> str:
+    if crop is None or crop.size == 0:
+        return ""
+    try:
+        import cv2  # type: ignore
+        import numpy as np  # type: ignore
+    except Exception:
+        return ""
+    try:
+        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+        h = float(np.median(hsv[:, :, 0]))
+        s = float(np.median(hsv[:, :, 1]))
+        v = float(np.median(hsv[:, :, 2]))
+    except Exception:
+        return ""
+    if v < 50:
+        return "black"
+    if s < 40:
+        return "white" if v > 170 else "gray"
+    if h < 10 or h >= 160:
+        return "red"
+    if h < 25:
+        return "orange"
+    if h < 35:
+        return "yellow"
+    if h < 85:
+        return "green"
+    if h < 130:
+        return "blue"
+    return "purple"
+
+
+def _contains(outer: dict[str, float], inner: dict[str, float]) -> bool:
+    """Whether the inner box's centre falls inside the outer box (used to find the
+    vehicle that a plate belongs to)."""
+    cx = inner["x"] + inner["w"] / 2
+    cy = inner["y"] + inner["h"] / 2
+    return outer["x"] <= cx <= outer["x"] + outer["w"] and outer["y"] <= cy <= outer["y"] + outer["h"]
+
+
+def _associate_vehicle(plate_box: dict[str, float], stock_dets: list[dict[str, Any]]) -> str:
+    """Find the vehicle type for a plate by locating the smallest stock vehicle
+    detection whose box contains the plate. Smallest = tightest enclosing vehicle."""
+    best_label, best_area = "", 2.0  # areas are normalized (<=1), so 2.0 = "none yet"
+    for det in stock_dets:
+        if det["label"] not in _VEHICLE_LABELS:
+            continue
+        if not _contains(det["box"], plate_box):
+            continue
+        area = det["box"]["w"] * det["box"]["h"]
+        if area < best_area:
+            best_label, best_area = det["label"], area
+    return best_label
+
+
+def _lpr_detect(
+    plate_model: Any, tmp_path: str, kwargs: dict[str, Any], stock_dets: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Run plate localization + OCR + enrichment. Returns "license plate" candidates."""
+    try:
+        import cv2  # type: ignore
+    except Exception:
+        return []
+    image = cv2.imread(tmp_path)
+    if image is None:
+        return []
+    img_h, img_w = image.shape[:2]
+    if not img_w or not img_h:
+        return []
+
+    # Localize plates (the plate model has its own classes; we treat every box as a
+    # plate region and let OCR decide readability).
+    plate_boxes = _run_model(plate_model, LPR_MODEL_PATH, tmp_path, kwargs)
+    out: list[dict[str, Any]] = []
+    for det in plate_boxes:
+        box = det["box"]
+        x1 = int(box["x"] * img_w)
+        y1 = int(box["y"] * img_h)
+        x2 = int((box["x"] + box["w"]) * img_w)
+        y2 = int((box["y"] + box["h"]) * img_h)
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(img_w, x2), min(img_h, y2)
+        if x2 <= x1 or y2 <= y1:
+            continue
+        plate_crop = image[y1:y2, x1:x2]
+        text, conf = _ocr_plate(plate_crop)
+        if not text:
+            continue
+        vehicle_type = _associate_vehicle(box, stock_dets)
+        color = ""
+        # Color the vehicle, not the plate: find the enclosing vehicle box to sample.
+        for vdet in stock_dets:
+            if vdet["label"] in _VEHICLE_LABELS and _contains(vdet["box"], box):
+                vx1 = max(0, int(vdet["box"]["x"] * img_w))
+                vy1 = max(0, int(vdet["box"]["y"] * img_h))
+                vx2 = min(img_w, int((vdet["box"]["x"] + vdet["box"]["w"]) * img_w))
+                vy2 = min(img_h, int((vdet["box"]["y"] + vdet["box"]["h"]) * img_h))
+                if vx2 > vx1 and vy2 > vy1:
+                    color = _vehicle_color(image[vy1:vy2, vx1:vx2])
+                break
+        out.append(
+            {
+                "label": "license plate",
+                "confidence": det["confidence"],
+                "box": box,
+                "metadata": {
+                    "model": LPR_MODEL_PATH,
+                    "plate": text,
+                    "ocrConfidence": conf,
+                    "vehicleType": vehicle_type,
+                    "color": color,
+                },
+            }
+        )
+    return out
+
+
+def _detect(stock_model: Any, custom_model: Any, plate_model: Any, request: dict[str, Any]) -> list[dict[str, Any]]:
     camera_id = int(request.get("cameraId") or 0)
     image_b64 = str(request.get("image") or "")
     if not image_b64:
@@ -211,6 +417,7 @@ def _detect(stock_model: Any, custom_model: Any, request: dict[str, Any]) -> lis
 
     image_bytes = base64.b64decode(image_b64)
     kwargs = _build_kwargs(request)
+    want_lpr = bool(request.get("lpr")) and plate_model is not None
     tmp_path = ""
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
@@ -218,11 +425,16 @@ def _detect(stock_model: Any, custom_model: Any, request: dict[str, Any]) -> lis
             tmp_path = tmp.name
         stock_dets = _run_model(stock_model, STOCK_MODEL_PATH, tmp_path, kwargs)
         custom_dets = _run_model(custom_model, CUSTOM_MODEL_PATH, tmp_path, kwargs) if custom_model is not None else []
+        # The plate stage reuses the SAME captured frame (no second grab) and the
+        # stock detections (for vehicle type/color), so enabling LPR adds only OCR
+        # compute, not another decode — see the per-camera gating note.
+        lpr_dets = _lpr_detect(plate_model, tmp_path, kwargs, stock_dets) if want_lpr else []
     finally:
         if tmp_path:
             Path(tmp_path).unlink(missing_ok=True)
 
-    detections = _merge(stock_dets, custom_dets) if custom_dets else stock_dets
+    detections = _merge(stock_dets, custom_dets) if custom_dets else list(stock_dets)
+    detections += lpr_dets
 
     if DEBUG:
         if detections:
@@ -260,13 +472,27 @@ def main() -> int:
             print(f"failed to load custom YOLO model ({CUSTOM_MODEL_PATH}): {exc}", file=sys.stderr, flush=True)
             custom_model = None
 
+    # The plate model is optional and only used on frames that request "lpr":true.
+    # Loading it must not take down stock detection.
+    plate_model = None
+    if LPR_MODEL_PATH:
+        if Path(LPR_MODEL_PATH).is_file():
+            try:
+                plate_model = _load_model(LPR_MODEL_PATH)
+            except Exception as exc:
+                print(f"failed to load LPR model ({LPR_MODEL_PATH}): {exc}", file=sys.stderr, flush=True)
+                plate_model = None
+        else:
+            print(f"lpr: MYMATASAN_LPR_MODEL set but not a file: {LPR_MODEL_PATH}", file=sys.stderr, flush=True)
+
     _HAS_CUDA = _check_cuda()
     device_label = "cuda" if _HAS_CUDA else "cpu"
     if DEVICE:
         device_label = DEVICE
     custom_label = CUSTOM_MODEL_PATH if custom_model is not None else "none"
+    lpr_label = LPR_MODEL_PATH if plate_model is not None else "none"
     print(
-        f"yolo_worker ready: stock={STOCK_MODEL_PATH} custom={custom_label} device={device_label} cuda={_HAS_CUDA}",
+        f"yolo_worker ready: stock={STOCK_MODEL_PATH} custom={custom_label} lpr={lpr_label} device={device_label} cuda={_HAS_CUDA}",
         file=sys.stderr,
         flush=True,
     )
@@ -278,7 +504,7 @@ def main() -> int:
                 continue
             try:
                 request = json.loads(line)
-                _write(_detect(stock_model, custom_model, request))
+                _write(_detect(stock_model, custom_model, plate_model, request))
             except Exception as exc:
                 _write({"error": str(exc)})
     except KeyboardInterrupt:

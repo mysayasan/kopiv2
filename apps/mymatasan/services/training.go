@@ -61,6 +61,10 @@ type trainingService struct {
 	dataDir         string
 	activeModelFile string
 	stockModelFile  string
+	// lprModelFile is the pointer file the YOLO worker reads to load the optional
+	// license-plate detector (separate slot from stock/custom — it's a second-stage
+	// detector, not merged into general detection).
+	lprModelFile string
 	// detector is the shared object-detection backend (also used by the live
 	// monitor). nil in motion mode — auto-label then reports it is unavailable.
 	detector      vision.ObjectDetector
@@ -93,6 +97,7 @@ func NewTrainingService(
 	dataDir string,
 	activeModelFile string,
 	stockModelFile string,
+	lprModelFile string,
 	detector vision.ObjectDetector,
 	minConfidence float64,
 	trainCfg TrainingRunConfig,
@@ -114,6 +119,7 @@ func NewTrainingService(
 		dataDir:         dir,
 		activeModelFile: strings.TrimSpace(activeModelFile),
 		stockModelFile:  strings.TrimSpace(stockModelFile),
+		lprModelFile:    strings.TrimSpace(lprModelFile),
 		detector:        detector,
 		minConfidence:   minConfidence,
 		trainCfg:        trainCfg,

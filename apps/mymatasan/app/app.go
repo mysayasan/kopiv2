@@ -175,6 +175,8 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	_ = os.Setenv("MYMATASAN_ACTIVE_MODEL_FILE", activeModelFile)
 	stockModelFile, _ := filepath.Abs(filepath.Join(trainingDir, "stock_model.txt"))
 	_ = os.Setenv("MYMATASAN_STOCK_MODEL_FILE", stockModelFile)
+	lprModelFile, _ := filepath.Abs(filepath.Join(trainingDir, "lpr_model.txt"))
+	_ = os.Setenv("MYMATASAN_LPR_MODEL_FILE", lprModelFile)
 	objectBackend, backendErr := buildTrainingObjectDetector(deps.Config.Vision.Detector)
 	if backendErr != nil {
 		deps.Logger.Warnf("mymatasan.vision", "object detector backend unavailable (%v); auto-label and custom models are disabled", backendErr)
@@ -210,6 +212,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		trainingDir,
 		activeModelFile,
 		stockModelFile,
+		lprModelFile,
 		objectBackend,
 		deps.Config.Vision.Detector.MinObjectConfidence,
 		trainingRunConfigFromAppConfig(deps.Config, deps.ConfigPath),
@@ -562,6 +565,46 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		}()
 	}
 
+	// Purge expired AI detection alerts on a configured interval (and once at
+	// startup). DiagnosticRetentionDays trims the noisy Vision-monitor diagnostics;
+	// AlertRetentionDays (0 = keep forever) trims real detections too. Both also
+	// unlink the snapshot image files of the rows they remove.
+	{
+		interval := time.Duration(deps.Config.Vision.AlertPurgeIntervalHours) * time.Hour
+		if interval <= 0 {
+			interval = 6 * time.Hour
+		}
+		go func() {
+			purge := func() {
+				if days := deps.Config.Vision.DiagnosticRetentionDays; days > 0 {
+					if deleted, err := visionService.PurgeAlertsOlderThanDays(monitorCtx, days, true); err != nil {
+						deps.Logger.Warnf("mymatasan.vision", "diagnostic alert purge failed: %v", err)
+					} else if deleted > 0 {
+						deps.Logger.Infof("mymatasan.vision", "purged %d diagnostic alerts older than %d day(s)", deleted, days)
+					}
+				}
+				if days := deps.Config.Vision.AlertRetentionDays; days > 0 {
+					if deleted, err := visionService.PurgeAlertsOlderThanDays(monitorCtx, days, false); err != nil {
+						deps.Logger.Warnf("mymatasan.vision", "alert purge failed: %v", err)
+					} else if deleted > 0 {
+						deps.Logger.Infof("mymatasan.vision", "purged %d alerts older than %d day(s)", deleted, days)
+					}
+				}
+			}
+			purge()
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					purge()
+				case <-monitorCtx.Done():
+					return
+				}
+			}
+		}()
+	}
+
 	return func(ctx context.Context) error {
 		stopMonitor()
 		recorderManager.Close()
@@ -697,6 +740,7 @@ func visionMonitorSettingsFromAppConfig(cfg *config.AppConfigModel) services.Vis
 		Interval:                  int64(cfg.Vision.IntervalMs),
 		CaptureTimeout:            int64(cfg.Vision.CaptureTimeoutMs),
 		DiagnosticCooldownSeconds: int64(cfg.Vision.DiagnosticCooldownSeconds),
+		PersistSampledDiagnostics: cfg.Vision.PersistSampledDiagnostics,
 		SnapshotDir:               snapshotDir,
 	}
 }

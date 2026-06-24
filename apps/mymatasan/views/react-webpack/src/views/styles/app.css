@@ -3548,6 +3548,19 @@ dd {
   text-anchor: middle;
   dominant-baseline: central;
 }
+/* Direction indicator on a crossing line: points to the side an object must move
+   toward to trigger (double-headed for "either direction"). */
+.crossing-arrow {
+  stroke: var(--accent, #2e9e6b);
+  stroke-width: 2;
+  pointer-events: none;
+}
+.crossing-arrow-head {
+  fill: var(--accent, #2e9e6b);
+  stroke: rgba(15, 23, 33, 0.7);
+  stroke-width: 0.4;
+  pointer-events: none;
+}
 
 .zone-point {
   fill: var(--accent);
@@ -4892,29 +4905,120 @@ button .btn-icon {
 }
 
 /* Notification delivery destinations (Settings → Notifications) */
+/* Inline-accordion standard (AccordionList/AccordionItem in ui.js): a compact
+   summary row per item that expands to its body. Shared by notification
+   destinations, AI detection rules, and any future list editor. */
+.accordion-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.accordion-item {
+  border: 1px solid var(--border-panel);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  overflow: hidden;
+}
+.accordion-item.open {
+  border-color: var(--accent, #2e9e6b);
+}
+.accordion-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  flex-wrap: wrap;
+}
+.accordion-summary-main {
+  flex: 1 1 240px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  background: none;
+  border: none;
+  padding: 4px 0;
+  margin: 0;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+.accordion-chevron {
+  display: inline-flex;
+  opacity: 0.7;
+  flex: 0 0 auto;
+}
+.accordion-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+}
+.accordion-actions .check-row.compact {
+  margin: 0;
+  white-space: nowrap;
+}
+/* Reusable summary content bits. */
+.accordion-title {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+}
+.accordion-muted {
+  opacity: 0.7;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.accordion-tag {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+  flex: 0 0 auto;
+}
+/* The expanded body sits flush inside the item (the item supplies the frame). */
+.accordion-body {
+  border-top: 1px solid var(--border-panel);
+  padding: 12px;
+}
+/* A destination/rule form rendered as an accordion body drops its own frame so
+   the item provides it. */
+.accordion-body > .dest-card,
+.accordion-body > .vision-rule-form {
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+}
 .dest-card {
   border: 1px solid var(--border-panel);
   border-radius: 8px;
   padding: 12px;
-  margin-bottom: 12px;
+  margin: 0;
   background: var(--bg-subtle);
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
-.dest-card-head {
+.dest-name-field {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 4px;
 }
-.dest-card-head .dest-name {
-  flex: 1 1 160px;
-  min-width: 120px;
-}
-.dest-card-head .check-row.compact {
-  margin: 0;
-  white-space: nowrap;
+.dest-name-field .dest-name {
+  max-width: 320px;
 }
 .dest-group {
   border: 1px solid var(--border-panel);
@@ -4937,6 +5041,39 @@ button .btn-icon {
 .dest-custom-row > input {
   flex: 1 1 120px;
   min-width: 90px;
+}
+.template-token-help {
+  margin-top: 10px;
+}
+.template-token-help .token-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.template-token-help .token-group-label {
+  font-size: 0.78rem;
+  color: var(--text-muted, #888);
+  min-width: 84px;
+}
+.template-token-help .token-chip {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.76rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border, #3a3a3a);
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+  color: var(--text-link, #6db3f2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.template-token-help .token-chip:hover {
+  border-color: var(--text-link, #6db3f2);
+}
+.template-token-help .token-chip.copied {
+  color: var(--status-ok, #4caf50);
+  border-color: var(--status-ok, #4caf50);
 }
 .dest-sample > summary {
   cursor: pointer;

@@ -1,8 +1,18 @@
 {
   "jwt": {
-    "secret": "standalone-dev-secret"
+    "secret": "-LTiwB7MO8H_zStaebzs3ZC1rHoDnJnuUWM1w3izKok"
+  },
+  "loginSecurity": {
+    "enabled": true,
+    "maxAttempts": 5,
+    "windowSeconds": 300,
+    "lockoutSeconds": 60,
+    "lockoutMaxSeconds": 900,
+    "failedDelayMs": 500,
+    "notifyOnLockout": true
   },
   "decoder": {
+    "browseRoots": [],
     "mjpeg": {
       "ffmpegPath": "D:\\github\\mysayasan\\kopiv2\\.tools\\ffmpeg\\ffmpeg-8.1.1-essentials_build\\bin\\ffmpeg.exe",
       "quality": 7,
@@ -32,11 +42,15 @@
   "vision": {
     "enabled": true,
     "intervalMs": 2000,
-    "captureTimeoutMs": 12000,
+    "captureTimeoutMs": 5000,
     "diagnosticCooldownSeconds": 30,
+    "persistSampledDiagnostics": false,
+    "diagnosticRetentionDays": 3,
+    "alertRetentionDays": 0,
+    "alertPurgeIntervalHours": 6,
     "detector": {
       "mode": "persistent",
-      "command": "python",
+      "command": "C:\\Users\\muham\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
       "args": ["./apps/mymatasan/ai/yolo_worker.py"],
       "timeoutMs": 8000,
       "useMotionFallback": true,
@@ -53,6 +67,30 @@
         "multi_line_crossing": ["person", "vehicle", "car", "truck", "bus", "motorcycle", "bicycle"]
       }
     }
+  },
+  "health": {
+    "enabled": true,
+    "intervalMs": 30000,
+    "timeoutMs": 5000,
+    "failureThreshold": 3,
+    "recoveryThreshold": 2
+  },
+  "notification": {
+    "webhook": {
+      "enabled": false,
+      "url": "",
+      "minSeverity": "warning"
+    },
+    "telegram": {
+      "enabled": false,
+      "botToken": "",
+      "chatId": "",
+      "minSeverity": "warning"
+    },
+    "sseClientBuffer": 16,
+    "retentionDays": 30,
+    "purgeIntervalHours": 6,
+    "purgeReadOnly": false
   },
   "fileStorage": {
     "path": "./uploads",
@@ -87,7 +125,7 @@
     "authOnly": {
       "enabled": true,
       "requests": 120,
-      "windowSeconds": 60
+      "windowSeconds": 20
     },
     "public": {
       "enabled": true,
@@ -135,32 +173,36 @@
     "keyPath": "./certs/key.pem"
   },
   "server": {
-    "hostnames": ["*"],
-    "tlsPorts": [],
-    "nonTlsPorts": [3000],
+    "hostnames": [
+      "*"
+    ],
+    "tlsPorts": [
+      3000
+    ],
+    "nonTlsPorts": [],
     "readHeaderTimeoutSeconds": 5,
     "readTimeoutSeconds": 0,
     "writeTimeoutSeconds": 0,
     "idleTimeoutSeconds": 120
   },
-  "allowOrigins": "*",
+  "allowOrigins": "https://192.168.1.50",
   "bootstrap": {
     "enabled": true,
     "autoCreateDatabase": true,
     "autoCreateSchema": true,
     "autoMigrate": true,
     "autoSeed": true,
-    "allowReset": false,
+    "allowReset": true,
     "setupPath": "/setup",
     "seedStatements": []
   },
   "db": {
-    "engine": "sqlite",
-    "host": "",
-    "port": 0,
-    "user": "",
-    "password": "",
-    "db_name": "./data/mymatasan.db",
-    "ssl_mode": ""
+    "engine": "postgres",
+    "host": "localhost",
+    "port": 5433,
+    "user": "postgres",
+    "password": "postgres",
+    "db_name": "mymatasandb",
+    "ssl_mode": "disable"
   }
 }

@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Ico } from './icons';
-import { FormBusyOverlay } from './ui';
+import { FormBusyOverlay, AccordionList, AccordionItem } from './ui';
 import { useSnapshotBlob } from '../hooks';
 import { scheduleDayOptions } from '../lib/constants';
-import {todayDateString,apiBase,fieldValue,formatTimestamp,parseMetadata,formatPercent,parseBoundingBox,formatSourceLabel,cameraTitle,orderedSavedCameras,parseZonePolygon,defaultZonePolygon,normalizeLineConfig,parseLineRuleConfig,lineRuleConfigText,lineCountFromRule,parseCrowdRuleConfig,detectionModes,modeFromDetectionType,detectionTypeForMode,targetClassesFromRule,buildRuleConfigForMode,ruleDestinationsFromConfig,applyRuleDestinations,groupedClassOptions,classDisplayName,defaultVisionRuleDraft,weeklySchedulePolicy,rangeSchedulePolicy,schedulePresetPolicy,scheduleDraftFromPolicy,scheduleSummary } from '../lib/helpers';
+import {todayDateString,apiBase,fieldValue,formatTimestamp,parseMetadata,formatPercent,parseBoundingBox,formatSourceLabel,cameraTitle,orderedSavedCameras,parseZonePolygon,defaultZonePolygon,normalizeLineConfig,parseLineRuleConfig,lineRuleConfigText,lineCountFromRule,parseCrowdRuleConfig,parseLPRRuleConfig,lprRuleConfigText,detectionModes,modeFromDetectionType,detectionTypeForMode,targetClassesFromRule,buildRuleConfigForMode,ruleDestinationsFromConfig,applyRuleDestinations,groupedClassOptions,classDisplayName,defaultVisionRuleDraft,weeklySchedulePolicy,rangeSchedulePolicy,schedulePresetPolicy,scheduleDraftFromPolicy,scheduleSummary } from '../lib/helpers';
 import { ZoneDrawingPreview, LineDrawingPreview } from './previews';
 import { SavedDeviceNav } from './cameras';
 
@@ -51,8 +51,10 @@ export function VisionTab({
   const mode = modeFromDetectionType(ruleDraft.detectionType);
   const lineRule = mode === 'line_crossing' || mode === 'multi_line_crossing';
   const crowdRule = mode === 'crowd';
+  const lprRule = mode === 'lpr';
   const lineRuleConfig = parseLineRuleConfig(ruleDraft.ruleConfig, mode === 'multi_line_crossing' ? 'multi_line_crossing' : 'line_crossing');
   const crowdRuleConfig = parseCrowdRuleConfig(ruleDraft.ruleConfig);
+  const lprRuleConfig = parseLPRRuleConfig(ruleDraft.ruleConfig);
   const targetClasses = targetClassesFromRule(ruleDraft);
   const ruleDestinations = ruleDestinationsFromConfig(ruleDraft.ruleConfig);
   const destinationOptions = (destinations || []).filter((d) => d && d.id);
@@ -61,6 +63,47 @@ export function VisionTab({
   const scheduleDraft = scheduleDraftFromPolicy(ruleDraft.schedulePolicy);
   const [logSelectedAlertId, setLogSelectedAlertId] = useState(null);
   const [aiView, setAiView] = useState('rules');
+  // Which rule's inline editor is expanded: a rule id, the sentinel 'new' for an
+  // unsaved new rule, or null for none. The editor form is rendered inside the
+  // open accordion row and is bound to the single shared ruleDraft.
+  const [openRuleId, setOpenRuleId] = useState(null);
+  // LPR capability of the selected camera — gates the "License plate" mode option
+  // so it only appears on cameras that can supply plate-legible frames. null while
+  // unknown/loading (option stays available so we never hide it spuriously).
+  const [lprCap, setLprCap] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLprCap(null);
+    if (!selectedCameraId) return undefined;
+    (async () => {
+      try {
+        const headers = authHeader ? { Authorization: authHeader } : {};
+        const resp = await fetch(`${apiBase()}/api/cameras/${selectedCameraId}/lpr-capability`, { credentials: 'include', headers });
+        const text = await resp.text();
+        const payload = text ? JSON.parse(text) : null;
+        const result = payload?.data?.result ?? payload?.result ?? payload;
+        if (!cancelled) setLprCap(result || null);
+      } catch (_) { if (!cancelled) setLprCap(null); }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedCameraId, authHeader]);
+
+  // The LPR mode is offered unless the camera is known to be too low-resolution.
+  // Keeping the current rule's mode visible avoids an existing LPR rule vanishing.
+  const lprAllowed = !lprCap || lprCap.supported || mode === 'lpr';
+  const availableModes = detectionModes.filter(([value]) => value !== 'lpr' || lprAllowed);
+
+  // Auto-close the editor when the shared draft no longer matches the open rule —
+  // e.g. after a successful save resets the draft to a blank new rule. Opening a
+  // rule sets the draft and openRuleId together (batched), so this never fires
+  // mid-open. The 'new' editor stays open (its draft id is always empty) so the
+  // user can add another rule immediately.
+  useEffect(() => {
+    if (openRuleId !== null && openRuleId !== 'new' && Number(ruleDraft.id) !== Number(openRuleId)) {
+      setOpenRuleId(null);
+    }
+  }, [ruleDraft.id, openRuleId]);
 
   // Alert Log — self-contained server-paged state
   const logPageSize = 20;
@@ -69,7 +112,9 @@ export function VisionTab({
   const [logAlerts, setLogAlerts] = useState([]);
   const [logTotal, setLogTotal] = useState(0);
   const [logLoading, setLogLoading] = useState(false);
-  const [logStatus, setLogStatus] = useState('');
+  // Default to real detections only — the Vision monitor's "sampled" diagnostics
+  // are hidden unless the user explicitly selects the Diagnostic filter.
+  const [logStatus, setLogStatus] = useState('detections');
   const [logRuleId, setLogRuleId] = useState('');
 
   const fetchLogAlerts = useCallback(async (cameraId, page, dateStr, status, ruleId) => {
@@ -110,6 +155,27 @@ export function VisionTab({
     }
   }, [authHeader]);
 
+  // purgeLogAlerts clears alert rows server-side (days=0 → everything up to now),
+  // then reloads. onlyDiagnostics=true removes just the Vision-monitor diagnostics;
+  // false also clears real detections (and their snapshot files). Global, not
+  // per-camera — diagnostics are noise across all cameras.
+  const purgeLogAlerts = useCallback(async (onlyDiagnostics) => {
+    setLogLoading(true);
+    try {
+      const headers = authHeader ? { Authorization: authHeader } : {};
+      const params = new URLSearchParams({ days: '0' });
+      if (onlyDiagnostics) params.set('onlyDiagnostics', 'true');
+      const resp = await fetch(`${apiBase()}/api/vision/alerts/purge?${params}`, { method: 'POST', credentials: 'include', headers });
+      if (!resp.ok) throw new Error(`${resp.status}`);
+    } catch (_) {
+      // Swallow — the reload below reflects whatever state the server is in.
+    } finally {
+      setLogLoading(false);
+    }
+    setLogPage(0);
+    fetchLogAlerts(selectedCamera?.id, 0, logDate, logStatus, logRuleId);
+  }, [authHeader, fetchLogAlerts, selectedCamera?.id, logDate, logStatus, logRuleId]);
+
   useEffect(() => {
     setLogPage(0);
   }, [selectedCamera?.id, logDate, logStatus, logRuleId]);
@@ -145,7 +211,25 @@ export function VisionTab({
   }, [logAlerts, logSelectedAlertId]);
 
   function selectCamera(cameraId) {
+    setOpenRuleId(null);
     onRuleDraft(defaultVisionRuleDraft(cameraId));
+  }
+
+  // toggleRule expands a rule into the inline editor (loading it into the shared
+  // draft) or collapses it when it is already open.
+  function toggleRule(rule) {
+    if (openRuleId === rule.id) {
+      setOpenRuleId(null);
+      return;
+    }
+    onEditRule(rule);
+    setOpenRuleId(rule.id);
+  }
+
+  // addRule opens a blank new-rule editor for the selected camera.
+  function addRule() {
+    onRuleDraft(defaultVisionRuleDraft(selectedCamera.id));
+    setOpenRuleId('new');
   }
 
   function changeSchedulePreset(preset) {
@@ -207,6 +291,20 @@ export function VisionTab({
     onRuleDraft({ ...ruleDraft, ruleConfig: applyRuleDestinations(buildRuleConfigForMode('crowd', targetClasses, JSON.stringify({ minCount })), ruleDestinations) });
   }
 
+  function changeLprConfig(patch) {
+    const next = { ...lprRuleConfig, ...patch };
+    onRuleDraft({ ...ruleDraft, ruleConfig: applyRuleDestinations(lprRuleConfigText(next), ruleDestinations) });
+  }
+  // The watchlist is edited as free text (one plate per line / comma-separated);
+  // parse + normalize on change so stored plates compare cleanly with OCR reads.
+  function changeLprPlates(text) {
+    const plates = String(text || '')
+      .split(/[\n,]+/)
+      .map((p) => p.trim().toUpperCase().replace(/[^A-Z0-9]/g, ''))
+      .filter(Boolean);
+    changeLprConfig({ plates });
+  }
+
   function toggleScheduleDay(day) {
     const current = new Set(scheduleDraft.days);
     if (current.has(day)) {
@@ -220,6 +318,13 @@ export function VisionTab({
     }
     changeCustomSchedule({ days });
   }
+
+  // ruleRows is the accordion's data: the camera's rules, plus a synthetic
+  // trailing row (__newRule) when adding so the new-rule editor opens inline like
+  // any other row.
+  const ruleRows = openRuleId === 'new'
+    ? [...selectedRules, { id: 'new', __newRule: true }]
+    : selectedRules;
 
   return (
     <section className="workspace">
@@ -255,21 +360,49 @@ export function VisionTab({
               <section className="settings-panel">
                 <header>
                   <div>
-                    <h2>{cameraTitle(selectedCamera)}</h2>
+                    <h2>Detection Rules — {cameraTitle(selectedCamera)}</h2>
                     <p className="section-subtitle">{selectedCamera.host || selectedCamera.xAddr || 'Saved camera'}</p>
                   </div>
                   <span className="status-pill">{selectedRules.length} rules</span>
                 </header>
-                <form className="vision-rule-form" onSubmit={onSaveRule}>
-                  <FormBusyOverlay busy={busy} />
-                  <header>
-                    <h2>{ruleDraft.id ? 'Edit Rule' : 'New Rule'}</h2>
-                    {ruleDraft.id ? (
-                      <button type="button" className="quiet" onClick={() => onRuleDraft(defaultVisionRuleDraft(selectedCamera.id))} disabled={busy}>
-                        <span className="btn-icon"><Ico n="plus" /> New Rule</span>
-                      </button>
-                    ) : null}
-                  </header>
+                {selectedRules.length === 0 && openRuleId !== 'new' ? (
+                  <p className="empty">No AI detection rules for this camera.</p>
+                ) : null}
+                <AccordionList>
+                  {ruleRows.map((rule) => {
+                    const isNew = rule.__newRule === true;
+                    const open = isNew ? true : openRuleId === rule.id;
+                    return (
+                      <AccordionItem
+                        key={rule.id}
+                        open={open}
+                        onToggle={() => (isNew ? setOpenRuleId(null) : toggleRule(rule))}
+                        summary={isNew ? (
+                          <span className="accordion-title">New rule</span>
+                        ) : (
+                          <>
+                            <span className="accordion-title">{rule.name || rule.detectionType}</span>
+                            <span className="accordion-muted">
+                              {rule.detectionType} · threshold {Number(rule.threshold || 0).toFixed(2)}
+                              {lineCountFromRule(rule) ? ` · ${lineCountFromRule(rule)}` : ''} · {scheduleSummary(rule.schedulePolicy)}
+                            </span>
+                            <span className={`status-pill ${rule.isEnabled ? 'online' : 'unknown'}`}>{rule.isEnabled ? 'enabled' : 'disabled'}</span>
+                          </>
+                        )}
+                        actions={isNew ? null : (
+                          <>
+                            <button type="button" className="quiet" onClick={() => onTriggerTestAlert(rule)} disabled={busy}>
+                              <span className="btn-icon"><Ico n="play" /> Test</span>
+                            </button>
+                            <button type="button" className="quiet danger-text" onClick={() => onDeleteRule(rule.id)} disabled={busy}>
+                              <span className="btn-icon"><Ico n="trash" /> Delete</span>
+                            </button>
+                          </>
+                        )}
+                      >
+                        {open ? (
+                          <form className="vision-rule-form" onSubmit={onSaveRule}>
+                            <FormBusyOverlay busy={busy} />
                   <div className="metadata-row">
                     <label>
                       Rule name
@@ -282,10 +415,15 @@ export function VisionTab({
                     <label>
                       Mode (how)
                       <select value={mode} onChange={(event) => changeMode(event.target.value)}>
-                        {detectionModes.map(([value, label]) => (
+                        {availableModes.map(([value, label]) => (
                           <option key={value} value={value}>{label}</option>
                         ))}
                       </select>
+                      {lprCap && !lprCap.supported ? (
+                        <span className="field-hint">License plate (LPR) is hidden: {lprCap.detail || 'this camera’s resolution is too low for plate reading'}.</span>
+                      ) : (lprRule && lprCap && lprCap.onvif ? (
+                        <span className="field-hint">LPR will auto-use this camera’s highest stream ({lprCap.detail}).</span>
+                      ) : null)}
                     </label>
                   </div>
                   {crowdRule ? (
@@ -313,12 +451,63 @@ export function VisionTab({
                       </div>
                     </section>
                   ) : null}
+                  {lprRule ? (
+                    <section className="schedule-panel">
+                      <header>
+                        <h3>License Plate (LPR)</h3>
+                        <span className="status-pill">
+                          {lprRuleConfig.matchMode === 'any' ? 'any plate'
+                            : lprRuleConfig.matchMode === 'include' ? `watch ${lprRuleConfig.plates.length}`
+                            : `unknown (${lprRuleConfig.plates.length} known)`}
+                        </span>
+                      </header>
+                      <span className="field-hint">
+                        Reads vehicle plates in the zone and (when available) the vehicle type and color.
+                        Needs a plate model (Settings → AI → License Plate Model) and a high-resolution camera —
+                        plates are unreadable on low-res streams.
+                      </span>
+                      <div className="metadata-row">
+                        <label>
+                          When to alert
+                          <select value={lprRuleConfig.matchMode} onChange={(event) => changeLprConfig({ matchMode: event.target.value })}>
+                            <option value="any">Any readable plate</option>
+                            <option value="include">Only plates on the watchlist</option>
+                            <option value="exclude">Any plate NOT on the list (unknown)</option>
+                          </select>
+                        </label>
+                        <label>
+                          Min OCR confidence
+                          <input
+                            type="number"
+                            min="0.1"
+                            max="1"
+                            step="0.05"
+                            value={lprRuleConfig.minOcrConfidence}
+                            onChange={(event) => changeLprConfig({ minOcrConfidence: Number(event.target.value) })}
+                          />
+                        </label>
+                      </div>
+                      {lprRuleConfig.matchMode !== 'any' ? (
+                        <label>
+                          Plate list ({lprRuleConfig.matchMode === 'include' ? 'alert on these' : 'these are known/allowed'})
+                          <textarea
+                            rows="4"
+                            value={lprRuleConfig.plates.join('\n')}
+                            onChange={(event) => changeLprPlates(event.target.value)}
+                            placeholder={'WXY1234\nABC123'}
+                          />
+                          <span className="field-hint">One plate per line (or comma-separated). Spaces/dashes are ignored; matching tolerates one OCR character error.</span>
+                        </label>
+                      ) : null}
+                    </section>
+                  ) : null}
                   {lineRule ? (
                     <section className="schedule-panel">
                       <header>
                         <h3>Line Direction</h3>
                         <span className="status-pill">{lineRuleConfig.direction}</span>
                       </header>
+                      <span className="field-hint">The green arrow on the preview points to the side an object must move toward to trigger (both arrows = either direction).</span>
                       <div className="metadata-row">
                         <label>
                           Direction
@@ -342,7 +531,7 @@ export function VisionTab({
                       </div>
                     </section>
                   ) : null}
-                  <section className="schedule-panel">
+                  <section className="schedule-panel" style={lprRule ? { display: 'none' } : undefined}>
                     <header>
                       <h3>Detect (what)</h3>
                       <span className="status-pill">
@@ -593,53 +782,23 @@ export function VisionTab({
                     </label>
                   </div>
                   <div className="action-row">
-                    <button type="submit" disabled={busy || targetClasses.length < 1 || (!lineRule && selectedZonePoints.length < 3) || (lineRule && lineRuleConfig.lines.length < (mode === 'multi_line_crossing' ? 2 : 1))}>
+                    <button type="submit" disabled={busy || (!lprRule && targetClasses.length < 1) || (!lineRule && selectedZonePoints.length < 3) || (lineRule && lineRuleConfig.lines.length < (mode === 'multi_line_crossing' ? 2 : 1)) || (lprRule && lprRuleConfig.matchMode !== 'any' && lprRuleConfig.plates.length < 1)}>
                       <span className="btn-icon"><Ico n="save" /> Save Rule</span>
                     </button>
-                    <button
-                      type="button"
-                      className="quiet"
-                      onClick={() => onRuleDraft(defaultVisionRuleDraft(selectedCamera.id))}
-                      disabled={busy}
-                    >
-                      Clear
+                    <button type="button" className="quiet" onClick={() => setOpenRuleId(null)} disabled={busy}>
+                      Cancel
                     </button>
                   </div>
-                </form>
-              </section>
-
-              <section className="settings-panel">
-                <header>
-                  <h2>Rules</h2>
-                  <span className="status-pill">{selectedRules.length}</span>
-                </header>
-                <div className="vision-list">
-                  {selectedRules.length === 0 ? <p className="empty">No AI detection rules for this camera.</p> : null}
-                  {selectedRules.map((rule) => (
-                    <article className="vision-row" key={rule.id}>
-                      <div>
-                        <h3>{rule.name || rule.detectionType}</h3>
-                        <p>
-                          {rule.detectionType} / threshold {Number(rule.threshold || 0).toFixed(2)}
-                          {lineCountFromRule(rule) ? ` / ${lineCountFromRule(rule)}` : ''} / {scheduleSummary(rule.schedulePolicy)}
-                        </p>
-                      </div>
-                      <strong className={`status-pill ${rule.isEnabled ? 'online' : 'unknown'}`}>
-                        {rule.isEnabled ? 'enabled' : 'disabled'}
-                      </strong>
-                      <div className="action-row">
-                        <button type="button" className="quiet" onClick={() => onEditRule(rule)} disabled={busy}>
-                          <span className="btn-icon"><Ico n="edit-2" /> Edit</span>
-                        </button>
-                        <button type="button" onClick={() => onTriggerTestAlert(rule)} disabled={busy}>
-                          <span className="btn-icon"><Ico n="play" /> Test Alert</span>
-                        </button>
-                        <button type="button" className="quiet danger-text" onClick={() => onDeleteRule(rule.id)} disabled={busy}>
-                          <span className="btn-icon"><Ico n="trash" /> Delete</span>
-                        </button>
-                      </div>
-                    </article>
-                  ))}
+                          </form>
+                        ) : null}
+                      </AccordionItem>
+                    );
+                  })}
+                </AccordionList>
+                <div className="action-row">
+                  <button type="button" className="quiet" onClick={addRule} disabled={busy || openRuleId === 'new'}>
+                    <span className="btn-icon"><Ico n="plus" /> Add Rule</span>
+                  </button>
                 </div>
               </section>
 
@@ -662,10 +821,11 @@ export function VisionTab({
                     <label style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', margin: 0 }}>
                       Status
                       <select value={logStatus} onChange={(e) => setLogStatus(e.target.value)}>
-                        <option value="">All</option>
+                        <option value="detections">All detections</option>
                         <option value="active">Active</option>
                         <option value="acknowledged">Acknowledged</option>
                         <option value="diagnostic">Diagnostic</option>
+                        <option value="">All incl. diagnostics</option>
                       </select>
                     </label>
                     <label style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', margin: 0 }}>
@@ -685,6 +845,19 @@ export function VisionTab({
                     </button>
                     <button type="button" className="quiet" onClick={() => fetchLogAlerts(selectedCamera?.id, logPage, logDate, logStatus, logRuleId)} disabled={logLoading}>
                       Reload
+                    </button>
+                    <button
+                      type="button"
+                      className="quiet danger-text"
+                      onClick={() => {
+                        if (window.confirm('Clear all Vision-monitor diagnostic rows (across all cameras)? Real detections are kept. This cannot be undone.')) {
+                          purgeLogAlerts(true);
+                        }
+                      }}
+                      disabled={logLoading}
+                      title="Delete all diagnostic alert rows (capture/detect/sampled). Real detections are kept."
+                    >
+                      <span className="btn-icon"><Ico n="trash" /> Clear diagnostics</span>
                     </button>
                   </div>
                   {logLoading ? <p className="empty">Loading…</p> : null}

@@ -1,0 +1,15 @@
+# Optional license-plate (LPR/ALPR) recognition dependencies.
+#
+# These are NOT required for normal object detection — install them only to enable
+# the License Plate Model feature (Settings -> AI -> License Plate Model). The YOLO
+# worker degrades gracefully without them (plate text is simply disabled).
+#
+# Install with the SAME Python the app runs the detector with, e.g.:
+#   python -m pip install -r requirements-lpr.txt
+# or run:  setup.ps1 -Lpr   (Windows)  /  setup.sh --lpr  (Linux/macOS)
+#
+# easyocr pulls in torch (already installed for detection) + numpy. opencv-python
+# is already installed by the base setup; listed here so a standalone install works.
+easyocr>=1.7
+opencv-python>=4.8
+numpy>=1.24

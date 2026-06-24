@@ -97,6 +97,42 @@ export function LayoutDropdown({ layout, onLayout }) {
   );
 }
 
+// AccordionList + AccordionItem are the shared inline-accordion standard used by
+// list editors (notification destinations, AI detection rules, …): a compact,
+// always-visible summary row per item that expands to its full body when opened.
+// The caller owns the open state (one-open-at-a-time, multi-open — its choice)
+// and supplies the summary content and any trailing actions, so the same shell
+// renders any kind of item. Keep new list editors on this component so they stay
+// visually and behaviourally consistent.
+export function AccordionList({ children, className }) {
+  return <ul className={`accordion-list${className ? ` ${className}` : ''}`}>{children}</ul>;
+}
+
+// AccordionItem is one row. `summary` is the clickable header content (the
+// chevron is added automatically); `actions` are controls shown at the row's
+// trailing edge that stay accessible while collapsed (e.g. an Enabled toggle or
+// Remove). `children` is the expanded body, rendered only when `open`.
+export function AccordionItem({ open, onToggle, summary, actions, children, disabled }) {
+  return (
+    <li className={`accordion-item${open ? ' open' : ''}`}>
+      <div className="accordion-summary">
+        <button
+          type="button"
+          className="accordion-summary-main"
+          onClick={onToggle}
+          aria-expanded={open}
+          disabled={disabled}
+        >
+          <span className="accordion-chevron"><Ico n={open ? 'chev-down' : 'arr-right'} /></span>
+          {summary}
+        </button>
+        {actions ? <div className="accordion-actions">{actions}</div> : null}
+      </div>
+      {open ? <div className="accordion-body">{children}</div> : null}
+    </li>
+  );
+}
+
 export function FormBusyOverlay({ busy }) {
   if (!busy) return null;
   return (

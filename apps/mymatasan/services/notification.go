@@ -113,6 +113,27 @@ func objectLabelFromMetadata(metadata string) string {
 	return ""
 }
 
+// plateInfoFromMetadata extracts the license-plate fields the LPR detector
+// promotes to an alert's top-level metadata. All are "" when absent (non-LPR
+// alerts), so callers can simply test plate != "".
+func plateInfoFromMetadata(metadata string) (plate, vehicleType, color string, watchlisted bool) {
+	if strings.TrimSpace(metadata) == "" {
+		return "", "", "", false
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(metadata), &parsed); err != nil {
+		return "", "", "", false
+	}
+	str := func(key string) string {
+		if v, ok := parsed[key].(string); ok {
+			return strings.TrimSpace(v)
+		}
+		return ""
+	}
+	wl, _ := parsed["watchlisted"].(bool)
+	return str("plate"), str("vehicleType"), str("color"), wl
+}
+
 // INotificationPublisher is the slice of the notification service the app uses
 // to emit events. The domain *notification.Service satisfies it. Publish stores +
 // streams + fans to destinations (generic path); DeliverTo sends a tailored
@@ -223,6 +244,20 @@ func renderVisionAlert(alert *entities.AlertEvent, cameraName, ruleName string, 
 	if fields.IncludeConfidence && alert.Confidence > 0 {
 		body = fmt.Sprintf("%s • %.0f%% confidence", body, alert.Confidence*100)
 	}
+	// License-plate alerts carry the plate (and vehicle type/color) in metadata. The
+	// alert label for an LPR rule already IS the plate descriptor ("Plate WXY1234
+	// (white car)"), so only add an explicit plate line when the label is NOT shown —
+	// otherwise it would duplicate. Either way the plate stays in the structured Data
+	// map below for webhook/MQTT consumers.
+	plate, vehicleType, color, watchlisted := plateInfoFromMetadata(alert.Metadata)
+	if plate != "" && !fields.IncludeLabel {
+		descriptor := strings.TrimSpace(color + " " + vehicleType)
+		if descriptor != "" {
+			body = fmt.Sprintf("%s • plate %s (%s)", body, plate, descriptor)
+		} else {
+			body = fmt.Sprintf("%s • plate %s", body, plate)
+		}
+	}
 
 	// Identifiers are always included so consumers can correlate and fetch detail.
 	data := map[string]any{
@@ -230,6 +265,16 @@ func renderVisionAlert(alert *entities.AlertEvent, cameraName, ruleName string, 
 		"ruleId":        alert.RuleId,
 		"cameraName":    camera,
 		"detectionType": alert.DetectionType,
+	}
+	if plate != "" {
+		data["plate"] = plate
+		data["watchlisted"] = watchlisted
+		if vehicleType != "" {
+			data["vehicleType"] = vehicleType
+		}
+		if color != "" {
+			data["color"] = color
+		}
 	}
 	if fields.IncludeRuleName && ruleName != "" {
 		data["ruleName"] = ruleName
@@ -328,6 +373,13 @@ func expandTemplate(value string, ctx map[string]string) string {
 // alertTemplateContext builds the token values available to custom-field
 // templates for a vision alert (e.g. {{ruleName}}, {{cameraName}}).
 func alertTemplateContext(alert *entities.AlertEvent, ruleName, cameraName string) map[string]string {
+	plate, vehicleType, color, watchlisted := plateInfoFromMetadata(alert.Metadata)
+	// watchlisted is only meaningful on a plate alert; leave it empty otherwise so
+	// the token resolves to nothing for non-LPR alerts.
+	watch := ""
+	if plate != "" {
+		watch = fmt.Sprintf("%t", watchlisted)
+	}
 	return map[string]string{
 		"ruleName":      ruleName,
 		"cameraName":    cameraName,
@@ -337,6 +389,11 @@ func alertTemplateContext(alert *entities.AlertEvent, ruleName, cameraName strin
 		"alertId":       fmt.Sprintf("%d", alert.Id),
 		"ruleId":        fmt.Sprintf("%d", alert.RuleId),
 		"cameraId":      fmt.Sprintf("%d", alert.CameraId),
+		// LPR tokens — empty for non-plate alerts.
+		"plate":       plate,
+		"vehicleType": vehicleType,
+		"color":       color,
+		"watchlisted": watch,
 	}
 }
 

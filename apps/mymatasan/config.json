@@ -44,6 +44,10 @@
     "intervalMs": 2000,
     "captureTimeoutMs": 5000,
     "diagnosticCooldownSeconds": 30,
+    "persistSampledDiagnostics": false,
+    "diagnosticRetentionDays": 3,
+    "alertRetentionDays": 0,
+    "alertPurgeIntervalHours": 6,
     "detector": {
       "mode": "persistent",
       "command": "C:\\Users\\muham\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",

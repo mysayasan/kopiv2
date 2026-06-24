@@ -75,6 +75,18 @@ func NewDetectionSource(camera ICameraService, recorder *recording.Manager, sett
 
 // Capture returns a single JPEG frame for the camera per the active capture mode.
 func (d *DetectionSource) Capture(ctx context.Context, cameraID int64) (vision.Frame, error) {
+	return d.capture(ctx, cameraID, false)
+}
+
+// CaptureForLPR returns a high-resolution standalone frame suitable for license-
+// plate OCR. It bypasses the low-res siphon shortcut (those frames are downscaled
+// for object detection and would be unreadable) and grabs a fresh frame at the
+// configured LPR width — "capture high, share down".
+func (d *DetectionSource) CaptureForLPR(ctx context.Context, cameraID int64) (vision.Frame, error) {
+	return d.capture(ctx, cameraID, true)
+}
+
+func (d *DetectionSource) capture(ctx context.Context, cameraID int64, highRes bool) (vision.Frame, error) {
 	rs, err := d.settings.Get(ctx)
 	if err != nil {
 		return vision.Frame{}, err
@@ -87,6 +99,33 @@ func (d *DetectionSource) Capture(ctx context.Context, cameraID int64) (vision.F
 	frameWidth := capCfg.FrameWidth
 	if frameWidth < 160 {
 		frameWidth = 640
+	}
+	if highRes {
+		// LPR needs the plate's pixels: use the dedicated (higher) LPR width and
+		// skip siphon so the frame is a full-resolution standalone grab, not the
+		// 640px object-detection frame.
+		lprWidth := capCfg.LPR.FrameWidth
+		if lprWidth < 640 {
+			lprWidth = 1920
+		}
+		frameWidth = lprWidth
+		mode = "standalone"
+
+		// Auto-pick-highest: when ONVIF exposes a higher-resolution profile than the
+		// camera's recording/live stream, capture the plate frame from THAT profile so
+		// LPR isn't limited by a low-res sub-stream the user picked for recording.
+		// Falls back to the normal stream resolution below when unavailable.
+		lprCap := d.camera.LPRCapability(ctx, cameraID)
+		if lprCap.Onvif && strings.TrimSpace(lprCap.RTSPURL) != "" {
+			if decoder, derr := d.settings.Decoder(ctx); derr == nil {
+				opts := MJPEGOptionsFromDecoderSettings(decoder)
+				opts.MaxWidth = frameWidth
+				if data, cerr := rtsp.CaptureJPEG(ctx, lprCap.RTSPURL, opts); cerr == nil {
+					return vision.Frame{CameraId: cameraID, Data: data, Format: "jpeg", CapturedAt: time.Now().UTC().Unix()}, nil
+				}
+			}
+			// On failure, fall through to the standard capture path below.
+		}
 	}
 	staleLimit := time.Duration(capCfg.Siphon.StaleLimitMs) * time.Millisecond
 	if staleLimit <= 0 {

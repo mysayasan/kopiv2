@@ -25,6 +25,12 @@ const (
 	DetectionIntrusion         = "intrusion"
 	DetectionLineCrossing      = "line_crossing"
 	DetectionMultiLineCrossing = "multi_line_crossing"
+	// DetectionLicensePlate is automatic license-plate recognition (ALPR/LPR). The
+	// worker localizes a plate, OCRs the crop, and (optionally) associates the
+	// enclosing vehicle's type and color; the plate string and attributes ride the
+	// candidate metadata. Rules can fire on any readable plate or only on a
+	// watchlist — see lpr.go.
+	DetectionLicensePlate = "lpr"
 )
 
 // DetectionRuleRequest is the reusable request shape for configuring a visual detector.
@@ -109,6 +115,11 @@ type Frame struct {
 	CapturedAt int64             `json:"capturedAt"`
 	Metadata   map[string]string `json:"metadata"`
 	Inference  InferenceParams   `json:"inference"`
+	// WantLPR requests the worker's license-plate stage (plate localization + OCR +
+	// vehicle attributes) for this frame. Set only for cameras that have an active
+	// LPR rule so the expensive OCR path never runs on object-detection-only
+	// cameras — this is the per-camera compute gate.
+	WantLPR bool `json:"-"`
 }
 
 // Detection is one detector result before it is persisted as an alert event.
@@ -197,6 +208,9 @@ func ValidateDetectionRule(rule DetectionRule) error {
 		return err
 	}
 	if err := validateCrowdRule(rule); err != nil {
+		return err
+	}
+	if err := validateLPRRule(rule); err != nil {
 		return err
 	}
 	return ValidateSchedulePolicy(rule.SchedulePolicy)

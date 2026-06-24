@@ -42,6 +42,11 @@ func NewTrainingApi(router *mux.Router, serv services.ITrainingService) {
 	group.HandleFunc("/setup-deps", handler.startSetupDeps).Methods("POST")
 	group.HandleFunc("/stock-model", handler.getStockModel).Methods("GET")
 	group.HandleFunc("/stock-model", handler.setStockModel).Methods("POST")
+	group.HandleFunc("/lpr-model", handler.getLPRModel).Methods("GET")
+	group.HandleFunc("/lpr-model", handler.setLPRModel).Methods("POST")
+	group.HandleFunc("/lpr-model/import", handler.importLPRModel).Methods("POST")
+	group.HandleFunc("/lpr-model/deactivate", handler.deactivateLPRModel).Methods("POST")
+	group.HandleFunc("/lpr-model/install-deps", handler.installLPRDeps).Methods("POST")
 	group.HandleFunc("/models/import", handler.importModel).Methods("POST")
 	group.HandleFunc("/models/{id}", handler.deleteModel).Methods("DELETE")
 	group.HandleFunc("/models/deactivate", handler.deactivateModel).Methods("POST")
@@ -84,6 +89,14 @@ func (a *trainingApi) startSetupDeps(w http.ResponseWriter, r *http.Request) {
 	controllers.SendResult(w, a.serv.DepsSetupStatus(), "succeed")
 }
 
+func (a *trainingApi) installLPRDeps(w http.ResponseWriter, r *http.Request) {
+	if err := a.serv.StartLPRDepsSetup(r.Context()); err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, a.serv.DepsSetupStatus(), "succeed")
+}
+
 func (a *trainingApi) getStockModel(w http.ResponseWriter, r *http.Request) {
 	controllers.SendResult(w, a.serv.GetStockModel(r.Context()), "succeed")
 }
@@ -102,6 +115,60 @@ func (a *trainingApi) setStockModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	controllers.SendResult(w, a.serv.GetStockModel(r.Context()), "succeed")
+}
+
+func (a *trainingApi) getLPRModel(w http.ResponseWriter, r *http.Request) {
+	controllers.SendResult(w, a.serv.GetLPRModel(r.Context()), "succeed")
+}
+
+func (a *trainingApi) setLPRModel(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+	var body struct {
+		// Model is a catalog name, an https URL, a local path, or "" / "none".
+		Model string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	if err := a.serv.SetLPRModel(r.Context(), body.Model, localUserID(r)); err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, a.serv.GetLPRModel(r.Context()), "succeed")
+}
+
+func (a *trainingApi) importLPRModel(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 512*1024*1024)
+	if err := r.ParseMultipartForm(512 * 1024 * 1024); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, "missing weights file")
+		return
+	}
+	defer file.Close()
+	weights, err := io.ReadAll(file)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	info, err := a.serv.ImportLPRModel(r.Context(), r.FormValue("name"), weights, localUserID(r))
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, info, "succeed")
+}
+
+func (a *trainingApi) deactivateLPRModel(w http.ResponseWriter, r *http.Request) {
+	if err := a.serv.DeactivateLPRModel(r.Context(), localUserID(r)); err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, a.serv.GetLPRModel(r.Context()), "succeed")
 }
 
 func (a *trainingApi) startTraining(w http.ResponseWriter, r *http.Request) {

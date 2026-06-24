@@ -1,5 +1,5 @@
 import config from 'config';
-import { defaultDecoderConfig, defaultYoloConfig, defaultCaptureConfig, defaultAlertNotificationConfig, defaultRecordingConfig, defaultMachineHealthSettings, defaultZonePoints, defaultVisionThreshold, defaultVisionMinFrames, lineDetectionTypes, defaultLineClasses, maxCrossingLines, defaultCrowdMinCount, weekdayScheduleDays, weekendScheduleDays, allScheduleDays, liveViewsCookieName, liveViewLayouts, defaultLiveViewLayout } from './constants';
+import { defaultDecoderConfig, defaultYoloConfig, defaultCaptureConfig, defaultAlertNotificationConfig, defaultRecordingConfig, defaultMachineHealthSettings, defaultZonePoints, defaultVisionThreshold, defaultVisionMinFrames, lineDetectionTypes, defaultLineClasses, maxCrossingLines, defaultCrowdMinCount, defaultMinOcrConfidence, weekdayScheduleDays, weekendScheduleDays, allScheduleDays, liveViewsCookieName, liveViewLayouts, defaultLiveViewLayout } from './constants';
 
 // normalizeLayout returns a known Live View layout id, defaulting unknown values.
 export function normalizeLayout(id) {
@@ -627,6 +627,7 @@ export const detectionModes = [
   ['intrusion', 'Intrusion (zone)'],
   ['line_crossing', 'Line crossing'],
   ['multi_line_crossing', 'Multi-line crossing'],
+  ['lpr', 'License plate (LPR)'],
 ];
 
 // Legacy single-object detection types map to presence mode with that class as
@@ -646,10 +647,44 @@ export function modeFromDetectionType(type) {
   if (value === 'presence' || legacyPresenceTypes.includes(value)) {
     return 'presence';
   }
-  if (['crowd', 'intrusion', 'line_crossing', 'multi_line_crossing'].includes(value)) {
+  if (['crowd', 'intrusion', 'line_crossing', 'multi_line_crossing', 'lpr'].includes(value)) {
     return value;
   }
   return 'presence';
+}
+
+export function isLprDetectionType(value) {
+  return String(value || '').toLowerCase() === 'lpr';
+}
+
+// parseLPRRuleConfig reads an LPR rule's ruleConfig into a normalized shape:
+// { plates: string[], matchMode: 'any'|'include'|'exclude', minOcrConfidence }.
+export function parseLPRRuleConfig(value) {
+  let cfg = {};
+  if (value) {
+    try { cfg = JSON.parse(value) || {}; } catch (_) { cfg = {}; }
+  }
+  const plates = Array.isArray(cfg.plates)
+    ? cfg.plates.map((p) => String(p).trim().toUpperCase().replace(/[^A-Z0-9]/g, '')).filter(Boolean)
+    : [];
+  let matchMode = String(cfg.matchMode || '').toLowerCase();
+  if (!['any', 'include', 'exclude'].includes(matchMode)) {
+    matchMode = plates.length ? 'include' : 'any';
+  }
+  let minOcrConfidence = Number(cfg.minOcrConfidence);
+  if (!(minOcrConfidence > 0 && minOcrConfidence <= 1)) {
+    minOcrConfidence = defaultMinOcrConfidence;
+  }
+  return { plates, matchMode, minOcrConfidence };
+}
+
+// lprRuleConfigText serializes the LPR config back to ruleConfig JSON.
+export function lprRuleConfigText(cfg) {
+  return JSON.stringify({
+    plates: cfg.plates || [],
+    matchMode: cfg.matchMode || 'any',
+    minOcrConfidence: cfg.minOcrConfidence || defaultMinOcrConfidence,
+  }, null, 2);
 }
 
 export function detectionTypeForMode(mode) {
@@ -700,6 +735,11 @@ export function buildRuleConfigForMode(mode, targetClasses, existingConfig) {
   if (mode === 'crowd') {
     const cfg = parseCrowdRuleConfig(existingConfig);
     return JSON.stringify({ minCount: cfg.minCount, classes }, null, 2);
+  }
+  if (mode === 'lpr') {
+    // LPR matches plates (via the worker's plate label), not the generic class
+    // list, so it carries plates/matchMode/minOcrConfidence instead of classes.
+    return lprRuleConfigText(parseLPRRuleConfig(existingConfig));
   }
   // presence / intrusion
   return JSON.stringify({ classes }, null, 2);

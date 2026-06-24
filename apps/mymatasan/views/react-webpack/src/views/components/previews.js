@@ -247,14 +247,79 @@ export function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTr
   );
 }
 
+// distanceToSegment returns the shortest distance from point p to the segment a–b
+// (all in normalized 0–1 coordinates). Used to find which polygon edge a new
+// point is closest to.
+function distanceToSegment(p, a, b) {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const len2 = dx * dx + dy * dy;
+  let t = len2 === 0 ? 0 : ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
+}
+
+// insertPointOnNearestEdge inserts p into the polygon between the two existing
+// vertices whose edge is nearest to p, so adding a point splits the closest edge
+// instead of always tacking onto the end (which made the new point jump back to
+// the first/"starting" vertex). With fewer than 3 points there is no closed shape
+// yet, so it just appends in click order while the initial triangle is built.
+function insertPointOnNearestEdge(pts, p) {
+  if (pts.length < 3) {
+    return [...pts, p];
+  }
+  let bestIdx = pts.length - 1;
+  let bestDist = Infinity;
+  for (let i = 0; i < pts.length; i += 1) {
+    const d = distanceToSegment(p, pts[i], pts[(i + 1) % pts.length]);
+    if (d < bestDist) {
+      bestDist = d;
+      bestIdx = i;
+    }
+  }
+  const next = [...pts];
+  next.splice(bestIdx + 1, 0, p);
+  return next;
+}
+
 export function ZoneDrawingPreview({ camera, polygonValue, onPolygon, authHeader, streamConfig, disabled }) {
   const overlayRef = useRef(null);
   const [draggingIndex, setDraggingIndex] = useState(null);
   const points = useMemo(() => parseZonePolygon(polygonValue), [polygonValue]);
   const polygonPoints = points.map((point) => `${point[0] * 100},${point[1] * 100}`).join(' ');
 
+  // Undo history: each user action (add/move/clear/full-frame) snapshots the
+  // pre-action polygon so Undo steps back through them — not just the last point.
+  // lastValueRef tracks the value WE committed, so an external change (switching
+  // rule/camera, parent edit) is detected and clears the now-stale history.
+  const [history, setHistory] = useState([]);
+  const lastValueRef = useRef(polygonValue);
+  const draggedRef = useRef(false);
+  useEffect(() => {
+    if (polygonValue !== lastValueRef.current) {
+      lastValueRef.current = polygonValue;
+      setHistory([]);
+    }
+  }, [polygonValue]);
+
   function commit(nextPoints) {
-    onPolygon(zonePolygonText(nextPoints));
+    const text = zonePolygonText(nextPoints);
+    lastValueRef.current = text;
+    onPolygon(text);
+  }
+
+  // pushHistory snapshots the current points before a mutating action.
+  function pushHistory() {
+    setHistory((h) => [...h, points]);
+  }
+
+  function undo() {
+    if (!history.length) {
+      return;
+    }
+    const prev = history[history.length - 1];
+    setHistory(history.slice(0, -1));
+    commit(prev);
   }
 
   function pointFromEvent(event) {
@@ -269,12 +334,19 @@ export function ZoneDrawingPreview({ camera, polygonValue, onPolygon, authHeader
     if (disabled || !camera) {
       return;
     }
-    commit([...points, pointFromEvent(event)]);
+    pushHistory();
+    commit(insertPointOnNearestEdge(points, pointFromEvent(event)));
   }
 
   function movePoint(event) {
     if (disabled || draggingIndex === null) {
       return;
+    }
+    // Snapshot once per drag (on the first actual move) so the whole drag is a
+    // single undo step rather than one per pointermove.
+    if (!draggedRef.current) {
+      pushHistory();
+      draggedRef.current = true;
     }
     const nextPoints = [...points];
     nextPoints[draggingIndex] = pointFromEvent(event);
@@ -286,6 +358,7 @@ export function ZoneDrawingPreview({ camera, polygonValue, onPolygon, authHeader
       overlayRef.current.releasePointerCapture(event.pointerId);
     }
     setDraggingIndex(null);
+    draggedRef.current = false;
   }
 
   return (
@@ -348,23 +421,24 @@ export function ZoneDrawingPreview({ camera, polygonValue, onPolygon, authHeader
         )}
       </div>
       <div className="action-row">
-        <button type="button" className="quiet" onClick={() => commit(points.slice(0, -1))} disabled={disabled || !points.length}>
-          <span className="btn-icon"><Ico n="undo" /> Undo Point</span>
+        <button type="button" className="quiet" onClick={undo} disabled={disabled || !history.length}>
+          <span className="btn-icon"><Ico n="undo" /> Undo</span>
         </button>
-        <button type="button" className="quiet" onClick={() => commit([])} disabled={disabled}>
+        <button type="button" className="quiet" onClick={() => { pushHistory(); commit([]); }} disabled={disabled || !points.length}>
           <span className="btn-icon"><Ico n="trash" /> Clear Zone</span>
         </button>
         <button
           type="button"
           className="quiet"
-          onClick={() =>
+          onClick={() => {
+            pushHistory();
             commit([
               [0, 0],
               [1, 0],
               [1, 1],
               [0, 1],
-            ])
-          }
+            ]);
+          }}
           disabled={disabled}
         >
           <span className="btn-icon"><Ico n="video" /> Full Frame</span>
@@ -374,14 +448,99 @@ export function ZoneDrawingPreview({ camera, polygonValue, onPolygon, authHeader
   );
 }
 
+// crossingDirectionArrows renders the direction indicator for a crossing line: an
+// arrow perpendicular to the line pointing to the side an object must move TOWARD
+// to trigger (a double-headed arrow for "both"). Matches the backend convention in
+// infra/vision/line_crossing.go — "forward" fires when an object crosses from the
+// negative to the POSITIVE signedArea side of A→B, and the positive side lies in
+// the direction (-dy, dx). Computed in the 0–100 SVG space; the sign of the side
+// is preserved under the preview's non-uniform stretch, so the arrow always points
+// to the correct side.
+function crossingDirectionArrows(first, second, direction) {
+  const x1 = first[0] * 100;
+  const y1 = first[1] * 100;
+  const x2 = second[0] * 100;
+  const y2 = second[1] * 100;
+  const mx = (x1 + x2) / 2;
+  const my = (y1 + y2) / 2;
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len; // unit normal toward the "forward" (positive signedArea) side
+  const ny = dx / len;
+  const shaft = 8;
+  const head = 3.4;
+  const arrows = [];
+  const addArrow = (ux, uy, key) => {
+    const tx = mx + ux * shaft;
+    const ty = my + uy * shaft;
+    const px = -uy; // perpendicular to the arrow, for the head width
+    const py = ux;
+    const points = [
+      `${tx},${ty}`,
+      `${tx - ux * head + px * head * 0.6},${ty - uy * head + py * head * 0.6}`,
+      `${tx - ux * head - px * head * 0.6},${ty - uy * head - py * head * 0.6}`,
+    ].join(' ');
+    arrows.push(<line key={`${key}-shaft`} x1={mx} y1={my} x2={tx} y2={ty} className="crossing-arrow" vectorEffect="non-scaling-stroke" />);
+    arrows.push(<polygon key={`${key}-head`} points={points} className="crossing-arrow-head" />);
+  };
+  if (direction === 'forward' || direction === 'both') {
+    addArrow(nx, ny, 'fwd');
+  }
+  if (direction === 'reverse' || direction === 'both') {
+    addArrow(-nx, -ny, 'rev');
+  }
+  return arrows;
+}
+
 export function LineDrawingPreview({ camera, config, detectionType, onConfig, authHeader, streamConfig, disabled }) {
   const overlayRef = useRef(null);
   const [dragging, setDragging] = useState(null);
   const maxLines = detectionType === 'multi_line_crossing' ? maxCrossingLines : 1;
-  const lines = normalizeLineConfig(config, detectionType).lines.slice(0, maxLines);
+  const normalizedLine = normalizeLineConfig(config, detectionType);
+  const lines = normalizedLine.lines.slice(0, maxLines);
+  const direction = normalizedLine.direction || 'both';
+
+  // Undo history mirrors the zone drawer: each action (add/move/clear) snapshots
+  // the pre-action lines so Undo steps back through them. The parent re-parses and
+  // re-normalizes the config on every commit (so the round-tripped value won't byte-
+  // match what we sent), so external changes are detected with a self-commit flag
+  // rather than value comparison: after our own commit the next render is accepted,
+  // any other change clears the now-stale history.
+  const [history, setHistory] = useState([]);
+  const linesKey = JSON.stringify(lines);
+  const lastKeyRef = useRef(linesKey);
+  const selfCommitRef = useRef(false);
+  const draggedRef = useRef(false);
+  useEffect(() => {
+    if (selfCommitRef.current) {
+      selfCommitRef.current = false;
+      lastKeyRef.current = linesKey;
+      return;
+    }
+    if (linesKey !== lastKeyRef.current) {
+      lastKeyRef.current = linesKey;
+      setHistory([]);
+    }
+  }, [linesKey]);
 
   function commit(nextLines) {
+    selfCommitRef.current = true;
     onConfig({ lines: nextLines.slice(0, maxLines) });
+  }
+
+  // pushHistory snapshots the current lines before a mutating action.
+  function pushHistory() {
+    setHistory((h) => [...h, lines]);
+  }
+
+  function undo() {
+    if (!history.length) {
+      return;
+    }
+    const prev = history[history.length - 1];
+    setHistory(history.slice(0, -1));
+    commit(prev);
   }
 
   function pointFromEvent(event) {
@@ -398,12 +557,19 @@ export function LineDrawingPreview({ camera, config, detectionType, onConfig, au
     }
     const start = point || [0.5, 0.25 + lines.length * 0.12];
     const end = roundedPoint([start[0], start[1] + 0.25]);
+    pushHistory();
     commit([...lines, { id: `line-${lines.length + 1}`, points: [roundedPoint(start), end] }]);
   }
 
   function movePoint(event) {
     if (disabled || !dragging) {
       return;
+    }
+    // Snapshot once per drag (on the first actual move) so the whole drag is one
+    // undo step rather than one per pointermove.
+    if (!draggedRef.current) {
+      pushHistory();
+      draggedRef.current = true;
     }
     const nextLines = lines.map((line, lineIndex) => {
       if (lineIndex !== dragging.lineIndex) {
@@ -421,6 +587,7 @@ export function LineDrawingPreview({ camera, config, detectionType, onConfig, au
       overlayRef.current.releasePointerCapture(event.pointerId);
     }
     setDragging(null);
+    draggedRef.current = false;
   }
 
   return (
@@ -470,6 +637,7 @@ export function LineDrawingPreview({ camera, config, detectionType, onConfig, au
                       <text x={(first[0] * 100 + second[0] * 100) / 2} y={(first[1] * 100 + second[1] * 100) / 2 - 2} className="crossing-label">
                         {lineIndex + 1}
                       </text>
+                      {crossingDirectionArrows(first, second, direction)}
                       {line.points.map((point, pointIndex) => (
                         <circle
                           key={`${lineIndex}-${pointIndex}`}
@@ -502,10 +670,10 @@ export function LineDrawingPreview({ camera, config, detectionType, onConfig, au
         <button type="button" className="quiet" onClick={() => addLine()} disabled={disabled || lines.length >= maxLines}>
           <span className="btn-icon"><Ico n="plus" /> Add Line</span>
         </button>
-        <button type="button" className="quiet" onClick={() => commit(lines.slice(0, -1))} disabled={disabled || !lines.length}>
-          <span className="btn-icon"><Ico n="undo" /> Undo Line</span>
+        <button type="button" className="quiet" onClick={undo} disabled={disabled || !history.length}>
+          <span className="btn-icon"><Ico n="undo" /> Undo</span>
         </button>
-        <button type="button" className="quiet" onClick={() => commit([])} disabled={disabled}>
+        <button type="button" className="quiet" onClick={() => { pushHistory(); commit([]); }} disabled={disabled || !lines.length}>
           <span className="btn-icon"><Ico n="trash" /> Clear Lines</span>
         </button>
       </div>

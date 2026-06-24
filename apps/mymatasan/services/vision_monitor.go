@@ -35,11 +35,12 @@ type VisionMonitor struct {
 	snapCipher  *atrest.Cipher
 	interval    time.Duration
 	refresh     time.Duration
-	timeout     time.Duration
-	diagCD      time.Duration
-	snapshotDir string
-	mu          sync.Mutex
-	lastDiag    map[string]int64
+	timeout        time.Duration
+	diagCD         time.Duration
+	persistSampled bool
+	snapshotDir    string
+	mu             sync.Mutex
+	lastDiag       map[string]int64
 }
 
 func NewVisionMonitor(camera ICameraService, visionService IVisionService, settings IRuntimeSettingsService, monitor VisionMonitorSettings) *VisionMonitor {
@@ -80,12 +81,13 @@ func NewVisionMonitor(camera ICameraService, visionService IVisionService, setti
 		source:      NewDetectionSource(camera, monitor.Recorder, settings, client),
 		detectCfg:   monitor.DetectStreamConfig,
 		snapCipher:  monitor.SnapshotCipher,
-		interval:    interval,
-		refresh:     refresh,
-		timeout:     timeout,
-		diagCD:      diagCooldown,
-		snapshotDir: monitor.SnapshotDir,
-		lastDiag:    map[string]int64{},
+		interval:       interval,
+		refresh:        refresh,
+		timeout:        timeout,
+		diagCD:         diagCooldown,
+		persistSampled: monitor.PersistSampledDiagnostics,
+		snapshotDir:    monitor.SnapshotDir,
+		lastDiag:       map[string]int64{},
 	}
 }
 
@@ -240,10 +242,15 @@ func (m *VisionMonitor) sampleCamera(ctx context.Context, cameraID int64, camera
 	if len(cameraRules) == 0 {
 		return
 	}
+	// A camera with an active LPR rule captures a dedicated high-resolution frame
+	// (plates need the pixels) and asks the worker to run the OCR stage; otherwise
+	// it uses the normal low-res object-detection frame and OCR never runs.
+	wantLPR := rulesContainLPR(cameraRules)
 	frameCtx, cancel := context.WithTimeout(ctx, m.timeout)
-	frame, err := m.captureFrame(frameCtx, cameraID)
+	frame, err := m.captureFrame(frameCtx, cameraID, wantLPR)
 	cancel()
 	frame.Inference = inference
+	frame.WantLPR = wantLPR
 	if err != nil {
 		m.emitDiagnostics(ctx, cameraRules, "capture_failed", err.Error(), map[string]any{
 			"cameraId": cameraID,
@@ -261,7 +268,11 @@ func (m *VisionMonitor) sampleCamera(ctx context.Context, cameraID int64, camera
 		})
 		return
 	}
-	if len(detections) == 0 {
+	// The "sampled" heartbeat (frame captured, nothing detected) is a noisy
+	// per-rule diagnostic that bloats the alert log, so it is only persisted when
+	// explicitly enabled for troubleshooting. Capture/detect FAILURES above are
+	// always logged so real problems still surface.
+	if len(detections) == 0 && m.persistSampled {
 		m.emitDiagnostics(ctx, cameraRules, "sampled", "frame captured; no detection above threshold", map[string]any{
 			"cameraId":   cameraID,
 			"capturedAt": frame.CapturedAt,
@@ -352,6 +363,17 @@ func toStringSlice(value any) []string {
 	default:
 		return nil
 	}
+}
+
+// rulesContainLPR reports whether any rule in the set is a license-plate rule,
+// used to gate the worker's OCR stage per camera.
+func rulesContainLPR(rules []vision.DetectionRule) bool {
+	for _, rule := range rules {
+		if strings.ToLower(strings.TrimSpace(rule.DetectionType)) == vision.DetectionLicensePlate {
+			return true
+		}
+	}
+	return false
 }
 
 // ruleNameByID returns the name of the rule with the given id, or "" if absent.
@@ -497,7 +519,10 @@ func (m *VisionMonitor) saveSnapshot(cameraID int64, data []byte, capturedAt int
 // captureFrame resolves a detection frame for the camera via the shared
 // DetectionSource, which honors the configured capture mode (standalone / siphon
 // / auto) and pins all modes to the recording stream when the camera records.
-func (m *VisionMonitor) captureFrame(ctx context.Context, cameraID int64) (vision.Frame, error) {
+func (m *VisionMonitor) captureFrame(ctx context.Context, cameraID int64, wantLPR bool) (vision.Frame, error) {
+	if wantLPR {
+		return m.source.CaptureForLPR(ctx, cameraID)
+	}
 	return m.source.Capture(ctx, cameraID)
 }
 

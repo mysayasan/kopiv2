@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -142,6 +144,66 @@ func (s *visionService) AcknowledgeAlert(ctx context.Context, id uint64, userId 
 		return nil, err
 	}
 	return alert, nil
+}
+
+// PurgeAlerts deletes alert events created before olderThan (unix seconds),
+// reclaiming both the rows and their snapshot image files. When onlyDiagnostics
+// is true, real detections are kept and only Vision-monitor diagnostics are
+// removed (those carry no snapshot, so nothing is unlinked). Deletes in oldest-
+// first batches so a large backlog cannot build an unbounded result set. Returns
+// the number of rows deleted.
+func (s *visionService) PurgeAlerts(ctx context.Context, olderThan int64, onlyDiagnostics bool) (int, error) {
+	if olderThan <= 0 {
+		return 0, fmt.Errorf("olderThan must be greater than zero")
+	}
+	filters := []sqldataenums.Filter{
+		{FieldName: "CreatedAt", Compare: sqldataenums.LessThan, Value: olderThan},
+	}
+	if onlyDiagnostics {
+		filters = append(filters, sqldataenums.Filter{FieldName: "IsDiagnostic", Compare: sqldataenums.Equal, Value: true})
+	}
+	sorters := []sqldataenums.Sorter{{FieldName: "CreatedAt", Sort: sqldataenums.ASC}}
+	deleted := 0
+	removedSnaps := map[string]bool{}
+	for {
+		// Always read the oldest batch at offset 0; each batch is deleted before the
+		// next read, so the window naturally advances without offset drift.
+		batch, _, err := s.alerts.Get(ctx, "", 500, 0, filters, sorters)
+		if err != nil {
+			return deleted, err
+		}
+		if len(batch) == 0 {
+			break
+		}
+		for _, a := range batch {
+			if _, err := s.alerts.DeleteById(ctx, "", uint64(a.Id)); err != nil {
+				return deleted, err
+			}
+			deleted++
+			// Snapshots are shared per frame (snap_<capturedAt>.jpg), so dedupe and
+			// remove each file once. Alerts sharing a snapshot share a CreatedAt, so
+			// they are always purged in the same sweep — the file is never orphaned
+			// from a surviving alert.
+			if p := strings.TrimSpace(a.SnapshotPath); p != "" && !removedSnaps[p] {
+				removedSnaps[p] = true
+				_ = os.Remove(p)
+			}
+		}
+		if len(batch) < 500 {
+			break
+		}
+	}
+	return deleted, nil
+}
+
+// PurgeAlertsOlderThanDays purges alerts older than the given number of days. A
+// days value <= 0 purges everything up to now (olderThan = current time).
+func (s *visionService) PurgeAlertsOlderThanDays(ctx context.Context, days int, onlyDiagnostics bool) (int, error) {
+	cutoff := time.Now().UTC().Unix()
+	if days > 0 {
+		cutoff = time.Now().UTC().AddDate(0, 0, -days).Unix()
+	}
+	return s.PurgeAlerts(ctx, cutoff, onlyDiagnostics)
 }
 
 func detectionRuleEntity(rule vision.DetectionRule) entities.DetectionRule {

@@ -276,6 +276,20 @@ type VisionConfigModel struct {
 	IntervalMs                int                       `json:"intervalMs"`
 	CaptureTimeoutMs          int                       `json:"captureTimeoutMs"`
 	DiagnosticCooldownSeconds int                       `json:"diagnosticCooldownSeconds"`
+	// PersistSampledDiagnostics writes a "sampled" diagnostic alert (frame
+	// captured; nothing detected) to the alert log on the diagnostic cooldown.
+	// Off by default: it is a noisy heartbeat that bloats the alert_event table,
+	// and capture/detect FAILURES are still logged regardless. Turn on only to
+	// confirm the monitor is alive and sampling while troubleshooting.
+	PersistSampledDiagnostics bool                      `json:"persistSampledDiagnostics"`
+	// Alert-log retention. The background purge runs every AlertPurgeIntervalHours
+	// (default 6). DiagnosticRetentionDays deletes Vision-monitor diagnostics older
+	// than N days (default 3 — keeps the noisy heartbeat/failure rows from piling
+	// up). AlertRetentionDays deletes ALL alert events (real detections included)
+	// older than N days; 0 disables it so real detections are kept indefinitely.
+	DiagnosticRetentionDays   int                       `json:"diagnosticRetentionDays"`
+	AlertRetentionDays        int                       `json:"alertRetentionDays"`
+	AlertPurgeIntervalHours   int                       `json:"alertPurgeIntervalHours"`
 	SnapshotDir               string                    `json:"snapshotDir"`
 	Detector                  VisionDetectorConfigModel `json:"detector"`
 	Training                  VisionTrainingConfigModel `json:"training"`

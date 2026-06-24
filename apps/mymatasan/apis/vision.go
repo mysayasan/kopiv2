@@ -41,6 +41,7 @@ func NewVisionApi(router *mux.Router, serv services.IVisionService, classes serv
 	group.HandleFunc("/rules/{id}", handler.deleteRule).Methods("DELETE")
 	group.HandleFunc("/alerts", handler.listAlerts).Methods("GET")
 	group.HandleFunc("/alerts", handler.createAlert).Methods("POST")
+	group.HandleFunc("/alerts/purge", handler.purgeAlerts).Methods("POST")
 	group.HandleFunc("/alerts/{id}/snapshot", handler.getAlertSnapshot).Methods("GET")
 	group.HandleFunc("/alerts/{id}/ack", handler.acknowledgeAlert).Methods("POST")
 	group.HandleFunc("/classes", handler.listClasses).Methods("GET")
@@ -198,6 +199,21 @@ func (a *visionApi) listAlerts(w http.ResponseWriter, r *http.Request) {
 		"items": alerts,
 		"total": total,
 	}, "succeed")
+}
+
+// purgeAlerts deletes alert events older than the given number of days. Query
+// params: days (int; <= 0 purges everything up to now) and onlyDiagnostics (bool;
+// default false also removes real detections). Snapshot image files of the removed
+// rows are unlinked. Returns the number of rows deleted.
+func (a *visionApi) purgeAlerts(w http.ResponseWriter, r *http.Request) {
+	days := int(parseInt64Query(r, "days"))
+	onlyDiagnostics := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("onlyDiagnostics")), "true")
+	deleted, err := a.serv.PurgeAlertsOlderThanDays(r.Context(), days, onlyDiagnostics)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, map[string]int{"deleted": deleted}, "succeed")
 }
 
 // cameraName resolves the alert's camera display name, returning "" so the

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -84,6 +85,48 @@ func TestWebhookChannelDeliversAndDrainsOnClose(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("webhook notification was not delivered")
+	}
+}
+
+func TestWebhookChannelRetriesTransientFailure(t *testing.T) {
+	// Shrink the backoff schedule so the retry runs fast under test.
+	orig := defaultRetryBackoffs
+	defaultRetryBackoffs = []time.Duration{5 * time.Millisecond, 5 * time.Millisecond}
+	defer func() { defaultRetryBackoffs = orig }()
+
+	var attempts int32
+	delivered := make(chan Notification, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Fail the first attempt (simulating a cold-start hiccup), succeed after.
+		if atomic.AddInt32(&attempts, 1) == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		var n Notification
+		_ = json.NewDecoder(r.Body).Decode(&n)
+		delivered <- n
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	ch := NewWebhookChannel(WebhookOptions{URL: srv.URL})
+	if err := ch.Send(context.Background(), Notification{ID: "retry-me"}); err != nil {
+		t.Fatalf("Send returned %v", err)
+	}
+
+	select {
+	case n := <-delivered:
+		if n.ID != "retry-me" {
+			t.Fatalf("delivered ID = %q, want retry-me", n.ID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("webhook notification was not retried after a transient failure")
+	}
+	if got := atomic.LoadInt32(&attempts); got < 2 {
+		t.Fatalf("attempts = %d, want at least 2 (one failure + one retry)", got)
+	}
+	if c, ok := ch.(io.Closer); ok {
+		_ = c.Close()
 	}
 }
 

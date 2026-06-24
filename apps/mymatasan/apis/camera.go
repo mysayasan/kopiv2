@@ -86,6 +86,7 @@ func NewCameraApi(router *mux.Router, serv services.ICameraService, settings ser
 	group.HandleFunc("/{id}/ptz/stop", handler.ptzStop).Methods("POST")
 	group.HandleFunc("/{id}/encoder", handler.getEncoder).Methods("GET")
 	group.HandleFunc("/{id}/encoder", handler.applyEncoder).Methods("POST")
+	group.HandleFunc("/{id}/lpr-capability", handler.lprCapability).Methods("GET")
 	group.HandleFunc("/{id}/webrtc/offer", handler.createWebRTCAnswer).Methods("POST")
 	group.HandleFunc("/{id}/live.mjpeg", handler.liveMJPEG).Methods("GET")
 	group.HandleFunc("/{id}", handler.updateDetails).Methods("PUT")
@@ -350,6 +351,14 @@ func (a *cameraApi) ptzStop(w http.ResponseWriter, r *http.Request) {
 
 // getEncoder reads the camera's current ONVIF video encoder configuration so the UI
 // can show the live codec/bitrate/resolution for the recording profile.
+// lprCapability reports whether a camera is suitable for license-plate recognition
+// (used to gate the LPR rule option in the UI). Best-effort + cached server-side.
+func (a *cameraApi) lprCapability(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	id, _ := strconv.ParseUint(params["id"], 10, 64)
+	controllers.SendResult(w, a.serv.LPRCapability(r.Context(), int64(id)), "succeed")
+}
+
 func (a *cameraApi) getEncoder(w http.ResponseWriter, r *http.Request) {
 	params := mux.Vars(r)
 	id, _ := strconv.ParseUint(params["id"], 10, 64)

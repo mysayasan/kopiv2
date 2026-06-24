@@ -58,9 +58,13 @@ Defines the top-level app configuration model loaded from app config JSON.
 - `stream.mjpegFallback.enabled` controls whether the MJPEG endpoint can be used as fallback or primary mode when WebRTC is disabled; omitted defaults to enabled.
 - `vision.enabled` controls whether the MyMataSan vision monitor worker starts; omitted defaults to enabled.
 - `vision.intervalMs`, `vision.captureTimeoutMs`, and `vision.diagnosticCooldownSeconds` control monitor polling, per-frame capture timeout, and diagnostic alert throttling.
+- `vision.persistSampledDiagnostics` (default `false`) — when `false`, the noisy per-frame heartbeat diagnostic (frame captured; nothing detected) is suppressed. Capture and detect failures are always logged.
+- `vision.diagnosticRetentionDays` — purge Vision-monitor diagnostic alert rows older than N days (default no purge when 0).
+- `vision.alertRetentionDays` — purge all alert event rows (real detections included) older than N days; 0 = keep forever.
+- `vision.alertPurgeIntervalHours` — how often the background purge job runs (default 6 hours).
 - `vision.detector.mode` selects `motion`, `external`, `hybrid`, or `persistent`; `motion` is the dependency-free default.
 - `vision.detector.command` and `vision.detector.args` configure either a per-frame detector process (`external`/`hybrid`) or a long-lived newline-JSON worker (`persistent`).
-- `vision.detector.classMap` maps rule detection types such as `fire`, `smoke`, `person`, `vehicle`, `animal`, `intrusion`, `line_crossing`, and `multi_line_crossing` to model labels.
+- `vision.detector.classMap` maps rule detection types such as `fire`, `smoke`, `person`, `vehicle`, `animal`, `crowd`, `intrusion`, `line_crossing`, `multi_line_crossing`, and `lpr` to model labels.
 - `transaction.lockProvider` selects Redis or in-memory FIFO transaction locking; empty inherits `cache.provider`.
 - `transaction.lockWaitTimeoutMs` bounds queue wait time.
 - `transaction.lockLeaseMs` controls Redis owner lease duration.

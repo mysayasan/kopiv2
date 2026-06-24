@@ -15,6 +15,28 @@ import (
 	"github.com/mysayasan/kopiv2/infra/vision"
 )
 
+// LPRCapabilityResult describes whether a camera is suitable for license-plate
+// recognition. Supported gates the LPR rule option in the UI; RTSPURL (when set)
+// is the highest-resolution ONVIF profile's stream so LPR capture auto-picks it.
+type LPRCapabilityResult struct {
+	// Supported is true when the camera can plausibly produce plate-legible frames:
+	// an ONVIF high-res profile exists, or resolution is unknown (non-ONVIF) so we
+	// allow it rather than block. False only when a known max resolution is too low.
+	Supported bool `json:"supported"`
+	// Onvif is true when profile resolutions were actually read (so Width/Height and
+	// the auto-pick RTSPURL are meaningful).
+	Onvif bool `json:"onvif"`
+	// Width/Height are the highest profile's resolution (0 when unknown).
+	Width  int `json:"width"`
+	Height int `json:"height"`
+	// RTSPURL is the highest-resolution profile's stream, used for auto-pick capture.
+	// Empty when not resolvable (non-ONVIF / probe failed) — capture falls back to
+	// the camera's existing recording/live stream.
+	RTSPURL string `json:"rtspUrl"`
+	// Detail is a short human-readable note for the UI (e.g. "highest profile 1920x1080").
+	Detail string `json:"detail"`
+}
+
 // SnapshotSource is a resolved camera source used for browser MJPEG output.
 type SnapshotSource struct {
 	URI      string
@@ -66,6 +88,10 @@ type ICameraService interface {
 	GetCameraEncoder(ctx context.Context, id uint64) (*onvif.VideoEncoderConfig, error)
 	ApplyCameraEncoder(ctx context.Context, id uint64, req ApplyCameraEncoderRequest) (*onvif.VideoEncoderConfig, error)
 	SnapshotSource(ctx context.Context, id uint64) (SnapshotSource, error)
+	// LPRCapability reports whether the camera can supply plate-legible frames and,
+	// when ONVIF profiles are readable, the highest-resolution profile's RTSP URL so
+	// LPR capture can auto-pick it. Cached; safe to call on the per-frame path.
+	LPRCapability(ctx context.Context, id int64) LPRCapabilityResult
 	TestStream(ctx context.Context, id uint64) (*rtsp.ProbeResult, error)
 	// DisplayName returns the camera's human-readable name (name/model/host),
 	// cached and invalidated on save so renames reflect immediately. Returns ""
@@ -109,6 +135,9 @@ type VisionMonitorSettings struct {
 	Interval                  int64
 	CaptureTimeout            int64
 	DiagnosticCooldownSeconds int64
+	// PersistSampledDiagnostics writes the noisy "sampled" heartbeat diagnostic to
+	// the alert log. Off by default; capture/detect failures are logged regardless.
+	PersistSampledDiagnostics bool
 	SnapshotDir               string
 	Detector                  vision.Detector
 	Recorder                  *recording.Manager
@@ -203,6 +232,19 @@ type CaptureSettings struct {
 	Standalone CaptureStandaloneSettings `json:"standalone"`
 	// Siphon holds parameters used only when reading frames off the recorder.
 	Siphon CaptureSiphonSettings `json:"siphon"`
+	// LPR holds parameters for the license-plate capture path (higher resolution).
+	LPR CaptureLPRSettings `json:"lpr"`
+}
+
+// CaptureLPRSettings tunes the frame used for license-plate recognition. Plates
+// need far more pixels than object detection, so LPR-enabled cameras capture a
+// dedicated high-resolution standalone frame (the low-res siphon frame would be
+// unreadable). This is the "capture high, share down" path.
+type CaptureLPRSettings struct {
+	// FrameWidth is the downscaled width (px) of the LPR frame (0 = default 1920).
+	// The plate crop is OCR'd from this, so higher = more legible distant plates at
+	// the cost of more decode/OCR time.
+	FrameWidth int `json:"frameWidth"`
 }
 
 // CaptureStandaloneSettings tunes the standalone (self-opened RTSP) frame source.
@@ -375,6 +417,8 @@ type IVisionService interface {
 	GetAlertById(ctx context.Context, id uint64) (*entities.AlertEvent, error)
 	CreateAlert(ctx context.Context, req AlertEventRequest, userId int64) (*entities.AlertEvent, error)
 	AcknowledgeAlert(ctx context.Context, id uint64, userId int64) (*entities.AlertEvent, error)
+	PurgeAlerts(ctx context.Context, olderThan int64, onlyDiagnostics bool) (int, error)
+	PurgeAlertsOlderThanDays(ctx context.Context, days int, onlyDiagnostics bool) (int, error)
 }
 
 // ITrainingService manages custom-model training datasets and their labeled
@@ -406,6 +450,15 @@ type ITrainingService interface {
 	DepsSetupStatus() DepsSetupState
 	GetStockModel(ctx context.Context) StockModelInfo
 	SetStockModel(ctx context.Context, model string, userId int64) error
+	// License-plate (LPR) model slot — a second-stage plate detector, separate from
+	// the stock/custom general-detection models.
+	GetLPRModel(ctx context.Context) LPRModelInfo
+	SetLPRModel(ctx context.Context, value string, userId int64) error
+	ImportLPRModel(ctx context.Context, name string, weights []byte, userId int64) (LPRModelInfo, error)
+	DeactivateLPRModel(ctx context.Context, userId int64) error
+	// StartLPRDepsSetup installs the OCR dependencies (easyocr) into the app's
+	// Python, streaming to the shared installer log (poll via DepsSetupStatus).
+	StartLPRDepsSetup(ctx context.Context) error
 }
 
 // INotificationService is the unified notification feed: it publishes events to

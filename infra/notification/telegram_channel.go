@@ -59,7 +59,7 @@ func NewTelegramChannel(opts TelegramOptions) Channel {
 		client:  client,
 		logger:  opts.Logger,
 	}
-	return newAsyncSender("telegram", opts.MinSeverity, opts.QueueSize, t.send)
+	return newAsyncSender("telegram", opts.MinSeverity, opts.QueueSize, t.send, opts.Logger)
 }
 
 type telegramSender struct {
@@ -75,33 +75,34 @@ type telegramMessage struct {
 	ParseMode string `json:"parse_mode,omitempty"`
 }
 
-func (t *telegramSender) send(n Notification) {
+// send returns a (retryable) error on transient failure so the async worker can
+// retry; permanent failures (marshal, multipart build) are wrapped so they are
+// not retried. Final logging is handled by the worker.
+func (t *telegramSender) send(n Notification) error {
 	// When the notification carries an image, deliver it as a photo so the
 	// snapshot shows inline in the chat; otherwise fall back to a text message.
 	if n.Attachment != nil && len(n.Attachment.Data) > 0 {
-		t.sendPhoto(n)
-		return
+		return t.sendPhoto(n)
 	}
-	t.sendMessage(n)
+	return t.sendMessage(n)
 }
 
-func (t *telegramSender) sendMessage(n Notification) {
+func (t *telegramSender) sendMessage(n Notification) error {
 	payload, err := json.Marshal(telegramMessage{
 		ChatID:    t.chatID,
 		Text:      telegramText(n),
 		ParseMode: "HTML",
 	})
 	if err != nil {
-		warn(t.logger, "notification.telegram", "marshal failed: %v", err)
-		return
+		return permanent(fmt.Errorf("marshal failed: %w", err))
 	}
-	t.do("sendMessage", "application/json", bytes.NewReader(payload))
+	return t.do("sendMessage", "application/json", bytes.NewReader(payload))
 }
 
 // sendPhoto uploads the attached image via multipart so it does not depend on the
 // snapshot endpoint being publicly reachable. The notification text becomes the
 // photo caption (Telegram caps captions at 1024 chars).
-func (t *telegramSender) sendPhoto(n Notification) {
+func (t *telegramSender) sendPhoto(n Notification) error {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	_ = mw.WriteField("chat_id", t.chatID)
@@ -113,39 +114,37 @@ func (t *telegramSender) sendPhoto(n Notification) {
 	}
 	part, err := mw.CreateFormFile("photo", filename)
 	if err != nil {
-		warn(t.logger, "notification.telegram", "create photo part failed: %v", err)
-		return
+		return permanent(fmt.Errorf("create photo part failed: %w", err))
 	}
 	if _, err := part.Write(n.Attachment.Data); err != nil {
-		warn(t.logger, "notification.telegram", "write photo failed: %v", err)
-		return
+		return permanent(fmt.Errorf("write photo failed: %w", err))
 	}
 	if err := mw.Close(); err != nil {
-		warn(t.logger, "notification.telegram", "close multipart failed: %v", err)
-		return
+		return permanent(fmt.Errorf("close multipart failed: %w", err))
 	}
-	t.do("sendPhoto", mw.FormDataContentType(), &buf)
+	return t.do("sendPhoto", mw.FormDataContentType(), &buf)
 }
 
-// do POSTs to a Telegram Bot API method and logs non-2xx responses.
-func (t *telegramSender) do(method, contentType string, body io.Reader) {
+// do POSTs to a Telegram Bot API method, returning an error on a transient
+// failure (so the worker retries) and a permanent error when the request itself
+// cannot be built.
+func (t *telegramSender) do(method, contentType string, body io.Reader) error {
 	ctx, cancel := context.WithTimeout(context.Background(), t.client.Timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.apiBase+"/"+method, body)
 	if err != nil {
-		warn(t.logger, "notification.telegram", "build request failed: %v", err)
-		return
+		return permanent(fmt.Errorf("build request failed: %w", err))
 	}
 	req.Header.Set("Content-Type", contentType)
 	resp, err := t.client.Do(req)
 	if err != nil {
-		warn(t.logger, "notification.telegram", "%s failed: %v", method, err)
-		return
+		return fmt.Errorf("%s failed: %w", method, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		warn(t.logger, "notification.telegram", "%s returned %s", method, resp.Status)
+		return fmt.Errorf("%s returned %s", method, resp.Status)
 	}
+	return nil
 }
 
 // truncateRunes shortens s to at most n runes without splitting a multi-byte rune.

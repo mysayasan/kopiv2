@@ -119,13 +119,21 @@ func (d *ObjectRuleDetector) Detect(ctx context.Context, frame Frame, rules []De
 		var matched bool
 		crowdCount := 0
 		var crowdBoxes []MetaBox
-		if isCrowdType(rule.DetectionType) {
+		var plate *plateMatch
+		switch {
+		case isCrowdType(rule.DetectionType):
 			cfg, err := parseCrowdConfig(rule)
 			if err != nil {
 				return nil, err
 			}
 			candidate, crowdCount, matched, crowdBoxes = d.crowdMatch(rule, cfg, candidates)
-		} else {
+		case isLPRType(rule.DetectionType):
+			cfg, err := parseLPRConfig(rule)
+			if err != nil {
+				return nil, err
+			}
+			candidate, plate, matched = d.lprMatch(rule, cfg, candidates)
+		default:
 			candidate, matched = d.bestCandidate(rule, candidates)
 		}
 
@@ -179,6 +187,22 @@ func (d *ObjectRuleDetector) Detect(ctx context.Context, frame Frame, rules []De
 				meta["boxes"] = crowdBoxes
 			}
 			label = crowdLabel(candidate.Label, crowdCount)
+		}
+		if plate != nil {
+			// Promote the plate string and associated vehicle attributes to top-level
+			// metadata so notifications can template {{plate}}/{{vehicleType}}/{{color}}
+			// and the plate-history view can filter on them without reaching into
+			// objectMeta.
+			meta["plate"] = plate.Plate
+			meta["ocrConfidence"] = plate.OCRConfidence
+			meta["watchlisted"] = plate.Watchlisted
+			if plate.VehicleType != "" {
+				meta["vehicleType"] = plate.VehicleType
+			}
+			if plate.Color != "" {
+				meta["color"] = plate.Color
+			}
+			label = lprLabel(plate)
 		}
 		metadata, _ := json.Marshal(meta)
 		detections = append(detections, Detection{
@@ -297,6 +321,7 @@ func normalizeClassMap(raw map[string][]string) map[string]map[string]bool {
 		DetectionVehicle:           vehicleClasses,
 		DetectionAnimal:            animalClasses,
 		DetectionCrowd:             {DetectionPerson},
+		DetectionLicensePlate:      {defaultPlateLabel},
 		DetectionIntrusion:         append([]string{"person"}, vehicleClasses...),
 		DetectionLineCrossing:      append([]string{"person"}, vehicleClasses...),
 		DetectionMultiLineCrossing: append([]string{"person"}, vehicleClasses...),

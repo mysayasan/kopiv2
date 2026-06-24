@@ -67,6 +67,9 @@ func (f *fakeCameraService) ApplyCameraEncoder(_ context.Context, _ uint64, _ se
 func (f *fakeCameraService) SnapshotSource(_ context.Context, _ uint64) (services.SnapshotSource, error) {
 	return services.SnapshotSource{}, nil
 }
+func (f *fakeCameraService) LPRCapability(_ context.Context, _ int64) services.LPRCapabilityResult {
+	return services.LPRCapabilityResult{}
+}
 func (f *fakeCameraService) TestStream(_ context.Context, _ uint64) (*rtsp.ProbeResult, error) {
 	return nil, nil
 }

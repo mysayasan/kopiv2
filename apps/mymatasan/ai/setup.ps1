@@ -21,7 +21,8 @@
 
 param(
   [string]$Python = "python",
-  [string]$Cuda = ""   # empty => auto-detect from the GPU
+  [string]$Cuda = "",  # empty => auto-detect from the GPU
+  [switch]$Lpr         # also install the optional license-plate (OCR) dependencies
 )
 
 $ErrorActionPreference = "Stop"
@@ -162,6 +163,18 @@ if ($hasGpu) {
 
 Write-Host "Installing ultralytics + OpenCV..."
 & $targetPython -m pip install --upgrade ultralytics opencv-python
+
+# Optional: license-plate (LPR) OCR backend. Only when -Lpr is passed, since easyocr
+# is a heavy extra most installs don't need.
+if ($Lpr) {
+  Write-Host "Installing license-plate OCR dependencies (easyocr)..." -ForegroundColor Green
+  $lprReq = Join-Path $PSScriptRoot "requirements-lpr.txt"
+  if (Test-Path $lprReq) {
+    & $targetPython -m pip install --upgrade -r $lprReq
+  } else {
+    & $targetPython -m pip install --upgrade easyocr opencv-python numpy
+  }
+}
 
 # --- 4. Verify + report -------------------------------------------------------
 Write-Section "Verifying"

@@ -17,6 +17,14 @@ Runs the MyMataSan background vision monitor that samples saved cameras and pers
 - On a successful alert creation, call `recording.Manager.TriggerEvent(cameraId, alertId, detection.FrameCapturedAt)` to start post-roll clip collection anchored to when the frame was captured, not when the detector finished processing it. This eliminates the YOLO latency shift that previously caused recordings to capture empty frames after the subject had already left.
 - Emit throttled diagnostic alert events for capture failures, detector failures, and successful samples with no threshold-crossing detection.
 
+## LPR capture path
+
+When any rule for a camera has `detectionType = "lpr"`, `sampleCamera` sets `wantLPR = true` (via `rulesContainLPR`). This has two effects: (1) `captureFrame` calls `DetectionSource.CaptureForLPR` instead of `Capture`, which forces standalone mode and grabs a full-resolution (default 1920 px wide) frame — bypassing the low-res siphon frame that would make plates unreadable; (2) `Frame.WantLPR` is set so the persistent worker runs its OCR stage. Non-LPR cameras are never affected: the OCR path and high-res capture never run for them.
+
+## Sampled-diagnostic suppression
+
+The `"sampled"` heartbeat diagnostic (frame captured; nothing detected) is now only written when `persistSampledDiagnostics` is `true` (off by default). Capture and detect failures are still written regardless. This prevents the noisy heartbeat from bloating the `alert_event` table; the setting is exposed in `VisionMonitorSettings.PersistSampledDiagnostics` and in the config as `vision.persistSampledDiagnostics`.
+
 ## Notes
 
 - The `recording.Manager` pointer is optional; when nil, both `WriteFrame` and `TriggerEvent` calls are skipped and recording is disabled for all cameras.
