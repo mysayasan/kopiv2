@@ -1,6 +1,6 @@
 {
   "type": "fixed",
-  "scope": "recording",
+  "scope": "infra",
   "summary": "RTSP recorder no longer errors on empty (0-byte) live segments. When an RTSP stream stalls or drops at a segment boundary, ffmpeg's segment muxer creates the .ts file but writes no data; remuxSegment then handed the empty file to ffmpeg, producing a noisy 'Invalid data found when processing input' error and leaving the orphaned file behind forever (remux deletes the source only on success). remuxSegment now stat-checks the .ts first and, when it is 0 bytes, logs an info-level 'skipping empty segment (no stream data)' line, removes the file, and returns without invoking ffmpeg.",
   "compatibility": "No behavior change for valid segments. Empty segments contained no video, so discarding them loses nothing. Note: pre-existing orphaned empty .ts files are cleaned up by this path going forward; large non-empty orphaned .ts files (e.g. from a restart mid-recording) are a separate issue and are not affected."
 }

@@ -26,3 +26,11 @@ apps/mymatasan/models/*.onnx
 
 # logs
 logs/
+
+# claude
+.claude/
+
+# local runtime sqlite databases (recreated by bootstrap; may hold secrets like the fleet CA key)
+apps/*/data/*.db
+apps/*/data/*.db-shm
+apps/*/data/*.db-wal

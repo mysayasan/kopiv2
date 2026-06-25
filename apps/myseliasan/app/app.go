@@ -1,12 +1,16 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/myseliasan/apis"
+	appentities "github.com/mysayasan/kopiv2/apps/myseliasan/entities"
+	"github.com/mysayasan/kopiv2/apps/myseliasan/services"
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
 	apiaccessenums "github.com/mysayasan/kopiv2/domain/enums/apiaccess"
 	"github.com/mysayasan/kopiv2/infra/apidocs"
@@ -46,6 +50,8 @@ func (m *module) Entities() []any {
 		sharedentities.ApiEndpoint{},
 		sharedentities.ApiLog{},
 		sharedentities.UserSession{},
+		appentities.ManagedNode{},
+		appentities.ControlSetting{},
 	}
 }
 
@@ -62,6 +68,8 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Runtime Version", Description: "runtime version access", Path: "/api/version", AccessTier: apiaccessenums.Public},
 		{Title: "Auth", Description: "relying-app auth start, callback, and logout", Path: "/api/auth", AccessTier: apiaccessenums.Public},
 		{Title: "Session", Description: "current relying-app session metadata", Path: "/api/session", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Nodes", Description: "mymatasan node discovery, adoption, and management", Path: "/api/nodes", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Node Self-Drop", Description: "node-initiated unpair notice (fleet-key authenticated)", Path: "/api/nodes/self-dropped", AccessTier: apiaccessenums.Public},
 	}
 
 	statements := make([]string, 0, len(endpoints)*2)
@@ -86,7 +94,52 @@ WHERE NOT EXISTS (SELECT 1 FROM api_endpoint WHERE app_code = 'myseliasan' AND h
 func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (apphost.ShutdownFunc, error) {
 	apis.NewAuthApi(api, deps.Config, deps.Auth, deps.Cache)
 	apis.NewSessionApi(api, *deps.Auth)
-	return nil, nil
+
+	// Node management: discover, adopt, and release mymatasan nodes over the
+	// fleet-key-authenticated pairing protocol. ParentBaseURL is recorded on each
+	// node so it can call back (enroll / release / self-drop). The control plane is
+	// also the fleet CA that issues node certs for the mTLS management channel.
+	parentID := deps.Config.SSO.ClientID
+	if parentID == "" {
+		parentID = "myseliasan"
+	}
+	p := deps.Config.Pairing
+	mtlsPort := p.MTLSPort
+	if mtlsPort <= 0 {
+		mtlsPort = 49532
+	}
+	registry := services.NewNodeRegistry(deps.Db, services.NodeRegistryConfig{
+		MulticastAddr: p.MulticastAddr,
+		ParentID:      parentID,
+		ParentName:    parentID,
+		ParentBaseURL: deps.Config.SSO.RedirectBaseURL,
+		MTLSPort:      mtlsPort,
+		CertTTL:       time.Duration(p.CertTTLHours) * time.Hour,
+	})
+	apis.NewNodesApi(api, *deps.Auth, registry)
+
+	// Heartbeat reconciliation: probe every adopted node over mTLS on an interval so
+	// the registry reflects liveness and converges after a node self-drops while the
+	// control plane was unreachable.
+	hbInterval := time.Duration(p.HeartbeatIntervalSeconds) * time.Second
+	if hbInterval <= 0 {
+		hbInterval = 60 * time.Second
+	}
+	hbCtx, stopHeartbeat := context.WithCancel(context.Background())
+	go func() {
+		ticker := time.NewTicker(hbInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-hbCtx.Done():
+				return
+			case <-ticker.C:
+				registry.Heartbeat(hbCtx)
+			}
+		}
+	}()
+
+	return func(context.Context) error { stopHeartbeat(); return nil }, nil
 }
 
 func (m *module) RegisterWebRoutes(router *mux.Router, deps apphost.Dependencies) error {

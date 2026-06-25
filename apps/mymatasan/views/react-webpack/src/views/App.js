@@ -2318,6 +2318,7 @@ export default function App() {
     return (
       <SetupWizard
         username={credentials.username}
+        authHeader={authHeader}
         busy={busy}
         message={message}
         capacity={capacity}

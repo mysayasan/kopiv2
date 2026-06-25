@@ -2,11 +2,11 @@ import { useState, useEffect } from 'react';
 import { Ico } from './icons';
 import { BrandLogo, PasswordField } from './layout';
 import { Message, FormBusyOverlay } from './ui';
-import { cameraTitle, sameCamera } from '../lib/helpers';
+import { cameraTitle, sameCamera, apiBase } from '../lib/helpers';
 import { CapacityRetentionNote } from './settings';
 import { defaultDestination } from '../lib/constants';
 
-const STEPS = ['Welcome', 'System', 'AI', 'Capacity', 'Cameras', 'Recording', 'Alerts', 'Done'];
+const STEPS = ['Welcome', 'System', 'AI', 'Capacity', 'Cameras', 'Recording', 'Alerts', 'Connectivity', 'Done'];
 const capacityLimitText = { cpu: 'CPU', gpu: 'GPU', disk: 'disk space', memory: 'memory' };
 
 // SetupWizard is the first-run onboarding overlay: welcome/account, machine
@@ -14,6 +14,7 @@ const capacityLimitText = { cpu: 'CPU', gpu: 'GPU', disk: 'disk space', memory: 
 // purely a thin orchestrator over the app's existing handlers, passed as props.
 export function SetupWizard({
   username,
+  authHeader,
   busy,
   message,
   capacity,
@@ -124,6 +125,9 @@ export function SetupWizard({
             />
           ) : null}
           {step === 7 ? (
+            <ConnectivityStep authHeader={authHeader} />
+          ) : null}
+          {step === 8 ? (
             <DoneStep cameraCount={cameraCount} recordingDone={recordingDone} alertsDone={alertsDone} />
           ) : null}
         </div>
@@ -148,6 +152,98 @@ export function SetupWizard({
         </div>
       </div>
     </main>
+  );
+}
+
+// ConnectivityStep (optional) lets the operator link this node to a myseliasan
+// control plane during onboarding: paste the fleet key, then generate a claim code
+// to enter in the control plane. Fully skippable — pairing can also be done later
+// from Settings → Connectivity.
+function ConnectivityStep({ authHeader }) {
+  const [status, setStatus] = useState(null);
+  const [fleetKey, setFleetKey] = useState('');
+  const [claim, setClaim] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState(null);
+
+  async function api(path, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    if (authHeader) headers.Authorization = authHeader;
+    if (options.body) headers['Content-Type'] = 'application/json';
+    const resp = await fetch(`${apiBase()}${path}`, { credentials: 'include', ...options, headers });
+    const text = await resp.text();
+    let payload = null;
+    if (text) { try { payload = JSON.parse(text); } catch (_) { payload = { message: text }; } }
+    const body = payload?.data?.result ?? payload?.result ?? payload;
+    return { ok: resp.ok, body, message: payload?.message };
+  }
+
+  async function load() {
+    const r = await api('/api/pairing/status').catch(() => ({ ok: false }));
+    if (r.ok) setStatus(r.body);
+  }
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [authHeader]);
+
+  async function saveKey() {
+    if (fleetKey.trim().length < 16) { setNote({ err: true, text: 'Fleet key must be at least 16 characters.' }); return; }
+    setBusy(true);
+    const r = await api('/api/pairing/fleet-key', { method: 'PUT', body: JSON.stringify({ key: fleetKey.trim() }) });
+    setBusy(false);
+    if (r.ok) { setNote({ err: false, text: 'Fleet key saved — this node is now discoverable.' }); setFleetKey(''); load(); }
+    else setNote({ err: true, text: r.message || 'Failed to save fleet key.' });
+  }
+
+  async function genClaim() {
+    setBusy(true);
+    const r = await api('/api/pairing/claim-code', { method: 'POST' });
+    setBusy(false);
+    if (r.ok) { setClaim(r.body); setNote(null); }
+    else setNote({ err: true, text: r.message || 'Failed to generate claim code.' });
+  }
+
+  const fleetKeySet = !!status?.fleetKeySet;
+  const paired = !!status?.paired;
+
+  return (
+    <div className="setup-pane">
+      <h2>Connect to a control plane <span className="field-hint">(optional)</span></h2>
+      <p>
+        If you manage this node from a myseliasan control plane, link it now. Paste the fleet key from your control
+        plane, then generate a claim code to enter there when adopting this node. You can skip this and do it later
+        from Settings → Connectivity.
+      </p>
+      {note ? <span className={note.err ? 'field-hint danger-text' : 'field-hint good'}>{note.text}</span> : null}
+      {paired ? (
+        <p>This node is already paired to <strong>{status?.parentName || status?.parentId}</strong>.</p>
+      ) : (
+        <div className="setup-pw-form">
+          <label>Fleet key {fleetKeySet ? '(set)' : ''}
+            <input
+              type="password"
+              value={fleetKey}
+              onChange={(e) => setFleetKey(e.target.value)}
+              placeholder={fleetKeySet ? '•••••••• (enter to replace)' : 'paste fleet key (min 16 chars)'}
+              disabled={busy}
+              autoComplete="off"
+            />
+          </label>
+          <div className="setup-account">
+            <button type="button" onClick={saveKey} disabled={busy || fleetKey.trim().length < 16}>
+              <span className="btn-icon"><Ico n="save" /> Save fleet key</span>
+            </button>
+            <button type="button" className="quiet" onClick={genClaim} disabled={busy || !fleetKeySet}>
+              <span className="btn-icon"><Ico n="refresh" /> Generate claim code</span>
+            </button>
+          </div>
+          {claim ? (
+            <p>
+              Claim code: <strong style={{ letterSpacing: 2, fontSize: '1.2em' }}>{claim.code}</strong>
+              {claim.expiresAt ? <> — expires {new Date(claim.expiresAt * 1000).toLocaleTimeString()}</> : null}
+            </p>
+          ) : null}
+        </div>
+      )}
+    </div>
   );
 }
 

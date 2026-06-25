@@ -2,7 +2,7 @@
 
 `mymatasan` is the standalone camera and video intelligence app for `kopiv2`.
 
-It is designed to run on small devices such as Raspberry Pi or Jetson-style micro computers. It discovers ONVIF cameras, persists camera records in a local SQLite database, and exposes live viewing through RTSP-backed streams. Browser live view uses WebRTC for H.264 camera tracks first, with MJPEG fallback retained for compatibility. It will later communicate with `myseliasan` through a strict device-control protocol.
+It is designed to run on small devices such as Raspberry Pi or Jetson-style micro computers. It discovers ONVIF cameras, persists camera records in a local SQLite database, and exposes live viewing through RTSP-backed streams. Browser live view uses WebRTC for H.264 camera tracks first, with MJPEG fallback retained for compatibility. It communicates with `myseliasan` through the LAN pairing protocol (authenticated UDP multicast discovery + HTTPS adoption).
 
 ## Current Scope
 
@@ -33,6 +33,7 @@ It is designed to run on small devices such as Raspberry Pi or Jetson-style micr
 - Default cache provider is in-process memory.
 - Default DB engine is SQLite at `apps/mymatasan/data/mymatasan.db`.
 - MyIDSan JWT auth, SSO, RBAC, user, role, app-registry, endpoint, endpoint-RBAC, file-storage, log, runtime-log, and cache-service APIs are not mounted in `mymatasan`.
+- **LAN pairing + mTLS management** (`/api/pairing`): secure single-parent adoption by a `myseliasan` control plane. An operator sets a shared fleet key, generates a short-lived claim code in Settings → Connectivity, and the control plane performs an authenticated LAN scan + adopt. Once adopted the node immediately enrolls for an ECDSA P-256 certificate from the control-plane fleet CA (the node generates the key locally; only a CSR is sent), and serves a mutual-TLS management listener on `pairing.mtlsPort` (default 49532) that the control plane uses for heartbeat probes and remote release. Certificates are renewed automatically before `pairing.renewBeforeHours` (default 48 h) of expiry. Once adopted, the node is invisible to further discovery probes. Admin self-drop (`POST /api/pairing/unpair`) or a control-plane release undoes the binding and tears down the mTLS listener.
 - App-specific OpenAPI descriptions for ONVIF, RTSP setup, live view, vision, and recording endpoints.
 
 ## Run

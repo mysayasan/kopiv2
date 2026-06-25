@@ -37,7 +37,6 @@ require (
 	github.com/wlynxg/anet v0.0.5 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
-	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
@@ -64,5 +63,6 @@ require (
 	github.com/shirou/gopsutil/v3 v3.24.5
 	golang.org/x/crypto v0.52.0
 	golang.org/x/image v0.42.0
+	golang.org/x/net v0.55.0
 	modernc.org/sqlite v1.52.0
 )

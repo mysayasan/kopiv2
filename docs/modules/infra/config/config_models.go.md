@@ -73,3 +73,10 @@ Defines the top-level app configuration model loaded from app config JSON.
 - `transaction.jobWorkerEnabled` starts the durable file-storage upload worker.
 - `transaction.jobWorkerFrequencySeconds` controls worker polling frequency.
 - `transaction.maxAttempts` caps retry attempts before a durable upload job fails and cleans up.
+- `pairing.enabled` turns the node-side discovery responder on/off in `mymatasan`; omitted defaults to `true`.
+- `pairing.multicastAddr` overrides the UDP multicast group and port for discovery; empty defaults to `"239.255.90.21:49531"` (the `infra/pairing` package default). Both node and control plane must agree on this value.
+- `pairing.replayWindowSeconds` overrides probe/announce freshness bounds; `0` defaults to `30s`.
+- `pairing.mtlsPort` is the node's mutual-TLS management listener port (heartbeat + release). Used by `EnrollmentManager` on the node and stamped into `ManagedNode.MTLSPort` on the control plane at adoption. `0` defaults to `49532`.
+- `pairing.certTtlHours` sets the lifetime of issued node certificates on the control plane. `0` defaults to `168` (7 days).
+- `pairing.renewBeforeHours` makes the node request renewal when its cert is within this many hours of expiry. `0` defaults to `48`.
+- `pairing.heartbeatIntervalSeconds` controls how often the `myseliasan` background loop calls `INodeRegistry.Heartbeat` to probe all adopted nodes over mTLS. `0` defaults to `60`.
