@@ -26,6 +26,7 @@ import (
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	applog "github.com/mysayasan/kopiv2/infra/logging"
 	"github.com/mysayasan/kopiv2/infra/onvif"
+	"github.com/mysayasan/kopiv2/infra/pairing"
 	"github.com/mysayasan/kopiv2/infra/recording"
 	"github.com/mysayasan/kopiv2/infra/rtsp"
 	"github.com/mysayasan/kopiv2/infra/stream"
@@ -109,6 +110,7 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Recording", Description: "video recording segments and per-camera recording config access", Path: "/api/recording", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "AI Training", Description: "custom-model training datasets and labeled images access", Path: "/api/training", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Notifications", Description: "unified notification feed and live stream access", Path: "/api/notifications", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Pairing", Description: "control-plane discovery and adoption (adopt/release are crypto-authenticated)", Path: "/api/pairing", AccessTier: apiaccessenums.Public},
 	}
 
 	coreRbac := make([]string, 0, len(endpoints)*2)
@@ -220,6 +222,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	)
 	settingsService := services.NewRuntimeSettingsService(runtimeSettingsRepo, runtimeSettingsFromAppConfig(deps.Config))
 	setupStateService := services.NewSetupStateService(runtimeSettingsRepo)
+	pairingService := services.NewPairingService(runtimeSettingsRepo, atrestCipher, "", "")
 	localUserService := services.NewLocalUserService(localUserRepo)
 	shredPasses := resolveShredPasses(deps.Config)
 	// At-rest recording codec is runtime-editable (Settings → Recording); read the
@@ -349,6 +352,30 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		loginLockoutNotifier = notificationService
 	}
 
+	// HTTPS port advertised to the control plane in discovery announces and used as
+	// the adoption-call origin.
+	httpsPort := 0
+	if len(deps.Config.Server.TLSPorts) > 0 {
+		httpsPort = deps.Config.Server.TLSPorts[0]
+	}
+
+	// Node mTLS enrollment manager: after adoption it enrolls with the control-plane
+	// fleet CA, serves the mutual-TLS management listener (heartbeat/release), and
+	// renews its certificate before expiry. Kicked on adopt; runs in the monitor
+	// lifecycle below.
+	pairingRenewBefore := time.Duration(deps.Config.Pairing.RenewBeforeHours) * time.Hour
+	enrollmentManager := services.NewEnrollmentManager(
+		pairingService,
+		deps.Config.Pairing.MTLSPort,
+		pairingRenewBefore,
+		func(format string, args ...any) { deps.Logger.Infof("mymatasan.pairing", format, args...) },
+	)
+
+	// Pairing adopt/release are called by the control plane (no local session) and
+	// authenticate cryptographically, so they mount on the public /api router — and
+	// must be registered before the session catch-all so requests match here first.
+	apis.NewPairingPublicApi(api, pairingService, enrollmentManager.Kick)
+
 	protected := api.PathPrefix("").Subrouter()
 	protected.Use(apis.NewLocalBasicAuth(localUserService, loginGuard, loginLockoutNotifier))
 	// Non-admins are read-only (plus a small viewer allow-list); admins get full
@@ -366,6 +393,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewNotificationApi(protected, notificationService)
 	apis.NewCapacityApi(protected, cameraService, settingsService, machineHealthMonitor, recordingService, objectBackend)
 	apis.NewSetupApi(protected, setupStateService)
+	apis.NewPairingApi(protected, pairingService)
 
 	// Factory reset ("Secure Wipe & Reset"): shred all media, drop + rebuild + reseed
 	// the database (honouring the configured engine), then restart into first-run
@@ -480,6 +508,29 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// notifications, and runs disk mitigation (early purge + pause/resume
 	// recording). Reads its settings live, so it can be retuned without a restart.
 	machineHealthMonitor.Start(monitorCtx)
+
+	// Discovery responder: answers authenticated pairing probes while the node is
+	// unpaired and a fleet key is set, then goes silent once adopted. The fleet key
+	// and discoverability are read live per probe, so setting a key or adopting the
+	// node takes effect without a restart. Shares the monitor lifecycle.
+	if boolValue(deps.Config.Pairing.Enabled, true) {
+		pairingResponder := pairing.NewResponder(pairing.ResponderConfig{
+			FleetKey:      func() []byte { k, _ := pairingService.FleetKey(monitorCtx); return k },
+			Discoverable:  func() bool { return pairingService.Discoverable(monitorCtx) },
+			AnnounceInfo:  func() pairing.AnnounceInfo { return pairingService.AnnounceInfo(monitorCtx, httpsPort) },
+			MulticastAddr: deps.Config.Pairing.MulticastAddr,
+			ReplayWindow:  time.Duration(deps.Config.Pairing.ReplayWindowSeconds) * time.Second,
+			Logf:          func(format string, args ...any) { deps.Logger.Infof("mymatasan.pairing", format, args...) },
+		})
+		go func() {
+			if err := pairingResponder.Run(monitorCtx); err != nil && monitorCtx.Err() == nil {
+				deps.Logger.Warnf("mymatasan.pairing", "discovery responder stopped: %v", err)
+			}
+		}()
+		// Enrollment manager (mTLS): enroll after adoption, serve the management
+		// listener, and renew certs. Shares the monitor lifecycle.
+		go enrollmentManager.Run(monitorCtx)
+	}
 
 	// Factory reset (Secure Wipe & Reset). Built here — after the monitors and
 	// recorder exist — so its StopServices hook can quiesce them before wiping: the

@@ -75,6 +75,15 @@
     "failureThreshold": 3,
     "recoveryThreshold": 2
   },
+  "pairing": {
+    "enabled": true,
+    "multicastAddr": "239.255.90.21:49531",
+    "replayWindowSeconds": 30,
+    "mtlsPort": 49532,
+    "certTtlHours": 168,
+    "renewBeforeHours": 48,
+    "heartbeatIntervalSeconds": 60
+  },
   "notification": {
     "webhook": {
       "enabled": false,

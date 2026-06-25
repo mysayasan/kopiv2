@@ -34,11 +34,32 @@ Both paths unlink snapshot image files for removed rows.
 
 At startup, `lpr_model.txt` (alongside `active_model.txt` and `stock_model.txt` in the training dir) is resolved and its absolute path is written to `MYMATASAN_LPR_MODEL_FILE`. The YOLO worker reads this env var to know where to load the plate-detector weights. When the file is absent or empty, the LPR OCR stage never runs.
 
+## Discovery responder
+
+After the vision and health monitors are started, `app.go` conditionally starts the `infra/pairing` discovery responder (gated by `pairing.enabled`, default `true`). The responder:
+
+- Reads the fleet key and discoverability live on every probe (`pairingService.FleetKey` / `pairingService.Discoverable`) so a key set or an adopt call takes effect without a restart.
+- Goes silent automatically once the node is paired (because `Discoverable()` returns false).
+- Advertises the first configured TLS port as `httpsPort` in announces so the control plane can build the adoption URL.
+- Shares the `monitorCtx` lifecycle — it shuts down with the rest of the monitors on graceful shutdown.
+- Logs diagnostics via the app logger under the `"mymatasan.pairing"` topic.
+
+## Enrollment manager (mTLS)
+
+Also within the monitor lifecycle, `app.go` builds and runs an `EnrollmentManager` (from `services/node_enrollment.go`):
+
+- Built from `pairingService`, `pairing.mtlsPort` (default 49532), and `pairing.renewBeforeHours` (default 48h).
+- `enrollmentManager.Kick` is passed as the `onAdopted` callback to `NewPairingPublicApi`, so enrollment begins immediately after the adopt call returns.
+- `enrollmentManager.Run(monitorCtx)` is started as a goroutine; it reconciles on start, on `Kick`, and every 5 minutes.
+- After adoption, it generates a key+CSR locally, POSTs to `<parentBaseURL>/api/nodes/enroll` for a signed certificate, and then serves a mutual-TLS management listener on `pairing.mtlsPort` (GET `/heartbeat`, POST `/release`).
+- On unpair, the listener is torn down and the cert bundle is cleared.
+
 ## Notes
 
 - Only the public shared version API is mounted for this standalone app.
 - Shared login, user/group/role, app-registry, endpoint, endpoint-RBAC, file-storage, log, runtime-log, and cache-service route groups are disabled.
-- App entity registration includes `OnvifDevice`, `RuntimeSetting`, `LocalUser`, `DetectionRule`, `AlertEvent`, `RecordingSegment`, and `RecordingConfig`.
+- App entity registration includes `OnvifDevice`, `RuntimeSetting`, `LocalUser`, `DetectionRule`, `AlertEvent`, `RecordingSegment`, `RecordingConfig`, and the pairing state rows stored in `RuntimeSetting` (no new table).
+- The `/api/pairing` endpoint group is seeded with `Public` access tier because `adopt` and `release` carry their own cryptographic authentication.
 - OpenAPI endpoint discovery is automatic; this module enriches summaries/descriptions via `APIDocs()`.
 - Vision detector modes are `motion`, `external`, `hybrid`, and `persistent`; `persistent` keeps one detector worker process alive and closes it during app shutdown.
 - At startup, per-camera recording configs with a missing RTSP URI are skipped with a warning log; recording starts only for cameras where an RTSP URI can be resolved.

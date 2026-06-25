@@ -1,0 +1,29 @@
+/* myseliasan control-plane additions, layered on top of the shared app.css so the
+   large shared stylesheet stays a verbatim copy of mymatasan's. */
+.primary-tabs { display: flex; gap: 6px; align-items: center; }
+.primary-tab {
+  border: none; background: transparent; color: var(--text-soft, #475569);
+  padding: 8px 14px; border-radius: 8px; cursor: pointer; font: inherit; font-weight: 600;
+}
+.primary-tab:hover { background: var(--accent-bg, rgba(0, 0, 0, 0.05)); }
+.primary-tab.active { background: var(--accent-bg, #e6f4ec); color: var(--accent, #2f8f5b); }
+.node-key-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.fleet-key-field { position: relative; flex: 1; min-width: 240px; display: flex; }
+.fleet-key-box {
+  flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--bg-body, #0f172a); color: var(--text-soft, #e2e8f0);
+  padding: 8px 40px 8px 12px; border-radius: 6px; word-break: break-all; font-size: 13px;
+  border: 1px solid var(--border-soft, #2a3850); min-height: 20px; line-height: 20px;
+}
+.fleet-key-copy {
+  position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0; border: none; border-radius: 6px;
+  background: transparent; color: var(--text-faint, #7a8ea4); cursor: pointer;
+}
+.fleet-key-copy:hover { background: var(--accent-bg, rgba(0,0,0,0.08)); color: var(--accent, #2f8f5b); }
+.code-block {
+  margin: 0; overflow: auto; border-radius: 8px; padding: 14px; font-size: 12px;
+  background: var(--bg-body, #0f172a); color: var(--text-soft, #e2e8f0);
+  border: 1px solid var(--border-soft, #2a3850);
+}

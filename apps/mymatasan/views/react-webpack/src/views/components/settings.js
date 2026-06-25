@@ -634,6 +634,226 @@ function SystemStatusPanel({ authHeader, onRestart }) {
   );
 }
 
+// PairingPanel manages the node's relationship to a myseliasan control plane:
+// setting the shared fleet key, generating a short-lived claim code an operator
+// enters in the control plane to adopt this node, and unpairing (self-drop) once
+// adopted. A node is discoverable on the LAN only while unpaired AND a fleet key
+// is set; adoption locks it to a single parent and silences discovery.
+function PairingPanel({ authHeader }) {
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const [fleetKey, setFleetKey] = useState('');
+  const [claim, setClaim] = useState(null);
+  const [claimCopied, setClaimCopied] = useState(false);
+
+  async function api(path, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    if (authHeader) headers.Authorization = authHeader;
+    if (options.body) headers['Content-Type'] = 'application/json';
+    const resp = await fetch(`${apiBase()}${path}`, { credentials: 'include', ...options, headers });
+    const text = await resp.text();
+    let payload = null;
+    if (text) { try { payload = JSON.parse(text); } catch (_) { payload = { message: text }; } }
+    const body = payload?.data?.result ?? payload?.result ?? payload;
+    return { ok: resp.ok, status: resp.status, body };
+  }
+
+  async function load(quiet) {
+    if (!quiet) setBusy(true);
+    const r = await api('/api/pairing/status').catch(() => ({ ok: false }));
+    if (r.ok) {
+      setStatus((prev) => {
+        // Surface the moment the control plane adopts (or releases) this node so
+        // an operator watching this page sees it without a manual refresh.
+        if (prev && prev.paired !== r.body?.paired) {
+          if (r.body?.paired) {
+            setMsg({ kind: 'ok', text: `This node was adopted by ${r.body.parentName || r.body.parentId || 'a control plane'}.` });
+            setClaim(null);
+          } else {
+            setMsg({ kind: 'ok', text: 'This node was released and is discoverable again.' });
+          }
+        }
+        return r.body;
+      });
+    }
+    if (!quiet) setBusy(false);
+  }
+  // Load on mount, then poll quietly so adoption/release initiated from the control
+  // plane is reflected here automatically (the page "refreshes" itself).
+  useEffect(() => {
+    load();
+    const id = window.setInterval(() => load(true), 4000);
+    return () => window.clearInterval(id);
+    /* eslint-disable-next-line */
+  }, [authHeader]);
+
+  async function saveFleetKey() {
+    if (fleetKey.trim().length < 16) { setMsg({ kind: 'error', text: 'Fleet key must be at least 16 characters.' }); return; }
+    setBusy(true);
+    const r = await api('/api/pairing/fleet-key', { method: 'PUT', body: JSON.stringify({ key: fleetKey.trim() }) });
+    setBusy(false);
+    if (r.ok) { setMsg({ kind: 'ok', text: 'Fleet key saved — this node is now discoverable by your control plane.' }); setFleetKey(''); load(); }
+    else setMsg({ kind: 'error', text: r.body?.message || 'Failed to save fleet key.' });
+  }
+
+  async function generateClaim() {
+    setBusy(true);
+    const r = await api('/api/pairing/claim-code', { method: 'POST' });
+    setBusy(false);
+    if (r.ok) { setClaim(r.body); setMsg(null); }
+    else setMsg({ kind: 'error', text: r.body?.message || 'Failed to generate claim code.' });
+  }
+
+  async function copyClaim() {
+    if (!claim?.code) return;
+    try {
+      await navigator.clipboard.writeText(claim.code);
+      setClaimCopied(true);
+      setTimeout(() => setClaimCopied(false), 2000);
+    } catch (_) {
+      setMsg({ kind: 'error', text: 'Could not copy — select the code and copy manually.' });
+    }
+  }
+
+  async function unpair() {
+    if (!window.confirm('Unpair this node from its control plane? It will become discoverable again and the current parent will lose access.')) return;
+    setBusy(true);
+    const r = await api('/api/pairing/unpair', { method: 'POST' });
+    setBusy(false);
+    if (r.ok) { setMsg({ kind: 'ok', text: 'Unpaired. This node is discoverable again.' }); setClaim(null); load(); }
+    else setMsg({ kind: 'error', text: r.body?.message || 'Failed to unpair.' });
+  }
+
+  const paired = !!status?.paired;
+  const fleetKeySet = !!status?.fleetKeySet;
+  const claimExpiry = claim?.expiresAt ? new Date(claim.expiresAt * 1000).toLocaleTimeString() : null;
+
+  return (
+    <div className="settings-layout">
+      <FormBusyOverlay busy={busy} />
+      <section className="settings-panel span-two">
+        <header>
+          <h2><span className="btn-icon"><Ico n="shield" /> Control plane</span></h2>
+          <div className="settings-header-actions">
+            <button type="button" className="quiet" onClick={load} disabled={busy}>
+              <span className="btn-icon"><Ico n="reload" /> Refresh</span>
+            </button>
+          </div>
+        </header>
+        {msg ? <p className={msg.kind === 'error' ? 'settings-hint danger-text' : 'settings-hint'}>{msg.text}</p> : null}
+        <div className="machine-metrics">
+          <div className="machine-metric-card">
+            <dt>Status</dt>
+            <dd><strong className={`status-pill ${paired ? 'online' : ''}`}>{paired ? 'Paired' : 'Unpaired'}</strong></dd>
+          </div>
+          <div className="machine-metric-card">
+            <dt>Discoverable</dt>
+            <dd><strong className={`status-pill ${status?.discoverable ? 'online' : 'offline'}`}>{status?.discoverable ? 'Yes' : 'No'}</strong></dd>
+            <span className="field-hint">{paired ? 'silenced — already adopted' : (fleetKeySet ? 'answering probes' : 'set a fleet key first')}</span>
+          </div>
+          <div className="machine-metric-card">
+            <dt>Node ID</dt>
+            <dd><strong className="status-pill">{status?.nodeId ? String(status.nodeId).slice(0, 8) : '—'}</strong></dd>
+            <span className="field-hint">{status?.name || ''}</span>
+          </div>
+        </div>
+      </section>
+
+      {paired ? (
+        <section className="settings-panel span-two">
+          <header><h2><span className="btn-icon"><Ico n="shield" /> Paired parent</span></h2></header>
+          <p className="settings-hint">
+            This node is locked to a single control plane and no longer answers discovery probes. To make it
+            discoverable again, either release it from the control plane or self-drop here.
+          </p>
+          <div className="machine-metrics">
+            <div className="machine-metric-card">
+              <dt>Parent</dt>
+              <dd><strong className="status-pill">{status?.parentName || status?.parentId || '—'}</strong></dd>
+              <span className="field-hint">{status?.parentBaseUrl || ''}</span>
+            </div>
+            {status?.pairedAt ? (
+              <div className="machine-metric-card">
+                <dt>Paired since</dt>
+                <dd><strong className="status-pill">{new Date(status.pairedAt * 1000).toLocaleString()}</strong></dd>
+              </div>
+            ) : null}
+          </div>
+          <div className="settings-actions">
+            <button type="button" className="danger" onClick={unpair} disabled={busy}>
+              <span className="btn-icon"><Ico n="x" /> Unpair (self-drop)</span>
+            </button>
+          </div>
+        </section>
+      ) : (
+        <>
+          <section className="settings-panel span-two">
+            <header><h2><span className="btn-icon"><Ico n="key" /> Fleet key</span></h2></header>
+            <p className="settings-hint">
+              Paste the fleet key generated by your myseliasan control plane. Discovery probes are signed with this
+              key, so only a control plane that shares it can see and adopt this node. {fleetKeySet ? 'A fleet key is already set; entering a new one replaces it.' : ''}
+            </p>
+            <div className="settings-field-grid">
+              <label>
+                Fleet key {fleetKeySet ? '(set)' : '(not set)'}
+                <input
+                  type="password"
+                  value={fleetKey}
+                  onChange={(e) => setFleetKey(e.target.value)}
+                  placeholder={fleetKeySet ? '•••••••• (enter to replace)' : 'paste fleet key (min 16 chars)'}
+                  disabled={busy}
+                  autoComplete="off"
+                />
+              </label>
+            </div>
+            <div className="settings-actions">
+              <button type="button" onClick={saveFleetKey} disabled={busy || fleetKey.trim().length < 16}>
+                <span className="btn-icon"><Ico n="save" /> Save fleet key</span>
+              </button>
+            </div>
+          </section>
+
+          <section className="settings-panel span-two">
+            <header><h2><span className="btn-icon"><Ico n="check-ok" /> Claim code</span></h2></header>
+            <p className="settings-hint">
+              Generate a short-lived claim code, then enter it in your control plane when adopting this node. The code
+              confirms the adoption is authorised from here and expires after a few minutes.
+            </p>
+            {claim ? (
+              <div className="machine-metrics">
+                <div className="machine-metric-card">
+                  <dt>Claim code</dt>
+                  <dd style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <strong className="status-pill online" style={{ letterSpacing: 2, fontSize: '1.2em' }}>{claim.code}</strong>
+                    <button
+                      type="button"
+                      className="quiet"
+                      onClick={copyClaim}
+                      title="Copy claim code"
+                      aria-label="Copy claim code"
+                      style={{ padding: 4, lineHeight: 0 }}
+                    >
+                      <Ico n={claimCopied ? 'check-ok' : 'copy'} sz={15} />
+                    </button>
+                  </dd>
+                  {claimExpiry ? <span className="field-hint">expires {claimExpiry}</span> : null}
+                </div>
+              </div>
+            ) : null}
+            <div className="settings-actions">
+              <button type="button" onClick={generateClaim} disabled={busy || !fleetKeySet}>
+                <span className="btn-icon"><Ico n="refresh" /> Generate claim code</span>
+              </button>
+              {!fleetKeySet ? <span className="field-hint">Set a fleet key first.</span> : null}
+            </div>
+          </section>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function SettingsTab({
   settingsNav,
   settings,
@@ -846,6 +1066,9 @@ export function SettingsTab({
         </button>
         <button type="button" className={settingsNav === 'users' ? 'active' : 'quiet'} onClick={() => onSettingsNav('users')}>
           <span className="btn-icon"><Ico n="user" /> Users</span>
+        </button>
+        <button type="button" className={settingsNav === 'pairing' ? 'active' : 'quiet'} onClick={() => onSettingsNav('pairing')}>
+          <span className="btn-icon"><Ico n="shield" /> Connectivity</span>
         </button>
         <button type="button" className={settingsNav === 'system' ? 'active' : 'quiet'} onClick={() => onSettingsNav('system')}>
           <span className="btn-icon"><Ico n="monitor" /> Version &amp; Health</span>
@@ -1725,6 +1948,10 @@ export function SettingsTab({
             resetAllowed={resetAllowed}
             onSecureWipe={onSecureWipe}
           />
+        ) : null}
+
+        {settingsNav === 'pairing' ? (
+          <PairingPanel authHeader={authHeader} />
         ) : null}
 
         {settingsNav === 'system' ? (

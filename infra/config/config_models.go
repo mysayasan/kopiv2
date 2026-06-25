@@ -94,9 +94,14 @@ type AppConfigModel struct {
 			NoBuffer        *bool  `json:"noBuffer"`
 		} `json:"ffmpeg"`
 	} `json:"decoder"`
-	Stream       StreamConfigModel       `json:"stream"`
-	Vision       VisionConfigModel       `json:"vision"`
-	Health       HealthConfigModel       `json:"health"`
+	Stream StreamConfigModel `json:"stream"`
+	Vision VisionConfigModel `json:"vision"`
+	Health HealthConfigModel `json:"health"`
+	// Pairing configures LAN discovery + single-parent adoption between a
+	// mymatasan node and a myseliasan control plane. When enabled (default), an
+	// unpaired node answers authenticated discovery probes on the multicast group
+	// and goes silent once adopted.
+	Pairing      PairingConfigModel      `json:"pairing"`
 	Notification NotificationConfigModel `json:"notification"`
 	Recording    RecordingConfigModel    `json:"recording"`
 	// Security configures encryption-at-rest. When enabled (default), recordings,
@@ -176,6 +181,28 @@ type AppConfigModel struct {
 		KeyPath  string `json:"keyPath" validate:"required"`
 	} `json:"tls"`
 	Db dbsql.DbConfigModel `json:"db"`
+}
+
+// PairingConfigModel holds discovery + adoption settings shared by the node
+// responder (mymatasan) and the control-plane prober (myseliasan).
+type PairingConfigModel struct {
+	// Enabled turns the node-side discovery responder on/off. Defaults to true.
+	Enabled *bool `json:"enabled"`
+	// MulticastAddr is the IPv4 group+port for discovery. Empty = package default.
+	MulticastAddr string `json:"multicastAddr"`
+	// ReplayWindowSeconds bounds probe/announce freshness. 0 = package default.
+	ReplayWindowSeconds int `json:"replayWindowSeconds"`
+	// MTLSPort is the node's mutual-TLS management listener port (release, heartbeat)
+	// that comes up once a node is adopted and enrolled. 0 = default (49532).
+	MTLSPort int `json:"mtlsPort"`
+	// CertTTLHours is the lifetime of an issued node certificate. 0 = default (168 / 7d).
+	CertTTLHours int `json:"certTtlHours"`
+	// RenewBeforeHours makes the node re-enroll when its cert is within this many
+	// hours of expiry. 0 = default (48).
+	RenewBeforeHours int `json:"renewBeforeHours"`
+	// HeartbeatIntervalSeconds is how often the control plane probes each adopted
+	// node over mTLS to reconcile liveness/self-drop. 0 = default (60).
+	HeartbeatIntervalSeconds int `json:"heartbeatIntervalSeconds"`
 }
 
 type StreamConfigModel struct {
@@ -272,27 +299,27 @@ type RecordingConfigModel struct {
 }
 
 type VisionConfigModel struct {
-	Enabled                   *bool                     `json:"enabled"`
-	IntervalMs                int                       `json:"intervalMs"`
-	CaptureTimeoutMs          int                       `json:"captureTimeoutMs"`
-	DiagnosticCooldownSeconds int                       `json:"diagnosticCooldownSeconds"`
+	Enabled                   *bool `json:"enabled"`
+	IntervalMs                int   `json:"intervalMs"`
+	CaptureTimeoutMs          int   `json:"captureTimeoutMs"`
+	DiagnosticCooldownSeconds int   `json:"diagnosticCooldownSeconds"`
 	// PersistSampledDiagnostics writes a "sampled" diagnostic alert (frame
 	// captured; nothing detected) to the alert log on the diagnostic cooldown.
 	// Off by default: it is a noisy heartbeat that bloats the alert_event table,
 	// and capture/detect FAILURES are still logged regardless. Turn on only to
 	// confirm the monitor is alive and sampling while troubleshooting.
-	PersistSampledDiagnostics bool                      `json:"persistSampledDiagnostics"`
+	PersistSampledDiagnostics bool `json:"persistSampledDiagnostics"`
 	// Alert-log retention. The background purge runs every AlertPurgeIntervalHours
 	// (default 6). DiagnosticRetentionDays deletes Vision-monitor diagnostics older
 	// than N days (default 3 — keeps the noisy heartbeat/failure rows from piling
 	// up). AlertRetentionDays deletes ALL alert events (real detections included)
 	// older than N days; 0 disables it so real detections are kept indefinitely.
-	DiagnosticRetentionDays   int                       `json:"diagnosticRetentionDays"`
-	AlertRetentionDays        int                       `json:"alertRetentionDays"`
-	AlertPurgeIntervalHours   int                       `json:"alertPurgeIntervalHours"`
-	SnapshotDir               string                    `json:"snapshotDir"`
-	Detector                  VisionDetectorConfigModel `json:"detector"`
-	Training                  VisionTrainingConfigModel `json:"training"`
+	DiagnosticRetentionDays int                       `json:"diagnosticRetentionDays"`
+	AlertRetentionDays      int                       `json:"alertRetentionDays"`
+	AlertPurgeIntervalHours int                       `json:"alertPurgeIntervalHours"`
+	SnapshotDir             string                    `json:"snapshotDir"`
+	Detector                VisionDetectorConfigModel `json:"detector"`
+	Training                VisionTrainingConfigModel `json:"training"`
 }
 
 // VisionTrainingConfigModel configures the custom-model training subsystem

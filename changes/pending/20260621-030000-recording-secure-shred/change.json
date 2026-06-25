@@ -1,6 +1,6 @@
 {
   "type": "added",
-  "scope": "recording",
+  "scope": "infra",
   "summary": "Recorded footage can now be securely shredded (multi-pass overwrite then unlink) on deletion instead of a plain unlink. New infra/recording/shred.go: ShredFile(path, passes) + SecureRemove(path, passes) (passes<=0 = plain delete; a missing file is a no-op), pure os/io and cross-platform. Defaults to 3 passes (recording.DefaultShredPasses); a new recording.shred config block (enabled *bool, passes int) controls it (default on, 3-pass; enabled=false -> plain delete). Wired into retention purge (rtsp.go purgeOldFiles) and the recording service's PurgeOldSegments + DeleteSegment. Intermediate .ts files removed during remux are NOT shredded (the data persists in the kept .mp4, so shredding them only wastes I/O).",
   "compatibility": "Backward compatible. Deletes still work the same way functionally; they are now overwrite-then-unlink by default, which costs extra disk I/O per delete. Set recording.shred.enabled=false (or passes=0) for the old plain-unlink behaviour. Note: overwrite-in-place is best-effort on copy-on-write/SSD-wear-levelled filesystems."
 }
