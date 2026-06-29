@@ -1727,6 +1727,51 @@ dd {
   grid-column: 1 / -1;
 }
 
+/* Per-node access grant form: role id + read/write toggles + save, on one aligned
+   row that wraps gracefully on narrow widths. The global `label { display: grid }`
+   rule stacks a checkbox above its text and stretches it full-width, so the check
+   labels opt back into a tidy inline row. */
+.node-access-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 18px;
+  margin-top: 4px;
+}
+
+.node-access-role {
+  width: 160px;
+  flex: 0 0 auto;
+}
+
+.node-access-checks {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding-bottom: 9px;
+}
+
+.node-access-check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  cursor: pointer;
+  color: var(--text-primary);
+}
+
+.node-access-check input[type='checkbox'] {
+  width: auto;
+  margin: 0;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+
+.node-access-save {
+  flex: 0 0 auto;
+}
+
 .ffmpeg-input-row {
   display: flex;
   align-items: center;

@@ -57,11 +57,27 @@ Endpoint rows with `accessTier` metadata are seeded for rate-limit classificatio
 
 1. A browser opens a relying app such as `myseliasan`.
 2. Without a local relying-app session, the app redirects to MyIDSan `/api/auth/authorize` with `client_id`, `audience`, exact `redirect_uri`, and state.
-3. MyIDSan validates the client config and redirect URI allow-list. If the browser has no MyIDSan session, it serves `/api/auth/login` and resumes authorization after local credential login.
+3. MyIDSan validates the client config and redirect URI allow-list. If the browser has no MyIDSan session, it serves `/api/auth/login` — the form now shows Google/GitHub buttons alongside the local login form when those providers are configured. The `continue` query parameter carries the authorization URL through any social login round-trip so the user lands back at step 4 automatically.
 4. MyIDSan redirects the browser back to the relying-app callback with a short-lived one-time code and state.
 5. The relying app validates state, then performs a backend HTTPS `POST` to MyIDSan `/api/auth/token` with its client secret.
 6. For HTTPS token exchange, the relying app uses the OS trust store plus optional `sso.caCertPath`/`SSO_CA_CERT_PATH`. This trusts private CA bundles without disabling hostname, expiry, or chain validation.
 7. After a valid token response, the relying app issues its own HttpOnly session cookie and redirects the browser to its app root.
+
+## Node Camera WebRTC Relay Flow (myseliasan → browser)
+
+This flow is for a browser live-viewing a camera attached to an adopted `mymatasan` node, where the browser has no direct path to the node.
+
+1. The node dials the parent's media channel (`wss://parentHost:mediaPort/media`) over fleet mTLS and maintains a persistent connection (`MediaChannelManager.Run`).
+2. The browser calls `GET /api/node-stream/config` to obtain the ICE server list (STUN/TURN) configured for the parent's WebRTC leg.
+3. The browser creates a local WebRTC peer, generates an SDP offer, and POSTs it to `POST /api/nodes/{id}/cameras/{cam}/webrtc/offer`.
+4. The API handler verifies the caller has at least viewer access to the node, confirms the node's media channel is connected, and builds a per-request `stream.Manager` backed by `MediaRelayHub.Connector(nodeID)`.
+5. `CreateWebRTCAnswerWithOptions` calls `relayConnector.Subscribe(source)`, which allocates a `streamID`, sends `FrameStart` down the media channel to the node, and waits for `FrameMeta` (codec info, up to 15 s timeout).
+6. The node receives `FrameStart`, subscribes the camera's RTSP stream, sends `FrameMeta`, replays the GOP backlog (`FrameBacklog`), then pumps live RTP as `FrameVideoRTP` / `FrameAudioRTP` frames.
+7. The API handler builds H264 video and optional audio tracks, answers the SDP offer, and starts pumping the relayed RTP packets into the browser's WebRTC peer. The SDP answer is returned to the browser.
+8. The browser's WebRTC peer connects (using the configured ICE/TURN if needed) and renders live video.
+9. When the browser disconnects, `Subscription.Close` triggers `relayConnector`'s `stopStream`, which sends `FrameStop` to the node and stops the RTSP subscription.
+
+**Data path summary:** camera → RTSP → mymatasan (RTP) → media channel (binary WebSocket, fleet mTLS) → myseliasan (MediaRelayHub) → WebRTC (pion) → browser.
 
 ## Bootstrap Flow
 

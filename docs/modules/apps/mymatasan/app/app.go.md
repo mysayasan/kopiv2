@@ -54,6 +54,16 @@ Also within the monitor lifecycle, `app.go` builds and runs an `EnrollmentManage
 - After adoption, it generates a key+CSR locally, POSTs to `<parentBaseURL>/api/nodes/enroll` for a signed certificate, and then serves a mutual-TLS management listener on `pairing.mtlsPort` (GET `/heartbeat`, POST `/release`).
 - On unpair, the listener is torn down and the cert bundle is cleared.
 
+## Media channel
+
+Within the monitor lifecycle, `app.go` also builds and runs a `MediaChannelManager` (`services/media_channel.go`):
+
+- Resolves each camera's RTSP source via `cameraService.SnapshotSource` (the same path used for browser live view); shares the `stream.Manager` RTSP session pool via the `MediaSubscriber` interface.
+- Dials the parent's media listener (`pairing.mediaPort`, default 49534) over fleet mTLS.
+- On a `FrameStart` from the parent, subscribes the requested camera and pumps live RTP (video + audio) up the channel.
+- Reconnects with backoff (1 s → 30 s cap) when the channel drops; the parent re-sends `FrameStart` on reconnect.
+- `mediaChannel.Run(monitorCtx)` is started as a goroutine alongside `controlChannel.Run`, sharing the monitor lifecycle.
+
 ## Notes
 
 - Only the public shared version API is mounted for this standalone app.

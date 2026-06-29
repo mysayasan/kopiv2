@@ -55,7 +55,8 @@ Implements the reusable runtime host for all app modules.
 - App modules can register app-specific periodic jobs through `deps.Scheduler`.
 - App modules can register protected non-API routes by implementing `WebRouteRegistrar`; `myseliasan` uses this to guard `/` before serving the dashboard shell.
 - OAuth providers remain optional; disabling Google/GitHub does not disable local credential auth routes.
-- Google and GitHub client secrets can be supplied from environment variables when their providers are configured.
+- A social-login provider block whose `client_id` or `client_secret` (config file or `GOOGLE_CLIENT_SECRET` / `GITHUB_CLIENT_SECRET` env) is blank is **disabled with a warning** and set to `nil` instead of blocking startup. The identity service continues serving local login and any other configured providers. Previously, a missing client secret was a fatal boot error.
+- Google and GitHub client secrets can be supplied from environment variables (`GOOGLE_CLIENT_SECRET`, `GITHUB_CLIENT_SECRET`) when their providers are configured.
 - Swagger/OpenAPI docs are served from `/swagger` and `/swagger/openapi.json`.
 - Readiness checks include DB and cache dependency checks.
 - App worker shutdown is invoked before HTTP server shutdown when provided.

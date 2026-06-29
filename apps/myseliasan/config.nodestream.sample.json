@@ -1,0 +1,28 @@
+{
+  "//": "Sample 'nodeStream' block for myseliasan (the control plane). It configures",
+  "// how the parent re-broadcasts relayed node camera RTP to browsers over WebRTC.": "",
+  "// Copy the 'nodeStream' object below into apps/myseliasan/config.json (alongside": "",
+  "// 'pairing'). ALL fields are optional — omit the whole block for same-LAN/local": "",
+  "// dev (host candidates). JSON has no real comments, so the '//' keys are ignored": "",
+  "// by the parser and just document the fields here.": "",
+
+  "nodeStream": {
+    "//publicIps": "Parent's externally reachable IP(s), advertised as host candidates (NAT 1:1) so a browser on another network reaches the parent directly. Leave [] / omit on a LAN.",
+    "publicIps": ["203.0.113.10"],
+
+    "//udpPort": "Bind a single shared WebRTC UDP port for all browser peers (open just this one port in the firewall). 0 / omit = pion's default ephemeral ports.",
+    "udpPort": 49600,
+
+    "//iceServers": "STUN/TURN offered to the browser. STUN helps discover the public path; a TURN server is needed only when the parent is itself behind NAT (browser<->parent media then relays through TURN). Omit / [] on a LAN.",
+    "iceServers": [
+      {
+        "urls": ["stun:stun.l.google.com:19302"]
+      },
+      {
+        "urls": ["turn:turn.example.com:3478?transport=udp"],
+        "username": "turn-username",
+        "credential": "turn-password"
+      }
+    ]
+  }
+}

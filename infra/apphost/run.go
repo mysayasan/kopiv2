@@ -609,23 +609,24 @@ func applySensitiveConfig(appConfig *config.AppConfigModel, configPath string) e
 	}
 
 	if appConfig.Login != nil && appConfig.Login.Google != nil {
-		googleClientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
-		if googleClientSecret != "" {
-			appConfig.Login.Google.ClientSecret = googleClientSecret
+		if secret := os.Getenv("GOOGLE_CLIENT_SECRET"); secret != "" {
+			appConfig.Login.Google.ClientSecret = secret
 		}
-
-		if appConfig.Login.Google.ClientSecret == "" {
-			return errors.New("google client secret is required")
+		// A provider block with no usable client id/secret (config + env both empty) is
+		// treated as not configured: disable it with a warning instead of refusing to
+		// boot, so a half-set-up social provider never blocks the whole identity service.
+		if strings.TrimSpace(appConfig.Login.Google.ClientId) == "" || strings.TrimSpace(appConfig.Login.Google.ClientSecret) == "" {
+			log.Printf("WARNING: google login disabled — set login.google.client_id and a client secret (config or GOOGLE_CLIENT_SECRET env)")
+			appConfig.Login.Google = nil
 		}
 	}
 	if appConfig.Login != nil && appConfig.Login.GitHub != nil {
-		githubClientSecret := os.Getenv("GITHUB_CLIENT_SECRET")
-		if githubClientSecret != "" {
-			appConfig.Login.GitHub.ClientSecret = githubClientSecret
+		if secret := os.Getenv("GITHUB_CLIENT_SECRET"); secret != "" {
+			appConfig.Login.GitHub.ClientSecret = secret
 		}
-
-		if appConfig.Login.GitHub.ClientSecret == "" {
-			return errors.New("github client secret is required")
+		if strings.TrimSpace(appConfig.Login.GitHub.ClientId) == "" || strings.TrimSpace(appConfig.Login.GitHub.ClientSecret) == "" {
+			log.Printf("WARNING: github login disabled — set login.github.client_id and a client secret (config or GITHUB_CLIENT_SECRET env)")
+			appConfig.Login.GitHub = nil
 		}
 	}
 

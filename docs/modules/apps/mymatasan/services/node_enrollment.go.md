@@ -30,7 +30,7 @@ Each reconcile cycle:
 - Reads `NodeID` and `ParentBaseURL` from the pairing service.
 - Generates a fresh ECDSA P-256 key + CSR via `fleetca.GenerateKeyAndCSR(nodeID)`. The private key never leaves the node.
 - POSTs `{"nodeId","token","csr"}` to `<parentBaseURL>/api/nodes/enroll` using an `InsecureSkipVerify` HTTP client (bootstrap leg; the parent's HTTPS cert may be self-signed).
-- Parses the response for `nodeCert` + `caRoot` PEMs; stores them together with the original key via `IPairingService.SaveCert`.
+- Parses the enrollment response for `nodeCert` + `caRoot` PEMs. The response envelope is dual-parsed: the standard `result.nodeCert` top-level path (produced by `controllers.SendResult`) is read first; the legacy `data.result.nodeCert` nesting is accepted as a fallback so any residual shape difference in the parent's response doesn't silently empty the certificate. Returns an error when both are empty. Stores the cert bundle together with the original key via `IPairingService.SaveCert`.
 
 ## mTLS Management Listener
 

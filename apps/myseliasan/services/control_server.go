@@ -192,6 +192,16 @@ func (cs *ControlServer) dispatch(nodeID string, frame *control.Frame) {
 	}
 }
 
+// IsConnected reports whether nodeID currently holds a live control-channel
+// connection. It is the authoritative liveness signal the heartbeat reconciler
+// consults before falling back to the mTLS poll.
+func (cs *ControlServer) IsConnected(nodeID string) bool {
+	cs.mu.Lock()
+	_, ok := cs.conns[nodeID]
+	cs.mu.Unlock()
+	return ok
+}
+
 // add registers a node's live connection, replacing (and closing) any stale one.
 func (cs *ControlServer) add(nodeID string, conn *control.Conn) {
 	cs.mu.Lock()

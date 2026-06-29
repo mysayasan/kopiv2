@@ -7,7 +7,7 @@ Implements `IControlUserService`, the myseliasan-specific identity layer over th
 ## Responsibilities
 
 - `EnsureStockSuperadmin(ctx, username, password)` — seeds a local bootstrap admin (must-change-password, IsStock=true) on startup. Refreshes the password from config only while the account is still untouched (MustChangePassword=true, not Disabled). Once a real admin has changed the password or the account is retired, config no longer overrides it.
-- `UpsertFederated(ctx, ssoUserId, email, name)` — provisions or refreshes a myidsan user on first login. New accounts get the `viewer` role. Returns `ErrUserDisabled` for a disabled account.
+- `UpsertFederated(ctx, ssoUserId, email, name)` — provisions or refreshes a myidsan user on first login. New accounts get the `viewer` role. Returns `ErrUserDisabled` for a disabled account. Rejects `ssoUserId <= 0` with an error (a stable SSO subject id is mandatory; without it the service cannot safely distinguish identities). Lookup is keyed strictly on `ssoUserId` — email is deliberately not used as a fallback match key (see Security note below).
 - `AuthenticateLocal(ctx, username, password)` — bcrypt verification; returns `ErrInvalidCredentials` or `ErrUserDisabled`.
 - `ChangePassword(ctx, userId, current, next)` — local accounts only; minimum 8 characters; clears `MustChangePassword`.
 - `SetRole(ctx, userId, roleId)` / `SetDisabled(ctx, userId, disabled)` — superadmin-level mutations.
@@ -21,3 +21,7 @@ Implements `IControlUserService`, the myseliasan-specific identity layer over th
 - Built-in roles (`superadmin`, `viewer`) are seeded by the shared accessrbac core (`EnsureBuiltins`), not by this service.
 - The `ErrUserDisabled` and `ErrInvalidCredentials` sentinel errors are checked by the auth API to return appropriate HTTP responses.
 - Minimum password length is 8 characters (`minPasswordLen`).
+
+## Security: federated identity lookup
+
+`findFederated` looks up by `ssoUserId` only. The previous email-fallback path was removed because `myidsan` can emit a non-unique placeholder email (e.g. `"admin"`) for accounts that have no real email, and matching on it would allow a new SSO identity to inherit the role of an existing — potentially privileged — account (privilege escalation / account takeover). A changed or new SSO subject id therefore provisions a fresh `viewer` account rather than rebinding to another row. Operators who switch identity providers and want to preserve an existing account's role must re-elevate the new federated user explicitly via `POST /api/rbac/users/{id}/elevate`.

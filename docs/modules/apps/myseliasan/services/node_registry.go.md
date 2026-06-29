@@ -13,7 +13,7 @@ Implements `INodeRegistry`, the control-plane service for fleet-key management, 
 | `MulticastAddr` | UDP multicast group+port for discovery (empty → package default). |
 | `ParentID` | This control plane's identity (stamped into adopt calls and used as the CA CN for the parent cert). |
 | `ParentName` | Human-readable control-plane name. |
-| `ParentBaseURL` | Externally reachable URL recorded on the node so it can call back (enroll / release / self-drop). |
+| `ParentBaseURL` | URL recorded on the node for callbacks (enroll / release / self-drop) and as the host it dials for the control and media channels. Derived in `app.go` from `pairing.parentBaseUrl` (when set) or `sso.redirectBaseUrl`; must be a LAN-reachable address (not localhost) when node and parent run on separate machines. |
 | `MTLSPort` | Node mTLS management listener port recorded at adoption (default 49532). |
 | `CertTTL` | Lifetime of issued node certificates (default 7 days). |
 | `HeartbeatInterval` | Interval for the background heartbeat loop (managed by app.go, not the registry itself). |
@@ -26,7 +26,8 @@ Implements `INodeRegistry`, the control-plane service for fleet-key management, 
 - `Adopt(ctx, AdoptInput)` — build a fleet-key-signed adopt request (`pairing.SignAssertion` over parentId + nonce + ts), POST it to `https://<ip>:<port>/api/pairing/adopt`, un-revoke the node's cert (to allow re-adoption), store the returned token + `MTLSPort` in a `ManagedNode` row (upsert by NodeId), and return the saved row.
 - `Enroll(ctx, nodeID, token, csrPEM)` — token-authenticated CSR signing. Looks up the adopted node by `nodeID`, verifies the pairing token matches, calls `fleetCA.SignNodeCSR`, records `CertExpiresAt` + bumps `LastSeenAt`, and returns the node cert PEM + CA root PEM. Used for both initial enrollment and renewal.
 - `Release(ctx, nodeID)` — revoke the node's cert (so it cannot renew), attempt to notify the node to release via mTLS (`POST /release`) falling back to the token leg, then unconditionally delete the `ManagedNode` row.
-- `Heartbeat(ctx)` — probe every adopted node (excluding `"self-dropped"`) over mTLS (`GET /heartbeat`); mark `online` + bump `LastSeenAt` on success, `lost` on failure. Called by the background loop started in `app.go`.
+- `SetControlPresence(connected func(nodeID string) bool)` — injects the control-channel liveness oracle from `ControlServer.IsConnected`. Called once at startup (after the control server is built in `app.go`). When set, a node holding a live control connection is treated as authoritatively online by `Heartbeat` regardless of the mTLS poll result.
+- `Heartbeat(ctx)` — reconciles every adopted node's liveness (excluding `"self-dropped"`). The control channel is consulted first via the injected presence function; the mTLS poll is only a fallback. A node is marked `"lost"` only after a grace window with no contact on either path (`lostGraceSeconds` = 3× heartbeat interval, floor 90 s). Within the grace window, the prior status is held and no database write is performed, preventing brief reconnect events from flapping a healthy node offline. Called by the background loop started in `app.go`.
 - `MarkSelfDropped(ctx, nodeID, nonce, ts, assertion)` — verify the fleet-key assertion (5-minute window) before updating the node's `Status` to `"self-dropped"`.
 
 ## HTTP Clients
@@ -38,7 +39,7 @@ Two clients are in use:
 
 ## Parent Identity
 
-`NewNodeRegistry` receives `ParentID`, `ParentName`, and `ParentBaseURL`. These are stamped into every adopt call so the node knows its parent. `ParentBaseURL` is the control-plane's externally reachable URL (from `sso.redirectBaseUrl`); the node uses it for enroll and self-drop callbacks.
+`NewNodeRegistry` receives `ParentID`, `ParentName`, and `ParentBaseURL`. These are stamped into every adopt call so the node knows its parent. `ParentBaseURL` is the address the node uses for enroll and self-drop callbacks and as the host it dials for the persistent control and media channels. `app.go` derives it from `pairing.parentBaseUrl` (when set) or falls back to `sso.redirectBaseUrl`. On a deployment where node and control plane are on separate machines, `pairing.parentBaseUrl` must be set to the parent's LAN-reachable URL (never `localhost`).
 
 ## Errors
 

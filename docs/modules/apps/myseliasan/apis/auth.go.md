@@ -9,6 +9,7 @@ Implements MySeliaSan as a relying app for MyIDSan authorization-code login.
 - `GET /api/auth/start`: creates a local state nonce and redirects to MyIDSan `/api/auth/authorize`.
 - `GET /api/auth/callback`: validates state, exchanges code at MyIDSan `/api/auth/token`, and issues the MySeliaSan session cookie.
 - `POST /api/auth/logout`: clears the MySeliaSan session cookie.
+- `POST /api/auth/local-login` (stock superadmin): authenticates local credentials and issues a session cookie. The issued JWT carries the `Email` claim (falls back to `username` when the account has no real email) so the shared auth middleware's non-empty email check is satisfied. Previously, logging in with the stock superadmin returned HTTP 200 but every subsequent request to `/api/session/me` returned 401 because the email claim was empty.
 
 ## Security
 

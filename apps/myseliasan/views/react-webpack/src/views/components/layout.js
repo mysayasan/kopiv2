@@ -25,7 +25,7 @@ export function BrandLogo({ size = 40, className = '' }) {
 // SideNav is the standardized RBAC-app navigation rail: the myidsan dark side-nav
 // (grouped menu, code tiles, tone accents) reused as the shared shell. Menu entries
 // follow the same permission matrix that gates their APIs — a role needs GET on
-// /api/nodes to see Mymatasan; Users & Roles is superadmin-only.
+// /api/nodes to see Nodes; Users & Roles is superadmin-only.
 export function SideNav({ activeTab, busy, onTab, onLogout, theme, onThemeChange, session }) {
   const groups = [
     {
@@ -36,7 +36,7 @@ export function SideNav({ activeTab, busy, onTab, onLogout, theme, onThemeChange
       label: 'Fleet',
       items: [
         ...(sessionCanGet(session, '/api/nodes')
-          ? [{ id: 'nodes', label: 'Mymatasan', icon: 'shield', tone: 'blue' }]
+          ? [{ id: 'nodes', label: 'Nodes', icon: 'shield', tone: 'blue' }]
           : []),
       ],
     },

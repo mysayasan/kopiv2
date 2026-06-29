@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mysayasan/kopiv2/apps/myseliasan/entities"
@@ -79,6 +80,10 @@ type INodeRegistry interface {
 	Enroll(ctx context.Context, nodeID, token string, csrPEM []byte) (nodeCertPEM, caRootPEM []byte, err error)
 	// Heartbeat probes every adopted node over mTLS and reconciles its status.
 	Heartbeat(ctx context.Context)
+	// SetControlPresence injects the control-channel liveness oracle. A node holding a
+	// live control connection is authoritatively online; the mTLS poll is only a
+	// fallback. Set once at startup, after the control server is built.
+	SetControlPresence(connected func(nodeID string) bool)
 	// ParentServerTLS returns the mTLS server config for the parent's control-channel
 	// listener (presents the parent's fleet leaf, requires a node client cert).
 	ParentServerTLS(ctx context.Context) (*tls.Config, error)
@@ -106,6 +111,9 @@ type nodeRegistry struct {
 	cfg           NodeRegistryConfig
 	parentBaseURL string
 	bootstrapHTTP *http.Client
+
+	presenceMu sync.RWMutex
+	presence   func(nodeID string) bool
 }
 
 // NewNodeRegistry builds the registry. ParentBaseURL is this control plane's own
@@ -343,25 +351,69 @@ func (s *nodeRegistry) Release(ctx context.Context, nodeID string) error {
 	return err
 }
 
-// Heartbeat probes every adopted node over mTLS and reconciles its status: a
-// reachable node is marked online (LastSeenAt bumped); an unreachable one is marked
-// lost. A node that self-dropped (status already "self-dropped") is left as-is.
+// SetControlPresence injects the control-channel liveness oracle. See INodeRegistry.
+func (s *nodeRegistry) SetControlPresence(connected func(nodeID string) bool) {
+	s.presenceMu.Lock()
+	s.presence = connected
+	s.presenceMu.Unlock()
+}
+
+// controlConnected reports whether the node currently holds a live control channel.
+func (s *nodeRegistry) controlConnected(nodeID string) bool {
+	s.presenceMu.RLock()
+	fn := s.presence
+	s.presenceMu.RUnlock()
+	return fn != nil && fn(nodeID)
+}
+
+// lostGraceSeconds is how long a node may go with no contact — neither a live control
+// channel nor a successful mTLS poll — before it is declared lost. Three heartbeat
+// intervals (floored at 90s) absorbs a control-channel reconnect or a single missed
+// poll without flapping the node offline.
+func (s *nodeRegistry) lostGraceSeconds() int64 {
+	iv := s.cfg.HeartbeatInterval
+	if iv <= 0 {
+		iv = 60 * time.Second
+	}
+	g := int64((3 * iv).Seconds())
+	if g < 90 {
+		g = 90
+	}
+	return g
+}
+
+// Heartbeat reconciles every adopted node's status. The persistent node-dialed
+// control channel is the authoritative liveness signal — it survives NAT / firewalls /
+// re-IP, so a node holding a live connection is online regardless of whether the
+// parent can reach its mTLS port directly. The mTLS poll is only a fallback, and a
+// node is declared lost only after the grace window with no contact on either path,
+// so a brief channel blip can no longer flap a healthy node offline. A node that
+// self-dropped (status already "self-dropped") is left as-is.
 func (s *nodeRegistry) Heartbeat(ctx context.Context) {
 	nodes, err := s.List(ctx)
 	if err != nil {
 		return
 	}
+	grace := s.lostGraceSeconds()
 	for _, node := range nodes {
 		if node.Status == "self-dropped" {
 			continue
 		}
-		alive := s.probeOverMTLS(ctx, node)
 		now := time.Now().Unix()
-		if alive {
+		alive := s.controlConnected(node.NodeId)
+		if !alive {
+			alive = s.probeOverMTLS(ctx, node)
+		}
+		switch {
+		case alive:
 			node.Status = "online"
 			node.LastSeenAt = now
-		} else {
+		case now-node.LastSeenAt >= grace:
 			node.Status = "lost"
+		default:
+			// Within the grace window with no contact: hold the prior status (still
+			// online) rather than flap, and skip the needless write.
+			continue
 		}
 		node.UpdatedAt = now
 		_, _ = s.nodes.UpdateById(ctx, "", *node)

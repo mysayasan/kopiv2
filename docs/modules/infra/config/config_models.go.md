@@ -13,7 +13,7 @@ Defines the top-level app configuration model loaded from app config JSON.
 ## Notes
 
 - `login.google` and `login.github` are independently optional.
-- Apphost requires each configured OAuth provider to have its matching client secret before startup continues.
+- A provider block whose `client_id` or `client_secret` (config or env) is blank is **disabled with a warning** rather than refusing to boot. This means a half-configured social provider (block present but credentials absent) is silently skipped; the identity service continues serving local and other configured social logins. Operators who want to enforce that a provider is correctly configured must verify the `login.google` / `login.github` disabled-with-warning log line on startup.
 - `server.tlsPorts` and `server.nonTlsPorts` are the preferred listener config fields.
 - `tls.certPath` and `tls.keyPath` are required when HTTPS listeners are enabled; relative paths are app-relative.
 - Legacy `server.ports`, `server.enableTls`, and `server.enableNonTls` remain available only as a fallback when explicit port lists are empty.
@@ -80,3 +80,9 @@ Defines the top-level app configuration model loaded from app config JSON.
 - `pairing.certTtlHours` sets the lifetime of issued node certificates on the control plane. `0` defaults to `168` (7 days).
 - `pairing.renewBeforeHours` makes the node request renewal when its cert is within this many hours of expiry. `0` defaults to `48`.
 - `pairing.heartbeatIntervalSeconds` controls how often the `myseliasan` background loop calls `INodeRegistry.Heartbeat` to probe all adopted nodes over mTLS. `0` defaults to `60`.
+- `pairing.controlPort` is the port myseliasan listens on for node-dialed control-channel WebSocket-over-fleet-mTLS connections. `0` defaults to `49533`. Must be reachable from nodes.
+- `pairing.mediaPort` is the port myseliasan listens on for node-dialed media-channel connections (camera RTP relay). Separate from `controlPort` so high-rate media never competes with control traffic. `0` defaults to `49534`. The node derives the parent host from its stored `ParentBaseURL`.
+- `pairing.parentBaseUrl` (parent/myseliasan only) overrides the base URL recorded on each adopted node for callbacks (enroll / release / self-drop) and as the host the node dials for the control and media channels. When empty, falls back to `sso.redirectBaseUrl`. Must be the parent's LAN-reachable URL (e.g. `https://192.168.1.10:3002`) — never `localhost` — when node and parent are on separate machines.
+- `nodeStream.publicIps` lists the parent's externally reachable IPs, advertised as WebRTC host candidates (NAT 1:1) for cross-network browser-to-parent media. Leave empty for same-LAN/local dev.
+- `nodeStream.udpPort` binds a single shared WebRTC UDP port for all browser peers connecting to relayed node cameras (one firewall rule). `0` = pion's default ephemeral ports.
+- `nodeStream.iceServers` are STUN/TURN servers offered to the browser for the parent↔browser WebRTC leg of node camera relay. A TURN server is only needed when the parent is itself behind NAT. Omit or leave empty for same-LAN use.

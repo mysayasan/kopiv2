@@ -389,6 +389,27 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// unified feed receives them live (in addition to local delivery).
 	notificationService.Register(services.NewControlEventSink(controlChannel))
 
+	// Media channel: a second node-dialed mTLS connection (separate port) that streams
+	// a camera's RTP up to the control plane on request, so myseliasan can re-broadcast
+	// full-frame-rate live view over WebRTC. Resolves each camera's RTSP via the same
+	// snapshot-source path used for browser live view, and shares the stream manager's
+	// RTSP sessions. Shares the monitor lifecycle alongside the control channel.
+	mediaResolve := func(ctx context.Context, camID uint64) (stream.Source, error) {
+		src, err := cameraService.SnapshotSource(ctx, camID)
+		if err != nil {
+			return stream.Source{}, err
+		}
+		return stream.Source{ID: fmt.Sprintf("camera-%d", camID), URI: src.RTSPURI}, nil
+	}
+	mediaChannel := services.NewMediaChannelManager(
+		pairingService,
+		deps.Config.Pairing.MediaPort,
+		appVersion(m.Name()),
+		streamManager,
+		mediaResolve,
+		func(format string, args ...any) { deps.Logger.Infof("mymatasan.media", format, args...) },
+	)
+
 	// Pairing adopt/release are called by the control plane (no local session) and
 	// authenticate cryptographically, so they mount on the public /api router — and
 	// must be registered before the session catch-all so requests match here first.
@@ -551,6 +572,9 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		// Control channel: dial the parent and maintain the persistent bi-directional
 		// channel once paired + enrolled. Shares the monitor lifecycle.
 		go controlChannel.Run(monitorCtx)
+		// Media channel: dial the parent's media listener and stream camera RTP on
+		// request (full-frame-rate live view relayed to myseliasan). Shares lifecycle.
+		go mediaChannel.Run(monitorCtx)
 	}
 
 	// Factory reset (Secure Wipe & Reset). Built here — after the monitors and

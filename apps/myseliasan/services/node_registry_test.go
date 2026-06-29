@@ -185,6 +185,46 @@ func TestRegistryEnrollRefusesRevokedNode(t *testing.T) {
 	}
 }
 
+func TestRegistryHeartbeatControlChannelIsAuthoritative(t *testing.T) {
+	reg, nodes := newTestRegistry()
+	ctx := context.Background()
+	now := time.Now().Unix()
+	// A connected node whose mTLS port is unreachable (the test has no real listener)
+	// must still be online purely from its live control channel.
+	nodes.rows = append(nodes.rows, &entities.ManagedNode{Id: 1, NodeId: "node-conn", Status: "lost", LastSeenAt: 0})
+	reg.SetControlPresence(func(id string) bool { return id == "node-conn" })
+
+	reg.Heartbeat(ctx)
+
+	if nodes.rows[0].Status != "online" {
+		t.Fatalf("control-connected node: got status %q want online", nodes.rows[0].Status)
+	}
+	if nodes.rows[0].LastSeenAt < now {
+		t.Fatal("control-connected node should bump LastSeenAt")
+	}
+}
+
+func TestRegistryHeartbeatGraceWindow(t *testing.T) {
+	reg, nodes := newTestRegistry()
+	ctx := context.Background()
+	now := time.Now().Unix()
+	// No control presence and no reachable mTLS port. A node seen recently stays online
+	// (within grace); a node not seen for well past the grace window goes lost.
+	nodes.rows = append(nodes.rows,
+		&entities.ManagedNode{Id: 1, NodeId: "node-recent", Status: "online", LastSeenAt: now - 10},
+		&entities.ManagedNode{Id: 2, NodeId: "node-stale", Status: "online", LastSeenAt: now - 1000},
+	)
+
+	reg.Heartbeat(ctx)
+
+	if nodes.rows[0].Status != "online" {
+		t.Fatalf("recently-seen node within grace: got %q want online", nodes.rows[0].Status)
+	}
+	if nodes.rows[1].Status != "lost" {
+		t.Fatalf("stale node past grace: got %q want lost", nodes.rows[1].Status)
+	}
+}
+
 func TestRegistryMarkSelfDroppedVerifiesAssertion(t *testing.T) {
 	reg, nodes := newTestRegistry()
 	ctx := context.Background()
