@@ -7,6 +7,8 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/domain/entities"
+	enumauth "github.com/mysayasan/kopiv2/domain/enums/auth"
+	"github.com/mysayasan/kopiv2/domain/models"
 	"github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
@@ -91,6 +93,12 @@ func (a *accessRbacApi) me(w http.ResponseWriter, r *http.Request) {
 		"mustChangePassword": principal.MustChangePassword,
 		"isSuperadmin":       false,
 		"permissions":        []*entities.AccessRolePermission{},
+	}
+	// Surface the caller's own identity so the SPA can recognize "self" (e.g. to avoid
+	// offering to disable your own account).
+	if claims, ok := r.Context().Value(enumauth.Claims).(*models.JwtCustomClaims); ok && claims != nil {
+		out["userId"] = claims.Id
+		out["email"] = claims.Email
 	}
 	if role, _ := a.roles.GetById(r.Context(), principal.RoleId); role != nil {
 		out["roleName"] = role.Name

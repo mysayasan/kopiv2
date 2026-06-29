@@ -17,7 +17,7 @@
   "localAuth": {
     "enabled": true,
     "username": "admin",
-    "password": "admin"
+    "password": "admin123"
   },
   "pairing": {
     "enabled": true,

@@ -12,7 +12,7 @@ Base path: `/api/access-rbac`
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/api/access-rbac/me` | Returns the caller's `roleId`, `roleName`, `isSuperadmin`, `mustChangePassword`, and `permissions` array. Superadmin returns `isSuperadmin: true` with an empty permissions array (the SPA treats it as a wildcard). Used by the SPA to compute menu visibility from the same rules that gate the APIs. |
+| `GET` | `/api/access-rbac/me` | Returns the caller's `userId`, `email`, `roleId`, `roleName`, `isSuperadmin`, `mustChangePassword`, and `permissions` array. `userId` and `email` are sourced from the JWT claims so the SPA can identify "self" (e.g. avoid offering to disable your own account). Superadmin returns `isSuperadmin: true` with an empty permissions array (the SPA treats it as a wildcard). Used by the SPA to compute menu visibility from the same rules that gate the APIs. |
 
 ### Superadmin-only (session auth + matrix + extra `IsSuperadmin` self-gate)
 

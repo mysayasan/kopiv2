@@ -10,6 +10,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/myidsan/apis"
 	outputdtos "github.com/mysayasan/kopiv2/apps/myidsan/dtos/output"
+	myidsanentities "github.com/mysayasan/kopiv2/apps/myidsan/entities"
 	"github.com/mysayasan/kopiv2/apps/myidsan/services"
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
 	apiaccessenums "github.com/mysayasan/kopiv2/domain/enums/apiaccess"
@@ -49,6 +50,7 @@ func (m *module) Entities() []any {
 		sharedentities.UserSession{},
 		sharedentities.AccessRole{},
 		sharedentities.AccessRolePermission{},
+		myidsanentities.SsoCa{},
 	}
 }
 
@@ -116,27 +118,34 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 			menuItem{Enabled: true, Id: "users", Label: "Users", Group: "Identity", Order: 10, Summary: "Maintain credentials, profile details, and role assignment.", Tone: "blue"},
 			menuItem{Enabled: true, Id: "roles", Label: "Roles", Group: "Identity", Order: 30, Summary: "Create group-scoped roles and parent role chains.", Tone: "violet"},
 		), AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
-		{AppCode: "myseliasan", Title: "myseliasan Session", Description: "myseliasan session metadata access", Path: "/api/session", AccessTier: apiaccessenums.AuthOnly, SeedRbac: true},
-		{AppCode: "myseliasan", Title: "myseliasan Auth", Description: "myseliasan relying-app auth callback access", Path: "/api/auth", AccessTier: apiaccessenums.Public},
-		{AppCode: "myseliasan", Title: "myseliasan Version", Description: "myseliasan runtime version access", Path: "/api/version", AccessTier: apiaccessenums.Public},
+		// The endpoint catalog is app-local now: authorization is the per-app accessrbac
+		// matrix and the rate limiter matches by host+path only (never app_code), so
+		// myidsan no longer seeds other apps' endpoints into its own database. Legacy
+		// cross-app rows are purged in coreDefaults below.
 	}
 
 	coreDefaults := []string{
+		// Self-heal: the built-in apps must keep their canonical codes (SSO/federation
+		// and the seed statements below key on them). If one was renamed in the UI,
+		// restore its code by audience before the rest of the seed runs.
+		`UPDATE app_registry SET code = 'myidsan' WHERE audience = 'myidsan' AND code <> 'myidsan' AND NOT EXISTS (SELECT 1 FROM app_registry WHERE code = 'myidsan');`,
+		`UPDATE app_registry SET code = 'mymatasan' WHERE audience = 'mymatasan' AND code <> 'mymatasan' AND NOT EXISTS (SELECT 1 FROM app_registry WHERE code = 'mymatasan');`,
+		`UPDATE app_registry SET code = 'myseliasan' WHERE audience = 'myseliasan' AND code <> 'myseliasan' AND NOT EXISTS (SELECT 1 FROM app_registry WHERE code = 'myseliasan');`,
 		`INSERT INTO app_registry (code, title, description, base_url, audience, client_secret, is_active, created_by, created_at, updated_by, updated_at)
 SELECT 'myidsan', 'myidsan', 'Identity and SSO authority', 'http://localhost:3001', 'myidsan', '', TRUE, 0, 0, 0, 0
-WHERE NOT EXISTS (SELECT 1 FROM app_registry WHERE code = 'myidsan');`,
+WHERE NOT EXISTS (SELECT 1 FROM app_registry WHERE code = 'myidsan' OR audience = 'myidsan');`,
 		`UPDATE app_registry
 SET title = 'myidsan', description = 'Identity and SSO authority', base_url = 'http://localhost:3001', audience = 'myidsan', is_active = TRUE, updated_at = 0
 WHERE code = 'myidsan';`,
 		`INSERT INTO app_registry (code, title, description, base_url, audience, client_secret, is_active, created_by, created_at, updated_by, updated_at)
 SELECT 'mymatasan', 'mymatasan', 'Standalone ONVIF monitoring device app', 'http://localhost:3000', 'mymatasan', '', TRUE, 0, 0, 0, 0
-WHERE NOT EXISTS (SELECT 1 FROM app_registry WHERE code = 'mymatasan');`,
+WHERE NOT EXISTS (SELECT 1 FROM app_registry WHERE code = 'mymatasan' OR audience = 'mymatasan');`,
 		`UPDATE app_registry
 SET title = 'mymatasan', description = 'Standalone ONVIF monitoring device app', base_url = 'http://localhost:3000', audience = 'mymatasan', is_active = TRUE, updated_at = 0
 WHERE code = 'mymatasan';`,
 		`INSERT INTO app_registry (code, title, description, base_url, audience, client_secret, is_active, created_by, created_at, updated_by, updated_at)
 SELECT 'myseliasan', 'myseliasan', 'Control plane for mymatasan', 'http://localhost:3002', 'myseliasan', '', TRUE, 0, 0, 0, 0
-WHERE NOT EXISTS (SELECT 1 FROM app_registry WHERE code = 'myseliasan');`,
+WHERE NOT EXISTS (SELECT 1 FROM app_registry WHERE code = 'myseliasan' OR audience = 'myseliasan');`,
 		`UPDATE app_registry
 SET title = 'myseliasan', description = 'Control plane for mymatasan', base_url = 'http://localhost:3002', audience = 'myseliasan', is_active = TRUE, updated_at = 0
 WHERE code = 'myseliasan';`,
@@ -169,13 +178,12 @@ AND redirect_uri = 'https://localhost:3002/api/auth/callback';`,
 		`INSERT INTO user_group (title, description, parent_id, is_active, created_by, created_at, updated_by, updated_at)
 SELECT 'system', 'core system group', 0, TRUE, 0, 0, 0, 0
 WHERE NOT EXISTS (SELECT 1 FROM user_group WHERE title = 'system' AND parent_id = 0);`,
-		// Stock superadmin local account. Its user_role_id is its accessrbac role id and
-		// is repointed to the accessrbac 'superadmin' role at startup (see
-		// RegisterAppRoutes), so it is seeded as 0 here. Roles now live in the shared
-		// accessrbac core (no per-app user_role table).
-		`INSERT INTO user_login (email, userpwd, first_name, last_name, user_role_id, is_active, created_by, created_at, updated_by, updated_at)
-SELECT 'superadmin', '$2a$10$ZNX/d.rXCH5QkWkmMdA0jepur7CEEriX3zTiSnSeYr1txq9GIMAou', 'Super', 'Admin', 0, TRUE, 0, 0, 0, 0
-WHERE NOT EXISTS (SELECT 1 FROM user_login ul WHERE ul.email = 'superadmin');`,
+		// The stock superadmin is no longer seeded here — it is created/refreshed from
+		// config.localAuth at startup by EnsureStockSuperadmin (RegisterAppRoutes), with
+		// a forced first-login password change.
+		// Endpoints are app-local: drop any legacy rows seeded for other apps so this
+		// database's catalog only describes myidsan's own endpoints.
+		`DELETE FROM api_endpoint WHERE app_code <> 'myidsan';`,
 	}
 
 	coreRbac := make([]string, 0, len(endpoints)*2)
@@ -220,10 +228,11 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// Bind the user_login store as the resolver, and map the bootstrap 'superadmin'
 	// account onto the accessrbac superadmin role (apphost seeded the roles).
 	ctx := context.Background()
+	// Seed (or refresh) the stock superadmin from config.localAuth, pinned to the
+	// accessrbac superadmin role and forced to change its password on first login.
 	if sa, err := deps.AccessRoles.GetByName(ctx, sharedservices.RoleSuperadmin); err == nil && sa != nil {
-		if u, err := userLoginRepo.GetByUnique(ctx, "", "email", "superadmin"); err == nil && u != nil && u.UserRoleId != sa.Id {
-			u.UserRoleId = sa.Id
-			_, _ = userLoginRepo.UpdateById(ctx, "", *u)
+		if err := userLoginService.EnsureStockSuperadmin(ctx, deps.Config.LocalAuth.Username, deps.Config.LocalAuth.Password, sa.Id); err != nil {
+			return nil, fmt.Errorf("seed stock superadmin: %w", err)
 		}
 	}
 	deps.Access.SetResolver(&userLoginResolver{repo: userLoginRepo})
@@ -237,6 +246,12 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewFederatedAuthApi(api, deps.Config, deps.Auth, userLoginService, appRegistryRepo, appAuthConfigRepo, appRedirectUriRepo, deps.Cache)
 	apis.NewAppAuthConfigApi(api, *deps.Auth, deps.Access, appAuthConfigRepo)
 	apis.NewAppRedirectUriApi(api, *deps.Auth, deps.Access, appRedirectUriRepo)
+	// SSO certificate authority: issues relying-app client certificates for mTLS.
+	ssoCaRepo := dbsql.NewGenericRepo[myidsanentities.SsoCa](deps.Db)
+	apis.NewSsoCertApi(api, *deps.Auth, deps.Access, services.NewSsoCaService(ssoCaRepo), appAuthConfigRepo)
+	// Superadmin-handoff status drives the "disable the stock superadmin" banner. The
+	// stock account's email is the configured localAuth.username.
+	apis.NewIdentityStatusApi(api, *deps.Auth, deps.Access, userLoginRepo, deps.AccessRoles, deps.Config.LocalAuth.Username)
 	return nil, nil
 }
 
@@ -257,7 +272,7 @@ func (r *userLoginResolver) ResolveAccessUser(ctx context.Context, userId int64)
 	if u == nil {
 		return nil, nil
 	}
-	return &sharedservices.AccessPrincipal{RoleId: u.UserRoleId, Disabled: !u.IsActive}, nil
+	return &sharedservices.AccessPrincipal{RoleId: u.UserRoleId, Disabled: !u.IsActive, MustChangePassword: u.MustChangePassword}, nil
 }
 
 func (m *module) APIDocs() apidocs.SpecConfig {

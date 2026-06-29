@@ -42,6 +42,10 @@ type IControlUserService interface {
 	// RetireStock disables every stock account (called after a real superadmin is
 	// elevated). Returns how many were retired.
 	RetireStock(ctx context.Context) (int, error)
+	// SuperadminStatus reports whether an active stock superadmin still exists, and
+	// whether an active real (non-stock) superadmin exists. Drives the handoff banner
+	// and guards stock-account disabling.
+	SuperadminStatus(ctx context.Context) (stockActive bool, realActive bool, err error)
 	// ResolveAccessUser implements sharedservices.AccessUserResolver.
 	ResolveAccessUser(ctx context.Context, userId int64) (*sharedservices.AccessPrincipal, error)
 }
@@ -284,6 +288,28 @@ func (s *controlUserService) RetireStock(ctx context.Context) (int, error) {
 		}
 	}
 	return retired, nil
+}
+
+func (s *controlUserService) SuperadminStatus(ctx context.Context) (stockActive bool, realActive bool, err error) {
+	all, err := s.List(ctx)
+	if err != nil {
+		return false, false, err
+	}
+	for _, u := range all {
+		if u.Disabled {
+			continue
+		}
+		role, rerr := s.roles.GetById(ctx, u.RoleId)
+		if rerr != nil || role == nil || !role.IsSuperadmin {
+			continue
+		}
+		if u.IsStock {
+			stockActive = true
+		} else {
+			realActive = true
+		}
+	}
+	return stockActive, realActive, nil
 }
 
 // findFederated locates a federated user by SSO id, falling back to email (so a

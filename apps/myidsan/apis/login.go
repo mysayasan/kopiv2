@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/myidsan/services"
 	"github.com/mysayasan/kopiv2/domain/entities"
+	enumauth "github.com/mysayasan/kopiv2/domain/enums/auth"
 	"github.com/mysayasan/kopiv2/domain/models"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
@@ -56,6 +57,9 @@ func NewLoginApi(
 	loginGroup.HandleFunc("/default", handler.defaultLogin).Methods("POST")
 	loginGroup.HandleFunc("/default/register", handler.defaultRegister).Methods("POST")
 	loginGroup.HandleFunc("/default/logout", handler.defaultLogout).Methods("POST")
+	// Authenticated: change the signed-in local account's password (also clears the
+	// forced first-login must-change flag).
+	loginGroup.Handle("/default/change-password", auth.Middleware(http.HandlerFunc(handler.changePassword))).Methods("POST")
 
 	if handler.googleAuth != nil {
 		loginGroup.HandleFunc("/google", handler.googleLogin).Methods("GET")
@@ -146,6 +150,34 @@ func (m *loginApi) defaultRegister(w http.ResponseWriter, r *http.Request) {
 
 func (m *loginApi) defaultLogout(w http.ResponseWriter, r *http.Request) {
 	m.auth.ClearAuthCookies(w, r)
+	controllers.SendResult(w, map[string]bool{"ok": true})
+}
+
+func (m *loginApi) changePassword(w http.ResponseWriter, r *http.Request) {
+	claims, _ := r.Context().Value(enumauth.Claims).(*models.JwtCustomClaims)
+	if claims == nil {
+		controllers.SendError(w, controllers.ErrPermission, "not authenticated")
+		return
+	}
+	var body struct {
+		CurrentPassword string `json:"currentPassword"`
+		NewPassword     string `json:"newPassword"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1048576)).Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	if err := m.userService.ChangePassword(r.Context(), claims.Id, body.CurrentPassword, body.NewPassword); err != nil {
+		switch {
+		case errors.Is(err, services.ErrInvalidCredential):
+			controllers.SendError(w, controllers.ErrAuthFailed, "current password is incorrect")
+		case errors.Is(err, services.ErrThirdPartyOnlyAccount):
+			controllers.SendError(w, controllers.ErrLimitedAccess, err.Error())
+		default:
+			controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		}
+		return
+	}
 	controllers.SendResult(w, map[string]bool{"ok": true})
 }
 

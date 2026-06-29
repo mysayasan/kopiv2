@@ -88,6 +88,16 @@ func (a *rbacAdminApi) setUserDisabled(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
 		return
 	}
+	// Guard against lockout: don't let the stock superadmin be disabled until a real
+	// superadmin is active to take over.
+	if body.Disabled {
+		if target, err := a.users.GetById(r.Context(), id); err == nil && target != nil && target.IsStock {
+			if _, realActive, serr := a.users.SuperadminStatus(r.Context()); serr == nil && !realActive {
+				controllers.SendError(w, controllers.ErrBadRequest, "promote a real superadmin before disabling the stock account")
+				return
+			}
+		}
+	}
 	if err := a.users.SetDisabled(r.Context(), id, body.Disabled); err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
@@ -122,15 +132,12 @@ func (a *rbacAdminApi) elevateUser(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
-	retired, err := a.users.RetireStock(r.Context())
-	if err != nil {
-		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
-		return
-	}
+	// The stock account is intentionally left active: instead of auto-retiring it (and
+	// risking lockout), the SPA shows a persistent banner prompting the operator to
+	// disable it from the Users list once they're satisfied with the new superadmin.
 	controllers.SendResult(w, map[string]any{
 		"ok":      true,
-		"retired": retired,
-		"warning": "The stock superadmin has been retired and signed out. From now on, administer this control plane with the elevated account.",
+		"warning": "Superadmin granted. The stock superadmin is still active — disable it from the Users list to finish the handoff.",
 	}, "succeed")
 }
 

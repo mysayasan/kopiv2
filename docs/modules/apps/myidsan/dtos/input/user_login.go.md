@@ -4,6 +4,6 @@
 
 Defines the myidsan input DTO for user login update payloads.
 
-## Notes
+## Fields
 
-- Mirrors `entities.UserLogin` for now.
+Mirrors `entities.UserLogin`. Includes `mustChangePassword bool` — allows the admin API to set or clear the forced first-login flag on a user record.

@@ -13,12 +13,14 @@ Implements user credential persistence operations for myidsan identity APIs.
 - Enforces credential policy for create operations.
 - Authenticates local username/password logins.
 - Registers local accounts without overriding third-party-only accounts.
+- `EnsureStockSuperadmin(ctx, username, password, superRoleId)` — seeds the bootstrap admin from `config.localAuth`, forced first-login password change (`MustChangePassword = true`). While the account is still untouched (MustChangePassword + IsActive), the password is refreshed from config on each startup so the operator can correct a typo before first login. Once the operator has changed the password, config no longer overrides it. The account is also pinned to the superadmin role if the role ID drifts.
+- `ChangePassword(ctx, userId, current, next)` — local accounts only; minimum 8 characters; verifies the current password (bcrypt or legacy plain-text); hashes and stores the new password; clears `MustChangePassword`.
+- `Update` now preserves the existing stored password when the incoming `userpwd` field is blank, and hashes the password when a plaintext value is supplied, so role/active toggles from the admin UI do not erase or store the password in plain text.
 
 ## Credential Policy
 
 - User creation rejects identical username/email and password pairs by default.
-- A single exception is allowed for first-run bootstrap compatibility: `superadmin` / `superadmin123`.
-- The exception only applies when no existing `superadmin` login record is present.
+- The legacy single exception for `superadmin`/`superadmin123` has been replaced by `EnsureStockSuperadmin`, which reads credentials from `config.localAuth` and does not hard-code any credential.
 
 ## Local Auth Notes
 

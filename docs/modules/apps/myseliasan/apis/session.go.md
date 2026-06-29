@@ -18,6 +18,8 @@ Returns current myseliasan session metadata enriched with the caller's accessrba
 | `mustChangePassword` | True for the stock bootstrap account until the password is changed. |
 | `kind` | `"local"` or `"federated"` (from `ControlUser`). |
 | `isStock` | True for the bootstrap account; the SPA uses this to show the handoff prompt. |
+| `stockSuperadminActive` | True if an active stock superadmin still exists in the user store. |
+| `superadminHandoffPending` | True when a stock superadmin is active AND a real (non-stock) active superadmin also exists — the exact condition when it is safe to disable the stock account. Drives the persistent handoff banner in the SPA. |
 | `permissions` | The role's `AccessRolePermission` rows (empty for superadmin; the SPA gates nav tabs on this). |
 
 ## Notes

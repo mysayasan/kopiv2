@@ -12,8 +12,8 @@ All routes require a myseliasan session and the caller's role must be superadmin
 |---|---|---|---|
 | `GET` | `/api/rbac/users` | — | List all control-plane users (`ControlUser` rows). |
 | `POST` | `/api/rbac/users/{id}/role` | `{roleId}` | Reassign a user's role (must be a valid `access_role.id`). |
-| `POST` | `/api/rbac/users/{id}/disabled` | `{disabled}` | Enable or disable a user. |
-| `POST` | `/api/rbac/users/{id}/elevate` | — | Bootstrap handoff: promote the target user (must be non-stock and active) to superadmin, then retire all stock accounts. The stock account's next request is rejected by the middleware (disabled). |
+| `POST` | `/api/rbac/users/{id}/disabled` | `{disabled: true/false}` | Enable or disable a user. Disable is blocked for the stock account unless a real (non-stock) active superadmin already exists (`SuperadminStatus` guard) to prevent lockout. |
+| `POST` | `/api/rbac/users/{id}/elevate` | — | Bootstrap handoff: promote the target user (must be non-stock and active) to superadmin. The stock account is intentionally left active; a persistent banner in the SPA prompts the operator to disable it from the Users list once the new account is confirmed. |
 
 ## Middleware Contract
 
@@ -23,4 +23,4 @@ All routes require a myseliasan session and the caller's role must be superadmin
 ## Notes
 
 - `elevate` rejects a stock target (`IsStock=true`) to prevent elevating the bootstrap account instead of a real federated user.
-- After elevation, the response body includes `retired` (count of stock accounts disabled) and a warning message.
+- After elevation, the response body includes `ok: true` and a `warning` message instructing the operator to disable the stock account from the Users list. The `retired` field (and the auto-retire behavior) has been removed; the stock account stays active until explicitly disabled by the operator.

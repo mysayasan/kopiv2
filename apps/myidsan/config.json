@@ -11,6 +11,11 @@
     "policyCacheTtlSeconds": 30,
     "internalToken": "change-me-in-production"
   },
+  "localAuth": {
+    "enabled": true,
+    "username": "admin",
+    "password": "admin123"
+  },
   "fileStorage": {
     "path": "./uploads",
     "cleanup": {

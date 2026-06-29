@@ -60,6 +60,12 @@ func (m *sessionApi) me(w http.ResponseWriter, r *http.Request) {
 			out["kind"] = user.Kind
 			out["isStock"] = user.IsStock
 		}
+		// Drive the handoff banner: nag to disable the stock superadmin only once a
+		// real superadmin is active (so the prompt appears exactly when it's safe).
+		if stockActive, realActive, serr := m.users.SuperadminStatus(r.Context()); serr == nil {
+			out["stockSuperadminActive"] = stockActive
+			out["superadminHandoffPending"] = stockActive && realActive
+		}
 	}
 	superadmin := false
 	if m.roles != nil {

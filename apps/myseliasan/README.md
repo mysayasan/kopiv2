@@ -13,9 +13,9 @@ It communicates with `mymatasan` nodes directly over the LAN using the pairing p
 - **Local (stock superadmin)**: seeded from `localAuth.username` / `localAuth.password` in `config.json` (defaults `admin` / `admin`); must change password on first login; intended to be retired after a real operator account is elevated.
 - **Federated**: a `myidsan`-authenticated user auto-provisioned on first login and assigned the `viewer` role.
 
-Roles and the per-endpoint permission matrix are managed via the shared accessrbac surface at `/api/access-rbac` (superadmin-only). User management and the bootstrap handoff are at `/api/rbac/users/*` (also superadmin-only). The **bootstrap handoff** (`POST /api/rbac/users/{id}/elevate`) promotes a chosen real federated user to superadmin, then retires all stock accounts. After handoff, the stock account's next request is rejected by the session middleware.
+Roles and the per-endpoint permission matrix are managed via the shared accessrbac surface at `/api/access-rbac` (superadmin-only). User management and the bootstrap handoff are at `/api/rbac/users/*` (also superadmin-only). The **bootstrap handoff** (`POST /api/rbac/users/{id}/elevate`) promotes a chosen real federated user to superadmin. The stock account is intentionally left active; a persistent non-dismissible banner appears in the SPA when `session/me` reports `superadminHandoffPending: true` (stock active + real active), prompting the operator to disable it from the Users list. Disabling the stock account is guarded — the API rejects the request if no real superadmin is active yet (`SuperadminStatus` check).
 
-The SPA gates nav tabs using `GET /api/session/me`, which returns the caller's role name, `isSuperadmin`, and permission rows — the same data the API gateway uses.
+The SPA gates nav tabs using `GET /api/session/me`, which returns the caller's role name, `isSuperadmin`, `stockSuperadminActive`, `superadminHandoffPending`, and permission rows — the same data the API gateway uses.
 
 ## Node management
 
@@ -37,7 +37,11 @@ Both app and node must be on the same LAN segment for UDP multicast discovery to
 
 ## Frontend
 
-The UI is a React/webpack SPA under `apps/myseliasan/views/react-webpack/`, built into `apps/myseliasan/static/` (content-hashed bundles), mirroring `mymatasan`'s frontend architecture. It reuses `mymatasan`'s `app.css` and `icons.js` verbatim; myseliasan-only styling lives in `styles/controlplane.css`. Build with `npm install && npm run build` in that directory.
+The UI is a React/webpack SPA under `apps/myseliasan/views/react-webpack/`, built into `apps/myseliasan/static/` (content-hashed bundles), mirroring `mymatasan`'s frontend architecture. It reuses `mymatasan`'s `app.css` and `icons.js` verbatim; myseliasan-only styling lives in `styles/controlplane.css` and the shared RBAC-standard rail in `styles/rbac-standard.css`. Build with `npm install && npm run build` in that directory.
+
+The shell has been migrated from a horizontal topbar (`TopBar`) to the standardized dark icon side-nav (`SideNav` from `components/layout.js`), matching myidsan's design. Admin pages (Users, Roles, RBAC) are now separate nav tabs under an **Administration** group instead of a single "Users & Roles" tab; they use the shared `DataTable` component from `components/data_table.js`. The `RbacAdminTab` export has been split into `UsersPage`, `RolesPage`, and `RbacPage`.
+
+A **superadmin handoff banner** is shown at the top of the workspace whenever `session/me` returns `superadminHandoffPending: true`, with a "Go to Users" shortcut for superadmins.
 
 Because the control plane authenticates with the federated middleware, **state-changing API calls must send the double-submit CSRF token**: the `api()` helper in `lib/helpers.js` echoes the non-HttpOnly `__Host-kopiv2_csrf` (HTTPS) / `kopiv2_csrf` (dev) cookie in the `X-CSRF-Token` header on POST/PUT/PATCH/DELETE. Omitting it yields a 403 (which redirects to the SSO login). The fleet-key card includes a copy-to-clipboard button to avoid copy errors.
 
@@ -60,7 +64,7 @@ Because the control plane authenticates with the federated middleware, **state-c
 - The default dev value points to `../myidsan/certs/cert.pem`, which trusts the bundled localhost MyIDSan certificate. If you later replace MyIDSan with a privately signed certificate, point `sso.caCertPath` or `SSO_CA_CERT_PATH` at that CA bundle.
 - `sso.caCertPath` only adds trusted roots for the backend HTTPS token exchange. It does not skip hostname, expiry, or chain validation.
 - DB engine: SQLite at `apps/myseliasan/data/myseliasan.db`
-- `localAuth.username` / `localAuth.password`: stock superadmin credentials (default `admin`/`admin`; must change on first login)
+- `localAuth.username` / `localAuth.password`: stock superadmin credentials (default `admin`/`admin123`; must change on first login)
 
 Run MyIDSan first, then run:
 
