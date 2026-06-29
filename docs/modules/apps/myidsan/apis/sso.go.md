@@ -2,20 +2,21 @@
 
 ## Purpose
 
-Internal SSO fallback APIs for relying apps that cannot share Redis-backed session or policy cache.
+Internal SSO fallback API for relying apps that cannot share a Redis-backed session cache.
 
 ## Routes
 
-- `POST /api/sso/introspect`: validates token, issuer/audience, and cache-backed session.
-- `POST /api/sso/authorize`: validates token/session, then returns an app-scoped RBAC decision.
+- `POST /api/sso/introspect`: validates token, issuer/audience, and cache-backed session. Returns an `introspectResponse` with `active`, `userId`, `roleId`, `email`, `name`, `sessionId`, `issuer`, `audience`, `appCode`, `policyVersion`, and `expiresAt`.
 
 ## Security
 
-- Requires `X-Myidsan-Internal-Token` or `Authorization: Bearer <token>`.
-- The expected token comes from `sso.internalToken` or `SSO_INTERNAL_TOKEN`.
+- Requires `X-Myidsan-Internal-Token` header or `Authorization: Bearer <token>` matching `sso.internalToken` / `SSO_INTERNAL_TOKEN`.
+
+## Removed (accessrbac migration)
+
+- `POST /api/sso/authorize` is removed. That endpoint returned app-scoped RBAC decisions using the legacy `RbacMidware`; relying apps now enforce authorization locally with `AccessSessionMidware` and the shared accessrbac matrix.
 
 ## Notes
 
 - These routes intentionally do not use browser cookie auth or CSRF middleware.
-- Authorization reuses `RbacMidware.AuthorizeClaimsForApp` so fallback decisions match normal protected-route decisions.
 - Browser redirect login for relying apps is handled separately by `apps/myidsan/apis/federated_auth.go`.

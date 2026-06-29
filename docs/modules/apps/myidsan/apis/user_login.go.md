@@ -13,6 +13,10 @@ Base path: `/api/user-credential`
 - `PUT /api/user-credential`
 - `DELETE /api/user-credential/{id}`
 
+## Middleware Contract
+
+Protected by auth middleware + `AccessSessionMidware`. The route uses the accessrbac permission matrix; superadmin bypasses it.
+
 ## Handler Behavior
 
 - GET supports `limit`, `offset`, `filters`, and `sorters` query parameters.

@@ -26,6 +26,6 @@ Exposes the control-plane node-management HTTP endpoints: fleet-key management, 
 
 ## Notes
 
-- `NewNodesApi` registers both public routes directly on the top-level router (before the session subrouter) so they are reachable without a session.
-- The session-protected group uses `auth.Middleware` applied via `g.Use(auth.Middleware)`.
+- `NewNodesApi` registers public routes (self-drop, enroll) directly on the top-level router so they are reachable without a session.
+- The session-protected group uses `auth.Middleware` + `session.Middleware` (the shared `AccessSessionMidware`). The accessrbac matrix gates operator node operations (viewer role needs GET access to `/api/nodes`; mutations need POST/DELETE; superadmin bypasses).
 - Request bodies are capped at 64 KiB and parsed with `DisallowUnknownFields`.

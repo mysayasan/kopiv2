@@ -19,8 +19,12 @@ type ManagedNode struct {
 	CertExpiresAt int64 `json:"certExpiresAt" form:"certExpiresAt" query:"certExpiresAt"`
 	// Status: "online" (adopted, reachable), "lost" (unreachable / token rejected),
 	// or "self-dropped" (the node unpaired itself).
-	Status     string `json:"status" form:"status" query:"status"`
-	AdoptedAt  int64  `json:"adoptedAt" form:"adoptedAt" query:"adoptedAt"`
+	Status string `json:"status" form:"status" query:"status"`
+	// OwnerRoleId is the myseliasan RoleId that adopted this node. That role gets full
+	// (admin) access to the node by default; other roles need an explicit
+	// NodeAccessGrant. 0 means legacy/unknown owner (no default access).
+	OwnerRoleId int64  `json:"ownerRoleId" form:"ownerRoleId" query:"ownerRoleId"`
+	AdoptedAt   int64  `json:"adoptedAt" form:"adoptedAt" query:"adoptedAt"`
 	LastSeenAt int64  `json:"lastSeenAt" form:"lastSeenAt" query:"lastSeenAt"`
 	CreatedBy  int64  `json:"createdBy" form:"createdBy" query:"createdBy"`
 	CreatedAt  int64  `json:"createdAt" form:"createdAt" query:"createdAt"`

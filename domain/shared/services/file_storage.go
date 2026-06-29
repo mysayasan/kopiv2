@@ -35,8 +35,7 @@ const (
 type fileStorageService struct {
 	repo             dbsql.IGenericRepo[entities.FileStorage]
 	jobRepo          dbsql.IGenericRepo[entities.OperationJob]
-	userRepo         dbsql.IGenericRepo[entities.UserLogin]
-	roleRepo         dbsql.IGenericRepo[entities.UserRole]
+	accessRoles      IAccessRoleService
 	cache            cache.Store
 	db               dbsql.IDbCrud
 	locker           coordination.Locker
@@ -71,15 +70,11 @@ func WithFileStorageJobRepo(repo dbsql.IGenericRepo[entities.OperationJob]) File
 	}
 }
 
-func WithFileStorageUserRepo(repo dbsql.IGenericRepo[entities.UserLogin]) FileStorageServiceOption {
+// WithFileStorageAccessRoles wires the accessrbac role service used to recognise a
+// superadmin for restricted-file downloads.
+func WithFileStorageAccessRoles(roles IAccessRoleService) FileStorageServiceOption {
 	return func(service *fileStorageService) {
-		service.userRepo = repo
-	}
-}
-
-func WithFileStorageRoleRepo(repo dbsql.IGenericRepo[entities.UserRole]) FileStorageServiceOption {
-	return func(service *fileStorageService) {
-		service.roleRepo = repo
+		service.accessRoles = roles
 	}
 }
 
@@ -639,73 +634,28 @@ func (m *fileStorageService) authorizeDownload(ctx context.Context, model entiti
 			return nil
 		}
 		return errors.New("file access is restricted to system services")
-	case filestorageenums.Group:
-		return m.authorizeGroupDownload(ctx, model, actor)
-	case filestorageenums.Role:
-		return m.authorizeRoleDownload(ctx, model, actor)
+	case filestorageenums.Group, filestorageenums.Role:
+		// accessrbac is a flat role model (no groups / role hierarchy), so both the
+		// Group and Role security levels collapse to: the file owner, or a superadmin.
+		return m.authorizeOwnerOrSuperadmin(ctx, model, actor)
 	default:
 		return errors.New("file security level is invalid")
 	}
 }
 
-func (m *fileStorageService) authorizeGroupDownload(ctx context.Context, model entities.FileStorage, actor *FileStorageDownloadActor) error {
-	ownerRole, actorRole, err := m.resolveOwnerAndActorRoles(ctx, model, actor)
-	if err != nil {
-		return err
+func (m *fileStorageService) authorizeOwnerOrSuperadmin(ctx context.Context, model entities.FileStorage, actor *FileStorageDownloadActor) error {
+	if actor == nil || actor.UserId <= 0 {
+		return errors.New("file access requires authentication")
 	}
-	if ownerRole.GroupId > 0 && ownerRole.GroupId == actorRole.GroupId {
-		return nil
+	if actor.UserId == model.CreatedBy {
+		return nil // the owner
 	}
-	return errors.New("file access is restricted to the owner's group")
-}
-
-func (m *fileStorageService) authorizeRoleDownload(ctx context.Context, model entities.FileStorage, actor *FileStorageDownloadActor) error {
-	ownerRole, actorRole, err := m.resolveOwnerAndActorRoles(ctx, model, actor)
-	if err != nil {
-		return err
-	}
-	if actorRole.Id <= 0 {
-		return errors.New("file access requires a role")
-	}
-	for role := ownerRole; role.Id > 0; {
-		if role.Id == actorRole.Id {
-			return nil
+	if m.accessRoles != nil && actor.RoleId > 0 {
+		if role, err := m.accessRoles.GetById(ctx, actor.RoleId); err == nil && role != nil && role.IsSuperadmin {
+			return nil // a superadmin may access any restricted file
 		}
-		if role.ParentId <= 0 || role.ParentId == role.Id {
-			break
-		}
-		parent, err := m.roleRepo.GetById(ctx, "", uint64(role.ParentId))
-		if err != nil {
-			return fmt.Errorf("load parent role %d: %w", role.ParentId, err)
-		}
-		role = *parent
 	}
-	return errors.New("file access is restricted to the owner's role hierarchy")
-}
-
-func (m *fileStorageService) resolveOwnerAndActorRoles(ctx context.Context, model entities.FileStorage, actor *FileStorageDownloadActor) (entities.UserRole, entities.UserRole, error) {
-	if actor == nil || actor.RoleId <= 0 {
-		return entities.UserRole{}, entities.UserRole{}, errors.New("file access requires authentication")
-	}
-	if m.userRepo == nil || m.roleRepo == nil {
-		return entities.UserRole{}, entities.UserRole{}, errors.New("file access repositories are not configured")
-	}
-	owner, err := m.userRepo.GetById(ctx, "", uint64(model.CreatedBy))
-	if err != nil {
-		return entities.UserRole{}, entities.UserRole{}, fmt.Errorf("load file owner: %w", err)
-	}
-	if owner.UserRoleId <= 0 {
-		return entities.UserRole{}, entities.UserRole{}, errors.New("file owner role is not configured")
-	}
-	ownerRole, err := m.roleRepo.GetById(ctx, "", uint64(owner.UserRoleId))
-	if err != nil {
-		return entities.UserRole{}, entities.UserRole{}, fmt.Errorf("load file owner role: %w", err)
-	}
-	actorRole, err := m.roleRepo.GetById(ctx, "", uint64(actor.RoleId))
-	if err != nil {
-		return entities.UserRole{}, entities.UserRole{}, fmt.Errorf("load actor role: %w", err)
-	}
-	return *ownerRole, *actorRole, nil
+	return errors.New("file access is restricted to the owner or a superadmin")
 }
 
 func (m *fileStorageService) storedFilePath(guid string) (string, error) {

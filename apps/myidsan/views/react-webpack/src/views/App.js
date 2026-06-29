@@ -12,10 +12,17 @@ import {
   rowsOf,
   setCookie
 } from '../lib/api'
+import { Ico } from '../lib/icons'
+import { ClientDataTable } from '../lib/data_table'
 
 const ACTIVE_SECTION_COOKIE = 'myidsan_active_section'
+const STOCK_SUPERADMIN_EMAIL = 'superadmin'
 const TABLE_STATE_PREFIX = 'myidsan_table_'
 const TABLE_STATE_VERSION = 1
+const THEME_KEY = 'myidsan_theme'
+const THEMES = ['light', 'dark']
+const THEME_LABELS = { light: 'Light', dark: 'Dark' }
+const THEME_ICONS = { light: 'sun', dark: 'moon' }
 
 const dashboardSection = {
   id: 'dashboard',
@@ -24,16 +31,19 @@ const dashboardSection = {
   order: 0,
   tone: 'steel',
   code: 'DA',
+  icon: 'monitor',
   paths: []
 }
 
 const routeCatalog = [
-  { id: 'users', label: 'Users', group: 'Identity', order: 10, tone: 'blue', code: 'US', paths: ['/api/user-credential'], summary: 'Maintain credentials, profile details, and role assignments.' },
-  { id: 'groups', label: 'Groups', group: 'Identity', order: 20, tone: 'teal', code: 'GR', paths: ['/api/user-group'], summary: 'Organize identity ownership and hierarchy roots.' },
-  { id: 'roles', label: 'Roles', group: 'Identity', order: 30, tone: 'violet', code: 'RO', paths: ['/api/user-credential'], summary: 'Create group-scoped roles and parent role chains.' },
-  { id: 'apps', label: 'Apps', group: 'Federation', order: 40, tone: 'indigo', code: 'AP', paths: ['/api/app-registry'], summary: 'Manage registered relying apps and audiences.' },
-  { id: 'endpoints', label: 'Endpoints', group: 'Access Control', order: 50, tone: 'steel', code: 'EP', paths: ['/api/endpoint'], summary: 'Maintain the protected endpoint catalog.' },
-  { id: 'rbac', label: 'RBAC', group: 'Access Control', order: 60, tone: 'green', code: 'RB', paths: ['/api/endpoint-rbac'], summary: 'Map endpoints to role-specific HTTP permissions.' }
+  // Administration mirrors myseliasan's admin group (Users, Roles, RBAC) plus Groups,
+  // which only myidsan has. Apps/Endpoints keep their own groups.
+  { id: 'users', label: 'Users', group: 'Administration', order: 10, tone: 'blue', code: 'US', icon: 'user', paths: ['/api/user-credential'], summary: 'Maintain credentials, profile details, and role assignments.' },
+  { id: 'groups', label: 'Groups', group: 'Administration', order: 20, tone: 'teal', code: 'GR', icon: 'folder', paths: ['/api/user-group'], summary: 'Organize identity ownership and hierarchy roots.' },
+  { id: 'roles', label: 'Roles', group: 'Administration', order: 30, tone: 'violet', code: 'RO', icon: 'key', paths: ['/api/access-rbac'], summary: 'Create, edit, and remove accessrbac roles (shared module).' },
+  { id: 'rbac', label: 'RBAC', group: 'Administration', order: 35, tone: 'green', code: 'RB', icon: 'lock', paths: ['/api/access-rbac'], summary: 'Manage accessrbac roles (shared module). Superadmin bypasses; viewer is read-only.' },
+  { id: 'apps', label: 'Apps', group: 'Federation', order: 40, tone: 'indigo', code: 'AP', icon: 'grid2', paths: ['/api/app-registry'], summary: 'Manage registered relying apps and audiences.' },
+  { id: 'endpoints', label: 'Endpoints', group: 'Access Control', order: 50, tone: 'steel', code: 'EP', icon: 'list', paths: ['/api/endpoint'], summary: 'Maintain the protected endpoint catalog.' }
 ]
 
 const routeCatalogById = routeCatalog.reduce((acc, section) => {
@@ -157,32 +167,107 @@ const normalizeRbac = data => ({
   userRoleId: emptyToZero(data?.userRoleId)
 })
 
+const emptyAccessRole = {
+  id: 0,
+  name: '',
+  description: '',
+  isSuperadmin: false,
+  builtin: false
+}
+
+const normalizeAccessRole = data => ({
+  ...emptyAccessRole,
+  ...data
+})
+
+// BrandMark is myidsan's identity glyph (line-art shield + keyhole) shown inside the
+// blue brand tile in the side-nav and on the login screen, replacing the old "ID"
+// text so the app has a real logo like myseliasan.
+function BrandMark({ size = 24 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3 5 6v5c0 4.4 3 7.6 7 9 4-1.4 7-4.6 7-9V6z" />
+      <circle cx="12" cy="10" r="1.7" />
+      <path d="M12 11.7V15" />
+    </svg>
+  )
+}
+
 function App() {
   const [session, setSession] = useState(() => localStorage.getItem('myidsan.session') === 'active')
   const [sessionReady, setSessionReady] = useState(false)
   const [active, setActive] = useState(() => getCookie(ACTIVE_SECTION_COOKIE) || 'dashboard')
   const [accessList, setAccessList] = useState([])
   const [sessionError, setSessionError] = useState('')
+  const [handoffPending, setHandoffPending] = useState(false)
+  const [currentEmail, setCurrentEmail] = useState('')
+  const [stockEmail, setStockEmail] = useState(STOCK_SUPERADMIN_EMAIL)
+  const [mustChange, setMustChange] = useState(false)
+  const [theme, setTheme] = useState(() => {
+    try { return localStorage.getItem(THEME_KEY) || 'light' } catch { return 'light' }
+  })
+
+  useEffect(() => {
+    const root = document.documentElement
+    THEMES.forEach(t => root.classList.remove(`theme-${t}`))
+    root.classList.add(`theme-${theme}`)
+  }, [theme])
+
+  const changeTheme = useCallback(next => {
+    setTheme(next)
+    try { localStorage.setItem(THEME_KEY, next) } catch { /* ignore */ }
+  }, [])
+
+  const refreshHandoff = useCallback(async () => {
+    // Best-effort + isolated so a failure never blocks the session.
+    try {
+      const status = resultOf(await apiRequest('/api/identity-status'))
+      setHandoffPending(Boolean(status?.superadminHandoffPending))
+      setStockEmail(status?.stockEmail || STOCK_SUPERADMIN_EMAIL)
+    } catch {
+      setHandoffPending(false)
+    }
+  }, [])
 
   const refreshSession = useCallback(async () => {
     try {
-      const payload = await apiRequest('/api/endpoint-rbac/ep/me')
-      const allowedEndpoints = rowsOf(payload)
+      // The shared accessrbac module reports the caller's own role + permission matrix
+      // at /me. A superadmin gets a single wildcard access entry (sees every section +
+      // CRUD); any other role's menu + actions are computed from its permission rows,
+      // so the same matrix that gates the APIs also drives the navigation.
+      const me = resultOf(await apiRequest('/api/access-rbac/me'))
+      setCurrentEmail(me?.email || '')
+      setMustChange(Boolean(me?.mustChangePassword))
       localStorage.setItem('myidsan.session', 'active')
-      setAccessList(allowedEndpoints)
+      if (me && me.isSuperadmin) {
+        setAccessList([{ path: '', canGet: true, canPost: true, canPut: true, canDelete: true, isActive: true, metadata: '' }])
+      } else {
+        const perms = me && Array.isArray(me.permissions) ? me.permissions : []
+        setAccessList(perms.map(p => ({
+          path: p.path,
+          canGet: !!p.canGet,
+          canPost: !!p.canPost,
+          canPut: !!p.canPut,
+          canDelete: !!p.canDelete,
+          isActive: true,
+          metadata: ''
+        })))
+      }
       setSession(true)
       setSessionError('')
+      refreshHandoff()
     } catch (err) {
       localStorage.removeItem('myidsan.session')
       setAccessList([])
       setSession(false)
+      setMustChange(false)
       if (err.status && err.status !== 401 && err.status !== 403) {
         setSessionError(err.message)
       }
     } finally {
       setSessionReady(true)
     }
-  }, [])
+  }, [refreshHandoff])
 
   const visibleSections = useMemo(() => {
     return buildVisibleSections(accessList)
@@ -231,11 +316,15 @@ function App() {
     return <AuthScreen onAuthed={handleAuthed} sessionError={sessionError} />
   }
 
+  if (mustChange) {
+    return <ChangePasswordScreen onDone={refreshSession} onLogout={handleLogout} />
+  }
+
   return (
     <div className="app-shell">
       <aside className="side-nav">
         <div className="brand-block">
-          <div className="brand-mark">ID</div>
+          <div className="brand-mark"><BrandMark /></div>
           <div>
             <div className="brand-name">MyIDSan</div>
             <div className="brand-subtitle">Identity control</div>
@@ -252,25 +341,149 @@ function App() {
                   onClick={() => setActiveSection(section.id)}
                   type="button"
                 >
-                  <span className="nav-code">{section.code || initials(section.label)}</span>
+                  <span className="nav-ico"><Ico n={section.icon || 'list'} sz={17} /></span>
                   <span className="nav-label">{section.label}</span>
                 </button>
               ))}
             </div>
           ))}
         </nav>
-        <button className="logout-button" onClick={handleLogout} type="button">Log out</button>
+        <div className="side-nav-foot">
+          <ThemeDropdown theme={theme} onThemeChange={changeTheme} />
+          <button className="logout-button" onClick={handleLogout} type="button">Log out</button>
+        </div>
       </aside>
       <main className="main-workspace">
+        {handoffPending && (
+          <div className="handoff-banner" role="alert">
+            <span className="handoff-banner-text">
+              The default <strong>stock superadmin</strong> account is still active. Open <strong>Users</strong> and set it inactive to finish securing this app.
+            </span>
+            <button type="button" className="handoff-banner-action" onClick={() => setActiveSection('users')}>Go to Users</button>
+          </div>
+        )}
         {active === 'dashboard' && <Dashboard onNavigate={setActiveSection} sections={visibleSections} />}
         {!activeAllowed && activeKnown && active !== 'dashboard' && <UnauthorizedPage section={routeCatalogById[active]} onNavigate={() => setActiveSection('dashboard')} />}
-        {active === 'users' && sectionAllowedById('users', accessList) && <UsersPage accessList={accessList} />}
+        {active === 'users' && sectionAllowedById('users', accessList) && <UsersPage accessList={accessList} currentEmail={currentEmail} stockEmail={stockEmail} onChanged={refreshHandoff} />}
         {active === 'groups' && sectionAllowedById('groups', accessList) && <GroupsPage accessList={accessList} />}
         {active === 'roles' && sectionAllowedById('roles', accessList) && <RolesPage accessList={accessList} />}
         {active === 'apps' && sectionAllowedById('apps', accessList) && <AppsPage accessList={accessList} />}
         {active === 'endpoints' && sectionAllowedById('endpoints', accessList) && <EndpointsPage accessList={accessList} />}
         {active === 'rbac' && sectionAllowedById('rbac', accessList) && <RbacPage accessList={accessList} />}
       </main>
+    </div>
+  )
+}
+
+// ThemeDropdown mirrors myseliasan's light/dark selector, sitting at the foot of
+// the side-nav. The menu opens upward (see .theme-menu) so it is never clipped.
+function ThemeDropdown({ theme, onThemeChange }) {
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef(null)
+
+  useEffect(() => {
+    if (!open) {
+      return undefined
+    }
+    const onDown = event => {
+      if (wrapRef.current && !wrapRef.current.contains(event.target)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  return (
+    <div className="theme-drop-wrap" ref={wrapRef}>
+      <button
+        type="button"
+        className={open ? 'theme-toggle active' : 'theme-toggle'}
+        onClick={() => setOpen(value => !value)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <span className="btn-icon"><Ico n={THEME_ICONS[theme]} sz={15} /> Theme</span>
+        <Ico n="chev-down" sz={13} />
+      </button>
+      {open && (
+        <div className="theme-menu" role="listbox" aria-label="Select theme">
+          {THEMES.map(option => (
+            <button
+              key={option}
+              type="button"
+              role="option"
+              aria-selected={option === theme}
+              className={option === theme ? 'theme-menu-item active' : 'theme-menu-item'}
+              onClick={() => { onThemeChange(option); setOpen(false) }}
+            >
+              <Ico n={THEME_ICONS[option]} sz={15} /> {THEME_LABELS[option]}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ChangePasswordScreen forces the seeded stock superadmin (must-change-password) to
+// set its own password before reaching the app — mirrors myseliasan's first-login flow.
+function ChangePasswordScreen({ onDone, onLogout }) {
+  const [form, setForm] = useState({ current: '', next: '', confirm: '' })
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const submit = async event => {
+    event.preventDefault()
+    if (form.next.length < 8) {
+      setError('New password must be at least 8 characters.')
+      return
+    }
+    if (form.next !== form.confirm) {
+      setError('New passwords do not match.')
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      await apiRequest('/api/login/default/change-password', { method: 'POST', body: { currentPassword: form.current, newPassword: form.next } })
+      onDone()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="auth-layout">
+      <section className="auth-panel">
+        <div className="brand-block auth-brand">
+          <div className="brand-mark"><BrandMark /></div>
+          <div>
+            <div className="brand-name">MyIDSan</div>
+            <div className="brand-subtitle">Set a new password</div>
+          </div>
+        </div>
+        <div className="message warning">For security, set your own password before continuing.</div>
+        <form className="auth-form" onSubmit={submit}>
+          {error && <div className="message danger">{error}</div>}
+          <label>
+            Current password
+            <input type="password" autoComplete="current-password" value={form.current} onChange={event => setForm({ ...form, current: event.target.value })} />
+          </label>
+          <label>
+            New password
+            <input type="password" autoComplete="new-password" value={form.next} onChange={event => setForm({ ...form, next: event.target.value })} />
+          </label>
+          <label>
+            Confirm new password
+            <input type="password" autoComplete="new-password" value={form.confirm} onChange={event => setForm({ ...form, confirm: event.target.value })} />
+          </label>
+          <button className="primary-button" disabled={busy} type="submit">{busy ? 'Saving' : 'Change password'}</button>
+          <button className="quiet-link" onClick={onLogout} type="button">Log out</button>
+        </form>
+      </section>
     </div>
   )
 }
@@ -310,7 +523,7 @@ function AuthScreen({ onAuthed, sessionError }) {
     <div className="auth-layout">
       <section className="auth-panel">
         <div className="brand-block auth-brand">
-          <div className="brand-mark">ID</div>
+          <div className="brand-mark"><BrandMark /></div>
           <div>
             <div className="brand-name">MyIDSan</div>
             <div className="brand-subtitle">Identity and RBAC admin</div>
@@ -398,34 +611,122 @@ function UnauthorizedPage({ section, onNavigate }) {
   )
 }
 
-function UsersPage({ accessList }) {
+// UsersPage mirrors myseliasan's inline user admin: a filterable table with a per-row
+// role dropdown, status pill, a "Make superadmin" action, and Enable/Disable — no modal
+// editor. Role/active changes PUT the user back (password preserved server-side). The
+// stock superadmin (email "superadmin") is flagged and can only be disabled once a real
+// superadmin is active, and you can never disable your own account.
+function UsersPage({ accessList, currentEmail, stockEmail = STOCK_SUPERADMIN_EMAIL, onChanged }) {
+  const [users, setUsers] = useState([])
+  const [roles, setRoles] = useState([])
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+
+  const canEdit = hasEndpointAccess(accessList, '/api/user-credential', 'PUT')
+
+  const load = useCallback(async () => {
+    setError('')
+    try {
+      const [u, r] = await Promise.all([
+        apiRequest('/api/user-credential'),
+        apiRequest('/api/access-rbac/roles')
+      ])
+      setUsers((rowsOf(u) || []).map(normalizeUser))
+      setRoles(resultOf(r) || [])
+    } catch (err) {
+      setError(err.message)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const superRole = roles.find(role => role.isSuperadmin)
+  const isSuperRole = id => superRole && Number(id) === Number(superRole.id)
+  const realSuperadminActive = users.some(u => u.email !== stockEmail && u.isActive && isSuperRole(u.userRoleId))
+
+  const saveUser = async (user, changes) => {
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      // userpwd is left blank — the service keeps the stored password on update.
+      await apiRequest('/api/user-credential', { method: 'PUT', body: { ...user, userpwd: '', ...changes } })
+      await load()
+      if (onChanged) onChanged()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const setUserRole = (user, roleId) => saveUser(user, { userRoleId: Number(roleId) })
+  const toggleActive = user => saveUser(user, { isActive: !user.isActive })
+  const makeSuperadmin = user => {
+    if (!superRole) {
+      setError('No superadmin role found.')
+      return
+    }
+    const label = user.email || `user ${user.id}`
+    if (!window.confirm(`Make "${label}" a superadmin?\n\nThe stock superadmin stays active — disable it from this list once you've confirmed the new account works.`)) {
+      return
+    }
+    saveUser(user, { userRoleId: superRole.id })
+  }
+
+  const columns = [
+    { key: 'id', label: 'ID' },
+    {
+      key: 'email',
+      label: 'User',
+      render: (value, u) => (
+        <>
+          {value || `#${u.id}`}
+          {u.email === stockEmail ? <span className="status-pill off" style={{ marginLeft: 6 }}>stock</span> : null}
+        </>
+      )
+    },
+    {
+      key: 'userRoleId',
+      label: 'Role',
+      filterable: false,
+      render: (_value, u) => (
+        <select value={u.userRoleId} onChange={event => setUserRole(u, event.target.value)} disabled={busy || !canEdit}>
+          {roles.length === 0 && <option value={0}>No roles</option>}
+          {roles.map(role => <option key={role.id} value={role.id}>{role.name}</option>)}
+        </select>
+      )
+    },
+    { key: 'isActive', label: 'Status', render: value => <span className={value ? 'status-pill on' : 'status-pill off'}>{value ? 'active' : 'inactive'}</span> },
+    {
+      key: 'actions',
+      label: '',
+      filterable: false,
+      render: (_value, u) => {
+        const self = currentEmail && u.email === currentEmail
+        const stock = u.email === stockEmail
+        const showDisable = !self && (!stock || realSuperadminActive)
+        return (
+          <div className="row-actions">
+            {!stock && !isSuperRole(u.userRoleId)
+              ? <button type="button" className="secondary-button" onClick={() => makeSuperadmin(u)} disabled={busy || !canEdit} title="Grant the superadmin role">Make superadmin</button> : null}
+            {showDisable
+              ? <button type="button" className="secondary-button danger" onClick={() => toggleActive(u)} disabled={busy || !canEdit}>{u.isActive ? 'Disable' : 'Enable'}</button> : null}
+          </div>
+        )
+      }
+    }
+  ]
+
   return (
-    <CrudPage
-      accessList={accessList}
-      title="Users"
-      subtitle="User credential records and role assignments."
-      resource="/api/user-credential"
-      emptyItem={emptyUser}
-      normalize={normalizeUser}
-      columns={[
-        { key: 'id', label: 'ID' },
-        { key: 'email', label: 'Email' },
-        { key: 'firstName', label: 'First' },
-        { key: 'lastName', label: 'Last' },
-        { key: 'userRoleId', label: 'Role' },
-        { key: 'isActive', label: 'Active', render: boolLabel }
-      ]}
-      fields={[
-        { name: 'email', label: 'Email', required: true },
-        { name: 'userpwd', label: 'Password', type: 'password', placeholder: 'Set only when changing password' },
-        { name: 'firstName', label: 'First name' },
-        { name: 'lastName', label: 'Last name' },
-        { name: 'picUrl', label: 'Picture URL' },
-        { name: 'userRoleId', label: 'Role ID', type: 'number' },
-        { name: 'isActive', label: 'Active', type: 'checkbox' }
-      ]}
-      canCreate={false}
-    />
+    <PageFrame title="Users" subtitle="User accounts and role assignments. Grant the superadmin role, then disable the stock superadmin to finish the handoff.">
+      {error && <div className="message danger">{error}</div>}
+      {notice && <div className="message success">{notice}</div>}
+      <section className="data-region">
+        <ClientDataTable rows={users} columns={columns} busy={busy} emptyText="No users" />
+      </section>
+    </PageFrame>
   )
 }
 
@@ -455,71 +756,491 @@ function GroupsPage({ accessList }) {
   )
 }
 
+// Roles manages the shared accessrbac roles (create/edit/remove) — the same surface
+// as myseliasan's Roles page. Per-path permissions for each role live on the RBAC
+// page. (The old group-scoped /api/user-credential/group/{id} listing had no backing
+// route and 404'd, so it was replaced with the accessrbac roles resource.)
 function RolesPage({ accessList }) {
-  const [groupId, setGroupId] = useState('1')
-  const listPath = `/api/user-credential/group/${groupId || 1}`
-
   return (
     <CrudPage
       accessList={accessList}
       title="Roles"
-      subtitle="Role records are exposed through the current user-credential role routes."
-      resource="/api/user-credential"
-      listResource={listPath}
-      emptyItem={emptyRole}
-      normalize={normalizeRole}
-      listMode={groupId ? 'default' : 'paging'}
+      subtitle="accessrbac roles (shared module). Create, edit, or remove roles; grant per-path access on the RBAC page. Superadmin bypasses all checks."
+      resource="/api/access-rbac/roles"
+      updateWithId
+      emptyItem={emptyAccessRole}
+      normalize={normalizeAccessRole}
       columns={[
         { key: 'id', label: 'ID' },
-        { key: 'title', label: 'Title' },
-        { key: 'groupId', label: 'Group' },
-        { key: 'parentId', label: 'Parent' },
-        { key: 'isActive', label: 'Active', render: boolLabel }
+        { key: 'name', label: 'Name' },
+        { key: 'description', label: 'Description' },
+        { key: 'isSuperadmin', label: 'Superadmin', render: boolLabel },
+        { key: 'builtin', label: 'Built-in', render: boolLabel }
       ]}
       fields={[
-        { name: 'title', label: 'Title', required: true },
-        { name: 'description', label: 'Description', dtoType: 'nullableString' },
-        { name: 'groupId', label: 'Group ID', type: 'number' },
-        { name: 'parentId', label: 'Parent role ID', type: 'number' },
-        { name: 'isActive', label: 'Active', type: 'checkbox' }
+        { name: 'name', label: 'Role name', required: true },
+        { name: 'description', label: 'Description' }
       ]}
-      toolbar={(
-        <label className="inline-filter">
-          Group ID
-          <input value={groupId} onChange={event => setGroupId(event.target.value)} placeholder="Optional" />
-        </label>
-      )}
     />
   )
 }
 
+// downloadText saves text content as a file via a transient object URL — used to
+// hand the admin the one-time SSO client key/cert and the CA certificate.
+function downloadText(filename, text) {
+  const blob = new Blob([text || ''], { type: 'application/x-pem-file' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
+// Built-in relying apps that the platform seeds and federation depends on; their
+// code/audience must stay canonical, so the UI locks them from rename/delete.
+const SYSTEM_APP_CODES = ['myidsan', 'mymatasan', 'myseliasan']
+
+// randomSecret returns a URL-safe, high-entropy client secret generated in the
+// browser (so the plaintext only ever exists client-side; the server stores a hash).
+function randomSecret() {
+  const bytes = new Uint8Array(24)
+  crypto.getRandomValues(bytes)
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+// AppsPage is a master-detail manager: pick (or add) a relying app on the left and
+// edit everything for it inline on the right — the registry fields AND its SSO client
+// (credentials, PKCE, token lifetimes, redirect URLs). No modal editor and no separate
+// "choose an app" step: the selected app is the context.
 function AppsPage({ accessList }) {
+  const [apps, setApps] = useState([])
+  const [selectedId, setSelectedId] = useState(null) // null | 'new' | number
+  const [error, setError] = useState('')
+
+  const loadApps = useCallback(async selectCode => {
+    try {
+      const list = rowsOf(await apiRequest('/api/app-registry'))
+      setApps(list)
+      if (selectCode) {
+        const found = list.find(app => app.code === selectCode)
+        if (found) {
+          setSelectedId(found.id)
+        }
+      }
+    } catch (err) {
+      setError(err.message)
+    }
+  }, [])
+
+  useEffect(() => { loadApps() }, [loadApps])
+
+  const selectedApp = typeof selectedId === 'number' ? apps.find(app => app.id === selectedId) : null
+
   return (
-    <CrudPage
-      accessList={accessList}
-      title="Apps"
-      subtitle="Registered SSO relying apps and audiences."
-      resource="/api/app-registry"
-      emptyItem={emptyApp}
-      normalize={normalizeApp}
-      columns={[
-        { key: 'id', label: 'ID' },
-        { key: 'code', label: 'Code' },
-        { key: 'title', label: 'Title' },
-        { key: 'audience', label: 'Audience' },
-        { key: 'baseUrl', label: 'Base URL' },
-        { key: 'isActive', label: 'Active', render: boolLabel }
-      ]}
-      fields={[
-        { name: 'code', label: 'Code', required: true },
-        { name: 'title', label: 'Title', required: true },
-        { name: 'description', label: 'Description' },
-        { name: 'baseUrl', label: 'Base URL' },
-        { name: 'audience', label: 'Audience', required: true },
-        { name: 'clientSecret', label: 'Client secret', type: 'password' },
-        { name: 'isActive', label: 'Active', type: 'checkbox' }
-      ]}
-    />
+    <PageFrame title="Apps" subtitle="Register relying apps and configure each one's SSO client — credentials, PKCE, token lifetimes, and callback URLs — all in one place.">
+      <div className="apps-layout">
+        <aside className="apps-sidebar">
+          <button className="primary-button apps-new" onClick={() => setSelectedId('new')} type="button">New app</button>
+          <div className="apps-nav">
+            {apps.length === 0 && <p className="message">No apps yet.</p>}
+            {apps.map(app => (
+              <button
+                key={app.id}
+                className={selectedId === app.id ? 'apps-nav-item active' : 'apps-nav-item'}
+                onClick={() => setSelectedId(app.id)}
+                type="button"
+              >
+                <strong>{app.title || app.code}</strong>
+                <span>{app.code}{app.isActive ? '' : ' · inactive'}</span>
+              </button>
+            ))}
+          </div>
+        </aside>
+        <section className="apps-detail">
+          {error && <div className="message danger">{error}</div>}
+          {selectedId === 'new' || selectedApp ? (
+            <AppDetail
+              key={selectedId}
+              accessList={accessList}
+              app={selectedApp || null}
+              onCreated={code => loadApps(code)}
+              onSaved={() => loadApps()}
+              onDeleted={() => { setSelectedId(null); loadApps() }}
+            />
+          ) : (
+            <div className="empty-state">Select an app on the left, or create a new one, to edit its details and SSO client.</div>
+          )}
+        </section>
+      </div>
+    </PageFrame>
+  )
+}
+
+const emptyAuthConfig = {
+  id: 0,
+  appRegistryId: 0,
+  clientId: '',
+  clientSecret: '',
+  authCodeTtlSeconds: 300,
+  accessTokenTtlSeconds: 900,
+  sessionTtlSeconds: 259200,
+  refreshTokenTtlSeconds: 0,
+  requirePkce: false,
+  allowRefreshToken: false,
+  isActive: true
+}
+
+// AppDetail is the right pane of the Apps master-detail: it edits one relying app
+// inline (registry fields) plus its SSO client (auth config + redirect URIs). It is
+// remounted (keyed by selection) when a different app is picked, so its forms reset
+// cleanly. The client secret is write-only — the API returns only whether one is set.
+function AppDetail({ accessList, app, onCreated, onSaved, onDeleted }) {
+  const isNew = !app
+  // Built-in apps power SSO/federation and the seeders key on their codes, so their
+  // code/audience are locked and they can't be deleted from the UI.
+  const isSystem = !isNew && SYSTEM_APP_CODES.includes(app.code)
+  const [appForm, setAppForm] = useState(() => ({
+    id: app?.id || 0,
+    code: app?.code || '',
+    title: app?.title || '',
+    description: app?.description || '',
+    baseUrl: app?.baseUrl || '',
+    audience: app?.audience || '',
+    isActive: app ? Boolean(app.isActive) : true
+  }))
+  const [config, setConfig] = useState(null)
+  const [authForm, setAuthForm] = useState(emptyAuthConfig)
+  const [uris, setUris] = useState([])
+  const [newUri, setNewUri] = useState('')
+  const [secretRevealed, setSecretRevealed] = useState(false)
+  const [showCertHelp, setShowCertHelp] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+
+  const canEdit = hasEndpointAccess(accessList, '/api/app-registry', isNew ? 'POST' : 'PUT')
+  const canDelete = hasEndpointAccess(accessList, '/api/app-registry', 'DELETE')
+  const canSso = hasEndpointAccess(accessList, '/api/app-auth-config', 'POST') || hasEndpointAccess(accessList, '/api/app-auth-config', 'PUT')
+
+  const generateSecret = () => {
+    setAuthForm(current => ({ ...current, clientSecret: randomSecret() }))
+    setSecretRevealed(true)
+    setNotice('Secret generated — copy it now. It is stored only as a hash and shown only here.')
+  }
+
+  const downloadCA = async () => {
+    setError('')
+    try {
+      const res = resultOf(await apiRequest('/api/sso-ca'))
+      downloadText('myidsan-ca.crt', res?.caCertPem)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const generateCert = async () => {
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      const res = resultOf(await apiRequest(`/api/sso-ca/issue/${config.id}`, { method: 'POST' }))
+      const base = res?.clientId || 'client'
+      downloadText(`${base}-client.crt`, res?.clientCertPem)
+      downloadText(`${base}-client.key`, res?.clientKeyPem)
+      downloadText('myidsan-ca.crt', res?.caCertPem)
+      setNotice('Client certificate issued — downloaded the certificate, its private key, and the CA. The key is shown only once.')
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const loadSso = useCallback(async () => {
+    if (!app?.id) {
+      return
+    }
+    const cfgQs = queryString({ filters: [{ fieldName: 'appRegistryId', compare: 1, value: Number(app.id) }] })
+    const cfgs = rowsOf(await apiRequest(`/api/app-auth-config${cfgQs}`))
+    const cfg = cfgs.find(row => Number(row.appRegistryId) === Number(app.id)) || null
+    setConfig(cfg)
+    setAuthForm(cfg
+      ? { ...emptyAuthConfig, ...cfg, clientSecret: '' }
+      : { ...emptyAuthConfig, appRegistryId: app.id, clientId: app.code })
+    if (cfg) {
+      const uriQs = queryString({ filters: [{ fieldName: 'appAuthConfigId', compare: 1, value: Number(cfg.id) }] })
+      setUris(rowsOf(await apiRequest(`/api/app-redirect-uri${uriQs}`)))
+    } else {
+      setUris([])
+    }
+  }, [app])
+
+  useEffect(() => { loadSso().catch(err => setError(err.message)) }, [loadSso])
+
+  const saveApp = async event => {
+    event.preventDefault()
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      if (isNew) {
+        await apiRequest('/api/app-registry', { method: 'POST', body: { ...appForm } })
+        onCreated(appForm.code)
+      } else {
+        await apiRequest('/api/app-registry', { method: 'PUT', body: { ...appForm, id: app.id } })
+        setNotice('App saved.')
+        onSaved()
+      }
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const deleteApp = async () => {
+    if (!window.confirm(`Delete app "${appForm.title || appForm.code}"? Its SSO client and redirect URIs are removed too.`)) {
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      await apiRequest(`/api/app-registry/${app.id}`, { method: 'DELETE' })
+      onDeleted()
+    } catch (err) {
+      setError(err.message)
+      setBusy(false)
+    }
+  }
+
+  const saveConfig = async event => {
+    event.preventDefault()
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      const isUpdate = Boolean(config && config.id)
+      if (!isUpdate && !String(authForm.clientSecret).trim()) {
+        throw new Error('Client secret is required when creating an SSO client.')
+      }
+      const payload = {
+        ...(isUpdate ? { id: config.id } : {}),
+        appRegistryId: app.id,
+        clientId: authForm.clientId,
+        clientSecret: authForm.clientSecret,
+        authCodeTtlSeconds: emptyToZero(authForm.authCodeTtlSeconds),
+        accessTokenTtlSeconds: emptyToZero(authForm.accessTokenTtlSeconds),
+        sessionTtlSeconds: emptyToZero(authForm.sessionTtlSeconds),
+        refreshTokenTtlSeconds: emptyToZero(authForm.refreshTokenTtlSeconds),
+        requirePkce: Boolean(authForm.requirePkce),
+        allowRefreshToken: Boolean(authForm.allowRefreshToken),
+        isActive: Boolean(authForm.isActive)
+      }
+      await apiRequest('/api/app-auth-config', { method: isUpdate ? 'PUT' : 'POST', body: payload })
+      setNotice(isUpdate ? 'SSO client updated.' : 'SSO client created.')
+      await loadSso()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const addUri = async () => {
+    if (!config?.id || !newUri.trim()) {
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      await apiRequest('/api/app-redirect-uri', { method: 'POST', body: { appAuthConfigId: config.id, redirectUri: newUri.trim(), isActive: true } })
+      setNewUri('')
+      await loadSso()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const removeUri = async row => {
+    setBusy(true)
+    setError('')
+    try {
+      await apiRequest(`/api/app-redirect-uri/${row.id}`, { method: 'DELETE' })
+      await loadSso()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="app-detail">
+      <h2>{isNew ? 'New app' : (appForm.title || appForm.code)}</h2>
+      {isSystem && <p className="cert-hint">Built-in app — its code and audience are managed by the system and cannot be changed or deleted.</p>}
+      {error && <div className="message danger">{error}</div>}
+      {notice && <div className="message success">{notice}</div>}
+
+      <form className="record-form" onSubmit={saveApp}>
+        <div className="two-col">
+          <label>
+            Code
+            <input value={appForm.code} onChange={event => setAppForm({ ...appForm, code: event.target.value })} required readOnly={isSystem} disabled={isSystem} />
+          </label>
+          <label>
+            Audience
+            <input value={appForm.audience} onChange={event => setAppForm({ ...appForm, audience: event.target.value })} required readOnly={isSystem} disabled={isSystem} />
+          </label>
+        </div>
+        <label>
+          Title
+          <input value={appForm.title} onChange={event => setAppForm({ ...appForm, title: event.target.value })} required />
+        </label>
+        <label>
+          Description
+          <input value={appForm.description} onChange={event => setAppForm({ ...appForm, description: event.target.value })} />
+        </label>
+        <label>
+          Base URL
+          <input value={appForm.baseUrl} onChange={event => setAppForm({ ...appForm, baseUrl: event.target.value })} placeholder="https://app.example.com" />
+        </label>
+        <label className="checkbox-field">
+          <input type="checkbox" checked={Boolean(appForm.isActive)} onChange={event => setAppForm({ ...appForm, isActive: event.target.checked })} />
+          Active
+        </label>
+        <div className="form-actions">
+          <button className="primary-button" type="submit" disabled={busy || !canEdit}>{isNew ? 'Create app' : 'Save app'}</button>
+          {!isNew && !isSystem && <button className="secondary-button danger" type="button" onClick={deleteApp} disabled={busy || !canDelete}>Delete app</button>}
+        </div>
+      </form>
+
+      {isNew ? (
+        <p className="message">Save the app first to configure its SSO client and redirect URLs.</p>
+      ) : (
+        <>
+          <hr className="detail-divider" />
+          <div className="detail-heading">
+            <h3>SSO client</h3>
+            <span className={config ? 'status-pill on' : 'status-pill off'}>{config ? 'SSO configured' : 'No SSO client'}</span>
+          </div>
+          <form className="record-form" onSubmit={saveConfig}>
+            <div className="two-col">
+              <label>
+                Client ID
+                <input value={authForm.clientId} onChange={event => setAuthForm({ ...authForm, clientId: event.target.value })} required />
+              </label>
+              <label>
+                Client secret
+                <div className="secret-row">
+                  <input type={secretRevealed ? 'text' : 'password'} value={authForm.clientSecret} onChange={event => setAuthForm({ ...authForm, clientSecret: event.target.value })} placeholder={config?.hasClientSecret ? 'Leave blank to keep current' : 'Set a client secret'} />
+                  <button className="secondary-button" type="button" onClick={generateSecret} disabled={busy} title="Generate a strong random secret">Generate</button>
+                </div>
+              </label>
+            </div>
+            <div className="two-col">
+              <label>
+                Auth code TTL (seconds)
+                <input type="number" value={authForm.authCodeTtlSeconds} onChange={event => setAuthForm({ ...authForm, authCodeTtlSeconds: event.target.value })} />
+              </label>
+              <label>
+                Access token TTL (seconds)
+                <input type="number" value={authForm.accessTokenTtlSeconds} onChange={event => setAuthForm({ ...authForm, accessTokenTtlSeconds: event.target.value })} />
+              </label>
+            </div>
+            <div className="two-col">
+              <label>
+                Session TTL (seconds)
+                <input type="number" value={authForm.sessionTtlSeconds} onChange={event => setAuthForm({ ...authForm, sessionTtlSeconds: event.target.value })} />
+              </label>
+              <label>
+                Refresh token TTL (seconds)
+                <input type="number" value={authForm.refreshTokenTtlSeconds} onChange={event => setAuthForm({ ...authForm, refreshTokenTtlSeconds: event.target.value })} />
+              </label>
+            </div>
+            <label className="checkbox-field">
+              <input type="checkbox" checked={Boolean(authForm.requirePkce)} onChange={event => setAuthForm({ ...authForm, requirePkce: event.target.checked })} />
+              Require PKCE
+            </label>
+            <label className="checkbox-field">
+              <input type="checkbox" checked={Boolean(authForm.allowRefreshToken)} onChange={event => setAuthForm({ ...authForm, allowRefreshToken: event.target.checked })} />
+              Allow refresh tokens
+            </label>
+            <label className="checkbox-field">
+              <input type="checkbox" checked={Boolean(authForm.isActive)} onChange={event => setAuthForm({ ...authForm, isActive: event.target.checked })} />
+              Active
+            </label>
+            <button className="primary-button" type="submit" disabled={busy || !canSso}>{config ? 'Save SSO client' : 'Create SSO client'}</button>
+          </form>
+
+          <div className="sso-uris">
+            <h3>Redirect URIs</h3>
+            {!config ? (
+              <p className="message">Create the SSO client first to add callback URLs.</p>
+            ) : (
+              <>
+                <div className="permission-add">
+                  <input value={newUri} onChange={event => setNewUri(event.target.value)} placeholder="https://app.example.com/api/auth/callback" disabled={busy} />
+                  <button className="secondary-button" onClick={addUri} type="button" disabled={busy}>Add URI</button>
+                </div>
+                {uris.length === 0 ? (
+                  <p className="message">No redirect URIs yet.</p>
+                ) : (
+                  <table className="permission-table">
+                    <thead>
+                      <tr><th>Redirect URI</th><th>Active</th><th /></tr>
+                    </thead>
+                    <tbody>
+                      {uris.map(uri => (
+                        <tr key={uri.id}>
+                          <td><code>{uri.redirectUri}</code></td>
+                          <td>{boolLabel(uri.isActive)}</td>
+                          <td><button className="secondary-button danger" onClick={() => removeUri(uri)} disabled={busy} type="button">Remove</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </>
+            )}
+          </div>
+
+          <div className="sso-certs">
+            <div className="detail-heading">
+              <h3>Client certificate (mTLS)</h3>
+              <button className="info-button" type="button" onClick={() => setShowCertHelp(value => !value)} title="How to configure and use the certificate" aria-label="Certificate help">?</button>
+            </div>
+            {showCertHelp && (
+              <div className="cert-help">
+                <strong>Using an mTLS client certificate</strong>
+                <ol>
+                  <li>Save the SSO client above so it has a <strong>Client ID</strong>.</li>
+                  <li>Click <em>Generate client certificate</em>. Three files download: the client certificate, its private key, and myidsan&apos;s CA certificate (<code>myidsan-ca.crt</code>).</li>
+                  <li>On the relying app, present the client certificate + key as a TLS client certificate when it calls myidsan&apos;s token endpoint (<code>/api/auth/token</code>), and trust <code>myidsan-ca.crt</code>.</li>
+                  <li>Keep the private key secret — it is shown only once. Re-generate any time to rotate it; the certificate&apos;s common name is the Client ID.</li>
+                </ol>
+                <p>Certificate issuance is available now. Enforcing mTLS at the token endpoint is rolling out separately; until then the <strong>client secret</strong> remains the active credential.</p>
+              </div>
+            )}
+            {!config ? (
+              <p className="message">Create the SSO client first to issue a certificate.</p>
+            ) : (
+              <>
+                <p className="cert-hint">myidsan issues a client certificate signed by its own CA (common name = this client&apos;s ID) for certificate-based authentication.</p>
+                <div className="form-actions">
+                  <button className="secondary-button" type="button" onClick={downloadCA} disabled={busy}>Download CA certificate</button>
+                  <button className="primary-button" type="button" onClick={generateCert} disabled={busy || !canSso}>Generate client certificate</button>
+                </div>
+              </>
+            )}
+          </div>
+        </>
+      )}
+    </div>
   )
 }
 
@@ -528,13 +1249,12 @@ function EndpointsPage({ accessList }) {
     <CrudPage
       accessList={accessList}
       title="Endpoints"
-      subtitle="App-scoped API endpoint catalog used by rate limiting and RBAC."
+      subtitle="This app's API endpoint catalog — sets each path's access tier (used by rate limiting) and its menu metadata."
       resource="/api/endpoint"
       emptyItem={emptyEndpoint}
       normalize={normalizeEndpoint}
       columns={[
         { key: 'id', label: 'ID' },
-        { key: 'appCode', label: 'App' },
         { key: 'host', label: 'Host' },
         { key: 'path', label: 'Path' },
         { key: 'metadata', label: 'Menu', render: menuMetadataLabel },
@@ -544,7 +1264,10 @@ function EndpointsPage({ accessList }) {
       fields={[
         { name: 'title', label: 'Title', required: true },
         { name: 'description', label: 'Description' },
-        { name: 'appCode', label: 'App code', required: true },
+        // Endpoints are app-local: appCode is auto-stamped to this app (myidsan) and
+        // hidden from the form. It is kept in the payload only to satisfy the shared
+        // API's required field; the catalog never spans apps anymore.
+        { name: 'appCode', label: 'App code', hidden: true },
         { name: 'host', label: 'Host', required: true },
         { name: 'path', label: 'Path', required: true },
         { name: 'metadata', label: 'Menu metadata', type: 'textarea', rows: 8, placeholder: '{"menu":{"enabled":true,"id":"users","label":"Users","group":"Identity","order":10,"summary":"Maintain user access.","tone":"blue"}}' },
@@ -555,37 +1278,198 @@ function EndpointsPage({ accessList }) {
   )
 }
 
-function RbacPage({ accessList }) {
+// RBAC is matrix-only (matches myseliasan): pick a role, then grant per-path/verb
+// access. Role records themselves are created/removed on the Roles page. The matrix
+// path prefixes drive BOTH API authorization and menu visibility (a role with no GET
+// on a section's path neither sees the menu nor can call its APIs). Superadmin bypasses.
+function RbacPage() {
+  return <RolePermissions />
+}
+
+const PERMISSION_VERBS = [['canGet', 'GET'], ['canPost', 'POST'], ['canPut', 'PUT'], ['canDelete', 'DELETE']]
+
+// MENU_SECTIONS maps each nav section to the API path whose GET permission reveals it
+// (Roles and RBAC share the accessrbac path). The "Menu access" toggles below grant or
+// revoke GET on these paths, which is exactly what drives menu visibility for a role.
+const MENU_SECTIONS = [
+  { label: 'Users', path: '/api/user-credential' },
+  { label: 'Groups', path: '/api/user-group' },
+  { label: 'Roles & RBAC', path: '/api/access-rbac' },
+  { label: 'Apps', path: '/api/app-registry' },
+  { label: 'Endpoints', path: '/api/endpoint' }
+]
+
+// RolePermissions edits the per-role endpoint permission matrix (path prefix ×
+// GET/POST/PUT/DELETE). Longest matching prefix wins; no rule means denied. The
+// same rows govern menu visibility — granting GET on a section's path reveals it.
+function RolePermissions() {
+  const [roles, setRoles] = useState([])
+  const [roleId, setRoleId] = useState(0)
+  const [perms, setPerms] = useState([])
+  const [path, setPath] = useState('/api')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const loadRoles = useCallback(async () => {
+    try {
+      const list = resultOf(await apiRequest('/api/access-rbac/roles')) || []
+      setRoles(list)
+      setRoleId(prev => prev || (list.find(role => !role.isSuperadmin)?.id ?? list[0]?.id ?? 0))
+    } catch (err) {
+      setError(err.message)
+    }
+  }, [])
+
+  const loadPerms = useCallback(async rid => {
+    if (!rid) {
+      setPerms([])
+      return
+    }
+    try {
+      const list = resultOf(await apiRequest(`/api/access-rbac/permissions?roleId=${rid}`)) || []
+      setPerms(list)
+    } catch (err) {
+      setError(err.message)
+    }
+  }, [])
+
+  useEffect(() => { loadRoles() }, [loadRoles])
+  useEffect(() => { loadPerms(roleId) }, [roleId, loadPerms])
+
+  const selectedRole = roles.find(role => role.id === Number(roleId))
+
+  const save = async body => {
+    setBusy(true)
+    setError('')
+    try {
+      await apiRequest('/api/access-rbac/permissions', { method: 'POST', body })
+      await loadPerms(roleId)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const toggle = (row, key) => save({
+    roleId: Number(roleId),
+    path: row.path,
+    canGet: !!row.canGet,
+    canPost: !!row.canPost,
+    canPut: !!row.canPut,
+    canDelete: !!row.canDelete,
+    [key]: !row[key]
+  })
+
+  const addPath = () => {
+    if (!path.trim().startsWith('/')) {
+      setError('Path must start with /')
+      return
+    }
+    save({ roleId: Number(roleId), path: path.trim(), canGet: true, canPost: false, canPut: false, canDelete: false })
+  }
+
+  // toggleSection flips GET on a section's path (preserving the other verbs), which is
+  // what shows/hides that menu for the role.
+  const toggleSection = section => {
+    const existing = perms.find(row => row.path === section.path)
+    save({
+      roleId: Number(roleId),
+      path: section.path,
+      canGet: !(existing && existing.canGet),
+      canPost: !!(existing && existing.canPost),
+      canPut: !!(existing && existing.canPut),
+      canDelete: !!(existing && existing.canDelete)
+    })
+  }
+
+  const remove = async row => {
+    setBusy(true)
+    setError('')
+    try {
+      await apiRequest(`/api/access-rbac/permissions/${row.id}`, { method: 'DELETE' })
+      await loadPerms(roleId)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
-    <CrudPage
-      accessList={accessList}
-      title="RBAC"
-      subtitle="HTTP method permissions by endpoint and user role."
-      resource="/api/endpoint-rbac"
-      emptyItem={emptyRbac}
-      normalize={normalizeRbac}
-      columns={[
-        { key: 'id', label: 'ID' },
-        { key: 'endpointAppCode', label: 'App', render: (value, row) => value || row.apiEndpointId },
-        { key: 'endpointHost', label: 'Host', render: (value, row) => value || row.apiEndpointId },
-        { key: 'endpointPath', label: 'Path', render: (value, row) => value || row.apiEndpointId },
-        { key: 'roleTitle', label: 'Role', render: (value, row) => value || row.userRoleId },
-        { key: 'canGet', label: 'GET', render: boolLabel },
-        { key: 'canPost', label: 'POST', render: boolLabel },
-        { key: 'canPut', label: 'PUT', render: boolLabel },
-        { key: 'canDelete', label: 'DELETE', render: boolLabel },
-        { key: 'isActive', label: 'Active', render: boolLabel }
-      ]}
-      fields={[
-        { name: 'apiEndpointId', label: 'Endpoint ID', type: 'number', required: true },
-        { name: 'userRoleId', label: 'Role ID', type: 'number', required: true },
-        { name: 'canGet', label: 'Can GET', type: 'checkbox' },
-        { name: 'canPost', label: 'Can POST', type: 'checkbox' },
-        { name: 'canPut', label: 'Can PUT', type: 'checkbox' },
-        { name: 'canDelete', label: 'Can DELETE', type: 'checkbox' },
-        { name: 'isActive', label: 'Active', type: 'checkbox' }
-      ]}
-    />
+    <section className="data-region rbac-permissions">
+      <header className="page-header">
+        <div>
+          <h1>Role permissions</h1>
+          <p>Grant a role access per path prefix and verb. This governs both API access and which menus the role sees.</p>
+        </div>
+      </header>
+      <div className="permission-controls">
+        <label className="permission-role-select">
+          <span>Role</span>
+          <select value={roleId} onChange={event => setRoleId(Number(event.target.value))} disabled={busy}>
+            {roles.length === 0 && <option value={0}>No roles</option>}
+            {roles.map(role => (
+              <option key={role.id} value={role.id}>{role.name}{role.isSuperadmin ? ' (superadmin)' : ''}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {error && <div className="message danger">{error}</div>}
+      {selectedRole?.isSuperadmin ? (
+        <p className="message">Superadmin bypasses all checks — no rules needed.</p>
+      ) : (
+        <>
+          <div className="menu-access">
+            <h2>Menu access</h2>
+            <p className="menu-access-hint">Toggle which navigation sections this role can see and open. Each switch grants or revokes GET on the section&apos;s API path — the same rule that drives menu visibility.</p>
+            <div className="menu-access-grid">
+              {MENU_SECTIONS.map(section => {
+                const on = !!perms.find(row => row.path === section.path)?.canGet
+                return (
+                  <label className="menu-access-item" key={section.path}>
+                    <input type="checkbox" checked={on} onChange={() => toggleSection(section)} disabled={busy} />
+                    <span>{section.label}</span>
+                  </label>
+                )
+              })}
+            </div>
+          </div>
+          <div className="permission-add">
+            <input value={path} onChange={event => setPath(event.target.value)} placeholder="/api/user-credential" disabled={busy} />
+            <button className="secondary-button" onClick={addPath} disabled={busy || !roleId} type="button">Add path</button>
+          </div>
+          {perms.length === 0 ? (
+            <p className="message">No rules — this role is denied everything (and sees no menus).</p>
+          ) : (
+            <table className="permission-table">
+              <thead>
+                <tr>
+                  <th>Path</th>
+                  {PERMISSION_VERBS.map(([, label]) => <th key={label}>{label}</th>)}
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {perms.map(row => (
+                  <tr key={row.id}>
+                    <td><code>{row.path}</code></td>
+                    {PERMISSION_VERBS.map(([key, label]) => (
+                      <td key={label} className="permission-cell">
+                        <input type="checkbox" checked={!!row[key]} onChange={() => toggle(row, key)} disabled={busy} aria-label={`${label} ${row.path}`} />
+                      </td>
+                    ))}
+                    <td>
+                      <button className="secondary-button danger" onClick={() => remove(row)} disabled={busy} type="button">Remove</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
+      )}
+    </section>
   )
 }
 
@@ -601,6 +1485,7 @@ function CrudPage({
   fields,
   canCreate = true,
   listMode = 'paging',
+  updateWithId = false,
   toolbar
 }) {
   const effectiveListResource = listResource || resource
@@ -793,7 +1678,10 @@ function CrudPage({
       }
       const method = isUpdate ? 'PUT' : 'POST'
       const payload = preparePayload(selected, fields)
-      await apiRequest(resource, { method, body: payload })
+      // Some resources (e.g. the shared accessrbac roles) update at /{id}; others
+      // (the legacy CRUD modules) take the id in the body and PUT to the base path.
+      const target = isUpdate && updateWithId ? `${resource}/${selected.id}` : resource
+      await apiRequest(target, { method, body: payload })
       if (isUpdate && editorItems.length > 1) {
         setEditorItems(current => current.map((item, index) => index === editorIndex ? normalize({ ...item, ...payload }) : item))
         setNotice(`Saved ${editorIndex + 1} of ${editorItems.length}`)
@@ -1190,6 +2078,11 @@ function RecordForm({ fields, value, onChange, onSubmit, busy, canCreate, canEdi
 }
 
 function Field({ field, value, onChange }) {
+  // Hidden fields are still submitted (kept in the payload) but never rendered —
+  // used for app-local constants like an endpoint's auto-stamped appCode.
+  if (field.hidden) {
+    return null
+  }
   if (field.type === 'checkbox') {
     return (
       <label className="checkbox-field">

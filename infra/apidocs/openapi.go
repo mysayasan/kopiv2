@@ -479,16 +479,6 @@ func endpointSuccessSchema(method string, path string) string {
 		return "DefaultAppRegistryResponse"
 	case "POST /api/sso/introspect":
 		return "DefaultSSOIntrospectionResponse"
-	case "POST /api/sso/authorize":
-		return "DefaultSSOAuthorizationResponse"
-	case "GET /api/endpoint-rbac":
-		return "PagingApiEndpointRbacResponse"
-	case "GET /api/endpoint-rbac/ep/me":
-		return "DefaultApiEndpointRbacJoinListResponse"
-	case "GET /api/endpoint-rbac/validate/me":
-		return "DefaultApiEndpointRbacResponse"
-	case "POST /api/endpoint-rbac", "PUT /api/endpoint-rbac":
-		return "DefaultApiEndpointRbacResponse"
 	case "GET /api/user-credential":
 		return "PagingUserCredentialResponse"
 	case "GET /api/user-credential/email":
@@ -497,10 +487,6 @@ func endpointSuccessSchema(method string, path string) string {
 		return "PagingAppUserLoginResponse"
 	case "GET /api/user-login/email":
 		return "DefaultAppUserLoginResponse"
-	case "GET /api/user-credential/group/{id}":
-		return "DefaultUserRoleListResponse"
-	case "POST /api/user-credential":
-		return "DefaultUserRoleResponse"
 	case "PUT /api/user-credential":
 		return "DefaultUserCredentialResponse"
 	case "GET /api/log":
@@ -588,12 +574,6 @@ func enrichOperationWithSchemas(method string, path string, op *openAPIOperation
 		op.RequestBody = jsonRequestBody("AppRegistryInputDto", true)
 	case "POST /api/sso/introspect":
 		op.RequestBody = jsonRequestBody("SSOIntrospectionRequest", true)
-	case "POST /api/sso/authorize":
-		op.RequestBody = jsonRequestBody("SSOAuthorizationRequest", true)
-	case "POST /api/endpoint-rbac", "PUT /api/endpoint-rbac":
-		op.RequestBody = jsonRequestBody("ApiEndpointRbacInputDto", true)
-	case "POST /api/user-credential":
-		op.RequestBody = jsonRequestBody("UserRoleInputDto", true)
 	case "PUT /api/user-credential":
 		op.RequestBody = jsonRequestBody("UserCredentialInputDto", true)
 	case "POST /api/file-storage/upload", "POST /api/file-storage/upload-async":
@@ -665,7 +645,6 @@ func isPagingEndpoint(method string, path string) bool {
 		"/api/user-login":      {},
 		"/api/app-registry":    {},
 		"/api/endpoint":        {},
-		"/api/endpoint-rbac":   {},
 		"/api/cache-service":   {},
 		"/api/log":             {},
 	}
@@ -685,7 +664,6 @@ func isSharedDBPagingEndpoint(method string, path string) bool {
 		"/api/user-login":      {},
 		"/api/app-registry":    {},
 		"/api/endpoint":        {},
-		"/api/endpoint-rbac":   {},
 		"/api/log":             {},
 	}
 
@@ -847,22 +825,6 @@ func baseComponentSchemas() map[string]openAPISchema {
 			},
 			Required: []string{"title", "parentId"},
 		},
-		"UserRoleOutputDto": {
-			Type: "object",
-			Properties: map[string]openAPISchema{
-				"id":          {Type: "integer", Format: "int64"},
-				"title":       {Type: "string"},
-				"description": {Type: "string", Nullable: true},
-				"parentId":    {Type: "integer", Format: "int64"},
-				"groupId":     {Type: "integer", Format: "int64"},
-				"isActive":    {Type: "boolean"},
-				"createdBy":   {Type: "integer", Format: "int64"},
-				"createdAt":   {Type: "integer", Format: "int64"},
-				"updatedBy":   {Type: "integer", Format: "int64"},
-				"updatedAt":   {Type: "integer", Format: "int64"},
-			},
-			Required: []string{"title", "parentId", "groupId"},
-		},
 		"UserLoginOutputDto": {
 			Type: "object",
 			Properties: map[string]openAPISchema{
@@ -899,7 +861,7 @@ func baseComponentSchemas() map[string]openAPISchema {
 			Required: []string{"email"},
 		},
 		"UserCredentialOutputDto": {
-			OneOf: []openAPISchema{{Ref: schemaRef("UserLoginOutputDto")}, {Ref: schemaRef("UserRoleOutputDto")}},
+			OneOf: []openAPISchema{{Ref: schemaRef("UserLoginOutputDto")}},
 		},
 		"ApiEndpointOutputDto": {
 			Type: "object",
@@ -943,50 +905,6 @@ func baseComponentSchemas() map[string]openAPISchema {
 				"updatedAt":   {Type: "integer", Format: "int64"},
 			},
 			Required: []string{"code", "title", "audience"},
-		},
-		"ApiEndpointRbacOutputDto": {
-			Type: "object",
-			Properties: map[string]openAPISchema{
-				"id":            {Type: "integer", Format: "int64"},
-				"apiEndpointId": {Type: "integer", Format: "int64"},
-				"userRoleId":    {Type: "integer", Format: "int64"},
-				"canGet":        {Type: "boolean"},
-				"canPost":       {Type: "boolean"},
-				"canPut":        {Type: "boolean"},
-				"canDelete":     {Type: "boolean"},
-				"isActive":      {Type: "boolean"},
-				"createdBy":     {Type: "integer", Format: "int64"},
-				"createdAt":     {Type: "integer", Format: "int64"},
-				"updatedBy":     {Type: "integer", Format: "int64"},
-				"updatedAt":     {Type: "integer", Format: "int64"},
-			},
-			Required: []string{"apiEndpointId", "userRoleId"},
-		},
-		"ApiEndpointRbacListOutputDto": {
-			Type: "object",
-			Properties: map[string]openAPISchema{
-				"id":               {Type: "integer", Format: "int64"},
-				"apiEndpointId":    {Type: "integer", Format: "int64"},
-				"userRoleId":       {Type: "integer", Format: "int64"},
-				"endpointTitle":    {Type: "string"},
-				"endpointAppCode":  {Type: "string"},
-				"endpointHost":     {Type: "string"},
-				"endpointPath":     {Type: "string"},
-				"endpointMetadata": {Type: "string"},
-				"endpointTier": {
-					Type:        "integer",
-					Format:      "int32",
-					Description: "0=DevOnly, 1=AuthOnly, 2=Public.",
-				},
-				"roleTitle": {Type: "string"},
-				"canGet":    {Type: "boolean"},
-				"canPost":   {Type: "boolean"},
-				"canPut":    {Type: "boolean"},
-				"canDelete": {Type: "boolean"},
-				"isActive":  {Type: "boolean"},
-				"createdAt": {Type: "integer", Format: "int64"},
-			},
-			Required: []string{"apiEndpointId", "userRoleId"},
 		},
 		"FileUploadRequest": {
 			Type: "object",
@@ -1033,17 +951,6 @@ func baseComponentSchemas() map[string]openAPISchema {
 			},
 			Required: []string{"token"},
 		},
-		"SSOAuthorizationRequest": {
-			Type: "object",
-			Properties: map[string]openAPISchema{
-				"token":    {Type: "string"},
-				"audience": {Type: "string"},
-				"host":     {Type: "string"},
-				"path":     {Type: "string"},
-				"method":   {Type: "string"},
-			},
-			Required: []string{"token", "path", "method"},
-		},
 		"SSOIntrospectionPayload": {
 			Type: "object",
 			Properties: map[string]openAPISchema{
@@ -1059,23 +966,6 @@ func baseComponentSchemas() map[string]openAPISchema {
 				"policyVersion": {Type: "integer", Format: "int64"},
 				"expiresAt":     {Type: "integer", Format: "int64"},
 				"reason":        {Type: "string"},
-			},
-		},
-		"SSOAuthorizationPayload": {
-			Type: "object",
-			Properties: map[string]openAPISchema{
-				"active":        {Type: "boolean"},
-				"allowed":       {Type: "boolean"},
-				"reason":        {Type: "string"},
-				"userId":        {Type: "integer", Format: "int64"},
-				"roleId":        {Type: "integer", Format: "int64"},
-				"email":         {Type: "string"},
-				"sessionId":     {Type: "string"},
-				"issuer":        {Type: "string"},
-				"audience":      {Type: "array", Items: &openAPISchema{Type: "string"}},
-				"appCode":       {Type: "string"},
-				"policyVersion": {Type: "integer", Format: "int64"},
-				"decision":      {Type: "object", AdditionalProperties: true},
 			},
 		},
 		"DefaultLoginRequest": {
@@ -1095,32 +985,6 @@ func baseComponentSchemas() map[string]openAPISchema {
 				"lastName":  {Type: "string"},
 			},
 			Required: []string{"username", "password"},
-		},
-		"ApiEndpointRbacJoinOutputDto": {
-			Type: "object",
-			Properties: map[string]openAPISchema{
-				"id":            {Type: "integer", Format: "int64"},
-				"apiEndpointId": {Type: "integer", Format: "int64"},
-				"userRoleId":    {Type: "integer", Format: "int64"},
-				"appCode":       {Type: "string"},
-				"host":          {Type: "string"},
-				"path":          {Type: "string"},
-				"metadata": {
-					Type:        "string",
-					Description: "JSON text copied from the joined api_endpoint row for menu and presentation customization.",
-				},
-				"accessTier": {
-					Type:        "integer",
-					Format:      "int32",
-					Description: "0=DevOnly, 1=AuthOnly, 2=Public.",
-				},
-				"canGet":    {Type: "boolean"},
-				"canPost":   {Type: "boolean"},
-				"canPut":    {Type: "boolean"},
-				"canDelete": {Type: "boolean"},
-				"isActive":  {Type: "boolean"},
-				"createdAt": {Type: "integer", Format: "int64"},
-			},
 		},
 		"ApiLogOutputDto": {
 			Type: "object",
@@ -1178,31 +1042,25 @@ func baseComponentSchemas() map[string]openAPISchema {
 	}
 
 	schemas["UserGroupInputDto"] = schemas["UserGroupOutputDto"]
-	schemas["UserRoleInputDto"] = schemas["UserRoleOutputDto"]
 	schemas["UserLoginInputDto"] = schemas["UserLoginOutputDto"]
 	schemas["UserCredentialInputDto"] = openAPISchema{
-		OneOf: []openAPISchema{{Ref: schemaRef("UserLoginInputDto")}, {Ref: schemaRef("UserRoleInputDto")}},
+		OneOf: []openAPISchema{{Ref: schemaRef("UserLoginInputDto")}},
 	}
 	schemas["ApiEndpointInputDto"] = schemas["ApiEndpointOutputDto"]
 	schemas["AppRegistryInputDto"] = schemas["AppRegistryOutputDto"]
 	appRegistryInput := schemas["AppRegistryInputDto"]
 	appRegistryInput.Properties["clientSecret"] = openAPISchema{Type: "string"}
 	schemas["AppRegistryInputDto"] = appRegistryInput
-	schemas["ApiEndpointRbacInputDto"] = schemas["ApiEndpointRbacOutputDto"]
 	schemas["ApiLogInputDto"] = schemas["ApiLogOutputDto"]
 	schemas["FileStorageInputDto"] = schemas["FileStorageOutputDto"]
 	schemas["OperationJobInputDto"] = schemas["OperationJobOutputDto"]
 
 	schemas["RuntimeLogEntry"] = schemas["RuntimeLogOutputDto"]
 	schemas["UserGroupPayload"] = schemas["UserGroupOutputDto"]
-	schemas["UserRolePayload"] = schemas["UserRoleOutputDto"]
 	schemas["UserLoginPayload"] = schemas["UserLoginOutputDto"]
 	schemas["UserCredentialPayload"] = schemas["UserCredentialOutputDto"]
 	schemas["ApiEndpointPayload"] = schemas["ApiEndpointOutputDto"]
 	schemas["AppRegistryPayload"] = schemas["AppRegistryOutputDto"]
-	schemas["ApiEndpointRbacPayload"] = schemas["ApiEndpointRbacOutputDto"]
-	schemas["ApiEndpointRbacListPayload"] = schemas["ApiEndpointRbacListOutputDto"]
-	schemas["ApiEndpointRbacJoinPayload"] = schemas["ApiEndpointRbacJoinOutputDto"]
 	schemas["ApiLogPayload"] = schemas["ApiLogOutputDto"]
 	schemas["FileStoragePayload"] = schemas["FileStorageOutputDto"]
 	schemas["OperationJobPayload"] = schemas["OperationJobOutputDto"]
@@ -1213,23 +1071,17 @@ func baseComponentSchemas() map[string]openAPISchema {
 	schemas["DefaultUserGroupResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("UserGroupOutputDto")})
 	schemas["DefaultUserLoginResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("UserLoginOutputDto")})
 	schemas["DefaultAppUserLoginResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("AppUserLoginPayload")})
-	schemas["DefaultUserRoleResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("UserRoleOutputDto")})
 	schemas["DefaultUserCredentialResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("UserCredentialOutputDto")})
 	schemas["DefaultApiEndpointResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("ApiEndpointOutputDto")})
 	schemas["DefaultAppRegistryResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("AppRegistryOutputDto")})
-	schemas["DefaultApiEndpointRbacResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("ApiEndpointRbacOutputDto")})
 	schemas["DefaultSSOIntrospectionResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("SSOIntrospectionPayload")})
-	schemas["DefaultSSOAuthorizationResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("SSOAuthorizationPayload")})
 	schemas["DefaultOperationJobResponse"] = defaultResponseSchema(openAPISchema{Ref: schemaRef("OperationJobOutputDto")})
-	schemas["DefaultUserRoleListResponse"] = defaultResponseSchema(openAPISchema{Type: "array", Items: &openAPISchema{Ref: schemaRef("UserRoleOutputDto")}})
-	schemas["DefaultApiEndpointRbacJoinListResponse"] = defaultResponseSchema(openAPISchema{Type: "array", Items: &openAPISchema{Ref: schemaRef("ApiEndpointRbacJoinOutputDto")}})
 
 	schemas["PagingUserGroupResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("UserGroupOutputDto")})
 	schemas["PagingUserCredentialResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("UserCredentialOutputDto")})
 	schemas["PagingAppUserLoginResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("AppUserLoginPayload")})
 	schemas["PagingApiEndpointResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("ApiEndpointOutputDto")})
 	schemas["PagingAppRegistryResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("AppRegistryOutputDto")})
-	schemas["PagingApiEndpointRbacResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("ApiEndpointRbacListOutputDto")})
 	schemas["PagingApiLogResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("ApiLogOutputDto")})
 	schemas["PagingRuntimeLogResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("RuntimeLogOutputDto")})
 	schemas["PagingFileStorageResponse"] = pagingResponseSchema(openAPISchema{Ref: schemaRef("FileStorageOutputDto")})

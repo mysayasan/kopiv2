@@ -203,6 +203,11 @@ type PairingConfigModel struct {
 	// HeartbeatIntervalSeconds is how often the control plane probes each adopted
 	// node over mTLS to reconcile liveness/self-drop. 0 = default (60).
 	HeartbeatIntervalSeconds int `json:"heartbeatIntervalSeconds"`
+	// ControlPort is the parent's node-dialed control-channel listener port (the
+	// persistent bi-directional command/event channel). The node derives the parent
+	// host from its stored ParentBaseURL and dials this shared port. 0 = default
+	// (49533). Distinct from MTLSPort (the node's own management listener).
+	ControlPort int `json:"controlPort"`
 }
 
 type StreamConfigModel struct {

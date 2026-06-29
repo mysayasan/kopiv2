@@ -1,0 +1,797 @@
+/* Standardized RBAC-app shell: the myidsan side-nav + permission-matrix design,
+   adopted verbatim as the shared look for every RBAC-enabled web app. The sidebar
+   keeps myidsan's constant dark palette (theme-independent), while the main
+   workspace and the permission matrix bind to myseliasan's theme variables so the
+   light/dark toggle keeps working. Imported last so it overrides app.css. */
+
+/* Sidebar palette — fixed (matches myidsan), independent of the light/dark theme. */
+:root {
+  --nav-bg: #111827;
+  --nav-line: rgba(255, 255, 255, 0.14);
+  --nav-fill: rgba(255, 255, 255, 0.08);
+  --nav-hover: rgba(255, 255, 255, 0.12);
+  --nav-label: #8ea0b8;
+  --nav-code: #d7e2f2;
+  --nav-sub: #a7b3c4;
+}
+
+.boot-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: var(--text-muted);
+}
+
+/* Override app.css's centered-column .app-shell with the two-pane sidebar grid. */
+.app-shell {
+  width: auto;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+}
+
+.side-nav {
+  background: var(--nav-bg);
+  color: #fff;
+  padding: 22px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+
+/* The SVG brand mark + wordmark, centered at the top of the dark sidebar. */
+.side-nav .brand-logo {
+  justify-self: center;
+  align-self: center;
+}
+
+.side-nav .brand-wordmark {
+  color: #eaf6ef;
+}
+
+.side-brand-sub {
+  text-align: center;
+  color: var(--nav-sub);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.side-nav nav {
+  display: grid;
+  gap: 18px;
+}
+
+.nav-group {
+  display: grid;
+  gap: 6px;
+}
+
+.nav-group-label {
+  padding: 0 10px 3px;
+  color: var(--nav-label);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.nav-item {
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  color: #fff;
+  text-align: left;
+  padding: 11px 12px;
+  background: transparent;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  position: relative;
+  min-height: 0;
+  cursor: pointer;
+}
+
+.nav-item:hover,
+.nav-item.active {
+  background: var(--nav-hover);
+}
+
+.nav-item.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--tone, #9aa7b8);
+}
+
+.nav-code {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--nav-line);
+  border-radius: 8px;
+  background: var(--nav-fill);
+  color: var(--nav-code);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+/* Icon-based nav entry: an SVG glyph in the leading cell, tinted with the section
+   tone (mirrors myidsan), replacing the code tile. */
+.nav-ico {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  color: var(--tone, #cdd8e8);
+}
+
+.nav-ico svg {
+  display: block;
+}
+
+.nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 760;
+}
+
+/* Bottom-of-sidebar actions: theme toggle + log out, styled to sit on the dark bg. */
+.side-nav-foot {
+  margin-top: auto;
+  display: grid;
+  gap: 10px;
+}
+
+.logout-button {
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  color: #fff;
+  text-align: left;
+  padding: 11px 12px;
+  background: var(--nav-fill);
+  min-height: 0;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.logout-button:hover {
+  background: var(--nav-hover);
+}
+
+/* Theme dropdown adapted to the dark sidebar: full width, opens upward so the menu
+   is never clipped below the viewport at the foot of the rail. */
+.side-nav .theme-drop-wrap {
+  width: 100%;
+}
+
+.side-nav .theme-toggle {
+  width: 100%;
+  min-height: 44px;
+  justify-content: space-between;
+  border: 0;
+  border-radius: 8px;
+  background: var(--nav-fill);
+  color: var(--nav-code);
+}
+
+.side-nav .theme-toggle:hover,
+.side-nav .theme-toggle.active {
+  background: var(--nav-hover);
+  color: #fff;
+}
+
+.side-nav .theme-menu {
+  top: auto;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+}
+
+.main-workspace {
+  min-width: 0;
+  padding: 28px;
+  background: var(--bg-body);
+}
+
+/* The embedded workspace already supplies its own top gap. */
+.main-workspace > .workspace {
+  padding-top: 0;
+}
+
+/* Section tones (sidebar accent + matches myidsan). */
+.tone-blue { --tone: #2563eb; }
+.tone-teal { --tone: #0f766e; }
+.tone-violet { --tone: #7c3aed; }
+.tone-indigo { --tone: #4f46e5; }
+.tone-steel { --tone: #64748b; }
+.tone-green { --tone: #138a5b; }
+
+/* --- Permission matrix (RBAC) — standardized to myidsan's layout, themed. ----- */
+.permission-controls {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  margin-bottom: 12px;
+}
+
+.permission-role-select {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.permission-role-select select {
+  min-height: 38px;
+  border-radius: 8px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-surface);
+  padding: 6px 10px;
+  font-weight: 600;
+}
+
+.permission-add {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.permission-add input {
+  flex: 1;
+  min-height: 38px;
+  border-radius: 8px;
+  border: 1px solid var(--border-soft);
+  padding: 6px 10px;
+}
+
+.permission-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.permission-table th,
+.permission-table td {
+  border-bottom: 1px solid var(--border-divider);
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.permission-table th:not(:first-child),
+.permission-cell {
+  text-align: center;
+  width: 64px;
+}
+
+.permission-table code {
+  font-size: 12px;
+}
+
+.permission-table input[type="checkbox"] {
+  width: auto;
+  min-height: 0;
+}
+
+/* --- Data table (filtering + sorting + pager) — ported from myidsan. -----------
+   Element selectors are scoped under .table-surface so they never touch the
+   dashboard/nodes tables; colours bind to myseliasan's theme variables. */
+.table-surface {
+  width: 100%;
+  border: 1px solid var(--border-divider);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+
+.table-wrap {
+  position: relative;
+  width: 100%;
+  overflow-x: auto;
+}
+
+.table-loading table {
+  pointer-events: none;
+}
+
+.table-surface table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 640px;
+  background: var(--bg-surface);
+}
+
+.table-surface th,
+.table-surface td {
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--border-divider);
+  text-align: left;
+  vertical-align: middle;
+  font-size: 14px;
+}
+
+.table-surface th {
+  color: var(--text-secondary);
+  background: var(--bg-subtle2);
+  font-weight: 700;
+}
+
+.table-surface tr:last-child td {
+  border-bottom: 0;
+}
+
+.column-head {
+  display: grid;
+  gap: 7px;
+  min-width: 120px;
+}
+
+.column-title-row,
+.column-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.column-title-row {
+  justify-content: space-between;
+}
+
+.column-title-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.column-actions {
+  flex: 0 0 auto;
+}
+
+.filter-button {
+  position: relative;
+  width: 30px;
+  min-height: 26px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  cursor: pointer;
+  padding: 0;
+}
+
+.filter-button::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 6px;
+  width: 14px;
+  height: 7px;
+  background: var(--text-secondary);
+  clip-path: polygon(0 0, 100% 0, 62% 100%, 38% 100%);
+}
+
+.filter-button::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  top: 13px;
+  width: 5px;
+  height: 6px;
+  background: var(--text-secondary);
+  border-radius: 1px 1px 2px 2px;
+}
+
+.filter-button:hover,
+.filter-button:focus-visible {
+  border-color: var(--accent);
+  outline: 0;
+}
+
+.filter-button.active {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.filter-button.active::before,
+.filter-button.active::after {
+  background: #fff;
+}
+
+.filter-count {
+  position: absolute;
+  right: -5px;
+  top: -6px;
+  z-index: 1;
+  min-width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.sort-button {
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  min-height: 26px;
+  padding: 3px 6px;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.sort-button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.sort-button span {
+  display: inline-grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+}
+
+.filter-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 49;
+  border: 0;
+  background: transparent;
+}
+
+.filter-popover {
+  position: fixed;
+  z-index: 50;
+  width: 280px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  box-shadow: 0 18px 42px var(--shadow-panel);
+  padding: 12px;
+}
+
+.filter-popover-head,
+.filter-popover-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.filter-popover-head {
+  margin: -2px 0 10px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.filter-popover-body {
+  display: grid;
+  gap: 10px;
+}
+
+.filter-condition {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border-divider);
+  border-radius: 8px;
+  background: var(--bg-subtle2);
+}
+
+.filter-condition-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.filter-popover-actions {
+  justify-content: flex-end;
+}
+
+.mini-button {
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  min-height: 28px;
+  padding: 2px 0;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.mini-button:hover {
+  color: var(--accent);
+}
+
+.empty-cell {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 28px;
+}
+
+/* Primary/secondary buttons used by the filter popover (myidsan parity). */
+.primary-button {
+  min-height: 34px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  padding: 6px 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.secondary-button {
+  min-height: 34px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  padding: 6px 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border-divider);
+  background: var(--bg-subtle2);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.pager-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pager-icon {
+  position: relative;
+  width: 34px;
+  min-height: 34px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  cursor: pointer;
+  padding: 0;
+}
+
+.pager-icon:hover:not(:disabled),
+.pager-icon:focus-visible:not(:disabled) {
+  border-color: var(--accent);
+  outline: 0;
+}
+
+.pager-icon:disabled {
+  opacity: 0.44;
+  cursor: not-allowed;
+}
+
+.pager-icon::before,
+.pager-icon::after {
+  content: "";
+  position: absolute;
+}
+
+.pager-icon.previous::before,
+.pager-icon.next::before,
+.pager-icon.first::before,
+.pager-icon.last::before {
+  top: 10px;
+  width: 10px;
+  height: 10px;
+  border-top: 2px solid var(--text-secondary);
+  border-right: 2px solid var(--text-secondary);
+}
+
+.pager-icon.previous::before {
+  left: 13px;
+  transform: rotate(-135deg);
+}
+
+.pager-icon.next::before {
+  right: 13px;
+  transform: rotate(45deg);
+}
+
+.pager-icon.first::before {
+  left: 15px;
+  transform: rotate(-135deg);
+}
+
+.pager-icon.last::before {
+  right: 15px;
+  transform: rotate(45deg);
+}
+
+.pager-icon.first::after,
+.pager-icon.last::after {
+  top: 9px;
+  width: 2px;
+  height: 14px;
+  background: var(--text-secondary);
+  border-radius: 1px;
+}
+
+.pager-icon.first::after {
+  left: 9px;
+}
+
+.pager-icon.last::after {
+  right: 9px;
+}
+
+.pager-icon.go::before {
+  left: 10px;
+  top: 9px;
+  width: 10px;
+  height: 16px;
+  border-right: 3px solid var(--text-secondary);
+  border-bottom: 3px solid var(--text-secondary);
+  transform: rotate(40deg);
+}
+
+.pager-jump {
+  width: 58px;
+}
+
+.pager-jump input {
+  min-height: 34px;
+  border-radius: 8px;
+  padding: 5px 7px;
+  text-align: center;
+}
+
+/* Admin toolbar (Roles add-bar etc.) above a data table. */
+.table-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+/* Persistent superadmin-handoff banner: warns that the stock superadmin is still
+   active. Non-dismissible — it clears only when the stock account is disabled. */
+.handoff-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  padding: 11px 14px;
+  border: 1px solid var(--warn-border);
+  border-left: 4px solid var(--warn-border);
+  border-radius: 8px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.handoff-banner-text {
+  flex: 1 1 260px;
+}
+
+.handoff-banner-action {
+  flex: 0 0 auto;
+  min-height: 32px;
+  border: 1px solid var(--warn-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--warn-text);
+  padding: 0 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.handoff-banner-action:hover {
+  background: color-mix(in srgb, var(--warn-border) 16%, transparent);
+}
+
+/* Menu access: per-role section toggles (write GET on the section path). */
+.menu-access {
+  margin-bottom: 14px;
+  padding: 14px;
+  border: 1px solid var(--border-divider);
+  border-radius: 8px;
+  background: var(--bg-subtle2);
+}
+
+.menu-access h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.menu-access-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.menu-access-item {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  border: 1px solid var(--border-divider);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.menu-access-item input {
+  width: 18px;
+  min-height: 18px;
+}
+
+@media (max-width: 1080px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .side-nav {
+    position: static;
+    height: auto;
+  }
+
+  .side-nav nav {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .nav-group {
+    align-content: start;
+  }
+
+  .side-nav-foot {
+    margin-top: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .main-workspace {
+    padding: 18px;
+  }
+
+  .side-nav nav {
+    grid-template-columns: 1fr 1fr;
+  }
+}

@@ -3,7 +3,9 @@ const HtmlWebPackPlugin = require('html-webpack-plugin')
 const fs = require('fs')
 
 const htmlPlugin = new HtmlWebPackPlugin({
-  hash: true,
+  // Cache-busting comes from [contenthash] filenames below (mirrors myseliasan),
+  // which also covers runtime-loaded split chunks, so a content change always yields
+  // a new URL and browsers never serve a stale chunk.
   title: 'MyIDSan',
   template: path.resolve(__dirname, 'src', 'index.html')
 })
@@ -17,7 +19,9 @@ module.exports = {
   output: {
     path: path.resolve(__dirname, '../../static'),
     publicPath: '/',
-    clean: false
+    filename: '[name].[contenthash:8].js',
+    chunkFilename: '[name].[contenthash:8].js',
+    clean: true
   },
   plugins: [htmlPlugin],
   module: {

@@ -1,5 +1,6 @@
 import { Ico } from './icons';
 import { ThemeDropdown } from './ui';
+import { sessionCanGet } from '../lib/helpers';
 
 // BrandLogo mirrors the mymatasan mark (line-art shield + eye + check) with the
 // rounded lowercase wordmark, so the control plane shares the product's identity.
@@ -21,39 +22,67 @@ export function BrandLogo({ size = 40, className = '' }) {
   );
 }
 
-// TopBar is the control-plane header: brand, primary tabs, and the theme / refresh
-// / lock actions — the same shell pattern mymatasan uses.
-export function TopBar({ activeTab, busy, onTab, onRefresh, onLogout, theme, onThemeChange, session }) {
-  const tabs = [
-    { id: 'dashboard', label: 'Dashboard', icon: 'monitor' },
-    { id: 'nodes', label: 'Mymatasan', icon: 'shield' },
-    { id: 'authorization', label: 'Authorization', icon: 'user' },
-  ];
+// SideNav is the standardized RBAC-app navigation rail: the myidsan dark side-nav
+// (grouped menu, code tiles, tone accents) reused as the shared shell. Menu entries
+// follow the same permission matrix that gates their APIs — a role needs GET on
+// /api/nodes to see Mymatasan; Users & Roles is superadmin-only.
+export function SideNav({ activeTab, busy, onTab, onLogout, theme, onThemeChange, session }) {
+  const groups = [
+    {
+      label: 'Workspace',
+      items: [{ id: 'dashboard', label: 'Dashboard', icon: 'monitor', tone: 'steel' }],
+    },
+    {
+      label: 'Fleet',
+      items: [
+        ...(sessionCanGet(session, '/api/nodes')
+          ? [{ id: 'nodes', label: 'Mymatasan', icon: 'shield', tone: 'blue' }]
+          : []),
+      ],
+    },
+    {
+      label: 'Administration',
+      items: session?.isSuperadmin
+        ? [
+            { id: 'users', label: 'Users', icon: 'user', tone: 'blue' },
+            { id: 'roles', label: 'Roles', icon: 'key', tone: 'violet' },
+            { id: 'rbac', label: 'RBAC', icon: 'lock', tone: 'green' },
+          ]
+        : [],
+    },
+  ].filter((group) => group.items.length > 0);
+
   return (
-    <header className="topbar">
-      <BrandLogo />
-      <nav className="primary-tabs" aria-label="Main">
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            className={`primary-tab${tab.id === activeTab ? ' active' : ''}`}
-            onClick={() => onTab(tab.id)}
-          >
-            <span className="btn-icon"><Ico n={tab.icon} /> {tab.label}</span>
-          </button>
+    <aside className="side-nav">
+      <div className="side-brand">
+        <BrandLogo />
+        <div className="side-brand-sub">Control plane</div>
+      </div>
+      <nav aria-label="Main">
+        {groups.map((group) => (
+          <div className="nav-group" key={group.label}>
+            <div className="nav-group-label">{group.label}</div>
+            {group.items.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`nav-item tone-${item.tone}${item.id === activeTab ? ' active' : ''}`}
+                onClick={() => onTab(item.id)}
+              >
+                <span className="nav-ico"><Ico n={item.icon} sz={17} /></span>
+                <span className="nav-label">{item.label}</span>
+              </button>
+            ))}
+          </div>
         ))}
       </nav>
-      <div className="topbar-actions">
-        {session?.email ? <span className="session-pill">{session.email}</span> : null}
+      <div className="side-nav-foot">
+        {session?.email ? <div className="side-brand-sub" title={session.email}>{session.email}</div> : null}
         <ThemeDropdown theme={theme} onThemeChange={onThemeChange} />
-        <button type="button" className="quiet" onClick={onRefresh} disabled={busy}>
-          <span className="btn-icon"><Ico n="refresh" /> Refresh</span>
-        </button>
-        <button type="button" className="quiet danger-text" onClick={onLogout} disabled={busy}>
-          <span className="btn-icon"><Ico n="lock" /> Log out</span>
+        <button type="button" className="logout-button" onClick={onLogout} disabled={busy}>
+          Log out
         </button>
       </div>
-    </header>
+    </aside>
   );
 }

@@ -44,6 +44,6 @@ Registers file storage upload, download, and upload-job endpoints.
 - `GET /api/file-storage/download?id=<id>&view=true` streams one stored file with inline disposition for browser rendering.
 - GUIDs remain internal physical storage identifiers and are not part of the public download contract.
 - The route is mounted without auth/RBAC so `Public` files can be retrieved by anonymous callers.
-- If auth cookies are present, the API passes caller user/role identity to the service for `Group` and `Role` access checks.
+- If auth cookies are present, the API passes caller user/role identity to the service. `Group` and `Role` security levels now use an owner-or-superadmin check (see `domain/shared/services/file_storage.go.md`).
 - Delegates metadata lookup and file reads to the file storage service.
 - ZIP downloads always use attachment disposition.

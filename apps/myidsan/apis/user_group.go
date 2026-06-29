@@ -17,7 +17,6 @@ import (
 // UserGroupApi struct
 type userGroupApi struct {
 	auth middlewares.AuthMidware
-	rbac middlewares.RbacMidware
 	serv services.IUserGroupDtoService[outputdtos.UserGroupDto]
 }
 
@@ -25,23 +24,23 @@ type userGroupApi struct {
 func NewUserGroupApi(
 	router *mux.Router,
 	auth middlewares.AuthMidware,
-	rbac middlewares.RbacMidware,
+	access *middlewares.AccessSessionMidware,
 	serv services.IUserGroupDtoService[outputdtos.UserGroupDto]) {
 	handler := &userGroupApi{
 		auth: auth,
-		rbac: rbac,
 		serv: serv,
 	}
 
 	// Create api sub-router
 	group := router.PathPrefix("/user-group").Subrouter()
 	group.Use(auth.Middleware)
+	group.Use(access.Middleware)
 
 	// Group Handlers
-	group.HandleFunc("", rbac.RbacHandler(handler.get)).Methods("GET")
-	group.HandleFunc("", rbac.RbacHandler(handler.post)).Methods("POST")
-	group.HandleFunc("", rbac.RbacHandler(handler.put)).Methods("PUT")
-	group.HandleFunc("/{id}", rbac.RbacHandler(handler.delete)).Methods("DELETE")
+	group.HandleFunc("", handler.get).Methods("GET")
+	group.HandleFunc("", handler.post).Methods("POST")
+	group.HandleFunc("", handler.put).Methods("PUT")
+	group.HandleFunc("/{id}", handler.delete).Methods("DELETE")
 }
 
 func (m *userGroupApi) get(w http.ResponseWriter, r *http.Request) {

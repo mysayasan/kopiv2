@@ -1,12 +1,5 @@
 # Module: apps/myidsan/services/user_role.go
 
-## Purpose
+## Status
 
-Provides user role persistence operations behind the shared service interface.
-
-## Responsibilities
-
-- List user role rows with caller-provided filters and sorters.
-- Use newest-first `CreatedAt DESC` ordering when callers do not provide sorters.
-- Resolve roles by group foreign key.
-- Create, update, and delete user roles through the shared generic repository.
+**Retired.** This file was deleted in the accessrbac migration. The myidsan-specific `IUserRoleService` (which managed per-app `user_role` rows) has been removed. Role management is now handled by the shared accessrbac service (`domain/shared/services/access_rbac.go`), which the myidsan `app.go` accesses via `deps.AccessRoles`.

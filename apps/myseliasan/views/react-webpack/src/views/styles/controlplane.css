@@ -27,3 +27,76 @@
   background: var(--bg-body, #0f172a); color: var(--text-soft, #e2e8f0);
   border: 1px solid var(--border-soft, #2a3850);
 }
+
+/* --- Node manager (per-node commander surface) ------------------------------ */
+.node-manage-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.node-manage-tabs .active { background: var(--accent-bg, #e6f4ec); color: var(--accent, #2f8f5b); }
+.node-row-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.status-pill.warn { background: rgba(217, 119, 6, 0.15); color: #b45309; }
+
+.node-access-check { flex-direction: row !important; align-items: center; gap: 8px; white-space: nowrap; }
+.node-access-check input { width: auto; }
+
+.node-remote-quick { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.node-remote-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.node-remote-bar select { flex: 0 0 auto; }
+.node-remote-bar input { flex: 1 1 260px; }
+.node-remote-body { display: block; margin-top: 12px; }
+.node-remote-body textarea {
+  width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+}
+.node-remote-resp { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+.node-remote-pre {
+  margin: 0; overflow: auto; max-height: 360px; border-radius: 8px; padding: 14px; font-size: 12px;
+  background: var(--bg-body, #0f172a); color: var(--text-soft, #e2e8f0);
+  border: 1px solid var(--border-soft, #2a3850);
+}
+
+.node-cam-grid {
+  display: grid; gap: 14px; margin-top: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+.node-cam-card {
+  margin: 0; border: 1px solid var(--border-soft, #2a3850); border-radius: 10px; overflow: hidden;
+  background: var(--bg-body, #0f172a);
+}
+.node-cam-img {
+  display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #000;
+}
+.node-cam-img--err { opacity: 0.25; }
+
+.btn-link { display: inline-flex; align-items: center; text-decoration: none; }
+
+/* --- Login / change-password screens ---------------------------------------- */
+.login-shell {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.login-card {
+  width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 14px; align-items: stretch;
+  padding: 28px; border-radius: 14px; border: 1px solid var(--border-soft, #2a3850);
+  background: var(--bg-panel, #fff);
+}
+.login-card .brand-logo { justify-content: center; }
+.login-sub { margin: 4px 0 8px; text-align: center; font-weight: 600; }
+.login-hint { margin: 0; text-align: center; font-size: 12px; color: var(--text-faint, #7a8ea4); }
+.login-sso { width: 100%; justify-content: center; }
+.login-divider {
+  display: flex; align-items: center; gap: 10px; color: var(--text-faint, #7a8ea4); font-size: 12px;
+}
+.login-divider::before, .login-divider::after {
+  content: ''; flex: 1; height: 1px; background: var(--border-soft, #2a3850);
+}
+.login-form { display: flex; flex-direction: column; gap: 10px; }
+.login-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.login-form button[type="submit"] { justify-content: center; margin-top: 4px; }
+.login-err { margin: 0; font-size: 13px; color: #dc2626; }
+
+/* --- Permission matrix editor ----------------------------------------------- */
+.perm-editor { margin-top: 16px; border-top: 1px solid var(--border-soft, #2a3850); padding-top: 14px; }
+.perm-editor h3 { margin: 0 0 10px; font-size: 14px; }
+.perm-editor table input[type="checkbox"] { width: auto; }
+.node-cam-cap {
+  padding: 8px 12px; font-size: 13px; font-weight: 600;
+  color: var(--text-soft, #e2e8f0); border-top: 1px solid var(--border-soft, #2a3850);
+}

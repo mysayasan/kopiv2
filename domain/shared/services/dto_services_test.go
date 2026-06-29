@@ -56,67 +56,6 @@ func TestApiEndpointDtoServiceGetReturnsSuppliedDTO(t *testing.T) {
 	}
 }
 
-type fakeApiEndpointRbacCoreService struct {
-	rbac     []*entities.ApiEndpointRbac
-	rbacList []*entities.ApiEndpointRbacListModel
-	join     []*entities.ApiEndpointRbacJoinModel
-}
-
-func (m *fakeApiEndpointRbacCoreService) Get(context.Context, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter) ([]*entities.ApiEndpointRbac, uint64, error) {
-	return m.rbac, uint64(len(m.rbac)), nil
-}
-
-func (m *fakeApiEndpointRbacCoreService) GetList(context.Context, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter) ([]*entities.ApiEndpointRbacListModel, uint64, error) {
-	return m.rbacList, uint64(len(m.rbacList)), nil
-}
-
-func (m *fakeApiEndpointRbacCoreService) GetApiEpByUserRole(context.Context, uint64) ([]*entities.ApiEndpointRbacJoinModel, uint64, error) {
-	return m.join, uint64(len(m.join)), nil
-}
-
-func (m *fakeApiEndpointRbacCoreService) Create(context.Context, entities.ApiEndpointRbac) (uint64, error) {
-	return 0, nil
-}
-
-func (m *fakeApiEndpointRbacCoreService) Update(context.Context, entities.ApiEndpointRbac) (uint64, error) {
-	return 0, nil
-}
-
-func (m *fakeApiEndpointRbacCoreService) Delete(context.Context, uint64) (uint64, error) {
-	return 0, nil
-}
-
-func (m *fakeApiEndpointRbacCoreService) Validate(context.Context, string, string, uint64) (*entities.ApiEndpointRbac, error) {
-	if len(m.rbac) == 0 {
-		return nil, nil
-	}
-	return m.rbac[0], nil
-}
-
-func TestApiEndpointRbacDtoServiceGetReturnsSuppliedDTOs(t *testing.T) {
-	service := NewApiEndpointRbacDtoService[sharedAdapterDTO, sharedAdapterDTO, sharedAdapterDTO](&fakeApiEndpointRbacCoreService{
-		rbac:     []*entities.ApiEndpointRbac{{Id: 4, ApiEndpointId: 3}},
-		rbacList: []*entities.ApiEndpointRbacListModel{{Id: 4, ApiEndpointId: 3, EndpointPath: "/api/home"}},
-		join:     []*entities.ApiEndpointRbacJoinModel{{Id: 4, Host: "*", Path: "/api/home"}},
-	})
-
-	res, totalCnt, err := service.Get(context.Background(), 10, 0, nil, nil)
-	if err != nil {
-		t.Fatalf("Get failed: %v", err)
-	}
-	if totalCnt != 1 || len(res) != 1 || res[0].Id != 4 {
-		t.Fatalf("unexpected dto result total=%d res=%+v", totalCnt, res)
-	}
-
-	join, joinTotal, err := service.GetApiEpByUserRole(context.Background(), 7)
-	if err != nil {
-		t.Fatalf("GetApiEpByUserRole failed: %v", err)
-	}
-	if joinTotal != 1 || len(join) != 1 || join[0].Path != "/api/home" {
-		t.Fatalf("unexpected join dto result total=%d res=%+v", joinTotal, join)
-	}
-}
-
 type fakeApiLogCoreService struct {
 	logs []*entities.ApiLog
 }

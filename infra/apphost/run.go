@@ -251,25 +251,38 @@ func Run(app App) error {
 	readyHolder := &readinessHolder{}
 	router.HandleFunc("/ready", readinessCheckHandler(dbCrud, cacheStore, readyHolder)).Methods("GET")
 
-	userLoginRepo := dbsql.NewGenericRepo[sharedEntities.UserLogin](dbCrud)
-	userRoleRepo := dbsql.NewGenericRepo[sharedEntities.UserRole](dbCrud)
 	apiLogRepo := dbsql.NewGenericRepo[sharedEntities.ApiLog](dbCrud)
 	appRegistryRepo := dbsql.NewGenericRepo[sharedEntities.AppRegistry](dbCrud)
 	apiEpRepo := dbsql.NewGenericRepo[sharedEntities.ApiEndpoint](dbCrud)
-	apiEpRbacRepo := dbsql.NewGenericRepo[sharedEntities.ApiEndpointRbac](dbCrud)
 	fileStorRepo := dbsql.NewGenericRepo[sharedEntities.FileStorage](dbCrud)
 	operationJobRepo := dbsql.NewGenericRepo[sharedEntities.OperationJob](dbCrud)
+
+	// Shared accessrbac core (single-app, no app_code): role + permission services
+	// and the late-bound authorization middleware. The app binds its own user store
+	// via deps.Access.SetResolver(...) in RegisterAppRoutes; seeding is gated so apps
+	// that don't opt in (mymatasan) need not carry the accessrbac tables.
+	accessRoleService := sharedServices.NewAccessRoleService(dbCrud)
+	accessPermService := sharedServices.NewAccessPermissionService(dbCrud)
+	accessMidware := middlewares.NewAccessSessionMidware(nil, accessRoleService, accessPermService)
+	if sharedAPIConfig.AccessRbac {
+		if err := accessRoleService.EnsureBuiltins(context.Background()); err != nil {
+			return fmt.Errorf("seed accessrbac roles: %w", err)
+		}
+		if viewer, err := accessRoleService.GetByName(context.Background(), sharedServices.RoleViewer); err == nil && viewer != nil {
+			if err := accessPermService.EnsureViewerDefaults(context.Background(), viewer.Id); err != nil {
+				return fmt.Errorf("seed accessrbac viewer defaults: %w", err)
+			}
+		}
+	}
 
 	apiLogService := sharedServices.NewApiLogService(apiLogRepo, cacheStore)
 	appRegistryService := sharedServices.NewAppRegistryService(appRegistryRepo, cacheStore)
 	apiEndpointService := sharedServices.NewApiEndpointService(apiEpRepo, cacheStore)
-	apiEndpointRbacService := sharedServices.NewApiEndpointRbacService(apiEpRbacRepo, userLoginRepo, apiEpRepo, cacheStore)
 	fileStorageService := sharedServices.NewFileStorageService(
 		fileStorRepo,
 		cacheStore,
 		sharedServices.WithFileStorageJobRepo(operationJobRepo),
-		sharedServices.WithFileStorageUserRepo(userLoginRepo),
-		sharedServices.WithFileStorageRoleRepo(userRoleRepo),
+		sharedServices.WithFileStorageAccessRoles(accessRoleService),
 		sharedServices.WithFileStorageTransaction(dbCrud),
 		sharedServices.WithFileStorageLocker(txLocker),
 		sharedServices.WithFileStoragePath(appConfig.FileStorage.Path),
@@ -281,7 +294,6 @@ func Run(app App) error {
 	apiLogDtoService := sharedServices.NewApiLogDtoService[sharedOutputDtos.ApiLogDto](apiLogService)
 	appRegistryDtoService := sharedServices.NewAppRegistryDtoService[sharedOutputDtos.AppRegistryDto](appRegistryService)
 	apiEndpointDtoService := sharedServices.NewApiEndpointDtoService[sharedOutputDtos.ApiEndpointDto](apiEndpointService)
-	apiEndpointRbacDtoService := sharedServices.NewApiEndpointRbacDtoService[sharedOutputDtos.ApiEndpointRbacDto, sharedOutputDtos.ApiEndpointRbacListDto, sharedOutputDtos.ApiEndpointRbacJoinDto](apiEndpointRbacService)
 	fileStorageDtoService := sharedServices.NewFileStorageDtoService[sharedOutputDtos.FileStorageDto, sharedOutputDtos.OperationJobDto](fileStorageService)
 	runtimeLogDtoService := sharedServices.NewRuntimeLogDtoService[sharedOutputDtos.RuntimeLogDto](runtimeLogService)
 	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
@@ -292,14 +304,6 @@ func Run(app App) error {
 	startFileStorageCleanupScheduler(runtimeScheduler, appConfig, runtimeLogger, fileStorageService)
 	startFileStorageJobScheduler(runtimeScheduler, appConfig, runtimeLogger, fileStorageService)
 
-	rbacCacheTTL := time.Duration(appConfig.Cache.TTLSeconds) * time.Second
-	if appConfig.SSO.PolicyCacheTTLSeconds > 0 {
-		rbacCacheTTL = time.Duration(appConfig.SSO.PolicyCacheTTLSeconds) * time.Second
-	}
-	rbac := middlewares.NewRbacWithConfig(apiEndpointRbacService, cacheStore, middlewares.RbacConfig{
-		AppCode:  app.Name(),
-		CacheTTL: rbacCacheTTL,
-	})
 	auth := middlewares.NewAuthWithConfig(authMiddlewareConfig(app.Name(), appConfig, cacheStore))
 	versionManifest, err := versioning.LoadDefault()
 	if err != nil {
@@ -320,26 +324,31 @@ func Run(app App) error {
 	if sharedAPIConfig.Version {
 		sharedApis.NewVersionApi(api, app.Name(), versionManifest)
 	}
+	// Shared admin APIs are now authorized by the accessrbac middleware (deps.Access);
+	// the app binds its user resolver in RegisterAppRoutes. The old app_code RBAC
+	// management endpoint (ApiEndpointRbac) is retired in favour of accessrbac roles.
 	if sharedAPIConfig.ApiLog {
-		sharedApis.NewApiLogApi(api, *auth, *rbac, apiLogDtoService)
+		sharedApis.NewApiLogApi(api, *auth, accessMidware, apiLogDtoService)
 	}
 	if sharedAPIConfig.AppRegistry {
-		sharedApis.NewAppRegistryApi(api, *auth, *rbac, appRegistryDtoService)
+		sharedApis.NewAppRegistryApi(api, *auth, accessMidware, appRegistryDtoService)
 	}
 	if sharedAPIConfig.ApiEndpoint {
-		sharedApis.NewApiEndpointApi(api, *auth, *rbac, apiEndpointDtoService)
-	}
-	if sharedAPIConfig.ApiEndpointRbac {
-		sharedApis.NewApiEndpointRbacApi(api, *auth, *rbac, apiEndpointRbacDtoService)
+		sharedApis.NewApiEndpointApi(api, *auth, accessMidware, apiEndpointDtoService)
 	}
 	if sharedAPIConfig.FileStorage {
-		sharedApis.NewFileStorageApi(api, *auth, *rbac, fileStorageDtoService, appConfig.FileStorage.Path)
+		sharedApis.NewFileStorageApi(api, *auth, accessMidware, fileStorageDtoService, appConfig.FileStorage.Path)
 	}
 	if sharedAPIConfig.CacheService {
-		sharedApis.NewCacheServiceApi(api, *auth, *rbac, cacheService, apiLogService)
+		sharedApis.NewCacheServiceApi(api, *auth, accessMidware, cacheService, apiLogService)
 	}
 	if sharedAPIConfig.RuntimeLog {
-		sharedApis.NewRuntimeLogApi(api, *auth, *rbac, runtimeLogDtoService)
+		sharedApis.NewRuntimeLogApi(api, *auth, accessMidware, runtimeLogDtoService)
+	}
+	if sharedAPIConfig.AccessRbac {
+		// The shared "Settings → RBAC" management surface (roles + permission matrix),
+		// identical on every app that uses the accessrbac core.
+		sharedApis.NewAccessRbacApi(api, *auth, accessMidware, accessRoleService, accessPermService)
 	}
 
 	// restarter lets app modules request a graceful restart (factory reset today,
@@ -355,7 +364,9 @@ func Run(app App) error {
 		Db:          dbCrud,
 		Cache:       cacheStore,
 		Auth:        auth,
-		Rbac:        rbac,
+		Access:      accessMidware,
+		AccessRoles: accessRoleService,
+		AccessPerms: accessPermService,
 		AppRegistry: appRegistryService,
 		Logger:      runtimeLogger,
 		Scheduler:   runtimeScheduler,
@@ -398,7 +409,6 @@ func Run(app App) error {
 	errChan := make(chan error, len(listeners))
 
 	for _, listener := range listeners {
-		listener := listener
 		srv := &http.Server{
 			Handler:           router,
 			Addr:              listener.Addr,

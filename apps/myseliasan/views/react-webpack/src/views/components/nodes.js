@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Ico } from './icons';
 import { FormBusyOverlay } from './ui';
+import { NodeManager } from './node_manager';
 import { api, formatTimestamp } from '../lib/helpers';
 
 // NodesTab is the control plane's mymatasan management surface: fleet-key
@@ -15,6 +16,7 @@ export function NodesTab({ onToast }) {
   const [scanning, setScanning] = useState(false);
   const [copied, setCopied] = useState(false);
   const [adoptForm, setAdoptForm] = useState({ ip: '', httpsPort: '', claimCode: '' });
+  const [managing, setManaging] = useState(null);
 
   function toast(text) { if (onToast) onToast(text); }
 
@@ -86,6 +88,16 @@ export function NodesTab({ onToast }) {
   }
 
   const keySet = !!fleetKey?.set;
+
+  if (managing) {
+    return (
+      <NodeManager
+        node={managing}
+        onToast={toast}
+        onBack={() => { setManaging(null); loadNodes(); }}
+      />
+    );
+  }
 
   return (
     <section className="workspace">
@@ -202,7 +214,12 @@ export function NodesTab({ onToast }) {
                   <td><span className={`status-pill ${n.status === 'online' ? 'online' : 'offline'}`}>{n.status || 'online'}</span></td>
                   <td>{n.certExpiresAt ? formatTimestamp(n.certExpiresAt) : '—'}</td>
                   <td>{n.adoptedAt ? formatTimestamp(n.adoptedAt) : '—'}</td>
-                  <td><button type="button" className="quiet danger-text" onClick={() => release(n)} disabled={busy}>Release</button></td>
+                  <td className="node-row-actions">
+                    <button type="button" className="quiet" onClick={() => setManaging(n)}>
+                      <span className="btn-icon"><Ico n="sliders" /> Manage</span>
+                    </button>
+                    <button type="button" className="quiet danger-text" onClick={() => release(n)} disabled={busy}>Release</button>
+                  </td>
                 </tr>
               ))}
             </tbody>

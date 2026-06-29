@@ -213,9 +213,110 @@ func (m *userLoginService) allowDefaultSuperadminSeed(ctx context.Context, model
 }
 
 func (m *userLoginService) Update(ctx context.Context, model entities.UserLogin) (uint64, error) {
+	// Password is write-only on update: a blank userpwd keeps the stored one (so role
+	// or active toggles don't erase it), and a supplied plaintext is hashed before save
+	// (Create hashes too; this keeps Update consistent).
+	if strings.TrimSpace(model.Userpwd) == "" {
+		if existing, err := m.repo.GetByUnique(ctx, "", "id", model.Id); err == nil && existing != nil {
+			model.Userpwd = existing.Userpwd
+		}
+	} else if !isBcryptHash(model.Userpwd) {
+		hashed, err := hashPassword(model.Userpwd)
+		if err != nil {
+			return 0, err
+		}
+		model.Userpwd = hashed
+	}
 	return m.repo.UpdateById(ctx, "", model)
 }
 
 func (m *userLoginService) Delete(ctx context.Context, id uint64) (uint64, error) {
 	return m.repo.DeleteById(ctx, "", id)
+}
+
+// EnsureStockSuperadmin seeds the bootstrap superadmin (email = username) on first run
+// with a forced first-login password change, and — while the account is still the
+// untouched stock account (must-change + active) — refreshes its password from config.
+// It also keeps the stock account pinned to the superadmin role.
+func (m *userLoginService) EnsureStockSuperadmin(ctx context.Context, username, password string, superRoleId int64) error {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		username = defaultSuperadminUsername
+	}
+	if strings.TrimSpace(password) == "" {
+		password = defaultSuperadminPassword
+	}
+	hash, err := hashPassword(password)
+	if err != nil {
+		return err
+	}
+	existing, err := m.repo.GetByUnique(ctx, "", "email", username)
+	if err != nil && !isNotFoundErr(err) {
+		return err
+	}
+	if existing != nil {
+		changed := false
+		// Refresh the bootstrap password from config ONLY while the account is still
+		// untouched (must-change + active); once the operator sets their own password,
+		// config no longer overrides it.
+		if existing.MustChangePassword && existing.IsActive {
+			existing.Userpwd = hash
+			changed = true
+		}
+		if superRoleId > 0 && existing.UserRoleId != superRoleId {
+			existing.UserRoleId = superRoleId
+			changed = true
+		}
+		if changed {
+			existing.UpdatedAt = time.Now().Unix()
+			_, uerr := m.repo.UpdateById(ctx, "", *existing)
+			return uerr
+		}
+		return nil
+	}
+	now := time.Now().Unix()
+	_, err = m.repo.Create(ctx, "", entities.UserLogin{
+		Email:              username,
+		Userpwd:            hash,
+		FirstName:          "Super",
+		LastName:           "Admin",
+		UserRoleId:         superRoleId,
+		IsActive:           true,
+		MustChangePassword: true,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	})
+	return err
+}
+
+func (m *userLoginService) ChangePassword(ctx context.Context, userId int64, current, next string) error {
+	if len(strings.TrimSpace(next)) < 8 {
+		return fmt.Errorf("new password must be at least 8 characters")
+	}
+	user, err := m.repo.GetByUnique(ctx, "", "id", userId)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return errors.New("user not found")
+	}
+	if strings.TrimSpace(user.Userpwd) == "" {
+		return ErrThirdPartyOnlyAccount
+	}
+	if isBcryptHash(user.Userpwd) {
+		if bcrypt.CompareHashAndPassword([]byte(user.Userpwd), []byte(current)) != nil {
+			return ErrInvalidCredential
+		}
+	} else if user.Userpwd != current {
+		return ErrInvalidCredential
+	}
+	hash, err := hashPassword(next)
+	if err != nil {
+		return err
+	}
+	user.Userpwd = hash
+	user.MustChangePassword = false
+	user.UpdatedAt = time.Now().Unix()
+	_, err = m.repo.UpdateById(ctx, "", *user)
+	return err
 }

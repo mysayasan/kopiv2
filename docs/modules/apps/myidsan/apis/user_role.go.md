@@ -1,29 +1,7 @@
 # Module: apps/myidsan/apis/user_role.go
 
-## Purpose
+## Status
 
-REST API endpoints for user role and role-by-group operations.
+**Retired.** This file was deleted in the accessrbac migration. The legacy `/api/user-credential` (user role management) endpoint group has been removed from myidsan. The "Roles" nav item in the myidsan SPA now points to the shared accessrbac management surface (`/api/access-rbac/roles`), which provides role CRUD and the per-role permission matrix editor.
 
-## Route Group
-
-Base path: `/api/user-credential`
-
-- `GET /api/user-credential`
-- `GET /api/user-credential/group/{id}`
-- `POST /api/user-credential`
-- `PUT /api/user-credential`
-- `DELETE /api/user-credential/{id}`
-
-## Middleware Contract
-
-- Auth middleware on route group.
-- RBAC wrapper per handler.
-
-## Notes
-
-- List GET supports `limit`, `offset`, `filters`, and `sorters` query parameters.
-- Filter and sorter query values use the shared SQL enum JSON contract from `query_options.go`.
-- Read handlers return myidsan output DTOs through `IUserRoleDtoService`.
-- POST/PUT decode myidsan input DTOs, then project them to `UserRole` entities for service writes.
-- Group-specific query uses path variable `{id}`.
-- POST/PUT enforce strict JSON decode.
+The `/api/user-credential` path that still appears in the endpoint catalog seeds is the **Users** admin surface (user login management), served by `apps/myidsan/apis/user_login.go`.

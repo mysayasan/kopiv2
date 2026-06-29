@@ -1,6 +1,6 @@
 {
   "jwt": {
-    "secret": "test0123456789"
+    "secret": "Y-p5slztLZpMkafYwJg-WVMQwHx8iHEibCnJEepdGjw"
   },
   "sso": {
     "issuer": "myidsan",
@@ -10,6 +10,11 @@
     "accessTokenTtlSeconds": 900,
     "policyCacheTtlSeconds": 30,
     "internalToken": "change-me-in-production"
+  },
+  "localAuth": {
+    "enabled": true,
+    "username": "admin",
+    "password": "admin123"
   },
   "fileStorage": {
     "path": "./uploads",

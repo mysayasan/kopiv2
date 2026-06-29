@@ -1,9 +1,5 @@
 # Module: domain/shared/dtos/input/api_endpoint_rbac.go
 
-## Purpose
+## Status
 
-Defines the shared input DTO for API endpoint RBAC create/update payloads.
-
-## Notes
-
-- Mirrors `entities.ApiEndpointRbac` for now.
+**Retired.** This file was deleted in the accessrbac migration. The shared input DTO for the legacy `/api/endpoint-rbac` endpoint has been removed. Permission upserts now use inline structs decoded directly in `domain/shared/apis/access_rbac.go`.

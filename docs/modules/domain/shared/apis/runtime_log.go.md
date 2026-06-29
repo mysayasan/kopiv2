@@ -8,7 +8,7 @@ Exposes runtime log listing for authenticated administrators.
 
 - Mount `GET /api/log-service`.
 - Mount `DELETE /api/log-service`.
-- Require auth middleware and RBAC validation.
+- Require auth middleware and accessrbac middleware (`AccessSessionMidware`).
 - Read `limit` and `offset` query parameters.
 - Return paginated runtime log entries from the configured logging module.
 - Return shared output DTOs through `IRuntimeLogDtoService`.

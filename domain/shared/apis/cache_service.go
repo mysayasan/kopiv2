@@ -24,7 +24,6 @@ import (
 // CacheServiceApi struct
 type cacheServiceApi struct {
 	auth middlewares.AuthMidware
-	rbac middlewares.RbacMidware
 	serv services.ICacheService
 	log  services.IApiLogService
 }
@@ -39,23 +38,23 @@ type cacheWipeRequest struct {
 func NewCacheServiceApi(
 	router *mux.Router,
 	auth middlewares.AuthMidware,
-	rbac middlewares.RbacMidware,
+	access *middlewares.AccessSessionMidware,
 	serv services.ICacheService,
 	apiLogServ services.IApiLogService) {
 	handler := &cacheServiceApi{
 		auth: auth,
-		rbac: rbac,
 		serv: serv,
 		log:  apiLogServ,
 	}
 
 	group := router.PathPrefix("/cache-service").Subrouter()
 	group.Use(auth.Middleware)
+	group.Use(access.Middleware)
 
-	group.HandleFunc("", rbac.RbacHandler(handler.list)).Methods("GET")
-	group.HandleFunc("/health", rbac.RbacHandler(handler.health)).Methods("GET")
-	group.HandleFunc("", rbac.RbacHandler(handler.wipe)).Methods("DELETE")
-	group.HandleFunc("/wipe", rbac.RbacHandler(handler.wipeByPayload)).Methods("POST")
+	group.HandleFunc("", handler.list).Methods("GET")
+	group.HandleFunc("/health", handler.health).Methods("GET")
+	group.HandleFunc("", handler.wipe).Methods("DELETE")
+	group.HandleFunc("/wipe", handler.wipeByPayload).Methods("POST")
 }
 
 func (m *cacheServiceApi) list(w http.ResponseWriter, r *http.Request) {

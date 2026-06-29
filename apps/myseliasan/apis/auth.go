@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/mux"
+	"github.com/mysayasan/kopiv2/apps/myseliasan/services"
 	"github.com/mysayasan/kopiv2/domain/models"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
@@ -30,6 +32,7 @@ type authApi struct {
 	cfg   *config.AppConfigModel
 	auth  *middlewares.AuthMidware
 	store cache.Store
+	users services.IControlUserService
 }
 
 type stateEntry struct {
@@ -69,12 +72,84 @@ type providerTokenResponse struct {
 	Result     providerTokenResult `json:"result"`
 }
 
-func NewAuthApi(router *mux.Router, cfg *config.AppConfigModel, auth *middlewares.AuthMidware, store cache.Store) {
-	handler := &authApi{cfg: cfg, auth: auth, store: store}
+func NewAuthApi(router *mux.Router, cfg *config.AppConfigModel, auth *middlewares.AuthMidware, store cache.Store, users services.IControlUserService) {
+	handler := &authApi{cfg: cfg, auth: auth, store: store, users: users}
 	group := router.PathPrefix("/auth").Subrouter()
 	group.HandleFunc("/start", handler.start).Methods("GET")
 	group.HandleFunc("/callback", handler.callback).Methods("GET")
 	group.HandleFunc("/logout", handler.logout).Methods("POST")
+	// Local login is the bootstrap stock-superadmin path (username/password). The
+	// change-password endpoint requires a session and is reachable while a user is
+	// flagged must-change (the control-session middleware is not mounted on /auth).
+	group.HandleFunc("/local-login", handler.localLogin).Methods("POST")
+	group.HandleFunc("/change-password", handler.changePassword).Methods("POST")
+}
+
+func (m *authApi) localLogin(w http.ResponseWriter, r *http.Request) {
+	if m.users == nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, "local login is not configured")
+		return
+	}
+	var body struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8*1024)).Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, "invalid request")
+		return
+	}
+	user, err := m.users.AuthenticateLocal(r.Context(), body.Username, body.Password)
+	if err != nil {
+		if errors.Is(err, services.ErrUserDisabled) {
+			controllers.SendError(w, controllers.ErrLimitedAccess, "this account has been disabled")
+			return
+		}
+		controllers.SendError(w, controllers.ErrLimitedAccess, "invalid username or password")
+		return
+	}
+	if err := m.auth.IssueAuthCookies(w, r, models.JwtCustomClaims{
+		Id:            user.Id,
+		Name:          user.Name,
+		RoleId:        user.RoleId,
+		VerifiedEmail: false,
+		AppCode:       audience(m.cfg),
+	}); err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, map[string]any{
+		"ok":                 true,
+		"mustChangePassword": user.MustChangePassword,
+	}, "succeed")
+}
+
+func (m *authApi) changePassword(w http.ResponseWriter, r *http.Request) {
+	if m.users == nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, "local login is not configured")
+		return
+	}
+	claims, err := m.auth.ClaimsFromRequest(r)
+	if err != nil || claims == nil {
+		controllers.SendError(w, controllers.ErrPermission, "not authenticated")
+		return
+	}
+	var body struct {
+		CurrentPassword string `json:"currentPassword"`
+		NewPassword     string `json:"newPassword"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8*1024)).Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, "invalid request")
+		return
+	}
+	if err := m.users.ChangePassword(r.Context(), claims.Id, body.CurrentPassword, body.NewPassword); err != nil {
+		if errors.Is(err, services.ErrInvalidCredentials) {
+			controllers.SendError(w, controllers.ErrLimitedAccess, "current password is incorrect")
+			return
+		}
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, map[string]any{"ok": true}, "succeed")
 }
 
 func (m *authApi) start(w http.ResponseWriter, r *http.Request) {
@@ -152,19 +227,32 @@ func (m *authApi) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// myidsan is identity-only and no longer carries an app role: we ignore
+	// token.RoleID and resolve myseliasan's OWN role. Provision the federated user
+	// (viewer on first sight), then stamp the myseliasan user id + role id into the
+	// session so every downstream RBAC decision keys on myseliasan's own identity.
+	user, err := m.users.UpsertFederated(r.Context(), token.UserID, token.Email, token.Name)
+	if err != nil {
+		if errors.Is(err, services.ErrUserDisabled) {
+			controllers.SendError(w, controllers.ErrLimitedAccess, "your access to this control plane has been disabled")
+			return
+		}
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+
 	expiresAt := time.Unix(token.ExpiresAt, 0)
 	if token.ExpiresAt <= 0 {
 		expiresAt = time.Now().UTC().Add(time.Duration(m.cfg.SSO.SessionTTLSeconds) * time.Second)
 	}
 	if err := m.auth.IssueAuthCookies(w, r, models.JwtCustomClaims{
-		Id:            token.UserID,
-		Email:         token.Email,
+		Id:            user.Id,
+		Email:         user.Email,
 		VerifiedEmail: true,
-		Name:          token.Name,
-		RoleId:        token.RoleID,
+		Name:          user.Name,
+		RoleId:        user.RoleId,
 		SessionId:     token.SessionID,
-		AppCode:       token.AppCode,
-		PolicyVersion: token.PolicyVersion,
+		AppCode:       audience(m.cfg),
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    token.Issuer,
 			Audience:  jwt.ClaimStrings(token.Audience),
