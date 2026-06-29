@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -19,6 +20,8 @@ import (
 	"github.com/mysayasan/kopiv2/infra/apphost"
 	"github.com/mysayasan/kopiv2/infra/db/bootstrap"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	"github.com/mysayasan/kopiv2/infra/mediarelay"
+	"github.com/mysayasan/kopiv2/infra/stream"
 	"github.com/mysayasan/kopiv2/infra/versioning"
 )
 
@@ -132,36 +135,31 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	if mtlsPort <= 0 {
 		mtlsPort = 49532
 	}
-	registry := services.NewNodeRegistry(deps.Db, services.NodeRegistryConfig{
-		MulticastAddr: p.MulticastAddr,
-		ParentID:      parentID,
-		ParentName:    parentID,
-		ParentBaseURL: deps.Config.SSO.RedirectBaseURL,
-		MTLSPort:      mtlsPort,
-		CertTTL:       time.Duration(p.CertTTLHours) * time.Hour,
-	})
-	apis.NewNodesApi(api, *deps.Auth, controlSession, registry)
-
-	// Heartbeat reconciliation: probe every adopted node over mTLS on an interval so
-	// the registry reflects liveness and converges after a node self-drops while the
-	// control plane was unreachable.
+	// ParentBaseURL is the address each node records for callbacks (enroll / release /
+	// self-drop) AND the host it dials for the persistent control channel. The default,
+	// sso.redirectBaseUrl, is correct only when node and parent share a host; a node on
+	// its own machine needs the parent's LAN-reachable URL, so pairing.parentBaseUrl
+	// overrides it (must not be localhost in that case).
+	parentBaseURL := strings.TrimSpace(p.ParentBaseURL)
+	if parentBaseURL == "" {
+		parentBaseURL = deps.Config.SSO.RedirectBaseURL
+	}
 	hbInterval := time.Duration(p.HeartbeatIntervalSeconds) * time.Second
 	if hbInterval <= 0 {
 		hbInterval = 60 * time.Second
 	}
+	registry := services.NewNodeRegistry(deps.Db, services.NodeRegistryConfig{
+		MulticastAddr:     p.MulticastAddr,
+		ParentID:          parentID,
+		ParentName:        parentID,
+		ParentBaseURL:     parentBaseURL,
+		MTLSPort:          mtlsPort,
+		CertTTL:           time.Duration(p.CertTTLHours) * time.Hour,
+		HeartbeatInterval: hbInterval,
+	})
+	apis.NewNodesApi(api, *deps.Auth, controlSession, registry)
+
 	bgCtx, stopBackground := context.WithCancel(context.Background())
-	go func() {
-		ticker := time.NewTicker(hbInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-bgCtx.Done():
-				return
-			case <-ticker.C:
-				registry.Heartbeat(bgCtx)
-			}
-		}
-	}()
 
 	// Unified notification feed for the control plane: events nodes push up their
 	// control channels (alerts, health, system, going-offline) land here so an
@@ -180,13 +178,74 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	}
 	controlServer := services.NewControlServer(registry, p.ControlPort, onNodeEvent,
 		func(format string, args ...any) { deps.Logger.Infof("myseliasan.control", format, args...) })
+	// The persistent node-dialed control channel is the authoritative liveness signal:
+	// a node holding a live connection is online even when the parent cannot reach its
+	// mTLS port directly. Wire its presence into the heartbeat reconciler so the mTLS
+	// poll becomes a fallback that can no longer flap a control-connected node offline.
+	registry.SetControlPresence(controlServer.IsConnected)
 	go controlServer.Run(bgCtx)
+
+	// Heartbeat reconciliation: every interval, reconcile each adopted node's liveness —
+	// control-channel presence first, then the mTLS poll as a fallback — converging the
+	// registry after self-drops and bounded by a grace window so brief reconnects don't
+	// show offline.
+	go func() {
+		ticker := time.NewTicker(hbInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-bgCtx.Done():
+				return
+			case <-ticker.C:
+				registry.Heartbeat(bgCtx)
+			}
+		}
+	}()
 
 	// Per-node access: a role gets full access to nodes it adopted (owner role) and
 	// whatever explicit grants it has elsewhere. Drives the tunnel's viewer/admin
 	// decision and gates grant management.
 	accessService := services.NewNodeAccessService(deps.Db)
 	apis.NewNodeAccessApi(api, *deps.Auth, accessService)
+
+	// Node camera media relay: a dedicated fleet-mTLS listener accepts the node-dialed
+	// media channel; per browser WebRTC subscription it asks the node to stream that
+	// camera's RTP, then re-broadcasts it to the browser (the browser talks only to
+	// myseliasan). The WebRTC engine advertises configured public IPs / a fixed UDP
+	// port (and offers STUN/TURN) so the browser↔parent leg works across networks;
+	// empty config = host candidates (same-LAN/local dev).
+	mediaEngine, engErr := stream.NewWebRTCEngine(deps.Config.NodeStream.PublicIPs, deps.Config.NodeStream.UDPPort)
+	if engErr != nil {
+		stopBackground()
+		return nil, fmt.Errorf("webrtc engine: %w", engErr)
+	}
+	mediaICE := make([]stream.ICEServer, 0, len(deps.Config.NodeStream.ICEServers))
+	for _, s := range deps.Config.NodeStream.ICEServers {
+		if len(s.URLs) == 0 {
+			continue
+		}
+		mediaICE = append(mediaICE, stream.ICEServer{URLs: s.URLs, Username: s.Username, Credential: s.Credential})
+	}
+	mediaHub := services.NewMediaRelayHub(func(format string, args ...any) { deps.Logger.Infof("myseliasan.media", format, args...) })
+	mediaPort := p.MediaPort
+	if mediaPort <= 0 {
+		mediaPort = 49534
+	}
+	go func() {
+		tlsCfg, terr := registry.ParentServerTLS(bgCtx)
+		if terr != nil {
+			deps.Logger.Warnf("myseliasan.media", "media listener TLS unavailable: %v", terr)
+			return
+		}
+		srv := mediarelay.NewServer(fmt.Sprintf(":%d", mediaPort), tlsCfg, mediaHub.HandleConn,
+			func(format string, args ...any) { deps.Logger.Infof("myseliasan.media", format, args...) })
+		deps.Logger.Infof("myseliasan.media", "media channel listening on :%d", mediaPort)
+		if rerr := srv.Run(bgCtx); rerr != nil {
+			deps.Logger.Warnf("myseliasan.media", "media server stopped: %v", rerr)
+		}
+	}()
+	// Registered before the proxy catch-all so the specific media-offer path wins.
+	apis.NewNodeMediaApi(api, *deps.Auth, mediaHub, accessService, mediaEngine, mediaICE)
 
 	// Reverse command tunnel: /api/nodes/{id}/proxy/<node-path> forwards over the
 	// control channel to the node's own API, giving the commander the node's exact

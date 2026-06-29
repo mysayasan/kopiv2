@@ -146,21 +146,30 @@ func (m *EnrollmentManager) enroll(ctx context.Context) error {
 		return fmt.Errorf("enroll: control plane unreachable: %w", err)
 	}
 	defer resp.Body.Close()
+	type enrollResult struct {
+		NodeCert string `json:"nodeCert"`
+		CARoot   string `json:"caRoot"`
+	}
 	var env struct {
 		Data struct {
-			Result struct {
-				NodeCert string `json:"nodeCert"`
-				CARoot   string `json:"caRoot"`
-			} `json:"result"`
+			Result enrollResult `json:"result"`
 		} `json:"data"`
-		Message string `json:"message"`
+		Result  enrollResult `json:"result"`
+		Message string       `json:"message"`
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&env)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("enroll: rejected: %s", env.Message)
 	}
-	certPEM := env.Data.Result.NodeCert
-	caRoot := env.Data.Result.CARoot
+	// The control plane replies with the standard envelope (top-level "result", via
+	// SendResult); accept the legacy "data.result" nesting too so a response-shape
+	// difference can't silently empty the cert. Mirrors the adopt-response parser.
+	res := env.Result
+	if res.NodeCert == "" {
+		res = env.Data.Result
+	}
+	certPEM := res.NodeCert
+	caRoot := res.CARoot
 	if certPEM == "" || caRoot == "" {
 		return fmt.Errorf("enroll: empty certificate in response")
 	}

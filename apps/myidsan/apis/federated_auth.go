@@ -189,6 +189,7 @@ func (m *federatedAuthApi) authorize(w http.ResponseWriter, r *http.Request) {
 
 func (m *federatedAuthApi) loginPage(w http.ResponseWriter, r *http.Request) {
 	continueTo := cleanContinuePath(r.URL.Query().Get("continue"))
+	social := m.socialButtonsHTML(continueTo)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintf(w, `<!doctype html>
@@ -209,22 +210,50 @@ func (m *federatedAuthApi) loginPage(w http.ResponseWriter, r *http.Request) {
     input { border: 1px solid #cbd5e1; border-radius: 6px; padding: 11px 12px; font: inherit; }
     button { width: 100%%; margin-top: 22px; border: 0; border-radius: 6px; padding: 12px; background: #1d4ed8; color: white; font-weight: 700; cursor: pointer; }
     .error { margin-top: 14px; color: #b91c1c; font-size: 13px; }
+    .divider { display: flex; align-items: center; gap: 10px; margin: 22px 0 6px; color: #94a3b8; font-size: 12px; }
+    .divider::before, .divider::after { content: ""; height: 1px; background: #e2e8f0; flex: 1; }
+    .oauth-row { display: flex; gap: 10px; }
+    .oauth-btn { flex: 1; text-align: center; text-decoration: none; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; color: #1f2937; font-weight: 650; font-size: 14px; background: #fff; }
+    .oauth-btn:hover { background: #f1f5f9; }
   </style>
 </head>
 <body>
   <main class="page">
     <section class="panel">
-      <div class="brand"><div class="mark">ID</div><div><h1>MyIDSan</h1><p>Sign in to continue</p></div></div>
+      <div class="brand"><div class="mark"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 5 6v5c0 4.4 3 7.6 7 9 4-1.4 7-4.6 7-9V6z"/><circle cx="12" cy="10" r="1.7"/><path d="M12 11.7V15"/></svg></div><div><h1>MyIDSan</h1><p>Sign in to continue</p></div></div>
       <form method="post" action="/api/auth/login">
         <input type="hidden" name="continue" value="%s">
         <label>Username or email<input name="username" autocomplete="username" required></label>
         <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
         <button type="submit">Log in</button>
-      </form>
+      </form>%s
     </section>
   </main>
 </body>
-</html>`, html.EscapeString(continueTo))
+</html>`, html.EscapeString(continueTo), social)
+}
+
+// socialButtonsHTML renders the Google/GitHub sign-in links for the federated login
+// page, but only for providers that are actually configured. Each link carries the
+// pending `continue` target (the /api/auth/authorize URL) through the social-login
+// round-trip so the user lands back at the authorization step afterwards.
+func (m *federatedAuthApi) socialButtonsHTML(continueTo string) string {
+	hasGoogle := m.cfg != nil && m.cfg.Login != nil && m.cfg.Login.Google != nil
+	hasGitHub := m.cfg != nil && m.cfg.Login != nil && m.cfg.Login.GitHub != nil
+	if !hasGoogle && !hasGitHub {
+		return ""
+	}
+	cont := url.QueryEscape(continueTo)
+	var b strings.Builder
+	b.WriteString(`<div class="divider"><span>or continue with</span></div><div class="oauth-row">`)
+	if hasGoogle {
+		fmt.Fprintf(&b, `<a class="oauth-btn" href="/api/login/google?continue=%s">Google</a>`, cont)
+	}
+	if hasGitHub {
+		fmt.Fprintf(&b, `<a class="oauth-btn" href="/api/login/github?continue=%s">GitHub</a>`, cont)
+	}
+	b.WriteString(`</div>`)
+	return b.String()
 }
 
 func (m *federatedAuthApi) loginPost(w http.ResponseWriter, r *http.Request) {

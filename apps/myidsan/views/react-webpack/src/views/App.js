@@ -498,6 +498,20 @@ function AuthScreen({ onAuthed, sessionError }) {
   })
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [providers, setProviders] = useState({ google: false, github: false })
+
+  // Only offer the social buttons for providers myidsan actually has configured, so a
+  // dead Google/GitHub link never shows (it would just return 'not configured').
+  useEffect(() => {
+    let active = true
+    apiRequest('/api/login/providers')
+      .then(payload => {
+        const p = resultOf(payload) || {}
+        if (active) setProviders({ google: !!p.google, github: !!p.github })
+      })
+      .catch(() => { /* leave both off */ })
+    return () => { active = false }
+  }, [])
 
   const submit = async event => {
     event.preventDefault()
@@ -557,10 +571,12 @@ function AuthScreen({ onAuthed, sessionError }) {
             </div>
           )}
           <button className="primary-button" disabled={busy} type="submit">{busy ? 'Working' : mode === 'login' ? 'Log in' : 'Create account'}</button>
-          <div className="oauth-row">
-            <a className="quiet-link" href="/api/login/google">Google</a>
-            <a className="quiet-link" href="/api/login/github">GitHub</a>
-          </div>
+          {(providers.google || providers.github) && (
+            <div className="oauth-row">
+              {providers.google && <a className="quiet-link" href="/api/login/google">Google</a>}
+              {providers.github && <a className="quiet-link" href="/api/login/github">GitHub</a>}
+            </div>
+          )}
         </form>
       </section>
     </div>

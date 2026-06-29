@@ -27,6 +27,7 @@ The **Mymatasan** view in the UI exposes:
 - **Adopted nodes**: table showing all adopted nodes with their status (`online`, `lost`, `self-dropped`), cert expiry, and a **Release** button. Release revokes the node's certificate and removes the registry row.
 - **Heartbeat**: the control plane probes every adopted node over mTLS (`GET :<mtlsPort>/heartbeat`) on a configurable interval (default 60 s) and marks each node `online` or `lost`.
 - **Command tunnel**: after pairing, each node dials a persistent WebSocket-over-fleet-mTLS connection to `myseliasan`'s control channel port (`pairing.controlPort`, default 49533). The `/api/nodes/{id}/proxy/<node-path>` endpoint tunnels any HTTP command to the node's own API router; the node's authorization stack enforces viewer/admin based on the per-node access grant. Node-pushed event frames (AI alerts, health, going-offline) are ingested into the control plane's notification feed at `/api/notifications`.
+- **Node camera live view (media relay)**: the node also dials a separate media channel (`pairing.mediaPort`, default 49534) over fleet mTLS. When a browser requests live view of a node camera (`POST /api/nodes/{id}/cameras/{cam}/webrtc/offer`), `myseliasan` asks the node to stream that camera's RTP over the media channel, then re-broadcasts it to the browser over WebRTC — at full frame rate, without the browser needing any direct path to the node. The node-camera tile in the Nodes view shows a WebRTC `<video>` element with automatic snapshot fallback.
 - **Per-node access grants**: the adopting role owns the node (full access without a grant); other roles need an explicit grant via `GET/POST/DELETE /api/nodes/access`.
 
 Both app and node must be on the same LAN segment for UDP multicast discovery to reach the node. Manual adoption by IP+port works across subnets if the node is reachable by HTTPS. The mTLS management port (default 49532) must also be reachable from the control plane.
@@ -45,11 +46,22 @@ A **superadmin handoff banner** is shown at the top of the workspace whenever `s
 
 Because the control plane authenticates with the federated middleware, **state-changing API calls must send the double-submit CSRF token**: the `api()` helper in `lib/helpers.js` echoes the non-HttpOnly `__Host-kopiv2_csrf` (HTTPS) / `kopiv2_csrf` (dev) cookie in the `X-CSRF-Token` header on POST/PUT/PATCH/DELETE. Omitting it yields a 403 (which redirects to the SSO login). The fleet-key card includes a copy-to-clipboard button to avoid copy errors.
 
+## Node liveness
+
+The heartbeat reconciler consults the persistent control channel first — a node holding a live connection is authoritatively online regardless of whether its mTLS port is directly reachable from the parent. The mTLS probe is a fallback. A node is declared `lost` only after a **grace window** (3× heartbeat interval, floor 90 s) with no contact on either path, so a brief reconnect or firewall blip no longer flaps a healthy node offline. Status `self-dropped` is never overwritten by heartbeat.
+
+The heartbeat order of operations:
+1. Control channel present (`ControlServer.IsConnected`) → mark **online**.
+2. Otherwise, attempt mTLS probe → mark **online** on success.
+3. On failure, check grace window: if `now - lastSeenAt >= graceSeconds`, mark **lost**; otherwise hold prior status and skip the write.
+
 ## Networking / operations
 
-- Discovery is UDP multicast (group `239.255.90.21:49531` by default) sent and received on **all** multicast-capable interfaces, so multi-homed hosts and same-host dev work. The host firewall must allow inbound UDP on the discovery port (49531) and TCP on the mTLS management port (49532) and the control channel port (49533).
+- Discovery is UDP multicast (group `239.255.90.21:49531` by default) sent and received on **all** multicast-capable interfaces, so multi-homed hosts and same-host dev work. The host firewall must allow inbound UDP on the discovery port (49531) and TCP on the mTLS management port (49532), the control channel port (49533), and the media channel port (49534).
 - Docker's default bridge network does not forward multicast — run with host networking, or use manual adoption by IP+port (which needs no multicast).
 - Discovery is same-subnet only (UDP multicast does not route); manual adoption works across subnets as long as the node's HTTPS + mTLS ports are reachable.
+- When `myseliasan` and `mymatasan` run on **separate machines**, add `"parentBaseUrl": "https://<parent-LAN-IP>:3002"` to `pairing` in `config.json`. Without it the node uses `sso.redirectBaseUrl`, which is `localhost` in the default dev config and is unreachable from another machine. `parentBaseUrl` is the address the node dials for the control and media channels and uses for enroll/self-drop callbacks.
+- For cross-network node camera live view, add a `nodeStream` block to `config.json` (see `config.nodestream.sample.json`): set `publicIps` to the parent's external IP(s), `udpPort` to a single open UDP port, and optionally `iceServers` with a TURN server. For same-LAN use, the `nodeStream` block can be omitted entirely.
 
 ## Development defaults
 

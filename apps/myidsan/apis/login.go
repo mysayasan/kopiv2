@@ -1,6 +1,7 @@
 package apis
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log"
@@ -54,6 +55,9 @@ func NewLoginApi(
 	loginGroup := router.PathPrefix("/login").Subrouter()
 	callbackGroup := router.PathPrefix("/callback").Subrouter()
 
+	// Public: which social-login providers are actually configured, so the SPA shows
+	// only the buttons that work (no dead Google/GitHub links).
+	loginGroup.HandleFunc("/providers", handler.providers).Methods("GET")
 	loginGroup.HandleFunc("/default", handler.defaultLogin).Methods("POST")
 	loginGroup.HandleFunc("/default/register", handler.defaultRegister).Methods("POST")
 	loginGroup.HandleFunc("/default/logout", handler.defaultLogout).Methods("POST")
@@ -70,6 +74,16 @@ func NewLoginApi(
 		loginGroup.HandleFunc("/github", handler.githubLogin).Methods("GET")
 		callbackGroup.HandleFunc("/github", handler.githubCallback).Methods("GET")
 	}
+}
+
+// providers reports which social-login providers are configured (non-nil after the
+// config's client id/secret were validated). The SPA gates its Google/GitHub buttons
+// on this so it never shows a link that would just return "not configured".
+func (m *loginApi) providers(w http.ResponseWriter, r *http.Request) {
+	controllers.SendResult(w, map[string]bool{
+		"google": m.googleAuth != nil,
+		"github": m.githubAuth != nil,
+	})
 }
 
 func (m *loginApi) defaultLogin(w http.ResponseWriter, r *http.Request) {
@@ -187,6 +201,9 @@ func (m *loginApi) googleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Remember where to land after the OAuth round-trip (e.g. an /api/auth/authorize
+	// URL when this login was reached via a relying-app SSO redirect).
+	setOAuthContinue(w, r, "google", r.URL.Query().Get("continue"))
 	m.googleAuth.Login(w, r)
 }
 
@@ -228,7 +245,11 @@ func (m *loginApi) googleCallback(w http.ResponseWriter, r *http.Request) {
 		user.Id = int64(res)
 	}
 
-	m.issueOAuthSession(w, r, user, userG.Name, userG.Email, userG.GivenName, userG.FamilyName, userG.Picture)
+	if err := m.setOAuthSession(w, r, user, userG.Name, userG.Email, userG.GivenName, userG.FamilyName, userG.Picture); err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	http.Redirect(w, r, consumeOAuthContinue(w, r, "google"), http.StatusFound)
 }
 
 func (m *loginApi) githubLogin(w http.ResponseWriter, r *http.Request) {
@@ -237,6 +258,7 @@ func (m *loginApi) githubLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	setOAuthContinue(w, r, "github", r.URL.Query().Get("continue"))
 	m.githubAuth.Login(w, r)
 }
 
@@ -285,13 +307,20 @@ func (m *loginApi) githubCallback(w http.ResponseWriter, r *http.Request) {
 		user.Id = int64(res)
 	}
 
-	m.issueOAuthSession(w, r, user, name, userG.Email, name, "", userG.AvatarURL)
+	if err := m.setOAuthSession(w, r, user, name, userG.Email, name, "", userG.AvatarURL); err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	http.Redirect(w, r, consumeOAuthContinue(w, r, "github"), http.StatusFound)
 }
 
-func (m *loginApi) issueOAuthSession(w http.ResponseWriter, r *http.Request, user *entities.UserLogin, name string, email string, givenName string, familyName string, picture string) {
+// setOAuthSession issues the signed-in session cookies for a social-login user. It
+// does NOT write a response body, so the caller controls the outcome (a redirect to
+// the pending `continue` target, or the dashboard) instead of the browser landing on
+// a raw JSON payload after the OAuth round-trip.
+func (m *loginApi) setOAuthSession(w http.ResponseWriter, r *http.Request, user *entities.UserLogin, name string, email string, givenName string, familyName string, picture string) error {
 	if user == nil {
-		controllers.SendError(w, controllers.ErrAuthFailed, "invalid user")
-		return
+		return errors.New("invalid user")
 	}
 
 	claims := &models.JwtCustomClaims{
@@ -308,12 +337,55 @@ func (m *loginApi) issueOAuthSession(w http.ResponseWriter, r *http.Request, use
 		},
 	}
 
-	if err := m.auth.IssueAuthCookies(w, r, *claims); err != nil {
-		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+	return m.auth.IssueAuthCookies(w, r, *claims)
+}
+
+func oauthContinueCookieName(provider string) string {
+	return "oauth_continue_" + strings.ToLower(strings.TrimSpace(provider))
+}
+
+// setOAuthContinue stores a validated post-login return path for the social-login
+// round-trip, scoped to the provider's callback path so it rides back with the OAuth
+// redirect. Unsafe or absent values are ignored (the callback then defaults to "/").
+// The value is base64-encoded because the return path carries query characters a raw
+// cookie value cannot.
+func setOAuthContinue(w http.ResponseWriter, r *http.Request, provider, continueTo string) {
+	continueTo = cleanContinuePath(continueTo)
+	if continueTo == "/" {
 		return
 	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     oauthContinueCookieName(provider),
+		Value:    base64.RawURLEncoding.EncodeToString([]byte(continueTo)),
+		Path:     "/api/callback/" + strings.ToLower(provider),
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int((5 * time.Minute).Seconds()),
+	})
+}
 
-	controllers.SendResult(w, map[string]bool{"ok": true})
+// consumeOAuthContinue reads and clears the return path set by setOAuthContinue,
+// falling back to "/" when absent or invalid. Single-use: the cookie is expired here.
+func consumeOAuthContinue(w http.ResponseWriter, r *http.Request, provider string) string {
+	cookie, err := r.Cookie(oauthContinueCookieName(provider))
+	if err != nil || cookie.Value == "" {
+		return "/"
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     oauthContinueCookieName(provider),
+		Value:    "",
+		Path:     "/api/callback/" + strings.ToLower(provider),
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
+	raw, err := base64.RawURLEncoding.DecodeString(cookie.Value)
+	if err != nil {
+		return "/"
+	}
+	return cleanContinuePath(string(raw))
 }
 
 func (m *loginApi) issueLocalSession(w http.ResponseWriter, r *http.Request, user *entities.UserLogin) {

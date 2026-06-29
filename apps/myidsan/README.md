@@ -87,7 +87,7 @@ The UI builds its sidebar from `GET /api/access-rbac/me`. A page appears only wh
 
 The side-nav uses the standardized dark icon rail (icon glyph + label, grouped by section). Nav entries are now regrouped: **Users**, **Groups**, **Roles**, and **RBAC** all appear under the **Administration** group. **Apps** is under **Federation**; **Endpoints** is under **Access Control**. The Roles page now manages accessrbac roles via `/api/access-rbac/roles`; the broken `/api/user-credential/group/{id}` listing has been removed from the Groups page. The RBAC page is the permission-matrix view only.
 
-A light/dark theme toggle (sun/moon) sits at the foot of the side-nav; the selected theme is persisted to `localStorage`. A shield+keyhole SVG brand mark replaces the old "ID" text tile.
+A light/dark theme toggle (sun/moon) sits at the foot of the side-nav; the selected theme is persisted to `localStorage`. A shield+keyhole SVG brand mark replaces the old "ID" text tile. The same shield+keyhole mark appears on the server-rendered federated login page (`GET /api/auth/login`). Google/GitHub buttons appear on that page only for providers that are currently configured and active; unconfigured providers are silently omitted. The SPA's own social-login buttons also gate on `GET /api/login/providers` so they never show a link that would fail.
 
 A **forced first-login gate** (`ChangePasswordScreen`) blocks access to the app shell until the seeded stock superadmin changes its password. This mirrors myseliasan's flow and uses `POST /api/login/default/change-password`.
 

@@ -51,16 +51,15 @@ export function NodeManager({ node, onToast, onBack }) {
   );
 }
 
-// NodeCameras shows a live view of the node's cameras by polling single-frame JPEG
-// snapshots over the command tunnel. Continuous streams (MJPEG/WebRTC) cannot be
-// tunneled, so each tile refreshes a still frame on an interval — a low-bandwidth
-// "live" view that works through the same secure channel as everything else.
+// NodeCameras shows full-frame-rate live view of the node's cameras over WebRTC: the
+// node relays each camera's RTP up its media channel and myseliasan re-broadcasts it
+// to the browser (the browser peers only with myseliasan). If WebRTC can't establish,
+// each tile falls back to the low-bandwidth snapshot poll over the command tunnel.
 function NodeCameras({ node, onToast }) {
   const [cams, setCams] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [tick, setTick] = useState(Date.now());
-  const [paused, setPaused] = useState(false);
+  const [iceServers, setIceServers] = useState([]);
 
   async function load() {
     setLoading(true);
@@ -68,38 +67,31 @@ function NodeCameras({ node, onToast }) {
       .catch(() => ({ ok: false }));
     setLoading(false);
     if (r.status === 403) { setError('No access to this node.'); setCams([]); return; }
-    if (r.ok) { setError(''); setCams(Array.isArray(r.body) ? r.body : []); }
+    if (r.ok) { setError(''); setCams(Array.isArray(r.body) ? r.body : (r.body?.items || [])); }
     else { setError(r.message || 'Failed to load cameras.'); if (onToast) onToast(r.message || 'Failed to load cameras.'); }
   }
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [node.nodeId]);
 
-  // Refresh every frame tile on an interval (cache-busted), unless paused.
+  // ICE config (STUN/TURN) for cross-network browser↔parent peering; empty on same LAN.
   useEffect(() => {
-    if (paused) return undefined;
-    const iv = setInterval(() => setTick(Date.now()), 1500);
-    return () => clearInterval(iv);
-  }, [paused]);
-
-  function frameUrl(camId) {
-    return `${apiBase()}/api/nodes/${encodeURIComponent(node.nodeId)}/proxy/api/vision/cameras/${camId}/frame?t=${tick}`;
-  }
+    api('/api/node-stream/config', { noRedirect: true })
+      .then((r) => { if (r.ok && Array.isArray(r.body?.iceServers)) setIceServers(r.body.iceServers); })
+      .catch(() => {});
+  }, []);
 
   return (
     <section className="settings-panel span-two">
       <header>
         <h2><span className="btn-icon"><Ico n="camera" /> Cameras</span></h2>
         <div className="settings-header-actions">
-          <button type="button" className="quiet" onClick={() => setPaused((p) => !p)}>
-            <span className="btn-icon"><Ico n={paused ? 'play' : 'stop'} /> {paused ? 'Resume' : 'Pause'}</span>
-          </button>
           <button type="button" className="quiet" onClick={load} disabled={loading}>
             <span className="btn-icon"><Ico n="reload" /> Refresh</span>
           </button>
         </div>
       </header>
       <p className="settings-hint">
-        Live snapshots streamed over the secure tunnel (a still frame refreshed every ~1.5s). Continuous video isn&apos;t
-        tunneled — open the node directly for full-motion playback.
+        Full-motion live view relayed over the node&apos;s secure media channel and re-broadcast via WebRTC. Tiles that
+        can&apos;t establish WebRTC fall back to ~1.5s snapshots automatically.
       </p>
       {error ? <p className="settings-hint danger-text">{error}</p> : null}
       {cams.length === 0 && !error ? (
@@ -107,21 +99,119 @@ function NodeCameras({ node, onToast }) {
       ) : (
         <div className="node-cam-grid">
           {cams.map((c) => (
-            <figure key={c.id} className="node-cam-card">
-              <img
-                className="node-cam-img"
-                src={frameUrl(c.id)}
-                alt={c.name || `Camera ${c.id}`}
-                onError={(e) => { e.currentTarget.classList.add('node-cam-img--err'); }}
-                onLoad={(e) => { e.currentTarget.classList.remove('node-cam-img--err'); }}
-              />
-              <figcaption className="node-cam-cap">{c.name || `Camera ${c.id}`}</figcaption>
-            </figure>
+            <NodeCameraTile key={c.id} nodeId={node.nodeId} cam={c} iceServers={iceServers} />
           ))}
         </div>
       )}
     </section>
   );
+}
+
+// NodeCameraTile renders one camera: it negotiates a WebRTC stream against myseliasan
+// (which relays the node's RTP) and shows it in a <video>; on any failure it switches
+// to snapshot polling over the command tunnel so the tile always shows something.
+function NodeCameraTile({ nodeId, cam, iceServers }) {
+  const videoRef = useRef(null);
+  const [mode, setMode] = useState('connecting'); // connecting | live | snapshot
+  const [tick, setTick] = useState(Date.now());
+
+  useEffect(() => {
+    let cancelled = false;
+    let pc = null;
+    if (typeof RTCPeerConnection === 'undefined') { setMode('snapshot'); return () => {}; }
+
+    const fallback = () => { if (!cancelled) setMode('snapshot'); };
+
+    (async () => {
+      try {
+        pc = new RTCPeerConnection({ iceServers: iceServers || [] });
+        pc.addTransceiver('video', { direction: 'recvonly' });
+        pc.addTransceiver('audio', { direction: 'recvonly' });
+        pc.ontrack = (event) => {
+          if (cancelled || !videoRef.current) return;
+          const stream = videoRef.current.srcObject instanceof MediaStream
+            ? videoRef.current.srcObject : new MediaStream();
+          stream.addTrack(event.track);
+          videoRef.current.srcObject = stream;
+          videoRef.current.play().catch(() => {});
+          if (event.track.kind === 'video') setMode('live');
+        };
+        pc.onconnectionstatechange = () => {
+          if (cancelled) return;
+          if (pc.connectionState === 'failed' || pc.connectionState === 'closed') fallback();
+        };
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await waitForIceGathering(pc);
+        const r = await api(`/api/nodes/${encodeURIComponent(nodeId)}/cameras/${cam.id}/webrtc/offer`, {
+          method: 'POST', noRedirect: true,
+          body: JSON.stringify({ type: pc.localDescription.type, sdp: pc.localDescription.sdp }),
+        }).catch(() => ({ ok: false }));
+        if (cancelled) return;
+        if (!r.ok || !r.body || !r.body.sdp) { fallback(); return; }
+        await pc.setRemoteDescription({ type: r.body.type || 'answer', sdp: r.body.sdp });
+      } catch (_) {
+        fallback();
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      try {
+        if (videoRef.current && videoRef.current.srcObject) {
+          videoRef.current.srcObject.getTracks().forEach((t) => t.stop());
+          videoRef.current.srcObject = null;
+        }
+      } catch (_) { /* ignore */ }
+      if (pc) pc.close();
+    };
+    // eslint-disable-next-line
+  }, [nodeId, cam.id]);
+
+  // Snapshot fallback: refresh the still frame on an interval while in snapshot mode.
+  useEffect(() => {
+    if (mode !== 'snapshot') return undefined;
+    const iv = setInterval(() => setTick(Date.now()), 1500);
+    return () => clearInterval(iv);
+  }, [mode]);
+
+  const label = cam.name || `Camera ${cam.id}`;
+  const badge = mode === 'live' ? 'live' : mode === 'snapshot' ? 'snapshot' : 'connecting…';
+  const snapUrl = `${apiBase()}/api/nodes/${encodeURIComponent(nodeId)}/proxy/api/vision/cameras/${cam.id}/frame?t=${tick}`;
+
+  return (
+    <figure className="node-cam-card">
+      {mode === 'snapshot' ? (
+        <img
+          className="node-cam-img"
+          src={snapUrl}
+          alt={label}
+          onError={(e) => { e.currentTarget.classList.add('node-cam-img--err'); }}
+          onLoad={(e) => { e.currentTarget.classList.remove('node-cam-img--err'); }}
+        />
+      ) : (
+        <video ref={videoRef} className="node-cam-img" autoPlay playsInline muted />
+      )}
+      <figcaption className="node-cam-cap">{label} · {badge}</figcaption>
+    </figure>
+  );
+}
+
+// waitForIceGathering resolves when the peer has gathered all ICE candidates (the
+// answer/offer is then complete and self-contained), or after a short cap so a slow
+// network doesn't stall the tile forever.
+function waitForIceGathering(pc) {
+  return new Promise((resolve) => {
+    if (pc.iceGatheringState === 'complete') { resolve(); return; }
+    const done = () => {
+      if (pc.iceGatheringState === 'complete') {
+        pc.removeEventListener('icegatheringstatechange', done);
+        resolve();
+      }
+    };
+    pc.addEventListener('icegatheringstatechange', done);
+    setTimeout(resolve, 3000);
+  });
 }
 
 // NodeEvents shows the node's slice of the control plane's unified feed (history via
@@ -252,19 +342,21 @@ function NodeAccess({ node, onToast }) {
         Grant other myseliasan roles access to this node. Read-only acts as a viewer; read+write acts as admin (write
         implies read). The owning role always has full access.
       </p>
-      <div className="settings-field-grid">
-        <label>Role id
+      <div className="node-access-form">
+        <label className="node-access-role">Role id
           <input value={form.roleId} onChange={(e) => setForm({ ...form, roleId: e.target.value })} placeholder="e.g. 3" disabled={busy} />
         </label>
-        <label className="node-access-check">
-          <input type="checkbox" checked={form.canRead} onChange={(e) => setForm({ ...form, canRead: e.target.checked, canWrite: e.target.checked ? form.canWrite : false })} disabled={busy} /> Read
-        </label>
-        <label className="node-access-check">
-          <input type="checkbox" checked={form.canWrite} onChange={(e) => setForm({ ...form, canWrite: e.target.checked, canRead: e.target.checked ? true : form.canRead })} disabled={busy} /> Write
-        </label>
-      </div>
-      <div className="settings-actions">
-        <button type="button" onClick={save} disabled={busy}><span className="btn-icon"><Ico n="save" /> Save grant</span></button>
+        <div className="node-access-checks">
+          <label className="node-access-check">
+            <input type="checkbox" checked={form.canRead} onChange={(e) => setForm({ ...form, canRead: e.target.checked, canWrite: e.target.checked ? form.canWrite : false })} disabled={busy} /> Read
+          </label>
+          <label className="node-access-check">
+            <input type="checkbox" checked={form.canWrite} onChange={(e) => setForm({ ...form, canWrite: e.target.checked, canRead: e.target.checked ? true : form.canRead })} disabled={busy} /> Write
+          </label>
+        </div>
+        <button type="button" className="node-access-save" onClick={save} disabled={busy}>
+          <span className="btn-icon"><Ico n="save" /> Save grant</span>
+        </button>
       </div>
       {grants.length === 0 ? (
         <p className="settings-hint">No extra grants — only the owning role can access this node.</p>

@@ -107,8 +107,16 @@ func (m *authApi) localLogin(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrLimitedAccess, "invalid username or password")
 		return
 	}
+	// The shared auth middleware rejects any token with an empty Email claim, so the
+	// session cookie MUST carry one. The stock superadmin has no real email, so fall
+	// back to its username (e.g. "admin") — a stable, non-empty identifier.
+	email := strings.TrimSpace(user.Email)
+	if email == "" {
+		email = strings.TrimSpace(user.Username)
+	}
 	if err := m.auth.IssueAuthCookies(w, r, models.JwtCustomClaims{
 		Id:            user.Id,
+		Email:         email,
 		Name:          user.Name,
 		RoleId:        user.RoleId,
 		VerifiedEmail: false,

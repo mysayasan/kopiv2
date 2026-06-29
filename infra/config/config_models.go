@@ -101,7 +101,12 @@ type AppConfigModel struct {
 	// mymatasan node and a myseliasan control plane. When enabled (default), an
 	// unpaired node answers authenticated discovery probes on the multicast group
 	// and goes silent once adopted.
-	Pairing      PairingConfigModel      `json:"pairing"`
+	Pairing PairingConfigModel `json:"pairing"`
+	// NodeStream (control-plane only) configures the parent's WebRTC re-broadcast of
+	// node camera streams to browsers. Empty = host candidates only (same-LAN/local
+	// dev). Set publicIps/udpPort for a remote parent with a reachable IP, and/or
+	// iceServers (STUN/TURN) when the parent is behind NAT.
+	NodeStream   NodeStreamConfigModel   `json:"nodeStream"`
 	Notification NotificationConfigModel `json:"notification"`
 	Recording    RecordingConfigModel    `json:"recording"`
 	// Security configures encryption-at-rest. When enabled (default), recordings,
@@ -208,6 +213,34 @@ type PairingConfigModel struct {
 	// host from its stored ParentBaseURL and dials this shared port. 0 = default
 	// (49533). Distinct from MTLSPort (the node's own management listener).
 	ControlPort int `json:"controlPort"`
+	// MediaPort is the node-dialed media-channel listener port (the dedicated RTP
+	// relay carrying camera video from node to control plane for WebRTC re-broadcast).
+	// Separate from ControlPort so high-rate media never competes with control traffic.
+	// 0 = default (49534). The node derives the parent host from its stored
+	// ParentBaseURL (same as ControlPort) and dials this port.
+	MediaPort int `json:"mediaPort"`
+	// ParentBaseURL (parent-side only) overrides the base URL recorded on each adopted
+	// node for callbacks (enroll / release / self-drop) AND as the host the node dials
+	// for the control channel. The control plane otherwise advertises sso.redirectBaseUrl,
+	// which is correct only when the node and parent share a host; for a node on a
+	// separate machine this MUST be the parent's LAN-reachable URL (e.g.
+	// https://192.168.1.10:3002) — never localhost. Empty = fall back to
+	// sso.redirectBaseUrl.
+	ParentBaseURL string `json:"parentBaseUrl"`
+}
+
+// NodeStreamConfigModel (control-plane only) configures how the parent re-broadcasts
+// relayed node camera RTP to browsers over WebRTC across networks.
+type NodeStreamConfigModel struct {
+	// PublicIPs are the parent's externally reachable IPs, advertised as host
+	// candidates (NAT 1:1) so a browser on another network reaches the parent directly.
+	PublicIPs []string `json:"publicIps"`
+	// UDPPort, when >0, binds a single shared WebRTC UDP port for all browser peers
+	// (one firewall rule). 0 = pion's default ephemeral ports.
+	UDPPort int `json:"udpPort"`
+	// ICEServers are STUN/TURN servers offered to the browser; a TURN server lets the
+	// browser↔parent media leg relay when the parent is itself behind NAT.
+	ICEServers []WebRTCICEServerModel `json:"iceServers"`
 }
 
 type StreamConfigModel struct {

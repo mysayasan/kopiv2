@@ -62,6 +62,14 @@ func (m *fakeUserLoginCoreService) Delete(ctx context.Context, id uint64) (uint6
 	return 0, nil
 }
 
+func (m *fakeUserLoginCoreService) EnsureStockSuperadmin(ctx context.Context, username, password string, superRoleId int64) error {
+	return nil
+}
+
+func (m *fakeUserLoginCoreService) ChangePassword(ctx context.Context, userId int64, current, next string) error {
+	return nil
+}
+
 func TestUserLoginDtoServiceReturnsSuppliedDTO(t *testing.T) {
 	shared := &fakeUserLoginCoreService{
 		users: []*entities.UserLogin{{

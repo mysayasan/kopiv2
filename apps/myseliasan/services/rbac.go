@@ -128,7 +128,14 @@ func (s *controlUserService) EnsureStockSuperadmin(ctx context.Context, username
 }
 
 func (s *controlUserService) UpsertFederated(ctx context.Context, ssoUserId int64, email, name string) (*entities.ControlUser, error) {
-	existing, err := s.findFederated(ctx, ssoUserId, email)
+	// A federated identity MUST carry a stable SSO subject id — that is the only key
+	// we trust. Without it we cannot safely tell two operators apart (email is not a
+	// reliable identifier; see findFederated), so refuse rather than risk binding the
+	// login to the wrong account.
+	if ssoUserId <= 0 {
+		return nil, errors.New("federated login is missing a stable user id")
+	}
+	existing, err := s.findFederated(ctx, ssoUserId)
 	if err != nil {
 		return nil, err
 	}
@@ -312,30 +319,24 @@ func (s *controlUserService) SuperadminStatus(ctx context.Context) (stockActive 
 	return stockActive, realActive, nil
 }
 
-// findFederated locates a federated user by SSO id, falling back to email (so a
-// myidsan id change doesn't orphan an existing account).
-func (s *controlUserService) findFederated(ctx context.Context, ssoUserId int64, email string) (*entities.ControlUser, error) {
-	if ssoUserId > 0 {
-		rows, err := s.query(ctx,
-			sqldataenums.Filter{FieldName: "Kind", Compare: sqldataenums.Equal, Value: "federated"},
-			sqldataenums.Filter{FieldName: "SsoUserId", Compare: sqldataenums.Equal, Value: ssoUserId})
-		if err != nil {
-			return nil, err
-		}
-		if len(rows) > 0 {
-			return rows[0], nil
-		}
+// findFederated locates a federated user strictly by its SSO subject id. Email is
+// deliberately NOT a match key: myidsan can emit a non-unique placeholder email
+// (e.g. "admin") for multiple identities, and matching on it would let a new SSO
+// identity inherit an existing — possibly privileged — account (account takeover /
+// privilege escalation). A changed SSO id therefore provisions a fresh viewer
+// account rather than silently rebinding to (and inheriting the role of) another row.
+func (s *controlUserService) findFederated(ctx context.Context, ssoUserId int64) (*entities.ControlUser, error) {
+	if ssoUserId <= 0 {
+		return nil, nil
 	}
-	if e := strings.TrimSpace(email); e != "" {
-		rows, err := s.query(ctx,
-			sqldataenums.Filter{FieldName: "Kind", Compare: sqldataenums.Equal, Value: "federated"},
-			sqldataenums.Filter{FieldName: "Email", Compare: sqldataenums.Equal, Value: e})
-		if err != nil {
-			return nil, err
-		}
-		if len(rows) > 0 {
-			return rows[0], nil
-		}
+	rows, err := s.query(ctx,
+		sqldataenums.Filter{FieldName: "Kind", Compare: sqldataenums.Equal, Value: "federated"},
+		sqldataenums.Filter{FieldName: "SsoUserId", Compare: sqldataenums.Equal, Value: ssoUserId})
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) > 0 {
+		return rows[0], nil
 	}
 	return nil, nil
 }

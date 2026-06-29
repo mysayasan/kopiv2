@@ -16,6 +16,23 @@
     "username": "admin",
     "password": "admin123"
   },
+  "login": {
+    "google": {
+      "client_id": "323260460700-kmbhjcg7leflb390vh8stsqi5iqgqac0.apps.googleusercontent.com",
+      "client_secret": "",
+      "redirect_url": "https://localhost:3001/api/callback/google",
+      "scopes": [
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/userinfo.profile"
+      ]
+    },
+    "github": {
+      "client_id": "",
+      "client_secret": "",
+      "redirect_url": "https://localhost:3001/api/callback/github",
+      "scopes": ["read:user", "user:email"]
+    }
+  },
   "fileStorage": {
     "path": "./uploads",
     "cleanup": {

@@ -189,8 +189,8 @@ const VERBS = [['canGet', 'GET'], ['canPost', 'POST'], ['canPut', 'PUT'], ['canD
 
 // Nav sections whose visibility is controlled per-role by the matrix. myseliasan's
 // admin pages (Users/Roles/RBAC) are superadmin-only, so the only role-restrictable
-// menu is Mymatasan (GET on /api/nodes). The toggles below grant/revoke that GET.
-const MENU_SECTIONS = [{ label: 'Mymatasan', path: '/api/nodes' }];
+// menu is Nodes (GET on /api/nodes). The toggles below grant/revoke that GET.
+const MENU_SECTIONS = [{ label: 'Nodes', path: '/api/nodes' }];
 
 export function RbacPage({ onToast }) {
   const [roles, setRoles] = useState([]);

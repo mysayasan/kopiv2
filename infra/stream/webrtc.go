@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,39 @@ const webRTCSetupTimeout = 15 * time.Second
 type Manager struct {
 	connector Connector
 	ice       []webrtc.ICEServer
+	// api, when set, is a shared pion API configured with a SettingEngine (NAT 1:1
+	// public-IP advertisement + a fixed UDP mux) for the parent relay. nil uses pion's
+	// default per-peer ephemeral ports — fine for same-LAN.
+	api *webrtc.API
+}
+
+// WebRTCEngine holds a shared pion API for the parent media relay so a browser on a
+// different network can reach the control plane: it advertises the parent's external
+// IP(s) as host candidates (NAT 1:1) and binds a single shared UDP port (one firewall
+// rule for all peers). STUN/TURN are passed per session via Options.ICEServers.
+type WebRTCEngine struct {
+	api *webrtc.API
+}
+
+// NewWebRTCEngine builds the shared engine. With no publicIPs and udpPort<=0 it
+// returns (nil, nil) — callers then use the default per-peer behavior (host
+// candidates, ephemeral ports), which is correct for same-LAN/local dev.
+func NewWebRTCEngine(publicIPs []string, udpPort int) (*WebRTCEngine, error) {
+	if len(publicIPs) == 0 && udpPort <= 0 {
+		return nil, nil
+	}
+	se := webrtc.SettingEngine{}
+	if len(publicIPs) > 0 {
+		se.SetNAT1To1IPs(publicIPs, webrtc.ICECandidateTypeHost)
+	}
+	if udpPort > 0 {
+		udp, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: udpPort})
+		if err != nil {
+			return nil, fmt.Errorf("bind webrtc udp mux on :%d: %w", udpPort, err)
+		}
+		se.SetICEUDPMux(webrtc.NewICEUDPMux(nil, udp))
+	}
+	return &WebRTCEngine{api: webrtc.NewAPI(webrtc.WithSettingEngine(se))}, nil
 }
 
 // NewManager creates a stream manager backed by shared RTSP sessions.
@@ -37,6 +71,26 @@ func NewManagerWithConnector(connector Connector) *Manager {
 	return &Manager{connector: connector}
 }
 
+// NewManagerWithConnectorEngine is like NewManagerWithConnector but uses a shared
+// WebRTCEngine (parent-relay public-IP/UDP-mux config). A nil engine falls back to
+// pion defaults.
+func NewManagerWithConnectorEngine(connector Connector, engine *WebRTCEngine) *Manager {
+	m := NewManagerWithConnector(connector)
+	if engine != nil {
+		m.api = engine.api
+	}
+	return m
+}
+
+// newPeerConnection builds a peer using the manager's configured pion API (shared
+// SettingEngine) when present, else the package default.
+func (m *Manager) newPeerConnection(config webrtc.Configuration) (*webrtc.PeerConnection, error) {
+	if m.api != nil {
+		return m.api.NewPeerConnection(config)
+	}
+	return webrtc.NewPeerConnection(config)
+}
+
 func webRTCICEServers(servers []ICEServer) []webrtc.ICEServer {
 	if len(servers) == 0 {
 		return nil
@@ -53,6 +107,17 @@ func webRTCICEServers(servers []ICEServer) []webrtc.ICEServer {
 		})
 	}
 	return result
+}
+
+// Subscribe opens (or shares) a camera RTP subscription directly, for callers that
+// relay the RTP elsewhere — e.g. the node→parent media channel — rather than building
+// a browser peer here. The returned Subscription is shared across subscribers and
+// must be Closed by the caller. Mirrors what CreateWebRTCAnswer does internally.
+func (m *Manager) Subscribe(source Source) (*Subscription, error) {
+	if m == nil || m.connector == nil {
+		return nil, errors.New("stream manager is not configured")
+	}
+	return m.connector.Subscribe(source)
 }
 
 // Close stops active camera stream sessions.
@@ -85,7 +150,7 @@ func (m *Manager) CreateWebRTCAnswerWithOptions(ctx context.Context, source Sour
 		return nil, err
 	}
 
-	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: webRTCICEServers(opts.ICEServers)})
+	pc, err := m.newPeerConnection(webrtc.Configuration{ICEServers: webRTCICEServers(opts.ICEServers)})
 	if err != nil {
 		sub.Close()
 		return nil, fmt.Errorf("create peer connection failed: %w", err)

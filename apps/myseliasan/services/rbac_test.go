@@ -135,6 +135,49 @@ func TestUpsertFederatedAssignsViewerThenUpdates(t *testing.T) {
 	}
 }
 
+// TestUpsertFederatedDoesNotMergeByEmail guards the privilege-escalation fix: two
+// distinct SSO identities that happen to share a (non-unique) email must remain
+// separate accounts, so a new login can never inherit an existing — possibly
+// privileged — record by email alone.
+func TestUpsertFederatedDoesNotMergeByEmail(t *testing.T) {
+	roles, users := newTestRBAC()
+	ctx := context.Background()
+	_ = roles.EnsureBuiltins(ctx)
+
+	u1, err := users.UpsertFederated(ctx, 1, "admin", "First")
+	if err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	// Simulate the first account having been elevated out-of-band.
+	sa, _ := roles.GetByName(ctx, sharedservices.RoleSuperadmin)
+	_ = users.SetRole(ctx, u1.Id, sa.Id)
+
+	// A different SSO id with the SAME email must create a brand-new account, not
+	// rebind to (and inherit superadmin from) the first.
+	u2, err := users.UpsertFederated(ctx, 2, "admin", "Second")
+	if err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if u2.Id == u1.Id {
+		t.Fatal("distinct SSO ids sharing an email must not merge into one account")
+	}
+	viewer, _ := roles.GetByName(ctx, sharedservices.RoleViewer)
+	if u2.RoleId != viewer.Id {
+		t.Fatalf("new federated account must default to viewer, got roleId=%d", u2.RoleId)
+	}
+}
+
+// TestUpsertFederatedRequiresStableId rejects a login with no usable SSO subject id,
+// so a stream of id-less logins can't pile up indistinguishable accounts.
+func TestUpsertFederatedRequiresStableId(t *testing.T) {
+	roles, users := newTestRBAC()
+	ctx := context.Background()
+	_ = roles.EnsureBuiltins(ctx)
+	if _, err := users.UpsertFederated(ctx, 0, "x@y.io", "NoId"); err == nil {
+		t.Fatal("expected rejection of federated login without a stable user id")
+	}
+}
+
 func TestUpsertFederatedRejectsDisabled(t *testing.T) {
 	roles, users := newTestRBAC()
 	ctx := context.Background()
