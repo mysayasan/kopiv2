@@ -16,7 +16,6 @@ import (
 // ApiLogApi struct
 type apiLogApi struct {
 	auth middlewares.AuthMidware
-	rbac middlewares.RbacMidware
 	serv services.IApiLogDtoService[outputdtos.ApiLogDto]
 }
 
@@ -24,21 +23,21 @@ type apiLogApi struct {
 func NewApiLogApi(
 	router *mux.Router,
 	auth middlewares.AuthMidware,
-	rbac middlewares.RbacMidware,
+	access *middlewares.AccessSessionMidware,
 	serv services.IApiLogDtoService[outputdtos.ApiLogDto]) {
 	handler := &apiLogApi{
 		auth: auth,
-		rbac: rbac,
 		serv: serv,
 	}
 
 	// Create api sub-router
 	group := router.PathPrefix("/log").Subrouter()
 	group.Use(auth.Middleware)
+	group.Use(access.Middleware)
 
 	// Group Handlers
-	group.HandleFunc("", rbac.RbacHandler(handler.get)).Methods("GET")
-	group.HandleFunc("", rbac.RbacHandler(handler.deleteByMonth)).Methods("DELETE")
+	group.HandleFunc("", handler.get).Methods("GET")
+	group.HandleFunc("", handler.deleteByMonth).Methods("DELETE")
 }
 
 func (m *apiLogApi) get(w http.ResponseWriter, r *http.Request) {

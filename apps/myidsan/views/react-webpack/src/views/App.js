@@ -33,7 +33,7 @@ const routeCatalog = [
   { id: 'roles', label: 'Roles', group: 'Identity', order: 30, tone: 'violet', code: 'RO', paths: ['/api/user-credential'], summary: 'Create group-scoped roles and parent role chains.' },
   { id: 'apps', label: 'Apps', group: 'Federation', order: 40, tone: 'indigo', code: 'AP', paths: ['/api/app-registry'], summary: 'Manage registered relying apps and audiences.' },
   { id: 'endpoints', label: 'Endpoints', group: 'Access Control', order: 50, tone: 'steel', code: 'EP', paths: ['/api/endpoint'], summary: 'Maintain the protected endpoint catalog.' },
-  { id: 'rbac', label: 'RBAC', group: 'Access Control', order: 60, tone: 'green', code: 'RB', paths: ['/api/endpoint-rbac'], summary: 'Map endpoints to role-specific HTTP permissions.' }
+  { id: 'rbac', label: 'RBAC', group: 'Access Control', order: 60, tone: 'green', code: 'RB', paths: ['/api/access-rbac'], summary: 'Manage accessrbac roles (shared module). Superadmin bypasses; viewer is read-only.' }
 ]
 
 const routeCatalogById = routeCatalog.reduce((acc, section) => {
@@ -157,6 +157,19 @@ const normalizeRbac = data => ({
   userRoleId: emptyToZero(data?.userRoleId)
 })
 
+const emptyAccessRole = {
+  id: 0,
+  name: '',
+  description: '',
+  isSuperadmin: false,
+  builtin: false
+}
+
+const normalizeAccessRole = data => ({
+  ...emptyAccessRole,
+  ...data
+})
+
 function App() {
   const [session, setSession] = useState(() => localStorage.getItem('myidsan.session') === 'active')
   const [sessionReady, setSessionReady] = useState(false)
@@ -166,10 +179,26 @@ function App() {
 
   const refreshSession = useCallback(async () => {
     try {
-      const payload = await apiRequest('/api/endpoint-rbac/ep/me')
-      const allowedEndpoints = rowsOf(payload)
+      // The shared accessrbac module reports the caller's own role + permission matrix
+      // at /me. A superadmin gets a single wildcard access entry (sees every section +
+      // CRUD); any other role's menu + actions are computed from its permission rows,
+      // so the same matrix that gates the APIs also drives the navigation.
+      const me = resultOf(await apiRequest('/api/access-rbac/me'))
       localStorage.setItem('myidsan.session', 'active')
-      setAccessList(allowedEndpoints)
+      if (me && me.isSuperadmin) {
+        setAccessList([{ path: '', canGet: true, canPost: true, canPut: true, canDelete: true, isActive: true, metadata: '' }])
+      } else {
+        const perms = me && Array.isArray(me.permissions) ? me.permissions : []
+        setAccessList(perms.map(p => ({
+          path: p.path,
+          canGet: !!p.canGet,
+          canPost: !!p.canPost,
+          canPut: !!p.canPut,
+          canDelete: !!p.canDelete,
+          isActive: true,
+          metadata: ''
+        })))
+      }
       setSession(true)
       setSessionError('')
     } catch (err) {
@@ -556,36 +585,181 @@ function EndpointsPage({ accessList }) {
 }
 
 function RbacPage({ accessList }) {
+  // accessrbac roles + the per-role permission matrix from the shared module. The
+  // matrix path prefixes drive BOTH API authorization and menu visibility (a role
+  // with no GET on a section's path neither sees the menu nor can call its APIs).
+  // Superadmin bypasses the matrix entirely.
   return (
-    <CrudPage
-      accessList={accessList}
-      title="RBAC"
-      subtitle="HTTP method permissions by endpoint and user role."
-      resource="/api/endpoint-rbac"
-      emptyItem={emptyRbac}
-      normalize={normalizeRbac}
-      columns={[
-        { key: 'id', label: 'ID' },
-        { key: 'endpointAppCode', label: 'App', render: (value, row) => value || row.apiEndpointId },
-        { key: 'endpointHost', label: 'Host', render: (value, row) => value || row.apiEndpointId },
-        { key: 'endpointPath', label: 'Path', render: (value, row) => value || row.apiEndpointId },
-        { key: 'roleTitle', label: 'Role', render: (value, row) => value || row.userRoleId },
-        { key: 'canGet', label: 'GET', render: boolLabel },
-        { key: 'canPost', label: 'POST', render: boolLabel },
-        { key: 'canPut', label: 'PUT', render: boolLabel },
-        { key: 'canDelete', label: 'DELETE', render: boolLabel },
-        { key: 'isActive', label: 'Active', render: boolLabel }
-      ]}
-      fields={[
-        { name: 'apiEndpointId', label: 'Endpoint ID', type: 'number', required: true },
-        { name: 'userRoleId', label: 'Role ID', type: 'number', required: true },
-        { name: 'canGet', label: 'Can GET', type: 'checkbox' },
-        { name: 'canPost', label: 'Can POST', type: 'checkbox' },
-        { name: 'canPut', label: 'Can PUT', type: 'checkbox' },
-        { name: 'canDelete', label: 'Can DELETE', type: 'checkbox' },
-        { name: 'isActive', label: 'Active', type: 'checkbox' }
-      ]}
-    />
+    <>
+      <CrudPage
+        accessList={accessList}
+        title="RBAC"
+        subtitle="accessrbac roles (shared module). Create/remove roles; superadmin bypasses all checks."
+        resource="/api/access-rbac/roles"
+        updateWithId
+        emptyItem={emptyAccessRole}
+        normalize={normalizeAccessRole}
+        columns={[
+          { key: 'id', label: 'ID' },
+          { key: 'name', label: 'Name' },
+          { key: 'description', label: 'Description' },
+          { key: 'isSuperadmin', label: 'Superadmin', render: boolLabel },
+          { key: 'builtin', label: 'Built-in', render: boolLabel }
+        ]}
+        fields={[
+          { name: 'name', label: 'Role name', required: true },
+          { name: 'description', label: 'Description' }
+        ]}
+      />
+      <RolePermissions />
+    </>
+  )
+}
+
+const PERMISSION_VERBS = [['canGet', 'GET'], ['canPost', 'POST'], ['canPut', 'PUT'], ['canDelete', 'DELETE']]
+
+// RolePermissions edits the per-role endpoint permission matrix (path prefix ×
+// GET/POST/PUT/DELETE). Longest matching prefix wins; no rule means denied. The
+// same rows govern menu visibility — granting GET on a section's path reveals it.
+function RolePermissions() {
+  const [roles, setRoles] = useState([])
+  const [roleId, setRoleId] = useState(0)
+  const [perms, setPerms] = useState([])
+  const [path, setPath] = useState('/api')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const loadRoles = useCallback(async () => {
+    try {
+      const list = resultOf(await apiRequest('/api/access-rbac/roles')) || []
+      setRoles(list)
+      setRoleId(prev => prev || (list.find(role => !role.isSuperadmin)?.id ?? list[0]?.id ?? 0))
+    } catch (err) {
+      setError(err.message)
+    }
+  }, [])
+
+  const loadPerms = useCallback(async rid => {
+    if (!rid) {
+      setPerms([])
+      return
+    }
+    try {
+      const list = resultOf(await apiRequest(`/api/access-rbac/permissions?roleId=${rid}`)) || []
+      setPerms(list)
+    } catch (err) {
+      setError(err.message)
+    }
+  }, [])
+
+  useEffect(() => { loadRoles() }, [loadRoles])
+  useEffect(() => { loadPerms(roleId) }, [roleId, loadPerms])
+
+  const selectedRole = roles.find(role => role.id === Number(roleId))
+
+  const save = async body => {
+    setBusy(true)
+    setError('')
+    try {
+      await apiRequest('/api/access-rbac/permissions', { method: 'POST', body })
+      await loadPerms(roleId)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const toggle = (row, key) => save({
+    roleId: Number(roleId),
+    path: row.path,
+    canGet: !!row.canGet,
+    canPost: !!row.canPost,
+    canPut: !!row.canPut,
+    canDelete: !!row.canDelete,
+    [key]: !row[key]
+  })
+
+  const addPath = () => {
+    if (!path.trim().startsWith('/')) {
+      setError('Path must start with /')
+      return
+    }
+    save({ roleId: Number(roleId), path: path.trim(), canGet: true, canPost: false, canPut: false, canDelete: false })
+  }
+
+  const remove = async row => {
+    setBusy(true)
+    setError('')
+    try {
+      await apiRequest(`/api/access-rbac/permissions/${row.id}`, { method: 'DELETE' })
+      await loadPerms(roleId)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="data-region rbac-permissions">
+      <header className="page-header">
+        <div>
+          <h1>Role permissions</h1>
+          <p>Grant a role access per path prefix and verb. This governs both API access and which menus the role sees.</p>
+        </div>
+      </header>
+      <div className="permission-controls">
+        <label className="permission-role-select">
+          <span>Role</span>
+          <select value={roleId} onChange={event => setRoleId(Number(event.target.value))} disabled={busy}>
+            {roles.length === 0 && <option value={0}>No roles</option>}
+            {roles.map(role => (
+              <option key={role.id} value={role.id}>{role.name}{role.isSuperadmin ? ' (superadmin)' : ''}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {error && <div className="message danger">{error}</div>}
+      {selectedRole?.isSuperadmin ? (
+        <p className="message">Superadmin bypasses all checks — no rules needed.</p>
+      ) : (
+        <>
+          <div className="permission-add">
+            <input value={path} onChange={event => setPath(event.target.value)} placeholder="/api/user-credential" disabled={busy} />
+            <button className="secondary-button" onClick={addPath} disabled={busy || !roleId} type="button">Add path</button>
+          </div>
+          {perms.length === 0 ? (
+            <p className="message">No rules — this role is denied everything (and sees no menus).</p>
+          ) : (
+            <table className="permission-table">
+              <thead>
+                <tr>
+                  <th>Path</th>
+                  {PERMISSION_VERBS.map(([, label]) => <th key={label}>{label}</th>)}
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {perms.map(row => (
+                  <tr key={row.id}>
+                    <td><code>{row.path}</code></td>
+                    {PERMISSION_VERBS.map(([key, label]) => (
+                      <td key={label} className="permission-cell">
+                        <input type="checkbox" checked={!!row[key]} onChange={() => toggle(row, key)} disabled={busy} aria-label={`${label} ${row.path}`} />
+                      </td>
+                    ))}
+                    <td>
+                      <button className="secondary-button danger" onClick={() => remove(row)} disabled={busy} type="button">Remove</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
+      )}
+    </section>
   )
 }
 
@@ -601,6 +775,7 @@ function CrudPage({
   fields,
   canCreate = true,
   listMode = 'paging',
+  updateWithId = false,
   toolbar
 }) {
   const effectiveListResource = listResource || resource
@@ -793,7 +968,10 @@ function CrudPage({
       }
       const method = isUpdate ? 'PUT' : 'POST'
       const payload = preparePayload(selected, fields)
-      await apiRequest(resource, { method, body: payload })
+      // Some resources (e.g. the shared accessrbac roles) update at /{id}; others
+      // (the legacy CRUD modules) take the id in the body and PUT to the base path.
+      const target = isUpdate && updateWithId ? `${resource}/${selected.id}` : resource
+      await apiRequest(target, { method, body: payload })
       if (isUpdate && editorItems.length > 1) {
         setEditorItems(current => current.map((item, index) => index === editorIndex ? normalize({ ...item, ...payload }) : item))
         setNotice(`Saved ${editorIndex + 1} of ${editorItems.length}`)

@@ -17,7 +17,6 @@ import (
 // UserLoginApi struct
 type userLoginApi struct {
 	auth middlewares.AuthMidware
-	rbac middlewares.RbacMidware
 	serv services.IUserLoginDtoService[outputdtos.UserLoginDto]
 }
 
@@ -25,23 +24,23 @@ type userLoginApi struct {
 func NewUserLoginApi(
 	router *mux.Router,
 	auth middlewares.AuthMidware,
-	rbac middlewares.RbacMidware,
+	access *middlewares.AccessSessionMidware,
 	serv services.IUserLoginDtoService[outputdtos.UserLoginDto]) {
 	handler := &userLoginApi{
 		auth: auth,
-		rbac: rbac,
 		serv: serv,
 	}
 
 	// Create api sub-router
 	group := router.PathPrefix("/user-credential").Subrouter()
 	group.Use(auth.Middleware)
+	group.Use(access.Middleware)
 
 	// Group Handlers
-	group.HandleFunc("", rbac.RbacHandler(handler.get)).Methods("GET")
-	group.HandleFunc("/email", rbac.RbacHandler(handler.getByEmail)).Methods("GET")
-	group.HandleFunc("", rbac.RbacHandler(handler.put)).Methods("PUT")
-	group.HandleFunc("/{id}", rbac.RbacHandler(handler.delete)).Methods("DELETE")
+	group.HandleFunc("", handler.get).Methods("GET")
+	group.HandleFunc("/email", handler.getByEmail).Methods("GET")
+	group.HandleFunc("", handler.put).Methods("PUT")
+	group.HandleFunc("/{id}", handler.delete).Methods("DELETE")
 }
 
 func (m *userLoginApi) get(w http.ResponseWriter, r *http.Request) {

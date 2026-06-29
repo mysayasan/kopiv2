@@ -1265,3 +1265,73 @@ textarea:focus {
     background-position: -120% 0;
   }
 }
+
+/* Role permission matrix (RBAC section) */
+.rbac-permissions {
+  margin-top: 18px;
+}
+
+.permission-controls {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  margin-bottom: 12px;
+}
+
+.permission-role-select {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.permission-role-select select {
+  min-height: 38px;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background: white;
+  padding: 6px 10px;
+  font-weight: 600;
+}
+
+.permission-add {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.permission-add input {
+  flex: 1;
+  min-height: 38px;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  padding: 6px 10px;
+}
+
+.permission-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.permission-table th,
+.permission-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.permission-table th:not(:first-child),
+.permission-cell {
+  text-align: center;
+  width: 64px;
+}
+
+.permission-table code {
+  font-size: 12px;
+}
+
+.secondary-button.danger {
+  border-color: var(--red, #c0392b);
+  color: var(--red, #c0392b);
+}

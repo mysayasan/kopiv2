@@ -24,15 +24,25 @@ type IAppRegistryService interface {
 	Delete(ctx context.Context, id uint64) (uint64, error)
 }
 
-// IApiEndpointRbacService interface
-type IApiEndpointRbacService interface {
-	Get(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.ApiEndpointRbac, uint64, error)
-	GetList(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.ApiEndpointRbacListModel, uint64, error)
-	GetApiEpByUserRole(ctx context.Context, userId uint64) ([]*entities.ApiEndpointRbacJoinModel, uint64, error)
-	Create(ctx context.Context, model entities.ApiEndpointRbac) (uint64, error)
-	Update(ctx context.Context, model entities.ApiEndpointRbac) (uint64, error)
-	Delete(ctx context.Context, id uint64) (uint64, error)
-	Validate(ctx context.Context, host string, path string, userRoleId uint64) (*entities.ApiEndpointRbac, error)
+// IAccessRoleService owns an app's accessrbac role catalog (shared, single-app, no
+// app_code).
+type IAccessRoleService interface {
+	EnsureBuiltins(ctx context.Context) error
+	GetByName(ctx context.Context, name string) (*entities.AccessRole, error)
+	GetById(ctx context.Context, id int64) (*entities.AccessRole, error)
+	List(ctx context.Context) ([]*entities.AccessRole, error)
+	Create(ctx context.Context, name, description string) (*entities.AccessRole, error)
+	Update(ctx context.Context, id int64, name, description string) error
+	Delete(ctx context.Context, id int64) error
+}
+
+// IAccessPermissionService owns the per-role endpoint permission matrix.
+type IAccessPermissionService interface {
+	EnsureViewerDefaults(ctx context.Context, viewerRoleId int64) error
+	Authorize(ctx context.Context, roleId int64, path, method string) (bool, error)
+	ListForRole(ctx context.Context, roleId int64) ([]*entities.AccessRolePermission, error)
+	Set(ctx context.Context, perm entities.AccessRolePermission) (*entities.AccessRolePermission, error)
+	Delete(ctx context.Context, id int64) error
 }
 
 // IApiLogService interface

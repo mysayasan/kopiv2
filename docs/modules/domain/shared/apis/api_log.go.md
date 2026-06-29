@@ -8,7 +8,7 @@ Exposes database-backed API activity logs for authenticated administrators.
 
 - Mount `GET /api/log`.
 - Mount `DELETE /api/log`.
-- Require auth middleware and RBAC validation.
+- Require auth middleware and accessrbac middleware (`AccessSessionMidware`).
 - Read `limit` and `offset` query parameters for listing.
 - Read optional `filters` and `sorters` JSON query parameters for DB-backed listing.
 - Return shared output DTOs through `IApiLogDtoService`.

@@ -1,9 +1,5 @@
 # Module: apps/myidsan/dtos/output/user_role.go
 
-## Purpose
+## Status
 
-Defines the myidsan output DTO for user role responses.
-
-## Notes
-
-- Mirrors `entities.UserRole` for now.
+**Retired.** This file was deleted in the accessrbac migration. The myidsan-specific `UserRole` output DTO has been removed. Role data is now returned directly from the shared accessrbac service as `entities.AccessRole` / `entities.AccessRolePermission`.

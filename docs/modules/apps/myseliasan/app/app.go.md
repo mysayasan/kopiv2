@@ -7,20 +7,31 @@ Implements the `myseliasan` relying control-plane app for the shared runtime hos
 ## Responsibilities
 
 - Provides app identity and base directory.
-- Registers `ManagedNode` and `ControlSetting` entities for DB bootstrap.
-- Disables shared management APIs except the public version endpoint.
-- Seeds a local endpoint catalog for rate limiting and runtime metadata (includes `/api/nodes` as `AuthOnly` and `/api/nodes/self-dropped` as `Public`).
-- Registers relying-app auth/session API routes.
-- Builds `INodeRegistry` (via `NewNodeRegistry` with a `NodeRegistryConfig` that includes `MTLSPort`, `CertTTL`, and `HeartbeatInterval` from the `pairing.*` config) and registers node-management routes via `NewNodesApi`.
-- Starts a background heartbeat goroutine that calls `INodeRegistry.Heartbeat` on the configured interval (`pairing.heartbeatIntervalSeconds`, default 60s). The goroutine is stopped via the `ShutdownFunc` returned from `RegisterAppRoutes`.
-- Derives `parentID` from `sso.clientId` (falls back to `"myseliasan"`) and `parentBaseURL` from `sso.redirectBaseUrl`; these are stamped into every adoption call so nodes know their parent.
-- Registers protected web routes for `/` and `/index.html` before static asset fallback.
+- Registers `ManagedNode`, `ControlSetting`, `NodeAccessGrant`, `ControlUser`, and the shared `AccessRole`/`AccessRolePermission` entities for DB bootstrap.
+- Enables only `Version` and `AccessRbac` from the shared API surface (`SharedAPIs()`); operational APIs (log, file storage, cache, app registry, etc.) are disabled for the control plane.
+- Seeds the local endpoint catalog for rate limiting and runtime metadata, including `Notifications` and `Node Access` endpoints.
+- On startup, seeds the stock superadmin local account via `EnsureStockSuperadmin` using credentials from `localAuth.username` / `localAuth.password` in config (or defaults `admin` / `admin`).
+- Binds the `ControlUser` service as the `AccessUserResolver` for `deps.Access`, so the shared accessrbac middleware enforces the permission matrix on myseliasan's own endpoints.
+- Registers auth/session routes (`NewAuthApi`, `NewSessionApi`).
+- Registers myseliasan-specific RBAC admin surface (`NewRbacAdminApi` at `/api/rbac/*`) for user management and the bootstrap superadmin handoff.
+- Builds `INodeRegistry` and registers node-management routes (`NewNodesApi`).
+- Starts a background heartbeat goroutine to probe adopted nodes over mTLS.
+- Builds the unified notification service and registers `NewNotificationApi`.
+- Starts the control channel server (`ControlServer`) on a dedicated fleet-mTLS port (`pairing.controlPort`, default `49533`) to accept node-dialed bi-directional connections. Node-pushed events are ingested into the notification feed via `ingestNodeEvent`.
+- Registers per-node access-grant management (`NewNodeAccessApi`).
+- Registers the reverse command tunnel proxy (`NewNodeProxyApi` at `/api/nodes/{id}/proxy/...`).
+- The `ShutdownFunc` cancels the background context (stops heartbeat + control server).
+
+## `ingestNodeEvent`
+
+Maps a node-pushed event frame to the control plane's notification feed:
+- `"notification"` — re-published as-is (re-tagged with `nodeId` and a new parent-side ID).
+- `"going-offline"` — converted to a system warning notification.
 
 ## Notes
 
-- MySeliaSan does not register user-management entities.
-- Opening `/` without a valid MySeliaSan session redirects to `/api/auth/start`.
-- MyIDSan remains the identity provider; MySeliaSan creates its own local session only after code exchange.
-- The fleet-key multicast address is read from `pairing.multicastAddr`; empty defaults to the `infra/pairing` package default (`239.255.90.21:49531`).
-- The heartbeat loop is distinct from the `monitorCtx` of `mymatasan`; it is controlled by a dedicated `context.WithCancel` and stopped by the `ShutdownFunc`.
-- The `fleetCA` (inside `nodeRegistry`) is self-contained and never contacts `myidsan`; it stores the CA key material in the local `ControlSetting` table.
+- The accessrbac middleware (`deps.Access`) only gates myseliasan's own management endpoints; the node tunnel (`/api/nodes/{id}/proxy/...`) is authorized by a separate axis (per-node `NodeAccessGrant` + owner role).
+- Opening `/` without a valid myseliasan session redirects to `/api/auth/start`.
+- myidsan remains the SSO identity provider; myseliasan issues its own local session after code exchange.
+- The fleet-CA, pairing, and mTLS wiring is unchanged from the LAN discovery / adoption epic.
+- `pairing.controlPort` is distinct from `pairing.mtlsPort` (49532): the control channel server listens on 49533 by default.

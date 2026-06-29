@@ -160,7 +160,6 @@ func (m *federatedAuthApi) authorize(w http.ResponseWriter, r *http.Request) {
 		Audience:    app.Audience,
 		RedirectURI: req.redirectURI,
 		UserID:      claims.Id,
-		RoleID:      claims.RoleId,
 		Email:       claims.Email,
 		Name:        claims.Name,
 		GivenName:   claims.GivenName,
@@ -297,6 +296,9 @@ func (m *federatedAuthApi) token(w http.ResponseWriter, r *http.Request) {
 		ttl = sessionTTL
 	}
 	expiresAt := time.Now().UTC().Add(ttl)
+	// myidsan is an identity provider only: the federated token carries identity
+	// (subject, email, name) but NO authorization role. Each relying app (e.g.
+	// myseliasan) owns its own RBAC and resolves a local role from this identity.
 	claims := models.JwtCustomClaims{
 		Id:            entry.UserID,
 		Email:         entry.Email,
@@ -305,7 +307,6 @@ func (m *federatedAuthApi) token(w http.ResponseWriter, r *http.Request) {
 		GivenName:     entry.GivenName,
 		FamilyName:    entry.FamilyName,
 		Picture:       entry.Picture,
-		RoleId:        entry.RoleID,
 		SessionId:     entry.SessionID,
 		AppCode:       app.Code,
 		PolicyVersion: 1,
@@ -329,7 +330,6 @@ func (m *federatedAuthApi) token(w http.ResponseWriter, r *http.Request) {
 		ExpiresIn:     int64(time.Until(expiresAt).Seconds()),
 		ExpiresAt:     expiresAt.Unix(),
 		UserID:        claims.Id,
-		RoleID:        claims.RoleId,
 		Email:         claims.Email,
 		Name:          claims.Name,
 		SessionID:     claims.SessionId,

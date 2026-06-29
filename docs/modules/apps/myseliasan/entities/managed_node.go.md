@@ -18,6 +18,7 @@ Defines the `ManagedNode` entity: the DB row that represents one `mymatasan` nod
 | `Fingerprint` | Reserved; not currently used. Identity verification in the implemented mTLS channel uses the certificate CN (node ID), not a pinned fingerprint. |
 | `MTLSPort` | The node's mutual-TLS management listener port (heartbeat + release), recorded at adoption from `NodeRegistryConfig.MTLSPort`. Used by the control plane to dial `GET /heartbeat` and `POST /release`. |
 | `CertExpiresAt` | Unix timestamp of the expiry of the last node certificate issued by the fleet CA. Recorded on successful enrollment/renewal so the UI can surface cert health. |
+| `OwnerRoleId` | The myseliasan `RoleId` that adopted this node. That role has full (admin) access by default, without an explicit `NodeAccessGrant`. Other roles need a grant. `0` means legacy/unknown owner (no default access). |
 | `Status` | `"online"` (adopted, reachable), `"lost"` (unreachable / mTLS probe failed), or `"self-dropped"` (node unpaired itself via admin self-drop). |
 | `AdoptedAt` | Unix timestamp of adoption. |
 | `LastSeenAt` | Unix timestamp of last successful mTLS heartbeat contact. |

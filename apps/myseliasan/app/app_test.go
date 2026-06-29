@@ -10,7 +10,7 @@ func TestMyseliasanSharedAPIsOnlyExposeVersion(t *testing.T) {
 	if !cfg.Version {
 		t.Fatalf("expected version API to remain enabled: %+v", cfg)
 	}
-	if cfg.ApiLog || cfg.AppRegistry || cfg.ApiEndpoint || cfg.ApiEndpointRbac || cfg.FileStorage || cfg.CacheService || cfg.RuntimeLog {
+	if cfg.ApiLog || cfg.AppRegistry || cfg.ApiEndpoint || cfg.FileStorage || cfg.CacheService || cfg.RuntimeLog {
 		t.Fatalf("expected myseliasan shared management APIs to be disabled: %+v", cfg)
 	}
 }

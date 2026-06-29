@@ -14,7 +14,6 @@ import (
 
 type runtimeLogApi struct {
 	auth middlewares.AuthMidware
-	rbac middlewares.RbacMidware
 	serv services.IRuntimeLogDtoService[outputdtos.RuntimeLogDto]
 }
 
@@ -22,18 +21,18 @@ type runtimeLogApi struct {
 func NewRuntimeLogApi(
 	router *mux.Router,
 	auth middlewares.AuthMidware,
-	rbac middlewares.RbacMidware,
+	access *middlewares.AccessSessionMidware,
 	serv services.IRuntimeLogDtoService[outputdtos.RuntimeLogDto]) {
 	handler := &runtimeLogApi{
 		auth: auth,
-		rbac: rbac,
 		serv: serv,
 	}
 
 	group := router.PathPrefix("/log-service").Subrouter()
 	group.Use(auth.Middleware)
-	group.HandleFunc("", rbac.RbacHandler(handler.list)).Methods("GET")
-	group.HandleFunc("", rbac.RbacHandler(handler.deleteByMonth)).Methods("DELETE")
+	group.Use(access.Middleware)
+	group.HandleFunc("", handler.list).Methods("GET")
+	group.HandleFunc("", handler.deleteByMonth).Methods("DELETE")
 }
 
 func (m *runtimeLogApi) list(w http.ResponseWriter, r *http.Request) {

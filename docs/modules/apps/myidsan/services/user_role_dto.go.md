@@ -1,11 +1,5 @@
 # Module: apps/myidsan/services/user_role_dto.go
 
-## Purpose
+## Status
 
-Adapts the core user role service to return caller-selected DTO types.
-
-## Responsibilities
-
-- Wraps `IUserRoleService` without changing its persistence behavior.
-- Projects paginated role lists and group-scoped role lookups into the selected DTO type.
-- Forwards create, update, and delete calls to the core service.
+**Retired.** This file was deleted in the accessrbac migration. The DTO service wrapper for `IUserRoleService` has been removed. Role data is now served directly from the shared accessrbac surface (`/api/access-rbac/roles`).

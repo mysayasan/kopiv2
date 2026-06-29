@@ -20,6 +20,16 @@ Provides file storage metadata operations and the coordinated upload transaction
 - Insert metadata and copy staged files into final GUID paths through an atomic final-path swap.
 - Roll back DB changes and delete staged/final files when a coordinated upload fails.
 
+## Download Authorization (accessrbac migration)
+
+The `Group` and `Role` security levels now collapse to an owner-or-superadmin check: a file is accessible if the requesting actor's `UserId` matches the file's `CreatedBy`, or if the actor belongs to an accessrbac superadmin role (checked via the injected `IAccessRoleService`). The old group-hierarchy and role-ancestor comparisons have been removed. The `WithFileStorageAccessRoles` option injects the role service; when omitted, only the owner check applies.
+
+Security levels summary after migration:
+
+- `SystemOnly`: requires `actor.IsSystem = true`.
+- `Group` / `Role`: owner (`actor.UserId == CreatedBy`) or superadmin role.
+- `Public`: any caller (no actor required).
+
 ## Notes
 
 - The Redis or memory coordinator serializes file-storage critical sections.
@@ -29,5 +39,4 @@ Provides file storage metadata operations and the coordinated upload transaction
 - Exhausted jobs clean staged and final paths before moving to `failed`.
 - Existing metadata by GUID is reused during retry so a recovered job does not insert duplicate file rows.
 - Download APIs use metadata IDs externally; GUIDs are only used by the service to resolve physical file paths.
-- `SystemOnly` requires a service actor, `Group` compares owner and actor role groups, `Role` accepts the owner's role or ancestor roles, and `Public` accepts any caller.
 - Expired files are denied on download even before the scheduled cleanup removes them.

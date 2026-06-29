@@ -371,6 +371,24 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		func(format string, args ...any) { deps.Logger.Infof("mymatasan.pairing", format, args...) },
 	)
 
+	// Control channel: once paired + enrolled, the node dials the control plane's
+	// control listener over mTLS and maintains a persistent bi-directional channel
+	// (commander commands down, events up). Reads state live from the pairing
+	// service; shares the monitor lifecycle alongside the enrollment manager.
+	// The dispatcher re-injects tunneled commands into this app's own /api router
+	// (built below) so the commander reaches the node's exact API surface, gated by
+	// the node's normal authorization via the synthetic principal it carries.
+	controlChannel := services.NewControlChannelManager(
+		pairingService,
+		deps.Config.Pairing.ControlPort,
+		appVersion(m.Name()),
+		apis.NewControlDispatcher(api),
+		func(format string, args ...any) { deps.Logger.Infof("mymatasan.control", format, args...) },
+	)
+	// Forward this node's notifications up the control channel so the control plane's
+	// unified feed receives them live (in addition to local delivery).
+	notificationService.Register(services.NewControlEventSink(controlChannel))
+
 	// Pairing adopt/release are called by the control plane (no local session) and
 	// authenticate cryptographically, so they mount on the public /api router — and
 	// must be registered before the session catch-all so requests match here first.
@@ -530,6 +548,9 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		// Enrollment manager (mTLS): enroll after adoption, serve the management
 		// listener, and renew certs. Shares the monitor lifecycle.
 		go enrollmentManager.Run(monitorCtx)
+		// Control channel: dial the parent and maintain the persistent bi-directional
+		// channel once paired + enrolled. Shares the monitor lifecycle.
+		go controlChannel.Run(monitorCtx)
 	}
 
 	// Factory reset (Secure Wipe & Reset). Built here — after the monitors and
@@ -944,6 +965,20 @@ func boolValue(value *bool, fallback bool) bool {
 		return fallback
 	}
 	return *value
+}
+
+// appVersion resolves this app's version from the version manifest for the control
+// channel Hello (best-effort; empty when the manifest is unavailable).
+func appVersion(appName string) string {
+	manifest, err := versioning.LoadDefault()
+	if err != nil {
+		return ""
+	}
+	info, err := manifest.InfoForApp(appName)
+	if err != nil {
+		return ""
+	}
+	return info.AppVersion
 }
 
 func (m *module) APIDocs() apidocs.SpecConfig {

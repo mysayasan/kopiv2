@@ -61,7 +61,11 @@ export async function api(path, options = {}) {
     if (token) headers[CSRF_HEADER] = token;
   }
   const resp = await fetch(`${apiBase()}${path}`, { credentials: 'same-origin', ...options, headers });
-  if (resp.status === 401 || resp.status === 403) {
+  // On 401/403 the session is missing/expired, so bounce to SSO login — EXCEPT when
+  // the caller opts out (noRedirect). The node command tunnel and access-grant
+  // endpoints return 403 for legitimate "no access to this node" / "not the owner"
+  // cases that the UI should surface in place, not treat as a login failure.
+  if ((resp.status === 401 || resp.status === 403) && !options.noRedirect) {
     window.location.href = '/api/auth/start';
     throw new Error('unauthenticated');
   }
@@ -77,4 +81,22 @@ export function formatTimestamp(value) {
   if (!value) return '';
   const ms = value < 1e12 ? value * 1000 : value;
   try { return new Date(ms).toLocaleString(); } catch (_) { return ''; }
+}
+
+// pathMatches mirrors the backend accessrbac longest-prefix match: an allowed prefix
+// covers a target if equal or a parent segment of it.
+function pathMatches(allowed, target) {
+  const a = String(allowed || '').replace(/\/$/, '');
+  const t = String(target || '').replace(/\/$/, '');
+  return a === t || t.startsWith(`${a}/`);
+}
+
+// sessionCanGet reports whether the signed-in session may GET a path, using the same
+// permission matrix the backend enforces. Superadmin bypasses (sees everything), so
+// nav visibility and API access stay in lock-step.
+export function sessionCanGet(session, path) {
+  if (!session) return false;
+  if (session.isSuperadmin) return true;
+  const perms = Array.isArray(session.permissions) ? session.permissions : [];
+  return perms.some((p) => p && p.canGet && pathMatches(p.path, path));
 }

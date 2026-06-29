@@ -13,6 +13,6 @@ Shared CRUD API for registered SSO applications.
 
 ## Behavior
 
-- Protected by shared auth middleware and RBAC middleware.
+- Protected by shared auth middleware and accessrbac middleware (`AccessSessionMidware`).
 - Uses shared list filters/sorters for `GET`.
 - Accepts `clientSecret` on input but returns the output DTO without the secret.

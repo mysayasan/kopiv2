@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
@@ -116,6 +117,23 @@ func (f *fleetCA) ParentClientTLS(ctx context.Context, expectNodeID string) (cer
 		return nil, nil, nil, err
 	}
 	return certPEM, keyPEM, ca.CertPEM(), nil
+}
+
+// ParentServerTLS builds the tls.Config for the control plane's own mTLS listener
+// (the node-dialed control channel). It presents the parent's fleet-CA leaf as the
+// server certificate (the same leaf the parent uses as a client when dialing nodes
+// — fleetca leaves carry both server and client EKUs) and requires the connecting
+// node to present a fleet-CA-signed client certificate.
+func (f *fleetCA) ParentServerTLS(ctx context.Context) (*tls.Config, error) {
+	ca, err := f.ensure(ctx)
+	if err != nil {
+		return nil, err
+	}
+	certPEM, keyPEM, err := f.parentCert(ctx, ca)
+	if err != nil {
+		return nil, err
+	}
+	return fleetca.ServerTLSConfig(certPEM, keyPEM, ca.CertPEM())
 }
 
 func (f *fleetCA) parentCert(ctx context.Context, ca *fleetca.CA) (certPEM, keyPEM []byte, err error) {

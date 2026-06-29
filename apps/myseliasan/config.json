@@ -14,6 +14,11 @@
     "redirectBaseUrl": "https://localhost:3002",
     "redirectPath": "/api/auth/callback"
   },
+  "localAuth": {
+    "enabled": true,
+    "username": "admin",
+    "password": "admin"
+  },
   "pairing": {
     "enabled": true,
     "multicastAddr": "239.255.90.21:49531",
@@ -120,12 +125,12 @@
     "seedStatements": []
   },
   "db": {
-    "engine": "sqlite",
-    "host": "",
-    "port": 0,
-    "user": "",
-    "password": "",
-    "db_name": "./data/myseliasan.db",
-    "ssl_mode": ""
+    "engine": "postgres",
+    "host": "localhost",
+    "port": 5433,
+    "user": "postgres",
+    "password": "postgres",
+    "db_name": "myseliasandb",
+    "ssl_mode": "disable"
   }
 }

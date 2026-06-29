@@ -32,6 +32,7 @@ Implements the reusable runtime host for all app modules.
 - Register shared app-registry admin API routes under `/api/app-registry`.
 - Register shared API log API routes under `/api/log`.
 - Register shared runtime log API routes under `/api/log-service`.
+- Seed built-in accessrbac roles (`superadmin`, `viewer`) and viewer defaults when `SharedAPIConfig.AccessRbac` is true, then mount the shared `/api/access-rbac` management surface protected by the accessrbac middleware.
 - Load the embedded version manifest and register the shared public version endpoint under `/api/version`.
 - Initialize Prometheus telemetry when configured and mount the metrics endpoint.
 - Mount shared operational route groups; identity apps such as `myidsan` register login/user routes from their own app package.
@@ -50,7 +51,7 @@ Implements the reusable runtime host for all app modules.
 ## Notes
 
 - Shared modules are mounted once in the host; app modules only provide app-specific routes/workers.
-- Apps can disable selected shared modules to keep resource-app API surfaces small; `mymatasan` disables app-registry, endpoint, and endpoint-RBAC management routes, while identity routes live only in `myidsan`.
+- Apps can disable selected shared modules to keep resource-app API surfaces small; `mymatasan` disables all shared APIs except the version endpoint. Identity routes live only in `myidsan`. The shared accessrbac management surface (`/api/access-rbac`) is mounted by apphost for any app with `SharedAPIConfig.AccessRbac = true` (the default); the app must include `AccessRole`/`AccessRolePermission` entities and bind a user resolver.
 - App modules can register app-specific periodic jobs through `deps.Scheduler`.
 - App modules can register protected non-API routes by implementing `WebRouteRegistrar`; `myseliasan` uses this to guard `/` before serving the dashboard shell.
 - OAuth providers remain optional; disabling Google/GitHub does not disable local credential auth routes.
@@ -80,5 +81,6 @@ Implements the reusable runtime host for all app modules.
 - File-storage upload worker config can be overridden by `TRANSACTION_JOB_WORKER_ENABLED`, `TRANSACTION_JOB_WORKER_FREQUENCY_SECONDS`, and `TRANSACTION_MAX_ATTEMPTS`.
 - The upload worker recovers stale running jobs before processing queued/retrying jobs and logs recovered/processed counts.
 - The file-storage expiry cleanup scheduler uses `fileStorage.cleanup.frequencySeconds` and `fileStorage.cleanup.batchSize`, and logs only when files are deleted.
-- `GET /api/version` is mounted without auth/RBAC so clients can read app/core versions before login.
+- `GET /api/version` is mounted without auth so clients can read app/core versions before login.
+- The shared accessrbac core (`AccessSessionMidware`) is wired regardless of `SharedAPIConfig.AccessRbac`; its user resolver starts nil and the app binds it during `RegisterAppRoutes` via `deps.Access.SetResolver(...)`. If the resolver is unbound when a protected route is hit, the middleware fails closed with 403.
 - `GET /metrics` is mounted when telemetry and Prometheus are enabled.

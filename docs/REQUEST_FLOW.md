@@ -12,11 +12,11 @@
    - API activity log middleware records the completed request into `api_log`, including elapsed `durationMs`.
    - API telemetry records request count, duration histogram, and slow-request metrics when enabled.
    - rate-limit middleware classifies the API endpoint tier (`0=DevOnly`, `1=AuthOnly`, `2=Public`) and applies config-driven sliding-window limits.
-   - routes that opt into MyIDSan auth read the HttpOnly session cookie, validate the JWT, and inject claims into context.
+   - routes that opt into auth read the HttpOnly session cookie, validate the JWT, and inject claims into context.
    - unsafe JWT-authenticated methods (`POST`, `PUT`, `PATCH`, `DELETE`) must send `X-CSRF-Token` matching the readable CSRF cookie.
    - auth middleware validates signed JWT, configured issuer/audience, and cache-backed SSO session when a `sid` claim is present.
-   - RBAC middleware validates resource-app scoped role access for host + path segment boundary + method when the route uses RBAC.
-   - standalone `mymatasan` ONVIF and vision routes use app-local Basic Auth instead of MyIDSan JWT/RBAC.
+   - accessrbac middleware (`AccessSessionMidware`) enforces the app's own permission matrix (per-role endpoint-prefix table, longest match) when the route uses the shared accessrbac layer. Superadmin roles bypass the matrix; disabled or must-change-password users are rejected with 403.
+   - standalone `mymatasan` ONVIF and vision routes use app-local Basic Auth instead of MyIDSan JWT/accessrbac.
 5. Handler decodes payload, calls service, and writes response.
 
 Shared JSON response helpers include `durationMs`, measured from request middleware start time to response serialization.
@@ -48,11 +48,10 @@ Shared JSON response helpers include `durationMs`, measured from request middlew
 17. Start app workers when the selected app registers any.
 18. Start one or more listeners based on host and explicit TLS/non-TLS port lists.
 
-Bootstrap seeding also ensures a default `system` group and `superadmin` role exist before the app becomes ready.
-The default `superadmin` login password is inserted as a bcrypt hash; legacy plain-text passwords still migrate after successful local login.
-It also seeds wildcard-host endpoint rows with `accessTier` metadata and RBAC rows for the protected API modules so the default access map is ready on a fresh install. Protected shared management APIs seed as `DevOnly`.
+Bootstrap seeding ensures the default `system` group and `superadmin` login exist. The shared accessrbac core (`EnsureBuiltins`) seeds `superadmin` and `viewer` roles on startup for apps that enable `AccessRbac`. The `superadmin` login's `UserRoleId` is repointed to the accessrbac superadmin role at startup so the bootstrap account bypasses the permission matrix.
+Endpoint rows with `accessTier` metadata are seeded for rate-limit classification. Per-endpoint RBAC rows are no longer seeded; authorization is the accessrbac matrix managed via `/api/access-rbac`.
 
-`myidsan` uses this same bootstrap flow to seed the identity-provider management surface, app registry, SSO fallback endpoints, and selected relying-app policies. It is the cross-app sign-on and RBAC authority. `mymatasan` is standalone: it seeds only local endpoint metadata for rate-limit classification and app bootstrap, mounts public version plus app-local ONVIF and vision routes, and protects those app-local routes with Basic Auth from local users.
+`myidsan` uses this same bootstrap flow to seed the identity-provider management surface, app registry, SSO fallback endpoints, and selected relying-app policies. It is the cross-app sign-on authority; authorization decisions now stay local to each app's accessrbac middleware. `mymatasan` is standalone: it seeds only local endpoint metadata for rate-limit classification and app bootstrap, mounts public version plus app-local ONVIF and vision routes, and protects those app-local routes with Basic Auth from local users. `myseliasan` registers the shared accessrbac entities and seeds its own stock superadmin user on startup via `EnsureStockSuperadmin`.
 
 ## Browser SSO Callback Flow
 

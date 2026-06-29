@@ -15,28 +15,27 @@ import (
 
 type appRegistryApi struct {
 	auth middlewares.AuthMidware
-	rbac middlewares.RbacMidware
 	serv services.IAppRegistryDtoService[outputdtos.AppRegistryDto]
 }
 
 func NewAppRegistryApi(
 	router *mux.Router,
 	auth middlewares.AuthMidware,
-	rbac middlewares.RbacMidware,
+	access *middlewares.AccessSessionMidware,
 	serv services.IAppRegistryDtoService[outputdtos.AppRegistryDto]) {
 	handler := &appRegistryApi{
 		auth: auth,
-		rbac: rbac,
 		serv: serv,
 	}
 
 	group := router.PathPrefix("/app-registry").Subrouter()
 	group.Use(auth.Middleware)
+	group.Use(access.Middleware)
 
-	group.HandleFunc("", rbac.RbacHandler(handler.get)).Methods("GET")
-	group.HandleFunc("", rbac.RbacHandler(handler.post)).Methods("POST")
-	group.HandleFunc("", rbac.RbacHandler(handler.put)).Methods("PUT")
-	group.HandleFunc("/{id}", rbac.RbacHandler(handler.delete)).Methods("DELETE")
+	group.HandleFunc("", handler.get).Methods("GET")
+	group.HandleFunc("", handler.post).Methods("POST")
+	group.HandleFunc("", handler.put).Methods("PUT")
+	group.HandleFunc("/{id}", handler.delete).Methods("DELETE")
 }
 
 func (m *appRegistryApi) get(w http.ResponseWriter, r *http.Request) {

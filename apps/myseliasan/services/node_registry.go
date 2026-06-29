@@ -55,6 +55,11 @@ type AdoptInput struct {
 	IP        string `json:"ip"`
 	HTTPSPort int    `json:"httpsPort"`
 	ClaimCode string `json:"claimCode"`
+	// OwnerRoleId / OwnerUserId identify the adopting operator (set server-side from
+	// the session, never the client). OwnerRoleId becomes the node's owning role,
+	// which gets default full access; OwnerUserId is recorded for audit.
+	OwnerRoleId int64 `json:"-"`
+	OwnerUserId int64 `json:"-"`
 }
 
 // INodeRegistry owns fleet-key management, LAN discovery, the adopt/release
@@ -74,6 +79,13 @@ type INodeRegistry interface {
 	Enroll(ctx context.Context, nodeID, token string, csrPEM []byte) (nodeCertPEM, caRootPEM []byte, err error)
 	// Heartbeat probes every adopted node over mTLS and reconciles its status.
 	Heartbeat(ctx context.Context)
+	// ParentServerTLS returns the mTLS server config for the parent's control-channel
+	// listener (presents the parent's fleet leaf, requires a node client cert).
+	ParentServerTLS(ctx context.Context) (*tls.Config, error)
+	// AcceptControlConn validates a node connecting on the control channel (known +
+	// not revoked) and marks it online, returning the node record. The TLS layer has
+	// already proven the caller holds nodeID's fleet cert.
+	AcceptControlConn(ctx context.Context, nodeID string) (*entities.ManagedNode, error)
 }
 
 // NodeRegistryConfig configures the registry's network identity and timings.
@@ -253,18 +265,20 @@ func (s *nodeRegistry) Adopt(ctx context.Context, in AdoptInput) (*entities.Mana
 
 	now := time.Now().Unix()
 	node := entities.ManagedNode{
-		NodeId:     nodeID,
-		Name:       firstNonEmpty(res.Name, in.Name),
-		BaseUrl:    baseURL,
-		IP:         ip,
-		HTTPSPort:  port,
-		MTLSPort:   s.cfg.MTLSPort,
-		Token:      res.Token,
-		Status:     "online",
-		AdoptedAt:  now,
-		LastSeenAt: now,
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		NodeId:      nodeID,
+		Name:        firstNonEmpty(res.Name, in.Name),
+		BaseUrl:     baseURL,
+		IP:          ip,
+		HTTPSPort:   port,
+		MTLSPort:    s.cfg.MTLSPort,
+		Token:       res.Token,
+		Status:      "online",
+		OwnerRoleId: in.OwnerRoleId,
+		AdoptedAt:   now,
+		LastSeenAt:  now,
+		CreatedBy:   in.OwnerUserId,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 	if err := s.upsertNode(ctx, node); err != nil {
 		return nil, err
@@ -352,6 +366,31 @@ func (s *nodeRegistry) Heartbeat(ctx context.Context) {
 		node.UpdatedAt = now
 		_, _ = s.nodes.UpdateById(ctx, "", *node)
 	}
+}
+
+// ParentServerTLS returns the mTLS server config for the parent control listener.
+func (s *nodeRegistry) ParentServerTLS(ctx context.Context) (*tls.Config, error) {
+	return s.ca.ParentServerTLS(ctx)
+}
+
+// AcceptControlConn validates a node connecting on the control channel and marks
+// it online. The mTLS handshake already proved the caller holds nodeID's fleet
+// cert; here we reject nodes we never adopted or have since revoked, and bump
+// liveness (socket presence is a stronger signal than the heartbeat poll).
+func (s *nodeRegistry) AcceptControlConn(ctx context.Context, nodeID string) (*entities.ManagedNode, error) {
+	node, err := s.nodes.GetByUnique(ctx, "", "node_id", nodeID)
+	if err != nil || node == nil {
+		return nil, ErrNodeUnknown
+	}
+	if revoked, _ := s.ca.IsRevoked(ctx, nodeID); revoked {
+		return nil, ErrNodeRevoked
+	}
+	now := time.Now().Unix()
+	node.Status = "online"
+	node.LastSeenAt = now
+	node.UpdatedAt = now
+	_, _ = s.nodes.UpdateById(ctx, "", *node)
+	return node, nil
 }
 
 // mtlsClient builds an mTLS HTTP client for one node, verifying the node's server

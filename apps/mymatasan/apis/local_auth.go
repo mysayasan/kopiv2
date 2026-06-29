@@ -41,6 +41,16 @@ func NewLocalBasicAuth(userService services.ILocalUserService, guard *LoginGuard
 			// handles 401 itself, so the native prompt is never wanted.
 			deny := func(msg string) { http.Error(w, msg, http.StatusUnauthorized) }
 
+			// A control-channel command arrives pre-authenticated: the dispatcher
+			// (apis.NewControlDispatcher) injects the principal in-process after the
+			// fleet-mTLS parent connection is verified. Honor it and skip credential
+			// and lockout checks — the principal can only be set in-process, never by a
+			// network client. The admin-for-writes gate downstream still applies.
+			if _, ok := LocalUserFromContext(r.Context()); ok {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			if userService == nil {
 				deny("local auth is not configured")
 				return

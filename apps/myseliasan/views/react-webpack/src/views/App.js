@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react';
 import './styles/app.css';
 import './styles/controlplane.css';
 import { TopBar } from './components/layout';
-import { ToastStack } from './components/ui';
+import { ToastStack, FormBusyOverlay } from './components/ui';
 import { DashboardTab } from './components/dashboard';
 import { NodesTab } from './components/nodes';
-import { Ico } from './components/icons';
-import { api } from './lib/helpers';
+import { RbacAdminTab } from './components/rbac_admin';
+import { LoginScreen, ChangePasswordScreen } from './components/auth_screens';
+import { api, sessionCanGet } from './lib/helpers';
 
 const THEME_KEY = 'myseliasan_theme';
 
@@ -24,9 +25,10 @@ export default function App() {
     try { localStorage.setItem(THEME_KEY, t); } catch (_) {}
   }
 
+  // authState: 'loading' | 'anon' | 'mustchange' | 'ready'
+  const [authState, setAuthState] = useState('loading');
   const [session, setSession] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [busy, setBusy] = useState(false);
   const [toasts, setToasts] = useState([]);
 
   function pushToast(text) {
@@ -35,23 +37,44 @@ export default function App() {
   }
 
   async function loadSession() {
-    setBusy(true);
-    const r = await api('/api/session/me').catch(() => ({ ok: false }));
-    setBusy(false);
-    if (r.ok) setSession(r.body);
+    const r = await api('/api/session/me', { noRedirect: true }).catch(() => ({ ok: false }));
+    if (r.ok && r.body) {
+      setSession(r.body);
+      setAuthState(r.body.mustChangePassword ? 'mustchange' : 'ready');
+    } else {
+      setSession(null);
+      setAuthState('anon');
+    }
   }
   useEffect(() => { loadSession(); /* eslint-disable-next-line */ }, []);
 
   async function logout() {
-    await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
-    window.location.href = '/api/auth/start';
+    await api('/api/auth/logout', { method: 'POST', noRedirect: true }).catch(() => {});
+    setSession(null);
+    setAuthState('anon');
   }
+
+  if (authState === 'loading') {
+    return <main className="app-shell"><FormBusyOverlay busy /></main>;
+  }
+  if (authState === 'anon') {
+    return <LoginScreen onLoggedIn={loadSession} />;
+  }
+  if (authState === 'mustchange') {
+    return <ChangePasswordScreen onDone={loadSession} onToast={pushToast} onLogout={logout} />;
+  }
+
+  // Demote to the dashboard if the active tab is no longer permitted (e.g. after a
+  // handoff that retired the current stock account, or a role that lost node access).
+  const canNodes = sessionCanGet(session, '/api/nodes');
+  if (activeTab === 'access' && !session?.isSuperadmin) setActiveTab('dashboard');
+  if (activeTab === 'nodes' && !canNodes) setActiveTab('dashboard');
 
   return (
     <main className="app-shell">
       <TopBar
         activeTab={activeTab}
-        busy={busy}
+        busy={false}
         onTab={setActiveTab}
         onRefresh={loadSession}
         onLogout={logout}
@@ -62,14 +85,9 @@ export default function App() {
       <ToastStack toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((t) => t.id !== id))} />
 
       {activeTab === 'dashboard' ? <DashboardTab session={session} /> : null}
-      {activeTab === 'nodes' ? <NodesTab onToast={pushToast} /> : null}
-      {activeTab === 'authorization' ? (
-        <section className="workspace">
-          <section className="settings-panel span-two">
-            <header><h2><span className="btn-icon"><Ico n="user" /> Authorization</span></h2></header>
-            <p className="settings-hint">Federated authorization is managed through myidsan.</p>
-          </section>
-        </section>
+      {activeTab === 'nodes' && canNodes ? <NodesTab onToast={pushToast} /> : null}
+      {activeTab === 'access' && session?.isSuperadmin ? (
+        <RbacAdminTab session={session} onToast={pushToast} onSessionChanged={loadSession} />
       ) : null}
     </main>
   );

@@ -35,7 +35,7 @@ func TestStartUsesConfiguredRedirectBaseURL(t *testing.T) {
 		SessionCache: cache.NewMemoryStore(time.Minute, time.Minute),
 		SessionTTL:   time.Hour,
 	})
-	NewAuthApi(router, cfg, auth, cache.NewMemoryStore(time.Minute, time.Minute))
+	NewAuthApi(router, cfg, auth, cache.NewMemoryStore(time.Minute, time.Minute), nil)
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:3002/auth/start?returnTo=/", nil)

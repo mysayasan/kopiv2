@@ -1,11 +1,5 @@
 # Module: domain/shared/dtos/output/api_endpoint_rbac.go
 
-## Purpose
+## Status
 
-Defines shared output DTOs for API endpoint RBAC responses.
-
-## Notes
-
-- `ApiEndpointRbacDto` mirrors `entities.ApiEndpointRbac` for write/validate responses.
-- `ApiEndpointRbacListDto` is the enriched admin list projection. It keeps `apiEndpointId` and `userRoleId` for edits while adding endpoint title/app/host/path/metadata/tier and role title for display.
-- `ApiEndpointRbacJoinDto` mirrors `entities.ApiEndpointRbacJoinModel` for now, including joined endpoint `metadata` so clients can build dynamic menus from the same RBAC access list.
+**Retired.** This file was deleted in the accessrbac migration. The `ApiEndpointRbacDto`, `ApiEndpointRbacListDto`, and `ApiEndpointRbacJoinDto` types have been removed together with the legacy `/api/endpoint-rbac` route group. The SPA now reads role and permission data via `GET /api/access-rbac/me` and the `/api/access-rbac/roles` / `/api/access-rbac/permissions` management endpoints.

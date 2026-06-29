@@ -1,20 +1,20 @@
 # myidsan
 
-`myidsan` is the identity and access-management app for `kopiv2`.
+`myidsan` is the identity and SSO authority for `kopiv2`.
 
-It owns the identity user, group, role, app registry, endpoint, and RBAC administration APIs and acts as the single sign-on authority for apps such as `mymatasan`.
+It owns user, group, app registry, endpoint catalog, and shared RBAC administration APIs and acts as the single sign-on provider for apps such as `myseliasan`.
 
 ## Current Scope
 
 - Local username/password login and registration through myidsan-local login APIs.
-- User, group, role, app registry, endpoint, and endpoint RBAC management through shared protected APIs.
+- User and group management through protected APIs (`/api/user-credential`, `/api/user-group`).
+- App registry, app-auth-config, and app-redirect-uri management for SSO clients.
+- Shared accessrbac role + permission-matrix management via `/api/access-rbac` (roles CRUD + per-role endpoint permission matrix). The same surface is used identically by all apps that include the shared accessrbac module.
 - SSO JWT issuer/audience settings through the `sso` config block.
 - Cache-backed session entries under `sso:session:<sid>`.
-- Internal fallback APIs:
-  - `POST /api/sso/introspect`
-  - `POST /api/sso/authorize`
+- Internal fallback API: `POST /api/sso/introspect` (token validity check; RBAC decisions are now local to each app's accessrbac middleware).
 - Redis or in-memory cache selection through the standard cache config.
-- Bootstrap of the default `system` group, `superadmin` role, `superadmin` account, registered apps, and protected identity-management endpoint permissions.
+- Bootstrap of the default `system` group, `superadmin` login account, shared accessrbac built-in roles (`superadmin`, `viewer`), registered apps, and endpoint tier metadata.
 - React/Webpack identity administration UI under `views/react-webpack`, built into `static` for the Go app host.
 - Runtime OpenAPI documentation at `/swagger`.
 
@@ -68,9 +68,9 @@ npm run build
 
 The production build writes assets into `apps/myidsan/static`, which the Go app host serves as the SPA catch-all.
 
-The UI builds its sidebar from `GET /api/endpoint-rbac/ep/me`. A page appears only when the current user's role has RBAC access to the backing API endpoint and that endpoint's `metadata` contains an enabled `menu` or `menus[]` item for the page. The supported menu metadata fields are `id`, `label`, `group`, `order`, `summary`, `tone`, and optional `code`.
+The UI builds its sidebar from `GET /api/access-rbac/me`. A page appears only when the current user's role has `canGet` access to the backing API endpoint path prefix, and that endpoint's `metadata` in the `api_endpoint` catalog contains an enabled `menu` or `menus[]` item. The supported menu metadata fields are `id`, `label`, `group`, `order`, `summary`, `tone`, and optional `code`. Superadmin roles (`isSuperadmin: true` in the `/me` response) see all menus.
 
-Example endpoint metadata:
+Example endpoint metadata stored in `api_endpoint.metadata`:
 
 ```json
 {
@@ -88,7 +88,7 @@ Example endpoint metadata:
 
 Use `menus[]` when one API endpoint backs multiple UI pages, such as `users` and `roles` through `/api/user-credential`.
 
-CRUD administration tables use the same RBAC source for page and action access. The toolbar enables create, edit, and delete only when the current role has the matching `POST`, `PUT`, or `DELETE` grant for the page endpoint, so row selection cannot bypass a denied action. Table controls are standardized with floating column filter popovers, datatype-aware operators, neutral boolean filters, ordered multi-column sorting, loading feedback, popup editing, and pagination with first, previous, next, last, and goto-page controls. Filter, sort, and page position are remembered in browser cookies per table resource and reset by the table clear control. The active page is also remembered; if the remembered page is no longer allowed by RBAC after refresh, the UI shows the unauthorized access page instead of silently jumping to another module.
+CRUD administration tables use the same accessrbac permission matrix for page and action access. The toolbar enables create, edit, and delete only when the current role has the matching `canPost`, `canPut`, or `canDelete` grant for the page endpoint path prefix. Table controls are standardized with floating column filter popovers, datatype-aware operators, neutral boolean filters, ordered multi-column sorting, loading feedback, popup editing, and pagination with first, previous, next, last, and goto-page controls. Filter, sort, and page position are remembered in browser cookies per table resource and reset by the table clear control.
 
 For local frontend iteration:
 
@@ -100,14 +100,14 @@ The webpack dev server runs on `https://localhost:4001` when the app cert files 
 
 ## SSO Flow
 
-`myidsan` is the issuer and policy authority for other apps:
+`myidsan` is the JWT issuer and cross-app SSO authority:
 
 1. A user signs in at `myidsan`.
 2. `myidsan` creates a cache-backed session and issues an HMAC JWT with `iss`, `aud`, `exp`, `sid`, `appCode`, and `policyVersion`.
-3. Resource apps such as `mymatasan` validate the token locally.
-4. When Redis is enabled, apps share short-lived session and RBAC cache entries.
-5. When only in-memory cache is enabled, resource apps call `myidsan` service APIs for introspection and authorization.
+3. Relying apps (e.g. `myseliasan`) exchange an authorization code for the token at `POST /api/auth/token`.
+4. When Redis is enabled, apps share short-lived session cache entries.
+5. When only in-memory cache is available, relying apps can call `POST /api/sso/introspect` to validate a token (requires `X-Myidsan-Internal-Token` or `Authorization: Bearer <token>` matching `sso.internalToken` / `SSO_INTERNAL_TOKEN`).
 
-Internal fallback requests must include either `X-Myidsan-Internal-Token` or `Authorization: Bearer <token>` matching `sso.internalToken` or `SSO_INTERNAL_TOKEN`.
+Authorization decisions (who can call what API) are enforced locally by each app's shared accessrbac middleware — `myidsan` no longer issues RBAC policy decisions.
 
 Browser relying apps such as `myseliasan` use the authorization-code routes under `/api/auth`. MyIDSan validates the registered client, exact callback URL, and requested audience before issuing a one-time code. During callback, the relying app exchanges that code at `POST /api/auth/token`; when this happens over local HTTPS, the relying app must trust the MyIDSan certificate through the OS trust store or its own `sso.caCertPath` setting.

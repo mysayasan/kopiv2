@@ -16,7 +16,6 @@ import (
 // ApiEndpointApi struct
 type apiEndpointApi struct {
 	auth middlewares.AuthMidware
-	rbac middlewares.RbacMidware
 	serv services.IApiEndpointDtoService[outputdtos.ApiEndpointDto]
 }
 
@@ -24,23 +23,23 @@ type apiEndpointApi struct {
 func NewApiEndpointApi(
 	router *mux.Router,
 	auth middlewares.AuthMidware,
-	rbac middlewares.RbacMidware,
+	access *middlewares.AccessSessionMidware,
 	serv services.IApiEndpointDtoService[outputdtos.ApiEndpointDto]) {
 	handler := &apiEndpointApi{
 		auth: auth,
-		rbac: rbac,
 		serv: serv,
 	}
 
 	// Create api sub-router
 	group := router.PathPrefix("/endpoint").Subrouter()
 	group.Use(auth.Middleware)
+	group.Use(access.Middleware)
 
 	// Group Handlers
-	group.HandleFunc("", rbac.RbacHandler(handler.get)).Methods("GET")
-	group.HandleFunc("", rbac.RbacHandler(handler.post)).Methods("POST")
-	group.HandleFunc("", rbac.RbacHandler(handler.put)).Methods("PUT")
-	group.HandleFunc("/{id}", rbac.RbacHandler(handler.delete)).Methods("DELETE")
+	group.HandleFunc("", handler.get).Methods("GET")
+	group.HandleFunc("", handler.post).Methods("POST")
+	group.HandleFunc("", handler.put).Methods("PUT")
+	group.HandleFunc("/{id}", handler.delete).Methods("DELETE")
 }
 
 func (m *apiEndpointApi) get(w http.ResponseWriter, r *http.Request) {

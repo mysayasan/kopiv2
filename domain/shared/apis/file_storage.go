@@ -29,7 +29,6 @@ import (
 // FileStorageApi struct
 type fileStorageApi struct {
 	auth middlewares.AuthMidware
-	rbac middlewares.RbacMidware
 	serv services.IFileStorageDtoService[outputdtos.FileStorageDto, outputdtos.OperationJobDto]
 	path string
 }
@@ -38,12 +37,11 @@ type fileStorageApi struct {
 func NewFileStorageApi(
 	router *mux.Router,
 	auth middlewares.AuthMidware,
-	rbac middlewares.RbacMidware,
+	access *middlewares.AccessSessionMidware,
 	serv services.IFileStorageDtoService[outputdtos.FileStorageDto, outputdtos.OperationJobDto],
 	path string) {
 	handler := &fileStorageApi{
 		auth: auth,
-		rbac: rbac,
 		serv: serv,
 		path: path,
 	}
@@ -54,11 +52,12 @@ func NewFileStorageApi(
 
 	group := base.PathPrefix("").Subrouter()
 	group.Use(auth.Middleware)
+	group.Use(access.Middleware)
 
 	// Group Handlers
-	group.HandleFunc("/upload", rbac.RbacHandler(handler.upload)).Methods("POST")
-	group.HandleFunc("/upload-async", rbac.RbacHandler(handler.uploadAsync)).Methods("POST")
-	group.HandleFunc("/job", rbac.RbacHandler(handler.job)).Methods("GET")
+	group.HandleFunc("/upload", handler.upload).Methods("POST")
+	group.HandleFunc("/upload-async", handler.uploadAsync).Methods("POST")
+	group.HandleFunc("/job", handler.job).Methods("GET")
 }
 
 func (m *fileStorageApi) download(w http.ResponseWriter, r *http.Request) {

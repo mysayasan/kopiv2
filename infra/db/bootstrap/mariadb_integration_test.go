@@ -66,9 +66,7 @@ func TestBootstrapEnsureMariaDBIntegration(t *testing.T) {
 		},
 		Entities: []any{
 			sharedentities.UserGroup{},
-			sharedentities.UserRole{},
 			sharedentities.ApiEndpoint{},
-			sharedentities.ApiEndpointRbac{},
 		},
 	}
 

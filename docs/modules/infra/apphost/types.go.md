@@ -13,12 +13,15 @@ Defines the app module contract used by the shared runtime host.
   - app-specific route registration (`RegisterAppRoutes`)
 - `Dependencies`
   - shared runtime dependencies passed into app modules
-  - includes shared runtime primitives such as database, cache, auth, RBAC, app registry, logger, scheduler, and `Restarter`
+  - includes database, cache, `Auth` (JWT middleware), `Access` (shared `AccessSessionMidware` — the accessrbac enforcement middleware), `AccessRoles` (`IAccessRoleService`), `AccessPerms` (`IAccessPermissionService`), app registry, logger, scheduler, and `Restarter`
+  - apps bind their own user store via `deps.Access.SetResolver(...)` during `RegisterAppRoutes`
 - `Restarter`
   - one-method primitive (`Restart(reason string)`) that gracefully restarts the process: it triggers the host's normal shutdown sequence and then relaunches a fresh instance from the current on-disk executable
   - general-purpose — used by the `mymatasan` factory reset and intended for self-update (swap the binary, then call `Restart`); the first call wins, later calls are no-ops
 - `SharedAPIConfig`
   - controls which shared route groups the host mounts for a selected app
+  - `AccessRbac: true` (the default): seeds `superadmin` + `viewer` roles, seeds viewer defaults, and mounts the `/api/access-rbac` management surface with the accessrbac middleware
+  - `mymatasan` opts out by returning `SharedAPIConfig{Version: true}` from `SharedAPIs()`
 - `SharedAPIConfigurator`
   - optional app interface for resource apps that should expose only a subset of shared APIs
 - `WebRouteRegistrar`

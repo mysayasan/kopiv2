@@ -13,5 +13,5 @@ Protected MyIDSan management API for relying-app auth client policy.
 
 ## Security
 
-- Routes use MyIDSan auth and RBAC middleware.
+- Routes use MyIDSan auth and accessrbac middleware (`AccessSessionMidware`).
 - Read responses expose `hasClientSecret` instead of `clientSecretHash`.

@@ -19,3 +19,7 @@ Implements MySeliaSan as a relying app for MyIDSan authorization-code login.
 - `sso.caCertPath` does not disable TLS verification. Hostname, expiry, and certificate-chain checks still apply.
 - `sso.redirectBaseUrl` makes the callback URL stable even when users open the app through another local host alias or proxy host.
 - Local session cookies are HttpOnly and issued by shared auth middleware.
+
+## User Provisioning
+
+On successful token exchange, the callback calls `IControlUserService.UpsertFederated(ssoUserId, email, name)` to provision or refresh a `ControlUser` row (kind=`"federated"`). New federated users are assigned the `viewer` role by default. Disabled federated accounts are rejected before the session cookie is issued. The myseliasan session JWT carries the federated user's `ControlUser.Id` and `RoleId`, not the myidsan user ID directly.

@@ -38,14 +38,6 @@ type fakeFileStorageRepo struct {
 	byGuid map[string]entities.FileStorage
 }
 
-type fakeFileStorageUserLoginRepo struct {
-	byID map[int64]entities.UserLogin
-}
-
-type fakeFileStorageUserRoleRepo struct {
-	byID map[int64]entities.UserRole
-}
-
 func (f *fakeRootDb) BeginScopedTx(context.Context) (dbsql.IDbCrud, error) {
 	return f.tx, nil
 }
@@ -297,130 +289,6 @@ func matchesFileFilters(model entities.FileStorage, filters []sqldataenums.Filte
 		}
 	}
 	return true
-}
-
-func newFakeFileStorageUserLoginRepo(users ...entities.UserLogin) *fakeFileStorageUserLoginRepo {
-	repo := &fakeFileStorageUserLoginRepo{byID: map[int64]entities.UserLogin{}}
-	for _, user := range users {
-		repo.byID[user.Id] = user
-	}
-	return repo
-}
-
-func newFakeFileStorageUserRoleRepo(roles ...entities.UserRole) *fakeFileStorageUserRoleRepo {
-	repo := &fakeFileStorageUserRoleRepo{byID: map[int64]entities.UserRole{}}
-	for _, role := range roles {
-		repo.byID[role.Id] = role
-	}
-	return repo
-}
-
-func (f *fakeFileStorageUserLoginRepo) Get(context.Context, string, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter) ([]*entities.UserLogin, uint64, error) {
-	return nil, 0, nil
-}
-func (f *fakeFileStorageUserLoginRepo) GetJoin(context.Context, string, any, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter, ...string) ([]map[string]any, uint64, error) {
-	return nil, 0, nil
-}
-
-func (f *fakeFileStorageUserLoginRepo) GetJoinWithSpec(context.Context, string, any, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter, ...dbsql.JoinSpec) ([]map[string]any, uint64, error) {
-	return nil, 0, nil
-}
-func (f *fakeFileStorageUserLoginRepo) GetSingle(context.Context, string, []sqldataenums.Filter) (*entities.UserLogin, error) {
-	return nil, nil
-}
-func (f *fakeFileStorageUserLoginRepo) GetById(_ context.Context, _ string, id uint64) (*entities.UserLogin, error) {
-	user, ok := f.byID[int64(id)]
-	if !ok {
-		return nil, errors.New("not found")
-	}
-	return &user, nil
-}
-func (f *fakeFileStorageUserLoginRepo) GetByUnique(context.Context, string, string, ...any) (*entities.UserLogin, error) {
-	return nil, nil
-}
-func (f *fakeFileStorageUserLoginRepo) GetByForeign(context.Context, string, string, ...any) ([]*entities.UserLogin, error) {
-	return nil, nil
-}
-func (f *fakeFileStorageUserLoginRepo) Create(context.Context, string, entities.UserLogin) (uint64, error) {
-	return 0, nil
-}
-func (f *fakeFileStorageUserLoginRepo) CreateMultiple(context.Context, string, []entities.UserLogin) (uint64, error) {
-	return 0, nil
-}
-func (f *fakeFileStorageUserLoginRepo) UpdateById(context.Context, string, entities.UserLogin) (uint64, error) {
-	return 0, nil
-}
-func (f *fakeFileStorageUserLoginRepo) UpdateByUnique(context.Context, string, string, entities.UserLogin) (uint64, error) {
-	return 0, nil
-}
-func (f *fakeFileStorageUserLoginRepo) UpdateByForeign(context.Context, string, string, entities.UserLogin) (uint64, error) {
-	return 0, nil
-}
-func (f *fakeFileStorageUserLoginRepo) Delete(context.Context, string, []sqldataenums.Filter) (uint64, error) {
-	return 0, nil
-}
-func (f *fakeFileStorageUserLoginRepo) DeleteById(context.Context, string, uint64) (uint64, error) {
-	return 0, nil
-}
-func (f *fakeFileStorageUserLoginRepo) DeleteByUnique(context.Context, string, string, ...any) (uint64, error) {
-	return 0, nil
-}
-func (f *fakeFileStorageUserLoginRepo) DeleteByForeign(context.Context, string, string, ...any) (uint64, error) {
-	return 0, nil
-}
-
-func (f *fakeFileStorageUserRoleRepo) Get(context.Context, string, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter) ([]*entities.UserRole, uint64, error) {
-	return nil, 0, nil
-}
-func (f *fakeFileStorageUserRoleRepo) GetJoin(context.Context, string, any, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter, ...string) ([]map[string]any, uint64, error) {
-	return nil, 0, nil
-}
-
-func (f *fakeFileStorageUserRoleRepo) GetJoinWithSpec(context.Context, string, any, uint64, uint64, []sqldataenums.Filter, []sqldataenums.Sorter, ...dbsql.JoinSpec) ([]map[string]any, uint64, error) {
-	return nil, 0, nil
-}
-func (f *fakeFileStorageUserRoleRepo) GetSingle(context.Context, string, []sqldataenums.Filter) (*entities.UserRole, error) {
-	return nil, nil
-}
-func (f *fakeFileStorageUserRoleRepo) GetById(_ context.Context, _ string, id uint64) (*entities.UserRole, error) {
-	role, ok := f.byID[int64(id)]
-	if !ok {
-		return nil, errors.New("not found")
-	}
-	return &role, nil
-}
-func (f *fakeFileStorageUserRoleRepo) GetByUnique(context.Context, string, string, ...any) (*entities.UserRole, error) {
-	return nil, nil
-}
-func (f *fakeFileStorageUserRoleRepo) GetByForeign(context.Context, string, string, ...any) ([]*entities.UserRole, error) {
-	return nil, nil
-}
-func (f *fakeFileStorageUserRoleRepo) Create(context.Context, string, entities.UserRole) (uint64, error) {
-	return 0, nil
-}
-func (f *fakeFileStorageUserRoleRepo) CreateMultiple(context.Context, string, []entities.UserRole) (uint64, error) {
-	return 0, nil
-}
-func (f *fakeFileStorageUserRoleRepo) UpdateById(context.Context, string, entities.UserRole) (uint64, error) {
-	return 0, nil
-}
-func (f *fakeFileStorageUserRoleRepo) UpdateByUnique(context.Context, string, string, entities.UserRole) (uint64, error) {
-	return 0, nil
-}
-func (f *fakeFileStorageUserRoleRepo) UpdateByForeign(context.Context, string, string, entities.UserRole) (uint64, error) {
-	return 0, nil
-}
-func (f *fakeFileStorageUserRoleRepo) Delete(context.Context, string, []sqldataenums.Filter) (uint64, error) {
-	return 0, nil
-}
-func (f *fakeFileStorageUserRoleRepo) DeleteById(context.Context, string, uint64) (uint64, error) {
-	return 0, nil
-}
-func (f *fakeFileStorageUserRoleRepo) DeleteByUnique(context.Context, string, string, ...any) (uint64, error) {
-	return 0, nil
-}
-func (f *fakeFileStorageUserRoleRepo) DeleteByForeign(context.Context, string, string, ...any) (uint64, error) {
-	return 0, nil
 }
 
 func (f *fakeOperationJobRepo) Get(_ context.Context, _ string, limit uint64, _ uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.OperationJob, uint64, error) {
@@ -734,83 +602,106 @@ func TestFileStorageDownloadSystemOnlyRequiresSystemActor(t *testing.T) {
 	}
 }
 
-func TestFileStorageDownloadGroupAllowsActorInOwnerGroup(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "guid-group"), []byte("group"), 0644); err != nil {
-		t.Fatalf("write stored file: %v", err)
-	}
-
-	service := NewFileStorageService(
-		newFakeFileStorageRepo(entities.FileStorage{
-			Id:          1,
-			Title:       "group.txt",
-			Guid:        "guid-group",
-			MimeType:    "text/plain",
-			SecurityLvl: int32(filestorageenums.Group),
-			CreatedBy:   10,
-		}),
-		nil,
-		WithFileStoragePath(dir),
-		WithFileStorageUserRepo(newFakeFileStorageUserLoginRepo(
-			entities.UserLogin{Id: 10, UserRoleId: 100},
-		)),
-		WithFileStorageRoleRepo(newFakeFileStorageUserRoleRepo(
-			entities.UserRole{Id: 100, GroupId: 7},
-			entities.UserRole{Id: 101, GroupId: 7},
-			entities.UserRole{Id: 200, GroupId: 8},
-		)),
-	)
-
-	if _, err := service.DownloadById(context.Background(), 1, &FileStorageDownloadActor{UserId: 20, RoleId: 200}); err == nil {
-		t.Fatal("expected different group to be rejected")
-	}
-
-	download, err := service.DownloadById(context.Background(), 1, &FileStorageDownloadActor{UserId: 21, RoleId: 101})
-	if err != nil {
-		t.Fatalf("same group actor should download: %v", err)
-	}
-	if string(download.Content) != "group" {
-		t.Fatalf("unexpected content: %q", download.Content)
-	}
+// fakeFileStorageAccessRoles is a minimal IAccessRoleService that only needs to
+// answer GetById for the superadmin check in restricted-file downloads.
+type fakeFileStorageAccessRoles struct {
+	byID map[int64]*entities.AccessRole
 }
 
-func TestFileStorageDownloadRoleAllowsOwnerRoleAncestors(t *testing.T) {
+func newFakeFileStorageAccessRoles(roles ...entities.AccessRole) *fakeFileStorageAccessRoles {
+	repo := &fakeFileStorageAccessRoles{byID: map[int64]*entities.AccessRole{}}
+	for i := range roles {
+		role := roles[i]
+		repo.byID[role.Id] = &role
+	}
+	return repo
+}
+
+func (f *fakeFileStorageAccessRoles) GetById(_ context.Context, id int64) (*entities.AccessRole, error) {
+	return f.byID[id], nil
+}
+func (f *fakeFileStorageAccessRoles) EnsureBuiltins(context.Context) error { return nil }
+func (f *fakeFileStorageAccessRoles) GetByName(context.Context, string) (*entities.AccessRole, error) {
+	return nil, nil
+}
+func (f *fakeFileStorageAccessRoles) List(context.Context) ([]*entities.AccessRole, error) {
+	return nil, nil
+}
+func (f *fakeFileStorageAccessRoles) Create(context.Context, string, string) (*entities.AccessRole, error) {
+	return nil, nil
+}
+func (f *fakeFileStorageAccessRoles) Update(context.Context, int64, string, string) error { return nil }
+func (f *fakeFileStorageAccessRoles) Delete(context.Context, int64) error                 { return nil }
+
+// Group and Role security levels both collapse to "the owner, or a superadmin"
+// now that accessrbac is a flat role model (no groups / hierarchy).
+func TestFileStorageDownloadRestrictedAllowsOwner(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "guid-role"), []byte("role"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "guid-owner"), []byte("owned"), 0644); err != nil {
 		t.Fatalf("write stored file: %v", err)
 	}
 
 	service := NewFileStorageService(
 		newFakeFileStorageRepo(entities.FileStorage{
 			Id:          1,
-			Title:       "role.txt",
-			Guid:        "guid-role",
+			Title:       "owned.txt",
+			Guid:        "guid-owner",
 			MimeType:    "text/plain",
 			SecurityLvl: int32(filestorageenums.Role),
 			CreatedBy:   10,
 		}),
 		nil,
 		WithFileStoragePath(dir),
-		WithFileStorageUserRepo(newFakeFileStorageUserLoginRepo(
-			entities.UserLogin{Id: 10, UserRoleId: 300},
-		)),
-		WithFileStorageRoleRepo(newFakeFileStorageUserRoleRepo(
-			entities.UserRole{Id: 100, ParentId: 0, GroupId: 7},
-			entities.UserRole{Id: 200, ParentId: 100, GroupId: 7},
-			entities.UserRole{Id: 300, ParentId: 200, GroupId: 7},
-			entities.UserRole{Id: 400, ParentId: 0, GroupId: 7},
+		WithFileStorageAccessRoles(newFakeFileStorageAccessRoles(
+			entities.AccessRole{Id: 100, IsSuperadmin: false},
 		)),
 	)
 
-	if _, err := service.DownloadById(context.Background(), 1, &FileStorageDownloadActor{UserId: 20, RoleId: 400}); err == nil {
-		t.Fatal("expected unrelated role to be rejected")
+	if _, err := service.DownloadById(context.Background(), 1, &FileStorageDownloadActor{UserId: 20, RoleId: 100}); err == nil {
+		t.Fatal("expected non-owner non-superadmin to be rejected")
 	}
 
-	download, err := service.DownloadById(context.Background(), 1, &FileStorageDownloadActor{UserId: 21, RoleId: 200})
+	download, err := service.DownloadById(context.Background(), 1, &FileStorageDownloadActor{UserId: 10, RoleId: 100})
 	if err != nil {
-		t.Fatalf("ancestor role actor should download: %v", err)
+		t.Fatalf("owner should download: %v", err)
 	}
-	if string(download.Content) != "role" {
+	if string(download.Content) != "owned" {
+		t.Fatalf("unexpected content: %q", download.Content)
+	}
+}
+
+func TestFileStorageDownloadRestrictedAllowsSuperadmin(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "guid-super"), []byte("super"), 0644); err != nil {
+		t.Fatalf("write stored file: %v", err)
+	}
+
+	service := NewFileStorageService(
+		newFakeFileStorageRepo(entities.FileStorage{
+			Id:          1,
+			Title:       "super.txt",
+			Guid:        "guid-super",
+			MimeType:    "text/plain",
+			SecurityLvl: int32(filestorageenums.Group),
+			CreatedBy:   10,
+		}),
+		nil,
+		WithFileStoragePath(dir),
+		WithFileStorageAccessRoles(newFakeFileStorageAccessRoles(
+			entities.AccessRole{Id: 1, IsSuperadmin: true},
+			entities.AccessRole{Id: 2, IsSuperadmin: false},
+		)),
+	)
+
+	if _, err := service.DownloadById(context.Background(), 1, &FileStorageDownloadActor{UserId: 20, RoleId: 2}); err == nil {
+		t.Fatal("expected non-superadmin non-owner to be rejected")
+	}
+
+	download, err := service.DownloadById(context.Background(), 1, &FileStorageDownloadActor{UserId: 20, RoleId: 1})
+	if err != nil {
+		t.Fatalf("superadmin should download: %v", err)
+	}
+	if string(download.Content) != "super" {
 		t.Fatalf("unexpected content: %q", download.Content)
 	}
 }

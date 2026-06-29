@@ -1,6 +1,6 @@
 {
   "jwt": {
-    "secret": "test0123456789"
+    "secret": "Y-p5slztLZpMkafYwJg-WVMQwHx8iHEibCnJEepdGjw"
   },
   "sso": {
     "issuer": "myidsan",

@@ -1,5 +1,6 @@
 import { Ico } from './icons';
 import { ThemeDropdown } from './ui';
+import { sessionCanGet } from '../lib/helpers';
 
 // BrandLogo mirrors the mymatasan mark (line-art shield + eye + check) with the
 // rounded lowercase wordmark, so the control plane shares the product's identity.
@@ -25,9 +26,12 @@ export function BrandLogo({ size = 40, className = '' }) {
 // / lock actions — the same shell pattern mymatasan uses.
 export function TopBar({ activeTab, busy, onTab, onRefresh, onLogout, theme, onThemeChange, session }) {
   const tabs = [
+    // Dashboard is the always-available landing tab. The Mymatasan tab follows the
+    // same permission matrix as its APIs — a role needs GET on /api/nodes to see it.
     { id: 'dashboard', label: 'Dashboard', icon: 'monitor' },
-    { id: 'nodes', label: 'Mymatasan', icon: 'shield' },
-    { id: 'authorization', label: 'Authorization', icon: 'user' },
+    ...(sessionCanGet(session, '/api/nodes') ? [{ id: 'nodes', label: 'Mymatasan', icon: 'shield' }] : []),
+    // Users & Roles is the myseliasan RBAC admin surface — superadmin only.
+    ...(session?.isSuperadmin ? [{ id: 'access', label: 'Users & Roles', icon: 'user' }] : []),
   ];
   return (
     <header className="topbar">

@@ -25,12 +25,3 @@ type IUserGroupService interface {
 	Update(ctx context.Context, model entities.UserGroup) (uint64, error)
 	Delete(ctx context.Context, id uint64) (uint64, error)
 }
-
-// IUserRoleService interface
-type IUserRoleService interface {
-	Get(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.UserRole, uint64, error)
-	GetByGroup(ctx context.Context, groupId uint64) ([]*entities.UserRole, error)
-	Create(ctx context.Context, model entities.UserRole) (uint64, error)
-	Update(ctx context.Context, model entities.UserRole) (uint64, error)
-	Delete(ctx context.Context, id uint64) (uint64, error)
-}

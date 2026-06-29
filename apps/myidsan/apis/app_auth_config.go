@@ -15,7 +15,6 @@ import (
 
 type appAuthConfigApi struct {
 	auth middlewares.AuthMidware
-	rbac middlewares.RbacMidware
 	repo dbsql.IGenericRepo[entities.AppAuthConfig]
 }
 
@@ -55,14 +54,15 @@ type appAuthConfigView struct {
 	UpdatedAt              int64  `json:"updatedAt"`
 }
 
-func NewAppAuthConfigApi(router *mux.Router, auth middlewares.AuthMidware, rbac middlewares.RbacMidware, repo dbsql.IGenericRepo[entities.AppAuthConfig]) {
-	handler := &appAuthConfigApi{auth: auth, rbac: rbac, repo: repo}
+func NewAppAuthConfigApi(router *mux.Router, auth middlewares.AuthMidware, access *middlewares.AccessSessionMidware, repo dbsql.IGenericRepo[entities.AppAuthConfig]) {
+	handler := &appAuthConfigApi{auth: auth, repo: repo}
 	group := router.PathPrefix("/app-auth-config").Subrouter()
 	group.Use(auth.Middleware)
-	group.HandleFunc("", rbac.RbacHandler(handler.get)).Methods("GET")
-	group.HandleFunc("", rbac.RbacHandler(handler.post)).Methods("POST")
-	group.HandleFunc("", rbac.RbacHandler(handler.put)).Methods("PUT")
-	group.HandleFunc("/{id}", rbac.RbacHandler(handler.delete)).Methods("DELETE")
+	group.Use(access.Middleware)
+	group.HandleFunc("", handler.get).Methods("GET")
+	group.HandleFunc("", handler.post).Methods("POST")
+	group.HandleFunc("", handler.put).Methods("PUT")
+	group.HandleFunc("/{id}", handler.delete).Methods("DELETE")
 }
 
 func (m *appAuthConfigApi) get(w http.ResponseWriter, r *http.Request) {

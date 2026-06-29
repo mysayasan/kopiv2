@@ -33,8 +33,14 @@ type Dependencies struct {
 	ConfigPath  string
 	Db          dbsql.IDbCrud
 	Cache       cache.Store
-	Auth        *middlewares.AuthMidware
-	Rbac        *middlewares.RbacMidware
+	Auth *middlewares.AuthMidware
+	// Access is the shared accessrbac authorization middleware (single-app, no
+	// app_code). apphost builds it with a settable resolver; the app binds its own
+	// user store via deps.Access.SetResolver(...) during RegisterAppRoutes. AccessRoles
+	// / AccessPerms are the matching role + permission services (same DB).
+	Access      *middlewares.AccessSessionMidware
+	AccessRoles sharedservices.IAccessRoleService
+	AccessPerms sharedservices.IAccessPermissionService
 	AppRegistry sharedservices.IAppRegistryService
 	Logger      applog.Logger
 	Scheduler   *scheduler.Scheduler
@@ -44,27 +50,30 @@ type Dependencies struct {
 
 // SharedAPIConfig controls which shared route groups the host mounts for an app.
 type SharedAPIConfig struct {
-	Version         bool
-	ApiLog          bool
-	AppRegistry     bool
-	ApiEndpoint     bool
-	ApiEndpointRbac bool
-	FileStorage     bool
-	CacheService    bool
-	RuntimeLog      bool
+	Version      bool
+	ApiLog       bool
+	AppRegistry  bool
+	ApiEndpoint  bool
+	FileStorage  bool
+	CacheService bool
+	RuntimeLog   bool
+	// AccessRbac makes apphost seed the accessrbac roles (superadmin/viewer) + viewer
+	// defaults for this app and authorize the shared admin APIs with deps.Access.
+	// The app must include the accessrbac entities in Entities() and bind a resolver.
+	AccessRbac bool
 }
 
 // DefaultSharedAPIConfig enables the full shared management surface.
 func DefaultSharedAPIConfig() SharedAPIConfig {
 	return SharedAPIConfig{
-		Version:         true,
-		ApiLog:          true,
-		AppRegistry:     true,
-		ApiEndpoint:     true,
-		ApiEndpointRbac: true,
-		FileStorage:     true,
-		CacheService:    true,
-		RuntimeLog:      true,
+		Version:      true,
+		ApiLog:       true,
+		AppRegistry:  true,
+		ApiEndpoint:  true,
+		FileStorage:  true,
+		CacheService: true,
+		RuntimeLog:   true,
+		AccessRbac:   true,
 	}
 }
 

@@ -8,6 +8,8 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/myseliasan/services"
+	enumauth "github.com/mysayasan/kopiv2/domain/enums/auth"
+	"github.com/mysayasan/kopiv2/domain/models"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 )
@@ -30,7 +32,7 @@ type nodesApi struct {
 // Public route (called by a node, authenticated by a fleet-key assertion):
 //
 //	POST /nodes/self-dropped  — a node reports it unpaired itself
-func NewNodesApi(router *mux.Router, auth middlewares.AuthMidware, registry services.INodeRegistry) {
+func NewNodesApi(router *mux.Router, auth middlewares.AuthMidware, session *middlewares.AccessSessionMidware, registry services.INodeRegistry) {
 	h := &nodesApi{registry: registry}
 
 	// Public self-drop notice — node has no session, carries its own signature.
@@ -41,6 +43,8 @@ func NewNodesApi(router *mux.Router, auth middlewares.AuthMidware, registry serv
 
 	g := router.PathPrefix("/nodes").Subrouter()
 	g.Use(auth.Middleware)
+	// Axis-1 RBAC: viewers can list nodes (GET) but not adopt/release/rotate keys.
+	g.Use(session.Middleware)
 	g.HandleFunc("", h.list).Methods("GET")
 	g.HandleFunc("/scan", h.scan).Methods("POST")
 	g.HandleFunc("/adopt", h.adopt).Methods("POST")
@@ -84,6 +88,12 @@ func (a *nodesApi) adopt(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(w, r, &in); err != nil {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
 		return
+	}
+	// The adopting operator's role owns the node (default full access); recorded
+	// server-side from the session, never from the request body.
+	if claims, ok := r.Context().Value(enumauth.Claims).(*models.JwtCustomClaims); ok && claims != nil {
+		in.OwnerRoleId = claims.RoleId
+		in.OwnerUserId = claims.Id
 	}
 	node, err := a.registry.Adopt(r.Context(), in)
 	if err != nil {
