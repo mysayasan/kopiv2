@@ -239,7 +239,7 @@ The UI is fully localized into **English**, **Malay (Bahasa Melayu)**, **Chinese
 
 ### Shared footer
 
-An `AppFooter` component (`@shared`) renders at the bottom of the app shell, showing the app name, app version, shared-core version, short commit hash, and build date (fetched from `/api/version`), plus the KopiV2 product tagline. All version fields are optional; if `/api/version` is unreachable, only the app name and tagline are shown.
+An `AppFooter` component (`@shared`) renders at the bottom of the app shell, showing the app name, app version, shared-core version, short commit hash, and build date (fetched from `/api/version`), plus the r450k product tagline. All version fields are optional; if `/api/version` is unreachable, only the app name and tagline are shown.
 
 ### Theming
 

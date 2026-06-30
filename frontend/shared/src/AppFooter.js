@@ -4,7 +4,7 @@ import './styles/footer.css';
 
 // AppFooter is the shared page footer: the app name + version + shared-core
 // version + short commit + build date (read from a version endpoint), followed by
-// the KopiV2 product tagline. It is SELF-CONTAINED — its own `shared-footer-*`
+// the r450k product tagline. It is SELF-CONTAINED — its own `shared-footer-*`
 // classes + styles/footer.css (tokenized with --ui-*), so it follows each app's
 // theme and a UI redesign can't leave it unstyled. Version fields render only when
 // present, so a missing/unreachable endpoint degrades gracefully to just the name.

@@ -87,7 +87,7 @@ const en = {
   'foot.built': 'built {date}',
   'foot.core': 'core v{v}',
   'foot.commit': 'commit',
-  'foot.tagline': 'A KopiV2 product — showing how human engineering and AI complete each other.',
+  'foot.tagline': 'An r450k product — showing how human engineering and AI complete each other.',
 };
 
 // Malay (Bahasa Melayu) — Malaysia's national language.
@@ -161,7 +161,7 @@ const ms = {
   'foot.built': 'dibina {date}',
   'foot.core': 'teras v{v}',
   'foot.commit': 'commit',
-  'foot.tagline': 'Produk KopiV2 — menunjukkan bagaimana kejuruteraan manusia dan AI saling melengkapi.',
+  'foot.tagline': 'Produk r450k — menunjukkan bagaimana kejuruteraan manusia dan AI saling melengkapi.',
 };
 
 // Chinese (Simplified).
@@ -235,7 +235,7 @@ const zh = {
   'foot.built': '构建于 {date}',
   'foot.core': '核心 v{v}',
   'foot.commit': '提交',
-  'foot.tagline': 'KopiV2 产品 — 展示人类工程与 AI 如何相辅相成。',
+  'foot.tagline': 'r450k 产品 — 展示人类工程与 AI 如何相辅相成。',
 };
 
 // Tamil.
@@ -309,7 +309,7 @@ const ta = {
   'foot.built': 'கட்டப்பட்டது {date}',
   'foot.core': 'மையம் v{v}',
   'foot.commit': 'கமிட்',
-  'foot.tagline': 'KopiV2 தயாரிப்பு — மனித பொறியியலும் AI யும் ஒருவரையொருவர் எவ்வாறு நிறைவு செய்கின்றன என்பதைக் காட்டுகிறது.',
+  'foot.tagline': 'r450k தயாரிப்பு — மனித பொறியியலும் AI யும் ஒருவரையொருவர் எவ்வாறு நிறைவு செய்கின்றன என்பதைக் காட்டுகிறது.',
 };
 
 const DICTS = { en, ms, zh, ta };
