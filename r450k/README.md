@@ -103,10 +103,11 @@ To make `www` and the apex agree, add a redirect (Cloudflare **Bulk Redirects** 
 
 ## Screenshots
 
-The **Showcase** section renders styled SVG mockups of the mymatasan UI by default. To use real
-captures, drop PNG/WebP files into [`public/screenshots/`](public/screenshots/) and uncomment the
-matching `src:` lines in `showcase.shots` (see that folder's README). Any image that fails to load
-falls back to its mockup, so the section never breaks.
+The **Showcase** section displays real mymatasan UI captures from
+[`public/screenshots/`](public/screenshots/) (`live-view.webp`, `rule-editor.webp`,
+`notifications.webp`). Any image that fails to load falls back to its SVG mockup, so the section
+never breaks. To replace or add captures, see the instructions and ffmpeg resize/convert command in
+[`public/screenshots/README.md`](public/screenshots/README.md).
 
 ### Social share image
 

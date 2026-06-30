@@ -107,23 +107,23 @@ export const how = {
 
 export const showcase = {
   title: 'A console built for operators, not just admins.',
-  lead: 'Live multi-camera grids, two-axis detection rules drawn on the real frame, and one unified alert feed — all in the browser. Drop real captures into public/screenshots/ to replace these mockups.',
+  lead: 'Live multi-camera grids, two-axis detection rules drawn on the real frame, and one unified alert feed — all in the browser.',
   shots: [
     {
       key: 'live',
-      // src: '/screenshots/live-view.png',
+      src: '/screenshots/live-view.webp',
       alt: 'Paged live-view grid with on-frame AI detection boxes',
       url: 'mymatasan.local/live',
     },
     {
       key: 'rules',
-      // src: '/screenshots/rule-editor.png',
+      src: '/screenshots/rule-editor.webp',
       alt: 'Two-axis rule editor with a detection zone drawn on the live frame',
       url: 'mymatasan.local/vision',
     },
     {
       key: 'notifications',
-      // src: '/screenshots/notifications.png',
+      src: '/screenshots/notifications.webp',
       alt: 'Unified notification feed with snapshots and acknowledge actions',
       url: 'mymatasan.local/notifications',
     },
