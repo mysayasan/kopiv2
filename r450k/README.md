@@ -49,12 +49,19 @@ One-time setup in the Cloudflare dashboard:
    | Setting | Value |
    | --- | --- |
    | Production branch | `main` |
-   | Framework preset | `Vite` (or `None`) |
+   | **Framework preset** | **`None`** |
    | **Root directory** | `r450k` |
    | Build command | `npm run build` |
    | Build output directory | `dist` |
 4. (Optional) Environment variable `NODE_VERSION = 20`.
 5. **Save and Deploy.**
+
+> **Use `None`, not the `Vite` preset.** Cloudflare's `Vite` framework preset injects
+> `@cloudflare/vite-plugin` (its full-stack *Workers* integration) into the build. This site is a
+> plain static SPA + Pages Functions, so that plugin is wrong for it and also fails on the build
+> image's Node version (`SyntaxError: ... 'node:module' does not provide an export named
+> 'registerHooks'`). With preset `None`, Pages just runs `npm run build` (plain `vite build`) and
+> serves `dist/`, and the `functions/` directory is compiled by Pages as usual.
 
 After the first deploy, every push to `main` that touches `r450k/` rebuilds and publishes
 automatically. Pull requests get preview deployments at unique URLs.
