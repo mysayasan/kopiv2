@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Ico } from './icons';
+import { useT } from '@shared/i18n';
 import { FormBusyOverlay, InfoButton, Tracks, LayoutDropdown } from './ui';
 import { defaultDeviceCredentials } from '../lib/constants';
 import {fieldValue,formatTimestamp,cameraTitle,cameraDescription,orderedSavedCameras,sameCamera,streamOptionLabel,layoutCapacity,layoutColumns,layoutRows } from '../lib/helpers';
@@ -12,50 +13,52 @@ import { CameraRecordingConfig, CameraStreamConfig } from './recording';
 function healthPillProps(status) {
   switch ((status || '').toLowerCase()) {
     case 'online':
-      return { cls: 'online', label: 'Online' };
+      return { cls: 'online', labelKey: 'cam.online' };
     case 'offline':
-      return { cls: 'offline', label: 'Offline' };
+      return { cls: 'offline', labelKey: 'cam.offline' };
     default:
-      return { cls: 'unknown', label: 'Unknown' };
+      return { cls: 'unknown', labelKey: 'cam.unknown' };
   }
 }
 
 // HealthPill shows the camera's network reachability as decided by the health monitor.
 export function HealthPill({ device }) {
-  const { cls, label } = healthPillProps(device.healthStatus);
+  const t = useT();
+  const { cls, labelKey } = healthPillProps(device.healthStatus);
   const checked = device.lastHealthCheckAt ? formatTimestamp(device.lastHealthCheckAt) : '';
   return (
-    <strong className={`status-pill ${cls}`} title={checked ? `Last checked ${checked}` : 'Not checked yet'}>
-      {label}
+    <strong className={`status-pill ${cls}`} title={checked ? t('cam.lastChecked', { time: checked }) : t('cam.notChecked')}>
+      {t(labelKey)}
     </strong>
   );
 }
 
 export function DeviceMeta({ device }) {
+  const t = useT();
   return (
     <dl className="meta-grid">
       <div>
-        <dt>Host</dt>
+        <dt>{t('cam.host')}</dt>
         <dd>{fieldValue(device.host)}</dd>
       </div>
       <div>
-        <dt>Port</dt>
+        <dt>{t('cam.port')}</dt>
         <dd>{fieldValue(device.port)}</dd>
       </div>
       <div>
-        <dt>Model</dt>
+        <dt>{t('cam.model')}</dt>
         <dd>{fieldValue(device.model)}</dd>
       </div>
       <div>
-        <dt>Serial</dt>
+        <dt>{t('cam.serial')}</dt>
         <dd>{fieldValue(device.serialNumber)}</dd>
       </div>
       <div>
-        <dt>Health</dt>
-        <dd>{healthPillProps(device.healthStatus).label}</dd>
+        <dt>{t('cam.health')}</dt>
+        <dd>{t(healthPillProps(device.healthStatus).labelKey)}</dd>
       </div>
       <div>
-        <dt>Last checked</dt>
+        <dt>{t('cam.lastCheckedLabel')}</dt>
         <dd>{device.lastHealthCheckAt ? formatTimestamp(device.lastHealthCheckAt) : '-'}</dd>
       </div>
     </dl>
@@ -71,53 +74,54 @@ export function DeviceDescription({ device }) {
 }
 
 export function OnvifDetails({ device }) {
+  const t = useT();
   return (
     <section className="capability-panel">
       <header>
-        <h4>ONVIF Information</h4>
+        <h4>{t('cam.onvifInfo')}</h4>
         <strong className={`status-pill ${device.ptzSupported ? 'online' : 'unknown'}`}>
-          PTZ {device.ptzSupported ? 'supported' : 'not detected'}
+          {device.ptzSupported ? t('cam.ptzSupported') : t('cam.ptzNotDetected')}
         </strong>
       </header>
       <dl className="capability-grid">
         <div>
-          <dt>Manufacturer</dt>
+          <dt>{t('cam.manufacturer')}</dt>
           <dd>{fieldValue(device.manufacturer)}</dd>
         </div>
         <div>
-          <dt>Firmware</dt>
+          <dt>{t('cam.firmware')}</dt>
           <dd>{fieldValue(device.firmwareVersion)}</dd>
         </div>
         <div>
-          <dt>Hardware ID</dt>
+          <dt>{t('cam.hardwareId')}</dt>
           <dd>{fieldValue(device.hardwareId)}</dd>
         </div>
         <div>
-          <dt>Media Service</dt>
+          <dt>{t('cam.mediaService')}</dt>
           <dd>{fieldValue(device.mediaXAddr)}</dd>
         </div>
         <div>
-          <dt>PTZ Service</dt>
+          <dt>{t('cam.ptzService')}</dt>
           <dd>{fieldValue(device.ptzXAddr)}</dd>
         </div>
         <div>
-          <dt>Profile Token</dt>
+          <dt>{t('cam.profileToken')}</dt>
           <dd>{fieldValue(device.profileToken)}</dd>
         </div>
         <div>
-          <dt>Snapshot URI</dt>
+          <dt>{t('cam.snapshotUri')}</dt>
           <dd>{fieldValue(device.snapshotUri)}</dd>
         </div>
         <div>
-          <dt>RTSP Transport</dt>
+          <dt>{t('cam.rtspTransport')}</dt>
           <dd>{fieldValue(device.rtspTransport)}</dd>
         </div>
         <div>
-          <dt>Types</dt>
+          <dt>{t('cam.types')}</dt>
           <dd>{fieldValue(device.types)}</dd>
         </div>
         <div>
-          <dt>Scopes</dt>
+          <dt>{t('cam.scopes')}</dt>
           <dd>{fieldValue(device.scopes)}</dd>
         </div>
       </dl>
@@ -143,6 +147,7 @@ export function ViewsTab({
   onPTZStop,
   onOpenAlerts,
 }) {
+  const t = useT();
   const tileCount = layoutCapacity(layout);
   const columns = layoutColumns(layout);
   const rows = layoutRows(layout);
@@ -228,22 +233,22 @@ export function ViewsTab({
         <div className="segmented">
           <LayoutDropdown layout={layout} onLayout={onLayout} />
           {pageCount > 1 ? (
-            <div className="view-pager" role="group" aria-label="Live view pages">
-              <button type="button" className="quiet" onClick={() => setPage(safePage - 1)} disabled={safePage <= 0} aria-label="Previous page">
+            <div className="view-pager" role="group" aria-label={t('cam.liveViewPages')}>
+              <button type="button" className="quiet" onClick={() => setPage(safePage - 1)} disabled={safePage <= 0} aria-label={t('cam.prevPage')}>
                 <Ico n="arr-left" sz={14} />
               </button>
               <span className="view-pager-label">{safePage + 1} / {pageCount}</span>
-              <button type="button" className="quiet" onClick={() => setPage(safePage + 1)} disabled={safePage >= pageCount - 1} aria-label="Next page">
+              <button type="button" className="quiet" onClick={() => setPage(safePage + 1)} disabled={safePage >= pageCount - 1} aria-label={t('cam.nextPage')}>
                 <Ico n="arr-right" sz={14} />
               </button>
             </div>
           ) : null}
-          <button type="button" className="quiet" onClick={toggleFullscreen} title="Fullscreen (Esc to exit)">
-            <span className="btn-icon"><Ico n="maximize" /> Fullscreen</span>
+          <button type="button" className="quiet" onClick={toggleFullscreen} title={t('cam.fullscreenTitle')}>
+            <span className="btn-icon"><Ico n="maximize" /> {t('cam.fullscreen')}</span>
           </button>
         </div>
         <div className="add-strip">
-          {available.length === 0 ? <span>No saved cameras available</span> : null}
+          {available.length === 0 ? <span>{t('cam.noCamerasAvailable')}</span> : null}
           {available.map((device) => (
             <button type="button" className="quiet" key={device.id} disabled={busy} onClick={() => onAdd(device)}>
               <span className="btn-icon"><Ico n="plus" /> {cameraTitle(device)}</span>
@@ -298,7 +303,7 @@ export function ViewsTab({
             {tile ? (
               <>
                 <div className="tile-header">
-                  <span className="drag-handle" title="Drag to reorder" aria-label="Drag to reorder">
+                  <span className="drag-handle" title={t('cam.dragReorder')} aria-label={t('cam.dragReorder')}>
                     ::
                   </span>
                   <strong>{tile.title}</strong>
@@ -307,21 +312,21 @@ export function ViewsTab({
                       type="button"
                       className="tile-alert-pill"
                       onClick={() => onOpenAlerts(tile.id)}
-                      aria-label={`${tileAlerts.length} AI alert${tileAlerts.length === 1 ? '' : 's'} for ${tile.title}`}
+                      aria-label={t('cam.aiAlertsFor', { n: tileAlerts.length, title: tile.title })}
                     >
-                      AI {tileAlerts.length}
+                      {t('cam.aiCount', { n: tileAlerts.length })}
                     </button>
                   ) : null}
                   <button
                     type="button"
                     className="icon-button"
                     onClick={() => toggleMaximize(tile.id)}
-                    aria-label={maximizedId === tile.id ? 'Restore tile' : 'Maximize tile'}
-                    title={maximizedId === tile.id ? 'Restore' : 'Maximize'}
+                    aria-label={maximizedId === tile.id ? t('cam.restoreTile') : t('cam.maximizeTile')}
+                    title={maximizedId === tile.id ? t('cam.restore') : t('cam.maximize')}
                   >
                     <Ico n={maximizedId === tile.id ? 'minimize' : 'maximize'} sz={12} />
                   </button>
-                  <button type="button" className="icon-button" onClick={() => onRemove(tile.id)} aria-label="Remove live view">
+                  <button type="button" className="icon-button" onClick={() => onRemove(tile.id)} aria-label={t('cam.removeLiveView')}>
                     <Ico n="x" sz={12} />
                   </button>
                 </div>
@@ -338,7 +343,7 @@ export function ViewsTab({
                 />
                 {latestAlert ? (
                   <button type="button" className="tile-ai-banner" onClick={() => onOpenAlerts(tile.id)}>
-                    <strong>{latestAlert.label || latestAlert.detectionType || 'AI event'}</strong>
+                    <strong>{latestAlert.label || latestAlert.detectionType || t('cam.aiEvent')}</strong>
                     <span>{formatTimestamp(latestAlert.createdAt)}</span>
                   </button>
                 ) : null}
@@ -354,7 +359,7 @@ export function ViewsTab({
                 ) : null}
               </>
             ) : (
-              <div className="empty-tile">Empty</div>
+              <div className="empty-tile">{t('cam.empty')}</div>
             )}
           </article>
           );
@@ -365,6 +370,7 @@ export function ViewsTab({
 }
 
 export function DiscoveredDevices({ devices, saved, busy, drafts, onDraft, onSave }) {
+  const t = useT();
   const [savedExpanded, setSavedExpanded] = useState(false);
   const notSavedDevices = devices.filter((device) => !saved.some((savedDevice) => sameCamera(device, savedDevice)));
   const savedDevices = devices.filter((device) => saved.some((savedDevice) => sameCamera(device, savedDevice)));
@@ -384,7 +390,7 @@ export function DiscoveredDevices({ devices, saved, busy, drafts, onDraft, onSav
             <p>{device.xAddr}</p>
           </div>
           <button type="button" onClick={() => onSave(device, draft)} disabled={busy}>
-            <span className="btn-icon"><Ico n="save" /> Save</span>
+            <span className="btn-icon"><Ico n="save" /> {t('common.save')}</span>
           </button>
         </div>
         <DeviceMeta device={device} />
@@ -394,13 +400,13 @@ export function DiscoveredDevices({ devices, saved, busy, drafts, onDraft, onSav
               <span key={m} className="discovery-method-badge">{m}</span>
             ))}
             {device._openPorts && device._openPorts.length > 0 ? (
-              <span className="discovery-ports">ports: {device._openPorts.join(', ')}</span>
+              <span className="discovery-ports">{t('cam.ports', { ports: device._openPorts.join(', ') })}</span>
             ) : null}
           </div>
         ) : null}
         <div className="metadata-row">
           <label>
-            Camera name
+            {t('cam.cameraName')}
             <input
               value={draft.name}
               onChange={(event) => onDraft(key, { ...draft, name: event.target.value })}
@@ -408,7 +414,7 @@ export function DiscoveredDevices({ devices, saved, busy, drafts, onDraft, onSav
             />
           </label>
           <label>
-            Description
+            {t('common.description')}
             <input
               value={draft.description}
               onChange={(event) => onDraft(key, { ...draft, description: event.target.value })}
@@ -429,7 +435,7 @@ export function DiscoveredDevices({ devices, saved, busy, drafts, onDraft, onSav
             <h3>{cameraTitle(device)}</h3>
             <p>{device.xAddr}</p>
           </div>
-          <strong className="status-pill saved">Saved</strong>
+          <strong className="status-pill saved">{t('cam.saved')}</strong>
         </div>
         <DeviceMeta device={device} />
       </article>
@@ -439,15 +445,15 @@ export function DiscoveredDevices({ devices, saved, busy, drafts, onDraft, onSav
   return (
     <section className="device-section">
       <header>
-        <h2>Discovered</h2>
+        <h2>{t('cam.discovered')}</h2>
         <span>{devices.length}</span>
       </header>
       <div className="discovery-groups">
-        {devices.length === 0 ? <p className="empty">No discovered devices.</p> : null}
+        {devices.length === 0 ? <p className="empty">{t('cam.noDiscovered')}</p> : null}
         {notSavedDevices.length > 0 ? (
           <section className="discovery-group">
             <header>
-              <h3>Not Saved</h3>
+              <h3>{t('cam.notSaved')}</h3>
               <span className="discovery-group-count">{notSavedDevices.length}</span>
             </header>
             <div className="device-list compact">{notSavedDevices.map(renderUnsaved)}</div>
@@ -456,7 +462,7 @@ export function DiscoveredDevices({ devices, saved, busy, drafts, onDraft, onSav
         {savedDevices.length > 0 ? (
           <section className="discovery-group">
             <header>
-              <h3>Saved</h3>
+              <h3>{t('cam.saved')}</h3>
               <div className="discovery-group-actions">
                 <span className="discovery-group-count">{savedDevices.length}</span>
                 <button
@@ -465,7 +471,7 @@ export function DiscoveredDevices({ devices, saved, busy, drafts, onDraft, onSav
                   aria-expanded={savedExpanded}
                   onClick={() => setSavedExpanded((current) => !current)}
                 >
-                  {savedExpanded ? 'Collapse' : 'Expand'}
+                  {savedExpanded ? t('cam.collapse') : t('cam.expand')}
                 </button>
               </div>
             </header>
@@ -507,6 +513,7 @@ export function SavedCameraRow({
   authHeader,
   canManage = true,
 }) {
+  const t = useT();
   const localDetails = detailDraft || { name: device.name || '', description: device.description || '' };
   const localCred = credentials || { username: device.username || '', password: '' };
   const savedDetails = { name: device.name || '', description: device.description || '' };
@@ -528,25 +535,25 @@ export function SavedCameraRow({
         </div>
         <div className="device-pill-group">
           <HealthPill device={device} />
-          <strong className={`status-pill ${device.rtspStatus || 'unknown'}`}>{device.rtspStatus || 'not ready'}</strong>
+          <strong className={`status-pill ${device.rtspStatus || 'unknown'}`}>{device.rtspStatus || t('cam.notReady')}</strong>
         </div>
       </div>
 
-      <nav className="saved-detail-tabs" aria-label="Saved camera settings">
+      <nav className="saved-detail-tabs" aria-label={t('cam.settingsAria')}>
         {[
-          ['details', 'Details'],
-          ['access', 'Access'],
-          ['stream', 'Stream'],
-          ['recording', 'Recording'],
-          ['onvif', 'ONVIF'],
-        ].map(([id, label]) => (
+          ['details', 'cam.tabDetails'],
+          ['access', 'cam.tabAccess'],
+          ['stream', 'cam.tabStream'],
+          ['recording', 'cam.tabRecording'],
+          ['onvif', 'cam.tabOnvif'],
+        ].map(([id, labelKey]) => (
           <button
             type="button"
             key={id}
             className={activePanel === id ? 'active' : 'quiet'}
             onClick={() => onPanelChange(id)}
           >
-            {label}
+            {t(labelKey)}
           </button>
         ))}
       </nav>
@@ -565,7 +572,7 @@ export function SavedCameraRow({
             <FormBusyOverlay busy={busy} />
             <div className="metadata-row">
               <label>
-                Camera name
+                {t('cam.cameraName')}
                 <input
                   value={localDetails.name}
                   onChange={(event) => onDetailDraft(device.id, { ...localDetails, name: event.target.value })}
@@ -573,7 +580,7 @@ export function SavedCameraRow({
                 />
               </label>
               <label>
-                Description
+                {t('common.description')}
                 <input
                   value={localDetails.description}
                   onChange={(event) => onDetailDraft(device.id, { ...localDetails, description: event.target.value })}
@@ -583,13 +590,13 @@ export function SavedCameraRow({
             </div>
             <div className="action-row">
               <button type="submit" className="quiet" disabled={busy || !detailsHaveChanges}>
-                <span className="btn-icon"><Ico n="save" /> Save Details</span>
+                <span className="btn-icon"><Ico n="save" /> {t('cam.saveDetails')}</span>
               </button>
               <button type="button" className="quiet" onClick={() => onDiscardDetails(device.id)} disabled={busy || !detailsHaveChanges}>
-                <span className="btn-icon"><Ico n="undo" /> Discard</span>
+                <span className="btn-icon"><Ico n="undo" /> {t('common.discard')}</span>
               </button>
               <button type="button" className="quiet danger-text" onClick={() => onRemove(device.id)} disabled={busy}>
-                <span className="btn-icon"><Ico n="trash" /> Remove</span>
+                <span className="btn-icon"><Ico n="trash" /> {t('common.remove')}</span>
               </button>
             </div>
           </form>
@@ -601,7 +608,7 @@ export function SavedCameraRow({
           <FormBusyOverlay busy={busy} />
           <div className="credential-row">
             <label>
-              Camera username
+              {t('cam.cameraUsername')}
               <input
                 value={localCred.username}
                 onChange={(event) => onCredential(device.id, { ...localCred, username: event.target.value })}
@@ -609,38 +616,38 @@ export function SavedCameraRow({
               />
             </label>
             <label>
-              Camera password
+              {t('cam.cameraPassword')}
               <PasswordField
                 value={localCred.password}
                 onChange={(password) => onCredential(device.id, { ...localCred, password })}
                 autoComplete="off"
-                placeholder={device.hasPassword ? 'Saved password kept' : ''}
+                placeholder={device.hasPassword ? t('cam.savedPwKept') : ''}
               />
               <span className={device.hasPassword ? 'field-hint good' : 'field-hint'}>
-                {device.hasPassword ? 'Password saved' : 'No saved password'}
+                {device.hasPassword ? t('cam.pwSaved') : t('cam.noPwSaved')}
               </span>
             </label>
           </div>
           <div className="action-row">
             <button type="button" className="quiet" onClick={() => onSaveCredentials(device)} disabled={busy || !credHaveChanges}>
-              <span className="btn-icon"><Ico n="shield" /> Save Credentials</span>
+              <span className="btn-icon"><Ico n="shield" /> {t('cam.saveCredentials')}</span>
             </button>
             <button type="button" className="quiet" onClick={() => onCredential(device.id, savedCred)} disabled={busy || !credHaveChanges}>
-              <span className="btn-icon"><Ico n="undo" /> Discard</span>
+              <span className="btn-icon"><Ico n="undo" /> {t('common.discard')}</span>
             </button>
           </div>
           <div className="credential-row">
             <label>
-              ONVIF user
+              {t('cam.onvifUser')}
               <input
                 value={localPasswordDraft.targetUsername}
                 onChange={(event) => onPasswordDraft(device.id, { ...localPasswordDraft, targetUsername: event.target.value })}
-                placeholder={device.username || 'camera user'}
+                placeholder={device.username || t('cam.cameraUser')}
                 autoComplete="off"
               />
             </label>
             <label>
-              New ONVIF password
+              {t('cam.newOnvifPassword')}
               <PasswordField
                 value={localPasswordDraft.newPassword}
                 onChange={(newPassword) => onPasswordDraft(device.id, { ...localPasswordDraft, newPassword })}
@@ -655,7 +662,7 @@ export function SavedCameraRow({
               onClick={() => onChangePassword(device)}
               disabled={busy || !localPasswordDraft.newPassword}
             >
-              <span className="btn-icon"><Ico n="key" /> Change Camera Password</span>
+              <span className="btn-icon"><Ico n="key" /> {t('cam.changeCameraPassword')}</span>
             </button>
           </div>
         </section>
@@ -665,15 +672,15 @@ export function SavedCameraRow({
         <section className="saved-tab-panel">
           <dl className="stream-meta">
             <div>
-              <dt>Profile</dt>
+              <dt>{t('cam.profile')}</dt>
               <dd>{fieldValue(device.profileToken)}</dd>
             </div>
             <div>
-              <dt>RTSP URI</dt>
+              <dt>{t('cam.rtspUri')}</dt>
               <dd>{fieldValue(device.rtspUrl)}</dd>
             </div>
             <div>
-              <dt>Tracks</dt>
+              <dt>{t('cam.tracks')}</dt>
               <dd>
                 <Tracks value={device.rtspTracks} />
               </dd>
@@ -682,7 +689,7 @@ export function SavedCameraRow({
           {options.length > 0 ? (
             <div className="stream-option-panel">
               <label>
-                ONVIF stream
+                {t('cam.onvifStream')}
                 <select value={selectedToken} onChange={(event) => onStreamToken(device.id, event.target.value)}>
                   {options.map((option) => (
                     <option key={option.profileToken} value={option.profileToken}>
@@ -693,22 +700,22 @@ export function SavedCameraRow({
               </label>
               <div className="stream-option-uri">{selectedOption ? selectedOption.rtspUrl : '-'}</div>
               <button type="button" className="quiet" onClick={() => onSelectStream(device, selectedOption)} disabled={busy || !selectedOption}>
-                Use Selected Stream
+                {t('cam.useSelectedStream')}
               </button>
             </div>
           ) : null}
           <div className="stream-action-flow">
             <button type="button" onClick={() => onResolve(device)} disabled={busy}>
-              <span className="btn-icon"><Ico n="search" /> Find Streams</span>
+              <span className="btn-icon"><Ico n="search" /> {t('cam.findStreams')}</span>
             </button>
             <button type="button" className="quiet" onClick={() => onTest(device)} disabled={busy || !streamReady}>
-              <span className="btn-icon"><Ico n="play" /> Test RTSP</span>
+              <span className="btn-icon"><Ico n="play" /> {t('cam.testRtsp')}</span>
             </button>
             <button type="button" className="quiet" onClick={() => onPreview(device)} disabled={busy}>
-              <span className="btn-icon"><Ico n="eye" /> Live Preview</span>
+              <span className="btn-icon"><Ico n="eye" /> {t('cam.livePreview')}</span>
             </button>
             <button type="button" className="quiet" onClick={() => onAdd(device)} disabled={busy}>
-              <span className="btn-icon"><Ico n="plus" /> Add to Live Views</span>
+              <span className="btn-icon"><Ico n="plus" /> {t('cam.addToLiveViews')}</span>
             </button>
           </div>
           <hr className="saved-tab-divider" />
@@ -745,15 +752,16 @@ export function SavedCameraRow({
 }
 
 export function SavedDeviceNav({ devices, selectedId, onSelect }) {
+  const t = useT();
   const orderedDevices = useMemo(() => orderedSavedCameras(devices), [devices]);
   return (
     <aside className="saved-sidebar">
       <header>
-        <h2>Saved Cameras</h2>
+        <h2>{t('cam.savedCameras')}</h2>
         <span>{devices.length}</span>
       </header>
-      <nav className="saved-device-nav" aria-label="Saved cameras">
-        {devices.length === 0 ? <p className="empty">No saved cameras.</p> : null}
+      <nav className="saved-device-nav" aria-label={t('cam.savedCameras')}>
+        {devices.length === 0 ? <p className="empty">{t('cam.noSavedCameras')}</p> : null}
         {orderedDevices.map((device) => (
           <button
             type="button"
@@ -762,7 +770,7 @@ export function SavedDeviceNav({ devices, selectedId, onSelect }) {
             onClick={() => onSelect(device.id)}
           >
             <strong>{cameraTitle(device)}</strong>
-            <span>{device.host || device.xAddr || 'Camera'}</span>
+            <span>{device.host || device.xAddr || t('cam.cameraFallback')}</span>
           </button>
         ))}
       </nav>
@@ -772,6 +780,7 @@ export function SavedDeviceNav({ devices, selectedId, onSelect }) {
 
 // Circular D-pad PTZ controller. Renders as an inline SVG; parent is responsible for positioning.
 export function PTZRing({ busy, size, onMove, onStop }) {
+  const t = useT();
   const sz = size || 140;
   // All path geometry is authored for a 200×200 viewBox then scaled by SVG.
   const ro = 94;                    // outer ring radius
@@ -815,19 +824,19 @@ export function PTZRing({ busy, size, onMove, onStop }) {
       width={sz}
       height={sz}
       className={`ptz-ring${busy ? ' ptz-ring-busy' : ''}`}
-      aria-label="PTZ controls"
+      aria-label={t('cam.ptzControls')}
     >
       {/* Interactive sectors — bottom layer so hover fill stays under structural lines */}
-      {sector(UP,    'PTZ Up',    'up')}
-      {sector(RIGHT, 'PTZ Right', 'right')}
-      {sector(DOWN,  'PTZ Down',  'down')}
-      {sector(LEFT,  'PTZ Left',  'left')}
+      {sector(UP,    t('cam.ptzUp'),    'up')}
+      {sector(RIGHT, t('cam.ptzRight'), 'right')}
+      {sector(DOWN,  t('cam.ptzDown'),  'down')}
+      {sector(LEFT,  t('cam.ptzLeft'),  'left')}
       {/* Center stop */}
       <circle
         cx={cx} cy={cy} r={ri}
         className={cls}
         role="button"
-        aria-label="PTZ Stop"
+        aria-label={t('cam.ptzStop')}
         tabIndex={busy ? -1 : 0}
         onClick={busy ? undefined : onStop}
         onKeyDown={(e) => !busy && e.key === 'Enter' && onStop()}
@@ -852,6 +861,7 @@ export function PTZRing({ busy, size, onMove, onStop }) {
 }
 
 export function CameraPreviewPanel({ preview, busy, authHeader, streamConfig, onClose, onAdd, onPTZMove, onPTZStop }) {
+  const t = useT();
   if (!preview) {
     return null;
   }
@@ -860,10 +870,10 @@ export function CameraPreviewPanel({ preview, busy, authHeader, streamConfig, on
       <header>
         <div>
           <h2>{preview.title}</h2>
-          <p>{preview.ptzSupported ? 'PTZ controls available' : 'Live preview'}</p>
+          <p>{preview.ptzSupported ? t('cam.ptzAvailable') : t('cam.livePreviewSub')}</p>
         </div>
         <button type="button" className="quiet" onClick={onClose}>
-          Close
+          {t('common.close')}
         </button>
       </header>
       <div className="preview-viewport">
@@ -890,7 +900,7 @@ export function CameraPreviewPanel({ preview, busy, authHeader, streamConfig, on
       <div className="preview-actions">
         <div className="action-row">
           <button type="button" className="quiet" onClick={() => onAdd(preview.device)} disabled={busy || !preview.device}>
-            <span className="btn-icon"><Ico n="plus" /> Add to Live Views</span>
+            <span className="btn-icon"><Ico n="plus" /> {t('cam.addToLiveViews')}</span>
           </button>
         </div>
       </div>
@@ -945,6 +955,7 @@ export function CamerasTab({
   onMessage,
   canManage = true,
 }) {
+  const t = useT();
   const [selectedSavedId, setSelectedSavedId] = useState(null);
   const [scanProtocol, setScanProtocol] = useState('all');
   // Held at this level (not inside SavedCameraRow, which remounts per camera) so the
@@ -971,23 +982,21 @@ export function CamerasTab({
   return (
     <section className="workspace">
       <div className="toolbar">
-        <nav className="secondary-tabs" aria-label="Cameras">
+        <nav className="secondary-tabs" aria-label={t('cam.camerasAria')}>
           <button type="button" className={cameraNav === 'probe' ? 'active' : 'quiet'} onClick={() => onCameraNav('probe')}>
-            <span className="btn-icon"><Ico n="search" /> Probe</span>
+            <span className="btn-icon"><Ico n="search" /> {t('cam.probe')}</span>
           </button>
           <button type="button" className={cameraNav === 'saved' ? 'active' : 'quiet'} onClick={() => onCameraNav('saved')}>
-            <span className="btn-icon"><Ico n="camera" /> Saved</span>
+            <span className="btn-icon"><Ico n="camera" /> {t('cam.saved')}</span>
           </button>
         </nav>
       </div>
 
       <>
           <div className="camera-tab-header">
-            <h2 className="section-title">{cameraNav === 'probe' ? 'Discover Cameras' : 'Saved Cameras'}</h2>
+            <h2 className="section-title">{cameraNav === 'probe' ? t('cam.discoverCameras') : t('cam.savedCameras')}</h2>
             <p className="section-subtitle">
-              {cameraNav === 'probe'
-                ? 'Scan the local network or probe a specific address to find ONVIF/RTSP cameras, then save them.'
-                : 'Manage your saved cameras — edit details, set access credentials, resolve the stream, and view ONVIF info.'}
+              {cameraNav === 'probe' ? t('cam.probeSubtitle') : t('cam.savedSubtitle')}
             </p>
           </div>
           {cameraNav === 'probe' ? (
@@ -995,24 +1004,24 @@ export function CamerasTab({
           <div className="probe-panel">
             <div className="scan-row">
               <label>
-                Scan timeout
+                {t('cam.scanTimeout')}
                 <input value={timeoutMs} onChange={(event) => onTimeout(event.target.value)} inputMode="numeric" />
               </label>
               <label className="scan-protocol-label">
-                Protocol
+                {t('cam.protocol')}
                 <select value={scanProtocol} onChange={(e) => setScanProtocol(e.target.value)} className="scan-protocol-select">
-                  <option value="all">All Methods</option>
+                  <option value="all">{t('cam.allMethods')}</option>
                   <option value="onvif">ONVIF</option>
-                  <option value="ssdp">SSDP / UPnP</option>
-                  <option value="mdns">mDNS / Bonjour</option>
-                  <option value="sadp">Hikvision SADP</option>
-                  <option value="portscan">Port Scan</option>
+                  <option value="ssdp">{t('cam.ssdp')}</option>
+                  <option value="mdns">{t('cam.mdns')}</option>
+                  <option value="sadp">{t('cam.sadp')}</option>
+                  <option value="portscan">{t('cam.portScan')}</option>
                 </select>
               </label>
               <label className="scan-protocol-label">
                 <span className="scan-label-row">
-                  Subnet
-                  <InfoButton text={'Enter a subnet in CIDR notation to scan a specific network range.\nExamples:\n  192.168.1.0/24  — scan 192.168.1.1 to .254\n  10.10.20.0/24   — scan a VLAN\nLeave empty to auto-detect your local subnet.'} />
+                  {t('cam.subnet')}
+                  <InfoButton text={t('cam.subnetInfo')} />
                 </span>
                 <input
                   value={scanCIDR}
@@ -1022,12 +1031,12 @@ export function CamerasTab({
                 />
               </label>
               <button type="button" onClick={() => onScan(scanProtocol, scanCIDR)} disabled={busy}>
-                <span className="btn-icon"><Ico n="wifi" /> Scan</span>
+                <span className="btn-icon"><Ico n="wifi" /> {t('cam.scan')}</span>
               </button>
             </div>
             <form className="probe-row" onSubmit={onProbe}>
               <label>
-                Manual address
+                {t('cam.manualAddress')}
                 <input
                   value={manualAddress}
                   onChange={(event) => onManualAddress(event.target.value)}
@@ -1035,7 +1044,7 @@ export function CamerasTab({
                 />
               </label>
               <button type="submit" disabled={busy}>
-                <span className="btn-icon"><Ico n="search" /> Probe</span>
+                <span className="btn-icon"><Ico n="search" /> {t('cam.probe')}</span>
               </button>
             </form>
           </div>
@@ -1098,8 +1107,8 @@ export function CamerasTab({
               </>
             ) : (
               <section className="device-card empty-detail">
-                <h2>No saved camera selected</h2>
-                <p className="empty">Scan or probe a camera, then save one to manage it here.</p>
+                <h2>{t('cam.noCameraSelected')}</h2>
+                <p className="empty">{t('cam.noCameraSelectedHint')}</p>
               </section>
             )}
           </main>

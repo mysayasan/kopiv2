@@ -320,6 +320,8 @@ button:disabled {
 .main-workspace {
   min-width: 0;
   padding: 28px;
+  display: flex;
+  flex-direction: column;
 }
 
 .page-header {

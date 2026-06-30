@@ -1,13 +1,15 @@
 import { useState, useEffect } from 'react';
 import { Ico } from './icons';
+import { useT } from '@shared/i18n';
+import { LanguageDropdown } from '@shared/LanguageDropdown';
 import { BrandLogo, PasswordField } from './layout';
 import { Message, FormBusyOverlay } from './ui';
 import { cameraTitle, sameCamera, apiBase } from '../lib/helpers';
 import { CapacityRetentionNote } from './settings';
 import { defaultDestination } from '../lib/constants';
 
-const STEPS = ['Welcome', 'System', 'AI', 'Capacity', 'Cameras', 'Recording', 'Alerts', 'Connectivity', 'Done'];
-const capacityLimitText = { cpu: 'CPU', gpu: 'GPU', disk: 'disk space', memory: 'memory' };
+const STEP_KEYS = ['setup.stepWelcome', 'setup.stepSystem', 'setup.stepAi', 'setup.stepCapacity', 'setup.stepCameras', 'setup.stepRecording', 'setup.stepAlerts', 'setup.stepConnectivity', 'setup.stepDone'];
+const capacityLimitKey = { cpu: 'setup.limitCpu', gpu: 'setup.limitGpu', disk: 'setup.limitDisk', memory: 'setup.limitMemory' };
 
 // SetupWizard is the first-run onboarding overlay: welcome/account, machine
 // capacity, add a camera, enable recording + person alerts, then finish. It is
@@ -15,6 +17,8 @@ const capacityLimitText = { cpu: 'CPU', gpu: 'GPU', disk: 'disk space', memory: 
 export function SetupWizard({
   username,
   authHeader,
+  lang,
+  onLangChange,
   busy,
   message,
   capacity,
@@ -43,18 +47,19 @@ export function SetupWizard({
   // resumes the wizard where it left off rather than jumping back to the start.
   const [step, setStepState] = useState(() => {
     const saved = Number(window.localStorage.getItem('setupStep'));
-    return Number.isInteger(saved) && saved > 0 && saved < STEPS.length ? saved : 0;
+    return Number.isInteger(saved) && saved > 0 && saved < STEP_KEYS.length ? saved : 0;
   });
   const setStep = (updater) => setStepState((s) => {
     const nextStep = typeof updater === 'function' ? updater(s) : updater;
     try { window.localStorage.setItem('setupStep', String(nextStep)); } catch (_) {}
     return nextStep;
   });
+  const t = useT();
   const [recordingDone, setRecordingDone] = useState(false);
   const [alertsDone, setAlertsDone] = useState(false);
   const cameraCount = (saved || []).length;
 
-  const next = () => setStep((s) => Math.min(STEPS.length - 1, s + 1));
+  const next = () => setStep((s) => Math.min(STEP_KEYS.length - 1, s + 1));
   const back = () => setStep((s) => Math.max(0, s - 1));
 
   return (
@@ -63,16 +68,19 @@ export function SetupWizard({
         <FormBusyOverlay busy={busy} />
         <div className="setup-head">
           <BrandLogo size={44} />
-          <button type="button" className="quiet setup-skip" onClick={onFinish} disabled={busy}>
-            Skip setup
-          </button>
+          <div className="setup-head-actions">
+            <LanguageDropdown lang={lang} onLang={onLangChange} />
+            <button type="button" className="quiet setup-skip" onClick={onFinish} disabled={busy}>
+              {t('setup.skip')}
+            </button>
+          </div>
         </div>
 
-        <ol className="setup-steps" aria-label="Setup progress">
-          {STEPS.map((label, i) => (
-            <li key={label} className={`setup-step-dot${i === step ? ' active' : ''}${i < step ? ' done' : ''}`}>
+        <ol className="setup-steps" aria-label={t('setup.progressAria')}>
+          {STEP_KEYS.map((key, i) => (
+            <li key={key} className={`setup-step-dot${i === step ? ' active' : ''}${i < step ? ' done' : ''}`}>
               <span className="setup-step-num">{i < step ? '✓' : i + 1}</span>
-              <span className="setup-step-label">{label}</span>
+              <span className="setup-step-label">{t(key)}</span>
             </li>
           ))}
         </ol>
@@ -137,16 +145,16 @@ export function SetupWizard({
         <div className="setup-nav">
           {step > 0 ? (
             <button type="button" className="quiet" onClick={back} disabled={busy}>
-              <span className="btn-icon"><Ico n="arr-left" /> Back</span>
+              <span className="btn-icon"><Ico n="arr-left" /> {t('setup.back')}</span>
             </button>
           ) : <span />}
-          {step < STEPS.length - 1 ? (
+          {step < STEP_KEYS.length - 1 ? (
             <button type="button" onClick={next} disabled={busy}>
-              <span className="btn-icon">Next <Ico n="arr-right" /></span>
+              <span className="btn-icon">{t('setup.next')} <Ico n="arr-right" /></span>
             </button>
           ) : (
             <button type="button" onClick={onFinish} disabled={busy}>
-              <span className="btn-icon"><Ico n="check-ok" /> Finish</span>
+              <span className="btn-icon"><Ico n="check-ok" /> {t('setup.finish')}</span>
             </button>
           )}
         </div>
@@ -160,6 +168,7 @@ export function SetupWizard({
 // to enter in the control plane. Fully skippable — pairing can also be done later
 // from Settings → Connectivity.
 function ConnectivityStep({ authHeader }) {
+  const t = useT();
   const [status, setStatus] = useState(null);
   const [fleetKey, setFleetKey] = useState('');
   const [claim, setClaim] = useState(null);
@@ -185,12 +194,12 @@ function ConnectivityStep({ authHeader }) {
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [authHeader]);
 
   async function saveKey() {
-    if (fleetKey.trim().length < 16) { setNote({ err: true, text: 'Fleet key must be at least 16 characters.' }); return; }
+    if (fleetKey.trim().length < 16) { setNote({ err: true, text: t('setup.fleetKeyMin') }); return; }
     setBusy(true);
     const r = await api('/api/pairing/fleet-key', { method: 'PUT', body: JSON.stringify({ key: fleetKey.trim() }) });
     setBusy(false);
-    if (r.ok) { setNote({ err: false, text: 'Fleet key saved — this node is now discoverable.' }); setFleetKey(''); load(); }
-    else setNote({ err: true, text: r.message || 'Failed to save fleet key.' });
+    if (r.ok) { setNote({ err: false, text: t('setup.fleetKeySaved') }); setFleetKey(''); load(); }
+    else setNote({ err: true, text: r.message || t('setup.fleetKeyFail') });
   }
 
   async function genClaim() {
@@ -198,7 +207,7 @@ function ConnectivityStep({ authHeader }) {
     const r = await api('/api/pairing/claim-code', { method: 'POST' });
     setBusy(false);
     if (r.ok) { setClaim(r.body); setNote(null); }
-    else setNote({ err: true, text: r.message || 'Failed to generate claim code.' });
+    else setNote({ err: true, text: r.message || t('setup.claimFail') });
   }
 
   const fleetKeySet = !!status?.fleetKeySet;
@@ -206,39 +215,35 @@ function ConnectivityStep({ authHeader }) {
 
   return (
     <div className="setup-pane">
-      <h2>Connect to a control plane <span className="field-hint">(optional)</span></h2>
-      <p>
-        If you manage this node from a myseliasan control plane, link it now. Paste the fleet key from your control
-        plane, then generate a claim code to enter there when adopting this node. You can skip this and do it later
-        from Settings → Connectivity.
-      </p>
+      <h2>{t('setup.connectTitle')} <span className="field-hint">{t('setup.optional')}</span></h2>
+      <p>{t('setup.connectIntro')}</p>
       {note ? <span className={note.err ? 'field-hint danger-text' : 'field-hint good'}>{note.text}</span> : null}
       {paired ? (
-        <p>This node is already paired to <strong>{status?.parentName || status?.parentId}</strong>.</p>
+        <p>{t('setup.alreadyPaired', { name: status?.parentName || status?.parentId })}</p>
       ) : (
         <div className="setup-pw-form">
-          <label>Fleet key {fleetKeySet ? '(set)' : ''}
+          <label>{t('setup.fleetKey')} {fleetKeySet ? t('setup.fleetKeySetSuffix') : ''}
             <input
               type="password"
               value={fleetKey}
               onChange={(e) => setFleetKey(e.target.value)}
-              placeholder={fleetKeySet ? '•••••••• (enter to replace)' : 'paste fleet key (min 16 chars)'}
+              placeholder={fleetKeySet ? t('setup.fleetKeyPlaceholderSet') : t('setup.fleetKeyPlaceholder')}
               disabled={busy}
               autoComplete="off"
             />
           </label>
           <div className="setup-account">
             <button type="button" onClick={saveKey} disabled={busy || fleetKey.trim().length < 16}>
-              <span className="btn-icon"><Ico n="save" /> Save fleet key</span>
+              <span className="btn-icon"><Ico n="save" /> {t('setup.saveFleetKey')}</span>
             </button>
             <button type="button" className="quiet" onClick={genClaim} disabled={busy || !fleetKeySet}>
-              <span className="btn-icon"><Ico n="refresh" /> Generate claim code</span>
+              <span className="btn-icon"><Ico n="refresh" /> {t('setup.genClaim')}</span>
             </button>
           </div>
           {claim ? (
             <p>
-              Claim code: <strong style={{ letterSpacing: 2, fontSize: '1.2em' }}>{claim.code}</strong>
-              {claim.expiresAt ? <> — expires {new Date(claim.expiresAt * 1000).toLocaleTimeString()}</> : null}
+              {t('setup.claimCodeLabel')} <strong style={{ letterSpacing: 2, fontSize: '1.2em' }}>{claim.code}</strong>
+              {claim.expiresAt ? <>{t('setup.expiresAt', { time: new Date(claim.expiresAt * 1000).toLocaleTimeString() })}</> : null}
             </p>
           ) : null}
         </div>
@@ -248,6 +253,7 @@ function ConnectivityStep({ authHeader }) {
 }
 
 function WelcomeStep({ username, busy, onChangePassword }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
@@ -256,8 +262,8 @@ function WelcomeStep({ username, busy, onChangePassword }) {
   const [done, setDone] = useState(false);
 
   async function submit() {
-    if (next.length < 8) { setLocalError('New password must be at least 8 characters.'); return; }
-    if (next !== confirm) { setLocalError('New passwords do not match.'); return; }
+    if (next.length < 8) { setLocalError(t('setup.pwMin')); return; }
+    if (next !== confirm) { setLocalError(t('setup.pwNoMatch')); return; }
     setLocalError('');
     await onChangePassword({ currentPassword: current, newPassword: next });
     setDone(true);
@@ -267,24 +273,24 @@ function WelcomeStep({ username, busy, onChangePassword }) {
 
   return (
     <div className="setup-pane">
-      <h2>Welcome to MyMataSan</h2>
-      <p>Let&apos;s get your camera monitor set up. You&apos;re signed in as <strong>{username || 'admin'}</strong> (Administrator).</p>
+      <h2>{t('setup.welcomeTitle')}</h2>
+      <p>{t('setup.welcomeIntro', { username: username || 'admin' })}</p>
       <div className="setup-account">
-        <span className="field-hint good"><Ico n="check-ok" sz={14} /> Your account password is set{done ? ' (updated)' : ''}.</span>
+        <span className="field-hint good"><Ico n="check-ok" sz={14} /> {t('setup.pwSet', { updated: done ? t('setup.pwUpdatedSuffix') : '' })}</span>
         {onChangePassword ? (
           <button type="button" className="quiet" onClick={() => setOpen((o) => !o)} disabled={busy}>
-            <span className="btn-icon"><Ico n="key" /> {open ? 'Cancel' : 'Change password'}</span>
+            <span className="btn-icon"><Ico n="key" /> {open ? t('setup.cancel') : t('setup.changePassword')}</span>
           </button>
         ) : null}
       </div>
       {open ? (
         <div className="setup-pw-form">
-          <label>Current password<PasswordField value={current} onChange={setCurrent} autoComplete="current-password" /></label>
-          <label>New password<PasswordField value={next} onChange={setNext} autoComplete="new-password" /></label>
-          <label>Confirm new password<PasswordField value={confirm} onChange={setConfirm} autoComplete="new-password" /></label>
+          <label>{t('setup.current')}<PasswordField value={current} onChange={setCurrent} autoComplete="current-password" /></label>
+          <label>{t('setup.new')}<PasswordField value={next} onChange={setNext} autoComplete="new-password" /></label>
+          <label>{t('setup.confirm')}<PasswordField value={confirm} onChange={setConfirm} autoComplete="new-password" /></label>
           {localError ? <span className="field-hint danger-text">{localError}</span> : null}
           <button type="button" onClick={submit} disabled={busy}>
-            <span className="btn-icon"><Ico n="save" /> Update password</span>
+            <span className="btn-icon"><Ico n="save" /> {t('setup.updatePassword')}</span>
           </button>
         </div>
       ) : null}
@@ -293,32 +299,34 @@ function WelcomeStep({ username, busy, onChangePassword }) {
 }
 
 function CapacityStep({ capacity, busy, onEstimateCapacity, onCalibrateCapacity }) {
-  const limit = capacity ? (capacityLimitText[(capacity.workloads || []).find((w) => w.name === capacity.limitingWorkload)?.limit] || capacity.limitingWorkload) : '';
+  const t = useT();
+  const limitRaw = capacity ? ((capacity.workloads || []).find((w) => w.name === capacity.limitingWorkload)?.limit) : null;
+  const limit = limitRaw ? (capacityLimitKey[limitRaw] ? t(capacityLimitKey[limitRaw]) : limitRaw) : (capacity ? capacity.limitingWorkload : '');
   return (
     <div className="setup-pane">
-      <h2>How many cameras can this machine handle?</h2>
-      <p>Run a quick benchmark for an accurate estimate before you add cameras — or just estimate from detected hardware.</p>
+      <h2>{t('setup.capacityTitle')}</h2>
+      <p>{t('setup.capacityIntro')}</p>
       <div className="setup-actions">
         <button type="button" onClick={() => onCalibrateCapacity && onCalibrateCapacity()} disabled={busy}>
-          <span className="btn-icon"><Ico n="wand" /> Run calibration</span>
+          <span className="btn-icon"><Ico n="wand" /> {t('setup.runCalibration')}</span>
         </button>
         <button type="button" className="quiet" onClick={() => onEstimateCapacity && onEstimateCapacity()} disabled={busy}>
-          <span className="btn-icon"><Ico n="reload" /> Quick estimate</span>
+          <span className="btn-icon"><Ico n="reload" /> {t('setup.quickEstimate')}</span>
         </button>
       </div>
       {capacity ? (
         <div className="setup-capacity">
           <span className="capacity-number">{capacity.estimatedMax}</span>
           <div className="capacity-headline-meta">
-            <span className="capacity-caption">estimated cameras</span>
+            <span className="capacity-caption">{t('setup.estCameras')}</span>
             <span className={`capacity-badge capacity-badge--${capacity.confidence}`}>
-              {capacity.confidence === 'measured' ? 'Measured from live load' : capacity.confidence === 'calibrated' ? 'Calibrated on this host' : 'Ballpark estimate'}
+              {capacity.confidence === 'measured' ? t('setup.measured') : capacity.confidence === 'calibrated' ? t('setup.calibrated') : t('setup.ballpark')}
             </span>
-            {limit ? <span className="field-hint">Limited by {limit}</span> : null}
+            {limit ? <span className="field-hint">{t('setup.limitedBy', { limit })}</span> : null}
           </div>
           <CapacityRetentionNote capacity={capacity} />
         </div>
-      ) : <p className="empty">No estimate yet.</p>}
+      ) : <p className="empty">{t('setup.noEstimate')}</p>}
     </div>
   );
 }
@@ -326,6 +334,7 @@ function CapacityStep({ capacity, busy, onEstimateCapacity, onCalibrateCapacity 
 // SystemStep checks the host prerequisites: the video engine (ffmpeg) and the clock.
 // Each card only prompts an action when something is missing ("only if not found").
 function SystemStep({ busy, onFfmpegStatus, onInstallFfmpeg, onSystemTime, onRestart }) {
+  const t = useT();
   const [ffmpeg, setFfmpeg] = useState(undefined); // undefined = loading
   const [time, setTime] = useState(null);
   const [installed, setInstalled] = useState(false);
@@ -342,44 +351,44 @@ function SystemStep({ busy, onFfmpegStatus, onInstallFfmpeg, onSystemTime, onRes
 
   return (
     <div className="setup-pane">
-      <h2>System check</h2>
-      <p>Make sure the basics this app needs are in place before adding cameras.</p>
+      <h2>{t('setup.systemCheck')}</h2>
+      <p>{t('setup.systemIntro')}</p>
 
       <div className="setup-toggle-row">
         <div>
-          <strong>Video engine (ffmpeg)</strong>
+          <strong>{t('setup.videoEngine')}</strong>
           <span className="field-hint">
-            {ffmpeg === undefined ? 'Checking…'
+            {ffmpeg === undefined ? t('setup.checking')
               : ffmpeg?.found ? (ffmpeg.version || ffmpeg.path)
-              : 'Not found — required for live view, recording, and AI capture.'}
+              : t('setup.ffmpegNotFound')}
           </span>
         </div>
         {ffmpeg === undefined ? <span /> : ffmpeg?.found && !installed ? (
-          <span className="field-hint good"><Ico n="check-ok" sz={14} /> Ready</span>
+          <span className="field-hint good"><Ico n="check-ok" sz={14} /> {t('setup.ready')}</span>
         ) : installed ? (
           <button type="button" onClick={() => onRestart && onRestart()} disabled={busy}>
-            <span className="btn-icon"><Ico n="reload" /> Restart to apply</span>
+            <span className="btn-icon"><Ico n="reload" /> {t('setup.restartApply')}</span>
           </button>
         ) : (
           <button type="button" onClick={download} disabled={busy}>
-            <span className="btn-icon"><Ico n="download" /> Download ffmpeg</span>
+            <span className="btn-icon"><Ico n="download" /> {t('setup.downloadFfmpeg')}</span>
           </button>
         )}
       </div>
       {installState && installState.status === 'failed' ? (
         <p className="field-hint danger-text">
-          Download failed. {installState.supported === false ? 'Automatic download isn’t available for this platform — install ffmpeg manually and set its path in Settings → Decoder.' : 'You can install ffmpeg manually and set its path in Settings → Decoder.'}
+          {installState.supported === false ? t('setup.ffmpegFailUnsupported') : t('setup.ffmpegFail')}
         </p>
       ) : null}
 
       <div className="setup-toggle-row">
         <div>
-          <strong>Clock &amp; timezone</strong>
+          <strong>{t('setup.clockTz')}</strong>
           <span className="field-hint">
-            {time ? `${time.now} (${time.abbrev || time.timezone})` : 'Checking…'}
+            {time ? `${time.now} (${time.abbrev || time.timezone})` : t('setup.checking')}
           </span>
         </div>
-        <span className="field-hint">{time ? 'Event timestamps use this. Fix in the OS if wrong.' : ''}</span>
+        <span className="field-hint">{time ? t('setup.clockNote') : ''}</span>
       </div>
     </div>
   );
@@ -388,6 +397,7 @@ function SystemStep({ busy, onFfmpegStatus, onInstallFfmpeg, onSystemTime, onRes
 // AiStep ensures the AI runtime (Python/torch/ultralytics) is usable and lets the user
 // pick a detection model, downloading and applying it. Both only prompt when needed.
 function AiStep({ busy, onAiCapability, onInstallAiDeps, onStockModel, onApplyStockModel, onRestart }) {
+  const t = useT();
   const [cap, setCap] = useState(undefined);
   const [model, setModel] = useState(null);
   const [choice, setChoice] = useState('');
@@ -414,34 +424,34 @@ function AiStep({ busy, onAiCapability, onInstallAiDeps, onStockModel, onApplySt
   const ready = cap?.available;
   return (
     <div className="setup-pane">
-      <h2>AI detection</h2>
-      <p>The detector needs an AI runtime and a model. Set these up now, or skip and configure later in Settings.</p>
+      <h2>{t('setup.aiDetection')}</h2>
+      <p>{t('setup.aiIntro')}</p>
 
       <div className="setup-toggle-row">
         <div>
-          <strong>AI runtime</strong>
-          <span className="field-hint">{cap === undefined ? 'Checking…' : (cap?.detail || (ready ? 'Ready.' : 'Not ready.'))}</span>
+          <strong>{t('setup.aiRuntime')}</strong>
+          <span className="field-hint">{cap === undefined ? t('setup.checking') : (cap?.detail || (ready ? t('setup.readyDot') : t('setup.notReady')))}</span>
         </div>
         {cap === undefined ? <span /> : ready && !installedDeps ? (
-          <span className="field-hint good"><Ico n="check-ok" sz={14} /> Ready</span>
+          <span className="field-hint good"><Ico n="check-ok" sz={14} /> {t('setup.ready')}</span>
         ) : installedDeps ? (
           <button type="button" onClick={() => onRestart && onRestart()} disabled={busy}>
-            <span className="btn-icon"><Ico n="reload" /> Restart to apply</span>
+            <span className="btn-icon"><Ico n="reload" /> {t('setup.restartApply')}</span>
           </button>
         ) : cap?.canInstall ? (
           <button type="button" onClick={installDeps} disabled={busy}>
-            <span className="btn-icon"><Ico n="wand" /> Install AI support</span>
+            <span className="btn-icon"><Ico n="wand" /> {t('setup.installAi')}</span>
           </button>
         ) : (
-          <span className="field-hint">Install Python + ultralytics, then re-check.</span>
+          <span className="field-hint">{t('setup.installPyHint')}</span>
         )}
       </div>
 
       {model?.options?.length ? (
         <div className="setup-toggle-row">
           <div>
-            <strong>Detection model</strong>
-            <span className="field-hint">Bigger models are more accurate but slower. Current: {model.current}</span>
+            <strong>{t('setup.detModel')}</strong>
+            <span className="field-hint">{t('setup.modelHint', { current: model.current })}</span>
           </div>
           <div className="setup-actions">
             <select value={choice} onChange={(e) => setChoice(e.target.value)} disabled={busy}>
@@ -450,7 +460,7 @@ function AiStep({ busy, onAiCapability, onInstallAiDeps, onStockModel, onApplySt
               ))}
             </select>
             <button type="button" onClick={apply} disabled={busy || !choice}>
-              <span className="btn-icon"><Ico n="download" /> Download &amp; apply</span>
+              <span className="btn-icon"><Ico n="download" /> {t('setup.downloadApply')}</span>
             </button>
           </div>
         </div>
@@ -460,6 +470,7 @@ function AiStep({ busy, onAiCapability, onInstallAiDeps, onStockModel, onApplySt
 }
 
 function DiscoveredRow({ device, busy, onAdd }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(() => cameraTitle(device));
   const [username, setUsername] = useState('');
@@ -480,24 +491,24 @@ function DiscoveredRow({ device, busy, onAdd }) {
       <div className="setup-found-row">
         <span className="setup-found-name">{cameraTitle(device)}<span className="field-hint">{device.host}</span></span>
         <button type="button" className="quiet" onClick={() => setOpen((o) => !o)} disabled={busy}>
-          <span className="btn-icon"><Ico n={open ? 'x' : 'plus'} /> {open ? 'Cancel' : 'Add'}</span>
+          <span className="btn-icon"><Ico n={open ? 'x' : 'plus'} /> {open ? t('setup.cancel') : t('setup.add')}</span>
         </button>
       </div>
       {open ? (
         <div className="setup-cred-form">
-          <label>Camera name
+          <label>{t('setup.cameraName')}
             <input value={name} onChange={(e) => setName(e.target.value)} autoComplete="off" placeholder={cameraTitle(device)} />
           </label>
-          <span className="field-hint">A friendly name to identify this camera (e.g. Front Door, Garage). You can rename it later in Cameras.</span>
-          <label>Username
-            <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" placeholder="e.g. admin" />
+          <span className="field-hint">{t('setup.cameraNameHint')}</span>
+          <label>{t('setup.username')}
+            <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" placeholder={t('setup.usernamePlaceholder')} />
           </label>
-          <label>Password
+          <label>{t('setup.password')}
             <PasswordField value={password} onChange={setPassword} autoComplete="off" />
           </label>
-          <span className="field-hint">Most cameras need a login. Leave blank only if yours has none.</span>
+          <span className="field-hint">{t('setup.passwordHint')}</span>
           <button type="button" className="setup-cred-add" onClick={add} disabled={busy || adding}>
-            <span className="btn-icon"><Ico n="shield" /> {adding ? 'Adding…' : 'Add camera'}</span>
+            <span className="btn-icon"><Ico n="shield" /> {adding ? t('setup.adding') : t('setup.addCamera')}</span>
           </button>
         </div>
       ) : null}
@@ -506,17 +517,18 @@ function DiscoveredRow({ device, busy, onAdd }) {
 }
 
 function CamerasStep({ busy, saved, discovered, onScan, onAddCamera }) {
+  const t = useT();
   const savedCount = (saved || []).length;
   const newDevices = (discovered || []).filter((d) => !(saved || []).some((s) => sameCamera(d, s)));
   return (
     <div className="setup-pane">
-      <h2>Add your first camera</h2>
-      <p>Scan your network for ONVIF cameras, then add the ones you want to monitor. Most need a username and password to stream. You can always add more later in Cameras.</p>
+      <h2>{t('setup.addFirstCamera')}</h2>
+      <p>{t('setup.camerasIntro')}</p>
       <div className="setup-actions">
         <button type="button" onClick={() => onScan && onScan()} disabled={busy}>
-          <span className="btn-icon"><Ico n="search" /> Scan network</span>
+          <span className="btn-icon"><Ico n="search" /> {t('setup.scanNetwork')}</span>
         </button>
-        <span className="field-hint">{savedCount} camera{savedCount === 1 ? '' : 's'} added</span>
+        <span className="field-hint">{t(savedCount === 1 ? 'setup.camerasAdded1' : 'setup.camerasAddedN', { n: savedCount })}</span>
       </div>
       {newDevices.length > 0 ? (
         <ul className="setup-found-list">
@@ -524,7 +536,7 @@ function CamerasStep({ busy, saved, discovered, onScan, onAddCamera }) {
             <DiscoveredRow key={device.xAddr || device.host} device={device} busy={busy} onAdd={onAddCamera} />
           ))}
         </ul>
-      ) : (discovered && discovered.length > 0 ? <p className="field-hint">All discovered cameras are already added.</p> : null)}
+      ) : (discovered && discovered.length > 0 ? <p className="field-hint">{t('setup.allAdded')}</p> : null)}
     </div>
   );
 }
@@ -532,6 +544,7 @@ function CamerasStep({ busy, saved, discovered, onScan, onAddCamera }) {
 // RecordingStep enables continuous recording and warns if the storage volume is
 // nearly full (recordings auto-purge, but a full disk still stops new writes).
 function RecordingStep({ busy, cameraCount, recordingDone, onDiskInfo, onEnableRecording }) {
+  const t = useT();
   const [path, setPath] = useState('recordings');
   const [disks, setDisks] = useState(null);
   useEffect(() => { onDiskInfo && onDiskInfo().then(setDisks); /* eslint-disable-next-line */ }, []);
@@ -543,33 +556,33 @@ function RecordingStep({ busy, cameraCount, recordingDone, onDiskInfo, onEnableR
   if (cameraCount === 0) {
     return (
       <div className="setup-pane">
-        <h2>Recording</h2>
-        <p className="empty">Add a camera first to turn on recording. You can skip this and set it up later.</p>
+        <h2>{t('setup.recording')}</h2>
+        <p className="empty">{t('setup.recordingNoCam')}</p>
       </div>
     );
   }
   return (
     <div className="setup-pane">
-      <h2>Recording</h2>
-      <p>Save footage for your {cameraCount} camera{cameraCount === 1 ? '' : 's'} with 7-day retention. Fine-tune per camera later in Cameras → Recording.</p>
+      <h2>{t('setup.recording')}</h2>
+      <p>{t(cameraCount === 1 ? 'setup.recordingIntro1' : 'setup.recordingIntroN', { n: cameraCount })}</p>
       <label className="setup-field">
-        <span>Storage folder</span>
+        <span>{t('setup.storageFolder')}</span>
         <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="recordings" disabled={busy || recordingDone} />
       </label>
       {lowSpace ? (
         <p className="field-hint danger-text">
-          ⚠ {fullest.mountpoint} is {Math.round(fullest.usedPercent)}% full — recordings may stop. Free space or choose a folder on a larger drive.
+          {t('setup.lowSpace', { mount: fullest.mountpoint, pct: Math.round(fullest.usedPercent) })}
         </p>
       ) : fullest ? (
-        <p className="field-hint">Largest volume in use: {fullest.mountpoint} at {Math.round(fullest.usedPercent)}%.</p>
+        <p className="field-hint">{t('setup.largestVolume', { mount: fullest.mountpoint, pct: Math.round(fullest.usedPercent) })}</p>
       ) : null}
       <div className="setup-toggle-row">
         <div>
-          <strong>Record continuously</strong>
-          <span className="field-hint">Continuous NVR with event clips.</span>
+          <strong>{t('setup.recordContinuously')}</strong>
+          <span className="field-hint">{t('setup.nvrHint')}</span>
         </div>
         <button type="button" className={recordingDone ? 'quiet' : ''} onClick={() => onEnableRecording(path)} disabled={busy || recordingDone}>
-          <span className="btn-icon">{recordingDone ? <><Ico n="check-ok" /> Enabled</> : <><Ico n="film" /> Enable recording</>}</span>
+          <span className="btn-icon">{recordingDone ? <><Ico n="check-ok" /> {t('setup.enabled')}</> : <><Ico n="film" /> {t('setup.enableRecording')}</>}</span>
         </button>
       </div>
     </div>
@@ -579,6 +592,7 @@ function RecordingStep({ busy, cameraCount, recordingDone, onDiskInfo, onEnableR
 // AlertsStep adds a person-detection rule and (optionally) a delivery destination so
 // alerts go somewhere beyond the in-app feed.
 function AlertsStep({ busy, cameraCount, alertsDone, onAddDestination, onAddAlerts }) {
+  const t = useT();
   const [type, setType] = useState('webhook');
   const [url, setUrl] = useState('');
   const [botToken, setBotToken] = useState('');
@@ -609,50 +623,50 @@ function AlertsStep({ busy, cameraCount, alertsDone, onAddDestination, onAddAler
 
   return (
     <div className="setup-pane">
-      <h2>Alerts</h2>
+      <h2>{t('setup.alerts')}</h2>
       {cameraCount === 0 ? (
-        <p className="empty">Add a camera first to enable AI alerts. You can set this up later.</p>
+        <p className="empty">{t('setup.alertsNoCam')}</p>
       ) : (
         <>
-          <p>Get notified when a person is detected. Add a destination so alerts reach you (otherwise they only appear in the in-app feed).</p>
+          <p>{t('setup.alertsIntro')}</p>
           <div className="setup-toggle-row">
             <div>
-              <strong>Alert on people</strong>
-              <span className="field-hint">Adds a person rule to every camera.</span>
+              <strong>{t('setup.alertOnPeople')}</strong>
+              <span className="field-hint">{t('setup.personRuleHint')}</span>
             </div>
             <button type="button" className={alertsDone ? 'quiet' : ''} onClick={onAddAlerts} disabled={busy || alertsDone}>
-              <span className="btn-icon">{alertsDone ? <><Ico n="check-ok" /> Added</> : <><Ico n="bell" /> Add person alerts</>}</span>
+              <span className="btn-icon">{alertsDone ? <><Ico n="check-ok" /> {t('setup.added')}</> : <><Ico n="bell" /> {t('setup.addPersonAlerts')}</>}</span>
             </button>
           </div>
 
           <div className="setup-dest">
             <label className="setup-field">
-              <span>Deliver to</span>
+              <span>{t('setup.deliverTo')}</span>
               <select value={type} onChange={(e) => { setType(e.target.value); setDestDone(false); }} disabled={busy || destDone}>
-                <option value="webhook">Webhook</option>
-                <option value="telegram">Telegram</option>
-                <option value="mqtt">MQTT</option>
+                <option value="webhook">{t('setup.webhook')}</option>
+                <option value="telegram">{t('setup.telegram')}</option>
+                <option value="mqtt">{t('setup.mqtt')}</option>
               </select>
             </label>
             {type === 'telegram' ? (
               <>
-                <label className="setup-field"><span>Bot token</span><input value={botToken} onChange={(e) => setBotToken(e.target.value)} disabled={busy || destDone} /></label>
-                <label className="setup-field"><span>Chat ID</span><input value={chatId} onChange={(e) => setChatId(e.target.value)} disabled={busy || destDone} /></label>
+                <label className="setup-field"><span>{t('setup.botToken')}</span><input value={botToken} onChange={(e) => setBotToken(e.target.value)} disabled={busy || destDone} /></label>
+                <label className="setup-field"><span>{t('setup.chatId')}</span><input value={chatId} onChange={(e) => setChatId(e.target.value)} disabled={busy || destDone} /></label>
               </>
             ) : type === 'mqtt' ? (
               <>
-                <label className="setup-field"><span>Broker URL</span><input value={brokerUrl} onChange={(e) => setBrokerUrl(e.target.value)} placeholder="tls://broker.example.com:8883" disabled={busy || destDone} /></label>
-                <label className="setup-field"><span>Topic</span><input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="alerts/camera" disabled={busy || destDone} /></label>
-                <span className="field-hint">Add authentication or TLS client certificates later in Settings → Notifications.</span>
+                <label className="setup-field"><span>{t('setup.brokerUrl')}</span><input value={brokerUrl} onChange={(e) => setBrokerUrl(e.target.value)} placeholder="tls://broker.example.com:8883" disabled={busy || destDone} /></label>
+                <label className="setup-field"><span>{t('setup.topic')}</span><input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="alerts/camera" disabled={busy || destDone} /></label>
+                <span className="field-hint">{t('setup.mqttHint')}</span>
               </>
             ) : (
-              <label className="setup-field"><span>Webhook URL</span><input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" disabled={busy || destDone} /></label>
+              <label className="setup-field"><span>{t('setup.webhookUrl')}</span><input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" disabled={busy || destDone} /></label>
             )}
             <button type="button" className={destDone ? 'quiet' : ''} onClick={addDestination} disabled={busy || destDone || !destValid}>
-              <span className="btn-icon">{destDone ? <><Ico n="check-ok" /> Saved</> : <><Ico n="save" /> Save destination</>}</span>
+              <span className="btn-icon">{destDone ? <><Ico n="check-ok" /> {t('setup.saved')}</> : <><Ico n="save" /> {t('setup.saveDestination')}</>}</span>
             </button>
           </div>
-          <p className="field-hint">Optional — you can add or edit destinations anytime in Settings → Notifications.</p>
+          <p className="field-hint">{t('setup.alertsOptional')}</p>
         </>
       )}
     </div>
@@ -660,16 +674,17 @@ function AlertsStep({ busy, cameraCount, alertsDone, onAddDestination, onAddAler
 }
 
 function DoneStep({ cameraCount, recordingDone, alertsDone }) {
+  const t = useT();
   return (
     <div className="setup-pane setup-done">
       <Ico n="check-ok" sz={48} />
-      <h2>You&apos;re all set!</h2>
+      <h2>{t('setup.allSet')}</h2>
       <ul className="setup-summary">
-        <li>{cameraCount} camera{cameraCount === 1 ? '' : 's'} added</li>
-        <li>Continuous recording {recordingDone ? 'enabled' : 'not enabled'}</li>
-        <li>Person alerts {alertsDone ? 'enabled' : 'not enabled'}</li>
+        <li>{t(cameraCount === 1 ? 'setup.summaryCameras1' : 'setup.summaryCamerasN', { n: cameraCount })}</li>
+        <li>{t(recordingDone ? 'setup.recordingEnabled' : 'setup.recordingNotEnabled')}</li>
+        <li>{t(alertsDone ? 'setup.alertsEnabled' : 'setup.alertsNotEnabled')}</li>
       </ul>
-      <p>Click Finish to open your dashboard. You can change any of this in Settings.</p>
+      <p>{t('setup.finishHint')}</p>
     </div>
   );
 }

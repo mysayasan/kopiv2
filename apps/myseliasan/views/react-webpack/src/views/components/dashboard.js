@@ -1,31 +1,32 @@
-import { Ico } from '@shared';
+import { Ico, useT } from '@shared';
 
 // DashboardTab shows control-plane status and the signed-in session, mirroring the
 // metric-grid + work-panel layout language used across the product.
 export function DashboardTab({ session }) {
+  const t = useT();
   return (
     <section className="workspace">
       <div className="machine-metrics">
         <div className="machine-metric-card">
-          <dt>Control status</dt>
-          <dd><strong className="status-pill online">Ready</strong></dd>
+          <dt>{t('dash.controlStatus')}</dt>
+          <dd><strong className="status-pill online">{t('dash.ready')}</strong></dd>
         </div>
         <div className="machine-metric-card">
-          <dt>Resource app</dt>
+          <dt>{t('dash.resourceApp')}</dt>
           <dd><strong className="status-pill">mymatasan</strong></dd>
         </div>
         <div className="machine-metric-card">
-          <dt>Identity provider</dt>
+          <dt>{t('dash.identityProvider')}</dt>
           <dd><strong className="status-pill">{session?.issuer || 'myidsan'}</strong></dd>
         </div>
       </div>
 
       <section className="settings-panel span-two">
-        <header><h2><span className="btn-icon"><Ico n="user" /> Session</span></h2></header>
+        <header><h2><span className="btn-icon"><Ico n="user" /> {t('dash.session')}</span></h2></header>
         <p className="settings-hint">
           {session
-            ? `${session.name || session.email || 'Authenticated user'} is signed in through ${session.issuer || 'myidsan'}.`
-            : 'Loading current account…'}
+            ? t('dash.signedInThrough', { name: session.name || session.email || t('dash.authenticatedUser'), issuer: session.issuer || 'myidsan' })
+            : t('dash.loadingAccount')}
         </p>
         {session ? (
           <pre className="code-block">{JSON.stringify(session, null, 2)}</pre>

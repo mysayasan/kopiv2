@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Ico } from './icons';
+import { useT } from '@shared/i18n';
 import { FormBusyOverlay, FieldTitle, AccordionList, AccordionItem } from './ui';
 import { ConsoleLog } from './console';
 import { PasswordField } from './layout';
@@ -8,16 +9,17 @@ import {iceUrlsText,textToIceUrls,decoderTransportOptions,decoderHWAccelOptions,
 
 // stockModelHints describes the speed/accuracy trade-off of each base model.
 const stockModelHints = {
-  'yolo11n.pt': 'Nano — fastest, least accurate (default; best for CPU / Raspberry Pi)',
-  'yolo11s.pt': 'Small — a bit slower, more accurate',
-  'yolo11m.pt': 'Medium — noticeably slower; GPU recommended',
-  'yolo11l.pt': 'Large — slow on CPU; GPU recommended',
-  'yolo11x.pt': 'Extra-large — slowest, most accurate; GPU strongly recommended',
+  'yolo11n.pt': 'st.modelHintNano',
+  'yolo11s.pt': 'st.modelHintSmall',
+  'yolo11m.pt': 'st.modelHintMedium',
+  'yolo11l.pt': 'st.modelHintLarge',
+  'yolo11x.pt': 'st.modelHintXl',
 };
 
 // StockModelPanel picks the always-on base detection model. Known variants are
 // downloaded from the net by ultralytics; a custom path can also be used.
 function StockModelPanel({ authHeader, onMessage }) {
+  const t = useT();
   const [info, setInfo] = useState({ current: 'yolo11n.pt', options: [] });
   const [choice, setChoice] = useState('');
   const [customPath, setCustomPath] = useState('');
@@ -46,15 +48,15 @@ function StockModelPanel({ authHeader, onMessage }) {
 
   async function apply() {
     const model = choice === '__custom__' ? customPath.trim() : choice;
-    if (!model) { if (onMessage) onMessage('Choose a model or enter a custom path.'); return; }
+    if (!model) { if (onMessage) onMessage(t('st.chooseModelOrPath'), 'error'); return; }
     setBusy(true);
-    if (onMessage) onMessage('Applying base model (downloading if needed)…');
+    if (onMessage) onMessage(t('st.applyingBaseModel'), 'info');
     try {
       const result = await api('/api/training/stock-model', { method: 'POST', body: JSON.stringify({ model }) });
       setInfo({ current: result?.current || model, options: info.options });
-      if (onMessage) onMessage(`Base model set to ${result?.current || model}. Detection reloaded.`);
+      if (onMessage) onMessage(t('st.baseModelSet', { model: result?.current || model }));
     } catch (err) {
-      if (onMessage) onMessage(err.message);
+      if (onMessage) onMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -66,35 +68,34 @@ function StockModelPanel({ authHeader, onMessage }) {
     <section className="settings-panel span-two">
       <header>
         <h2>
-          <FieldTitle info="The always-on base detection model. It detects the general COCO classes (person, vehicle, animal, …) and runs in parallel with any activated custom model. Larger variants are more accurate but much slower — on CPU/Raspberry Pi stick to nano or small.">
-            Stock (base) model
+          <FieldTitle info={t('st.stockInfo')}>
+            {t('st.stockTitle')}
           </FieldTitle>
         </h2>
         <span className="status-pill">{info.current}</span>
       </header>
       <p className="settings-hint">
-        Bigger models are more accurate but slower (each frame is inferenced once per active model). Known variants are
-        downloaded from the internet on first use, then cached — the device needs internet access for that one-time download.
+        {t('st.stockHint')}
       </p>
       <div className="settings-field-grid">
         <label>
-          Model
+          {t('st.model')}
           <select value={choice} onChange={(e) => setChoice(e.target.value)} disabled={busy}>
             {info.options.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
-            <option value="__custom__">Custom path…</option>
+            <option value="__custom__">{t('st.customPathOpt')}</option>
           </select>
-          <span className="field-hint">{choice === '__custom__' ? 'Point to a local .pt file on the server.' : (stockModelHints[choice] || '')}</span>
+          <span className="field-hint">{choice === '__custom__' ? t('st.customPathHint') : (stockModelHints[choice] ? t(stockModelHints[choice]) : '')}</span>
         </label>
         {choice === '__custom__' ? (
           <label>
-            Custom .pt path
+            {t('st.customPtPath')}
             <input value={customPath} onChange={(e) => setCustomPath(e.target.value)} placeholder="/path/to/model.pt" disabled={busy} />
           </label>
         ) : null}
       </div>
       <div className="settings-actions">
         <button type="button" onClick={apply} disabled={busy || !dirty}>
-          <span className="btn-icon"><Ico n="download" /> Download &amp; apply</span>
+          <span className="btn-icon"><Ico n="download" /> {t('st.downloadApply')}</span>
         </button>
       </div>
     </section>
@@ -107,6 +108,7 @@ function StockModelPanel({ authHeader, onMessage }) {
 // "manual" path (upload a .pt). Plate models are third-party, so unlike the stock
 // picker they download from an explicit URL rather than by ultralytics name.
 function LPRModelPanel({ authHeader, onMessage }) {
+  const t = useT();
   const [info, setInfo] = useState({ current: '', path: '', options: [], ocrReady: false });
   const [choice, setChoice] = useState('');
   const [customValue, setCustomValue] = useState('');
@@ -141,7 +143,7 @@ function LPRModelPanel({ authHeader, onMessage }) {
   async function installOcr() {
     if (installingOcr) return;
     setInstallingOcr(true);
-    if (onMessage) onMessage('Installing OCR dependencies — this can take a few minutes…');
+    if (onMessage) onMessage(t('st.installingOcr'), 'info');
     try {
       const st = await api('/api/training/lpr-model/install-deps', { method: 'POST' });
       setOcrLog(st?.log || '');
@@ -161,8 +163,8 @@ function LPRModelPanel({ authHeader, onMessage }) {
           setInstallingOcr(false);
           await load();
           if (onMessage) onMessage(st?.status === 'done'
-            ? 'OCR dependencies installed. Plate reading is now available.'
-            : 'OCR install finished with errors — see the log.');
+            ? t('st.ocrInstalled')
+            : t('st.ocrInstallErr'), st?.status === 'done' ? 'success' : 'error');
         }
       } catch (_) { /* keep polling */ }
     }, 3000);
@@ -171,15 +173,15 @@ function LPRModelPanel({ authHeader, onMessage }) {
 
   async function apply() {
     const model = choice === '__url__' || choice === '__path__' ? customValue.trim() : choice;
-    if (!model) { if (onMessage) onMessage('Choose a catalog model, or paste a URL / server path.'); return; }
+    if (!model) { if (onMessage) onMessage(t('st.chooseCatalogOrUrl'), 'error'); return; }
     setBusy(true);
-    if (onMessage) onMessage('Applying plate model (downloading if needed)…');
+    if (onMessage) onMessage(t('st.applyingPlateModel'), 'info');
     try {
       const result = await api('/api/training/lpr-model', { method: 'POST', body: JSON.stringify({ model }) });
       setInfo({ current: result?.current || '', path: result?.path || '', options: info.options });
-      if (onMessage) onMessage(`Plate model set to ${result?.current || model}. Detection reloaded.`);
+      if (onMessage) onMessage(t('st.plateModelSet', { model: result?.current || model }));
     } catch (err) {
-      if (onMessage) onMessage(err.message);
+      if (onMessage) onMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -188,16 +190,16 @@ function LPRModelPanel({ authHeader, onMessage }) {
   async function upload(file) {
     if (!file) return;
     setBusy(true);
-    if (onMessage) onMessage(`Uploading ${file.name}…`);
+    if (onMessage) onMessage(t('st.uploadingName', { name: file.name }), 'info');
     try {
       const form = new FormData();
       form.append('file', file);
       form.append('name', file.name);
       const result = await api('/api/training/lpr-model/import', { method: 'POST', body: form });
       setInfo({ current: result?.current || file.name, path: result?.path || '', options: info.options });
-      if (onMessage) onMessage(`Plate model ${result?.current || file.name} uploaded and activated.`);
+      if (onMessage) onMessage(t('st.plateModelUploaded', { name: result?.current || file.name }));
     } catch (err) {
-      if (onMessage) onMessage(err.message);
+      if (onMessage) onMessage(err.message, 'error');
     } finally {
       setBusy(false);
       if (fileRef.current) fileRef.current.value = '';
@@ -209,9 +211,9 @@ function LPRModelPanel({ authHeader, onMessage }) {
     try {
       const result = await api('/api/training/lpr-model/deactivate', { method: 'POST' });
       setInfo({ current: result?.current || '', path: result?.path || '', options: info.options });
-      if (onMessage) onMessage('Plate model disabled. License-plate recognition is off.');
+      if (onMessage) onMessage(t('st.plateModelDisabled'));
     } catch (err) {
-      if (onMessage) onMessage(err.message);
+      if (onMessage) onMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -224,47 +226,46 @@ function LPRModelPanel({ authHeader, onMessage }) {
     <section className="settings-panel span-two">
       <header>
         <h2>
-          <FieldTitle info="The optional license-plate (LPR) detector. When set, cameras with a License Plate rule run a second stage that localizes plates, OCRs them, and reads the vehicle's type/color. This is a separate model from the stock/custom detectors and only runs on cameras that have an LPR rule.">
-            License Plate Model (LPR)
+          <FieldTitle info={t('st.lprInfo')}>
+            {t('st.lprTitle')}
           </FieldTitle>
         </h2>
-        <span className="status-pill">{active ? info.current : 'disabled'}</span>
+        <span className="status-pill">{active ? info.current : t('st.disabled')}</span>
       </header>
       <p className="settings-hint">
-        Pick a plate detector from the catalog, paste a direct <code>.pt</code> URL, or upload your own. The model is
-        downloaded once and cached. Plate recognition also needs the OCR dependencies installed (see Version &amp; Health).
+        {t('st.lprHint')}
       </p>
       <div className="settings-field-grid">
         <label>
-          Plate model
+          {t('st.plateModel')}
           <select value={choice} onChange={(e) => setChoice(e.target.value)} disabled={busy}>
             {info.options.map((opt) => <option key={opt.name} value={opt.name}>{opt.name}</option>)}
-            <option value="__url__">Download from URL…</option>
-            <option value="__path__">Local .pt path on server…</option>
+            <option value="__url__">{t('st.downloadFromUrl')}</option>
+            <option value="__path__">{t('st.localPtPath')}</option>
           </select>
           <span className="field-hint">
-            {choice === '__url__' ? 'Paste a direct https link to a .pt plate model.'
-              : choice === '__path__' ? 'Absolute path to a .pt file already on the server.'
+            {choice === '__url__' ? t('st.pasteUrlHint')
+              : choice === '__path__' ? t('st.absPathHint')
               : (selectedOpt?.description || '')}
           </span>
         </label>
         {(choice === '__url__' || choice === '__path__') ? (
           <label>
-            {choice === '__url__' ? 'Model URL' : 'Server .pt path'}
+            {choice === '__url__' ? t('st.modelUrl') : t('st.serverPtPath')}
             <input value={customValue} onChange={(e) => setCustomValue(e.target.value)} placeholder={choice === '__url__' ? 'https://…/best.pt' : '/path/to/plate.pt'} disabled={busy} />
           </label>
         ) : null}
       </div>
       <div className="settings-actions">
         <button type="button" onClick={apply} disabled={busy}>
-          <span className="btn-icon"><Ico n="download" /> Download &amp; apply</span>
+          <span className="btn-icon"><Ico n="download" /> {t('st.downloadApply')}</span>
         </button>
         <button type="button" className="quiet" onClick={() => fileRef.current && fileRef.current.click()} disabled={busy}>
-          <span className="btn-icon"><Ico n="plus" /> Upload .pt</span>
+          <span className="btn-icon"><Ico n="plus" /> {t('st.uploadPt')}</span>
         </button>
         {active ? (
           <button type="button" className="quiet danger" onClick={deactivate} disabled={busy}>
-            <span className="btn-icon"><Ico n="x" /> Disable LPR</span>
+            <span className="btn-icon"><Ico n="x" /> {t('st.disableLpr')}</span>
           </button>
         ) : null}
         <input ref={fileRef} type="file" accept=".pt" style={{ display: 'none' }} onChange={(e) => upload(e.target.files?.[0])} />
@@ -272,17 +273,16 @@ function LPRModelPanel({ authHeader, onMessage }) {
       <div className="install-deps" style={{ marginTop: '12px' }}>
         <div className="metadata-row" style={{ alignItems: 'center', gap: '10px' }}>
           <span className={`status-pill ${info.ocrReady ? 'ok' : 'offline'}`}>
-            OCR engine: {info.ocrReady ? 'installed ✓' : 'not installed'}
+            {t('st.ocrEngine', { state: info.ocrReady ? t('st.ocrInstalledTag') : t('st.ocrNotInstalled') })}
           </span>
           <button type="button" className="quiet" onClick={installOcr} disabled={installingOcr || busy}>
-            <span className="btn-icon"><Ico n="download" /> {info.ocrReady ? 'Reinstall OCR engine' : 'Install OCR engine (easyocr)'}</span>
+            <span className="btn-icon"><Ico n="download" /> {info.ocrReady ? t('st.reinstallOcr') : t('st.installOcr')}</span>
           </button>
         </div>
         <span className="field-hint">
-          Downloading a plate model is only half of it — plate <em>text</em> is read by the OCR engine (easyocr).
-          Install it here once; the worker reloads automatically when it finishes.
+          {t('st.ocrHint')}
         </span>
-        {ocrLog ? <ConsoleLog title="OCR dependency install" log={ocrLog} running={installingOcr} /> : null}
+        {ocrLog ? <ConsoleLog title={t('st.ocrInstallTitle')} log={ocrLog} running={installingOcr} /> : null}
       </div>
     </section>
   );
@@ -293,6 +293,7 @@ function LPRModelPanel({ authHeader, onMessage }) {
 // click a file to select it, and returns the chosen absolute path. Used to pick the
 // ffmpeg binary without typing a path. Admin-gated server-side.
 function FileBrowserModal({ authHeader, initialPath, onSelect, onClose }) {
+  const t = useT();
   const [listing, setListing] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -323,13 +324,13 @@ function FileBrowserModal({ authHeader, initialPath, onSelect, onClose }) {
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-card file-browser" onClick={(e) => e.stopPropagation()}>
         <header className="file-browser-head">
-          <h2><span className="btn-icon"><Ico n="folder" /> Choose ffmpeg</span></h2>
-          <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}><Ico n="x" /></button>
+          <h2><span className="btn-icon"><Ico n="folder" /> {t('st.chooseFfmpeg')}</span></h2>
+          <button type="button" className="icon-btn" aria-label={t('common.close')} onClick={onClose}><Ico n="x" /></button>
         </header>
-        <div className="file-browser-path" title={listing?.path || ''}>{listing?.path || 'Allowed locations'}</div>
+        <div className="file-browser-path" title={listing?.path || ''}>{listing?.path || t('st.allowedLocations')}</div>
         <div className="file-browser-list">
           {loading ? (
-            <p className="field-hint">Loading…</p>
+            <p className="field-hint">{t('common.loading')}</p>
           ) : error ? (
             <p className="field-hint danger-text">{error}</p>
           ) : (
@@ -352,11 +353,11 @@ function FileBrowserModal({ authHeader, initialPath, onSelect, onClose }) {
                   </button>
                 </li>
               ))}
-              {entries.length === 0 ? <li><span className="field-hint">Empty folder.</span></li> : null}
+              {entries.length === 0 ? <li><span className="field-hint">{t('st.emptyFolder')}</span></li> : null}
             </ul>
           )}
         </div>
-        <p className="field-hint file-browser-hint">Click a folder to open it, or a file to select it.</p>
+        <p className="field-hint file-browser-hint">{t('st.browserHint')}</p>
       </div>
     </div>
   );
@@ -368,6 +369,7 @@ function FileBrowserModal({ authHeader, initialPath, onSelect, onClose }) {
 // so this lets an operator fix a missing video engine without leaving Settings.
 // Endpoints: GET /decoder/status, POST /decoder/ffmpeg/install (+ /install/status).
 function FfmpegInstallControl({ authHeader, value, onChangePath, onMessage, onRestart, onInstalledPath }) {
+  const t = useT();
   const [status, setStatus] = useState(undefined); // undefined = loading
   const [installing, setInstalling] = useState(false);
   const [installed, setInstalled] = useState(false);
@@ -394,7 +396,7 @@ function FfmpegInstallControl({ authHeader, value, onChangePath, onMessage, onRe
   async function download() {
     setInstalling(true);
     setFailure(null);
-    if (onMessage) onMessage('Downloading ffmpeg…');
+    if (onMessage) onMessage(t('st.downloadingFfmpeg'), 'info');
     try {
       await api('/api/settings/decoder/ffmpeg/install', { method: 'POST' });
       // Poll the background job until it finishes.
@@ -409,11 +411,11 @@ function FfmpegInstallControl({ authHeader, value, onChangePath, onMessage, onRe
       if (state?.status === 'done') {
         setInstalled(true);
         if (state.path && onInstalledPath) onInstalledPath(state.path);
-        if (onMessage) onMessage('ffmpeg installed. Restart the app to apply it everywhere.');
+        if (onMessage) onMessage(t('st.ffmpegInstalled'));
         await check();
       } else {
         setFailure(state || { status: 'failed' });
-        if (onMessage) onMessage(`ffmpeg install failed: ${state?.log || 'unknown error'}`);
+        if (onMessage) onMessage(t('st.ffmpegInstallFailed', { log: state?.log || 'unknown error' }), 'error');
       }
     } catch (err) {
       setFailure({ status: 'failed', log: err.message });
@@ -426,9 +428,9 @@ function FfmpegInstallControl({ authHeader, value, onChangePath, onMessage, onRe
   // Status icon shown between the input and Check button. The detail (version,
   // path, or why it matters) lives in a hover/focus balloon so the row stays tidy.
   const found = status?.found;
-  const tip = status === undefined ? 'Checking for ffmpeg…'
-    : found ? `ffmpeg found${status.version ? ` — ${status.version}` : status.path ? ` — ${status.path}` : ''}${installed ? ' (restart to apply)' : ''}`
-    : 'ffmpeg not found — required for live view, recording, and AI capture. Use Download to install it, or set the path manually.';
+  const tip = status === undefined ? t('st.checkingFfmpeg')
+    : found ? `${t('st.ffmpegFound')}${status.version ? ` — ${status.version}` : status.path ? ` — ${status.path}` : ''}${installed ? t('st.restartToApply') : ''}`
+    : t('st.ffmpegNotFound');
   const iconState = status === undefined ? 'pending' : found ? 'ok' : 'bad';
 
   return (
@@ -445,8 +447,8 @@ function FfmpegInstallControl({ authHeader, value, onChangePath, onMessage, onRe
             type="button"
             className="input-icon-btn"
             onClick={() => setBrowsing(true)}
-            title="Browse for the ffmpeg binary"
-            aria-label="Browse for the ffmpeg binary"
+            title={t('st.browseFfmpeg')}
+            aria-label={t('st.browseFfmpeg')}
           >
             <Ico n="folder" sz={15} />
           </button>
@@ -461,26 +463,26 @@ function FfmpegInstallControl({ authHeader, value, onChangePath, onMessage, onRe
           <Ico n={status === undefined ? 'reload' : found ? 'check-ok' : 'x'} sz={15} />
         </span>
         <button type="button" className="quiet ffmpeg-check-btn" onClick={check} disabled={installing}>
-          <span className="btn-icon"><Ico n="reload" /> Check</span>
+          <span className="btn-icon"><Ico n="reload" /> {t('st.check')}</span>
         </button>
       </div>
       {(status && !status.found && !installed) || (installed && onRestart) || failure ? (
         <div className="ffmpeg-status-actions">
           {status && !status.found && !installed ? (
             <button type="button" onClick={download} disabled={installing}>
-              <span className="btn-icon"><Ico n="download" /> {installing ? 'Downloading…' : 'Download ffmpeg'}</span>
+              <span className="btn-icon"><Ico n="download" /> {installing ? t('rec.downloading') : t('st.downloadFfmpeg')}</span>
             </button>
           ) : null}
           {installed && onRestart ? (
             <button type="button" onClick={() => onRestart()} disabled={installing}>
-              <span className="btn-icon"><Ico n="reload" /> Restart now</span>
+              <span className="btn-icon"><Ico n="reload" /> {t('st.restartNow')}</span>
             </button>
           ) : null}
           {failure ? (
             <p className="field-hint danger-text ffmpeg-status-error">
               {failure.supported === false
-                ? 'Automatic download isn’t available for this platform — install ffmpeg manually and set its path above.'
-                : 'Download failed — install ffmpeg manually and set its path above.'}
+                ? t('st.dlUnavailablePlatform')
+                : t('st.dlFailed')}
             </p>
           ) : null}
         </div>
@@ -506,6 +508,7 @@ function FfmpegInstallControl({ authHeader, value, onChangePath, onMessage, onRe
 //   GET /health       — service liveness        {"alive": true}
 //   GET /ready        — service readiness        {"ok", "db", "cache", ...advisory}
 function SystemStatusPanel({ authHeader, onRestart }) {
+  const t = useT();
   const [restarting, setRestarting] = useState(false);
   const [version, setVersion] = useState(null);
   const [apiHealth, setApiHealth] = useState(null);
@@ -555,14 +558,14 @@ function SystemStatusPanel({ authHeader, onRestart }) {
       <FormBusyOverlay busy={busy} />
       <section className="settings-panel span-two">
         <header>
-          <h2><span className="btn-icon"><Ico n="monitor" /> Software version</span></h2>
+          <h2><span className="btn-icon"><Ico n="monitor" /> {t('st.softwareVersion')}</span></h2>
           <div className="settings-header-actions">
             <button type="button" className="quiet" onClick={load} disabled={busy || restarting}>
-              <span className="btn-icon"><Ico n="reload" /> Refresh</span>
+              <span className="btn-icon"><Ico n="reload" /> {t('common.refresh')}</span>
             </button>
             {onRestart ? (
               <button type="button" className="quiet" onClick={() => { setRestarting(true); onRestart(); }} disabled={restarting}>
-                <span className="btn-icon"><Ico n="reload" /> {restarting ? 'Restarting…' : 'Restart app'}</span>
+                <span className="btn-icon"><Ico n="reload" /> {restarting ? t('st.restarting') : t('st.restartApp')}</span>
               </button>
             ) : null}
           </div>
@@ -570,56 +573,54 @@ function SystemStatusPanel({ authHeader, onRestart }) {
         {ver ? (
           <div className="machine-metrics">
             <div className="machine-metric-card">
-              <dt>Application</dt>
+              <dt>{t('st.application')}</dt>
               <dd><strong className="status-pill">{ver.app || '—'}</strong></dd>
               <span className="field-hint">v{ver.appVersion || '—'}</span>
             </div>
             <div className="machine-metric-card">
-              <dt>Shared core</dt>
+              <dt>{t('st.sharedCore')}</dt>
               <dd><strong className="status-pill">v{ver.coreVersion || '—'}</strong></dd>
             </div>
             {ver.commit ? (
               <div className="machine-metric-card">
-                <dt>Commit</dt>
+                <dt>{t('st.commit')}</dt>
                 <dd><strong className="status-pill">{String(ver.commit).slice(0, 12)}</strong></dd>
               </div>
             ) : null}
             {ver.updatedAt ? (
               <div className="machine-metric-card">
-                <dt>Built</dt>
+                <dt>{t('st.built')}</dt>
                 <dd><strong className="status-pill">{ver.updatedAt}</strong></dd>
               </div>
             ) : null}
           </div>
         ) : (
-          <p className="settings-hint">Version unavailable{version?.body?.message ? ` — ${version.body.message}` : ''}.</p>
+          <p className="settings-hint">{t('st.versionUnavailable')}{version?.body?.message ? ` — ${version.body.message}` : ''}.</p>
         )}
       </section>
 
       <section className="settings-panel span-two">
         <header>
-          <h2><span className="btn-icon"><Ico n="wifi" /> Service health</span></h2>
-          {checkedAt ? <span className="field-hint">Checked {checkedAt.toLocaleTimeString()}</span> : null}
+          <h2><span className="btn-icon"><Ico n="wifi" /> {t('st.serviceHealth')}</span></h2>
+          {checkedAt ? <span className="field-hint">{t('st.checkedAt', { time: checkedAt.toLocaleTimeString() })}</span> : null}
         </header>
         <p className="settings-hint">
-          Liveness confirms the process is responding; readiness additionally checks the database and cache are
-          reachable. The app's own monitors (machine, cameras) appear as advisory readiness fields — they never
-          block readiness, but a degraded value is worth investigating.
+          {t('st.healthHint')}
         </p>
         <div className="machine-metrics">
           <div className="machine-metric-card">
-            <dt>API namespaces</dt>
-            <dd>{pill(apiHealth?.ok && apiHealth?.body?.ok !== false, apiHealth?.ok ? 'OK' : 'Down')}</dd>
+            <dt>{t('st.apiNamespaces')}</dt>
+            <dd>{pill(apiHealth?.ok && apiHealth?.body?.ok !== false, apiHealth?.ok ? t('st.ok') : t('st.down'))}</dd>
             <span className="field-hint">/api/health</span>
           </div>
           <div className="machine-metric-card">
-            <dt>Liveness</dt>
-            <dd>{pill(live?.ok && live?.body?.alive !== false, live?.ok ? 'Alive' : 'Down')}</dd>
+            <dt>{t('st.liveness')}</dt>
+            <dd>{pill(live?.ok && live?.body?.alive !== false, live?.ok ? t('st.alive') : t('st.down'))}</dd>
             <span className="field-hint">/health</span>
           </div>
           <div className="machine-metric-card">
-            <dt>Readiness</dt>
-            <dd>{pill(ready?.ok && ready?.body?.ok === true, ready?.ok && ready?.body?.ok === true ? 'Ready' : 'Not ready')}</dd>
+            <dt>{t('st.readiness')}</dt>
+            <dd>{pill(ready?.ok && ready?.body?.ok === true, ready?.ok && ready?.body?.ok === true ? t('st.ready') : t('st.notReady'))}</dd>
             <span className="field-hint">/ready</span>
           </div>
           {readyExtras.map(([key, val]) => (
@@ -640,6 +641,7 @@ function SystemStatusPanel({ authHeader, onRestart }) {
 // adopted. A node is discoverable on the LAN only while unpaired AND a fleet key
 // is set; adoption locks it to a single parent and silences discovery.
 function PairingPanel({ authHeader }) {
+  const t = useT();
   const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
@@ -668,10 +670,10 @@ function PairingPanel({ authHeader }) {
         // an operator watching this page sees it without a manual refresh.
         if (prev && prev.paired !== r.body?.paired) {
           if (r.body?.paired) {
-            setMsg({ kind: 'ok', text: `This node was adopted by ${r.body.parentName || r.body.parentId || 'a control plane'}.` });
+            setMsg({ kind: 'ok', text: t('st.adoptedBy', { parent: r.body.parentName || r.body.parentId || t('st.aControlPlane') }) });
             setClaim(null);
           } else {
-            setMsg({ kind: 'ok', text: 'This node was released and is discoverable again.' });
+            setMsg({ kind: 'ok', text: t('st.releasedDiscoverable') });
           }
         }
         return r.body;
@@ -689,12 +691,12 @@ function PairingPanel({ authHeader }) {
   }, [authHeader]);
 
   async function saveFleetKey() {
-    if (fleetKey.trim().length < 16) { setMsg({ kind: 'error', text: 'Fleet key must be at least 16 characters.' }); return; }
+    if (fleetKey.trim().length < 16) { setMsg({ kind: 'error', text: t('st.fleetKeyMin') }); return; }
     setBusy(true);
     const r = await api('/api/pairing/fleet-key', { method: 'PUT', body: JSON.stringify({ key: fleetKey.trim() }) });
     setBusy(false);
-    if (r.ok) { setMsg({ kind: 'ok', text: 'Fleet key saved — this node is now discoverable by your control plane.' }); setFleetKey(''); load(); }
-    else setMsg({ kind: 'error', text: r.body?.message || 'Failed to save fleet key.' });
+    if (r.ok) { setMsg({ kind: 'ok', text: t('st.fleetKeySaved') }); setFleetKey(''); load(); }
+    else setMsg({ kind: 'error', text: r.body?.message || t('st.fleetKeySaveFail') });
   }
 
   async function generateClaim() {
@@ -702,7 +704,7 @@ function PairingPanel({ authHeader }) {
     const r = await api('/api/pairing/claim-code', { method: 'POST' });
     setBusy(false);
     if (r.ok) { setClaim(r.body); setMsg(null); }
-    else setMsg({ kind: 'error', text: r.body?.message || 'Failed to generate claim code.' });
+    else setMsg({ kind: 'error', text: r.body?.message || t('st.claimGenFail') });
   }
 
   async function copyClaim() {
@@ -712,17 +714,17 @@ function PairingPanel({ authHeader }) {
       setClaimCopied(true);
       setTimeout(() => setClaimCopied(false), 2000);
     } catch (_) {
-      setMsg({ kind: 'error', text: 'Could not copy — select the code and copy manually.' });
+      setMsg({ kind: 'error', text: t('st.copyManually') });
     }
   }
 
   async function unpair() {
-    if (!window.confirm('Unpair this node from its control plane? It will become discoverable again and the current parent will lose access.')) return;
+    if (!window.confirm(t('st.unpairConfirm'))) return;
     setBusy(true);
     const r = await api('/api/pairing/unpair', { method: 'POST' });
     setBusy(false);
-    if (r.ok) { setMsg({ kind: 'ok', text: 'Unpaired. This node is discoverable again.' }); setClaim(null); load(); }
-    else setMsg({ kind: 'error', text: r.body?.message || 'Failed to unpair.' });
+    if (r.ok) { setMsg({ kind: 'ok', text: t('st.unpaired') }); setClaim(null); load(); }
+    else setMsg({ kind: 'error', text: r.body?.message || t('st.unpairFail') });
   }
 
   const paired = !!status?.paired;
@@ -734,26 +736,26 @@ function PairingPanel({ authHeader }) {
       <FormBusyOverlay busy={busy} />
       <section className="settings-panel span-two">
         <header>
-          <h2><span className="btn-icon"><Ico n="shield" /> Control plane</span></h2>
+          <h2><span className="btn-icon"><Ico n="shield" /> {t('st.controlPlane')}</span></h2>
           <div className="settings-header-actions">
             <button type="button" className="quiet" onClick={load} disabled={busy}>
-              <span className="btn-icon"><Ico n="reload" /> Refresh</span>
+              <span className="btn-icon"><Ico n="reload" /> {t('common.refresh')}</span>
             </button>
           </div>
         </header>
         {msg ? <p className={msg.kind === 'error' ? 'settings-hint danger-text' : 'settings-hint'}>{msg.text}</p> : null}
         <div className="machine-metrics">
           <div className="machine-metric-card">
-            <dt>Status</dt>
-            <dd><strong className={`status-pill ${paired ? 'online' : ''}`}>{paired ? 'Paired' : 'Unpaired'}</strong></dd>
+            <dt>{t('common.status')}</dt>
+            <dd><strong className={`status-pill ${paired ? 'online' : ''}`}>{paired ? t('st.paired') : t('st.unpairedPill')}</strong></dd>
           </div>
           <div className="machine-metric-card">
-            <dt>Discoverable</dt>
-            <dd><strong className={`status-pill ${status?.discoverable ? 'online' : 'offline'}`}>{status?.discoverable ? 'Yes' : 'No'}</strong></dd>
-            <span className="field-hint">{paired ? 'silenced — already adopted' : (fleetKeySet ? 'answering probes' : 'set a fleet key first')}</span>
+            <dt>{t('st.discoverable')}</dt>
+            <dd><strong className={`status-pill ${status?.discoverable ? 'online' : 'offline'}`}>{status?.discoverable ? t('common.yes') : t('common.no')}</strong></dd>
+            <span className="field-hint">{paired ? t('st.silenced') : (fleetKeySet ? t('st.answeringProbes') : t('st.setFleetFirst'))}</span>
           </div>
           <div className="machine-metric-card">
-            <dt>Node ID</dt>
+            <dt>{t('st.nodeId')}</dt>
             <dd><strong className="status-pill">{status?.nodeId ? String(status.nodeId).slice(0, 8) : '—'}</strong></dd>
             <span className="field-hint">{status?.name || ''}</span>
           </div>
@@ -762,46 +764,44 @@ function PairingPanel({ authHeader }) {
 
       {paired ? (
         <section className="settings-panel span-two">
-          <header><h2><span className="btn-icon"><Ico n="shield" /> Paired parent</span></h2></header>
+          <header><h2><span className="btn-icon"><Ico n="shield" /> {t('st.pairedParent')}</span></h2></header>
           <p className="settings-hint">
-            This node is locked to a single control plane and no longer answers discovery probes. To make it
-            discoverable again, either release it from the control plane or self-drop here.
+            {t('st.pairedParentHint')}
           </p>
           <div className="machine-metrics">
             <div className="machine-metric-card">
-              <dt>Parent</dt>
+              <dt>{t('st.parent')}</dt>
               <dd><strong className="status-pill">{status?.parentName || status?.parentId || '—'}</strong></dd>
               <span className="field-hint">{status?.parentBaseUrl || ''}</span>
             </div>
             {status?.pairedAt ? (
               <div className="machine-metric-card">
-                <dt>Paired since</dt>
+                <dt>{t('st.pairedSince')}</dt>
                 <dd><strong className="status-pill">{new Date(status.pairedAt * 1000).toLocaleString()}</strong></dd>
               </div>
             ) : null}
           </div>
           <div className="settings-actions">
             <button type="button" className="danger" onClick={unpair} disabled={busy}>
-              <span className="btn-icon"><Ico n="x" /> Unpair (self-drop)</span>
+              <span className="btn-icon"><Ico n="x" /> {t('st.unpairSelfDrop')}</span>
             </button>
           </div>
         </section>
       ) : (
         <>
           <section className="settings-panel span-two">
-            <header><h2><span className="btn-icon"><Ico n="key" /> Fleet key</span></h2></header>
+            <header><h2><span className="btn-icon"><Ico n="key" /> {t('st.fleetKey')}</span></h2></header>
             <p className="settings-hint">
-              Paste the fleet key generated by your myseliasan control plane. Discovery probes are signed with this
-              key, so only a control plane that shares it can see and adopt this node. {fleetKeySet ? 'A fleet key is already set; entering a new one replaces it.' : ''}
+              {t('st.fleetKeyHint')}{fleetKeySet ? t('st.fleetKeyReplaceHint') : ''}
             </p>
             <div className="settings-field-grid">
               <label>
-                Fleet key {fleetKeySet ? '(set)' : '(not set)'}
+                {fleetKeySet ? t('st.fleetKeySetLabel') : t('st.fleetKeyNotSetLabel')}
                 <input
                   type="password"
                   value={fleetKey}
                   onChange={(e) => setFleetKey(e.target.value)}
-                  placeholder={fleetKeySet ? '•••••••• (enter to replace)' : 'paste fleet key (min 16 chars)'}
+                  placeholder={fleetKeySet ? t('st.fleetKeyPhSet') : t('st.fleetKeyPhUnset')}
                   disabled={busy}
                   autoComplete="off"
                 />
@@ -809,43 +809,42 @@ function PairingPanel({ authHeader }) {
             </div>
             <div className="settings-actions">
               <button type="button" onClick={saveFleetKey} disabled={busy || fleetKey.trim().length < 16}>
-                <span className="btn-icon"><Ico n="save" /> Save fleet key</span>
+                <span className="btn-icon"><Ico n="save" /> {t('st.saveFleetKey')}</span>
               </button>
             </div>
           </section>
 
           <section className="settings-panel span-two">
-            <header><h2><span className="btn-icon"><Ico n="check-ok" /> Claim code</span></h2></header>
+            <header><h2><span className="btn-icon"><Ico n="check-ok" /> {t('st.claimCode')}</span></h2></header>
             <p className="settings-hint">
-              Generate a short-lived claim code, then enter it in your control plane when adopting this node. The code
-              confirms the adoption is authorised from here and expires after a few minutes.
+              {t('st.claimHint')}
             </p>
             {claim ? (
               <div className="machine-metrics">
                 <div className="machine-metric-card">
-                  <dt>Claim code</dt>
+                  <dt>{t('st.claimCode')}</dt>
                   <dd style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <strong className="status-pill online" style={{ letterSpacing: 2, fontSize: '1.2em' }}>{claim.code}</strong>
                     <button
                       type="button"
                       className="quiet"
                       onClick={copyClaim}
-                      title="Copy claim code"
-                      aria-label="Copy claim code"
+                      title={t('st.copyClaim')}
+                      aria-label={t('st.copyClaim')}
                       style={{ padding: 4, lineHeight: 0 }}
                     >
                       <Ico n={claimCopied ? 'check-ok' : 'copy'} sz={15} />
                     </button>
                   </dd>
-                  {claimExpiry ? <span className="field-hint">expires {claimExpiry}</span> : null}
+                  {claimExpiry ? <span className="field-hint">{t('st.expiresAt', { time: claimExpiry })}</span> : null}
                 </div>
               </div>
             ) : null}
             <div className="settings-actions">
               <button type="button" onClick={generateClaim} disabled={busy || !fleetKeySet}>
-                <span className="btn-icon"><Ico n="refresh" /> Generate claim code</span>
+                <span className="btn-icon"><Ico n="refresh" /> {t('st.generateClaim')}</span>
               </button>
-              {!fleetKeySet ? <span className="field-hint">Set a fleet key first.</span> : null}
+              {!fleetKeySet ? <span className="field-hint">{t('st.setFleetFirstShort')}</span> : null}
             </div>
           </section>
         </>
@@ -912,6 +911,7 @@ export function SettingsTab({
   resetAllowed,
   onSecureWipe,
 }) {
+  const t = useT();
   const iceServers = settings.stream.webrtc.iceServers || [];
   const capture = { ...defaultCaptureConfig, ...(settings.vision?.capture || {}),
     standalone: { ...defaultCaptureConfig.standalone, ...(settings.vision?.capture?.standalone || {}) },
@@ -1048,30 +1048,30 @@ export function SettingsTab({
 
   return (
     <section className="workspace settings-workspace">
-      <aside className="settings-side-nav" aria-label="Settings">
+      <aside className="settings-side-nav" aria-label={t('st.settingsAria')}>
         <button type="button" className={settingsNav === 'runtime' ? 'active' : 'quiet'} onClick={() => onSettingsNav('runtime')}>
-          <span className="btn-icon"><Ico n="sliders" /> Runtime</span>
+          <span className="btn-icon"><Ico n="sliders" /> {t('st.navRuntime')}</span>
         </button>
         <button type="button" className={settingsNav === 'ai' ? 'active' : 'quiet'} onClick={() => onSettingsNav('ai')}>
-          <span className="btn-icon"><Ico n="cpu" /> AI</span>
+          <span className="btn-icon"><Ico n="cpu" /> {t('st.navAi')}</span>
         </button>
         <button type="button" className={settingsNav === 'notifications' ? 'active' : 'quiet'} onClick={() => onSettingsNav('notifications')}>
-          <span className="btn-icon"><Ico n="bell" /> Notifications</span>
+          <span className="btn-icon"><Ico n="bell" /> {t('st.navNotifications')}</span>
         </button>
         <button type="button" className={settingsNav === 'health' ? 'active' : 'quiet'} onClick={() => onSettingsNav('health')}>
-          <span className="btn-icon"><Ico n="wifi" /> Camera Health</span>
+          <span className="btn-icon"><Ico n="wifi" /> {t('st.navCameraHealth')}</span>
         </button>
         <button type="button" className={settingsNav === 'machine' ? 'active' : 'quiet'} onClick={() => onSettingsNav('machine')}>
-          <span className="btn-icon"><Ico n="cpu" /> Machine Health</span>
+          <span className="btn-icon"><Ico n="cpu" /> {t('st.navMachineHealth')}</span>
         </button>
         <button type="button" className={settingsNav === 'users' ? 'active' : 'quiet'} onClick={() => onSettingsNav('users')}>
-          <span className="btn-icon"><Ico n="user" /> Users</span>
+          <span className="btn-icon"><Ico n="user" /> {t('st.navUsers')}</span>
         </button>
         <button type="button" className={settingsNav === 'pairing' ? 'active' : 'quiet'} onClick={() => onSettingsNav('pairing')}>
-          <span className="btn-icon"><Ico n="shield" /> Connectivity</span>
+          <span className="btn-icon"><Ico n="shield" /> {t('st.navConnectivity')}</span>
         </button>
         <button type="button" className={settingsNav === 'system' ? 'active' : 'quiet'} onClick={() => onSettingsNav('system')}>
-          <span className="btn-icon"><Ico n="monitor" /> Version &amp; Health</span>
+          <span className="btn-icon"><Ico n="monitor" /> {t('st.navVersionHealth')}</span>
         </button>
       </aside>
 
@@ -1082,9 +1082,9 @@ export function SettingsTab({
         {settingsNav === 'runtime' && (<>
         <section className="settings-panel span-two">
           <header>
-            <h2>Decoder</h2>
+            <h2>{t('st.decoder')}</h2>
             <button type="button" className="quiet" onClick={onAutoTune} disabled={busy}>
-              <span className="btn-icon"><Ico n="wand" /> Auto Tune</span>
+              <span className="btn-icon"><Ico n="wand" /> {t('st.autoTune')}</span>
             </button>
           </header>
           {autoTuneResult ? (
@@ -1102,7 +1102,7 @@ export function SettingsTab({
           <div className="settings-field-grid">
           <label className="field-span-two">
             <FieldTitle info="Executable used for RTSP-to-MJPEG fallback and RTSP frame capture. Leave as ffmpeg to resolve from PATH, or use an absolute service-safe path.">
-              FFmpeg path
+              {t('st.ffmpegPath')}
             </FieldTitle>
             <FfmpegInstallControl
               authHeader={authHeader}
@@ -1115,7 +1115,7 @@ export function SettingsTab({
           </label>
           <label>
             <FieldTitle info="RTSP transport passed to ffmpeg. TCP is most reliable on unstable camera networks; UDP can reduce latency when packet loss is low.">
-              RTSP transport
+              {t('st.rtspTransport')}
             </FieldTitle>
             <select value={settings.decoder.ffmpeg.rtspTransport} onChange={(event) => updateFFmpegDecoder({ rtspTransport: event.target.value })}>
               {decoderTransportOptions.map((item) => (
@@ -1127,7 +1127,7 @@ export function SettingsTab({
           </label>
           <label>
             <FieldTitle info="Hardware acceleration mode for ffmpeg decoding — applies to live view, standalone AI capture, and the continuous detection/recording siphon decode (offloading it from the CPU). None uses CPU software decode; auto lets ffmpeg choose; platform-specific modes need matching ffmpeg build, drivers, and hardware.">
-              Hardware decode
+              {t('st.hardwareDecode')}
             </FieldTitle>
             <select value={settings.decoder.ffmpeg.hwaccel} onChange={(event) => updateFFmpegDecoder({ hwaccel: event.target.value })}>
               {decoderHWAccelOptions.map((item) => (
@@ -1139,10 +1139,10 @@ export function SettingsTab({
           </label>
           <label className="field-span-two">
             <FieldTitle info="Optional hardware device or GPU index passed to ffmpeg hwaccel_device, such as 0, 1, or /dev/dri/renderD128 depending on platform.">
-              GPU/device
+              {t('st.gpuDevice')}
             </FieldTitle>
             <select value={effectiveGpuSelectValue} onChange={(event) => selectGPUDevice(event.target.value)}>
-              <option value="__default__">Default / ffmpeg decides</option>
+              <option value="__default__">{t('st.gpuDefault')}</option>
               {gpuDeviceOptions.map((item, index) => (
                 <option key={`${item.kind || 'gpu'}-${index}-${item.value}`} value={String(index)}>
                   {item.label}
@@ -1150,8 +1150,8 @@ export function SettingsTab({
               ))}
               <option value="__manual__">
                 {settings.decoder.ffmpeg.hwaccelDevice && selectedGpuDeviceIndex < 0
-                  ? `Manual: ${settings.decoder.ffmpeg.hwaccelDevice}`
-                  : 'Manual entry...'}
+                  ? t('st.gpuManual', { dev: settings.decoder.ffmpeg.hwaccelDevice })
+                  : t('st.gpuManualEntry')}
               </option>
             </select>
             {Array.isArray(gpuDevices?.observations) && gpuDevices.observations.length > 0 ? (
@@ -1161,14 +1161,14 @@ export function SettingsTab({
               <input
                 value={settings.decoder.ffmpeg.hwaccelDevice}
                 onChange={(event) => updateFFmpegDecoder({ hwaccelDevice: event.target.value })}
-                placeholder="Manual device value"
+                placeholder={t('st.manualDeviceValue')}
                 autoComplete="off"
               />
             ) : null}
           </label>
           <label>
             <FieldTitle info="Optional ffmpeg init_hw_device value for advanced setups, for example vaapi=va:/dev/dri/renderD128 or d3d11va=cam:1.">
-              Init hardware device
+              {t('st.initHwDevice')}
             </FieldTitle>
             <input
               value={settings.decoder.ffmpeg.initHwDevice}
@@ -1179,7 +1179,7 @@ export function SettingsTab({
           </label>
           <label>
             <FieldTitle info="Optional decoder name passed as ffmpeg -c:v before the input, such as h264_cuvid or hevc_cuvid. Leave empty for ffmpeg auto-selection.">
-              Video decoder
+              {t('st.videoDecoder')}
             </FieldTitle>
             <input
               value={settings.decoder.ffmpeg.videoDecoder}
@@ -1190,7 +1190,7 @@ export function SettingsTab({
           </label>
           <label>
             <FieldTitle info="MJPEG output quality. Lower numbers are higher quality and more CPU/bandwidth; 7 is a balanced live-view default.">
-              MJPEG quality
+              {t('st.mjpegQuality')}
             </FieldTitle>
             <input
               type="number"
@@ -1202,7 +1202,7 @@ export function SettingsTab({
           </label>
           <label>
             <FieldTitle info="Thread count used by ffmpeg while writing MJPEG output. Keep this low on small devices to protect the rest of the app.">
-              MJPEG threads
+              {t('st.mjpegThreads')}
             </FieldTitle>
             <input
               type="number"
@@ -1214,7 +1214,7 @@ export function SettingsTab({
           </label>
           <label>
             <FieldTitle info="Bytes ffmpeg may probe before decoding. Larger values can help unusual streams but slow startup.">
-              Probe size
+              {t('st.probeSize')}
             </FieldTitle>
             <input
               type="number"
@@ -1227,7 +1227,7 @@ export function SettingsTab({
           </label>
           <label>
             <FieldTitle info="Microseconds ffmpeg may analyze stream metadata. Larger values can help odd cameras but increase first-frame delay.">
-              Analyze duration
+              {t('st.analyzeDuration')}
             </FieldTitle>
             <input
               type="number"
@@ -1245,7 +1245,7 @@ export function SettingsTab({
               onChange={(event) => updateFFmpegDecoder({ lowDelay: event.target.checked })}
             />
             <FieldTitle info="Passes ffmpeg low_delay flags for lower latency. Disable only when a camera behaves badly with low-latency decoding.">
-              Low delay
+              {t('st.lowDelay')}
             </FieldTitle>
           </label>
           <label className="check-row">
@@ -1255,7 +1255,7 @@ export function SettingsTab({
               onChange={(event) => updateFFmpegDecoder({ noBuffer: event.target.checked })}
             />
             <FieldTitle info="Passes ffmpeg nobuffer flags to reduce live-view lag. Disable if the stream becomes unstable or drops too many frames.">
-              No buffer
+              {t('st.noBuffer')}
             </FieldTitle>
           </label>
           </div>
@@ -1265,27 +1265,27 @@ export function SettingsTab({
           <header>
             <h2>
               <FieldTitle info="How recorded NVR segments are stored on disk. 'Copy' keeps the camera's native codec with no re-encode (default; existing installs unchanged). 'H.264'/'H.265' re-encode each segment once at remux time on the GPU (NVENC) to shrink it — live capture and event clips always stay stream-copy. For the smallest footage with zero host cost, set the camera's own encoder to H.265 in the camera's Recording tab instead.">
-                Recording storage (compression)
+                {t('st.recStorageTitle')}
               </FieldTitle>
             </h2>
           </header>
           <div className="settings-grid">
             <label>
               <FieldTitle info="At-rest video codec. Copy: store the camera's codec unchanged (no host CPU/GPU). H.265 (HEVC): ~40-60% smaller, re-encoded on the GPU once per segment; browsers that can't decode HEVC are transcoded to H.264 on playback. H.264: smaller than copy for high-bitrate cameras, plays everywhere.">
-                Storage codec
+                {t('st.storageCodec')}
               </FieldTitle>
               <select
                 value={(settings.recording && settings.recording.storage && settings.recording.storage.codec) || 'copy'}
                 onChange={(event) => updateRecordingStorage({ codec: event.target.value })}
               >
-                <option value="copy">Copy (no re-encode — default)</option>
-                <option value="hevc">H.265 / HEVC (smallest)</option>
-                <option value="h264">H.264 (compatible)</option>
+                <option value="copy">{t('st.codecCopy')}</option>
+                <option value="hevc">{t('st.codecHevc')}</option>
+                <option value="h264">{t('st.codecH264')}</option>
               </select>
             </label>
             <label>
               <FieldTitle info="NVENC constant-quality (CQ) target used when re-encoding. Lower = better quality and larger files; 23-28 is typical. 0 uses the built-in default (26). Ignored in Copy mode.">
-                Re-encode quality (CQ)
+                {t('st.reEncodeQuality')}
               </FieldTitle>
               <input
                 type="number"
@@ -1297,7 +1297,7 @@ export function SettingsTab({
             </label>
             <label>
               <FieldTitle info="Maximum simultaneous GPU (NVENC) encode sessions shared by remux-time re-encoding and playback transcode. Match your GPU's session cap so it is never oversubscribed. 0 uses the default (2).">
-                Max concurrent GPU encodes
+                {t('st.maxGpuEncodes')}
               </FieldTitle>
               <input
                 type="number"
@@ -1309,7 +1309,7 @@ export function SettingsTab({
             </label>
           </div>
           <p className="field-hint" style={{marginTop:'8px'}}>
-            Codec/quality changes apply to newly recorded segments after you re-save a camera's recording config or restart the server. The concurrency limit applies on restart.
+            {t('st.recStorageHint')}
           </p>
         </section>
         </>)}
@@ -1321,22 +1321,22 @@ export function SettingsTab({
           <header>
             <h2>
               <FieldTitle info="YOLO inference parameters sent to the AI worker on every frame. 0 or disabled means the worker uses its own env-var default. Changes take effect immediately without a restart.">
-                YOLO Inference Tuning
+                {t('st.yoloTuning')}
               </FieldTitle>
             </h2>
             <button
               type="button"
               className="quiet"
-              title="Apply best-practice defaults: conf=0.20, IOU=0.35, imgsz=640, maxDet=100, augment on"
+              title={t('st.bestCalibrationTitle')}
               onClick={() => updateYolo(bestYoloDefaults)}
             >
-              <span className="btn-icon"><Ico n="wand" /> Best Calibration</span>
+              <span className="btn-icon"><Ico n="wand" /> {t('st.bestCalibration')}</span>
             </button>
           </header>
           <div className="settings-field-grid">
             <label>
               <FieldTitle info="YOLO confidence threshold override (0–1). 0 uses the worker default (MYMATASAN_YOLO_CONF env var, usually 0.25). Lower values detect more objects at the cost of more false positives. Recommended: 0.15–0.20 for hard-to-detect poses like back-facing persons.">
-                Confidence override
+                {t('st.confOverride')}
               </FieldTitle>
               <input
                 type="number"
@@ -1349,7 +1349,7 @@ export function SettingsTab({
             </label>
             <label>
               <FieldTitle info="NMS IOU threshold override (0–1). 0 uses the YOLO default (0.45). Lower values keep more overlapping bounding boxes, reducing suppression of back-facing or partially-occluded persons. Recommended: 0.3–0.4.">
-                IOU threshold override
+                {t('st.iouOverride')}
               </FieldTitle>
               <input
                 type="number"
@@ -1362,13 +1362,13 @@ export function SettingsTab({
             </label>
             <label>
               <FieldTitle info="Inference image size override in pixels (0 uses env default, e.g. 640). Larger sizes improve detection of small or distant objects but are slower. Raspberry Pi 4 (1–4 GB RAM): use 320 or 480 — sizes above 640 may run out of memory. Jetson Nano: 480–640 is safe. x86/desktop: 640–1280.">
-                Image size override
+                {t('st.imgszOverride')}
               </FieldTitle>
               <select
                 value={settings.vision?.yolo?.imgsz ?? 0}
                 onChange={(event) => updateYolo({ imgsz: Number(event.target.value) })}
               >
-                <option value={0}>Default (env var)</option>
+                <option value={0}>{t('st.defaultEnvVar')}</option>
                 <option value={320}>320</option>
                 <option value={416}>416</option>
                 <option value={480}>480</option>
@@ -1379,7 +1379,7 @@ export function SettingsTab({
             </label>
             <label>
               <FieldTitle info="Maximum detections per image (0 uses YOLO default of 300). Increase if you expect many objects in the frame.">
-                Max detections override
+                {t('st.maxDetOverride')}
               </FieldTitle>
               <input
                 type="number"
@@ -1397,7 +1397,7 @@ export function SettingsTab({
                 onChange={(event) => updateYolo({ augment: event.target.checked })}
               />
               <FieldTitle info="Enable test-time augmentation (TTA): YOLO runs inference with flipped and scaled copies of the image and merges the results. This is the single most effective setting for detecting back-facing, crouching, or partially-occluded persons. Roughly doubles inference time. Raspberry Pi 4: adds ~10–30 s per frame — only enable if accuracy matters more than speed. Jetson/x86: typically adds 1–3 s.">
-                Augment (TTA — best for back-facing detection)
+                {t('st.augmentLabel')}
               </FieldTitle>
             </label>
             <label className="check-row">
@@ -1407,7 +1407,7 @@ export function SettingsTab({
                 onChange={(event) => updateYolo({ half: event.target.checked })}
               />
               <FieldTitle info="Use FP16 half-precision inference. Only effective on CUDA GPUs (Jetson, NVIDIA desktop). Automatically ignored on CPU — will not crash on Raspberry Pi or other ARM/CPU-only devices. Reduces memory usage and can increase throughput on GPU, but may slightly reduce detection accuracy.">
-                Half precision (GPU only — safe to enable anywhere)
+                {t('st.halfLabel')}
               </FieldTitle>
             </label>
           </div>
@@ -1417,24 +1417,24 @@ export function SettingsTab({
           <header>
             <h2>
               <FieldTitle info="Controls how the AI detector sources frames per camera. Auto and Siphon keep a continuous decoded stream feeding the detector — off the recorder when recording is on, or off a dedicated detection-only stream when recording is off — so detection stays immediate. Standalone opens a fresh one-frame RTSP grab each interval (slower; ~2–3s per frame). For critical/industrial use pick Auto (default) or Siphon.">
-                Capture
+                {t('st.capture')}
               </FieldTitle>
-              {capture.mode === 'auto' ? <span className="auto-badge">Auto</span> : null}
+              {capture.mode === 'auto' ? <span className="auto-badge">{t('st.auto')}</span> : null}
             </h2>
             <button
               type="button"
               className="quiet"
-              title="Detect local hardware (GPU/CPU and camera count) and apply recommended capture parameters."
+              title={t('st.autoConfigTitle')}
               onClick={onCaptureAutoConfig}
               disabled={busy}
             >
-              <span className="btn-icon"><Ico n="wand" /> Auto Config</span>
+              <span className="btn-icon"><Ico n="wand" /> {t('st.autoConfig')}</span>
             </button>
           </header>
           <div className="settings-field-grid">
             <label>
               <FieldTitle info="Frame source. Auto: read fresh decoded frames off the continuous stream (recorder when recording is on, else a dedicated detection-only stream), falling back to a one-shot grab only if no frame is ready yet. Siphon: always read off the continuous stream. Standalone: AI opens its own one-frame RTSP grab each interval (slower). Auto/Siphon give immediate detection even with recording off.">
-                Mode
+                {t('st.mode')}
               </FieldTitle>
               <select value={capture.mode} onChange={(event) => updateCapture({ mode: event.target.value })}>
                 {captureModeOptions.map(([value, label]) => (
@@ -1444,7 +1444,7 @@ export function SettingsTab({
             </label>
             <label>
               <FieldTitle info="Per-camera sampling interval in milliseconds — how often each camera is sampled for detection. Lower values detect faster but cost more CPU/GPU. In Auto mode these are set by Auto Config.">
-                Interval (ms)
+                {t('st.intervalMs')}
               </FieldTitle>
               <input
                 type="number"
@@ -1459,7 +1459,7 @@ export function SettingsTab({
             </label>
             <label>
               <FieldTitle info="Downscaled frame width in pixels fed to detection. 640 is a good accuracy/speed balance; smaller is faster.">
-                Frame width (px)
+                {t('st.frameWidthPx')}
               </FieldTitle>
               <input
                 type="number"
@@ -1474,7 +1474,7 @@ export function SettingsTab({
             </label>
             <label>
               <FieldTitle info="Standalone only. Deadline in milliseconds for a self-opened one-frame RTSP grab before it is abandoned.">
-                Standalone capture timeout (ms)
+                {t('st.standaloneTimeout')}
               </FieldTitle>
               <input
                 type="number"
@@ -1489,7 +1489,7 @@ export function SettingsTab({
             </label>
             <label>
               <FieldTitle info="Siphon only. Frames-per-second the recorder tee produces for the detector. Higher gives fresher frames at more CPU cost.">
-                Siphon FPS
+                {t('st.siphonFps')}
               </FieldTitle>
               <input
                 type="number"
@@ -1503,7 +1503,7 @@ export function SettingsTab({
             </label>
             <label>
               <FieldTitle info="Siphon only. How old (ms) a siphoned frame may be before Auto mode falls back to a standalone grab. Typically about twice the interval.">
-                Siphon stale limit (ms)
+                {t('st.siphonStale')}
               </FieldTitle>
               <input
                 type="number"
@@ -1518,7 +1518,7 @@ export function SettingsTab({
             </label>
           </div>
           {captureAuto ? (
-            <p className="settings-hint">In Auto mode these parameters are managed for you. Use Auto Config to recompute them from detected hardware, or switch Mode to Siphon/Standalone to edit them by hand.</p>
+            <p className="settings-hint">{t('st.captureAutoHint')}</p>
           ) : null}
         </section>
 
@@ -1526,11 +1526,11 @@ export function SettingsTab({
           <header>
             <h2>
               <FieldTitle info="Checks the configured AI detector command, Python packages, worker script, model file, and whether native fallback can keep non-AI detection available.">
-                AI Tool
+                {t('st.aiTool')}
               </FieldTitle>
             </h2>
             <button type="button" className="quiet" onClick={onCheckVisionTool} disabled={busy}>
-              <span className="btn-icon"><Ico n="check-ok" /> Check AI Tool</span>
+              <span className="btn-icon"><Ico n="check-ok" /> {t('st.checkAiTool')}</span>
             </button>
           </header>
           {visionToolStatus ? (
@@ -1538,47 +1538,47 @@ export function SettingsTab({
               <strong>{visionToolStatus.summary}</strong>
               <dl className="tool-status-grid">
                 <div>
-                  <dt>Mode</dt>
+                  <dt>{t('st.mode')}</dt>
                   <dd>{visionToolStatus.mode || 'motion'}</dd>
                 </div>
                 <div>
-                  <dt>AI ready</dt>
-                  <dd>{visionToolStatus.available ? 'Yes' : 'No'}</dd>
+                  <dt>{t('st.aiReady')}</dt>
+                  <dd>{visionToolStatus.available ? t('common.yes') : t('common.no')}</dd>
                 </div>
                 <div>
-                  <dt>Python</dt>
-                  <dd>{visionToolStatus.pythonVersion || 'Not detected'}</dd>
+                  <dt>{t('st.python')}</dt>
+                  <dd>{visionToolStatus.pythonVersion || t('st.notDetected')}</dd>
                 </div>
                 <div>
-                  <dt>AI packages</dt>
+                  <dt>{t('st.aiPackages')}</dt>
                   <dd>{(() => {
                     if (visionToolStatus.packagesAvailable) return '✓ ultralytics  ✓ cv2  ✓ torch';
                     const missing = visionToolStatus.missingPackages || [];
                     if (missing.length) {
                       return ['ultralytics', 'cv2', 'torch'].map((p) => `${missing.includes(p) ? '✗' : '✓'} ${p}`).join('  ');
                     }
-                    return visionToolStatus.packageError || 'Not checked';
+                    return visionToolStatus.packageError || t('st.notCheckedShort');
                   })()}</dd>
                 </div>
                 <div>
-                  <dt>Native fallback</dt>
-                  <dd>{visionToolStatus.nativeFallback ? 'Available' : 'Disabled'}</dd>
+                  <dt>{t('st.nativeFallback')}</dt>
+                  <dd>{visionToolStatus.nativeFallback ? t('st.fallbackAvailable') : t('st.fallbackDisabled')}</dd>
                 </div>
                 <div>
-                  <dt>ByteTrack tracker</dt>
-                  <dd>{visionToolStatus.trackerAvailable ? 'Available' : 'Not installed (optional — install lapx for ARM/Pi)'}</dd>
+                  <dt>{t('st.bytetrack')}</dt>
+                  <dd>{visionToolStatus.trackerAvailable ? t('st.fallbackAvailable') : t('st.trackerNotInstalled')}</dd>
                 </div>
                 <div>
-                  <dt>Command</dt>
-                  <dd>{visionToolStatus.commandPath || 'Not found'}</dd>
+                  <dt>{t('st.command')}</dt>
+                  <dd>{visionToolStatus.commandPath || t('st.notFound')}</dd>
                 </div>
                 <div>
-                  <dt>Worker</dt>
-                  <dd>{visionToolStatus.workerPath || 'Not configured'}</dd>
+                  <dt>{t('st.worker')}</dt>
+                  <dd>{visionToolStatus.workerPath || t('st.notConfigured')}</dd>
                 </div>
                 <div>
-                  <dt>Model</dt>
-                  <dd>{visionToolStatus.modelPath || 'Not configured'}</dd>
+                  <dt>{t('st.model')}</dt>
+                  <dd>{visionToolStatus.modelPath || t('st.notConfigured')}</dd>
                 </div>
               </dl>
               {Array.isArray(visionToolStatus.observations) && visionToolStatus.observations.length > 0 ? (
@@ -1590,13 +1590,13 @@ export function SettingsTab({
               ) : null}
               {Array.isArray(visionToolStatus.installHints) && visionToolStatus.installHints.length > 0 ? (
                 <div className="install-hints">
-                  <p><strong>Missing packages — how to fix:</strong></p>
+                  <p><strong>{t('st.missingPkgsFix')}</strong></p>
                   <ul>
                     {visionToolStatus.installHints.map((hint) => (
                       <li key={hint.importName}>
                         <code>{hint.importName}</code>
                         {hint.manual ? (
-                          <span> — manual install required. {hint.note}</span>
+                          <span>{t('st.manualInstall', { note: hint.note })}</span>
                         ) : (
                           <span>
                             {' — '}
@@ -1608,12 +1608,12 @@ export function SettingsTab({
                   </ul>
                   {visionToolStatus.installHints.some((h) => !h.manual) ? (
                     <button type="button" className="quiet" onClick={onInstallPackages} disabled={busy}>
-                      <span className="btn-icon"><Ico n="download" /> Install missing packages</span>
+                      <span className="btn-icon"><Ico n="download" /> {t('st.installMissing')}</span>
                     </button>
                   ) : null}
                   {visionInstallResult ? (
                     <div className="install-result">
-                      <strong>{visionInstallResult.success ? 'Install succeeded.' : 'Install failed.'}</strong>
+                      <strong>{visionInstallResult.success ? t('st.installSucceeded') : t('st.installFailed')}</strong>
                       {Array.isArray(visionInstallResult.observations) && visionInstallResult.observations.length > 0 ? (
                         <ul>
                           {visionInstallResult.observations.map((item, index) => (
@@ -1636,7 +1636,7 @@ export function SettingsTab({
         {settingsNav === 'runtime' && (<>
         <section className="settings-panel">
           <header>
-            <h2>Live Stream</h2>
+            <h2>{t('st.liveStream')}</h2>
           </header>
           <label className="check-row">
             <input
@@ -1652,7 +1652,7 @@ export function SettingsTab({
                 }))
               }
             />
-            WebRTC
+            {t('st.webrtc')}
           </label>
           <label className="check-row">
             <input
@@ -1668,13 +1668,13 @@ export function SettingsTab({
                 }))
               }
             />
-            MJPEG fallback
+            {t('st.mjpegFallback')}
           </label>
         </section>
 
         <section className="settings-panel span-two">
           <header>
-            <h2>ICE Servers</h2>
+            <h2>{t('st.iceServers')}</h2>
             <button
               type="button"
               className="quiet"
@@ -1692,15 +1692,15 @@ export function SettingsTab({
               }
               disabled={busy}
             >
-              Add Server
+              {t('st.addServer')}
             </button>
           </header>
           <div className="ice-list">
-            {iceServers.length === 0 ? <p className="empty">No STUN/TURN servers configured.</p> : null}
+            {iceServers.length === 0 ? <p className="empty">{t('st.noIceServers')}</p> : null}
             {iceServers.map((server, index) => (
               <div className="ice-row" key={`ice-${index}`}>
                 <label>
-                  URLs
+                  {t('st.urls')}
                   <textarea
                     value={iceUrlsText(server)}
                     onChange={(event) => updateIceServer(index, { urls: textToIceUrls(event.target.value) })}
@@ -1708,7 +1708,7 @@ export function SettingsTab({
                   />
                 </label>
                 <label>
-                  Username
+                  {t('common.username')}
                   <input
                     value={server.username || ''}
                     onChange={(event) => updateIceServer(index, { username: event.target.value })}
@@ -1716,7 +1716,7 @@ export function SettingsTab({
                   />
                 </label>
                 <label>
-                  Credential
+                  {t('st.credential')}
                   <PasswordField
                     value={server.credential || ''}
                     onChange={(credential) => updateIceServer(index, { credential })}
@@ -1740,7 +1740,7 @@ export function SettingsTab({
                   }
                   disabled={busy}
                 >
-                  Remove
+                  {t('common.remove')}
                 </button>
               </div>
             ))}
@@ -1750,13 +1750,13 @@ export function SettingsTab({
 
         <div className="settings-actions">
           <button type="submit" disabled={busy || !hasChanges}>
-            <span className="btn-icon"><Ico n="save" /> Save Settings</span>
+            <span className="btn-icon"><Ico n="save" /> {t('st.saveSettings')}</span>
           </button>
           <button type="button" className="quiet" onClick={onDiscard} disabled={busy || !hasChanges}>
-            <span className="btn-icon"><Ico n="undo" /> Discard Changes</span>
+            <span className="btn-icon"><Ico n="undo" /> {t('st.discardChanges')}</span>
           </button>
           <button type="button" className="quiet" onClick={onReset} disabled={busy}>
-            <span className="btn-icon"><Ico n="reload" /> Reset Defaults</span>
+            <span className="btn-icon"><Ico n="reload" /> {t('st.resetDefaults')}</span>
           </button>
         </div>
           </form>
@@ -1766,13 +1766,13 @@ export function SettingsTab({
           <div className="settings-layout">
           <section className="settings-panel span-two">
             <header>
-              <h2>Add user</h2>
+              <h2>{t('st.addUser')}</h2>
             </header>
-            <p className="settings-hint">Create a local sign-in account. Admins can manage users and settings; non-admins get view access.</p>
+            <p className="settings-hint">{t('st.addUserHint')}</p>
             <form onSubmit={onCreateUser}>
               <div className="settings-field-grid">
                 <label>
-                  Username
+                  {t('common.username')}
                   <input
                     value={newUser.username}
                     onChange={(event) => onNewUser({ ...newUser, username: event.target.value })}
@@ -1781,7 +1781,7 @@ export function SettingsTab({
                   />
                 </label>
                 <label>
-                  Display name
+                  {t('st.displayName')}
                   <input
                     value={newUser.displayName}
                     onChange={(event) => onNewUser({ ...newUser, displayName: event.target.value })}
@@ -1789,7 +1789,7 @@ export function SettingsTab({
                   />
                 </label>
                 <label>
-                  Password
+                  {t('common.password')}
                   <PasswordField
                     value={newUser.password}
                     onChange={(password) => onNewUser({ ...newUser, password })}
@@ -1802,12 +1802,12 @@ export function SettingsTab({
                     checked={newUser.isAdmin}
                     onChange={(event) => onNewUser({ ...newUser, isAdmin: event.target.checked })}
                   />
-                  Administrator
+                  {t('st.administrator')}
                 </label>
               </div>
               <div className="settings-actions">
                 <button type="submit" disabled={busy}>
-                  <span className="btn-icon"><Ico n="user-plus" /> Add User</span>
+                  <span className="btn-icon"><Ico n="user-plus" /> {t('st.addUserBtn')}</span>
                 </button>
               </div>
             </form>
@@ -1815,13 +1815,13 @@ export function SettingsTab({
 
           <section className="settings-panel span-two">
             <header>
-              <h2>Users</h2>
+              <h2>{t('st.users')}</h2>
               <button type="button" className="quiet" onClick={onLoadUsers} disabled={busy}>
-                <span className="btn-icon"><Ico n="refresh" /> Reload</span>
+                <span className="btn-icon"><Ico n="refresh" /> {t('common.reload')}</span>
               </button>
             </header>
             <div className="user-list">
-              {users.length === 0 ? <p className="empty">No local users loaded.</p> : null}
+              {users.length === 0 ? <p className="empty">{t('st.noUsers')}</p> : null}
               {users.map((user) => {
                 const isFocused = focusUsername && user.username === focusUsername;
                 return (
@@ -1833,15 +1833,15 @@ export function SettingsTab({
                   <div className="user-card-head">
                     <Ico n="user" sz={16} />
                     <span className="user-card-name">{user.displayName || user.username}</span>
-                    {user.isAdmin ? <span className="user-badge user-badge--admin">Admin</span> : null}
+                    {user.isAdmin ? <span className="user-badge user-badge--admin">{t('st.adminBadge')}</span> : null}
                     <span className={`user-badge ${user.isActive ? 'user-badge--active' : 'user-badge--inactive'}`}>
-                      {user.isActive ? 'Active' : 'Inactive'}
+                      {user.isActive ? t('common.active') : t('common.inactive')}
                     </span>
-                    {user.mustChangePassword ? <span className="user-badge user-badge--warn">Password change pending</span> : null}
+                    {user.mustChangePassword ? <span className="user-badge user-badge--warn">{t('st.pwChangePending')}</span> : null}
                   </div>
                   <div className="settings-field-grid">
                     <label>
-                      Username
+                      {t('common.username')}
                       <input
                         value={user.username || ''}
                         onChange={(event) => onEditUser(user.id, { username: event.target.value })}
@@ -1849,7 +1849,7 @@ export function SettingsTab({
                       />
                     </label>
                     <label>
-                      Display name
+                      {t('st.displayName')}
                       <input
                         value={user.displayName || ''}
                         onChange={(event) => onEditUser(user.id, { displayName: event.target.value })}
@@ -1857,12 +1857,12 @@ export function SettingsTab({
                       />
                     </label>
                     <label>
-                      New password
+                      {t('st.newPassword')}
                       <PasswordField
                         value={passwordDrafts[user.id] || ''}
                         onChange={(password) => onPasswordDraft(user.id, password)}
                         autoComplete="new-password"
-                        placeholder="Leave blank to keep current"
+                        placeholder={t('st.leaveBlankKeep')}
                       />
                     </label>
                     <div className="user-card-toggles">
@@ -1872,7 +1872,7 @@ export function SettingsTab({
                           checked={Boolean(user.isAdmin)}
                           onChange={(event) => onEditUser(user.id, { isAdmin: event.target.checked })}
                         />
-                        Administrator
+                        {t('st.administrator')}
                       </label>
                       <label className="check-row">
                         <input
@@ -1880,13 +1880,13 @@ export function SettingsTab({
                           checked={Boolean(user.isActive)}
                           onChange={(event) => onEditUser(user.id, { isActive: event.target.checked })}
                         />
-                        Active
+                        {t('common.active')}
                       </label>
                     </div>
                   </div>
                   <div className="user-actions">
                     <button type="button" onClick={() => onUpdateUser(user)} disabled={busy}>
-                      <span className="btn-icon"><Ico n="save" /> Save</span>
+                      <span className="btn-icon"><Ico n="save" /> {t('common.save')}</span>
                     </button>
                     <button
                       type="button"
@@ -1894,10 +1894,10 @@ export function SettingsTab({
                       onClick={() => onResetPassword(user)}
                       disabled={busy || !(passwordDrafts[user.id] || '').trim()}
                     >
-                      <span className="btn-icon"><Ico n="key" /> Reset Password</span>
+                      <span className="btn-icon"><Ico n="key" /> {t('st.resetPassword')}</span>
                     </button>
                     <button type="button" className="quiet danger-text" onClick={() => onDeleteUser(user)} disabled={busy}>
-                      <span className="btn-icon"><Ico n="trash" /> Delete</span>
+                      <span className="btn-icon"><Ico n="trash" /> {t('common.delete')}</span>
                     </button>
                   </div>
                 </article>
@@ -1969,6 +1969,7 @@ export const SEVERITY_OPTIONS = [
 ];
 
 export function NotificationSettingsPanel({ settings, busy, hasChanges, onChange, onSave, onDiscard, onTest, onPurgeExpired }) {
+  const t = useT();
   const retention = settings.retention || defaultNotificationSettings.retention;
   const destinations = Array.isArray(settings.destinations) ? settings.destinations : [];
   // Which destination's form is expanded (accordion — one open at a time).
@@ -1997,18 +1998,16 @@ export function NotificationSettingsPanel({ settings, busy, hasChanges, onChange
 
       <section className="settings-panel span-two">
         <header>
-          <h2><span className="btn-icon"><Ico n="send" /> Delivery Destinations</span></h2>
+          <h2><span className="btn-icon"><Ico n="send" /> {t('st.deliveryDest')}</span></h2>
           <button type="button" className="quiet" onClick={() => onTest('destinations')} disabled={busy}>
-            <span className="btn-icon"><Ico n="send" /> Send Test</span>
+            <span className="btn-icon"><Ico n="send" /> {t('st.sendTest')}</span>
           </button>
         </header>
         <p className="settings-hint">
-          Each destination delivers independently — its own channel, severity floor, which notification types it
-          receives, which detection fields it includes, and custom fields. The in-app feed always shows every alert in
-          full. Test sends a <strong>System</strong> notification to destinations subscribed to it.
+          {t('st.notifHint')}
         </p>
         {destinations.length === 0 ? (
-          <p className="settings-hint">No destinations yet — add a webhook, Telegram, or MQTT target below.</p>
+          <p className="settings-hint">{t('st.noDest')}</p>
         ) : null}
         {destinations.length > 0 ? (
           <AccordionList>
@@ -2027,59 +2026,59 @@ export function NotificationSettingsPanel({ settings, busy, hasChanges, onChange
         ) : null}
         <div className="action-row">
           <button type="button" className="quiet" onClick={() => addDestination('webhook')} disabled={busy}>
-            <span className="btn-icon"><Ico n="wifi" /> Add webhook</span>
+            <span className="btn-icon"><Ico n="wifi" /> {t('st.addWebhook')}</span>
           </button>
           <button type="button" className="quiet" onClick={() => addDestination('telegram')} disabled={busy}>
-            <span className="btn-icon"><Ico n="send" /> Add Telegram</span>
+            <span className="btn-icon"><Ico n="send" /> {t('st.addTelegram')}</span>
           </button>
           <button type="button" className="quiet" onClick={() => addDestination('mqtt')} disabled={busy}>
-            <span className="btn-icon"><Ico n="wifi" /> Add MQTT</span>
+            <span className="btn-icon"><Ico n="wifi" /> {t('st.addMqtt')}</span>
           </button>
         </div>
       </section>
 
       <section className="settings-panel span-two">
         <header>
-          <h2><span className="btn-icon"><Ico n="trash" /> Retention</span></h2>
+          <h2><span className="btn-icon"><Ico n="trash" /> {t('st.retention')}</span></h2>
           {onPurgeExpired ? (
             <button
               type="button"
               className="quiet"
               disabled={busy || !(retention.days > 0)}
               title={retention.days > 0
-                ? `Delete AI detections older than ${retention.days} day(s) now${retention.onlyRead ? ' (read only)' : ''}.`
-                : 'Set a retention of at least 1 day to purge.'}
+                ? t('st.purgeTitleActive', { days: retention.days, read: retention.onlyRead ? t('st.purgeReadSuffix') : '' })
+                : t('st.purgeTitleDisabled')}
               onClick={() => {
-                if (window.confirm(`Delete AI detections older than ${retention.days} day(s)${retention.onlyRead ? ' that have been read' : ''}? This cannot be undone.`)) {
+                if (window.confirm(t('st.purgeConfirm', { days: retention.days, read: retention.onlyRead ? t('st.purgeConfirmReadSuffix') : '' }))) {
                   onPurgeExpired({ days: retention.days, onlyRead: !!retention.onlyRead });
                 }
               }}
             >
-              <span className="btn-icon"><Ico n="trash" /> Purge expired now</span>
+              <span className="btn-icon"><Ico n="trash" /> {t('st.purgeExpiredNow')}</span>
             </button>
           ) : null}
         </header>
-        <p className="settings-hint">Old notifications are purged automatically. The in-app feed and live stream are always on and need no configuration.</p>
+        <p className="settings-hint">{t('st.retentionHint')}</p>
         <div className="settings-grid">
           <label>
-            Keep for (days)
+            {t('st.keepForDays')}
             <input
               type="number"
               min="0"
               value={retention.days}
               onChange={(event) => patch('retention', { days: Number(event.target.value) })}
             />
-            <span className="settings-hint">0 disables automatic purging.</span>
+            <span className="settings-hint">{t('st.zeroDisablesPurge')}</span>
           </label>
           <label>
-            Purge interval (hours)
+            {t('st.purgeInterval')}
             <input
               type="number"
               min="1"
               value={retention.intervalHours}
               onChange={(event) => patch('retention', { intervalHours: Number(event.target.value) })}
             />
-            <span className="settings-hint">Interval changes apply after restart.</span>
+            <span className="settings-hint">{t('st.intervalAfterRestart')}</span>
           </label>
           <label className="check-row">
             <input
@@ -2087,17 +2086,17 @@ export function NotificationSettingsPanel({ settings, busy, hasChanges, onChange
               checked={retention.onlyRead}
               onChange={(event) => patch('retention', { onlyRead: event.target.checked })}
             />
-            Only purge read notifications
+            {t('st.onlyPurgeRead')}
           </label>
         </div>
       </section>
 
       <div className="settings-actions">
         <button type="submit" disabled={busy || !hasChanges}>
-          <span className="btn-icon"><Ico n="save" /> Save Settings</span>
+          <span className="btn-icon"><Ico n="save" /> {t('st.saveSettings')}</span>
         </button>
         <button type="button" className="quiet" onClick={onDiscard} disabled={busy || !hasChanges}>
-          <span className="btn-icon"><Ico n="undo" /> Discard Changes</span>
+          <span className="btn-icon"><Ico n="undo" /> {t('st.discardChanges')}</span>
         </button>
       </div>
     </form>
@@ -2140,16 +2139,16 @@ const WEBHOOK_PAYLOAD_SAMPLE = `{
 // destinationTarget renders a one-line summary of where a destination delivers,
 // shown in the collapsed accordion row so the target is visible without opening
 // the form.
-function destinationTarget(dest) {
+function destinationTarget(dest, t) {
   if (dest.type === 'mqtt') {
     const mqtt = dest.mqtt || {};
     if (mqtt.brokerUrl) return `${mqtt.brokerUrl}${mqtt.topic ? ` → ${mqtt.topic}` : ''}`;
-    return 'No broker set';
+    return t('st.noBrokerSet');
   }
   if (dest.type === 'telegram') {
-    return dest.chatId ? `Chat ${dest.chatId}` : 'No chat set';
+    return dest.chatId ? t('st.chatN', { id: dest.chatId }) : t('st.noChatSet');
   }
-  return dest.url || 'No URL set';
+  return dest.url || t('st.noUrlSet');
 }
 
 // DestinationItem is one accordion row in the destinations list: a compact,
@@ -2157,27 +2156,28 @@ function destinationTarget(dest) {
 // expands to the full editing form (DestinationCard) when clicked. Built on the
 // shared AccordionItem so it matches every other list editor.
 function DestinationItem({ dest, busy, open, onToggleOpen, onChange, onRemove }) {
+  const t = useT();
   const enabled = dest.enabled !== false;
   const summary = (
     <>
       <span className="accordion-title">{dest.name || titleizeType(dest.type)}</span>
       <span className={`class-source-badge ${dest.type}`}>{dest.type}</span>
-      <span className="accordion-muted">{destinationTarget(dest)}</span>
-      {!enabled ? <span className="accordion-tag">disabled</span> : null}
+      <span className="accordion-muted">{destinationTarget(dest, t)}</span>
+      {!enabled ? <span className="accordion-tag">{t('st.disabled')}</span> : null}
     </>
   );
   const actions = (
     <>
-      <label className="check-row compact" title="Enable or disable delivery to this destination">
+      <label className="check-row compact" title={t('st.enableDeliveryTitle')}>
         <input
           type="checkbox"
           checked={enabled}
           onChange={(event) => onChange({ enabled: event.target.checked })}
           disabled={busy}
         />
-        Enabled
+        {t('common.enabled')}
       </label>
-      <button type="button" className="quiet danger" onClick={onRemove} disabled={busy}>Remove</button>
+      <button type="button" className="quiet danger" onClick={onRemove} disabled={busy}>{t('common.remove')}</button>
     </>
   );
   return (
@@ -2200,6 +2200,7 @@ function titleizeType(type) {
 // field, that field's toggle is disabled so the user sees the stock field is
 // bypassed (custom wins).
 function DestinationCard({ dest, busy, onChange }) {
+  const t = useT();
   const isMqtt = dest.type === 'mqtt';
   const isTelegram = dest.type === 'telegram';
   const fields = dest.fields || defaultAlertNotificationConfig;
@@ -2230,12 +2231,12 @@ function DestinationCard({ dest, busy, onChange }) {
   return (
     <div className="dest-card">
       <label className="dest-name-field">
-        Name
+        {t('common.name')}
         <input
           className="dest-name"
           value={dest.name || ''}
           onChange={(event) => onChange({ name: event.target.value })}
-          placeholder="Destination name"
+          placeholder={t('st.destNamePh')}
           disabled={busy}
         />
       </label>
@@ -2244,96 +2245,96 @@ function DestinationCard({ dest, busy, onChange }) {
         <>
           <div className="settings-grid">
             <label>
-              Broker URL
+              {t('st.brokerUrl')}
               <input value={mqtt.brokerUrl || ''} onChange={(event) => setMqtt({ brokerUrl: event.target.value })} placeholder="ssl://broker.example.com:8883" autoComplete="off" disabled={disabled} />
             </label>
             <label>
               <FieldTitle info="Publish topic. Supports {{token}} placeholders from the payload data (cameraName, alertId, ruleId, detectionType, and label/confidence/ruleName when those fields are enabled; plate/vehicleType/color on license-plate alerts) plus cameraId, category, severity. A token that resolves to nothing collapses its level (e.g. .../{{cameraId}} on a Test → no trailing slash).">
-                Topic
+                {t('st.topic')}
               </FieldTitle>
               <input value={mqtt.topic || ''} onChange={(event) => setMqtt({ topic: event.target.value })} placeholder="matasan/alerts/{'{{cameraName}}'}" autoComplete="off" disabled={disabled} />
             </label>
             <label>
-              Client ID
-              <input value={mqtt.clientId || ''} onChange={(event) => setMqtt({ clientId: event.target.value })} placeholder="mymatasan-1 (optional)" autoComplete="off" disabled={disabled} />
+              {t('st.clientId')}
+              <input value={mqtt.clientId || ''} onChange={(event) => setMqtt({ clientId: event.target.value })} placeholder={t('st.clientIdPh')} autoComplete="off" disabled={disabled} />
             </label>
             <label>
-              QoS
+              {t('st.qos')}
               <select value={Number(mqtt.qos ?? 1)} onChange={(event) => setMqtt({ qos: Number(event.target.value) })} disabled={disabled}>
-                <option value={0}>0 — at most once</option>
-                <option value={1}>1 — at least once</option>
-                <option value={2}>2 — exactly once</option>
+                <option value={0}>{t('st.qos0')}</option>
+                <option value={1}>{t('st.qos1')}</option>
+                <option value={2}>{t('st.qos2')}</option>
               </select>
             </label>
             <label>
-              Username
+              {t('common.username')}
               <input value={mqtt.username || ''} onChange={(event) => setMqtt({ username: event.target.value })} autoComplete="off" disabled={disabled} />
             </label>
             <label>
-              Password
+              {t('common.password')}
               <PasswordField value={mqtt.password || ''} onChange={(password) => setMqtt({ password })} autoComplete="off" disabled={disabled} />
             </label>
           </div>
           <label className="check-row">
             <input type="checkbox" checked={Boolean(mqtt.retain)} onChange={(event) => setMqtt({ retain: event.target.checked })} disabled={disabled} />
-            Retain last message on the topic
+            {t('st.retainMsg')}
           </label>
           <fieldset className="dest-group">
             <legend>
               <FieldTitle info="TLS for ssl:// brokers. Paste PEM contents. CA verifies the broker; client certificate + key enable mutual-TLS (client-certificate auth).">
-                TLS / client certificate
+                {t('st.tlsClientCert')}
               </FieldTitle>
             </legend>
             <label>
-              CA certificate (PEM)
+              {t('st.caCert')}
               <textarea rows="3" value={mqtt.caCert || ''} onChange={(event) => setMqtt({ caCert: event.target.value })} placeholder="-----BEGIN CERTIFICATE-----" disabled={disabled} />
             </label>
             <div className="settings-grid">
               <label>
-                Client certificate (PEM)
+                {t('st.clientCert')}
                 <textarea rows="3" value={mqtt.clientCert || ''} onChange={(event) => setMqtt({ clientCert: event.target.value })} placeholder="-----BEGIN CERTIFICATE-----" disabled={disabled} />
               </label>
               <label>
-                Client key (PEM)
+                {t('st.clientKey')}
                 <textarea rows="3" value={mqtt.clientKey || ''} onChange={(event) => setMqtt({ clientKey: event.target.value })} placeholder="-----BEGIN PRIVATE KEY-----" disabled={disabled} />
               </label>
             </div>
             <label className="check-row">
               <input type="checkbox" checked={Boolean(mqtt.insecureSkipVerify)} onChange={(event) => setMqtt({ insecureSkipVerify: event.target.checked })} disabled={disabled} />
-              Skip broker certificate verification (insecure)
+              {t('st.skipVerify')}
             </label>
           </fieldset>
           <details className="dest-sample">
-            <summary>Sample payload</summary>
+            <summary>{t('st.samplePayload')}</summary>
             <pre className="install-output">{WEBHOOK_PAYLOAD_SAMPLE}</pre>
           </details>
         </>
       ) : isTelegram ? (
         <div className="settings-grid">
           <label>
-            Bot token
+            {t('st.botToken')}
             <PasswordField value={dest.botToken || ''} onChange={(botToken) => onChange({ botToken })} placeholder="123456:ABC-DEF..." autoComplete="off" disabled={disabled} />
           </label>
           <label>
-            Chat ID
+            {t('st.chatId')}
             <input value={dest.chatId || ''} onChange={(event) => onChange({ chatId: event.target.value })} placeholder="-1001234567890" autoComplete="off" disabled={disabled} />
           </label>
         </div>
       ) : (
         <>
           <label>
-            Webhook URL
+            {t('st.webhookUrl')}
             <input value={dest.url || ''} onChange={(event) => onChange({ url: event.target.value })} type="url" placeholder="https://hooks.example.com/..." autoComplete="off" disabled={disabled} />
           </label>
           <details className="dest-sample">
-            <summary>Sample payload</summary>
+            <summary>{t('st.samplePayload')}</summary>
             <pre className="install-output">{WEBHOOK_PAYLOAD_SAMPLE}</pre>
           </details>
         </>
       )}
 
       <label>
-        Minimum severity
+        {t('st.minSeverity')}
         <select value={dest.minSeverity || 'warning'} onChange={(event) => onChange({ minSeverity: event.target.value })} disabled={disabled}>
           {SEVERITY_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -2342,7 +2343,7 @@ function DestinationCard({ dest, busy, onChange }) {
       </label>
 
       <fieldset className="dest-group">
-        <legend>Receives</legend>
+        <legend>{t('st.receives')}</legend>
         {notificationCategories.map(([value, label, help]) => (
           <label className="check-row" key={value} title={help}>
             <input
@@ -2354,11 +2355,11 @@ function DestinationCard({ dest, busy, onChange }) {
             {label}
           </label>
         ))}
-        <span className="field-hint">None checked = all notification types.</span>
+        <span className="field-hint">{t('st.noneAllTypes')}</span>
       </fieldset>
 
       <fieldset className="dest-group">
-        <legend>Detection fields (AI alerts)</legend>
+        <legend>{t('st.detectionFields')}</legend>
         {alertNotificationFields.map(([key, label, help]) => {
           const overridden = customKeys.has(alertFieldDataKeys[key]);
           return (
@@ -2369,47 +2370,45 @@ function DestinationCard({ dest, busy, onChange }) {
                 onChange={(event) => setField(key, event.target.checked)}
                 disabled={busy || overridden}
               />
-              {label}{overridden ? ' — overridden by custom field' : ''}
+              {label}{overridden ? t('st.overriddenSuffix') : ''}
             </label>
           );
         })}
         <span className="field-hint">
-          License-plate (LPR) alerts also automatically include the <strong>plate number</strong>, and the
-          <strong> vehicle type</strong> &amp; <strong>color</strong> when detected — in both the message and the
-          payload (<code>plate</code>, <code>vehicleType</code>, <code>color</code>). No toggle needed.
+          {t('st.lprFieldsHint')}
         </span>
       </fieldset>
 
       {!customKeys.has(alertFieldDataKeys.includeSnapshot) && fields.includeSnapshot !== false ? (
         <label>
-          Snapshot delivery
+          {t('st.snapshotDelivery')}
           <select value={dest.snapshotMode === 'link' ? 'link' : 'inline'} onChange={(event) => onChange({ snapshotMode: event.target.value })} disabled={busy}>
-            <option value="inline">Inline — embed the image</option>
-            <option value="link">Link only — reference, no bytes</option>
+            <option value="inline">{t('st.snapInline')}</option>
+            <option value="link">{t('st.snapLink')}</option>
           </select>
-          <span className="field-hint">Inline embeds the image (webhook/MQTT base64, Telegram photo). Link only sends a reference (smaller payloads); the consumer fetches the image itself.</span>
+          <span className="field-hint">{t('st.snapHint')}</span>
         </label>
       ) : null}
 
       <fieldset className="dest-group">
         <legend>
           <FieldTitle info="Key/value pairs added to the payload. A custom field overrides a built-in field of the same key. Values may use templates: {{ruleName}}, {{cameraName}}, {{label}}, {{confidence}}, {{detectionType}}, {{alertId}}, {{ruleId}}, {{cameraId}}, and for license-plate alerts {{plate}}, {{vehicleType}}, {{color}}, {{watchlisted}}.">
-            Custom fields
+            {t('st.customFields')}
           </FieldTitle>
         </legend>
         {customFields.map((field, index) => {
           const collides = reservedKeys.has(String(field.key || '').trim());
           return (
             <div className="dest-custom-row" key={index}>
-              <input value={field.key || ''} onChange={(event) => setCustom(index, { key: event.target.value })} placeholder="key" disabled={busy} />
-              <input value={field.value || ''} onChange={(event) => setCustom(index, { value: event.target.value })} placeholder="value" disabled={busy} />
-              <button type="button" className="quiet danger" onClick={() => onChange({ customFields: customFields.filter((_, i) => i !== index) })} disabled={busy} aria-label="Remove field">✕</button>
-              {collides ? <span className="field-hint">overrides built-in “{String(field.key).trim()}”</span> : null}
+              <input value={field.key || ''} onChange={(event) => setCustom(index, { key: event.target.value })} placeholder={t('st.keyPh')} disabled={busy} />
+              <input value={field.value || ''} onChange={(event) => setCustom(index, { value: event.target.value })} placeholder={t('st.valuePh')} disabled={busy} />
+              <button type="button" className="quiet danger" onClick={() => onChange({ customFields: customFields.filter((_, i) => i !== index) })} disabled={busy} aria-label={t('st.removeField')}>✕</button>
+              {collides ? <span className="field-hint">{t('st.overridesBuiltin', { key: String(field.key).trim() })}</span> : null}
             </div>
           );
         })}
         <button type="button" className="quiet" onClick={() => onChange({ customFields: [...customFields, { key: '', value: '' }] })} disabled={busy}>
-          <span className="btn-icon"><Ico n="plus" /> Add field</span>
+          <span className="btn-icon"><Ico n="plus" /> {t('st.addField')}</span>
         </button>
         <TemplateTokenHelp />
       </fieldset>
@@ -2421,9 +2420,10 @@ function DestinationCard({ dest, busy, onChange }) {
 // have to guess them. Clicking a token copies "{{token}}" to the clipboard and
 // shows brief inline feedback (self-contained — no parent props needed).
 function TemplateTokenHelp() {
+  const t = useT();
   const [copied, setCopied] = useState('');
-  const groups = notificationTemplateTokens.reduce((acc, t) => {
-    (acc[t.group] = acc[t.group] || []).push(t);
+  const groups = notificationTemplateTokens.reduce((acc, tk) => {
+    (acc[tk.group] = acc[tk.group] || []).push(tk);
     return acc;
   }, {});
   async function copy(token) {
@@ -2434,19 +2434,19 @@ function TemplateTokenHelp() {
   }
   return (
     <div className="template-token-help">
-      <span className="field-hint">Available placeholders (click to copy) — a token that resolves to nothing is left out of the payload:</span>
+      <span className="field-hint">{t('st.placeholdersHint')}</span>
       {Object.entries(groups).map(([group, tokens]) => (
         <div key={group} className="token-group">
           <strong className="token-group-label">{group}:</strong>
-          {tokens.map((t) => (
+          {tokens.map((tk) => (
             <button
-              key={t.token}
+              key={tk.token}
               type="button"
-              className={`token-chip${copied === t.token ? ' copied' : ''}`}
-              title={t.desc}
-              onClick={() => copy(t.token)}
+              className={`token-chip${copied === tk.token ? ' copied' : ''}`}
+              title={tk.desc}
+              onClick={() => copy(tk.token)}
             >
-              {copied === t.token ? 'copied ✓' : `{{${t.token}}}`}
+              {copied === tk.token ? t('st.copied') : `{{${tk.token}}}`}
             </button>
           ))}
         </div>
@@ -2456,6 +2456,7 @@ function TemplateTokenHelp() {
 }
 
 export function HealthSettingsPanel({ settings, busy, hasChanges, onChange, onSave, onDiscard }) {
+  const t = useT();
   const value = { ...defaultHealthSettings, ...(settings || {}) };
   function patch(values) {
     onChange({ ...value, ...values });
@@ -2470,25 +2471,23 @@ export function HealthSettingsPanel({ settings, busy, hasChanges, onChange, onSa
 
       <section className="settings-panel span-two">
         <header>
-          <h2><span className="btn-icon"><Ico n="wifi" /> Camera Health Monitor</span></h2>
+          <h2><span className="btn-icon"><Ico n="wifi" /> {t('st.cameraHealthMonitor')}</span></h2>
           <label className="check-row">
             <input
               type="checkbox"
               checked={value.enabled}
               onChange={(event) => patch({ enabled: event.target.checked })}
             />
-            Enabled
+            {t('common.enabled')}
           </label>
         </header>
         <p className="settings-hint">
-          Periodically checks whether each camera is reachable over the network (TCP, with an RTSP fallback check).
-          When a camera goes offline a critical notification is raised, and an informational one when it recovers.
-          Changes apply on the next sweep — no restart needed.
+          {t('st.cameraHealthHint')}
         </p>
         <div className="settings-grid">
           <label>
             <FieldTitle info="How often every camera is checked. Lower values detect outages sooner but probe the network more frequently. Minimum 5 seconds.">
-              Check interval (seconds)
+              {t('st.checkInterval')}
             </FieldTitle>
             <input
               type="number"
@@ -2501,7 +2500,7 @@ export function HealthSettingsPanel({ settings, busy, hasChanges, onChange, onSa
           </label>
           <label>
             <FieldTitle info="Per-probe deadline for the TCP dial and RTSP check. Cameras on slow links may need a higher value. 1–60 seconds.">
-              Probe timeout (seconds)
+              {t('st.probeTimeout')}
             </FieldTitle>
             <input
               type="number"
@@ -2514,7 +2513,7 @@ export function HealthSettingsPanel({ settings, busy, hasChanges, onChange, onSa
           </label>
           <label>
             <FieldTitle info="Consecutive failed checks before a camera is declared offline. Higher values avoid false alarms from brief network blips.">
-              Failure threshold
+              {t('st.failureThreshold')}
             </FieldTitle>
             <input
               type="number"
@@ -2527,7 +2526,7 @@ export function HealthSettingsPanel({ settings, busy, hasChanges, onChange, onSa
           </label>
           <label>
             <FieldTitle info="Consecutive successful checks before a camera is declared back online. Higher values avoid flapping when a camera is intermittently reachable.">
-              Recovery threshold
+              {t('st.recoveryThreshold')}
             </FieldTitle>
             <input
               type="number"
@@ -2540,17 +2539,16 @@ export function HealthSettingsPanel({ settings, busy, hasChanges, onChange, onSa
           </label>
         </div>
         <p className="settings-hint">
-          With these settings an outage is reported after roughly {detectionSec} second{detectionSec === 1 ? '' : 's'}
-          {' '}({value.failureThreshold} × {intervalSec}s).
+          {t('st.outageHint', { n: detectionSec, thr: value.failureThreshold, int: intervalSec })}
         </p>
       </section>
 
       <div className="settings-actions">
         <button type="submit" disabled={busy || !hasChanges}>
-          <span className="btn-icon"><Ico n="save" /> Save Settings</span>
+          <span className="btn-icon"><Ico n="save" /> {t('st.saveSettings')}</span>
         </button>
         <button type="button" className="quiet" onClick={onDiscard} disabled={busy || !hasChanges}>
-          <span className="btn-icon"><Ico n="undo" /> Discard Changes</span>
+          <span className="btn-icon"><Ico n="undo" /> {t('st.discardChanges')}</span>
         </button>
       </div>
     </form>
@@ -2571,7 +2569,7 @@ function machineLevelClass(percent, warn, critical) {
   return 'online';
 }
 
-const capacityLimitLabels = { cpu: 'CPU', gpu: 'GPU', disk: 'disk space', memory: 'memory' };
+const capacityLimitLabels = { cpu: 'st.capCpu', gpu: 'st.capGpu', disk: 'st.capDisk', memory: 'st.capMemory' };
 
 // formatRetentionDays renders an estimated retention span readably: minutes/hours
 // below a day, otherwise days.
@@ -2588,22 +2586,22 @@ export function formatRetentionDays(days) {
 // CapacityRetentionNote shows the recording retention achievable at the estimated
 // camera count — disk shortens retention rather than blocking cameras.
 export function CapacityRetentionNote({ capacity }) {
+  const t = useT();
   if (!capacity || !capacity.configuredRetentionDays) return null;
   const constrained = capacity.retentionConstrained;
   return (
     <div className={`capacity-retention${constrained ? ' capacity-retention--warn' : ''}`}>
       <span className="btn-icon"><Ico n={constrained ? 'warning' : 'trash'} /></span>
       <span>
-        At {capacity.estimatedMax} cameras, recording keeps about{' '}
-        <strong>{formatRetentionDays(capacity.achievableRetentionDays)}</strong> of footage
-        {' '}(target {capacity.configuredRetentionDays} days).
-        {constrained ? ' Oldest footage auto-purges — lower the bitrate or add storage to keep more.' : ''}
+        {t('st.capRetentionNote', { max: capacity.estimatedMax, span: formatRetentionDays(capacity.achievableRetentionDays), target: capacity.configuredRetentionDays })}
+        {constrained ? t('st.capRetentionConstrained') : ''}
       </span>
     </div>
   );
 }
 
 export function MachineHealthSettingsPanel({ settings, busy, hasChanges, metrics, onChange, onSave, onDiscard, onRefreshMetrics, capacity, onEstimateCapacity, onCalibrateCapacity, resetAllowed, onSecureWipe }) {
+  const t = useT();
   const d = defaultMachineHealthSettings;
   const value = {
     ...d,
@@ -2627,33 +2625,30 @@ export function MachineHealthSettingsPanel({ settings, busy, hasChanges, metrics
 
       <section className="settings-panel span-two">
         <header>
-          <h2><span className="btn-icon"><Ico n="cpu" /> Camera Capacity Estimate</span></h2>
+          <h2><span className="btn-icon"><Ico n="cpu" /> {t('st.capacityEstimate')}</span></h2>
           <div className="capacity-actions">
-            <button type="button" className="quiet" onClick={() => onCalibrateCapacity && onCalibrateCapacity()} disabled={busy} title="Benchmark the detector on this machine for an accurate estimate before any camera is added.">
-              <span className="btn-icon"><Ico n="wand" /> Run calibration</span>
+            <button type="button" className="quiet" onClick={() => onCalibrateCapacity && onCalibrateCapacity()} disabled={busy} title={t('st.runCalibrationTitle')}>
+              <span className="btn-icon"><Ico n="wand" /> {t('st.runCalibration')}</span>
             </button>
             <button type="button" className="quiet" onClick={() => onEstimateCapacity && onEstimateCapacity()} disabled={busy}>
-              <span className="btn-icon"><Ico n="reload" /> Estimate</span>
+              <span className="btn-icon"><Ico n="reload" /> {t('st.estimate')}</span>
             </button>
           </div>
         </header>
         <p className="settings-hint">
-          A guide to how many cameras this host can process, from detected hardware
-          {capacity?.confidence === 'measured' ? ' and current live load' : capacity?.confidence === 'calibrated' ? ' and a detector benchmark' : ''}. The total is the tightest continuous
-          workload (AI detection, recording, memory); live view is on-demand and not counted.
-          Run calibration for an accurate number before adding cameras.
+          {t('st.capacityHint', { extra: capacity?.confidence === 'measured' ? t('st.capExtraMeasured') : capacity?.confidence === 'calibrated' ? t('st.capExtraCalibrated') : '' })}
         </p>
         {capacity ? (
           <>
             <div className="capacity-headline">
               <span className="capacity-number">{capacity.estimatedMax}</span>
               <div className="capacity-headline-meta">
-                <span className="capacity-caption">estimated cameras</span>
+                <span className="capacity-caption">{t('st.estimatedCameras')}</span>
                 <span className={`capacity-badge capacity-badge--${capacity.confidence}`}>
-                  {capacity.confidence === 'measured' ? 'Measured from live load' : capacity.confidence === 'calibrated' ? 'Calibrated on this host' : 'Ballpark estimate'}
+                  {capacity.confidence === 'measured' ? t('st.confMeasured') : capacity.confidence === 'calibrated' ? t('st.confCalibrated') : t('st.confBallpark')}
                 </span>
                 {capacity.limitingWorkload ? (
-                  <span className="field-hint">Limited by {capacityLimitLabels[(capacity.workloads || []).find((w) => w.name === capacity.limitingWorkload)?.limit] || capacity.limitingWorkload}</span>
+                  <span className="field-hint">{t('st.limitedBy', { x: (() => { const k = capacityLimitLabels[(capacity.workloads || []).find((w) => w.name === capacity.limitingWorkload)?.limit]; return k ? t(k) : capacity.limitingWorkload; })() })}</span>
                 ) : null}
               </div>
             </div>
@@ -2662,103 +2657,101 @@ export function MachineHealthSettingsPanel({ settings, busy, hasChanges, metrics
               {(capacity.workloads || []).map((wl) => (
                 <div className={`capacity-card${wl.name === capacity.limitingWorkload ? ' capacity-card--limit' : ''}`} key={wl.name}>
                   <dt>{wl.label}{!wl.continuous ? ' *' : ''}</dt>
-                  <dd><strong>{wl.maxCameras}</strong> cameras</dd>
+                  <dd><strong>{wl.maxCameras}</strong> {t('st.cameras')}</dd>
                   <span className="field-hint">{wl.note}</span>
                 </div>
               ))}
             </div>
             {Array.isArray(capacity.assumptions) && capacity.assumptions.length > 0 ? (
               <details className="capacity-assumptions">
-                <summary>Assumptions &amp; method</summary>
+                <summary>{t('st.assumptionsMethod')}</summary>
                 <ul>{capacity.assumptions.map((a, i) => <li key={i}>{a}</li>)}</ul>
               </details>
             ) : null}
           </>
         ) : (
-          <p className="empty">Click <strong>Estimate</strong> to gauge capacity for this machine.</p>
+          <p className="empty">{t('st.clickEstimate')}</p>
         )}
       </section>
 
       <section className="settings-panel span-two">
         <header>
-          <h2><span className="btn-icon"><Ico n="cpu" /> Machine Health Monitor</span></h2>
+          <h2><span className="btn-icon"><Ico n="cpu" /> {t('st.machineHealthMonitor')}</span></h2>
           <label className="check-row">
             <input type="checkbox" checked={value.enabled} onChange={(e) => patch({ enabled: e.target.checked })} />
-            Enabled
+            {t('common.enabled')}
           </label>
         </header>
         <p className="settings-hint">
-          Samples host CPU, memory, and disk usage and raises warning/critical notifications (with recovery notices)
-          when they cross your thresholds. Disk mitigation can purge expired recordings early and, as a last resort,
-          pause recording so a full disk cannot break recordings, snapshots, or the database. Changes apply live.
+          {t('st.machineHealthHint')}
         </p>
 
         <div className="machine-metrics">
           <div className="machine-metric-card">
-            <dt>CPU</dt>
+            <dt>{t('st.capCpu')}</dt>
             <dd><strong className={`status-pill ${machineLevelClass(metrics?.cpuPercent ?? 0, value.cpu.warnPercent, value.cpu.criticalPercent)}`}>{metrics ? `${metrics.cpuPercent}%` : '—'}</strong></dd>
           </div>
           <div className="machine-metric-card">
-            <dt>Memory</dt>
+            <dt>{t('st.memoryMetric')}</dt>
             <dd><strong className={`status-pill ${machineLevelClass(metrics?.memoryPercent ?? 0, value.memory.warnPercent, value.memory.criticalPercent)}`}>{metrics ? `${metrics.memoryPercent}%` : '—'}</strong></dd>
             {metrics ? <span className="field-hint">{formatBytes(metrics.memoryUsedBytes)} / {formatBytes(metrics.memoryTotalBytes)}</span> : null}
           </div>
           {disks.map((disk) => (
             <div className="machine-metric-card" key={disk.mountpoint}>
-              <dt>Disk {disk.mountpoint}</dt>
+              <dt>{t('st.diskMount', { mount: disk.mountpoint })}</dt>
               <dd><strong className={`status-pill ${machineLevelClass(disk.usedPercent, value.disk.warnPercent, value.disk.criticalPercent)}`}>{disk.usedPercent}%</strong></dd>
               <span className="field-hint">{formatBytes(disk.freeBytes)} free of {formatBytes(disk.totalBytes)}</span>
             </div>
           ))}
           {metrics?.recordingPaused ? (
             <div className="machine-metric-card">
-              <dt>Recording</dt>
-              <dd><strong className="status-pill offline">Paused (disk)</strong></dd>
+              <dt>{t('st.recording')}</dt>
+              <dd><strong className="status-pill offline">{t('st.pausedDisk')}</strong></dd>
             </div>
           ) : null}
           <div className="machine-metrics-action">
             <button type="button" className="quiet" onClick={() => onRefreshMetrics && onRefreshMetrics()} disabled={busy}>
-              <span className="btn-icon"><Ico n="reload" /> Check now</span>
+              <span className="btn-icon"><Ico n="reload" /> {t('st.checkNow')}</span>
             </button>
           </div>
         </div>
 
         <div className="settings-grid">
           <label>
-            <FieldTitle info="How often host metrics are sampled. Minimum 5 seconds.">Sample interval (seconds)</FieldTitle>
+            <FieldTitle info="How often host metrics are sampled. Minimum 5 seconds.">{t('st.sampleInterval')}</FieldTitle>
             <input type="number" min="5" step="5" value={intervalSec} onChange={(e) => patch({ intervalMs: Math.max(5, Number(e.target.value) || 0) * 1000 })} disabled={!value.enabled} />
           </label>
           <label>
-            <FieldTitle info="Consecutive breaching samples before an alert fires (debounce against transient spikes).">Sustained samples</FieldTitle>
+            <FieldTitle info="Consecutive breaching samples before an alert fires (debounce against transient spikes).">{t('st.sustainedSamples')}</FieldTitle>
             <input type="number" min="1" max="60" value={value.sustainedSamples} onChange={(e) => patch({ sustainedSamples: Math.max(1, Number(e.target.value) || 0) })} disabled={!value.enabled} />
           </label>
           <label>
-            <FieldTitle info="Consecutive normal samples before a recovery notice fires.">Recovery samples</FieldTitle>
+            <FieldTitle info="Consecutive normal samples before a recovery notice fires.">{t('st.recoverySamples')}</FieldTitle>
             <input type="number" min="1" max="60" value={value.recoverySamples} onChange={(e) => patch({ recoverySamples: Math.max(1, Number(e.target.value) || 0) })} disabled={!value.enabled} />
           </label>
         </div>
       </section>
 
       <section className="settings-panel span-two">
-        <header><h2>Thresholds</h2></header>
-        <p className="settings-hint">Warning and critical percentages per metric. Critical must exceed warning.</p>
+        <header><h2>{t('st.thresholds')}</h2></header>
+        <p className="settings-hint">{t('st.thresholdsHint')}</p>
         <div className="settings-field-grid">
-          <label><FieldTitle info="CPU usage % that raises a Warning.">CPU warning %</FieldTitle>
+          <label><FieldTitle info="CPU usage % that raises a Warning.">{t('st.cpuWarn')}</FieldTitle>
             <input type="number" min="1" max="100" value={value.cpu.warnPercent} onChange={(e) => patchCpu({ warnPercent: Number(e.target.value) })} disabled={!value.enabled} /></label>
-          <label><FieldTitle info="CPU usage % that raises a Critical.">CPU critical %</FieldTitle>
+          <label><FieldTitle info="CPU usage % that raises a Critical.">{t('st.cpuCrit')}</FieldTitle>
             <input type="number" min="1" max="100" value={value.cpu.criticalPercent} onChange={(e) => patchCpu({ criticalPercent: Number(e.target.value) })} disabled={!value.enabled} /></label>
-          <label><FieldTitle info="Memory usage % that raises a Warning.">Memory warning %</FieldTitle>
+          <label><FieldTitle info="Memory usage % that raises a Warning.">{t('st.memWarn')}</FieldTitle>
             <input type="number" min="1" max="100" value={value.memory.warnPercent} onChange={(e) => patchMem({ warnPercent: Number(e.target.value) })} disabled={!value.enabled} /></label>
-          <label><FieldTitle info="Memory usage % that raises a Critical.">Memory critical %</FieldTitle>
+          <label><FieldTitle info="Memory usage % that raises a Critical.">{t('st.memCrit')}</FieldTitle>
             <input type="number" min="1" max="100" value={value.memory.criticalPercent} onChange={(e) => patchMem({ criticalPercent: Number(e.target.value) })} disabled={!value.enabled} /></label>
-          <label><FieldTitle info="Disk fullness % that raises a Warning.">Disk warning %</FieldTitle>
+          <label><FieldTitle info="Disk fullness % that raises a Warning.">{t('st.diskWarn')}</FieldTitle>
             <input type="number" min="1" max="100" value={value.disk.warnPercent} onChange={(e) => patchDisk({ warnPercent: Number(e.target.value) })} disabled={!value.enabled} /></label>
-          <label><FieldTitle info="Disk fullness % that raises a Critical.">Disk critical %</FieldTitle>
+          <label><FieldTitle info="Disk fullness % that raises a Critical.">{t('st.diskCrit')}</FieldTitle>
             <input type="number" min="1" max="100" value={value.disk.criticalPercent} onChange={(e) => patchDisk({ criticalPercent: Number(e.target.value) })} disabled={!value.enabled} /></label>
         </div>
         <label>
           <FieldTitle info="Extra disk paths/volumes to monitor, one per line. The volumes the app writes to (recordings, logs, working dir) are monitored automatically.">
-            Extra disk paths (one per line)
+            {t('st.extraDiskPaths')}
           </FieldTitle>
           <textarea
             rows="2"
@@ -2772,27 +2765,26 @@ export function MachineHealthSettingsPanel({ settings, busy, hasChanges, metrics
 
       <section className="settings-panel span-two">
         <header>
-          <h2><span className="btn-icon"><Ico n="shield" /> Disk Mitigation</span></h2>
+          <h2><span className="btn-icon"><Ico n="shield" /> {t('st.diskMitigation')}</span></h2>
           <label className="check-row">
             <input type="checkbox" checked={value.mitigation.enabled} onChange={(e) => patchMit({ enabled: e.target.checked })} disabled={!value.enabled} />
-            Enabled
+            {t('common.enabled')}
           </label>
         </header>
         <p className="settings-hint">
-          Automatic protective actions when a monitored disk gets dangerously full. Pausing recording stops new NVR
-          footage until the disk recovers — footage during the pause is not captured.
+          {t('st.diskMitigationHint')}
         </p>
         <div className="settings-grid">
           <label>
-            <FieldTitle info="When a monitored disk reaches this fullness, immediately purge expired recordings (only deletes footage already past its retention).">Early purge at %</FieldTitle>
+            <FieldTitle info="When a monitored disk reaches this fullness, immediately purge expired recordings (only deletes footage already past its retention).">{t('st.earlyPurgeAt')}</FieldTitle>
             <input type="number" min="1" max="100" value={value.mitigation.purgeAtPercent} onChange={(e) => patchMit({ purgeAtPercent: Number(e.target.value) })} disabled={!value.enabled || !value.mitigation.enabled} />
           </label>
           <label>
-            <FieldTitle info="When a monitored disk reaches this fullness, pause NVR recording to stop the volume filling completely.">Pause recording at %</FieldTitle>
+            <FieldTitle info="When a monitored disk reaches this fullness, pause NVR recording to stop the volume filling completely.">{t('st.pauseRecordingAt')}</FieldTitle>
             <input type="number" min="1" max="100" value={value.mitigation.pauseRecordingAtPercent} onChange={(e) => patchMit({ pauseRecordingAtPercent: Number(e.target.value) })} disabled={!value.enabled || !value.mitigation.enabled} />
           </label>
           <label>
-            <FieldTitle info="Recording resumes once the disk drops below this fullness (hysteresis). Must be below the pause threshold.">Resume below %</FieldTitle>
+            <FieldTitle info="Recording resumes once the disk drops below this fullness (hysteresis). Must be below the pause threshold.">{t('st.resumeBelow')}</FieldTitle>
             <input type="number" min="1" max="99" value={value.mitigation.resumePercent} onChange={(e) => patchMit({ resumePercent: Number(e.target.value) })} disabled={!value.enabled || !value.mitigation.enabled} />
           </label>
         </div>
@@ -2800,25 +2792,23 @@ export function MachineHealthSettingsPanel({ settings, busy, hasChanges, metrics
 
       <div className="settings-actions">
         <button type="submit" disabled={busy || !hasChanges}>
-          <span className="btn-icon"><Ico n="save" /> Save Settings</span>
+          <span className="btn-icon"><Ico n="save" /> {t('st.saveSettings')}</span>
         </button>
         <button type="button" className="quiet" onClick={onDiscard} disabled={busy || !hasChanges}>
-          <span className="btn-icon"><Ico n="undo" /> Discard Changes</span>
+          <span className="btn-icon"><Ico n="undo" /> {t('st.discardChanges')}</span>
         </button>
       </div>
 
       {resetAllowed && onSecureWipe ? (
         <section className="settings-panel span-two danger-zone">
           <header>
-            <h2><span className="btn-icon"><Ico n="warning" /> Danger Zone</span></h2>
+            <h2><span className="btn-icon"><Ico n="warning" /> {t('st.dangerZone')}</span></h2>
           </header>
           <p className="settings-hint">
-            <strong>Secure Wipe &amp; Reset</strong> permanently shreds every recording, snapshot, training dataset and
-            upload, drops and rebuilds the database, and restarts the system back to first-run defaults. Runtime settings
-            return to defaults. <strong>This cannot be undone.</strong>
+            {t('st.dangerHint')}
           </p>
           <button type="button" className="danger-solid" onClick={onSecureWipe} disabled={busy}>
-            <span className="btn-icon"><Ico n="warning" /> Secure Wipe &amp; Reset</span>
+            <span className="btn-icon"><Ico n="warning" /> {t('st.secureWipe')}</span>
           </button>
         </section>
       ) : null}

@@ -233,6 +233,14 @@ Persistent worker stdout can be either an array or an object with `detections` o
 
 The browser UI is a React 18 single-page application bundled with Webpack 5 into `static/59.js`.
 
+### Multi-language UI (i18n)
+
+The UI is fully localized into **English**, **Malay (Bahasa Melayu)**, **Chinese Simplified**, and **Tamil**. A language switcher (`LanguageDropdown` from `@shared`) appears in the top bar as an inline row of buttons (`English | Melayu | 中文 | தமிழ்`). The active language is persisted to `localStorage`. App-specific translations are in `views/react-webpack/src/views/i18n.js`; they layer over the shared base dictionary (`frontend/shared/src/i18n/index.js`) via `LangProvider`/`useT()`. Keys missing from a locale fall back to English, then to the key itself, so no render path can crash from a missing translation.
+
+### Shared footer
+
+An `AppFooter` component (`@shared`) renders at the bottom of the app shell, showing the app name, app version, shared-core version, short commit hash, and build date (fetched from `/api/version`), plus the KopiV2 product tagline. All version fields are optional; if `/api/version` is unreachable, only the app name and tagline are shown.
+
 ### Theming
 
 A **Theme** dropdown in the top bar lets you switch between **Light**, **Dark**, and **Slate** themes. The selection is persisted in `localStorage` and applied via a CSS custom-property theme class on `<html>`. Additional themes can be added by extending the `THEMES`, `THEME_LABELS`, and `THEME_ICONS` constants at the top of `App.js`.

@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Ico } from '@shared';
+import { Ico, useT } from '@shared';
 import { BrandLogo } from './layout';
 import { api } from '../lib/helpers';
 
 // LoginScreen offers both sign-in paths: federated (myidsan SSO) and the local
 // bootstrap stock-superadmin username/password.
 export function LoginScreen({ onLoggedIn }) {
+  const t = useT();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -13,7 +14,7 @@ export function LoginScreen({ onLoggedIn }) {
 
   async function localLogin(e) {
     e.preventDefault();
-    if (!username.trim() || !password) { setErr('Enter your username and password.'); return; }
+    if (!username.trim() || !password) { setErr(t('auth.enterCreds')); return; }
     setBusy(true); setErr('');
     const r = await api('/api/auth/local-login', {
       method: 'POST', noRedirect: true,
@@ -21,28 +22,28 @@ export function LoginScreen({ onLoggedIn }) {
     }).catch(() => ({ ok: false }));
     setBusy(false);
     if (r.ok) onLoggedIn();
-    else setErr(r.message || 'Invalid username or password.');
+    else setErr(r.message || t('auth.invalidCreds'));
   }
 
   return (
     <main className="login-shell">
       <section className="login-card">
         <BrandLogo size={52} />
-        <p className="login-sub">Sign in to the control plane</p>
+        <p className="login-sub">{t('auth.subSignin')}</p>
         <button type="button" className="login-sso" onClick={() => { window.location.href = '/api/auth/start'; }}>
-          <span className="btn-icon"><Ico n="login" /> Continue with myidsan</span>
+          <span className="btn-icon"><Ico n="login" /> {t('auth.continueMyidsan')}</span>
         </button>
-        <div className="login-divider"><span>or stock superadmin</span></div>
+        <div className="login-divider"><span>{t('auth.orStock')}</span></div>
         <form className="login-form" onSubmit={localLogin}>
-          <label>Username
+          <label>{t('auth.username')}
             <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" disabled={busy} />
           </label>
-          <label>Password
+          <label>{t('auth.password')}
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" disabled={busy} />
           </label>
           {err ? <p className="login-err">{err}</p> : null}
           <button type="submit" disabled={busy}>
-            <span className="btn-icon"><Ico n="lock" /> {busy ? 'Signing in…' : 'Sign in'}</span>
+            <span className="btn-icon"><Ico n="lock" /> {busy ? t('auth.signingIn') : t('auth.signIn')}</span>
           </button>
         </form>
       </section>
@@ -53,6 +54,7 @@ export function LoginScreen({ onLoggedIn }) {
 // ChangePasswordScreen forces the stock superadmin (must-change) to pick a new
 // password before reaching the app.
 export function ChangePasswordScreen({ onDone, onToast, onLogout }) {
+  const t = useT();
   const [current, setCurrent] = useState('');
   const [next1, setNext1] = useState('');
   const [next2, setNext2] = useState('');
@@ -61,39 +63,39 @@ export function ChangePasswordScreen({ onDone, onToast, onLogout }) {
 
   async function submit(e) {
     e.preventDefault();
-    if (next1.length < 8) { setErr('New password must be at least 8 characters.'); return; }
-    if (next1 !== next2) { setErr('New passwords do not match.'); return; }
+    if (next1.length < 8) { setErr(t('auth.passwordMin')); return; }
+    if (next1 !== next2) { setErr(t('auth.passwordsNoMatch')); return; }
     setBusy(true); setErr('');
     const r = await api('/api/auth/change-password', {
       method: 'POST', noRedirect: true,
       body: JSON.stringify({ currentPassword: current, newPassword: next1 }),
     }).catch(() => ({ ok: false }));
     setBusy(false);
-    if (r.ok) { if (onToast) onToast('Password updated.'); onDone(); }
-    else setErr(r.message || 'Could not change the password.');
+    if (r.ok) { if (onToast) onToast(t('auth.passwordUpdated')); onDone(); }
+    else setErr(r.message || t('auth.couldNotChange'));
   }
 
   return (
     <main className="login-shell">
       <section className="login-card">
         <BrandLogo size={48} />
-        <p className="login-sub">Set a new password</p>
-        <p className="login-hint">The stock superadmin must replace the default password before continuing.</p>
+        <p className="login-sub">{t('auth.setNewPassword')}</p>
+        <p className="login-hint">{t('auth.changeHint')}</p>
         <form className="login-form" onSubmit={submit}>
-          <label>Current password
+          <label>{t('auth.currentPassword')}
             <input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" disabled={busy} />
           </label>
-          <label>New password
+          <label>{t('auth.newPassword')}
             <input type="password" value={next1} onChange={(e) => setNext1(e.target.value)} autoComplete="new-password" disabled={busy} />
           </label>
-          <label>Confirm new password
+          <label>{t('auth.confirmNewPassword')}
             <input type="password" value={next2} onChange={(e) => setNext2(e.target.value)} autoComplete="new-password" disabled={busy} />
           </label>
           {err ? <p className="login-err">{err}</p> : null}
           <button type="submit" disabled={busy}>
-            <span className="btn-icon"><Ico n="check-ok" /> {busy ? 'Saving…' : 'Set password'}</span>
+            <span className="btn-icon"><Ico n="check-ok" /> {busy ? t('auth.saving') : t('auth.setPassword')}</span>
           </button>
-          {onLogout ? <button type="button" className="quiet" onClick={onLogout}>Log out</button> : null}
+          {onLogout ? <button type="button" className="quiet" onClick={onLogout}>{t('auth.logout')}</button> : null}
         </form>
       </section>
     </main>
@@ -104,6 +106,7 @@ export function ChangePasswordScreen({ onDone, onToast, onLogout }) {
 // no role yet) out of the control plane until a superadmin assigns it a role on the
 // RBAC page. It offers only a re-check and a log-out.
 export function PendingClearanceScreen({ email, onRefresh, onLogout }) {
+  const t = useT();
   const [busy, setBusy] = useState(false);
   async function recheck() {
     setBusy(true);
@@ -113,16 +116,13 @@ export function PendingClearanceScreen({ email, onRefresh, onLogout }) {
     <main className="login-shell">
       <section className="login-card">
         <BrandLogo size={48} />
-        <p className="login-sub">Access pending</p>
-        <p className="login-hint">
-          Your account{email ? <> (<strong>{email}</strong>)</> : null} is awaiting clearance. A superadmin must assign
-          you a role before you can access the control plane.
-        </p>
+        <p className="login-sub">{t('auth.accessPending')}</p>
+        <p className="login-hint">{t('auth.pendingHint', { email: email ? ` (${email})` : '' })}</p>
         <div className="login-form">
           <button type="button" disabled={busy} onClick={recheck}>
-            <span className="btn-icon"><Ico n="reload" /> {busy ? 'Checking…' : 'Check again'}</span>
+            <span className="btn-icon"><Ico n="reload" /> {busy ? t('auth.checking') : t('auth.checkAgain')}</span>
           </button>
-          {onLogout ? <button type="button" className="quiet" onClick={onLogout}>Log out</button> : null}
+          {onLogout ? <button type="button" className="quiet" onClick={onLogout}>{t('auth.logout')}</button> : null}
         </div>
       </section>
     </main>

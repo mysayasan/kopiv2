@@ -1,6 +1,8 @@
 import { useMemo, useState, useRef, useEffect } from 'react';
 import { Ico } from './icons';
+import { useT } from '@shared/i18n';
 import { ThemeDropdown, FormBusyOverlay, Message } from './ui';
+import { LanguageDropdown } from '@shared/LanguageDropdown';
 import {formatTimestamp,notificationKind } from '../lib/helpers';
 
 // BrandLogo is the MyMataSan mark: a line-art shield holding a watchful eye and a
@@ -33,6 +35,7 @@ export function BrandLogo({ size = 40, className = '' }) {
 // app standard for any password entry — used on the login, forced-change, and
 // settings screens — so the control looks and behaves identically everywhere.
 export function PasswordField({ value, onChange, autoComplete = 'off', autoFocus = false, placeholder, disabled = false }) {
+  const t = useT();
   const [show, setShow] = useState(false);
   return (
     <div className="password-field">
@@ -49,7 +52,7 @@ export function PasswordField({ value, onChange, autoComplete = 'off', autoFocus
         type="button"
         className="password-reveal"
         onClick={() => setShow((s) => !s)}
-        aria-label={show ? 'Hide password' : 'Show password'}
+        aria-label={show ? t('login.hidePassword') : t('login.showPassword')}
         aria-pressed={show}
         tabIndex={-1}
         disabled={disabled}
@@ -85,6 +88,7 @@ function formatCountdown(totalSeconds) {
 }
 
 export function LoginPage({ credentials, busy, message, lockoutUntil, onChange, onSubmit }) {
+  const t = useT();
   const lockRemaining = useCountdown(lockoutUntil || 0);
   const locked = lockRemaining > 0;
   return (
@@ -92,10 +96,10 @@ export function LoginPage({ credentials, busy, message, lockoutUntil, onChange, 
       <form className="login-panel" onSubmit={onSubmit}>
         <div className="login-brand">
           <BrandLogo size={104} className="brand-logo--login" />
-          <p>Standalone camera monitor</p>
+          <p>{t('login.subtitle')}</p>
         </div>
         <label>
-          Username
+          {t('login.username')}
           <input
             value={credentials.username}
             onChange={(event) => onChange({ ...credentials, username: event.target.value })}
@@ -105,7 +109,7 @@ export function LoginPage({ credentials, busy, message, lockoutUntil, onChange, 
           />
         </label>
         <label>
-          Password
+          {t('login.password')}
           <PasswordField
             value={credentials.password}
             onChange={(password) => onChange({ ...credentials, password })}
@@ -114,12 +118,12 @@ export function LoginPage({ credentials, busy, message, lockoutUntil, onChange, 
           />
         </label>
         <button type="submit" disabled={busy || locked}>
-          <span className="btn-icon"><Ico n="login" /> Sign In</span>
+          <span className="btn-icon"><Ico n="login" /> {t('login.signIn')}</span>
         </button>
         {locked ? (
           <div className="login-lockout" role="alert">
             <Ico n="lock" sz={15} />
-            <span>Too many failed attempts. Try again in <strong>{formatCountdown(lockRemaining)}</strong></span>
+            <span>{t('login.lockout', { time: formatCountdown(lockRemaining) })}</span>
           </div>
         ) : null}
         <Message value={message} />
@@ -133,6 +137,7 @@ export function LoginPage({ credentials, busy, message, lockoutUntil, onChange, 
 // login-panel chrome so the transition from sign-in feels seamless. Validation
 // (match + length) happens here; the server re-checks and is the source of truth.
 export function ChangePasswordPage({ busy, message, onSubmit, onCancel }) {
+  const t = useT();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -141,11 +146,11 @@ export function ChangePasswordPage({ busy, message, onSubmit, onCancel }) {
   function submit(event) {
     event.preventDefault();
     if (newPassword.length < 8) {
-      setLocalError('New password must be at least 8 characters.');
+      setLocalError(t('cpw.min'));
       return;
     }
     if (newPassword !== confirmPassword) {
-      setLocalError('New passwords do not match.');
+      setLocalError(t('cpw.noMatch'));
       return;
     }
     setLocalError('');
@@ -157,13 +162,11 @@ export function ChangePasswordPage({ busy, message, onSubmit, onCancel }) {
       <form className="login-panel" onSubmit={submit}>
         <div className="login-brand">
           <BrandLogo size={104} className="brand-logo--login" />
-          <p>Set a new password to continue</p>
+          <p>{t('cpw.subtitle')}</p>
         </div>
-        <p className="login-note">
-          You&apos;re signing in with the default credentials. Choose a new password before continuing.
-        </p>
+        <p className="login-note">{t('cpw.note')}</p>
         <label>
-          Current password
+          {t('cpw.current')}
           <PasswordField
             value={currentPassword}
             onChange={setCurrentPassword}
@@ -172,7 +175,7 @@ export function ChangePasswordPage({ busy, message, onSubmit, onCancel }) {
           />
         </label>
         <label>
-          New password
+          {t('cpw.new')}
           <PasswordField
             value={newPassword}
             onChange={setNewPassword}
@@ -180,7 +183,7 @@ export function ChangePasswordPage({ busy, message, onSubmit, onCancel }) {
           />
         </label>
         <label>
-          Confirm new password
+          {t('cpw.confirm')}
           <PasswordField
             value={confirmPassword}
             onChange={setConfirmPassword}
@@ -188,10 +191,10 @@ export function ChangePasswordPage({ busy, message, onSubmit, onCancel }) {
           />
         </label>
         <button type="submit" disabled={busy}>
-          <span className="btn-icon"><Ico n="key" /> Set Password &amp; Continue</span>
+          <span className="btn-icon"><Ico n="key" /> {t('cpw.submit')}</span>
         </button>
         <button type="button" className="quiet" onClick={onCancel} disabled={busy}>
-          Sign in as a different user
+          {t('cpw.differentUser')}
         </button>
         <Message value={localError || message} />
         <FormBusyOverlay busy={busy} />
@@ -204,6 +207,7 @@ export function ChangePasswordPage({ busy, message, onSubmit, onCancel }) {
 // look as the theme dropdown) so the topbar stays uncluttered. The trigger shows
 // the active module.
 function ModuleDropdown({ tabs, activeTab, onTab }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
   useEffect(() => {
@@ -231,7 +235,7 @@ function ModuleDropdown({ tabs, activeTab, onTab }) {
         </span>
       </button>
       {open && (
-        <div className="module-menu" role="listbox" aria-label="Select module">
+        <div className="module-menu" role="listbox" aria-label={t('topbar.selectModule')}>
           {tabs.map((tab) => (
             <button
               key={tab.id}
@@ -250,17 +254,18 @@ function ModuleDropdown({ tabs, activeTab, onTab }) {
   );
 }
 
-export function TopBar({ activeTab, isAdmin, busy, onTab, onRefresh, onLogout, notifications, notifOpen, notifUnread, onNotifToggle, onNotifClick, theme, onThemeChange }) {
+export function TopBar({ activeTab, isAdmin, busy, onTab, onRefresh, onLogout, notifications, notifOpen, notifUnread, onNotifToggle, onNotifClick, theme, onThemeChange, lang, onLangChange }) {
+  const t = useT();
   // Non-admins are view-only: they get live views, recording playback, and the
   // notification feed; camera/AI/training/settings management is admin-only.
   const allTabs = [
-    { id: 'views',     label: 'Live Views', icon: 'monitor', adminOnly: false },
-    { id: 'cameras',   label: 'Cameras',    icon: 'camera',  adminOnly: true  },
-    { id: 'ai',        label: 'AI',         icon: 'cpu',     adminOnly: true  },
-    { id: 'training',  label: 'Training',   icon: 'folder',  adminOnly: true  },
-    { id: 'recording', label: 'Recordings', icon: 'film',    adminOnly: false },
-    { id: 'notifications', label: 'Notifications', icon: 'bell', adminOnly: false },
-    { id: 'settings',  label: 'Settings',   icon: 'sliders', adminOnly: true  },
+    { id: 'views',     label: t('tab.views'),         icon: 'monitor', adminOnly: false },
+    { id: 'cameras',   label: t('tab.cameras'),       icon: 'camera',  adminOnly: true  },
+    { id: 'ai',        label: t('tab.ai'),            icon: 'cpu',     adminOnly: true  },
+    { id: 'training',  label: t('tab.training'),      icon: 'folder',  adminOnly: true  },
+    { id: 'recording', label: t('tab.recording'),     icon: 'film',    adminOnly: false },
+    { id: 'notifications', label: t('tab.notifications'), icon: 'bell', adminOnly: false },
+    { id: 'settings',  label: t('tab.settings'),      icon: 'sliders', adminOnly: true  },
   ];
   const tabs = allTabs.filter((tab) => isAdmin || !tab.adminOnly);
   const notifItems = useMemo(() => (notifications || []).slice(0, 20), [notifications]);
@@ -271,28 +276,30 @@ export function TopBar({ activeTab, isAdmin, busy, onTab, onRefresh, onLogout, n
         <ModuleDropdown tabs={tabs} activeTab={activeTab} onTab={onTab} />
       </nav>
       <div className="topbar-actions">
+        <LanguageDropdown lang={lang} onLang={onLangChange} />
+        <div className="topbar-action-buttons">
         <div className="notif-wrap">
           <button
             type="button"
             className={`quiet notif-btn${notifOpen ? ' active' : ''}`}
             onClick={onNotifToggle}
-            aria-label={`Notifications${notifUnread > 0 ? `, ${notifUnread} unread` : ''}`}
+            aria-label={notifUnread > 0 ? t('topbar.notifAriaUnread', { n: notifUnread }) : t('topbar.notifAria')}
           >
             <span className="btn-icon">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style={{verticalAlign:'middle',flexShrink:0}}>
                 <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6V11c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/>
               </svg>
-              Notifications
+              {t('topbar.notifications')}
               <span className={`notif-badge${notifUnread > 0 ? ' notif-badge--visible' : ''}`}>
                 {notifUnread > 99 ? '99+' : notifUnread || ''}
               </span>
             </span>
           </button>
           {notifOpen && (
-            <div className="notif-panel" role="dialog" aria-label="Notifications">
-              <div className="notif-panel-header">Notifications</div>
+            <div className="notif-panel" role="dialog" aria-label={t('topbar.notifications')}>
+              <div className="notif-panel-header">{t('topbar.notifications')}</div>
               {notifItems.length === 0 ? (
-                <p className="notif-empty">No new notifications.</p>
+                <p className="notif-empty">{t('topbar.noNotifs')}</p>
               ) : (
                 notifItems.map((notif) => {
                   const kind = notificationKind(notif);
@@ -321,11 +328,12 @@ export function TopBar({ activeTab, isAdmin, busy, onTab, onRefresh, onLogout, n
         </div>
         <ThemeDropdown theme={theme} onThemeChange={onThemeChange} />
         <button type="button" className="quiet" onClick={onRefresh} disabled={busy}>
-          <span className="btn-icon"><Ico n="refresh" /> Refresh</span>
+          <span className="btn-icon"><Ico n="refresh" /> {t('topbar.refresh')}</span>
         </button>
         <button type="button" className="quiet danger-text" onClick={onLogout} disabled={busy}>
-          <span className="btn-icon"><Ico n="lock" /> Lock</span>
+          <span className="btn-icon"><Ico n="lock" /> {t('topbar.lock')}</span>
         </button>
+        </div>
       </div>
     </header>
   );

@@ -125,56 +125,15 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 	}
 
 	coreDefaults := []string{
-		// Self-heal: the built-in apps must keep their canonical codes (SSO/federation
-		// and the seed statements below key on them). If one was renamed in the UI,
-		// restore its code by audience before the rest of the seed runs.
-		`UPDATE app_registry SET code = 'myidsan' WHERE audience = 'myidsan' AND code <> 'myidsan' AND NOT EXISTS (SELECT 1 FROM app_registry WHERE code = 'myidsan');`,
-		`UPDATE app_registry SET code = 'mymatasan' WHERE audience = 'mymatasan' AND code <> 'mymatasan' AND NOT EXISTS (SELECT 1 FROM app_registry WHERE code = 'mymatasan');`,
-		`UPDATE app_registry SET code = 'myseliasan' WHERE audience = 'myseliasan' AND code <> 'myseliasan' AND NOT EXISTS (SELECT 1 FROM app_registry WHERE code = 'myseliasan');`,
-		`INSERT INTO app_registry (code, title, description, base_url, audience, client_secret, is_active, created_by, created_at, updated_by, updated_at)
-SELECT 'myidsan', 'myidsan', 'Identity and SSO authority', 'http://localhost:3001', 'myidsan', '', TRUE, 0, 0, 0, 0
-WHERE NOT EXISTS (SELECT 1 FROM app_registry WHERE code = 'myidsan' OR audience = 'myidsan');`,
-		`UPDATE app_registry
-SET title = 'myidsan', description = 'Identity and SSO authority', base_url = 'http://localhost:3001', audience = 'myidsan', is_active = TRUE, updated_at = 0
-WHERE code = 'myidsan';`,
-		`INSERT INTO app_registry (code, title, description, base_url, audience, client_secret, is_active, created_by, created_at, updated_by, updated_at)
-SELECT 'mymatasan', 'mymatasan', 'Standalone ONVIF monitoring device app', 'http://localhost:3000', 'mymatasan', '', TRUE, 0, 0, 0, 0
-WHERE NOT EXISTS (SELECT 1 FROM app_registry WHERE code = 'mymatasan' OR audience = 'mymatasan');`,
-		`UPDATE app_registry
-SET title = 'mymatasan', description = 'Standalone ONVIF monitoring device app', base_url = 'http://localhost:3000', audience = 'mymatasan', is_active = TRUE, updated_at = 0
-WHERE code = 'mymatasan';`,
-		`INSERT INTO app_registry (code, title, description, base_url, audience, client_secret, is_active, created_by, created_at, updated_by, updated_at)
-SELECT 'myseliasan', 'myseliasan', 'Control plane for mymatasan', 'http://localhost:3002', 'myseliasan', '', TRUE, 0, 0, 0, 0
-WHERE NOT EXISTS (SELECT 1 FROM app_registry WHERE code = 'myseliasan' OR audience = 'myseliasan');`,
-		`UPDATE app_registry
-SET title = 'myseliasan', description = 'Control plane for mymatasan', base_url = 'http://localhost:3002', audience = 'myseliasan', is_active = TRUE, updated_at = 0
-WHERE code = 'myseliasan';`,
-		`INSERT INTO app_auth_config (app_registry_id, client_id, client_secret_hash, auth_code_ttl_seconds, access_token_ttl_seconds, session_ttl_seconds, refresh_token_ttl_seconds, require_pkce, allow_refresh_token, is_active, created_by, created_at, updated_by, updated_at)
-SELECT ar.id, 'myseliasan', '736c6859eceedb2db6b79b2f96d8e53a714ac644d83ee1dd3b52f89ae55cc274', 300, 900, 259200, 0, FALSE, FALSE, TRUE, 0, 0, 0, 0
-FROM app_registry ar
-WHERE ar.code = 'myseliasan'
-AND NOT EXISTS (SELECT 1 FROM app_auth_config ac WHERE ac.client_id = 'myseliasan');`,
-		`UPDATE app_auth_config
-SET app_registry_id = (SELECT id FROM app_registry WHERE code = 'myseliasan'), client_secret_hash = '736c6859eceedb2db6b79b2f96d8e53a714ac644d83ee1dd3b52f89ae55cc274', auth_code_ttl_seconds = 300, access_token_ttl_seconds = 900, session_ttl_seconds = 259200, refresh_token_ttl_seconds = 0, require_pkce = FALSE, allow_refresh_token = FALSE, is_active = TRUE, updated_at = 0
-WHERE client_id = 'myseliasan';`,
-		`INSERT INTO app_redirect_uri (app_auth_config_id, redirect_uri, is_active, created_by, created_at, updated_by, updated_at)
-SELECT ac.id, 'http://localhost:3002/api/auth/callback', TRUE, 0, 0, 0, 0
-FROM app_auth_config ac
-WHERE ac.client_id = 'myseliasan'
-AND NOT EXISTS (SELECT 1 FROM app_redirect_uri aru WHERE aru.app_auth_config_id = ac.id AND aru.redirect_uri = 'http://localhost:3002/api/auth/callback');`,
-		`UPDATE app_redirect_uri
-SET is_active = TRUE, updated_at = 0
-WHERE app_auth_config_id = (SELECT id FROM app_auth_config WHERE client_id = 'myseliasan')
-AND redirect_uri = 'http://localhost:3002/api/auth/callback';`,
-		`INSERT INTO app_redirect_uri (app_auth_config_id, redirect_uri, is_active, created_by, created_at, updated_by, updated_at)
-SELECT ac.id, 'https://localhost:3002/api/auth/callback', TRUE, 0, 0, 0, 0
-FROM app_auth_config ac
-WHERE ac.client_id = 'myseliasan'
-AND NOT EXISTS (SELECT 1 FROM app_redirect_uri aru WHERE aru.app_auth_config_id = ac.id AND aru.redirect_uri = 'https://localhost:3002/api/auth/callback');`,
-		`UPDATE app_redirect_uri
-SET is_active = TRUE, updated_at = 0
-WHERE app_auth_config_id = (SELECT id FROM app_auth_config WHERE client_id = 'myseliasan')
-AND redirect_uri = 'https://localhost:3002/api/auth/callback';`,
+		// Relying apps are NOT auto-registered. Following the standard OAuth /
+		// Google-console model, an app (myidsan itself, mymatasan, myseliasan, …) can
+		// only obtain an authorization code once an operator has explicitly registered
+		// it under "myidsan → Apps": an app_registry row, an app_auth_config (client_id
+		// + client secret), and at least one app_redirect_uri. Until then the federated
+		// auth flow rejects it with "client is not registered" (see federated_auth.go
+		// loadClient / validateRedirectURI). This is deliberate — auto-seeding these
+		// rows would let an unregistered app keep working after a database drop, which
+		// is exactly the security hole we are closing.
 		`INSERT INTO user_group (title, description, parent_id, is_active, created_by, created_at, updated_by, updated_at)
 SELECT 'system', 'core system group', 0, TRUE, 0, 0, 0, 0
 WHERE NOT EXISTS (SELECT 1 FROM user_group WHERE title = 'system' AND parent_id = 0);`,

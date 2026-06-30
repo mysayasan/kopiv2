@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Ico } from './icons';
+import { useT } from './i18n';
 import './styles/toast.css';
 
 // Toast / ToastStack: the shared transient-notification system for the RBAC apps.
@@ -9,6 +10,7 @@ import './styles/toast.css';
 // <ToastStack/> at the app root.
 
 function Toast({ id, text, kind = 'info', duration = 3500, onDismiss }) {
+  const t = useT();
   const [leaving, setLeaving] = useState(false);
   const timer = useRef(null);
   const start = () => {
@@ -30,7 +32,7 @@ function Toast({ id, text, kind = 'info', duration = 3500, onDismiss }) {
       onTransitionEnd={() => { if (leaving) onDismiss(id); }}
     >
       <span className="toast-text">{text}</span>
-      <button type="button" className="toast-close" aria-label="Dismiss" onClick={() => setLeaving(true)}>
+      <button type="button" className="toast-close" aria-label={t('common.dismiss')} onClick={() => setLeaving(true)}>
         <Ico n="x" sz={13} />
       </button>
     </div>

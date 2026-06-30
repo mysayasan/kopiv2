@@ -1,7 +1,7 @@
 import config from 'config'
 
 const unsafeMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
-const apiBase = (config && config.apiUrl ? config.apiUrl : '').replace(/\/$/, '')
+export const apiBase = (config && config.apiUrl ? config.apiUrl : '').replace(/\/$/, '')
 
 export const ACCESS_TIERS = [
   { value: 0, label: 'DevOnly' },

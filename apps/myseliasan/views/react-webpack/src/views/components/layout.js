@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Ico, SideNav as SharedSideNav } from '@shared';
+import { Ico, SideNav as SharedSideNav, useT } from '@shared';
 import { ThemeDropdown } from './ui';
 import { sessionCanGet } from '../lib/helpers';
 
@@ -34,6 +34,7 @@ const NODE_FALLBACK_ICON = 'monitor';
 // branch without leaving the current view. Large fleets get a search filter and a
 // scrollable branch.
 function NodesNavItem({ nodes, activeTab, managingNodeId, onSelectNode }) {
+  const t = useT();
   const onNodes = activeTab === 'nodes';
   const [open, setOpen] = useState(onNodes);
   const [query, setQuery] = useState('');
@@ -53,7 +54,7 @@ function NodesNavItem({ nodes, activeTab, managingNodeId, onSelectNode }) {
           type="button"
           className="nav-tree-caret"
           onClick={() => setOpen((o) => !o)}
-          aria-label={open ? 'Collapse nodes' : 'Expand nodes'}
+          aria-label={open ? t('nodes.collapse') : t('nodes.expand')}
           aria-expanded={open}
         >
           <Ico n="chev-down" sz={14} style={open ? undefined : { transform: 'rotate(-90deg)' }} />
@@ -64,7 +65,7 @@ function NodesNavItem({ nodes, activeTab, managingNodeId, onSelectNode }) {
           onClick={() => { onSelectNode(null); setOpen(true); }}
         >
           <span className="nav-ico"><Ico n="shield" sz={17} /></span>
-          <span className="nav-label">Nodes</span>
+          <span className="nav-label">{t('nav.nodes')}</span>
           {list.length > 0 ? <span className="nav-tree-count">{list.length}</span> : null}
         </button>
       </div>
@@ -77,16 +78,16 @@ function NodesNavItem({ nodes, activeTab, managingNodeId, onSelectNode }) {
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder={`Filter ${list.length} nodes…`}
-                aria-label="Filter nodes"
+                placeholder={t('nodes.filter', { n: list.length })}
+                aria-label={t('nodes.filterAria')}
               />
             </div>
           ) : null}
           <div className={`nav-tree-children${big ? ' scrolling' : ''}`}>
             {list.length === 0 ? (
-              <div className="nav-tree-empty">No nodes yet</div>
+              <div className="nav-tree-empty">{t('nodes.none')}</div>
             ) : shown.length === 0 ? (
-              <div className="nav-tree-empty">No matches</div>
+              <div className="nav-tree-empty">{t('nodes.noMatches')}</div>
             ) : (
               shown.map((n) => {
                 const active = onNodes && managingNodeId === n.nodeId;
@@ -125,11 +126,12 @@ function NodesNavItem({ nodes, activeTab, managingNodeId, onSelectNode }) {
 // follow the same permission matrix that gates their APIs — a role needs GET on
 // /api/nodes to see Nodes; Users & Roles is superadmin-only.
 export function SideNav({ activeTab, busy, onTab, onLogout, theme, onThemeChange, session, nodes, managingNodeId, onSelectNode }) {
+  const t = useT();
   const navItem = (id, label, icon, tone) => ({ id, label, icon, tone, active: id === activeTab, onClick: () => onTab(id) });
   const groups = [
-    { label: 'Workspace', items: [navItem('dashboard', 'Dashboard', 'monitor', 'steel')] },
+    { label: t('group.workspace'), items: [navItem('dashboard', t('nav.dashboard'), 'monitor', 'steel')] },
     {
-      label: 'Fleet',
+      label: t('group.fleet'),
       items: sessionCanGet(session, '/api/nodes')
         // The Nodes entry is a bespoke tree — injected via the shell's render hook.
         ? [{ id: 'nodes', render: () => (
@@ -138,9 +140,9 @@ export function SideNav({ activeTab, busy, onTab, onLogout, theme, onThemeChange
         : [],
     },
     {
-      label: 'Administration',
+      label: t('group.administration'),
       items: session?.isSuperadmin
-        ? [navItem('users', 'Users', 'user', 'blue'), navItem('roles', 'Roles', 'key', 'violet'), navItem('rbac', 'RBAC', 'lock', 'green')]
+        ? [navItem('users', t('nav.users'), 'user', 'blue'), navItem('roles', t('nav.roles'), 'key', 'violet'), navItem('rbac', t('nav.rbac'), 'lock', 'green')]
         : [],
     },
   ];
@@ -148,7 +150,7 @@ export function SideNav({ activeTab, busy, onTab, onLogout, theme, onThemeChange
   const brand = (
     <div className="side-brand">
       <BrandLogo />
-      <div className="side-brand-sub">Control plane</div>
+      <div className="side-brand-sub">{t('brand.controlPlane')}</div>
     </div>
   );
   const footer = (
@@ -156,7 +158,7 @@ export function SideNav({ activeTab, busy, onTab, onLogout, theme, onThemeChange
       {session?.email ? <div className="side-brand-sub" title={session.email}>{session.email}</div> : null}
       <ThemeDropdown theme={theme} onThemeChange={onThemeChange} />
       <button type="button" className="logout-button" onClick={onLogout} disabled={busy}>
-        Log out
+        {t('auth.logout')}
       </button>
     </>
   );

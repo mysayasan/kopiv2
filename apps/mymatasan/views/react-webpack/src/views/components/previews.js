@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Ico } from './icons';
+import { useT } from '@shared/i18n';
 import { maxCrossingLines } from '../lib/constants';
 import {fallbackLiveSource,normalizeStreamConfig,roundedPoint,zonePolygonText,parseZonePolygon,normalizeLineConfig,waitForIceGathering,createWebRTCAnswer,shouldUseMJPEGForTracks,apiBase } from '../lib/helpers';
 
@@ -14,6 +15,7 @@ import {fallbackLiveSource,normalizeStreamConfig,roundedPoint,zonePolygonText,pa
 // dragging a point so the scene stays stable mid-draw. This is a pure UI display
 // (a cheap re-read of the cached siphon frame) — it never affects detection.
 function DetectionFrameBackdrop({ cameraId, paused }) {
+  const t = useT();
   const [src, setSrc] = useState('');
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
@@ -54,16 +56,17 @@ function DetectionFrameBackdrop({ cameraId, paused }) {
     <img
       className="detection-frame-backdrop"
       src={src}
-      alt="Detection frame"
+      alt={t('prev.detectionFrame')}
       draggable={false}
     />
   );
 }
 
 export function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTracks, healthStatus, streamKey, startDelayMs = 0 }) {
+  const t = useT();
   const videoRef = useRef(null);
   const audioRef = useRef(null);
-  const [state, setState] = useState('Connecting');
+  const [state, setState] = useState(() => '');
   const [fallbackSrc, setFallbackSrc] = useState('');
   const [hasAudio, setHasAudio] = useState(false);
   const [muted, setMuted] = useState(true);
@@ -80,7 +83,7 @@ export function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTr
     if (offline) {
       setFallbackSrc('');
       setHasAudio(false);
-      setState('Offline');
+      setState(t('prev.stOffline'));
       return undefined;
     }
     const configValue = normalizeStreamConfig(streamConfig);
@@ -88,14 +91,14 @@ export function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTr
     setFallbackSrc('');
     setHasAudio(false);
     setMuted(true);
-    setState(forceMJPEG || !configValue.webrtc.enabled ? 'MJPEG' : 'Connecting');
+    setState(forceMJPEG || !configValue.webrtc.enabled ? t('prev.stMjpeg') : t('prev.stConnecting'));
 
     if (forceMJPEG) {
       if (configValue.mjpegFallback.enabled) {
-        setState('MJPEG fallback');
+        setState(t('prev.stMjpegFallback'));
         setFallbackSrc(fallbackLiveSource(deviceId));
       } else {
-        setState('WebRTC needs H264');
+        setState(t('prev.stNeedH264'));
       }
       return undefined;
     }
@@ -104,16 +107,16 @@ export function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTr
       if (configValue.mjpegFallback.enabled) {
         setFallbackSrc(fallbackLiveSource(deviceId));
       } else {
-        setState('Live view disabled');
+        setState(t('prev.stLiveDisabled'));
       }
       return undefined;
     }
     if (typeof RTCPeerConnection === 'undefined') {
       if (configValue.mjpegFallback.enabled) {
-        setState('MJPEG fallback');
+        setState(t('prev.stMjpegFallback'));
         setFallbackSrc(fallbackLiveSource(deviceId));
       } else {
-        setState('WebRTC unavailable');
+        setState(t('prev.stWebrtcUnavailable'));
       }
       return undefined;
     }
@@ -133,7 +136,7 @@ export function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTr
             const stream = event.streams[0] || new MediaStream([event.track]);
             videoRef.current.srcObject = stream;
             videoRef.current.play().catch(() => {});
-            setState('Live');
+            setState(t('prev.stLive'));
           } else if (event.track.kind === 'audio' && audioRef.current) {
             setHasAudio(true);
             // Route audio to a dedicated element so the video element stays muted
@@ -147,10 +150,10 @@ export function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTr
           if (cs === 'disconnected') {
             // Transient — ICE may recover; keep the video element alive and
             // show a status hint instead of switching to MJPEG fallback.
-            setState('Reconnecting…');
+            setState(t('prev.stReconnecting'));
           } else if (cs === 'failed' || cs === 'closed') {
             if (configValue.mjpegFallback.enabled) {
-              setState('MJPEG fallback');
+              setState(t('prev.stMjpegFallback'));
               setFallbackSrc(fallbackLiveSource(deviceId));
             } else {
               setState(`WebRTC ${cs}`);
@@ -172,7 +175,7 @@ export function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTr
             setState(err.message || 'MJPEG fallback');
             setFallbackSrc(fallbackLiveSource(deviceId));
           } else {
-            setState(err.message || 'WebRTC failed');
+            setState(err.message || t('prev.stWebrtcFailed'));
           }
           pc.close();
         }
@@ -221,14 +224,14 @@ export function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTr
   return (
     <div className="live-frame">
       {offline ? (
-        <div className="live-offline" aria-label={`${title} offline`}>
+        <div className="live-offline" aria-label={t('prev.offlineAria', { title })}>
           <Ico n="wifi" sz={28} />
-          <span>Camera offline</span>
+          <span>{t('prev.cameraOffline')}</span>
         </div>
       ) : fallbackSrc ? (
-        <img src={fallbackSrc} alt={`${title} live view`} />
+        <img src={fallbackSrc} alt={t('prev.liveViewAria', { title })} />
       ) : (
-        <video ref={videoRef} autoPlay muted playsInline aria-label={`${title} live view`} />
+        <video ref={videoRef} autoPlay muted playsInline aria-label={t('prev.liveViewAria', { title })} />
       )}
       <audio ref={audioRef} playsInline style={{ display: 'none' }} />
       {!offline && <span className="stream-state">{state}</span>}
@@ -237,8 +240,8 @@ export function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTr
           type="button"
           className="audio-mute-btn"
           onClick={toggleMute}
-          aria-label={muted ? 'Unmute audio' : 'Mute audio'}
-          title={muted ? 'Unmute audio' : 'Mute audio'}
+          aria-label={muted ? t('prev.unmute') : t('prev.mute')}
+          title={muted ? t('prev.unmute') : t('prev.mute')}
         >
           <Ico n={muted ? 'volume-x' : 'volume-2'} sz={14} />
         </button>
@@ -283,6 +286,7 @@ function insertPointOnNearestEdge(pts, p) {
 }
 
 export function ZoneDrawingPreview({ camera, polygonValue, onPolygon, authHeader, streamConfig, disabled }) {
+  const t = useT();
   const overlayRef = useRef(null);
   const [draggingIndex, setDraggingIndex] = useState(null);
   const points = useMemo(() => parseZonePolygon(polygonValue), [polygonValue]);
@@ -364,13 +368,10 @@ export function ZoneDrawingPreview({ camera, polygonValue, onPolygon, authHeader
   return (
     <section className="zone-drawer">
       <header>
-        <h3>Detection Zone</h3>
-        <span className="status-pill">{points.length} points</span>
+        <h3>{t('prev.detectionZone')}</h3>
+        <span className="status-pill">{t('prev.points', { n: points.length })}</span>
       </header>
-      <p className="zone-drawer-hint">
-        This preview is a periodic snapshot (it may look choppy and pauses while you drag) — that&apos;s the preview
-        only. Detection runs at full rate on the same frames, so your zone has no effect on detection speed or accuracy.
-      </p>
+      <p className="zone-drawer-hint">{t('prev.zoneHint')}</p>
       <div className={camera ? 'zone-live' : 'zone-live empty-zone'}>
         {camera ? (
           <>
@@ -380,7 +381,7 @@ export function ZoneDrawingPreview({ camera, polygonValue, onPolygon, authHeader
               className="zone-overlay"
               role="button"
               tabIndex={0}
-              aria-label="Draw detection zone"
+              aria-label={t('prev.drawZone')}
               onPointerDown={(event) => {
                 if (event.button !== 0) {
                   return;
@@ -417,15 +418,15 @@ export function ZoneDrawingPreview({ camera, polygonValue, onPolygon, authHeader
             </div>
           </>
         ) : (
-          <div className="zone-empty-state">Select camera</div>
+          <div className="zone-empty-state">{t('prev.selectCamera')}</div>
         )}
       </div>
       <div className="action-row">
         <button type="button" className="quiet" onClick={undo} disabled={disabled || !history.length}>
-          <span className="btn-icon"><Ico n="undo" /> Undo</span>
+          <span className="btn-icon"><Ico n="undo" /> {t('prev.undo')}</span>
         </button>
         <button type="button" className="quiet" onClick={() => { pushHistory(); commit([]); }} disabled={disabled || !points.length}>
-          <span className="btn-icon"><Ico n="trash" /> Clear Zone</span>
+          <span className="btn-icon"><Ico n="trash" /> {t('prev.clearZone')}</span>
         </button>
         <button
           type="button"
@@ -441,7 +442,7 @@ export function ZoneDrawingPreview({ camera, polygonValue, onPolygon, authHeader
           }}
           disabled={disabled}
         >
-          <span className="btn-icon"><Ico n="video" /> Full Frame</span>
+          <span className="btn-icon"><Ico n="video" /> {t('prev.fullFrame')}</span>
         </button>
       </div>
     </section>
@@ -494,6 +495,7 @@ function crossingDirectionArrows(first, second, direction) {
 }
 
 export function LineDrawingPreview({ camera, config, detectionType, onConfig, authHeader, streamConfig, disabled }) {
+  const t = useT();
   const overlayRef = useRef(null);
   const [dragging, setDragging] = useState(null);
   const maxLines = detectionType === 'multi_line_crossing' ? maxCrossingLines : 1;
@@ -593,13 +595,10 @@ export function LineDrawingPreview({ camera, config, detectionType, onConfig, au
   return (
     <section className="zone-drawer">
       <header>
-        <h3>{detectionType === 'multi_line_crossing' ? 'Crossing Sequence' : 'Crossing Line'}</h3>
-        <span className="status-pill">{lines.length}/{maxLines} lines</span>
+        <h3>{detectionType === 'multi_line_crossing' ? t('prev.crossingSequence') : t('prev.crossingLine')}</h3>
+        <span className="status-pill">{t('prev.lines', { n: lines.length, max: maxLines })}</span>
       </header>
-      <p className="zone-drawer-hint">
-        This preview is a periodic snapshot (it may look choppy and pauses while you drag) — that&apos;s the preview
-        only. Detection runs at full rate on the same frames, so your line has no effect on detection speed or accuracy.
-      </p>
+      <p className="zone-drawer-hint">{t('prev.lineHint')}</p>
       <div className={camera ? 'zone-live' : 'zone-live empty-zone'}>
         {camera ? (
           <>
@@ -609,7 +608,7 @@ export function LineDrawingPreview({ camera, config, detectionType, onConfig, au
               className="zone-overlay"
               role="button"
               tabIndex={0}
-              aria-label="Draw crossing lines"
+              aria-label={t('prev.drawLines')}
               onPointerDown={(event) => {
                 if (event.button !== 0 || lines.length >= maxLines) {
                   return;
@@ -663,18 +662,18 @@ export function LineDrawingPreview({ camera, config, detectionType, onConfig, au
             </div>
           </>
         ) : (
-          <div className="zone-empty-state">Select camera</div>
+          <div className="zone-empty-state">{t('prev.selectCamera')}</div>
         )}
       </div>
       <div className="action-row">
         <button type="button" className="quiet" onClick={() => addLine()} disabled={disabled || lines.length >= maxLines}>
-          <span className="btn-icon"><Ico n="plus" /> Add Line</span>
+          <span className="btn-icon"><Ico n="plus" /> {t('prev.addLine')}</span>
         </button>
         <button type="button" className="quiet" onClick={undo} disabled={disabled || !history.length}>
-          <span className="btn-icon"><Ico n="undo" /> Undo</span>
+          <span className="btn-icon"><Ico n="undo" /> {t('prev.undo')}</span>
         </button>
         <button type="button" className="quiet" onClick={() => { pushHistory(); commit([]); }} disabled={disabled || !lines.length}>
-          <span className="btn-icon"><Ico n="trash" /> Clear Lines</span>
+          <span className="btn-icon"><Ico n="trash" /> {t('prev.clearLines')}</span>
         </button>
       </div>
     </section>

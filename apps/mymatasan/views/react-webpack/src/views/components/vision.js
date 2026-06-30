@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Ico } from './icons';
+import { useT } from '@shared/i18n';
 import { FormBusyOverlay, AccordionList, AccordionItem } from './ui';
 import { useSnapshotBlob } from '../hooks';
 import { scheduleDayOptions } from '../lib/constants';
@@ -39,6 +40,7 @@ export function VisionTab({
   onPrepareCamera,
   onReload,
 }) {
+  const t = useT();
   const orderedSaved = useMemo(() => orderedSavedCameras(saved), [saved]);
   const selectedCameraId = Number(ruleDraft.cameraId) || Number(orderedSaved[0]?.id) || 0;
   const selectedCamera = saved.find((device) => Number(device.id) === selectedCameraId) || orderedSaved[0] || null;
@@ -330,20 +332,20 @@ export function VisionTab({
     <section className="workspace">
       <div className="toolbar">
         <div>
-          <h2 className="section-title">AI Detection</h2>
-          <p className="section-subtitle">{aiView === 'classes' ? 'Object classes used by detection rules.' : 'Camera rules and alert events.'}</p>
+          <h2 className="section-title">{t('vi.aiDetection')}</h2>
+          <p className="section-subtitle">{aiView === 'classes' ? t('vi.subClasses') : t('vi.subRules')}</p>
         </div>
         <button type="button" className="quiet" onClick={onReload} disabled={busy}>
-          <span className="btn-icon"><Ico n="reload" /> Reload</span>
+          <span className="btn-icon"><Ico n="reload" /> {t('common.reload')}</span>
         </button>
       </div>
 
-      <nav className="vision-subnav" aria-label="AI section">
+      <nav className="vision-subnav" aria-label={t('vi.aiSectionAria')}>
         <button type="button" className={aiView === 'rules' ? 'active' : 'quiet'} onClick={() => setAiView('rules')}>
-          <span className="btn-icon"><Ico n="list" /> Detection Rules</span>
+          <span className="btn-icon"><Ico n="list" /> {t('vi.detectionRules')}</span>
         </button>
         <button type="button" className={aiView === 'classes' ? 'active' : 'quiet'} onClick={() => setAiView('classes')}>
-          <span className="btn-icon"><Ico n="grid2" /> Object Classes</span>
+          <span className="btn-icon"><Ico n="grid2" /> {t('vi.objectClasses')}</span>
         </button>
       </nav>
 
@@ -360,13 +362,13 @@ export function VisionTab({
               <section className="settings-panel">
                 <header>
                   <div>
-                    <h2>Detection Rules — {cameraTitle(selectedCamera)}</h2>
-                    <p className="section-subtitle">{selectedCamera.host || selectedCamera.xAddr || 'Saved camera'}</p>
+                    <h2>{t('vi.rulesFor', { name: cameraTitle(selectedCamera) })}</h2>
+                    <p className="section-subtitle">{selectedCamera.host || selectedCamera.xAddr || t('vi.savedCamera')}</p>
                   </div>
-                  <span className="status-pill">{selectedRules.length} rules</span>
+                  <span className="status-pill">{t('vi.rulesCount', { n: selectedRules.length })}</span>
                 </header>
                 {selectedRules.length === 0 && openRuleId !== 'new' ? (
-                  <p className="empty">No AI detection rules for this camera.</p>
+                  <p className="empty">{t('vi.noRules')}</p>
                 ) : null}
                 <AccordionList>
                   {ruleRows.map((rule) => {
@@ -378,24 +380,24 @@ export function VisionTab({
                         open={open}
                         onToggle={() => (isNew ? setOpenRuleId(null) : toggleRule(rule))}
                         summary={isNew ? (
-                          <span className="accordion-title">New rule</span>
+                          <span className="accordion-title">{t('vi.newRule')}</span>
                         ) : (
                           <>
                             <span className="accordion-title">{rule.name || rule.detectionType}</span>
                             <span className="accordion-muted">
-                              {rule.detectionType} · threshold {Number(rule.threshold || 0).toFixed(2)}
+                              {rule.detectionType} · {t('vi.thresholdLabel', { v: Number(rule.threshold || 0).toFixed(2) })}
                               {lineCountFromRule(rule) ? ` · ${lineCountFromRule(rule)}` : ''} · {scheduleSummary(rule.schedulePolicy)}
                             </span>
-                            <span className={`status-pill ${rule.isEnabled ? 'online' : 'unknown'}`}>{rule.isEnabled ? 'enabled' : 'disabled'}</span>
+                            <span className={`status-pill ${rule.isEnabled ? 'online' : 'unknown'}`}>{rule.isEnabled ? t('vi.enabled') : t('vi.disabled')}</span>
                           </>
                         )}
                         actions={isNew ? null : (
                           <>
                             <button type="button" className="quiet" onClick={() => onTriggerTestAlert(rule)} disabled={busy}>
-                              <span className="btn-icon"><Ico n="play" /> Test</span>
+                              <span className="btn-icon"><Ico n="play" /> {t('common.test')}</span>
                             </button>
                             <button type="button" className="quiet danger-text" onClick={() => onDeleteRule(rule.id)} disabled={busy}>
-                              <span className="btn-icon"><Ico n="trash" /> Delete</span>
+                              <span className="btn-icon"><Ico n="trash" /> {t('common.delete')}</span>
                             </button>
                           </>
                         )}
@@ -405,40 +407,39 @@ export function VisionTab({
                             <FormBusyOverlay busy={busy} />
                   <div className="metadata-row">
                     <label>
-                      Rule name
+                      {t('vi.ruleName')}
                       <input
                         value={ruleDraft.name || ''}
                         onChange={(event) => onRuleDraft({ ...ruleDraft, name: event.target.value })}
-                        placeholder={`${cameraTitle(selectedCamera)} fire watch`}
+                        placeholder={t('vi.fireWatchPh', { name: cameraTitle(selectedCamera) })}
                       />
                     </label>
                     <label>
-                      Mode (how)
+                      {t('vi.modeHow')}
                       <select value={mode} onChange={(event) => changeMode(event.target.value)}>
-                        {availableModes.map(([value, label]) => (
-                          <option key={value} value={value}>{label}</option>
+                        {availableModes.map(([value]) => (
+                          <option key={value} value={value}>{t(`vi.mode_${value}`)}</option>
                         ))}
                       </select>
                       {lprCap && !lprCap.supported ? (
-                        <span className="field-hint">License plate (LPR) is hidden: {lprCap.detail || 'this camera’s resolution is too low for plate reading'}.</span>
+                        <span className="field-hint">{t('vi.lprHidden', { detail: lprCap.detail || t('vi.lprHiddenDefault') })}</span>
                       ) : (lprRule && lprCap && lprCap.onvif ? (
-                        <span className="field-hint">LPR will auto-use this camera’s highest stream ({lprCap.detail}).</span>
+                        <span className="field-hint">{t('vi.lprAutoStream', { detail: lprCap.detail })}</span>
                       ) : null)}
                     </label>
                   </div>
                   {crowdRule ? (
                     <section className="schedule-panel">
                       <header>
-                        <h3>Crowd Threshold</h3>
-                        <span className="status-pill">{crowdRuleConfig.minCount}+ people</span>
+                        <h3>{t('vi.crowdThreshold')}</h3>
+                        <span className="status-pill">{t('vi.peoplePlus', { n: crowdRuleConfig.minCount })}</span>
                       </header>
                       <span className="field-hint">
-                        Fires when at least this many people are detected inside the zone in a single frame.
-                        Each person must meet the confidence threshold.
+                        {t('vi.crowdHint')}
                       </span>
                       <div className="metadata-row">
                         <label>
-                          Minimum people
+                          {t('vi.minPeople')}
                           <input
                             type="number"
                             min="2"
@@ -454,29 +455,27 @@ export function VisionTab({
                   {lprRule ? (
                     <section className="schedule-panel">
                       <header>
-                        <h3>License Plate (LPR)</h3>
+                        <h3>{t('vi.lprTitle')}</h3>
                         <span className="status-pill">
-                          {lprRuleConfig.matchMode === 'any' ? 'any plate'
-                            : lprRuleConfig.matchMode === 'include' ? `watch ${lprRuleConfig.plates.length}`
-                            : `unknown (${lprRuleConfig.plates.length} known)`}
+                          {lprRuleConfig.matchMode === 'any' ? t('vi.anyPlate')
+                            : lprRuleConfig.matchMode === 'include' ? t('vi.watchN', { n: lprRuleConfig.plates.length })
+                            : t('vi.unknownKnown', { n: lprRuleConfig.plates.length })}
                         </span>
                       </header>
                       <span className="field-hint">
-                        Reads vehicle plates in the zone and (when available) the vehicle type and color.
-                        Needs a plate model (Settings → AI → License Plate Model) and a high-resolution camera —
-                        plates are unreadable on low-res streams.
+                        {t('vi.lprHint')}
                       </span>
                       <div className="metadata-row">
                         <label>
-                          When to alert
+                          {t('vi.whenAlert')}
                           <select value={lprRuleConfig.matchMode} onChange={(event) => changeLprConfig({ matchMode: event.target.value })}>
-                            <option value="any">Any readable plate</option>
-                            <option value="include">Only plates on the watchlist</option>
-                            <option value="exclude">Any plate NOT on the list (unknown)</option>
+                            <option value="any">{t('vi.lprAny')}</option>
+                            <option value="include">{t('vi.lprInclude')}</option>
+                            <option value="exclude">{t('vi.lprExclude')}</option>
                           </select>
                         </label>
                         <label>
-                          Min OCR confidence
+                          {t('vi.minOcr')}
                           <input
                             type="number"
                             min="0.1"
@@ -489,14 +488,14 @@ export function VisionTab({
                       </div>
                       {lprRuleConfig.matchMode !== 'any' ? (
                         <label>
-                          Plate list ({lprRuleConfig.matchMode === 'include' ? 'alert on these' : 'these are known/allowed'})
+                          {t('vi.plateList', { sub: lprRuleConfig.matchMode === 'include' ? t('vi.plateAlertOnThese') : t('vi.plateKnownAllowed') })}
                           <textarea
                             rows="4"
                             value={lprRuleConfig.plates.join('\n')}
                             onChange={(event) => changeLprPlates(event.target.value)}
                             placeholder={'WXY1234\nABC123'}
                           />
-                          <span className="field-hint">One plate per line (or comma-separated). Spaces/dashes are ignored; matching tolerates one OCR character error.</span>
+                          <span className="field-hint">{t('vi.platesHint')}</span>
                         </label>
                       ) : null}
                     </section>
@@ -504,22 +503,22 @@ export function VisionTab({
                   {lineRule ? (
                     <section className="schedule-panel">
                       <header>
-                        <h3>Line Direction</h3>
+                        <h3>{t('vi.lineDirection')}</h3>
                         <span className="status-pill">{lineRuleConfig.direction}</span>
                       </header>
-                      <span className="field-hint">The green arrow on the preview points to the side an object must move toward to trigger (both arrows = either direction).</span>
+                      <span className="field-hint">{t('vi.lineDirHint')}</span>
                       <div className="metadata-row">
                         <label>
-                          Direction
+                          {t('vi.direction')}
                           <select value={lineRuleConfig.direction} onChange={(event) => changeLineConfig({ direction: event.target.value })}>
-                            <option value="both">Either direction</option>
-                            <option value="forward">Forward side</option>
-                            <option value="reverse">Reverse side</option>
+                            <option value="both">{t('vi.dirBoth')}</option>
+                            <option value="forward">{t('vi.dirForward')}</option>
+                            <option value="reverse">{t('vi.dirReverse')}</option>
                           </select>
                         </label>
                         {mode === 'multi_line_crossing' ? (
                           <label>
-                            Max seconds between lines
+                            {t('vi.maxSecBetween')}
                             <input
                               type="number"
                               min="1"
@@ -533,12 +532,12 @@ export function VisionTab({
                   ) : null}
                   <section className="schedule-panel" style={lprRule ? { display: 'none' } : undefined}>
                     <header>
-                      <h3>Detect (what)</h3>
+                      <h3>{t('vi.detectWhat')}</h3>
                       <span className="status-pill">
-                        {targetClasses.includes('*') ? 'anything' : `${targetClasses.length} selected`}
+                        {targetClasses.includes('*') ? t('vi.anything') : t('vi.nSelected', { n: targetClasses.length })}
                       </span>
                     </header>
-                    <span className="field-hint">Pick the object classes this rule watches. Manage classes and groups in Object Classes below.</span>
+                    <span className="field-hint">{t('vi.detectHint')}</span>
                     <div className="schedule-days">
                       <label className="check-row line-class-any">
                         <input
@@ -546,7 +545,7 @@ export function VisionTab({
                           checked={targetClasses.includes('*')}
                           onChange={(event) => changeTargets(event.target.checked ? ['*'] : ['person'])}
                         />
-                        <strong>Anything</strong> — any detected object
+                        {t('vi.anythingRow')}
                       </label>
                       {!targetClasses.includes('*') && classGroups.map(([groupLabel, items]) => (
                         <div key={groupLabel} className="class-target-group">
@@ -561,20 +560,20 @@ export function VisionTab({
                                   onChange={(event) => toggleTarget(cls.name, event.target.checked)}
                                 />
                                 {cls.displayName || classDisplayName(classes, cls.name)}
-                                {!live ? <span className="class-inactive-tag"> · model not active</span> : null}
+                                {!live ? <span className="class-inactive-tag">{t('vi.modelNotActiveInline')}</span> : null}
                               </label>
                             );
                           })}
                         </div>
                       ))}
                       {classGroups.length === 0 ? (
-                        <span className="field-hint">No object classes yet — add one in Object Classes below.</span>
+                        <span className="field-hint">{t('vi.noClassesYet')}</span>
                       ) : null}
                     </div>
                   </section>
                   <div className="metadata-row">
                     <label>
-                      Threshold
+                      {t('vi.threshold')}
                       <input
                         type="number"
                         min="0.01"
@@ -585,7 +584,7 @@ export function VisionTab({
                       />
                     </label>
                     <label>
-                      Min frames
+                      {t('vi.minFrames')}
                       <input
                         type="number"
                         min="1"
@@ -595,7 +594,7 @@ export function VisionTab({
                     </label>
                   </div>
                   <label>
-                    Cooldown seconds
+                    {t('vi.cooldownSeconds')}
                     <input
                       type="number"
                       min="0"
@@ -605,15 +604,15 @@ export function VisionTab({
                   </label>
                   <section className="schedule-panel">
                     <header>
-                      <h3>Notification routing</h3>
-                      <span className="status-pill">{ruleDestinations.length === 0 ? 'All destinations' : `${ruleDestinations.length} selected`}</span>
+                      <h3>{t('vi.notifRouting')}</h3>
+                      <span className="status-pill">{ruleDestinations.length === 0 ? t('vi.allDestinations') : t('vi.nSelected', { n: ruleDestinations.length })}</span>
                     </header>
                     {destinationOptions.length === 0 ? (
-                      <p className="field-hint">No delivery destinations configured yet — add them in Settings → Notifications. Until then, alerts reach every destination.</p>
+                      <p className="field-hint">{t('vi.noDestinations')}</p>
                     ) : (
                       <>
-                        <p className="field-hint">Choose which destinations receive this rule&apos;s alerts. None selected = all destinations.</p>
-                        <div className="schedule-days" aria-label="Notification destinations">
+                        <p className="field-hint">{t('vi.chooseDestinations')}</p>
+                        <div className="schedule-days" aria-label={t('vi.notifDestAria')}>
                           {destinationOptions.map((d) => (
                             <label className="check-row" key={d.id}>
                               <input
@@ -621,7 +620,7 @@ export function VisionTab({
                                 checked={ruleDestinations.includes(String(d.id))}
                                 onChange={(event) => toggleDestination(String(d.id), event.target.checked)}
                               />
-                              {d.name || d.type}{d.enabled === false ? ' (disabled)' : ''}
+                              {d.name || d.type}{d.enabled === false ? t('vi.destDisabledSuffix') : ''}
                             </label>
                           ))}
                         </div>
@@ -630,25 +629,25 @@ export function VisionTab({
                   </section>
                   <section className="schedule-panel">
                     <header>
-                      <h3>Schedule</h3>
+                      <h3>{t('vi.schedule')}</h3>
                       <span className="status-pill">{scheduleSummary(ruleDraft.schedulePolicy)}</span>
                     </header>
                     <div className="metadata-row">
                       <label>
-                        Detection schedule
+                        {t('vi.detectionSchedule')}
                         <select value={scheduleDraft.preset} onChange={(event) => changeSchedulePreset(event.target.value)}>
-                          <option value="always">Always active</option>
-                          <option value="daytime">Daytime</option>
-                          <option value="nighttime">Nighttime</option>
-                          <option value="weekdays">Weekdays</option>
-                          <option value="weekends">Weekends</option>
-                          <option value="custom">Custom weekly</option>
-                          <option value="range">Specific datetime</option>
+                          <option value="always">{t('vi.schedAlways')}</option>
+                          <option value="daytime">{t('vi.schedDaytime')}</option>
+                          <option value="nighttime">{t('vi.schedNighttime')}</option>
+                          <option value="weekdays">{t('vi.schedWeekdays')}</option>
+                          <option value="weekends">{t('vi.schedWeekends')}</option>
+                          <option value="custom">{t('vi.schedCustom')}</option>
+                          <option value="range">{t('vi.schedRange')}</option>
                         </select>
                       </label>
                       {scheduleDraft.preset === 'custom' || scheduleDraft.preset === 'range' ? (
                         <label>
-                          Policy mode
+                          {t('vi.policyMode')}
                           <select
                             value={scheduleDraft.mode}
                             onChange={(event) => {
@@ -659,8 +658,8 @@ export function VisionTab({
                               }
                             }}
                           >
-                            <option value="allow">Detect only during this schedule</option>
-                            <option value="deny">Pause during this schedule</option>
+                            <option value="allow">{t('vi.policyAllow')}</option>
+                            <option value="deny">{t('vi.policyDeny')}</option>
                           </select>
                         </label>
                       ) : null}
@@ -668,7 +667,7 @@ export function VisionTab({
                     {scheduleDraft.preset === 'custom' ? (
                       <>
                         <label>
-                          Timezone
+                          {t('vi.timezone')}
                           <input
                             value={scheduleDraft.timezone}
                             onChange={(event) => changeCustomSchedule({ timezone: event.target.value })}
@@ -677,23 +676,23 @@ export function VisionTab({
                           />
                         </label>
                         <div className="schedule-edit-block">
-                          <strong>Active days</strong>
-                          <div className="schedule-days" aria-label="Schedule days">
-                            {scheduleDayOptions.map(([day, label]) => (
+                          <strong>{t('vi.activeDays')}</strong>
+                          <div className="schedule-days" aria-label={t('vi.scheduleDaysAria')}>
+                            {scheduleDayOptions.map(([day]) => (
                               <label className="check-row" key={day}>
                                 <input
                                   type="checkbox"
                                   checked={scheduleDraft.days.includes(day)}
                                   onChange={() => toggleScheduleDay(day)}
                                 />
-                                {label}
+                                {t(`vi.day_${day}`)}
                               </label>
                             ))}
                           </div>
                         </div>
                         <div className="metadata-row">
                           <label>
-                            Start time (HH:MM)
+                            {t('vi.startTime')}
                             <input
                               type="time"
                               value={scheduleDraft.start}
@@ -701,7 +700,7 @@ export function VisionTab({
                             />
                           </label>
                           <label>
-                            End time (HH:MM)
+                            {t('vi.endTime')}
                             <input
                               type="time"
                               value={scheduleDraft.end}
@@ -714,7 +713,7 @@ export function VisionTab({
                     {scheduleDraft.preset === 'range' ? (
                       <>
                         <label>
-                          Timezone
+                          {t('vi.timezone')}
                           <input
                             value={scheduleDraft.timezone}
                             onChange={(event) => changeRangeSchedule({ timezone: event.target.value })}
@@ -724,7 +723,7 @@ export function VisionTab({
                         </label>
                         <div className="metadata-row">
                           <label>
-                            Start datetime
+                            {t('vi.startDatetime')}
                             <input
                               type="datetime-local"
                               value={scheduleDraft.rangeStart}
@@ -732,7 +731,7 @@ export function VisionTab({
                             />
                           </label>
                           <label>
-                            End datetime
+                            {t('vi.endDatetime')}
                             <input
                               type="datetime-local"
                               value={scheduleDraft.rangeEnd}
@@ -770,7 +769,7 @@ export function VisionTab({
                         checked={Boolean(ruleDraft.soundEnabled)}
                         onChange={(event) => onRuleDraft({ ...ruleDraft, soundEnabled: event.target.checked })}
                       />
-                      Sound alert
+                      {t('vi.soundAlert')}
                     </label>
                     <label className="check-row">
                       <input
@@ -778,15 +777,15 @@ export function VisionTab({
                         checked={Boolean(ruleDraft.isEnabled)}
                         onChange={(event) => onRuleDraft({ ...ruleDraft, isEnabled: event.target.checked })}
                       />
-                      Enabled
+                      {t('common.enabled')}
                     </label>
                   </div>
                   <div className="action-row">
                     <button type="submit" disabled={busy || (!lprRule && targetClasses.length < 1) || (!lineRule && selectedZonePoints.length < 3) || (lineRule && lineRuleConfig.lines.length < (mode === 'multi_line_crossing' ? 2 : 1)) || (lprRule && lprRuleConfig.matchMode !== 'any' && lprRuleConfig.plates.length < 1)}>
-                      <span className="btn-icon"><Ico n="save" /> Save Rule</span>
+                      <span className="btn-icon"><Ico n="save" /> {t('vi.saveRule')}</span>
                     </button>
                     <button type="button" className="quiet" onClick={() => setOpenRuleId(null)} disabled={busy}>
-                      Cancel
+                      {t('common.cancel')}
                     </button>
                   </div>
                           </form>
@@ -797,20 +796,20 @@ export function VisionTab({
                 </AccordionList>
                 <div className="action-row">
                   <button type="button" className="quiet" onClick={addRule} disabled={busy || openRuleId === 'new'}>
-                    <span className="btn-icon"><Ico n="plus" /> Add Rule</span>
+                    <span className="btn-icon"><Ico n="plus" /> {t('vi.addRule')}</span>
                   </button>
                 </div>
               </section>
 
               <section className="settings-panel">
                 <header>
-                  <h2>Alert Log</h2>
+                  <h2>{t('vi.alertLog')}</h2>
                   <span className="status-pill">{logLoading ? '…' : logTotal}</span>
                 </header>
                 <div className="vision-list">
                   <div className="log-toolbar" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
                     <label style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', margin: 0 }}>
-                      Date
+                      {t('vi.date')}
                       <input
                         type="date"
                         value={logDate}
@@ -819,60 +818,60 @@ export function VisionTab({
                       />
                     </label>
                     <label style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', margin: 0 }}>
-                      Status
+                      {t('common.status')}
                       <select value={logStatus} onChange={(e) => setLogStatus(e.target.value)}>
-                        <option value="detections">All detections</option>
-                        <option value="active">Active</option>
-                        <option value="acknowledged">Acknowledged</option>
-                        <option value="diagnostic">Diagnostic</option>
-                        <option value="">All incl. diagnostics</option>
+                        <option value="detections">{t('vi.statusAllDetections')}</option>
+                        <option value="active">{t('vi.statusActive')}</option>
+                        <option value="acknowledged">{t('vi.statusAcknowledged')}</option>
+                        <option value="diagnostic">{t('vi.statusDiagnostic')}</option>
+                        <option value="">{t('vi.statusAllInclDiag')}</option>
                       </select>
                     </label>
                     <label style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', margin: 0 }}>
-                      Rule
+                      {t('vi.rule')}
                       <select value={logRuleId} onChange={(e) => setLogRuleId(e.target.value)}>
-                        <option value="">All rules</option>
+                        <option value="">{t('vi.allRules')}</option>
                         {selectedRules.map((rule) => (
-                          <option key={rule.id} value={rule.id}>{rule.name || rule.detectionType || `Rule #${rule.id}`}</option>
+                          <option key={rule.id} value={rule.id}>{rule.name || rule.detectionType || t('vi.ruleNum', { id: rule.id })}</option>
                         ))}
                       </select>
                     </label>
                     <button type="button" className="quiet" onClick={() => setLogDate('')} disabled={!logDate}>
-                      All dates
+                      {t('vi.allDates')}
                     </button>
                     <button type="button" className="quiet" onClick={() => setLogDate(todayDateString())} disabled={logDate === todayDateString()}>
-                      Today
+                      {t('vi.today')}
                     </button>
                     <button type="button" className="quiet" onClick={() => fetchLogAlerts(selectedCamera?.id, logPage, logDate, logStatus, logRuleId)} disabled={logLoading}>
-                      Reload
+                      {t('common.reload')}
                     </button>
                     <button
                       type="button"
                       className="quiet danger-text"
                       onClick={() => {
-                        if (window.confirm('Clear all Vision-monitor diagnostic rows (across all cameras)? Real detections are kept. This cannot be undone.')) {
+                        if (window.confirm(t('vi.clearDiagConfirm'))) {
                           purgeLogAlerts(true);
                         }
                       }}
                       disabled={logLoading}
-                      title="Delete all diagnostic alert rows (capture/detect/sampled). Real detections are kept."
+                      title={t('vi.clearDiagTitle')}
                     >
-                      <span className="btn-icon"><Ico n="trash" /> Clear diagnostics</span>
+                      <span className="btn-icon"><Ico n="trash" /> {t('vi.clearDiagnostics')}</span>
                     </button>
                   </div>
-                  {logLoading ? <p className="empty">Loading…</p> : null}
-                  {!logLoading && logAlerts.length === 0 ? <p className="empty">No alert events for this camera{logDate ? ' on this date' : ''}.</p> : null}
+                  {logLoading ? <p className="empty">{t('vi.loading')}</p> : null}
+                  {!logLoading && logAlerts.length === 0 ? <p className="empty">{t('vi.noEvents', { date: logDate ? t('vi.onThisDate') : '' })}</p> : null}
                   {logAlerts.length > 0 ? (
                     <div className="event-table-wrap">
                       <table className="event-table">
                         <thead>
                           <tr>
-                            <th>Time</th>
-                            <th>Event</th>
-                            <th>Rule</th>
-                            <th>Confidence</th>
-                            <th>Status</th>
-                            <th>Action</th>
+                            <th>{t('vi.thTime')}</th>
+                            <th>{t('vi.thEvent')}</th>
+                            <th>{t('vi.rule')}</th>
+                            <th>{t('vi.thConfidence')}</th>
+                            <th>{t('common.status')}</th>
+                            <th>{t('vi.thAction')}</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -885,20 +884,20 @@ export function VisionTab({
                               <tr key={alert.id} className={Number(logSelectedAlertId) === Number(alert.id) ? 'selected' : ''}>
                                 <td>{formatTimestamp(alert.createdAt)}</td>
                                 <td>
-                                  <strong>{objectLabel || alert.label || alert.detectionType || 'Detection event'}</strong>
+                                  <strong>{objectLabel || alert.label || alert.detectionType || t('vi.detectionEvent')}</strong>
                                   <span>{formatSourceLabel(metadata.source)}</span>
                                 </td>
                                 <td>{rule?.name || `#${alert.ruleId || '-'}`}</td>
                                 <td>{Number(alert.confidence || 0).toFixed(3)}</td>
                                 <td>
                                   <span className={`status-pill ${diagnostic ? 'unknown' : alert.isAcknowledged ? 'resolved' : 'offline'}`}>
-                                    {diagnostic ? 'diagnostic' : alert.isAcknowledged ? 'acknowledged' : 'active'}
+                                    {diagnostic ? t('vi.pillDiagnostic') : alert.isAcknowledged ? t('vi.pillAcknowledged') : t('vi.pillActive')}
                                   </span>
                                 </td>
                                 <td>
                                   <div className="table-actions">
                                     <button type="button" className="quiet" onClick={() => setLogSelectedAlertId(Number(logSelectedAlertId) === Number(alert.id) ? null : alert.id)}>
-                                      {Number(logSelectedAlertId) === Number(alert.id) ? 'Close' : 'Details'}
+                                      {Number(logSelectedAlertId) === Number(alert.id) ? t('common.close') : t('vi.details')}
                                     </button>
                                     <button
                                       type="button"
@@ -920,13 +919,13 @@ export function VisionTab({
                   {logTotal > logPageSize ? (
                     <div className="pagination-bar" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.5rem' }}>
                       <button type="button" className="quiet" onClick={() => setLogPage((p) => Math.max(0, p - 1))} disabled={logPage === 0 || logLoading}>
-                        ‹ Prev
+                        {t('vi.prevArrow')}
                       </button>
                       <span style={{ fontSize: '0.85rem' }}>
-                        Page {logPage + 1} / {Math.ceil(logTotal / logPageSize)}
+                        {t('vi.pageOf', { n: logPage + 1, total: Math.ceil(logTotal / logPageSize) })}
                       </span>
                       <button type="button" className="quiet" onClick={() => setLogPage((p) => p + 1)} disabled={(logPage + 1) * logPageSize >= logTotal || logLoading}>
-                        Next ›
+                        {t('vi.nextArrow')}
                       </button>
                     </div>
                   ) : null}
@@ -936,8 +935,8 @@ export function VisionTab({
             </>
           ) : (
             <section className="device-card empty-detail">
-              <h2>No saved camera selected</h2>
-              <p className="empty">Save a camera first, then create AI detection rules here.</p>
+              <h2>{t('vi.noCameraSelected')}</h2>
+              <p className="empty">{t('vi.noCameraHint')}</p>
             </section>
           )}
         </main>
@@ -965,7 +964,6 @@ export function VisionTab({
 // bundles several categories. Trained labels (e.g. "papa") can be folded into an
 // existing category so they aren't a top-level sibling of Person/Vehicle/Animal.
 const emptyClassDraft = { id: 0, name: '', displayName: '', kind: 'object', members: [], source: 'object' };
-const kindLabels = { object: 'Object category', hazard: 'Hazard category', group: 'Group of categories' };
 
 function classSlug(value) {
   return String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
@@ -988,6 +986,7 @@ function titleizeLabel(value) {
 const TRAINED_GROUP = 'Custom model';
 
 function ObjectClassesPanel({ classes, labelCatalog, activeModelClasses, busy, onSaveClass, onDeleteClass }) {
+  const t = useT();
   const [draft, setDraft] = useState(emptyClassDraft);
   const [labelInput, setLabelInput] = useState('');
   // The new/edit form lives in a modal (matching the image-labelling popup) so the
@@ -1135,19 +1134,16 @@ function ObjectClassesPanel({ classes, labelCatalog, activeModelClasses, busy, o
   return (
     <section className="settings-panel">
       <header>
-        <h2>Object Classes</h2>
+        <h2>{t('vi.objectClasses')}</h2>
         <span className="status-pill">{(classes || []).length}</span>
       </header>
       <span className="field-hint">
-        These are the <strong>targets</strong> you pick in a rule's <strong>Detect</strong> list. A <strong>category</strong>
-        {' '}(e.g. Person, Vehicle) maps a friendly name to the raw labels your model outputs. A <strong>group</strong> bundles
-        several categories. <strong>Tip:</strong> to file a trained label like <code>papa</code> under an existing category,
-        click <strong>Edit</strong> on that category and add the label there — it won't appear as its own top-level class.
+        {t('vi.classesIntro')}
       </span>
 
       <div className="action-row">
         <button type="button" onClick={openNew} disabled={busy}>
-          <span className="btn-icon"><Ico n="plus" /> Add category or group</span>
+          <span className="btn-icon"><Ico n="plus" /> {t('vi.addCategoryGroup')}</span>
         </button>
       </div>
 
@@ -1158,18 +1154,18 @@ function ObjectClassesPanel({ classes, labelCatalog, activeModelClasses, busy, o
               <strong>{cls.displayName || cls.name}</strong>
               <span className={`class-source-badge ${cls.source}`}>{cls.source}</span>
               {cls.source === 'trained' && !classIsLive(cls, activeModelClasses) ? (
-                <span className="class-source-badge inactive">model not active</span>
+                <span className="class-source-badge inactive">{t('vi.modelNotActiveBadge')}</span>
               ) : null}
               <div className="chip-list">
                 {(cls.memberList || []).length
                   ? (cls.memberList || []).map((m) => <span key={m} className="chip chip-static">{m}</span>)
-                  : <span className="field-hint">no labels</span>}
+                  : <span className="field-hint">{t('vi.noLabels')}</span>}
               </div>
             </div>
             <div className="class-registry-actions">
-              <button type="button" className="quiet" onClick={() => editClass(cls)} disabled={busy}>Edit</button>
+              <button type="button" className="quiet" onClick={() => editClass(cls)} disabled={busy}>{t('common.edit')}</button>
               {cls.source !== 'builtin' ? (
-                <button type="button" className="quiet danger" onClick={() => onDeleteClass(cls.id)} disabled={busy}>Delete</button>
+                <button type="button" className="quiet danger" onClick={() => onDeleteClass(cls.id)} disabled={busy}>{t('common.delete')}</button>
               ) : null}
             </div>
           </li>
@@ -1180,39 +1176,39 @@ function ObjectClassesPanel({ classes, labelCatalog, activeModelClasses, busy, o
       <div className="video-overlay" onClick={closeEditor}>
       <div className="video-dialog class-editor-dialog" onClick={(e) => e.stopPropagation()}>
         <div className="video-dialog-header">
-          <span className="video-dialog-title">{isNew ? 'New category or group' : `Edit "${draft.displayName || draft.name}"`}</span>
-          <button type="button" className="video-dialog-close" onClick={closeEditor} aria-label="Close">✕</button>
+          <span className="video-dialog-title">{isNew ? t('vi.newCategoryGroup') : t('vi.editQuoted', { name: draft.displayName || draft.name })}</span>
+          <button type="button" className="video-dialog-close" onClick={closeEditor} aria-label={t('common.close')}>✕</button>
         </div>
       <form className="vision-rule-form class-editor-form" onSubmit={submit}>
         <div className="metadata-row">
           <label>
-            Name
+            {t('common.name')}
             <input
               value={draft.displayName}
               onChange={(event) => setDraft({ ...draft, displayName: event.target.value })}
-              placeholder="e.g. Person, Delivery"
+              placeholder={t('vi.namePh')}
               disabled={busy || draft.source === 'builtin'}
             />
-            {!isNew ? <span className="field-hint">id: {draft.name}</span> : null}
+            {!isNew ? <span className="field-hint">{t('vi.idLabel', { id: draft.name })}</span> : null}
           </label>
           <label>
-            Type
+            {t('common.type')}
             <select
               value={draft.kind}
               onChange={(event) => setDraft({ ...draft, kind: event.target.value })}
               disabled={busy || draft.source === 'builtin'}
             >
-              <option value="object">{kindLabels.object}</option>
-              <option value="hazard">{kindLabels.hazard}</option>
-              <option value="group">{kindLabels.group}</option>
+              <option value="object">{t('vi.kindObject')}</option>
+              <option value="hazard">{t('vi.kindHazard')}</option>
+              <option value="group">{t('vi.kindGroup')}</option>
             </select>
           </label>
         </div>
 
         {isGroup ? (
           <div className="class-member-editor">
-            <strong>Categories in this group</strong>
-            <span className="field-hint">A rule targeting this group matches any of the selected categories.</span>
+            <strong>{t('vi.categoriesInGroup')}</strong>
+            <span className="field-hint">{t('vi.groupHint')}</span>
             <div className="class-option-grid">
               {selectableMembers.map((cls) => (
                 <label className="check-row class-option" key={cls.name}>
@@ -1224,16 +1220,14 @@ function ObjectClassesPanel({ classes, labelCatalog, activeModelClasses, busy, o
                   {cls.displayName || cls.name}
                 </label>
               ))}
-              {selectableMembers.length === 0 ? <span className="field-hint">No categories to group yet — create some first.</span> : null}
+              {selectableMembers.length === 0 ? <span className="field-hint">{t('vi.noCategoriesGroup')}</span> : null}
             </div>
           </div>
         ) : (
           <div className="class-member-editor">
-            <strong>Model labels in this category</strong>
+            <strong>{t('vi.modelLabelsCategory')}</strong>
             <span className="field-hint">
-              The raw labels your models output. A rule targeting this category matches any of them (e.g. Vehicle = car, truck, bus).
-              <strong> Search and pick from the list</strong> — a label only detects something if a model that produces it is active, and a
-              mistyped name never matches. New trained labels (from the <strong>Training</strong> tab) appear here once their model is active.
+              {t('vi.labelsHint')}
             </span>
 
             {draft.members.length ? (
@@ -1241,7 +1235,7 @@ function ObjectClassesPanel({ classes, labelCatalog, activeModelClasses, busy, o
                 {draft.members.map((label) => (
                   <span key={label} className="chip">
                     {label}
-                    <button type="button" className="chip-remove" onClick={() => removeLabel(label)} aria-label={`Remove ${label}`} disabled={busy}>×</button>
+                    <button type="button" className="chip-remove" onClick={() => removeLabel(label)} aria-label={t('vi.removeLabel', { label })} disabled={busy}>×</button>
                   </span>
                 ))}
               </div>
@@ -1258,7 +1252,7 @@ function ObjectClassesPanel({ classes, labelCatalog, activeModelClasses, busy, o
                   if (matchingEntries.length === 1) addLabel(matchingEntries[0].label);
                   else if (customAddable) addLabel(labelInput);
                 }}
-                placeholder={catalog.length ? `Search ${catalog.length} labels, or type a new one…` : 'Type a label…'}
+                placeholder={catalog.length ? t('vi.searchLabels', { n: catalog.length }) : t('vi.typeLabel')}
                 disabled={busy}
               />
               <div className="class-label-groups">
@@ -1277,11 +1271,11 @@ function ObjectClassesPanel({ classes, labelCatalog, activeModelClasses, busy, o
                           {shown.map((entry) => (
                             <button type="button" key={entry.label} className={`chip chip-suggest-btn${entry.source === 'trained' ? ' is-trained' : ''}`} onClick={() => addLabel(entry.label)} disabled={busy} title={entry.label}>
                               + {entry.display || entry.label}
-                              {entry.source === 'trained' ? <span className="chip-tag">trained</span> : null}
+                              {entry.source === 'trained' ? <span className="chip-tag">{t('vi.trained')}</span> : null}
                             </button>
                           ))}
                           {entries.length > shown.length ? (
-                            <span className="field-hint">+{entries.length - shown.length} more — search to narrow.</span>
+                            <span className="field-hint">{t('vi.moreSearch', { n: entries.length - shown.length })}</span>
                           ) : null}
                         </div>
                       ) : null}
@@ -1289,13 +1283,13 @@ function ObjectClassesPanel({ classes, labelCatalog, activeModelClasses, busy, o
                   );
                 })}
                 {availableEntries.length === 0
-                  ? <span className="field-hint">Every known label is already in this category.</span> : null}
+                  ? <span className="field-hint">{t('vi.everyLabelIn')}</span> : null}
                 {availableEntries.length > 0 && matchingEntries.length === 0 && !customAddable
-                  ? <span className="field-hint">No known labels match.</span> : null}
+                  ? <span className="field-hint">{t('vi.noLabelsMatch')}</span> : null}
               </div>
               {customAddable ? (
                 <button type="button" className="quiet" onClick={() => addLabel(labelInput)} disabled={busy}>
-                  <span className="btn-icon"><Ico n="plus" /> Add “{labelInput.trim()}” as a custom label</span>
+                  <span className="btn-icon"><Ico n="plus" /> {t('vi.addCustomLabel', { label: labelInput.trim() })}</span>
                 </button>
               ) : null}
             </div>
@@ -1304,9 +1298,9 @@ function ObjectClassesPanel({ classes, labelCatalog, activeModelClasses, busy, o
 
         <div className="action-row">
           <button type="submit" disabled={busy || !draft.displayName.trim()}>
-            <span className="btn-icon"><Ico n="save" /> Save</span>
+            <span className="btn-icon"><Ico n="save" /> {t('common.save')}</span>
           </button>
-          <button type="button" className="quiet" onClick={closeEditor} disabled={busy}>Cancel</button>
+          <button type="button" className="quiet" onClick={closeEditor} disabled={busy}>{t('common.cancel')}</button>
         </div>
       </form>
       </div>
@@ -1317,6 +1311,7 @@ function ObjectClassesPanel({ classes, labelCatalog, activeModelClasses, busy, o
 }
 
 export function AlertDetailModal({ alert, rule, authHeader, onClose }) {
+  const t = useT();
   const meta = parseMetadata(alert.metadata);
   const bb = parseBoundingBox(alert.boundingBox);
   const isDiagnostic = Boolean(meta.diagnostic);
@@ -1334,7 +1329,7 @@ export function AlertDetailModal({ alert, rule, authHeader, onClose }) {
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const title = meta.objectLabel || alert.label || alert.detectionType || 'Detection event';
+  const title = meta.objectLabel || alert.label || alert.detectionType || t('vi.detectionEvent');
 
   // Download the snapshot with the detection box drawn in (server-side), matching
   // the notification image. Uses an auth'd fetch since the endpoint is protected.
@@ -1364,19 +1359,19 @@ export function AlertDetailModal({ alert, rule, authHeader, onClose }) {
           <div className="alert-modal-title-group">
             <span className="alert-modal-title" style={{ textTransform: 'capitalize' }}>{title}</span>
             <span className={`status-pill ${isDiagnostic ? 'unknown' : alert.isAcknowledged ? 'resolved' : 'offline'}`}>
-              {isDiagnostic ? 'diagnostic' : alert.isAcknowledged ? 'acknowledged' : 'active'}
+              {isDiagnostic ? t('vi.pillDiagnostic') : alert.isAcknowledged ? t('vi.pillAcknowledged') : t('vi.pillActive')}
             </span>
             <span className="alert-modal-time">{formatTimestamp(alert.createdAt)}</span>
           </div>
-          <button type="button" className="alert-modal-close" onClick={onClose} aria-label="Close">✕</button>
+          <button type="button" className="alert-modal-close" onClick={onClose} aria-label={t('common.close')}>✕</button>
         </div>
 
         <div className="alert-modal-image-wrap">
-          {snapLoading && <div className="alert-modal-snap-msg">Loading snapshot…</div>}
-          {snapError && !snapLoading && <div className="alert-modal-snap-msg alert-modal-snap-none">No snapshot available</div>}
+          {snapLoading && <div className="alert-modal-snap-msg">{t('vi.loadingSnapshot')}</div>}
+          {snapError && !snapLoading && <div className="alert-modal-snap-msg alert-modal-snap-none">{t('vi.noSnapshot')}</div>}
           {snapUrl && (
             <div className="alert-modal-snap-container">
-              <img className="alert-modal-snap" src={snapUrl} alt="Detection snapshot" />
+              <img className="alert-modal-snap" src={snapUrl} alt={t('vi.detectionSnapshot')} />
               {bb && (
                 <div className="alert-modal-bb" style={{
                   left: `${(bb.x * 100).toFixed(3)}%`,
@@ -1392,7 +1387,7 @@ export function AlertDetailModal({ alert, rule, authHeader, onClose }) {
           {snapUrl && bb && (
             <div className="alert-modal-snap-actions">
               <button type="button" className="quiet" onClick={downloadAnnotated}>
-                <span className="btn-icon"><Ico n="download" /> Download with box</span>
+                <span className="btn-icon"><Ico n="download" /> {t('vi.downloadWithBox')}</span>
               </button>
             </div>
           )}
@@ -1400,11 +1395,11 @@ export function AlertDetailModal({ alert, rule, authHeader, onClose }) {
 
         <div className="alert-modal-meta">
           <dl className="event-grid">
-            <div><dt>Rule</dt><dd>{rule?.name || `#${alert.ruleId || '-'}`}</dd></div>
-            <div><dt>Type</dt><dd>{fieldValue(alert.detectionType)}</dd></div>
-            <div><dt>Source</dt><dd>{formatSourceLabel(meta.source)}</dd></div>
+            <div><dt>{t('vi.rule')}</dt><dd>{rule?.name || `#${alert.ruleId || '-'}`}</dd></div>
+            <div><dt>{t('common.type')}</dt><dd>{fieldValue(alert.detectionType)}</dd></div>
+            <div><dt>{t('vi.metaSource')}</dt><dd>{formatSourceLabel(meta.source)}</dd></div>
             <div>
-              <dt>Confidence</dt>
+              <dt>{t('vi.thConfidence')}</dt>
               <dd>
                 <span className="conf-value">{conf.toFixed(3)}</span>
                 <div className="conf-bar-wrap">
@@ -1412,23 +1407,23 @@ export function AlertDetailModal({ alert, rule, authHeader, onClose }) {
                 </div>
               </dd>
             </div>
-            {isYolo && meta.objectLabel ? <div><dt>Object Label</dt><dd style={{ textTransform: 'capitalize' }}>{meta.objectLabel}</dd></div> : null}
-            {trackId ? <div><dt>Track ID</dt><dd>{trackId}</dd></div> : null}
+            {isYolo && meta.objectLabel ? <div><dt>{t('vi.objectLabelMeta')}</dt><dd style={{ textTransform: 'capitalize' }}>{meta.objectLabel}</dd></div> : null}
+            {trackId ? <div><dt>{t('vi.trackId')}</dt><dd>{trackId}</dd></div> : null}
             {isLineCrossing && meta.lineId ? (
-              <div><dt>Line</dt><dd>{meta.lineId}{meta.lineCount > 1 ? ` (${Number(meta.lineIndex) + 1}/${meta.lineCount})` : ''}</dd></div>
+              <div><dt>{t('vi.line')}</dt><dd>{meta.lineId}{meta.lineCount > 1 ? ` (${Number(meta.lineIndex) + 1}/${meta.lineCount})` : ''}</dd></div>
             ) : null}
-            {isMotion && meta.changedRatio !== undefined ? <div><dt>Changed Area</dt><dd>{formatPercent(meta.changedRatio)}</dd></div> : null}
+            {isMotion && meta.changedRatio !== undefined ? <div><dt>{t('vi.changedArea')}</dt><dd>{formatPercent(meta.changedRatio)}</dd></div> : null}
             {isDiagnostic ? (
               <>
-                <div><dt>Status</dt><dd>{fieldValue(meta.status)}</dd></div>
-                <div><dt>Threshold</dt><dd>{meta.ruleThreshold !== undefined ? Number(meta.ruleThreshold).toFixed(2) : '-'}</dd></div>
-                <div><dt>Min Frames</dt><dd>{meta.ruleMinFrames ?? '-'}</dd></div>
-                <div><dt>Cooldown</dt><dd>{meta.ruleCooldownSec !== undefined ? `${meta.ruleCooldownSec}s` : '-'}</dd></div>
-                {meta.message ? <div style={{ gridColumn: '1 / -1' }}><dt>Message</dt><dd>{meta.message}</dd></div> : null}
+                <div><dt>{t('common.status')}</dt><dd>{fieldValue(meta.status)}</dd></div>
+                <div><dt>{t('vi.threshold')}</dt><dd>{meta.ruleThreshold !== undefined ? Number(meta.ruleThreshold).toFixed(2) : '-'}</dd></div>
+                <div><dt>{t('vi.metaMinFrames')}</dt><dd>{meta.ruleMinFrames ?? '-'}</dd></div>
+                <div><dt>{t('vi.cooldown')}</dt><dd>{meta.ruleCooldownSec !== undefined ? `${meta.ruleCooldownSec}s` : '-'}</dd></div>
+                {meta.message ? <div style={{ gridColumn: '1 / -1' }}><dt>{t('vi.message')}</dt><dd>{meta.message}</dd></div> : null}
               </>
             ) : null}
-            {bb ? <div><dt>Bounding Box</dt><dd className="bb-coords-inline">X {formatPercent(bb.x)} Y {formatPercent(bb.y)} W {formatPercent(bb.w)} H {formatPercent(bb.h)}</dd></div> : null}
-            <div><dt>Acknowledged</dt><dd>{alert.isAcknowledged ? formatTimestamp(alert.acknowledgedAt) : '-'}</dd></div>
+            {bb ? <div><dt>{t('vi.boundingBox')}</dt><dd className="bb-coords-inline">X {formatPercent(bb.x)} Y {formatPercent(bb.y)} W {formatPercent(bb.w)} H {formatPercent(bb.h)}</dd></div> : null}
+            <div><dt>{t('vi.acknowledgedMeta')}</dt><dd>{alert.isAcknowledged ? formatTimestamp(alert.acknowledgedAt) : '-'}</dd></div>
           </dl>
         </div>
       </div>
