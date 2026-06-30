@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <radialGradient id="g1" cx="80%" cy="0%" r="90%">
+      <stop offset="0%" stop-color="#1a3a55" stop-opacity="0.7"/>
+      <stop offset="60%" stop-color="#0d1117" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="g2" cx="10%" cy="10%" r="80%">
+      <stop offset="0%" stop-color="#123026" stop-opacity="0.8"/>
+      <stop offset="55%" stop-color="#0d1117" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="title" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#b9c6d8"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="630" fill="#0d1117"/>
+  <rect width="1200" height="630" fill="url(#g1)"/>
+  <rect width="1200" height="630" fill="url(#g2)"/>
+
+  <!-- brand mark -->
+  <g transform="translate(90,86)">
+    <path d="M40 0l30 13v20.5C70 53 57 68 40 76 23 68 10 53 10 33.5V13L40 0Z"
+          fill="rgba(68,170,128,0.16)" stroke="#44aa80" stroke-width="3.5"/>
+    <ellipse cx="40" cy="36" rx="16" ry="11" fill="none" stroke="#44aa80" stroke-width="3.5"/>
+    <circle cx="40" cy="36" r="5.5" fill="#44aa80"/>
+    <path d="M29 50l8 7 15-15" fill="none" stroke="#44aa80" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="186" y="150" font-family="system-ui,Segoe UI,Roboto,Arial" font-size="46" font-weight="700" fill="#e2eaf4">r450k</text>
+
+  <!-- eyebrow -->
+  <text x="90" y="290" font-family="system-ui,Segoe UI,Roboto,Arial" font-size="26" font-weight="600" letter-spacing="1" fill="#44aa80">ON-PREM · EDGE AI · NO CLOUD REQUIRED</text>
+
+  <!-- title -->
+  <text x="90" y="372" font-family="system-ui,Segoe UI,Roboto,Arial" font-size="68" font-weight="800" letter-spacing="-1.5" fill="url(#title)">AI camera intelligence</text>
+  <text x="90" y="452" font-family="system-ui,Segoe UI,Roboto,Arial" font-size="68" font-weight="800" letter-spacing="-1.5" fill="url(#title)">that runs at the edge.</text>
+
+  <!-- subtitle -->
+  <text x="90" y="522" font-family="system-ui,Segoe UI,Roboto,Arial" font-size="30" fill="#c0cede">ONVIF discovery · YOLO detection · NVR recording · WebRTC live view</text>
+
+  <text x="90" y="582" font-family="system-ui,Segoe UI,Roboto,Arial" font-size="26" font-weight="600" fill="#8a9fb8">r450k.com</text>
+</svg>

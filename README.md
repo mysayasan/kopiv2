@@ -109,6 +109,7 @@ Relevant top-level layout:
 |- domain/                 # Domain entities, enums, shared APIs/services
 |- infra/                  # Config, DB, auth login providers, camera adapters
 |- deploy/linux/           # systemd templates
+|- r450k/                  # Static marketing site (React + Vite, deployed to Cloudflare Pages at r450k.com)
 |- Dockerfile              # Production image build
 |- docker-compose.yml      # App + PostgreSQL compose stack
 |- go.mod
