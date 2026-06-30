@@ -17,7 +17,7 @@ npm run build    # outputs static site to dist/
 npm run preview  # serve the built dist/ locally
 ```
 
-Requires Node 20+ (see [`.nvmrc`](.nvmrc)).
+Requires Node 22+ (see [`.nvmrc`](.nvmrc)) — Wrangler 4 needs Node ≥ 22.
 
 ## Project layout
 
@@ -59,6 +59,10 @@ repository**, or your existing Worker → **Settings → Build**):
 That's it — there is **no "Build output directory"** field for Workers; the output dir is declared
 in `wrangler.jsonc` (`assets.directory: ./dist`). `npm run build` produces `dist/`; `npx wrangler
 deploy` uploads the Worker (`worker/index.js`) plus the `dist/` assets.
+
+> **Node 22+ required.** Wrangler 4 needs Node ≥ 22. [`.nvmrc`](.nvmrc) pins `22`, which Cloudflare
+> reads automatically; if a build still uses an older Node, add a build variable `NODE_VERSION=22`
+> in the Worker's build settings.
 
 > **Why a Worker and not Pages?** Cloudflare now funnels new Git projects into Workers Builds (the
 > screen with a *Deploy command* + *Build token*). This site is configured for that model:
