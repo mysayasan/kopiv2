@@ -21,7 +21,7 @@ func NewAppRedirectUriApi(router *mux.Router, auth middlewares.AuthMidware, acce
 	handler := &appRedirectUriApi{auth: auth, repo: repo}
 	group := router.PathPrefix("/app-redirect-uri").Subrouter()
 	group.Use(auth.Middleware)
-	group.Use(access.Middleware)
+	group.Use(access.Middleware) // RBAC-matrix governed (delegate per role; not granted by default)
 	group.HandleFunc("", handler.get).Methods("GET")
 	group.HandleFunc("", handler.post).Methods("POST")
 	group.HandleFunc("", handler.put).Methods("PUT")

@@ -8,7 +8,9 @@ import (
 	inputdtos "github.com/mysayasan/kopiv2/apps/myidsan/dtos/input"
 	outputdtos "github.com/mysayasan/kopiv2/apps/myidsan/dtos/output"
 	"github.com/mysayasan/kopiv2/apps/myidsan/services"
+	enumauth "github.com/mysayasan/kopiv2/domain/enums/auth"
 	"github.com/mysayasan/kopiv2/domain/entities"
+	"github.com/mysayasan/kopiv2/domain/models"
 	sharedapis "github.com/mysayasan/kopiv2/domain/shared/apis"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
@@ -21,6 +23,12 @@ type userLoginApi struct {
 }
 
 // Create UserLoginApi
+//
+// User-account management (listing, role assignment, enable/disable, deletion) is
+// SUPERADMIN-ONLY, mirroring myseliasan's /api/rbac surface. Role assignment is a
+// privilege-escalation vector, so it must never be governed by the generic permission
+// matrix alone (a non-superadmin role with a broad GET/PUT grant could otherwise change
+// any account's role — including its own — to superadmin).
 func NewUserLoginApi(
 	router *mux.Router,
 	auth middlewares.AuthMidware,
@@ -31,10 +39,11 @@ func NewUserLoginApi(
 		serv: serv,
 	}
 
-	// Create api sub-router
+	// Create api sub-router — the whole user-account surface is superadmin-only.
 	group := router.PathPrefix("/user-credential").Subrouter()
 	group.Use(auth.Middleware)
 	group.Use(access.Middleware)
+	group.Use(access.RequireSuperadmin)
 
 	// Group Handlers
 	group.HandleFunc("", handler.get).Methods("GET")
@@ -77,6 +86,16 @@ func (m *userLoginApi) put(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
 		return
+	}
+
+	// Defence in depth: a superadmin may not change their OWN role (no self-elevation
+	// games, and no accidental self-lockout). claims.RoleId is the live role — the
+	// access middleware re-stamps it from the user store on each request.
+	if claims, ok := r.Context().Value(enumauth.Claims).(*models.JwtCustomClaims); ok && claims != nil {
+		if body.Id == claims.Id && body.UserRoleId != claims.RoleId {
+			controllers.SendError(w, controllers.ErrLimitedAccess, "you cannot change your own role")
+			return
+		}
 	}
 
 	res, err := m.serv.Update(r.Context(), *body)

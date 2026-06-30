@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Ico } from './icons';
+import { Ico } from '@shared';
 import { BrandLogo } from './layout';
 import { api } from '../lib/helpers';
 
@@ -95,6 +95,35 @@ export function ChangePasswordScreen({ onDone, onToast, onLogout }) {
           </button>
           {onLogout ? <button type="button" className="quiet" onClick={onLogout}>Log out</button> : null}
         </form>
+      </section>
+    </main>
+  );
+}
+
+// PendingClearanceScreen gates a freshly-provisioned account (authenticated but with
+// no role yet) out of the control plane until a superadmin assigns it a role on the
+// RBAC page. It offers only a re-check and a log-out.
+export function PendingClearanceScreen({ email, onRefresh, onLogout }) {
+  const [busy, setBusy] = useState(false);
+  async function recheck() {
+    setBusy(true);
+    try { await onRefresh(); } finally { setBusy(false); }
+  }
+  return (
+    <main className="login-shell">
+      <section className="login-card">
+        <BrandLogo size={48} />
+        <p className="login-sub">Access pending</p>
+        <p className="login-hint">
+          Your account{email ? <> (<strong>{email}</strong>)</> : null} is awaiting clearance. A superadmin must assign
+          you a role before you can access the control plane.
+        </p>
+        <div className="login-form">
+          <button type="button" disabled={busy} onClick={recheck}>
+            <span className="btn-icon"><Ico n="reload" /> {busy ? 'Checking…' : 'Check again'}</span>
+          </button>
+          {onLogout ? <button type="button" className="quiet" onClick={onLogout}>Log out</button> : null}
+        </div>
       </section>
     </main>
   );

@@ -11,11 +11,11 @@ It communicates with `mymatasan` nodes directly over the LAN using the pairing p
 `myseliasan` owns its own user store (`control_user` table). Two kinds of users coexist:
 
 - **Local (stock superadmin)**: seeded from `localAuth.username` / `localAuth.password` in `config.json` (defaults `admin` / `admin`); must change password on first login; intended to be retired after a real operator account is elevated.
-- **Federated**: a `myidsan`-authenticated user auto-provisioned on first login and assigned the `viewer` role.
+- **Federated**: a `myidsan`-authenticated user auto-provisioned on first login with **no role** (pending clearance). They can authenticate but have zero access until a superadmin assigns a role on the RBAC page; the SPA shows an "access pending — contact your administrator" screen until a role is assigned.
 
 Roles and the per-endpoint permission matrix are managed via the shared accessrbac surface at `/api/access-rbac` (superadmin-only). User management and the bootstrap handoff are at `/api/rbac/users/*` (also superadmin-only). The **bootstrap handoff** (`POST /api/rbac/users/{id}/elevate`) promotes a chosen real federated user to superadmin. The stock account is intentionally left active; a persistent non-dismissible banner appears in the SPA when `session/me` reports `superadminHandoffPending: true` (stock active + real active), prompting the operator to disable it from the Users list. Disabling the stock account is guarded — the API rejects the request if no real superadmin is active yet (`SuperadminStatus` check).
 
-The SPA gates nav tabs using `GET /api/session/me`, which returns the caller's role name, `isSuperadmin`, `stockSuperadminActive`, `superadminHandoffPending`, and permission rows — the same data the API gateway uses.
+The SPA gates nav tabs using `GET /api/session/me`, which returns the caller's role name, `isSuperadmin`, `pending`, `stockSuperadminActive`, `superadminHandoffPending`, and permission rows — the same data the API gateway uses. When `pending: true` the SPA shows an "access pending" screen before the main nav is rendered. Role changes by a superadmin take effect on the next request without a re-login.
 
 ## Node management
 
@@ -28,7 +28,8 @@ The **Mymatasan** view in the UI exposes:
 - **Heartbeat**: the control plane probes every adopted node over mTLS (`GET :<mtlsPort>/heartbeat`) on a configurable interval (default 60 s) and marks each node `online` or `lost`.
 - **Command tunnel**: after pairing, each node dials a persistent WebSocket-over-fleet-mTLS connection to `myseliasan`'s control channel port (`pairing.controlPort`, default 49533). The `/api/nodes/{id}/proxy/<node-path>` endpoint tunnels any HTTP command to the node's own API router; the node's authorization stack enforces viewer/admin based on the per-node access grant. Node-pushed event frames (AI alerts, health, going-offline) are ingested into the control plane's notification feed at `/api/notifications`.
 - **Node camera live view (media relay)**: the node also dials a separate media channel (`pairing.mediaPort`, default 49534) over fleet mTLS. When a browser requests live view of a node camera (`POST /api/nodes/{id}/cameras/{cam}/webrtc/offer`), `myseliasan` asks the node to stream that camera's RTP over the media channel, then re-broadcasts it to the browser over WebRTC — at full frame rate, without the browser needing any direct path to the node. The node-camera tile in the Nodes view shows a WebRTC `<video>` element with automatic snapshot fallback.
-- **Per-node access grants**: the adopting role owns the node (full access without a grant); other roles need an explicit grant via `GET/POST/DELETE /api/nodes/access`.
+- **Per-node access grants**: the adopting role and **superadmin roles** own the node (full access without a grant); other roles need an explicit grant via `GET/POST/DELETE /api/nodes/access`. A superadmin can also query a role's grants across all nodes with `GET /api/nodes/access?roleId=ID` (central RBAC node-access matrix on the RBAC page).
+- **Adoption metadata**: when adopting a node, the operator can now set a custom **Name** (overrides the node's reported hostname), a **Description** (shown as a tooltip in the nav tree), and an **Icon** (glyph displayed in the side-nav node tree).
 
 Both app and node must be on the same LAN segment for UDP multicast discovery to reach the node. Manual adoption by IP+port works across subnets if the node is reachable by HTTPS. The mTLS management port (default 49532) must also be reachable from the control plane.
 
@@ -38,9 +39,15 @@ Both app and node must be on the same LAN segment for UDP multicast discovery to
 
 ## Frontend
 
-The UI is a React/webpack SPA under `apps/myseliasan/views/react-webpack/`, built into `apps/myseliasan/static/` (content-hashed bundles), mirroring `mymatasan`'s frontend architecture. It reuses `mymatasan`'s `app.css` and `icons.js` verbatim; myseliasan-only styling lives in `styles/controlplane.css` and the shared RBAC-standard rail in `styles/rbac-standard.css`. Build with `npm install && npm run build` in that directory.
+The UI is a React/webpack SPA under `apps/myseliasan/views/react-webpack/`, built into `apps/myseliasan/static/` (content-hashed bundles), mirroring `mymatasan`'s frontend architecture. Myseliasan-only styling lives in `styles/app.css` and the shared RBAC-standard rail in `styles/rbac-standard.css`. Build with `npm install && npm run build` in that directory.
 
-The shell has been migrated from a horizontal topbar (`TopBar`) to the standardized dark icon side-nav (`SideNav` from `components/layout.js`), matching myidsan's design. Admin pages (Users, Roles, RBAC) are now separate nav tabs under an **Administration** group instead of a single "Users & Roles" tab; they use the shared `DataTable` component from `components/data_table.js`. The `RbacAdminTab` export has been split into `UsersPage`, `RolesPage`, and `RbacPage`.
+The shell uses the standardized dark icon side-nav (`SideNav` from `components/layout.js`), with a bespoke **Nodes tree** in the side-nav: an expandable branch listing adopted nodes (root item → fleet page, child items → per-node manage view) with search filter and scroll for large fleets. Admin pages (Users, Roles, RBAC) appear under the **Administration** group; the RBAC page now includes a central **Node Access** matrix where a superadmin assigns per-role node access.
+
+`DataTable`, `Toast`/`ToastStack`, and the `icons` set are now sourced from the shared in-repo module at `frontend/shared/` (via `@shared` webpack alias). Per-app copies (`components/data_table.js`, `components/icons.js`) have been deleted. The `webpack.config.js` has been updated to resolve `@shared` and add `frontend/shared/src` to module search paths; the babel-loader now uses inline preset config.
+
+**Theming**: three themes are available (Light / Dark / **High contrast**). The high-contrast theme uses black surfaces, white text, bright accents, and strong borders for accessibility. The side-nav responds to the active theme via `--nav-*` CSS tokens (soft light rail in light mode, dark gradient in dark, black in high contrast).
+
+An **access pending screen** is shown to authenticated users with no role assigned (`session/me` returns `pending: true`), instructing them to contact an administrator.
 
 A **superadmin handoff banner** is shown at the top of the workspace whenever `session/me` returns `superadminHandoffPending: true`, with a "Go to Users" shortcut for superadmins.
 

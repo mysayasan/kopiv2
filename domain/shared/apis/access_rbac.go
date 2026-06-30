@@ -92,7 +92,10 @@ func (a *accessRbacApi) me(w http.ResponseWriter, r *http.Request) {
 		"roleId":             principal.RoleId,
 		"mustChangePassword": principal.MustChangePassword,
 		"isSuperadmin":       false,
-		"permissions":        []*entities.AccessRolePermission{},
+		// pending = authenticated but no role assigned yet (awaiting admin clearance).
+		// The SPA shows an "access pending" screen instead of the app.
+		"pending":     true,
+		"permissions": []*entities.AccessRolePermission{},
 	}
 	// Surface the caller's own identity so the SPA can recognize "self" (e.g. to avoid
 	// offering to disable your own account).
@@ -103,6 +106,7 @@ func (a *accessRbacApi) me(w http.ResponseWriter, r *http.Request) {
 	if role, _ := a.roles.GetById(r.Context(), principal.RoleId); role != nil {
 		out["roleName"] = role.Name
 		out["isSuperadmin"] = role.IsSuperadmin
+		out["pending"] = false
 	}
 	if out["isSuperadmin"] != true {
 		rows, err := a.perms.ListForRole(r.Context(), principal.RoleId)

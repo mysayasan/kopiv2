@@ -205,8 +205,8 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// Per-node access: a role gets full access to nodes it adopted (owner role) and
 	// whatever explicit grants it has elsewhere. Drives the tunnel's viewer/admin
 	// decision and gates grant management.
-	accessService := services.NewNodeAccessService(deps.Db)
-	apis.NewNodeAccessApi(api, *deps.Auth, accessService)
+	accessService := services.NewNodeAccessService(deps.Db, roleService)
+	apis.NewNodeAccessApi(api, *deps.Auth, accessService, controlSession)
 
 	// Node camera media relay: a dedicated fleet-mTLS listener accepts the node-dialed
 	// media channel; per browser WebRTC subscription it asks the node to stream that
@@ -245,14 +245,14 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		}
 	}()
 	// Registered before the proxy catch-all so the specific media-offer path wins.
-	apis.NewNodeMediaApi(api, *deps.Auth, mediaHub, accessService, mediaEngine, mediaICE)
+	apis.NewNodeMediaApi(api, *deps.Auth, mediaHub, accessService, mediaEngine, mediaICE, controlSession)
 
 	// Reverse command tunnel: /api/nodes/{id}/proxy/<node-path> forwards over the
 	// control channel to the node's own API, giving the commander the node's exact
 	// capability surface. The operator's per-node grant decides viewer vs admin (no
 	// read access → 403). Registered after NewNodesApi/NewNodeAccessApi so their
 	// specific routes win; mux falls through to the proxy for /nodes/{id}/proxy/...
-	apis.NewNodeProxyApi(api, *deps.Auth, controlServer, accessService)
+	apis.NewNodeProxyApi(api, *deps.Auth, controlServer, accessService, controlSession)
 
 	return func(context.Context) error { stopBackground(); return nil }, nil
 }

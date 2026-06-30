@@ -20,8 +20,9 @@ import (
 const maxProxyBodyBytes = 8 << 20
 
 type nodeProxyApi struct {
-	sender services.ControlSender
-	access services.INodeAccessService
+	sender  services.ControlSender
+	access  services.INodeAccessService
+	session *middlewares.AccessSessionMidware
 }
 
 // NewNodeProxyApi registers the commander's reverse tunnel: any method under
@@ -36,8 +37,8 @@ type nodeProxyApi struct {
 // Registered as its own /nodes subrouter; it shares the session-auth middleware and
 // is matched after NewNodesApi's specific routes (mux falls through to it when the
 // path is /nodes/{id}/proxy/...).
-func NewNodeProxyApi(router *mux.Router, auth middlewares.AuthMidware, sender services.ControlSender, access services.INodeAccessService) {
-	h := &nodeProxyApi{sender: sender, access: access}
+func NewNodeProxyApi(router *mux.Router, auth middlewares.AuthMidware, sender services.ControlSender, access services.INodeAccessService, session *middlewares.AccessSessionMidware) {
+	h := &nodeProxyApi{sender: sender, access: access, session: session}
 	g := router.PathPrefix("/nodes").Subrouter()
 	g.Use(auth.Middleware)
 	g.PathPrefix("/{id}/proxy").HandlerFunc(h.proxy)
@@ -60,6 +61,13 @@ func (a *nodeProxyApi) proxy(w http.ResponseWriter, r *http.Request) {
 	// node is driven as admin; read-only → viewer; no read → forbidden. The node's
 	// owning role (it adopted the node) has full access without an explicit grant.
 	roleId, actor := operatorIdentity(r)
+	// Use the LIVE role from the user store (not the token's baked roleId) so a
+	// just-demoted operator immediately loses node access without a re-login.
+	if a.session != nil {
+		if p, perr := a.session.CurrentPrincipal(r); perr == nil && p != nil {
+			roleId = p.RoleId
+		}
+	}
 	acc, err := a.access.Resolve(r.Context(), roleId, nodeID)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())

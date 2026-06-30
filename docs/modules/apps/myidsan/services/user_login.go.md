@@ -7,7 +7,7 @@ Implements user credential persistence operations for myidsan identity APIs.
 ## Responsibilities
 
 - Lists user credential records with caller-provided filters and sorters.
-- Uses default newest-first sorting when callers do not provide sorters.
+- Uses stable ascending-id order as the default sort (previously newest-first; changed so the user list is deterministic in the UI).
 - Resolves user credentials by unique email.
 - Creates, updates, and deletes user credentials through the shared generic repository.
 - Enforces credential policy for create operations.
@@ -15,7 +15,8 @@ Implements user credential persistence operations for myidsan identity APIs.
 - Registers local accounts without overriding third-party-only accounts.
 - `EnsureStockSuperadmin(ctx, username, password, superRoleId)` — seeds the bootstrap admin from `config.localAuth`, forced first-login password change (`MustChangePassword = true`). While the account is still untouched (MustChangePassword + IsActive), the password is refreshed from config on each startup so the operator can correct a typo before first login. Once the operator has changed the password, config no longer overrides it. The account is also pinned to the superadmin role if the role ID drifts.
 - `ChangePassword(ctx, userId, current, next)` — local accounts only; minimum 8 characters; verifies the current password (bcrypt or legacy plain-text); hashes and stores the new password; clears `MustChangePassword`.
-- `Update` now preserves the existing stored password when the incoming `userpwd` field is blank, and hashes the password when a plaintext value is supplied, so role/active toggles from the admin UI do not erase or store the password in plain text.
+- `Update` preserves the existing stored password when the incoming `userpwd` field is blank, and hashes the password when a plaintext value is supplied, so role/active toggles from the admin UI do not erase or store the password in plain text. The password-preserve lookup now uses `repo.GetById` (primary key) instead of `GetByUnique(ctx,"","id",id)`, which matched no field and would return the first user's password.
+- `ChangePassword` similarly uses `repo.GetById` to fetch the user before verifying the current password.
 
 ## Credential Policy
 

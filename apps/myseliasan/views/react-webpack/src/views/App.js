@@ -3,11 +3,12 @@ import './styles/app.css';
 import './styles/controlplane.css';
 import './styles/rbac-standard.css';
 import { SideNav } from './components/layout';
-import { ToastStack, FormBusyOverlay } from './components/ui';
+import { ToastStack } from '@shared';
+import { FormBusyOverlay } from './components/ui';
 import { DashboardTab } from './components/dashboard';
 import { NodesTab } from './components/nodes';
 import { UsersPage, RolesPage, RbacPage } from './components/rbac_admin';
-import { LoginScreen, ChangePasswordScreen } from './components/auth_screens';
+import { LoginScreen, ChangePasswordScreen, PendingClearanceScreen } from './components/auth_screens';
 import { api, sessionCanGet } from './lib/helpers';
 
 const THEME_KEY = 'myseliasan_theme';
@@ -18,7 +19,7 @@ export default function App() {
   });
   useEffect(() => {
     const root = document.documentElement;
-    ['light', 'dark'].forEach((t) => root.classList.remove(`theme-${t}`));
+    ['light', 'dark', 'contrast'].forEach((t) => root.classList.remove(`theme-${t}`));
     root.classList.add(`theme-${theme}`);
   }, [theme]);
   function changeTheme(t) {
@@ -31,10 +32,37 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [toasts, setToasts] = useState([]);
+  // Fleet state is lifted here so the side-nav tree and the Nodes page stay in sync:
+  // the tree lists adopted nodes and `managingNodeId` selects which one the page opens.
+  const [nodes, setNodes] = useState([]);
+  const [managingNodeId, setManagingNodeId] = useState(null);
 
-  function pushToast(text) {
+  async function loadNodes() {
+    if (!sessionCanGet(session, '/api/nodes')) { setNodes([]); return; }
+    const r = await api('/api/nodes').catch(() => ({ ok: false }));
+    if (r.ok) setNodes(Array.isArray(r.body) ? r.body : []);
+  }
+  useEffect(() => {
+    if (authState === 'ready') loadNodes();
+    // eslint-disable-next-line
+  }, [authState, session]);
+
+  // selectNode drives both nav surfaces: null opens the fleet list/management page,
+  // a nodeId jumps straight to that node's manage view.
+  function selectNode(nodeId) {
+    setManagingNodeId(nodeId);
+    setActiveTab('nodes');
+  }
+  // Leaving the Nodes section clears the managed node so returning lands on the list.
+  function selectTab(id) {
+    if (id !== 'nodes') setManagingNodeId(null);
+    setActiveTab(id);
+  }
+
+  function pushToast(text, kind = 'info') {
+    if (!text) return;
     const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    setToasts((list) => [{ id, text }, ...list].slice(0, 5));
+    setToasts((list) => [{ id, text, kind }, ...list].slice(0, 5));
   }
 
   async function loadSession() {
@@ -64,6 +92,11 @@ export default function App() {
   if (authState === 'mustchange') {
     return <ChangePasswordScreen onDone={loadSession} onToast={pushToast} onLogout={logout} />;
   }
+  // Authenticated but no role assigned yet — gate the whole control plane behind a
+  // clearance screen until a superadmin grants a role.
+  if (session?.pending && !session?.isSuperadmin) {
+    return <PendingClearanceScreen email={session?.email} onRefresh={loadSession} onLogout={logout} />;
+  }
 
   // Demote to the dashboard if the active tab is no longer permitted (e.g. after a
   // handoff that retired the current stock account, or a role that lost node access).
@@ -77,11 +110,14 @@ export default function App() {
       <SideNav
         activeTab={activeTab}
         busy={false}
-        onTab={setActiveTab}
+        onTab={selectTab}
         onLogout={logout}
         theme={theme}
         onThemeChange={changeTheme}
         session={session}
+        nodes={nodes}
+        managingNodeId={managingNodeId}
+        onSelectNode={selectNode}
       />
       <main className="main-workspace">
         {session?.superadminHandoffPending ? (
@@ -95,7 +131,16 @@ export default function App() {
         <ToastStack toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((t) => t.id !== id))} />
 
         {activeTab === 'dashboard' ? <DashboardTab session={session} /> : null}
-        {activeTab === 'nodes' && canNodes ? <NodesTab onToast={pushToast} /> : null}
+        {activeTab === 'nodes' && canNodes ? (
+          <NodesTab
+            onToast={pushToast}
+            nodes={nodes}
+            reloadNodes={loadNodes}
+            managingNodeId={managingNodeId}
+            onManage={selectNode}
+            onBack={() => setManagingNodeId(null)}
+          />
+        ) : null}
         {activeTab === 'users' && session?.isSuperadmin ? (
           <UsersPage session={session} onToast={pushToast} onSessionChanged={loadSession} />
         ) : null}

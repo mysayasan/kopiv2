@@ -23,6 +23,13 @@ module.exports = {
     chunkFilename: '[name].[contenthash:8].js',
     clean: true
   },
+  resolve: {
+    // '@shared' -> the in-repo shared UI module (frontend/shared/src).
+    alias: { '@shared': path.resolve(__dirname, '../../../../frontend/shared/src') },
+    // Shared files do bare `import ... from 'react'`; resolve them from THIS app's
+    // node_modules so there's a single React copy.
+    modules: [path.resolve(__dirname, 'node_modules'), 'node_modules']
+  },
   plugins: [htmlPlugin],
   module: {
     rules: [

@@ -14,14 +14,16 @@ Authorization middleware for the shared "accessrbac" RBAC core. Runs after `Auth
 2. Call `AccessUserResolver.ResolveAccessUser(userId)` to obtain the app's `AccessPrincipal` (role id, disabled flag, must-change-password flag).
 3. If the user is disabled or not found, return `403`.
 4. If `mustChangePassword` is set, return `403` with the sentinel code `password_change_required`.
-5. Look up the role. If `IsSuperadmin`, pass through unconditionally (bypass the matrix).
-6. Otherwise call `IAccessPermissionService.Authorize(roleId, path, method)` — longest-prefix match over the role's permission rows; no match = deny.
-7. Return `403` when the matrix denies access.
+5. **Re-stamp `claims.RoleId` from the live principal** so downstream handlers that read the JWT claims see the current role without a re-login. This makes an admin's role change take effect on the user's very next request.
+6. Look up the role. If `IsSuperadmin`, pass through unconditionally (bypass the matrix).
+7. Otherwise call `IAccessPermissionService.Authorize(roleId, path, method)` — longest-prefix match over the role's permission rows; no match = deny.
+8. Return `403` when the matrix denies access.
 
 ## Helper Methods
 
 - `CurrentPrincipal(r)` — resolves the request's `AccessPrincipal` (used by the `/api/access-rbac/me` handler).
-- `IsSuperadmin(r)` — quick boolean check used by management handlers that must self-gate regardless of the matrix.
+- `IsSuperadmin(r)` — resolves the caller's role **live from the user store** (not the token's baked `roleId`) so a just-granted or just-revoked superadmin role takes effect without a re-login. Used by management handlers that must self-gate regardless of the matrix.
+- `RequireSuperadmin` — gorilla/mux middleware that admits only a superadmin session. Mount it on a subrouter (after `Middleware`) to lock down an entire API surface to superadmin regardless of any matrix grant.
 - `SetResolver(users)` — thread-safe rebind of the user resolver (called once during `RegisterAppRoutes`).
 
 ## Notes

@@ -61,6 +61,11 @@ func (a *rbacAdminApi) listUsers(w http.ResponseWriter, r *http.Request) {
 
 func (a *rbacAdminApi) setUserRole(w http.ResponseWriter, r *http.Request) {
 	id := pathInt64(r, "id")
+	// A superadmin may not change their OWN role — no self-elevation/self-demotion.
+	if id == operatorUserId(r) {
+		controllers.SendError(w, controllers.ErrLimitedAccess, "you cannot change your own role")
+		return
+	}
 	var body struct {
 		RoleId int64 `json:"roleId"`
 	}
@@ -68,9 +73,12 @@ func (a *rbacAdminApi) setUserRole(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
 		return
 	}
-	if role, err := a.roles.GetById(r.Context(), body.RoleId); err != nil || role == nil {
-		controllers.SendError(w, controllers.ErrBadRequest, "unknown role")
-		return
+	// roleId 0 = revoke the role (back to pending / no access). Any other id must exist.
+	if body.RoleId != 0 {
+		if role, err := a.roles.GetById(r.Context(), body.RoleId); err != nil || role == nil {
+			controllers.SendError(w, controllers.ErrBadRequest, "unknown role")
+			return
+		}
 	}
 	if err := a.users.SetRole(r.Context(), id, body.RoleId); err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
@@ -110,6 +118,11 @@ func (a *rbacAdminApi) setUserDisabled(w http.ResponseWriter, r *http.Request) {
 // request (the session middleware rejects a disabled user).
 func (a *rbacAdminApi) elevateUser(w http.ResponseWriter, r *http.Request) {
 	id := pathInt64(r, "id")
+	// A superadmin may not elevate themselves (no-op at best; blocks self-targeting).
+	if id == operatorUserId(r) {
+		controllers.SendError(w, controllers.ErrLimitedAccess, "choose another user to elevate")
+		return
+	}
 	super, err := a.roles.GetByName(r.Context(), sharedservices.RoleSuperadmin)
 	if err != nil || super == nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, "superadmin role missing")

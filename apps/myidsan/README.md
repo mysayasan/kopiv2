@@ -8,7 +8,7 @@ It owns user, group, app registry, endpoint catalog, and shared RBAC administrat
 
 - Local username/password login and registration through myidsan-local login APIs.
 - Authenticated `POST /api/login/default/change-password` — verifies current password and sets a new one, clearing the forced first-login flag.
-- User and group management through protected APIs (`/api/user-credential`, `/api/user-group`).
+- User and group management through protected APIs (`/api/user-credential`, `/api/user-group`). Both surfaces are **superadmin-only** (`RequireSuperadmin` middleware), preventing any non-superadmin role from reading or modifying user accounts or groups regardless of matrix grants. A superadmin may not change their own role via PUT `/api/user-credential`.
 - App registry, app-auth-config, and app-redirect-uri management for SSO clients, with built-in app protection (myidsan/mymatasan/myseliasan codes are locked from rename/delete in the UI).
 - SSO certificate authority: `GET /api/sso-ca` (CA public cert) and `POST /api/sso-ca/issue/{id}` (issue a client cert for a registered app's `client_id`). Backed by `ISsoCaService` / `SsoCa` entity using `infra/fleetca`. mTLS enforcement on the token endpoint is not yet wired.
 - Superadmin handoff status: `GET /api/identity-status` — tells the SPA whether the stock superadmin is still active and whether handoff is safe; drives the persistent handoff banner.
@@ -83,9 +83,13 @@ npm run build
 
 The production build writes assets into `apps/myidsan/static`, which the Go app host serves as the SPA catch-all.
 
-The UI builds its sidebar from `GET /api/access-rbac/me`. A page appears only when the current user's role has `canGet` access to the backing API endpoint path prefix, and that endpoint's `metadata` in the `api_endpoint` catalog contains an enabled `menu` or `menus[]` item. The supported menu metadata fields are `id`, `label`, `group`, `order`, `summary`, `tone`, and optional `icon`. Superadmin roles (`isSuperadmin: true` in the `/me` response) see all menus.
+The UI builds its sidebar from `GET /api/access-rbac/me`. A page appears only when the current user's role has `canGet` access to the backing API endpoint path prefix, and that endpoint's `metadata` in the `api_endpoint` catalog contains an enabled `menu` or `menus[]` item. The supported menu metadata fields are `id`, `label`, `group`, `order`, `summary`, `tone`, and optional `icon`. Superadmin roles (`isSuperadmin: true` in the `/me` response) see all menus. When `/me` returns `pending: true` (authenticated but no role assigned), an "access pending — contact your administrator" screen is shown instead of the app shell.
 
-The side-nav uses the standardized dark icon rail (icon glyph + label, grouped by section). Nav entries are now regrouped: **Users**, **Groups**, **Roles**, and **RBAC** all appear under the **Administration** group. **Apps** is under **Federation**; **Endpoints** is under **Access Control**. The Roles page now manages accessrbac roles via `/api/access-rbac/roles`; the broken `/api/user-credential/group/{id}` listing has been removed from the Groups page. The RBAC page is the permission-matrix view only.
+The side-nav uses the standardized dark icon rail (icon glyph + label, grouped by section). Nav entries are regrouped: **Users**, **Groups**, **Roles**, and **RBAC** all appear under the **Administration** group; **Users** and **Groups** are superadmin-only sections in the SPA. **Apps** is under **Federation**; **Endpoints** is under **Access Control**. The Roles page manages accessrbac roles via `/api/access-rbac/roles`; the RBAC page is the permission-matrix view only.
+
+`DataTable`, `Toast`/`ToastStack`, and the `icons` set are now sourced from the shared in-repo module at `frontend/shared/` (via `@shared` webpack alias). Per-app copies (`lib/data_table.js`, `lib/icons.js`) have been deleted. The `webpack.config.js` has been updated accordingly.
+
+**Theming**: three themes are available (Light / Dark / **High contrast**). The high-contrast theme uses black surfaces, white text, and strong borders for accessibility. The side-nav responds to the active theme via `--nav-*` CSS tokens.
 
 A light/dark theme toggle (sun/moon) sits at the foot of the side-nav; the selected theme is persisted to `localStorage`. A shield+keyhole SVG brand mark replaces the old "ID" text tile. The same shield+keyhole mark appears on the server-rendered federated login page (`GET /api/auth/login`). Google/GitHub buttons appear on that page only for providers that are currently configured and active; unconfigured providers are silently omitted. The SPA's own social-login buttons also gate on `GET /api/login/providers` so they never show a link that would fail.
 

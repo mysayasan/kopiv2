@@ -47,6 +47,11 @@ func (m *sessionApi) me(w http.ResponseWriter, r *http.Request) {
 		"audience": []string(claims.Audience),
 	}
 
+	// The user's CURRENT role is resolved live from the store (not the token's baked
+	// roleId), so an admin's role change takes effect on the next request without a
+	// re-login.
+	roleId := claims.RoleId
+
 	// A user the control plane no longer recognizes (e.g. a retired stock account)
 	// is treated as signed out so the SPA returns to the login screen.
 	if m.users != nil {
@@ -56,6 +61,8 @@ func (m *sessionApi) me(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if user != nil {
+			roleId = user.RoleId
+			out["roleId"] = user.RoleId
 			out["mustChangePassword"] = user.MustChangePassword
 			out["kind"] = user.Kind
 			out["isStock"] = user.IsStock
@@ -68,20 +75,25 @@ func (m *sessionApi) me(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	superadmin := false
+	// pending = authenticated but no role assigned yet (awaiting admin clearance); the
+	// SPA shows an "access pending" screen instead of the control plane.
+	pending := true
 	if m.roles != nil {
-		if role, err := m.roles.GetById(r.Context(), claims.RoleId); err == nil && role != nil {
+		if role, err := m.roles.GetById(r.Context(), roleId); err == nil && role != nil {
 			out["roleName"] = role.Name
 			out["isSuperadmin"] = role.IsSuperadmin
 			superadmin = role.IsSuperadmin
+			pending = false
 		}
 	}
+	out["pending"] = pending
 
 	// The role's permission matrix lets the SPA gate the nav from the same rules that
 	// gate the APIs (a tab is shown only if the role has GET on its path prefix).
 	// Superadmin bypasses the matrix, so the SPA treats an empty list as a wildcard.
 	out["permissions"] = []*sharedentities.AccessRolePermission{}
 	if m.perms != nil && !superadmin {
-		if rows, err := m.perms.ListForRole(r.Context(), claims.RoleId); err == nil {
+		if rows, err := m.perms.ListForRole(r.Context(), roleId); err == nil {
 			out["permissions"] = rows
 		}
 	}

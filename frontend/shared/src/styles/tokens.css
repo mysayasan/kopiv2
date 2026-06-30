@@ -1,0 +1,23 @@
+/* Design-token contract for @shared CSS.
+ *
+ * Shared stylesheets (toast.css, …) reference ONLY these --ui-* variables — never an
+ * app-specific var or hardcoded color. Each consuming app defines them once in its own
+ * :root / theme blocks, mapping to its existing palette (light AND dark). This file is
+ * documentation only; it intentionally sets no values.
+ *
+ * Required tokens:
+ *   --ui-surface        panel / card background
+ *   --ui-bg             page background
+ *   --ui-text           primary text
+ *   --ui-muted          secondary / muted text + neutral accents
+ *   --ui-border         hairline border
+ *   --ui-border-strong  stronger border
+ *   --ui-accent         brand / primary accent
+ *   --ui-success        success accent (green)
+ *   --ui-danger         error/destructive accent (red)
+ *   --ui-shadow         elevation shadow color (rgba)
+ *
+ * Example mapping in an app's stylesheet:
+ *   :root, .theme-light { --ui-surface: var(--panel); --ui-text: var(--text); ... }
+ *   .theme-dark         { --ui-surface: var(--bg-surface); ... }
+ */

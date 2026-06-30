@@ -21,6 +21,13 @@ module.exports = {
     chunkFilename: '[name].[contenthash:8].js',
     clean: true
   },
+  resolve: {
+    // '@shared' -> the in-repo shared UI module (frontend/shared/src).
+    alias: { '@shared': path.resolve(__dirname, '../../../../frontend/shared/src') },
+    // Shared files do bare `import ... from 'react'`; resolve them from THIS app's
+    // node_modules so there's a single React copy.
+    modules: [path.resolve(__dirname, 'node_modules'), 'node_modules']
+  },
   plugins: [
     htmlPlugin,
     new CopyPlugin({
@@ -34,9 +41,16 @@ module.exports = {
         use: ['style-loader', 'css-loader']
       },
       {
+        // Inline presets (instead of relying only on .babelrc) so files OUTSIDE this
+        // app — i.e. the @shared module under frontend/shared/src — are also transpiled.
         test: /\.js$/,
         exclude: /node_modules/,
-        use: ['babel-loader']
+        use: {
+          loader: 'babel-loader',
+          options: {
+            presets: ['@babel/preset-env', ['@babel/preset-react', { runtime: 'automatic' }]]
+          }
+        }
       }
     ]
   },

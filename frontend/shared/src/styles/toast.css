@@ -1,0 +1,69 @@
+/* Shared toast styling. Uses --ui-* design tokens (see styles/tokens.css) that each
+   app maps to its own palette, so this single stylesheet renders correctly in every
+   app's light/dark theme. */
+
+.toast-stack {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(380px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 13px;
+  border-radius: 9px;
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  border-left: 4px solid var(--ui-muted);
+  box-shadow: 0 12px 30px var(--ui-shadow);
+  color: var(--ui-text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  opacity: 1;
+  transform: translateX(0);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+/* Accent by kind. */
+.toast-success { border-left-color: var(--ui-success); }
+.toast-error { border-left-color: var(--ui-danger); }
+
+.toast--leaving {
+  opacity: 0;
+  transform: translateX(14px);
+}
+
+.toast-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.toast-close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  margin: -2px -2px 0 0;
+  border: none;
+  background: transparent;
+  color: var(--ui-muted);
+  cursor: pointer;
+  opacity: 0.85;
+}
+
+.toast-close:hover {
+  color: var(--ui-text);
+  opacity: 1;
+}

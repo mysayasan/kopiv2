@@ -370,9 +370,10 @@ func (m *AuthMidware) validateSession(ctx context.Context, claims *models.JwtCus
 	if entry.UserId != 0 && entry.UserId != claims.Id {
 		return fmt.Errorf("session user mismatch")
 	}
-	if entry.RoleId != 0 && entry.RoleId != claims.RoleId {
-		return fmt.Errorf("session role mismatch")
-	}
+	// NOTE: role is intentionally NOT validated here. The user's role is dynamic —
+	// authorization resolves it live from the user store on each request — so a role
+	// change must not invalidate an otherwise-valid session (that caused changed users
+	// to be bounced to login until they re-authenticated).
 	if entry.Email != "" && !strings.EqualFold(entry.Email, claims.Email) {
 		return fmt.Errorf("session email mismatch")
 	}

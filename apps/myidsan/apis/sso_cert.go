@@ -24,7 +24,7 @@ func NewSsoCertApi(router *mux.Router, auth middlewares.AuthMidware, access *mid
 	h := &ssoCertApi{ca: ca, configs: configs}
 	group := router.PathPrefix("/sso-ca").Subrouter()
 	group.Use(auth.Middleware)
-	group.Use(access.Middleware)
+	group.Use(access.Middleware) // RBAC-matrix governed (delegate per role; not granted by default)
 	group.HandleFunc("", h.getCA).Methods("GET")
 	group.HandleFunc("/issue/{id}", h.issue).Methods("POST")
 }

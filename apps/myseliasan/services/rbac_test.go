@@ -30,6 +30,15 @@ func (f *fakeAccessRoleRepo) GetByUnique(_ context.Context, _ string, field stri
 	}
 	return nil, errors.New("no result found")
 }
+func (f *fakeAccessRoleRepo) GetById(_ context.Context, _ string, id uint64) (*sharedentities.AccessRole, error) {
+	for _, r := range f.rows {
+		if uint64(r.Id) == id {
+			cp := *r
+			return &cp, nil
+		}
+	}
+	return nil, nil
+}
 func (f *fakeAccessRoleRepo) Get(_ context.Context, _ string, _ uint64, _ uint64, _ []sqldataenums.Filter, _ []sqldataenums.Sorter) ([]*sharedentities.AccessRole, uint64, error) {
 	return f.rows, uint64(len(f.rows)), nil
 }
@@ -55,6 +64,15 @@ func (f *fakeUserRepo) GetByUnique(_ context.Context, _ string, field string, ui
 		}
 	}
 	return nil, errors.New("no result found")
+}
+func (f *fakeUserRepo) GetById(_ context.Context, _ string, id uint64) (*entities.ControlUser, error) {
+	for _, r := range f.rows {
+		if uint64(r.Id) == id {
+			cp := *r
+			return &cp, nil
+		}
+	}
+	return nil, nil
 }
 func (f *fakeUserRepo) Get(_ context.Context, _ string, _ uint64, _ uint64, filters []sqldataenums.Filter, _ []sqldataenums.Sorter) ([]*entities.ControlUser, uint64, error) {
 	var out []*entities.ControlUser
@@ -113,18 +131,19 @@ func newTestRBAC() (sharedservices.IAccessRoleService, *controlUserService) {
 	return roles, users
 }
 
-func TestUpsertFederatedAssignsViewerThenUpdates(t *testing.T) {
+func TestUpsertFederatedAssignsNoRoleThenUpdates(t *testing.T) {
 	roles, users := newTestRBAC()
 	ctx := context.Background()
 	_ = roles.EnsureBuiltins(ctx)
-	viewer, _ := roles.GetByName(ctx, sharedservices.RoleViewer)
 
 	u1, err := users.UpsertFederated(ctx, 42, "a@x.io", "Alice")
 	if err != nil {
 		t.Fatalf("UpsertFederated: %v", err)
 	}
-	if u1.Kind != "federated" || u1.RoleId != viewer.Id {
-		t.Fatalf("first login should be federated viewer: %+v", u1)
+	// New federated identities are provisioned pending (no role) until an admin grants
+	// access — never auto-elevated to viewer/anything.
+	if u1.Kind != "federated" || u1.RoleId != 0 {
+		t.Fatalf("first login should be federated with no role (pending): %+v", u1)
 	}
 	u2, err := users.UpsertFederated(ctx, 42, "a@x.io", "Alice Smith")
 	if err != nil {
@@ -161,9 +180,10 @@ func TestUpsertFederatedDoesNotMergeByEmail(t *testing.T) {
 	if u2.Id == u1.Id {
 		t.Fatal("distinct SSO ids sharing an email must not merge into one account")
 	}
-	viewer, _ := roles.GetByName(ctx, sharedservices.RoleViewer)
-	if u2.RoleId != viewer.Id {
-		t.Fatalf("new federated account must default to viewer, got roleId=%d", u2.RoleId)
+	// The new account must start pending (no role) — never inherit the first account's
+	// elevated role, and never be auto-granted any role.
+	if u2.RoleId != 0 {
+		t.Fatalf("new federated account must default to no role (pending), got roleId=%d", u2.RoleId)
 	}
 }
 

@@ -268,9 +268,11 @@ func Run(app App) error {
 		if err := accessRoleService.EnsureBuiltins(context.Background()); err != nil {
 			return fmt.Errorf("seed accessrbac roles: %w", err)
 		}
+		// Enforce least privilege for the viewer role: strip the legacy read-everything
+		// GET /api wildcard if a prior build seeded it (viewer now starts with no access).
 		if viewer, err := accessRoleService.GetByName(context.Background(), sharedServices.RoleViewer); err == nil && viewer != nil {
 			if err := accessPermService.EnsureViewerDefaults(context.Background(), viewer.Id); err != nil {
-				return fmt.Errorf("seed accessrbac viewer defaults: %w", err)
+				return fmt.Errorf("enforce accessrbac viewer least-privilege defaults: %w", err)
 			}
 		}
 	}

@@ -13,7 +13,7 @@ Answers browser WebRTC offers for node cameras by re-broadcasting the RTP the no
 
 ## Constructor
 
-`NewNodeMediaApi(router, auth, hub, access, engine, ice)` — registers both route groups. Must be registered before the proxy catch-all (`/api/nodes/{id}/proxy/...`) so the specific offer path wins.
+`NewNodeMediaApi(router, auth, hub, access, engine, ice, session)` — registers both route groups. The `session *AccessSessionMidware` parameter enables live-role resolution for media access authorization. Must be registered before the proxy catch-all (`/api/nodes/{id}/proxy/...`) so the specific offer path wins.
 
 ## `POST .../webrtc/offer` Flow
 
@@ -32,6 +32,6 @@ Answers browser WebRTC offers for node cameras by re-broadcasting the RTP the no
 
 ## Notes
 
-- Authorization uses the per-node access grant, not the accessrbac matrix; viewer-level grant is sufficient for live view (no write access to the node is needed).
+- Authorization uses the per-node access grant, not the accessrbac matrix; viewer-level grant is sufficient for live view (no write access to the node is needed). The caller's role is resolved **live from the user store** (via `AccessSessionMidware.CurrentPrincipal`) on every offer, so a just-demoted account immediately loses media access without a re-login.
 - Each browser offer produces one independent `stream.Manager` (and one `relaySub` on the hub); the node sends a separate keyframe backlog for each.
 - The `GET /api/node-stream/config` prefix is `/node-stream` rather than `/nodes/{id}` to avoid ambiguity with the proxy catch-all route.

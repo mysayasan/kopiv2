@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Ico } from './icons';
 
-// DataTable is myidsan's filterable/sortable data grid, ported into myseliasan so the
-// two RBAC apps share one table design (column filter popovers, multi-sort, pager).
-// myseliasan's admin endpoints return plain arrays, so filtering/sorting/paging run
-// client-side here (myidsan does the same in its non-paging "default" list mode).
+// DataTable is the shared filterable/sortable/pageable data grid for the RBAC apps.
+// Filtering/sorting/paging run client-side over the supplied `rows`. Columns are
+// `{ key, label, render?, filterable?, filterType? }`; action columns set
+// `filterable:false`. The CSS classes it renders (.table-surface, .pager, .filter-*,
+// .sort-button, …) are styled by the consuming app's stylesheet.
 
 const FILTER_OPERATORS = [
   { value: 1, label: '=' },
@@ -264,7 +264,7 @@ function Pager({ total, offset, limit, onPage, busy }) {
   );
 }
 
-// --- shared filter/sort helpers (ported verbatim from myidsan) ------------------
+// --- shared filter/sort helpers -------------------------------------------------
 
 function createColumnFilter(field) {
   return { compare: filterOperatorsForField(field)[0]?.value || 1, value: '' };

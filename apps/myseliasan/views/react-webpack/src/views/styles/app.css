@@ -60,6 +60,55 @@
   color-scheme: dark;
 }
 
+/* High-contrast theme — pure black surfaces, white text, bright accents and strong
+   borders for low-vision / accessibility use. The side-nav --nav-* overrides live in
+   rbac-standard.css. */
+.theme-contrast {
+  --bg-body: #000000;
+  --bg-surface: #0a0d12;
+  --bg-subtle: #12161d;
+  --bg-subtle2: #12161d;
+  --bg-video: #000000;
+  --text-primary: #ffffff;
+  --text-secondary: #f0f3f7;
+  --text-muted: #dde2e8;
+  --text-faint: #c6ccd4;
+  --text-link: #5ec8ff;
+  --accent: #5ec8ff;
+  --accent-bg: #00263a;
+  --accent-badge: #013049;
+  --border-soft: #7d8694;
+  --border-panel: #9aa3b0;
+  --border-divider: #6d7682;
+  --border-subtle: #5b6470;
+  --danger: #ff6b6b;
+  --danger-text: #ff9d9d;
+  --danger-bg: #2a0000;
+  --ok-text: #2be88a;
+  --ok-bg: #002616;
+  --warn-border: #ffd43b;
+  --warn-bg: #221b00;
+  --warn-text: #ffd43b;
+  --status-neutral-bg: #14181f;
+  --shadow-panel: rgba(0, 0, 0, 0.7);
+  color-scheme: dark;
+}
+
+/* @shared design-token mapping: frontend/shared CSS references --ui-*; map them to this
+   app's palette. Each maps to a theme var, so --ui-* follow light/dark/slate automatically. */
+:root {
+  --ui-surface: var(--bg-surface);
+  --ui-bg: var(--bg-body);
+  --ui-text: var(--text-primary);
+  --ui-muted: var(--text-muted);
+  --ui-border: var(--border-soft);
+  --ui-border-strong: var(--border-panel);
+  --ui-accent: var(--accent);
+  --ui-success: var(--ok-text);
+  --ui-danger: var(--danger);
+  --ui-shadow: var(--shadow-panel);
+}
+
 .theme-slate {
   --bg-body: #e6eaef;
   --bg-surface: #f0f4f8;
@@ -754,66 +803,7 @@ label {
   backdrop-filter: blur(3px);
 }
 
-/* Top-right toast stack: status messages surface here in the main app, newest on
-   top, each auto-dismissing after a few seconds. */
-.toast-stack {
-  position: fixed;
-  top: 76px;
-  right: 16px;
-  z-index: 400;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: min(360px, calc(100vw - 32px));
-  pointer-events: none;
-}
-
-.toast {
-  pointer-events: auto;
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 11px 12px;
-  border-radius: 8px;
-  border-left: 4px solid var(--warn-border);
-  background: var(--warn-bg);
-  color: var(--warn-text);
-  box-shadow: 0 8px 24px var(--shadow-panel);
-  font-size: 13px;
-  line-height: 1.4;
-  opacity: 1;
-  transform: translateX(0);
-  transition: opacity 0.22s ease, transform 0.22s ease;
-}
-
-.toast--leaving {
-  opacity: 0;
-  transform: translateX(12px);
-}
-
-.toast-text {
-  flex: 1 1 auto;
-  min-width: 0;
-  word-break: break-word;
-}
-
-.toast-close {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px;
-  margin: -2px -2px 0 0;
-  background: transparent;
-  border: none;
-  color: inherit;
-  opacity: 0.7;
-  cursor: pointer;
-}
-
-.toast-close:hover {
-  opacity: 1;
-}
+/* Toast styling now lives in the shared module (@shared → styles/toast.css). */
 
 .workspace {
   display: grid;
@@ -1725,6 +1715,101 @@ dd {
 /* Makes a label in a 2-column settings grid span the full width. */
 .field-span-two {
   grid-column: 1 / -1;
+}
+
+/* Muted "(optional)" hint appended to a field label. */
+.settings-field-opt {
+  color: var(--text-muted, #8a94a6);
+  font-weight: 600;
+  font-size: 11px;
+}
+
+/* Pre-installed icon picker (node adoption): a single dropdown control showing the
+   current glyph, opening a small grid of options — one control, one selection. */
+.icon-drop-wrap {
+  position: relative;
+}
+
+.icon-drop-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.icon-drop-toggle:hover,
+.icon-drop-toggle.active {
+  border-color: var(--accent);
+}
+
+.icon-drop-toggle:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.icon-drop-current {
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+}
+
+.icon-drop-name {
+  flex: 1 1 auto;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.icon-drop-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--border-panel);
+  border-radius: 10px;
+  background: var(--bg-surface);
+  box-shadow: 0 12px 30px var(--shadow-panel);
+}
+
+.icon-drop-item {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+
+.icon-drop-item:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.icon-drop-item.active {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Node name + its icon, shown together in the adopted-nodes table. */
+.node-name-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
 }
 
 /* Per-node access grant form: role id + read/write toggles + save, on one aligned

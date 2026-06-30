@@ -262,7 +262,9 @@ type userLoginResolver struct {
 }
 
 func (r *userLoginResolver) ResolveAccessUser(ctx context.Context, userId int64) (*sharedservices.AccessPrincipal, error) {
-	u, err := r.repo.GetByUnique(ctx, "", "id", userId)
+	// Look up by PRIMARY key — GetByUnique keyed on "id" matches no field (no ukey:"id")
+	// and would return the FIRST user, making every session resolve to that user's role.
+	u, err := r.repo.GetById(ctx, "", uint64(userId))
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "no result found") {
 			return nil, nil

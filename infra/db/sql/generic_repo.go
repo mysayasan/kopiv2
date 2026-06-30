@@ -88,6 +88,10 @@ func (m *genericRepo[T]) GetById(ctx context.Context, datasrc string, id uint64)
 	if err != nil {
 		return nil, fmt.Errorf("select by id failed: %w", err)
 	}
+	// Not found → nil (not a zero-value struct), so `x == nil` checks work.
+	if res == nil {
+		return nil, nil
+	}
 
 	var model T
 	mapstructure.Decode(res, &model)
@@ -100,6 +104,13 @@ func (m *genericRepo[T]) GetByUnique(ctx context.Context, datasrc string, keyGro
 	res, err := m.dbCrud.SelectByUnique(ctx, *tmodel, datasrc, keyGroup, uids...)
 	if err != nil {
 		return nil, fmt.Errorf("select by unique failed: %w", err)
+	}
+	// Not found → nil (not a zero-value struct). SelectByUnique returns a nil map when
+	// no row matches; decoding that would yield a non-nil zero struct, silently
+	// defeating every `x == nil` not-found check across the codebase (a serious bug for
+	// auth/RBAC lookups, e.g. treating a missing role/user as a real zero-id record).
+	if res == nil {
+		return nil, nil
 	}
 
 	var model T

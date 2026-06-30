@@ -75,6 +75,40 @@ func TestSQLiteDbCrudRepositoryCRUD(t *testing.T) {
 	}
 }
 
+// TestSQLiteSelectByUniqueUnknownKeyGroup guards against a severe auth bug: a
+// GetByUnique whose key group matches NO field on the model used to resolve to an
+// empty filter set and run an unfiltered `LIMIT 1` query, returning the FIRST row.
+// Several services looked users/roles up via GetByUnique(ctx,"","id",…) although no
+// entity tags Id with ukey:"id" — so every lookup resolved to the first user/role
+// (the stock superadmin), making everyone a superadmin. The lookup must fail closed.
+func TestSQLiteSelectByUniqueUnknownKeyGroup(t *testing.T) {
+	ctx := context.Background()
+	crud := newTestCrud(t)
+	repo := dbsql.NewGenericRepo[localCrudTestModel](crud)
+
+	if _, err := repo.Create(ctx, "", localCrudTestModel{Name: "alpha", Age: 1, Active: true}); err != nil {
+		t.Fatalf("create alpha: %v", err)
+	}
+	if _, err := repo.Create(ctx, "", localCrudTestModel{Name: "beta", Age: 2}); err != nil {
+		t.Fatalf("create beta: %v", err)
+	}
+
+	// "id" is not a ukey on this model — must return nil, NOT the first row.
+	got, err := repo.GetByUnique(ctx, "", "id", int64(2))
+	if err != nil {
+		t.Fatalf("GetByUnique(id): %v", err)
+	}
+	if got != nil {
+		t.Fatalf("GetByUnique with an unknown key group must return nil, got %+v", got)
+	}
+
+	// A valid ukey still resolves correctly.
+	got, err = repo.GetByUnique(ctx, "", "name", "beta")
+	if err != nil || got == nil || got.Name != "beta" {
+		t.Fatalf("GetByUnique(name) = %+v err=%v", got, err)
+	}
+}
+
 func TestSQLiteDbCrudScopedTxRollback(t *testing.T) {
 	ctx := context.Background()
 	crud := newTestCrud(t)

@@ -58,7 +58,7 @@ func NewAppAuthConfigApi(router *mux.Router, auth middlewares.AuthMidware, acces
 	handler := &appAuthConfigApi{auth: auth, repo: repo}
 	group := router.PathPrefix("/app-auth-config").Subrouter()
 	group.Use(auth.Middleware)
-	group.Use(access.Middleware)
+	group.Use(access.Middleware) // RBAC-matrix governed (delegate per role; not granted by default)
 	group.HandleFunc("", handler.get).Methods("GET")
 	group.HandleFunc("", handler.post).Methods("POST")
 	group.HandleFunc("", handler.put).Methods("PUT")

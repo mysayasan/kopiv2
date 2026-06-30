@@ -12,3 +12,4 @@ Builds and executes PostgreSQL select queries for the runtime DB adapter.
 - Normalize nullable database strings into empty strings for plain Go string fields.
 - Convert signed database row counts into safe unsigned totals.
 - Return the current result count as `totalCnt` when no window-count column is present.
+- `SelectByUnique` now fail-closes when the supplied key group matches no struct field: it returns `(nil, nil)` immediately rather than issuing an unfiltered `LIMIT 1` query that would silently return the first row (same fix as the SQLite adapter — prevents privilege-escalation via a missing `ukey` tag).

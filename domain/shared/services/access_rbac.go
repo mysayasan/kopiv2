@@ -91,7 +91,10 @@ func (s *accessRoleService) GetByName(ctx context.Context, name string) (*entiti
 }
 
 func (s *accessRoleService) GetById(ctx context.Context, id int64) (*entities.AccessRole, error) {
-	row, err := s.repo.GetByUnique(ctx, "", "id", id)
+	// Look up by PRIMARY key. (GetByUnique keyed on "id" is wrong — AccessRole.Id has no
+	// ukey:"id" tag, so it would match no filter and return the FIRST role = superadmin,
+	// making every role resolve as superadmin.)
+	row, err := s.repo.GetById(ctx, "", uint64(id))
 	if err != nil {
 		if accessNoResult(err) {
 			return nil, nil
@@ -180,19 +183,27 @@ func NewAccessPermissionServiceWithRepo(repo dbsql.IGenericRepo[entities.AccessR
 	return &accessPermissionService{repo: repo}
 }
 
+// EnsureViewerDefaults enforces least privilege for the built-in viewer role. Early
+// builds seeded viewer with a read-EVERYTHING wildcard (GET on the /api root), which
+// exposed every administrative surface (relying-app secrets, the SSO CA, audit logs,
+// the user/role catalogs, …) to any viewer. Viewer now starts with NO permissions — an
+// admin grants specific read paths via the RBAC matrix — and this strips that legacy
+// wildcard from existing deployments on startup. It deliberately matches only the exact
+// seed shape (GET-only on /api root) so an admin's narrower, intentional grants are left
+// untouched.
 func (s *accessPermissionService) EnsureViewerDefaults(ctx context.Context, viewerRoleId int64) error {
 	rows, err := s.ListForRole(ctx, viewerRoleId)
 	if err != nil {
 		return err
 	}
-	if len(rows) > 0 {
-		return nil
+	for _, r := range rows {
+		if accessNormalizePath(r.Path) == "/api" && r.CanGet && !r.CanPost && !r.CanPut && !r.CanDelete {
+			if err := s.Delete(ctx, r.Id); err != nil {
+				return err
+			}
+		}
 	}
-	now := time.Now().Unix()
-	_, err = s.repo.Create(ctx, "", entities.AccessRolePermission{
-		RoleId: viewerRoleId, Path: "/api", CanGet: true, CreatedAt: now, UpdatedAt: now,
-	})
-	return err
+	return nil
 }
 
 func (s *accessPermissionService) Authorize(ctx context.Context, roleId int64, path, method string) (bool, error) {
@@ -223,8 +234,12 @@ func (s *accessPermissionService) Authorize(ctx context.Context, roleId int64, p
 }
 
 func (s *accessPermissionService) ListForRole(ctx context.Context, roleId int64) ([]*entities.AccessRolePermission, error) {
+	// Stable order by path so the permission-matrix rows never reshuffle after an
+	// upsert (an unordered list can move the just-edited row, making its checkbox look
+	// like it ticked a different row).
 	rows, _, err := s.repo.Get(ctx, "", 1000, 0,
-		[]sqldataenums.Filter{{FieldName: "RoleId", Compare: sqldataenums.Equal, Value: roleId}}, nil)
+		[]sqldataenums.Filter{{FieldName: "RoleId", Compare: sqldataenums.Equal, Value: roleId}},
+		[]sqldataenums.Sorter{{FieldName: "Path", Sort: sqldataenums.ASC}})
 	if err != nil {
 		if accessNoResult(err) {
 			return []*entities.AccessRolePermission{}, nil

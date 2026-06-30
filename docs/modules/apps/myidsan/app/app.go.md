@@ -16,7 +16,7 @@ Implements the `myidsan` app module for the shared runtime host.
 - Seeds registered app rows for `myidsan`, `mymatasan`, and `myseliasan`.
 - Seeds MySeliaSan client auth config and exact callback URI defaults for development.
 - On first run, calls `EnsureStockSuperadmin` to seed (or refresh) the bootstrap account pinned to the accessrbac `superadmin` role.
-- Binds the `user_login` table as the `AccessUserResolver` for `deps.Access` (`userLoginResolver` maps `UserRoleId → AccessPrincipal.RoleId`, `!IsActive → Disabled`, `MustChangePassword → MustChangePassword`).
+- Binds the `user_login` table as the `AccessUserResolver` for `deps.Access` (`userLoginResolver` maps `UserRoleId → AccessPrincipal.RoleId`, `!IsActive → Disabled`, `MustChangePassword → MustChangePassword`). The resolver now uses `repo.GetById` (primary key) instead of the previous `GetByUnique(ctx,"","id",id)`, which matched no field and always returned the first user row — a critical auth bug causing every session to resolve as the stock superadmin's role.
 - Registers myidsan-local login (including the new authenticated change-password endpoint), user, group, SSO fallback (introspect only), browser federated-auth, app-auth-config, app-redirect-uri, SSO certificate-authority, and identity-status handlers.
 - Provides OpenAPI metadata and descriptions for the identity and RBAC administration surface.
 
