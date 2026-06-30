@@ -199,14 +199,11 @@ export const finalCta = {
 
 export const contact = {
   enabled: true,
-  // Your Telegram username WITHOUT the @ — used for the one-tap t.me deep link
-  // (→ t.me/mysayasan).
-  telegramHandle: 'mysayasan',
-  // Pages Function (Cloudflare Worker) that relays the form to your Telegram bot.
-  // Same-origin path; no CORS. See r450k/functions/api/contact.js + README.
+  // Worker route that relays the form to the Telegram bot (same-origin).
+  // See r450k/worker/index.js + README.
   endpoint: '/api/contact',
   title: 'Get in touch',
-  blurb: 'Questions about r450k? Message me on Telegram, or send a quick note below.',
+  blurb: 'Send a message below and it lands straight in my Telegram.',
 };
 
 export const footer = {

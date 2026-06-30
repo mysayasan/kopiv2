@@ -15,7 +15,6 @@ export default function ContactWidget() {
   const [state, setState] = useState('idle'); // idle | sending | sent | error
   const [error, setError] = useState('');
   const panelRef = useRef(null);
-  const tgLink = `https://t.me/${contact.telegramHandle}`;
 
   // close on outside click / Escape
   useEffect(() => {
@@ -60,8 +59,8 @@ export default function ContactWidget() {
       setState('error');
       setError(
         err.message?.includes('Failed to fetch') || err.message?.includes('404')
-          ? 'Message endpoint not reachable. (In local dev, run the Pages Function — see README.)'
-          : err.message || 'Something went wrong. Try Telegram directly.'
+          ? 'Message endpoint not reachable. (In local dev, run the Worker — see README.)'
+          : err.message || 'Something went wrong. Please try again.'
       );
     }
   };
@@ -79,12 +78,6 @@ export default function ContactWidget() {
             </button>
           </div>
           <p className="cw__blurb">{contact.blurb}</p>
-
-          <a className="cw__tg" href={tgLink} target="_blank" rel="noopener noreferrer">
-            <TgIcon size={18} /> Open Telegram&nbsp;<span className="cw__handle">@{contact.telegramHandle}</span>
-          </a>
-
-          <div className="cw__or"><span>or send a message</span></div>
 
           {state === 'sent' ? (
             <div className="cw__sent">

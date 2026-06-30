@@ -116,17 +116,19 @@ to `public/og-image.png` and point the `og:image` / `twitter:image` tags in `ind
 
 ## Contact form (Telegram via the Worker)
 
-The floating **Contact** button (bottom-left) opens a popover with a one-tap **Open Telegram**
-deep link *and* a short **message form**. The form POSTs same-origin to `/api/contact`, which the
-Worker ([`worker/index.js`](worker/index.js)) handles and relays to your Telegram via the Bot API.
-Your bot token stays server-side; it is never in the static bundle.
+The floating **Contact** button (bottom-left) opens a popover with a short **message form**. The
+form POSTs same-origin to `/api/contact`, which the Worker ([`worker/index.js`](worker/index.js))
+handles and relays to your Telegram via the Bot API. Your bot token stays server-side; it is never
+in the static bundle.
 
 ### 1. Create a bot and get your chat id
 
 1. In Telegram, message **@BotFather** → `/newbot` → follow prompts → copy the **bot token**
    (looks like `123456789:AA…`).
-2. Open a chat with your new bot and send it any message (so it can DM you back).
-3. Get your **chat id**: message **@userinfobot** (it replies with your numeric id), or visit
+2. Open a chat with your new bot and **send it any message** (bots can't start a conversation, so
+   this is required before they can DM you).
+3. Get **your** chat id (the human the bot will message — **not** the bot's own id): message
+   **@userinfobot** (it replies with your numeric id), or visit
    `https://api.telegram.org/bot<TOKEN>/getUpdates` after messaging your bot and read
    `result[].message.chat.id`.
 
@@ -146,18 +148,22 @@ npx wrangler secret put TELEGRAM_BOT_TOKEN
 npx wrangler secret put TELEGRAM_CHAT_ID
 ```
 
-Secrets persist across deploys, so set them once. The next deploy picks them up.
+Secrets persist across deploys, so set them once (live immediately — no redeploy needed).
 
-### 3. Set your handle
+To hide the widget entirely, set `enabled: false` in the `contact` block of
+[`src/content.js`](src/content.js).
 
-Edit `telegramHandle` in [`src/content.js`](src/content.js) (the `contact` block) to your Telegram
-username for the deep-link button. Set `enabled: false` there to hide the widget entirely.
+### Troubleshooting
+
+- **`403 ... the bot can't send messages to the bot`** — `TELEGRAM_CHAT_ID` is set to the bot's own
+  id. Set it to **your** numeric chat id (step 1.3) and make sure you've messaged the bot first.
+- **`403 ... bot was blocked by the user` / `chat not found`** — open the bot in Telegram and press
+  **Start** (or unblock it), then retry.
 
 ### Local testing
 
 `npm run dev` (Vite) serves the static site but **not** the Worker, so the form reports the
-endpoint as unreachable — the Telegram deep link still works. To run the Worker + assets together
-(real `/api/contact`):
+endpoint as unreachable. To run the Worker + assets together (real `/api/contact`):
 
 ```bash
 cp .dev.vars.example .dev.vars   # fill in your real token + chat id (gitignored)
