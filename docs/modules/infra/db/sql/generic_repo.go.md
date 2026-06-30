@@ -10,6 +10,7 @@ Typed repository implementation over `IDbCrud`.
 - Provides generic CRUD and query helpers per entity type.
 - Returns an empty list and zero total count for no-result list queries.
 - Wraps DB errors with contextual messages using `%w`.
+- `GetById` and `GetByUnique` return `(nil, nil)` — not a zero-value struct — when the underlying `SelectById`/`SelectByUnique` returns a nil map. This makes every `x == nil` not-found check across the codebase correct; previously a nil map decoded through `mapstructure` would produce a non-nil zero struct, silently defeating not-found guards in auth/RBAC lookups.
 
 ## Core Methods
 

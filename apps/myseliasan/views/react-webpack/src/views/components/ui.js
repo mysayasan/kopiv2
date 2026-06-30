@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { Ico } from './icons';
+import { Ico } from '@shared';
 
 // Light/dark theme set, mirroring mymatasan's theming pattern but trimmed to the
 // two myseliasan ships with.
-export const THEMES = ['light', 'dark'];
-export const THEME_LABELS = { light: 'Light', dark: 'Dark' };
-export const THEME_ICONS = { light: 'sun', dark: 'moon' };
+export const THEMES = ['light', 'dark', 'contrast'];
+export const THEME_LABELS = { light: 'Light', dark: 'Dark', contrast: 'High contrast' };
+export const THEME_ICONS = { light: 'sun', dark: 'moon', contrast: 'contrast' };
 
 export function ThemeDropdown({ theme, onThemeChange }) {
   const [open, setOpen] = useState(false);
@@ -53,6 +53,56 @@ export function ThemeDropdown({ theme, onThemeChange }) {
   );
 }
 
+// IconDropdown is a compact glyph selector: a button showing the current icon, which
+// opens a small grid of the pre-installed options. Used at node adoption so the icon
+// choice is unambiguous (one control, one selection) rather than a row of buttons.
+export function IconDropdown({ value, options, onChange, disabled }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    function onDown(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+  const current = value || (options && options[0]);
+  return (
+    <div className="icon-drop-wrap" ref={wrapRef}>
+      <button
+        type="button"
+        className={`icon-drop-toggle${open ? ' active' : ''}`}
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        disabled={disabled}
+      >
+        <span className="icon-drop-current"><Ico n={current} sz={16} /></span>
+        <span className="icon-drop-name">{current}</span>
+        <Ico n="chev-down" sz={12} />
+      </button>
+      {open && (
+        <div className="icon-drop-menu" role="listbox" aria-label="Select icon">
+          {options.map((name) => (
+            <button
+              key={name}
+              type="button"
+              role="option"
+              aria-selected={name === current}
+              className={`icon-drop-item${name === current ? ' active' : ''}`}
+              onClick={() => { onChange(name); setOpen(false); }}
+              title={name}
+            >
+              <Ico n={name} sz={18} />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function FormBusyOverlay({ busy }) {
   if (!busy) return null;
   return (
@@ -67,44 +117,5 @@ export function Message({ value, floating = false }) {
   return <div className={`status-line${floating ? ' status-line--floating' : ''}`}>{value}</div>;
 }
 
-// Toast is a single auto-dismissing notification (newest on top in the stack).
-function Toast({ id, text, duration = 3000, onDismiss }) {
-  const [leaving, setLeaving] = useState(false);
-  const timerRef = useRef(null);
-  const start = () => {
-    clearTimeout(timerRef.current);
-    timerRef.current = window.setTimeout(() => setLeaving(true), duration);
-  };
-  useEffect(() => {
-    start();
-    return () => clearTimeout(timerRef.current);
-    // eslint-disable-next-line
-  }, []);
-  const handleEnd = () => { if (leaving) onDismiss(id); };
-  return (
-    <div
-      className={`toast${leaving ? ' toast--leaving' : ''}`}
-      role="status"
-      aria-live="polite"
-      onMouseEnter={() => clearTimeout(timerRef.current)}
-      onMouseLeave={start}
-      onTransitionEnd={handleEnd}
-    >
-      <span className="toast-text">{text}</span>
-      <button type="button" className="toast-close" aria-label="Dismiss" onClick={() => setLeaving(true)}>
-        <Ico n="x" sz={13} />
-      </button>
-    </div>
-  );
-}
-
-export function ToastStack({ toasts, onDismiss }) {
-  if (!toasts || toasts.length === 0) return null;
-  return (
-    <div className="toast-stack" aria-live="polite">
-      {toasts.map((t) => (
-        <Toast key={t.id} id={t.id} text={t.text} onDismiss={onDismiss} />
-      ))}
-    </div>
-  );
-}
+// Toast / ToastStack now live in the shared module (@shared) so both control planes
+// share one notification design — import { ToastStack } from '@shared'.

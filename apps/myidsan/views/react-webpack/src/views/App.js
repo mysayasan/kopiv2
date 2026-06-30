@@ -12,17 +12,16 @@ import {
   rowsOf,
   setCookie
 } from '../lib/api'
-import { Ico } from '../lib/icons'
-import { ClientDataTable } from '../lib/data_table'
+import { Ico, DataTable as ClientDataTable, ToastStack, SideNav } from '@shared'
 
 const ACTIVE_SECTION_COOKIE = 'myidsan_active_section'
 const STOCK_SUPERADMIN_EMAIL = 'superadmin'
 const TABLE_STATE_PREFIX = 'myidsan_table_'
 const TABLE_STATE_VERSION = 1
 const THEME_KEY = 'myidsan_theme'
-const THEMES = ['light', 'dark']
-const THEME_LABELS = { light: 'Light', dark: 'Dark' }
-const THEME_ICONS = { light: 'sun', dark: 'moon' }
+const THEMES = ['light', 'dark', 'contrast']
+const THEME_LABELS = { light: 'Light', dark: 'Dark', contrast: 'High contrast' }
+const THEME_ICONS = { light: 'sun', dark: 'moon', contrast: 'contrast' }
 
 const dashboardSection = {
   id: 'dashboard',
@@ -36,12 +35,15 @@ const dashboardSection = {
 }
 
 const routeCatalog = [
-  // Administration mirrors myseliasan's admin group (Users, Roles, RBAC) plus Groups,
-  // which only myidsan has. Apps/Endpoints keep their own groups.
-  { id: 'users', label: 'Users', group: 'Administration', order: 10, tone: 'blue', code: 'US', icon: 'user', paths: ['/api/user-credential'], summary: 'Maintain credentials, profile details, and role assignments.' },
-  { id: 'groups', label: 'Groups', group: 'Administration', order: 20, tone: 'teal', code: 'GR', icon: 'folder', paths: ['/api/user-group'], summary: 'Organize identity ownership and hierarchy roots.' },
-  { id: 'roles', label: 'Roles', group: 'Administration', order: 30, tone: 'violet', code: 'RO', icon: 'key', paths: ['/api/access-rbac'], summary: 'Create, edit, and remove accessrbac roles (shared module).' },
-  { id: 'rbac', label: 'RBAC', group: 'Administration', order: 35, tone: 'green', code: 'RB', icon: 'lock', paths: ['/api/access-rbac'], summary: 'Manage accessrbac roles (shared module). Superadmin bypasses; viewer is read-only.' },
+  // Identity/RBAC management is privilege-escalation-sensitive, so it stays
+  // superadminOnly (its APIs are superadmin-gated server-side too): Users (role
+  // assignment), Groups, Roles + RBAC (the permission matrix). Apps and Endpoints are
+  // ordinary RBAC-governed sections — their APIs are matrix-gated, so a role granted
+  // GET on /api/app-registry or /api/endpoint sees the menu and the list.
+  { id: 'users', label: 'Users', group: 'Administration', order: 10, tone: 'blue', code: 'US', icon: 'user', paths: ['/api/user-credential'], summary: 'Maintain credentials, profile details, and role assignments.', superadminOnly: true },
+  { id: 'groups', label: 'Groups', group: 'Administration', order: 20, tone: 'teal', code: 'GR', icon: 'folder', paths: ['/api/user-group'], summary: 'Organize identity ownership and hierarchy roots.', superadminOnly: true },
+  { id: 'roles', label: 'Roles', group: 'Administration', order: 30, tone: 'violet', code: 'RO', icon: 'key', paths: ['/api/access-rbac'], summary: 'Create, edit, and remove accessrbac roles (shared module).', superadminOnly: true },
+  { id: 'rbac', label: 'RBAC', group: 'Administration', order: 35, tone: 'green', code: 'RB', icon: 'lock', paths: ['/api/access-rbac'], summary: 'Manage accessrbac roles (shared module). Superadmin bypasses; viewer is read-only.', superadminOnly: true },
   { id: 'apps', label: 'Apps', group: 'Federation', order: 40, tone: 'indigo', code: 'AP', icon: 'grid2', paths: ['/api/app-registry'], summary: 'Manage registered relying apps and audiences.' },
   { id: 'endpoints', label: 'Endpoints', group: 'Access Control', order: 50, tone: 'steel', code: 'EP', icon: 'list', paths: ['/api/endpoint'], summary: 'Maintain the protected endpoint catalog.' }
 ]
@@ -203,6 +205,16 @@ function App() {
   const [currentEmail, setCurrentEmail] = useState('')
   const [stockEmail, setStockEmail] = useState(STOCK_SUPERADMIN_EMAIL)
   const [mustChange, setMustChange] = useState(false)
+  const [pending, setPending] = useState(false)
+  const [isSuperadmin, setIsSuperadmin] = useState(false)
+  const [toasts, setToasts] = useState([])
+
+  const pushToast = useCallback((text, kind = 'info') => {
+    if (!text) return
+    const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+    setToasts(list => [{ id, text, kind }, ...list].slice(0, 5))
+  }, [])
+  const dismissToast = useCallback(id => setToasts(list => list.filter(t => t.id !== id)), [])
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem(THEME_KEY) || 'light' } catch { return 'light' }
   })
@@ -238,6 +250,12 @@ function App() {
       const me = resultOf(await apiRequest('/api/access-rbac/me'))
       setCurrentEmail(me?.email || '')
       setMustChange(Boolean(me?.mustChangePassword))
+      // pending = authenticated but no role assigned yet — gate the whole app behind a
+      // clearance screen until an admin grants a role.
+      setPending(Boolean(me?.pending))
+      // Admin sections are superadmin-only (their APIs are superadmin-gated server-side);
+      // the SPA hides them from everyone else.
+      setIsSuperadmin(Boolean(me?.isSuperadmin))
       localStorage.setItem('myidsan.session', 'active')
       if (me && me.isSuperadmin) {
         setAccessList([{ path: '', canGet: true, canPost: true, canPut: true, canDelete: true, isActive: true, metadata: '' }])
@@ -261,6 +279,8 @@ function App() {
       setAccessList([])
       setSession(false)
       setMustChange(false)
+      setPending(false)
+      setIsSuperadmin(false)
       if (err.status && err.status !== 401 && err.status !== 403) {
         setSessionError(err.message)
       }
@@ -270,8 +290,8 @@ function App() {
   }, [refreshHandoff])
 
   const visibleSections = useMemo(() => {
-    return buildVisibleSections(accessList)
-  }, [accessList])
+    return buildVisibleSections(accessList, isSuperadmin)
+  }, [accessList, isSuperadmin])
 
   const navGroups = useMemo(() => groupNavSections(visibleSections), [visibleSections])
   const activeAllowed = visibleSections.some(section => section.id === active)
@@ -320,39 +340,41 @@ function App() {
     return <ChangePasswordScreen onDone={refreshSession} onLogout={handleLogout} />
   }
 
+  if (pending) {
+    return <PendingClearanceScreen email={currentEmail} onRefresh={refreshSession} onLogout={handleLogout} />
+  }
+
   return (
     <div className="app-shell">
-      <aside className="side-nav">
-        <div className="brand-block">
-          <div className="brand-mark"><BrandMark /></div>
-          <div>
-            <div className="brand-name">MyIDSan</div>
-            <div className="brand-subtitle">Identity control</div>
-          </div>
-        </div>
-        <nav>
-          {navGroups.map(group => (
-            <div className="nav-group" key={group.label}>
-              <div className="nav-group-label">{group.label}</div>
-              {group.items.map(section => (
-                <button
-                  key={section.id}
-                  className={active === section.id ? `nav-item active tone-${section.tone}` : `nav-item tone-${section.tone}`}
-                  onClick={() => setActiveSection(section.id)}
-                  type="button"
-                >
-                  <span className="nav-ico"><Ico n={section.icon || 'list'} sz={17} /></span>
-                  <span className="nav-label">{section.label}</span>
-                </button>
-              ))}
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
+      <SideNav
+        brand={(
+          <div className="brand-block">
+            <div className="brand-mark"><BrandMark /></div>
+            <div>
+              <div className="brand-name">MyIDSan</div>
+              <div className="brand-subtitle">Identity control</div>
             </div>
-          ))}
-        </nav>
-        <div className="side-nav-foot">
-          <ThemeDropdown theme={theme} onThemeChange={changeTheme} />
-          <button className="logout-button" onClick={handleLogout} type="button">Log out</button>
-        </div>
-      </aside>
+          </div>
+        )}
+        groups={navGroups.map(group => ({
+          label: group.label,
+          items: group.items.map(section => ({
+            id: section.id,
+            label: section.label,
+            icon: section.icon,
+            tone: section.tone,
+            active: active === section.id,
+            onClick: () => setActiveSection(section.id)
+          }))
+        }))}
+        footer={(
+          <>
+            <ThemeDropdown theme={theme} onThemeChange={changeTheme} />
+            <button className="logout-button" onClick={handleLogout} type="button">Log out</button>
+          </>
+        )}
+      />
       <main className="main-workspace">
         {handoffPending && (
           <div className="handoff-banner" role="alert">
@@ -364,16 +386,19 @@ function App() {
         )}
         {active === 'dashboard' && <Dashboard onNavigate={setActiveSection} sections={visibleSections} />}
         {!activeAllowed && activeKnown && active !== 'dashboard' && <UnauthorizedPage section={routeCatalogById[active]} onNavigate={() => setActiveSection('dashboard')} />}
-        {active === 'users' && sectionAllowedById('users', accessList) && <UsersPage accessList={accessList} currentEmail={currentEmail} stockEmail={stockEmail} onChanged={refreshHandoff} />}
-        {active === 'groups' && sectionAllowedById('groups', accessList) && <GroupsPage accessList={accessList} />}
-        {active === 'roles' && sectionAllowedById('roles', accessList) && <RolesPage accessList={accessList} />}
-        {active === 'apps' && sectionAllowedById('apps', accessList) && <AppsPage accessList={accessList} />}
-        {active === 'endpoints' && sectionAllowedById('endpoints', accessList) && <EndpointsPage accessList={accessList} />}
-        {active === 'rbac' && sectionAllowedById('rbac', accessList) && <RbacPage accessList={accessList} />}
+        {active === 'users' && sectionAllowedById('users', accessList, isSuperadmin) && <UsersPage accessList={accessList} currentEmail={currentEmail} stockEmail={stockEmail} onChanged={refreshHandoff} onToast={pushToast} />}
+        {active === 'groups' && sectionAllowedById('groups', accessList, isSuperadmin) && <GroupsPage accessList={accessList} onToast={pushToast} />}
+        {active === 'roles' && sectionAllowedById('roles', accessList, isSuperadmin) && <RolesPage accessList={accessList} onToast={pushToast} />}
+        {active === 'apps' && sectionAllowedById('apps', accessList, isSuperadmin) && <AppsPage accessList={accessList} onToast={pushToast} />}
+        {active === 'endpoints' && sectionAllowedById('endpoints', accessList, isSuperadmin) && <EndpointsPage accessList={accessList} onToast={pushToast} />}
+        {active === 'rbac' && sectionAllowedById('rbac', accessList, isSuperadmin) && <RbacPage accessList={accessList} onToast={pushToast} />}
       </main>
     </div>
   )
 }
+
+// Toast / ToastStack now live in the shared module (@shared) so both control planes
+// share one notification design — imported at the top of this file.
 
 // ThemeDropdown mirrors myseliasan's light/dark selector, sitting at the foot of
 // the side-nav. The menu opens upward (see .theme-menu) so it is never clipped.
@@ -483,6 +508,39 @@ function ChangePasswordScreen({ onDone, onLogout }) {
           <button className="primary-button" disabled={busy} type="submit">{busy ? 'Saving' : 'Change password'}</button>
           <button className="quiet-link" onClick={onLogout} type="button">Log out</button>
         </form>
+      </section>
+    </div>
+  )
+}
+
+// PendingClearanceScreen gates a freshly-provisioned account (authenticated but with
+// no role yet) out of the app until an administrator grants it access. It offers only
+// a re-check and a log-out — there is nothing else the account may do.
+function PendingClearanceScreen({ email, onRefresh, onLogout }) {
+  const [busy, setBusy] = useState(false)
+  const recheck = async () => {
+    setBusy(true)
+    try { await onRefresh() } finally { setBusy(false) }
+  }
+  return (
+    <div className="auth-layout">
+      <section className="auth-panel">
+        <div className="brand-block auth-brand">
+          <div className="brand-mark"><BrandMark /></div>
+          <div>
+            <div className="brand-name">MyIDSan</div>
+            <div className="brand-subtitle">Access pending</div>
+          </div>
+        </div>
+        <div className="message warning">
+          Your account{email ? <> (<strong>{email}</strong>)</> : null} is awaiting clearance. An administrator must
+          assign you a role before you can access the dashboard.
+        </div>
+        <p className="auth-hint">Once an administrator grants you access, use “Check again” to continue.</p>
+        <div className="auth-form">
+          <button className="primary-button" disabled={busy} type="button" onClick={recheck}>{busy ? 'Checking…' : 'Check again'}</button>
+          <button className="quiet-link" onClick={onLogout} type="button">Log out</button>
+        </div>
       </section>
     </div>
   )
@@ -632,12 +690,12 @@ function UnauthorizedPage({ section, onNavigate }) {
 // editor. Role/active changes PUT the user back (password preserved server-side). The
 // stock superadmin (email "superadmin") is flagged and can only be disabled once a real
 // superadmin is active, and you can never disable your own account.
-function UsersPage({ accessList, currentEmail, stockEmail = STOCK_SUPERADMIN_EMAIL, onChanged }) {
+function UsersPage({ accessList, currentEmail, stockEmail = STOCK_SUPERADMIN_EMAIL, onChanged, onToast }) {
   const [users, setUsers] = useState([])
   const [roles, setRoles] = useState([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [notice, setNotice] = useState('')
+  const toast = (text, kind = 'success') => { if (onToast) onToast(text, kind) }
 
   const canEdit = hasEndpointAccess(accessList, '/api/user-credential', 'PUT')
 
@@ -661,34 +719,41 @@ function UsersPage({ accessList, currentEmail, stockEmail = STOCK_SUPERADMIN_EMA
   const isSuperRole = id => superRole && Number(id) === Number(superRole.id)
   const realSuperadminActive = users.some(u => u.email !== stockEmail && u.isActive && isSuperRole(u.userRoleId))
 
-  const saveUser = async (user, changes) => {
+  const saveUser = async (user, changes, successMsg = 'Saved.') => {
     setBusy(true)
-    setError('')
-    setNotice('')
     try {
       // userpwd is left blank — the service keeps the stored password on update.
       await apiRequest('/api/user-credential', { method: 'PUT', body: { ...user, userpwd: '', ...changes } })
       await load()
+      toast(successMsg, 'success')
       if (onChanged) onChanged()
     } catch (err) {
-      setError(err.message)
+      toast(err.message, 'error')
     } finally {
       setBusy(false)
     }
   }
 
-  const setUserRole = (user, roleId) => saveUser(user, { userRoleId: Number(roleId) })
-  const toggleActive = user => saveUser(user, { isActive: !user.isActive })
+  const roleLabel = roleId => {
+    const id = Number(roleId)
+    if (!id) return 'No role (pending)'
+    return roles.find(r => Number(r.id) === id)?.name || `role ${id}`
+  }
+  const setUserRole = (user, roleId) => {
+    const who = user.email || `user ${user.id}`
+    saveUser(user, { userRoleId: Number(roleId) }, `Role for ${who} set to ${roleLabel(roleId)}.`)
+  }
+  const toggleActive = user => saveUser(user, { isActive: !user.isActive }, `${user.email || 'User'} ${user.isActive ? 'disabled' : 'enabled'}.`)
   const makeSuperadmin = user => {
     if (!superRole) {
-      setError('No superadmin role found.')
+      toast('No superadmin role found.', 'error')
       return
     }
     const label = user.email || `user ${user.id}`
     if (!window.confirm(`Make "${label}" a superadmin?\n\nThe stock superadmin stays active — disable it from this list once you've confirmed the new account works.`)) {
       return
     }
-    saveUser(user, { userRoleId: superRole.id })
+    saveUser(user, { userRoleId: superRole.id }, `${label} is now a superadmin.`)
   }
 
   const columns = [
@@ -708,8 +773,10 @@ function UsersPage({ accessList, currentEmail, stockEmail = STOCK_SUPERADMIN_EMA
       label: 'Role',
       filterable: false,
       render: (_value, u) => (
-        <select value={u.userRoleId} onChange={event => setUserRole(u, event.target.value)} disabled={busy || !canEdit}>
-          {roles.length === 0 && <option value={0}>No roles</option>}
+        <select value={u.userRoleId || 0} onChange={event => setUserRole(u, event.target.value)} disabled={busy || !canEdit}>
+          {/* value 0 = no role yet (pending). Without this option the browser would show
+              the first role for a role-less user, making them look like a superadmin. */}
+          <option value={0}>— No role (pending) —</option>
           {roles.map(role => <option key={role.id} value={role.id}>{role.name}</option>)}
         </select>
       )
@@ -738,7 +805,6 @@ function UsersPage({ accessList, currentEmail, stockEmail = STOCK_SUPERADMIN_EMA
   return (
     <PageFrame title="Users" subtitle="User accounts and role assignments. Grant the superadmin role, then disable the stock superadmin to finish the handoff.">
       {error && <div className="message danger">{error}</div>}
-      {notice && <div className="message success">{notice}</div>}
       <section className="data-region">
         <ClientDataTable rows={users} columns={columns} busy={busy} emptyText="No users" />
       </section>
@@ -1367,15 +1433,20 @@ function RolePermissions() {
     }
   }
 
-  const toggle = (row, key) => save({
-    roleId: Number(roleId),
-    path: row.path,
-    canGet: !!row.canGet,
-    canPost: !!row.canPost,
-    canPut: !!row.canPut,
-    canDelete: !!row.canDelete,
-    [key]: !row[key]
-  })
+  const toggle = (row, key) => {
+    // Optimistic: flip just this row's cell immediately so the checkbox responds at
+    // once (the server reload then confirms; rows stay put thanks to the stable sort).
+    setPerms(cur => cur.map(p => (p.id === row.id ? { ...p, [key]: !p[key] } : p)))
+    save({
+      roleId: Number(roleId),
+      path: row.path,
+      canGet: !!row.canGet,
+      canPost: !!row.canPost,
+      canPut: !!row.canPut,
+      canDelete: !!row.canDelete,
+      [key]: !row[key]
+    })
+  }
 
   const addPath = () => {
     if (!path.trim().startsWith('/')) {
@@ -2459,8 +2530,8 @@ function printable(value) {
   return value ?? ''
 }
 
-function sectionAllowedById(sectionId, accessList) {
-  return buildVisibleSections(accessList).some(section => section.id === sectionId)
+function sectionAllowedById(sectionId, accessList, isSuperadmin = false) {
+  return buildVisibleSections(accessList, isSuperadmin).some(section => section.id === sectionId)
 }
 
 function sectionAllowed(section, accessList) {
@@ -2470,7 +2541,7 @@ function sectionAllowed(section, accessList) {
   return section.paths.some(path => hasEndpointAccess(accessList, path, 'GET'))
 }
 
-function buildVisibleSections(accessList) {
+function buildVisibleSections(accessList, isSuperadmin = false) {
   const sectionsById = new Map()
   let hasMenuConfig = false
 
@@ -2490,6 +2561,11 @@ function buildVisibleSections(accessList) {
       if (!catalog || !catalog.paths.some(path => pathMatches(access?.path, path))) {
         return
       }
+      // Admin sections are superadmin-only — never surface them to anyone else, even if
+      // a broad matrix grant (e.g. a viewer's GET /api wildcard) would otherwise match.
+      if (catalog.superadminOnly && !isSuperadmin) {
+        return
+      }
       const merged = {
         ...catalog,
         ...cleanMenuItem(item),
@@ -2507,7 +2583,7 @@ function buildVisibleSections(accessList) {
 
   const allowed = hasMenuConfig
     ? Array.from(sectionsById.values())
-    : routeCatalog.filter(section => sectionAllowed(section, accessList))
+    : routeCatalog.filter(section => sectionAllowed(section, accessList) && (!section.superadminOnly || isSuperadmin))
 
   allowed.sort((a, b) => {
     const orderDiff = Number(a.order || 0) - Number(b.order || 0)

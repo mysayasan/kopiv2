@@ -79,6 +79,11 @@ func (m *AccessSessionMidware) Middleware(next http.Handler) http.Handler {
 			controllers.SendError(w, controllers.ErrPermission, PasswordChangeRequiredCode)
 			return
 		}
+		// The live DB role is authoritative — re-stamp it onto the request claims so an
+		// admin's role change takes effect on the user's very next request (the token's
+		// baked roleId is no longer trusted for authorization). Downstream handlers that
+		// read claims.RoleId then see the current role without a re-login.
+		claims.RoleId = principal.RoleId
 		if role, _ := m.roles.GetById(r.Context(), principal.RoleId); role != nil && role.IsSuperadmin {
 			next.ServeHTTP(w, r)
 			return
@@ -90,6 +95,20 @@ func (m *AccessSessionMidware) Middleware(next http.Handler) http.Handler {
 		}
 		if !allowed {
 			controllers.SendError(w, controllers.ErrLimitedAccess, "you do not have permission for this action")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// RequireSuperadmin is a gorilla/mux middleware that admits only a superadmin session.
+// Mount it on an admin API subrouter (after Middleware) to make the whole surface
+// superadmin-only regardless of the permission matrix — so a broad GET/PUT grant (e.g.
+// a viewer's `GET /api` wildcard) can never reach administrative data or actions.
+func (m *AccessSessionMidware) RequireSuperadmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !m.IsSuperadmin(r) {
+			controllers.SendError(w, controllers.ErrLimitedAccess, "superadmin access required")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -114,12 +133,13 @@ func (m *AccessSessionMidware) CurrentPrincipal(r *http.Request) (*sharedservice
 
 // IsSuperadmin reports whether the request's session role is a superadmin role.
 // Used by management handlers that must self-gate to superadmin regardless of the
-// permission matrix.
+// permission matrix. It resolves the role LIVE from the user store (not the token's
+// baked roleId) so a just-granted/revoked superadmin takes effect without a re-login.
 func (m *AccessSessionMidware) IsSuperadmin(r *http.Request) bool {
-	claims, _ := r.Context().Value(enumauth.Claims).(*models.JwtCustomClaims)
-	if claims == nil {
+	principal, err := m.CurrentPrincipal(r)
+	if err != nil || principal == nil {
 		return false
 	}
-	role, err := m.roles.GetById(r.Context(), claims.RoleId)
+	role, err := m.roles.GetById(r.Context(), principal.RoleId)
 	return err == nil && role != nil && role.IsSuperadmin
 }

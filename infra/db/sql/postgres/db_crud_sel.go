@@ -408,6 +408,12 @@ func (m *dbCrud) SelectByUnique(ctx context.Context, model interface{}, datasrc 
 	props := reflect.ValueOf(model)
 
 	filters := m.getFiltersByKeyType(props, 2, keyGroup, uids...)
+	// Fail closed: if the key group matched no field, an unfiltered LIMIT 1 query would
+	// silently return the FIRST row — a severe auth bug (every by-key lookup would
+	// resolve to the first user/role). Treat a missing key as "not found".
+	if len(filters) == 0 {
+		return nil, nil
+	}
 
 	rows, _, err := m.Select(ctx, props.Interface(), 1, 0, filters, nil, datasrc)
 	if err != nil {

@@ -32,7 +32,7 @@ Implements the reusable runtime host for all app modules.
 - Register shared app-registry admin API routes under `/api/app-registry`.
 - Register shared API log API routes under `/api/log`.
 - Register shared runtime log API routes under `/api/log-service`.
-- Seed built-in accessrbac roles (`superadmin`, `viewer`) and viewer defaults when `SharedAPIConfig.AccessRbac` is true, then mount the shared `/api/access-rbac` management surface protected by the accessrbac middleware.
+- Seed built-in accessrbac roles (`superadmin`, `viewer`) and enforce viewer least-privilege when `SharedAPIConfig.AccessRbac` is true, then mount the shared `/api/access-rbac` management surface protected by the accessrbac middleware. `EnsureViewerDefaults` is called **to strip** the legacy read-everything `GET /api` wildcard from existing deployments (viewer now starts with no permissions; an admin grants specific read paths via the matrix).
 - Load the embedded version manifest and register the shared public version endpoint under `/api/version`.
 - Initialize Prometheus telemetry when configured and mount the metrics endpoint.
 - Mount shared operational route groups; identity apps such as `myidsan` register login/user routes from their own app package.

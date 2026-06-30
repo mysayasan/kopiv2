@@ -48,10 +48,11 @@ func NewUserLoginService(
 
 func (m *userLoginService) Get(ctx context.Context, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.UserLogin, uint64, error) {
 	if len(sorters) == 0 {
+		// Default to a stable id order; the UI lets the operator sort by any column.
 		sorters = []sqldataenums.Sorter{
 			{
-				FieldName: "CreatedAt",
-				Sort:      sqldataenums.DESC,
+				FieldName: "Id",
+				Sort:      sqldataenums.ASC,
 			},
 		}
 	}
@@ -217,7 +218,7 @@ func (m *userLoginService) Update(ctx context.Context, model entities.UserLogin)
 	// or active toggles don't erase it), and a supplied plaintext is hashed before save
 	// (Create hashes too; this keeps Update consistent).
 	if strings.TrimSpace(model.Userpwd) == "" {
-		if existing, err := m.repo.GetByUnique(ctx, "", "id", model.Id); err == nil && existing != nil {
+		if existing, err := m.repo.GetById(ctx, "", uint64(model.Id)); err == nil && existing != nil {
 			model.Userpwd = existing.Userpwd
 		}
 	} else if !isBcryptHash(model.Userpwd) {
@@ -293,7 +294,7 @@ func (m *userLoginService) ChangePassword(ctx context.Context, userId int64, cur
 	if len(strings.TrimSpace(next)) < 8 {
 		return fmt.Errorf("new password must be at least 8 characters")
 	}
-	user, err := m.repo.GetByUnique(ctx, "", "id", userId)
+	user, err := m.repo.GetById(ctx, "", uint64(userId))
 	if err != nil {
 		return err
 	}

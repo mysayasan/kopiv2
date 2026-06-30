@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Ico } from './icons';
+import { Ico, DataTable } from '@shared';
 import { FormBusyOverlay } from './ui';
-import { DataTable } from './data_table';
 import { api } from '../lib/helpers';
 
 // The myseliasan admin surface, split into the same menu structure myidsan uses —
@@ -15,7 +14,7 @@ export function UsersPage({ session, onToast, onSessionChanged }) {
   const [roles, setRoles] = useState([]);
   const [busy, setBusy] = useState(false);
 
-  function toast(t) { if (onToast) onToast(t); }
+  function toast(t, kind = 'info') { if (onToast) onToast(t, kind); }
 
   async function load() {
     const [u, r] = await Promise.all([
@@ -33,7 +32,13 @@ export function UsersPage({ session, onToast, onSessionChanged }) {
     setBusy(true);
     const r = await api(`/api/rbac/users/${user.id}/role`, { method: 'POST', noRedirect: true, body: JSON.stringify({ roleId: Number(roleId) }) });
     setBusy(false);
-    if (r.ok) { toast('Role updated.'); load(); } else toast(r.message || 'Failed to update role.');
+    if (r.ok) {
+      const id = Number(roleId);
+      const roleName = !id ? 'No role (pending)' : (roles.find((x) => Number(x.id) === id)?.name || `role ${id}`);
+      const who = user.email || user.name || `user ${user.id}`;
+      toast(`Role for ${who} set to ${roleName}.`, 'success');
+      load();
+    } else toast(r.message || 'Failed to update role.', 'error');
   }
   async function toggleDisabled(user) {
     setBusy(true);
@@ -72,7 +77,10 @@ export function UsersPage({ session, onToast, onSessionChanged }) {
       label: 'Role',
       filterable: false,
       render: (_v, u) => (
-        <select value={u.roleId} disabled={u.isStock} onChange={(e) => setUserRole(u, e.target.value)}>
+        <select value={u.roleId || 0} disabled={u.isStock} onChange={(e) => setUserRole(u, e.target.value)}>
+          {/* value 0 = no role yet (pending). Without this option a role-less user would
+              render as the first role, making them look like a superadmin. */}
+          <option value={0}>— No role (pending) —</option>
           {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
         </select>
       ),
@@ -122,7 +130,7 @@ export function RolesPage({ onToast }) {
   const [newName, setNewName] = useState('');
   const [busy, setBusy] = useState(false);
 
-  function toast(t) { if (onToast) onToast(t); }
+  function toast(t, kind = 'info') { if (onToast) onToast(t, kind); }
 
   async function load() {
     const r = await api('/api/access-rbac/roles', { noRedirect: true }).catch(() => ({ ok: false }));
@@ -198,8 +206,10 @@ export function RbacPage({ onToast }) {
   const [perms, setPerms] = useState([]);
   const [path, setPath] = useState('/api');
   const [busy, setBusy] = useState(false);
+  const [nodes, setNodes] = useState([]);
+  const [nodeGrants, setNodeGrants] = useState([]);
 
-  function toast(t) { if (onToast) onToast(t); }
+  function toast(t, kind = 'info') { if (onToast) onToast(t, kind); }
 
   async function loadRoles() {
     const r = await api('/api/access-rbac/roles', { noRedirect: true }).catch(() => ({ ok: false }));
@@ -212,10 +222,48 @@ export function RbacPage({ onToast }) {
     const r = await api(`/api/access-rbac/permissions?roleId=${rid}`, { noRedirect: true }).catch(() => ({ ok: false }));
     if (r.ok) setPerms(Array.isArray(r.body) ? r.body : []);
   }
-  useEffect(() => { loadRoles(); /* eslint-disable-next-line */ }, []);
-  useEffect(() => { loadPerms(roleId); /* eslint-disable-next-line */ }, [roleId]);
+  async function loadNodes() {
+    const r = await api('/api/nodes', { noRedirect: true }).catch(() => ({ ok: false }));
+    if (r.ok) setNodes(Array.isArray(r.body) ? r.body : []);
+  }
+  async function loadNodeGrants(rid) {
+    if (!rid) { setNodeGrants([]); return; }
+    const r = await api(`/api/nodes/access?roleId=${rid}`, { noRedirect: true }).catch(() => ({ ok: false }));
+    if (r.ok) setNodeGrants(Array.isArray(r.body) ? r.body : []);
+  }
+  useEffect(() => { loadRoles(); loadNodes(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { loadPerms(roleId); loadNodeGrants(roleId); /* eslint-disable-next-line */ }, [roleId]);
 
   const selectedRole = roles.find((x) => x.id === Number(roleId));
+
+  // Resolve the role's current access level on a node: owner (implicit full),
+  // superadmin (read+write), viewer (read-only), or none.
+  function nodeLevel(node) {
+    if (node.ownerRoleId && node.ownerRoleId === Number(roleId)) return 'owner';
+    const g = nodeGrants.find((x) => x.nodeId === node.nodeId);
+    if (!g) return 'none';
+    if (g.canWrite) return 'superadmin';
+    if (g.canRead) return 'viewer';
+    return 'none';
+  }
+  // Set the role's access level on a node. "none" removes any grant; viewer/superadmin
+  // upsert it. Superadmin = read+write (drives the node as admin); viewer = read-only —
+  // mirroring how mymatasan's superadmin/viewer behave.
+  async function setNodeLevel(node, level) {
+    setBusy(true);
+    let r;
+    if (level === 'none') {
+      const g = nodeGrants.find((x) => x.nodeId === node.nodeId);
+      r = g ? await api(`/api/nodes/access/${g.id}`, { method: 'DELETE', noRedirect: true }) : { ok: true };
+    } else {
+      r = await api('/api/nodes/access', {
+        method: 'POST', noRedirect: true,
+        body: JSON.stringify({ roleId: Number(roleId), nodeId: node.nodeId, canRead: true, canWrite: level === 'superadmin' }),
+      });
+    }
+    setBusy(false);
+    if (r.ok) loadNodeGrants(roleId); else toast(r.message || 'Failed to update node access.');
+  }
 
   async function save(p) {
     setBusy(true);
@@ -230,7 +278,12 @@ export function RbacPage({ onToast }) {
     setBusy(false);
     if (r.ok) loadPerms(roleId); else toast(r.message || 'Failed.');
   }
-  function toggle(p, key) { save({ ...p, [key]: !p[key] }); }
+  function toggle(p, key) {
+    // Optimistic: flip this row's cell immediately (server reload confirms; the stable
+    // path-sorted list keeps rows from reshuffling under the click).
+    setPerms((cur) => cur.map((row) => (row.id === p.id ? { ...row, [key]: !row[key] } : row)));
+    save({ ...p, [key]: !p[key] });
+  }
   function addPath() {
     if (!path.trim().startsWith('/')) { toast('Path must start with /'); return; }
     save({ roleId: Number(roleId), path: path.trim(), canGet: true, canPost: false, canPut: false, canDelete: false });
@@ -306,6 +359,42 @@ export function RbacPage({ onToast }) {
                 </tbody>
               </table>
             )}
+            {nodes.length > 0 ? (
+              <div className="node-access-matrix">
+                <h3>Node access</h3>
+                <p className="settings-hint">
+                  Grant this role access to managed nodes. <strong>Superadmin</strong> drives the node with full
+                  read + write; <strong>Viewer</strong> is read-only — mirroring how mymatasan&apos;s superadmin and
+                  viewer roles behave. The node&apos;s owning role always has full access.
+                </p>
+                <table className="permission-table">
+                  <thead><tr><th>Node</th><th>Access</th></tr></thead>
+                  <tbody>
+                    {nodes.map((n) => {
+                      const level = nodeLevel(n);
+                      return (
+                        <tr key={n.nodeId}>
+                          <td>
+                            <span className="node-name-cell"><Ico n={n.icon || 'monitor'} sz={15} /> {n.name || n.nodeId}</span>
+                          </td>
+                          <td>
+                            {level === 'owner' ? (
+                              <span className="status-pill online" title="This role adopted the node">Owner — full access</span>
+                            ) : (
+                              <select value={level} onChange={(e) => setNodeLevel(n, e.target.value)} disabled={busy} aria-label={`Access for ${n.name || n.nodeId}`}>
+                                <option value="none">No access</option>
+                                <option value="viewer">Viewer (read-only)</option>
+                                <option value="superadmin">Superadmin (read + write)</option>
+                              </select>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
           </>
         )}
       </section>

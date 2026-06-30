@@ -154,19 +154,16 @@ func (s *controlUserService) UpsertFederated(ctx context.Context, ssoUserId int6
 		}
 		return existing, nil
 	}
-	viewer, err := s.roles.GetByName(ctx, sharedservices.RoleViewer)
-	if err != nil {
-		return nil, err
-	}
-	if viewer == nil {
-		return nil, errors.New("viewer role not seeded")
-	}
+	// New federated identities are provisioned with NO role (pending). They can
+	// authenticate but have zero access until a superadmin assigns a role on the RBAC
+	// page — the SPA shows them an "access pending" screen. (Previously they were auto-
+	// granted the viewer role, whose GET /api default exposed every admin page.)
 	user := entities.ControlUser{
 		Kind:        "federated",
 		SsoUserId:   ssoUserId,
 		Email:       strings.TrimSpace(email),
 		Name:        strings.TrimSpace(name),
-		RoleId:      viewer.Id,
+		RoleId:      0,
 		LastLoginAt: now,
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -180,7 +177,9 @@ func (s *controlUserService) UpsertFederated(ctx context.Context, ssoUserId int6
 }
 
 func (s *controlUserService) GetById(ctx context.Context, id int64) (*entities.ControlUser, error) {
-	row, err := s.repo.GetByUnique(ctx, "", "id", id)
+	// Look up by PRIMARY key — GetByUnique keyed on "id" matches no field (no ukey:"id")
+	// and would return the FIRST user, making every session resolve to that user's role.
+	row, err := s.repo.GetById(ctx, "", uint64(id))
 	if err != nil {
 		if isNoResultFoundErr(err) {
 			return nil, nil
@@ -239,7 +238,8 @@ func (s *controlUserService) ChangePassword(ctx context.Context, userId int64, c
 }
 
 func (s *controlUserService) List(ctx context.Context) ([]*entities.ControlUser, error) {
-	rows, _, err := s.repo.Get(ctx, "", 1000, 0, nil, nil)
+	// Stable id order by default; the Users table lets the operator sort by any column.
+	rows, _, err := s.repo.Get(ctx, "", 1000, 0, nil, []sqldataenums.Sorter{{FieldName: "Id", Sort: sqldataenums.ASC}})
 	if err != nil {
 		if isNoResultFoundErr(err) {
 			return []*entities.ControlUser{}, nil

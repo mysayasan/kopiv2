@@ -15,7 +15,7 @@ Base path: `/api/user-group`
 
 ## Middleware Contract
 
-Protected by auth middleware + `AccessSessionMidware`. The route uses the accessrbac permission matrix; superadmin bypasses it.
+Protected by auth middleware + `AccessSessionMidware` + `RequireSuperadmin`. The entire `/api/user-group` surface is **superadmin-only**, preventing any non-superadmin role from reading or modifying group membership regardless of matrix grants.
 
 ## Handler Behavior
 

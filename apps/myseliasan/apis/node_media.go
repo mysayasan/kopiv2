@@ -17,16 +17,17 @@ import (
 // RTP the node relays over its media channel. The browser talks only to myseliasan;
 // the node→parent leg is the media channel, the parent→browser leg is WebRTC.
 type nodeMediaApi struct {
-	hub    *services.MediaRelayHub
-	access services.INodeAccessService
-	engine *stream.WebRTCEngine
-	ice    []stream.ICEServer
+	hub     *services.MediaRelayHub
+	access  services.INodeAccessService
+	engine  *stream.WebRTCEngine
+	ice     []stream.ICEServer
+	session *middlewares.AccessSessionMidware
 }
 
 // NewNodeMediaApi registers POST /api/nodes/{id}/cameras/{cam}/webrtc/offer. Must be
 // registered before the proxy catch-all so its specific path wins.
-func NewNodeMediaApi(router *mux.Router, auth middlewares.AuthMidware, hub *services.MediaRelayHub, access services.INodeAccessService, engine *stream.WebRTCEngine, ice []stream.ICEServer) {
-	a := &nodeMediaApi{hub: hub, access: access, engine: engine, ice: ice}
+func NewNodeMediaApi(router *mux.Router, auth middlewares.AuthMidware, hub *services.MediaRelayHub, access services.INodeAccessService, engine *stream.WebRTCEngine, ice []stream.ICEServer, session *middlewares.AccessSessionMidware) {
+	a := &nodeMediaApi{hub: hub, access: access, engine: engine, ice: ice, session: session}
 	g := router.PathPrefix("/nodes").Subrouter()
 	g.Use(auth.Middleware)
 	g.HandleFunc("/{id}/cameras/{cam}/webrtc/offer", a.offer).Methods("POST")
@@ -64,6 +65,12 @@ func (a *nodeMediaApi) offer(w http.ResponseWriter, r *http.Request) {
 
 	// Authorize: watching a node camera only needs read access (viewer is enough).
 	roleId, _ := operatorIdentity(r)
+	// Live role from the user store (not the token's baked roleId) gates media access.
+	if a.session != nil {
+		if p, perr := a.session.CurrentPrincipal(r); perr == nil && p != nil {
+			roleId = p.RoleId
+		}
+	}
 	acc, err := a.access.Resolve(r.Context(), roleId, nodeID)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())

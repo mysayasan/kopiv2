@@ -26,6 +26,10 @@ Returns permission errors when:
 - CSRF token missing or mismatched on unsafe methods
 - required claim (`Email`) empty
 
+## Session Role Validation
+
+The `validateSession` function no longer checks whether the session-stored `RoleId` matches `claims.RoleId`. Role is now a dynamic property resolved live from the user store on each request by `AccessSessionMidware`; invalidating a session because the role changed would bounce users to the login screen every time an admin updated their role. An otherwise-valid session (matching `UserId`, `Email`, and non-expired `sid`) remains valid regardless of role changes.
+
 ## Utility
 
 - `JwtToken(claims)` generates signed JWT for login/session issuance.

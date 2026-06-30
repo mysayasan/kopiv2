@@ -35,6 +35,7 @@ func NewUserGroupApi(
 	group := router.PathPrefix("/user-group").Subrouter()
 	group.Use(auth.Middleware)
 	group.Use(access.Middleware)
+	group.Use(access.RequireSuperadmin) // admin surface — superadmin only
 
 	// Group Handlers
 	group.HandleFunc("", handler.get).Methods("GET")

@@ -20,6 +20,15 @@
   --ink-strong: #344054;
   --row-active: #eff6ff;
   --control-border: #98a2b3;
+  /* Side-nav palette — theme-responsive (a soft light rail in light mode). */
+  --nav-bg: linear-gradient(180deg, #f2f5fa 0%, #e9edf4 100%);
+  --nav-text: #1c2533;
+  --nav-label: #5b6675;
+  --nav-sub: #66718a;
+  --nav-hover: rgba(37, 99, 235, 0.10);
+  --nav-line: #d5dbe5;
+  --nav-fill: rgba(20, 30, 50, 0.05);
+  --nav-code: #3a4660;
   color-scheme: light;
 }
 
@@ -42,7 +51,68 @@
   --ink-strong: #c0cede;
   --row-active: #1a2d4a;
   --control-border: #2a3850;
+  --nav-bg: linear-gradient(180deg, #161d2b 0%, #0f1622 100%);
+  --nav-text: #ffffff;
+  --nav-label: #8ea0b8;
+  --nav-sub: #a7b3c4;
+  --nav-hover: rgba(255, 255, 255, 0.12);
+  --nav-line: rgba(255, 255, 255, 0.14);
+  --nav-fill: rgba(255, 255, 255, 0.08);
+  --nav-code: #d7e2f2;
   color-scheme: dark;
+}
+
+/* High-contrast theme — pure black surfaces, white text, bright accents and strong
+   borders for low-vision / accessibility use (mirrors a "high contrast black" scheme).
+   The dark side-nav uses --panel-strong, so it goes black here too. */
+.theme-contrast {
+  --bg: #000000;
+  --panel: #0a0d12;
+  --panel-strong: #000000;
+  --line: #7d8694;
+  --line-strong: #cdd3db;
+  --text: #ffffff;
+  --muted: #dde2e8;
+  --blue: #5ec8ff;
+  --blue-dark: #36b3f5;
+  --green: #2be88a;
+  --red: #ff6b6b;
+  --amber: #ffd43b;
+  --surface: #0a0d12;
+  --surface-alt: #12161d;
+  --head-ink: #ffffff;
+  --ink-strong: #ffffff;
+  --row-active: #06324a;
+  --control-border: #cdd3db;
+  --nav-bg: #000000;
+  --nav-text: #ffffff;
+  --nav-label: #ffffff;
+  --nav-sub: #e8eaee;
+  --nav-hover: rgba(255, 255, 255, 0.24);
+  --nav-line: rgba(255, 255, 255, 0.55);
+  --nav-fill: rgba(255, 255, 255, 0.14);
+  --nav-code: #ffffff;
+  --ui-shadow: rgba(0, 0, 0, 0.7);
+  color-scheme: dark;
+}
+
+/* @shared design-token mapping: frontend/shared CSS references --ui-*; map them to this
+   app's palette. The mapped vars (e.g. --panel) are themselves redefined per theme, so
+   --ui-* follow light/dark automatically; only --ui-shadow needs a per-theme value. */
+:root, .theme-light {
+  --ui-surface: var(--panel);
+  --ui-bg: var(--bg);
+  --ui-text: var(--text);
+  --ui-muted: var(--muted);
+  --ui-border: var(--line);
+  --ui-border-strong: var(--line-strong);
+  --ui-accent: var(--blue);
+  --ui-success: var(--green);
+  --ui-danger: var(--red);
+  --ui-shadow: rgba(17, 24, 39, 0.16);
+}
+.theme-dark {
+  --ui-shadow: rgba(0, 0, 0, 0.45);
 }
 
 :root {
@@ -92,6 +162,13 @@ button:disabled {
   box-shadow: 0 18px 50px rgba(17, 24, 39, 0.08);
 }
 
+.auth-hint {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .app-shell {
   min-height: 100vh;
   display: grid;
@@ -99,8 +176,9 @@ button:disabled {
 }
 
 .side-nav {
-  background: var(--panel-strong);
-  color: white;
+  background: var(--nav-bg);
+  color: var(--nav-text);
+  border-right: 1px solid var(--nav-line);
   padding: 22px 16px;
   display: flex;
   flex-direction: column;
@@ -108,6 +186,7 @@ button:disabled {
   position: sticky;
   top: 0;
   height: 100vh;
+  transition: background 0.2s ease, color 0.2s ease;
 }
 
 .brand-block {
@@ -137,7 +216,7 @@ button:disabled {
 }
 
 .brand-subtitle {
-  color: #a7b3c4;
+  color: var(--nav-sub);
   font-size: 13px;
 }
 
@@ -153,7 +232,7 @@ button:disabled {
 
 .nav-group-label {
   padding: 0 10px 3px;
-  color: #8ea0b8;
+  color: var(--nav-label);
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0;
@@ -165,7 +244,7 @@ button:disabled {
   width: 100%;
   border: 0;
   border-radius: 8px;
-  color: white;
+  color: var(--nav-text);
   text-align: left;
   padding: 11px 12px;
   background: transparent;
@@ -181,7 +260,7 @@ button:disabled {
 
 .nav-item:hover,
 .nav-item.active {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--nav-hover);
 }
 
 .nav-item.active::before {
@@ -200,10 +279,10 @@ button:disabled {
   height: 30px;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--nav-line);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.08);
-  color: #d7e2f2;
+  background: var(--nav-fill);
+  color: var(--nav-code);
   font-size: 11px;
   font-weight: 900;
 }
@@ -231,7 +310,11 @@ button:disabled {
 
 .logout-button {
   margin-top: auto;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--nav-fill);
+}
+
+.logout-button:hover {
+  background: var(--nav-hover);
 }
 
 .main-workspace {
@@ -1073,6 +1156,8 @@ textarea:focus {
   border: 1px solid #c8f0df;
 }
 
+/* Toast styling now lives in the shared module (@shared → styles/toast.css). */
+
 .status-pill {
   display: inline-grid;
   place-items: center;
@@ -1694,15 +1779,15 @@ textarea:focus {
   border: 0;
   border-radius: 8px;
   padding: 0 12px;
-  background: rgba(255, 255, 255, 0.08);
-  color: #d7e2f2;
+  background: var(--nav-fill);
+  color: var(--nav-text);
   font-weight: 700;
 }
 
 .theme-toggle:hover,
 .theme-toggle.active {
-  background: rgba(255, 255, 255, 0.14);
-  color: #fff;
+  background: var(--nav-hover);
+  color: var(--nav-text);
 }
 
 .theme-toggle .btn-icon {

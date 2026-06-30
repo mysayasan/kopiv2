@@ -15,7 +15,7 @@ Base path: `/api/user-credential`
 
 ## Middleware Contract
 
-Protected by auth middleware + `AccessSessionMidware`. The route uses the accessrbac permission matrix; superadmin bypasses it.
+Protected by auth middleware + `AccessSessionMidware` + `RequireSuperadmin`. The entire `/api/user-credential` surface is **superadmin-only** — role assignment is a privilege-escalation vector and must not be reachable by any non-superadmin role regardless of matrix grants.
 
 ## Handler Behavior
 
@@ -23,6 +23,7 @@ Protected by auth middleware + `AccessSessionMidware`. The route uses the access
 - Filter and sorter query values use the shared SQL enum JSON contract from `query_options.go`.
 - Read handlers return myidsan output DTOs through `IUserLoginDtoService`.
 - PUT decodes the myidsan input DTO, then projects it to a `UserLogin` entity for service writes.
-- `/email` uses the `email` query parameter for exact unique lookup.
 - PUT rejects unknown JSON fields.
+- PUT blocks self-role-change: if `body.Id` matches `claims.Id` and `body.UserRoleId` differs from `claims.RoleId`, the request is rejected with 403. This prevents a superadmin from accidentally (or maliciously) demoting or escalating their own role.
+- `/email` uses the `email` query parameter for exact unique lookup.
 - DELETE parses `{id}` from route params.

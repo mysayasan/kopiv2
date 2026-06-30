@@ -6,6 +6,7 @@ import (
 
 	"github.com/mysayasan/kopiv2/apps/myseliasan/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
+	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
 
@@ -37,6 +38,9 @@ type INodeAccessService interface {
 	OwnsNode(ctx context.Context, roleId int64, nodeId string) (bool, error)
 	// ListForNode returns the explicit grants configured for a node.
 	ListForNode(ctx context.Context, nodeId string) ([]*entities.NodeAccessGrant, error)
+	// ListForRole returns the explicit grants a role holds across all nodes (used by
+	// the central RBAC node-access matrix).
+	ListForRole(ctx context.Context, roleId int64) ([]*entities.NodeAccessGrant, error)
 	// Set creates or updates the grant for (roleId, nodeId). write implies read.
 	Set(ctx context.Context, grant entities.NodeAccessGrant) (*entities.NodeAccessGrant, error)
 	// GrantById returns a grant by id, or nil when not found (for ownership checks
@@ -49,24 +53,33 @@ type INodeAccessService interface {
 type nodeAccessService struct {
 	grants dbsql.IGenericRepo[entities.NodeAccessGrant]
 	nodes  dbsql.IGenericRepo[entities.ManagedNode]
+	roles  sharedservices.IAccessRoleService
 }
 
-// NewNodeAccessService builds the access service over the control-plane database.
-func NewNodeAccessService(db dbsql.IDbCrud) INodeAccessService {
+// NewNodeAccessService builds the access service over the control-plane database. The
+// roles service lets it grant superadmin roles implicit full access to every node.
+func NewNodeAccessService(db dbsql.IDbCrud, roles sharedservices.IAccessRoleService) INodeAccessService {
 	return newNodeAccessService(
 		dbsql.NewGenericRepo[entities.NodeAccessGrant](db),
 		dbsql.NewGenericRepo[entities.ManagedNode](db),
+		roles,
 	)
 }
 
 func newNodeAccessService(
 	grants dbsql.IGenericRepo[entities.NodeAccessGrant],
 	nodes dbsql.IGenericRepo[entities.ManagedNode],
+	roles sharedservices.IAccessRoleService,
 ) *nodeAccessService {
-	return &nodeAccessService{grants: grants, nodes: nodes}
+	return &nodeAccessService{grants: grants, nodes: nodes, roles: roles}
 }
 
 func (s *nodeAccessService) Resolve(ctx context.Context, roleId int64, nodeId string) (NodeAccess, error) {
+	// A superadmin role has full access to every node (mirrors mymatasan's superadmin),
+	// without needing ownership or an explicit grant.
+	if s.isSuperadminRole(ctx, roleId) {
+		return NodeAccess{CanRead: true, CanWrite: true}, nil
+	}
 	owns, err := s.OwnsNode(ctx, roleId, nodeId)
 	if err != nil {
 		return NodeAccess{}, err
@@ -83,6 +96,16 @@ func (s *nodeAccessService) Resolve(ctx context.Context, roleId int64, nodeId st
 	}
 	// write implies read, even if a stale row says otherwise.
 	return NodeAccess{CanRead: grant.CanRead || grant.CanWrite, CanWrite: grant.CanWrite}, nil
+}
+
+// isSuperadminRole reports whether roleId is a superadmin role (nil-safe — returns
+// false when no roles service is wired, e.g. in unit tests).
+func (s *nodeAccessService) isSuperadminRole(ctx context.Context, roleId int64) bool {
+	if s.roles == nil || roleId == 0 {
+		return false
+	}
+	role, err := s.roles.GetById(ctx, roleId)
+	return err == nil && role != nil && role.IsSuperadmin
 }
 
 func (s *nodeAccessService) OwnsNode(ctx context.Context, roleId int64, nodeId string) (bool, error) {
@@ -102,6 +125,18 @@ func (s *nodeAccessService) OwnsNode(ctx context.Context, roleId int64, nodeId s
 func (s *nodeAccessService) ListForNode(ctx context.Context, nodeId string) ([]*entities.NodeAccessGrant, error) {
 	rows, _, err := s.grants.Get(ctx, "", 1000, 0,
 		[]sqldataenums.Filter{{FieldName: "NodeId", Compare: sqldataenums.Equal, Value: nodeId}}, nil)
+	if err != nil {
+		if isNoResultFoundErr(err) {
+			return []*entities.NodeAccessGrant{}, nil
+		}
+		return nil, err
+	}
+	return rows, nil
+}
+
+func (s *nodeAccessService) ListForRole(ctx context.Context, roleId int64) ([]*entities.NodeAccessGrant, error) {
+	rows, _, err := s.grants.Get(ctx, "", 1000, 0,
+		[]sqldataenums.Filter{{FieldName: "RoleId", Compare: sqldataenums.Equal, Value: roleId}}, nil)
 	if err != nil {
 		if isNoResultFoundErr(err) {
 			return []*entities.NodeAccessGrant{}, nil

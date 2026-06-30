@@ -1,4 +1,4 @@
-import { Ico } from './icons';
+import { Ico } from '@shared';
 
 // DashboardTab shows control-plane status and the signed-in session, mirroring the
 // metric-grid + work-panel layout language used across the product.

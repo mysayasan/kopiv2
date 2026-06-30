@@ -13,5 +13,5 @@ Protected MyIDSan management API for relying-app callback URLs.
 
 ## Security
 
-- Routes use MyIDSan auth and accessrbac middleware (`AccessSessionMidware`).
+- Routes use MyIDSan auth and accessrbac middleware (`AccessSessionMidware`). The surface is **RBAC-matrix governed** (delegatable; not granted by default) — a superadmin can grant a role access to manage callback URLs via the permission matrix.
 - MyIDSan authorization only accepts active callback URLs from this table.

@@ -11,9 +11,9 @@ All routes require a myseliasan session and the caller's role must be superadmin
 | Method | Path | Body | Notes |
 |---|---|---|---|
 | `GET` | `/api/rbac/users` | — | List all control-plane users (`ControlUser` rows). |
-| `POST` | `/api/rbac/users/{id}/role` | `{roleId}` | Reassign a user's role (must be a valid `access_role.id`). |
+| `POST` | `/api/rbac/users/{id}/role` | `{roleId}` | Reassign a user's role. `roleId=0` revokes the role (user enters pending/no-access state). Any other value must be a valid `access_role.id`. A superadmin may not change their **own** role (self-targeting is rejected with 403). |
 | `POST` | `/api/rbac/users/{id}/disabled` | `{disabled: true/false}` | Enable or disable a user. Disable is blocked for the stock account unless a real (non-stock) active superadmin already exists (`SuperadminStatus` guard) to prevent lockout. |
-| `POST` | `/api/rbac/users/{id}/elevate` | — | Bootstrap handoff: promote the target user (must be non-stock and active) to superadmin. The stock account is intentionally left active; a persistent banner in the SPA prompts the operator to disable it from the Users list once the new account is confirmed. |
+| `POST` | `/api/rbac/users/{id}/elevate` | — | Bootstrap handoff: promote the target user (must be non-stock and active) to superadmin. The stock account is intentionally left active; a persistent banner in the SPA prompts the operator to disable it from the Users list once the new account is confirmed. A superadmin may not elevate **themselves** (self-targeting is rejected with 403). |
 
 ## Middleware Contract
 

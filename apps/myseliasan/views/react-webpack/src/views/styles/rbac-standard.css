@@ -4,15 +4,38 @@
    workspace and the permission matrix bind to myseliasan's theme variables so the
    light/dark toggle keeps working. Imported last so it overrides app.css. */
 
-/* Sidebar palette — fixed (matches myidsan), independent of the light/dark theme. */
-:root {
-  --nav-bg: #111827;
+/* Side-nav palette — theme-responsive: a soft light rail in light mode, the classic
+   dark rail in dark mode, pure black in high contrast. (Declared light→dark→contrast so
+   later blocks win at equal specificity.) */
+:root, .theme-light {
+  --nav-bg: linear-gradient(180deg, #f2f5fa 0%, #e9edf4 100%);
+  --nav-text: #1c2533;
+  --nav-label: #5b6675;
+  --nav-sub: #66718a;
+  --nav-hover: rgba(45, 108, 223, 0.10);
+  --nav-line: #d5dbe5;
+  --nav-fill: rgba(20, 30, 50, 0.05);
+  --nav-code: #3a4660;
+}
+.theme-dark {
+  --nav-bg: linear-gradient(180deg, #161d2b 0%, #0f1622 100%);
+  --nav-text: #ffffff;
+  --nav-label: #8ea0b8;
+  --nav-sub: #a7b3c4;
+  --nav-hover: rgba(255, 255, 255, 0.12);
   --nav-line: rgba(255, 255, 255, 0.14);
   --nav-fill: rgba(255, 255, 255, 0.08);
-  --nav-hover: rgba(255, 255, 255, 0.12);
-  --nav-label: #8ea0b8;
   --nav-code: #d7e2f2;
-  --nav-sub: #a7b3c4;
+}
+.theme-contrast {
+  --nav-bg: #000000;
+  --nav-text: #ffffff;
+  --nav-label: #ffffff;
+  --nav-sub: #e8eaee;
+  --nav-hover: rgba(255, 255, 255, 0.24);
+  --nav-line: rgba(255, 255, 255, 0.55);
+  --nav-fill: rgba(255, 255, 255, 0.14);
+  --nav-code: #ffffff;
 }
 
 .boot-screen {
@@ -36,7 +59,8 @@
 
 .side-nav {
   background: var(--nav-bg);
-  color: #fff;
+  color: var(--nav-text);
+  border-right: 1px solid var(--nav-line);
   padding: 22px 16px;
   display: flex;
   flex-direction: column;
@@ -44,6 +68,9 @@
   position: sticky;
   top: 0;
   height: 100vh;
+  /* Lift above the static workspace so a node's hover balloon isn't clipped/painted under it. */
+  z-index: 20;
+  transition: background 0.2s ease, color 0.2s ease;
 }
 
 /* The SVG brand mark + wordmark, centered at the top of the dark sidebar. */
@@ -53,7 +80,7 @@
 }
 
 .side-nav .brand-wordmark {
-  color: #eaf6ef;
+  color: var(--nav-text);
 }
 
 .side-brand-sub {
@@ -85,7 +112,7 @@
   width: 100%;
   border: 0;
   border-radius: 8px;
-  color: #fff;
+  color: var(--nav-text);
   text-align: left;
   padding: 11px 12px;
   background: transparent;
@@ -148,6 +175,219 @@
   font-weight: 760;
 }
 
+/* Expandable Nodes tree: a caret toggle + root row, then an indented branch of the
+   adopted nodes. The caret collapses the branch without navigating; the root row and
+   each child are ordinary nav-items so they inherit hover/active styling. */
+.nav-tree-rootrow {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.nav-tree-caret {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--nav-label);
+  cursor: pointer;
+}
+
+.nav-tree-caret:hover {
+  background: var(--nav-hover);
+  color: var(--nav-text);
+}
+
+.nav-tree-caret svg {
+  transition: transform 0.12s ease;
+}
+
+.nav-tree-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.nav-tree-children {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-left: 22px;
+  padding-left: 8px;
+  border-left: 1px solid var(--nav-line);
+}
+
+.nav-tree-child {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  position: relative;
+}
+
+/* Hover balloon describing a node — only rendered when the node has a description.
+   Sits to the right of the rail and floats above the workspace (see .side-nav z-index). */
+.nav-tip {
+  position: absolute;
+  left: calc(100% + 14px);
+  top: 50%;
+  transform: translateY(-50%) translateX(-4px);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: max-content;
+  max-width: 240px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: #0f1722;
+  border: 1px solid var(--nav-line);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+  text-align: left;
+  white-space: normal;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.nav-tip::before {
+  content: "";
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 6px solid transparent;
+  border-right-color: #0f1722;
+}
+
+.nav-tree-child:hover .nav-tip,
+.nav-tree-child:focus-visible .nav-tip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(-50%) translateX(0);
+}
+
+.nav-tip-title {
+  color: #fff;
+  font-weight: 800;
+  font-size: 12px;
+}
+
+.nav-tip-body {
+  color: #c4d0e0;
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.nav-tree-child .nav-label {
+  font-weight: 680;
+  font-size: 13px;
+}
+
+/* The node's chosen glyph in the leading cell, with a small status dot tucked into
+   the corner so identity (icon) and liveness (dot colour) read at a glance. */
+.nav-tree-ico {
+  width: 30px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  position: relative;
+  color: var(--tone, #cdd8e8);
+}
+
+.nav-tree-ico::after {
+  content: "";
+  position: absolute;
+  right: 2px;
+  bottom: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #6b7686;
+  box-shadow: 0 0 0 2px var(--nav-bg);
+}
+
+.nav-tree-ico[data-status="online"]::after {
+  background: #3fb27f;
+}
+
+.nav-tree-ico[data-status="offline"]::after {
+  background: #c2603f;
+}
+
+/* Node count badge on the Nodes root row. */
+.nav-tree-count {
+  margin-left: auto;
+  align-self: center;
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--nav-fill);
+  border: 1px solid var(--nav-line);
+  color: var(--nav-label);
+  font-size: 11px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.nav-tree-main {
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+}
+
+/* Filter box for large fleets — sits above the scrollable branch. */
+.nav-tree-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 6px 22px;
+  padding: 0 8px;
+  border-radius: 7px;
+  background: var(--nav-fill);
+  border: 1px solid var(--nav-line);
+  color: var(--nav-label);
+}
+
+.nav-tree-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--nav-text);
+  font-size: 12px;
+  padding: 6px 0;
+  outline: none;
+}
+
+.nav-tree-search input::placeholder {
+  color: var(--nav-label);
+}
+
+/* Cap the branch height and let it scroll once the fleet is large. */
+.nav-tree-children.scrolling {
+  max-height: 320px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+}
+
+.nav-tree-children.scrolling::-webkit-scrollbar {
+  width: 8px;
+}
+
+.nav-tree-children.scrolling::-webkit-scrollbar-thumb {
+  background: var(--nav-line);
+  border-radius: 999px;
+}
+
+.nav-tree-empty {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--nav-label);
+}
+
 /* Bottom-of-sidebar actions: theme toggle + log out, styled to sit on the dark bg. */
 .side-nav-foot {
   margin-top: auto;
@@ -159,7 +399,7 @@
   width: 100%;
   border: 0;
   border-radius: 8px;
-  color: #fff;
+  color: var(--nav-text);
   text-align: left;
   padding: 11px 12px;
   background: var(--nav-fill);
@@ -186,13 +426,13 @@
   border: 0;
   border-radius: 8px;
   background: var(--nav-fill);
-  color: var(--nav-code);
+  color: var(--nav-text);
 }
 
 .side-nav .theme-toggle:hover,
 .side-nav .theme-toggle.active {
   background: var(--nav-hover);
-  color: #fff;
+  color: var(--nav-text);
 }
 
 .side-nav .theme-menu {
@@ -743,6 +983,24 @@
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 8px;
   margin-top: 10px;
+}
+
+/* Central RBAC node-access matrix: per-node access level for the selected role. */
+.node-access-matrix {
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid var(--border-divider);
+  border-radius: 8px;
+  background: var(--bg-subtle2);
+}
+
+.node-access-matrix h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.node-access-matrix select {
+  min-width: 220px;
 }
 
 .menu-access-item {

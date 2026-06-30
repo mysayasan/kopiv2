@@ -7,6 +7,10 @@ type ManagedNode struct {
 	Id          int64  `json:"id" form:"id" query:"id" params:"id" skipWhenInsert:"true" pkey:"true" validate:"required"`
 	NodeId      string `json:"nodeId" form:"nodeId" query:"nodeId" ukey:"node_id" validate:"required"`
 	Name        string `json:"name" form:"name" query:"name"`
+	// Description is an optional operator note shown as a hover tooltip in the nav.
+	Description string `json:"description" form:"description" query:"description"`
+	// Icon is the pre-installed glyph name shown for this node in the nav (e.g. "camera").
+	Icon        string `json:"icon" form:"icon" query:"icon"`
 	BaseUrl     string `json:"baseUrl" form:"baseUrl" query:"baseUrl"`
 	IP          string `json:"ip" form:"ip" query:"ip"`
 	HTTPSPort   int    `json:"httpsPort" form:"httpsPort" query:"httpsPort"`

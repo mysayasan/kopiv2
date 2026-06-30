@@ -29,7 +29,7 @@ Returning `(nil, nil)` means "no such user" (treated as signed-out).
 ## Role Service (IAccessRoleService)
 
 - `EnsureBuiltins(ctx)` — seeds `superadmin` (IsSuperadmin=true, Builtin=true) and `viewer` (Builtin=true) on startup, skipping existing rows.
-- `GetByName / GetById` — look up a role; returns `nil, nil` when not found.
+- `GetByName / GetById` — look up a role; returns `nil, nil` when not found. `GetById` uses the primary key (`repo.GetById`), not `GetByUnique` — the prior use of `GetByUnique(ctx,"","id",id)` matched no field (no `ukey:"id"` tag) and always returned the first role (the superadmin), making every role lookup resolve as superadmin.
 - `List` — returns all roles (up to 1000).
 - `Create(name, description)` — trims, validates uniqueness, inserts, returns the new row.
 - `Update(id, name, description)` — updates mutable fields (name, description, UpdatedAt).
@@ -37,9 +37,9 @@ Returning `(nil, nil)` means "no such user" (treated as signed-out).
 
 ## Permission Service (IAccessPermissionService)
 
-- `EnsureViewerDefaults(ctx, viewerRoleId)` — seeds a single `/api GET-only` permission row for the viewer role when it has no rows yet.
+- `EnsureViewerDefaults(ctx, viewerRoleId)` — enforces least privilege for the viewer role. Early builds seeded viewer with a read-everything `GET /api` wildcard that exposed every administrative surface to any viewer. This method now **strips** that legacy row on startup (matching only the exact seed shape: GET-only on `/api`). Viewer starts with no permissions; an admin grants specific read paths via the RBAC matrix. Intentional narrower grants are left untouched.
 - `Authorize(ctx, roleId, path, method)` — longest-prefix match over the role's permission rows; no match = `false`. Methods `GET/HEAD/OPTIONS` check `CanGet`; `POST` checks `CanPost`; `PUT/PATCH` check `CanPut`; `DELETE` checks `CanDelete`.
-- `ListForRole(ctx, roleId)` — returns all permission rows for a role (up to 1000).
+- `ListForRole(ctx, roleId)` — returns all permission rows for a role (up to 1000), **sorted by `Path` ASC** for stable ordering. A stable order prevents the just-edited row from reshuffling in the RBAC matrix UI when its checkbox is toggled.
 - `Set(ctx, perm)` — upsert by `(roleId, path)`: updates verb flags if the path already exists, inserts otherwise. Normalizes the path (leading slash, no trailing slash, `/` for root).
 - `Delete(ctx, id)` — deletes a permission row by ID.
 

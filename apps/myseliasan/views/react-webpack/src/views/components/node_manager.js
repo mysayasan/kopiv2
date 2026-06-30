@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { Ico } from './icons';
+import { Ico } from '@shared';
 import { FormBusyOverlay } from './ui';
 import { api, apiBase, formatTimestamp } from '../lib/helpers';
 
 const TABS = [
   { id: 'cameras', label: 'Cameras', icon: 'camera' },
   { id: 'events', label: 'Events', icon: 'bell' },
-  { id: 'access', label: 'Access', icon: 'shield' },
   { id: 'remote', label: 'Remote', icon: 'send' },
 ];
 
@@ -45,7 +44,6 @@ export function NodeManager({ node, onToast, onBack }) {
 
       {tab === 'cameras' ? <NodeCameras node={node} onToast={onToast} /> : null}
       {tab === 'events' ? <NodeEvents node={node} /> : null}
-      {tab === 'access' ? <NodeAccess node={node} onToast={onToast} /> : null}
       {tab === 'remote' ? <NodeRemote node={node} onToast={onToast} /> : null}
     </section>
   );
@@ -280,102 +278,6 @@ function severityClass(sev) {
   if (sev === 'critical') return 'offline';
   if (sev === 'warning') return 'warn';
   return 'online';
-}
-
-// NodeAccess manages the per-(role, node) read/write grants. Only the node's owning
-// role may view/change them; the API returns 403 otherwise, surfaced here in place.
-function NodeAccess({ node, onToast }) {
-  const [grants, setGrants] = useState([]);
-  const [denied, setDenied] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState({ roleId: '', canRead: true, canWrite: false });
-
-  function toast(t) { if (onToast) onToast(t); }
-
-  async function load() {
-    const r = await api(`/api/nodes/access?nodeId=${encodeURIComponent(node.nodeId)}`, { noRedirect: true }).catch(() => ({ ok: false }));
-    if (r.status === 403) { setDenied(true); setGrants([]); return; }
-    setDenied(false);
-    if (r.ok) setGrants(Array.isArray(r.body) ? r.body : []);
-  }
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [node.nodeId]);
-
-  async function save() {
-    const roleId = parseInt(form.roleId, 10);
-    if (!roleId || roleId <= 0) { toast('Enter a valid role id.'); return; }
-    setBusy(true);
-    const r = await api('/api/nodes/access', {
-      method: 'POST',
-      noRedirect: true,
-      body: JSON.stringify({ roleId, nodeId: node.nodeId, canRead: form.canRead, canWrite: form.canWrite }),
-    });
-    setBusy(false);
-    if (r.status === 403) { toast('Only the node owner can manage access.'); return; }
-    if (r.ok) { toast('Access grant saved.'); setForm({ roleId: '', canRead: true, canWrite: false }); load(); }
-    else toast(r.message || 'Failed to save grant.');
-  }
-
-  async function remove(grant) {
-    if (!window.confirm(`Remove access for role ${grant.roleId}?`)) return;
-    setBusy(true);
-    const r = await api(`/api/nodes/access/${grant.id}`, { method: 'DELETE', noRedirect: true });
-    setBusy(false);
-    if (r.status === 403) { toast('Only the node owner can manage access.'); return; }
-    if (r.ok) { toast('Grant removed.'); load(); }
-    else toast(r.message || 'Failed to remove grant.');
-  }
-
-  if (denied) {
-    return (
-      <section className="settings-panel span-two">
-        <header><h2><span className="btn-icon"><Ico n="shield" /> Access</span></h2></header>
-        <p className="settings-hint danger-text">Only the role that adopted this node can manage its access grants.</p>
-      </section>
-    );
-  }
-
-  return (
-    <section className="settings-panel span-two">
-      <FormBusyOverlay busy={busy} />
-      <header><h2><span className="btn-icon"><Ico n="shield" /> Access</span></h2></header>
-      <p className="settings-hint">
-        Grant other myseliasan roles access to this node. Read-only acts as a viewer; read+write acts as admin (write
-        implies read). The owning role always has full access.
-      </p>
-      <div className="node-access-form">
-        <label className="node-access-role">Role id
-          <input value={form.roleId} onChange={(e) => setForm({ ...form, roleId: e.target.value })} placeholder="e.g. 3" disabled={busy} />
-        </label>
-        <div className="node-access-checks">
-          <label className="node-access-check">
-            <input type="checkbox" checked={form.canRead} onChange={(e) => setForm({ ...form, canRead: e.target.checked, canWrite: e.target.checked ? form.canWrite : false })} disabled={busy} /> Read
-          </label>
-          <label className="node-access-check">
-            <input type="checkbox" checked={form.canWrite} onChange={(e) => setForm({ ...form, canWrite: e.target.checked, canRead: e.target.checked ? true : form.canRead })} disabled={busy} /> Write
-          </label>
-        </div>
-        <button type="button" className="node-access-save" onClick={save} disabled={busy}>
-          <span className="btn-icon"><Ico n="save" /> Save grant</span>
-        </button>
-      </div>
-      {grants.length === 0 ? (
-        <p className="settings-hint">No extra grants — only the owning role can access this node.</p>
-      ) : (
-        <table className="event-table">
-          <thead><tr><th>Role id</th><th>Access</th><th></th></tr></thead>
-          <tbody>
-            {grants.map((g) => (
-              <tr key={g.id}>
-                <td>{g.roleId}</td>
-                <td>{g.canWrite ? 'Read + Write (admin)' : g.canRead ? 'Read (viewer)' : '—'}</td>
-                <td><button type="button" className="quiet danger-text" onClick={() => remove(g)} disabled={busy}>Remove</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </section>
-  );
 }
 
 const QUICK = [

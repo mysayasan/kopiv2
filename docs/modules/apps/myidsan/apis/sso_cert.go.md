@@ -6,7 +6,7 @@ Exposes myidsan's SSO certificate authority for relying-app mTLS client authenti
 
 ## Routes
 
-All routes require a myidsan auth session and the shared accessrbac middleware.
+All routes require a myidsan auth session and the shared accessrbac middleware. The surface is **RBAC-matrix governed** (delegatable; not granted by default) — a superadmin can grant a role access to read the CA cert or issue client certificates via the permission matrix.
 
 | Method | Path | Notes |
 |---|---|---|

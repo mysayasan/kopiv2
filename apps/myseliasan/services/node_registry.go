@@ -49,13 +49,16 @@ type DiscoveredNode struct {
 
 // AdoptInput binds a node. IP+HTTPSPort locate it; ClaimCode authorises the bind
 // (the operator reads it from the node). NodeID/Name are optional hints from a
-// prior scan.
+// prior scan. Name, when set, is the operator's chosen label (it overrides the node's
+// reported hostname); Description is an optional operator note.
 type AdoptInput struct {
-	NodeID    string `json:"nodeId"`
-	Name      string `json:"name"`
-	IP        string `json:"ip"`
-	HTTPSPort int    `json:"httpsPort"`
-	ClaimCode string `json:"claimCode"`
+	NodeID      string `json:"nodeId"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Icon        string `json:"icon"`
+	IP          string `json:"ip"`
+	HTTPSPort   int    `json:"httpsPort"`
+	ClaimCode   string `json:"claimCode"`
 	// OwnerRoleId / OwnerUserId identify the adopting operator (set server-side from
 	// the session, never the client). OwnerRoleId becomes the node's owning role,
 	// which gets default full access; OwnerUserId is recorded for audit.
@@ -274,7 +277,10 @@ func (s *nodeRegistry) Adopt(ctx context.Context, in AdoptInput) (*entities.Mana
 	now := time.Now().Unix()
 	node := entities.ManagedNode{
 		NodeId:      nodeID,
-		Name:        firstNonEmpty(res.Name, in.Name),
+		// Operator's chosen label wins; fall back to the node's reported hostname.
+		Name:        firstNonEmpty(in.Name, res.Name),
+		Description: strings.TrimSpace(in.Description),
+		Icon:        strings.TrimSpace(in.Icon),
 		BaseUrl:     baseURL,
 		IP:          ip,
 		HTTPSPort:   port,

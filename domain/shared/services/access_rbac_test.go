@@ -25,6 +25,15 @@ func (f *fakeAccessRoleRepo) GetByUnique(_ context.Context, _ string, field stri
 	}
 	return nil, errors.New("no result found")
 }
+func (f *fakeAccessRoleRepo) GetById(_ context.Context, _ string, id uint64) (*entities.AccessRole, error) {
+	for _, r := range f.rows {
+		if uint64(r.Id) == id {
+			cp := *r
+			return &cp, nil
+		}
+	}
+	return nil, nil
+}
 func (f *fakeAccessRoleRepo) Get(_ context.Context, _ string, _ uint64, _ uint64, _ []sqldataenums.Filter, _ []sqldataenums.Sorter) ([]*entities.AccessRole, uint64, error) {
 	return f.rows, uint64(len(f.rows)), nil
 }
@@ -76,6 +85,15 @@ func (f *fakeAccessPermRepo) UpdateById(_ context.Context, _ string, m entities.
 	}
 	return 0, nil
 }
+func (f *fakeAccessPermRepo) DeleteById(_ context.Context, _ string, id uint64) (uint64, error) {
+	for i, r := range f.rows {
+		if uint64(r.Id) == id {
+			f.rows = append(f.rows[:i], f.rows[i+1:]...)
+			return 1, nil
+		}
+	}
+	return 0, nil
+}
 
 func TestAccessRoleEnsureBuiltinsIdempotent(t *testing.T) {
 	svc := NewAccessRoleServiceWithRepo(&fakeAccessRoleRepo{})
@@ -101,7 +119,8 @@ func TestAccessPermissionAuthorizeMatrix(t *testing.T) {
 	ctx := context.Background()
 	const viewer = int64(2)
 
-	if err := perms.EnsureViewerDefaults(ctx, viewer); err != nil {
+	// An admin grants the role a read scope (the matrix no longer seeds a wildcard).
+	if _, err := perms.Set(ctx, entities.AccessRolePermission{RoleId: viewer, Path: "/api", CanGet: true}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	if ok, _ := perms.Authorize(ctx, viewer, "/api/nodes", "GET"); !ok {
@@ -118,5 +137,38 @@ func TestAccessPermissionAuthorizeMatrix(t *testing.T) {
 	}
 	if ok, _ := perms.Authorize(ctx, 99, "/api/nodes", "GET"); ok {
 		t.Fatal("unconfigured role should be denied")
+	}
+}
+
+func TestEnsureViewerDefaultsStripsLegacyWildcard(t *testing.T) {
+	perms := NewAccessPermissionServiceWithRepo(&fakeAccessPermRepo{})
+	ctx := context.Background()
+	const viewer = int64(2)
+
+	// Simulate a legacy deployment: viewer carries the read-everything GET /api wildcard
+	// plus a legitimate narrower grant.
+	if _, err := perms.Set(ctx, entities.AccessRolePermission{RoleId: viewer, Path: "/api", CanGet: true}); err != nil {
+		t.Fatalf("seed wildcard: %v", err)
+	}
+	if _, err := perms.Set(ctx, entities.AccessRolePermission{RoleId: viewer, Path: "/api/nodes", CanGet: true}); err != nil {
+		t.Fatalf("seed grant: %v", err)
+	}
+
+	if err := perms.EnsureViewerDefaults(ctx, viewer); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+
+	// The /api wildcard is gone (no more read-everything)…
+	if ok, _ := perms.Authorize(ctx, viewer, "/api/app-auth-config", "GET"); ok {
+		t.Fatal("legacy GET /api wildcard should have been stripped")
+	}
+	// …but the narrower, intentional grant survives.
+	if ok, _ := perms.Authorize(ctx, viewer, "/api/nodes", "GET"); !ok {
+		t.Fatal("narrower /api/nodes grant must be preserved")
+	}
+
+	// Idempotent on a clean (least-privilege) viewer.
+	if err := perms.EnsureViewerDefaults(ctx, viewer); err != nil {
+		t.Fatalf("ensure 2: %v", err)
 	}
 }

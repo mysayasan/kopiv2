@@ -1,4 +1,5 @@
-import { Ico } from './icons';
+import { useState } from 'react';
+import { Ico, SideNav as SharedSideNav } from '@shared';
 import { ThemeDropdown } from './ui';
 import { sessionCanGet } from '../lib/helpers';
 
@@ -22,67 +23,143 @@ export function BrandLogo({ size = 40, className = '' }) {
   );
 }
 
+// Past this many nodes the branch gets a filter box and becomes a height-capped
+// scroll area, so the rail stays usable with dozens–hundreds of nodes.
+const NODE_FILTER_THRESHOLD = 8;
+const NODE_FALLBACK_ICON = 'monitor';
+
+// NodesNavItem renders the Nodes entry as an expandable tree: the root row navigates
+// to the fleet management page (discovery/adoption/list), while each adopted node is a
+// child branch that jumps straight to that node's manage surface. A caret toggles the
+// branch without leaving the current view. Large fleets get a search filter and a
+// scrollable branch.
+function NodesNavItem({ nodes, activeTab, managingNodeId, onSelectNode }) {
+  const onNodes = activeTab === 'nodes';
+  const [open, setOpen] = useState(onNodes);
+  const [query, setQuery] = useState('');
+  const rootActive = onNodes && !managingNodeId;
+  const list = Array.isArray(nodes) ? nodes : [];
+
+  const big = list.length > NODE_FILTER_THRESHOLD;
+  const q = query.trim().toLowerCase();
+  const shown = q
+    ? list.filter((n) => `${n.name || ''} ${n.description || ''} ${n.nodeId || ''}`.toLowerCase().includes(q))
+    : list;
+
+  return (
+    <div className="nav-tree">
+      <div className="nav-tree-rootrow">
+        <button
+          type="button"
+          className="nav-tree-caret"
+          onClick={() => setOpen((o) => !o)}
+          aria-label={open ? 'Collapse nodes' : 'Expand nodes'}
+          aria-expanded={open}
+        >
+          <Ico n="chev-down" sz={14} style={open ? undefined : { transform: 'rotate(-90deg)' }} />
+        </button>
+        <button
+          type="button"
+          className={`nav-item tone-blue nav-tree-main${rootActive ? ' active' : ''}`}
+          onClick={() => { onSelectNode(null); setOpen(true); }}
+        >
+          <span className="nav-ico"><Ico n="shield" sz={17} /></span>
+          <span className="nav-label">Nodes</span>
+          {list.length > 0 ? <span className="nav-tree-count">{list.length}</span> : null}
+        </button>
+      </div>
+      {open ? (
+        <div className="nav-tree-branch">
+          {big ? (
+            <div className="nav-tree-search">
+              <Ico n="search" sz={13} />
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={`Filter ${list.length} nodes…`}
+                aria-label="Filter nodes"
+              />
+            </div>
+          ) : null}
+          <div className={`nav-tree-children${big ? ' scrolling' : ''}`}>
+            {list.length === 0 ? (
+              <div className="nav-tree-empty">No nodes yet</div>
+            ) : shown.length === 0 ? (
+              <div className="nav-tree-empty">No matches</div>
+            ) : (
+              shown.map((n) => {
+                const active = onNodes && managingNodeId === n.nodeId;
+                const status = n.status === 'online' ? 'online' : 'offline';
+                return (
+                  <button
+                    key={n.nodeId}
+                    type="button"
+                    className={`nav-item tone-blue nav-tree-child${active ? ' active' : ''}`}
+                    onClick={() => onSelectNode(n.nodeId)}
+                    title={n.description ? undefined : (n.name || n.nodeId)}
+                  >
+                    <span className="nav-tree-ico" data-status={status}>
+                      <Ico n={n.icon || NODE_FALLBACK_ICON} sz={16} />
+                    </span>
+                    <span className="nav-label">{n.name || n.nodeId}</span>
+                    {n.description ? (
+                      <span className="nav-tip" role="tooltip">
+                        <span className="nav-tip-title">{n.name || n.nodeId}</span>
+                        <span className="nav-tip-body">{n.description}</span>
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // SideNav is the standardized RBAC-app navigation rail: the myidsan dark side-nav
 // (grouped menu, code tiles, tone accents) reused as the shared shell. Menu entries
 // follow the same permission matrix that gates their APIs — a role needs GET on
 // /api/nodes to see Nodes; Users & Roles is superadmin-only.
-export function SideNav({ activeTab, busy, onTab, onLogout, theme, onThemeChange, session }) {
+export function SideNav({ activeTab, busy, onTab, onLogout, theme, onThemeChange, session, nodes, managingNodeId, onSelectNode }) {
+  const navItem = (id, label, icon, tone) => ({ id, label, icon, tone, active: id === activeTab, onClick: () => onTab(id) });
   const groups = [
-    {
-      label: 'Workspace',
-      items: [{ id: 'dashboard', label: 'Dashboard', icon: 'monitor', tone: 'steel' }],
-    },
+    { label: 'Workspace', items: [navItem('dashboard', 'Dashboard', 'monitor', 'steel')] },
     {
       label: 'Fleet',
-      items: [
-        ...(sessionCanGet(session, '/api/nodes')
-          ? [{ id: 'nodes', label: 'Nodes', icon: 'shield', tone: 'blue' }]
-          : []),
-      ],
+      items: sessionCanGet(session, '/api/nodes')
+        // The Nodes entry is a bespoke tree — injected via the shell's render hook.
+        ? [{ id: 'nodes', render: () => (
+            <NodesNavItem nodes={nodes} activeTab={activeTab} managingNodeId={managingNodeId} onSelectNode={onSelectNode} />
+          ) }]
+        : [],
     },
     {
       label: 'Administration',
       items: session?.isSuperadmin
-        ? [
-            { id: 'users', label: 'Users', icon: 'user', tone: 'blue' },
-            { id: 'roles', label: 'Roles', icon: 'key', tone: 'violet' },
-            { id: 'rbac', label: 'RBAC', icon: 'lock', tone: 'green' },
-          ]
+        ? [navItem('users', 'Users', 'user', 'blue'), navItem('roles', 'Roles', 'key', 'violet'), navItem('rbac', 'RBAC', 'lock', 'green')]
         : [],
     },
-  ].filter((group) => group.items.length > 0);
+  ];
 
-  return (
-    <aside className="side-nav">
-      <div className="side-brand">
-        <BrandLogo />
-        <div className="side-brand-sub">Control plane</div>
-      </div>
-      <nav aria-label="Main">
-        {groups.map((group) => (
-          <div className="nav-group" key={group.label}>
-            <div className="nav-group-label">{group.label}</div>
-            {group.items.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={`nav-item tone-${item.tone}${item.id === activeTab ? ' active' : ''}`}
-                onClick={() => onTab(item.id)}
-              >
-                <span className="nav-ico"><Ico n={item.icon} sz={17} /></span>
-                <span className="nav-label">{item.label}</span>
-              </button>
-            ))}
-          </div>
-        ))}
-      </nav>
-      <div className="side-nav-foot">
-        {session?.email ? <div className="side-brand-sub" title={session.email}>{session.email}</div> : null}
-        <ThemeDropdown theme={theme} onThemeChange={onThemeChange} />
-        <button type="button" className="logout-button" onClick={onLogout} disabled={busy}>
-          Log out
-        </button>
-      </div>
-    </aside>
+  const brand = (
+    <div className="side-brand">
+      <BrandLogo />
+      <div className="side-brand-sub">Control plane</div>
+    </div>
   );
+  const footer = (
+    <>
+      {session?.email ? <div className="side-brand-sub" title={session.email}>{session.email}</div> : null}
+      <ThemeDropdown theme={theme} onThemeChange={onThemeChange} />
+      <button type="button" className="logout-button" onClick={onLogout} disabled={busy}>
+        Log out
+      </button>
+    </>
+  );
+
+  return <SharedSideNav brand={brand} groups={groups} footer={footer} />;
 }

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/mysayasan/kopiv2/apps/myseliasan/entities"
+	shentities "github.com/mysayasan/kopiv2/domain/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
@@ -76,8 +77,26 @@ func grantMatches(g *entities.NodeAccessGrant, filters []sqldataenums.Filter) bo
 func newTestAccess() (*nodeAccessService, *fakeNodesRepo, *fakeGrantsRepo) {
 	nodes := &fakeNodesRepo{}
 	grants := &fakeGrantsRepo{}
-	return newNodeAccessService(grants, nodes), nodes, grants
+	return newNodeAccessService(grants, nodes, nil), nodes, grants
 }
+
+// fakeRoles is a minimal IAccessRoleService for tests: only GetById is meaningful,
+// returning a superadmin role for ids in the super set.
+type fakeRoles struct{ super map[int64]bool }
+
+func (f *fakeRoles) EnsureBuiltins(ctx context.Context) error { return nil }
+func (f *fakeRoles) GetByName(ctx context.Context, name string) (*shentities.AccessRole, error) {
+	return nil, nil
+}
+func (f *fakeRoles) GetById(ctx context.Context, id int64) (*shentities.AccessRole, error) {
+	return &shentities.AccessRole{Id: id, IsSuperadmin: f.super[id]}, nil
+}
+func (f *fakeRoles) List(ctx context.Context) ([]*shentities.AccessRole, error) { return nil, nil }
+func (f *fakeRoles) Create(ctx context.Context, name, description string) (*shentities.AccessRole, error) {
+	return nil, nil
+}
+func (f *fakeRoles) Update(ctx context.Context, id int64, name, description string) error { return nil }
+func (f *fakeRoles) Delete(ctx context.Context, id int64) error                           { return nil }
 
 func TestNodeAccessResolveMatrix(t *testing.T) {
 	svc, nodes, grants := newTestAccess()
@@ -113,6 +132,31 @@ func TestNodeAccessResolveMatrix(t *testing.T) {
 			t.Fatalf("%s: got read=%v write=%v role=%q, want read=%v write=%v role=%q",
 				c.name, acc.CanRead, acc.CanWrite, acc.Role(), c.wantRead, c.wantWrite, c.wantRole)
 		}
+	}
+}
+
+func TestNodeAccessSuperadminFullAccess(t *testing.T) {
+	nodes := &fakeNodesRepo{}
+	grants := &fakeGrantsRepo{}
+	// role 1 is superadmin; role 2 is not.
+	svc := newNodeAccessService(grants, nodes, &fakeRoles{super: map[int64]bool{1: true}})
+	ctx := context.Background()
+
+	// A node owned by some other role, with no grants for role 1 or 2.
+	nodes.rows = append(nodes.rows, &entities.ManagedNode{Id: 1, NodeId: "n1", OwnerRoleId: 99})
+
+	// Superadmin role → full access despite no ownership/grant.
+	acc, err := svc.Resolve(ctx, 1, "n1")
+	if err != nil {
+		t.Fatalf("Resolve superadmin: %v", err)
+	}
+	if !acc.CanRead || !acc.CanWrite || acc.Role() != "admin" {
+		t.Fatalf("superadmin: got read=%v write=%v role=%q, want full admin", acc.CanRead, acc.CanWrite, acc.Role())
+	}
+
+	// Non-superadmin, non-owner, no grant → denied.
+	if acc, _ := svc.Resolve(ctx, 2, "n1"); acc.Role() != "" {
+		t.Fatalf("non-superadmin: expected denied, got role=%q", acc.Role())
 	}
 }
 

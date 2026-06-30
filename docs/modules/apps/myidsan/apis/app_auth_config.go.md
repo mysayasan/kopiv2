@@ -13,5 +13,5 @@ Protected MyIDSan management API for relying-app auth client policy.
 
 ## Security
 
-- Routes use MyIDSan auth and accessrbac middleware (`AccessSessionMidware`).
+- Routes use MyIDSan auth and accessrbac middleware (`AccessSessionMidware`). The surface is **RBAC-matrix governed** (not granted by default; a superadmin must explicitly grant the role permission in the matrix to delegate access). This is safe to delegate because it does not expose the raw client secret.
 - Read responses expose `hasClientSecret` instead of `clientSecretHash`.
