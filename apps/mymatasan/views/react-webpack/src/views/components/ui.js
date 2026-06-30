@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Ico } from './icons';
+import { useT } from '@shared/i18n';
 import { THEMES, THEME_LABELS, THEME_ICONS, liveViewLayouts } from '../lib/constants';
 import { parseTracks } from '../lib/helpers';
 
 export function ThemeDropdown({ theme, onThemeChange }) {
+  const tr = useT();
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
   useEffect(() => {
@@ -25,12 +27,12 @@ export function ThemeDropdown({ theme, onThemeChange }) {
       >
         <span className="btn-icon">
           <Ico n={THEME_ICONS[theme]} sz={13} />
-          Theme
+          {tr('theme.label')}
           <Ico n="chev-down" sz={11} />
         </span>
       </button>
       {open && (
-        <div className="theme-menu" role="listbox" aria-label="Select theme">
+        <div className="theme-menu" role="listbox" aria-label={tr('theme.select')}>
           {THEMES.map((t) => (
             <button
               key={t}
@@ -40,7 +42,7 @@ export function ThemeDropdown({ theme, onThemeChange }) {
               className={`theme-menu-item${t === theme ? ' active' : ''}`}
               onClick={() => { onThemeChange(t); setOpen(false); }}
             >
-              <Ico n={THEME_ICONS[t]} sz={14} /> {THEME_LABELS[t]}
+              <Ico n={THEME_ICONS[t]} sz={14} /> {tr(`theme.${t}`)}
             </button>
           ))}
         </div>
@@ -50,6 +52,7 @@ export function ThemeDropdown({ theme, onThemeChange }) {
 }
 
 export function LayoutDropdown({ layout, onLayout }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
   useEffect(() => {
@@ -78,7 +81,7 @@ export function LayoutDropdown({ layout, onLayout }) {
         </span>
       </button>
       {open && (
-        <div className="layout-menu" role="listbox" aria-label="Select grid layout">
+        <div className="layout-menu" role="listbox" aria-label={t('layout.select')}>
           {liveViewLayouts.map((o) => (
             <button
               key={o.id}
@@ -182,54 +185,11 @@ export function Message({ value, floating = false }) {
   return <div className={`status-line${floating ? ' status-line--floating' : ''}`}>{value}</div>;
 }
 
-// Toast is a single auto-dismissing notification. It schedules its own removal so
-// new toasts pushed onto the stack don't reset each other's timers. Hovering pauses
-// the timer so a message can be read; it can also be dismissed manually.
-function Toast({ id, text, duration = 3000, onDismiss }) {
-  const [leaving, setLeaving] = useState(false);
-  const timerRef = useRef(null);
-
-  const start = () => {
-    clearTimeout(timerRef.current);
-    timerRef.current = window.setTimeout(() => setLeaving(true), duration);
-  };
-  useEffect(() => {
-    start();
-    return () => clearTimeout(timerRef.current);
-    // eslint-disable-next-line
-  }, []);
-
-  // Remove from the stack only after the leave transition finishes.
-  const handleEnd = () => { if (leaving) onDismiss(id); };
-
-  return (
-    <div
-      className={`toast${leaving ? ' toast--leaving' : ''}`}
-      role="status"
-      aria-live="polite"
-      onMouseEnter={() => clearTimeout(timerRef.current)}
-      onMouseLeave={start}
-      onTransitionEnd={handleEnd}
-    >
-      <span className="toast-text">{text}</span>
-      <button type="button" className="toast-close" aria-label="Dismiss" onClick={() => setLeaving(true)}>
-        <Ico n="x" sz={13} />
-      </button>
-    </div>
-  );
-}
-
-// ToastStack renders the top-right stack of toasts. Newest appears at the top.
-export function ToastStack({ toasts, onDismiss }) {
-  if (!toasts || toasts.length === 0) {
-    return null;
-  }
-  return (
-    <div className="toast-stack" aria-live="polite">
-      {toasts.map((t) => (
-        <Toast key={t.id} id={t.id} text={t.text} onDismiss={onDismiss} />
-      ))}
-    </div>
-  );
-}
+// Toast/ToastStack now come from the shared UI module (frontend/shared/src/Toast.js)
+// so mymatasan's transient notifications match the RBAC apps (myidsan, myseliasan).
+// The shared component imports its own tokenized toast.css; mymatasan maps the
+// required --ui-* tokens in app.css. Re-exported here so existing `./ui` import
+// sites keep working unchanged. Each toast may carry a `kind` (success|error|info)
+// for a colored accent; mymatasan's status messages default to neutral 'info'.
+export { ToastStack } from '@shared/Toast';
 

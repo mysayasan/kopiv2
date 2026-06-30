@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Ico } from './icons';
+import { useT } from '@shared/i18n';
 import {formatFileSize,segmentDuration,segmentFilename,detectionTypeLabel,todayDateString,apiBase,formatTimestamp,orderedSavedCameras } from '../lib/helpers';
 import { SavedDeviceNav } from './cameras';
 
@@ -35,6 +36,7 @@ function segmentPlaybackUrl(seg) {
 // list, and playback. Per-camera recording config and stream URLs now live in the
 // Saved-camera panel (CameraRecordingConfig / CameraStreamConfig).
 export function RecordingTab({ canManage = true, saved, segments, busy, authHeader, onDeleteSegment, onPurgeExpired, onReload, focusCameraId, unacknowledgedAlertIds, onAcknowledgeAlert, alerts }) {
+  const t = useT();
   const orderedSaved = useMemo(() => orderedSavedCameras(saved), [saved]);
   const [selectedCameraId, setSelectedCameraId] = useState(0);
   const onReloadRef = useRef(onReload);
@@ -209,7 +211,7 @@ export function RecordingTab({ canManage = true, saved, segments, busy, authHead
         }}
         className={`segment-row${isFocused ? ' focused' : ''}${extraClass ? ` ${extraClass}` : ''}`}
       >
-        <button type="button" className="segment-thumb-btn" onClick={() => playSegment(seg)} title="Play">
+        <button type="button" className="segment-thumb-btn" onClick={() => playSegment(seg)} title={t('rec.play')}>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
             <path d="M8 5v14l11-7z"/>
           </svg>
@@ -219,7 +221,7 @@ export function RecordingTab({ canManage = true, saved, segments, busy, authHead
             <strong className="segment-filename">{segmentFilename(seg)}</strong>
             {eventDesc && <span className="segment-event-label">{eventDesc}</span>}
             {seg.alertId > 0 && unacknowledgedAlertIds && unacknowledgedAlertIds.has(Number(seg.alertId)) && (
-              <span className="segment-unreviewed">Unreviewed</span>
+              <span className="segment-unreviewed">{t('rec.unreviewed')}</span>
             )}
           </div>
           <span className="segment-meta">
@@ -228,24 +230,24 @@ export function RecordingTab({ canManage = true, saved, segments, busy, authHead
             {segmentDuration(seg)}
             {' · '}
             {formatFileSize(seg.fileSize)}
-            {seg.alertId ? ` · Alert #${seg.alertId}` : ''}
+            {seg.alertId ? ` · ${t('rec.alertNum', { id: seg.alertId })}` : ''}
           </span>
         </div>
         <div className="segment-actions">
           {seg.alertId > 0 && unacknowledgedAlertIds && unacknowledgedAlertIds.has(Number(seg.alertId)) && (
             <button type="button" className="quiet" disabled={busy} onClick={() => onAcknowledgeAlert(seg.alertId)}>
-              <span className="btn-icon"><Ico n="acknowledge" /> Acknowledge</span>
+              <span className="btn-icon"><Ico n="acknowledge" /> {t('rec.acknowledge')}</span>
             </button>
           )}
           <button type="button" className="quiet" onClick={() => playSegment(seg)}>
-            <span className="btn-icon"><Ico n="play" /> Play</span>
+            <span className="btn-icon"><Ico n="play" /> {t('rec.play')}</span>
           </button>
           <button type="button" className="quiet" disabled={downloading === seg.id} onClick={() => downloadSegment(seg)}>
-            <span className="btn-icon"><Ico n="download" /> {downloading === seg.id ? 'Downloading…' : 'Download'}</span>
+            <span className="btn-icon"><Ico n="download" /> {downloading === seg.id ? t('rec.downloading') : t('common.download')}</span>
           </button>
           {canManage ? (
             <button type="button" className="quiet danger-text" disabled={busy} onClick={() => onDeleteSegment(seg.id)}>
-              <span className="btn-icon"><Ico n="trash" /> Delete</span>
+              <span className="btn-icon"><Ico n="trash" /> {t('common.delete')}</span>
             </button>
           ) : null}
         </div>
@@ -257,8 +259,8 @@ export function RecordingTab({ canManage = true, saved, segments, busy, authHead
     <section className="workspace">
       <div className="toolbar">
         <div>
-          <h2 className="section-title">Recordings</h2>
-          <p className="section-subtitle">Continuous NVR recording with event clip extraction.</p>
+          <h2 className="section-title">{t('rec.title')}</h2>
+          <p className="section-subtitle">{t('rec.subtitle')}</p>
         </div>
         <div className="toolbar-actions">
           {canManage && onPurgeExpired ? (
@@ -266,18 +268,18 @@ export function RecordingTab({ canManage = true, saved, segments, busy, authHead
               type="button"
               className="quiet"
               disabled={busy}
-              title="Delete recordings already older than each camera's retention. In-retention footage is kept."
+              title={t('rec.purgeTitle')}
               onClick={() => {
-                if (window.confirm('Delete all recordings already past their retention period? Footage still within retention is kept.')) {
+                if (window.confirm(t('rec.purgeConfirm'))) {
                   onPurgeExpired();
                 }
               }}
             >
-              <span className="btn-icon"><Ico n="trash" /> Purge expired</span>
+              <span className="btn-icon"><Ico n="trash" /> {t('rec.purgeExpired')}</span>
             </button>
           ) : null}
           <button type="button" className="quiet" onClick={onReload} disabled={busy}>
-            <span className="btn-icon"><Ico n="reload" /> Reload</span>
+            <span className="btn-icon"><Ico n="reload" /> {t('common.reload')}</span>
           </button>
         </div>
       </div>
@@ -303,12 +305,12 @@ export function RecordingTab({ canManage = true, saved, segments, busy, authHead
                   return (
                   <>
                     <header>
-                      <h2>All Recordings</h2>
+                      <h2>{t('rec.allRecordings')}</h2>
                       <span className="status-pill">{browseLoaded ? allBrowseSegments.length : '—'}</span>
                     </header>
                     <div className="log-toolbar" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
                       <label style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', margin: 0 }}>
-                        Date
+                        {t('rec.date')}
                         <input
                           type="date"
                           value={browseDate}
@@ -317,10 +319,10 @@ export function RecordingTab({ canManage = true, saved, segments, busy, authHead
                         />
                       </label>
                       <button type="button" className="quiet" onClick={() => { const t = todayDateString(); setBrowseDate(t); setAllBrowseSegments([]); setBrowseLoaded(false); setTimelineSelectedMin(null); }} disabled={browseDate === todayDateString()}>
-                        Today
+                        {t('rec.today')}
                       </button>
                     </div>
-                    {browseLoading && <p className="empty-hint">Loading…</p>}
+                    {browseLoading && <p className="empty-hint">{t('common.loading')}</p>}
 
                     {browseLoaded && (
                       <div className="timeline-wrap">
@@ -339,7 +341,7 @@ export function RecordingTab({ canManage = true, saved, segments, busy, authHead
                           onClick={handleTimelineClick}
                           onMouseMove={handleTimelineHover}
                           onMouseLeave={() => setTimelineHoverMin(null)}
-                          title="Click to jump to a time"
+                          title={t('rec.clickJump')}
                         >
                           {/* hour tick marks */}
                           {Array.from({length: 25}, (_, h) => (
@@ -379,7 +381,7 @@ export function RecordingTab({ canManage = true, saved, segments, busy, authHead
                                 key={seg.id}
                                 className="timeline-segment timeline-segment--event"
                                 style={{left: `${left}%`, width: `${width}%`}}
-                                title={`Alert #${seg.alertId} · ${formatTimestamp(seg.startedAt)} · ${segmentDuration(seg)}`}
+                                title={`${t('rec.alertNum', { id: seg.alertId })} · ${formatTimestamp(seg.startedAt)} · ${segmentDuration(seg)}`}
                               />
                             );
                           })}
@@ -400,15 +402,15 @@ export function RecordingTab({ canManage = true, saved, segments, busy, authHead
                         </div>
 
                         <div className="timeline-legend">
-                          <span className="timeline-legend-item timeline-legend-item--cont">Continuous</span>
-                          <span className="timeline-legend-item timeline-legend-item--event">Event clip</span>
+                          <span className="timeline-legend-item timeline-legend-item--cont">{t('rec.continuous')}</span>
+                          <span className="timeline-legend-item timeline-legend-item--event">{t('rec.eventClip')}</span>
                           {timelineSelectedMin !== null && (
                             <span style={{fontSize: '12px', color: '#667788', marginLeft: 'auto'}}>
-                              Selected: {selectedLabel} · {allBrowseSegments.filter((s) => {
+                              {t('rec.selectedSegs', { time: selectedLabel, n: allBrowseSegments.filter((s) => {
                                 const startMin = (s.startedAt - dayStartSec) / 60;
                                 const endMin = ((s.endedAt || s.startedAt) - dayStartSec) / 60;
                                 return timelineSelectedMin >= startMin && timelineSelectedMin <= endMin;
-                              }).length} segment(s) at this time
+                              }).length })}
                             </span>
                           )}
                         </div>
@@ -416,7 +418,7 @@ export function RecordingTab({ canManage = true, saved, segments, busy, authHead
                     )}
 
                     {browseLoaded && allBrowseSegments.length === 0 && (
-                      <p className="empty-hint">No recordings found for this date.</p>
+                      <p className="empty-hint">{t('rec.noRecordingsDate')}</p>
                     )}
                     {allBrowseSegments.length > 0 && (
                       <div className="segment-list" style={{marginTop: '8px'}}>
@@ -440,7 +442,7 @@ export function RecordingTab({ canManage = true, saved, segments, busy, authHead
               </section>
             </div>
           ) : (
-            <p className="empty-hint">No cameras saved. Add a camera in the Cameras tab first.</p>
+            <p className="empty-hint">{t('rec.noCameras')}</p>
           )}
         </main>
       </section>
@@ -456,17 +458,17 @@ export function RecordingTab({ canManage = true, saved, segments, busy, authHead
                 <span className="video-dialog-title">{segmentFilename(playingSegment)}</span>
                 {playEventDesc && <span className="segment-event-label">{playEventDesc}</span>}
               </div>
-              <button type="button" className="video-dialog-close" onClick={closeVideoModal} aria-label="Close">✕</button>
+              <button type="button" className="video-dialog-close" onClick={closeVideoModal} aria-label={t('common.close')}>✕</button>
             </div>
             <div className="video-dialog-body">
-              {loadingVideo && <div className="video-loading-msg">Loading video…</div>}
+              {loadingVideo && <div className="video-loading-msg">{t('rec.loadingVideo')}</div>}
               {videoUrl && (
                 <video className="video-player" controls autoPlay src={videoUrl} />
               )}
             </div>
             <div className="video-dialog-meta">
               {formatTimestamp(playingSegment.startedAt)} · {segmentDuration(playingSegment)} · {formatFileSize(playingSegment.fileSize)}
-              {playingSegment.alertId ? ` · Alert #${playingSegment.alertId}` : ''}
+              {playingSegment.alertId ? ` · ${t('rec.alertNum', { id: playingSegment.alertId })}` : ''}
             </div>
           </div>
         </div>
@@ -500,7 +502,8 @@ function configDraftFor(existing, cameraId, liveFallback = '') {
 // preserves them on save by merging over the camera's existing config. It also polls
 // the recorder status so the user gets immediate feedback after enabling recording.
 export function CameraRecordingConfig({ device, configs, busy, canManage = true, authHeader, onSaveConfig, onMessage }) {
-  const notify = useCallback((msg) => { if (onMessage && msg) onMessage(msg); }, [onMessage]);
+  const t = useT();
+  const notify = useCallback((msg, kind) => { if (onMessage && msg) onMessage(msg, kind); }, [onMessage]);
   const cameraId = Number(device?.id) || 0;
   const existing = useMemo(
     () => (configs || []).find((c) => Number(c.cameraId) === cameraId) || null,
@@ -569,7 +572,7 @@ export function CameraRecordingConfig({ device, configs, busy, canManage = true,
       syncEncoderControls(cfg);
     } catch (e) {
       setEncoder(null);
-      notify(`Could not read camera encoder (camera may not be ONVIF-managed): ${e.message}`);
+      notify(t('rec.couldNotReadEncoder', { err: e.message }), 'error');
     } finally {
       setEncoderBusy(false);
     }
@@ -590,9 +593,9 @@ export function CameraRecordingConfig({ device, configs, busy, canManage = true,
       if (!resp.ok) throw new Error(payload?.message || payload?.error || `${resp.status}`);
       const cfg = payload?.data?.result ?? payload?.result ?? payload;
       syncEncoderControls(cfg);
-      notify(`Camera now encoding ${cfg?.encoding || encoderCodec.toUpperCase()}${cfg?.bitrateLimit ? ` at ${cfg.bitrateLimit} kbps` : ''}. New recordings use this; existing footage is unchanged.`);
+      notify(t('rec.cameraNowEncoding', { codec: cfg?.encoding || encoderCodec.toUpperCase(), bitrate: cfg?.bitrateLimit ? t('rec.bitrateSuffix', { kbps: cfg.bitrateLimit }) : '' }));
     } catch (e) {
-      notify(`Camera quality not applied: ${e.message || 'apply failed'}`);
+      notify(t('rec.qualityNotApplied', { err: e.message || 'apply failed' }), 'error');
     } finally {
       setEncoderBusy(false);
     }
@@ -604,27 +607,27 @@ export function CameraRecordingConfig({ device, configs, busy, canManage = true,
     <section className="saved-tab-panel">
       <div className="recording-config-grid">
         <label className="field-label">
-          <span>Segment length (minutes)</span>
+          <span>{t('rec.segLength')}</span>
           <input type="number" min="1" max="60" value={draft.segmentMinutes || 15}
             onChange={(e) => setDraft({ ...draft, segmentMinutes: Number(e.target.value) })} />
         </label>
         <label className="field-label">
-          <span>Pre-roll (seconds)</span>
+          <span>{t('rec.preRoll')}</span>
           <input type="number" min="5" max="120" value={draft.preRollSec}
             onChange={(e) => setDraft({ ...draft, preRollSec: Number(e.target.value) })} />
         </label>
         <label className="field-label">
-          <span>Post-roll (seconds)</span>
+          <span>{t('rec.postRoll')}</span>
           <input type="number" min="3" max="120" value={draft.postRollSec}
             onChange={(e) => setDraft({ ...draft, postRollSec: Number(e.target.value) })} />
         </label>
         <label className="field-label">
-          <span>Retention (days)</span>
+          <span>{t('rec.retention')}</span>
           <input type="number" min="1" max="365" value={draft.retentionDays || 7}
             onChange={(e) => setDraft({ ...draft, retentionDays: Number(e.target.value) })} />
         </label>
         <label className="field-label">
-          <span>Storage path</span>
+          <span>{t('rec.storagePath')}</span>
           <input type="text" value={draft.storagePath || ''} placeholder="recordings"
             onChange={(e) => setDraft({ ...draft, storagePath: e.target.value })} />
         </label>
@@ -634,10 +637,10 @@ export function CameraRecordingConfig({ device, configs, busy, canManage = true,
         <label className="check-row">
           <input type="checkbox" checked={!!draft.enabled} disabled={!canManage}
             onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} />
-          Enable recording for this camera
+          {t('rec.enableForCamera')}
         </label>
         <button type="button" onClick={save} disabled={busy || !canManage}>
-          <span className="btn-icon"><Ico n="save" /> Save config</span>
+          <span className="btn-icon"><Ico n="save" /> {t('rec.saveConfig')}</span>
         </button>
       </div>
 
@@ -650,13 +653,13 @@ export function CameraRecordingConfig({ device, configs, busy, canManage = true,
             <div style={{marginTop: '12px', padding: '10px 12px', borderRadius: '6px', background: isOk ? 'rgba(34,197,94,0.1)' : isErr ? 'rgba(239,68,68,0.1)' : 'rgba(148,163,184,0.1)', border: `1px solid ${isOk ? 'rgba(34,197,94,0.3)' : isErr ? 'rgba(239,68,68,0.3)' : 'rgba(148,163,184,0.3)'}`}}>
               <div style={{display:'flex', alignItems:'center', gap:'8px', marginBottom: rs.lastError || rs.liveDir ? '6px' : '0'}}>
                 <span style={{width:'8px', height:'8px', borderRadius:'50%', background: isOk ? '#22c55e' : isErr ? '#ef4444' : '#94a3b8', display:'inline-block', flexShrink:0}} />
-                <strong style={{fontSize:'13px'}}>{isOk ? 'Recording active' : isErr ? 'Recorder error' : 'Recorder stopped'}</strong>
-                <span style={{fontSize:'12px', color:'var(--text-muted, #94a3b8)', marginLeft:'auto'}}>{rs.liveFiles} live segment{rs.liveFiles !== 1 ? 's' : ''}</span>
+                <strong style={{fontSize:'13px'}}>{isOk ? t('rec.recActive') : isErr ? t('rec.recError') : t('rec.recStopped')}</strong>
+                <span style={{fontSize:'12px', color:'var(--text-muted, #94a3b8)', marginLeft:'auto'}}>{t('rec.liveSegs', { n: rs.liveFiles })}</span>
                 <button type="button" className="quiet" style={{fontSize:'11px', padding:'2px 6px'}} onClick={fetchStatus}>↻</button>
               </div>
               {rs.liveDir && <div style={{fontSize:'11px', color:'var(--text-muted, #94a3b8)', wordBreak:'break-all'}}>{rs.liveDir}</div>}
               {rs.activeStreamUrl && <div style={{fontSize:'11px', color:'var(--text-muted, #94a3b8)', wordBreak:'break-all', marginTop:'2px'}}>
-                {rs.usingFallback ? '⚠ Fallback: ' : 'Stream: '}{rs.activeStreamUrl}
+                {rs.usingFallback ? t('rec.fallbackPrefix') : t('rec.streamPrefix')}{rs.activeStreamUrl}
               </div>}
               {rs.lastError && <div style={{fontSize:'12px', color:'#ef4444', marginTop:'4px', wordBreak:'break-all'}}>{rs.lastError}</div>}
             </div>
@@ -667,10 +670,10 @@ export function CameraRecordingConfig({ device, configs, busy, canManage = true,
             <div style={{marginTop: '12px', padding: '10px 12px', borderRadius: '6px', background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.3)'}}>
               <div style={{display:'flex', alignItems:'center', gap:'8px'}}>
                 <span style={{width:'8px', height:'8px', borderRadius:'50%', background:'#eab308', display:'inline-block', flexShrink:0}} />
-                <strong style={{fontSize:'13px'}}>No active recorder</strong>
+                <strong style={{fontSize:'13px'}}>{t('rec.noActiveRecorder')}</strong>
                 <button type="button" className="quiet" style={{fontSize:'11px', padding:'2px 6px', marginLeft:'auto'}} onClick={fetchStatus}>↻</button>
               </div>
-              <div style={{fontSize:'12px', color:'var(--text-muted, #94a3b8)', marginTop:'4px'}}>Recording is enabled but no recorder is running. Make sure a stream is set in the Stream tab and the storage path is writable; check server logs for details.</div>
+              <div style={{fontSize:'12px', color:'var(--text-muted, #94a3b8)', marginTop:'4px'}}>{t('rec.noRecorderHint')}</div>
             </div>
           );
         }
@@ -682,17 +685,17 @@ export function CameraRecordingConfig({ device, configs, busy, canManage = true,
           stream-copies it. */}
       <div className="camera-encoder-section" style={{marginTop:'16px', paddingTop:'12px', borderTop:'1px solid var(--border, rgba(148,163,184,0.2))'}}>
         <div style={{display:'flex', alignItems:'center', gap:'8px', marginBottom:'8px'}}>
-          <strong style={{fontSize:'13px'}}>Camera-side quality (ONVIF)</strong>
+          <strong style={{fontSize:'13px'}}>{t('rec.cameraSideQuality')}</strong>
           <button type="button" className="quiet" style={{fontSize:'11px', padding:'2px 8px', marginLeft:'auto'}} onClick={loadEncoder} disabled={encoderBusy}>
-            {encoderBusy ? '…' : (encoder ? '↻ Refresh' : 'Read from camera')}
+            {encoderBusy ? '…' : (encoder ? `↻ ${t('common.refresh')}` : t('rec.readFromCamera'))}
           </button>
         </div>
         <p style={{fontSize:'12px', color:'var(--text-muted, #94a3b8)', margin:'0 0 8px'}}>
-          Pushes the codec and a bitrate cap to the camera's own encoder. The smallest footage with no host CPU/GPU cost. Requires an ONVIF camera that allows encoder changes.
+          {t('rec.cameraSideHint')}
         </p>
         {encoder && (
           <div style={{fontSize:'12px', color:'var(--text-muted, #94a3b8)', marginBottom:'8px'}}>
-            Current: <strong>{encoder.encoding || '?'}</strong>
+            {t('rec.current')} <strong>{encoder.encoding || '?'}</strong>
             {encoder.width ? ` · ${encoder.width}×${encoder.height}` : ''}
             {encoder.frameRateLimit ? ` · ${encoder.frameRateLimit} fps` : ''}
             {encoder.bitrateLimit ? ` · ${encoder.bitrateLimit} kbps` : ''}
@@ -700,14 +703,14 @@ export function CameraRecordingConfig({ device, configs, busy, canManage = true,
         )}
         <div className="recording-config-grid">
           <label className="field-label">
-            <span>Codec</span>
+            <span>{t('rec.codec')}</span>
             <select value={encoderCodec} disabled={!canManage} onChange={(e) => setEncoderCodec(e.target.value)}>
-              <option value="h265">H.265 (HEVC) — smallest</option>
-              <option value="h264">H.264 — most compatible</option>
+              <option value="h265">{t('rec.codecH265')}</option>
+              <option value="h264">{t('rec.codecH264')}</option>
             </select>
           </label>
           <label className="field-label">
-            <span>Bitrate cap (kbps, 0 = keep)</span>
+            <span>{t('rec.bitrateCap')}</span>
             <input type="number" min="0" max="20000" step="256" value={encoderKbps}
               placeholder="e.g. 2048" disabled={!canManage}
               onChange={(e) => setEncoderKbps(e.target.value)} />
@@ -715,7 +718,7 @@ export function CameraRecordingConfig({ device, configs, busy, canManage = true,
         </div>
         <div className="settings-actions" style={{marginTop:'14px', justifyContent:'flex-start'}}>
           <button type="button" onClick={applyEncoder} disabled={encoderBusy || !canManage}>
-            <span className="btn-icon"><Ico n="save" /> {encoderBusy ? 'Applying…' : 'Apply to camera'}</span>
+            <span className="btn-icon"><Ico n="save" /> {encoderBusy ? t('rec.applying') : t('rec.applyToCamera')}</span>
           </button>
         </div>
       </div>
@@ -728,6 +731,7 @@ export function CameraRecordingConfig({ device, configs, busy, canManage = true,
 // feed BOTH AI detection (even when recording is off) and recording when enabled. It
 // preserves the camera's recording settings on save by merging over the existing config.
 export function CameraStreamConfig({ device, configs, busy, authHeader, canManage = true, onSaveConfig }) {
+  const t = useT();
   const cameraId = Number(device?.id) || 0;
   const liveFallback = device?.rtspUrl || '';
   const existing = useMemo(
@@ -754,7 +758,7 @@ export function CameraStreamConfig({ device, configs, busy, authHeader, canManag
       const result = payload?.data?.result ?? payload?.result ?? payload;
       setStreamProfiles(result || null);
     } catch (e) {
-      setStreamProfilesError(e.message || 'Failed to load streams');
+      setStreamProfilesError(e.message || t('rec.failedLoadStreams'));
       setStreamProfiles(null);
     } finally {
       setStreamProfilesLoading(false);
@@ -771,7 +775,7 @@ export function CameraStreamConfig({ device, configs, busy, authHeader, canManag
       if (!resp.ok) throw new Error(`${resp.status}`);
       await fetchStreamProfiles();
     } catch (e) {
-      alert(`Failed to apply live stream: ${e.message}`);
+      alert(t('rec.applyLiveFail', { err: e.message }));
     }
   }
 
@@ -782,7 +786,7 @@ export function CameraStreamConfig({ device, configs, busy, authHeader, canManag
       setDraft((d) => ({ ...d, liveStreamUrl: opts[0].rtspUrl, streamUrl: opts[1].rtspUrl, fallbackStreamUrl: opts[0].rtspUrl }));
     } else {
       setDraft((d) => ({ ...d, liveStreamUrl: opts[0].rtspUrl, streamUrl: '', fallbackStreamUrl: '' }));
-      alert('Only one stream profile found. Both live and detection/recording will use the same stream.');
+      alert(t('rec.oneProfile'));
     }
   }
 
@@ -842,41 +846,41 @@ export function CameraStreamConfig({ device, configs, busy, authHeader, canManag
   return (
     <section className="saved-tab-panel" style={{display:'flex', flexDirection:'column', gap:'10px'}}>
       <p style={{margin:0, fontSize:'12px', color:'var(--text-muted,#94a3b8)'}}>
-        These streams are used for both AI detection and, when enabled, recording — they apply even with recording off.
+        {t('rec.streamsIntro')}
       </p>
       <div style={{display:'flex', gap:'8px', alignItems:'center'}}>
         <button type="button" className="quiet" style={{fontSize:'12px'}} onClick={fetchStreamProfiles} disabled={streamProfilesLoading}>
-          {streamProfilesLoading ? 'Loading streams…' : 'Detect streams'}
+          {streamProfilesLoading ? t('rec.loadingStreams') : t('rec.detectStreams')}
         </button>
         {streamProfiles?.options?.length >= 2 && (
           <button type="button" className="quiet" style={{fontSize:'12px'}} onClick={autoConfigureStreams}>
-            Auto-configure (main→live, sub→detection/recording)
+            {t('rec.autoConfigure')}
           </button>
         )}
         {streamProfilesError && <span style={{fontSize:'12px', color:'#ef4444'}}>{streamProfilesError}</span>}
       </div>
       {aspectMismatch && (
         <p style={{margin:0, fontSize:'12px', color:'#f59e0b'}}>
-          ⚠ The detection/recording stream framing differs from the live-view stream (different aspect ratio). Detection zones and crossing lines are drawn on the detection stream — re-check them in the rule editor if you switch streams.
+          {t('rec.aspectMismatch')}
         </p>
       )}
 
       <label className="field-label" style={{gap:'4px'}}>
-        <span style={{fontSize:'12px', fontWeight:'600'}}>Live view stream</span>
+        <span style={{fontSize:'12px', fontWeight:'600'}}>{t('rec.liveStream')}</span>
         {profileChips(draft.liveStreamUrl, (url) => setDraft((d) => ({ ...d, liveStreamUrl: url })))}
         <input type="text" value={draft.liveStreamUrl || ''} placeholder="rtsp://user:pass@ip/stream1"
           onChange={(e) => setDraft({ ...draft, liveStreamUrl: e.target.value })} />
       </label>
 
       <label className="field-label" style={{gap:'4px'}}>
-        <span style={{fontSize:'12px', fontWeight:'600'}}>Detection / recording stream <span style={{fontWeight:'normal', color:'var(--text-muted,#94a3b8)'}}>(used for AI detection and, when enabled, recording; leave blank to use the live-view stream)</span></span>
+        <span style={{fontSize:'12px', fontWeight:'600'}}>{t('rec.detectStream')} <span style={{fontWeight:'normal', color:'var(--text-muted,#94a3b8)'}}>{t('rec.detectStreamHint')}</span></span>
         {profileChips(draft.streamUrl, (url) => setDraft((d) => ({ ...d, streamUrl: url })))}
         <input type="text" value={draft.streamUrl || ''} placeholder="rtsp://user:pass@ip/stream2"
           onChange={(e) => setDraft({ ...draft, streamUrl: e.target.value })} />
       </label>
 
       <label className="field-label" style={{gap:'4px'}}>
-        <span style={{fontSize:'12px', fontWeight:'600'}}>Fallback stream <span style={{fontWeight:'normal', color:'var(--text-muted,#94a3b8)'}}>(tried after 2 quick failures of the primary)</span></span>
+        <span style={{fontSize:'12px', fontWeight:'600'}}>{t('rec.fallbackStream')} <span style={{fontWeight:'normal', color:'var(--text-muted,#94a3b8)'}}>{t('rec.fallbackStreamHint')}</span></span>
         {profileChips(draft.fallbackStreamUrl, (url) => setDraft((d) => ({ ...d, fallbackStreamUrl: url })))}
         <input type="text" value={draft.fallbackStreamUrl || ''} placeholder="rtsp://user:pass@ip/stream1  (optional)"
           onChange={(e) => setDraft({ ...draft, fallbackStreamUrl: e.target.value })} />
@@ -884,7 +888,7 @@ export function CameraStreamConfig({ device, configs, busy, authHeader, canManag
 
       <div className="settings-actions">
         <button type="button" onClick={save} disabled={busy || !canManage}>
-          <span className="btn-icon"><Ico n="save" /> Save streams</span>
+          <span className="btn-icon"><Ico n="save" /> {t('rec.saveStreams')}</span>
         </button>
       </div>
     </section>

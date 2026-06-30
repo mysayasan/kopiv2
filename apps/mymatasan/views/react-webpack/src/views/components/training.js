@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Ico } from './icons';
+import { useT } from '@shared/i18n';
 import { ConsoleLog } from './console';
 import { apiBase, cameraTitle } from '../lib/helpers';
 
@@ -54,6 +55,7 @@ function AuthBlobImage({ path, authHeader, alt = '' }) {
 // captured for it, plays that clip — so the user can review context before
 // importing the frame as a training sample.
 function AlertPreviewModal({ alert, authHeader, busy, onAdd, onClose }) {
+  const t = useT();
   const [videoUrl, setVideoUrl] = useState(null);
   const [loadingVideo, setLoadingVideo] = useState(true);
   const [noClip, setNoClip] = useState(false);
@@ -104,23 +106,23 @@ function AlertPreviewModal({ alert, authHeader, busy, onAdd, onClose }) {
       <div className="video-dialog" onClick={(e) => e.stopPropagation()}>
         <div className="video-dialog-header">
           <span className="video-dialog-title">{alert.label || alert.detectionType} · #{alert.id}</span>
-          <button type="button" className="video-dialog-close" onClick={onClose} aria-label="Close">✕</button>
+          <button type="button" className="video-dialog-close" onClick={onClose} aria-label={t('common.close')}>✕</button>
         </div>
         <div className="video-dialog-body">
           {videoUrl ? (
             <video className="video-player" controls autoPlay muted src={videoUrl} />
           ) : (
-            <AuthBlobImage path={`/api/vision/alerts/${alert.id}/snapshot`} authHeader={authHeader} alt="alert snapshot" />
+            <AuthBlobImage path={`/api/vision/alerts/${alert.id}/snapshot`} authHeader={authHeader} alt={t('tr.altAlertSnapshot')} />
           )}
         </div>
         <div className="video-dialog-meta">
-          {loadingVideo ? 'Loading clip…' : noClip ? 'No recorded clip for this alert — showing snapshot.' : `camera ${alert.cameraId}`}
+          {loadingVideo ? t('tr.loadingClip') : noClip ? t('tr.noClip') : t('tr.cameraN', { id: alert.cameraId })}
         </div>
         <div className="action-row">
           <button type="button" onClick={onAdd} disabled={busy}>
-            <span className="btn-icon"><Ico n="plus" /> Add to dataset</span>
+            <span className="btn-icon"><Ico n="plus" /> {t('tr.addToDataset')}</span>
           </button>
-          <button type="button" className="quiet" onClick={onClose}>Close</button>
+          <button type="button" className="quiet" onClick={onClose}>{t('common.close')}</button>
         </div>
       </div>
     </div>
@@ -179,6 +181,7 @@ function nextBoxName(existing) {
 // class to each, run auto-label, then save. Coordinates are normalized 0..1 and
 // the SVG overlay maps them to the displayed image via percentage units.
 function ImageAnnotator({ image, dataset, authHeader, busy, onSave, onAutoLabel, onClose }) {
+  const t = useT();
   const [boxes, setBoxes] = useState(() => parseAnnotations(image.annotations));
   const [selected, setSelected] = useState(-1);
   const [checked, setChecked] = useState(() => new Set());
@@ -195,7 +198,7 @@ function ImageAnnotator({ image, dataset, authHeader, busy, onSave, onAutoLabel,
   boxesRef.current = boxes;
   const requestClose = useCallback(() => {
     const dirtyNow = JSON.stringify(boxesRef.current) !== initialJsonRef.current;
-    if (dirtyNow && !window.confirm('Discard unsaved label changes?')) return;
+    if (dirtyNow && !window.confirm(t('tr.discardConfirm'))) return;
     onClose();
   }, [onClose]);
 
@@ -333,10 +336,10 @@ function ImageAnnotator({ image, dataset, authHeader, busy, onSave, onAutoLabel,
       <div className="video-dialog annotator-dialog" onClick={(e) => e.stopPropagation()}>
         <div className="video-dialog-header">
           <span className="video-dialog-title">
-            Label image
-            {dirty ? <span className="annotator-dirty"> ● Unsaved</span> : null}
+            {t('tr.labelImage')}
+            {dirty ? <span className="annotator-dirty">{t('tr.unsaved')}</span> : null}
           </span>
-          <button type="button" className="video-dialog-close" onClick={requestClose} aria-label="Close">✕</button>
+          <button type="button" className="video-dialog-close" onClick={requestClose} aria-label={t('common.close')}>✕</button>
         </div>
 
         <datalist id="annotator-label-suggestions">
@@ -344,27 +347,27 @@ function ImageAnnotator({ image, dataset, authHeader, busy, onSave, onAutoLabel,
         </datalist>
 
         <span className="field-hint annotator-intro">
-          Drag on the image to draw a box — it's added to the list as box1, box2… for you to rename. Or use Auto-label to let the detector pre-fill them.
+          {t('tr.annotatorIntro')}
         </span>
 
         <div className="annotator-body">
           {/* Left: the box list with multi-select + bulk delete. */}
           <aside className="annotator-sidebar">
             <div className="annotator-sidebar-head">
-              <strong>Boxes ({boxes.length})</strong>
+              <strong>{t('tr.boxesCount', { n: boxes.length })}</strong>
               <div className="annotator-sidebar-tools">
                 <label className="check-row compact">
                   <input type="checkbox" checked={allChecked} onChange={toggleAllChecked} disabled={boxes.length === 0} />
-                  All
+                  {t('common.all')}
                 </label>
                 <button type="button" className="quiet danger" onClick={deleteChecked} disabled={busy || checked.size === 0}>
-                  <span className="btn-icon"><Ico n="trash" /> Delete ({checked.size})</span>
+                  <span className="btn-icon"><Ico n="trash" /> {t('tr.deleteN', { n: checked.size })}</span>
                 </button>
               </div>
             </div>
             <div className="annotator-boxlist">
               {boxes.length === 0 ? (
-                <span className="field-hint">No boxes yet — drag on the image, or use Auto-label.</span>
+                <span className="field-hint">{t('tr.noBoxesYet')}</span>
               ) : (
                 boxes.map((b, i) => (
                   <div
@@ -372,14 +375,14 @@ function ImageAnnotator({ image, dataset, authHeader, busy, onSave, onAutoLabel,
                     className={`annotator-box-row${i === selected ? ' is-selected' : ''}`}
                     onMouseEnter={() => setSelected(i)}
                   >
-                    <input type="checkbox" checked={checked.has(i)} onChange={() => toggleChecked(i)} title="Select for bulk delete" />
+                    <input type="checkbox" checked={checked.has(i)} onChange={() => toggleChecked(i)} title={t('tr.selectForBulk')} />
                     <i className={`anno-swatch ${b.source}`} />
                     <input
                       className="annotator-box-name"
                       list="annotator-label-suggestions"
                       value={b.className}
                       onChange={(e) => setBoxClassAt(i, e.target.value)}
-                      placeholder="label, e.g. papa"
+                      placeholder={t('tr.labelPlaceholder')}
                     />
                   </div>
                 ))
@@ -391,12 +394,12 @@ function ImageAnnotator({ image, dataset, authHeader, busy, onSave, onAutoLabel,
           <div className="annotator-main">
             <div className="annotator-legend">
               <div className="annotator-legend-keys">
-                <span><i className="anno-swatch manual" /> You drew</span>
-                <span><i className="anno-swatch auto" /> Auto-labeled</span>
-                <span><i className="anno-swatch selected" /> Selected</span>
+                <span><i className="anno-swatch manual" /> {t('tr.youDrew')}</span>
+                <span><i className="anno-swatch auto" /> {t('tr.autoLabeled')}</span>
+                <span><i className="anno-swatch selected" /> {t('tr.selected')}</span>
               </div>
-              <button type="button" className="quiet" onClick={runAutoLabel} disabled={busy} title="Let the detector draw boxes automatically; you can then fix them">
-                <span className="btn-icon"><Ico n="wand" /> Auto-label</span>
+              <button type="button" className="quiet" onClick={runAutoLabel} disabled={busy} title={t('tr.autoLabelTitle')}>
+                <span className="btn-icon"><Ico n="wand" /> {t('tr.autoLabel')}</span>
               </button>
             </div>
 
@@ -408,7 +411,7 @@ function ImageAnnotator({ image, dataset, authHeader, busy, onSave, onAutoLabel,
               onMouseUp={onMouseUp}
               onMouseLeave={onMouseUp}
             >
-              {blobUrl ? <img src={blobUrl} alt="annotate" draggable="false" /> : <div className="training-thumb-empty" />}
+              {blobUrl ? <img src={blobUrl} alt={t('tr.altAnnotate')} draggable="false" /> : <div className="training-thumb-empty" />}
               <svg className="annotator-overlay" viewBox="0 0 100 100" preserveAspectRatio="none">
                 {boxes.map((b, i) => (
                   <rect
@@ -443,14 +446,14 @@ function ImageAnnotator({ image, dataset, authHeader, busy, onSave, onAutoLabel,
         </div>
 
         {unlabeled > 0 ? (
-          <div className="field-hint annotator-warn">{unlabeled} box{unlabeled === 1 ? '' : 'es'} without a label won't be used for training — assign a label or remove.</div>
+          <div className="field-hint annotator-warn">{t('tr.unlabeledWarn', { n: unlabeled })}</div>
         ) : null}
 
         <div className="action-row">
           <button type="button" onClick={() => onSave(image.id, boxes)} disabled={busy || !dirty}>
-            <span className="btn-icon"><Ico n="save" /> Save labels</span>
+            <span className="btn-icon"><Ico n="save" /> {t('tr.saveLabels')}</span>
           </button>
-          <button type="button" className="quiet" onClick={requestClose}>Cancel</button>
+          <button type="button" className="quiet" onClick={requestClose}>{t('common.cancel')}</button>
         </div>
       </div>
     </div>
@@ -460,19 +463,20 @@ function ImageAnnotator({ image, dataset, authHeader, busy, onSave, onAutoLabel,
 // Detection-type options for the importer filter. Values match the stored
 // detectionType (rule mode / legacy object type) and are filtered server-side.
 const alertTypeOptions = [
-  ['presence', 'Presence'],
-  ['crowd', 'Crowd'],
-  ['intrusion', 'Intrusion'],
-  ['line_crossing', 'Line crossing'],
-  ['multi_line_crossing', 'Multi-line crossing'],
-  ['person', 'Person'],
-  ['vehicle', 'Vehicle'],
-  ['animal', 'Animal'],
-  ['fire', 'Fire'],
-  ['smoke', 'Smoke'],
+  ['presence', 'det.presence'],
+  ['crowd', 'det.crowd'],
+  ['intrusion', 'det.intrusion'],
+  ['line_crossing', 'det.lineCrossing'],
+  ['multi_line_crossing', 'det.multiLineCrossing'],
+  ['person', 'det.person'],
+  ['vehicle', 'det.vehicle'],
+  ['animal', 'det.animal'],
+  ['fire', 'det.fire'],
+  ['smoke', 'det.smoke'],
 ];
 
 export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }) {
+  const t = useT();
   const [datasets, setDatasets] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [images, setImages] = useState([]);
@@ -497,14 +501,14 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
   const alertsRef = useRef(null);
   const alertPageSize = 12;
 
-  const notify = useCallback((msg) => { if (onMessage) onMessage(msg); }, [onMessage]);
+  const notify = useCallback((msg, kind) => { if (onMessage) onMessage(msg, kind); }, [onMessage]);
 
   const cameraName = useCallback(
     (id) => {
       const cam = (cameras || []).find((c) => Number(c.id) === Number(id));
-      return cam ? cameraTitle(cam) : `Camera ${id}`;
+      return cam ? cameraTitle(cam) : t('tr.cameraLabel', { id });
     },
-    [cameras],
+    [cameras, t],
   );
 
   const selected = datasets.find((d) => Number(d.id) === Number(selectedId)) || null;
@@ -516,7 +520,7 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
       setDatasets(items);
       setSelectedId((current) => current || items[0]?.id || null);
     } catch (err) {
-      notify(err.message);
+      notify(err.message, 'error');
     }
   }, [authHeader, notify]);
 
@@ -526,7 +530,7 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
       const result = await api(`/api/training/datasets/${datasetId}/images`, authHeader);
       setImages(Array.isArray(result?.items) ? result.items : []);
     } catch (err) {
-      notify(err.message);
+      notify(err.message, 'error');
     }
   }, [authHeader, notify]);
 
@@ -546,7 +550,7 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
       setImportAlerts(Array.isArray(result?.items) ? result.items : []);
       setImportTotal(typeof result?.total === 'number' ? result.total : 0);
     } catch (err) {
-      notify(err.message);
+      notify(err.message, 'error');
     }
   }, [authHeader, notify]);
 
@@ -555,7 +559,7 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
       const result = await api('/api/training/models', authHeader);
       setModels(Array.isArray(result?.items) ? result.items : []);
     } catch (err) {
-      notify(err.message);
+      notify(err.message, 'error');
     }
   }, [authHeader, notify]);
 
@@ -573,7 +577,7 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
       const st = await api('/api/training/setup-deps', authHeader, { method: 'POST' });
       setInstallLog(st?.log || '');
       setInstalling(true);
-    }, 'Installing GPU support — this can take several minutes.');
+    }, t('tr.installingGpu'));
   }, [authHeader]);
 
   useEffect(() => {
@@ -587,8 +591,8 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
           setInstalling(false);
           await loadCapability();
           notify(st?.status === 'done'
-            ? 'GPU dependencies installed. Restart the server to use the GPU.'
-            : 'Dependency install finished with errors — see the log below.');
+            ? t('tr.gpuInstalled')
+            : t('tr.gpuInstallErr'), st?.status === 'done' ? 'success' : 'error');
         }
       } catch (_) { /* keep polling */ }
     }, 3000);
@@ -619,7 +623,7 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
       await action();
       if (okMessage) notify(okMessage);
     } catch (err) {
-      notify(err.message);
+      notify(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -637,7 +641,7 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
       setDraft(emptyDatasetDraft);
       await loadDatasets();
       if (saved?.id) setSelectedId(saved.id);
-    }, 'Dataset saved.');
+    }, t('tr.datasetSaved'));
   }
 
   function deleteDataset(id) {
@@ -645,7 +649,7 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
       await api(`/api/training/datasets/${id}`, authHeader, { method: 'DELETE' });
       if (Number(id) === Number(selectedId)) setSelectedId(null);
       await loadDatasets();
-    }, 'Dataset deleted.');
+    }, t('tr.datasetDeleted'));
   }
 
   function uploadFiles(fileList) {
@@ -658,7 +662,7 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
       }
       await loadImages(selectedId);
       await loadDatasets();
-    }, 'Images uploaded.');
+    }, t('tr.imagesUploaded'));
   }
 
   function addFromAlert(alertId) {
@@ -671,7 +675,7 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
       await loadImages(selectedId);
       await loadDatasets();
       await loadImportAlerts(alertPage, filterCamera, filterType);
-    }, 'Alert snapshot added.');
+    }, t('tr.alertAdded'));
   }
 
   function deleteImage(id) {
@@ -679,7 +683,7 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
       await api(`/api/training/images/${id}`, authHeader, { method: 'DELETE' });
       await loadImages(selectedId);
       await loadDatasets();
-    }, 'Image removed.');
+    }, t('tr.imageRemoved'));
   }
 
   function saveAnnotations(imageId, annotations) {
@@ -691,7 +695,7 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
       await loadImages(selectedId);
       await loadDatasets();
       setEditingImage(null);
-    }, 'Labels saved.');
+    }, t('tr.labelsSaved'));
   }
 
   // autoLabelImage runs the detector server-side and returns the resulting
@@ -701,10 +705,10 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
       const updated = await api(`/api/training/images/${imageId}/autolabel`, authHeader, { method: 'POST' });
       await loadImages(selectedId);
       await loadDatasets();
-      notify('Auto-label complete.');
+      notify(t('tr.autoLabelDone'));
       return parseAnnotations(updated?.annotations);
     } catch (err) {
-      notify(err.message);
+      notify(err.message, 'error');
       return null;
     }
   }
@@ -716,7 +720,7 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
       const resp = await fetch(`${apiBase()}/api/training/datasets/${selectedId}/export`, { credentials: 'include', headers });
       if (!resp.ok) {
         const text = await resp.text();
-        let msg = `Export failed (${resp.status})`;
+        let msg = t('tr.exportFailed', { status: resp.status });
         try { msg = JSON.parse(text)?.message || msg; } catch (_) { /* keep default */ }
         throw new Error(msg);
       }
@@ -729,13 +733,13 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-    }, 'Dataset exported.');
+    }, t('tr.datasetExported'));
   }
 
   function importModel(event) {
     event.preventDefault();
     const file = modelFileRef.current?.files?.[0];
-    if (!file) { notify('Choose a .pt weights file to import.'); return; }
+    if (!file) { notify(t('tr.choosePt'), 'error'); return; }
     run(async () => {
       const form = new FormData();
       form.append('file', file);
@@ -747,20 +751,20 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
       await loadModels();
       const cls = modelClasses(model);
       notify(cls.length
-        ? `Model imported — detected classes: ${cls.join(', ')}. Activate it to start detecting them.`
-        : 'Model imported. Activate it to start detecting its classes.');
+        ? t('tr.modelImportedCls', { cls: cls.join(', ') })
+        : t('tr.modelImported'));
     });
   }
 
   function startTraining() {
-    if (!selectedId) { notify('Pick an active dataset to train.'); return; }
+    if (!selectedId) { notify(t('tr.pickDatasetTrain'), 'error'); return; }
     run(async () => {
       await api('/api/training/models', authHeader, {
         method: 'POST',
         body: JSON.stringify({ datasetId: Number(selectedId), epochs: Number(trainDraft.epochs) || 50, imgsz: Number(trainDraft.imgsz) || 640 }),
       });
       await loadModels();
-    }, 'Training started — progress will update below.');
+    }, t('tr.trainingStarted'));
   }
 
   function activateModel(id) {
@@ -772,8 +776,8 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
       if (onModelActivated) onModelActivated();
       const cls = modelClasses(model);
       notify(cls.length
-        ? `Model activated — it now runs alongside the stock model and detects: ${cls.join(', ')}. Add a rule in the AI tab → Detection Rules → "Detect" targeting those (known hazards like fire/smoke fold into the built-in Fire/Smoke categories).`
-        : 'Model activated — it now runs alongside the stock model.');
+        ? t('tr.modelActivatedCls', { cls: cls.join(', ') })
+        : t('tr.modelActivated'));
     });
   }
 
@@ -782,14 +786,14 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
       await api('/api/training/models/deactivate', authHeader, { method: 'POST' });
       await loadModels();
       if (onModelActivated) onModelActivated();
-    }, 'Reverted to the stock model — detection no longer uses a custom model.');
+    }, t('tr.modelDeactivated'));
   }
 
   function deleteModel(id) {
     run(async () => {
       await api(`/api/training/models/${id}`, authHeader, { method: 'DELETE' });
       await loadModels();
-    }, 'Model deleted.');
+    }, t('tr.modelDeleted'));
   }
 
   // The server returns this page already filtered (status=active + camera/type);
@@ -800,29 +804,20 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
   const rangeEnd = Math.min((alertPage + 1) * alertPageSize, importTotal);
 
   const steps = [
-    ['datasets', 'Datasets', 'folder'],
-    ['images', 'Images & Labels', 'grid2'],
-    ['models', 'Models', 'cpu'],
+    ['datasets', t('tr.stepDatasets'), 'folder'],
+    ['images', t('tr.stepImages'), 'grid2'],
+    ['models', t('tr.stepModels'), 'cpu'],
   ];
   const stepHeaders = {
-    datasets: {
-      title: 'Datasets',
-      desc: 'Step 1 of 3 — Create a dataset (a named collection of images for one set of classes), then select it and continue to Images & Labels.',
-    },
-    images: {
-      title: 'Images & Labels',
-      desc: 'Step 2 of 3 — Add images (upload, or import from recent alerts), then click each image to draw or auto-label boxes around the objects.',
-    },
-    models: {
-      title: 'Models',
-      desc: 'Step 3 of 3 — Train the selected dataset (in-app if a GPU is available, or export to train elsewhere), then activate a model to run it alongside the stock detector.',
-    },
+    datasets: { title: t('tr.stepDatasets'), desc: t('tr.datasetsDesc') },
+    images: { title: t('tr.stepImages'), desc: t('tr.imagesDesc') },
+    models: { title: t('tr.stepModels'), desc: t('tr.modelsDesc') },
   };
   const header = stepHeaders[step] || stepHeaders.datasets;
 
   return (
     <section className="workspace settings-workspace training-workspace">
-      <aside className="settings-side-nav" aria-label="Training">
+      <aside className="settings-side-nav" aria-label={t('tr.trainingAria')}>
         {steps.map(([id, label, icon]) => (
           <button
             key={id}
@@ -837,7 +832,7 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
 
       <div className="settings-content">
       <header className="training-header">
-        <span className="training-eyebrow">Custom Model Training</span>
+        <span className="training-eyebrow">{t('tr.eyebrow')}</span>
         <h1>{header.title}</h1>
         <p>{header.desc}</p>
       </header>
@@ -845,14 +840,14 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
       {step !== 'datasets' ? (
         <div className="training-context-bar">
           <label>
-            Active dataset
+            {t('tr.activeDataset')}
             <select value={selectedId || ''} onChange={(e) => setSelectedId(Number(e.target.value) || null)}>
-              {datasets.length === 0 ? <option value="">(none — create one in Datasets)</option> : null}
+              {datasets.length === 0 ? <option value="">{t('tr.noneCreate')}</option> : null}
               {datasets.map((ds) => <option key={ds.id} value={ds.id}>{ds.name}</option>)}
             </select>
           </label>
           {selected ? (
-            <span className="field-hint">{selected.imageCount || 0} images · {selected.labeledCount || 0} labeled</span>
+            <span className="field-hint">{t('tr.imagesLabeled', { n: selected.imageCount || 0, m: selected.labeledCount || 0 })}</span>
           ) : null}
         </div>
       ) : null}
@@ -860,7 +855,7 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
       {step === 'datasets' ? (
         <section className="settings-panel">
           <header>
-            <h2>Datasets</h2>
+            <h2>{t('tr.stepDatasets')}</h2>
             <span className="status-pill">{datasets.length}</span>
           </header>
           <ul className="class-registry-list">
@@ -871,31 +866,31 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
               >
                 <button type="button" className="training-dataset-pick" onClick={() => { setSelectedId(ds.id); setStep('images'); }}>
                   <strong>{ds.name}</strong>
-                  <span className="field-hint"> {ds.imageCount || 0} images · {ds.labeledCount || 0} labeled</span>
+                  <span className="field-hint"> {t('tr.imagesLabeled', { n: ds.imageCount || 0, m: ds.labeledCount || 0 })}</span>
                 </button>
-                <button type="button" className="quiet danger" onClick={() => deleteDataset(ds.id)} disabled={busy}>Delete</button>
+                <button type="button" className="quiet danger" onClick={() => deleteDataset(ds.id)} disabled={busy}>{t('common.delete')}</button>
               </li>
             ))}
-            {datasets.length === 0 ? <li className="field-hint">No datasets yet — create one below.</li> : null}
+            {datasets.length === 0 ? <li className="field-hint">{t('tr.noDatasets')}</li> : null}
           </ul>
           <form className="vision-rule-form" onSubmit={createDataset}>
-            <header><h3>New dataset</h3></header>
+            <header><h3>{t('tr.newDataset')}</h3></header>
             <label>
-              Name
-              <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Couriers" disabled={busy} />
+              {t('common.name')}
+              <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder={t('tr.phCouriers')} disabled={busy} />
             </label>
             <label>
-              Classes (optional)
-              <input value={draft.classes} onChange={(e) => setDraft({ ...draft, classes: e.target.value })} placeholder="leave blank — collected as you label" disabled={busy} />
-              <span className="field-hint">You don&apos;t need these up front. Every label you assign to a box is added to the dataset automatically, and only classes you actually box are used for training. Pre-fill only to get them as type-ahead suggestions in each box&apos;s label field while annotating.</span>
+              {t('tr.classesOptional')}
+              <input value={draft.classes} onChange={(e) => setDraft({ ...draft, classes: e.target.value })} placeholder={t('tr.phClassesBlank')} disabled={busy} />
+              <span className="field-hint">{t('tr.classesHint')}</span>
             </label>
             <label>
-              Description
-              <input value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} placeholder="Delivery couriers at the front gate" disabled={busy} />
+              {t('common.description')}
+              <input value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} placeholder={t('tr.phDescription')} disabled={busy} />
             </label>
             <div className="action-row">
               <button type="submit" disabled={busy || !draft.name.trim()}>
-                <span className="btn-icon"><Ico n="plus" /> Create Dataset</span>
+                <span className="btn-icon"><Ico n="plus" /> {t('tr.createDataset')}</span>
               </button>
             </div>
           </form>
@@ -905,11 +900,11 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
       {step === 'images' ? (
         <section className="settings-panel">
           <header>
-            <h2>{selected ? `Images — ${selected.name}` : 'Images'}</h2>
+            <h2>{selected ? t('tr.imagesNamed', { name: selected.name }) : t('tr.images')}</h2>
             <span className="status-pill">{images.length}</span>
           </header>
           {!selected ? (
-            <span className="field-hint">Select or create a dataset (step 1) to add images.</span>
+            <span className="field-hint">{t('tr.selectDatasetHint')}</span>
           ) : (
             <>
               <div className="action-row">
@@ -922,20 +917,20 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
                   onChange={(e) => { uploadFiles(e.target.files); e.target.value = ''; }}
                 />
                 <button type="button" onClick={() => fileInputRef.current?.click()} disabled={busy}>
-                  <span className="btn-icon"><Ico n="plus" /> Upload JPEGs</span>
+                  <span className="btn-icon"><Ico n="plus" /> {t('tr.uploadJpegs')}</span>
                 </button>
-                <span className="field-hint">or</span>
+                <span className="field-hint">{t('tr.or')}</span>
                 <button type="button" className="quiet" onClick={() => alertsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
-                  <span className="btn-icon"><Ico n="arr-down" /> Add from recent alerts</span>
+                  <span className="btn-icon"><Ico n="arr-down" /> {t('tr.addFromAlerts')}</span>
                 </button>
               </div>
-              <span className="field-hint"><strong>Click an image</strong> to draw or auto-label boxes — the badge shows how many boxes it has.</span>
+              <span className="field-hint">{t('tr.clickImageHint')}</span>
 
               <div className="training-image-grid">
                 {images.map((img) => (
                   <div key={img.id} className="training-image-cell">
-                    <button type="button" className="training-image-open" onClick={() => setEditingImage(img)} title="Click to label this image">
-                      <AuthBlobImage path={`/api/training/images/${img.id}/file`} authHeader={authHeader} alt="training sample" />
+                    <button type="button" className="training-image-open" onClick={() => setEditingImage(img)} title={t('tr.clickToLabel')}>
+                      <AuthBlobImage path={`/api/training/images/${img.id}/file`} authHeader={authHeader} alt={t('tr.altTrainingSample')} />
                       <span className="training-image-badge">{annotationCount(img.annotations)} ▢</span>
                     </button>
                     <div className="training-image-meta">
@@ -944,39 +939,39 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
                     </div>
                   </div>
                 ))}
-                {images.length === 0 ? <span className="field-hint">No images yet — upload some, or add from recent alerts below.</span> : null}
+                {images.length === 0 ? <span className="field-hint">{t('tr.noImages')}</span> : null}
               </div>
 
-              <header ref={alertsRef} className="training-divider"><h3>Add from recent alerts</h3></header>
-              <span className="field-hint">Click a thumbnail to preview the snapshot and recorded clip. Importing pre-labels the frame with its detection box.</span>
+              <header ref={alertsRef} className="training-divider"><h3>{t('tr.addFromAlerts')}</h3></header>
+              <span className="field-hint">{t('tr.alertsHint')}</span>
               <div className="training-filter-row">
                 <label>
-                  Camera
+                  {t('tr.camera')}
                   <select value={filterCamera} onChange={(e) => changeFilterCamera(e.target.value)}>
-                    <option value="">All cameras</option>
+                    <option value="">{t('tr.allCameras')}</option>
                     {(cameras || []).map((cam) => (
                       <option key={cam.id} value={cam.id}>{cameraName(cam.id)}</option>
                     ))}
                   </select>
                 </label>
                 <label>
-                  Detection type
+                  {t('tr.detectionType')}
                   <select value={filterType} onChange={(e) => changeFilterType(e.target.value)}>
-                    <option value="">All types</option>
+                    <option value="">{t('tr.allTypes')}</option>
                     {alertTypeOptions.map(([value, label]) => (
-                      <option key={value} value={value}>{label}</option>
+                      <option key={value} value={value}>{t(label)}</option>
                     ))}
                   </select>
                 </label>
                 {(filterCamera || filterType) ? (
-                  <button type="button" className="quiet" onClick={() => { setFilterCamera(''); setFilterType(''); setAlertPage(0); }}>Clear</button>
+                  <button type="button" className="quiet" onClick={() => { setFilterCamera(''); setFilterType(''); setAlertPage(0); }}>{t('common.clear')}</button>
                 ) : null}
               </div>
               <div className="training-alert-list">
                 {importableAlerts.map((a) => (
                   <div key={a.id} className="training-alert-row">
-                    <button type="button" className="training-alert-thumb" onClick={() => setPreviewAlert(a)} title="Preview">
-                      <AuthBlobImage path={`/api/vision/alerts/${a.id}/snapshot`} authHeader={authHeader} alt="alert snapshot" />
+                    <button type="button" className="training-alert-thumb" onClick={() => setPreviewAlert(a)} title={t('tr.preview')}>
+                      <AuthBlobImage path={`/api/vision/alerts/${a.id}/snapshot`} authHeader={authHeader} alt={t('tr.altAlertSnapshot')} />
                     </button>
                     <div className="training-alert-info">
                       <strong>{a.label || a.detectionType}</strong>
@@ -984,21 +979,21 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
                     </div>
                     <div className="training-alert-actions">
                       <button type="button" className="quiet" onClick={() => setPreviewAlert(a)} disabled={busy}>
-                        <span className="btn-icon"><Ico n="play" /> Preview</span>
+                        <span className="btn-icon"><Ico n="play" /> {t('tr.preview')}</span>
                       </button>
-                      <button type="button" onClick={() => addFromAlert(a.id)} disabled={busy}>Add</button>
+                      <button type="button" onClick={() => addFromAlert(a.id)} disabled={busy}>{t('common.add')}</button>
                     </div>
                   </div>
                 ))}
                 {importableAlerts.length === 0 ? (
-                  <span className="field-hint">{(filterCamera || filterType) ? 'No detections match the filter.' : 'No recent detections to import.'}</span>
+                  <span className="field-hint">{(filterCamera || filterType) ? t('tr.noMatch') : t('tr.noRecent')}</span>
                 ) : null}
               </div>
               {importTotal > alertPageSize ? (
                 <div className="training-pager">
-                  <button type="button" className="quiet" onClick={() => setAlertPage((p) => Math.max(0, p - 1))} disabled={alertPage === 0}>Prev</button>
-                  <span className="field-hint">{rangeStart}–{rangeEnd} of {importTotal}</span>
-                  <button type="button" className="quiet" onClick={() => setAlertPage((p) => Math.min(alertPageCount - 1, p + 1))} disabled={alertPage >= alertPageCount - 1}>Next</button>
+                  <button type="button" className="quiet" onClick={() => setAlertPage((p) => Math.max(0, p - 1))} disabled={alertPage === 0}>{t('tr.prev')}</button>
+                  <span className="field-hint">{t('tr.range', { a: rangeStart, b: rangeEnd, total: importTotal })}</span>
+                  <button type="button" className="quiet" onClick={() => setAlertPage((p) => Math.min(alertPageCount - 1, p + 1))} disabled={alertPage >= alertPageCount - 1}>{t('tr.next')}</button>
                 </div>
               ) : null}
             </>
@@ -1009,12 +1004,11 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
       {step === 'models' ? (
       <section className="settings-panel">
         <header>
-          <h2>Models</h2>
+          <h2>{t('tr.stepModels')}</h2>
           <span className="status-pill">{models.length}</span>
         </header>
         <span className="field-hint">
-          The <strong>stock model always runs</strong>; activating a custom model runs it <strong>alongside</strong> stock so its
-          classes are detected on top. Only <strong>one</strong> custom model runs at a time — activating another switches to it.
+          {t('tr.modelsHint')}
         </span>
         {(() => {
           const active = models.find((m) => m.isActive);
@@ -1022,18 +1016,18 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
           const cls = modelClasses(active);
           return (
             <div className="training-active-banner">
-              <Ico n="check-ok" /> <strong>{active.name}</strong> is running <strong>alongside the stock model</strong> (stock still detects person, vehicle, animal, …).
-              {cls.length ? <> Use its classes (<strong>{cls.join(', ')}</strong>) in the <strong>AI</strong> tab → <strong>Detection Rules</strong> → under <strong>“Detect”</strong>.</> : null}
+              <Ico n="check-ok" /> {t('tr.activeRunning', { name: active.name })}
+              {cls.length ? t('tr.activeUseClasses', { cls: cls.join(', ') }) : null}
             </div>
           );
         })()}
 
         <section className="schedule-panel">
           <header>
-            <h3>Train in-app</h3>
+            <h3>{t('tr.trainInApp')}</h3>
             {capability ? (
               <span className={`status-pill ${capability.cuda ? 'ok' : ''}`}>
-                {capability.cuda ? 'GPU ready' : capability.available ? 'CPU only' : 'unavailable'}
+                {capability.cuda ? t('tr.gpuReady') : capability.available ? t('tr.cpuOnly') : t('tr.unavailable')}
               </span>
             ) : null}
           </header>
@@ -1043,40 +1037,40 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
               <div className="action-row">
                 <button type="button" onClick={installDeps} disabled={busy || installing}>
                   <span className="btn-icon">
-                    <Ico n={installing ? 'refresh' : 'download'} /> {installing ? 'Installing GPU support…' : 'Install GPU support'}
+                    <Ico n={installing ? 'refresh' : 'download'} /> {installing ? t('tr.installingGpuBtn') : t('tr.installGpuBtn')}
                   </span>
                 </button>
                 <span className="field-hint">
-                  Detected <strong>{capability.gpu}</strong>. This installs the CUDA build of PyTorch into the app’s Python. Detection pauses briefly during install.
+                  {t('tr.detectedGpu', { gpu: capability.gpu })}
                 </span>
               </div>
-              {installing ? <span className="field-hint">Downloading and installing — this can take several minutes. This panel refreshes when it finishes.</span> : null}
-              {installLog ? <ConsoleLog title="GPU dependency install" log={installLog} running={installing} /> : null}
+              {installing ? <span className="field-hint">{t('tr.downloadingInstalling')}</span> : null}
+              {installLog ? <ConsoleLog title={t('tr.gpuInstallTitle')} log={installLog} running={installing} /> : null}
             </div>
           ) : null}
           {capability && !capability.hasGpu && !capability.cuda ? (
-            <span className="field-hint">No CUDA-capable NVIDIA GPU detected on this machine — use <strong>Export instead</strong> to train on a GPU elsewhere.</span>
+            <span className="field-hint">{t('tr.noCuda')}</span>
           ) : null}
           <div className="metadata-row">
             <label>
-              Epochs
+              {t('tr.epochs')}
               <input type="number" min="1" max="1000" value={trainDraft.epochs} onChange={(e) => setTrainDraft({ ...trainDraft, epochs: Number(e.target.value) })} disabled={busy} />
             </label>
             <label>
-              Image size
+              {t('tr.imageSize')}
               <input type="number" min="64" step="32" value={trainDraft.imgsz} onChange={(e) => setTrainDraft({ ...trainDraft, imgsz: Number(e.target.value) })} disabled={busy} />
             </label>
           </div>
           <div className="action-row">
             <button type="button" onClick={startTraining} disabled={busy || !selected || trainingActive || (capability ? !capability.available : false)}>
-              <span className="btn-icon"><Ico n="cpu" /> Train {selected ? `“${selected.name}”` : 'dataset'}</span>
+              <span className="btn-icon"><Ico n="cpu" /> {t('tr.train')} {selected ? `“${selected.name}”` : t('tr.dataset')}</span>
             </button>
-            <button type="button" className="quiet" onClick={exportDataset} disabled={busy || !selected} title="Download a YOLO dataset zip to train on a GPU elsewhere">
-              <span className="btn-icon"><Ico n="download" /> Export instead</span>
+            <button type="button" className="quiet" onClick={exportDataset} disabled={busy || !selected} title={t('tr.exportInsteadTitle')}>
+              <span className="btn-icon"><Ico n="download" /> {t('tr.exportInstead')}</span>
             </button>
           </div>
-          {trainingActive ? <span className="field-hint">A training run is in progress — see its progress in the list below.</span> : null}
-          {!selected ? <span className="field-hint">Pick an active dataset above first.</span> : null}
+          {trainingActive ? <span className="field-hint">{t('tr.trainingInProgress')}</span> : null}
+          {!selected ? <span className="field-hint">{t('tr.pickDatasetAbove')}</span> : null}
         </section>
 
         <ul className="class-registry-list">
@@ -1084,9 +1078,9 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
             <li key={m.id} className="class-registry-row">
               <div>
                 <strong>{m.name}</strong>
-                {m.isActive ? <span className="status-pill ok"> active</span> : null}
+                {m.isActive ? <span className="status-pill ok"> {t('tr.activePill')}</span> : null}
                 <span className="field-hint">
-                  {' '}{m.status}{m.status === 'running' ? ` · ${m.progress || 0}%` : ''} · {(() => { try { return JSON.parse(m.classes || '[]').join(', '); } catch (_) { return ''; } })() || 'no classes'}
+                  {' '}{m.status}{m.status === 'running' ? ` · ${m.progress || 0}%` : ''} · {(() => { try { return JSON.parse(m.classes || '[]').join(', '); } catch (_) { return ''; } })() || t('tr.noClasses')}
                   {(() => { try { const mt = JSON.parse(m.metrics || '{}'); return mt.map50 ? ` · mAP50 ${(mt.map50 * 100).toFixed(0)}%` : (mt.error ? ` · ${mt.error}` : ''); } catch (_) { return ''; } })()}
                 </span>
                 {m.status === 'running' ? (
@@ -1095,37 +1089,37 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
               </div>
               <div className="class-registry-actions">
                 {!m.isActive && m.status !== 'running' && m.status !== 'pending' ? (
-                  <button type="button" onClick={() => activateModel(m.id)} disabled={busy || !m.filePath}>Activate</button>
+                  <button type="button" onClick={() => activateModel(m.id)} disabled={busy || !m.filePath}>{t('tr.activate')}</button>
                 ) : null}
                 {m.isActive ? (
-                  <button type="button" className="quiet" onClick={deactivateModel} disabled={busy} title="Revert detection to the stock model so this one can be deleted">Deactivate</button>
+                  <button type="button" className="quiet" onClick={deactivateModel} disabled={busy} title={t('tr.deactivateTitle')}>{t('tr.deactivate')}</button>
                 ) : null}
-                <button type="button" className="quiet danger" onClick={() => deleteModel(m.id)} disabled={busy || m.isActive || m.status === 'running'} title={m.isActive ? 'Deactivate first — the active model cannot be deleted' : 'Delete model'}>Delete</button>
+                <button type="button" className="quiet danger" onClick={() => deleteModel(m.id)} disabled={busy || m.isActive || m.status === 'running'} title={m.isActive ? t('tr.deactivateFirst') : t('tr.deleteModel')}>{t('common.delete')}</button>
               </div>
             </li>
           ))}
-          {models.length === 0 ? <li className="field-hint">No models yet — train one above, or import a trained best.pt below.</li> : null}
+          {models.length === 0 ? <li className="field-hint">{t('tr.noModels')}</li> : null}
         </ul>
         <form className="vision-rule-form" onSubmit={importModel}>
-          <header><h3>Import a trained model</h3></header>
+          <header><h3>{t('tr.importTrainedModel')}</h3></header>
           <div className="metadata-row">
             <label>
-              Name
-              <input value={modelDraft.name} onChange={(e) => setModelDraft({ ...modelDraft, name: e.target.value })} placeholder="Couriers v1" disabled={busy} />
+              {t('common.name')}
+              <input value={modelDraft.name} onChange={(e) => setModelDraft({ ...modelDraft, name: e.target.value })} placeholder={t('tr.phCouriersV1')} disabled={busy} />
             </label>
             <label>
-              Classes (optional)
-              <input value={modelDraft.classes} onChange={(e) => setModelDraft({ ...modelDraft, classes: e.target.value })} placeholder="auto-detected from the model" disabled={busy} />
+              {t('tr.classesOptional')}
+              <input value={modelDraft.classes} onChange={(e) => setModelDraft({ ...modelDraft, classes: e.target.value })} placeholder={t('tr.phAutoDetected')} disabled={busy} />
             </label>
           </div>
           <label>
-            Weights file (.pt)
+            {t('tr.weightsFile')}
             <input ref={modelFileRef} type="file" accept=".pt" disabled={busy} />
-            <span className="field-hint">Classes are read from the model file automatically — leave the field blank unless the read fails (no Python on this host), then list them as a fallback.</span>
+            <span className="field-hint">{t('tr.weightsHint')}</span>
           </label>
           <div className="action-row">
             <button type="submit" disabled={busy || !modelDraft.name.trim()}>
-              <span className="btn-icon"><Ico n="save" /> Import model</span>
+              <span className="btn-icon"><Ico n="save" /> {t('tr.importModel')}</span>
             </button>
           </div>
         </form>

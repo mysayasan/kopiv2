@@ -1,0 +1,6 @@
+{
+  "type": "security",
+  "scope": "myidsan",
+  "summary": "myidsan no longer auto-seeds app_registry, app_auth_config, or app_redirect_uri rows for mymatasan, myseliasan, or itself on startup. Following the standard OAuth / Google-console model, a relying app can only obtain an authorization code once an operator has explicitly registered it via the Apps UI (or API): an app_registry row, an app_auth_config (client ID + secret), and at least one app_redirect_uri. Until registered, the federated auth flow rejects the client with 'client is not registered'. This closes a security hole where a database drop would silently re-provision an unregistered app's credentials and let it continue to work without operator action.",
+  "compatibility": "Breaking for fresh installs and after a database drop: operators must now register myseliasan (and any other relying app) in the myidsan Apps UI before the SSO authorization-code flow will work. Existing installs with already-present rows in app_registry/app_auth_config/app_redirect_uri are unaffected — those rows are not removed. The app_registry self-heal (code restoration) seed for built-in apps has also been removed; codes set via the UI are authoritative."
+}

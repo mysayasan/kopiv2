@@ -1,0 +1,60 @@
+/* Self-contained styling for the inline language switcher. It deliberately does NOT
+   reuse any app's classes, so redesigning an app's nav/topbar can never leave the
+   selector unstyled or broken. Colors come from the --ui-* design tokens every app maps
+   (see styles/tokens.css), so it follows each app's light/dark/theme automatically.
+   Renders as a one-line list — "English | Melayu | 中文 | தமிழ்" — with the pipe drawn as
+   a left border between adjacent options. */
+
+.shared-lang {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.shared-lang-opt {
+  border: 0;
+  background: transparent;
+  /* Neutralize host apps' aggressive global button styles (accent fill, min-height,
+     shadows) so every option is plain text, not a tab/pill. */
+  min-height: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 2px 9px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.3;
+  color: var(--ui-muted, #64748b);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* The separating pipe between options. */
+.shared-lang-opt + .shared-lang-opt {
+  border-left: 1px solid var(--ui-border-strong, #c7d1dc);
+}
+
+.shared-lang-opt:hover {
+  color: var(--ui-text, #1f2937);
+}
+
+.shared-lang-opt.active {
+  /* `background`/`border` are re-stated (not just color) so a host app's
+     `button.active { background: accent }` can't turn the selected option into a
+     solid block with same-color text. Active = accent-colored bold text, no fill. */
+  background: transparent;
+  border: 0;
+  color: var(--ui-accent, #2d6cdf);
+  font-weight: 700;
+}
+
+/* Top-right header bar that hosts the language switcher at the top of the main page.
+   Self-contained + --ui-* tokenized so it follows each app's theme and survives a
+   redesign. An app renders <div className="shared-lang-bar"><LanguageDropdown …/></div>
+   as the first child of its main content. */
+.shared-lang-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 4px 2px 10px;
+}

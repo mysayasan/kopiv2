@@ -26,6 +26,18 @@
   --warn-text: #64450d;
   --status-neutral-bg: #eef1f4;
   --shadow-panel: rgba(32, 42, 54, 0.08);
+  /* --ui-* design tokens consumed by the shared UI module (toast.css, …). Mapped to
+     mymatasan's palette so shared components follow each theme automatically. */
+  --ui-surface: var(--bg-surface);
+  --ui-bg: var(--bg-body);
+  --ui-text: var(--text-primary);
+  --ui-muted: var(--text-muted);
+  --ui-border: var(--border-panel);
+  --ui-border-strong: var(--border-soft);
+  --ui-accent: var(--accent);
+  --ui-success: var(--ok-text);
+  --ui-danger: var(--danger);
+  --ui-shadow: var(--shadow-panel);
   color-scheme: light;
 }
 
@@ -57,6 +69,16 @@
   --warn-text: #d4952a;
   --status-neutral-bg: #1c2434;
   --shadow-panel: rgba(0, 0, 0, 0.3);
+  --ui-surface: var(--bg-surface);
+  --ui-bg: var(--bg-body);
+  --ui-text: var(--text-primary);
+  --ui-muted: var(--text-muted);
+  --ui-border: var(--border-panel);
+  --ui-border-strong: var(--border-soft);
+  --ui-accent: var(--accent);
+  --ui-success: var(--ok-text);
+  --ui-danger: var(--danger);
+  --ui-shadow: var(--shadow-panel);
   color-scheme: dark;
 }
 
@@ -88,6 +110,16 @@
   --warn-text: #5a3e08;
   --status-neutral-bg: #dce4ee;
   --shadow-panel: rgba(20, 36, 52, 0.1);
+  --ui-surface: var(--bg-surface);
+  --ui-bg: var(--bg-body);
+  --ui-text: var(--text-primary);
+  --ui-muted: var(--text-muted);
+  --ui-border: var(--border-panel);
+  --ui-border-strong: var(--border-soft);
+  --ui-accent: var(--accent);
+  --ui-success: var(--ok-text);
+  --ui-danger: var(--danger);
+  --ui-shadow: var(--shadow-panel);
   color-scheme: light;
 }
 
@@ -701,15 +733,35 @@ label {
   width: min(1360px, calc(100vw - 32px));
   margin: 0 auto;
   padding: 18px 0 32px;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* mymatasan-scoped: give the shared footer clear separation from the content above.
+   The shared default (margin-top: auto) collapses to 0 once a tab fills the viewport,
+   so the footer can sit flush against the content; this swaps in a fixed gap. Scoped
+   here so the RBAC apps keep the shared push-to-bottom default. */
+.app-shell > .shared-footer {
+  margin-top: 36px;
 }
 
 .topbar {
   display: grid;
   grid-template-columns: minmax(180px, 1fr) auto auto;
-  align-items: center;
+  /* Bottom-align so the module dropdown and the action buttons share one baseline,
+     with the language line sitting above the buttons (top-right). Taller + padding so
+     nothing cramps. */
+  align-items: end;
   gap: 18px;
-  min-height: 68px;
+  min-height: 88px;
+  padding: 10px 0 12px;
   border-bottom: 1px solid var(--border-divider);
+}
+
+/* Keep the brand mark vertically centred rather than dropped to the baseline. */
+.topbar > .brand-logo {
+  align-self: center;
 }
 
 .primary-tabs,
@@ -725,7 +777,19 @@ label {
 }
 
 .topbar-actions {
-  justify-content: end;
+  /* Language selector on top, action buttons on the row below — both right-aligned. */
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 6px;
+}
+
+.topbar-action-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .status-line {
@@ -754,65 +818,15 @@ label {
   backdrop-filter: blur(3px);
 }
 
-/* Top-right toast stack: status messages surface here in the main app, newest on
-   top, each auto-dismissing after a few seconds. */
-.toast-stack {
-  position: fixed;
+/* Toast styling now lives in the shared UI module (frontend/shared/src/styles/
+   toast.css), imported by the shared Toast component. It renders from the --ui-*
+   design tokens mapped in the theme blocks above, so mymatasan's toasts match the
+   RBAC apps and follow light/dark/slate automatically.
+   Position override: the shared stack sits at top:18px (RBAC apps use a side rail),
+   but mymatasan has a fixed 68px topbar, so the stack is pushed below it. The
+   `body` prefix raises specificity so this wins regardless of stylesheet order. */
+body .toast-stack {
   top: 76px;
-  right: 16px;
-  z-index: 400;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: min(360px, calc(100vw - 32px));
-  pointer-events: none;
-}
-
-.toast {
-  pointer-events: auto;
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 11px 12px;
-  border-radius: 8px;
-  border-left: 4px solid var(--warn-border);
-  background: var(--warn-bg);
-  color: var(--warn-text);
-  box-shadow: 0 8px 24px var(--shadow-panel);
-  font-size: 13px;
-  line-height: 1.4;
-  opacity: 1;
-  transform: translateX(0);
-  transition: opacity 0.22s ease, transform 0.22s ease;
-}
-
-.toast--leaving {
-  opacity: 0;
-  transform: translateX(12px);
-}
-
-.toast-text {
-  flex: 1 1 auto;
-  min-width: 0;
-  word-break: break-word;
-}
-
-.toast-close {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px;
-  margin: -2px -2px 0 0;
-  background: transparent;
-  border: none;
-  color: inherit;
-  opacity: 0.7;
-  cursor: pointer;
-}
-
-.toast-close:hover {
-  opacity: 1;
 }
 
 .workspace {

@@ -1,6 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './styles/app.css';
 import { ToastStack } from './components/ui';
+import { LangProvider, normalizeLang, useT } from '@shared/i18n';
+import { AppFooter } from '@shared/AppFooter';
+import { messages as appMessages } from './i18n';
 import { THEMES, emptyLogin, defaultStreamConfig, defaultRuntimeSettings, defaultNewUser, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings, defaultVisionThreshold, defaultVisionMinFrames } from './lib/constants';
 import {readLiveViewsCookie,saveLiveViewsCookie,bestLiveViewLayout,unwrap,errorMessage,apiBase,parseMetadata,cameraTitle,normalizeScanDevice,orderedSavedCameras,isActionableVisionAlert,latestAlertsByCamera,sameCamera,liveSource,normalizeRuntimeSettings,normalizeMachineHealthSettings,defaultZonePolygon,isLineDetectionType,defaultLineRuleConfig,lineRuleConfigText,defaultVisionRuleDraft,playAlertSound,hasH264VideoTrack,streamOptionLabel,isVisionAlertNotification } from './lib/helpers';
 import { LoginPage, ChangePasswordPage, TopBar } from './components/layout';
@@ -14,7 +17,8 @@ import { NotificationsTab } from './components/notifications';
 import { SecureWipeCountdown, ResetProgressOverlay } from './components/securewipe';
 
 
-export default function App() {
+function AppInner({ lang, onLangChange }) {
+  const t = useT();
   const initialLiveViews = readLiveViewsCookie();
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem('mymatasan_theme') || 'light'; } catch (_) { return 'light'; }
@@ -68,10 +72,21 @@ export default function App() {
   const [saved, setSaved] = useState([]);
   const [discovered, setDiscovered] = useState([]);
   const [saveDrafts, setSaveDrafts] = useState({});
-  const [message, setMessage] = useState('');
-  // Main-app status toasts (top-right, auto-dismissing). The single `message`
-  // string above is bridged into this stack for the authenticated app; login/setup
-  // still render `message` inline.
+  // Status message bridged into the toast stack (authenticated app) or rendered
+  // inline (login/setup). Held as { text, kind } | null so toasts can show severity.
+  // setMessage stays string-compatible. Default kind is 'success' (green) because
+  // nearly every literal status message reports a completed action; the contract is:
+  //   - failures MUST pass 'error' (red) — every setMessage(err.message, 'error')
+  //     does, plus the explicit validation/failure messages below;
+  //   - in-progress messages pass 'info' (neutral, e.g. 'Downloading…');
+  //   - setMessage('') clears.
+  const [message, setMessageState] = useState(null);
+  const setMessage = useCallback(
+    (text, kind = 'success') => setMessageState(text ? { text: String(text), kind } : null),
+    []
+  );
+  // Main-app status toasts (top-right, auto-dismissing). The `message` above is
+  // bridged into this stack for the authenticated app; login/setup render it inline.
   const [toasts, setToasts] = useState([]);
   const toastIdRef = useRef(0);
   const [busy, setBusy] = useState(false);
@@ -214,7 +229,7 @@ export default function App() {
       ) {
         sessionExpiredRef.current = true;
         logout();
-        setMessage('Your session has expired. Please sign in again.');
+        setMessage(t('app.sessionExpired'), 'error');
       }
       const error = new Error(errorMessage(payload, `Request failed with ${response.status}`));
       error.status = response.status;
@@ -247,11 +262,11 @@ export default function App() {
         setViewTiles((current) => enrichTilesWithDevices(current, devices));
       }
       if (!quiet) {
-        setMessage('Saved cameras refreshed.');
+        setMessage(t('app.savedCamsRefreshed'));
       }
       return Array.isArray(result) ? result : [];
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       throw err;
     } finally {
       setBusy(false);
@@ -310,7 +325,7 @@ export default function App() {
   async function login(event) {
     event.preventDefault();
     if (!credentials.username || !credentials.password) {
-      setMessage('Username and password are required.');
+      setMessage(t('app.userPassRequired'), 'error');
       return;
     }
     setBusy(true);
@@ -325,7 +340,7 @@ export default function App() {
         setLockoutUntil(Date.now() + err.retryAfter * 1000);
         setMessage('');
       } else {
-        setMessage(err.status === 401 ? 'Invalid username or password.' : err.message);
+        setMessage(err.status === 401 ? 'Invalid username or password.' : err.message, 'error');
       }
       setBusy(false);
       return;
@@ -392,7 +407,7 @@ export default function App() {
         })
         .catch(() => {});
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -413,7 +428,7 @@ export default function App() {
       credentialsRef.current = nextCredentials;
       setCredentials(nextCredentials);
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       setBusy(false);
       return;
     }
@@ -472,7 +487,7 @@ export default function App() {
     } catch (err) {
       setDecoderGpuDevices(null);
       if (!quiet) {
-        setMessage(err.message);
+        setMessage(err.message, 'error');
       }
       return null;
     }
@@ -488,11 +503,11 @@ export default function App() {
       const items = Array.isArray(result) ? result : result?.items || [];
       setUsers(items);
       if (!quiet) {
-        setMessage('Users loaded.');
+        setMessage(t('app.usersLoaded'));
       }
       return items;
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       throw err;
     } finally {
       if (!quiet) {
@@ -520,7 +535,7 @@ export default function App() {
       setSavedNotificationSettings(merged);
       return merged;
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       throw err;
     } finally {
       if (!quiet) {
@@ -548,9 +563,9 @@ export default function App() {
       };
       setNotificationSettings(merged);
       setSavedNotificationSettings(merged);
-      setMessage('Notification settings saved.');
+      setMessage(t('app.notifSaved'));
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -562,9 +577,9 @@ export default function App() {
     try {
       // Send a high-severity test so it passes any minimum-severity filter.
       await request('/api/settings/notification/test?severity=critical', { method: 'POST' });
-      setMessage(`Test notification dispatched${channel ? ` to ${channel}` : ''}. Check your ${channel || 'channel'}.`);
+      setMessage(t('app.testNotifDispatched', { to: channel ? t('app.testNotifToFrag', { channel }) : '', channel: channel || t('app.channelWord') }));
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -579,9 +594,9 @@ export default function App() {
       if (onlyRead) params.set('onlyRead', 'true');
       const result = await request(`/api/notifications/purge?${params.toString()}`, { method: 'POST' });
       const deleted = Number(result?.deleted) || 0;
-      setMessage(deleted > 0 ? `Purged ${deleted} expired detection${deleted === 1 ? '' : 's'}.` : 'No expired detections to purge.');
+      setMessage(deleted > 0 ? t('app.purgedN', { n: deleted }) : t('app.noExpiredPurge'));
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -599,7 +614,7 @@ export default function App() {
       setSavedHealthSettings(merged);
       return merged;
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       throw err;
     } finally {
       if (!quiet) {
@@ -620,9 +635,9 @@ export default function App() {
       const merged = { ...defaultHealthSettings, ...(result || {}) };
       setHealthSettings(merged);
       setSavedHealthSettings(merged);
-      setMessage('Camera health settings saved.');
+      setMessage(t('app.camHealthSaved'));
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -640,7 +655,7 @@ export default function App() {
       loadMachineMetrics().catch(() => {});
       return result;
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       throw err;
     } finally {
       if (!quiet) {
@@ -660,9 +675,9 @@ export default function App() {
       }));
       setMachineHealthSettings(result);
       setSavedMachineHealthSettings(result);
-      setMessage('Machine health settings saved.');
+      setMessage(t('app.machineHealthSaved'));
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -689,7 +704,7 @@ export default function App() {
       setCapacity(result || null);
       return result;
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       return null;
     } finally {
       setBusy(false);
@@ -700,14 +715,14 @@ export default function App() {
   // cold-start estimate (no cameras needed). Slow on first run (model load).
   async function calibrateCapacity() {
     setBusy(true);
-    setMessage('Calibrating detector… this can take several seconds.');
+    setMessage(t('app.calibrating'), 'info');
     try {
       const result = await request('/api/capacity/calibrate', { method: 'POST' });
       setCapacity(result || null);
-      setMessage('Calibration complete.');
+      setMessage(t('app.calibrationComplete'));
       return result;
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       return null;
     } finally {
       setBusy(false);
@@ -787,9 +802,9 @@ export default function App() {
       const nextCredentials = { ...credentialsRef.current, password: newPassword };
       credentialsRef.current = nextCredentials;
       setCredentials(nextCredentials);
-      setMessage('Password updated.');
+      setMessage(t('app.passwordUpdated'));
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -840,10 +855,10 @@ export default function App() {
       const merged = { ...next, destinations: Array.isArray(result?.destinations) ? result.destinations : next.destinations };
       setNotificationSettings(merged);
       setSavedNotificationSettings(merged);
-      setMessage('Notification destination saved.');
+      setMessage(t('app.destSaved'));
       return merged.destinations;
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       return null;
     } finally {
       setBusy(false);
@@ -862,9 +877,9 @@ export default function App() {
         });
       }
       await loadVision({ quiet: true });
-      setMessage('Person alerts added.');
+      setMessage(t('app.personAlertsAdded'));
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -889,9 +904,9 @@ export default function App() {
         });
       }
       await refresh({ quiet: true });
-      setMessage('Camera added.');
+      setMessage(t('app.cameraAdded'));
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -934,7 +949,7 @@ export default function App() {
   // where it left off after the reload.
   async function restartApp() {
     resetActiveRef.current = true; // suppress session-expiry handling during the restart
-    setMessage('Restarting…');
+    setMessage(t('st.restarting'), 'info');
     try {
       await request('/api/system/restart', { method: 'POST' });
     } catch (_) {
@@ -981,19 +996,19 @@ export default function App() {
   // Returns the final install state so the wizard can flag "restart recommended".
   async function installFfmpeg() {
     setBusy(true);
-    setMessage('Downloading ffmpeg…');
+    setMessage(t('st.downloadingFfmpeg'), 'info');
     try {
       await request('/api/settings/decoder/ffmpeg/install', { method: 'POST' });
       const state = await pollJob('/api/settings/decoder/ffmpeg/install/status');
       if (state?.status === 'done') {
         try { await request('/api/settings/runtime/auto-tune', { method: 'POST' }); } catch (_) {}
-        setMessage('ffmpeg installed. Restart to apply it everywhere.');
+        setMessage(t('app.ffmpegInstalled'));
       } else {
-        setMessage(`ffmpeg install failed: ${state?.log || 'unknown error'}`);
+        setMessage(t('st.ffmpegInstallFailed', { log: state?.log || 'unknown error' }), 'error');
       }
       return state;
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       return { status: 'failed', log: err.message };
     } finally {
       setBusy(false);
@@ -1007,14 +1022,14 @@ export default function App() {
   // installAiDeps runs the in-app GPU/Python dependency installer (background job).
   async function installAiDeps() {
     setBusy(true);
-    setMessage('Installing AI dependencies… this can take several minutes.');
+    setMessage(t('app.installingAi'), 'info');
     try {
       await request('/api/training/setup-deps', { method: 'POST' });
       const state = await pollJob('/api/training/setup-deps');
-      setMessage(state?.status === 'done' ? 'AI dependencies installed. Restart to apply.' : `Install failed: ${state?.log || 'unknown error'}`);
+      setMessage(state?.status === 'done' ? 'AI dependencies installed. Restart to apply.' : `Install failed: ${state?.log || 'unknown error'}`, state?.status === 'done' ? 'success' : 'error');
       return state;
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       return { status: 'failed', log: err.message };
     } finally {
       setBusy(false);
@@ -1027,13 +1042,13 @@ export default function App() {
 
   async function applyStockModel(model) {
     setBusy(true);
-    setMessage('Downloading and applying model…');
+    setMessage(t('app.downloadingModel'), 'info');
     try {
       const result = await request('/api/training/stock-model', { method: 'POST', body: JSON.stringify({ model }) });
-      setMessage(`Model set to ${result?.current || model}.`);
+      setMessage(t('app.modelSet', { model: result?.current || model }));
       return result;
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       return null;
     } finally {
       setBusy(false);
@@ -1103,11 +1118,11 @@ export default function App() {
         playAlertSound();
       }
       if (!quiet) {
-        setMessage('AI rules and alerts loaded.');
+        setMessage(t('app.aiRulesLoaded'));
       }
       return { rules, alerts };
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       throw err;
     } finally {
       if (!quiet) {
@@ -1139,7 +1154,7 @@ export default function App() {
       return items;
     } catch (err) {
       if (!quiet) {
-        setMessage(err.message);
+        setMessage(err.message, 'error');
       }
       return [];
     }
@@ -1268,8 +1283,7 @@ export default function App() {
       return;
     }
     const id = ++toastIdRef.current;
-    const text = message;
-    setToasts((list) => [{ id, text }, ...list].slice(0, 5));
+    setToasts((list) => [{ id, text: message.text, kind: message.kind }, ...list].slice(0, 5));
     setMessage('');
   }, [authenticated, setupNeeded, message]);
 
@@ -1303,9 +1317,9 @@ export default function App() {
       setStreamConfig(result.stream);
       setRuntimeAutoTune(null);
       setVisionToolStatus(null);
-      setMessage('Settings saved.');
+      setMessage(t('app.settingsSaved'));
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -1325,9 +1339,9 @@ export default function App() {
       setStreamConfig(result.stream);
       setRuntimeAutoTune(null);
       setVisionToolStatus(null);
-      setMessage('Settings reset to config defaults.');
+      setMessage(t('app.settingsReset'));
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -1351,7 +1365,7 @@ export default function App() {
       setMessage(result?.summary || 'Decoder auto-tune applied.');
       await refresh({ quiet: true });
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -1367,9 +1381,9 @@ export default function App() {
       setRuntimeSettings(result);
       setSavedRuntimeSettings(result);
       setStreamConfig(result.stream);
-      setMessage('Capture auto-config applied.');
+      setMessage(t('app.captureAutoApplied'));
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -1389,7 +1403,7 @@ export default function App() {
       setRecordingConfigs(Array.isArray(cfgsResult) ? cfgsResult : []);
     } catch (err) {
       if (!quiet) {
-        setMessage(err.message);
+        setMessage(err.message, 'error');
       }
     } finally {
       if (!quiet) {
@@ -1414,12 +1428,12 @@ export default function App() {
         return saved ? [...next, saved] : next;
       });
       if (warning) {
-        setMessage(`Config saved. Recorder warning: ${warning}`);
+        setMessage(t('app.configSavedWarning', { warning }));
       } else {
-        setMessage('Recording config saved.');
+        setMessage(t('app.recordingConfigSaved'));
       }
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -1431,9 +1445,9 @@ export default function App() {
     try {
       await request(`/api/recording/segments/${id}`, { method: 'DELETE' });
       setRecordingSegments((current) => current.filter((s) => Number(s.id) !== Number(id)));
-      setMessage('Clip deleted.');
+      setMessage(t('app.clipDeleted'));
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -1449,7 +1463,7 @@ export default function App() {
       await loadRecording({ quiet: true });
       setMessage(deleted > 0 ? `Purged ${deleted} expired clip${deleted === 1 ? '' : 's'}.` : 'No expired clips to purge.');
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -1464,7 +1478,7 @@ export default function App() {
       setVisionInstallResult(null);
       setMessage(result?.summary || 'AI tool status checked.');
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -1474,7 +1488,7 @@ export default function App() {
     const packages = (visionToolStatus?.installHints || []).filter((h) => !h.manual).map((h) => h.pipName);
     if (packages.length === 0) return;
     setBusy(true);
-    setMessage('Installing packages...');
+    setMessage(t('app.installingPackages'), 'info');
     setVisionInstallResult(null);
     try {
       const result = await request('/api/settings/vision/ai-tool/install', {
@@ -1482,13 +1496,13 @@ export default function App() {
         body: JSON.stringify({ packages }),
       });
       setVisionInstallResult(result || null);
-      setMessage(result?.success ? 'Install succeeded. Re-checking tool status...' : 'Install finished with errors.');
+      setMessage(result?.success ? 'Install succeeded. Re-checking tool status...' : 'Install finished with errors.', result?.success ? 'success' : 'error');
       if (result?.success) {
         const status = await request('/api/settings/vision/ai-tool/status');
         setVisionToolStatus(status || null);
       }
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -1505,9 +1519,9 @@ export default function App() {
       });
       setNewUser(defaultNewUser);
       await loadUsers({ quiet: true });
-      setMessage('User created.');
+      setMessage(t('app.userCreated'));
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -1531,9 +1545,9 @@ export default function App() {
         }),
       });
       await loadUsers({ quiet: true });
-      setMessage('User saved.');
+      setMessage(t('app.userSaved'));
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -1548,9 +1562,9 @@ export default function App() {
         body: JSON.stringify({ password: passwordDrafts[user.id] || '' }),
       });
       setPasswordDrafts((current) => ({ ...current, [user.id]: '' }));
-      setMessage('Password reset.');
+      setMessage(t('app.passwordReset'));
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -1562,9 +1576,9 @@ export default function App() {
     try {
       await request(`/api/settings/users/${user.id}`, { method: 'DELETE' });
       await loadUsers({ quiet: true });
-      setMessage('User deleted.');
+      setMessage(t('app.userDeleted'));
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -1584,9 +1598,9 @@ export default function App() {
       });
       setVisionRuleDraft(defaultVisionRuleDraft(visionRuleDraft.cameraId || orderedSavedCameras(saved)[0]?.id));
       await loadVision({ quiet: true });
-      setMessage('AI detection rule saved.');
+      setMessage(t('app.ruleSaved'));
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -1619,9 +1633,9 @@ export default function App() {
     try {
       await request(`/api/vision/rules/${id}`, { method: 'DELETE' });
       await loadVision({ quiet: true });
-      setMessage('AI detection rule deleted.');
+      setMessage(t('app.ruleDeleted'));
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -1636,9 +1650,9 @@ export default function App() {
         body: JSON.stringify(payload),
       });
       await loadVision({ quiet: true });
-      setMessage('Object class saved.');
+      setMessage(t('app.classSaved'));
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -1650,9 +1664,9 @@ export default function App() {
     try {
       await request(`/api/vision/classes/${id}`, { method: 'DELETE' });
       await loadVision({ quiet: true });
-      setMessage('Object class deleted.');
+      setMessage(t('app.classDeleted'));
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -1684,10 +1698,10 @@ export default function App() {
       if (rule.soundEnabled) {
         playAlertSound();
       }
-      setMessage('Test alert created. Opening Notifications…');
+      setMessage(t('app.testAlertCreated'));
       openNotificationsPage();
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -1701,7 +1715,7 @@ export default function App() {
       await ensureLiveView(device);
       await refresh({ quiet: true });
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       throw err;
     }
   }
@@ -1721,9 +1735,9 @@ export default function App() {
     try {
       await request(`/api/vision/alerts/${id}/ack`, { method: 'POST' });
       await loadVision({ quiet: true });
-      setMessage('Alert acknowledged.');
+      setMessage(t('app.alertAck'));
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       // Re-sync so a failed ack doesn't leave the optimistic change stuck.
       loadVision({ quiet: true }).catch(() => {});
     } finally {
@@ -1876,9 +1890,9 @@ export default function App() {
         return next;
       });
       const label = { all: 'all methods', onvif: 'ONVIF', ssdp: 'SSDP/UPnP', mdns: 'mDNS', sadp: 'SADP', portscan: 'port scan' }[protocol] || protocol;
-      setMessage(`${devices.length} device(s) found via ${label}: ${newCount} not saved, ${savedCount} saved.`);
+      setMessage(t('app.devicesFound', { n: devices.length, label, newCount, savedCount }));
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -1887,7 +1901,7 @@ export default function App() {
   async function probe(event) {
     event.preventDefault();
     if (!manualAddress.trim()) {
-      setMessage('Manual address is required.');
+      setMessage(t('app.manualAddrRequired'), 'error');
       return;
     }
     setBusy(true);
@@ -1902,9 +1916,9 @@ export default function App() {
         ...current,
         [result.xAddr || `${result.host}:${result.port}`]: { name: cameraTitle(result), description: '' },
       }));
-      setMessage('Manual probe completed.');
+      setMessage(t('app.manualProbeDone'));
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     } finally {
       setBusy(false);
     }
@@ -1924,11 +1938,11 @@ export default function App() {
           description: (draft.description || '').trim(),
         }),
       });
-      setMessage('Camera saved.');
+      setMessage(t('app.cameraSaved'));
       await refresh({ quiet: true });
       setCameraNav('saved');
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       setBusy(false);
     }
   }
@@ -1946,10 +1960,10 @@ export default function App() {
         }),
       });
       setDeviceDrafts((current) => ({ ...current, [device.id]: null }));
-      setMessage('Camera details saved.');
+      setMessage(t('app.cameraDetailsSaved'));
       await refresh({ quiet: true });
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       setBusy(false);
     }
   }
@@ -1987,7 +2001,7 @@ export default function App() {
     const results = await Promise.allSettled(targets.map((device) => ensureLiveView(device)));
     const failed = results.filter((result) => result.status === 'rejected').length;
     if (failed > 0) {
-      setMessage(`${failed} saved camera(s) may still be resolving live view.`);
+      setMessage(t('app.camsResolving', { n: failed }));
     }
     return targets.map((device, idx) => {
       const result = results[idx].status === 'fulfilled' ? results[idx].value : device;
@@ -2004,7 +2018,7 @@ export default function App() {
     const cameraCredentials = credentialsFor(device);
     if (!cameraCredentials.username && !cameraCredentials.password) {
       if (!quiet) {
-        setMessage('Camera username or password is required.');
+        setMessage(t('app.camUserPassRequired'), 'error');
       }
       return null;
     }
@@ -2019,12 +2033,12 @@ export default function App() {
       });
       if (!quiet) {
         setDeviceCredentials((current) => ({ ...current, [device.id]: null }));
-        setMessage('Camera credentials saved.');
+        setMessage(t('app.camCredsSaved'));
         await refresh({ quiet: true });
       }
       return result;
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       if (!quiet) {
         setBusy(false);
       }
@@ -2039,7 +2053,7 @@ export default function App() {
   async function changeCameraPassword(device) {
     const draft = cameraPasswordDrafts[device.id] || {};
     if (!draft.newPassword) {
-      setMessage('New ONVIF password is required.');
+      setMessage(t('app.onvifPwRequired'), 'error');
       return;
     }
     setBusy(true);
@@ -2060,10 +2074,10 @@ export default function App() {
         ...current,
         [device.id]: { username: result.username || device.username || '', password: draft.newPassword },
       }));
-      setMessage('Camera password changed.');
+      setMessage(t('app.camPwChanged'));
       await refresh({ quiet: true });
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       setBusy(false);
     }
   }
@@ -2076,7 +2090,7 @@ export default function App() {
         body: JSON.stringify({ direction, speed: 0.35, durationMs: 350 }),
       });
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     }
   }
 
@@ -2085,7 +2099,7 @@ export default function App() {
     try {
       await request(`/api/cameras/${deviceId}/ptz/stop`, { method: 'POST' });
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
     }
   }
 
@@ -2103,17 +2117,17 @@ export default function App() {
       if (selectedToken) {
         setSelectedStreamTokens((current) => ({ ...current, [device.id]: selectedToken }));
       }
-      setMessage(`${(result?.options || []).length} RTSP stream option(s) found.`);
+      setMessage(t('app.rtspOptionsFound', { n: (result?.options || []).length }));
       await refresh({ quiet: true });
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       setBusy(false);
     }
   }
 
   async function selectStreamOption(device, option) {
     if (!option?.profileToken) {
-      setMessage('Choose an ONVIF stream first.');
+      setMessage(t('app.chooseOnvifFirst'), 'error');
       return;
     }
     setBusy(true);
@@ -2173,17 +2187,17 @@ export default function App() {
             const rest = current.filter((c) => Number(c.cameraId) !== Number(device.id));
             return savedCfg ? [...rest, savedCfg] : rest;
           });
-          setMessage(`${streamOptionLabel(option)} saved. Recording enabled automatically.`);
+          setMessage(t('app.streamSavedRecEnabled', { label: streamOptionLabel(option) }));
         } catch (_) {
-          setMessage(`${streamOptionLabel(option)} saved. Recording auto-enable failed — configure it in the Recording tab.`);
+          setMessage(t('app.streamSavedRecFailed', { label: streamOptionLabel(option) }), 'error');
         }
       } else {
-        setMessage(`${streamOptionLabel(option)} saved.`);
+        setMessage(t('app.streamSaved', { label: streamOptionLabel(option) }));
       }
 
       await refresh({ quiet: true });
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       setBusy(false);
     }
   }
@@ -2197,10 +2211,10 @@ export default function App() {
       const suffix = tracks.length && !hasH264VideoTrack(tracks)
         ? ' No H264 video track; live view will use MJPEG fallback.'
         : '';
-      setMessage(`RTSP online: ${tracks.length} track(s).${suffix}`);
+      setMessage(t('app.rtspOnline', { n: tracks.length, suffix }));
       await refresh({ quiet: true });
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       setBusy(false);
     }
   }
@@ -2234,10 +2248,10 @@ export default function App() {
         device: { ...device, ...result },
         ptzSupported: Boolean(result.ptzSupported || device.ptzSupported),
       });
-      setMessage('Live preview opened.');
+      setMessage(t('app.livePreviewOpened'));
       await refresh({ quiet: true });
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       setBusy(false);
     }
   }
@@ -2256,7 +2270,7 @@ export default function App() {
       try {
         result = await ensureLiveView(device);
       } catch (err) {
-        setMessage('Camera added to Live Views; live stream may still be resolving.');
+        setMessage(t('app.camAddedResolving'));
       }
       setViewTilesWithCookie((current) => [
         ...current,
@@ -2267,10 +2281,10 @@ export default function App() {
         },
       ]);
       setActiveTab('views');
-      setMessage('Camera added to Live Views.');
+      setMessage(t('app.camAdded'));
       await refresh({ quiet: true });
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       setBusy(false);
     }
   }
@@ -2280,12 +2294,12 @@ export default function App() {
     setMessage('');
     try {
       await request(`/api/cameras/${id}`, { method: 'DELETE' });
-      setMessage('Camera removed.');
+      setMessage(t('app.cameraRemoved'));
       setViewTilesWithCookie((current) => current.filter((tile) => tile.id !== id));
       setPreview((current) => (current?.id === id ? null : current));
       await refresh({ quiet: true });
     } catch (err) {
-      setMessage(err.message);
+      setMessage(err.message, 'error');
       setBusy(false);
     }
   }
@@ -2296,7 +2310,7 @@ export default function App() {
         {passwordChangeRequired ? (
           <ChangePasswordPage
             busy={busy}
-            message={message}
+            message={message?.text || ''}
             onSubmit={completePasswordChange}
             onCancel={logout}
           />
@@ -2304,7 +2318,7 @@ export default function App() {
           <LoginPage
             credentials={credentials}
             busy={busy}
-            message={message}
+            message={message?.text || ''}
             lockoutUntil={lockoutUntil}
             onChange={setCredentials}
             onSubmit={login}
@@ -2319,8 +2333,10 @@ export default function App() {
       <SetupWizard
         username={credentials.username}
         authHeader={authHeader}
+        lang={lang}
+        onLangChange={onLangChange}
         busy={busy}
-        message={message}
+        message={message?.text || ''}
         capacity={capacity}
         saved={saved}
         discovered={discovered}
@@ -2386,6 +2402,8 @@ export default function App() {
         onNotifClick={handleNotificationClick}
         theme={theme}
         onThemeChange={changeTheme}
+        lang={lang}
+        onLangChange={onLangChange}
       />
       <ToastStack toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((t) => t.id !== id))} />
 
@@ -2591,7 +2609,29 @@ export default function App() {
           onOpenUser={(username) => { setFocusUsername(username); setActiveTab('settings'); openSettingsSection('users'); }}
         />
       ) : null}
+
+      <AppFooter appName="MyMataSan" apiBase={apiBase()} authHeader={authHeader} />
     </main>
+  );
+}
+
+const LANG_KEY = 'mymatasan_lang';
+
+// App owns the active locale and wraps the tree in the shared LangProvider so the
+// shared toast/icons (and future translated app strings) follow it. Persisted in
+// localStorage like the theme; default browser language → English.
+export default function App() {
+  const [lang, setLang] = useState(() => {
+    try { return normalizeLang(localStorage.getItem(LANG_KEY) || navigator.language); } catch (_) { return 'en'; }
+  });
+  const changeLang = useCallback((l) => {
+    setLang(l);
+    try { localStorage.setItem(LANG_KEY, l); } catch (_) {}
+  }, []);
+  return (
+    <LangProvider lang={lang} messages={appMessages}>
+      <AppInner lang={lang} onLangChange={changeLang} />
+    </LangProvider>
   );
 }
 

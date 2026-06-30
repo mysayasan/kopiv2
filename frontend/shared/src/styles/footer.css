@@ -1,0 +1,55 @@
+/* Self-contained styling for the shared app footer. It deliberately does NOT reuse
+   any app's classes, so redesigning an app can never leave it unstyled. Colors come
+   from the --ui-* design tokens every app maps (see styles/tokens.css), so it follows
+   each app's light/dark/theme automatically. `margin-top: auto` pins it to the bottom
+   when its container is a flex column with room to spare. */
+
+.shared-footer {
+  margin-top: auto;
+  padding: 18px 24px 22px;
+  border-top: 1px solid var(--ui-border, #d6dee7);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+}
+
+.shared-footer-line {
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--ui-muted, #64748b);
+}
+
+.shared-footer-name {
+  font-weight: 700;
+  color: var(--ui-accent, #2d6cdf);
+  letter-spacing: 0.2px;
+}
+
+.shared-footer-ver {
+  font-weight: 600;
+}
+
+.shared-footer-commit {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* Dot separators before every field after the name. */
+.shared-footer-ver::before,
+.shared-footer-core::before,
+.shared-footer-commit::before,
+.shared-footer-built::before {
+  content: '·';
+  margin: 0 8px;
+  opacity: 0.5;
+}
+
+.shared-footer-tagline {
+  margin: 0;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--ui-muted, #64748b);
+  opacity: 0.85;
+  max-width: 60ch;
+}

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useT } from './i18n';
 
 // DataTable is the shared filterable/sortable/pageable data grid for the RBAC apps.
 // Filtering/sorting/paging run client-side over the supplied `rows`. Columns are
@@ -17,7 +18,8 @@ const FILTER_OPERATORS = [
 const TEXT_FILTER_OPERATORS = FILTER_OPERATORS.filter((op) => [1, 2].includes(op.value));
 const BOOLEAN_FILTER_OPERATORS = FILTER_OPERATORS.filter((op) => [1, 2].includes(op.value));
 
-export function DataTable({ rows, columns, pageSize = 10, busy = false, emptyText = 'No records' }) {
+export function DataTable({ rows, columns, pageSize = 10, busy = false, emptyText }) {
+  const t = useT();
   const [columnFilters, setColumnFilters] = useState({});
   const [sorters, setSorters] = useState([]);
   const [offset, setOffset] = useState(0);
@@ -116,12 +118,12 @@ export function DataTable({ rows, columns, pageSize = 10, busy = false, emptyTex
           </thead>
           <tbody>
             {!busy && pageRows.length === 0 && (
-              <tr><td className="empty-cell" colSpan={columns.length}>{emptyText}</td></tr>
+              <tr><td className="empty-cell" colSpan={columns.length}>{emptyText != null ? emptyText : t('table.empty')}</td></tr>
             )}
             {pageRows.map((row, idx) => (
               <tr key={row.id ?? idx}>
                 {columns.map((column) => (
-                  <td key={column.key}>{column.render ? column.render(row[column.key], row) : printable(row[column.key])}</td>
+                  <td key={column.key}>{column.render ? column.render(row[column.key], row) : printableCell(row[column.key], t)}</td>
                 ))}
               </tr>
             ))}
@@ -148,8 +150,9 @@ export function DataTable({ rows, columns, pageSize = 10, busy = false, emptyTex
 }
 
 function ColumnHeader({ column, filter, sort, onFilterOpen, onSort }) {
+  const t = useT();
   const filterCount = normalizeFilterDrafts(filter, column).filter((item) => String(item.value ?? '').trim() !== '').length;
-  const sortLabel = sort?.sort === 1 ? 'ASC' : sort?.sort === 2 ? 'DESC' : 'Sort';
+  const sortLabel = sort?.sort === 1 ? t('table.sortAsc') : sort?.sort === 2 ? t('table.sortDesc') : t('table.sort');
 
   return (
     <div className="column-head">
@@ -157,15 +160,15 @@ function ColumnHeader({ column, filter, sort, onFilterOpen, onSort }) {
         <span>{column.label}</span>
         <div className="column-actions">
           <button
-            aria-label={`Filter ${column.label}`}
+            aria-label={t('table.filterCol', { col: column.label })}
             className={filterCount > 0 ? 'filter-button active' : 'filter-button'}
             onClick={(event) => onFilterOpen(column, event.currentTarget)}
-            title={`Filter ${column.label}`}
+            title={t('table.filterCol', { col: column.label })}
             type="button"
           >
             {filterCount > 1 && <span className="filter-count">{filterCount}</span>}
           </button>
-          <button className={sort ? 'sort-button active' : 'sort-button'} onClick={() => onSort(column.key)} type="button" title={`Sort by ${column.label}`}>
+          <button className={sort ? 'sort-button active' : 'sort-button'} onClick={() => onSort(column.key)} type="button" title={t('table.sortByCol', { col: column.label })}>
             {sortLabel}
             {sort?.index && <span>{sort.index}</span>}
           </button>
@@ -176,6 +179,7 @@ function ColumnHeader({ column, filter, sort, onFilterOpen, onSort }) {
 }
 
 function ColumnFilterPopover({ column, filter, left, top, onApply, onClear, onClose }) {
+  const t = useT();
   const [draft, setDraft] = useState(() => normalizeFilterDrafts(filter, column));
   const operators = filterOperatorsForField(column);
 
@@ -191,28 +195,28 @@ function ColumnFilterPopover({ column, filter, left, top, onApply, onClear, onCl
     <div className="filter-popover" style={{ left, top }}>
       <div className="filter-popover-head">
         <span>{column.label}</span>
-        <button className="mini-button" onClick={onClose} type="button">Close</button>
+        <button className="mini-button" onClick={onClose} type="button">{t('common.close')}</button>
       </div>
       <form className="filter-popover-body" onSubmit={(e) => { e.preventDefault(); onApply(column.key, draft); }}>
         {draft.map((item, index) => (
           <div className="filter-condition" key={`filter-${column.key}-${index}`}>
             <div className="filter-condition-head">
-              <span>Condition {index + 1}</span>
-              {draft.length > 1 && <button className="mini-button" onClick={() => setDraft((c) => c.filter((_, i) => i !== index))} type="button">Remove</button>}
+              <span>{t('table.condition', { n: index + 1 })}</span>
+              {draft.length > 1 && <button className="mini-button" onClick={() => setDraft((c) => c.filter((_, i) => i !== index))} type="button">{t('common.remove')}</button>}
             </div>
             <label>
-              Operator
+              {t('table.operator')}
               <select value={normalizeFilterCompare(item.compare, column)} onChange={(e) => updateDraft(index, { compare: Number(e.target.value) })}>
                 {operators.map((op) => <option key={op.value} value={op.value}>{op.label}</option>)}
               </select>
             </label>
             <label>
-              Value
+              {t('table.value')}
               {column.filterType === 'boolean' ? (
                 <select value={item.value} onChange={(e) => updateDraft(index, { value: e.target.value })}>
-                  <option value="">Any</option>
-                  <option value="true">Yes</option>
-                  <option value="false">No</option>
+                  <option value="">{t('common.any')}</option>
+                  <option value="true">{t('common.yes')}</option>
+                  <option value="false">{t('common.no')}</option>
                 </select>
               ) : (
                 <input
@@ -226,9 +230,9 @@ function ColumnFilterPopover({ column, filter, left, top, onApply, onClear, onCl
           </div>
         ))}
         <div className="filter-popover-actions">
-          <button className="secondary-button" onClick={() => setDraft((c) => [...c, createColumnFilter(column)])} type="button">Add</button>
-          <button className="secondary-button" onClick={onClear} type="button">Clear</button>
-          <button className="primary-button" type="submit">Apply</button>
+          <button className="secondary-button" onClick={() => setDraft((c) => [...c, createColumnFilter(column)])} type="button">{t('common.add')}</button>
+          <button className="secondary-button" onClick={onClear} type="button">{t('common.clear')}</button>
+          <button className="primary-button" type="submit">{t('common.apply')}</button>
         </div>
       </form>
     </div>
@@ -236,6 +240,7 @@ function ColumnFilterPopover({ column, filter, left, top, onApply, onClear, onCl
 }
 
 function Pager({ total, offset, limit, onPage, busy }) {
+  const t = useT();
   const pageCount = Math.max(1, Math.ceil(total / limit));
   const currentPage = Math.min(pageCount, Math.floor(offset / limit) + 1);
   const last = Math.max(0, (pageCount - 1) * limit);
@@ -249,16 +254,16 @@ function Pager({ total, offset, limit, onPage, busy }) {
 
   return (
     <div className="pager">
-      <span>Page {currentPage} / {pageCount} · {total} total</span>
+      <span>{t('pager.summary', { current: currentPage, count: pageCount, total })}</span>
       <div className="pager-controls">
-        <button className="pager-icon first" disabled={busy || offset <= 0} onClick={() => onPage(0)} title="First page" type="button" aria-label="First page" />
-        <button className="pager-icon previous" disabled={busy || offset <= 0} onClick={() => onPage(Math.max(0, offset - limit))} title="Previous page" type="button" aria-label="Previous page" />
+        <button className="pager-icon first" disabled={busy || offset <= 0} onClick={() => onPage(0)} title={t('pager.first')} type="button" aria-label={t('pager.first')} />
+        <button className="pager-icon previous" disabled={busy || offset <= 0} onClick={() => onPage(Math.max(0, offset - limit))} title={t('pager.previous')} type="button" aria-label={t('pager.previous')} />
         <label className="pager-jump">
-          <input min="1" max={pageCount} value={pageDraft} onChange={(e) => setPageDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); goToDraftPage(); } }} title="Page number" type="number" />
+          <input min="1" max={pageCount} value={pageDraft} onChange={(e) => setPageDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); goToDraftPage(); } }} title={t('pager.pageNumber')} type="number" />
         </label>
-        <button className="pager-icon go" disabled={busy} onClick={goToDraftPage} title="Go to page" type="button" aria-label="Go to page" />
-        <button className="pager-icon next" disabled={busy || offset + limit >= total} onClick={() => onPage(offset + limit)} title="Next page" type="button" aria-label="Next page" />
-        <button className="pager-icon last" disabled={busy || offset >= last} onClick={() => onPage(last)} title="Last page" type="button" aria-label="Last page" />
+        <button className="pager-icon go" disabled={busy} onClick={goToDraftPage} title={t('pager.goto')} type="button" aria-label={t('pager.goto')} />
+        <button className="pager-icon next" disabled={busy || offset + limit >= total} onClick={() => onPage(offset + limit)} title={t('pager.next')} type="button" aria-label={t('pager.next')} />
+        <button className="pager-icon last" disabled={busy || offset >= last} onClick={() => onPage(last)} title={t('pager.last')} type="button" aria-label={t('pager.last')} />
       </div>
     </div>
   );
@@ -361,4 +366,12 @@ export function printable(value) {
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (typeof value === 'object' && value !== null) return value.String || JSON.stringify(value);
   return value ?? '';
+}
+
+// printableCell is printable() with locale-aware booleans, used for default cell
+// rendering inside the table (where a translate fn is available). printable() stays
+// English-only for callers outside React (it can't use hooks).
+function printableCell(value, t) {
+  if (typeof value === 'boolean') return t(value ? 'common.yes' : 'common.no');
+  return printable(value);
 }

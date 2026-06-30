@@ -1,18 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
-import { Ico } from '@shared';
+import { Ico, useT } from '@shared';
 import { FormBusyOverlay } from './ui';
 import { api, apiBase, formatTimestamp } from '../lib/helpers';
 
+// Tab ids drive both the icon and the localized label (nm.tab<Id>).
 const TABS = [
-  { id: 'cameras', label: 'Cameras', icon: 'camera' },
-  { id: 'events', label: 'Events', icon: 'bell' },
-  { id: 'remote', label: 'Remote', icon: 'send' },
+  { id: 'cameras', icon: 'camera' },
+  { id: 'events', icon: 'bell' },
+  { id: 'remote', icon: 'send' },
 ];
+const tabKey = (id) => `nm.tab${id[0].toUpperCase()}${id.slice(1)}`;
 
 // NodeManager is the per-node commander surface: a live event feed, per-role access
 // management, and a remote console that drives the node's own API over the control
 // tunnel (the node enforces its own authorization on every proxied request).
 export function NodeManager({ node, onToast, onBack }) {
+  const t = useT();
   const [tab, setTab] = useState('cameras');
   return (
     <section className="workspace">
@@ -21,12 +24,12 @@ export function NodeManager({ node, onToast, onBack }) {
           <h2><span className="btn-icon"><Ico n="monitor" /> {node.name || node.nodeId}</span></h2>
           <div className="settings-header-actions">
             {node.baseUrl ? (
-              <a className="quiet btn-link" href={node.baseUrl} target="_blank" rel="noreferrer" title="Open this node's own UI (full-motion video, all screens)">
-                <span className="btn-icon"><Ico n="login" /> Open node UI</span>
+              <a className="quiet btn-link" href={node.baseUrl} target="_blank" rel="noreferrer" title={t('nm.openNodeUiTitle')}>
+                <span className="btn-icon"><Ico n="login" /> {t('nm.openNodeUi')}</span>
               </a>
             ) : null}
             <button type="button" className="quiet" onClick={onBack}>
-              <span className="btn-icon"><Ico n="arr-left" /> Back to nodes</span>
+              <span className="btn-icon"><Ico n="arr-left" /> {t('nm.back')}</span>
             </button>
           </div>
         </header>
@@ -34,9 +37,9 @@ export function NodeManager({ node, onToast, onBack }) {
           {node.baseUrl} · <span className={`status-pill ${node.status === 'online' ? 'online' : 'offline'}`}>{node.status || 'online'}</span>
         </p>
         <div className="node-manage-tabs">
-          {TABS.map((t) => (
-            <button key={t.id} type="button" className={`quiet${tab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}>
-              <span className="btn-icon"><Ico n={t.icon} /> {t.label}</span>
+          {TABS.map((tb) => (
+            <button key={tb.id} type="button" className={`quiet${tab === tb.id ? ' active' : ''}`} onClick={() => setTab(tb.id)}>
+              <span className="btn-icon"><Ico n={tb.icon} /> {t(tabKey(tb.id))}</span>
             </button>
           ))}
         </div>
@@ -54,6 +57,7 @@ export function NodeManager({ node, onToast, onBack }) {
 // to the browser (the browser peers only with myseliasan). If WebRTC can't establish,
 // each tile falls back to the low-bandwidth snapshot poll over the command tunnel.
 function NodeCameras({ node, onToast }) {
+  const t = useT();
   const [cams, setCams] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -64,9 +68,9 @@ function NodeCameras({ node, onToast }) {
     const r = await api(`/api/nodes/${encodeURIComponent(node.nodeId)}/proxy/api/cameras?limit=100`, { noRedirect: true })
       .catch(() => ({ ok: false }));
     setLoading(false);
-    if (r.status === 403) { setError('No access to this node.'); setCams([]); return; }
+    if (r.status === 403) { setError(t('nm.noAccess')); setCams([]); return; }
     if (r.ok) { setError(''); setCams(Array.isArray(r.body) ? r.body : (r.body?.items || [])); }
-    else { setError(r.message || 'Failed to load cameras.'); if (onToast) onToast(r.message || 'Failed to load cameras.'); }
+    else { setError(r.message || t('nm.failedCameras')); if (onToast) onToast(r.message || t('nm.failedCameras')); }
   }
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [node.nodeId]);
 
@@ -80,20 +84,17 @@ function NodeCameras({ node, onToast }) {
   return (
     <section className="settings-panel span-two">
       <header>
-        <h2><span className="btn-icon"><Ico n="camera" /> Cameras</span></h2>
+        <h2><span className="btn-icon"><Ico n="camera" /> {t('nm.tabCameras')}</span></h2>
         <div className="settings-header-actions">
           <button type="button" className="quiet" onClick={load} disabled={loading}>
-            <span className="btn-icon"><Ico n="reload" /> Refresh</span>
+            <span className="btn-icon"><Ico n="reload" /> {t('nm.refresh')}</span>
           </button>
         </div>
       </header>
-      <p className="settings-hint">
-        Full-motion live view relayed over the node&apos;s secure media channel and re-broadcast via WebRTC. Tiles that
-        can&apos;t establish WebRTC fall back to ~1.5s snapshots automatically.
-      </p>
+      <p className="settings-hint">{t('nm.camerasHint')}</p>
       {error ? <p className="settings-hint danger-text">{error}</p> : null}
       {cams.length === 0 && !error ? (
-        <p className="settings-hint">No cameras configured on this node.</p>
+        <p className="settings-hint">{t('nm.noCameras')}</p>
       ) : (
         <div className="node-cam-grid">
           {cams.map((c) => (
@@ -109,6 +110,7 @@ function NodeCameras({ node, onToast }) {
 // (which relays the node's RTP) and shows it in a <video>; on any failure it switches
 // to snapshot polling over the command tunnel so the tile always shows something.
 function NodeCameraTile({ nodeId, cam, iceServers }) {
+  const t = useT();
   const videoRef = useRef(null);
   const [mode, setMode] = useState('connecting'); // connecting | live | snapshot
   const [tick, setTick] = useState(Date.now());
@@ -157,7 +159,7 @@ function NodeCameraTile({ nodeId, cam, iceServers }) {
       cancelled = true;
       try {
         if (videoRef.current && videoRef.current.srcObject) {
-          videoRef.current.srcObject.getTracks().forEach((t) => t.stop());
+          videoRef.current.srcObject.getTracks().forEach((trk) => trk.stop());
           videoRef.current.srcObject = null;
         }
       } catch (_) { /* ignore */ }
@@ -173,8 +175,8 @@ function NodeCameraTile({ nodeId, cam, iceServers }) {
     return () => clearInterval(iv);
   }, [mode]);
 
-  const label = cam.name || `Camera ${cam.id}`;
-  const badge = mode === 'live' ? 'live' : mode === 'snapshot' ? 'snapshot' : 'connecting…';
+  const label = cam.name || t('nm.cameraN', { id: cam.id });
+  const badge = mode === 'live' ? t('nm.badgeLive') : mode === 'snapshot' ? t('nm.badgeSnapshot') : t('nm.badgeConnecting');
   const snapUrl = `${apiBase()}/api/nodes/${encodeURIComponent(nodeId)}/proxy/api/vision/cameras/${cam.id}/frame?t=${tick}`;
 
   return (
@@ -215,6 +217,7 @@ function waitForIceGathering(pc) {
 // NodeEvents shows the node's slice of the control plane's unified feed (history via
 // the list endpoint, live via the SSE stream filtered to this node).
 function NodeEvents({ node }) {
+  const t = useT();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
 
@@ -245,19 +248,19 @@ function NodeEvents({ node }) {
   return (
     <section className="settings-panel span-two">
       <header>
-        <h2><span className="btn-icon"><Ico n="bell" /> Events</span></h2>
+        <h2><span className="btn-icon"><Ico n="bell" /> {t('nm.tabEvents')}</span></h2>
         <div className="settings-header-actions">
           <button type="button" className="quiet" onClick={load} disabled={loading}>
-            <span className="btn-icon"><Ico n="reload" /> Refresh</span>
+            <span className="btn-icon"><Ico n="reload" /> {t('nm.refresh')}</span>
           </button>
         </div>
       </header>
-      <p className="settings-hint">Alerts, health checks, and system events this node pushed to the control plane (live).</p>
+      <p className="settings-hint">{t('nm.eventsHint')}</p>
       {items.length === 0 ? (
-        <p className="settings-hint">No events from this node yet.</p>
+        <p className="settings-hint">{t('nm.noEvents')}</p>
       ) : (
         <table className="event-table">
-          <thead><tr><th>Time</th><th>Severity</th><th>Category</th><th>Event</th></tr></thead>
+          <thead><tr><th>{t('nm.colTime')}</th><th>{t('nm.colSeverity')}</th><th>{t('nm.colCategory')}</th><th>{t('nm.colEvent')}</th></tr></thead>
           <tbody>
             {items.map((n, i) => (
               <tr key={n.id || i}>
@@ -280,17 +283,19 @@ function severityClass(sev) {
   return 'online';
 }
 
+// Quick-action presets for the remote console; label localized via tkey.
 const QUICK = [
-  { label: 'Version', method: 'GET', path: '/api/version' },
-  { label: 'Runtime settings', method: 'GET', path: '/api/settings/runtime' },
-  { label: 'AI rules', method: 'GET', path: '/api/vision/rules' },
-  { label: 'Notifications', method: 'GET', path: '/api/notifications' },
+  { tkey: 'nm.quickVersion', method: 'GET', path: '/api/version' },
+  { tkey: 'nm.quickRuntime', method: 'GET', path: '/api/settings/runtime' },
+  { tkey: 'nm.quickAiRules', method: 'GET', path: '/api/vision/rules' },
+  { tkey: 'nm.quickNotifications', method: 'GET', path: '/api/notifications' },
 ];
 
 // NodeRemote drives the node's own API over the tunnel. The node authorizes each
 // request as if it were local (the operator's grant decides viewer vs admin), so a
 // read-only operator's writes come back 403 here.
 function NodeRemote({ node, onToast }) {
+  const t = useT();
   const [method, setMethod] = useState('GET');
   const [path, setPath] = useState('/api/settings/runtime');
   const [body, setBody] = useState('');
@@ -300,7 +305,7 @@ function NodeRemote({ node, onToast }) {
 
   async function send() {
     const p = path.trim();
-    if (!p.startsWith('/')) { if (onToast) onToast('Path must start with /'); return; }
+    if (!p.startsWith('/')) { if (onToast) onToast(t('nm.pathStartSlash')); return; }
     setBusy(true);
     const opts = { method, noRedirect: true };
     if (method !== 'GET' && body.trim()) opts.body = body;
@@ -313,15 +318,12 @@ function NodeRemote({ node, onToast }) {
   return (
     <section className="settings-panel span-two">
       <FormBusyOverlay busy={busy} />
-      <header><h2><span className="btn-icon"><Ico n="send" /> Remote console</span></h2></header>
-      <p className="settings-hint">
-        Call this node&apos;s API over the secure tunnel. The node enforces its own authorization — read-only access
-        rejects writes. Streaming endpoints (live video, SSE) are not tunnelable.
-      </p>
+      <header><h2><span className="btn-icon"><Ico n="send" /> {t('nm.remoteConsole')}</span></h2></header>
+      <p className="settings-hint">{t('nm.remoteHint')}</p>
       <div className="node-remote-quick">
         {QUICK.map((q) => (
-          <button key={q.label} type="button" className="quiet" onClick={() => { setMethod(q.method); setPath(q.path); setBody(''); }}>
-            {q.label}
+          <button key={q.tkey} type="button" className="quiet" onClick={() => { setMethod(q.method); setPath(q.path); setBody(''); }}>
+            {t(q.tkey)}
           </button>
         ))}
       </div>
@@ -330,26 +332,26 @@ function NodeRemote({ node, onToast }) {
           {['GET', 'POST', 'PUT', 'DELETE'].map((m) => <option key={m} value={m}>{m}</option>)}
         </select>
         <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/api/settings/runtime" disabled={busy} />
-        <button type="button" onClick={send} disabled={busy}><span className="btn-icon"><Ico n="send" /> Send</span></button>
+        <button type="button" onClick={send} disabled={busy}><span className="btn-icon"><Ico n="send" /> {t('nm.send')}</span></button>
       </div>
       {method !== 'GET' ? (
-        <label className="node-remote-body">Request body (JSON)
+        <label className="node-remote-body">{t('nm.requestBody')}
           <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={5} placeholder='{ "key": "value" }' disabled={busy} />
         </label>
       ) : null}
       {resp ? (
         <div className="node-remote-resp" ref={respRef}>
           <div className={`status-pill ${resp.ok ? 'online' : 'offline'}`}>HTTP {resp.status || '—'}</div>
-          <pre className="node-remote-pre">{formatResp(resp)}</pre>
+          <pre className="node-remote-pre">{formatResp(resp, t)}</pre>
         </div>
       ) : null}
     </section>
   );
 }
 
-function formatResp(r) {
+function formatResp(r, t) {
   if (r.body !== undefined && r.body !== null) {
     try { return JSON.stringify(r.body, null, 2); } catch (_) { return String(r.body); }
   }
-  return r.message || '(empty response)';
+  return r.message || t('nm.emptyResp');
 }

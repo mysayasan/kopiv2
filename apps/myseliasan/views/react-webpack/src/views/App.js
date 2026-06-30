@@ -3,17 +3,19 @@ import './styles/app.css';
 import './styles/controlplane.css';
 import './styles/rbac-standard.css';
 import { SideNav } from './components/layout';
-import { ToastStack } from '@shared';
+import { ToastStack, LangProvider, normalizeLang, useT, LanguageDropdown, AppFooter } from '@shared';
 import { FormBusyOverlay } from './components/ui';
 import { DashboardTab } from './components/dashboard';
 import { NodesTab } from './components/nodes';
 import { UsersPage, RolesPage, RbacPage } from './components/rbac_admin';
 import { LoginScreen, ChangePasswordScreen, PendingClearanceScreen } from './components/auth_screens';
-import { api, sessionCanGet } from './lib/helpers';
+import { api, sessionCanGet, apiBase } from './lib/helpers';
+import { messages as appMessages } from './i18n';
 
 const THEME_KEY = 'myseliasan_theme';
 
-export default function App() {
+function AppInner({ lang, onLangChange }) {
+  const t = useT();
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem(THEME_KEY) || 'light'; } catch (_) { return 'light'; }
   });
@@ -120,12 +122,11 @@ export default function App() {
         onSelectNode={selectNode}
       />
       <main className="main-workspace">
+        <div className="shared-lang-bar"><LanguageDropdown lang={lang} onLang={onLangChange} /></div>
         {session?.superadminHandoffPending ? (
           <div className="handoff-banner" role="alert">
-            <span className="handoff-banner-text">
-              A default <strong>stock superadmin</strong> account is still active. Open <strong>Users</strong> and disable it to finish securing the control plane.
-            </span>
-            {session?.isSuperadmin ? <button type="button" className="handoff-banner-action" onClick={() => setActiveTab('users')}>Go to Users</button> : null}
+            <span className="handoff-banner-text">{t('handoff.text')}</span>
+            {session?.isSuperadmin ? <button type="button" className="handoff-banner-action" onClick={() => setActiveTab('users')}>{t('handoff.goToUsers')}</button> : null}
           </div>
         ) : null}
         <ToastStack toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((t) => t.id !== id))} />
@@ -146,7 +147,28 @@ export default function App() {
         ) : null}
         {activeTab === 'roles' && session?.isSuperadmin ? <RolesPage onToast={pushToast} /> : null}
         {activeTab === 'rbac' && session?.isSuperadmin ? <RbacPage onToast={pushToast} /> : null}
+        <AppFooter appName="MySeliaSan" apiBase={apiBase()} />
       </main>
     </div>
+  );
+}
+
+const LANG_KEY = 'myseliasan_lang';
+
+// App owns the active locale and wraps the tree in the shared LangProvider so every
+// shared component (SideNav, DataTable, ToastStack) translates. The locale persists in
+// localStorage, mirroring the theme; default is the browser language → English.
+export default function App() {
+  const [lang, setLang] = useState(() => {
+    try { return normalizeLang(localStorage.getItem(LANG_KEY) || navigator.language); } catch (_) { return 'en'; }
+  });
+  function changeLang(l) {
+    setLang(l);
+    try { localStorage.setItem(LANG_KEY, l); } catch (_) {}
+  }
+  return (
+    <LangProvider lang={lang} messages={appMessages}>
+      <AppInner lang={lang} onLangChange={changeLang} />
+    </LangProvider>
   );
 }

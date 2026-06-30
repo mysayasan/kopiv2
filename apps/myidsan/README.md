@@ -17,7 +17,8 @@ It owns user, group, app registry, endpoint catalog, and shared RBAC administrat
 - Cache-backed session entries under `sso:session:<sid>`.
 - Internal fallback API: `POST /api/sso/introspect` (token validity check; RBAC decisions are now local to each app's accessrbac middleware).
 - Redis or in-memory cache selection through the standard cache config.
-- Bootstrap of the default `system` group; stock superadmin is seeded at startup from `localAuth.username`/`localAuth.password` with a forced first-login password change (no hardcoded SQL seed). Shared accessrbac built-in roles (`superadmin`, `viewer`), registered apps, and endpoint tier metadata are also seeded. Endpoint catalog is app-local: legacy cross-app rows are deleted on startup.
+- Bootstrap of the default `system` group; stock superadmin is seeded at startup from `localAuth.username`/`localAuth.password` with a forced first-login password change (no hardcoded SQL seed). Shared accessrbac built-in roles (`superadmin`, `viewer`) and endpoint tier metadata are also seeded. Endpoint catalog is app-local: legacy cross-app rows are deleted on startup.
+- **App registration is operator-controlled, not auto-seeded.** Following the standard OAuth / Google-console model, `myidsan` no longer automatically registers `mymatasan`, `myseliasan`, or itself in `app_registry`/`app_auth_config`/`app_redirect_uri` on startup. An operator must register each relying app via **Apps** in the UI (or via the API) before its SSO client can exchange authorization codes. This closes the security hole where a database drop would silently re-provision an unregistered app's credentials.
 - React/Webpack identity administration UI under `views/react-webpack`, built into `static` for the Go app host.
 - Runtime OpenAPI documentation at `/swagger`.
 
@@ -90,6 +91,10 @@ The side-nav uses the standardized dark icon rail (icon glyph + label, grouped b
 `DataTable`, `Toast`/`ToastStack`, and the `icons` set are now sourced from the shared in-repo module at `frontend/shared/` (via `@shared` webpack alias). Per-app copies (`lib/data_table.js`, `lib/icons.js`) have been deleted. The `webpack.config.js` has been updated accordingly.
 
 **Theming**: three themes are available (Light / Dark / **High contrast**). The high-contrast theme uses black surfaces, white text, and strong borders for accessibility. The side-nav responds to the active theme via `--nav-*` CSS tokens.
+
+**Multi-language UI (i18n)**: the frontend is fully localized into English, Malay (Bahasa Melayu), Chinese Simplified, and Tamil. The active language is persisted to `localStorage`. A language switcher (`LanguageDropdown` from `@shared`) appears in the top bar as an inline row of buttons (`English | Melayu | 中文 | தமிழ்`). Translations live in `views/react-webpack/src/views/i18n.js` (app-specific strings) and are layered over the shared base dictionary in `frontend/shared/src/i18n/index.js` via `LangProvider`/`useT()`. Adding a new key to the English dict and any locale dicts is sufficient; missing-locale keys fall back to English, then to the key itself, so no render path can crash.
+
+**Shared footer**: a `AppFooter` component (`@shared`) renders at the bottom of the app shell, showing the app name, version, shared-core version, short commit hash, build date (fetched from `/api/version`), and the r450k product tagline. All fields are optional and degrade gracefully if the endpoint is unreachable.
 
 A light/dark theme toggle (sun/moon) sits at the foot of the side-nav; the selected theme is persisted to `localStorage`. A shield+keyhole SVG brand mark replaces the old "ID" text tile. The same shield+keyhole mark appears on the server-rendered federated login page (`GET /api/auth/login`). Google/GitHub buttons appear on that page only for providers that are currently configured and active; unconfigured providers are silently omitted. The SPA's own social-login buttons also gate on `GET /api/login/providers` so they never show a link that would fail.
 

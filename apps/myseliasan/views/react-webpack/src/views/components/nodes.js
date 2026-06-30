@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Ico } from '@shared';
+import { Ico, useT } from '@shared';
 import { FormBusyOverlay, IconDropdown } from './ui';
 import { NodeManager } from './node_manager';
 import { api, formatTimestamp } from '../lib/helpers';
@@ -19,6 +19,7 @@ export const DEFAULT_NODE_ICON = 'monitor';
 // subnets), and the adopted-nodes table with release. Uses the shared settings
 // panel / metric-card visual language.
 export function NodesTab({ onToast, nodes, reloadNodes, managingNodeId, onManage, onBack }) {
+  const t = useT();
   const [fleetKey, setFleetKey] = useState(null);
   const [discovered, setDiscovered] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -40,12 +41,12 @@ export function NodesTab({ onToast, nodes, reloadNodes, managingNodeId, onManage
   useEffect(() => { loadFleetKey(); /* eslint-disable-next-line */ }, []);
 
   async function generateFleetKey() {
-    if (!window.confirm('Generate a new fleet key? Existing nodes keep working only if you update their key too.')) return;
+    if (!window.confirm(t('node.confirmRotate'))) return;
     setBusy(true);
     const r = await api('/api/nodes/fleet-key', { method: 'POST' });
     setBusy(false);
-    if (r.ok) { setFleetKey(r.body); toast('Fleet key generated. Paste it into each node.'); }
-    else toast(r.message || 'Failed to generate fleet key.');
+    if (r.ok) { setFleetKey(r.body); toast(t('node.fleetGenerated')); }
+    else toast(r.message || t('node.fleetGenFailed'));
   }
 
   async function copyKey() {
@@ -54,19 +55,19 @@ export function NodesTab({ onToast, nodes, reloadNodes, managingNodeId, onManage
     try {
       await navigator.clipboard.writeText(key);
       setCopied(true);
-      toast('Fleet key copied to clipboard.');
+      toast(t('node.fleetCopied'));
       setTimeout(() => setCopied(false), 2000);
     } catch (_) {
-      toast('Could not copy automatically — select the key and copy manually.');
+      toast(t('node.copyManual'));
     }
   }
 
   async function scan() {
-    if (!fleetKey?.set) { toast('Generate a fleet key first — discovery probes are signed with it.'); return; }
+    if (!fleetKey?.set) { toast(t('node.genKeyFirst')); return; }
     setScanning(true);
     const r = await api('/api/nodes/scan', { method: 'POST', body: JSON.stringify({ timeoutMs: 4000 }) });
     setScanning(false);
-    if (!r.ok) { toast(r.message || 'Scan failed (is a fleet key set?).'); return; }
+    if (!r.ok) { toast(r.message || t('node.scanFailed')); return; }
     setDiscovered(Array.isArray(r.body) ? r.body : []);
   }
 
@@ -80,25 +81,25 @@ export function NodesTab({ onToast, nodes, reloadNodes, managingNodeId, onManage
     const ip = adoptForm.ip.trim();
     const port = parseInt(adoptForm.httpsPort, 10);
     const code = adoptForm.claimCode.trim();
-    if (!ip || !port) { toast('Enter the node IP and HTTPS port.'); return; }
-    if (!code) { toast('Enter the claim code shown on the node.'); return; }
+    if (!ip || !port) { toast(t('node.enterIpPort')); return; }
+    if (!code) { toast(t('node.enterClaim')); return; }
     setBusy(true);
     const r = await api('/api/nodes/adopt', {
       method: 'POST',
       body: JSON.stringify({ ip, httpsPort: port, claimCode: code, name: adoptForm.name.trim(), description: adoptForm.description.trim(), icon: adoptForm.icon }),
     });
     setBusy(false);
-    if (r.ok) { toast('Node adopted.'); setAdoptForm({ ip: '', httpsPort: '', claimCode: '', name: '', description: '', icon: DEFAULT_NODE_ICON }); reloadNodes(); }
-    else toast(r.message || 'Adoption failed (check the claim code and that the node is reachable).');
+    if (r.ok) { toast(t('node.nodeAdopted')); setAdoptForm({ ip: '', httpsPort: '', claimCode: '', name: '', description: '', icon: DEFAULT_NODE_ICON }); reloadNodes(); }
+    else toast(r.message || t('node.adoptFailed'));
   }
 
   async function release(node) {
-    if (!window.confirm(`Release "${node.name || node.nodeId}"? It will become discoverable again.`)) return;
+    if (!window.confirm(t('node.confirmRelease', { name: node.name || node.nodeId }))) return;
     setBusy(true);
     const r = await api(`/api/nodes/${encodeURIComponent(node.nodeId)}/release`, { method: 'POST' });
     setBusy(false);
-    if (r.ok) { toast('Node released.'); if (managingNodeId === node.nodeId) onBack(); reloadNodes(); }
-    else toast(r.message || 'Release failed.');
+    if (r.ok) { toast(t('node.nodeReleased')); if (managingNodeId === node.nodeId) onBack(); reloadNodes(); }
+    else toast(r.message || t('node.releaseFailed'));
   }
 
   const keySet = !!fleetKey?.set;
@@ -119,50 +120,45 @@ export function NodesTab({ onToast, nodes, reloadNodes, managingNodeId, onManage
 
       <section className="settings-panel span-two">
         <header>
-          <h2><span className="btn-icon"><Ico n="key" /> Fleet key</span></h2>
+          <h2><span className="btn-icon"><Ico n="key" /> {t('node.fleetKey')}</span></h2>
         </header>
-        <p className="settings-hint">
-          Nodes are discoverable only by a control plane that shares this key. Generate it once, then paste it into
-          each mymatasan node&apos;s Settings → Connectivity.
-        </p>
+        <p className="settings-hint">{t('node.fleetKeyHint')}</p>
         <div className="node-key-row">
           <div className="fleet-key-field">
-            <code className="fleet-key-box">{keySet ? fleetKey.fleetKey : 'Not set — generate one to begin.'}</code>
+            <code className="fleet-key-box">{keySet ? fleetKey.fleetKey : t('node.notSet')}</code>
             {keySet ? (
               <button
                 type="button"
                 className="fleet-key-copy"
                 onClick={copyKey}
-                title="Copy fleet key"
-                aria-label="Copy fleet key"
+                title={t('node.copyFleetKey')}
+                aria-label={t('node.copyFleetKey')}
               >
                 <Ico n={copied ? 'check-ok' : 'copy'} sz={15} />
               </button>
             ) : null}
           </div>
           <button type="button" className="quiet" onClick={generateFleetKey} disabled={busy}>
-            <span className="btn-icon"><Ico n="refresh" /> Generate / rotate</span>
+            <span className="btn-icon"><Ico n="refresh" /> {t('node.generateRotate')}</span>
           </button>
         </div>
       </section>
 
       <section className="settings-panel span-two">
         <header>
-          <h2><span className="btn-icon"><Ico n="search" /> Discover nodes</span></h2>
+          <h2><span className="btn-icon"><Ico n="search" /> {t('node.discover')}</span></h2>
           <div className="settings-header-actions">
             <button type="button" onClick={scan} disabled={scanning || !keySet}>
-              <span className="btn-icon"><Ico n="wifi" /> {scanning ? 'Scanning…' : 'Scan LAN'}</span>
+              <span className="btn-icon"><Ico n="wifi" /> {scanning ? t('node.scanning') : t('node.scanLan')}</span>
             </button>
           </div>
         </header>
-        <p className="settings-hint">
-          Scan the local network for unpaired mymatasan nodes. Already-adopted nodes go silent and won&apos;t appear.
-        </p>
-        {!keySet ? <p className="settings-hint danger-text">Set a fleet key above before scanning.</p> : null}
-        {discovered && discovered.length === 0 ? <p className="settings-hint">No unpaired nodes found.</p> : null}
+        <p className="settings-hint">{t('node.discoverHint')}</p>
+        {!keySet ? <p className="settings-hint danger-text">{t('node.setKeyFirst')}</p> : null}
+        {discovered && discovered.length === 0 ? <p className="settings-hint">{t('node.noUnpaired')}</p> : null}
         {discovered && discovered.length > 0 ? (
           <table className="event-table">
-            <thead><tr><th>Name</th><th>Node ID</th><th>Address</th><th>Version</th><th></th></tr></thead>
+            <thead><tr><th>{t('node.colName')}</th><th>{t('node.colNodeId')}</th><th>{t('node.colAddress')}</th><th>{t('node.colVersion')}</th><th></th></tr></thead>
             <tbody>
               {discovered.map((n) => (
                 <tr key={n.nodeId}>
@@ -172,8 +168,8 @@ export function NodesTab({ onToast, nodes, reloadNodes, managingNodeId, onManage
                   <td>{n.version || '—'}</td>
                   <td>
                     {n.adopted
-                      ? <span className="status-pill online">Adopted</span>
-                      : <button type="button" className="quiet" onClick={() => selectDiscovered(n)}>Select</button>}
+                      ? <span className="status-pill online">{t('node.adopted')}</span>
+                      : <button type="button" className="quiet" onClick={() => selectDiscovered(n)}>{t('node.select')}</button>}
                   </td>
                 </tr>
               ))}
@@ -183,28 +179,25 @@ export function NodesTab({ onToast, nodes, reloadNodes, managingNodeId, onManage
       </section>
 
       <section className="settings-panel span-two">
-        <header><h2><span className="btn-icon"><Ico n="plus" /> Adopt a node</span></h2></header>
-        <p className="settings-hint">
-          Pick a discovered node (or enter an address manually for a different subnet), then enter the claim code shown
-          on that node&apos;s Connectivity page. Name defaults to the node&apos;s hostname — rename it if you like.
-        </p>
+        <header><h2><span className="btn-icon"><Ico n="plus" /> {t('node.adoptTitle')}</span></h2></header>
+        <p className="settings-hint">{t('node.adoptHint')}</p>
         <div className="settings-field-grid">
-          <label>Node IP
+          <label>{t('node.nodeIp')}
             <input value={adoptForm.ip} onChange={(e) => setAdoptForm({ ...adoptForm, ip: e.target.value })} placeholder="192.168.1.40" disabled={busy} />
           </label>
-          <label>HTTPS port
+          <label>{t('node.httpsPort')}
             <input value={adoptForm.httpsPort} onChange={(e) => setAdoptForm({ ...adoptForm, httpsPort: e.target.value })} placeholder="3000" disabled={busy} />
           </label>
-          <label>Claim code
-            <input value={adoptForm.claimCode} onChange={(e) => setAdoptForm({ ...adoptForm, claimCode: e.target.value })} placeholder="claim code" disabled={busy} />
+          <label>{t('node.claimCode')}
+            <input value={adoptForm.claimCode} onChange={(e) => setAdoptForm({ ...adoptForm, claimCode: e.target.value })} placeholder={t('node.claimPlaceholder')} disabled={busy} />
           </label>
-          <label>Name <span className="settings-field-opt">(optional)</span>
-            <input value={adoptForm.name} onChange={(e) => setAdoptForm({ ...adoptForm, name: e.target.value })} placeholder="defaults to hostname" disabled={busy} />
+          <label>{t('node.name')} <span className="settings-field-opt">{t('node.optional')}</span>
+            <input value={adoptForm.name} onChange={(e) => setAdoptForm({ ...adoptForm, name: e.target.value })} placeholder={t('node.defaultsHostname')} disabled={busy} />
           </label>
-          <label className="field-span-two">Description <span className="settings-field-opt">(optional)</span>
-            <textarea value={adoptForm.description} onChange={(e) => setAdoptForm({ ...adoptForm, description: e.target.value })} rows={2} placeholder="Shown as a tooltip in the nav, e.g. “Front gate — 4 cameras”" disabled={busy} />
+          <label className="field-span-two">{t('node.description')} <span className="settings-field-opt">{t('node.optional')}</span>
+            <textarea value={adoptForm.description} onChange={(e) => setAdoptForm({ ...adoptForm, description: e.target.value })} rows={2} placeholder={t('node.descPlaceholder')} disabled={busy} />
           </label>
-          <label>Icon
+          <label>{t('node.icon')}
             <IconDropdown
               value={adoptForm.icon}
               options={NODE_ICONS}
@@ -215,25 +208,25 @@ export function NodesTab({ onToast, nodes, reloadNodes, managingNodeId, onManage
         </div>
         <div className="settings-actions">
           <button type="button" onClick={adopt} disabled={busy}>
-            <span className="btn-icon"><Ico n="check-ok" /> Adopt</span>
+            <span className="btn-icon"><Ico n="check-ok" /> {t('node.adopt')}</span>
           </button>
         </div>
       </section>
 
       <section className="settings-panel span-two">
         <header>
-          <h2><span className="btn-icon"><Ico n="shield" /> Adopted nodes</span></h2>
+          <h2><span className="btn-icon"><Ico n="shield" /> {t('node.adoptedNodes')}</span></h2>
           <div className="settings-header-actions">
             <button type="button" className="quiet" onClick={reloadNodes} disabled={busy}>
-              <span className="btn-icon"><Ico n="reload" /> Refresh</span>
+              <span className="btn-icon"><Ico n="reload" /> {t('node.refresh')}</span>
             </button>
           </div>
         </header>
         {nodeList.length === 0 ? (
-          <p className="settings-hint">No adopted nodes yet.</p>
+          <p className="settings-hint">{t('node.noAdopted')}</p>
         ) : (
           <table className="event-table">
-            <thead><tr><th>Name</th><th>Address</th><th>Status</th><th>Cert expires</th><th>Adopted</th><th></th></tr></thead>
+            <thead><tr><th>{t('node.colName')}</th><th>{t('node.colAddress')}</th><th>{t('node.colStatus')}</th><th>{t('node.colCertExpires')}</th><th>{t('node.colAdopted')}</th><th></th></tr></thead>
             <tbody>
               {nodeList.map((n) => (
                 <tr key={n.nodeId}>
@@ -244,9 +237,9 @@ export function NodesTab({ onToast, nodes, reloadNodes, managingNodeId, onManage
                   <td>{n.adoptedAt ? formatTimestamp(n.adoptedAt) : '—'}</td>
                   <td className="node-row-actions">
                     <button type="button" className="quiet" onClick={() => onManage(n.nodeId)}>
-                      <span className="btn-icon"><Ico n="sliders" /> Manage</span>
+                      <span className="btn-icon"><Ico n="sliders" /> {t('node.manage')}</span>
                     </button>
-                    <button type="button" className="quiet danger-text" onClick={() => release(n)} disabled={busy}>Release</button>
+                    <button type="button" className="quiet danger-text" onClick={() => release(n)} disabled={busy}>{t('node.release')}</button>
                   </td>
                 </tr>
               ))}

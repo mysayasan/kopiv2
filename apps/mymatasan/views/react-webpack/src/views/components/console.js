@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { useT } from '@shared/i18n';
 
 // ConsoleLog renders streamed text in a terminal-style box: monospace, dark, and
 // auto-scrolled to the newest output (like a real console). It's a generic,
@@ -12,6 +13,7 @@ import { useEffect, useRef } from 'react';
 //   maxChars trailing characters to keep (default 4000) so the DOM stays light
 //   empty    placeholder text when there's no log yet
 export function ConsoleLog({ log = '', title, running = false, maxChars = 4000, empty = '' }) {
+  const t = useT();
   const bodyRef = useRef(null);
   const text = log.length > maxChars ? `…\n${log.slice(-maxChars)}` : log;
 
@@ -31,7 +33,7 @@ export function ConsoleLog({ log = '', title, running = false, maxChars = 4000, 
         <div className="console-log-head">
           <span className="console-log-dots" aria-hidden="true"><i /><i /><i /></span>
           <span className="console-log-title">{title}</span>
-          {running ? <span className="console-log-status">running…</span> : null}
+          {running ? <span className="console-log-status">{t('console.running')}</span> : null}
         </div>
       ) : null}
       <pre className="console-log-body" ref={bodyRef}>

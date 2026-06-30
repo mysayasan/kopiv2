@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Ico } from './icons';
+import { useT } from '@shared/i18n';
 import { useSnapshotBlob } from '../hooks';
 import {
   apiBase,
@@ -22,11 +23,11 @@ const PAGE_SIZE = 20;
 // health and login both live under the "system" category, so they are separated
 // by source instead.
 const TYPE_FILTERS = [
-  { id: 'all', label: 'All', query: {} },
-  { id: 'ai', label: 'AI Detection', query: { category: 'vision.alert' } },
-  { id: 'camera', label: 'Camera Health', query: { category: 'health.check' } },
-  { id: 'machine', label: 'Machine Health', query: { source: 'machine-health-monitor' } },
-  { id: 'login', label: 'Login Security', query: { source: 'local-auth' } },
+  { id: 'all', labelKey: 'notif.filterAll', query: {} },
+  { id: 'ai', labelKey: 'notif.filterAi', query: { category: 'vision.alert' } },
+  { id: 'camera', labelKey: 'notif.filterCamera', query: { category: 'health.check' } },
+  { id: 'machine', labelKey: 'notif.filterMachine', query: { source: 'machine-health-monitor' } },
+  { id: 'login', labelKey: 'notif.filterLogin', query: { source: 'local-auth' } },
 ];
 
 const SEVERITY_RANK = { critical: 3, warning: 2, info: 1 };
@@ -51,6 +52,7 @@ export function NotificationsTab({
   onOpenSettingsSection,
   onOpenUser,
 }) {
+  const t = useT();
   const [view, setView] = useState('unread'); // 'unread' | 'all'
   const [typeFilter, setTypeFilter] = useState('all');
   const [items, setItems] = useState([]);
@@ -129,7 +131,7 @@ export function NotificationsTab({
         setItems((prev) => (replace ? list : [...prev, ...list]));
         setTotal(typeof result?.total === 'number' ? result.total : list.length);
       } catch (e) {
-        if (onMessage) onMessage('Failed to load notifications.');
+        if (onMessage) onMessage(t('notif.failedLoad'), 'error');
       } finally {
         setLoading(false);
       }
@@ -221,33 +223,29 @@ export function NotificationsTab({
     <section className="panel notifications-page">
       <header className="notifications-head">
         <div className="notifications-headings">
-          <h2><span className="btn-icon"><Ico n="bell" /> Notifications</span></h2>
-          <p className="notifications-desc">
-            AI detections show the event snapshot and details. “View clip” appears when a matching
-            recording is available; events with no recording — or whose clip has aged out of recent
-            recordings (retention) — show “No clip recorded”.
-          </p>
+          <h2><span className="btn-icon"><Ico n="bell" /> {t('notif.title')}</span></h2>
+          <p className="notifications-desc">{t('notif.desc')}</p>
         </div>
         <div className="notifications-toolbar">
-          <div className="seg-toggle" role="group" aria-label="Read filter">
-            <button type="button" className={view === 'unread' ? 'active' : 'quiet'} onClick={() => setView('unread')}>Unread</button>
-            <button type="button" className={view === 'all' ? 'active' : 'quiet'} onClick={() => setView('all')}>All</button>
+          <div className="seg-toggle" role="group" aria-label={t('notif.readFilter')}>
+            <button type="button" className={view === 'unread' ? 'active' : 'quiet'} onClick={() => setView('unread')}>{t('notif.unread')}</button>
+            <button type="button" className={view === 'all' ? 'active' : 'quiet'} onClick={() => setView('all')}>{t('notif.all')}</button>
           </div>
           <button type="button" className="quiet" onClick={() => fetchPage(0, true)} disabled={loading}>
-            <span className="btn-icon"><Ico n="refresh" /> Reload</span>
+            <span className="btn-icon"><Ico n="refresh" /> {t('notif.reload')}</span>
           </button>
         </div>
       </header>
 
       <div className="notifications-filters">
-        {TYPE_FILTERS.map((t) => (
+        {TYPE_FILTERS.map((f) => (
           <button
-            key={t.id}
+            key={f.id}
             type="button"
-            className={`chip${typeFilter === t.id ? ' chip--active' : ''}`}
-            onClick={() => setTypeFilter(t.id)}
+            className={`chip${typeFilter === f.id ? ' chip--active' : ''}`}
+            onClick={() => setTypeFilter(f.id)}
           >
-            {t.label}
+            {t(f.labelKey)}
           </button>
         ))}
       </div>
@@ -280,7 +278,7 @@ export function NotificationsTab({
       {hasMore ? (
         <div className="notifications-more">
           <button type="button" className="quiet" onClick={() => fetchPage(items.length, false)} disabled={loading}>
-            {loading ? 'Loading…' : `Load more (${items.length}/${total})`}
+            {loading ? t('notif.loading') : t('notif.loadMore', { n: items.length, total })}
           </button>
         </div>
       ) : null}
@@ -292,15 +290,15 @@ export function NotificationsTab({
               <div className="video-dialog-title-group">
                 <span className="video-dialog-title">{segmentFilename(playingSegment)}</span>
               </div>
-              <button type="button" className="video-dialog-close" onClick={closeVideoModal} aria-label="Close">✕</button>
+              <button type="button" className="video-dialog-close" onClick={closeVideoModal} aria-label={t('notif.close')}>✕</button>
             </div>
             <div className="video-dialog-body">
-              {loadingVideo ? <div className="video-loading-msg">Loading video…</div> : null}
+              {loadingVideo ? <div className="video-loading-msg">{t('notif.loadingVideo')}</div> : null}
               {videoUrl ? <video className="video-player" controls autoPlay src={videoUrl} /> : null}
             </div>
             <div className="video-dialog-meta">
               {formatTimestamp(playingSegment.startedAt)} · {segmentDuration(playingSegment)} · {formatFileSize(playingSegment.fileSize)}
-              {playingSegment.alertId ? ` · Alert #${playingSegment.alertId}` : ''}
+              {playingSegment.alertId ? ` · ${t('notif.alertNum', { id: playingSegment.alertId })}` : ''}
             </div>
           </div>
         </div>
@@ -316,6 +314,7 @@ export function NotificationsTab({
 // ImageZoomModal shows an event snapshot full-size in a lightbox with zoom
 // (mouse wheel + buttons) and click-drag panning once zoomed in.
 function ImageZoomModal({ alertId, authHeader, onClose }) {
+  const t = useT();
   const { url, loading, error } = useSnapshotBlob(alertId, authHeader, true);
   const [scale, setScale] = useState(1);
   const [pos, setPos] = useState({ x: 0, y: 0 });
@@ -362,12 +361,12 @@ function ImageZoomModal({ alertId, authHeader, onClose }) {
     <div className="image-zoom-overlay" onClick={onClose}>
       <div className="image-zoom-dialog" onClick={(e) => e.stopPropagation()}>
         <div className="image-zoom-toolbar">
-          <button type="button" className="quiet" onClick={() => zoomBy(-0.25)} disabled={scale <= 1} aria-label="Zoom out">−</button>
+          <button type="button" className="quiet" onClick={() => zoomBy(-0.25)} disabled={scale <= 1} aria-label={t('notif.zoomOut')}>−</button>
           <span className="image-zoom-level">{Math.round(scale * 100)}%</span>
-          <button type="button" className="quiet" onClick={() => zoomBy(0.25)} disabled={scale >= 5} aria-label="Zoom in">+</button>
-          <button type="button" className="quiet" onClick={reset} disabled={scale === 1 && pos.x === 0 && pos.y === 0}>Reset</button>
+          <button type="button" className="quiet" onClick={() => zoomBy(0.25)} disabled={scale >= 5} aria-label={t('notif.zoomIn')}>+</button>
+          <button type="button" className="quiet" onClick={reset} disabled={scale === 1 && pos.x === 0 && pos.y === 0}>{t('notif.reset')}</button>
           <span className="image-zoom-spacer" />
-          <button type="button" className="image-zoom-close" onClick={onClose} aria-label="Close">✕</button>
+          <button type="button" className="image-zoom-close" onClick={onClose} aria-label={t('notif.close')}>✕</button>
         </div>
         <div
           ref={bodyRef}
@@ -379,16 +378,16 @@ function ImageZoomModal({ alertId, authHeader, onClose }) {
           onPointerLeave={onPointerUp}
           style={{ cursor: scale > 1 ? (dragRef.current ? 'grabbing' : 'grab') : 'zoom-in' }}
         >
-          {loading ? <div className="video-loading-msg">Loading image…</div> : null}
+          {loading ? <div className="video-loading-msg">{t('notif.loadingImage')}</div> : null}
           {!loading && url ? (
             <img
               src={url}
-              alt="Event snapshot"
+              alt={t('notif.eventSnapshot')}
               draggable={false}
               style={{ transform: `translate(${pos.x}px, ${pos.y}px) scale(${scale})` }}
             />
           ) : null}
-          {!loading && !url && error ? <div className="video-loading-msg">Image unavailable.</div> : null}
+          {!loading && !url && error ? <div className="video-loading-msg">{t('notif.imageUnavailable')}</div> : null}
         </div>
       </div>
     </div>
@@ -415,6 +414,7 @@ function NotificationRow({
   onOpenSettingsSection,
   onOpenUser,
 }) {
+  const t = useT();
   const isAi = isVisionAlertNotification(notif);
   // The hook is always called (rules of hooks); a null id means no fetch.
   const { url: snapUrl, loading: snapLoading, error: snapError } = useSnapshotBlob(
@@ -445,7 +445,7 @@ function NotificationRow({
     const camera =
       data.cameraName ||
       cameraTitle((saved || []).find((d) => Number(d.id) === Number(notif.cameraId))) ||
-      (notif.cameraId ? `Camera ${notif.cameraId}` : '');
+      (notif.cameraId ? t('notif.cameraN', { id: notif.cameraId }) : '');
     const fields = [
       objectLabel ? { k: 'Object', v: objectLabel, cap: true } : null,
       confidence > 0 ? { k: 'Confidence', v: `${(confidence * 100).toFixed(0)}%` } : null,
@@ -460,26 +460,26 @@ function NotificationRow({
           className="notification-snap"
           onClick={() => snapUrl && onZoomImage(Number(notif.refId))}
           disabled={!snapUrl}
-          title={snapUrl ? 'Click to enlarge' : undefined}
-          aria-label={snapUrl ? 'Enlarge event snapshot' : undefined}
+          title={snapUrl ? t('notif.clickEnlarge') : undefined}
+          aria-label={snapUrl ? t('notif.enlargeSnapshot') : undefined}
         >
           {snapLoading ? <span className="notification-snap-ph">…</span> : null}
-          {!snapLoading && snapUrl ? <img src={snapUrl} alt="Event snapshot" /> : null}
+          {!snapLoading && snapUrl ? <img src={snapUrl} alt={t('notif.eventSnapshot')} /> : null}
           {!snapLoading && !snapUrl ? <span className="notification-snap-ph"><Ico n="camera" sz={20} /></span> : null}
           {snapError ? null : null}
         </button>
         <div className="notification-body">
           <div className="notification-title-row">
             <span className={`notif-sev notif-sev--${severity}`} aria-hidden="true" />
-            <strong>{notif.title || rule?.name || 'Detection'}</strong>
-            <span className="notification-kind">AI Detection</span>
-            {!acknowledged ? <span className="segment-unreviewed">Unreviewed</span> : null}
+            <strong>{notif.title || rule?.name || t('notif.detection')}</strong>
+            <span className="notification-kind">{t('notif.aiDetection')}</span>
+            {!acknowledged ? <span className="segment-unreviewed">{t('notif.unreviewed')}</span> : null}
           </div>
           {camera ? <div className="notification-sub">{camera}</div> : null}
           <dl className="notification-fields">
             {fields.map((f) => (
               <div key={f.k}>
-                <dt>{f.k}</dt>
+                <dt>{t('notif.f' + f.k)}</dt>
                 <dd className={f.cap ? 'cap' : ''}>{fieldValue(f.v)}</dd>
               </div>
             ))}
@@ -489,21 +489,21 @@ function NotificationRow({
         <div className="notification-actions">
           {unread && !acknowledged ? (
             <button type="button" onClick={() => onAcknowledge(notif)}>
-              <span className="btn-icon"><Ico n="acknowledge" /> Acknowledge</span>
+              <span className="btn-icon"><Ico n="acknowledge" /> {t('notif.acknowledge')}</span>
             </button>
           ) : unread ? (
             // Unread but already acknowledged elsewhere — still let the leftover
             // notification be cleared so it can't get stuck in the feed/dropdown.
             <button type="button" className="quiet" onClick={() => onDismiss(notif)}>
-              <span className="btn-icon"><Ico n="check-ok" /> Dismiss</span>
+              <span className="btn-icon"><Ico n="check-ok" /> {t('notif.dismiss')}</span>
             </button>
           ) : null}
           {clip ? (
             <button type="button" className="quiet" onClick={() => onPlayClip(clip)}>
-              <span className="btn-icon"><Ico n="play" /> View clip</span>
+              <span className="btn-icon"><Ico n="play" /> {t('notif.viewClip')}</span>
             </button>
           ) : noClip ? (
-            <span className="notification-noclip"><Ico n="film" sz={13} /> No clip recorded</span>
+            <span className="notification-noclip"><Ico n="film" sz={13} /> {t('notif.noClip')}</span>
           ) : null}
         </div>
       </article>
@@ -517,14 +517,14 @@ function NotificationRow({
   if (!isAdmin) {
     deepLink = null;
   } else if (notif.source === 'camera-health-monitor' || notif.category === 'health.check') {
-    deepLink = { label: 'Camera Health settings', icon: 'wifi', run: () => onOpenSettingsSection('health') };
+    deepLink = { label: t('notif.cameraHealthSettings'), icon: 'wifi', run: () => onOpenSettingsSection('health') };
   } else if (notif.source === 'machine-health-monitor') {
-    deepLink = { label: 'Machine Health settings', icon: 'cpu', run: () => onOpenSettingsSection('machine') };
+    deepLink = { label: t('notif.machineHealthSettings'), icon: 'cpu', run: () => onOpenSettingsSection('machine') };
   } else if (notif.source === 'local-auth') {
     const username = (data.username || '').trim();
-    deepLink = { label: username ? `View user '${username}'` : 'View users', icon: 'user', run: () => onOpenUser(username) };
+    deepLink = { label: username ? t('notif.viewUser', { username }) : t('notif.viewUsers'), icon: 'user', run: () => onOpenUser(username) };
   } else if (notif.source === 'settings') {
-    deepLink = { label: 'Notification settings', icon: 'sliders', run: () => onOpenSettingsSection('notifications') };
+    deepLink = { label: t('notif.notifSettings'), icon: 'sliders', run: () => onOpenSettingsSection('notifications') };
   }
 
   return (
@@ -546,7 +546,7 @@ function NotificationRow({
         ) : null}
         {unread ? (
           <button type="button" className="quiet" onClick={() => onDismiss(notif)}>
-            <span className="btn-icon"><Ico n="check-ok" /> Dismiss</span>
+            <span className="btn-icon"><Ico n="check-ok" /> {t('notif.dismiss')}</span>
           </button>
         ) : null}
       </div>

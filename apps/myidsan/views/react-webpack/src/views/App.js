@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ACCESS_TIERS,
+  apiBase,
   apiRequest,
   clearCookie,
   emptyToZero,
@@ -12,7 +13,8 @@ import {
   rowsOf,
   setCookie
 } from '../lib/api'
-import { Ico, DataTable as ClientDataTable, ToastStack, SideNav } from '@shared'
+import { Ico, DataTable as ClientDataTable, ToastStack, SideNav, LangProvider, LanguageDropdown, AppFooter, normalizeLang, useT } from '@shared'
+import { messages as appMessages } from './i18n'
 
 const ACTIVE_SECTION_COOKIE = 'myidsan_active_section'
 const STOCK_SUPERADMIN_EMAIL = 'superadmin'
@@ -195,7 +197,8 @@ function BrandMark({ size = 24 }) {
   )
 }
 
-function App() {
+function AppInner({ lang, onLangChange }) {
+  const t = useT()
   const [session, setSession] = useState(() => localStorage.getItem('myidsan.session') === 'active')
   const [sessionReady, setSessionReady] = useState(false)
   const [active, setActive] = useState(() => getCookie(ACTIVE_SECTION_COOKIE) || 'dashboard')
@@ -329,7 +332,7 @@ function App() {
   }
 
   if (!sessionReady) {
-    return <div className="boot-screen">Checking session</div>
+    return <div className="boot-screen">{t('common.checkingSession')}</div>
   }
 
   if (!session) {
@@ -353,15 +356,15 @@ function App() {
             <div className="brand-mark"><BrandMark /></div>
             <div>
               <div className="brand-name">MyIDSan</div>
-              <div className="brand-subtitle">Identity control</div>
+              <div className="brand-subtitle">{t('brand.subtitle')}</div>
             </div>
           </div>
         )}
         groups={navGroups.map(group => ({
-          label: group.label,
+          label: t(`grp.${group.label}`),
           items: group.items.map(section => ({
             id: section.id,
-            label: section.label,
+            label: t(`nav.${section.id}`),
             icon: section.icon,
             tone: section.tone,
             active: active === section.id,
@@ -371,17 +374,16 @@ function App() {
         footer={(
           <>
             <ThemeDropdown theme={theme} onThemeChange={changeTheme} />
-            <button className="logout-button" onClick={handleLogout} type="button">Log out</button>
+            <button className="logout-button" onClick={handleLogout} type="button">{t('common.logout')}</button>
           </>
         )}
       />
       <main className="main-workspace">
+        <div className="shared-lang-bar"><LanguageDropdown lang={lang} onLang={onLangChange} /></div>
         {handoffPending && (
           <div className="handoff-banner" role="alert">
-            <span className="handoff-banner-text">
-              The default <strong>stock superadmin</strong> account is still active. Open <strong>Users</strong> and set it inactive to finish securing this app.
-            </span>
-            <button type="button" className="handoff-banner-action" onClick={() => setActiveSection('users')}>Go to Users</button>
+            <span className="handoff-banner-text">{t('handoff.text')}</span>
+            <button type="button" className="handoff-banner-action" onClick={() => setActiveSection('users')}>{t('handoff.goToUsers')}</button>
           </div>
         )}
         {active === 'dashboard' && <Dashboard onNavigate={setActiveSection} sections={visibleSections} />}
@@ -392,6 +394,7 @@ function App() {
         {active === 'apps' && sectionAllowedById('apps', accessList, isSuperadmin) && <AppsPage accessList={accessList} onToast={pushToast} />}
         {active === 'endpoints' && sectionAllowedById('endpoints', accessList, isSuperadmin) && <EndpointsPage accessList={accessList} onToast={pushToast} />}
         {active === 'rbac' && sectionAllowedById('rbac', accessList, isSuperadmin) && <RbacPage accessList={accessList} onToast={pushToast} />}
+        <AppFooter appName="MyIDSan" apiBase={apiBase} />
       </main>
     </div>
   )
@@ -403,6 +406,7 @@ function App() {
 // ThemeDropdown mirrors myseliasan's light/dark selector, sitting at the foot of
 // the side-nav. The menu opens upward (see .theme-menu) so it is never clipped.
 function ThemeDropdown({ theme, onThemeChange }) {
+  const t = useT()
   const [open, setOpen] = useState(false)
   const wrapRef = useRef(null)
 
@@ -428,11 +432,11 @@ function ThemeDropdown({ theme, onThemeChange }) {
         aria-haspopup="listbox"
         aria-expanded={open}
       >
-        <span className="btn-icon"><Ico n={THEME_ICONS[theme]} sz={15} /> Theme</span>
+        <span className="btn-icon"><Ico n={THEME_ICONS[theme]} sz={15} /> {t('theme.label')}</span>
         <Ico n="chev-down" sz={13} />
       </button>
       {open && (
-        <div className="theme-menu" role="listbox" aria-label="Select theme">
+        <div className="theme-menu" role="listbox" aria-label={t('theme.select')}>
           {THEMES.map(option => (
             <button
               key={option}
@@ -442,7 +446,7 @@ function ThemeDropdown({ theme, onThemeChange }) {
               className={option === theme ? 'theme-menu-item active' : 'theme-menu-item'}
               onClick={() => { onThemeChange(option); setOpen(false) }}
             >
-              <Ico n={THEME_ICONS[option]} sz={15} /> {THEME_LABELS[option]}
+              <Ico n={THEME_ICONS[option]} sz={15} /> {t(`theme.${option}`)}
             </button>
           ))}
         </div>
@@ -454,6 +458,7 @@ function ThemeDropdown({ theme, onThemeChange }) {
 // ChangePasswordScreen forces the seeded stock superadmin (must-change-password) to
 // set its own password before reaching the app — mirrors myseliasan's first-login flow.
 function ChangePasswordScreen({ onDone, onLogout }) {
+  const t = useT()
   const [form, setForm] = useState({ current: '', next: '', confirm: '' })
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -461,11 +466,11 @@ function ChangePasswordScreen({ onDone, onLogout }) {
   const submit = async event => {
     event.preventDefault()
     if (form.next.length < 8) {
-      setError('New password must be at least 8 characters.')
+      setError(t('cpw.min'))
       return
     }
     if (form.next !== form.confirm) {
-      setError('New passwords do not match.')
+      setError(t('cpw.noMatch'))
       return
     }
     setBusy(true)
@@ -487,26 +492,26 @@ function ChangePasswordScreen({ onDone, onLogout }) {
           <div className="brand-mark"><BrandMark /></div>
           <div>
             <div className="brand-name">MyIDSan</div>
-            <div className="brand-subtitle">Set a new password</div>
+            <div className="brand-subtitle">{t('cpw.subtitle')}</div>
           </div>
         </div>
-        <div className="message warning">For security, set your own password before continuing.</div>
+        <div className="message warning">{t('cpw.securityNote')}</div>
         <form className="auth-form" onSubmit={submit}>
           {error && <div className="message danger">{error}</div>}
           <label>
-            Current password
+            {t('cpw.current')}
             <input type="password" autoComplete="current-password" value={form.current} onChange={event => setForm({ ...form, current: event.target.value })} />
           </label>
           <label>
-            New password
+            {t('cpw.new')}
             <input type="password" autoComplete="new-password" value={form.next} onChange={event => setForm({ ...form, next: event.target.value })} />
           </label>
           <label>
-            Confirm new password
+            {t('cpw.confirm')}
             <input type="password" autoComplete="new-password" value={form.confirm} onChange={event => setForm({ ...form, confirm: event.target.value })} />
           </label>
-          <button className="primary-button" disabled={busy} type="submit">{busy ? 'Saving' : 'Change password'}</button>
-          <button className="quiet-link" onClick={onLogout} type="button">Log out</button>
+          <button className="primary-button" disabled={busy} type="submit">{busy ? t('cpw.saving') : t('cpw.change')}</button>
+          <button className="quiet-link" onClick={onLogout} type="button">{t('common.logout')}</button>
         </form>
       </section>
     </div>
@@ -517,6 +522,7 @@ function ChangePasswordScreen({ onDone, onLogout }) {
 // no role yet) out of the app until an administrator grants it access. It offers only
 // a re-check and a log-out — there is nothing else the account may do.
 function PendingClearanceScreen({ email, onRefresh, onLogout }) {
+  const t = useT()
   const [busy, setBusy] = useState(false)
   const recheck = async () => {
     setBusy(true)
@@ -529,17 +535,14 @@ function PendingClearanceScreen({ email, onRefresh, onLogout }) {
           <div className="brand-mark"><BrandMark /></div>
           <div>
             <div className="brand-name">MyIDSan</div>
-            <div className="brand-subtitle">Access pending</div>
+            <div className="brand-subtitle">{t('pend.subtitle')}</div>
           </div>
         </div>
-        <div className="message warning">
-          Your account{email ? <> (<strong>{email}</strong>)</> : null} is awaiting clearance. An administrator must
-          assign you a role before you can access the dashboard.
-        </div>
-        <p className="auth-hint">Once an administrator grants you access, use “Check again” to continue.</p>
+        <div className="message warning">{t('pend.hint', { email: email ? ` (${email})` : '' })}</div>
+        <p className="auth-hint">{t('pend.note')}</p>
         <div className="auth-form">
-          <button className="primary-button" disabled={busy} type="button" onClick={recheck}>{busy ? 'Checking…' : 'Check again'}</button>
-          <button className="quiet-link" onClick={onLogout} type="button">Log out</button>
+          <button className="primary-button" disabled={busy} type="button" onClick={recheck}>{busy ? t('pend.checking') : t('pend.checkAgain')}</button>
+          <button className="quiet-link" onClick={onLogout} type="button">{t('common.logout')}</button>
         </div>
       </section>
     </div>
@@ -547,6 +550,7 @@ function PendingClearanceScreen({ email, onRefresh, onLogout }) {
 }
 
 function AuthScreen({ onAuthed, sessionError }) {
+  const t = useT()
   const [mode, setMode] = useState('login')
   const [form, setForm] = useState({
     username: '',
@@ -598,37 +602,37 @@ function AuthScreen({ onAuthed, sessionError }) {
           <div className="brand-mark"><BrandMark /></div>
           <div>
             <div className="brand-name">MyIDSan</div>
-            <div className="brand-subtitle">Identity and RBAC admin</div>
+            <div className="brand-subtitle">{t('auth.subAdmin')}</div>
           </div>
         </div>
         <div className="segmented">
-          <button className={mode === 'login' ? 'selected' : ''} onClick={() => setMode('login')} type="button">Log in</button>
-          <button className={mode === 'register' ? 'selected' : ''} onClick={() => setMode('register')} type="button">Register</button>
+          <button className={mode === 'login' ? 'selected' : ''} onClick={() => setMode('login')} type="button">{t('auth.login')}</button>
+          <button className={mode === 'register' ? 'selected' : ''} onClick={() => setMode('register')} type="button">{t('auth.register')}</button>
         </div>
         <form className="auth-form" onSubmit={submit}>
           {sessionError && <div className="message warning">{sessionError}</div>}
           {error && <div className="message danger">{error}</div>}
           <label>
-            Username
+            {t('auth.username')}
             <input autoComplete="username" value={form.username} onChange={event => setForm({ ...form, username: event.target.value })} />
           </label>
           <label>
-            Password
+            {t('auth.password')}
             <input autoComplete={mode === 'login' ? 'current-password' : 'new-password'} type="password" value={form.password} onChange={event => setForm({ ...form, password: event.target.value })} />
           </label>
           {mode === 'register' && (
             <div className="two-col">
               <label>
-                First name
+                {t('auth.firstName')}
                 <input value={form.firstName} onChange={event => setForm({ ...form, firstName: event.target.value })} />
               </label>
               <label>
-                Last name
+                {t('auth.lastName')}
                 <input value={form.lastName} onChange={event => setForm({ ...form, lastName: event.target.value })} />
               </label>
             </div>
           )}
-          <button className="primary-button" disabled={busy} type="submit">{busy ? 'Working' : mode === 'login' ? 'Log in' : 'Create account'}</button>
+          <button className="primary-button" disabled={busy} type="submit">{busy ? t('auth.working') : mode === 'login' ? t('auth.login') : t('auth.createAccount')}</button>
           {(providers.google || providers.github) && (
             <div className="oauth-row">
               {providers.google && <a className="quiet-link" href="/api/login/google">Google</a>}
@@ -642,18 +646,19 @@ function AuthScreen({ onAuthed, sessionError }) {
 }
 
 function Dashboard({ onNavigate, sections: visibleSections }) {
+  const t = useT()
   const cards = visibleSections
     .filter(section => section.id !== 'dashboard')
     .map(section => ({
       id: section.id,
-      title: section.label,
-      group: section.group,
+      title: t(`nav.${section.id}`),
+      group: t(`grp.${section.group}`),
       tone: section.tone,
-      body: section.summary || dashboardBody(section.id)
+      body: section.summary ? t(`sum.${section.id}`) : dashboardBody(section.id)
     }))
 
   return (
-    <PageFrame title="Identity Administration" subtitle="Configure accounts, role membership, applications, endpoints, and RBAC policy.">
+    <PageFrame title={t('dash.title')} subtitle={t('dash.subtitle')}>
       <div className="dashboard-grid">
         {cards.map(card => (
           <button className={`dashboard-card tone-${card.tone}`} key={card.id} onClick={() => onNavigate(card.id)} type="button">
@@ -664,7 +669,7 @@ function Dashboard({ onNavigate, sections: visibleSections }) {
         ))}
         {cards.length === 0 && (
           <div className="empty-state">
-            No RBAC-backed menu entries are available for this account.
+            {t('dash.noMenus')}
           </div>
         )}
       </div>
@@ -673,13 +678,14 @@ function Dashboard({ onNavigate, sections: visibleSections }) {
 }
 
 function UnauthorizedPage({ section, onNavigate }) {
-  const title = section?.label || 'Restricted Page'
+  const t = useT()
+  const title = section ? t(`nav.${section.id}`) : t('unauth.restricted')
   return (
-    <PageFrame title="Unauthorized Access" subtitle={`Your current RBAC policy no longer allows access to ${title}.`}>
+    <PageFrame title={t('unauth.title')} subtitle={t('unauth.subtitle', { title })}>
       <div className="empty-state unauthorized-state">
         <strong>{title}</strong>
-        <span>This page is hidden until your role is granted the required GET permission again.</span>
-        <button className="primary-button" onClick={onNavigate} type="button">Go to dashboard</button>
+        <span>{t('unauth.hidden')}</span>
+        <button className="primary-button" onClick={onNavigate} type="button">{t('unauth.goDashboard')}</button>
       </div>
     </PageFrame>
   )
@@ -691,6 +697,7 @@ function UnauthorizedPage({ section, onNavigate }) {
 // stock superadmin (email "superadmin") is flagged and can only be disabled once a real
 // superadmin is active, and you can never disable your own account.
 function UsersPage({ accessList, currentEmail, stockEmail = STOCK_SUPERADMIN_EMAIL, onChanged, onToast }) {
+  const t = useT()
   const [users, setUsers] = useState([])
   const [roles, setRoles] = useState([])
   const [busy, setBusy] = useState(false)
@@ -719,7 +726,7 @@ function UsersPage({ accessList, currentEmail, stockEmail = STOCK_SUPERADMIN_EMA
   const isSuperRole = id => superRole && Number(id) === Number(superRole.id)
   const realSuperadminActive = users.some(u => u.email !== stockEmail && u.isActive && isSuperRole(u.userRoleId))
 
-  const saveUser = async (user, changes, successMsg = 'Saved.') => {
+  const saveUser = async (user, changes, successMsg = t('user.saved')) => {
     setBusy(true)
     try {
       // userpwd is left blank — the service keeps the stored password on update.
@@ -736,52 +743,52 @@ function UsersPage({ accessList, currentEmail, stockEmail = STOCK_SUPERADMIN_EMA
 
   const roleLabel = roleId => {
     const id = Number(roleId)
-    if (!id) return 'No role (pending)'
+    if (!id) return t('user.noRolePending')
     return roles.find(r => Number(r.id) === id)?.name || `role ${id}`
   }
   const setUserRole = (user, roleId) => {
     const who = user.email || `user ${user.id}`
-    saveUser(user, { userRoleId: Number(roleId) }, `Role for ${who} set to ${roleLabel(roleId)}.`)
+    saveUser(user, { userRoleId: Number(roleId) }, t('user.roleSetTo', { who, role: roleLabel(roleId) }))
   }
-  const toggleActive = user => saveUser(user, { isActive: !user.isActive }, `${user.email || 'User'} ${user.isActive ? 'disabled' : 'enabled'}.`)
+  const toggleActive = user => saveUser(user, { isActive: !user.isActive }, t(user.isActive ? 'user.disabledMsg' : 'user.enabledMsg', { user: user.email || t('user.userWord') }))
   const makeSuperadmin = user => {
     if (!superRole) {
-      toast('No superadmin role found.', 'error')
+      toast(t('user.noSuperRole'), 'error')
       return
     }
     const label = user.email || `user ${user.id}`
-    if (!window.confirm(`Make "${label}" a superadmin?\n\nThe stock superadmin stays active — disable it from this list once you've confirmed the new account works.`)) {
+    if (!window.confirm(t('user.confirmSuperadmin', { label }))) {
       return
     }
-    saveUser(user, { userRoleId: superRole.id }, `${label} is now a superadmin.`)
+    saveUser(user, { userRoleId: superRole.id }, t('user.nowSuperadmin', { label }))
   }
 
   const columns = [
-    { key: 'id', label: 'ID' },
+    { key: 'id', label: t('f.id') },
     {
       key: 'email',
-      label: 'User',
+      label: t('user.colUser'),
       render: (value, u) => (
         <>
           {value || `#${u.id}`}
-          {u.email === stockEmail ? <span className="status-pill off" style={{ marginLeft: 6 }}>stock</span> : null}
+          {u.email === stockEmail ? <span className="status-pill off" style={{ marginLeft: 6 }}>{t('user.stock')}</span> : null}
         </>
       )
     },
     {
       key: 'userRoleId',
-      label: 'Role',
+      label: t('user.colRole'),
       filterable: false,
       render: (_value, u) => (
         <select value={u.userRoleId || 0} onChange={event => setUserRole(u, event.target.value)} disabled={busy || !canEdit}>
           {/* value 0 = no role yet (pending). Without this option the browser would show
               the first role for a role-less user, making them look like a superadmin. */}
-          <option value={0}>— No role (pending) —</option>
+          <option value={0}>{t('user.noRolePendingOpt')}</option>
           {roles.map(role => <option key={role.id} value={role.id}>{role.name}</option>)}
         </select>
       )
     },
-    { key: 'isActive', label: 'Status', render: value => <span className={value ? 'status-pill on' : 'status-pill off'}>{value ? 'active' : 'inactive'}</span> },
+    { key: 'isActive', label: t('user.colStatus'), render: value => <span className={value ? 'status-pill on' : 'status-pill off'}>{value ? t('user.active') : t('user.inactive')}</span> },
     {
       key: 'actions',
       label: '',
@@ -793,9 +800,9 @@ function UsersPage({ accessList, currentEmail, stockEmail = STOCK_SUPERADMIN_EMA
         return (
           <div className="row-actions">
             {!stock && !isSuperRole(u.userRoleId)
-              ? <button type="button" className="secondary-button" onClick={() => makeSuperadmin(u)} disabled={busy || !canEdit} title="Grant the superadmin role">Make superadmin</button> : null}
+              ? <button type="button" className="secondary-button" onClick={() => makeSuperadmin(u)} disabled={busy || !canEdit} title={t('user.makeSuperadminTip')}>{t('user.makeSuperadmin')}</button> : null}
             {showDisable
-              ? <button type="button" className="secondary-button danger" onClick={() => toggleActive(u)} disabled={busy || !canEdit}>{u.isActive ? 'Disable' : 'Enable'}</button> : null}
+              ? <button type="button" className="secondary-button danger" onClick={() => toggleActive(u)} disabled={busy || !canEdit}>{u.isActive ? t('user.disable') : t('user.enable')}</button> : null}
           </div>
         )
       }
@@ -803,36 +810,38 @@ function UsersPage({ accessList, currentEmail, stockEmail = STOCK_SUPERADMIN_EMA
   ]
 
   return (
-    <PageFrame title="Users" subtitle="User accounts and role assignments. Grant the superadmin role, then disable the stock superadmin to finish the handoff.">
+    <PageFrame title={t('user.title')} subtitle={t('user.subtitle')}>
       {error && <div className="message danger">{error}</div>}
       <section className="data-region">
-        <ClientDataTable rows={users} columns={columns} busy={busy} emptyText="No users" />
+        <ClientDataTable rows={users} columns={columns} busy={busy} emptyText={t('user.empty')} />
       </section>
     </PageFrame>
   )
 }
 
 function GroupsPage({ accessList }) {
+  const t = useT()
+  const boolCell = v => t(v ? 'common.yes' : 'common.no')
   return (
     <CrudPage
       accessList={accessList}
-      title="Groups"
-      subtitle="Top-level and nested user groups."
+      title={t('group.title')}
+      subtitle={t('group.subtitle')}
       resource="/api/user-group"
       emptyItem={emptyGroup}
       normalize={normalizeGroup}
       columns={[
-        { key: 'id', label: 'ID' },
-        { key: 'title', label: 'Title' },
-        { key: 'description', label: 'Description' },
-        { key: 'parentId', label: 'Parent' },
-        { key: 'isActive', label: 'Active', render: boolLabel }
+        { key: 'id', label: t('f.id') },
+        { key: 'title', label: t('f.title') },
+        { key: 'description', label: t('f.description') },
+        { key: 'parentId', label: t('group.colParent') },
+        { key: 'isActive', label: t('f.active'), render: boolCell }
       ]}
       fields={[
-        { name: 'title', label: 'Title', required: true },
-        { name: 'description', label: 'Description' },
-        { name: 'parentId', label: 'Parent ID', type: 'number' },
-        { name: 'isActive', label: 'Active', type: 'checkbox' }
+        { name: 'title', label: t('f.title'), required: true },
+        { name: 'description', label: t('f.description') },
+        { name: 'parentId', label: t('group.fParentId'), type: 'number' },
+        { name: 'isActive', label: t('f.active'), type: 'checkbox' }
       ]}
     />
   )
@@ -843,25 +852,27 @@ function GroupsPage({ accessList }) {
 // page. (The old group-scoped /api/user-credential/group/{id} listing had no backing
 // route and 404'd, so it was replaced with the accessrbac roles resource.)
 function RolesPage({ accessList }) {
+  const t = useT()
+  const boolCell = v => t(v ? 'common.yes' : 'common.no')
   return (
     <CrudPage
       accessList={accessList}
-      title="Roles"
-      subtitle="accessrbac roles (shared module). Create, edit, or remove roles; grant per-path access on the RBAC page. Superadmin bypasses all checks."
+      title={t('role.title')}
+      subtitle={t('role.subtitle')}
       resource="/api/access-rbac/roles"
       updateWithId
       emptyItem={emptyAccessRole}
       normalize={normalizeAccessRole}
       columns={[
-        { key: 'id', label: 'ID' },
-        { key: 'name', label: 'Name' },
-        { key: 'description', label: 'Description' },
-        { key: 'isSuperadmin', label: 'Superadmin', render: boolLabel },
-        { key: 'builtin', label: 'Built-in', render: boolLabel }
+        { key: 'id', label: t('f.id') },
+        { key: 'name', label: t('f.name') },
+        { key: 'description', label: t('f.description') },
+        { key: 'isSuperadmin', label: t('role.colSuperadmin'), render: boolCell },
+        { key: 'builtin', label: t('role.colBuiltin'), render: boolCell }
       ]}
       fields={[
-        { name: 'name', label: 'Role name', required: true },
-        { name: 'description', label: 'Description' }
+        { name: 'name', label: t('role.fName'), required: true },
+        { name: 'description', label: t('f.description') }
       ]}
     />
   )
@@ -898,6 +909,7 @@ function randomSecret() {
 // (credentials, PKCE, token lifetimes, redirect URLs). No modal editor and no separate
 // "choose an app" step: the selected app is the context.
 function AppsPage({ accessList }) {
+  const t = useT()
   const [apps, setApps] = useState([])
   const [selectedId, setSelectedId] = useState(null) // null | 'new' | number
   const [error, setError] = useState('')
@@ -922,12 +934,12 @@ function AppsPage({ accessList }) {
   const selectedApp = typeof selectedId === 'number' ? apps.find(app => app.id === selectedId) : null
 
   return (
-    <PageFrame title="Apps" subtitle="Register relying apps and configure each one's SSO client — credentials, PKCE, token lifetimes, and callback URLs — all in one place.">
+    <PageFrame title={t('app.title')} subtitle={t('app.subtitle')}>
       <div className="apps-layout">
         <aside className="apps-sidebar">
-          <button className="primary-button apps-new" onClick={() => setSelectedId('new')} type="button">New app</button>
+          <button className="primary-button apps-new" onClick={() => setSelectedId('new')} type="button">{t('app.newApp')}</button>
           <div className="apps-nav">
-            {apps.length === 0 && <p className="message">No apps yet.</p>}
+            {apps.length === 0 && <p className="message">{t('app.noApps')}</p>}
             {apps.map(app => (
               <button
                 key={app.id}
@@ -936,7 +948,7 @@ function AppsPage({ accessList }) {
                 type="button"
               >
                 <strong>{app.title || app.code}</strong>
-                <span>{app.code}{app.isActive ? '' : ' · inactive'}</span>
+                <span>{app.code}{app.isActive ? '' : t('app.inactiveSuffix')}</span>
               </button>
             ))}
           </div>
@@ -953,7 +965,7 @@ function AppsPage({ accessList }) {
               onDeleted={() => { setSelectedId(null); loadApps() }}
             />
           ) : (
-            <div className="empty-state">Select an app on the left, or create a new one, to edit its details and SSO client.</div>
+            <div className="empty-state">{t('app.selectPrompt')}</div>
           )}
         </section>
       </div>
@@ -980,6 +992,7 @@ const emptyAuthConfig = {
 // remounted (keyed by selection) when a different app is picked, so its forms reset
 // cleanly. The client secret is write-only — the API returns only whether one is set.
 function AppDetail({ accessList, app, onCreated, onSaved, onDeleted }) {
+  const t = useT()
   const isNew = !app
   // Built-in apps power SSO/federation and the seeders key on their codes, so their
   // code/audience are locked and they can't be deleted from the UI.
@@ -1010,7 +1023,7 @@ function AppDetail({ accessList, app, onCreated, onSaved, onDeleted }) {
   const generateSecret = () => {
     setAuthForm(current => ({ ...current, clientSecret: randomSecret() }))
     setSecretRevealed(true)
-    setNotice('Secret generated — copy it now. It is stored only as a hash and shown only here.')
+    setNotice(t('app.secretGenerated'))
   }
 
   const downloadCA = async () => {
@@ -1033,7 +1046,7 @@ function AppDetail({ accessList, app, onCreated, onSaved, onDeleted }) {
       downloadText(`${base}-client.crt`, res?.clientCertPem)
       downloadText(`${base}-client.key`, res?.clientKeyPem)
       downloadText('myidsan-ca.crt', res?.caCertPem)
-      setNotice('Client certificate issued — downloaded the certificate, its private key, and the CA. The key is shown only once.')
+      setNotice(t('app.certIssued'))
     } catch (err) {
       setError(err.message)
     } finally {
@@ -1073,7 +1086,7 @@ function AppDetail({ accessList, app, onCreated, onSaved, onDeleted }) {
         onCreated(appForm.code)
       } else {
         await apiRequest('/api/app-registry', { method: 'PUT', body: { ...appForm, id: app.id } })
-        setNotice('App saved.')
+        setNotice(t('app.appSaved'))
         onSaved()
       }
     } catch (err) {
@@ -1084,7 +1097,7 @@ function AppDetail({ accessList, app, onCreated, onSaved, onDeleted }) {
   }
 
   const deleteApp = async () => {
-    if (!window.confirm(`Delete app "${appForm.title || appForm.code}"? Its SSO client and redirect URIs are removed too.`)) {
+    if (!window.confirm(t('app.confirmDelete', { name: appForm.title || appForm.code }))) {
       return
     }
     setBusy(true)
@@ -1106,7 +1119,7 @@ function AppDetail({ accessList, app, onCreated, onSaved, onDeleted }) {
     try {
       const isUpdate = Boolean(config && config.id)
       if (!isUpdate && !String(authForm.clientSecret).trim()) {
-        throw new Error('Client secret is required when creating an SSO client.')
+        throw new Error(t('app.secretRequired'))
       }
       const payload = {
         ...(isUpdate ? { id: config.id } : {}),
@@ -1122,7 +1135,7 @@ function AppDetail({ accessList, app, onCreated, onSaved, onDeleted }) {
         isActive: Boolean(authForm.isActive)
       }
       await apiRequest('/api/app-auth-config', { method: isUpdate ? 'PUT' : 'POST', body: payload })
-      setNotice(isUpdate ? 'SSO client updated.' : 'SSO client created.')
+      setNotice(isUpdate ? t('app.ssoUpdated') : t('app.ssoCreated'))
       await loadSso()
     } catch (err) {
       setError(err.message)
@@ -1163,125 +1176,125 @@ function AppDetail({ accessList, app, onCreated, onSaved, onDeleted }) {
 
   return (
     <div className="app-detail">
-      <h2>{isNew ? 'New app' : (appForm.title || appForm.code)}</h2>
-      {isSystem && <p className="cert-hint">Built-in app — its code and audience are managed by the system and cannot be changed or deleted.</p>}
+      <h2>{isNew ? t('app.newApp') : (appForm.title || appForm.code)}</h2>
+      {isSystem && <p className="cert-hint">{t('app.systemNote')}</p>}
       {error && <div className="message danger">{error}</div>}
       {notice && <div className="message success">{notice}</div>}
 
       <form className="record-form" onSubmit={saveApp}>
         <div className="two-col">
           <label>
-            Code
+            {t('app.code')}
             <input value={appForm.code} onChange={event => setAppForm({ ...appForm, code: event.target.value })} required readOnly={isSystem} disabled={isSystem} />
           </label>
           <label>
-            Audience
+            {t('app.audience')}
             <input value={appForm.audience} onChange={event => setAppForm({ ...appForm, audience: event.target.value })} required readOnly={isSystem} disabled={isSystem} />
           </label>
         </div>
         <label>
-          Title
+          {t('f.title')}
           <input value={appForm.title} onChange={event => setAppForm({ ...appForm, title: event.target.value })} required />
         </label>
         <label>
-          Description
+          {t('f.description')}
           <input value={appForm.description} onChange={event => setAppForm({ ...appForm, description: event.target.value })} />
         </label>
         <label>
-          Base URL
+          {t('app.baseUrl')}
           <input value={appForm.baseUrl} onChange={event => setAppForm({ ...appForm, baseUrl: event.target.value })} placeholder="https://app.example.com" />
         </label>
         <label className="checkbox-field">
           <input type="checkbox" checked={Boolean(appForm.isActive)} onChange={event => setAppForm({ ...appForm, isActive: event.target.checked })} />
-          Active
+          {t('f.active')}
         </label>
         <div className="form-actions">
-          <button className="primary-button" type="submit" disabled={busy || !canEdit}>{isNew ? 'Create app' : 'Save app'}</button>
-          {!isNew && !isSystem && <button className="secondary-button danger" type="button" onClick={deleteApp} disabled={busy || !canDelete}>Delete app</button>}
+          <button className="primary-button" type="submit" disabled={busy || !canEdit}>{isNew ? t('app.createApp') : t('app.saveApp')}</button>
+          {!isNew && !isSystem && <button className="secondary-button danger" type="button" onClick={deleteApp} disabled={busy || !canDelete}>{t('app.deleteApp')}</button>}
         </div>
       </form>
 
       {isNew ? (
-        <p className="message">Save the app first to configure its SSO client and redirect URLs.</p>
+        <p className="message">{t('app.saveFirst')}</p>
       ) : (
         <>
           <hr className="detail-divider" />
           <div className="detail-heading">
-            <h3>SSO client</h3>
-            <span className={config ? 'status-pill on' : 'status-pill off'}>{config ? 'SSO configured' : 'No SSO client'}</span>
+            <h3>{t('app.ssoClient')}</h3>
+            <span className={config ? 'status-pill on' : 'status-pill off'}>{config ? t('app.ssoConfigured') : t('app.noSsoClient')}</span>
           </div>
           <form className="record-form" onSubmit={saveConfig}>
             <div className="two-col">
               <label>
-                Client ID
+                {t('app.clientId')}
                 <input value={authForm.clientId} onChange={event => setAuthForm({ ...authForm, clientId: event.target.value })} required />
               </label>
               <label>
-                Client secret
+                {t('app.clientSecret')}
                 <div className="secret-row">
-                  <input type={secretRevealed ? 'text' : 'password'} value={authForm.clientSecret} onChange={event => setAuthForm({ ...authForm, clientSecret: event.target.value })} placeholder={config?.hasClientSecret ? 'Leave blank to keep current' : 'Set a client secret'} />
-                  <button className="secondary-button" type="button" onClick={generateSecret} disabled={busy} title="Generate a strong random secret">Generate</button>
+                  <input type={secretRevealed ? 'text' : 'password'} value={authForm.clientSecret} onChange={event => setAuthForm({ ...authForm, clientSecret: event.target.value })} placeholder={config?.hasClientSecret ? t('app.secretKeep') : t('app.secretSet')} />
+                  <button className="secondary-button" type="button" onClick={generateSecret} disabled={busy} title={t('app.generateTip')}>{t('app.generate')}</button>
                 </div>
               </label>
             </div>
             <div className="two-col">
               <label>
-                Auth code TTL (seconds)
+                {t('app.authCodeTtl')}
                 <input type="number" value={authForm.authCodeTtlSeconds} onChange={event => setAuthForm({ ...authForm, authCodeTtlSeconds: event.target.value })} />
               </label>
               <label>
-                Access token TTL (seconds)
+                {t('app.accessTtl')}
                 <input type="number" value={authForm.accessTokenTtlSeconds} onChange={event => setAuthForm({ ...authForm, accessTokenTtlSeconds: event.target.value })} />
               </label>
             </div>
             <div className="two-col">
               <label>
-                Session TTL (seconds)
+                {t('app.sessionTtl')}
                 <input type="number" value={authForm.sessionTtlSeconds} onChange={event => setAuthForm({ ...authForm, sessionTtlSeconds: event.target.value })} />
               </label>
               <label>
-                Refresh token TTL (seconds)
+                {t('app.refreshTtl')}
                 <input type="number" value={authForm.refreshTokenTtlSeconds} onChange={event => setAuthForm({ ...authForm, refreshTokenTtlSeconds: event.target.value })} />
               </label>
             </div>
             <label className="checkbox-field">
               <input type="checkbox" checked={Boolean(authForm.requirePkce)} onChange={event => setAuthForm({ ...authForm, requirePkce: event.target.checked })} />
-              Require PKCE
+              {t('app.requirePkce')}
             </label>
             <label className="checkbox-field">
               <input type="checkbox" checked={Boolean(authForm.allowRefreshToken)} onChange={event => setAuthForm({ ...authForm, allowRefreshToken: event.target.checked })} />
-              Allow refresh tokens
+              {t('app.allowRefresh')}
             </label>
             <label className="checkbox-field">
               <input type="checkbox" checked={Boolean(authForm.isActive)} onChange={event => setAuthForm({ ...authForm, isActive: event.target.checked })} />
-              Active
+              {t('f.active')}
             </label>
-            <button className="primary-button" type="submit" disabled={busy || !canSso}>{config ? 'Save SSO client' : 'Create SSO client'}</button>
+            <button className="primary-button" type="submit" disabled={busy || !canSso}>{config ? t('app.saveSso') : t('app.createSso')}</button>
           </form>
 
           <div className="sso-uris">
-            <h3>Redirect URIs</h3>
+            <h3>{t('app.redirectUris')}</h3>
             {!config ? (
-              <p className="message">Create the SSO client first to add callback URLs.</p>
+              <p className="message">{t('app.createSsoFirst')}</p>
             ) : (
               <>
                 <div className="permission-add">
                   <input value={newUri} onChange={event => setNewUri(event.target.value)} placeholder="https://app.example.com/api/auth/callback" disabled={busy} />
-                  <button className="secondary-button" onClick={addUri} type="button" disabled={busy}>Add URI</button>
+                  <button className="secondary-button" onClick={addUri} type="button" disabled={busy}>{t('app.addUri')}</button>
                 </div>
                 {uris.length === 0 ? (
-                  <p className="message">No redirect URIs yet.</p>
+                  <p className="message">{t('app.noUris')}</p>
                 ) : (
                   <table className="permission-table">
                     <thead>
-                      <tr><th>Redirect URI</th><th>Active</th><th /></tr>
+                      <tr><th>{t('app.colRedirectUri')}</th><th>{t('f.active')}</th><th /></tr>
                     </thead>
                     <tbody>
                       {uris.map(uri => (
                         <tr key={uri.id}>
                           <td><code>{uri.redirectUri}</code></td>
-                          <td>{boolLabel(uri.isActive)}</td>
-                          <td><button className="secondary-button danger" onClick={() => removeUri(uri)} disabled={busy} type="button">Remove</button></td>
+                          <td>{t(uri.isActive ? 'common.yes' : 'common.no')}</td>
+                          <td><button className="secondary-button danger" onClick={() => removeUri(uri)} disabled={busy} type="button">{t('common.remove')}</button></td>
                         </tr>
                       ))}
                     </tbody>
@@ -1293,29 +1306,29 @@ function AppDetail({ accessList, app, onCreated, onSaved, onDeleted }) {
 
           <div className="sso-certs">
             <div className="detail-heading">
-              <h3>Client certificate (mTLS)</h3>
-              <button className="info-button" type="button" onClick={() => setShowCertHelp(value => !value)} title="How to configure and use the certificate" aria-label="Certificate help">?</button>
+              <h3>{t('app.clientCert')}</h3>
+              <button className="info-button" type="button" onClick={() => setShowCertHelp(value => !value)} title={t('app.certHelpTip')} aria-label={t('app.certHelpAria')}>?</button>
             </div>
             {showCertHelp && (
               <div className="cert-help">
-                <strong>Using an mTLS client certificate</strong>
+                <strong>{t('app.certHelpTitle')}</strong>
                 <ol>
-                  <li>Save the SSO client above so it has a <strong>Client ID</strong>.</li>
-                  <li>Click <em>Generate client certificate</em>. Three files download: the client certificate, its private key, and myidsan&apos;s CA certificate (<code>myidsan-ca.crt</code>).</li>
-                  <li>On the relying app, present the client certificate + key as a TLS client certificate when it calls myidsan&apos;s token endpoint (<code>/api/auth/token</code>), and trust <code>myidsan-ca.crt</code>.</li>
-                  <li>Keep the private key secret — it is shown only once. Re-generate any time to rotate it; the certificate&apos;s common name is the Client ID.</li>
+                  <li>{t('app.certStep1')}</li>
+                  <li>{t('app.certStep2')}</li>
+                  <li>{t('app.certStep3')}</li>
+                  <li>{t('app.certStep4')}</li>
                 </ol>
-                <p>Certificate issuance is available now. Enforcing mTLS at the token endpoint is rolling out separately; until then the <strong>client secret</strong> remains the active credential.</p>
+                <p>{t('app.certNote')}</p>
               </div>
             )}
             {!config ? (
-              <p className="message">Create the SSO client first to issue a certificate.</p>
+              <p className="message">{t('app.createSsoCertFirst')}</p>
             ) : (
               <>
-                <p className="cert-hint">myidsan issues a client certificate signed by its own CA (common name = this client&apos;s ID) for certificate-based authentication.</p>
+                <p className="cert-hint">{t('app.certIssuerNote')}</p>
                 <div className="form-actions">
-                  <button className="secondary-button" type="button" onClick={downloadCA} disabled={busy}>Download CA certificate</button>
-                  <button className="primary-button" type="button" onClick={generateCert} disabled={busy || !canSso}>Generate client certificate</button>
+                  <button className="secondary-button" type="button" onClick={downloadCA} disabled={busy}>{t('app.downloadCa')}</button>
+                  <button className="primary-button" type="button" onClick={generateCert} disabled={busy || !canSso}>{t('app.generateCert')}</button>
                 </div>
               </>
             )}
@@ -1327,34 +1340,36 @@ function AppDetail({ accessList, app, onCreated, onSaved, onDeleted }) {
 }
 
 function EndpointsPage({ accessList }) {
+  const t = useT()
+  const boolCell = v => t(v ? 'common.yes' : 'common.no')
   return (
     <CrudPage
       accessList={accessList}
-      title="Endpoints"
-      subtitle="This app's API endpoint catalog — sets each path's access tier (used by rate limiting) and its menu metadata."
+      title={t('ep.title')}
+      subtitle={t('ep.subtitle')}
       resource="/api/endpoint"
       emptyItem={emptyEndpoint}
       normalize={normalizeEndpoint}
       columns={[
-        { key: 'id', label: 'ID' },
-        { key: 'host', label: 'Host' },
-        { key: 'path', label: 'Path' },
-        { key: 'metadata', label: 'Menu', render: menuMetadataLabel },
-        { key: 'accessTier', label: 'Tier', render: tierLabel },
-        { key: 'isActive', label: 'Active', render: boolLabel }
+        { key: 'id', label: t('f.id') },
+        { key: 'host', label: t('ep.colHost') },
+        { key: 'path', label: t('ep.colPath') },
+        { key: 'metadata', label: t('ep.colMenu'), render: menuMetadataLabel },
+        { key: 'accessTier', label: t('ep.colTier'), render: tierLabel },
+        { key: 'isActive', label: t('f.active'), render: boolCell }
       ]}
       fields={[
-        { name: 'title', label: 'Title', required: true },
-        { name: 'description', label: 'Description' },
+        { name: 'title', label: t('f.title'), required: true },
+        { name: 'description', label: t('f.description') },
         // Endpoints are app-local: appCode is auto-stamped to this app (myidsan) and
         // hidden from the form. It is kept in the payload only to satisfy the shared
         // API's required field; the catalog never spans apps anymore.
-        { name: 'appCode', label: 'App code', hidden: true },
-        { name: 'host', label: 'Host', required: true },
-        { name: 'path', label: 'Path', required: true },
-        { name: 'metadata', label: 'Menu metadata', type: 'textarea', rows: 8, placeholder: '{"menu":{"enabled":true,"id":"users","label":"Users","group":"Identity","order":10,"summary":"Maintain user access.","tone":"blue"}}' },
-        { name: 'accessTier', label: 'Access tier', type: 'select', options: ACCESS_TIERS },
-        { name: 'isActive', label: 'Active', type: 'checkbox' }
+        { name: 'appCode', label: t('ep.fAppCode'), hidden: true },
+        { name: 'host', label: t('ep.colHost'), required: true },
+        { name: 'path', label: t('ep.colPath'), required: true },
+        { name: 'metadata', label: t('ep.fMenuMeta'), type: 'textarea', rows: 8, placeholder: '{"menu":{"enabled":true,"id":"users","label":"Users","group":"Identity","order":10,"summary":"Maintain user access.","tone":"blue"}}' },
+        { name: 'accessTier', label: t('ep.fAccessTier'), type: 'select', options: ACCESS_TIERS },
+        { name: 'isActive', label: t('f.active'), type: 'checkbox' }
       ]}
     />
   )
@@ -1374,17 +1389,18 @@ const PERMISSION_VERBS = [['canGet', 'GET'], ['canPost', 'POST'], ['canPut', 'PU
 // (Roles and RBAC share the accessrbac path). The "Menu access" toggles below grant or
 // revoke GET on these paths, which is exactly what drives menu visibility for a role.
 const MENU_SECTIONS = [
-  { label: 'Users', path: '/api/user-credential' },
-  { label: 'Groups', path: '/api/user-group' },
-  { label: 'Roles & RBAC', path: '/api/access-rbac' },
-  { label: 'Apps', path: '/api/app-registry' },
-  { label: 'Endpoints', path: '/api/endpoint' }
+  { labelKey: 'nav.users', path: '/api/user-credential' },
+  { labelKey: 'nav.groups', path: '/api/user-group' },
+  { labelKey: 'rbac.menuRolesRbac', path: '/api/access-rbac' },
+  { labelKey: 'nav.apps', path: '/api/app-registry' },
+  { labelKey: 'nav.endpoints', path: '/api/endpoint' }
 ]
 
 // RolePermissions edits the per-role endpoint permission matrix (path prefix ×
 // GET/POST/PUT/DELETE). Longest matching prefix wins; no rule means denied. The
 // same rows govern menu visibility — granting GET on a section's path reveals it.
 function RolePermissions() {
+  const t = useT()
   const [roles, setRoles] = useState([])
   const [roleId, setRoleId] = useState(0)
   const [perms, setPerms] = useState([])
@@ -1450,7 +1466,7 @@ function RolePermissions() {
 
   const addPath = () => {
     if (!path.trim().startsWith('/')) {
-      setError('Path must start with /')
+      setError(t('rbac.pathStartSlash'))
       return
     }
     save({ roleId: Number(roleId), path: path.trim(), canGet: true, canPost: false, canPut: false, canDelete: false })
@@ -1487,36 +1503,36 @@ function RolePermissions() {
     <section className="data-region rbac-permissions">
       <header className="page-header">
         <div>
-          <h1>Role permissions</h1>
-          <p>Grant a role access per path prefix and verb. This governs both API access and which menus the role sees.</p>
+          <h1>{t('rbac.title')}</h1>
+          <p>{t('rbac.subtitle')}</p>
         </div>
       </header>
       <div className="permission-controls">
         <label className="permission-role-select">
-          <span>Role</span>
+          <span>{t('rbac.role')}</span>
           <select value={roleId} onChange={event => setRoleId(Number(event.target.value))} disabled={busy}>
-            {roles.length === 0 && <option value={0}>No roles</option>}
+            {roles.length === 0 && <option value={0}>{t('rbac.noRoles')}</option>}
             {roles.map(role => (
-              <option key={role.id} value={role.id}>{role.name}{role.isSuperadmin ? ' (superadmin)' : ''}</option>
+              <option key={role.id} value={role.id}>{role.name}{role.isSuperadmin ? t('rbac.superadminParen') : ''}</option>
             ))}
           </select>
         </label>
       </div>
       {error && <div className="message danger">{error}</div>}
       {selectedRole?.isSuperadmin ? (
-        <p className="message">Superadmin bypasses all checks — no rules needed.</p>
+        <p className="message">{t('rbac.superadminBypass')}</p>
       ) : (
         <>
           <div className="menu-access">
-            <h2>Menu access</h2>
-            <p className="menu-access-hint">Toggle which navigation sections this role can see and open. Each switch grants or revokes GET on the section&apos;s API path — the same rule that drives menu visibility.</p>
+            <h2>{t('rbac.menuAccess')}</h2>
+            <p className="menu-access-hint">{t('rbac.menuAccessHint')}</p>
             <div className="menu-access-grid">
               {MENU_SECTIONS.map(section => {
                 const on = !!perms.find(row => row.path === section.path)?.canGet
                 return (
                   <label className="menu-access-item" key={section.path}>
                     <input type="checkbox" checked={on} onChange={() => toggleSection(section)} disabled={busy} />
-                    <span>{section.label}</span>
+                    <span>{t(section.labelKey)}</span>
                   </label>
                 )
               })}
@@ -1524,15 +1540,15 @@ function RolePermissions() {
           </div>
           <div className="permission-add">
             <input value={path} onChange={event => setPath(event.target.value)} placeholder="/api/user-credential" disabled={busy} />
-            <button className="secondary-button" onClick={addPath} disabled={busy || !roleId} type="button">Add path</button>
+            <button className="secondary-button" onClick={addPath} disabled={busy || !roleId} type="button">{t('rbac.addPath')}</button>
           </div>
           {perms.length === 0 ? (
-            <p className="message">No rules — this role is denied everything (and sees no menus).</p>
+            <p className="message">{t('rbac.noRules')}</p>
           ) : (
             <table className="permission-table">
               <thead>
                 <tr>
-                  <th>Path</th>
+                  <th>{t('rbac.colPath')}</th>
                   {PERMISSION_VERBS.map(([, label]) => <th key={label}>{label}</th>)}
                   <th />
                 </tr>
@@ -1547,7 +1563,7 @@ function RolePermissions() {
                       </td>
                     ))}
                     <td>
-                      <button className="secondary-button danger" onClick={() => remove(row)} disabled={busy} type="button">Remove</button>
+                      <button className="secondary-button danger" onClick={() => remove(row)} disabled={busy} type="button">{t('rbac.remove')}</button>
                     </td>
                   </tr>
                 ))}
@@ -1575,6 +1591,7 @@ function CrudPage({
   updateWithId = false,
   toolbar
 }) {
+  const t = useT()
   const effectiveListResource = listResource || resource
   const tableStateKey = tableStateCookieName(resource, effectiveListResource)
   const restoredTableState = useMemo(() => readTableState(tableStateKey), [tableStateKey])
@@ -1758,10 +1775,10 @@ function CrudPage({
     try {
       const isUpdate = Number(selected.id) > 0
       if (!isUpdate && !actionAccess.canCreate) {
-        throw new Error('Your role cannot create records for this resource.')
+        throw new Error(t('crud.cantCreate'))
       }
       if (isUpdate && !actionAccess.canEdit) {
-        throw new Error('Your role cannot edit records for this resource.')
+        throw new Error(t('crud.cantEdit'))
       }
       const method = isUpdate ? 'PUT' : 'POST'
       const payload = preparePayload(selected, fields)
@@ -1771,9 +1788,9 @@ function CrudPage({
       await apiRequest(target, { method, body: payload })
       if (isUpdate && editorItems.length > 1) {
         setEditorItems(current => current.map((item, index) => index === editorIndex ? normalize({ ...item, ...payload }) : item))
-        setNotice(`Saved ${editorIndex + 1} of ${editorItems.length}`)
+        setNotice(t('crud.savedNofM', { i: editorIndex + 1, n: editorItems.length }))
       } else {
-        setNotice(isUpdate ? 'Updated' : 'Created')
+        setNotice(isUpdate ? t('crud.updated') : t('crud.created'))
         closeEditor()
       }
       await load(page.offset || 0)
@@ -1790,7 +1807,7 @@ function CrudPage({
       return
     }
     if (!actionAccess.canDelete) {
-      setError('Your role cannot delete records for this resource.')
+      setError(t('crud.cantDelete'))
       return
     }
     setBusy(true)
@@ -1800,7 +1817,7 @@ function CrudPage({
       for (const item of items) {
         await apiRequest(`${resource}/${item.id}`, { method: 'DELETE' })
       }
-      setNotice(items.length === 1 ? 'Deleted' : `Deleted ${items.length} records`)
+      setNotice(items.length === 1 ? t('crud.deleted') : t('crud.deletedN', { n: items.length }))
       setSelectedIds([])
       closeEditor()
       await load(0)
@@ -1817,14 +1834,14 @@ function CrudPage({
         <section className="data-region">
           <div className="table-toolbar">
             {toolbar}
-            {selectedIds.length > 0 && <span className="selection-count">{selectedIds.length} selected</span>}
-            {canCreate && <button className="toolbar-icon icon-new primary" onClick={openCreate} disabled={busy || !actionAccess.canCreate} type="button" title="New record" aria-label="New record" />}
-            <button className="toolbar-icon icon-edit" onClick={openEditSelected} disabled={busy || !actionAccess.canEdit || selectedIds.length === 0} type="button" title="Edit selected" aria-label="Edit selected" />
-            <button className="toolbar-icon icon-delete danger" onClick={removeSelected} disabled={busy || !actionAccess.canDelete || selectedIds.length === 0} type="button" title="Delete selected" aria-label="Delete selected" />
+            {selectedIds.length > 0 && <span className="selection-count">{t('crud.selected', { n: selectedIds.length })}</span>}
+            {canCreate && <button className="toolbar-icon icon-new primary" onClick={openCreate} disabled={busy || !actionAccess.canCreate} type="button" title={t('crud.newRecord')} aria-label={t('crud.newRecord')} />}
+            <button className="toolbar-icon icon-edit" onClick={openEditSelected} disabled={busy || !actionAccess.canEdit || selectedIds.length === 0} type="button" title={t('crud.editSelected')} aria-label={t('crud.editSelected')} />
+            <button className="toolbar-icon icon-delete danger" onClick={removeSelected} disabled={busy || !actionAccess.canDelete || selectedIds.length === 0} type="button" title={t('crud.deleteSelected')} aria-label={t('crud.deleteSelected')} />
             {(filters.length > 0 || sorters.length > 0 || Number(page.offset || 0) > 0) && (
-              <button className="toolbar-icon icon-clear" onClick={clearTableControls} disabled={busy} type="button" title="Clear table filters, sorting, and remembered page" aria-label="Clear table filters, sorting, and remembered page" />
+              <button className="toolbar-icon icon-clear" onClick={clearTableControls} disabled={busy} type="button" title={t('crud.clearTable')} aria-label={t('crud.clearTable')} />
             )}
-            <button className={busy ? 'toolbar-icon icon-refresh spinning' : 'toolbar-icon icon-refresh'} onClick={() => load(page.offset || 0)} disabled={busy} type="button" title="Refresh" aria-label="Refresh" />
+            <button className={busy ? 'toolbar-icon icon-refresh spinning' : 'toolbar-icon icon-refresh'} onClick={() => load(page.offset || 0)} disabled={busy} type="button" title={t('crud.refresh')} aria-label={t('crud.refresh')} />
           </div>
           {error && <div className="message danger">{error}</div>}
           {notice && <div className="message success">{notice}</div>}
@@ -1878,26 +1895,27 @@ function PageFrame({ title, subtitle, children }) {
 }
 
 function EditorModal({ busy, canCreate, canEdit, fields, itemCount, itemIndex, onChange, onClear, onClose, onNavigate, onSubmit, value }) {
+  const t = useT()
   const hasMultipleItems = itemCount > 1
 
   return (
     <div className="modal-layer">
-      <button className="modal-backdrop" onClick={onClose} type="button" aria-label="Close editor" />
+      <button className="modal-backdrop" onClick={onClose} type="button" aria-label={t('crud.closeEditor')} />
       <section className="editor-modal" role="dialog" aria-modal="true" aria-labelledby="editor-title">
         <div className="modal-heading">
           <div>
-            <h2 id="editor-title">{value.id ? 'Edit record' : 'New record'}</h2>
+            <h2 id="editor-title">{value.id ? t('crud.editRecord') : t('crud.newRecord')}</h2>
             {hasMultipleItems && <p>{itemIndex + 1} / {itemCount}</p>}
           </div>
           <div className="modal-actions">
             {hasMultipleItems && (
               <div className="modal-record-pager">
-                <button className="pager-icon previous" onClick={() => onNavigate(itemIndex - 1)} disabled={busy || itemIndex <= 0} type="button" title="Previous selected record" aria-label="Previous selected record" />
-                <button className="pager-icon next" onClick={() => onNavigate(itemIndex + 1)} disabled={busy || itemIndex >= itemCount - 1} type="button" title="Next selected record" aria-label="Next selected record" />
+                <button className="pager-icon previous" onClick={() => onNavigate(itemIndex - 1)} disabled={busy || itemIndex <= 0} type="button" title={t('crud.prevRecord')} aria-label={t('crud.prevRecord')} />
+                <button className="pager-icon next" onClick={() => onNavigate(itemIndex + 1)} disabled={busy || itemIndex >= itemCount - 1} type="button" title={t('crud.nextRecord')} aria-label={t('crud.nextRecord')} />
               </div>
             )}
-            <button className="secondary-button" onClick={onClear} disabled={busy} type="button">Clear</button>
-            <button className="icon-button" onClick={onClose} disabled={busy} type="button" title="Close">Close</button>
+            <button className="secondary-button" onClick={onClear} disabled={busy} type="button">{t('common.clear')}</button>
+            <button className="icon-button" onClick={onClose} disabled={busy} type="button" title={t('common.close')}>{t('common.close')}</button>
           </div>
         </div>
         <div className="modal-body">
@@ -1909,10 +1927,11 @@ function EditorModal({ busy, canCreate, canEdit, fields, itemCount, itemIndex, o
 }
 
 function ColumnHeader({ column, filter, sort, onFilterOpen, onSort }) {
+  const t = useT()
   const filterCount = normalizeFilterDrafts(filter, column)
     .filter(item => String(item.value ?? '').trim() !== '')
     .length
-  const sortLabel = sort?.sort === 1 ? 'ASC' : sort?.sort === 2 ? 'DESC' : 'Sort'
+  const sortLabel = sort?.sort === 1 ? t('table.sortAsc') : sort?.sort === 2 ? t('table.sortDesc') : t('table.sort')
   const filterActive = filterCount > 0
 
   return (
@@ -1922,16 +1941,16 @@ function ColumnHeader({ column, filter, sort, onFilterOpen, onSort }) {
         <div className="column-actions">
           {column.filterable !== false && (
             <button
-              aria-label={`Filter ${column.label}`}
+              aria-label={t('table.filterCol', { col: column.label })}
               className={filterActive ? 'filter-button active' : 'filter-button'}
               onClick={event => onFilterOpen(column, event.currentTarget)}
-              title={`Filter ${column.label}`}
+              title={t('table.filterCol', { col: column.label })}
               type="button"
             >
               {filterCount > 1 && <span className="filter-count">{filterCount}</span>}
             </button>
           )}
-          <button className={sort ? 'sort-button active' : 'sort-button'} onClick={() => onSort(column.key)} type="button" title={`Sort by ${column.label}`}>
+          <button className={sort ? 'sort-button active' : 'sort-button'} onClick={() => onSort(column.key)} type="button" title={t('table.sortByCol', { col: column.label })}>
             {sortLabel}
             {sort?.index && <span>{sort.index}</span>}
           </button>
@@ -1942,6 +1961,7 @@ function ColumnHeader({ column, filter, sort, onFilterOpen, onSort }) {
 }
 
 function DataTable({ rows, columns, busy, columnFilters, page, selectedIds, sorters, onFilterChange, onPage, onSelectionChange, onSort }) {
+  const t = useT()
   const [openFilter, setOpenFilter] = useState(null)
   const rowIds = rows.map(row => String(row.id))
   const selectedSet = new Set(selectedIds)
@@ -1980,7 +2000,7 @@ function DataTable({ rows, columns, busy, columnFilters, page, selectedIds, sort
           <thead>
             <tr>
               <th className="select-col">
-                <input checked={allSelected} disabled={busy || rowIds.length === 0} onChange={event => toggleAllRows(event.target.checked)} type="checkbox" title="Select all rows" aria-label="Select all rows" />
+                <input checked={allSelected} disabled={busy || rowIds.length === 0} onChange={event => toggleAllRows(event.target.checked)} type="checkbox" title={t('tbl.selectAll')} aria-label={t('tbl.selectAll')} />
               </th>
               {columns.map(column => (
                 <th key={column.key}>
@@ -1998,7 +2018,7 @@ function DataTable({ rows, columns, busy, columnFilters, page, selectedIds, sort
           <tbody>
             {!busy && rows.length === 0 && (
               <tr>
-                <td className="empty-cell" colSpan={columns.length + 1}>No records</td>
+                <td className="empty-cell" colSpan={columns.length + 1}>{t('table.empty')}</td>
               </tr>
             )}
             {initialLoading && (
@@ -2007,7 +2027,7 @@ function DataTable({ rows, columns, busy, columnFilters, page, selectedIds, sort
             {rows.map(row => (
               <tr className={selectedSet.has(String(row.id)) ? 'selected-row' : ''} key={`${row.id}-${row.email || row.title || row.path || row.code}`}>
                 <td className="select-col">
-                  <input checked={selectedSet.has(String(row.id))} disabled={busy} onChange={event => toggleRow(row, event.target.checked)} type="checkbox" title="Select row" aria-label="Select row" />
+                  <input checked={selectedSet.has(String(row.id))} disabled={busy} onChange={event => toggleRow(row, event.target.checked)} type="checkbox" title={t('tbl.selectRow')} aria-label={t('tbl.selectRow')} />
                 </td>
                 {columns.map(column => (
                   <td key={column.key}>{column.render ? column.render(row[column.key], row) : printable(row[column.key])}</td>
@@ -2019,14 +2039,14 @@ function DataTable({ rows, columns, busy, columnFilters, page, selectedIds, sort
         {refreshing && (
           <div className="table-refresh-overlay">
             <span className="table-spinner" />
-            <span>Refreshing</span>
+            <span>{t('tbl.refreshing')}</span>
           </div>
         )}
       </div>
       {page && onPage && <Pager page={page} onPage={onPage} busy={busy} />}
       {openFilter && (
         <>
-          <button className="filter-popover-backdrop" onClick={closeColumnFilter} type="button" aria-label="Close filter" />
+          <button className="filter-popover-backdrop" onClick={closeColumnFilter} type="button" aria-label={t('tbl.closeFilter')} />
           <ColumnFilterPopover
             column={openFilter.column}
             filter={columnFilters[openFilter.column.key]}
@@ -2065,6 +2085,7 @@ function TableSkeleton({ columns }) {
 }
 
 function ColumnFilterPopover({ column, filter, left, top, onApply, onClear, onClose }) {
+  const t = useT()
   const [draft, setDraft] = useState(() => normalizeFilterDrafts(filter, column))
   const operators = filterOperatorsForField(column)
 
@@ -2098,28 +2119,28 @@ function ColumnFilterPopover({ column, filter, left, top, onApply, onClear, onCl
     <div className="filter-popover" style={{ left, top }}>
       <div className="filter-popover-head">
         <span>{column.label}</span>
-        <button className="mini-button" onClick={onClose} type="button">Close</button>
+        <button className="mini-button" onClick={onClose} type="button">{t('common.close')}</button>
       </div>
       <form className="filter-popover-body" onSubmit={submit}>
         {draft.map((item, index) => (
           <div className="filter-condition" key={`filter-${column.key}-${index}`}>
             <div className="filter-condition-head">
-              <span>Condition {index + 1}</span>
-              {draft.length > 1 && <button className="mini-button" onClick={() => removeDraft(index)} type="button">Remove</button>}
+              <span>{t('table.condition', { n: index + 1 })}</span>
+              {draft.length > 1 && <button className="mini-button" onClick={() => removeDraft(index)} type="button">{t('common.remove')}</button>}
             </div>
             <label>
-              Operator
+              {t('table.operator')}
               <select value={normalizeFilterCompare(item.compare, column)} onChange={event => updateDraft(index, { compare: Number(event.target.value) })}>
                 {operators.map(operator => <option key={operator.value} value={operator.value}>{operator.label}</option>)}
               </select>
             </label>
             <label>
-              Value
+              {t('table.value')}
               {column.filterType === 'boolean' ? (
                 <select value={item.value} onChange={event => updateDraft(index, { value: event.target.value })}>
-                  <option value="">Any</option>
-                  <option value="true">Yes</option>
-                  <option value="false">No</option>
+                  <option value="">{t('common.any')}</option>
+                  <option value="true">{t('common.yes')}</option>
+                  <option value="false">{t('common.no')}</option>
                 </select>
               ) : (
                 <input
@@ -2133,9 +2154,9 @@ function ColumnFilterPopover({ column, filter, left, top, onApply, onClear, onCl
           </div>
         ))}
         <div className="filter-popover-actions">
-          <button className="secondary-button" onClick={addDraft} type="button">Add</button>
-          <button className="secondary-button" onClick={onClear} type="button">Clear</button>
-          <button className="primary-button" type="submit">Apply</button>
+          <button className="secondary-button" onClick={addDraft} type="button">{t('common.add')}</button>
+          <button className="secondary-button" onClick={onClear} type="button">{t('common.clear')}</button>
+          <button className="primary-button" type="submit">{t('common.apply')}</button>
         </div>
       </form>
     </div>
@@ -2143,6 +2164,7 @@ function ColumnFilterPopover({ column, filter, left, top, onApply, onClear, onCl
 }
 
 function RecordForm({ fields, value, onChange, onSubmit, busy, canCreate, canEdit = true }) {
+  const t = useT()
   const update = (name, nextValue) => onChange({ ...value, [name]: nextValue })
   const canSubmit = value.id ? canEdit : canCreate
 
@@ -2150,7 +2172,7 @@ function RecordForm({ fields, value, onChange, onSubmit, busy, canCreate, canEdi
     <form className="record-form" onSubmit={onSubmit}>
       {Number(value.id) > 0 && (
         <label>
-          ID
+          {t('crud.id')}
           <input value={value.id} disabled />
         </label>
       )}
@@ -2158,7 +2180,7 @@ function RecordForm({ fields, value, onChange, onSubmit, busy, canCreate, canEdi
         <Field key={field.name} field={field} value={value[field.name]} onChange={nextValue => update(field.name, nextValue)} />
       ))}
       <button className="primary-button" disabled={busy || !canSubmit} type="submit">
-        {busy ? 'Saving' : value.id ? 'Save changes' : 'Create'}
+        {busy ? t('crud.saving') : value.id ? t('crud.saveChanges') : t('crud.create')}
       </button>
     </form>
   )
@@ -2220,6 +2242,7 @@ function Field({ field, value, onChange }) {
 }
 
 function Pager({ page, onPage, busy }) {
+  const t = useT()
   const offset = Number(page.offset || 0)
   const limit = Number(page.limit || 10)
   const total = Number(page.totalCnt || 0)
@@ -2247,10 +2270,10 @@ function Pager({ page, onPage, busy }) {
 
   return (
     <div className="pager">
-      <span>Page {currentPage} / {pageCount} · {total} total</span>
+      <span>{t('pager.summary', { current: currentPage, count: pageCount, total })}</span>
       <div className="pager-controls">
-        <button className="pager-icon first" disabled={busy || offset <= 0} onClick={() => onPage(0)} title="First page" type="button" aria-label="First page" />
-        <button className="pager-icon previous" disabled={busy || offset <= 0} onClick={() => onPage(prev)} title="Previous page" type="button" aria-label="Previous page" />
+        <button className="pager-icon first" disabled={busy || offset <= 0} onClick={() => onPage(0)} title={t('pager.first')} type="button" aria-label={t('pager.first')} />
+        <button className="pager-icon previous" disabled={busy || offset <= 0} onClick={() => onPage(prev)} title={t('pager.previous')} type="button" aria-label={t('pager.previous')} />
         <label className="pager-jump">
           <input
             min="1"
@@ -2258,13 +2281,13 @@ function Pager({ page, onPage, busy }) {
             value={pageDraft}
             onChange={event => setPageDraft(event.target.value)}
             onKeyDown={submitDraftPage}
-            title="Page number"
+            title={t('pager.pageNumber')}
             type="number"
           />
         </label>
-        <button className="pager-icon go" disabled={busy} onClick={goToDraftPage} title="Go to page" type="button" aria-label="Go to page" />
-        <button className="pager-icon next" disabled={busy || !page.hasNext} onClick={() => onPage(page.nextOffset)} title="Next page" type="button" aria-label="Next page" />
-        <button className="pager-icon last" disabled={busy || offset >= last} onClick={() => onPage(last)} title="Last page" type="button" aria-label="Last page" />
+        <button className="pager-icon go" disabled={busy} onClick={goToDraftPage} title={t('pager.goto')} type="button" aria-label={t('pager.goto')} />
+        <button className="pager-icon next" disabled={busy || !page.hasNext} onClick={() => onPage(page.nextOffset)} title={t('pager.next')} type="button" aria-label={t('pager.next')} />
+        <button className="pager-icon last" disabled={busy || offset >= last} onClick={() => onPage(last)} title={t('pager.last')} type="button" aria-label={t('pager.last')} />
       </div>
     </div>
   )
@@ -2715,6 +2738,26 @@ function dashboardBody(sectionId) {
     default:
       return ''
   }
+}
+
+const LANG_KEY = 'myidsan_lang'
+
+// App owns the active locale and wraps the tree in the shared LangProvider so the
+// shared SideNav, DataTable, and ToastStack translate. Persists in localStorage like
+// the theme; defaults to the browser language → English.
+function App() {
+  const [lang, setLang] = useState(() => {
+    try { return normalizeLang(localStorage.getItem(LANG_KEY) || navigator.language) } catch { return 'en' }
+  })
+  const changeLang = useCallback(next => {
+    setLang(next)
+    try { localStorage.setItem(LANG_KEY, next) } catch { /* ignore */ }
+  }, [])
+  return (
+    <LangProvider lang={lang} messages={appMessages}>
+      <AppInner lang={lang} onLangChange={changeLang} />
+    </LangProvider>
+  )
 }
 
 export default App

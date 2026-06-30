@@ -4,3 +4,6 @@ export { Ico, icoSvg } from './icons';
 export { DataTable, printable } from './DataTable';
 export { ToastStack } from './Toast';
 export { SideNav } from './SideNav';
+export { LangProvider, useT, LANGUAGES, normalizeLang } from './i18n';
+export { LanguageDropdown } from './LanguageDropdown';
+export { AppFooter } from './AppFooter';

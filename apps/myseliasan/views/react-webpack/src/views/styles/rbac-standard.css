@@ -446,6 +446,8 @@
   min-width: 0;
   padding: 28px;
   background: var(--bg-body);
+  display: flex;
+  flex-direction: column;
 }
 
 /* The embedded workspace already supplies its own top gap. */

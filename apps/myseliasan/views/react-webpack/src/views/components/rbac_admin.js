@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Ico, DataTable } from '@shared';
+import { Ico, DataTable, useT } from '@shared';
 import { FormBusyOverlay } from './ui';
 import { api } from '../lib/helpers';
 
@@ -10,11 +10,12 @@ import { api } from '../lib/helpers';
 
 // --- Users ---------------------------------------------------------------------
 export function UsersPage({ session, onToast, onSessionChanged }) {
+  const t = useT();
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
   const [busy, setBusy] = useState(false);
 
-  function toast(t, kind = 'info') { if (onToast) onToast(t, kind); }
+  function toast(msg, kind = 'info') { if (onToast) onToast(msg, kind); }
 
   async function load() {
     const [u, r] = await Promise.all([
@@ -34,58 +35,58 @@ export function UsersPage({ session, onToast, onSessionChanged }) {
     setBusy(false);
     if (r.ok) {
       const id = Number(roleId);
-      const roleName = !id ? 'No role (pending)' : (roles.find((x) => Number(x.id) === id)?.name || `role ${id}`);
+      const roleName = !id ? t('rb.noRolePending') : (roles.find((x) => Number(x.id) === id)?.name || `role ${id}`);
       const who = user.email || user.name || `user ${user.id}`;
-      toast(`Role for ${who} set to ${roleName}.`, 'success');
+      toast(t('rb.roleSetTo', { who, role: roleName }), 'success');
       load();
-    } else toast(r.message || 'Failed to update role.', 'error');
+    } else toast(r.message || t('rb.failedRole'), 'error');
   }
   async function toggleDisabled(user) {
     setBusy(true);
     const r = await api(`/api/rbac/users/${user.id}/disabled`, { method: 'POST', noRedirect: true, body: JSON.stringify({ disabled: !user.disabled }) });
     setBusy(false);
-    if (r.ok) load(); else toast(r.message || 'Failed.');
+    if (r.ok) load(); else toast(r.message || t('rb.failed'));
   }
   async function elevate(user) {
     const label = user.email || user.name || user.username || `user ${user.id}`;
-    if (!window.confirm(`Make "${label}" a superadmin?\n\nThe stock superadmin stays active — disable it from this list once you've confirmed the new account works.`)) return;
+    if (!window.confirm(t('rb.confirmSuperadmin', { label }))) return;
     setBusy(true);
     const r = await api(`/api/rbac/users/${user.id}/elevate`, { method: 'POST', noRedirect: true });
     setBusy(false);
     if (r.ok) {
-      toast((r.body && r.body.warning) || 'Superadmin granted.');
+      toast((r.body && r.body.warning) || t('rb.superadminGranted'));
       load();
       if (onSessionChanged) onSessionChanged();
-    } else toast(r.message || 'Handoff failed.');
+    } else toast(r.message || t('rb.handoffFailed'));
   }
 
   const columns = [
-    { key: 'id', label: 'ID' },
+    { key: 'id', label: t('rb.colId') },
     {
       key: 'email',
-      label: 'User',
+      label: t('rb.colUser'),
       render: (_v, u) => (
         <>
           {u.email || u.username || u.name || `#${u.id}`}
-          {u.isStock ? <span className="status-pill warn" style={{ marginLeft: 6 }}>stock</span> : null}
+          {u.isStock ? <span className="status-pill warn" style={{ marginLeft: 6 }}>{t('rb.stock')}</span> : null}
         </>
       ),
     },
-    { key: 'kind', label: 'Kind' },
+    { key: 'kind', label: t('rb.colKind') },
     {
       key: 'roleId',
-      label: 'Role',
+      label: t('rb.colRole'),
       filterable: false,
       render: (_v, u) => (
         <select value={u.roleId || 0} disabled={u.isStock} onChange={(e) => setUserRole(u, e.target.value)}>
           {/* value 0 = no role yet (pending). Without this option a role-less user would
               render as the first role, making them look like a superadmin. */}
-          <option value={0}>— No role (pending) —</option>
+          <option value={0}>{t('rb.noRolePendingOpt')}</option>
           {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
         </select>
       ),
     },
-    { key: 'disabled', label: 'Status', render: (v) => <span className={`status-pill ${v ? 'offline' : 'online'}`}>{v ? 'disabled' : 'active'}</span> },
+    { key: 'disabled', label: t('rb.colStatus'), render: (v) => <span className={`status-pill ${v ? 'offline' : 'online'}`}>{v ? t('rb.statusDisabled') : t('rb.statusActive')}</span> },
     {
       key: 'actions',
       label: '',
@@ -95,9 +96,9 @@ export function UsersPage({ session, onToast, onSessionChanged }) {
         return (
           <div className="node-row-actions">
             {!u.isStock && u.kind === 'federated' && !isSuperRole(u.roleId)
-              ? <button type="button" className="quiet" onClick={() => elevate(u)} title="Bootstrap handoff">Make superadmin</button> : null}
+              ? <button type="button" className="quiet" onClick={() => elevate(u)} title={t('rb.bootstrapHandoff')}>{t('rb.makeSuperadmin')}</button> : null}
             {!self && (!u.isStock || session?.superadminHandoffPending)
-              ? <button type="button" className="quiet danger-text" onClick={() => toggleDisabled(u)}>{u.disabled ? 'Enable' : 'Disable'}</button> : null}
+              ? <button type="button" className="quiet danger-text" onClick={() => toggleDisabled(u)}>{u.disabled ? t('rb.enable') : t('rb.disable')}</button> : null}
           </div>
         );
       },
@@ -109,16 +110,13 @@ export function UsersPage({ session, onToast, onSessionChanged }) {
       <FormBusyOverlay busy={busy} />
       <section className="settings-panel span-two">
         <header>
-          <h2><span className="btn-icon"><Ico n="user" /> Users</span></h2>
+          <h2><span className="btn-icon"><Ico n="user" /> {t('rb.users')}</span></h2>
           <div className="settings-header-actions">
-            <button type="button" className="quiet" onClick={load}><span className="btn-icon"><Ico n="reload" /> Refresh</span></button>
+            <button type="button" className="quiet" onClick={load}><span className="btn-icon"><Ico n="reload" /> {t('rb.refresh')}</span></button>
           </div>
         </header>
-        <p className="settings-hint">
-          Every myidsan sign-in is provisioned as a viewer. Assign a role, disable access, or run the one-time
-          bootstrap handoff to retire the stock superadmin.
-        </p>
-        <DataTable rows={users} columns={columns} emptyText="No users yet." />
+        <p className="settings-hint">{t('rb.usersHint')}</p>
+        <DataTable rows={users} columns={columns} emptyText={t('rb.noUsers')} />
       </section>
     </section>
   );
@@ -126,11 +124,12 @@ export function UsersPage({ session, onToast, onSessionChanged }) {
 
 // --- Roles ---------------------------------------------------------------------
 export function RolesPage({ onToast }) {
+  const t = useT();
   const [roles, setRoles] = useState([]);
   const [newName, setNewName] = useState('');
   const [busy, setBusy] = useState(false);
 
-  function toast(t, kind = 'info') { if (onToast) onToast(t, kind); }
+  function toast(msg, kind = 'info') { if (onToast) onToast(msg, kind); }
 
   async function load() {
     const r = await api('/api/access-rbac/roles', { noRedirect: true }).catch(() => ({ ok: false }));
@@ -139,35 +138,35 @@ export function RolesPage({ onToast }) {
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
 
   async function createRole() {
-    if (!newName.trim()) { toast('Enter a role name.'); return; }
+    if (!newName.trim()) { toast(t('rb.enterRoleName')); return; }
     setBusy(true);
     const r = await api('/api/access-rbac/roles', { method: 'POST', noRedirect: true, body: JSON.stringify({ name: newName.trim() }) });
     setBusy(false);
-    if (r.ok) { setNewName(''); load(); } else toast(r.message || 'Failed to create role.');
+    if (r.ok) { setNewName(''); load(); } else toast(r.message || t('rb.failedCreateRole'));
   }
   async function deleteRole(role) {
-    if (!window.confirm(`Delete role "${role.name}"?`)) return;
+    if (!window.confirm(t('rb.confirmDeleteRole', { name: role.name }))) return;
     setBusy(true);
     const r = await api(`/api/access-rbac/roles/${role.id}`, { method: 'DELETE', noRedirect: true });
     setBusy(false);
-    if (r.ok) load(); else toast(r.message || 'Failed to delete role.');
+    if (r.ok) load(); else toast(r.message || t('rb.failedDeleteRole'));
   }
 
   const columns = [
-    { key: 'id', label: 'ID' },
+    { key: 'id', label: t('rb.colId') },
     {
       key: 'name',
-      label: 'Role',
-      render: (v, r) => (<>{v}{r.isSuperadmin ? <span className="status-pill online" style={{ marginLeft: 6 }}>superadmin</span> : null}</>),
+      label: t('rb.colRole'),
+      render: (v, r) => (<>{v}{r.isSuperadmin ? <span className="status-pill online" style={{ marginLeft: 6 }}>{t('rb.superadminPill')}</span> : null}</>),
     },
-    { key: 'builtin', label: 'Type', render: (v) => (v ? 'built-in' : 'custom') },
+    { key: 'builtin', label: t('rb.colType'), render: (v) => (v ? t('rb.typeBuiltin') : t('rb.typeCustom')) },
     {
       key: 'actions',
       label: '',
       filterable: false,
       render: (_v, r) => (
         <div className="node-row-actions">
-          {!r.builtin ? <button type="button" className="quiet danger-text" onClick={() => deleteRole(r)}>Delete</button> : null}
+          {!r.builtin ? <button type="button" className="quiet danger-text" onClick={() => deleteRole(r)}>{t('rb.delete')}</button> : null}
         </div>
       ),
     },
@@ -177,16 +176,13 @@ export function RolesPage({ onToast }) {
     <section className="workspace">
       <FormBusyOverlay busy={busy} />
       <section className="settings-panel span-two">
-        <header><h2><span className="btn-icon"><Ico n="shield" /> Roles</span></h2></header>
-        <p className="settings-hint">
-          Roles are the shared accessrbac roles. Superadmin bypasses all checks; built-in roles cannot be deleted.
-          Grant per-path access on the RBAC page.
-        </p>
+        <header><h2><span className="btn-icon"><Ico n="shield" /> {t('rb.roles')}</span></h2></header>
+        <p className="settings-hint">{t('rb.rolesHint')}</p>
         <div className="table-toolbar">
-          <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="New role name" style={{ maxWidth: 260 }} />
-          <button type="button" onClick={createRole}><span className="btn-icon"><Ico n="plus" /> Add role</span></button>
+          <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder={t('rb.newRoleName')} style={{ maxWidth: 260 }} />
+          <button type="button" onClick={createRole}><span className="btn-icon"><Ico n="plus" /> {t('rb.addRole')}</span></button>
         </div>
-        <DataTable rows={roles} columns={columns} emptyText="No roles yet." />
+        <DataTable rows={roles} columns={columns} emptyText={t('rb.noRoles')} />
       </section>
     </section>
   );
@@ -197,10 +193,11 @@ const VERBS = [['canGet', 'GET'], ['canPost', 'POST'], ['canPut', 'PUT'], ['canD
 
 // Nav sections whose visibility is controlled per-role by the matrix. myseliasan's
 // admin pages (Users/Roles/RBAC) are superadmin-only, so the only role-restrictable
-// menu is Nodes (GET on /api/nodes). The toggles below grant/revoke that GET.
-const MENU_SECTIONS = [{ label: 'Nodes', path: '/api/nodes' }];
+// menu is Nodes (GET on /api/nodes). The label is localized via nav.nodes.
+const MENU_SECTIONS = [{ labelKey: 'nav.nodes', path: '/api/nodes' }];
 
 export function RbacPage({ onToast }) {
+  const t = useT();
   const [roles, setRoles] = useState([]);
   const [roleId, setRoleId] = useState(0);
   const [perms, setPerms] = useState([]);
@@ -209,7 +206,7 @@ export function RbacPage({ onToast }) {
   const [nodes, setNodes] = useState([]);
   const [nodeGrants, setNodeGrants] = useState([]);
 
-  function toast(t, kind = 'info') { if (onToast) onToast(t, kind); }
+  function toast(msg, kind = 'info') { if (onToast) onToast(msg, kind); }
 
   async function loadRoles() {
     const r = await api('/api/access-rbac/roles', { noRedirect: true }).catch(() => ({ ok: false }));
@@ -262,7 +259,7 @@ export function RbacPage({ onToast }) {
       });
     }
     setBusy(false);
-    if (r.ok) loadNodeGrants(roleId); else toast(r.message || 'Failed to update node access.');
+    if (r.ok) loadNodeGrants(roleId); else toast(r.message || t('rb.failedNodeAccess'));
   }
 
   async function save(p) {
@@ -270,13 +267,13 @@ export function RbacPage({ onToast }) {
     const body = { roleId: Number(roleId), path: p.path, canGet: !!p.canGet, canPost: !!p.canPost, canPut: !!p.canPut, canDelete: !!p.canDelete };
     const r = await api('/api/access-rbac/permissions', { method: 'POST', noRedirect: true, body: JSON.stringify(body) });
     setBusy(false);
-    if (r.ok) loadPerms(roleId); else toast(r.message || 'Failed to save permission.');
+    if (r.ok) loadPerms(roleId); else toast(r.message || t('rb.failedSavePerm'));
   }
   async function remove(p) {
     setBusy(true);
     const r = await api(`/api/access-rbac/permissions/${p.id}`, { method: 'DELETE', noRedirect: true });
     setBusy(false);
-    if (r.ok) loadPerms(roleId); else toast(r.message || 'Failed.');
+    if (r.ok) loadPerms(roleId); else toast(r.message || t('rb.failed'));
   }
   function toggle(p, key) {
     // Optimistic: flip this row's cell immediately (server reload confirms; the stable
@@ -285,7 +282,7 @@ export function RbacPage({ onToast }) {
     save({ ...p, [key]: !p[key] });
   }
   function addPath() {
-    if (!path.trim().startsWith('/')) { toast('Path must start with /'); return; }
+    if (!path.trim().startsWith('/')) { toast(t('nm.pathStartSlash')); return; }
     save({ roleId: Number(roleId), path: path.trim(), canGet: true, canPost: false, canPut: false, canDelete: false });
   }
   // toggleSection flips GET on a section's path (preserving other verbs) — what
@@ -306,34 +303,31 @@ export function RbacPage({ onToast }) {
     <section className="workspace">
       <FormBusyOverlay busy={busy} />
       <section className="settings-panel span-two rbac-permissions">
-        <header><h2><span className="btn-icon"><Ico n="lock" /> RBAC</span></h2></header>
-        <p className="settings-hint">
-          Grant a role access per path prefix and verb (longest matching prefix wins; no rule means denied). This
-          governs both API access and which menus the role sees. Superadmin bypasses all checks.
-        </p>
+        <header><h2><span className="btn-icon"><Ico n="lock" /> {t('rb.rbac')}</span></h2></header>
+        <p className="settings-hint">{t('rb.rbacHint')}</p>
         <div className="permission-controls">
           <label className="permission-role-select">
-            <span>Role</span>
+            <span>{t('rb.role')}</span>
             <select value={roleId} onChange={(e) => setRoleId(Number(e.target.value))} disabled={busy}>
-              {roles.length === 0 && <option value={0}>No roles</option>}
-              {roles.map((r) => <option key={r.id} value={r.id}>{r.name}{r.isSuperadmin ? ' (superadmin)' : ''}</option>)}
+              {roles.length === 0 && <option value={0}>{t('rb.noRolesOpt')}</option>}
+              {roles.map((r) => <option key={r.id} value={r.id}>{r.name}{r.isSuperadmin ? t('rb.superadminParen') : ''}</option>)}
             </select>
           </label>
         </div>
         {selectedRole?.isSuperadmin ? (
-          <p className="settings-hint">Superadmin bypasses all checks — no rules needed.</p>
+          <p className="settings-hint">{t('rb.superadminBypass')}</p>
         ) : (
           <>
             <div className="menu-access">
-              <h3>Menu access</h3>
-              <p className="settings-hint">Toggle which navigation sections this role can see and open. Each switch grants or revokes GET on the section&apos;s API path.</p>
+              <h3>{t('rb.menuAccess')}</h3>
+              <p className="settings-hint">{t('rb.menuAccessHint')}</p>
               <div className="menu-access-grid">
                 {MENU_SECTIONS.map((section) => {
                   const on = !!perms.find((p) => p.path === section.path)?.canGet;
                   return (
                     <label className="menu-access-item" key={section.path}>
                       <input type="checkbox" checked={on} onChange={() => toggleSection(section)} disabled={busy} />
-                      <span>{section.label}</span>
+                      <span>{t(section.labelKey)}</span>
                     </label>
                   );
                 })}
@@ -341,11 +335,11 @@ export function RbacPage({ onToast }) {
             </div>
             <div className="permission-add">
               <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/api/nodes" disabled={busy} />
-              <button type="button" className="quiet" onClick={addPath} disabled={busy || !roleId}><span className="btn-icon"><Ico n="plus" /> Add path</span></button>
+              <button type="button" className="quiet" onClick={addPath} disabled={busy || !roleId}><span className="btn-icon"><Ico n="plus" /> {t('rb.addPath')}</span></button>
             </div>
-            {perms.length === 0 ? <p className="settings-hint">No rules — this role is denied everything (and sees no menus).</p> : (
+            {perms.length === 0 ? <p className="settings-hint">{t('rb.noRules')}</p> : (
               <table className="permission-table">
-                <thead><tr><th>Path</th>{VERBS.map(([, v]) => <th key={v}>{v}</th>)}<th /></tr></thead>
+                <thead><tr><th>{t('rb.colPath')}</th>{VERBS.map(([, v]) => <th key={v}>{v}</th>)}<th /></tr></thead>
                 <tbody>
                   {perms.map((p) => (
                     <tr key={p.id}>
@@ -353,7 +347,7 @@ export function RbacPage({ onToast }) {
                       {VERBS.map(([key, v]) => (
                         <td key={v} className="permission-cell"><input type="checkbox" checked={!!p[key]} onChange={() => toggle(p, key)} aria-label={`${v} ${p.path}`} /></td>
                       ))}
-                      <td><button type="button" className="quiet danger-text" onClick={() => remove(p)} aria-label={`Remove ${p.path}`}><Ico n="trash" sz={13} /></button></td>
+                      <td><button type="button" className="quiet danger-text" onClick={() => remove(p)} aria-label={`${t('common.remove')} ${p.path}`}><Ico n="trash" sz={13} /></button></td>
                     </tr>
                   ))}
                 </tbody>
@@ -361,14 +355,10 @@ export function RbacPage({ onToast }) {
             )}
             {nodes.length > 0 ? (
               <div className="node-access-matrix">
-                <h3>Node access</h3>
-                <p className="settings-hint">
-                  Grant this role access to managed nodes. <strong>Superadmin</strong> drives the node with full
-                  read + write; <strong>Viewer</strong> is read-only — mirroring how mymatasan&apos;s superadmin and
-                  viewer roles behave. The node&apos;s owning role always has full access.
-                </p>
+                <h3>{t('rb.nodeAccess')}</h3>
+                <p className="settings-hint">{t('rb.nodeAccessHint')}</p>
                 <table className="permission-table">
-                  <thead><tr><th>Node</th><th>Access</th></tr></thead>
+                  <thead><tr><th>{t('rb.colNode')}</th><th>{t('rb.colAccess')}</th></tr></thead>
                   <tbody>
                     {nodes.map((n) => {
                       const level = nodeLevel(n);
@@ -379,12 +369,12 @@ export function RbacPage({ onToast }) {
                           </td>
                           <td>
                             {level === 'owner' ? (
-                              <span className="status-pill online" title="This role adopted the node">Owner — full access</span>
+                              <span className="status-pill online" title={t('rb.ownerTitle')}>{t('rb.ownerFull')}</span>
                             ) : (
-                              <select value={level} onChange={(e) => setNodeLevel(n, e.target.value)} disabled={busy} aria-label={`Access for ${n.name || n.nodeId}`}>
-                                <option value="none">No access</option>
-                                <option value="viewer">Viewer (read-only)</option>
-                                <option value="superadmin">Superadmin (read + write)</option>
+                              <select value={level} onChange={(e) => setNodeLevel(n, e.target.value)} disabled={busy} aria-label={`${t('rb.colAccess')} ${n.name || n.nodeId}`}>
+                                <option value="none">{t('rb.accessNone')}</option>
+                                <option value="viewer">{t('rb.accessViewer')}</option>
+                                <option value="superadmin">{t('rb.accessSuperadmin')}</option>
                               </select>
                             )}
                           </td>
