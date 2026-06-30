@@ -2,12 +2,14 @@
   "name": "r450k-site",
   "version": "1.0.0",
   "private": true,
-  "description": "r450k product marketing site (static, Cloudflare Pages)",
+  "description": "r450k product marketing site (static, Cloudflare Workers + static assets)",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "wrangler deploy",
+    "cf-dev": "wrangler dev"
   },
   "dependencies": {
     "react": "^18.2.0",
@@ -15,6 +17,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
-    "vite": "^6.0.0"
+    "vite": "^6.0.0",
+    "wrangler": "^4.0.0"
   }
 }

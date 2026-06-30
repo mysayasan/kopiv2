@@ -1,15 +1,15 @@
-// Cloudflare Pages Function — POST /api/contact
-// Relays a contact-form submission to a Telegram chat via the Bot API.
-// Runs same-origin with the static site, so no CORS is needed.
+// Cloudflare Worker entry for the r450k site (Workers + Static Assets model).
 //
-// Required environment variables (set in the Pages project → Settings →
-// Environment variables, as ENCRYPTED secrets — never commit them):
-//   TELEGRAM_BOT_TOKEN  - from @BotFather (e.g. 1234:AAbb...)
-//   TELEGRAM_CHAT_ID    - your numeric chat id (DM the bot, then read getUpdates,
-//                         or message @userinfobot to find it)
+// Routing: static files in dist/ are served by the ASSETS binding before the
+// Worker runs; the Worker is invoked for non-asset paths. We handle
+// POST /api/contact here and delegate everything else back to ASSETS (which
+// applies the single-page-application not_found_handling for deep links).
 //
-// For local testing, put the same keys in r450k/.dev.vars (gitignored) and run
-// `npx wrangler pages dev dist`. See README → "Contact form".
+// Required secrets — set in the Worker → Settings → Variables and Secrets, or
+// `npx wrangler secret put TELEGRAM_BOT_TOKEN` / `... TELEGRAM_CHAT_ID`:
+//   TELEGRAM_BOT_TOKEN  - from @BotFather
+//   TELEGRAM_CHAT_ID    - your numeric Telegram chat id
+// For local dev, put the same keys in r450k/.dev.vars and run `npx wrangler dev`.
 
 const json = (obj, status = 200) =>
   new Response(JSON.stringify(obj), {
@@ -17,8 +17,8 @@ const json = (obj, status = 200) =>
     headers: { 'content-type': 'application/json; charset=utf-8' },
   });
 
-export async function onRequestPost(context) {
-  const { request, env } = context;
+async function handleContact(request, env) {
+  if (request.method !== 'POST') return json({ ok: false, error: 'Method not allowed.' }, 405);
 
   if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) {
     return json({ ok: false, error: 'Contact endpoint is not configured.' }, 500);
@@ -62,13 +62,15 @@ export async function onRequestPost(context) {
       return json({ ok: false, error: `Telegram API error (${tg.status}). ${detail}`.trim() }, 502);
     }
     return json({ ok: true });
-  } catch (err) {
+  } catch {
     return json({ ok: false, error: 'Failed to reach Telegram.' }, 502);
   }
 }
 
-// Anything other than POST → 405.
-export async function onRequest(context) {
-  if (context.request.method === 'POST') return onRequestPost(context);
-  return json({ ok: false, error: 'Method not allowed.' }, 405);
-}
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (url.pathname === '/api/contact') return handleContact(request, env);
+    return env.ASSETS.fetch(request);
+  },
+};

@@ -1,5 +1,5 @@
-# Copy to `.dev.vars` (gitignored) for local testing of the contact Pages Function
-# with `npx wrangler pages dev dist`. In production these are set as encrypted
-# environment variables in the Cloudflare Pages project, NOT in this file.
+# Copy to `.dev.vars` (gitignored) for local testing of the contact Worker
+# with `npm run cf-dev` (npx wrangler dev). In production these are set as
+# secrets on the Cloudflare Worker (Settings → Variables and Secrets), NOT here.
 TELEGRAM_BOT_TOKEN=123456789:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TELEGRAM_CHAT_ID=123456789

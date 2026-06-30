@@ -1,8 +1,8 @@
 # r450k — product site
 
 Standalone static marketing site for the **r450k** platform, built with React + Vite and
-deployed to **Cloudflare Pages**. It is decoupled from the Go backend; it ships nothing but a
-static `dist/` bundle.
+deployed to **Cloudflare Workers (Static Assets)**. It is decoupled from the Go backend; it
+ships a static `dist/` bundle served by a tiny Worker that also handles the contact endpoint.
 
 Content is sourced from the platform READMEs (primarily [`apps/mymatasan/README.md`](../apps/mymatasan/README.md))
 and lives entirely in [`src/content.js`](src/content.js) — edit copy there without touching layout.
@@ -25,49 +25,59 @@ Requires Node 20+ (see [`.nvmrc`](.nvmrc)).
 r450k/
   index.html            # entry HTML + meta tags
   vite.config.js
+  wrangler.jsonc        # Cloudflare Worker + Static Assets config
+  worker/
+    index.js            # Worker entry: POST /api/contact + serves dist/ assets
   public/
     favicon.svg
-    _headers            # Cloudflare Pages security + cache headers
-    _redirects          # SPA fallback to index.html
+    _headers            # security + cache headers (served by Workers assets)
+    robots.txt, sitemap.xml, og-image.svg
   src/
     main.jsx
     App.jsx
     content.js          # ALL site copy — edit here
     styles.css          # dark theme, mirrors the apps' --theme-dark palette
-    components/         # Logo, Icon
-    sections/           # Nav, Hero, Features, HowItWorks, UseCases, Apps, FinalCta, Footer
+    components/         # Logo, Icon, ContactWidget, animation helpers
+    sections/           # Nav, Hero, Features, HowItWorks, Tiers, Showcase, UseCases, Apps, FinalCta, Footer
 ```
 
-## Deploy to Cloudflare Pages (Git integration)
+## Deploy to Cloudflare Workers (Git integration)
 
-Deploys automatically on every push to `main` — no secrets in the repo, no GitHub Actions.
-One-time setup in the Cloudflare dashboard:
+The site deploys via **Workers Builds**: on every push to `main`, Cloudflare runs the build
+command, then the deploy command, using [`wrangler.jsonc`](wrangler.jsonc). No secrets live in the
+repo. One-time setup in the Cloudflare dashboard (**Workers & Pages → Create → Workers → Import a
+repository**, or your existing Worker → **Settings → Build**):
 
-1. **Cloudflare dashboard → Workers & Pages → Create → Pages → Connect to Git.**
-2. Authorize GitHub and select the `mysayasan/kopiv2` repository.
-3. Configure the build:
-   | Setting | Value |
-   | --- | --- |
-   | Production branch | `main` |
-   | **Framework preset** | **`None`** |
-   | **Root directory** | `r450k` |
-   | Build command | `npm run build` |
-   | Build output directory | `dist` |
-4. (Optional) Environment variable `NODE_VERSION = 20`.
-5. **Save and Deploy.**
+| Setting | Value |
+| --- | --- |
+| Git repository | `mysayasan/kopiv2` |
+| Production branch | `main` |
+| **Root directory** | `r450k` |
+| Build command | `npm run build` |
+| Deploy command | `npx wrangler deploy` |
 
-> **Use `None`, not the `Vite` preset.** Cloudflare's `Vite` framework preset injects
-> `@cloudflare/vite-plugin` (its full-stack *Workers* integration) into the build. This site is a
-> plain static SPA + Pages Functions, so that plugin is wrong for it and also fails on the build
-> image's Node version (`SyntaxError: ... 'node:module' does not provide an export named
-> 'registerHooks'`). With preset `None`, Pages just runs `npm run build` (plain `vite build`) and
-> serves `dist/`, and the `functions/` directory is compiled by Pages as usual.
+That's it — there is **no "Build output directory"** field for Workers; the output dir is declared
+in `wrangler.jsonc` (`assets.directory: ./dist`). `npm run build` produces `dist/`; `npx wrangler
+deploy` uploads the Worker (`worker/index.js`) plus the `dist/` assets.
 
-After the first deploy, every push to `main` that touches `r450k/` rebuilds and publishes
-automatically. Pull requests get preview deployments at unique URLs.
+> **Why a Worker and not Pages?** Cloudflare now funnels new Git projects into Workers Builds (the
+> screen with a *Deploy command* + *Build token*). This site is configured for that model:
+> `wrangler.jsonc` serves `dist/` via the static-assets `ASSETS` binding and routes `POST
+> /api/contact` to the Worker. Do **not** pick the `Vite` framework preset anywhere — it injects
+> `@cloudflare/vite-plugin` (a full-stack Workers integration) which this static site doesn't use
+> and which fails the build (`'node:module' does not provide an export named 'registerHooks'`).
+> Here the build stays a plain `vite build`; deployment is the separate `wrangler deploy` step.
 
-> The root `.github/workflows/main.yml` (version-manifest job) is unaffected — Cloudflare Pages
-> builds independently of GitHub Actions.
+After the first deploy, every push to `main` rebuilds and publishes automatically; other branches
+get preview URLs. You can also deploy by hand from `r450k/`:
+
+```bash
+npm run build
+npm run deploy        # = npx wrangler deploy (needs `wrangler login` once)
+```
+
+> The root `.github/workflows/main.yml` (version-manifest job) is unaffected — Cloudflare builds
+> independently of GitHub Actions.
 
 ## Custom domain — r450k.com
 
@@ -78,10 +88,10 @@ in [`index.html`](index.html), [`public/robots.txt`](public/robots.txt),
 
 Connect the domain in Cloudflare (the same domain can host the apex and `www`):
 
-1. **Pages project → Custom domains → Set up a custom domain.**
+1. **Worker → Settings → Domains & Routes → Add → Custom domain.**
 2. Add `r450k.com` (and optionally `www.r450k.com`).
-3. If the domain's DNS is already on Cloudflare, the `CNAME`/flattened record is added for you.
-   Otherwise, point the host at the Pages target shown in the dialog and finish the TLS step.
+3. If the domain's DNS is already on Cloudflare, the record is added for you. Otherwise point the
+   host at the target shown in the dialog and finish the TLS step.
 4. Cloudflare issues the certificate automatically; the domain goes live within minutes.
 
 To make `www` and the apex agree, add a redirect (Cloudflare **Bulk Redirects** or a
@@ -100,13 +110,12 @@ falls back to its mockup, so the section never breaks.
 (Facebook, some Twitter paths) don't render SVG — for best compatibility, export a **1200×630 PNG**
 to `public/og-image.png` and point the `og:image` / `twitter:image` tags in `index.html` at it.
 
-## Contact form (Telegram via a Cloudflare Worker)
+## Contact form (Telegram via the Worker)
 
 The floating **Contact** button (bottom-left) opens a popover with a one-tap **Open Telegram**
-deep link *and* a short **message form**. The form POSTs to a **Pages Function** — a Cloudflare
-Worker that runs on the same domain at `/api/contact` ([`functions/api/contact.js`](functions/api/contact.js))
-— which relays the message to your Telegram via the Bot API. Your bot token stays server-side; it
-is never in the static bundle.
+deep link *and* a short **message form**. The form POSTs same-origin to `/api/contact`, which the
+Worker ([`worker/index.js`](worker/index.js)) handles and relays to your Telegram via the Bot API.
+Your bot token stays server-side; it is never in the static bundle.
 
 ### 1. Create a bot and get your chat id
 
@@ -117,18 +126,23 @@ is never in the static bundle.
    `https://api.telegram.org/bot<TOKEN>/getUpdates` after messaging your bot and read
    `result[].message.chat.id`.
 
-### 2. Set the secrets in Cloudflare Pages
+### 2. Set the secrets on the Worker
 
-Pages project → **Settings → Environment variables** → add two **encrypted** variables (Production
-*and* Preview if you want previews to work):
+Worker → **Settings → Variables and Secrets** → add two **secret** values:
 
 | Name | Value |
 | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | the BotFather token |
 | `TELEGRAM_CHAT_ID` | your numeric chat id |
 
-Redeploy (or push) so the Function picks them up. No `wrangler.toml` is needed — Pages
-auto-detects the `functions/` directory at the project root.
+…or from `r450k/` on the CLI:
+
+```bash
+npx wrangler secret put TELEGRAM_BOT_TOKEN
+npx wrangler secret put TELEGRAM_CHAT_ID
+```
+
+Secrets persist across deploys, so set them once. The next deploy picks them up.
 
 ### 3. Set your handle
 
@@ -137,31 +151,26 @@ username for the deep-link button. Set `enabled: false` there to hide the widget
 
 ### Local testing
 
-`npm run dev` (Vite) serves the static site but **not** the Function, so the form will report the
-endpoint as unreachable — the Telegram deep link still works. To test the Function locally:
+`npm run dev` (Vite) serves the static site but **not** the Worker, so the form reports the
+endpoint as unreachable — the Telegram deep link still works. To run the Worker + assets together
+(real `/api/contact`):
 
 ```bash
 cp .dev.vars.example .dev.vars   # fill in your real token + chat id (gitignored)
 npm run build
-npx wrangler pages dev dist      # serves dist/ + functions/ with .dev.vars
+npm run cf-dev                   # = npx wrangler dev (serves dist/ + worker with .dev.vars)
 ```
-
-### Standalone Worker alternative
-
-If you'd rather run a separate Worker (e.g. shared across sites), deploy the same logic as its own
-Worker and point `contact.endpoint` in `src/content.js` at its full URL. The Worker must then send
-CORS headers (`Access-Control-Allow-Origin: https://r450k.com`) and handle an `OPTIONS` preflight —
-neither is needed for the same-origin Pages Function above, which is why it's the default.
 
 ### Hardening (optional)
 
-The Function already drops bot spam via a hidden **honeypot** field and caps message length. For
+The Worker already drops bot spam via a hidden **honeypot** field and caps message length. For
 heavier abuse, add **Cloudflare Turnstile** (a free CAPTCHA) to the form and verify the token in the
-Function, and/or a per-IP rate limit via a Workers KV namespace.
+Worker, and/or a per-IP rate limit via a Workers KV namespace.
 
 ## Notes
 
-- `_headers` / `_redirects` in `public/` are copied verbatim into `dist/` by Vite and read by
-  Cloudflare Pages.
-- The static site is served from `dist/`; the `functions/` directory is deployed by Pages as
-  serverless Workers (only `/api/contact` is used today).
+- `public/` files (incl. `_headers`) are copied verbatim into `dist/` by Vite and served by the
+  Workers static-assets layer; `_headers` applies its security + cache rules.
+- Routing: static files in `dist/` are served directly; the Worker runs for non-asset paths,
+  handling `/api/contact` and otherwise delegating to the `ASSETS` binding (SPA fallback via
+  `not_found_handling`). There is no `_redirects` catch-all — it would intercept `/api/contact`.

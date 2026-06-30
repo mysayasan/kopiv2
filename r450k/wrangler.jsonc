@@ -1,0 +1,18 @@
+{
+  // Cloudflare Worker + Static Assets config for the r450k site.
+  // Build: `npm run build` (Vite → dist/). Deploy: `npx wrangler deploy`.
+  // Static files in dist/ are served directly; the Worker (worker/index.js)
+  // handles POST /api/contact and falls through to assets for everything else.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "r450k",
+  "main": "worker/index.js",
+  "compatibility_date": "2025-06-01",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "observability": {
+    "enabled": true
+  }
+}
