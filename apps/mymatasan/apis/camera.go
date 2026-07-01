@@ -30,6 +30,10 @@ type cameraApi struct {
 type saveDiscoveredRequest struct {
 	onvif.Device
 	Description string `json:"description"`
+	// Credentials to verify before the camera is saved (an ONVIF/RTSP login that the
+	// camera actively rejects blocks the save).
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 type streamURIRequest struct {
@@ -61,6 +65,15 @@ type ptzMoveRequest struct {
 type webRTCOfferRequest struct {
 	Type string `json:"type"`
 	SDP  string `json:"sdp"`
+	// RTSPURL, when set, previews a specific detected stream instead of the camera's
+	// active one — streamed under a separate source ID with no change to the camera.
+	RTSPURL string `json:"rtspUrl,omitempty"`
+}
+
+// streamTestRequest optionally targets a specific detected stream URL for a per-stream
+// connectivity test; empty rtspUrl tests the camera's active stream.
+type streamTestRequest struct {
+	RTSPURL string `json:"rtspUrl,omitempty"`
 }
 
 type cameraEncoderRequest struct {
@@ -77,7 +90,19 @@ func NewCameraApi(router *mux.Router, serv services.ICameraService, settings ser
 	group.HandleFunc("/health/refresh", handler.refreshHealth).Methods("POST")
 	group.HandleFunc("/discovered", handler.saveDiscovered).Methods("POST")
 	group.HandleFunc("/{id}/credentials", handler.saveCredentials).Methods("POST")
+	group.HandleFunc("/{id}/auth-check", handler.authCheck).Methods("GET")
 	group.HandleFunc("/{id}/camera-password", handler.changeCameraPassword).Methods("POST")
+	group.HandleFunc("/{id}/onvif-users", handler.listCameraUsers).Methods("GET")
+	group.HandleFunc("/{id}/onvif-users", handler.createCameraUser).Methods("POST")
+	group.HandleFunc("/{id}/onvif-users/{username}", handler.deleteCameraUser).Methods("DELETE")
+	group.HandleFunc("/{id}/reboot", handler.rebootCamera).Methods("POST")
+	group.HandleFunc("/{id}/factory-default", handler.factoryDefaultCamera).Methods("POST")
+	group.HandleFunc("/{id}/datetime", handler.getCameraDateTime).Methods("GET")
+	group.HandleFunc("/{id}/datetime", handler.setCameraDateTime).Methods("POST")
+	group.HandleFunc("/{id}/network", handler.getCameraNetwork).Methods("GET")
+	group.HandleFunc("/{id}/network", handler.setCameraNetwork).Methods("POST")
+	group.HandleFunc("/{id}/capabilities", handler.getCameraCapabilities).Methods("GET")
+	group.HandleFunc("/{id}/device-info", handler.getCameraDeviceInfo).Methods("GET")
 	group.HandleFunc("/{id}/stream-options", handler.streamOptions).Methods("POST")
 	group.HandleFunc("/{id}/stream-uri", handler.resolveStream).Methods("POST")
 	group.HandleFunc("/{id}/rtsp-test", handler.testStream).Methods("POST")
@@ -136,6 +161,15 @@ func (a *cameraApi) saveDiscovered(w http.ResponseWriter, r *http.Request) {
 		PTZSupported: body.PTZSupported,
 		ProfileToken: body.ProfileToken,
 	}
+	// Require working credentials before saving: a camera that actively rejects the login
+	// can't be added (an unreachable camera is allowed through — we just couldn't verify).
+	creds := onvif.Credentials{Username: strings.TrimSpace(body.Username), Password: body.Password}
+	if status, _ := a.serv.VerifyDeviceCredentials(r.Context(), detail, creds); status == services.CameraAuthUnauthorized {
+		controllers.SendError(w, controllers.ErrBadRequest, "camera rejected the credentials")
+		return
+	}
+	detail.Username = creds.Username
+	detail.Password = creds.Password
 	res, err := a.serv.Save(r.Context(), detail)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
@@ -198,6 +232,19 @@ func (a *cameraApi) saveCredentials(w http.ResponseWriter, r *http.Request) {
 	controllers.SendResult(w, res, "succeed")
 }
 
+// authCheck reports whether a camera's stored credentials still authenticate — the camera
+// node's access gate uses "unauthorized" to prompt for new credentials.
+func (a *cameraApi) authCheck(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	id, _ := strconv.ParseUint(params["id"], 10, 64)
+	status, err := a.serv.CameraAuthStatus(r.Context(), id)
+	if err != nil {
+		sendCameraBadRequest(w, err)
+		return
+	}
+	controllers.SendResult(w, map[string]string{"status": status}, "succeed")
+}
+
 func (a *cameraApi) changeCameraPassword(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
 	params := mux.Vars(r)
@@ -222,6 +269,186 @@ func (a *cameraApi) changeCameraPassword(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	controllers.SendResult(w, res, "succeed")
+}
+
+type cameraUserRequest struct {
+	Username  string `json:"username"`
+	Password  string `json:"password"`
+	UserLevel string `json:"userLevel"`
+}
+
+func (a *cameraApi) listCameraUsers(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	id, _ := strconv.ParseUint(params["id"], 10, 64)
+	res, err := a.serv.ListCameraUsers(r.Context(), id)
+	if err != nil {
+		sendCameraBadRequest(w, err)
+		return
+	}
+	controllers.SendResult(w, res, "succeed")
+}
+
+func (a *cameraApi) createCameraUser(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
+	params := mux.Vars(r)
+	id, _ := strconv.ParseUint(params["id"], 10, 64)
+	var body cameraUserRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	if err := a.serv.CreateCameraUser(r.Context(), id, services.CreateCameraUserRequest{
+		Username:  body.Username,
+		Password:  body.Password,
+		UserLevel: body.UserLevel,
+	}); err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	// Return the refreshed list so the UI reflects the new user immediately.
+	users, err := a.serv.ListCameraUsers(r.Context(), id)
+	if err != nil {
+		controllers.SendResult(w, []onvif.User{}, "succeed")
+		return
+	}
+	controllers.SendResult(w, users, "succeed")
+}
+
+func (a *cameraApi) deleteCameraUser(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	id, _ := strconv.ParseUint(params["id"], 10, 64)
+	if err := a.serv.DeleteCameraUser(r.Context(), id, params["username"]); err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	users, err := a.serv.ListCameraUsers(r.Context(), id)
+	if err != nil {
+		controllers.SendResult(w, []onvif.User{}, "succeed")
+		return
+	}
+	controllers.SendResult(w, users, "succeed")
+}
+
+type factoryDefaultRequest struct {
+	Hard bool `json:"hard"`
+}
+
+func (a *cameraApi) rebootCamera(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	id, _ := strconv.ParseUint(params["id"], 10, 64)
+	msg, err := a.serv.RebootCamera(r.Context(), id)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, map[string]string{"message": msg}, "succeed")
+}
+
+func (a *cameraApi) factoryDefaultCamera(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	id, _ := strconv.ParseUint(params["id"], 10, 64)
+	var body factoryDefaultRequest
+	if r.Body != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, 1048576)
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&body); err != nil && err != io.EOF {
+			controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+			return
+		}
+	}
+	if err := a.serv.FactoryDefaultCamera(r.Context(), id, body.Hard); err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, map[string]bool{"ok": true}, "succeed")
+}
+
+func (a *cameraApi) getCameraDateTime(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	id, _ := strconv.ParseUint(params["id"], 10, 64)
+	res, err := a.serv.GetCameraDateTime(r.Context(), id)
+	if err != nil {
+		sendCameraBadRequest(w, err)
+		return
+	}
+	controllers.SendResult(w, res, "succeed")
+}
+
+func (a *cameraApi) setCameraDateTime(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
+	params := mux.Vars(r)
+	id, _ := strconv.ParseUint(params["id"], 10, 64)
+	var body services.SetCameraDateTimeRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	if err := a.serv.SetCameraDateTime(r.Context(), id, body); err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	res, err := a.serv.GetCameraDateTime(r.Context(), id)
+	if err != nil {
+		controllers.SendResult(w, map[string]bool{"ok": true}, "succeed")
+		return
+	}
+	controllers.SendResult(w, res, "succeed")
+}
+
+func (a *cameraApi) getCameraNetwork(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	id, _ := strconv.ParseUint(params["id"], 10, 64)
+	res, err := a.serv.GetCameraNetwork(r.Context(), id)
+	if err != nil {
+		sendCameraBadRequest(w, err)
+		return
+	}
+	controllers.SendResult(w, res, "succeed")
+}
+
+func (a *cameraApi) getCameraCapabilities(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	id, _ := strconv.ParseUint(params["id"], 10, 64)
+	res, err := a.serv.GetCameraCapabilities(r.Context(), id)
+	if err != nil {
+		sendCameraBadRequest(w, err)
+		return
+	}
+	controllers.SendResult(w, res, "succeed")
+}
+
+func (a *cameraApi) getCameraDeviceInfo(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	id, _ := strconv.ParseUint(params["id"], 10, 64)
+	res, err := a.serv.GetCameraDeviceInfo(r.Context(), id)
+	if err != nil {
+		sendCameraBadRequest(w, err)
+		return
+	}
+	controllers.SendResult(w, res, "succeed")
+}
+
+func (a *cameraApi) setCameraNetwork(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
+	params := mux.Vars(r)
+	id, _ := strconv.ParseUint(params["id"], 10, 64)
+	var body services.SetCameraNetworkRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	if err := a.serv.SetCameraNetwork(r.Context(), id, body); err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, map[string]bool{"ok": true}, "succeed")
 }
 
 func (a *cameraApi) streamOptions(w http.ResponseWriter, r *http.Request) {
@@ -281,7 +508,25 @@ func (a *cameraApi) resolveStream(w http.ResponseWriter, r *http.Request) {
 func (a *cameraApi) testStream(w http.ResponseWriter, r *http.Request) {
 	params := mux.Vars(r)
 	id, _ := strconv.ParseUint(params["id"], 10, 64)
-	res, err := a.serv.TestStream(r.Context(), id)
+	// A specific detected stream (rtspUrl) is probed without persisting; empty tests the
+	// camera's active stream.
+	var body streamTestRequest
+	if r.Body != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, 1048576)
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&body); err != nil && err != io.EOF {
+			controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+			return
+		}
+	}
+	var res *rtsp.ProbeResult
+	var err error
+	if strings.TrimSpace(body.RTSPURL) != "" {
+		res, err = a.serv.TestStreamURL(r.Context(), id, body.RTSPURL)
+	} else {
+		res, err = a.serv.TestStream(r.Context(), id)
+	}
 	if err != nil {
 		sendCameraBadRequest(w, err)
 		return
@@ -427,7 +672,17 @@ func (a *cameraApi) createWebRTCAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	source, err := a.serv.SnapshotSource(r.Context(), id)
+	// A specific detected stream is previewed under a SEPARATE source ID with the
+	// camera's credentials but no DB change, so the camera's active stream (used by
+	// recording + detection siphon) is never disturbed. Empty rtspUrl = the active stream.
+	var source services.SnapshotSource
+	sourceID := fmt.Sprintf("camera-%d", id)
+	if strings.TrimSpace(body.RTSPURL) != "" {
+		source, err = a.serv.PreviewSource(r.Context(), id, body.RTSPURL)
+		sourceID = fmt.Sprintf("camera-%d-preview", id)
+	} else {
+		source, err = a.serv.SnapshotSource(r.Context(), id)
+	}
 	if err != nil {
 		sendCameraBadRequest(w, err)
 		return
@@ -438,7 +693,7 @@ func (a *cameraApi) createWebRTCAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	answer, err := a.streamManager.CreateWebRTCAnswerWithOptions(r.Context(), stream.Source{
-		ID:  fmt.Sprintf("camera-%d", id),
+		ID:  sourceID,
 		URI: source.RTSPURI,
 	}, stream.SessionDescription{
 		Type: body.Type,

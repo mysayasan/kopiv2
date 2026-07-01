@@ -227,10 +227,25 @@ func normalizeQueryValue(value any, typ reflect.Type) (any, error) {
 		return queryIntValue(value)
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		return queryUintValue(value)
+	case reflect.Float32, reflect.Float64:
+		return queryFloatValue(value)
 	case reflect.String:
 		return queryStringValue(value)
 	default:
 		return queryStringValue(value)
+	}
+}
+
+func queryFloatValue(value any) (float64, error) {
+	switch v := value.(type) {
+	case json.Number:
+		return v.Float64()
+	case string:
+		return strconv.ParseFloat(strings.TrimSpace(v), 64)
+	case float64:
+		return v, nil
+	default:
+		return 0, fmt.Errorf("expected numeric value")
 	}
 }
 

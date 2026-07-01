@@ -66,22 +66,14 @@ func (s *visionService) DeleteRule(ctx context.Context, id uint64) (uint64, erro
 	return s.rules.DeleteById(ctx, "", id)
 }
 
-func (s *visionService) GetAlerts(ctx context.Context, limit uint64, offset uint64, cameraId int64, createdAfter int64, createdBefore int64, ruleId int64, status string, detectionType string) ([]*entities.AlertEvent, uint64, error) {
+// GetAlerts lists alert events with true DB-side filtering/sorting/paging. The camera
+// and status are mandatory base constraints; extraFilters/extraSorters come straight
+// from the client DataTable (column filters + sort), letting the grid drive the query.
+// When no sort is supplied the newest events come first.
+func (s *visionService) GetAlerts(ctx context.Context, limit uint64, offset uint64, cameraId int64, status string, extraFilters []sqldataenums.Filter, extraSorters []sqldataenums.Sorter) ([]*entities.AlertEvent, uint64, error) {
 	var filters []sqldataenums.Filter
 	if cameraId > 0 {
 		filters = append(filters, sqldataenums.Filter{FieldName: "CameraId", Compare: sqldataenums.Equal, Value: cameraId})
-	}
-	if dt := strings.ToLower(strings.TrimSpace(detectionType)); dt != "" {
-		filters = append(filters, sqldataenums.Filter{FieldName: "DetectionType", Compare: sqldataenums.Equal, Value: dt})
-	}
-	if createdAfter > 0 {
-		filters = append(filters, sqldataenums.Filter{FieldName: "CreatedAt", Compare: sqldataenums.GreaterThanOrEqualTo, Value: createdAfter})
-	}
-	if createdBefore > 0 {
-		filters = append(filters, sqldataenums.Filter{FieldName: "CreatedAt", Compare: sqldataenums.LessThan, Value: createdBefore})
-	}
-	if ruleId > 0 {
-		filters = append(filters, sqldataenums.Filter{FieldName: "RuleId", Compare: sqldataenums.Equal, Value: ruleId})
 	}
 	switch status {
 	case "active":
@@ -100,7 +92,12 @@ func (s *visionService) GetAlerts(ctx context.Context, limit uint64, offset uint
 	case "diagnostic":
 		filters = append(filters, sqldataenums.Filter{FieldName: "IsDiagnostic", Compare: sqldataenums.Equal, Value: true})
 	}
-	sorters := []sqldataenums.Sorter{{FieldName: "CreatedAt", Sort: sqldataenums.DESC}}
+	// Column filters from the grid (createdAt range, label, ruleId, confidence, …).
+	filters = append(filters, extraFilters...)
+	sorters := extraSorters
+	if len(sorters) == 0 {
+		sorters = []sqldataenums.Sorter{{FieldName: "CreatedAt", Sort: sqldataenums.DESC}}
+	}
 	return s.alerts.Get(ctx, "", limit, offset, filters, sorters)
 }
 

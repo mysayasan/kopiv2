@@ -1,18 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './styles/app.css';
+import './styles/rbac-standard.css';
 import { ToastStack } from './components/ui';
 import { LangProvider, normalizeLang, useT } from '@shared/i18n';
 import { AppFooter } from '@shared/AppFooter';
 import { messages as appMessages } from './i18n';
 import { THEMES, emptyLogin, defaultStreamConfig, defaultRuntimeSettings, defaultNewUser, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings, defaultVisionThreshold, defaultVisionMinFrames } from './lib/constants';
-import {readLiveViewsCookie,saveLiveViewsCookie,bestLiveViewLayout,unwrap,errorMessage,apiBase,parseMetadata,cameraTitle,normalizeScanDevice,orderedSavedCameras,isActionableVisionAlert,latestAlertsByCamera,sameCamera,liveSource,normalizeRuntimeSettings,normalizeMachineHealthSettings,defaultZonePolygon,isLineDetectionType,defaultLineRuleConfig,lineRuleConfigText,defaultVisionRuleDraft,playAlertSound,hasH264VideoTrack,streamOptionLabel,isVisionAlertNotification } from './lib/helpers';
-import { LoginPage, ChangePasswordPage, TopBar } from './components/layout';
+import {readLiveViewsCookie,saveLiveViewsCookie,bestLiveViewLayout,unwrap,errorMessage,apiBase,parseMetadata,cameraTitle,normalizeScanDevice,orderedSavedCameras,isActionableVisionAlert,latestAlertsByCamera,sameCamera,liveSource,normalizeRuntimeSettings,normalizeMachineHealthSettings,defaultZonePolygon,isLineDetectionType,defaultLineRuleConfig,lineRuleConfigText,defaultVisionRuleDraft,playAlertSound,hasH264VideoTrack,isVisionAlertNotification } from './lib/helpers';
+import { LoginPage, ChangePasswordPage, SideNav, WorkspaceHeader } from './components/layout';
+import { DashboardTab } from './components/dashboard';
 import { SetupWizard } from './components/setup';
 import { ViewsTab, CamerasTab } from './components/cameras';
-import { VisionTab } from './components/vision';
 import { TrainingTab } from './components/training';
 import { SettingsTab } from './components/settings';
-import { RecordingTab } from './components/recording';
 import { NotificationsTab } from './components/notifications';
 import { SecureWipeCountdown, ResetProgressOverlay } from './components/securewipe';
 
@@ -31,6 +31,18 @@ function AppInner({ lang, onLangChange }) {
   function changeTheme(t) {
     setTheme(t);
     try { localStorage.setItem('mymatasan_theme', t); } catch (_) {}
+  }
+  // Side-nav display mode: pinned (default, always in-flow) vs auto-hide (collapses
+  // to a slim hover edge and slides in on hover). Persisted like the theme.
+  const [navPinned, setNavPinned] = useState(() => {
+    try { return localStorage.getItem('mymatasan_nav_pinned') !== 'false'; } catch (_) { return true; }
+  });
+  function toggleNavPinned() {
+    setNavPinned((p) => {
+      const next = !p;
+      try { localStorage.setItem('mymatasan_nav_pinned', String(next)); } catch (_) {}
+      return next;
+    });
   }
   const [credentials, setCredentials] = useState(emptyLogin);
   // credentialsRef always holds the latest credentials so request() builds its
@@ -54,6 +66,14 @@ function AppInner({ lang, onLangChange }) {
   const [activeTab, setActiveTab] = useState('views');
   const [settingsNav, setSettingsNav] = useState('runtime');
   const [cameraNav, setCameraNav] = useState('probe');
+  // The saved camera whose properties the Cameras page is showing, driven by the
+  // side-nav camera tree (null = the probe/discovery view). Lifted here so the rail
+  // and the page stay in sync (mirrors myseliasan's managingNodeId).
+  const [managingCameraId, setManagingCameraId] = useState(null);
+  // Per-camera credential status ("ok"|"unauthorized"|"unreachable") for the camera-node
+  // access gate: when a camera's stored login stops working, all its tabs are blocked
+  // behind a credential prompt until valid credentials are re-entered.
+  const [cameraAuthById, setCameraAuthById] = useState({});
   const [manualAddress, setManualAddress] = useState('');
   const [timeoutMs, setTimeoutMs] = useState(3000);
   const [scanCIDR, setScanCIDR] = useState('');
@@ -92,9 +112,7 @@ function AppInner({ lang, onLangChange }) {
   const [busy, setBusy] = useState(false);
   const [deviceDrafts, setDeviceDrafts] = useState({});
   const [deviceCredentials, setDeviceCredentials] = useState({});
-  const [cameraPasswordDrafts, setCameraPasswordDrafts] = useState({});
   const [streamOptionsById, setStreamOptionsById] = useState({});
-  const [selectedStreamTokens, setSelectedStreamTokens] = useState({});
   const [viewLayout, setViewLayout] = useState(initialLiveViews.layout);
   const [viewTiles, setViewTiles] = useState([]);
   const [draggedTileId, setDraggedTileId] = useState(null);
@@ -128,11 +146,11 @@ function AppInner({ lang, onLangChange }) {
   const [visionRuleDraft, setVisionRuleDraft] = useState(defaultVisionRuleDraft());
   const [recordingSegments, setRecordingSegments] = useState([]);
   const [recordingConfigs, setRecordingConfigs] = useState([]);
-  const [notifOpen, setNotifOpen] = useState(false);
   const [notifUnread, setNotifUnread] = useState(0);
   // Unified notification feed (AI detections, camera/machine health, login
-  // security, ...) backing the topbar bell. Loaded unread-only from the shared
-  // /api/notifications store; notifUnread mirrors the server's total unread.
+  // security, ...). notifUnread drives the side-nav Notifications badge. Loaded
+  // unread-only from the shared /api/notifications store; notifUnread mirrors the
+  // server's total unread.
   const [notifications, setNotifications] = useState([]);
   const loadNotificationsRef = useRef(null);
   // Bumped whenever the unread feed actually changes (new arrivals, reads), so the
@@ -143,8 +161,6 @@ function AppInner({ lang, onLangChange }) {
   // Username a login-security notification deep-links to, so the Users settings
   // highlights the account that was targeted.
   const [focusUsername, setFocusUsername] = useState('');
-  // Notification id the page should scroll to/highlight after a dropdown click.
-  const [notifFocusId, setNotifFocusId] = useState(0);
   const [seenInRecordingIds, setSeenInRecordingIds] = useState(new Set());
   const seenVisionAlertIdsRef = useRef(new Set());
   const loadVisionRef = useRef(null);
@@ -448,7 +464,6 @@ function AppInner({ lang, onLangChange }) {
     setSaveDrafts({});
     setDeviceDrafts({});
     setDeviceCredentials({});
-    setCameraPasswordDrafts({});
     setViewTiles([]);
     setPreview(null);
     setStreamConfig(defaultStreamConfig);
@@ -462,7 +477,6 @@ function AppInner({ lang, onLangChange }) {
     setVisionRuleDraft(defaultVisionRuleDraft());
     setRecordingSegments([]);
     setRecordingConfigs([]);
-    setNotifOpen(false);
     setNotifUnread(0);
     setNotifications([]);
     setFocusUsername('');
@@ -893,20 +907,23 @@ function AppInner({ lang, onLangChange }) {
     try {
       const { _discoveryMethods, _openPorts, ...deviceData } = device;
       const name = (creds.name || '').trim() || cameraTitle(device);
-      const newId = await request('/api/cameras/discovered', {
+      // Send credentials with the save so the backend verifies them before persisting;
+      // a rejected login throws so the wizard keeps the camera un-added and shows the error.
+      await request('/api/cameras/discovered', {
         method: 'POST',
-        body: JSON.stringify({ ...deviceData, name, description: '' }),
+        body: JSON.stringify({
+          ...deviceData,
+          name,
+          description: '',
+          username: (creds.username || '').trim(),
+          password: creds.password || '',
+        }),
       });
-      if (newId && (creds.username || creds.password)) {
-        await request(`/api/cameras/${newId}/credentials`, {
-          method: 'POST',
-          body: JSON.stringify({ username: creds.username || '', password: creds.password || '' }),
-        });
-      }
       await refresh({ quiet: true });
       setMessage(t('app.cameraAdded'));
     } catch (err) {
       setMessage(err.message, 'error');
+      throw err;
     } finally {
       setBusy(false);
     }
@@ -1177,35 +1194,15 @@ function AppInner({ lang, onLangChange }) {
     loadNotifications({ quiet: true }).catch(() => {});
   }
 
-  // handleNotificationClick (topbar bell): every click opens the dedicated
-  // Notifications page focused on the clicked entry. A non-detection click also
-  // dismisses it from the bell (a plain click handles it); AI detections stay in
-  // the list until acknowledged on the page.
+  // openNotificationsPage opens the dedicated Notifications page and refreshes its
+  // data. Reached from the side-nav Notifications item and from in-view alert banners
+  // (tiles, recordings); the old topbar bell + its per-entry click handler are gone.
   function openNotificationsPage() {
     setActiveTab('notifications');
     loadNotifications({ quiet: true }).catch(() => {});
     // Enrich AI rows (full alert metadata) and detect which alerts have clips.
     loadVision({ quiet: true }).catch(() => {});
     loadRecording({ quiet: true }).catch(() => {});
-  }
-
-  function handleNotificationClick(notif) {
-    if (!notif) {
-      return;
-    }
-    setNotifOpen(false);
-    setNotifFocusId(Number(notif.id));
-    openNotificationsPage();
-    if (!isVisionAlertNotification(notif)) {
-      markNotificationRead(notif.id);
-      return;
-    }
-    // AI detection: if its alert was already acknowledged, the notification is a
-    // leftover with no Acknowledge action — dismiss it so it can't get stuck.
-    const alert = visionAlerts.find((a) => Number(a.id) === Number(notif.refId));
-    if (alert && alert.isAcknowledged) {
-      markNotificationRead(notif.id);
-    }
   }
 
   useEffect(() => {
@@ -1606,8 +1603,11 @@ function AppInner({ lang, onLangChange }) {
     }
   }
 
-  function editVisionRule(rule) {
-    setVisionRuleDraft({
+  // visionRuleToDraft maps a rule (from the API list) into the exact draft shape the
+  // save endpoint (POST /api/vision/rules) expects — typed, complete fields. Used by
+  // both the editor and the in-list enable/disable toggle so both post a valid body.
+  function visionRuleToDraft(rule) {
+    return {
       id: rule.id,
       cameraId: rule.cameraId || '',
       name: rule.name || '',
@@ -1620,7 +1620,11 @@ function AppInner({ lang, onLangChange }) {
       cooldownSeconds: rule.cooldownSeconds || 30,
       soundEnabled: Boolean(rule.soundEnabled),
       isEnabled: Boolean(rule.isEnabled),
-    });
+    };
+  }
+
+  function editVisionRule(rule) {
+    setVisionRuleDraft(visionRuleToDraft(rule));
     const camera = saved.find((device) => Number(device.id) === Number(rule.cameraId));
     if (camera) {
       prepareVisionLiveView(camera).catch(() => {});
@@ -1634,6 +1638,24 @@ function AppInner({ lang, onLangChange }) {
       await request(`/api/vision/rules/${id}`, { method: 'DELETE' });
       await loadVision({ quiet: true });
       setMessage(t('app.ruleDeleted'));
+    } catch (err) {
+      setMessage(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // toggleVisionRule flips a rule's enabled state directly from the list (no editor) by
+  // re-posting the rule with isEnabled inverted — the same upsert endpoint as save.
+  async function toggleVisionRule(rule) {
+    setBusy(true);
+    setMessage('');
+    try {
+      await request('/api/vision/rules', {
+        method: 'POST',
+        body: JSON.stringify({ ...visionRuleToDraft(rule), isEnabled: !rule.isEnabled }),
+      });
+      await loadVision({ quiet: true });
     } catch (err) {
       setMessage(err.message, 'error');
     } finally {
@@ -1930,12 +1952,16 @@ function AppInner({ lang, onLangChange }) {
     // Strip frontend-only fields that the backend struct doesn't accept.
     const { _discoveryMethods, _openPorts, ...deviceData } = device;
     try {
+      // Credentials are verified server-side before the camera is persisted; a camera that
+      // rejects the login is not saved (the add dialog stays open with the error).
       await request('/api/cameras/discovered', {
         method: 'POST',
         body: JSON.stringify({
           ...deviceData,
           name: (draft.name || '').trim() || cameraTitle(device),
           description: (draft.description || '').trim(),
+          username: (draft.username || '').trim(),
+          password: draft.password || '',
         }),
       });
       setMessage(t('app.cameraSaved'));
@@ -1943,6 +1969,8 @@ function AppInner({ lang, onLangChange }) {
       setCameraNav('saved');
     } catch (err) {
       setMessage(err.message, 'error');
+      throw err;
+    } finally {
       setBusy(false);
     }
   }
@@ -2050,38 +2078,6 @@ function AppInner({ lang, onLangChange }) {
     }
   }
 
-  async function changeCameraPassword(device) {
-    const draft = cameraPasswordDrafts[device.id] || {};
-    if (!draft.newPassword) {
-      setMessage(t('app.onvifPwRequired'), 'error');
-      return;
-    }
-    setBusy(true);
-    setMessage('');
-    try {
-      const result = await request(`/api/cameras/${device.id}/camera-password`, {
-        method: 'POST',
-        body: JSON.stringify({
-          targetUsername: (draft.targetUsername || '').trim() || device.username,
-          newPassword: draft.newPassword,
-        }),
-      });
-      setCameraPasswordDrafts((current) => ({
-        ...current,
-        [device.id]: { targetUsername: result.username || device.username || '', newPassword: '' },
-      }));
-      setDeviceCredentials((current) => ({
-        ...current,
-        [device.id]: { username: result.username || device.username || '', password: draft.newPassword },
-      }));
-      setMessage(t('app.camPwChanged'));
-      await refresh({ quiet: true });
-    } catch (err) {
-      setMessage(err.message, 'error');
-      setBusy(false);
-    }
-  }
-
   async function movePTZ(deviceId, direction) {
     setMessage('');
     try {
@@ -2112,11 +2108,6 @@ function AppInner({ lang, onLangChange }) {
         body: JSON.stringify(credentialsFor(device)),
       });
       setStreamOptionsById((current) => ({ ...current, [device.id]: result }));
-      const selectedToken =
-        result?.selectedProfileToken || result?.preferredProfileToken || (result?.options || [])[0]?.profileToken || '';
-      if (selectedToken) {
-        setSelectedStreamTokens((current) => ({ ...current, [device.id]: selectedToken }));
-      }
       setMessage(t('app.rtspOptionsFound', { n: (result?.options || []).length }));
       await refresh({ quiet: true });
     } catch (err) {
@@ -2125,88 +2116,17 @@ function AppInner({ lang, onLangChange }) {
     }
   }
 
-  async function selectStreamOption(device, option) {
-    if (!option?.profileToken) {
-      setMessage(t('app.chooseOnvifFirst'), 'error');
-      return;
-    }
+  async function testStream(device, option) {
     setBusy(true);
     setMessage('');
     try {
-      const result = await request(`/api/cameras/${device.id}/stream-uri`, {
+      // A specific detected stream (option.rtspUrl) is probed WITHOUT switching the
+      // camera's active stream — recording/detection (which read the saved RTSP URL)
+      // are untouched; no option = test the active stream.
+      const result = await request(`/api/cameras/${device.id}/rtsp-test`, {
         method: 'POST',
-        body: JSON.stringify({
-          ...credentialsFor(device),
-          profileToken: option.profileToken,
-          rtspUrl: option.rtspUrl || '',
-        }),
+        ...(option?.rtspUrl ? { body: JSON.stringify({ rtspUrl: option.rtspUrl }) } : {}),
       });
-      setSelectedStreamTokens((current) => ({ ...current, [device.id]: option.profileToken }));
-      setStreamOptionsById((current) => {
-        const existing = current[device.id];
-        if (!existing?.options) {
-          return current;
-        }
-        return {
-          ...current,
-          [device.id]: {
-            ...existing,
-            selectedProfileToken: option.profileToken,
-            options: existing.options.map((item) => ({
-              ...item,
-              selected: item.profileToken === option.profileToken,
-            })),
-          },
-        };
-      });
-      applyDeviceUpdate(result);
-
-      // Auto-enable recording when a stream is first selected or recording was disabled.
-      const existingConfig = recordingConfigs.find((c) => Number(c.cameraId) === Number(device.id));
-      if (!existingConfig?.enabled) {
-        const streamUrl = result?.rtspUrl || option.rtspUrl || '';
-        const configToSave = {
-          cameraId: device.id,
-          enabled: true,
-          preRollSec:       existingConfig?.preRollSec       ?? 30,
-          postRollSec:      existingConfig?.postRollSec      ?? 10,
-          storagePath:      existingConfig?.storagePath      ?? 'recordings',
-          retentionDays:    existingConfig?.retentionDays    ?? 7,
-          segmentMinutes:   existingConfig?.segmentMinutes   ?? 15,
-          liveStreamUrl:    existingConfig?.liveStreamUrl    ?? '',
-          streamUrl,
-          fallbackStreamUrl: existingConfig?.fallbackStreamUrl ?? '',
-        };
-        try {
-          const recResult = await request('/api/recording/config', {
-            method: 'PUT',
-            body: JSON.stringify(configToSave),
-          });
-          const savedCfg = recResult?.config || recResult;
-          setRecordingConfigs((current) => {
-            const rest = current.filter((c) => Number(c.cameraId) !== Number(device.id));
-            return savedCfg ? [...rest, savedCfg] : rest;
-          });
-          setMessage(t('app.streamSavedRecEnabled', { label: streamOptionLabel(option) }));
-        } catch (_) {
-          setMessage(t('app.streamSavedRecFailed', { label: streamOptionLabel(option) }), 'error');
-        }
-      } else {
-        setMessage(t('app.streamSaved', { label: streamOptionLabel(option) }));
-      }
-
-      await refresh({ quiet: true });
-    } catch (err) {
-      setMessage(err.message, 'error');
-      setBusy(false);
-    }
-  }
-
-  async function testStream(device) {
-    setBusy(true);
-    setMessage('');
-    try {
-      const result = await request(`/api/cameras/${device.id}/rtsp-test`, { method: 'POST' });
       const tracks = result.tracks || [];
       const suffix = tracks.length && !hasH264VideoTrack(tracks)
         ? ' No H264 video track; live view will use MJPEG fallback.'
@@ -2237,7 +2157,23 @@ function AppInner({ lang, onLangChange }) {
     return result || device;
   }
 
-  async function previewCamera(device) {
+  async function previewCamera(device, option) {
+    // Previewing a SPECIFIC detected stream: open the modal against that URL directly.
+    // The WebRTC offer carries the URL and the backend streams it under a separate
+    // source ID with the camera's saved credentials — the camera's active stream (and
+    // thus recording + detection) is never switched. Creds are already saved by the time
+    // streams are detected (Find streams saves them), so no live-view resolve is needed.
+    if (option?.rtspUrl) {
+      setPreview({
+        id: device.id,
+        title: cameraTitle(device),
+        device,
+        ptzSupported: Boolean(device.ptzSupported),
+        previewUrl: option.rtspUrl,
+      });
+      setMessage(t('app.livePreviewOpened'));
+      return;
+    }
     setBusy(true);
     setMessage('');
     try {
@@ -2256,11 +2192,11 @@ function AppInner({ lang, onLangChange }) {
     }
   }
 
-  async function addToViews(device) {
+  async function addToViews(device, opts = {}) {
     // No capacity cap: the grid is a per-page size and paging shows any overflow,
     // so adding a camera beyond the current page just lands on a new page.
     if (viewTiles.some((tile) => tile.id === device.id)) {
-      setActiveTab('views');
+      if (!opts.stay) setActiveTab('views');
       return;
     }
     setBusy(true);
@@ -2280,13 +2216,25 @@ function AppInner({ lang, onLangChange }) {
           ptzSupported: Boolean(result.ptzSupported || device.ptzSupported),
         },
       ]);
-      setActiveTab('views');
+      // From the camera-node Live View we toggle in place; only jump to the tiles
+      // grid when the button was used elsewhere (e.g. the discover/preview flow).
+      if (!opts.stay) setActiveTab('views');
       setMessage(t('app.camAdded'));
       await refresh({ quiet: true });
     } catch (err) {
       setMessage(err.message, 'error');
       setBusy(false);
+    } finally {
+      setBusy(false);
     }
+  }
+
+  // removeFromViews takes a camera out of the live-tiles grid (the Live View toggle's
+  // "remove" side). It doesn't delete the camera, just the tile.
+  function removeFromViews(device) {
+    const id = device?.id ?? device;
+    setViewTilesWithCookie((current) => current.filter((tile) => tile.id !== id));
+    setMessage(t('app.camRemovedFromViews'));
   }
 
   async function removeDevice(id) {
@@ -2300,6 +2248,80 @@ function AppInner({ lang, onLangChange }) {
       await refresh({ quiet: true });
     } catch (err) {
       setMessage(err.message, 'error');
+      setBusy(false);
+    }
+  }
+
+  // selectTab switches the active module and runs each tab's on-enter data load
+  // (previously inline in the topbar). Leaving the Cameras section clears the managed
+  // camera so returning lands on the probe/discovery view.
+  function selectTab(tab) {
+    if (tab !== 'cameras') setManagingCameraId(null);
+    setActiveTab(tab);
+    if (tab === 'settings' && settingsNav === 'users') {
+      loadUsers().catch(() => {});
+    }
+    // Cameras hosts the per-camera Settings (Recording/Stream config), AI rules, and
+    // Recordings browser tabs, so refresh recording configs + vision state on entry.
+    if (tab === 'cameras') {
+      loadRecording({ quiet: true }).catch(() => {});
+      loadVision({ quiet: true }).catch(() => {});
+    }
+    if (tab === 'notifications') {
+      loadNotifications({ quiet: true }).catch(() => {});
+      loadVision({ quiet: true }).catch(() => {});
+      loadRecording({ quiet: true }).catch(() => {});
+    }
+  }
+
+  // selectCameraRoot opens the Cameras page on the probe/discovery view (no camera
+  // selected); selectCamera jumps straight to a saved camera's properties tabs. Both
+  // are driven by the side-nav camera tree.
+  function selectCameraRoot() {
+    setManagingCameraId(null);
+    setCameraNav('probe');
+    setActiveTab('cameras');
+    loadRecording({ quiet: true }).catch(() => {});
+  }
+  function selectCamera(cameraId) {
+    setManagingCameraId(cameraId);
+    setCameraNav('saved');
+    setActiveTab('cameras');
+    loadRecording({ quiet: true }).catch(() => {});
+    checkCameraAuth(cameraId);
+  }
+
+  // checkCameraAuth verifies a camera's stored credentials so the node can gate its tabs
+  // when the login has stopped working. A check error is treated as "ok" (don't block on a
+  // transient failure); only a definitive "unauthorized" raises the gate.
+  async function checkCameraAuth(id) {
+    if (!id) return;
+    try {
+      const data = await request(`/api/cameras/${id}/auth-check`);
+      const status = (data && data.status) || 'ok';
+      setCameraAuthById((cur) => ({ ...cur, [id]: status }));
+    } catch (_) {
+      setCameraAuthById((cur) => ({ ...cur, [id]: 'ok' }));
+    }
+  }
+
+  // unlockCamera re-enters a camera's credentials from the access gate; the backend
+  // verifies them (rejecting a bad login), then we re-check so a valid login clears the gate.
+  async function unlockCamera(device, creds) {
+    setBusy(true);
+    setMessage('');
+    try {
+      await request(`/api/cameras/${device.id}/credentials`, {
+        method: 'POST',
+        body: JSON.stringify({ username: (creds.username || '').trim(), password: creds.password || '' }),
+      });
+      await refresh({ quiet: true });
+      await checkCameraAuth(device.id);
+      setMessage(t('app.camCredsSaved'));
+    } catch (err) {
+      setMessage(err.message, 'error');
+      throw err;
+    } finally {
       setBusy(false);
     }
   }
@@ -2363,49 +2385,38 @@ function AppInner({ lang, onLangChange }) {
   }
 
   return (
-    <main className="app-shell">
+    <div className={`app-shell${navPinned ? '' : ' nav-autohide'}`}>
       {wipeCountdown ? (
         <SecureWipeCountdown onCancel={() => setWipeCountdown(false)} onProceed={startSecureWipe} />
       ) : null}
       {resetProgress ? (
         <ResetProgressOverlay progress={resetProgress} onDismiss={() => setResetProgress(null)} />
       ) : null}
-      <TopBar
+      <SideNav
         activeTab={activeTab}
         isAdmin={isAdmin}
         busy={busy}
-        onTab={(tab) => {
-          setActiveTab(tab);
-          if (tab === 'settings' && settingsNav === 'users') {
-            loadUsers().catch(() => {});
-          }
-          if (tab === 'ai') {
-            loadVision({ quiet: true }).catch(() => {});
-          }
-          // Cameras hosts the per-camera Recording/Stream config tabs, which read
-          // recordingConfigs — keep them fresh when entering either tab.
-          if (tab === 'recording' || tab === 'cameras') {
-            loadRecording({ quiet: true }).catch(() => {});
-          }
-          if (tab === 'notifications') {
-            loadNotifications({ quiet: true }).catch(() => {});
-            loadVision({ quiet: true }).catch(() => {});
-            loadRecording({ quiet: true }).catch(() => {});
-          }
-        }}
-        onRefresh={() => refresh()}
-        onLogout={logout}
-        notifications={notifications}
-        notifOpen={notifOpen}
+        username={credentials.username}
+        cameras={saved}
+        managingCameraId={managingCameraId}
         notifUnread={notifUnread}
-        onNotifToggle={() => setNotifOpen((o) => !o)}
-        onNotifClick={handleNotificationClick}
+        onTab={selectTab}
+        onSelectCameraRoot={selectCameraRoot}
+        onSelectCamera={selectCamera}
+        onLogout={logout}
         theme={theme}
         onThemeChange={changeTheme}
-        lang={lang}
-        onLangChange={onLangChange}
+        pinned={navPinned}
+        onTogglePinned={toggleNavPinned}
       />
-      <ToastStack toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((t) => t.id !== id))} />
+      <main className="main-workspace">
+        <WorkspaceHeader
+          lang={lang}
+          onLangChange={onLangChange}
+        />
+        <ToastStack toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((t) => t.id !== id))} />
+
+      {activeTab === 'dashboard' ? <DashboardTab /> : null}
 
       {activeTab === 'views' ? (
         <ViewsTab
@@ -2441,14 +2452,16 @@ function AppInner({ lang, onLangChange }) {
           manualAddress={manualAddress}
           timeoutMs={timeoutMs}
           cameraNav={cameraNav}
+          selectedSavedId={managingCameraId}
+          onSelectSaved={selectCamera}
+          cameraAuth={cameraAuthById}
+          onUnlockCamera={unlockCamera}
           preview={preview}
           authHeader={authHeader}
           streamConfig={streamConfig}
           detailDraftsById={deviceDrafts}
           credentialsById={deviceCredentials}
-          passwordDraftsById={cameraPasswordDrafts}
           streamOptionsById={streamOptionsById}
-          selectedStreamTokens={selectedStreamTokens}
           saveDrafts={saveDrafts}
           onCameraNav={(nav) => {
             setCameraNav(nav);
@@ -2465,15 +2478,13 @@ function AppInner({ lang, onLangChange }) {
           onSaveDetails={saveDeviceDetails}
           onDiscardDetails={discardDeviceDetails}
           onCredential={(id, value) => setDeviceCredentials((current) => ({ ...current, [id]: value }))}
-          onPasswordDraft={(id, value) => setCameraPasswordDrafts((current) => ({ ...current, [id]: value }))}
           onSaveCredentials={saveCredentials}
-          onChangePassword={changeCameraPassword}
           onResolve={resolveStream}
-          onStreamToken={(id, token) => setSelectedStreamTokens((current) => ({ ...current, [id]: token }))}
-          onSelectStream={selectStreamOption}
           onTest={testStream}
           onPreview={previewCamera}
           onAddToViews={addToViews}
+          onRemoveFromViews={removeFromViews}
+          viewTileIds={viewTiles.map((tile) => tile.id)}
           onPTZMove={movePTZ}
           onPTZStop={stopPTZ}
           onRemove={removeDevice}
@@ -2482,37 +2493,46 @@ function AppInner({ lang, onLangChange }) {
           onSaveRecordingConfig={saveRecordingConfig}
           onMessage={setMessage}
           canManage={isAdmin}
-        />
-      ) : null}
-
-      {activeTab === 'ai' ? (
-        <VisionTab
-          saved={saved}
-          rules={visionRules}
-          alerts={visionAlerts}
-          classes={visionClasses}
-          labelCatalog={visionLabels}
-          activeModelClasses={activeModelClasses}
-          destinations={notificationSettings.destinations}
-          ruleDraft={visionRuleDraft}
-          busy={busy}
-          authHeader={authHeader}
-          streamConfig={streamConfig}
-          onRuleDraft={setVisionRuleDraft}
-          onSaveRule={saveVisionRule}
-          onSaveClass={saveVisionClass}
-          onDeleteClass={deleteVisionClass}
-          onEditRule={editVisionRule}
-          onDeleteRule={deleteVisionRule}
-          onTriggerTestAlert={triggerTestAlert}
-          onAcknowledgeAlert={acknowledgeAlert}
-          onPrepareCamera={prepareVisionLiveView}
-          onReload={() => loadVision()}
+          ai={{
+            rules: visionRules,
+            alerts: visionAlerts,
+            classes: visionClasses,
+            activeModelClasses,
+            destinations: notificationSettings.destinations,
+            ruleDraft: visionRuleDraft,
+            onRuleDraft: setVisionRuleDraft,
+            onSaveRule: saveVisionRule,
+            onEditRule: editVisionRule,
+            onDeleteRule: deleteVisionRule,
+            onToggleRule: toggleVisionRule,
+            onTriggerTestAlert: triggerTestAlert,
+            onAcknowledgeAlert: acknowledgeAlert,
+            onPrepareCamera: prepareVisionLiveView,
+            onReload: () => loadVision(),
+          }}
+          recordings={{
+            alerts: visionAlerts,
+            unacknowledgedAlertIds,
+            onDeleteSegment: deleteRecordingSegment,
+            onPurgeExpired: purgeExpiredRecordings,
+            onAcknowledgeAlert: acknowledgeAlert,
+            onReload: () => loadRecording(),
+          }}
         />
       ) : null}
 
       {activeTab === 'training' ? (
-        <TrainingTab authHeader={authHeader} cameras={saved} onMessage={setMessage} onModelActivated={() => { loadVision({ quiet: true }); loadActiveModelClasses(); }} />
+        <TrainingTab
+          authHeader={authHeader}
+          cameras={saved}
+          onMessage={setMessage}
+          onModelActivated={() => { loadVision({ quiet: true }); loadActiveModelClasses(); }}
+          classes={visionClasses}
+          labelCatalog={visionLabels}
+          activeModelClasses={activeModelClasses}
+          onSaveClass={saveVisionClass}
+          onDeleteClass={deleteVisionClass}
+        />
       ) : null}
 
       {activeTab === 'settings' ? (
@@ -2576,22 +2596,6 @@ function AppInner({ lang, onLangChange }) {
         />
       ) : null}
 
-      {activeTab === 'recording' ? (
-        <RecordingTab
-          canManage={isAdmin}
-          saved={saved}
-          segments={recordingSegments}
-          busy={busy}
-          authHeader={authHeader}
-          onDeleteSegment={deleteRecordingSegment}
-          onPurgeExpired={purgeExpiredRecordings}
-          onReload={() => loadRecording()}
-          unacknowledgedAlertIds={unacknowledgedAlertIds}
-          onAcknowledgeAlert={acknowledgeAlert}
-          alerts={visionAlerts}
-        />
-      ) : null}
-
       {activeTab === 'notifications' ? (
         <NotificationsTab
           authHeader={authHeader}
@@ -2600,7 +2604,6 @@ function AppInner({ lang, onLangChange }) {
           visionAlerts={visionAlerts}
           visionRules={visionRules}
           clipByAlertId={clipByAlertId}
-          focusId={notifFocusId}
           refreshSignal={notifVersion}
           onAcknowledgeAlert={acknowledgeAlert}
           onMarkRead={markNotificationRead}
@@ -2610,8 +2613,9 @@ function AppInner({ lang, onLangChange }) {
         />
       ) : null}
 
-      <AppFooter appName="MyMataSan" apiBase={apiBase()} authHeader={authHeader} />
-    </main>
+        <AppFooter appName="MyMataSan" apiBase={apiBase()} authHeader={authHeader} />
+      </main>
+    </div>
   );
 }
 

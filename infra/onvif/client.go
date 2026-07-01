@@ -116,6 +116,21 @@ type ChangeUserPasswordRequest struct {
 	UserLevel        string      `json:"userLevel"`
 }
 
+// UsersRequest lists the camera's local ONVIF user accounts (Device Management GetUsers).
+type UsersRequest struct {
+	DeviceServiceURL string
+	Credentials      Credentials
+}
+
+// UserRequest creates or deletes a single local ONVIF user account.
+type UserRequest struct {
+	DeviceServiceURL string
+	Credentials      Credentials
+	Username         string
+	Password         string
+	UserLevel        string
+}
+
 // PTZMoveRequest controls one PTZ movement.
 type PTZMoveRequest struct {
 	DeviceServiceURL string      `json:"deviceServiceUrl"`
@@ -508,6 +523,340 @@ func (c *Client) ChangeUserPassword(ctx context.Context, req ChangeUserPasswordR
 		return fmt.Errorf("change ONVIF camera password failed: %w", err)
 	}
 	return nil
+}
+
+// GetUsers lists the camera's local ONVIF user accounts (Device Management GetUsers).
+func (c *Client) GetUsers(ctx context.Context, req UsersRequest) ([]User, error) {
+	deviceURL, err := NormalizeDeviceServiceURL(req.DeviceServiceURL)
+	if err != nil {
+		return nil, err
+	}
+	body, _, err := c.postSOAP(ctx, deviceURL, getUsersBody(), req.Credentials)
+	if err != nil {
+		return nil, fmt.Errorf("get ONVIF users failed: %w", err)
+	}
+	return ParseUsers(body)
+}
+
+// CreateUser adds a local ONVIF user with a role (Administrator / Operator / User).
+func (c *Client) CreateUser(ctx context.Context, req UserRequest) error {
+	deviceURL, err := NormalizeDeviceServiceURL(req.DeviceServiceURL)
+	if err != nil {
+		return err
+	}
+	username := strings.TrimSpace(req.Username)
+	password := strings.TrimSpace(req.Password)
+	if username == "" {
+		return errors.New("username is required")
+	}
+	if password == "" {
+		return errors.New("password is required")
+	}
+	userLevel := strings.TrimSpace(req.UserLevel)
+	if userLevel == "" {
+		userLevel = "User"
+	}
+	if _, _, err := c.postSOAP(ctx, deviceURL, createUsersBody(username, password, userLevel), req.Credentials); err != nil {
+		return fmt.Errorf("create ONVIF user failed: %w", err)
+	}
+	return nil
+}
+
+// DeleteUser removes a local ONVIF user account.
+func (c *Client) DeleteUser(ctx context.Context, req UserRequest) error {
+	deviceURL, err := NormalizeDeviceServiceURL(req.DeviceServiceURL)
+	if err != nil {
+		return err
+	}
+	username := strings.TrimSpace(req.Username)
+	if username == "" {
+		return errors.New("username is required")
+	}
+	if _, _, err := c.postSOAP(ctx, deviceURL, deleteUsersBody(username), req.Credentials); err != nil {
+		return fmt.Errorf("delete ONVIF user failed: %w", err)
+	}
+	return nil
+}
+
+// DeviceRequest is a bare Device-service call (reboot / factory default / reads).
+type DeviceRequest struct {
+	DeviceServiceURL string
+	Credentials      Credentials
+}
+
+// SystemReboot asks the camera to reboot; returns the device's reboot message.
+func (c *Client) SystemReboot(ctx context.Context, req DeviceRequest) (string, error) {
+	deviceURL, err := NormalizeDeviceServiceURL(req.DeviceServiceURL)
+	if err != nil {
+		return "", err
+	}
+	body, _, err := c.postSOAP(ctx, deviceURL, `
+    <tds:SystemReboot/>`, req.Credentials)
+	if err != nil {
+		return "", fmt.Errorf("ONVIF reboot failed: %w", err)
+	}
+	return ParseRebootMessage(body), nil
+}
+
+// FactoryDefaultRequest resets the camera to factory defaults (Soft keeps network config).
+type FactoryDefaultRequest struct {
+	DeviceServiceURL string
+	Credentials      Credentials
+	Hard             bool
+}
+
+// SetSystemFactoryDefault restores factory defaults (Soft or Hard).
+func (c *Client) SetSystemFactoryDefault(ctx context.Context, req FactoryDefaultRequest) error {
+	deviceURL, err := NormalizeDeviceServiceURL(req.DeviceServiceURL)
+	if err != nil {
+		return err
+	}
+	kind := "Soft"
+	if req.Hard {
+		kind = "Hard"
+	}
+	if _, _, err := c.postSOAP(ctx, deviceURL, fmt.Sprintf(`
+    <tds:SetSystemFactoryDefault>
+      <tds:FactoryDefault>%s</tds:FactoryDefault>
+    </tds:SetSystemFactoryDefault>`, kind), req.Credentials); err != nil {
+		return fmt.Errorf("ONVIF factory default failed: %w", err)
+	}
+	return nil
+}
+
+// GetSystemDateAndTime reads the camera clock configuration.
+func (c *Client) GetSystemDateAndTime(ctx context.Context, req DeviceRequest) (*SystemDateTime, error) {
+	deviceURL, err := NormalizeDeviceServiceURL(req.DeviceServiceURL)
+	if err != nil {
+		return nil, err
+	}
+	body, _, err := c.postSOAP(ctx, deviceURL, `
+    <tds:GetSystemDateAndTime/>`, req.Credentials)
+	if err != nil {
+		return nil, fmt.Errorf("ONVIF get date/time failed: %w", err)
+	}
+	return ParseSystemDateTime(body)
+}
+
+// SystemDateTimeUpdate configures the camera clock.
+type SystemDateTimeUpdate struct {
+	DeviceServiceURL string
+	Credentials      Credentials
+	DateTimeType     string // "Manual" | "NTP"
+	DaylightSavings  bool
+	TimeZone         string
+	UTC              time.Time // used only when DateTimeType == "Manual"
+}
+
+// SetSystemDateAndTime sets the camera clock configuration.
+func (c *Client) SetSystemDateAndTime(ctx context.Context, req SystemDateTimeUpdate) error {
+	deviceURL, err := NormalizeDeviceServiceURL(req.DeviceServiceURL)
+	if err != nil {
+		return err
+	}
+	mode := strings.TrimSpace(req.DateTimeType)
+	if mode != "Manual" {
+		mode = "NTP"
+	}
+	tzBlock := ""
+	if tz := strings.TrimSpace(req.TimeZone); tz != "" {
+		tzBlock = fmt.Sprintf(`
+      <tds:TimeZone><tt:TZ>%s</tt:TZ></tds:TimeZone>`, xmlEscape(tz))
+	}
+	utcBlock := ""
+	if mode == "Manual" {
+		t := req.UTC.UTC()
+		utcBlock = fmt.Sprintf(`
+      <tds:UTCDateTime>
+        <tt:Time><tt:Hour>%d</tt:Hour><tt:Minute>%d</tt:Minute><tt:Second>%d</tt:Second></tt:Time>
+        <tt:Date><tt:Year>%d</tt:Year><tt:Month>%d</tt:Month><tt:Day>%d</tt:Day></tt:Date>
+      </tds:UTCDateTime>`, t.Hour(), t.Minute(), t.Second(), t.Year(), int(t.Month()), t.Day())
+	}
+	soap := fmt.Sprintf(`
+    <tds:SetSystemDateAndTime>
+      <tds:DateTimeType>%s</tds:DateTimeType>
+      <tds:DaylightSavings>%t</tds:DaylightSavings>%s%s
+    </tds:SetSystemDateAndTime>`, mode, req.DaylightSavings, tzBlock, utcBlock)
+	if _, _, err := c.postSOAP(ctx, deviceURL, soap, req.Credentials); err != nil {
+		return fmt.Errorf("ONVIF set date/time failed: %w", err)
+	}
+	return nil
+}
+
+// GetNetwork reads the camera's network config (interfaces + gateway + DNS).
+func (c *Client) GetNetwork(ctx context.Context, req DeviceRequest) (*NetworkConfig, error) {
+	deviceURL, err := NormalizeDeviceServiceURL(req.DeviceServiceURL)
+	if err != nil {
+		return nil, err
+	}
+	ifBody, _, err := c.postSOAP(ctx, deviceURL, `
+    <tds:GetNetworkInterfaces/>`, req.Credentials)
+	if err != nil {
+		return nil, fmt.Errorf("ONVIF get network interfaces failed: %w", err)
+	}
+	cfg, err := ParseNetworkInterfaces(ifBody)
+	if err != nil {
+		return nil, err
+	}
+	if gwBody, _, gwErr := c.postSOAP(ctx, deviceURL, `
+    <tds:GetNetworkDefaultGateway/>`, req.Credentials); gwErr == nil {
+		cfg.Gateway = ParseNetworkGateway(gwBody)
+	}
+	if dnsBody, _, dnsErr := c.postSOAP(ctx, deviceURL, `
+    <tds:GetDNS/>`, req.Credentials); dnsErr == nil {
+		cfg.DNS, cfg.DNSFromDHCP = ParseDNS(dnsBody)
+	}
+	return cfg, nil
+}
+
+// NetworkUpdate sets IPv4 for one interface, plus the default gateway + DNS.
+type NetworkUpdate struct {
+	DeviceServiceURL string
+	Credentials      Credentials
+	InterfaceToken   string
+	DHCP             bool
+	IPAddress        string
+	PrefixLength     int
+	Gateway          string
+	DNS              []string
+}
+
+// SetNetwork applies IPv4 config to one interface, then the gateway + DNS.
+func (c *Client) SetNetwork(ctx context.Context, req NetworkUpdate) error {
+	deviceURL, err := NormalizeDeviceServiceURL(req.DeviceServiceURL)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(req.InterfaceToken) == "" {
+		return errors.New("interfaceToken is required")
+	}
+	ipv4 := ""
+	if req.DHCP {
+		ipv4 = `
+        <tt:Enabled>true</tt:Enabled>
+        <tt:DHCP>true</tt:DHCP>`
+	} else {
+		if strings.TrimSpace(req.IPAddress) == "" {
+			return errors.New("ipAddress is required for a static interface")
+		}
+		prefix := req.PrefixLength
+		if prefix <= 0 || prefix > 32 {
+			prefix = 24
+		}
+		ipv4 = fmt.Sprintf(`
+        <tt:Enabled>true</tt:Enabled>
+        <tt:Manual>
+          <tt:Address>%s</tt:Address>
+          <tt:PrefixLength>%d</tt:PrefixLength>
+        </tt:Manual>
+        <tt:DHCP>false</tt:DHCP>`, xmlEscape(strings.TrimSpace(req.IPAddress)), prefix)
+	}
+	soap := fmt.Sprintf(`
+    <tds:SetNetworkInterfaces>
+      <tds:InterfaceToken>%s</tds:InterfaceToken>
+      <tds:NetworkInterface>
+        <tt:Enabled>true</tt:Enabled>
+        <tt:IPv4>%s
+        </tt:IPv4>
+      </tds:NetworkInterface>
+    </tds:SetNetworkInterfaces>`, xmlEscape(strings.TrimSpace(req.InterfaceToken)), ipv4)
+	if _, _, err := c.postSOAP(ctx, deviceURL, soap, req.Credentials); err != nil {
+		return fmt.Errorf("ONVIF set network interface failed: %w", err)
+	}
+	if !req.DHCP && strings.TrimSpace(req.Gateway) != "" {
+		if _, _, err := c.postSOAP(ctx, deviceURL, fmt.Sprintf(`
+    <tds:SetNetworkDefaultGateway>
+      <tds:IPv4Address>%s</tds:IPv4Address>
+    </tds:SetNetworkDefaultGateway>`, xmlEscape(strings.TrimSpace(req.Gateway))), req.Credentials); err != nil {
+			return fmt.Errorf("ONVIF set gateway failed: %w", err)
+		}
+	}
+	if len(req.DNS) > 0 {
+		manual := ""
+		for _, d := range req.DNS {
+			if d = strings.TrimSpace(d); d != "" {
+				manual += fmt.Sprintf(`
+      <tds:DNSManual><tt:Type>IPv4</tt:Type><tt:IPv4Address>%s</tt:IPv4Address></tds:DNSManual>`, xmlEscape(d))
+			}
+		}
+		if _, _, err := c.postSOAP(ctx, deviceURL, fmt.Sprintf(`
+    <tds:SetDNS>
+      <tds:FromDHCP>false</tds:FromDHCP>%s
+    </tds:SetDNS>`, manual), req.Credentials); err != nil {
+			return fmt.Errorf("ONVIF set DNS failed: %w", err)
+		}
+	}
+	return nil
+}
+
+// GetNTP reads the camera's NTP configuration; returns the servers + whether from DHCP.
+func (c *Client) GetNTP(ctx context.Context, req DeviceRequest) ([]string, bool, error) {
+	deviceURL, err := NormalizeDeviceServiceURL(req.DeviceServiceURL)
+	if err != nil {
+		return nil, false, err
+	}
+	body, _, err := c.postSOAP(ctx, deviceURL, `
+    <tds:GetNTP/>`, req.Credentials)
+	if err != nil {
+		return nil, false, fmt.Errorf("ONVIF get NTP failed: %w", err)
+	}
+	servers, fromDHCP := ParseNTP(body)
+	return servers, fromDHCP, nil
+}
+
+// NTPUpdate sets the camera's NTP servers (manual) or defers to DHCP.
+type NTPUpdate struct {
+	DeviceServiceURL string
+	Credentials      Credentials
+	FromDHCP         bool
+	Servers          []string
+}
+
+// SetNTP configures the camera's NTP servers.
+func (c *Client) SetNTP(ctx context.Context, req NTPUpdate) error {
+	deviceURL, err := NormalizeDeviceServiceURL(req.DeviceServiceURL)
+	if err != nil {
+		return err
+	}
+	manual := ""
+	if !req.FromDHCP {
+		for _, s := range req.Servers {
+			s = strings.TrimSpace(s)
+			if s == "" {
+				continue
+			}
+			entry := fmt.Sprintf(`<tt:DNSname>%s</tt:DNSname>`, xmlEscape(s))
+			typ := "DNS"
+			if ip := net.ParseIP(s); ip != nil && ip.To4() != nil {
+				entry = fmt.Sprintf(`<tt:IPv4Address>%s</tt:IPv4Address>`, xmlEscape(s))
+				typ = "IPv4"
+			}
+			manual += fmt.Sprintf(`
+      <tds:NTPManual><tt:Type>%s</tt:Type>%s</tds:NTPManual>`, typ, entry)
+		}
+	}
+	soap := fmt.Sprintf(`
+    <tds:SetNTP>
+      <tds:FromDHCP>%t</tds:FromDHCP>%s
+    </tds:SetNTP>`, req.FromDHCP, manual)
+	if _, _, err := c.postSOAP(ctx, deviceURL, soap, req.Credentials); err != nil {
+		return fmt.Errorf("ONVIF set NTP failed: %w", err)
+	}
+	return nil
+}
+
+// GetServices lists the ONVIF services (namespaces) the device advertises.
+func (c *Client) GetServices(ctx context.Context, req DeviceRequest) ([]Service, error) {
+	deviceURL, err := NormalizeDeviceServiceURL(req.DeviceServiceURL)
+	if err != nil {
+		return nil, err
+	}
+	body, _, err := c.postSOAP(ctx, deviceURL, `
+    <tds:GetServices><tds:IncludeCapability>false</tds:IncludeCapability></tds:GetServices>`, req.Credentials)
+	if err != nil {
+		return nil, fmt.Errorf("ONVIF get services failed: %w", err)
+	}
+	return ParseServices(body)
 }
 
 // PTZMove starts a continuous PTZ movement and optionally stops it after Duration.
@@ -1044,6 +1393,29 @@ func setUserBody(username string, password string, userLevel string) string {
         <tt:UserLevel>%s</tt:UserLevel>
       </tds:User>
     </tds:SetUser>`, xmlEscape(username), xmlEscape(password), xmlEscape(userLevel))
+}
+
+func getUsersBody() string {
+	return `
+    <tds:GetUsers/>`
+}
+
+func createUsersBody(username string, password string, userLevel string) string {
+	return fmt.Sprintf(`
+    <tds:CreateUsers>
+      <tds:User>
+        <tt:Username>%s</tt:Username>
+        <tt:Password>%s</tt:Password>
+        <tt:UserLevel>%s</tt:UserLevel>
+      </tds:User>
+    </tds:CreateUsers>`, xmlEscape(username), xmlEscape(password), xmlEscape(userLevel))
+}
+
+func deleteUsersBody(username string) string {
+	return fmt.Sprintf(`
+    <tds:DeleteUsers>
+      <tds:Username>%s</tds:Username>
+    </tds:DeleteUsers>`, xmlEscape(username))
 }
 
 func getProfilesBody() string {

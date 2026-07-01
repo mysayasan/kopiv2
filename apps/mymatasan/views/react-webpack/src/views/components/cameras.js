@@ -1,12 +1,13 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Ico } from './icons';
 import { useT } from '@shared/i18n';
 import { FormBusyOverlay, InfoButton, Tracks, LayoutDropdown } from './ui';
+import { CameraAiPanel } from './vision';
 import { defaultDeviceCredentials } from '../lib/constants';
-import {fieldValue,formatTimestamp,cameraTitle,cameraDescription,orderedSavedCameras,sameCamera,streamOptionLabel,layoutCapacity,layoutColumns,layoutRows } from '../lib/helpers';
+import {apiBase,fieldValue,formatTimestamp,cameraTitle,cameraDescription,orderedSavedCameras,sameCamera,streamOptionLabel,layoutCapacity,layoutColumns,layoutRows } from '../lib/helpers';
 import { LiveViewport } from './previews';
 import { PasswordField } from './layout';
-import { CameraRecordingConfig, CameraStreamConfig } from './recording';
+import { CameraRecordingConfig, CameraStreamConfig, CameraRecordingsPanel } from './recording';
 
 // healthPillProps maps a camera's live health status into a pill class and label.
 // The status-pill online/offline/unknown classes are shared with the RTSP pill.
@@ -369,9 +370,12 @@ export function ViewsTab({
   );
 }
 
-export function DiscoveredDevices({ devices, saved, busy, drafts, onDraft, onSave }) {
+export function DiscoveredDevices({ devices, saved, busy, onSave }) {
   const t = useT();
   const [savedExpanded, setSavedExpanded] = useState(false);
+  // The device whose "Add" credential dialog is open (credentials are verified before the
+  // camera can be saved), or null when no dialog is showing.
+  const [addingDevice, setAddingDevice] = useState(null);
   const notSavedDevices = devices.filter((device) => !saved.some((savedDevice) => sameCamera(device, savedDevice)));
   const savedDevices = devices.filter((device) => saved.some((savedDevice) => sameCamera(device, savedDevice)));
 
@@ -381,7 +385,6 @@ export function DiscoveredDevices({ devices, saved, busy, drafts, onDraft, onSav
 
   function renderUnsaved(device) {
     const key = device.xAddr || `${device.host}:${device.port}`;
-    const draft = drafts[key] || { name: cameraTitle(device), description: '' };
     return (
       <article className="device-card" key={key}>
         <div className="device-title-row">
@@ -389,8 +392,8 @@ export function DiscoveredDevices({ devices, saved, busy, drafts, onDraft, onSav
             <h3>{cameraTitle(device)}</h3>
             <p>{device.xAddr}</p>
           </div>
-          <button type="button" onClick={() => onSave(device, draft)} disabled={busy}>
-            <span className="btn-icon"><Ico n="save" /> {t('common.save')}</span>
+          <button type="button" onClick={() => setAddingDevice(device)} disabled={busy}>
+            <span className="btn-icon"><Ico n="plus" /> {t('cam.addCamera')}</span>
           </button>
         </div>
         <DeviceMeta device={device} />
@@ -404,24 +407,6 @@ export function DiscoveredDevices({ devices, saved, busy, drafts, onDraft, onSav
             ) : null}
           </div>
         ) : null}
-        <div className="metadata-row">
-          <label>
-            {t('cam.cameraName')}
-            <input
-              value={draft.name}
-              onChange={(event) => onDraft(key, { ...draft, name: event.target.value })}
-              autoComplete="off"
-            />
-          </label>
-          <label>
-            {t('common.description')}
-            <input
-              value={draft.description}
-              onChange={(event) => onDraft(key, { ...draft, description: event.target.value })}
-              autoComplete="off"
-            />
-          </label>
-        </div>
       </article>
     );
   }
@@ -462,48 +447,634 @@ export function DiscoveredDevices({ devices, saved, busy, drafts, onDraft, onSav
         {savedDevices.length > 0 ? (
           <section className="discovery-group">
             <header>
-              <h3>{t('cam.saved')}</h3>
-              <div className="discovery-group-actions">
-                <span className="discovery-group-count">{savedDevices.length}</span>
-                <button
-                  type="button"
-                  className="quiet compact-button"
-                  aria-expanded={savedExpanded}
-                  onClick={() => setSavedExpanded((current) => !current)}
-                >
-                  {savedExpanded ? t('cam.collapse') : t('cam.expand')}
-                </button>
-              </div>
+              <button
+                type="button"
+                className="discovery-group-toggle"
+                aria-expanded={savedExpanded}
+                aria-label={savedExpanded ? t('cam.collapse') : t('cam.expand')}
+                title={savedExpanded ? t('cam.collapse') : t('cam.expand')}
+                onClick={() => setSavedExpanded((current) => !current)}
+              >
+                <Ico n={savedExpanded ? 'chev-up' : 'chev-down'} sz={16} />
+                <h3>{t('cam.saved')}</h3>
+              </button>
+              <span className="discovery-group-count">{savedDevices.length}</span>
             </header>
             {savedExpanded ? <div className="device-list compact">{savedDevices.map(renderSaved)}</div> : null}
           </section>
+        ) : null}
+      </div>
+      {addingDevice ? (
+        <AddCameraDialog
+          device={addingDevice}
+          busy={busy}
+          onCancel={() => setAddingDevice(null)}
+          onSave={onSave}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+// AddCameraDialog collects a name + login for a discovered camera and verifies the
+// credentials on save. `onSave` throws when the camera rejects the login, so the dialog
+// stays open showing the error; on success the parent view unmounts it (navigates to Saved).
+function AddCameraDialog({ device, busy, onCancel, onSave }) {
+  const t = useT();
+  const [name, setName] = useState(() => cameraTitle(device));
+  const [description, setDescription] = useState('');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function submit(e) {
+    e.preventDefault();
+    setSaving(true);
+    setError('');
+    try {
+      await onSave(device, { name: name.trim(), description: description.trim(), username: username.trim(), password });
+    } catch (err) {
+      setError(err?.message || t('cam.authFailed'));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div
+      className="preview-overlay"
+      role="dialog"
+      aria-modal="true"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}
+    >
+      <div className="preview-dialog add-camera-dialog">
+        <header className="preview-dialog-head">
+          <h3>{t('cam.addDialogTitle')}</h3>
+          <button type="button" className="quiet icon-only" onClick={onCancel} aria-label={t('common.close')}>
+            <Ico n="x" />
+          </button>
+        </header>
+        <form className="add-camera-form" onSubmit={submit}>
+          <p className="field-hint">{cameraTitle(device)} · {device.xAddr || device.host}</p>
+          <label>
+            {t('cam.cameraName')}
+            <input value={name} onChange={(e) => setName(e.target.value)} autoComplete="off" />
+          </label>
+          <label>
+            {t('common.description')}
+            <input value={description} onChange={(e) => setDescription(e.target.value)} autoComplete="off" />
+          </label>
+          <div className="credential-row">
+            <label>
+              {t('cam.credUsername')}
+              <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" placeholder="admin" />
+            </label>
+            <label>
+              {t('cam.credPassword')}
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" />
+            </label>
+          </div>
+          <p className="field-hint">{t('cam.addDialogHint')}</p>
+          {error ? <p className="field-hint danger-text">{error}</p> : null}
+          <div className="add-camera-actions">
+            <button type="button" className="quiet" onClick={onCancel} disabled={saving}>{t('common.cancel')}</button>
+            <button type="submit" disabled={saving || busy}>
+              <span className="btn-icon"><Ico n="shield" /> {saving ? t('cam.verifying') : t('cam.verifyAndSave')}</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// CameraUsers manages the camera's local ONVIF user accounts (Device Management
+// GetUsers/CreateUsers/DeleteUsers). The list is loaded on demand — the ONVIF call hits
+// the camera, so it isn't auto-fetched every time the Access panel opens.
+function CameraUsers({ device, busy, authHeader, canManage }) {
+  const t = useT();
+  const cameraId = Number(device?.id) || 0;
+  const [users, setUsers] = useState(null); // null = not loaded yet
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [draft, setDraft] = useState({ username: '', password: '', userLevel: 'User' });
+  const [pwFor, setPwFor] = useState(null); // username whose password is being changed
+  const [pwValue, setPwValue] = useState('');
+
+  useEffect(() => {
+    setUsers(null);
+    setError('');
+    setDraft({ username: '', password: '', userLevel: 'User' });
+    setPwFor(null);
+    setPwValue('');
+  }, [cameraId]);
+
+  const resultOf = (payload) => payload?.data?.result ?? payload?.result ?? payload;
+  const errOf = (payload, status) => payload?.message || payload?.error || `${status}`;
+
+  const load = useCallback(async () => {
+    if (!cameraId) return;
+    setLoading(true);
+    setError('');
+    try {
+      const headers = authHeader ? { Authorization: authHeader } : {};
+      const resp = await fetch(`${apiBase()}/api/cameras/${cameraId}/onvif-users`, { credentials: 'include', headers });
+      const payload = await resp.json().catch(() => null);
+      if (!resp.ok) throw new Error(errOf(payload, resp.status));
+      const result = resultOf(payload);
+      setUsers(Array.isArray(result) ? result : []);
+    } catch (e) {
+      setError(e.message || 'failed');
+      setUsers([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [cameraId, authHeader]);
+
+  async function addUser(event) {
+    event.preventDefault();
+    if (!draft.username.trim() || !draft.password) return;
+    setSaving(true);
+    setError('');
+    try {
+      const headers = { 'Content-Type': 'application/json', ...(authHeader ? { Authorization: authHeader } : {}) };
+      const resp = await fetch(`${apiBase()}/api/cameras/${cameraId}/onvif-users`, {
+        method: 'POST', credentials: 'include', headers, body: JSON.stringify(draft),
+      });
+      const payload = await resp.json().catch(() => null);
+      if (!resp.ok) throw new Error(errOf(payload, resp.status));
+      const result = resultOf(payload);
+      setUsers(Array.isArray(result) ? result : users);
+      setDraft({ username: '', password: '', userLevel: 'User' });
+    } catch (e) {
+      setError(e.message || 'failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function changePassword(user) {
+    if (!pwValue) return;
+    setSaving(true);
+    setError('');
+    try {
+      const headers = { 'Content-Type': 'application/json', ...(authHeader ? { Authorization: authHeader } : {}) };
+      const resp = await fetch(`${apiBase()}/api/cameras/${cameraId}/camera-password`, {
+        method: 'POST', credentials: 'include', headers,
+        body: JSON.stringify({ targetUsername: user.username, newPassword: pwValue, userLevel: user.userLevel || 'User' }),
+      });
+      const payload = await resp.json().catch(() => null);
+      if (!resp.ok) throw new Error(errOf(payload, resp.status));
+      setPwFor(null);
+      setPwValue('');
+    } catch (e) {
+      setError(e.message || 'failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeUser(username) {
+    if (!window.confirm(t('cam.removeUserConfirm', { name: username }))) return;
+    setSaving(true);
+    setError('');
+    try {
+      const headers = authHeader ? { Authorization: authHeader } : {};
+      const resp = await fetch(`${apiBase()}/api/cameras/${cameraId}/onvif-users/${encodeURIComponent(username)}`, {
+        method: 'DELETE', credentials: 'include', headers,
+      });
+      const payload = await resp.json().catch(() => null);
+      if (!resp.ok) throw new Error(errOf(payload, resp.status));
+      const result = resultOf(payload);
+      setUsers(Array.isArray(result) ? result : (users || []).filter((u) => u.username !== username));
+    } catch (e) {
+      setError(e.message || 'failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="camera-users">
+      <hr className="saved-tab-divider" />
+      <div className="camera-users-head">
+        <div>
+          <strong>{t('cam.cameraUsers')}</strong>
+          <span className="field-hint">{t('cam.usersIntro')}</span>
+        </div>
+        <button type="button" className="quiet" onClick={load} disabled={loading || busy}>
+          <span className="btn-icon"><Ico n="refresh" /> {users === null ? t('cam.loadUsers') : t('common.refresh')}</span>
+        </button>
+      </div>
+      {error ? <p className="field-hint danger-text">{error}</p> : null}
+      {loading ? <p className="empty-hint">{t('common.loading')}</p> : null}
+      {users !== null && !loading ? (
+        users.length === 0 ? (
+          <p className="empty-hint">{t('cam.noUsers')}</p>
+        ) : (
+          <ul className="user-list">
+            {users.map((u) => (
+              <li key={u.username} className="user-row">
+                <div className="user-row-main">
+                  <span className="user-name"><Ico n="user" sz={14} /> {u.username}</span>
+                  <span className="user-level">{u.userLevel || '-'}</span>
+                  {canManage ? (
+                    <>
+                      <button type="button" className="quiet" onClick={() => { setPwFor(pwFor === u.username ? null : u.username); setPwValue(''); }} disabled={saving || busy} title={t('cam.changeUserPassword')} aria-label={t('cam.changeUserPassword')}>
+                        <Ico n="key" sz={13} />
+                      </button>
+                      <button type="button" className="quiet danger-text" onClick={() => removeUser(u.username)} disabled={saving || busy} title={t('common.delete')} aria-label={t('common.delete')}>
+                        <Ico n="trash" sz={13} />
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+                {canManage && pwFor === u.username ? (
+                  <form className="user-pw-form" onSubmit={(e) => { e.preventDefault(); changePassword(u); }}>
+                    <PasswordField value={pwValue} onChange={setPwValue} autoComplete="new-password" placeholder={t('cam.newUserPassword')} />
+                    <button type="submit" className="quiet" disabled={!pwValue || saving}>{t('common.save')}</button>
+                    <button type="button" className="quiet" onClick={() => setPwFor(null)}>{t('common.cancel')}</button>
+                  </form>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )
+      ) : null}
+      {canManage ? (
+        <form className="camera-users-add" onSubmit={addUser}>
+          <div className="credential-row">
+            <label>
+              {t('cam.newUserName')}
+              <input value={draft.username} onChange={(e) => setDraft({ ...draft, username: e.target.value })} autoComplete="off" />
+            </label>
+            <label>
+              {t('cam.newUserPassword')}
+              <PasswordField value={draft.password} onChange={(password) => setDraft({ ...draft, password })} autoComplete="new-password" />
+            </label>
+          </div>
+          <div className="credential-row">
+            <label>
+              {t('cam.userRole')}
+              <select value={draft.userLevel} onChange={(e) => setDraft({ ...draft, userLevel: e.target.value })}>
+                <option value="Administrator">{t('cam.roleAdmin')}</option>
+                <option value="Operator">{t('cam.roleOperator')}</option>
+                <option value="User">{t('cam.roleUser')}</option>
+              </select>
+            </label>
+          </div>
+          <div className="action-row">
+            <button type="submit" className="quiet" disabled={saving || busy || !draft.username.trim() || !draft.password}>
+              <span className="btn-icon"><Ico n="user-plus" /> {t('cam.addUser')}</span>
+            </button>
+          </div>
+        </form>
+      ) : null}
+    </div>
+  );
+}
+
+// CameraMaintenance exposes ONVIF Device-Management maintenance: reboot + factory reset
+// (soft keeps network config, hard wipes everything). Destructive → confirm dialogs.
+function CameraMaintenance({ device, busy, authHeader, canManage, onMessage }) {
+  const t = useT();
+  const cameraId = Number(device?.id) || 0;
+  const [working, setWorking] = useState('');
+  const notify = (msg, kind) => { if (onMessage) onMessage(msg, kind); };
+  async function call(path, body, confirmMsg, okMsg) {
+    if (confirmMsg && !window.confirm(confirmMsg)) return;
+    setWorking(path);
+    try {
+      const headers = { 'Content-Type': 'application/json', ...(authHeader ? { Authorization: authHeader } : {}) };
+      const resp = await fetch(`${apiBase()}/api/cameras/${cameraId}/${path}`, {
+        method: 'POST', credentials: 'include', headers, body: body ? JSON.stringify(body) : undefined,
+      });
+      const payload = await resp.json().catch(() => null);
+      if (!resp.ok) throw new Error(payload?.message || payload?.error || `${resp.status}`);
+      notify(okMsg);
+    } catch (e) {
+      notify(e.message || 'failed', 'error');
+    } finally {
+      setWorking('');
+    }
+  }
+  const disabled = !canManage || busy || Boolean(working);
+  return (
+    <section className="settings-box danger-zone-box">
+      <header><h3>{t('cam.maintenance')}</h3></header>
+      <div className="settings-box-body">
+        <p className="danger-zone-hint">{t('cam.maintenanceHint')}</p>
+        <div className="action-row">
+          <button type="button" className="quiet" disabled={disabled} onClick={() => call('reboot', null, t('cam.rebootConfirm'), t('cam.rebootStarted'))}>
+            <span className="btn-icon"><Ico n="reload" /> {t('cam.reboot')}</span>
+          </button>
+          <button type="button" className="quiet danger-text" disabled={disabled} onClick={() => call('factory-default', { hard: false }, t('cam.softResetConfirm'), t('cam.resetStarted'))}>
+            <span className="btn-icon"><Ico n="undo" /> {t('cam.softReset')}</span>
+          </button>
+          <button type="button" className="danger-solid" disabled={disabled} onClick={() => call('factory-default', { hard: true }, t('cam.hardResetConfirm'), t('cam.resetStarted'))}>
+            <span className="btn-icon"><Ico n="warning" /> {t('cam.hardReset')}</span>
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// CameraTime reads/sets the camera clock (ONVIF Get/SetSystemDateAndTime). Loaded on
+// demand; Manual mode syncs the browser's current time as the camera's UTC clock.
+// Common POSIX/ONVIF time-zone offsets for the Time dropdown (the "GMT±HH:MM" format the
+// cameras report). Kept as plain offsets so we don't need a full tz database.
+const TIMEZONE_OPTIONS = [
+  'GMT-12:00', 'GMT-11:00', 'GMT-10:00', 'GMT-09:30', 'GMT-09:00', 'GMT-08:00', 'GMT-07:00',
+  'GMT-06:00', 'GMT-05:00', 'GMT-04:00', 'GMT-03:30', 'GMT-03:00', 'GMT-02:00', 'GMT-01:00',
+  'GMT+00:00', 'GMT+01:00', 'GMT+02:00', 'GMT+03:00', 'GMT+03:30', 'GMT+04:00', 'GMT+04:30',
+  'GMT+05:00', 'GMT+05:30', 'GMT+05:45', 'GMT+06:00', 'GMT+06:30', 'GMT+07:00', 'GMT+08:00',
+  'GMT+08:45', 'GMT+09:00', 'GMT+09:30', 'GMT+10:00', 'GMT+10:30', 'GMT+11:00', 'GMT+12:00',
+  'GMT+12:45', 'GMT+13:00', 'GMT+14:00',
+];
+
+function CameraTime({ device, busy, authHeader, canManage, onMessage }) {
+  const t = useT();
+  const cameraId = Number(device?.id) || 0;
+  const [info, setInfo] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [draft, setDraft] = useState({ dateTimeType: 'NTP', daylightSavings: false, timeZone: '', ntpFromDhcp: false, ntpServers: '' });
+  const notify = (msg, kind) => { if (onMessage) onMessage(msg, kind); };
+
+  useEffect(() => { setInfo(null); setError(''); }, [cameraId]);
+
+  const load = useCallback(async () => {
+    if (!cameraId) return;
+    setLoading(true);
+    setError('');
+    try {
+      const headers = authHeader ? { Authorization: authHeader } : {};
+      const resp = await fetch(`${apiBase()}/api/cameras/${cameraId}/datetime`, { credentials: 'include', headers });
+      const payload = await resp.json().catch(() => null);
+      if (!resp.ok) throw new Error(payload?.message || payload?.error || `${resp.status}`);
+      const result = payload?.data?.result ?? payload?.result ?? payload;
+      setInfo(result || {});
+      if (result) setDraft({ dateTimeType: result.dateTimeType || 'NTP', daylightSavings: !!result.daylightSavings, timeZone: result.timeZone || '', ntpFromDhcp: !!result.ntpFromDhcp, ntpServers: (result.ntpServers || []).join(', ') });
+    } catch (e) {
+      setError(e.message || 'failed');
+      setInfo(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [cameraId, authHeader]);
+
+  async function save() {
+    setSaving(true);
+    setError('');
+    try {
+      const headers = { 'Content-Type': 'application/json', ...(authHeader ? { Authorization: authHeader } : {}) };
+      const body = {
+        dateTimeType: draft.dateTimeType,
+        daylightSavings: draft.daylightSavings,
+        timeZone: draft.timeZone,
+        utcDateTime: '',
+        ntpFromDhcp: draft.ntpFromDhcp,
+        ntpServers: draft.ntpServers.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean),
+      };
+      if (draft.dateTimeType === 'Manual') body.utcDateTime = new Date().toISOString();
+      const resp = await fetch(`${apiBase()}/api/cameras/${cameraId}/datetime`, { method: 'POST', credentials: 'include', headers, body: JSON.stringify(body) });
+      const payload = await resp.json().catch(() => null);
+      if (!resp.ok) throw new Error(payload?.message || payload?.error || `${resp.status}`);
+      const result = payload?.data?.result ?? payload?.result ?? payload;
+      if (result && result.dateTimeType) setInfo(result);
+      notify(t('cam.timeSaved'));
+    } catch (e) {
+      setError(e.message || 'failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="settings-box">
+      <header><h3>{t('cam.timeSettings')}</h3></header>
+      <div className="settings-box-body">
+        <div className="camera-users-head">
+          <span className="field-hint">
+            {info?.utcDateTime ? t('cam.cameraTimeNow', { time: formatTimestamp(Math.floor(new Date(info.utcDateTime).getTime() / 1000)) }) : t('cam.timeHint')}
+          </span>
+          <button type="button" className="quiet" onClick={load} disabled={loading || busy}>
+            <span className="btn-icon"><Ico n="refresh" /> {info === null ? t('cam.loadSettings') : t('common.refresh')}</span>
+          </button>
+        </div>
+        {error ? <p className="field-hint danger-text">{error}</p> : null}
+        {info !== null ? (
+          <>
+            <div className="metadata-row">
+              <label>
+                {t('cam.timeMode')}
+                <select value={draft.dateTimeType} onChange={(e) => setDraft({ ...draft, dateTimeType: e.target.value })} disabled={!canManage}>
+                  <option value="NTP">{t('cam.timeNtp')}</option>
+                  <option value="Manual">{t('cam.timeManual')}</option>
+                </select>
+              </label>
+              <label>
+                {t('cam.timeZone')}
+                <select value={draft.timeZone} onChange={(e) => setDraft({ ...draft, timeZone: e.target.value })} disabled={!canManage}>
+                  <option value="">{t('cam.timeZonePick')}</option>
+                  {draft.timeZone && !TIMEZONE_OPTIONS.includes(draft.timeZone) ? (
+                    <option value={draft.timeZone}>{draft.timeZone}</option>
+                  ) : null}
+                  {TIMEZONE_OPTIONS.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+                </select>
+              </label>
+            </div>
+            <label className="check-row">
+              <input type="checkbox" checked={draft.daylightSavings} onChange={(e) => setDraft({ ...draft, daylightSavings: e.target.checked })} disabled={!canManage} />
+              {t('cam.daylightSavings')}
+            </label>
+            {draft.dateTimeType === 'NTP' ? (
+              <>
+                <label className="check-row">
+                  <input type="checkbox" checked={draft.ntpFromDhcp} onChange={(e) => setDraft({ ...draft, ntpFromDhcp: e.target.checked })} disabled={!canManage} />
+                  {t('cam.ntpFromDhcp')}
+                </label>
+                {!draft.ntpFromDhcp ? (
+                  <label>
+                    {t('cam.ntpServers')}
+                    <input value={draft.ntpServers} onChange={(e) => setDraft({ ...draft, ntpServers: e.target.value })} placeholder="pool.ntp.org, 192.168.1.1" autoComplete="off" disabled={!canManage} />
+                  </label>
+                ) : null}
+              </>
+            ) : null}
+            {draft.dateTimeType === 'Manual' ? <p className="field-hint">{t('cam.manualTimeHint')}</p> : null}
+            {canManage ? (
+              <div className="action-row">
+                <button type="button" className="quiet" onClick={save} disabled={saving || busy}>
+                  <span className="btn-icon"><Ico n="save" /> {t('cam.saveTime')}</span>
+                </button>
+              </div>
+            ) : null}
+          </>
         ) : null}
       </div>
     </section>
   );
 }
 
+// CameraNetwork reads/sets the camera's IPv4 (ONVIF Get/SetNetworkInterfaces + gateway +
+// DNS). Loaded on demand; a static-IP change can orphan the camera, so it warns + confirms.
+function CameraNetwork({ device, busy, authHeader, canManage, onMessage }) {
+  const t = useT();
+  const cameraId = Number(device?.id) || 0;
+  const [net, setNet] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [draft, setDraft] = useState(null);
+  const notify = (msg, kind) => { if (onMessage) onMessage(msg, kind); };
+
+  useEffect(() => { setNet(null); setDraft(null); setError(''); }, [cameraId]);
+
+  const load = useCallback(async () => {
+    if (!cameraId) return;
+    setLoading(true);
+    setError('');
+    try {
+      const headers = authHeader ? { Authorization: authHeader } : {};
+      const resp = await fetch(`${apiBase()}/api/cameras/${cameraId}/network`, { credentials: 'include', headers });
+      const payload = await resp.json().catch(() => null);
+      if (!resp.ok) throw new Error(payload?.message || payload?.error || `${resp.status}`);
+      const result = payload?.data?.result ?? payload?.result ?? payload;
+      setNet(result || { interfaces: [] });
+      const iface = (result?.interfaces || [])[0] || null;
+      setDraft(iface ? {
+        interfaceToken: iface.token,
+        dhcp: !!iface.dhcp,
+        ipAddress: iface.ipAddress || '',
+        prefixLength: iface.prefixLength || 24,
+        gateway: result?.gateway || '',
+        dns: (result?.dns || []).join(', '),
+      } : null);
+    } catch (e) {
+      setError(e.message || 'failed');
+      setNet(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [cameraId, authHeader]);
+
+  async function save() {
+    if (!draft) return;
+    if (!draft.dhcp && !window.confirm(t('cam.networkConfirm'))) return;
+    setSaving(true);
+    setError('');
+    try {
+      const headers = { 'Content-Type': 'application/json', ...(authHeader ? { Authorization: authHeader } : {}) };
+      const body = {
+        interfaceToken: draft.interfaceToken,
+        dhcp: draft.dhcp,
+        ipAddress: draft.ipAddress,
+        prefixLength: Number(draft.prefixLength) || 24,
+        gateway: draft.gateway,
+        dns: draft.dns.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean),
+      };
+      const resp = await fetch(`${apiBase()}/api/cameras/${cameraId}/network`, { method: 'POST', credentials: 'include', headers, body: JSON.stringify(body) });
+      const payload = await resp.json().catch(() => null);
+      if (!resp.ok) throw new Error(payload?.message || payload?.error || `${resp.status}`);
+      notify(t('cam.networkSaved'));
+    } catch (e) {
+      setError(e.message || 'failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="settings-box">
+      <header><h3>{t('cam.networkSettings')}</h3></header>
+      <div className="settings-box-body">
+        <div className="camera-users-head">
+          <span className="field-hint">{t('cam.networkHint')}</span>
+          <button type="button" className="quiet" onClick={load} disabled={loading || busy}>
+            <span className="btn-icon"><Ico n="refresh" /> {net === null ? t('cam.loadSettings') : t('common.refresh')}</span>
+          </button>
+        </div>
+        {error ? <p className="field-hint danger-text">{error}</p> : null}
+        {net !== null && draft ? (
+          <>
+            <label className="check-row">
+              <input type="checkbox" checked={draft.dhcp} onChange={(e) => setDraft({ ...draft, dhcp: e.target.checked })} disabled={!canManage} />
+              {t('cam.useDhcp')}
+            </label>
+            {!draft.dhcp ? (
+              <>
+                <div className="metadata-row">
+                  <label>{t('cam.ipAddress')}<input value={draft.ipAddress} onChange={(e) => setDraft({ ...draft, ipAddress: e.target.value })} placeholder="192.168.1.40" autoComplete="off" disabled={!canManage} /></label>
+                  <label>{t('cam.prefixLength')}<input type="number" min="1" max="32" value={draft.prefixLength} onChange={(e) => setDraft({ ...draft, prefixLength: e.target.value })} disabled={!canManage} /></label>
+                </div>
+                <div className="metadata-row">
+                  <label>{t('cam.gateway')}<input value={draft.gateway} onChange={(e) => setDraft({ ...draft, gateway: e.target.value })} placeholder="192.168.1.1" autoComplete="off" disabled={!canManage} /></label>
+                  <label>{t('cam.dns')}<input value={draft.dns} onChange={(e) => setDraft({ ...draft, dns: e.target.value })} placeholder="8.8.8.8, 1.1.1.1" autoComplete="off" disabled={!canManage} /></label>
+                </div>
+              </>
+            ) : null}
+            <p className="field-hint danger-text">{t('cam.networkWarning')}</p>
+            {canManage ? (
+              <div className="action-row">
+                <button type="button" className="quiet danger-text" onClick={save} disabled={saving || busy}>
+                  <span className="btn-icon"><Ico n="save" /> {t('cam.saveNetwork')}</span>
+                </button>
+              </div>
+            ) : null}
+          </>
+        ) : net !== null && !draft ? (
+          <p className="empty-hint">{t('cam.noInterfaces')}</p>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+// CameraCapabilities displays which ONVIF services a camera advertises as chips. The
+// capabilities (incl. per-operation probes) are fetched once by SavedCameraRow and passed
+// in, so it can also gate the management boxes.
+function CameraCapabilities({ caps, loading, error, onRefresh, busy }) {
+  const t = useT();
+  const chips = caps
+    ? [['PTZ', caps.ptz], ['Media', caps.media], ['Imaging', caps.imaging], ['Analytics', caps.analytics], ['Events', caps.events]]
+        .filter(([, ok]) => ok).map(([label]) => label)
+    : [];
+  return (
+    <div className="camera-caps">
+      <div className="camera-users-head">
+        <span className="field-hint">{t('cam.capsHint')}</span>
+        <button type="button" className="quiet" onClick={onRefresh} disabled={loading || busy}>
+          <span className="btn-icon"><Ico n="refresh" /> {t('common.refresh')}</span>
+        </button>
+      </div>
+      {error ? <p className="field-hint danger-text">{error}</p> : null}
+      {loading ? <p className="empty-hint">{t('cam.checkingCaps')}</p> : null}
+      {caps && !loading ? (
+        <div className="caps-chips">
+          {chips.length ? chips.map((c) => <span key={c} className="user-level">{c}</span>) : <span className="field-hint">{t('cam.noExtraCaps')}</span>}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function SavedCameraRow({
   device,
-  activePanel,
-  onPanelChange,
   onMessage,
   busy,
   detailDraft,
   credentials,
-  passwordDraft,
   streamOptions,
-  selectedStreamToken,
   onDetailDraft,
   onSaveDetails,
   onDiscardDetails,
   onCredential,
-  onPasswordDraft,
   onSaveCredentials,
-  onChangePassword,
   onResolve,
-  onStreamToken,
-  onSelectStream,
   onTest,
   onPreview,
   onAdd,
@@ -520,17 +1091,72 @@ export function SavedCameraRow({
   const detailsHaveChanges = localDetails.name !== savedDetails.name || localDetails.description !== savedDetails.description;
   const savedCred = { username: device.username || '', password: '' };
   const credHaveChanges = localCred.username !== savedCred.username || localCred.password !== '';
-  const localPasswordDraft = passwordDraft || { targetUsername: device.username || '', newPassword: '' };
   const streamReady = Boolean(device.rtspUrl);
   const options = Array.isArray(streamOptions?.options) ? streamOptions.options : [];
-  const selectedToken = selectedStreamToken || device.profileToken || streamOptions?.selectedProfileToken || options[0]?.profileToken || '';
-  const selectedOption = options.find((option) => option.profileToken === selectedToken) || null;
+  // Which role(s) each detected stream currently fills, derived from this camera's
+  // recording config (live-view / detection / recording / fallback) — so the badges say
+  // WHERE a stream is used, not a vague "In use". Comparison is on the bare RTSP URL,
+  // which is what the config chips store.
+  const streamCfg = (recordingConfigs || []).find((c) => Number(c.cameraId) === Number(device.id)) || null;
+  const streamRoles = (option) => {
+    const optUrl = (option?.rtspUrl || '').trim();
+    if (!optUrl) {
+      return [];
+    }
+    const norm = (u) => (u || '').trim();
+    const roles = [];
+    // Live view uses liveStreamUrl, or the camera's active RTSP when that's unset.
+    if ((norm(streamCfg?.liveStreamUrl) || norm(device.rtspUrl)) === optUrl) {
+      roles.push(t('cam.roleLive'));
+    }
+    if (norm(streamCfg?.streamUrl) === optUrl) {
+      roles.push(t('cam.roleDetection'));
+      if (streamCfg?.enabled) {
+        roles.push(t('cam.roleRecording'));
+      }
+    }
+    if (norm(streamCfg?.fallbackStreamUrl) === optUrl) {
+      roles.push(t('cam.roleFallback'));
+    }
+    return roles;
+  };
+  // GitHub-style destructive confirm: the Remove button stays disabled until the user
+  // re-types the camera's exact name. Reset when switching cameras (keyed remount).
+  const [confirmRemove, setConfirmRemove] = useState('');
+  const removeName = cameraTitle(device);
+  const removeReady = confirmRemove.trim() === removeName;
+  // ONVIF device-management (users / time / network / maintenance / capabilities) only
+  // works on ONVIF cameras; a manually-added RTSP camera has no device service URL.
+  const isOnvif = Boolean(device.xAddr);
+  // Fetch the camera's capabilities once (it also probes GetUsers/GetDateTime/GetNetwork
+  // server-side) so each management box is shown only if that operation actually works.
+  const [caps, setCaps] = useState(null);
+  const [capsLoading, setCapsLoading] = useState(false);
+  const [capsError, setCapsError] = useState('');
+  const loadCaps = useCallback(async () => {
+    if (!isOnvif || !device.id) return;
+    setCapsLoading(true);
+    setCapsError('');
+    try {
+      const headers = authHeader ? { Authorization: authHeader } : {};
+      const resp = await fetch(`${apiBase()}/api/cameras/${device.id}/capabilities`, { credentials: 'include', headers });
+      const payload = await resp.json().catch(() => null);
+      if (!resp.ok) throw new Error(payload?.message || payload?.error || `${resp.status}`);
+      setCaps((payload?.data?.result ?? payload?.result ?? payload) || {});
+    } catch (e) {
+      setCapsError(e.message || 'failed');
+      setCaps(null);
+    } finally {
+      setCapsLoading(false);
+    }
+  }, [isOnvif, device.id, authHeader]);
+  useEffect(() => { loadCaps(); }, [loadCaps]);
 
   return (
-    <article className="device-card">
+    <div className="settings-boxes">
       <div className="device-title-row">
         <div>
-          <h3>{cameraTitle(device)}</h3>
+          <h3>{removeName}</h3>
           <p>{device.xAddr}</p>
         </div>
         <div className="device-pill-group">
@@ -539,27 +1165,9 @@ export function SavedCameraRow({
         </div>
       </div>
 
-      <nav className="saved-detail-tabs" aria-label={t('cam.settingsAria')}>
-        {[
-          ['details', 'cam.tabDetails'],
-          ['access', 'cam.tabAccess'],
-          ['stream', 'cam.tabStream'],
-          ['recording', 'cam.tabRecording'],
-          ['onvif', 'cam.tabOnvif'],
-        ].map(([id, labelKey]) => (
-          <button
-            type="button"
-            key={id}
-            className={activePanel === id ? 'active' : 'quiet'}
-            onClick={() => onPanelChange(id)}
-          >
-            {t(labelKey)}
-          </button>
-        ))}
-      </nav>
-
-      {activePanel === 'details' ? (
-        <section className="saved-tab-panel">
+      <section className="settings-box">
+        <header><h3>{t('cam.tabDetails')}</h3></header>
+        <div className="settings-box-body">
           <DeviceDescription device={device} />
           <DeviceMeta device={device} />
           <form
@@ -595,16 +1203,14 @@ export function SavedCameraRow({
               <button type="button" className="quiet" onClick={() => onDiscardDetails(device.id)} disabled={busy || !detailsHaveChanges}>
                 <span className="btn-icon"><Ico n="undo" /> {t('common.discard')}</span>
               </button>
-              <button type="button" className="quiet danger-text" onClick={() => onRemove(device.id)} disabled={busy}>
-                <span className="btn-icon"><Ico n="trash" /> {t('common.remove')}</span>
-              </button>
             </div>
           </form>
-        </section>
-      ) : null}
+        </div>
+      </section>
 
-      {activePanel === 'access' ? (
-        <section className="saved-tab-panel">
+      <section className="settings-box">
+        <header><h3>{t('cam.tabAccess')}</h3></header>
+        <div className="settings-box-body">
           <FormBusyOverlay busy={busy} />
           <div className="credential-row">
             <label>
@@ -636,40 +1242,13 @@ export function SavedCameraRow({
               <span className="btn-icon"><Ico n="undo" /> {t('common.discard')}</span>
             </button>
           </div>
-          <div className="credential-row">
-            <label>
-              {t('cam.onvifUser')}
-              <input
-                value={localPasswordDraft.targetUsername}
-                onChange={(event) => onPasswordDraft(device.id, { ...localPasswordDraft, targetUsername: event.target.value })}
-                placeholder={device.username || t('cam.cameraUser')}
-                autoComplete="off"
-              />
-            </label>
-            <label>
-              {t('cam.newOnvifPassword')}
-              <PasswordField
-                value={localPasswordDraft.newPassword}
-                onChange={(newPassword) => onPasswordDraft(device.id, { ...localPasswordDraft, newPassword })}
-                autoComplete="new-password"
-              />
-            </label>
-          </div>
-          <div className="action-row">
-            <button
-              type="button"
-              className="quiet"
-              onClick={() => onChangePassword(device)}
-              disabled={busy || !localPasswordDraft.newPassword}
-            >
-              <span className="btn-icon"><Ico n="key" /> {t('cam.changeCameraPassword')}</span>
-            </button>
-          </div>
-        </section>
-      ) : null}
+          {caps?.userMgmt ? <CameraUsers device={device} busy={busy} authHeader={authHeader} canManage={canManage} /> : null}
+        </div>
+      </section>
 
-      {activePanel === 'stream' ? (
-        <section className="saved-tab-panel">
+      <section className="settings-box">
+        <header><h3>{t('cam.tabStream')}</h3></header>
+        <div className="settings-box-body">
           <dl className="stream-meta">
             <div>
               <dt>{t('cam.profile')}</dt>
@@ -687,21 +1266,32 @@ export function SavedCameraRow({
             </div>
           </dl>
           {options.length > 0 ? (
-            <div className="stream-option-panel">
-              <label>
-                {t('cam.onvifStream')}
-                <select value={selectedToken} onChange={(event) => onStreamToken(device.id, event.target.value)}>
-                  {options.map((option) => (
-                    <option key={option.profileToken} value={option.profileToken}>
-                      {streamOptionLabel(option)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="stream-option-uri">{selectedOption ? selectedOption.rtspUrl : '-'}</div>
-              <button type="button" className="quiet" onClick={() => onSelectStream(device, selectedOption)} disabled={busy || !selectedOption}>
-                {t('cam.useSelectedStream')}
-              </button>
+            <div className="stream-list">
+              <span className="stream-list-label">{t('cam.onvifStream')}</span>
+              {options.map((option) => {
+                const roles = streamRoles(option);
+                return (
+                  <div key={option.profileToken} className={`stream-row${roles.length ? ' active' : ''}`}>
+                    <div className="stream-row-info">
+                      <strong className="stream-row-name">
+                        {streamOptionLabel(option)}
+                        {roles.map((role) => (
+                          <span key={role} className="stream-row-badge">{role}</span>
+                        ))}
+                      </strong>
+                      <span className="stream-row-uri">{option.rtspUrl || '-'}</span>
+                    </div>
+                    <div className="stream-row-actions">
+                      <button type="button" className="quiet" onClick={() => onTest(device, option)} disabled={busy} title={t('cam.testRtsp')}>
+                        <span className="btn-icon"><Ico n="play" /> {t('cam.testRtsp')}</span>
+                      </button>
+                      <button type="button" className="quiet" onClick={() => onPreview(device, option)} disabled={busy} title={t('cam.livePreview')}>
+                        <span className="btn-icon"><Ico n="eye" /> {t('cam.livePreview')}</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           ) : null}
           <div className="stream-action-flow">
@@ -727,54 +1317,65 @@ export function SavedCameraRow({
             canManage={canManage}
             onSaveConfig={onSaveRecordingConfig}
           />
+        </div>
+      </section>
+
+      <section className="settings-box">
+        <header><h3>{t('cam.tabRecording')}</h3></header>
+        <div className="settings-box-body">
+          <CameraRecordingConfig
+            device={device}
+            configs={recordingConfigs}
+            busy={busy}
+            authHeader={authHeader}
+            canManage={canManage}
+            onSaveConfig={onSaveRecordingConfig}
+            onMessage={onMessage}
+          />
+        </div>
+      </section>
+
+      {isOnvif ? (
+        <section className="settings-box">
+          <header><h3>{t('cam.tabOnvif')}</h3></header>
+          <div className="settings-box-body">
+            <CameraCapabilities caps={caps} loading={capsLoading} error={capsError} onRefresh={loadCaps} busy={busy} />
+            <OnvifDetails device={device} />
+          </div>
         </section>
       ) : null}
 
-      {activePanel === 'recording' ? (
-        <CameraRecordingConfig
-          device={device}
-          configs={recordingConfigs}
-          busy={busy}
-          authHeader={authHeader}
-          canManage={canManage}
-          onSaveConfig={onSaveRecordingConfig}
-          onMessage={onMessage}
-        />
+      {caps?.dateTime ? (
+        <CameraTime device={device} busy={busy} authHeader={authHeader} canManage={canManage} onMessage={onMessage} />
+      ) : null}
+      {caps?.network ? (
+        <CameraNetwork device={device} busy={busy} authHeader={authHeader} canManage={canManage} onMessage={onMessage} />
+      ) : null}
+      {isOnvif ? (
+        <CameraMaintenance device={device} busy={busy} authHeader={authHeader} canManage={canManage} onMessage={onMessage} />
       ) : null}
 
-      {activePanel === 'onvif' ? (
-        <section className="saved-tab-panel">
-          <OnvifDetails device={device} />
-        </section>
-      ) : null}
-    </article>
-  );
-}
-
-export function SavedDeviceNav({ devices, selectedId, onSelect }) {
-  const t = useT();
-  const orderedDevices = useMemo(() => orderedSavedCameras(devices), [devices]);
-  return (
-    <aside className="saved-sidebar">
-      <header>
-        <h2>{t('cam.savedCameras')}</h2>
-        <span>{devices.length}</span>
-      </header>
-      <nav className="saved-device-nav" aria-label={t('cam.savedCameras')}>
-        {devices.length === 0 ? <p className="empty">{t('cam.noSavedCameras')}</p> : null}
-        {orderedDevices.map((device) => (
-          <button
-            type="button"
-            className={Number(selectedId) === Number(device.id) ? 'saved-device-button active' : 'saved-device-button'}
-            key={device.id || device.xAddr}
-            onClick={() => onSelect(device.id)}
-          >
-            <strong>{cameraTitle(device)}</strong>
-            <span>{device.host || device.xAddr || t('cam.cameraFallback')}</span>
-          </button>
-        ))}
-      </nav>
-    </aside>
+      <section className="settings-box danger-zone-box">
+        <header><h3>{t('cam.dangerZone')}</h3></header>
+        <div className="settings-box-body">
+          <p className="danger-zone-hint">{t('cam.removeCameraHint')}</p>
+          <label className="danger-confirm">
+            {t('cam.removeConfirmLabel', { name: removeName })}
+            <input
+              value={confirmRemove}
+              onChange={(event) => setConfirmRemove(event.target.value)}
+              placeholder={removeName}
+              autoComplete="off"
+            />
+          </label>
+          <div className="action-row">
+            <button type="button" className="danger-solid" onClick={() => onRemove(device.id)} disabled={busy || !removeReady}>
+              <span className="btn-icon"><Ico n="trash" /> {t('cam.removeCamera')}</span>
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -860,50 +1461,236 @@ export function PTZRing({ busy, size, onMove, onStop }) {
   );
 }
 
+// CameraPreviewPanel is the live-preview popup: a modal dialog over the workspace with
+// the WebRTC live view (its own audio/mute button, same as tiles) + the PTZ ring. Opened
+// per camera or per detected stream from the Settings → Stream section; Esc / backdrop
+// click closes it.
 export function CameraPreviewPanel({ preview, busy, authHeader, streamConfig, onClose, onAdd, onPTZMove, onPTZStop }) {
   const t = useT();
+  useEffect(() => {
+    if (!preview) {
+      return undefined;
+    }
+    const onKey = (event) => { if (event.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [preview, onClose]);
   if (!preview) {
     return null;
   }
   return (
-    <section className="preview-panel">
-      <header>
-        <div>
-          <h2>{preview.title}</h2>
-          <p>{preview.ptzSupported ? t('cam.ptzAvailable') : t('cam.livePreviewSub')}</p>
-        </div>
-        <button type="button" className="quiet" onClick={onClose}>
-          {t('common.close')}
-        </button>
-      </header>
-      <div className="preview-viewport">
-        <LiveViewport
-          key={`${preview.id}:${preview.device?.rtspUrl || ''}:${preview.device?.rtspTracks || ''}`}
-          deviceId={preview.id}
-          title={preview.title}
-          authHeader={authHeader}
-          streamConfig={streamConfig}
-          rtspTracks={preview.device?.rtspTracks}
-          streamKey={`${preview.device?.rtspUrl || ''}:${preview.device?.rtspTracks || ''}`}
-        />
-        {preview.ptzSupported ? (
-          <div className="ptz-ring-overlay">
-            <PTZRing
-              busy={busy}
-              size={150}
-              onMove={(dir) => onPTZMove(preview.id, dir)}
-              onStop={() => onPTZStop(preview.id)}
-            />
+    <div className="preview-overlay" onClick={onClose}>
+      <div className="preview-dialog" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label={preview.title}>
+        <header>
+          <div>
+            <h2>{preview.title}</h2>
+            <p>{preview.ptzSupported ? t('cam.ptzAvailable') : t('cam.livePreviewSub')}</p>
           </div>
-        ) : null}
-      </div>
-      <div className="preview-actions">
-        <div className="action-row">
-          <button type="button" className="quiet" onClick={() => onAdd(preview.device)} disabled={busy || !preview.device}>
-            <span className="btn-icon"><Ico n="plus" /> {t('cam.addToLiveViews')}</span>
+          <button type="button" className="icon-button" onClick={onClose} aria-label={t('common.close')} title={t('common.close')}>
+            <Ico n="x" sz={16} />
           </button>
+        </header>
+        <div className="preview-viewport">
+          <LiveViewport
+            key={`${preview.id}:${preview.previewUrl || preview.device?.rtspUrl || ''}:${preview.device?.rtspTracks || ''}`}
+            deviceId={preview.id}
+            title={preview.title}
+            authHeader={authHeader}
+            streamConfig={streamConfig}
+            rtspTracks={preview.device?.rtspTracks}
+            sourceUrl={preview.previewUrl || ''}
+            streamKey={`${preview.previewUrl || preview.device?.rtspUrl || ''}:${preview.device?.rtspTracks || ''}`}
+          />
+          {preview.ptzSupported ? (
+            <div className="ptz-ring-overlay">
+              <PTZRing
+                busy={busy}
+                size={150}
+                onMove={(dir) => onPTZMove(preview.id, dir)}
+                onStop={() => onPTZStop(preview.id)}
+              />
+            </div>
+          ) : null}
+        </div>
+        <div className="preview-actions">
+          <div className="action-row">
+            <button type="button" className="quiet" onClick={() => onAdd(preview.device)} disabled={busy || !preview.device}>
+              <span className="btn-icon"><Ico n="plus" /> {t('cam.addToLiveViews')}</span>
+            </button>
+          </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// CameraLiveView is the camera node's Live View tab: the camera's main live stream (with
+// sound + PTZ, like a tile) plus read-only camera info, in a box panel like the other
+// tabs. Everything here is view-only — editing lives in the Settings tab.
+// CameraAuthGate blocks a camera node's tabs when the stored credentials have stopped
+// working (e.g. the password was changed on the camera). It overlays a centered credential
+// prompt; entering a valid login re-verifies server-side and clears the gate.
+function CameraAuthGate({ device, busy, onUnlock }) {
+  const t = useT();
+  const [username, setUsername] = useState(() => device?.username || '');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function submit(e) {
+    e.preventDefault();
+    setSaving(true);
+    setError('');
+    try {
+      await onUnlock(device, { username: username.trim(), password });
+    } catch (err) {
+      setError(err?.message || t('cam.authFailed'));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="camera-auth-gate">
+      <form className="camera-auth-card" onSubmit={submit}>
+        <span className="camera-auth-icon"><Ico n="lock" sz={22} /></span>
+        <h3>{t('cam.authGateTitle')}</h3>
+        <p className="field-hint">{t('cam.authGateHint')}</p>
+        <label>
+          {t('cam.credUsername')}
+          <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" placeholder="admin" />
+        </label>
+        <label>
+          {t('cam.credPassword')}
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" />
+        </label>
+        {error ? <p className="field-hint danger-text">{error}</p> : null}
+        <button type="submit" disabled={saving || busy}>
+          <span className="btn-icon"><Ico n="shield" /> {saving ? t('cam.verifying') : t('cam.unlock')}</span>
+        </button>
+      </form>
+    </div>
+  );
+}
+
+// onvifLocation pulls a readable location out of a camera's ONVIF scopes (space-separated
+// onvif:// URIs; the location value sits under .../location/<value>).
+function onvifLocation(scopes) {
+  const raw = String(scopes || '');
+  for (const scope of raw.split(/\s+/)) {
+    const idx = scope.indexOf('/location/');
+    if (idx >= 0) {
+      const val = scope.slice(idx + '/location/'.length).replace(/^\/+|\/+$/g, '').replace(/\/+/g, ', ');
+      try { return decodeURIComponent(val); } catch (_) { return val; }
+    }
+  }
+  return '';
+}
+
+export function CameraLiveView({ camera, busy, authHeader, streamConfig, inLiveViews, onAddToViews, onRemoveFromViews, onPTZMove, onPTZStop }) {
+  const t = useT();
+  const cameraId = Number(camera?.id) || 0;
+  const isOnvif = Boolean(camera?.xAddr);
+  // MAC address + ONVIF version aren't stored on the camera; pull them live on demand so
+  // the default Live View stays fast and doesn't hit the camera on every open.
+  const [devInfo, setDevInfo] = useState(null);
+  const [devLoading, setDevLoading] = useState(false);
+  const [devError, setDevError] = useState('');
+  useEffect(() => { setDevInfo(null); setDevError(''); }, [cameraId]);
+  const loadDevInfo = useCallback(async () => {
+    if (!cameraId) return;
+    setDevLoading(true);
+    setDevError('');
+    try {
+      const headers = authHeader ? { Authorization: authHeader } : {};
+      const resp = await fetch(`${apiBase()}/api/cameras/${cameraId}/device-info`, { credentials: 'include', headers });
+      const payload = await resp.json().catch(() => null);
+      if (!resp.ok) throw new Error(payload?.message || payload?.error || `${resp.status}`);
+      setDevInfo((payload?.data?.result ?? payload?.result ?? payload) || {});
+    } catch (e) {
+      setDevError(e.message || 'failed');
+    } finally {
+      setDevLoading(false);
+    }
+  }, [cameraId, authHeader]);
+  if (!camera) {
+    return null;
+  }
+  const status = (camera.healthStatus || '').toLowerCase();
+  const dotState = status === 'online' ? 'online' : status === 'offline' ? 'offline' : 'unknown';
+  const description = cameraDescription(camera);
+  const location = onvifLocation(camera.scopes) || (devInfo && devInfo.location) || '';
+  const info = [
+    [t('cam.manufacturer'), fieldValue(camera.manufacturer)],
+    [t('cam.model'), fieldValue(camera.model)],
+    [t('cam.firmware'), fieldValue(camera.firmwareVersion)],
+    [t('cam.hardwareId'), fieldValue(camera.hardwareId)],
+    [t('cam.serial'), fieldValue(camera.serialNumber)],
+    ...(location ? [[t('cam.location'), location]] : []),
+    ...(devInfo && devInfo.macAddress ? [[t('cam.macAddress'), devInfo.macAddress]] : []),
+    ...(devInfo && devInfo.onvifVersion ? [[t('cam.onvifVersion'), devInfo.onvifVersion]] : []),
+    [t('cam.host'), fieldValue(camera.host)],
+    [t('cam.port'), fieldValue(camera.port)],
+    ...(camera.xAddr ? [[t('cam.onvifUri'), camera.xAddr]] : []),
+    [t('cam.lastCheckedLabel'), camera.lastHealthCheckAt ? formatTimestamp(camera.lastHealthCheckAt) : '-'],
+  ];
+  return (
+    <section className="camera-live-panel">
+      <div className="camera-live-stage">
+        <div className="camera-live-view">
+          <LiveViewport
+            key={`live-${camera.id}`}
+            deviceId={camera.id}
+            title={cameraTitle(camera)}
+            authHeader={authHeader}
+            streamConfig={streamConfig}
+            rtspTracks={camera.rtspTracks}
+            healthStatus={camera.healthStatus}
+            streamKey={`${camera.rtspUrl || ''}:${camera.rtspTracks || ''}`}
+          />
+          {camera.ptzSupported ? (
+            <div className="ptz-ring-overlay">
+              <PTZRing
+                busy={busy}
+                size={120}
+                onMove={(dir) => onPTZMove(camera.id, dir)}
+                onStop={() => onPTZStop(camera.id)}
+              />
+            </div>
+          ) : null}
+        </div>
+        <div className="camera-live-bar">
+          <span className="camera-live-name">
+            <span className={`live-dot ${dotState}`} aria-hidden="true" />
+            <span className="camera-live-name-text">{cameraTitle(camera)}</span>
+          </span>
+          {inLiveViews ? (
+            <button type="button" className="camera-live-add is-remove" onClick={() => onRemoveFromViews(camera)} disabled={busy}>
+              <span className="btn-icon"><Ico n="trash" /> {t('cam.removeFromLiveViews')}</span>
+            </button>
+          ) : (
+            <button type="button" className="camera-live-add" onClick={() => onAddToViews(camera, { stay: true })} disabled={busy}>
+              <span className="btn-icon"><Ico n="plus" /> {t('cam.addToLiveViews')}</span>
+            </button>
+          )}
+        </div>
+      </div>
+      {description ? <p className="camera-live-desc">{description}</p> : null}
+      <dl className="camera-live-info">
+        {info.map(([label, value]) => (
+          <div key={label} className="live-info-chip">
+            <dt>{label}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
+      {isOnvif && !devInfo ? (
+        <div className="camera-live-more">
+          <button type="button" className="quiet" onClick={loadDevInfo} disabled={devLoading || busy}>
+            <span className="btn-icon"><Ico n="refresh" /> {devLoading ? t('cam.checkingCaps') : t('cam.loadDeviceInfo')}</span>
+          </button>
+          {devError ? <span className="field-hint danger-text">{devError}</span> : null}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -915,14 +1702,16 @@ export function CamerasTab({
   manualAddress,
   timeoutMs,
   cameraNav,
+  selectedSavedId: controlledSelectedId,
+  onSelectSaved,
+  cameraAuth,
+  onUnlockCamera,
   preview,
   authHeader,
   streamConfig,
   detailDraftsById,
   credentialsById,
-  passwordDraftsById,
   streamOptionsById,
-  selectedStreamTokens,
   saveDrafts,
   onCameraNav,
   onManualAddress,
@@ -937,15 +1726,13 @@ export function CamerasTab({
   onSaveDetails,
   onDiscardDetails,
   onCredential,
-  onPasswordDraft,
   onSaveCredentials,
-  onChangePassword,
   onResolve,
-  onStreamToken,
-  onSelectStream,
   onTest,
   onPreview,
   onAddToViews,
+  onRemoveFromViews,
+  viewTileIds,
   onPTZMove,
   onPTZStop,
   onRemove,
@@ -953,100 +1740,118 @@ export function CamerasTab({
   recordingConfigs,
   onSaveRecordingConfig,
   onMessage,
+  ai,
+  recordings,
   canManage = true,
 }) {
   const t = useT();
-  const [selectedSavedId, setSelectedSavedId] = useState(null);
+  // Which top-level tab of a selected camera is showing: its Settings (details,
+  // access, stream, recording, onvif — as an accordion) or its AI detection rules.
+  const [cameraDetailTab, setCameraDetailTab] = useState('liveview');
+  // Selection is controlled when the parent passes selectedSavedId/onSelectSaved (so
+  // the side-nav camera tree and this page stay in sync); otherwise fall back to a
+  // local state so the component still works standalone.
+  const [internalSelectedId, setInternalSelectedId] = useState(null);
+  const selectedSavedId = controlledSelectedId != null ? controlledSelectedId : internalSelectedId;
+  const setSelectedSavedId = onSelectSaved || setInternalSelectedId;
   const [scanProtocol, setScanProtocol] = useState('all');
-  // Held at this level (not inside SavedCameraRow, which remounts per camera) so the
-  // open settings tab persists when switching between cameras in the left panel.
-  const [savedPanel, setSavedPanel] = useState('details');
   const orderedSaved = useMemo(() => orderedSavedCameras(saved), [saved]);
   const selectedSaved =
     saved.find((device) => Number(device.id) === Number(selectedSavedId)) || orderedSaved[0] || null;
   const selectedPreview =
     selectedSaved && preview && Number(preview.id) === Number(selectedSaved.id) ? preview : null;
 
+  // Auto-select the first camera when entering the saved view with no valid
+  // selection. Gated to the saved view so opening the probe view (managed camera
+  // cleared) doesn't immediately re-select a camera and steal the root highlight.
   useEffect(() => {
-    if (!saved.length) {
-      if (selectedSavedId !== null) {
-        setSelectedSavedId(null);
-      }
+    if (cameraNav !== 'saved' || !saved.length) {
       return;
     }
     if (!selectedSaved || Number(selectedSaved.id) !== Number(selectedSavedId)) {
       setSelectedSavedId(orderedSaved[0]?.id || null);
     }
-  }, [saved, orderedSaved, selectedSaved, selectedSavedId]);
+  }, [cameraNav, saved, orderedSaved, selectedSaved, selectedSavedId]);
 
   return (
     <section className="workspace">
-      <div className="toolbar">
-        <nav className="secondary-tabs" aria-label={t('cam.camerasAria')}>
-          <button type="button" className={cameraNav === 'probe' ? 'active' : 'quiet'} onClick={() => onCameraNav('probe')}>
-            <span className="btn-icon"><Ico n="search" /> {t('cam.probe')}</span>
-          </button>
-          <button type="button" className={cameraNav === 'saved' ? 'active' : 'quiet'} onClick={() => onCameraNav('saved')}>
-            <span className="btn-icon"><Ico n="camera" /> {t('cam.saved')}</span>
-          </button>
-        </nav>
-      </div>
-
-      <>
+      {/* Cameras are navigated from the side-nav tree now (root → probe, each camera →
+          its properties), so the in-page probe/saved toggle and the duplicate saved
+          list are gone: the root opens discovery, a camera opens its detail directly. */}
+      {cameraNav === 'probe' ? (
+        <>
           <div className="camera-tab-header">
-            <h2 className="section-title">{cameraNav === 'probe' ? t('cam.discoverCameras') : t('cam.savedCameras')}</h2>
-            <p className="section-subtitle">
-              {cameraNav === 'probe' ? t('cam.probeSubtitle') : t('cam.savedSubtitle')}
-            </p>
+            <h2 className="section-title">{t('cam.discoverCameras')}</h2>
+            <p className="section-subtitle">{t('cam.probeSubtitle')}</p>
           </div>
-          {cameraNav === 'probe' ? (
-        <section className="camera-grid">
-          <div className="probe-panel">
-            <div className="scan-row">
-              <label>
-                {t('cam.scanTimeout')}
-                <input value={timeoutMs} onChange={(event) => onTimeout(event.target.value)} inputMode="numeric" />
-              </label>
-              <label className="scan-protocol-label">
-                {t('cam.protocol')}
-                <select value={scanProtocol} onChange={(e) => setScanProtocol(e.target.value)} className="scan-protocol-select">
-                  <option value="all">{t('cam.allMethods')}</option>
-                  <option value="onvif">ONVIF</option>
-                  <option value="ssdp">{t('cam.ssdp')}</option>
-                  <option value="mdns">{t('cam.mdns')}</option>
-                  <option value="sadp">{t('cam.sadp')}</option>
-                  <option value="portscan">{t('cam.portScan')}</option>
-                </select>
-              </label>
-              <label className="scan-protocol-label">
-                <span className="scan-label-row">
-                  {t('cam.subnet')}
-                  <InfoButton text={t('cam.subnetInfo')} />
-                </span>
-                <input
-                  value={scanCIDR}
-                  onChange={(e) => onScanCIDR(e.target.value)}
-                  placeholder="auto"
-                  className="scan-cidr-input"
-                />
-              </label>
-              <button type="button" onClick={() => onScan(scanProtocol, scanCIDR)} disabled={busy}>
-                <span className="btn-icon"><Ico n="wifi" /> {t('cam.scan')}</span>
-              </button>
+          <section className="discover-layout">
+          <div className="discover-actions">
+            <div className="discover-card discover-card--scan">
+              <div className="discover-card-head">
+                <span className="discover-card-icon"><Ico n="wifi" /></span>
+                <div className="discover-card-heading">
+                  <h3>{t('cam.scanTitle')}</h3>
+                  <p>{t('cam.scanCardHint')}</p>
+                </div>
+              </div>
+              <div className="scan-row">
+                <label>
+                  {t('cam.scanTimeout')}
+                  <input value={timeoutMs} onChange={(event) => onTimeout(event.target.value)} inputMode="numeric" />
+                </label>
+                <label className="scan-protocol-label">
+                  {t('cam.protocol')}
+                  <select value={scanProtocol} onChange={(e) => setScanProtocol(e.target.value)} className="scan-protocol-select">
+                    <option value="all">{t('cam.allMethods')}</option>
+                    <option value="onvif">ONVIF</option>
+                    <option value="ssdp">{t('cam.ssdp')}</option>
+                    <option value="mdns">{t('cam.mdns')}</option>
+                    <option value="sadp">{t('cam.sadp')}</option>
+                    <option value="portscan">{t('cam.portScan')}</option>
+                  </select>
+                </label>
+                <label className="scan-protocol-label">
+                  <span className="scan-label-row">
+                    {t('cam.subnet')}
+                    <InfoButton text={t('cam.subnetInfo')} />
+                  </span>
+                  <input
+                    value={scanCIDR}
+                    onChange={(e) => onScanCIDR(e.target.value)}
+                    placeholder="auto"
+                    className="scan-cidr-input"
+                  />
+                </label>
+                <button type="button" onClick={() => onScan(scanProtocol, scanCIDR)} disabled={busy}>
+                  <span className="btn-icon"><Ico n="wifi" /> {t('cam.scan')}</span>
+                </button>
+              </div>
             </div>
-            <form className="probe-row" onSubmit={onProbe}>
-              <label>
-                {t('cam.manualAddress')}
-                <input
-                  value={manualAddress}
-                  onChange={(event) => onManualAddress(event.target.value)}
-                  placeholder="192.168.1.40"
-                />
-              </label>
-              <button type="submit" disabled={busy}>
-                <span className="btn-icon"><Ico n="search" /> {t('cam.probe')}</span>
-              </button>
-            </form>
+
+            <div className="discover-divider" aria-hidden="true"><span>{t('common.or')}</span></div>
+
+            <div className="discover-card discover-card--manual">
+              <div className="discover-card-head">
+                <span className="discover-card-icon"><Ico n="plus" /></span>
+                <div className="discover-card-heading">
+                  <h3>{t('cam.manualTitle')}</h3>
+                  <p>{t('cam.manualCardHint')}</p>
+                </div>
+              </div>
+              <form className="probe-row" onSubmit={onProbe}>
+                <label>
+                  {t('cam.manualAddress')}
+                  <input
+                    value={manualAddress}
+                    onChange={(event) => onManualAddress(event.target.value)}
+                    placeholder="192.168.1.40"
+                  />
+                </label>
+                <button type="submit" disabled={busy}>
+                  <span className="btn-icon"><Ico n="search" /> {t('cam.probe')}</span>
+                </button>
+              </form>
+            </div>
           </div>
           <DiscoveredDevices
             devices={discovered}
@@ -1056,54 +1861,103 @@ export function CamerasTab({
             onDraft={onSaveDraft}
             onSave={onSave}
           />
-        </section>
+          </section>
+        </>
       ) : (
-        <section className="saved-browser">
-          <SavedDeviceNav devices={saved} selectedId={selectedSaved?.id} onSelect={setSelectedSavedId} />
           <main className="saved-detail">
             {selectedSaved ? (
               <>
-                <SavedCameraRow
-                  key={selectedSaved.id || selectedSaved.xAddr}
-                  device={selectedSaved}
-                  activePanel={savedPanel}
-                  onPanelChange={setSavedPanel}
-                  onMessage={onMessage}
-                  busy={busy}
-                  detailDraft={detailDraftsById[selectedSaved.id] || { name: selectedSaved.name || '', description: selectedSaved.description || '' }}
-                  credentials={credentialsById[selectedSaved.id] || { ...defaultDeviceCredentials, username: selectedSaved.username || '' }}
-                  passwordDraft={passwordDraftsById[selectedSaved.id] || { targetUsername: selectedSaved.username || '', newPassword: '' }}
-                  streamOptions={streamOptionsById[selectedSaved.id]}
-                  selectedStreamToken={selectedStreamTokens[selectedSaved.id]}
-                  onDetailDraft={onDetailDraft}
-                  onSaveDetails={onSaveDetails}
-                  onDiscardDetails={onDiscardDetails}
-                  onCredential={onCredential}
-                  onPasswordDraft={onPasswordDraft}
-                  onSaveCredentials={onSaveCredentials}
-                  onChangePassword={onChangePassword}
-                  onResolve={onResolve}
-                  onStreamToken={onStreamToken}
-                  onSelectStream={onSelectStream}
-                  onTest={onTest}
-                  onPreview={onPreview}
-                  onAdd={onAddToViews}
-                  onRemove={onRemove}
-                  recordingConfigs={recordingConfigs}
-                  onSaveRecordingConfig={onSaveRecordingConfig}
-                  authHeader={authHeader}
-                  canManage={canManage}
-                />
-                <CameraPreviewPanel
-                  preview={selectedPreview}
-                  busy={busy}
-                  authHeader={authHeader}
-                  streamConfig={streamConfig}
-                  onClose={onClosePreview}
-                  onAdd={onAddToViews}
-                  onPTZMove={onPTZMove}
-                  onPTZStop={onPTZStop}
-                />
+                <nav className="camera-detail-tabs" aria-label={t('cam.detailTabsAria')}>
+                  <button type="button" className={cameraDetailTab === 'liveview' ? 'active' : 'quiet'} onClick={() => setCameraDetailTab('liveview')}>
+                    <span className="btn-icon"><Ico n="video" /> {t('cam.detailLive')}</span>
+                  </button>
+                  <button type="button" className={cameraDetailTab === 'ai' ? 'active' : 'quiet'} onClick={() => setCameraDetailTab('ai')}>
+                    <span className="btn-icon"><Ico n="cpu" /> {t('cam.detailDetection')}</span>
+                  </button>
+                  <button type="button" className={cameraDetailTab === 'recordings' ? 'active' : 'quiet'} onClick={() => setCameraDetailTab('recordings')}>
+                    <span className="btn-icon"><Ico n="film" /> {t('tab.recording')}</span>
+                  </button>
+                  <button type="button" className={cameraDetailTab === 'settings' ? 'active' : 'quiet'} onClick={() => setCameraDetailTab('settings')}>
+                    <span className="btn-icon"><Ico n="sliders" /> {t('cam.detailSettings')}</span>
+                  </button>
+                </nav>
+                {cameraDetailTab === 'liveview' ? (
+                  <CameraLiveView
+                    key={`live-${selectedSaved.id}`}
+                    camera={selectedSaved}
+                    busy={busy}
+                    authHeader={authHeader}
+                    streamConfig={streamConfig}
+                    inLiveViews={(viewTileIds || []).includes(selectedSaved.id)}
+                    onAddToViews={onAddToViews}
+                    onRemoveFromViews={onRemoveFromViews}
+                    onPTZMove={onPTZMove}
+                    onPTZStop={onPTZStop}
+                  />
+                ) : cameraDetailTab === 'settings' ? (
+                  <section className="camera-settings-panel">
+                    <div className="toolbar">
+                      <div>
+                        <h2 className="section-title">{t('cam.settingsTitle')}</h2>
+                        <p className="section-subtitle">{t('cam.settingsSub')}</p>
+                      </div>
+                    </div>
+                    <SavedCameraRow
+                      key={selectedSaved.id || selectedSaved.xAddr}
+                      device={selectedSaved}
+                      onMessage={onMessage}
+                      busy={busy}
+                      detailDraft={detailDraftsById[selectedSaved.id] || { name: selectedSaved.name || '', description: selectedSaved.description || '' }}
+                      credentials={credentialsById[selectedSaved.id] || { ...defaultDeviceCredentials, username: selectedSaved.username || '' }}
+                      streamOptions={streamOptionsById[selectedSaved.id]}
+                      onDetailDraft={onDetailDraft}
+                      onSaveDetails={onSaveDetails}
+                      onDiscardDetails={onDiscardDetails}
+                      onCredential={onCredential}
+                      onSaveCredentials={onSaveCredentials}
+                      onResolve={onResolve}
+                      onTest={onTest}
+                      onPreview={onPreview}
+                      onAdd={onAddToViews}
+                      onRemove={onRemove}
+                      recordingConfigs={recordingConfigs}
+                      onSaveRecordingConfig={onSaveRecordingConfig}
+                      authHeader={authHeader}
+                      canManage={canManage}
+                    />
+                    <CameraPreviewPanel
+                      preview={selectedPreview}
+                      busy={busy}
+                      authHeader={authHeader}
+                      streamConfig={streamConfig}
+                      onClose={onClosePreview}
+                      onAdd={onAddToViews}
+                      onPTZMove={onPTZMove}
+                      onPTZStop={onPTZStop}
+                    />
+                  </section>
+                ) : cameraDetailTab === 'recordings' ? (
+                  <CameraRecordingsPanel
+                    key={`rec-${selectedSaved.id}`}
+                    camera={selectedSaved}
+                    busy={busy}
+                    authHeader={authHeader}
+                    canManage={canManage}
+                    {...(recordings || {})}
+                  />
+                ) : (
+                  <CameraAiPanel
+                    key={`ai-${selectedSaved.id}`}
+                    camera={selectedSaved}
+                    busy={busy}
+                    authHeader={authHeader}
+                    streamConfig={streamConfig}
+                    {...(ai || {})}
+                  />
+                )}
+                {cameraAuth && cameraAuth[selectedSaved.id] === 'unauthorized' ? (
+                  <CameraAuthGate device={selectedSaved} busy={busy} onUnlock={onUnlockCamera} />
+                ) : null}
               </>
             ) : (
               <section className="device-card empty-detail">
@@ -1112,9 +1966,7 @@ export function CamerasTab({
               </section>
             )}
           </main>
-        </section>
-          )}
-        </>
+      )}
     </section>
   );
 }

@@ -12,6 +12,8 @@ It is designed to run on small devices such as Raspberry Pi or Jetson-style micr
 - **Secure Wipe & Reset** (factory reset: crypto-erase key + erase media + drop/rebuild DB + TRIM/scrub + restart) behind `bootstrap.allowReset`, plus secure multi-pass **shredding** of deleted footage.
 - **Unified notification feed** (topbar bell + Notifications page) across AI detection, camera/machine health, and login security; per-event acknowledge, annotated screenshot, and in-page clip playback.
 - ONVIF discovery, manual probe, saved-device list, save, camera password change, PTZ move/stop, stream option listing, selected stream URI resolution, RTSP test, WebRTC live view, MJPEG fallback, and delete endpoints under `/api/onvif`.
+- **Credential verification + access gate**: adding a discovered camera (or updating its saved credentials) verifies the login against the camera (ONVIF stream-URI resolve and/or RTSP `DESCRIBE`) before persisting — a camera that actively rejects the login is never saved, while an unreachable camera is still allowed through. `GET /api/cameras/{id}/auth-check` re-verifies a saved camera's stored credentials on demand; the camera node's UI blocks all tabs behind a credential-entry gate the moment stored credentials stop authenticating (e.g. after an out-of-band password change on the camera).
+- **ONVIF device management**: local user accounts (list/create/delete), reboot, factory default (soft/hard), camera clock (manual or NTP) and network (IPv4/gateway/DNS) configuration under `/api/cameras/{id}/{onvif-users,reboot,factory-default,datetime,network}`. `GET /api/cameras/{id}/capabilities` probes which of these the camera's firmware actually supports so the Settings UI only shows boxes that will work; `GET /api/cameras/{id}/device-info` surfaces manufacturer/model/firmware/serial/MAC/ONVIF version/location for the Live View → Camera Information panel.
 - Camera-first AI detection rules and alert events under `/api/vision`, backed by reusable `infra/vision` rule, schedule, motion, external-object, line-crossing, multi-line-crossing, and hybrid detection primitives.
 - Line-crossing rules support an **Anything** wildcard class (`"*"`) that triggers on any detected YOLO object regardless of label, in addition to the named class list.
 - **Crowd** detection: a rule mode that fires when at least `minCount` people (default 2) are in the zone in a single frame.
@@ -19,7 +21,7 @@ It is designed to run on small devices such as Raspberry Pi or Jetson-style micr
 - **Two-axis rule model**: a detection rule is now a **Mode** (presence, crowd, intrusion, line crossing, multi-line crossing, lpr) plus a **target class list** chosen from a data-driven **detection class registry** under `/api/vision/classes` (built-in classes + user-defined groups + trained classes). Legacy single-object rules (`person`/`vehicle`/`animal`/`fire`/`smoke`) still work and open in the new editor.
 - **Custom model training** under `/api/training`: build labeled image datasets (upload or import from alert snapshots), draw/correct bounding boxes in-browser, auto-label with the running model, export a YOLO dataset zip, train a custom model (in-app on a GPU, or offline), import a `best.pt`, and **activate** it to hot-swap the live detector and register its classes for rules.
 - YOLO Inference Tuning in Settings includes a **Best Calibration** button that applies recommended defaults (conf=0.20, IOU=0.35, imgsz=640, maxDet=100, augment on).
-- Alert log with server-side filtering by camera ID and unix-timestamp date range; the browser UI defaults to today's alerts and pages 20 at a time.
+- Alert log with true server-side filtering, sorting, and paging (any `AlertEvent` column — time range, rule, label, confidence, acknowledged status) via the shared `DataTable` grid in server mode; defaults to the latest detections, with a **Today** button for a one-click date-range filter.
 - NVR recording under `/api/recording`: RTSP-mode rolling `.ts` segment buffer with event-triggered MP4 clip extraction; tick-mode JPEG ring buffer for low-resource devices. Config hot-reload without restart. Live recorder status endpoint.
 - **Recording compression** (Settings → Recording, default off): shrink footage without hurting performance. Optionally re-encode segments to **H.265/H.264 once on the GPU (NVENC) at remux** (live capture and clips stay stream-copy; a shared NVENC semaphore queues encodes so recording never blocks); browsers that can't decode HEVC get an **on-the-fly HEVC→H.264 playback transcode**. A per-camera **Camera-side quality (ONVIF)** control can instead push H.265 + a bitrate cap to the camera's own encoder (zero host cost; host stream-copies). The capacity estimator accounts for the GPU encode load.
 - Per-camera split-stream configuration: separate `streamUrl` (recording) and live-view URI with `fallbackStreamUrl` automatic switching after repeated connection failures.
@@ -328,6 +330,59 @@ curl -u admin:Admin123 -H "Content-Type: application/json" \
 ```
 
 Discovery upserts WS-Discovery matches into the local database by XAddr and returns best-effort unauthenticated ONVIF metadata such as model, manufacturer, media service URL, RTSP URI, and snapshot URI when the camera allows it. Cameras that require ONVIF credentials may only return host and XAddr until you save credentials and resolve live view.
+
+### Camera credentials (`/api/cameras`)
+
+Saving a discovered camera with credentials verifies the login before persisting — a camera that actively rejects the login (e.g. wrong password) is **not** saved and returns `400`; an unreachable camera is saved anyway (we simply couldn't verify):
+
+```bash
+curl -u admin:Admin123 -H "Content-Type: application/json" \
+  -d '{"xAddr":"http://192.168.1.40/onvif/device_service","username":"admin","password":"cameraPass"}' \
+  "http://localhost:3000/api/cameras/discovered"
+```
+
+Check whether a saved camera's stored credentials still authenticate (used by the camera node's access gate to decide whether to prompt for new credentials):
+
+```bash
+curl -u admin:Admin123 "http://localhost:3000/api/cameras/1/auth-check"
+# {"status":"ok"}  |  {"status":"unauthorized"}  |  {"status":"unreachable"}
+```
+
+### ONVIF device management (`/api/cameras/{id}/...`)
+
+```bash
+# Which management operations this camera's firmware supports
+curl -u admin:Admin123 "http://localhost:3000/api/cameras/1/capabilities"
+
+# Device identity for the Live View "Camera Information" panel
+curl -u admin:Admin123 "http://localhost:3000/api/cameras/1/device-info"
+
+# Local ONVIF user accounts
+curl -u admin:Admin123 "http://localhost:3000/api/cameras/1/onvif-users"
+curl -u admin:Admin123 -H "Content-Type: application/json" \
+  -d '{"username":"operator","password":"changeMe123","userLevel":"Operator"}' \
+  "http://localhost:3000/api/cameras/1/onvif-users"
+curl -u admin:Admin123 -X DELETE "http://localhost:3000/api/cameras/1/onvif-users/operator"
+
+# Reboot / factory default (hard wipes network config, soft keeps it)
+curl -u admin:Admin123 -X POST "http://localhost:3000/api/cameras/1/reboot"
+curl -u admin:Admin123 -X POST -H "Content-Type: application/json" -d '{"hard":false}' \
+  "http://localhost:3000/api/cameras/1/factory-default"
+
+# Clock: read, then set to NTP
+curl -u admin:Admin123 "http://localhost:3000/api/cameras/1/datetime"
+curl -u admin:Admin123 -X POST -H "Content-Type: application/json" \
+  -d '{"dateTimeType":"NTP","ntpServers":["pool.ntp.org"]}' \
+  "http://localhost:3000/api/cameras/1/datetime"
+
+# Network: read, then set a static IPv4
+curl -u admin:Admin123 "http://localhost:3000/api/cameras/1/network"
+curl -u admin:Admin123 -X POST -H "Content-Type: application/json" \
+  -d '{"interfaceToken":"eth0","dhcp":false,"ipAddress":"192.168.1.40","prefixLength":24,"gateway":"192.168.1.1","dns":["1.1.1.1"]}' \
+  "http://localhost:3000/api/cameras/1/network"
+```
+
+The Camera node's Settings tab only shows the boxes for operations `capabilities` reports as supported, since Device-Management calls all share one mandatory ONVIF service and can't otherwise be told apart without probing.
 
 Manual probe:
 
@@ -671,14 +726,18 @@ List alert events (newest first, all cameras, all dates):
 curl -u admin:Admin123 "http://localhost:3000/api/vision/alerts?limit=50&offset=0"
 ```
 
-Filter alerts to a specific camera and date range (unix timestamps):
+Filter alerts to a specific camera and date range using the generic `filters`/`sorters` query contract (DataTable-shaped JSON, validated against `AlertEvent` fields):
 
 ```bash
-curl -u admin:Admin123 \
-  "http://localhost:3000/api/vision/alerts?cameraId=1&createdAfter=1749657600&createdBefore=1749743999&limit=20&offset=0"
+curl -u admin:Admin123 -G \
+  --data-urlencode 'cameraId=1' \
+  --data-urlencode 'filters=[{"fieldName":"createdAt","compare":5,"value":1749657600},{"fieldName":"createdAt","compare":6,"value":1749743999}]' \
+  --data-urlencode 'sorters=[{"fieldName":"createdAt","sort":2}]' \
+  --data-urlencode 'limit=20' --data-urlencode 'offset=0' \
+  "http://localhost:3000/api/vision/alerts"
 ```
 
-The Alert Log panel in the browser UI defaults to today's date and pages 20 alerts at a time with Prev/Next buttons. Use the date picker to browse older days or clear the filter to see all dates.
+The Alert Log panel in the browser UI is a `@shared/DataTable` grid in server mode: every column filter and sort click re-queries the backend directly (true DB-side paging, not a client-side slice), so it stays fast even with a large detection history. It defaults to the latest detections; a **Today** button seeds a `createdAt` date-range filter for the current day.
 
 Acknowledge an alert:
 

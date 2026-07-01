@@ -1,9 +1,10 @@
-import { useMemo, useState, useRef, useEffect } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { Ico } from './icons';
+import { SideNav as SharedSideNav } from '@shared/SideNav';
 import { useT } from '@shared/i18n';
 import { ThemeDropdown, FormBusyOverlay, Message } from './ui';
 import { LanguageDropdown } from '@shared/LanguageDropdown';
-import {formatTimestamp,notificationKind } from '../lib/helpers';
+import {cameraTitle,cameraDescription,orderedSavedCameras } from '../lib/helpers';
 
 // BrandLogo is the MyMataSan mark: a line-art shield holding a watchful eye and a
 // checkmark, with the rounded lowercase wordmark underneath. Self-contained inline
@@ -203,139 +204,212 @@ export function ChangePasswordPage({ busy, message, onSubmit, onCancel }) {
   );
 }
 
-// ModuleDropdown collapses the primary module tabs into a single dropdown (same
-// look as the theme dropdown) so the topbar stays uncluttered. The trigger shows
-// the active module.
-function ModuleDropdown({ tabs, activeTab, onTab }) {
-  const t = useT();
-  const [open, setOpen] = useState(false);
-  const wrapRef = useRef(null);
-  useEffect(() => {
-    if (!open) return undefined;
-    function onDown(e) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
-    }
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [open]);
-  const active = tabs.find((t) => t.id === activeTab) || tabs[0];
+// WorkspaceHeader is the slim action strip at the top of the main workspace. The
+// notifications control now lives in the side rail (see SideNav's Notifications item,
+// which carries the unread badge and opens the full list), so only the language
+// picker remains here. Primary navigation lives in the side rail (SideNav).
+export function WorkspaceHeader({ lang, onLangChange }) {
   return (
-    <div className="module-drop-wrap" ref={wrapRef}>
-      <button
-        type="button"
-        className={`quiet module-toggle${open ? ' active' : ''}`}
-        onClick={() => setOpen((o) => !o)}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-      >
-        <span className="btn-icon">
-          <Ico n={active.icon} sz={14} />
-          {active.label}
-          <Ico n="chev-down" sz={11} />
-        </span>
-      </button>
-      {open && (
-        <div className="module-menu" role="listbox" aria-label={t('topbar.selectModule')}>
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              role="option"
-              aria-selected={tab.id === activeTab}
-              className={`module-menu-item${tab.id === activeTab ? ' active' : ''}`}
-              onClick={() => { onTab(tab.id); setOpen(false); }}
-            >
-              <Ico n={tab.icon} sz={14} /> {tab.label}
-            </button>
-          ))}
-        </div>
-      )}
+    <div className="workspace-header">
+      <LanguageDropdown lang={lang} onLang={onLangChange} />
     </div>
   );
 }
 
-export function TopBar({ activeTab, isAdmin, busy, onTab, onRefresh, onLogout, notifications, notifOpen, notifUnread, onNotifToggle, onNotifClick, theme, onThemeChange, lang, onLangChange }) {
+// Past this many cameras the branch gets a filter box and becomes a height-capped
+// scroll area, so the rail stays usable with dozens of cameras.
+const CAMERA_FILTER_THRESHOLD = 8;
+
+// CamerasNavItem renders the Cameras entry as an expandable tree: the root row opens
+// the probe/discovery page, while each saved camera is a child that jumps straight to
+// that camera's properties (details/access/stream/recording/onvif). A caret toggles
+// the branch without leaving the current view. The status dot mirrors the camera's
+// live reachability (online/offline). Large sets get a search filter + scroll.
+function CamerasNavItem({ cameras, active, managingCameraId, onSelectRoot, onSelectCamera }) {
   const t = useT();
-  // Non-admins are view-only: they get live views, recording playback, and the
-  // notification feed; camera/AI/training/settings management is admin-only.
-  const allTabs = [
-    { id: 'views',     label: t('tab.views'),         icon: 'monitor', adminOnly: false },
-    { id: 'cameras',   label: t('tab.cameras'),       icon: 'camera',  adminOnly: true  },
-    { id: 'ai',        label: t('tab.ai'),            icon: 'cpu',     adminOnly: true  },
-    { id: 'training',  label: t('tab.training'),      icon: 'folder',  adminOnly: true  },
-    { id: 'recording', label: t('tab.recording'),     icon: 'film',    adminOnly: false },
-    { id: 'notifications', label: t('tab.notifications'), icon: 'bell', adminOnly: false },
-    { id: 'settings',  label: t('tab.settings'),      icon: 'sliders', adminOnly: true  },
-  ];
-  const tabs = allTabs.filter((tab) => isAdmin || !tab.adminOnly);
-  const notifItems = useMemo(() => (notifications || []).slice(0, 20), [notifications]);
+  const [open, setOpen] = useState(active);
+  const [query, setQuery] = useState('');
+  const list = useMemo(() => orderedSavedCameras(Array.isArray(cameras) ? cameras : []), [cameras]);
+  const rootActive = active && !managingCameraId;
+
+  const big = list.length > CAMERA_FILTER_THRESHOLD;
+  const q = query.trim().toLowerCase();
+  const shown = q
+    ? list.filter((c) => `${cameraTitle(c)} ${cameraDescription(c) || ''} ${c.host || c.xAddr || ''}`.toLowerCase().includes(q))
+    : list;
+
   return (
-    <header className="topbar">
-      <BrandLogo />
-      <nav className="primary-tabs" aria-label="Main">
-        <ModuleDropdown tabs={tabs} activeTab={activeTab} onTab={onTab} />
-      </nav>
-      <div className="topbar-actions">
-        <LanguageDropdown lang={lang} onLang={onLangChange} />
-        <div className="topbar-action-buttons">
-        <div className="notif-wrap">
-          <button
-            type="button"
-            className={`quiet notif-btn${notifOpen ? ' active' : ''}`}
-            onClick={onNotifToggle}
-            aria-label={notifUnread > 0 ? t('topbar.notifAriaUnread', { n: notifUnread }) : t('topbar.notifAria')}
-          >
-            <span className="btn-icon">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style={{verticalAlign:'middle',flexShrink:0}}>
-                <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6V11c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/>
-              </svg>
-              {t('topbar.notifications')}
-              <span className={`notif-badge${notifUnread > 0 ? ' notif-badge--visible' : ''}`}>
-                {notifUnread > 99 ? '99+' : notifUnread || ''}
-              </span>
-            </span>
-          </button>
-          {notifOpen && (
-            <div className="notif-panel" role="dialog" aria-label={t('topbar.notifications')}>
-              <div className="notif-panel-header">{t('topbar.notifications')}</div>
-              {notifItems.length === 0 ? (
-                <p className="notif-empty">{t('topbar.noNotifs')}</p>
-              ) : (
-                notifItems.map((notif) => {
-                  const kind = notificationKind(notif);
-                  return (
-                    <button
-                      key={notif.id}
-                      type="button"
-                      className="notif-item"
-                      onClick={() => onNotifClick(notif)}
-                    >
-                      <span className="notif-topic">
-                        <span className={`notif-sev notif-sev--${notif.severity || 'info'}`} aria-hidden="true" />
-                        {notif.title || kind}
-                      </span>
-                      {notif.body ? <span className="notif-detail">{notif.body}</span> : null}
-                      <span className="notif-meta-row">
-                        <span className="notif-camera">{kind}</span>
-                        <span className="notif-time">{formatTimestamp(notif.createdAt)}</span>
-                      </span>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          )}
-        </div>
-        <ThemeDropdown theme={theme} onThemeChange={onThemeChange} />
-        <button type="button" className="quiet" onClick={onRefresh} disabled={busy}>
-          <span className="btn-icon"><Ico n="refresh" /> {t('topbar.refresh')}</span>
+    <div className="nav-tree">
+      <div className="nav-tree-rootrow">
+        <button
+          type="button"
+          className="nav-tree-caret"
+          onClick={() => setOpen((o) => !o)}
+          aria-label={open ? t('cam.collapse') : t('cam.expand')}
+          aria-expanded={open}
+        >
+          <Ico n="chev-down" sz={14} style={open ? undefined : { transform: 'rotate(-90deg)' }} />
         </button>
-        <button type="button" className="quiet danger-text" onClick={onLogout} disabled={busy}>
-          <span className="btn-icon"><Ico n="lock" /> {t('topbar.lock')}</span>
+        <button
+          type="button"
+          className={`nav-item tone-blue nav-tree-main${rootActive ? ' active' : ''}`}
+          onClick={() => { onSelectRoot(); setOpen(true); }}
+        >
+          <span className="nav-ico"><Ico n="camera" sz={17} /></span>
+          <span className="nav-label">{t('nav.cameras')}</span>
+          {list.length > 0 ? <span className="nav-tree-count">{list.length}</span> : null}
         </button>
-        </div>
       </div>
-    </header>
+      {open ? (
+        <div className="nav-tree-branch">
+          {big ? (
+            <div className="nav-tree-search">
+              <Ico n="search" sz={13} />
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={t('cam.filter', { n: list.length })}
+                aria-label={t('cam.filterAria')}
+              />
+            </div>
+          ) : null}
+          <div className={`nav-tree-children${big ? ' scrolling' : ''}`}>
+            {list.length === 0 ? (
+              <div className="nav-tree-empty">{t('cam.none')}</div>
+            ) : shown.length === 0 ? (
+              <div className="nav-tree-empty">{t('cam.noMatches')}</div>
+            ) : (
+              shown.map((c) => {
+                const isActive = active && Number(managingCameraId) === Number(c.id);
+                const status = (c.healthStatus || '').toLowerCase() === 'online'
+                  ? 'online'
+                  : (c.healthStatus || '').toLowerCase() === 'offline'
+                    ? 'offline'
+                    : 'unknown';
+                const description = cameraDescription(c);
+                return (
+                  <button
+                    key={c.id || c.xAddr}
+                    type="button"
+                    className={`nav-item tone-blue nav-tree-child${isActive ? ' active' : ''}`}
+                    onClick={() => onSelectCamera(c.id)}
+                    title={description ? undefined : cameraTitle(c)}
+                  >
+                    <span className="nav-tree-ico" data-status={status}>
+                      <Ico n="camera" sz={16} />
+                    </span>
+                    <span className="nav-label">{cameraTitle(c)}</span>
+                    {description ? (
+                      <span className="nav-tip" role="tooltip">
+                        <span className="nav-tip-title">{cameraTitle(c)}</span>
+                        <span className="nav-tip-body">{description}</span>
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
+}
+
+// SideNav is mymatasan's standardized navigation rail (shared SideNav shell). Modules
+// are grouped like myseliasan's; the Cameras entry is a bespoke tree whose root opens
+// the probe page and whose children open per-camera properties. Non-admins see only
+// the view-only surfaces (Dashboard, Live Views, Recordings, Notifications).
+export function SideNav({ activeTab, isAdmin, busy, username, cameras, managingCameraId, notifUnread = 0, onTab, onSelectCameraRoot, onSelectCamera, onLogout, theme, onThemeChange, pinned = true, onTogglePinned }) {
+  const t = useT();
+  const navItem = (id, label, icon, tone) => ({ id, label, icon, tone, active: id === activeTab, onClick: () => onTab(id) });
+  // The Notifications entry doubles as the notifications control now that the topbar
+  // bell is gone: it opens the full list (no dropdown) and carries the unread badge.
+  const notificationsItem = {
+    id: 'notifications',
+    render: () => (
+      <button
+        type="button"
+        className={`nav-item nav-item-badged tone-green${activeTab === 'notifications' ? ' active' : ''}`}
+        onClick={() => onTab('notifications')}
+        aria-label={notifUnread > 0 ? t('topbar.notifAriaUnread', { n: notifUnread }) : t('topbar.notifAria')}
+      >
+        <span className="nav-ico"><Ico n="bell" sz={17} /></span>
+        <span className="nav-label">{t('tab.notifications')}</span>
+        {notifUnread > 0 ? (
+          <span className="nav-item-badge">{notifUnread > 99 ? '99+' : notifUnread}</span>
+        ) : null}
+      </button>
+    ),
+  };
+  const groups = [
+    {
+      label: t('group.workspace'),
+      items: [
+        navItem('dashboard', t('nav.dashboard'), 'monitor', 'steel'),
+        navItem('views', t('tab.views'), 'grid2', 'teal'),
+      ],
+    },
+    {
+      label: t('group.surveillance'),
+      items: [
+        isAdmin
+          ? { id: 'cameras', render: () => (
+              <CamerasNavItem
+                cameras={cameras}
+                active={activeTab === 'cameras'}
+                managingCameraId={managingCameraId}
+                onSelectRoot={onSelectCameraRoot}
+                onSelectCamera={onSelectCamera}
+              />
+            ) }
+          : null,
+      ],
+    },
+    {
+      label: t('group.intelligence'),
+      items: isAdmin
+        ? [navItem('training', t('tab.training'), 'folder', 'amber')]
+        : [],
+    },
+    {
+      label: t('group.system'),
+      items: [
+        notificationsItem,
+        isAdmin ? navItem('settings', t('tab.settings'), 'sliders', 'blue') : null,
+      ],
+    },
+  ];
+
+  const brand = (
+    <div className="side-brand">
+      {onTogglePinned ? (
+        <button
+          type="button"
+          className="nav-pin-toggle"
+          onClick={(e) => { onTogglePinned(); e.currentTarget.blur(); }}
+          aria-pressed={pinned}
+          title={pinned ? t('nav.autohide') : t('nav.pin')}
+          aria-label={pinned ? t('nav.autohide') : t('nav.pin')}
+        >
+          <Ico n={pinned ? 'pin' : 'pin-off'} sz={16} />
+        </button>
+      ) : null}
+      <BrandLogo />
+      <div className="side-brand-sub">{t('brand.subtitle')}</div>
+    </div>
+  );
+  const footer = (
+    <>
+      {username ? <div className="side-brand-sub" title={username}>{username}</div> : null}
+      <ThemeDropdown theme={theme} onThemeChange={onThemeChange} />
+      <button type="button" className="logout-button" onClick={onLogout} disabled={busy}>
+        <span className="btn-icon"><Ico n="lock" sz={15} /> {t('topbar.lock')}</span>
+      </button>
+    </>
+  );
+
+  return <SharedSideNav brand={brand} groups={groups} footer={footer} />;
 }
 

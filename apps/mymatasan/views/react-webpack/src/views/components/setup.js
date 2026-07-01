@@ -476,11 +476,17 @@ function DiscoveredRow({ device, busy, onAdd }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [adding, setAdding] = useState(false);
+  const [error, setError] = useState('');
 
   async function add() {
     setAdding(true);
+    setError('');
     try {
+      // onAdd verifies the credentials server-side and throws if the camera rejects them,
+      // so a failed login leaves the camera un-added with the error shown.
       await onAdd(device, { name: name.trim(), username: username.trim(), password });
+    } catch (err) {
+      setError(err?.message || t('setup.addFailed'));
     } finally {
       setAdding(false);
     }
@@ -507,6 +513,7 @@ function DiscoveredRow({ device, busy, onAdd }) {
             <PasswordField value={password} onChange={setPassword} autoComplete="off" />
           </label>
           <span className="field-hint">{t('setup.passwordHint')}</span>
+          {error ? <span className="field-hint danger-text">{error}</span> : null}
           <button type="button" className="setup-cred-add" onClick={add} disabled={busy || adding}>
             <span className="btn-icon"><Ico n="shield" /> {adding ? t('setup.adding') : t('setup.addCamera')}</span>
           </button>

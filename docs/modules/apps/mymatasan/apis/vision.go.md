@@ -20,17 +20,20 @@ Registers AI detection rule and alert routes for standalone `mymatasan`.
 | `POST`   | `/api/vision/classes`             | Create or update a registry class/group. |
 | `DELETE` | `/api/vision/classes/{id}`        | Delete a custom class/group (built-ins cannot be deleted). |
 
-The `detectionType` field on a rule is the **mode** (`presence`, `crowd`, `intrusion`, `line_crossing`, `multi_line_crossing`, `lpr`); the **target classes** live in `ruleConfig.classes` and are resolved against the class registry at rule-load time. LPR rules instead carry their watchlist and match mode in `ruleConfig` (see `infra/vision/lpr.go`). The `alerts` list also accepts a `detectionType` query param for exact-match filtering.
+The `detectionType` field on a rule is the **mode** (`presence`, `crowd`, `intrusion`, `line_crossing`, `multi_line_crossing`, `lpr`); the **target classes** live in `ruleConfig.classes` and are resolved against the class registry at rule-load time. LPR rules instead carry their watchlist and match mode in `ruleConfig` (see `infra/vision/lpr.go`).
 
 ### GET /api/vision/alerts query parameters
 
-| Param           | Type  | Notes |
-|-----------------|-------|-------|
-| `limit`         | int   | Page size (default behaviour inherited from `readPaging`). |
-| `offset`        | int   | Page offset. |
-| `cameraId`      | int64 | Filter to a single camera. 0 means all cameras. |
-| `createdAfter`  | int64 | Unix timestamp lower bound (inclusive). 0 means no lower bound. |
-| `createdBefore` | int64 | Unix timestamp upper bound (exclusive). 0 means no upper bound. |
+| Param      | Type   | Notes |
+|------------|--------|-------|
+| `limit`    | int    | Page size (default behaviour inherited from `readPaging`). |
+| `offset`   | int    | Page offset. |
+| `cameraId` | int64  | Filter to a single camera. 0 means all cameras. |
+| `status`   | string | `active` (unacknowledged real detections), `acknowledged`, `detections` (all real detections, ack or not), or `diagnostic`. Empty applies no status filter. |
+| `filters`  | JSON   | DataTable-format `[]{fieldName, compare, value}` array, validated against `entities.AlertEvent` fields via `sharedapis.ParseListQueryOptions`. Drives true DB-side `WHERE` clauses — e.g. a `createdAt` date-range filter, `ruleId`, `confidence`, or `label`. |
+| `sorters`  | JSON   | DataTable-format `[]{fieldName, sort}` array. Defaults to `CreatedAt DESC` when omitted. |
+
+The legacy `createdAfter`/`createdBefore`/`ruleId`/`detectionType` query params were removed in favor of the generic `filters`/`sorters` pair — the frontend's Alert Log grid (`@shared/DataTable` in server mode) now emits column filters/sort directly in this shape, so paging always runs over the true filtered set rather than a client-side slice.
 
 ## Notes
 
@@ -39,4 +42,4 @@ The `detectionType` field on a rule is the **mode** (`presence`, `crowd`, `intru
 - JSON request bodies are capped at 2 MiB.
 - Request decoding rejects unknown JSON fields so frontend/API drift is caught early.
 - Rule validation and alert validation are delegated to reusable `infra/vision` contracts.
-- The Alert Log UI defaults to today's date range by computing `createdAfter`/`createdBefore` from midnight-to-midnight local time in the browser before sending the request.
+- The Alert Log UI's default view is the latest detections (no filter, `CreatedAt DESC`); a "Today" button seeds a `createdAt` daterange filter for midnight-to-midnight local time instead of pre-computing epoch bounds client-side.

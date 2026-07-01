@@ -2,6 +2,7 @@ package onvif
 
 import (
 	"encoding/xml"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -92,6 +93,314 @@ type MediaProfile struct {
 	Encoding string `json:"encoding"`
 	Width    int    `json:"width"`
 	Height   int    `json:"height"`
+}
+
+// User is a local ONVIF camera account (Device Management GetUsers).
+type User struct {
+	Username  string `json:"username"`
+	UserLevel string `json:"userLevel"`
+}
+
+type usersEnvelopeXML struct {
+	Body usersBodyXML `xml:"Body"`
+}
+
+type usersBodyXML struct {
+	Response usersResponseXML `xml:"GetUsersResponse"`
+}
+
+type usersResponseXML struct {
+	Users []userXML `xml:"User"`
+}
+
+type userXML struct {
+	Username  string `xml:"Username"`
+	UserLevel string `xml:"UserLevel"`
+}
+
+// ParseUsers parses the local user accounts from a GetUsers response.
+func ParseUsers(data []byte) ([]User, error) {
+	var envelope usersEnvelopeXML
+	if err := xml.Unmarshal(data, &envelope); err != nil {
+		return nil, err
+	}
+	users := make([]User, 0, len(envelope.Body.Response.Users))
+	for _, u := range envelope.Body.Response.Users {
+		username := strings.TrimSpace(u.Username)
+		if username == "" {
+			continue
+		}
+		users = append(users, User{Username: username, UserLevel: strings.TrimSpace(u.UserLevel)})
+	}
+	return users, nil
+}
+
+// SystemDateTime is the camera's clock configuration (GetSystemDateAndTime + GetNTP).
+type SystemDateTime struct {
+	DateTimeType    string   `json:"dateTimeType"` // "Manual" | "NTP"
+	DaylightSavings bool     `json:"daylightSavings"`
+	TimeZone        string   `json:"timeZone"`    // POSIX TZ, e.g. "GMT+08:00"
+	UTCDateTime     string   `json:"utcDateTime"` // RFC3339 UTC (when the camera reports it)
+	NTPFromDHCP     bool     `json:"ntpFromDhcp"`
+	NTPServers      []string `json:"ntpServers"` // NTP hosts/IPs (from GetNTP)
+}
+
+// Service is an ONVIF service the device advertises (GetServices).
+type Service struct {
+	Namespace string `json:"namespace"`
+	XAddr     string `json:"xAddr"`
+	Version   string `json:"version"` // "Major.Minor" from the service's <Version> (best-effort)
+}
+
+// NetworkInterface is one NIC's IPv4 config.
+type NetworkInterface struct {
+	Token        string `json:"token"`
+	Name         string `json:"name"`
+	MAC          string `json:"mac"`
+	Enabled      bool   `json:"enabled"`
+	DHCP         bool   `json:"dhcp"`
+	IPAddress    string `json:"ipAddress"`
+	PrefixLength int    `json:"prefixLength"`
+}
+
+// NetworkConfig is the camera's network configuration.
+type NetworkConfig struct {
+	Interfaces  []NetworkInterface `json:"interfaces"`
+	Gateway     string             `json:"gateway"`
+	DNS         []string           `json:"dns"`
+	DNSFromDHCP bool               `json:"dnsFromDhcp"`
+}
+
+// ParseRebootMessage extracts the reboot Message (best-effort).
+func ParseRebootMessage(data []byte) string {
+	var env struct {
+		Body struct {
+			Response struct {
+				Message string `xml:"Message"`
+			} `xml:"SystemRebootResponse"`
+		} `xml:"Body"`
+	}
+	_ = xml.Unmarshal(data, &env)
+	return strings.TrimSpace(env.Body.Response.Message)
+}
+
+// ParseSystemDateTime parses a GetSystemDateAndTimeResponse.
+func ParseSystemDateTime(data []byte) (*SystemDateTime, error) {
+	var env struct {
+		Body struct {
+			Response struct {
+				SDT struct {
+					DateTimeType    string `xml:"DateTimeType"`
+					DaylightSavings string `xml:"DaylightSavings"`
+					TimeZone        struct {
+						TZ string `xml:"TZ"`
+					} `xml:"TimeZone"`
+					UTCDateTime struct {
+						Time struct {
+							Hour   int `xml:"Hour"`
+							Minute int `xml:"Minute"`
+							Second int `xml:"Second"`
+						} `xml:"Time"`
+						Date struct {
+							Year  int `xml:"Year"`
+							Month int `xml:"Month"`
+							Day   int `xml:"Day"`
+						} `xml:"Date"`
+					} `xml:"UTCDateTime"`
+				} `xml:"SystemDateAndTime"`
+			} `xml:"GetSystemDateAndTimeResponse"`
+		} `xml:"Body"`
+	}
+	if err := xml.Unmarshal(data, &env); err != nil {
+		return nil, err
+	}
+	sdt := env.Body.Response.SDT
+	res := &SystemDateTime{
+		DateTimeType:    strings.TrimSpace(sdt.DateTimeType),
+		DaylightSavings: strings.EqualFold(strings.TrimSpace(sdt.DaylightSavings), "true"),
+		TimeZone:        strings.TrimSpace(sdt.TimeZone.TZ),
+	}
+	d := sdt.UTCDateTime.Date
+	tm := sdt.UTCDateTime.Time
+	if d.Year > 0 {
+		res.UTCDateTime = time.Date(d.Year, time.Month(d.Month), d.Day, tm.Hour, tm.Minute, tm.Second, 0, time.UTC).Format(time.RFC3339)
+	}
+	return res, nil
+}
+
+// ParseNetworkInterfaces parses a GetNetworkInterfacesResponse.
+func ParseNetworkInterfaces(data []byte) (*NetworkConfig, error) {
+	var env struct {
+		Body struct {
+			Response struct {
+				Interfaces []struct {
+					Token   string `xml:"token,attr"`
+					Enabled string `xml:"Enabled"`
+					Info    struct {
+						Name      string `xml:"Name"`
+						HwAddress string `xml:"HwAddress"`
+					} `xml:"Info"`
+					IPv4 struct {
+						Config struct {
+							Manual []struct {
+								Address      string `xml:"Address"`
+								PrefixLength int    `xml:"PrefixLength"`
+							} `xml:"Manual"`
+							DHCP     string `xml:"DHCP"`
+							FromDHCP struct {
+								Address      string `xml:"Address"`
+								PrefixLength int    `xml:"PrefixLength"`
+							} `xml:"FromDHCP"`
+						} `xml:"Config"`
+					} `xml:"IPv4"`
+				} `xml:"NetworkInterfaces"`
+			} `xml:"GetNetworkInterfacesResponse"`
+		} `xml:"Body"`
+	}
+	if err := xml.Unmarshal(data, &env); err != nil {
+		return nil, err
+	}
+	cfg := &NetworkConfig{}
+	for _, ni := range env.Body.Response.Interfaces {
+		iface := NetworkInterface{
+			Token:   strings.TrimSpace(ni.Token),
+			Name:    strings.TrimSpace(ni.Info.Name),
+			MAC:     strings.TrimSpace(ni.Info.HwAddress),
+			Enabled: strings.EqualFold(strings.TrimSpace(ni.Enabled), "true"),
+			DHCP:    strings.EqualFold(strings.TrimSpace(ni.IPv4.Config.DHCP), "true"),
+		}
+		if iface.DHCP {
+			iface.IPAddress = strings.TrimSpace(ni.IPv4.Config.FromDHCP.Address)
+			iface.PrefixLength = ni.IPv4.Config.FromDHCP.PrefixLength
+		} else if len(ni.IPv4.Config.Manual) > 0 {
+			iface.IPAddress = strings.TrimSpace(ni.IPv4.Config.Manual[0].Address)
+			iface.PrefixLength = ni.IPv4.Config.Manual[0].PrefixLength
+		}
+		cfg.Interfaces = append(cfg.Interfaces, iface)
+	}
+	return cfg, nil
+}
+
+// ParseNetworkGateway parses a GetNetworkDefaultGatewayResponse (IPv4).
+func ParseNetworkGateway(data []byte) string {
+	var env struct {
+		Body struct {
+			Response struct {
+				Gateway struct {
+					IPv4Address string `xml:"IPv4Address"`
+				} `xml:"NetworkGateway"`
+			} `xml:"GetNetworkDefaultGatewayResponse"`
+		} `xml:"Body"`
+	}
+	_ = xml.Unmarshal(data, &env)
+	return strings.TrimSpace(env.Body.Response.Gateway.IPv4Address)
+}
+
+// ParseDNS parses a GetDNSResponse; returns the IPv4 servers + whether DNS is from DHCP.
+func ParseDNS(data []byte) ([]string, bool) {
+	var env struct {
+		Body struct {
+			Response struct {
+				Info struct {
+					FromDHCP string `xml:"FromDHCP"`
+					Manual   []struct {
+						IPv4Address string `xml:"IPv4Address"`
+					} `xml:"DNSManual"`
+					FromDHCPSrv []struct {
+						IPv4Address string `xml:"IPv4Address"`
+					} `xml:"DNSFromDHCP"`
+				} `xml:"DNSInformation"`
+			} `xml:"GetDNSResponse"`
+		} `xml:"Body"`
+	}
+	_ = xml.Unmarshal(data, &env)
+	info := env.Body.Response.Info
+	fromDHCP := strings.EqualFold(strings.TrimSpace(info.FromDHCP), "true")
+	src := info.Manual
+	if fromDHCP && len(info.FromDHCPSrv) > 0 {
+		src = info.FromDHCPSrv
+	}
+	var servers []string
+	for _, s := range src {
+		if a := strings.TrimSpace(s.IPv4Address); a != "" {
+			servers = append(servers, a)
+		}
+	}
+	return servers, fromDHCP
+}
+
+// ParseNTP parses a GetNTPResponse; returns the NTP hosts/IPs + whether from DHCP.
+func ParseNTP(data []byte) ([]string, bool) {
+	type ntpEntry struct {
+		IPv4Address string `xml:"IPv4Address"`
+		DNSname     string `xml:"DNSname"`
+	}
+	var env struct {
+		Body struct {
+			Response struct {
+				Info struct {
+					FromDHCP    string     `xml:"FromDHCP"`
+					Manual      []ntpEntry `xml:"NTPManual"`
+					FromDHCPSrv []ntpEntry `xml:"NTPFromDHCP"`
+				} `xml:"NTPInformation"`
+			} `xml:"GetNTPResponse"`
+		} `xml:"Body"`
+	}
+	_ = xml.Unmarshal(data, &env)
+	info := env.Body.Response.Info
+	fromDHCP := strings.EqualFold(strings.TrimSpace(info.FromDHCP), "true")
+	src := info.Manual
+	if fromDHCP && len(info.FromDHCPSrv) > 0 {
+		src = info.FromDHCPSrv
+	}
+	var servers []string
+	for _, s := range src {
+		if v := strings.TrimSpace(firstNonEmptyStr(s.DNSname, s.IPv4Address)); v != "" {
+			servers = append(servers, v)
+		}
+	}
+	return servers, fromDHCP
+}
+
+// ParseServices parses the service namespaces a device advertises (GetServices).
+func ParseServices(data []byte) ([]Service, error) {
+	var env struct {
+		Body struct {
+			Response struct {
+				Services []struct {
+					Namespace string `xml:"Namespace"`
+					XAddr     string `xml:"XAddr"`
+					Version   struct {
+						Major int `xml:"Major"`
+						Minor int `xml:"Minor"`
+					} `xml:"Version"`
+				} `xml:"Service"`
+			} `xml:"GetServicesResponse"`
+		} `xml:"Body"`
+	}
+	if err := xml.Unmarshal(data, &env); err != nil {
+		return nil, err
+	}
+	services := make([]Service, 0, len(env.Body.Response.Services))
+	for _, s := range env.Body.Response.Services {
+		ns := strings.TrimSpace(s.Namespace)
+		if ns == "" {
+			continue
+		}
+		ver := ""
+		if s.Version.Major > 0 || s.Version.Minor > 0 {
+			ver = fmt.Sprintf("%d.%02d", s.Version.Major, s.Version.Minor)
+		}
+		services = append(services, Service{Namespace: ns, XAddr: strings.TrimSpace(s.XAddr), Version: ver})
+	}
+	return services, nil
+}
+
+func firstNonEmptyStr(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+	return b
 }
 
 type streamURIEnvelopeXML struct {

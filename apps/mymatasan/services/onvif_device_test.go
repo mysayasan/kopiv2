@@ -292,6 +292,34 @@ func (f *fakeResolveStreamClient) GetSnapshotURI(_ context.Context, req onvif.St
 func (f *fakeResolveStreamClient) ChangeUserPassword(context.Context, onvif.ChangeUserPasswordRequest) error {
 	return nil
 }
+func (f *fakeResolveStreamClient) GetUsers(context.Context, onvif.UsersRequest) ([]onvif.User, error) {
+	return nil, nil
+}
+func (f *fakeResolveStreamClient) CreateUser(context.Context, onvif.UserRequest) error { return nil }
+func (f *fakeResolveStreamClient) DeleteUser(context.Context, onvif.UserRequest) error { return nil }
+func (f *fakeResolveStreamClient) SystemReboot(context.Context, onvif.DeviceRequest) (string, error) {
+	return "", nil
+}
+func (f *fakeResolveStreamClient) SetSystemFactoryDefault(context.Context, onvif.FactoryDefaultRequest) error {
+	return nil
+}
+func (f *fakeResolveStreamClient) GetSystemDateAndTime(context.Context, onvif.DeviceRequest) (*onvif.SystemDateTime, error) {
+	return nil, nil
+}
+func (f *fakeResolveStreamClient) SetSystemDateAndTime(context.Context, onvif.SystemDateTimeUpdate) error {
+	return nil
+}
+func (f *fakeResolveStreamClient) GetNetwork(context.Context, onvif.DeviceRequest) (*onvif.NetworkConfig, error) {
+	return nil, nil
+}
+func (f *fakeResolveStreamClient) SetNetwork(context.Context, onvif.NetworkUpdate) error { return nil }
+func (f *fakeResolveStreamClient) GetNTP(context.Context, onvif.DeviceRequest) ([]string, bool, error) {
+	return nil, false, nil
+}
+func (f *fakeResolveStreamClient) SetNTP(context.Context, onvif.NTPUpdate) error { return nil }
+func (f *fakeResolveStreamClient) GetServices(context.Context, onvif.DeviceRequest) ([]onvif.Service, error) {
+	return nil, nil
+}
 func (f *fakeResolveStreamClient) PTZMove(context.Context, onvif.PTZMoveRequest) error { return nil }
 func (f *fakeResolveStreamClient) PTZStop(context.Context, onvif.PTZMoveRequest) error { return nil }
 func (f *fakeResolveStreamClient) GetVideoEncoderConfig(context.Context, onvif.StreamURIRequest) (*onvif.VideoEncoderConfig, error) {

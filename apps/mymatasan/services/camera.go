@@ -24,6 +24,19 @@ import (
 // cancelled.
 const cameraProbeTimeout = 8 * time.Second
 
+// Credential-verification statuses. "unauthorized" is a definitive login rejection
+// (401/NotAuthorized); "unreachable" means we couldn't reach the camera to decide, so it
+// must NOT be treated as bad credentials.
+const (
+	CameraAuthOK           = "ok"
+	CameraAuthUnauthorized = "unauthorized"
+	CameraAuthUnreachable  = "unreachable"
+)
+
+// ErrCameraUnauthorized is returned when a camera actively rejects the supplied
+// credentials, so callers (save / credential update) can refuse to persist them.
+var ErrCameraUnauthorized = errors.New("camera rejected the credentials")
+
 type onvifClient interface {
 	Discover(ctx context.Context, timeout time.Duration) ([]onvif.Device, error)
 	Probe(ctx context.Context, address string) (*onvif.Device, error)
@@ -32,6 +45,18 @@ type onvifClient interface {
 	GetStreamOptions(ctx context.Context, req onvif.StreamURIRequest) (*onvif.StreamOptionsResult, error)
 	GetSnapshotURI(ctx context.Context, req onvif.StreamURIRequest) (*onvif.SnapshotURIResult, error)
 	ChangeUserPassword(ctx context.Context, req onvif.ChangeUserPasswordRequest) error
+	GetUsers(ctx context.Context, req onvif.UsersRequest) ([]onvif.User, error)
+	CreateUser(ctx context.Context, req onvif.UserRequest) error
+	DeleteUser(ctx context.Context, req onvif.UserRequest) error
+	SystemReboot(ctx context.Context, req onvif.DeviceRequest) (string, error)
+	SetSystemFactoryDefault(ctx context.Context, req onvif.FactoryDefaultRequest) error
+	GetSystemDateAndTime(ctx context.Context, req onvif.DeviceRequest) (*onvif.SystemDateTime, error)
+	SetSystemDateAndTime(ctx context.Context, req onvif.SystemDateTimeUpdate) error
+	GetNetwork(ctx context.Context, req onvif.DeviceRequest) (*onvif.NetworkConfig, error)
+	SetNetwork(ctx context.Context, req onvif.NetworkUpdate) error
+	GetNTP(ctx context.Context, req onvif.DeviceRequest) ([]string, bool, error)
+	SetNTP(ctx context.Context, req onvif.NTPUpdate) error
+	GetServices(ctx context.Context, req onvif.DeviceRequest) ([]onvif.Service, error)
 	PTZMove(ctx context.Context, req onvif.PTZMoveRequest) error
 	PTZStop(ctx context.Context, req onvif.PTZMoveRequest) error
 	GetVideoEncoderConfig(ctx context.Context, req onvif.StreamURIRequest) (*onvif.VideoEncoderConfig, error)
@@ -340,6 +365,12 @@ func (s *cameraService) SaveCredentials(ctx context.Context, id uint64, credenti
 	if err != nil {
 		return nil, err
 	}
+	// Verify before persisting so a wrong password can't overwrite a working one and the
+	// node's credential gate rejects bad creds. Only a definitive rejection blocks; an
+	// unreachable camera still lets the operator store (possibly-correct) credentials.
+	if status, verr := s.verifyCredentials(ctx, *detail, credentials); status == CameraAuthUnauthorized {
+		return nil, fmt.Errorf("%w: %v", ErrCameraUnauthorized, verr)
+	}
 	if strings.TrimSpace(credentials.Username) != "" {
 		detail.Username = strings.TrimSpace(credentials.Username)
 	}
@@ -383,13 +414,309 @@ func (s *cameraService) ChangeCameraPassword(ctx context.Context, id uint64, req
 	}); err != nil {
 		return nil, err
 	}
-	detail.Username = targetUsername
-	detail.Password = req.NewPassword
-	_ = s.refreshCapabilities(ctx, detail, onvif.Credentials{Username: detail.Username, Password: detail.Password})
-	if err := s.saveDetail(ctx, detail); err != nil {
-		return nil, err
+	// Only re-sync the app's stored credential when we changed the very account it logs
+	// in with — changing some OTHER user's password must not overwrite our credential.
+	if strings.EqualFold(strings.TrimSpace(targetUsername), strings.TrimSpace(current.Username)) {
+		detail.Username = targetUsername
+		detail.Password = req.NewPassword
+		_ = s.refreshCapabilities(ctx, detail, onvif.Credentials{Username: detail.Username, Password: detail.Password})
+		if err := s.saveDetail(ctx, detail); err != nil {
+			return nil, err
+		}
 	}
 	return detail, nil
+}
+
+// cameraOnvifCredentials returns the camera's stored ONVIF admin credentials, used to
+// authenticate user-management calls against the device.
+func (s *cameraService) cameraOnvifCredentials(detail *CameraDetail) onvif.Credentials {
+	return onvif.Credentials{Username: detail.Username, Password: detail.Password}
+}
+
+func (s *cameraService) ListCameraUsers(ctx context.Context, id uint64) ([]onvif.User, error) {
+	detail, err := s.loadDetail(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(detail.XAddr) == "" {
+		return nil, errors.New("camera is not an ONVIF device")
+	}
+	return s.client.GetUsers(ctx, onvif.UsersRequest{
+		DeviceServiceURL: detail.XAddr,
+		Credentials:      s.cameraOnvifCredentials(detail),
+	})
+}
+
+func (s *cameraService) CreateCameraUser(ctx context.Context, id uint64, req CreateCameraUserRequest) error {
+	detail, err := s.loadDetail(ctx, id)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(detail.XAddr) == "" {
+		return errors.New("camera is not an ONVIF device")
+	}
+	return s.client.CreateUser(ctx, onvif.UserRequest{
+		DeviceServiceURL: detail.XAddr,
+		Credentials:      s.cameraOnvifCredentials(detail),
+		Username:         req.Username,
+		Password:         req.Password,
+		UserLevel:        req.UserLevel,
+	})
+}
+
+func (s *cameraService) DeleteCameraUser(ctx context.Context, id uint64, username string) error {
+	detail, err := s.loadDetail(ctx, id)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(detail.XAddr) == "" {
+		return errors.New("camera is not an ONVIF device")
+	}
+	if strings.TrimSpace(username) == "" {
+		return errors.New("username is required")
+	}
+	// Guard against removing the account these API calls authenticate with, which would
+	// lock the app out of the camera.
+	if strings.EqualFold(strings.TrimSpace(username), strings.TrimSpace(detail.Username)) {
+		return errors.New("cannot delete the camera's active credential user")
+	}
+	return s.client.DeleteUser(ctx, onvif.UserRequest{
+		DeviceServiceURL: detail.XAddr,
+		Credentials:      s.cameraOnvifCredentials(detail),
+		Username:         username,
+	})
+}
+
+func (s *cameraService) onvifDeviceRequest(detail *CameraDetail) onvif.DeviceRequest {
+	return onvif.DeviceRequest{DeviceServiceURL: detail.XAddr, Credentials: s.cameraOnvifCredentials(detail)}
+}
+
+func (s *cameraService) requireOnvif(ctx context.Context, id uint64) (*CameraDetail, error) {
+	detail, err := s.loadDetail(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(detail.XAddr) == "" {
+		return nil, errors.New("camera is not an ONVIF device")
+	}
+	return detail, nil
+}
+
+func (s *cameraService) RebootCamera(ctx context.Context, id uint64) (string, error) {
+	detail, err := s.requireOnvif(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	return s.client.SystemReboot(ctx, s.onvifDeviceRequest(detail))
+}
+
+func (s *cameraService) FactoryDefaultCamera(ctx context.Context, id uint64, hard bool) error {
+	detail, err := s.requireOnvif(ctx, id)
+	if err != nil {
+		return err
+	}
+	return s.client.SetSystemFactoryDefault(ctx, onvif.FactoryDefaultRequest{
+		DeviceServiceURL: detail.XAddr,
+		Credentials:      s.cameraOnvifCredentials(detail),
+		Hard:             hard,
+	})
+}
+
+func (s *cameraService) GetCameraDateTime(ctx context.Context, id uint64) (*onvif.SystemDateTime, error) {
+	detail, err := s.requireOnvif(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	res, err := s.client.GetSystemDateAndTime(ctx, s.onvifDeviceRequest(detail))
+	if err != nil {
+		return nil, err
+	}
+	// NTP config is a separate ONVIF call; merge it in (best-effort).
+	if servers, fromDHCP, ntpErr := s.client.GetNTP(ctx, s.onvifDeviceRequest(detail)); ntpErr == nil {
+		res.NTPServers = servers
+		res.NTPFromDHCP = fromDHCP
+	}
+	return res, nil
+}
+
+func (s *cameraService) SetCameraDateTime(ctx context.Context, id uint64, req SetCameraDateTimeRequest) error {
+	detail, err := s.requireOnvif(ctx, id)
+	if err != nil {
+		return err
+	}
+	update := onvif.SystemDateTimeUpdate{
+		DeviceServiceURL: detail.XAddr,
+		Credentials:      s.cameraOnvifCredentials(detail),
+		DateTimeType:     req.DateTimeType,
+		DaylightSavings:  req.DaylightSavings,
+		TimeZone:         req.TimeZone,
+	}
+	if strings.EqualFold(strings.TrimSpace(req.DateTimeType), "Manual") {
+		when := time.Now().UTC()
+		if strings.TrimSpace(req.UTCDateTime) != "" {
+			if parsed, perr := time.Parse(time.RFC3339, strings.TrimSpace(req.UTCDateTime)); perr == nil {
+				when = parsed.UTC()
+			}
+		}
+		update.UTC = when
+	}
+	if err := s.client.SetSystemDateAndTime(ctx, update); err != nil {
+		return err
+	}
+	// In NTP mode, also push the NTP servers (a separate ONVIF call).
+	if strings.EqualFold(strings.TrimSpace(req.DateTimeType), "NTP") {
+		return s.client.SetNTP(ctx, onvif.NTPUpdate{
+			DeviceServiceURL: detail.XAddr,
+			Credentials:      s.cameraOnvifCredentials(detail),
+			FromDHCP:         req.NTPFromDHCP,
+			Servers:          req.NTPServers,
+		})
+	}
+	return nil
+}
+
+func (s *cameraService) GetCameraCapabilities(ctx context.Context, id uint64) (*CameraCapabilities, error) {
+	detail, err := s.loadDetail(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	caps := &CameraCapabilities{
+		Onvif:           strings.TrimSpace(detail.XAddr) != "",
+		PTZ:             detail.PTZSupported,
+		Manufacturer:    detail.Manufacturer,
+		Model:           detail.Model,
+		FirmwareVersion: detail.FirmwareVersion,
+		SerialNumber:    detail.SerialNumber,
+		HardwareID:      detail.HardwareID,
+	}
+	if !caps.Onvif {
+		return caps, nil
+	}
+	// GetServices tells us which ONVIF services the camera advertises (best-effort).
+	if services, svcErr := s.client.GetServices(ctx, s.onvifDeviceRequest(detail)); svcErr == nil {
+		for _, svc := range services {
+			ns := strings.ToLower(svc.Namespace)
+			switch {
+			case strings.Contains(ns, "/media"):
+				caps.Media = true
+			case strings.Contains(ns, "/ptz"):
+				caps.PTZ = true
+			case strings.Contains(ns, "/imaging"):
+				caps.Imaging = true
+			case strings.Contains(ns, "/analytics"):
+				caps.Analytics = true
+			case strings.Contains(ns, "/events"):
+				caps.Events = true
+			}
+		}
+	}
+	// Device-Management operations are all in the (mandatory) device service, so GetServices
+	// can't tell them apart — probe each read call and treat success as "supported" so the
+	// UI hides the ones this camera's firmware doesn't actually implement.
+	req := s.onvifDeviceRequest(detail)
+	if _, e := s.client.GetUsers(ctx, onvif.UsersRequest{DeviceServiceURL: req.DeviceServiceURL, Credentials: req.Credentials}); e == nil {
+		caps.UserMgmt = true
+	}
+	if _, e := s.client.GetSystemDateAndTime(ctx, req); e == nil {
+		caps.DateTime = true
+	}
+	if _, e := s.client.GetNetwork(ctx, req); e == nil {
+		caps.Network = true
+	}
+	return caps, nil
+}
+
+// GetCameraDeviceInfo returns the read-only device identity shown in Live View → Camera
+// Information. Static fields come from the stored detail; MAC + ONVIF version are pulled
+// live (best-effort) so they never block the response if the camera is slow/offline.
+func (s *cameraService) GetCameraDeviceInfo(ctx context.Context, id uint64) (*CameraDeviceInfo, error) {
+	detail, err := s.loadDetail(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	info := &CameraDeviceInfo{
+		Manufacturer:    detail.Manufacturer,
+		Model:           detail.Model,
+		FirmwareVersion: detail.FirmwareVersion,
+		HardwareID:      detail.HardwareID,
+		SerialNumber:    detail.SerialNumber,
+		Location:        onvifScopeLocation(detail.Scopes),
+		ONVIFUri:        strings.TrimSpace(detail.XAddr),
+	}
+	if info.ONVIFUri == "" {
+		return info, nil // non-ONVIF camera: static fields only
+	}
+	req := s.onvifDeviceRequest(detail)
+	// MAC address from the first NIC that reports one (best-effort).
+	if cfg, e := s.client.GetNetwork(ctx, req); e == nil && cfg != nil {
+		for _, iface := range cfg.Interfaces {
+			if mac := strings.TrimSpace(iface.MAC); mac != "" {
+				info.MACAddress = mac
+				break
+			}
+		}
+	}
+	// ONVIF version from the device service entry, falling back to any advertised version.
+	if services, e := s.client.GetServices(ctx, req); e == nil {
+		fallback := ""
+		for _, svc := range services {
+			if strings.TrimSpace(svc.Version) == "" {
+				continue
+			}
+			if strings.Contains(strings.ToLower(svc.Namespace), "/device/") {
+				info.ONVIFVersion = svc.Version
+				break
+			}
+			if fallback == "" {
+				fallback = svc.Version
+			}
+		}
+		if info.ONVIFVersion == "" {
+			info.ONVIFVersion = fallback
+		}
+	}
+	return info, nil
+}
+
+// onvifScopeLocation extracts a readable location from a camera's ONVIF scopes
+// (space-separated onvif:// URIs; the location sits under .../location/<value>).
+func onvifScopeLocation(scopes string) string {
+	const marker = "/location/"
+	for _, scope := range strings.Fields(scopes) {
+		if idx := strings.Index(scope, marker); idx >= 0 {
+			val := strings.ReplaceAll(strings.Trim(scope[idx+len(marker):], "/"), "/", ", ")
+			if dec, err := url.QueryUnescape(val); err == nil {
+				return dec
+			}
+			return val
+		}
+	}
+	return ""
+}
+
+func (s *cameraService) GetCameraNetwork(ctx context.Context, id uint64) (*onvif.NetworkConfig, error) {
+	detail, err := s.requireOnvif(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return s.client.GetNetwork(ctx, s.onvifDeviceRequest(detail))
+}
+
+func (s *cameraService) SetCameraNetwork(ctx context.Context, id uint64, req SetCameraNetworkRequest) error {
+	detail, err := s.requireOnvif(ctx, id)
+	if err != nil {
+		return err
+	}
+	return s.client.SetNetwork(ctx, onvif.NetworkUpdate{
+		DeviceServiceURL: detail.XAddr,
+		Credentials:      s.cameraOnvifCredentials(detail),
+		InterfaceToken:   req.InterfaceToken,
+		DHCP:             req.DHCP,
+		IPAddress:        req.IPAddress,
+		PrefixLength:     req.PrefixLength,
+		Gateway:          req.Gateway,
+		DNS:              req.DNS,
+	})
 }
 
 // — Streaming ----------------------------------------------------------------
@@ -600,6 +927,26 @@ func (s *cameraService) SnapshotSource(ctx context.Context, id uint64) (Snapshot
 	}, nil
 }
 
+// PreviewSource builds a playable source for an arbitrary detected-profile URL using the
+// camera's stored credentials, WITHOUT persisting — the live-preview modal streams this
+// under a separate source ID, so the camera's active RTSP URL (recording/detection) is
+// never changed.
+func (s *cameraService) PreviewSource(ctx context.Context, id uint64, rtspURL string) (SnapshotSource, error) {
+	detail, err := s.loadDetail(ctx, id)
+	if err != nil {
+		return SnapshotSource{}, err
+	}
+	rtspURL = strings.TrimSpace(rtspURL)
+	if rtspURL == "" {
+		return SnapshotSource{}, errors.New("rtspUrl is required")
+	}
+	return SnapshotSource{
+		RTSPURI:  RTSPURIWithCredentials(rtspURL, detail.Username, detail.Password),
+		Username: detail.Username,
+		Password: detail.Password,
+	}, nil
+}
+
 func (s *cameraService) TestStream(ctx context.Context, id uint64) (*rtsp.ProbeResult, error) {
 	detail, err := s.loadDetail(ctx, id)
 	if err != nil {
@@ -628,6 +975,29 @@ func (s *cameraService) TestStream(ctx context.Context, id uint64) (*rtsp.ProbeR
 		detail.Camera.RTSPTracks = string(tracks)
 	}
 	if err := s.saveDetail(ctx, detail); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// TestStreamURL probes a specific detected-profile RTSP URL with the camera's credentials
+// but does NOT persist anything (unlike TestStream, which writes back the resolved URL /
+// status / tracks) — so a per-stream test never disturbs the camera's active RTSP URL
+// that recording and detection rely on.
+func (s *cameraService) TestStreamURL(ctx context.Context, id uint64, rtspURL string) (*rtsp.ProbeResult, error) {
+	detail, err := s.loadDetail(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	rtspURL = strings.TrimSpace(rtspURL)
+	if rtspURL == "" {
+		return nil, errors.New("rtspUrl is required")
+	}
+	result, _, probeErrs, err := s.probeRTSPCandidates(ctx, detail, rtspURL, detail.ProfileToken)
+	if err != nil {
+		if len(probeErrs) > 1 {
+			return nil, fmt.Errorf("RTSP probe failed after trying %d candidate URLs: %s", len(probeErrs), strings.Join(probeErrs, "; "))
+		}
 		return nil, err
 	}
 	return result, nil
@@ -928,6 +1298,105 @@ func (s *cameraService) probeRTSPCandidates(ctx context.Context, detail *CameraD
 		probeErrs = append(probeErrs, fmt.Sprintf("%s: %v", candidate, err))
 	}
 	return nil, "", probeErrs, err
+}
+
+// classifyCredError maps a verification failure to an auth status. An explicit login
+// rejection is "unauthorized"; anything else (timeout, connection refused, DNS) is
+// "unreachable" so a temporarily offline camera never gets mistaken for bad credentials.
+// NB: many ONVIF cameras reject a bad WS-Security digest with HTTP 400 + a NotAuthorized
+// SOAP fault (not 401), so "status 400" from a reachable camera is treated as an auth
+// rejection too — this classifier is only ever called on a verification failure.
+func classifyCredError(err error) string {
+	if err == nil {
+		return CameraAuthOK
+	}
+	msg := strings.ToLower(err.Error())
+	for _, marker := range []string{"400", "401", "403", "unauthorized", "forbidden", "not authorized", "notauthorized", "authentication"} {
+		if strings.Contains(msg, marker) {
+			return CameraAuthUnauthorized
+		}
+	}
+	return CameraAuthUnreachable
+}
+
+// verifyCredentials checks whether creds authenticate against the camera without writing
+// to the DB. Returns one of CameraAuth{OK,Unauthorized,Unreachable}. For ONVIF cameras it
+// resolves the stream URI (a 401 there is definitive); it then opens the RTSP stream with
+// the creds — the DESCRIBE 401 being the only auth signal available for manual cameras.
+func (s *cameraService) verifyCredentials(ctx context.Context, detail CameraDetail, creds onvif.Credentials) (string, error) {
+	if strings.TrimSpace(creds.Username) == "" {
+		creds.Username = detail.Username
+	}
+	if creds.Password == "" {
+		creds.Password = detail.Password
+	}
+	// probeRTSPCandidates injects detail.Username/Password, so verify against the supplied
+	// creds by using them on a local copy.
+	detail.Username = creds.Username
+	detail.Password = creds.Password
+
+	probeCtx, cancel := context.WithTimeout(ctx, cameraProbeTimeout)
+	defer cancel()
+
+	rtspURL := strings.TrimSpace(detail.Camera.RTSPUrl)
+	profileToken := detail.ProfileToken
+
+	if strings.TrimSpace(detail.XAddr) != "" {
+		stream, err := s.client.GetStreamURI(probeCtx, onvif.StreamURIRequest{
+			DeviceServiceURL: detail.XAddr,
+			MediaServiceURL:  detail.MediaXAddr,
+			ProfileToken:     detail.ProfileToken,
+			Credentials:      creds,
+		})
+		if err != nil {
+			// A definitive rejection stops here; an unreachable ONVIF service falls through
+			// to the RTSP probe when we already know a stream URL.
+			if status := classifyCredError(err); status == CameraAuthUnauthorized {
+				return status, err
+			}
+		} else if stream != nil {
+			if u := strings.TrimSpace(stream.RTSPURL); u != "" {
+				rtspURL = u
+			}
+			if pt := strings.TrimSpace(stream.ProfileToken); pt != "" {
+				profileToken = pt
+			}
+		}
+	}
+
+	if rtspURL != "" {
+		if _, _, _, err := s.probeRTSPCandidates(probeCtx, &detail, rtspURL, profileToken); err != nil {
+			return classifyCredError(err), err
+		}
+		return CameraAuthOK, nil
+	}
+
+	// No stream URL to probe: if the ONVIF resolve above succeeded we accept it; otherwise
+	// we simply couldn't reach the camera to decide.
+	if strings.TrimSpace(detail.XAddr) != "" {
+		return CameraAuthOK, nil
+	}
+	return CameraAuthUnreachable, nil
+}
+
+// VerifyDeviceCredentials verifies creds against a not-yet-saved discovered camera (the
+// add flow, where there is no DB id yet).
+func (s *cameraService) VerifyDeviceCredentials(ctx context.Context, detail CameraDetail, creds onvif.Credentials) (string, error) {
+	return s.verifyCredentials(ctx, detail, creds)
+}
+
+// CameraAuthStatus verifies a saved camera's STORED credentials — the signal the camera
+// node's access gate uses to decide whether to prompt for new credentials.
+func (s *cameraService) CameraAuthStatus(ctx context.Context, id uint64) (string, error) {
+	detail, err := s.loadDetail(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	// The probe error is only a diagnostic — classifying the credentials as "unauthorized"
+	// (or "unreachable") is a successful determination, so it must NOT surface as an API
+	// error (that would make the handler return 400 and the gate never appear).
+	status, _ := s.verifyCredentials(ctx, *detail, onvif.Credentials{Username: detail.Username, Password: detail.Password})
+	return status, nil
 }
 
 // RTSPURIWithCredentials injects username:password into an RTSP URI.

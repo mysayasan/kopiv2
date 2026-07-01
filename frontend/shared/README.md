@@ -27,7 +27,7 @@ Each app's babel-loader transpiles these files (they're plain ESM React, outside
 `node_modules`).
 
 ## Components
-- `DataTable` — client-side filter/sort/page grid. Columns: `{ key, label, render?, filterable?, filterType? }`. (Renders `.table-surface`/`.pager`/`.filter-*` classes — styled by the app's table CSS.)
+- `DataTable` — filter/sort/page grid, client or server mode. Columns: `{ key, label, render?, filterable?, filterType? }` (`filterType: 'daterange'` renders a From/To date-range popover that emits two conditions, e.g. for a `createdAt` column). Default (`serverMode` unset/false) filters/sorts/pages in-memory over `rows`. Pass `serverMode` to make it a controlled view instead: `rows` is already the current page, `total` is the full filtered count, and `onQuery({ filters, sorters, offset, limit })` fires whenever filter/sort/page state changes so the parent can run the query against the backend's `filters`/`sorters` query-param contract (`domain/shared/apis.ParseListQueryOptions`) — used by mymatasan's Alert Log for true DB-side paging over large detection histories. Optional `pageSizeOptions` + a page-size selector in the pager; optional `initialFilters` seeds column filters at mount (remount via a `key` to apply a fresh seed, e.g. a "Today" preset). (Renders `.table-surface`/`.pager`/`.filter-*` classes — styled by the app's table CSS.)
 - `ToastStack` — floating transient notifications. The app owns `toasts` state + a `pushToast(text, kind)`; `kind` ∈ `success | error | info`. Ships its own tokenized CSS.
 - `Ico` / `icoSvg` — the shared icon vocabulary. Add new glyphs here, never per-app. `Ico` defaults to `sz=14`.
 

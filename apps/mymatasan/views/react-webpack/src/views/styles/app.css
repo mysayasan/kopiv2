@@ -913,8 +913,15 @@ body .toast-stack {
 }
 
 /* Fullscreen Live View: hide all chrome and size the grid rows × cols so every
-   tile fits the screen with no scrolling. Activated via the Fullscreen API. */
+   tile fits the screen with no scrolling. Activated via the Fullscreen API, but also
+   pinned as a top-most fixed overlay so it reliably covers the side-nav (z-index 20),
+   workspace header, and footer of the new shell — the section is nested inside
+   .main-workspace now, so relying on the fullscreen top layer alone left that chrome
+   showing on some setups. */
 .views-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
   padding: 0;
   margin: 0;
   width: 100vw;
@@ -989,8 +996,10 @@ body .toast-stack {
 
 .view-tile img,
 .view-tile video,
-.preview-panel img,
-.preview-panel video,
+.preview-dialog img,
+.preview-dialog video,
+.camera-live-view img,
+.camera-live-view video,
 .zone-live img,
 .zone-live video {
   width: 100%;
@@ -1233,86 +1242,11 @@ body .toast-stack {
   }
 }
 
-.camera-grid {
+/* Discover Camera page: probe toolbox stacked on top, results below. */
+.discover-layout {
   display: grid;
-  grid-template-columns: minmax(280px, 420px) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
-}
-
-.saved-browser {
-  display: grid;
-  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
-  gap: 16px;
-  align-items: start;
-}
-
-.saved-sidebar {
-  display: grid;
-  gap: 12px;
-  border: 1px solid var(--border-panel);
-  border-radius: 8px;
-  background: var(--bg-surface);
-  padding: 12px;
-}
-
-.saved-sidebar header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.saved-sidebar h2 {
-  margin: 0;
-  font-size: 17px;
-}
-
-.saved-sidebar header span {
-  min-width: 30px;
-  text-align: center;
-  border-radius: 999px;
-  background: var(--accent-badge);
-  color: var(--accent);
-  padding: 4px 8px;
-  font-weight: 720;
-}
-
-.saved-device-nav {
-  display: grid;
-  gap: 6px;
-}
-
-.saved-device-button {
-  width: 100%;
-  min-height: 52px;
-  display: grid;
-  gap: 3px;
-  justify-items: start;
-  border-color: transparent;
-  background: var(--bg-surface);
-  color: var(--text-secondary);
-  padding: 8px 10px;
-  text-align: left;
-}
-
-.saved-device-button:hover,
-.saved-device-button.active {
-  border-color: var(--accent);
-  background: var(--accent-bg);
-}
-
-.saved-device-button strong,
-.saved-device-button span {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.saved-device-button span {
-  color: var(--text-faint);
-  font-size: 12px;
 }
 
 .saved-detail {
@@ -1358,25 +1292,157 @@ body .toast-stack {
   padding: 14px;
 }
 
-.scan-row,
-.probe-row,
+/* Discover Cameras action area: the auto "Network scan" and "Add by address" cards sit
+   side-by-side as two distinct entities, joined by a central OR divider. */
+.discover-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1.75fr) auto minmax(0, 1fr);
+  align-items: stretch;
+  gap: 0;
+}
+
+.discover-card {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  border: 1px solid var(--border-panel);
+  border-radius: 12px;
+  background: var(--bg-surface);
+  padding: 16px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* A slim accent bar down the left edge distinguishes the two cards at a glance. */
+.discover-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+}
+
+.discover-card--scan::before { background: var(--primary, #2563eb); }
+.discover-card--manual::before { background: var(--success, #16a34a); }
+
+.discover-card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.discover-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  flex: 0 0 auto;
+}
+
+.discover-card--scan .discover-card-icon {
+  color: var(--primary, #2563eb);
+  background: color-mix(in srgb, var(--primary, #2563eb) 12%, transparent);
+}
+
+.discover-card--manual .discover-card-icon {
+  color: var(--success, #16a34a);
+  background: color-mix(in srgb, var(--success, #16a34a) 12%, transparent);
+}
+
+.discover-card-heading h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-base);
+}
+
+.discover-card-heading p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* The OR divider: a vertical hairline with a centered chip. */
+.discover-divider {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+}
+
+.discover-divider::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  width: 1px;
+  background: var(--border-subtle);
+}
+
+.discover-divider span {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-base);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Stack the two cards (OR divider goes horizontal) once the row gets too tight. */
+@media (max-width: 860px) {
+  .discover-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .discover-divider {
+    width: auto;
+    height: 40px;
+  }
+  .discover-divider::before {
+    top: auto;
+    bottom: auto;
+    left: 12px;
+    right: 12px;
+    width: auto;
+    height: 1px;
+  }
+}
+
 .credential-row,
 .metadata-row {
   display: grid;
   gap: 12px;
-  align-items: end;
+  /* Top-align so a field's helper text (e.g. "Password saved" under the password) hangs
+     below without shoving the sibling field down to match. */
+  align-items: start;
 }
 
+/* Both scan and manual-probe rows read as a single left-aligned toolbar of
+   controls that wraps as needed; the trailing button sits after the fields. */
 .scan-row,
 .probe-row {
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
-.scan-row {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
   gap: 12px;
+}
+
+/* The manual-probe row now lives in its own card; let its address field grow to
+   fill the card so it doesn't look stranded. */
+.probe-row label {
+  flex: 1 1 180px;
+  min-width: 0;
 }
 
 .scan-protocol-label {
@@ -1415,16 +1481,32 @@ body .toast-stack {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.preview-panel {
-  display: grid;
-  gap: 10px;
-  border: 1px solid var(--border-panel);
-  border-radius: 8px;
-  background: var(--bg-surface);
-  padding: 14px;
+/* Live-preview modal: a dimmed backdrop + a centered dialog card (WebRTC view + PTZ). */
+.preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.55);
 }
 
-.preview-panel header,
+.preview-dialog {
+  display: grid;
+  gap: 10px;
+  width: min(100%, 900px);
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  border: 1px solid var(--border-panel);
+  border-radius: 10px;
+  background: var(--bg-surface);
+  padding: 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+}
+
+.preview-dialog header,
 .device-section > header,
 .device-title-row {
   display: flex;
@@ -1433,13 +1515,13 @@ body .toast-stack {
   gap: 12px;
 }
 
-.preview-panel h2,
+.preview-dialog h2,
 .device-section h2 {
   margin: 0;
   font-size: 18px;
 }
 
-.preview-panel p {
+.preview-dialog p {
   margin: 4px 0 0;
   color: var(--text-faint);
   font-size: 13px;
@@ -1447,12 +1529,12 @@ body .toast-stack {
 
 .preview-viewport {
   position: relative;
-  width: min(100%, 860px);
+  width: 100%;
   overflow: hidden;
   border-radius: 8px;
 }
 
-.preview-panel .live-frame {
+.preview-dialog .live-frame {
   width: 100%;
   aspect-ratio: 16 / 9;
   border: 1px solid var(--border-soft);
@@ -1509,10 +1591,29 @@ body .toast-stack {
   font-size: 15px;
 }
 
-.discovery-group-actions {
+/* The Saved group title doubles as its expand/collapse control: a chevron +
+   heading that resets all default button chrome so it reads as plain text, with
+   the count badge kept separate on the header's right edge. */
+.discovery-group-toggle {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  color: var(--text-base);
+  cursor: pointer;
+}
+
+.discovery-group-toggle:hover {
+  color: var(--accent);
+}
+
+.discovery-group-toggle h3 {
+  margin: 0;
 }
 
 .discovery-group-count {
@@ -1639,26 +1740,69 @@ body .toast-stack {
   grid-template-columns: 1fr;
 }
 
-.stream-option-panel {
+/* Detected ONVIF streams: one row per profile with per-stream Test / Live Preview / Use
+   actions. The active (in-use) stream is highlighted. */
+.stream-list {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(0, 1.4fr) auto;
-  gap: 10px;
-  align-items: end;
+  gap: 8px;
+}
+
+.stream-list-label {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text-muted);
+}
+
+.stream-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   background: var(--bg-subtle);
-  padding: 12px;
+  padding: 10px 12px;
 }
 
-.stream-option-uri {
-  min-height: 38px;
+.stream-row.active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.stream-row-info {
+  flex: 1 1 220px;
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.stream-row-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.stream-row-badge {
+  border-radius: 999px;
+  background: var(--accent-badge);
+  color: var(--accent);
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.stream-row-uri {
   overflow-wrap: anywhere;
-  border: 1px solid var(--border-panel);
-  border-radius: 6px;
-  background: var(--bg-surface);
-  padding: 9px 10px;
-  color: var(--text-muted);
-  font-size: 13px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.stream-row-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex: 0 0 auto;
 }
 
 .stream-action-flow {
@@ -3711,8 +3855,6 @@ dd {
 
 @media (max-width: 980px) {
   .topbar,
-  .camera-grid,
-  .saved-browser,
   .vision-layout,
   .settings-workspace,
   .settings-layout,
@@ -3721,11 +3863,8 @@ dd {
   .vision-row,
   .event-grid,
   .tool-status-grid,
-  .scan-row,
-  .probe-row,
   .credential-row,
   .metadata-row,
-  .stream-option-panel,
   .stream-action-flow {
     grid-template-columns: 1fr;
   }
@@ -4161,109 +4300,7 @@ dd {
   border-top: 1px solid #2e3a52;
 }
 
-.notif-wrap {
-  position: relative;
-}
-
-.notif-btn {
-  position: relative;
-}
-
-.notif-badge {
-  position: absolute;
-  top: -5px;
-  right: -6px;
-  min-width: 17px;
-  height: 17px;
-  padding: 0 4px;
-  border-radius: 9px;
-  background: #e53935;
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 17px;
-  text-align: center;
-  pointer-events: none;
-  opacity: 0;
-  transform: scale(0.6);
-  transition: opacity 0.15s ease, transform 0.15s ease;
-}
-
-.notif-badge--visible {
-  opacity: 1;
-  transform: scale(1);
-}
-
-.notif-panel {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  width: 300px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-divider);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px var(--shadow-panel);
-  z-index: 200;
-  overflow: hidden;
-  max-height: 400px;
-  overflow-y: auto;
-}
-
-.notif-panel-header {
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border-divider);
-  font-weight: 600;
-  font-size: 13px;
-  position: sticky;
-  top: 0;
-  background: var(--bg-surface);
-}
-
-.notif-empty {
-  padding: 14px;
-  color: var(--text-faint);
-  font-size: 13px;
-  margin: 0;
-}
-
-.notif-item {
-  display: grid;
-  width: 100%;
-  text-align: left;
-  padding: 9px 14px;
-  border: none;
-  border-bottom: 1px solid var(--border-subtle);
-  background: none;
-  cursor: pointer;
-  gap: 2px;
-  color: var(--text-primary);
-}
-
-.notif-item:last-child {
-  border-bottom: none;
-}
-
-.notif-item:hover {
-  background: var(--bg-body);
-}
-
-.notif-label {
-  font-weight: 600;
-  font-size: 13px;
-  text-transform: capitalize;
-  color: var(--text-primary);
-}
-
-.notif-topic {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-weight: 600;
-  font-size: 13px;
-  color: var(--text-primary);
-}
-
-/* Severity dot before a notification title. */
+/* Severity dot before a notification title (shown on the Notifications page). */
 .notif-sev {
   flex-shrink: 0;
   width: 8px;
@@ -4282,34 +4319,6 @@ dd {
 
 .notif-sev--critical {
   background: var(--danger-color, #d9534f);
-}
-
-.notif-detail {
-  font-size: 12px;
-  color: var(--text-secondary);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  white-space: pre-line;
-}
-
-.notif-meta-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 1px;
-}
-
-.notif-camera {
-  font-size: 12px;
-  color: var(--text-link);
-}
-
-.notif-time {
-  font-size: 11px;
-  color: var(--text-faint);
 }
 
 /* ---- Dedicated Notifications page ---- */
