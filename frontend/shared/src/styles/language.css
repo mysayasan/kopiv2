@@ -2,7 +2,7 @@
    reuse any app's classes, so redesigning an app's nav/topbar can never leave the
    selector unstyled or broken. Colors come from the --ui-* design tokens every app maps
    (see styles/tokens.css), so it follows each app's light/dark/theme automatically.
-   Renders as a one-line list — "English | Melayu | 中文 | தமிழ்" — with the pipe drawn as
+   Renders as a one-line list — "English | Melayu | 中文 | العربية" — with the pipe drawn as
    a left border between adjacent options. */
 
 .shared-lang {

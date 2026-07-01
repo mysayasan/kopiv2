@@ -1,0 +1,6 @@
+{
+  "type": "changed",
+  "scope": "mymatasan, myidsan, myseliasan, shared",
+  "summary": "Tamil was permanently removed as a supported UI language and replaced with Arabic (العربية) across the shared frontend module and all three app frontends. Arabic is now the fourth supported locale alongside English, Malay, and Chinese Simplified. The shared i18n module (frontend/shared/src/i18n/index.js) gained an ar dictionary (mirroring the existing en/ms/zh key set), updated LANGUAGES to list العربية, added RTL_LANGS = ['ar'], and extended LangProvider to keep <html lang/dir> in sync — selecting Arabic sets dir=rtl so every app's layout mirrors automatically without per-component changes. Each app's i18n.js had its ta block replaced with a full ar block. The LanguageDropdown now reads English | Melayu | 中文 | العربية. normalizeLang maps ar prefixes instead of ta.",
+  "compatibility": "Breaking for any user who had Tamil ('ta') stored as their preferred language in localStorage — normalizeLang no longer recognizes 'ta' and will fall back to 'en' on next load. All other language preferences (en, ms, zh) and all server-side behaviour are unchanged. No database or API changes. Existing installs that never offered Tamil to users are unaffected."
+}

@@ -2,7 +2,7 @@ import { LANGUAGES, useT } from './i18n';
 import './styles/language.css';
 
 // LanguageDropdown (kept name for stable imports) is now a plain inline one-line
-// switcher: "English | Melayu | 中文 | தமிழ்" — each language a clickable option, the
+// switcher: "English | Melayu | 中文 | العربية" — each language a clickable option, the
 // active one highlighted, no dropdown. It is fully SELF-CONTAINED: its own
 // `shared-lang-*` classes + styles/language.css (tokenized with --ui-*), so it never
 // depends on an app's theme/nav/topbar classes and a UI redesign can't break it. The

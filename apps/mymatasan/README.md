@@ -235,7 +235,7 @@ The browser UI is a React 18 single-page application bundled with Webpack 5 into
 
 ### Multi-language UI (i18n)
 
-The UI is fully localized into **English**, **Malay (Bahasa Melayu)**, **Chinese Simplified**, and **Tamil**. A language switcher (`LanguageDropdown` from `@shared`) appears in the top bar as an inline row of buttons (`English | Melayu | 中文 | தமிழ்`). The active language is persisted to `localStorage`. App-specific translations are in `views/react-webpack/src/views/i18n.js`; they layer over the shared base dictionary (`frontend/shared/src/i18n/index.js`) via `LangProvider`/`useT()`. Keys missing from a locale fall back to English, then to the key itself, so no render path can crash from a missing translation.
+The UI is fully localized into **English**, **Malay (Bahasa Melayu)**, **Chinese Simplified**, and **Arabic (العربية)**. Arabic is a right-to-left (RTL) locale; selecting it sets `<html dir="rtl">` so the entire layout mirrors automatically. A language switcher (`LanguageDropdown` from `@shared`) appears in the top bar as an inline row of buttons (`English | Melayu | 中文 | العربية`). The active language is persisted to `localStorage`. App-specific translations are in `views/react-webpack/src/views/i18n.js`; they layer over the shared base dictionary (`frontend/shared/src/i18n/index.js`) via `LangProvider`/`useT()`. The shared provider also maintains `RTL_LANGS = ['ar']` and sets `<html lang/dir>` on every locale change. Keys missing from a locale fall back to English, then to the key itself, so no render path can crash from a missing translation.
 
 ### Shared footer
 

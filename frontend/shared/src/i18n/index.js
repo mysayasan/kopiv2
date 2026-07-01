@@ -12,7 +12,7 @@
 // Apps opt in by wrapping their tree in <LangProvider lang={lang}> and feeding it a
 // locale from localStorage. With NO provider, useT() resolves to English, so every
 // existing consumer keeps working unchanged until an app wires the provider.
-import { createContext, useContext, useMemo } from 'react';
+import { createContext, useContext, useEffect, useMemo } from 'react';
 
 // Each dictionary is a flat map of stable id -> string. Namespaced by area
 // (common.* reused across widgets, table.*, pager.*, nav.*, lang.*).
@@ -238,81 +238,84 @@ const zh = {
   'foot.tagline': 'r450k 产品 — 展示人类工程与 AI 如何相辅相成。',
 };
 
-// Tamil.
-const ta = {
-  'common.close': 'மூடு',
-  'common.remove': 'அகற்று',
-  'common.add': 'சேர்',
-  'common.clear': 'அழி',
-  'common.apply': 'பயன்படுத்து',
-  'common.any': 'ஏதேனும்',
-  'common.yes': 'ஆம்',
-  'common.no': 'இல்லை',
-  'common.dismiss': 'மூடு',
-  'common.save': 'சேமி',
-  'common.saving': 'சேமிக்கிறது…',
-  'common.saved': 'சேமிக்கப்பட்டது',
-  'common.cancel': 'ரத்து',
-  'common.delete': 'நீக்கு',
-  'common.edit': 'திருத்து',
-  'common.create': 'உருவாக்கு',
-  'common.update': 'புதுப்பி',
-  'common.refresh': 'புதுப்பி',
-  'common.reload': 'மீண்டும் ஏற்று',
-  'common.enable': 'இயக்கு',
-  'common.disable': 'முடக்கு',
-  'common.enabled': 'இயக்கப்பட்டது',
-  'common.disabled': 'முடக்கப்பட்டது',
-  'common.active': 'செயலில்',
-  'common.inactive': 'செயலற்ற',
-  'common.loading': 'ஏற்றுகிறது…',
-  'common.name': 'பெயர்',
-  'common.description': 'விளக்கம்',
-  'common.username': 'பயனர் பெயர்',
-  'common.password': 'கடவுச்சொல்',
-  'common.search': 'தேடு',
-  'common.test': 'சோதி',
-  'common.upload': 'பதிவேற்று',
-  'common.download': 'பதிவிறக்கு',
-  'common.start': 'தொடங்கு',
-  'common.stop': 'நிறுத்து',
-  'common.confirm': 'உறுதிப்படுத்து',
-  'common.reset': 'மீட்டமை',
-  'common.discard': 'நிராகரி',
-  'common.back': 'பின்',
-  'common.next': 'அடுத்து',
-  'common.done': 'முடிந்தது',
-  'common.status': 'நிலை',
-  'common.type': 'வகை',
-  'common.all': 'அனைத்தும்',
-  'common.none': 'இல்லை',
-  'common.optional': '(விருப்பத்தேர்வு)',
-  'table.empty': 'பதிவுகள் இல்லை',
-  'table.sort': 'வரிசைப்படுத்து',
-  'table.sortAsc': 'ஏறு',
-  'table.sortDesc': 'இறங்கு',
-  'table.operator': 'செயற்குறி',
-  'table.value': 'மதிப்பு',
-  'table.condition': 'நிபந்தனை {n}',
-  'table.filterCol': '{col} வடிகட்டு',
-  'table.sortByCol': '{col} வாரியாக வரிசைப்படுத்து',
-  'pager.summary': 'பக்கம் {current} / {count} · மொத்தம் {total}',
-  'pager.first': 'முதல் பக்கம்',
-  'pager.previous': 'முந்தைய பக்கம்',
-  'pager.next': 'அடுத்த பக்கம்',
-  'pager.last': 'கடைசி பக்கம்',
-  'pager.goto': 'பக்கத்திற்குச் செல்',
-  'pager.pageNumber': 'பக்க எண்',
-  'nav.main': 'முதன்மை',
-  'lang.label': 'மொழி',
-  'lang.select': 'மொழியைத் தேர்ந்தெடுக்கவும்',
-  'foot.built': 'கட்டப்பட்டது {date}',
-  'foot.core': 'மையம் v{v}',
-  'foot.commit': 'கமிட்',
-  'foot.tagline': 'r450k தயாரிப்பு — மனித பொறியியலும் AI யும் ஒருவரையொருவர் எவ்வாறு நிறைவு செய்கின்றன என்பதைக் காட்டுகிறது.',
+// Arabic (العربية) — right-to-left.
+const ar = {
+  'common.close': 'إغلاق',
+  'common.remove': 'إزالة',
+  'common.add': 'إضافة',
+  'common.clear': 'مسح',
+  'common.apply': 'تطبيق',
+  'common.any': 'أي',
+  'common.yes': 'نعم',
+  'common.no': 'لا',
+  'common.dismiss': 'تجاهل',
+  'common.save': 'حفظ',
+  'common.saving': 'جارٍ الحفظ…',
+  'common.saved': 'تم الحفظ',
+  'common.cancel': 'إلغاء',
+  'common.delete': 'حذف',
+  'common.edit': 'تعديل',
+  'common.create': 'إنشاء',
+  'common.update': 'تحديث',
+  'common.refresh': 'تحديث',
+  'common.reload': 'إعادة تحميل',
+  'common.enable': 'تفعيل',
+  'common.disable': 'تعطيل',
+  'common.enabled': 'مُفعّل',
+  'common.disabled': 'مُعطّل',
+  'common.active': 'نشط',
+  'common.inactive': 'غير نشط',
+  'common.loading': 'جارٍ التحميل…',
+  'common.name': 'الاسم',
+  'common.description': 'الوصف',
+  'common.username': 'اسم المستخدم',
+  'common.password': 'كلمة المرور',
+  'common.search': 'بحث',
+  'common.test': 'اختبار',
+  'common.upload': 'رفع',
+  'common.download': 'تنزيل',
+  'common.start': 'بدء',
+  'common.stop': 'إيقاف',
+  'common.confirm': 'تأكيد',
+  'common.reset': 'إعادة تعيين',
+  'common.discard': 'تجاهل',
+  'common.back': 'رجوع',
+  'common.next': 'التالي',
+  'common.done': 'تم',
+  'common.status': 'الحالة',
+  'common.type': 'النوع',
+  'common.all': 'الكل',
+  'common.none': 'لا شيء',
+  'common.optional': '(اختياري)',
+  'table.empty': 'لا توجد سجلات',
+  'table.sort': 'فرز',
+  'table.sortAsc': 'تصاعدي',
+  'table.sortDesc': 'تنازلي',
+  'table.operator': 'عامل',
+  'table.value': 'القيمة',
+  'table.condition': 'الشرط {n}',
+  'table.filterCol': 'تصفية {col}',
+  'table.sortByCol': 'الفرز حسب {col}',
+  'pager.summary': 'صفحة {current} / {count} · {total} إجمالاً',
+  'pager.first': 'الصفحة الأولى',
+  'pager.previous': 'الصفحة السابقة',
+  'pager.next': 'الصفحة التالية',
+  'pager.last': 'الصفحة الأخيرة',
+  'pager.goto': 'الانتقال إلى الصفحة',
+  'pager.pageNumber': 'رقم الصفحة',
+  'nav.main': 'الرئيسية',
+  'lang.label': 'اللغة',
+  'lang.select': 'اختر اللغة',
+  'foot.built': 'بُني في {date}',
+  'foot.core': 'النواة v{v}',
+  'foot.commit': 'الإصدار',
+  'foot.tagline': 'منتج r450k — يُظهر كيف تُكمّل الهندسة البشرية والذكاء الاصطناعي بعضهما البعض.',
 };
 
-const DICTS = { en, ms, zh, ta };
+const DICTS = { en, ms, zh, ar };
+
+// Locales that render right-to-left.
+export const RTL_LANGS = ['ar'];
 
 // LANGUAGES drives the language dropdown. `label` is the language's endonym (shown in
 // its own script) so it's recognizable regardless of the current UI locale.
@@ -320,7 +323,7 @@ export const LANGUAGES = [
   { code: 'en', label: 'English' },
   { code: 'ms', label: 'Melayu' },
   { code: 'zh', label: '中文' },
-  { code: 'ta', label: 'தமிழ்' },
+  { code: 'ar', label: 'العربية' },
 ];
 
 // Default context value works even with no provider mounted (English, no app dict).
@@ -330,8 +333,14 @@ const LangContext = createContext({ lang: 'en', messages: null });
 // `messages` is `{ en: {...}, ms: {...}, ... }` supplied by each app for its OWN strings;
 // it LAYERS OVER the shared base dictionary (app key wins, then shared, then English,
 // then the key). Pass a stable (module-level) object so the memo stays put.
+// It also keeps <html lang/dir> in sync so RTL locales (Arabic) mirror the layout.
 export function LangProvider({ lang, messages = null, children }) {
   const norm = DICTS[lang] ? lang : 'en';
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.documentElement.lang = norm;
+    document.documentElement.dir = RTL_LANGS.includes(norm) ? 'rtl' : 'ltr';
+  }, [norm]);
   const value = useMemo(() => ({ lang: norm, messages }), [norm, messages]);
   return <LangContext.Provider value={value}>{children}</LangContext.Provider>;
 }
@@ -367,6 +376,6 @@ export function normalizeLang(value) {
   const v = String(value || '').toLowerCase();
   if (v.startsWith('ms') || v.startsWith('id')) return 'ms';
   if (v.startsWith('zh')) return 'zh';
-  if (v.startsWith('ta')) return 'ta';
+  if (v.startsWith('ar')) return 'ar';
   return 'en';
 }
