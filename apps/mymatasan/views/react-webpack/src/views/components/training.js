@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Ico } from './icons';
 import { useT } from '@shared/i18n';
 import { ConsoleLog } from './console';
+import { ObjectClassesPanel } from './vision';
 import { apiBase, cameraTitle } from '../lib/helpers';
 
 // api is a thin authed fetch wrapper that unwraps the standard response envelope
@@ -475,7 +476,7 @@ const alertTypeOptions = [
   ['smoke', 'det.smoke'],
 ];
 
-export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }) {
+export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated, classes, labelCatalog, activeModelClasses, onSaveClass, onDeleteClass }) {
   const t = useT();
   const [datasets, setDatasets] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
@@ -807,11 +808,13 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
     ['datasets', t('tr.stepDatasets'), 'folder'],
     ['images', t('tr.stepImages'), 'grid2'],
     ['models', t('tr.stepModels'), 'cpu'],
+    ['classes', t('tr.stepClasses'), 'box'],
   ];
   const stepHeaders = {
     datasets: { title: t('tr.stepDatasets'), desc: t('tr.datasetsDesc') },
     images: { title: t('tr.stepImages'), desc: t('tr.imagesDesc') },
     models: { title: t('tr.stepModels'), desc: t('tr.modelsDesc') },
+    classes: { title: t('tr.stepClasses'), desc: t('tr.classesDesc') },
   };
   const header = stepHeaders[step] || stepHeaders.datasets;
 
@@ -1124,6 +1127,17 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated }
           </div>
         </form>
       </section>
+      ) : null}
+
+      {step === 'classes' ? (
+        <ObjectClassesPanel
+          classes={classes}
+          labelCatalog={labelCatalog}
+          activeModelClasses={activeModelClasses}
+          busy={busy}
+          onSaveClass={onSaveClass}
+          onDeleteClass={onDeleteClass}
+        />
       ) : null}
       </div>
 

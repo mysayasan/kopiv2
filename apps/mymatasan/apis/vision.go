@@ -10,6 +10,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
+	sharedapis "github.com/mysayasan/kopiv2/domain/shared/apis"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/recording"
@@ -185,12 +186,16 @@ func (a *visionApi) deleteRule(w http.ResponseWriter, r *http.Request) {
 func (a *visionApi) listAlerts(w http.ResponseWriter, r *http.Request) {
 	limit, offset := readPaging(r)
 	cameraId := parseInt64Query(r, "cameraId")
-	createdAfter := parseInt64Query(r, "createdAfter")
-	createdBefore := parseInt64Query(r, "createdBefore")
-	ruleId := parseInt64Query(r, "ruleId")
 	status := r.URL.Query().Get("status")
-	detectionType := r.URL.Query().Get("detectionType")
-	alerts, total, err := a.serv.GetAlerts(r.Context(), limit, offset, cameraId, createdAfter, createdBefore, ruleId, status, detectionType)
+	// The grid drives filtering + sorting server-side: `filters`/`sorters` query
+	// params (DataTable format) are validated against AlertEvent's fields, so paging
+	// runs over the true filtered set rather than a client-side slice.
+	opts, err := sharedapis.ParseListQueryOptions[entities.AlertEvent](r)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	alerts, total, err := a.serv.GetAlerts(r.Context(), limit, offset, cameraId, status, opts.Filters, opts.Sorters)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return

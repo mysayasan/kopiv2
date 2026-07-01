@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Ico } from './icons';
 import { useT } from '@shared/i18n';
-import {formatFileSize,segmentDuration,segmentFilename,detectionTypeLabel,todayDateString,apiBase,formatTimestamp,orderedSavedCameras } from '../lib/helpers';
-import { SavedDeviceNav } from './cameras';
+import {formatFileSize,segmentDuration,segmentFilename,detectionTypeLabel,todayDateString,apiBase,formatTimestamp } from '../lib/helpers';
 
 // hevcPlaybackSupported reports whether this browser can decode HEVC in a plain
 // <video> element. Chrome/Edge (with OS HW support) and Safari return a non-empty
@@ -32,17 +31,15 @@ function segmentPlaybackUrl(seg) {
   return base;
 }
 
-// RecordingTab is the full-width recordings browser: per-camera date timeline, segment
-// list, and playback. Per-camera recording config and stream URLs now live in the
-// Saved-camera panel (CameraRecordingConfig / CameraStreamConfig).
-export function RecordingTab({ canManage = true, saved, segments, busy, authHeader, onDeleteSegment, onPurgeExpired, onReload, focusCameraId, unacknowledgedAlertIds, onAcknowledgeAlert, alerts }) {
+// CameraRecordingsPanel is the per-camera recordings browser (date timeline, segment
+// list, and playback) shown as a tab inside the camera node, beside AI. Per-camera
+// recording config and stream URLs live in the Saved-camera Settings panel
+// (CameraRecordingConfig / CameraStreamConfig). The camera is fixed by the caller —
+// the camera node's tree drives selection — so there is no in-panel camera picker.
+export function CameraRecordingsPanel({ camera, canManage = true, busy, authHeader, onDeleteSegment, onPurgeExpired, onReload, unacknowledgedAlertIds, onAcknowledgeAlert, alerts }) {
   const t = useT();
-  const orderedSaved = useMemo(() => orderedSavedCameras(saved), [saved]);
-  const [selectedCameraId, setSelectedCameraId] = useState(0);
-  const onReloadRef = useRef(onReload);
-  useEffect(() => { onReloadRef.current = onReload; });
-  const effectiveCameraId = selectedCameraId || Number(orderedSaved[0]?.id) || 0;
-  const selectedCamera = saved.find((d) => Number(d.id) === effectiveCameraId) || orderedSaved[0] || null;
+  const effectiveCameraId = Number(camera?.id) || 0;
+  const selectedCamera = camera || null;
   const alertById = useMemo(
     () => new Map((alerts || []).map((a) => [Number(a.id), a])),
     [alerts],
@@ -52,7 +49,7 @@ export function RecordingTab({ canManage = true, saved, segments, busy, authHead
   const [videoUrl, setVideoUrl] = useState(null);
   const [loadingVideo, setLoadingVideo] = useState(false);
 
-  // All Recordings browse state
+  // Recordings browse state (scoped to this camera + the selected date).
   const [browseDate, setBrowseDate] = useState(todayDateString);
   const [allBrowseSegments, setAllBrowseSegments] = useState([]);
   const [browseLoading, setBrowseLoading] = useState(false);
@@ -62,10 +59,6 @@ export function RecordingTab({ canManage = true, saved, segments, busy, authHead
   const [timelineScrollTargetId, setTimelineScrollTargetId] = useState(null);
   const timelineBarRef = useRef(null);
   const segmentRefsMap = useRef({});
-
-  useEffect(() => {
-    if (focusCameraId) setSelectedCameraId(Number(focusCameraId));
-  }, [focusCameraId]);
 
   useEffect(() => {
     if (!playingSegment) return;
@@ -256,7 +249,7 @@ export function RecordingTab({ canManage = true, saved, segments, busy, authHead
   }
 
   return (
-    <section className="workspace">
+    <section className="camera-recordings-panel">
       <div className="toolbar">
         <div>
           <h2 className="section-title">{t('rec.title')}</h2>
@@ -284,13 +277,9 @@ export function RecordingTab({ canManage = true, saved, segments, busy, authHead
         </div>
       </div>
 
-      <section className="saved-browser">
-        <SavedDeviceNav devices={saved} selectedId={selectedCamera?.id} onSelect={setSelectedCameraId} />
-
-        <main className="saved-detail">
-          {selectedCamera ? (
-            <div className="recording-layout">
-              <section className="settings-panel">
+      {selectedCamera ? (
+        <div className="recording-layout">
+          <section className="settings-panel">
                 {(() => {
                   const dayStartSec = browseDate ? new Date(browseDate + 'T00:00:00').getTime() / 1000 : 0;
                   const MINS_IN_DAY = 24 * 60;
@@ -439,13 +428,11 @@ export function RecordingTab({ canManage = true, saved, segments, busy, authHead
                   </>
                   );
                 })()}
-              </section>
-            </div>
-          ) : (
-            <p className="empty-hint">{t('rec.noCameras')}</p>
-          )}
-        </main>
-      </section>
+          </section>
+        </div>
+      ) : (
+        <p className="empty-hint">{t('rec.noCameras')}</p>
+      )}
 
       {playingSegment && (() => {
         const playAlert = playingSegment.alertId ? alertById.get(Number(playingSegment.alertId)) : null;
@@ -686,8 +673,8 @@ export function CameraRecordingConfig({ device, configs, busy, canManage = true,
       <div className="camera-encoder-section" style={{marginTop:'16px', paddingTop:'12px', borderTop:'1px solid var(--border, rgba(148,163,184,0.2))'}}>
         <div style={{display:'flex', alignItems:'center', gap:'8px', marginBottom:'8px'}}>
           <strong style={{fontSize:'13px'}}>{t('rec.cameraSideQuality')}</strong>
-          <button type="button" className="quiet" style={{fontSize:'11px', padding:'2px 8px', marginLeft:'auto'}} onClick={loadEncoder} disabled={encoderBusy}>
-            {encoderBusy ? '…' : (encoder ? `↻ ${t('common.refresh')}` : t('rec.readFromCamera'))}
+          <button type="button" className="quiet" style={{marginLeft:'auto'}} onClick={loadEncoder} disabled={encoderBusy}>
+            <span className="btn-icon"><Ico n="refresh" /> {encoder ? t('common.refresh') : t('rec.readFromCamera')}</span>
           </button>
         </div>
         <p style={{fontSize:'12px', color:'var(--text-muted, #94a3b8)', margin:'0 0 8px'}}>

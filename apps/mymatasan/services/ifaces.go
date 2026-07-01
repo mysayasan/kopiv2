@@ -6,6 +6,7 @@ import (
 
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
+	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	"github.com/mysayasan/kopiv2/domain/notification"
 	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/onvif"
@@ -78,7 +79,25 @@ type ICameraService interface {
 	GetById(ctx context.Context, id uint64) (*CameraDetail, error)
 	Save(ctx context.Context, detail CameraDetail) (uint64, error)
 	SaveCredentials(ctx context.Context, id uint64, credentials onvif.Credentials) (*CameraDetail, error)
+	// VerifyDeviceCredentials checks creds against a not-yet-saved camera; CameraAuthStatus
+	// verifies a saved camera's stored creds. Both return "ok"|"unauthorized"|"unreachable".
+	VerifyDeviceCredentials(ctx context.Context, detail CameraDetail, credentials onvif.Credentials) (string, error)
+	CameraAuthStatus(ctx context.Context, id uint64) (string, error)
 	ChangeCameraPassword(ctx context.Context, id uint64, req ChangeCameraPasswordRequest) (*CameraDetail, error)
+	// ListCameraUsers / CreateCameraUser / DeleteCameraUser manage the camera's local
+	// ONVIF user accounts (Device Management GetUsers/CreateUsers/DeleteUsers).
+	ListCameraUsers(ctx context.Context, id uint64) ([]onvif.User, error)
+	CreateCameraUser(ctx context.Context, id uint64, req CreateCameraUserRequest) error
+	DeleteCameraUser(ctx context.Context, id uint64, username string) error
+	// Maintenance / config via ONVIF Device Management.
+	RebootCamera(ctx context.Context, id uint64) (string, error)
+	FactoryDefaultCamera(ctx context.Context, id uint64, hard bool) error
+	GetCameraDateTime(ctx context.Context, id uint64) (*onvif.SystemDateTime, error)
+	SetCameraDateTime(ctx context.Context, id uint64, req SetCameraDateTimeRequest) error
+	GetCameraNetwork(ctx context.Context, id uint64) (*onvif.NetworkConfig, error)
+	SetCameraNetwork(ctx context.Context, id uint64, req SetCameraNetworkRequest) error
+	GetCameraCapabilities(ctx context.Context, id uint64) (*CameraCapabilities, error)
+	GetCameraDeviceInfo(ctx context.Context, id uint64) (*CameraDeviceInfo, error)
 	StreamOptions(ctx context.Context, id uint64, credentials onvif.Credentials) (*onvif.StreamOptionsResult, error)
 	ResolveStream(ctx context.Context, id uint64, req StreamSelectionRequest) (*CameraDetail, error)
 	SetLiveStream(ctx context.Context, id uint64, rtspURL string) (*CameraDetail, error)
@@ -88,11 +107,20 @@ type ICameraService interface {
 	GetCameraEncoder(ctx context.Context, id uint64) (*onvif.VideoEncoderConfig, error)
 	ApplyCameraEncoder(ctx context.Context, id uint64, req ApplyCameraEncoderRequest) (*onvif.VideoEncoderConfig, error)
 	SnapshotSource(ctx context.Context, id uint64) (SnapshotSource, error)
+	// PreviewSource resolves an arbitrary detected-profile RTSP URL into a playable
+	// source using the camera's stored credentials, WITHOUT persisting anything — so a
+	// live preview of a specific stream never changes the camera's active RTSP URL
+	// (which recording and detection read via SnapshotSource).
+	PreviewSource(ctx context.Context, id uint64, rtspURL string) (SnapshotSource, error)
 	// LPRCapability reports whether the camera can supply plate-legible frames and,
 	// when ONVIF profiles are readable, the highest-resolution profile's RTSP URL so
 	// LPR capture can auto-pick it. Cached; safe to call on the per-frame path.
 	LPRCapability(ctx context.Context, id int64) LPRCapabilityResult
 	TestStream(ctx context.Context, id uint64) (*rtsp.ProbeResult, error)
+	// TestStreamURL probes a specific detected-profile RTSP URL with the camera's stored
+	// credentials, WITHOUT persisting — a per-stream connectivity check that leaves the
+	// camera's saved RTSP URL (and thus recording/detection) untouched.
+	TestStreamURL(ctx context.Context, id uint64, rtspURL string) (*rtsp.ProbeResult, error)
 	// DisplayName returns the camera's human-readable name (name/model/host),
 	// cached and invalidated on save so renames reflect immediately. Returns ""
 	// when it cannot be resolved.
@@ -109,6 +137,69 @@ type ChangeCameraPasswordRequest struct {
 	TargetUsername  string `json:"targetUsername"`
 	NewPassword     string `json:"newPassword"`
 	UserLevel       string `json:"userLevel"`
+}
+
+// CreateCameraUserRequest adds a local ONVIF user account on the camera.
+type CreateCameraUserRequest struct {
+	Username  string `json:"username"`
+	Password  string `json:"password"`
+	UserLevel string `json:"userLevel"`
+}
+
+// SetCameraDateTimeRequest configures the camera clock (ONVIF SetSystemDateAndTime + SetNTP).
+type SetCameraDateTimeRequest struct {
+	DateTimeType    string   `json:"dateTimeType"` // "Manual" | "NTP"
+	DaylightSavings bool     `json:"daylightSavings"`
+	TimeZone        string   `json:"timeZone"`
+	UTCDateTime     string   `json:"utcDateTime"` // RFC3339 UTC, required for Manual
+	NTPFromDHCP     bool     `json:"ntpFromDhcp"`
+	NTPServers      []string `json:"ntpServers"`
+}
+
+// CameraCapabilities surfaces a camera's firmware/device info + which ONVIF services it
+// advertises, so the UI can hide operations the camera doesn't support.
+type CameraCapabilities struct {
+	Onvif           bool   `json:"onvif"`
+	PTZ             bool   `json:"ptz"`
+	Media           bool   `json:"media"`
+	Imaging         bool   `json:"imaging"`
+	Analytics       bool   `json:"analytics"`
+	Events          bool   `json:"events"`
+	// Per-operation support, established by actually probing the read call (so the UI can
+	// hide a management box the camera's firmware doesn't implement).
+	UserMgmt        bool   `json:"userMgmt"`
+	DateTime        bool   `json:"dateTime"`
+	Network         bool   `json:"network"`
+	Manufacturer    string `json:"manufacturer"`
+	Model           string `json:"model"`
+	FirmwareVersion string `json:"firmwareVersion"`
+	SerialNumber    string `json:"serialNumber"`
+	HardwareID      string `json:"hardwareId"`
+}
+
+// CameraDeviceInfo is the read-only identity/inventory of a camera surfaced in the Live
+// View → Camera Information panel (like ONVIF Device Manager's device page). The static
+// fields come from the stored CameraDetail; MACAddress + ONVIFVersion are pulled live.
+type CameraDeviceInfo struct {
+	Manufacturer    string `json:"manufacturer"`
+	Model           string `json:"model"`
+	FirmwareVersion string `json:"firmwareVersion"`
+	HardwareID      string `json:"hardwareId"`
+	SerialNumber    string `json:"serialNumber"`
+	Location        string `json:"location"`     // parsed from ONVIF scopes (.../location/...)
+	MACAddress      string `json:"macAddress"`   // NIC HwAddress (GetNetworkInterfaces)
+	ONVIFVersion    string `json:"onvifVersion"` // device service version (GetServices)
+	ONVIFUri        string `json:"onvifUri"`     // device service XAddr
+}
+
+// SetCameraNetworkRequest configures a camera NIC's IPv4 + gateway + DNS.
+type SetCameraNetworkRequest struct {
+	InterfaceToken string   `json:"interfaceToken"`
+	DHCP           bool     `json:"dhcp"`
+	IPAddress      string   `json:"ipAddress"`
+	PrefixLength   int      `json:"prefixLength"`
+	Gateway        string   `json:"gateway"`
+	DNS            []string `json:"dns"`
 }
 
 type PTZMoveRequest struct {
@@ -413,7 +504,7 @@ type IVisionService interface {
 	GetRules(ctx context.Context, limit uint64, offset uint64) ([]*entities.DetectionRule, uint64, error)
 	SaveRule(ctx context.Context, req DetectionRuleRequest, userId int64) (*entities.DetectionRule, error)
 	DeleteRule(ctx context.Context, id uint64) (uint64, error)
-	GetAlerts(ctx context.Context, limit uint64, offset uint64, cameraId int64, createdAfter int64, createdBefore int64, ruleId int64, status string, detectionType string) ([]*entities.AlertEvent, uint64, error)
+	GetAlerts(ctx context.Context, limit uint64, offset uint64, cameraId int64, status string, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.AlertEvent, uint64, error)
 	GetAlertById(ctx context.Context, id uint64) (*entities.AlertEvent, error)
 	CreateAlert(ctx context.Context, req AlertEventRequest, userId int64) (*entities.AlertEvent, error)
 	AcknowledgeAlert(ctx context.Context, id uint64, userId int64) (*entities.AlertEvent, error)

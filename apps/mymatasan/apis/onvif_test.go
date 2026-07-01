@@ -37,8 +37,45 @@ func (f *fakeCameraService) Save(_ context.Context, detail services.CameraDetail
 func (f *fakeCameraService) SaveCredentials(_ context.Context, _ uint64, _ onvif.Credentials) (*services.CameraDetail, error) {
 	return nil, nil
 }
+func (f *fakeCameraService) VerifyDeviceCredentials(_ context.Context, _ services.CameraDetail, _ onvif.Credentials) (string, error) {
+	return services.CameraAuthOK, nil
+}
+func (f *fakeCameraService) CameraAuthStatus(_ context.Context, _ uint64) (string, error) {
+	return services.CameraAuthOK, nil
+}
 func (f *fakeCameraService) ChangeCameraPassword(_ context.Context, _ uint64, _ services.ChangeCameraPasswordRequest) (*services.CameraDetail, error) {
 	return nil, nil
+}
+func (f *fakeCameraService) ListCameraUsers(_ context.Context, _ uint64) ([]onvif.User, error) {
+	return nil, nil
+}
+func (f *fakeCameraService) CreateCameraUser(_ context.Context, _ uint64, _ services.CreateCameraUserRequest) error {
+	return nil
+}
+func (f *fakeCameraService) DeleteCameraUser(_ context.Context, _ uint64, _ string) error {
+	return nil
+}
+func (f *fakeCameraService) RebootCamera(_ context.Context, _ uint64) (string, error) { return "", nil }
+func (f *fakeCameraService) FactoryDefaultCamera(_ context.Context, _ uint64, _ bool) error {
+	return nil
+}
+func (f *fakeCameraService) GetCameraDateTime(_ context.Context, _ uint64) (*onvif.SystemDateTime, error) {
+	return nil, nil
+}
+func (f *fakeCameraService) SetCameraDateTime(_ context.Context, _ uint64, _ services.SetCameraDateTimeRequest) error {
+	return nil
+}
+func (f *fakeCameraService) GetCameraNetwork(_ context.Context, _ uint64) (*onvif.NetworkConfig, error) {
+	return nil, nil
+}
+func (f *fakeCameraService) SetCameraNetwork(_ context.Context, _ uint64, _ services.SetCameraNetworkRequest) error {
+	return nil
+}
+func (f *fakeCameraService) GetCameraCapabilities(_ context.Context, _ uint64) (*services.CameraCapabilities, error) {
+	return &services.CameraCapabilities{}, nil
+}
+func (f *fakeCameraService) GetCameraDeviceInfo(_ context.Context, _ uint64) (*services.CameraDeviceInfo, error) {
+	return &services.CameraDeviceInfo{}, nil
 }
 func (f *fakeCameraService) StreamOptions(_ context.Context, _ uint64, _ onvif.Credentials) (*onvif.StreamOptionsResult, error) {
 	return nil, nil
@@ -67,10 +104,16 @@ func (f *fakeCameraService) ApplyCameraEncoder(_ context.Context, _ uint64, _ se
 func (f *fakeCameraService) SnapshotSource(_ context.Context, _ uint64) (services.SnapshotSource, error) {
 	return services.SnapshotSource{}, nil
 }
+func (f *fakeCameraService) PreviewSource(_ context.Context, _ uint64, _ string) (services.SnapshotSource, error) {
+	return services.SnapshotSource{}, nil
+}
 func (f *fakeCameraService) LPRCapability(_ context.Context, _ int64) services.LPRCapabilityResult {
 	return services.LPRCapabilityResult{}
 }
 func (f *fakeCameraService) TestStream(_ context.Context, _ uint64) (*rtsp.ProbeResult, error) {
+	return nil, nil
+}
+func (f *fakeCameraService) TestStreamURL(_ context.Context, _ uint64, _ string) (*rtsp.ProbeResult, error) {
 	return nil, nil
 }
 func (f *fakeCameraService) DisplayName(_ context.Context, _ int64) string { return "" }

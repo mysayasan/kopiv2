@@ -12,7 +12,7 @@ Parses reusable list endpoint query options into SQL repository filter and sorte
 - Accepts public entity field names from `json`, `query`, `form`, lower-camel, snake-case, or Go struct names.
 - Maps accepted field names back to Go struct field names before passing them to services.
 - Validates compare enum values `1..6` and sorter enum values `1..2`.
-- Coerces filter values to the target entity field type before repository use.
+- Coerces filter values to the target entity field type before repository use, including `float32`/`float64` fields (accepts `json.Number`, numeric strings, or a raw float64).
 - Exposes the parser for app-local APIs that follow the same shared list contract.
 
 ## Query Contract

@@ -62,7 +62,7 @@ function DetectionFrameBackdrop({ cameraId, paused }) {
   );
 }
 
-export function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTracks, healthStatus, streamKey, startDelayMs = 0 }) {
+export function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTracks, healthStatus, streamKey, sourceUrl, startDelayMs = 0 }) {
   const t = useT();
   const videoRef = useRef(null);
   const audioRef = useRef(null);
@@ -164,7 +164,7 @@ export function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTr
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         await waitForIceGathering(pc);
-        const answer = await createWebRTCAnswer(deviceId, pc.localDescription, authHeader);
+        const answer = await createWebRTCAnswer(deviceId, pc.localDescription, authHeader, sourceUrl);
         if (cancelled) {
           return;
         }
@@ -205,7 +205,7 @@ export function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTr
       }
       pc.close();
     };
-  }, [deviceId, authHeader, streamConfig, rtspTracks, healthStatus, streamKey, startDelayMs]);
+  }, [deviceId, authHeader, streamConfig, rtspTracks, healthStatus, streamKey, sourceUrl, startDelayMs]);
 
   function toggleMute() {
     setMuted((prev) => {

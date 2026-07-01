@@ -1,0 +1,1564 @@
+/* Standardized side-nav shell for mymatasan — the myidsan/myseliasan RBAC-app
+   navigation rail adopted here as the first step of migrating mymatasan onto the
+   shared UI. The sidebar palette is theme-responsive (light rail in light mode, the
+   classic dark rail in dark, near-black in slate), while the main workspace binds to
+   mymatasan's existing theme variables so the light/dark/slate toggle keeps working.
+   Imported AFTER app.css so its two-pane .app-shell overrides app.css's centered
+   column. */
+
+/* Side-nav palette — theme-responsive. Declared light→dark→slate so later blocks win
+   at equal specificity. */
+:root, .theme-light {
+  --nav-bg: linear-gradient(180deg, #f2f5fa 0%, #e9edf4 100%);
+  --nav-text: #1c2533;
+  --nav-label: #5b6675;
+  --nav-sub: #66718a;
+  --nav-hover: rgba(45, 108, 223, 0.10);
+  --nav-line: #d5dbe5;
+  --nav-fill: rgba(20, 30, 50, 0.05);
+  --nav-code: #3a4660;
+}
+.theme-dark {
+  --nav-bg: linear-gradient(180deg, #161d2b 0%, #0f1622 100%);
+  --nav-text: #ffffff;
+  --nav-label: #8ea0b8;
+  --nav-sub: #a7b3c4;
+  --nav-hover: rgba(255, 255, 255, 0.12);
+  --nav-line: rgba(255, 255, 255, 0.14);
+  --nav-fill: rgba(255, 255, 255, 0.08);
+  --nav-code: #d7e2f2;
+}
+.theme-slate {
+  --nav-bg: linear-gradient(180deg, #1a2436 0%, #131b29 100%);
+  --nav-text: #eef3fb;
+  --nav-label: #93a3bd;
+  --nav-sub: #aab7cc;
+  --nav-hover: rgba(255, 255, 255, 0.12);
+  --nav-line: rgba(255, 255, 255, 0.16);
+  --nav-fill: rgba(255, 255, 255, 0.08);
+  --nav-code: #dbe6f6;
+}
+
+/* Override app.css's centered-column .app-shell with the two-pane sidebar grid. */
+.app-shell {
+  width: auto;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+}
+
+.side-nav {
+  background: var(--nav-bg);
+  color: var(--nav-text);
+  border-right: 1px solid var(--nav-line);
+  padding: 22px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  /* Lift above the static workspace so a camera's hover balloon isn't clipped. */
+  z-index: 20;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.side-brand {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+}
+
+/* Pin / auto-hide toggle — tucked into the top-right corner of the brand block. */
+.nav-pin-toggle {
+  position: absolute;
+  top: -6px;
+  right: -4px;
+  width: 28px;
+  height: 28px;
+  /* Reset the base button's min-height/padding so the square stays 28×28 and the
+     hover background sits centered on the icon instead of drifting right. */
+  min-height: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--nav-label);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.nav-pin-toggle:hover {
+  background: var(--nav-hover);
+  color: var(--nav-text);
+}
+
+.nav-pin-toggle[aria-pressed="true"] {
+  color: var(--tone-accent, #2563eb);
+}
+
+.side-nav .brand-logo {
+  justify-self: center;
+  align-self: center;
+}
+
+.side-nav .brand-wordmark {
+  color: var(--nav-text);
+}
+
+.side-brand-sub {
+  text-align: center;
+  color: var(--nav-sub);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.side-nav nav {
+  display: grid;
+  gap: 18px;
+}
+
+.nav-group {
+  display: grid;
+  gap: 6px;
+}
+
+.nav-group-label {
+  padding: 0 10px 3px;
+  color: var(--nav-label);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.nav-item {
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  color: var(--nav-text);
+  text-align: left;
+  padding: 11px 12px;
+  background: transparent;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  position: relative;
+  min-height: 0;
+  cursor: pointer;
+}
+
+.nav-item:hover,
+.nav-item.active {
+  background: var(--nav-hover);
+}
+
+.nav-item.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--tone, #9aa7b8);
+}
+
+/* Icon-based nav entry: an SVG glyph in the leading cell, tinted with the section
+   tone, replacing the code tile. */
+.nav-ico {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  color: var(--tone, #cdd8e8);
+}
+
+.nav-ico svg {
+  display: block;
+}
+
+.nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 760;
+}
+
+/* Expandable Cameras tree: a caret toggle + root row, then an indented branch of the
+   saved cameras. The caret collapses the branch without navigating; the root row and
+   each child are ordinary nav-items so they inherit hover/active styling. */
+.nav-tree-rootrow {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.nav-tree-caret {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--nav-label);
+  cursor: pointer;
+}
+
+.nav-tree-caret:hover {
+  background: var(--nav-hover);
+  color: var(--nav-text);
+}
+
+.nav-tree-caret svg {
+  transition: transform 0.12s ease;
+}
+
+.nav-tree-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+}
+
+.nav-tree-children {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-left: 22px;
+  padding-left: 8px;
+  border-left: 1px solid var(--nav-line);
+}
+
+.nav-tree-child {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  position: relative;
+}
+
+/* Hover balloon describing a camera — only rendered when the camera has a description.
+   Sits to the right of the rail and floats above the workspace. */
+.nav-tip {
+  position: absolute;
+  left: calc(100% + 14px);
+  top: 50%;
+  transform: translateY(-50%) translateX(-4px);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: max-content;
+  max-width: 240px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: #0f1722;
+  border: 1px solid var(--nav-line);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+  text-align: left;
+  white-space: normal;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.nav-tip::before {
+  content: "";
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 6px solid transparent;
+  border-right-color: #0f1722;
+}
+
+.nav-tree-child:hover .nav-tip,
+.nav-tree-child:focus-visible .nav-tip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(-50%) translateX(0);
+}
+
+.nav-tip-title {
+  color: #fff;
+  font-weight: 800;
+  font-size: 12px;
+}
+
+.nav-tip-body {
+  color: #c4d0e0;
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.nav-tree-child .nav-label {
+  font-weight: 680;
+  font-size: 13px;
+}
+
+/* The camera's glyph in the leading cell, with a small status dot tucked into the
+   corner so identity (icon) and reachability (dot colour) read at a glance. */
+.nav-tree-ico {
+  width: 30px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  position: relative;
+  color: var(--tone, #cdd8e8);
+}
+
+.nav-tree-ico::after {
+  content: "";
+  position: absolute;
+  right: 2px;
+  bottom: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #6b7686;
+  box-shadow: 0 0 0 2px var(--nav-bg);
+}
+
+.nav-tree-ico[data-status="online"]::after {
+  background: #3fb27f;
+}
+
+.nav-tree-ico[data-status="offline"]::after {
+  background: #c2603f;
+}
+
+/* Camera count badge on the Cameras root row. */
+.nav-tree-count {
+  margin-left: auto;
+  align-self: center;
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--nav-fill);
+  border: 1px solid var(--nav-line);
+  color: var(--nav-label);
+  font-size: 11px;
+  font-weight: 800;
+  text-align: center;
+}
+
+/* A nav-item that carries a trailing badge (e.g. Notifications): add a third,
+   content-sized column so the badge sits inline on the right instead of wrapping
+   to a second grid row. The .nav-item base is a 2-column grid (icon + label). */
+.nav-item-badged {
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+}
+
+/* Unread badge on the Notifications nav item (the topbar bell moved here). Red so
+   an unread count reads as an alert, not a plain count. */
+.nav-item-badge {
+  align-self: center;
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #e53935;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.5;
+  text-align: center;
+}
+
+/* Filter box for large camera sets — sits above the scrollable branch. */
+.nav-tree-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 6px 22px;
+  padding: 0 8px;
+  border-radius: 7px;
+  background: var(--nav-fill);
+  border: 1px solid var(--nav-line);
+  color: var(--nav-label);
+}
+
+.nav-tree-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--nav-text);
+  font-size: 12px;
+  padding: 6px 0;
+  outline: none;
+}
+
+.nav-tree-search input::placeholder {
+  color: var(--nav-label);
+}
+
+.nav-tree-children.scrolling {
+  max-height: 320px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+}
+
+.nav-tree-children.scrolling::-webkit-scrollbar {
+  width: 8px;
+}
+
+.nav-tree-children.scrolling::-webkit-scrollbar-thumb {
+  background: var(--nav-line);
+  border-radius: 999px;
+}
+
+.nav-tree-empty {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--nav-label);
+}
+
+/* Bottom-of-sidebar actions: session line + theme toggle + log out. */
+.side-nav-foot {
+  margin-top: auto;
+  display: grid;
+  gap: 10px;
+}
+
+.logout-button {
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  color: var(--nav-text);
+  text-align: left;
+  padding: 11px 12px;
+  background: var(--nav-fill);
+  min-height: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.logout-button:hover {
+  background: var(--nav-hover);
+}
+
+/* Theme dropdown adapted to the sidebar: full width, opens upward so the menu is
+   never clipped below the viewport at the foot of the rail. */
+.side-nav .theme-drop-wrap {
+  width: 100%;
+}
+
+.side-nav .theme-toggle {
+  width: 100%;
+  min-height: 44px;
+  justify-content: space-between;
+  border: 0;
+  border-radius: 8px;
+  background: var(--nav-fill);
+  color: var(--nav-text);
+}
+
+.side-nav .theme-toggle:hover,
+.side-nav .theme-toggle.active {
+  background: var(--nav-hover);
+  color: var(--nav-text);
+}
+
+.side-nav .theme-menu {
+  top: auto;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+}
+
+/* Auto-hide rail: pulled off-canvas leaving a slim always-visible edge; the workspace
+   reclaims the full width. Hovering (or focusing) the rail slides it back in as an
+   overlay so it never reflows the page. Pinned mode (default) keeps the rail in-flow. */
+/* --- Unpinned = a slim icon-only rail that expands to the full panel on hover. ---
+   The grid keeps the collapsed width reserved so the workspace never sits under the
+   rail, but the rail itself is fixed, so expanding on hover slides the full panel out
+   OVER the workspace instead of reflowing it. Pinned keeps the full 260px rail in the
+   grid flow (see .app-shell above) — it only "sticks" (takes layout space) when pinned.
+   Desktop-only: on mobile (<=860px) the rail is static/stacked, so this must not apply. */
+@media (min-width: 861px) {
+  .app-shell.nav-autohide {
+    grid-template-columns: 68px minmax(0, 1fr);
+  }
+
+  /* The rail is fixed (out of grid flow), so the workspace must be pinned to column 2
+     explicitly — otherwise it auto-places into the empty 68px column 1 and collapses. */
+  .app-shell.nav-autohide .main-workspace {
+    grid-column: 2;
+  }
+
+  .app-shell.nav-autohide .side-nav {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 68px;
+    padding-left: 12px;
+    padding-right: 12px;
+    overflow: hidden;
+    transition: width 0.18s ease, padding 0.18s ease, box-shadow 0.18s ease;
+  }
+
+  .app-shell.nav-autohide .side-nav:hover,
+  .app-shell.nav-autohide .side-nav:focus-within {
+    width: 260px;
+    padding-left: 16px;
+    padding-right: 16px;
+    box-shadow: 8px 0 30px rgba(0, 0, 0, 0.32);
+  }
+
+  /* Collapsed state (rail not hovered/focused): center each item's glyph and hide every
+     label, group heading, count/badge, the camera tree's caret + child nodes, the brand
+     wordmark/subtitle + pin toggle, and the whole footer. All of it returns when the
+     rail expands on hover, so the collapsed rail shows only the main icons. */
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-item {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-label,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-group-label,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-tree-count,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-item-badge,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-tree-caret,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-tree-branch,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .brand-wordmark,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .side-brand-sub,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-pin-toggle,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .side-nav-foot {
+    display: none;
+  }
+}
+
+.main-workspace {
+  min-width: 0;
+  padding: 20px 28px 28px;
+  background: var(--bg-body);
+  display: flex;
+  flex-direction: column;
+}
+
+/* The shared footer bottom-sticks via margin-top:auto, which collapses to 0 when the
+   page content is tall — leaving the footer flush against the content. Guarantee a gap
+   above it regardless of content height. */
+.main-workspace > .shared-footer {
+  margin-top: 32px;
+}
+
+/* The embedded workspace already supplies its own top gap. */
+.main-workspace > .workspace {
+  padding-top: 0;
+}
+
+/* Top action strip inside the workspace: language picker, notifications bell, and
+   refresh — the pieces that used to live in the topbar, now that primary navigation
+   moved to the side rail. */
+.workspace-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+/* Section tones (sidebar accent). */
+.tone-blue { --tone: #2563eb; }
+.tone-teal { --tone: #0f766e; }
+.tone-violet { --tone: #7c3aed; }
+.tone-indigo { --tone: #4f46e5; }
+.tone-steel { --tone: #64748b; }
+.tone-green { --tone: #138a5b; }
+.tone-amber { --tone: #b45309; }
+
+/* Per-camera detail: a top-level tab strip (Settings | AI) above the selected
+   camera's content. Settings hosts the accordion of property groups; AI hosts the
+   detection-rules panel that used to be the standalone AI module. */
+.camera-detail-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border-divider);
+  padding-bottom: 10px;
+}
+
+.camera-detail-tabs button {
+  min-height: 38px;
+  font-weight: 700;
+}
+
+/* The embedded per-camera AI surface (rules + alert log), no longer a full page. */
+/* The camera-node tabs (Live View / AI / Recordings / Settings) share one panel shape:
+   a title+description header, then the content, with a consistent 16px gap. */
+.camera-ai-panel,
+.camera-settings-panel,
+.camera-recordings-panel,
+.camera-live-panel {
+  display: grid;
+  gap: 16px;
+}
+
+/* Live View tab: the camera's main stream as a hero "stage" (video + an integrated
+   control bar), centered, above a compact chip row of read-only camera info. */
+.camera-live-stage {
+  width: min(100%, 960px);
+  margin: 0 auto;
+  border: 1px solid var(--border-panel);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg-surface);
+  box-shadow: 0 6px 22px var(--shadow-panel, rgba(0, 0, 0, 0.12));
+}
+
+.camera-live-view {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: #000;
+}
+
+.camera-live-view .live-frame {
+  width: 100%;
+  height: 100%;
+}
+
+/* Control bar under the video (inside the rounded stage) — status + name on the left,
+   the Add-to-tiles action on the right, so the button reads as a player control. */
+.camera-live-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px 10px 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.camera-live-name {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  font-weight: 720;
+}
+
+.camera-live-name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #6b7686;
+}
+
+.live-dot.online {
+  background: #3fb27f;
+  animation: live-pulse 2s ease-out infinite;
+}
+
+.live-dot.offline {
+  background: #c2603f;
+}
+
+@keyframes live-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(63, 178, 127, 0.5); }
+  70% { box-shadow: 0 0 0 7px rgba(63, 178, 127, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(63, 178, 127, 0); }
+}
+
+.camera-live-add {
+  flex: 0 0 auto;
+  min-height: 34px;
+}
+
+.camera-live-add.is-remove {
+  background: transparent;
+  border-color: var(--danger, #dc2626);
+  color: var(--danger, #dc2626);
+}
+
+.camera-live-add.is-remove:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger, #dc2626) 12%, transparent);
+}
+
+.camera-live-desc {
+  margin: 0;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+/* Compact info chips (host / port / model / serial / last checked) — replaces the airy
+   meta grid so the tab reads dense, not empty. */
+.camera-live-info {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.live-info-chip {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  padding: 5px 12px;
+  background: var(--bg-surface);
+}
+
+.live-info-chip dt {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.live-info-chip dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text-base);
+}
+
+.camera-live-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+/* Camera-node access gate: a centered credential prompt that covers all tabs when the
+   stored login stops working. Anchored to the .saved-detail panel. */
+.saved-detail { position: relative; }
+
+.camera-auth-gate {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--bg-base, #0b1220) 62%, transparent);
+  backdrop-filter: blur(3px);
+}
+
+.camera-auth-card {
+  width: 100%;
+  max-width: 360px;
+  display: grid;
+  gap: 10px;
+  padding: 22px;
+  border: 1px solid var(--border-panel);
+  border-radius: 14px;
+  background: var(--bg-surface);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+  text-align: center;
+}
+
+.camera-auth-card h3 { margin: 2px 0 0; font-size: 16px; }
+.camera-auth-card label { display: grid; gap: 4px; text-align: left; font-size: 13px; }
+.camera-auth-card input { width: 100%; }
+.camera-auth-card > button { margin-top: 4px; justify-content: center; }
+
+.camera-auth-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  margin: 0 auto;
+  border-radius: 50%;
+  color: var(--danger, #dc2626);
+  background: color-mix(in srgb, var(--danger, #dc2626) 12%, transparent);
+}
+
+/* Add-camera credential dialog (reuses the .preview-overlay modal backdrop). */
+.add-camera-dialog { width: 100%; max-width: 440px; }
+.add-camera-form { display: grid; gap: 12px; padding: 16px; }
+.add-camera-form label { display: grid; gap: 4px; font-size: 13px; }
+.add-camera-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+
+/* Detection master-detail: the rule editor box + the selectable rules list below it. */
+.rule-editor-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.rule-list {
+  display: grid;
+  gap: 8px;
+}
+
+/* A rule row in the master list: a clickable name/meta area (opens the editor), the
+   enabled pill, and per-rule Test/Delete actions. */
+.rule-list-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-surface);
+}
+
+.rule-list-item:hover,
+.rule-list-item.active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.rule-list-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  gap: 2px;
+  padding: 6px 8px;
+  text-align: left;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.rule-list-name {
+  font-weight: 700;
+  color: var(--text-base);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rule-list-meta {
+  font-size: 12px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rule-list-item .status-pill {
+  flex: 0 0 auto;
+}
+
+.rule-list-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+/* Camera Settings — GitHub-repo-settings style: a stack of bordered boxes, each with a
+   titled header + a padded body, and a red-framed Danger Zone for destructive removal. */
+.settings-boxes {
+  display: grid;
+  gap: 16px;
+}
+
+.settings-box {
+  border: 1px solid var(--border-panel);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+
+.settings-box > header {
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-body);
+}
+
+.settings-box > header h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.settings-box-body {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+/* Danger Zone: red framing so the destructive remove action reads as risky. */
+.settings-box.danger-zone-box {
+  border-color: var(--danger-text, #d9534f);
+}
+
+.settings-box.danger-zone-box > header {
+  background: var(--danger-bg, rgba(217, 83, 79, 0.12));
+  border-bottom-color: var(--danger-text, #d9534f);
+}
+
+.settings-box.danger-zone-box > header h3 {
+  color: var(--danger-text, #d9534f);
+}
+
+.danger-zone-hint {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.danger-confirm {
+  max-width: 360px;
+}
+
+/* Access panel → Camera Users: the camera's ONVIF accounts (list + add form). */
+.camera-users {
+  display: grid;
+  gap: 12px;
+}
+
+.camera-users-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.camera-users-head strong {
+  display: block;
+  font-size: 14px;
+}
+
+.camera-users-head .field-hint {
+  display: block;
+}
+
+.user-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.user-row {
+  display: grid;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-surface);
+}
+
+.user-row-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Inline per-user change-password form (revealed under a row). */
+.user-pw-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.user-pw-form > :first-child {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.user-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-level {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--accent-badge);
+  color: var(--accent);
+  padding: 2px 10px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.user-row > .quiet {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 8px;
+}
+
+.camera-users-add {
+  display: grid;
+  gap: 12px;
+}
+
+/* ONVIF capability chips (PTZ / Media / Imaging / …). */
+.camera-caps {
+  display: grid;
+  gap: 8px;
+}
+
+.caps-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Alert Log toolbar (above the table). */
+.log-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+/* Empty-state placeholder used by pages that are not built out yet (Dashboard). */
+.page-placeholder {
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  min-height: 340px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.page-placeholder h2 {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.page-placeholder p {
+  margin: 0;
+  max-width: 420px;
+}
+
+/* With the side rail, the toast stack no longer clears a fixed topbar. */
+body .toast-stack {
+  top: 18px;
+}
+
+/* --- Shared DataTable (filtering + sorting + pager) — ported from myseliasan so the
+   camera AI-tab Alert Log matches the myseliasan/myidsan tables. Element selectors are
+   scoped under .table-surface; colours bind to mymatasan's theme variables. */
+.table-surface {
+  width: 100%;
+  border: 1px solid var(--border-divider);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+
+.table-wrap {
+  position: relative;
+  width: 100%;
+  overflow-x: auto;
+}
+
+.table-loading table {
+  pointer-events: none;
+}
+
+.table-surface table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 640px;
+  background: var(--bg-surface);
+}
+
+.table-surface th,
+.table-surface td {
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--border-divider);
+  text-align: left;
+  vertical-align: middle;
+  font-size: 14px;
+}
+
+.table-surface th {
+  color: var(--text-secondary);
+  background: var(--bg-subtle2);
+  font-weight: 700;
+}
+
+.table-surface tr:last-child td {
+  border-bottom: 0;
+}
+
+.column-head {
+  display: grid;
+  gap: 7px;
+  min-width: 120px;
+}
+
+.column-title-row,
+.column-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.column-title-row {
+  justify-content: space-between;
+}
+
+.column-title-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.column-actions {
+  flex: 0 0 auto;
+}
+
+.filter-button {
+  position: relative;
+  width: 30px;
+  min-height: 26px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  cursor: pointer;
+  padding: 0;
+}
+
+.filter-button::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 6px;
+  width: 14px;
+  height: 7px;
+  background: var(--text-secondary);
+  clip-path: polygon(0 0, 100% 0, 62% 100%, 38% 100%);
+}
+
+.filter-button::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  top: 13px;
+  width: 5px;
+  height: 6px;
+  background: var(--text-secondary);
+  border-radius: 1px 1px 2px 2px;
+}
+
+.filter-button:hover,
+.filter-button:focus-visible {
+  border-color: var(--accent);
+  outline: 0;
+}
+
+.filter-button.active {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.filter-button.active::before,
+.filter-button.active::after {
+  background: #fff;
+}
+
+.filter-count {
+  position: absolute;
+  right: -5px;
+  top: -6px;
+  z-index: 1;
+  min-width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.sort-button {
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  min-height: 26px;
+  padding: 3px 6px;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.sort-button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.sort-button span {
+  display: inline-grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+}
+
+.filter-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 49;
+  border: 0;
+  background: transparent;
+}
+
+.filter-popover {
+  position: fixed;
+  z-index: 50;
+  width: 280px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  box-shadow: 0 18px 42px var(--shadow-panel);
+  padding: 12px;
+}
+
+.filter-popover-head,
+.filter-popover-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.filter-popover-head {
+  margin: -2px 0 10px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.filter-popover-body {
+  display: grid;
+  gap: 10px;
+}
+
+.filter-condition {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border-divider);
+  border-radius: 8px;
+  background: var(--bg-subtle2);
+}
+
+.filter-condition-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.filter-popover-actions {
+  justify-content: flex-end;
+}
+
+.mini-button {
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  min-height: 28px;
+  padding: 2px 0;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.mini-button:hover {
+  color: var(--accent);
+}
+
+.empty-cell {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 28px;
+}
+
+.primary-button {
+  min-height: 34px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  padding: 6px 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.secondary-button {
+  min-height: 34px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  padding: 6px 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border-divider);
+  background: var(--bg-subtle2);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.pager-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Left side of the pager: the summary + an optional page-size selector. */
+.pager-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pager-size {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.pager-size select {
+  min-height: 30px;
+  padding: 3px 6px;
+  border-radius: 6px;
+}
+
+.pager-icon {
+  position: relative;
+  width: 34px;
+  min-height: 34px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  cursor: pointer;
+  padding: 0;
+}
+
+.pager-icon:hover:not(:disabled),
+.pager-icon:focus-visible:not(:disabled) {
+  border-color: var(--accent);
+  outline: 0;
+}
+
+.pager-icon:disabled {
+  opacity: 0.44;
+  cursor: not-allowed;
+}
+
+.pager-icon::before,
+.pager-icon::after {
+  content: "";
+  position: absolute;
+}
+
+.pager-icon.previous::before,
+.pager-icon.next::before,
+.pager-icon.first::before,
+.pager-icon.last::before {
+  top: 10px;
+  width: 10px;
+  height: 10px;
+  border-top: 2px solid var(--text-secondary);
+  border-right: 2px solid var(--text-secondary);
+}
+
+.pager-icon.previous::before {
+  left: 13px;
+  transform: rotate(-135deg);
+}
+
+.pager-icon.next::before {
+  right: 13px;
+  transform: rotate(45deg);
+}
+
+.pager-icon.first::before {
+  left: 15px;
+  transform: rotate(-135deg);
+}
+
+.pager-icon.last::before {
+  right: 15px;
+  transform: rotate(45deg);
+}
+
+.pager-icon.first::after,
+.pager-icon.last::after {
+  top: 9px;
+  width: 2px;
+  height: 14px;
+  background: var(--text-secondary);
+  border-radius: 1px;
+}
+
+.pager-icon.first::after {
+  left: 9px;
+}
+
+.pager-icon.last::after {
+  right: 9px;
+}
+
+.pager-icon.go::before {
+  left: 10px;
+  top: 9px;
+  width: 10px;
+  height: 16px;
+  border-right: 3px solid var(--text-secondary);
+  border-bottom: 3px solid var(--text-secondary);
+  transform: rotate(40deg);
+}
+
+.pager-jump {
+  width: 58px;
+}
+
+.pager-jump input {
+  min-height: 34px;
+  border-radius: 8px;
+  padding: 5px 7px;
+  text-align: center;
+}
+
+/* Alert Log "Event" cell: the label over its detection source. */
+.event-cell {
+  display: grid;
+  gap: 2px;
+}
+
+.event-source {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* On narrow screens collapse the two-pane grid into a stacked layout so the rail
+   sits above the workspace rather than squeezing it. */
+@media (max-width: 860px) {
+  .app-shell,
+  .app-shell.nav-autohide {
+    grid-template-columns: 1fr;
+  }
+  .side-nav,
+  .app-shell.nav-autohide .side-nav {
+    position: static;
+    height: auto;
+    width: auto;
+    padding: 22px 16px;
+    box-shadow: none;
+    overflow: visible;
+  }
+}
+
+/* --- Mobile: keep the DataTable usable on small screens. The grid stays tabular and
+   scrolls horizontally (so column filter/sort stay reachable in the headers), with the
+   Time column pinned so rows keep context; padding tightens and the pager + filter
+   popover reflow to fit the viewport. */
+@media (max-width: 640px) {
+  .main-workspace {
+    padding: 16px 12px 20px;
+  }
+
+  .table-wrap {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .table-surface table {
+    min-width: 520px;
+  }
+
+  .table-surface th,
+  .table-surface td {
+    padding: 9px 10px;
+    font-size: 13px;
+  }
+
+  .column-head {
+    min-width: 0;
+  }
+
+  /* Pin the first column (Time) while scrolling the rest horizontally. */
+  .table-surface th:first-child,
+  .table-surface td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--bg-surface);
+  }
+  .table-surface th:first-child {
+    background: var(--bg-subtle2);
+  }
+
+  /* The filter popover must never overflow a narrow viewport. */
+  .filter-popover {
+    width: auto;
+    min-width: 220px;
+    max-width: calc(100vw - 20px);
+  }
+
+  /* Pager reflows to a centered stack instead of overflowing. */
+  .pager {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    text-align: center;
+  }
+  .pager-controls {
+    justify-content: center;
+  }
+
+  /* Per-camera + AI toolbars wrap cleanly. */
+  .camera-detail-tabs {
+    overflow-x: auto;
+  }
+}

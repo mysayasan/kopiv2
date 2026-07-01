@@ -1,12 +1,12 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Ico } from './icons';
 import { useT } from '@shared/i18n';
-import { FormBusyOverlay, AccordionList, AccordionItem } from './ui';
+import { DataTable } from '@shared/DataTable';
+import { FormBusyOverlay } from './ui';
 import { useSnapshotBlob } from '../hooks';
 import { scheduleDayOptions } from '../lib/constants';
-import {todayDateString,apiBase,fieldValue,formatTimestamp,parseMetadata,formatPercent,parseBoundingBox,formatSourceLabel,cameraTitle,orderedSavedCameras,parseZonePolygon,defaultZonePolygon,normalizeLineConfig,parseLineRuleConfig,lineRuleConfigText,lineCountFromRule,parseCrowdRuleConfig,parseLPRRuleConfig,lprRuleConfigText,detectionModes,modeFromDetectionType,detectionTypeForMode,targetClassesFromRule,buildRuleConfigForMode,ruleDestinationsFromConfig,applyRuleDestinations,groupedClassOptions,classDisplayName,defaultVisionRuleDraft,weeklySchedulePolicy,rangeSchedulePolicy,schedulePresetPolicy,scheduleDraftFromPolicy,scheduleSummary } from '../lib/helpers';
+import {apiBase,fieldValue,formatTimestamp,parseMetadata,formatPercent,parseBoundingBox,formatSourceLabel,cameraTitle,parseZonePolygon,defaultZonePolygon,normalizeLineConfig,parseLineRuleConfig,lineRuleConfigText,lineCountFromRule,parseCrowdRuleConfig,parseLPRRuleConfig,lprRuleConfigText,detectionModes,modeFromDetectionType,detectionTypeForMode,targetClassesFromRule,buildRuleConfigForMode,ruleDestinationsFromConfig,applyRuleDestinations,groupedClassOptions,classDisplayName,defaultVisionRuleDraft,weeklySchedulePolicy,rangeSchedulePolicy,schedulePresetPolicy,scheduleDraftFromPolicy,scheduleSummary } from '../lib/helpers';
 import { ZoneDrawingPreview, LineDrawingPreview } from './previews';
-import { SavedDeviceNav } from './cameras';
 
 // classIsLive reports whether a registry class can actually be detected right
 // now: built-ins/groups always show as usable, while a trained class is "live"
@@ -17,12 +17,16 @@ function classIsLive(cls, activeModelClasses) {
   return (cls.memberList || []).some((label) => active.includes(String(label).toLowerCase()));
 }
 
-export function VisionTab({
-  saved,
+// CameraAiPanel is the per-camera AI surface — the detection rules editor plus that
+// camera's alert log. It used to be the standalone AI module's "rules" view (which
+// carried its own camera picker); now the camera is chosen from the side-nav tree and
+// passed in as `camera`, so this renders embedded inside a camera's AI tab. The global
+// Object Classes registry moved to the Training module (see ObjectClassesPanel).
+export function CameraAiPanel({
+  camera,
   rules,
   alerts,
   classes,
-  labelCatalog,
   activeModelClasses,
   destinations,
   ruleDraft,
@@ -31,25 +35,20 @@ export function VisionTab({
   streamConfig,
   onRuleDraft,
   onSaveRule,
-  onSaveClass,
-  onDeleteClass,
   onEditRule,
   onDeleteRule,
+  onToggleRule,
   onTriggerTestAlert,
   onAcknowledgeAlert,
   onPrepareCamera,
   onReload,
 }) {
   const t = useT();
-  const orderedSaved = useMemo(() => orderedSavedCameras(saved), [saved]);
-  const selectedCameraId = Number(ruleDraft.cameraId) || Number(orderedSaved[0]?.id) || 0;
-  const selectedCamera = saved.find((device) => Number(device.id) === selectedCameraId) || orderedSaved[0] || null;
+  const selectedCamera = camera || null;
+  const selectedCameraId = Number(camera?.id) || 0;
   const selectedRules = selectedCamera
     ? rules.filter((rule) => Number(rule.cameraId) === Number(selectedCamera.id))
     : [];
-  const selectedAlerts = selectedCamera
-    ? alerts.filter((alert) => Number(alert.cameraId) === Number(selectedCamera.id))
-    : alerts;
   const mode = modeFromDetectionType(ruleDraft.detectionType);
   const lineRule = mode === 'line_crossing' || mode === 'multi_line_crossing';
   const crowdRule = mode === 'crowd';
@@ -64,11 +63,10 @@ export function VisionTab({
   const selectedZonePoints = parseZonePolygon(ruleDraft.zonePolygon);
   const scheduleDraft = scheduleDraftFromPolicy(ruleDraft.schedulePolicy);
   const [logSelectedAlertId, setLogSelectedAlertId] = useState(null);
-  const [aiView, setAiView] = useState('rules');
-  // Which rule's inline editor is expanded: a rule id, the sentinel 'new' for an
-  // unsaved new rule, or null for none. The editor form is rendered inside the
-  // open accordion row and is bound to the single shared ruleDraft.
-  const [openRuleId, setOpenRuleId] = useState(null);
+  // Whether the rule editor (and its detection-frame stream) is open. Closed by default
+  // so the frame stream isn't polled until the user actually adds or edits a rule —
+  // saving bandwidth. Opened by newRule()/editRule(); closed by Close or after a save.
+  const [ruleEditorOpen, setRuleEditorOpen] = useState(false);
   // LPR capability of the selected camera — gates the "License plate" mode option
   // so it only appears on cameras that can supply plate-legible frames. null while
   // unknown/loading (option stays available so we never hide it spuriously).
@@ -96,53 +94,49 @@ export function VisionTab({
   const lprAllowed = !lprCap || lprCap.supported || mode === 'lpr';
   const availableModes = detectionModes.filter(([value]) => value !== 'lpr' || lprAllowed);
 
-  // Auto-close the editor when the shared draft no longer matches the open rule —
-  // e.g. after a successful save resets the draft to a blank new rule. Opening a
-  // rule sets the draft and openRuleId together (batched), so this never fires
-  // mid-open. The 'new' editor stays open (its draft id is always empty) so the
-  // user can add another rule immediately.
-  useEffect(() => {
-    if (openRuleId !== null && openRuleId !== 'new' && Number(ruleDraft.id) !== Number(openRuleId)) {
-      setOpenRuleId(null);
-    }
-  }, [ruleDraft.id, openRuleId]);
-
-  // Alert Log — self-contained server-paged state
-  const logPageSize = 20;
-  const [logPage, setLogPage] = useState(0);
-  const [logDate, setLogDate] = useState(todayDateString);
+  // Alert Log — TRUE server-side filtering/sorting/paging. The shared DataTable runs in
+  // `serverMode`: its column filters, sort, and pager emit a query and we run it in the
+  // DB (LIMIT/OFFSET + WHERE/ORDER BY), so a camera with thousands of detections never
+  // pulls them all at once. Diagnostics are always excluded (status=detections). The
+  // default view is the latest detections; the Today button seeds a today-only filter.
+  const LOG_PAGE_SIZE = 10;
   const [logAlerts, setLogAlerts] = useState([]);
   const [logTotal, setLogTotal] = useState(0);
   const [logLoading, setLogLoading] = useState(false);
-  // Default to real detections only — the Vision monitor's "sampled" diagnostics
-  // are hidden unless the user explicitly selects the Diagnostic filter.
-  const [logStatus, setLogStatus] = useState('detections');
-  const [logRuleId, setLogRuleId] = useState('');
+  // logReloadKey + logSeed drive a controlled remount of the grid: bumping the key
+  // remounts it and it reads logSeed as its initial column filters ({} = latest, or a
+  // today range). Switching camera resets the seed to latest (render-phase guard).
+  const [logReloadKey, setLogReloadKey] = useState(0);
+  const [logSeed, setLogSeed] = useState({});
+  const [logPrevCam, setLogPrevCam] = useState(selectedCamera?.id);
+  if (selectedCamera?.id !== logPrevCam) {
+    setLogPrevCam(selectedCamera?.id);
+    setLogSeed({});
+  }
+  // showTodayLog resets filters/sort/paging and shows only today's detections (seeds
+  // the Time column with a From/To = today range, converted to an epoch span on query).
+  function showTodayLog() {
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    setLogSeed({ createdAt: [{ compare: 5, value: today }, { compare: 6, value: today }] });
+    setLogReloadKey((k) => k + 1);
+  }
 
-  const fetchLogAlerts = useCallback(async (cameraId, page, dateStr, status, ruleId) => {
-    if (!cameraId) return;
+  const loadLogAlerts = useCallback(async (cameraId, { filters, sorters, offset, limit }) => {
+    if (!cameraId) { setLogAlerts([]); setLogTotal(0); return; }
     setLogLoading(true);
     try {
       const headers = authHeader ? { Authorization: authHeader } : {};
+      // Default (no filters): the backend sorts CreatedAt DESC, so page 1 is simply the
+      // latest detections within the page size — no date scoping.
       const params = new URLSearchParams({
-        limit: String(logPageSize),
-        offset: String(page * logPageSize),
+        limit: String(limit || LOG_PAGE_SIZE),
+        offset: String(offset || 0),
         cameraId: String(cameraId),
+        status: 'detections',
       });
-      if (status) {
-        params.set('status', status);
-      }
-      if (ruleId) {
-        params.set('ruleId', String(ruleId));
-      }
-      if (dateStr) {
-        const start = new Date(dateStr);
-        start.setHours(0, 0, 0, 0);
-        const end = new Date(dateStr);
-        end.setHours(23, 59, 59, 999);
-        params.set('createdAfter', String(Math.floor(start.getTime() / 1000)));
-        params.set('createdBefore', String(Math.floor(end.getTime() / 1000)));
-      }
+      if ((filters || []).length) params.set('filters', JSON.stringify(filters));
+      if ((sorters || []).length) params.set('sorters', JSON.stringify(sorters));
       const resp = await fetch(`${apiBase()}/api/vision/alerts?${params}`, { credentials: 'include', headers });
       if (!resp.ok) throw new Error(`${resp.status}`);
       const payload = await resp.json();
@@ -157,39 +151,6 @@ export function VisionTab({
     }
   }, [authHeader]);
 
-  // purgeLogAlerts clears alert rows server-side (days=0 → everything up to now),
-  // then reloads. onlyDiagnostics=true removes just the Vision-monitor diagnostics;
-  // false also clears real detections (and their snapshot files). Global, not
-  // per-camera — diagnostics are noise across all cameras.
-  const purgeLogAlerts = useCallback(async (onlyDiagnostics) => {
-    setLogLoading(true);
-    try {
-      const headers = authHeader ? { Authorization: authHeader } : {};
-      const params = new URLSearchParams({ days: '0' });
-      if (onlyDiagnostics) params.set('onlyDiagnostics', 'true');
-      const resp = await fetch(`${apiBase()}/api/vision/alerts/purge?${params}`, { method: 'POST', credentials: 'include', headers });
-      if (!resp.ok) throw new Error(`${resp.status}`);
-    } catch (_) {
-      // Swallow — the reload below reflects whatever state the server is in.
-    } finally {
-      setLogLoading(false);
-    }
-    setLogPage(0);
-    fetchLogAlerts(selectedCamera?.id, 0, logDate, logStatus, logRuleId);
-  }, [authHeader, fetchLogAlerts, selectedCamera?.id, logDate, logStatus, logRuleId]);
-
-  useEffect(() => {
-    setLogPage(0);
-  }, [selectedCamera?.id, logDate, logStatus, logRuleId]);
-
-  useEffect(() => {
-    fetchLogAlerts(selectedCamera?.id, logPage, logDate, logStatus, logRuleId);
-  }, [selectedCamera?.id, logPage, logDate, logStatus, logRuleId, fetchLogAlerts]);
-
-  // Rules are camera-specific, so clear the rule filter when the camera changes.
-  useEffect(() => {
-    setLogRuleId('');
-  }, [selectedCamera?.id]);
 
   useEffect(() => {
     if (!selectedCamera) {
@@ -206,32 +167,35 @@ export function VisionTab({
     }
   }, [selectedCamera?.id]);
 
+  // Switching cameras closes the editor so its detection-frame stream stops and the
+  // user re-opens intentionally on the new camera.
+  useEffect(() => {
+    setRuleEditorOpen(false);
+  }, [selectedCamera?.id]);
+
   useEffect(() => {
     if (logSelectedAlertId !== null && !logAlerts.some((alert) => Number(alert.id) === Number(logSelectedAlertId))) {
       setLogSelectedAlertId(null);
     }
   }, [logAlerts, logSelectedAlertId]);
 
-  function selectCamera(cameraId) {
-    setOpenRuleId(null);
-    onRuleDraft(defaultVisionRuleDraft(cameraId));
-  }
-
-  // toggleRule expands a rule into the inline editor (loading it into the shared
-  // draft) or collapses it when it is already open.
-  function toggleRule(rule) {
-    if (openRuleId === rule.id) {
-      setOpenRuleId(null);
-      return;
-    }
-    onEditRule(rule);
-    setOpenRuleId(rule.id);
-  }
-
-  // addRule opens a blank new-rule editor for the selected camera.
-  function addRule() {
+  // newRule opens the editor on a blank new rule for the selected camera. editRule
+  // opens it on an existing rule (loading it into the shared draft). closeEditor hides
+  // the editor (and stops the detection-frame stream). Save also closes it.
+  function newRule() {
     onRuleDraft(defaultVisionRuleDraft(selectedCamera.id));
-    setOpenRuleId('new');
+    setRuleEditorOpen(true);
+  }
+  function editRule(rule) {
+    onEditRule(rule);
+    setRuleEditorOpen(true);
+  }
+  function closeEditor() {
+    setRuleEditorOpen(false);
+  }
+  function saveAndClose(event) {
+    onSaveRule(event);
+    setRuleEditorOpen(false);
   }
 
   function changeSchedulePreset(preset) {
@@ -321,90 +285,110 @@ export function VisionTab({
     changeCustomSchedule({ days });
   }
 
-  // ruleRows is the accordion's data: the camera's rules, plus a synthetic
-  // trailing row (__newRule) when adding so the new-rule editor opens inline like
-  // any other row.
-  const ruleRows = openRuleId === 'new'
-    ? [...selectedRules, { id: 'new', __newRule: true }]
-    : selectedRules;
+  // Alert Log columns for the shared DataTable (serverMode). Each column key is a real
+  // AlertEvent field so the DB can filter/sort on it; `render` maps the raw row to its
+  // display. Time/Confidence/Rule are numeric filters, Status is boolean, Event is text.
+  const logColumns = [
+    { key: 'createdAt', label: t('vi.thTime'), filterType: 'daterange', render: (v) => formatTimestamp(v) },
+    {
+      key: 'label',
+      label: t('vi.thEvent'),
+      render: (_v, row) => {
+        const meta = parseMetadata(row.metadata);
+        return (
+          <div className="event-cell">
+            <strong style={{ textTransform: 'capitalize' }}>{meta.objectLabel || row.label || row.detectionType || t('vi.detectionEvent')}</strong>
+            <span className="event-source">{formatSourceLabel(meta.source)}</span>
+          </div>
+        );
+      },
+    },
+    { key: 'ruleId', label: t('vi.rule'), filterType: 'number', render: (v) => (selectedRules.find((r) => Number(r.id) === Number(v))?.name || `#${v || '-'}`) },
+    { key: 'confidence', label: t('vi.thConfidence'), filterType: 'number', render: (v) => Number(v || 0).toFixed(3) },
+    {
+      key: 'isAcknowledged',
+      label: t('common.status'),
+      filterType: 'boolean',
+      render: (v) => <span className={`status-pill ${v ? 'resolved' : 'offline'}`}>{v ? t('vi.pillAcknowledged') : t('vi.pillActive')}</span>,
+    },
+    {
+      key: 'actions',
+      label: t('vi.thAction'),
+      filterable: false,
+      render: (_v, row) => (
+        <div className="table-actions">
+          <button type="button" className="quiet" onClick={() => setLogSelectedAlertId(Number(logSelectedAlertId) === Number(row.id) ? null : row.id)}>
+            {Number(logSelectedAlertId) === Number(row.id) ? t('common.close') : t('vi.details')}
+          </button>
+          <button
+            type="button"
+            className="quiet"
+            onClick={() => onAcknowledgeAlert(row.id)}
+            disabled={busy || row.isAcknowledged}
+            title={t('vi.acknowledge')}
+          >
+            <Ico n="acknowledge" sz={12} />
+          </button>
+        </div>
+      ),
+    },
+  ];
 
   return (
-    <section className="workspace">
+    <section className="camera-ai-panel">
       <div className="toolbar">
         <div>
           <h2 className="section-title">{t('vi.aiDetection')}</h2>
-          <p className="section-subtitle">{aiView === 'classes' ? t('vi.subClasses') : t('vi.subRules')}</p>
+          <p className="section-subtitle">{t('vi.subRules')}</p>
         </div>
         <button type="button" className="quiet" onClick={onReload} disabled={busy}>
           <span className="btn-icon"><Ico n="reload" /> {t('common.reload')}</span>
         </button>
       </div>
 
-      <nav className="vision-subnav" aria-label={t('vi.aiSectionAria')}>
-        <button type="button" className={aiView === 'rules' ? 'active' : 'quiet'} onClick={() => setAiView('rules')}>
-          <span className="btn-icon"><Ico n="list" /> {t('vi.detectionRules')}</span>
-        </button>
-        <button type="button" className={aiView === 'classes' ? 'active' : 'quiet'} onClick={() => setAiView('classes')}>
-          <span className="btn-icon"><Ico n="grid2" /> {t('vi.objectClasses')}</span>
-        </button>
-      </nav>
-
-      {aiView === 'classes' ? (
-        <ObjectClassesPanel classes={classes} labelCatalog={labelCatalog} activeModelClasses={activeModelClasses} busy={busy} onSaveClass={onSaveClass} onDeleteClass={onDeleteClass} />
-      ) : null}
-
-      {aiView === 'rules' ? (
-      <section className="saved-browser vision-browser">
-        <SavedDeviceNav devices={saved} selectedId={selectedCamera?.id} onSelect={selectCamera} />
-        <main className="saved-detail">
-          {selectedCamera ? (
+      {selectedCamera ? (
             <>
-              <section className="settings-panel">
+              {/* The editor box opens only when the user adds or edits a rule, so the
+                  detection-frame stream isn't polled otherwise (saves bandwidth). The
+                  rules list below is always shown. */}
+              {ruleEditorOpen ? (
+              <section className="settings-panel rule-editor-box">
                 <header>
                   <div>
-                    <h2>{t('vi.rulesFor', { name: cameraTitle(selectedCamera) })}</h2>
-                    <p className="section-subtitle">{selectedCamera.host || selectedCamera.xAddr || t('vi.savedCamera')}</p>
+                    <h2>{ruleDraft.id ? (ruleDraft.name || ruleDraft.detectionType || t('vi.newRule')) : t('vi.newRule')}</h2>
+                    <p className="section-subtitle">{t(`vi.mode_${mode}`)}</p>
                   </div>
-                  <span className="status-pill">{t('vi.rulesCount', { n: selectedRules.length })}</span>
+                  <div className="rule-editor-actions">
+                    <button type="button" className="quiet" onClick={closeEditor} disabled={busy} title={t('common.close')} aria-label={t('common.close')}>
+                      <Ico n="x" sz={14} />
+                    </button>
+                  </div>
                 </header>
-                {selectedRules.length === 0 && openRuleId !== 'new' ? (
-                  <p className="empty">{t('vi.noRules')}</p>
-                ) : null}
-                <AccordionList>
-                  {ruleRows.map((rule) => {
-                    const isNew = rule.__newRule === true;
-                    const open = isNew ? true : openRuleId === rule.id;
-                    return (
-                      <AccordionItem
-                        key={rule.id}
-                        open={open}
-                        onToggle={() => (isNew ? setOpenRuleId(null) : toggleRule(rule))}
-                        summary={isNew ? (
-                          <span className="accordion-title">{t('vi.newRule')}</span>
-                        ) : (
-                          <>
-                            <span className="accordion-title">{rule.name || rule.detectionType}</span>
-                            <span className="accordion-muted">
-                              {rule.detectionType} · {t('vi.thresholdLabel', { v: Number(rule.threshold || 0).toFixed(2) })}
-                              {lineCountFromRule(rule) ? ` · ${lineCountFromRule(rule)}` : ''} · {scheduleSummary(rule.schedulePolicy)}
-                            </span>
-                            <span className={`status-pill ${rule.isEnabled ? 'online' : 'unknown'}`}>{rule.isEnabled ? t('vi.enabled') : t('vi.disabled')}</span>
-                          </>
-                        )}
-                        actions={isNew ? null : (
-                          <>
-                            <button type="button" className="quiet" onClick={() => onTriggerTestAlert(rule)} disabled={busy}>
-                              <span className="btn-icon"><Ico n="play" /> {t('common.test')}</span>
-                            </button>
-                            <button type="button" className="quiet danger-text" onClick={() => onDeleteRule(rule.id)} disabled={busy}>
-                              <span className="btn-icon"><Ico n="trash" /> {t('common.delete')}</span>
-                            </button>
-                          </>
-                        )}
-                      >
-                        {open ? (
-                          <form className="vision-rule-form" onSubmit={onSaveRule}>
-                            <FormBusyOverlay busy={busy} />
+                {/* Video stream under the title: the AI detection frame + the mode-aware
+                    drawing overlay/tools (line vs zone). This is the AI detect stream, not
+                    the live view. */}
+                {lineRule ? (
+                  <LineDrawingPreview
+                    camera={selectedCamera}
+                    config={lineRuleConfig}
+                    detectionType={ruleDraft.detectionType}
+                    authHeader={authHeader}
+                    streamConfig={streamConfig}
+                    disabled={busy}
+                    onConfig={changeLineConfig}
+                  />
+                ) : (
+                  <ZoneDrawingPreview
+                    camera={selectedCamera}
+                    polygonValue={ruleDraft.zonePolygon}
+                    authHeader={authHeader}
+                    streamConfig={streamConfig}
+                    disabled={busy}
+                    onPolygon={(zonePolygon) => onRuleDraft({ ...ruleDraft, cameraId: selectedCamera.id, zonePolygon })}
+                  />
+                )}
+                <form className="vision-rule-form" onSubmit={saveAndClose}>
+                  <FormBusyOverlay busy={busy} />
                   <div className="metadata-row">
                     <label>
                       {t('vi.ruleName')}
@@ -742,26 +726,6 @@ export function VisionTab({
                       </>
                     ) : null}
                   </section>
-                  {lineRule ? (
-                    <LineDrawingPreview
-                      camera={selectedCamera}
-                      config={lineRuleConfig}
-                      detectionType={ruleDraft.detectionType}
-                      authHeader={authHeader}
-                      streamConfig={streamConfig}
-                      disabled={busy}
-                      onConfig={changeLineConfig}
-                    />
-                  ) : (
-                    <ZoneDrawingPreview
-                      camera={selectedCamera}
-                      polygonValue={ruleDraft.zonePolygon}
-                      authHeader={authHeader}
-                      streamConfig={streamConfig}
-                      disabled={busy}
-                      onPolygon={(zonePolygon) => onRuleDraft({ ...ruleDraft, cameraId: selectedCamera.id, zonePolygon })}
-                    />
-                  )}
                   <div className="action-row">
                     <label className="check-row">
                       <input
@@ -784,21 +748,57 @@ export function VisionTab({
                     <button type="submit" disabled={busy || (!lprRule && targetClasses.length < 1) || (!lineRule && selectedZonePoints.length < 3) || (lineRule && lineRuleConfig.lines.length < (mode === 'multi_line_crossing' ? 2 : 1)) || (lprRule && lprRuleConfig.matchMode !== 'any' && lprRuleConfig.plates.length < 1)}>
                       <span className="btn-icon"><Ico n="save" /> {t('vi.saveRule')}</span>
                     </button>
-                    <button type="button" className="quiet" onClick={() => setOpenRuleId(null)} disabled={busy}>
+                    <button type="button" className="quiet" onClick={closeEditor} disabled={busy}>
                       {t('common.cancel')}
                     </button>
+                    {ruleDraft.id ? (
+                      <button type="button" className="quiet danger-text" onClick={() => { onDeleteRule(ruleDraft.id); closeEditor(); }} disabled={busy} style={{ marginLeft: 'auto' }}>
+                        <span className="btn-icon"><Ico n="trash" /> {t('common.delete')}</span>
+                      </button>
+                    ) : null}
                   </div>
-                          </form>
-                        ) : null}
-                      </AccordionItem>
-                    );
-                  })}
-                </AccordionList>
-                <div className="action-row">
-                  <button type="button" className="quiet" onClick={addRule} disabled={busy || openRuleId === 'new'}>
+                </form>
+              </section>
+              ) : null}
+
+              {/* BOTTOM: the master rules list — plain, selectable (no accordion). Picking
+                  a row opens the editor on that rule; the active row is highlighted. */}
+              <section className="settings-panel rule-list-box">
+                <header>
+                  <div>
+                    <h2>{t('vi.rulesFor', { name: cameraTitle(selectedCamera) })}</h2>
+                    <p className="section-subtitle">{t('vi.rulesCount', { n: selectedRules.length })}</p>
+                  </div>
+                  <button type="button" className="quiet" onClick={newRule} disabled={busy}>
                     <span className="btn-icon"><Ico n="plus" /> {t('vi.addRule')}</span>
                   </button>
-                </div>
+                </header>
+                {selectedRules.length === 0 ? (
+                  <p className="empty">{t('vi.noRules')}</p>
+                ) : (
+                  <div className="rule-list">
+                    {selectedRules.map((rule) => (
+                      <div
+                        key={rule.id}
+                        className={`rule-list-item${ruleEditorOpen && Number(ruleDraft.id) === Number(rule.id) ? ' active' : ''}`}
+                      >
+                        <button type="button" className="rule-list-main" onClick={() => editRule(rule)}>
+                          <span className="rule-list-name">{rule.name || rule.detectionType}</span>
+                          <span className="rule-list-meta">{rule.detectionType}{lineCountFromRule(rule) ? ` · ${lineCountFromRule(rule)}` : ''} · {scheduleSummary(rule.schedulePolicy)}</span>
+                        </button>
+                        <span className={`status-pill ${rule.isEnabled ? 'online' : 'unknown'}`}>{rule.isEnabled ? t('vi.enabled') : t('vi.disabled')}</span>
+                        <div className="rule-list-actions">
+                          <button type="button" className="quiet" onClick={() => onTriggerTestAlert(rule)} disabled={busy} title={t('common.test')}>
+                            <span className="btn-icon"><Ico n="play" /> {t('common.test')}</span>
+                          </button>
+                          <button type="button" className="quiet" onClick={() => onToggleRule(rule)} disabled={busy} title={rule.isEnabled ? t('vi.disableRule') : t('vi.enableRule')}>
+                            <span className="btn-icon"><Ico n={rule.isEnabled ? 'stop' : 'check-ok'} /> {rule.isEnabled ? t('vi.disableRule') : t('vi.enableRule')}</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </section>
 
               <section className="settings-panel">
@@ -807,129 +807,30 @@ export function VisionTab({
                   <span className="status-pill">{logLoading ? '…' : logTotal}</span>
                 </header>
                 <div className="vision-list">
-                  <div className="log-toolbar" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-                    <label style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', margin: 0 }}>
-                      {t('vi.date')}
-                      <input
-                        type="date"
-                        value={logDate}
-                        max={todayDateString()}
-                        onChange={(e) => setLogDate(e.target.value)}
-                      />
-                    </label>
-                    <label style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', margin: 0 }}>
-                      {t('common.status')}
-                      <select value={logStatus} onChange={(e) => setLogStatus(e.target.value)}>
-                        <option value="detections">{t('vi.statusAllDetections')}</option>
-                        <option value="active">{t('vi.statusActive')}</option>
-                        <option value="acknowledged">{t('vi.statusAcknowledged')}</option>
-                        <option value="diagnostic">{t('vi.statusDiagnostic')}</option>
-                        <option value="">{t('vi.statusAllInclDiag')}</option>
-                      </select>
-                    </label>
-                    <label style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', margin: 0 }}>
-                      {t('vi.rule')}
-                      <select value={logRuleId} onChange={(e) => setLogRuleId(e.target.value)}>
-                        <option value="">{t('vi.allRules')}</option>
-                        {selectedRules.map((rule) => (
-                          <option key={rule.id} value={rule.id}>{rule.name || rule.detectionType || t('vi.ruleNum', { id: rule.id })}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <button type="button" className="quiet" onClick={() => setLogDate('')} disabled={!logDate}>
-                      {t('vi.allDates')}
-                    </button>
-                    <button type="button" className="quiet" onClick={() => setLogDate(todayDateString())} disabled={logDate === todayDateString()}>
-                      {t('vi.today')}
-                    </button>
-                    <button type="button" className="quiet" onClick={() => fetchLogAlerts(selectedCamera?.id, logPage, logDate, logStatus, logRuleId)} disabled={logLoading}>
-                      {t('common.reload')}
-                    </button>
+                  <div className="log-toolbar">
                     <button
                       type="button"
-                      className="quiet danger-text"
-                      onClick={() => {
-                        if (window.confirm(t('vi.clearDiagConfirm'))) {
-                          purgeLogAlerts(true);
-                        }
-                      }}
+                      className="quiet"
+                      onClick={showTodayLog}
                       disabled={logLoading}
-                      title={t('vi.clearDiagTitle')}
+                      title={t('vi.todayTitle')}
                     >
-                      <span className="btn-icon"><Ico n="trash" /> {t('vi.clearDiagnostics')}</span>
+                      <span className="btn-icon"><Ico n="reload" /> {t('vi.today')}</span>
                     </button>
                   </div>
-                  {logLoading ? <p className="empty">{t('vi.loading')}</p> : null}
-                  {!logLoading && logAlerts.length === 0 ? <p className="empty">{t('vi.noEvents', { date: logDate ? t('vi.onThisDate') : '' })}</p> : null}
-                  {logAlerts.length > 0 ? (
-                    <div className="event-table-wrap">
-                      <table className="event-table">
-                        <thead>
-                          <tr>
-                            <th>{t('vi.thTime')}</th>
-                            <th>{t('vi.thEvent')}</th>
-                            <th>{t('vi.rule')}</th>
-                            <th>{t('vi.thConfidence')}</th>
-                            <th>{t('common.status')}</th>
-                            <th>{t('vi.thAction')}</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {logAlerts.map((alert) => {
-                            const metadata = parseMetadata(alert.metadata);
-                            const diagnostic = Boolean(metadata.diagnostic);
-                            const rule = selectedRules.find((item) => Number(item.id) === Number(alert.ruleId));
-                            const objectLabel = metadata.objectLabel;
-                            return (
-                              <tr key={alert.id} className={Number(logSelectedAlertId) === Number(alert.id) ? 'selected' : ''}>
-                                <td>{formatTimestamp(alert.createdAt)}</td>
-                                <td>
-                                  <strong>{objectLabel || alert.label || alert.detectionType || t('vi.detectionEvent')}</strong>
-                                  <span>{formatSourceLabel(metadata.source)}</span>
-                                </td>
-                                <td>{rule?.name || `#${alert.ruleId || '-'}`}</td>
-                                <td>{Number(alert.confidence || 0).toFixed(3)}</td>
-                                <td>
-                                  <span className={`status-pill ${diagnostic ? 'unknown' : alert.isAcknowledged ? 'resolved' : 'offline'}`}>
-                                    {diagnostic ? t('vi.pillDiagnostic') : alert.isAcknowledged ? t('vi.pillAcknowledged') : t('vi.pillActive')}
-                                  </span>
-                                </td>
-                                <td>
-                                  <div className="table-actions">
-                                    <button type="button" className="quiet" onClick={() => setLogSelectedAlertId(Number(logSelectedAlertId) === Number(alert.id) ? null : alert.id)}>
-                                      {Number(logSelectedAlertId) === Number(alert.id) ? t('common.close') : t('vi.details')}
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="quiet"
-                                      onClick={() => onAcknowledgeAlert(alert.id)}
-                                      disabled={busy || alert.isAcknowledged || diagnostic}
-                                    >
-                                      <Ico n="acknowledge" sz={12} />
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : null}
-                  {logTotal > logPageSize ? (
-                    <div className="pagination-bar" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.5rem' }}>
-                      <button type="button" className="quiet" onClick={() => setLogPage((p) => Math.max(0, p - 1))} disabled={logPage === 0 || logLoading}>
-                        {t('vi.prevArrow')}
-                      </button>
-                      <span style={{ fontSize: '0.85rem' }}>
-                        {t('vi.pageOf', { n: logPage + 1, total: Math.ceil(logTotal / logPageSize) })}
-                      </span>
-                      <button type="button" className="quiet" onClick={() => setLogPage((p) => p + 1)} disabled={(logPage + 1) * logPageSize >= logTotal || logLoading}>
-                        {t('vi.nextArrow')}
-                      </button>
-                    </div>
-                  ) : null}
-                  {null /* detail shown in AlertDetailModal overlay */}
+                  <DataTable
+                    key={`log-${selectedCamera.id}-${logReloadKey}`}
+                    serverMode
+                    rows={logAlerts}
+                    columns={logColumns}
+                    total={logTotal}
+                    pageSize={LOG_PAGE_SIZE}
+                    pageSizeOptions={[10, 15, 30, 50, 100]}
+                    initialFilters={logSeed}
+                    busy={logLoading}
+                    onQuery={(q) => loadLogAlerts(selectedCamera?.id, q)}
+                    emptyText={t('vi.noEvents', { date: '' })}
+                  />
                 </div>
               </section>
             </>
@@ -939,9 +840,6 @@ export function VisionTab({
               <p className="empty">{t('vi.noCameraHint')}</p>
             </section>
           )}
-        </main>
-      </section>
-      ) : null}
       {(() => {
         const logSelectedAlert = logAlerts.find((a) => Number(a.id) === Number(logSelectedAlertId)) || null;
         if (!logSelectedAlert) return null;
@@ -985,7 +883,7 @@ function titleizeLabel(value) {
 // user-trained labels (papa, oven, …) are easy to find among the stock catalog.
 const TRAINED_GROUP = 'Custom model';
 
-function ObjectClassesPanel({ classes, labelCatalog, activeModelClasses, busy, onSaveClass, onDeleteClass }) {
+export function ObjectClassesPanel({ classes, labelCatalog, activeModelClasses, busy, onSaveClass, onDeleteClass }) {
   const t = useT();
   const [draft, setDraft] = useState(emptyClassDraft);
   const [labelInput, setLabelInput] = useState('');

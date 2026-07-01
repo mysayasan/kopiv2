@@ -1071,16 +1071,22 @@ export function waitForIceGathering(pc) {
   });
 }
 
-export async function createWebRTCAnswer(deviceId, offer, authHeader) {
+export async function createWebRTCAnswer(deviceId, offer, authHeader, rtspUrl) {
   const headers = { 'Content-Type': 'application/json' };
   if (authHeader) {
     headers.Authorization = authHeader;
+  }
+  // rtspUrl (optional) previews a specific detected stream under a separate source ID —
+  // it does NOT change the camera's active stream (recording/detection are untouched).
+  const body = { type: offer.type, sdp: offer.sdp };
+  if (rtspUrl) {
+    body.rtspUrl = rtspUrl;
   }
   const response = await fetch(`${apiBase()}/api/cameras/${deviceId}/webrtc/offer`, {
     method: 'POST',
     credentials: 'include',
     headers,
-    body: JSON.stringify({ type: offer.type, sdp: offer.sdp }),
+    body: JSON.stringify(body),
   });
   const text = await response.text();
   let payload = null;

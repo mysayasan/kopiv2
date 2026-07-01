@@ -30,6 +30,13 @@
       "noBuffer": true
     }
   },
+  "recording": {
+    "storage": {
+      "codec": "hevc",
+      "quality": 0,
+      "maxConcurrentEncodes": 0
+    }
+  },
   "stream": {
     "webrtc": {
       "enabled": true,

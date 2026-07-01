@@ -1,11 +1,19 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useT } from './i18n';
 
 // DataTable is the shared filterable/sortable/pageable data grid for the RBAC apps.
-// Filtering/sorting/paging run client-side over the supplied `rows`. Columns are
-// `{ key, label, render?, filterable?, filterType? }`; action columns set
+// Columns are `{ key, label, render?, filterable?, filterType? }`; action columns set
 // `filterable:false`. The CSS classes it renders (.table-surface, .pager, .filter-*,
 // .sort-button, …) are styled by the consuming app's stylesheet.
+//
+// Two modes:
+//   - client (default): filtering/sorting/paging run in-memory over `rows`.
+//   - server (`serverMode`): the grid is a controlled view — `rows` is already the
+//     current page, `total` is the full filtered count, and `onQuery({ filters,
+//     sorters, offset, limit })` fires whenever the filter/sort/page state changes so
+//     the parent can run the query in the DB. `filters`/`sorters` use the same shape
+//     the backend query parser expects ({ fieldName, compare, value } / { fieldName,
+//     sort }), so they can be JSON-stringified straight into the request.
 
 const FILTER_OPERATORS = [
   { value: 1, label: '=' },
@@ -18,12 +26,21 @@ const FILTER_OPERATORS = [
 const TEXT_FILTER_OPERATORS = FILTER_OPERATORS.filter((op) => [1, 2].includes(op.value));
 const BOOLEAN_FILTER_OPERATORS = FILTER_OPERATORS.filter((op) => [1, 2].includes(op.value));
 
-export function DataTable({ rows, columns, pageSize = 10, busy = false, emptyText }) {
+export function DataTable({ rows, columns, pageSize: initialPageSize = 10, pageSizeOptions = null, busy = false, emptyText, serverMode = false, total, onQuery, initialFilters = null }) {
   const t = useT();
-  const [columnFilters, setColumnFilters] = useState({});
+  // `initialFilters` seeds the column filters at mount (shape: { colKey: [{compare,
+  // value}] }). Remount (via a `key`) to apply a fresh seed — e.g. a "Today" preset.
+  const [columnFilters, setColumnFilters] = useState(() => (initialFilters && typeof initialFilters === 'object' ? { ...initialFilters } : {}));
   const [sorters, setSorters] = useState([]);
   const [offset, setOffset] = useState(0);
   const [openFilter, setOpenFilter] = useState(null);
+  // Page size is stateful when a selector is offered (pageSizeOptions), otherwise it
+  // is simply the fixed prop. Changing it returns to the first page.
+  const [pageSize, setPageSize] = useState(initialPageSize);
+  function changePageSize(n) {
+    setPageSize(n);
+    setOffset(0);
+  }
 
   // Filter/sort metadata is derived only for the data columns (action columns opt
   // out with filterable:false); every column is still rendered.
@@ -39,27 +56,48 @@ export function DataTable({ rows, columns, pageSize = 10, busy = false, emptyTex
       .map((filter) => {
         const value = String(filter?.value ?? '').trim();
         if (value === '') return null;
+        const compare = normalizeFilterCompare(filter?.compare, column);
         return {
           fieldName: column.key,
-          compare: normalizeFilterCompare(filter?.compare, column),
-          value: coerceFilterValue(value, column),
+          compare,
+          value: coerceFilterValue(value, column, compare),
         };
       })
       .filter(Boolean)),
     [columnFilters, fieldColumns],
   );
 
-  const viewRows = useMemo(
+  // Client mode filters/sorts in-memory; server mode trusts `rows` as the ready page.
+  const clientViewRows = useMemo(
     () => applyClientSorters(applyClientFilters(Array.isArray(rows) ? rows : [], filters, fieldColumns), sorters, fieldColumns),
     [rows, filters, sorters, fieldColumns],
   );
+  const viewRows = serverMode ? (Array.isArray(rows) ? rows : []) : clientViewRows;
 
-  // Keep the page offset in range as filtering shrinks the result set.
+  // Server mode: emit the current query whenever filters/sorters/page change, always
+  // calling the latest onQuery (via a ref) so an inline parent callback never causes a
+  // refetch loop. The `filters` array is re-derived every render (callers pass inline
+  // `columns`/`rows`), so guard on a serialized signature — only emit when the query
+  // actually changed, otherwise a fetch → setState → re-render would loop forever.
+  const onQueryRef = useRef(onQuery);
+  useEffect(() => { onQueryRef.current = onQuery; });
+  const lastQuerySigRef = useRef(null);
   useEffect(() => {
-    if (offset > 0 && offset >= viewRows.length) setOffset(0);
-  }, [viewRows.length, offset]);
+    if (!serverMode) return;
+    const query = { filters, sorters, offset, limit: pageSize };
+    const sig = JSON.stringify(query);
+    if (sig === lastQuerySigRef.current) return;
+    lastQuerySigRef.current = sig;
+    if (onQueryRef.current) onQueryRef.current(query);
+  }, [serverMode, filters, sorters, offset, pageSize]);
 
-  const pageRows = viewRows.slice(offset, offset + pageSize);
+  // Client mode only: keep the page offset in range as filtering shrinks the set.
+  useEffect(() => {
+    if (!serverMode && offset > 0 && offset >= clientViewRows.length) setOffset(0);
+  }, [serverMode, clientViewRows.length, offset]);
+
+  const pageRows = serverMode ? viewRows : viewRows.slice(offset, offset + pageSize);
+  const pagerTotal = serverMode ? (Number(total) || 0) : viewRows.length;
 
   function updateColumnFilter(fieldName, criteria) {
     setColumnFilters((current) => {
@@ -82,6 +120,8 @@ export function DataTable({ rows, columns, pageSize = 10, busy = false, emptyTex
       if (Number(existing.sort) === 1) return current.map((s) => (s.fieldName === fieldName ? { ...s, sort: 2 } : s));
       return current.filter((s) => s.fieldName !== fieldName);
     });
+    // Re-sorting returns to the first page (matches filtering; keeps server paging sane).
+    setOffset(0);
   }
 
   function openColumnFilter(column, anchor) {
@@ -130,7 +170,7 @@ export function DataTable({ rows, columns, pageSize = 10, busy = false, emptyTex
           </tbody>
         </table>
       </div>
-      <Pager total={viewRows.length} offset={offset} limit={pageSize} onPage={setOffset} busy={busy} />
+      <Pager total={pagerTotal} offset={offset} limit={pageSize} onPage={setOffset} busy={busy} pageSizeOptions={pageSizeOptions} onPageSize={changePageSize} />
       {openFilter && (
         <>
           <button className="filter-popover-backdrop" onClick={() => setOpenFilter(null)} type="button" aria-label="Close filter" />
@@ -180,15 +220,57 @@ function ColumnHeader({ column, filter, sort, onFilterOpen, onSort }) {
 
 function ColumnFilterPopover({ column, filter, left, top, onApply, onClear, onClose }) {
   const t = useT();
+  const isRange = column.filterType === 'daterange';
   const [draft, setDraft] = useState(() => normalizeFilterDrafts(filter, column));
+  const [range, setRange] = useState(() => rangeFromFilter(filter));
   const operators = filterOperatorsForField(column);
 
-  useEffect(() => { setDraft(normalizeFilterDrafts(filter, column)); }, [column, filter]);
+  useEffect(() => {
+    setDraft(normalizeFilterDrafts(filter, column));
+    setRange(rangeFromFilter(filter));
+  }, [column, filter]);
 
   function updateDraft(index, patch) {
     setDraft((current) => current.map((item, i) => (i === index
       ? { ...item, ...patch, compare: normalizeFilterCompare(patch.compare ?? item.compare, column) }
       : item)));
+  }
+
+  // A date-range filter picks a From/To span and emits it as two conditions
+  // (createdAt >= from, createdAt <= to); either bound may be left open.
+  function applyRange(e) {
+    e.preventDefault();
+    const conditions = [];
+    if (range.from) conditions.push({ compare: 5, value: range.from });
+    if (range.to) conditions.push({ compare: 6, value: range.to });
+    onApply(column.key, conditions);
+  }
+
+  if (isRange) {
+    return (
+      <div className="filter-popover" style={{ left, top }}>
+        <div className="filter-popover-head">
+          <span>{column.label}</span>
+          <button className="mini-button" onClick={onClose} type="button">{t('common.close')}</button>
+        </div>
+        <form className="filter-popover-body" onSubmit={applyRange}>
+          <div className="filter-condition">
+            <label>
+              {t('table.dateFrom')}
+              <input type="date" autoFocus value={range.from} max={range.to || undefined} onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))} />
+            </label>
+            <label>
+              {t('table.dateTo')}
+              <input type="date" value={range.to} min={range.from || undefined} onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))} />
+            </label>
+          </div>
+          <div className="filter-popover-actions">
+            <button className="secondary-button" onClick={() => setRange({ from: '', to: '' })} type="button">{t('common.clear')}</button>
+            <button className="primary-button" type="submit">{t('common.apply')}</button>
+          </div>
+        </form>
+      </div>
+    );
   }
 
   return (
@@ -239,8 +321,9 @@ function ColumnFilterPopover({ column, filter, left, top, onApply, onClear, onCl
   );
 }
 
-function Pager({ total, offset, limit, onPage, busy }) {
+function Pager({ total, offset, limit, onPage, busy, pageSizeOptions, onPageSize }) {
   const t = useT();
+  const showSize = Array.isArray(pageSizeOptions) && pageSizeOptions.length > 0 && typeof onPageSize === 'function';
   const pageCount = Math.max(1, Math.ceil(total / limit));
   const currentPage = Math.min(pageCount, Math.floor(offset / limit) + 1);
   const last = Math.max(0, (pageCount - 1) * limit);
@@ -254,7 +337,17 @@ function Pager({ total, offset, limit, onPage, busy }) {
 
   return (
     <div className="pager">
-      <span>{t('pager.summary', { current: currentPage, count: pageCount, total })}</span>
+      <div className="pager-meta">
+        <span>{t('pager.summary', { current: currentPage, count: pageCount, total })}</span>
+        {showSize ? (
+          <label className="pager-size">
+            {t('pager.rows')}
+            <select value={limit} onChange={(e) => onPageSize(Number(e.target.value))} disabled={busy}>
+              {pageSizeOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </label>
+        ) : null}
+      </div>
       <div className="pager-controls">
         <button className="pager-icon first" disabled={busy || offset <= 0} onClick={() => onPage(0)} title={t('pager.first')} type="button" aria-label={t('pager.first')} />
         <button className="pager-icon previous" disabled={busy || offset <= 0} onClick={() => onPage(Math.max(0, offset - limit))} title={t('pager.previous')} type="button" aria-label={t('pager.previous')} />
@@ -293,8 +386,33 @@ function inferFilterType(key) {
 
 function filterOperatorsForField(field) {
   if (field?.filterType === 'boolean') return BOOLEAN_FILTER_OPERATORS;
-  if (field?.filterType === 'number') return FILTER_OPERATORS;
+  if (field?.filterType === 'number' || field?.filterType === 'date' || field?.filterType === 'daterange') return FILTER_OPERATORS;
   return TEXT_FILTER_OPERATORS;
+}
+
+// rangeFromFilter reads a date-range column's stored conditions back into { from, to }
+// date strings (compare >= / > is the lower bound, <= / < the upper) so re-opening the
+// popover shows the picked span rather than raw epochs.
+function rangeFromFilter(filter) {
+  const list = Array.isArray(filter) ? filter : filter ? [filter] : [];
+  let from = '';
+  let to = '';
+  for (const f of list) {
+    const c = Number(f?.compare);
+    if (c === 5 || c === 3) from = String(f?.value ?? '');
+    else if (c === 6 || c === 4) to = String(f?.value ?? '');
+  }
+  return { from, to };
+}
+
+// dateToEpoch converts a YYYY-MM-DD picker value to a Unix timestamp (seconds). Upper
+// bounds ('<=' and '>') snap to the END of the chosen day so the whole calendar day is
+// covered; lower bounds use its start.
+function dateToEpoch(value, compare) {
+  const d = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return value;
+  if (compare === 3 || compare === 6) d.setHours(23, 59, 59, 999);
+  return Math.floor(d.getTime() / 1000);
 }
 
 function normalizeFilterCompare(compare, field) {
@@ -303,9 +421,10 @@ function normalizeFilterCompare(compare, field) {
   return operators.some((op) => op.value === value) ? value : operators[0].value;
 }
 
-function coerceFilterValue(value, field) {
+function coerceFilterValue(value, field, compare) {
   if (field?.filterType === 'boolean') return String(value).toLowerCase() === 'true';
   if (field?.filterType === 'number') return Number(value);
+  if (field?.filterType === 'date' || field?.filterType === 'daterange') return dateToEpoch(value, compare);
   return value;
 }
 
@@ -334,13 +453,13 @@ function applyClientSorters(rows, sorters, fields) {
 }
 
 function sortComparableValue(value, field) {
-  if (field?.filterType === 'number') { const n = Number(value); return Number.isNaN(n) ? 0 : n; }
+  if (field?.filterType === 'number' || field?.filterType === 'date' || field?.filterType === 'daterange') { const n = Number(value); return Number.isNaN(n) ? 0 : n; }
   if (field?.filterType === 'boolean') return value ? 1 : 0;
   return String(value ?? '').toLowerCase();
 }
 
 function compareFilterValue(actual, expected, compare, field) {
-  if (field?.filterType === 'number') {
+  if (field?.filterType === 'number' || field?.filterType === 'date' || field?.filterType === 'daterange') {
     const left = Number(actual);
     const right = Number(expected);
     if (Number.isNaN(left) || Number.isNaN(right)) return false;

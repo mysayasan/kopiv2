@@ -22,6 +22,17 @@ Declares service contracts for app-specific domain.
   - `GetCameraEncoder(ctx, id)` — reads the camera's current ONVIF video encoder config
   - `ApplyCameraEncoder(ctx, id, ApplyCameraEncoderRequest)` — pushes a recording codec + bitrate cap to the camera's encoder via ONVIF (Phase 3 camera-side compression)
   - `LPRCapability(ctx, id)` — returns `LPRCapabilityResult` reporting whether the camera can supply plate-legible frames; when ONVIF profiles are readable it also surfaces the highest-resolution profile's RTSP URL for auto-pick capture. Cached (15 min TTL); safe to call on the per-frame path. Cache is invalidated on camera save.
+  - `VerifyDeviceCredentials(ctx, detail, credentials)` — checks credentials against a not-yet-saved discovered camera (the Add flow, before there is a DB id) by resolving the ONVIF stream URI and/or probing RTSP `DESCRIBE`. Returns `"ok"`/`"unauthorized"`/`"unreachable"`; never returns an error for a successful *determination* (only for genuinely malformed input).
+  - `CameraAuthStatus(ctx, id)` — verifies a saved camera's *stored* credentials the same way; this is the signal the camera node's access gate polls to decide whether to block the UI and prompt for new credentials.
+  - `ListCameraUsers` / `CreateCameraUser` / `DeleteCameraUser` — manage the camera's local ONVIF user accounts (Device Management `GetUsers`/`CreateUsers`/`DeleteUsers`). `DeleteCameraUser` refuses to delete the account the app itself authenticates with (would lock the app out of the camera).
+  - `RebootCamera(ctx, id)` — ONVIF `SystemReboot`; returns the device's reboot message.
+  - `FactoryDefaultCamera(ctx, id, hard)` — ONVIF `SetSystemFactoryDefault` (`Soft` keeps network config, `Hard` wipes it).
+  - `GetCameraDateTime` / `SetCameraDateTime` — read/write the camera clock (`GetSystemDateAndTime`+`GetNTP` merged on read; `SetSystemDateAndTime` + a follow-up `SetNTP` call in NTP mode on write).
+  - `GetCameraNetwork` / `SetCameraNetwork` — read/write a camera NIC's IPv4 config, default gateway, and DNS via ONVIF `GetNetworkInterfaces`/`SetNetworkInterfaces`/`SetNetworkDefaultGateway`/`SetDNS`.
+  - `GetCameraCapabilities(ctx, id)` — returns `CameraCapabilities`: service-level flags (Media/PTZ/Imaging/Analytics/Events) from `GetServices`, plus per-operation flags (`UserMgmt`/`DateTime`/`Network`) established by actually probing each read call, since Device-Management operations all live in the one mandatory device service and `GetServices` can't tell them apart. The UI hides management boxes the camera's firmware doesn't implement.
+  - `GetCameraDeviceInfo(ctx, id)` — returns `CameraDeviceInfo` for the Live View → Camera Information panel: manufacturer/model/firmware/hardware/serial/location (static, from the stored detail; location is parsed out of ONVIF scopes) plus MAC address (from `GetNetwork`) and ONVIF version (from `GetServices`), both fetched live and best-effort so a slow/offline camera never blocks the response.
+  - `PreviewSource(ctx, id, rtspUrl)` — resolves an arbitrary detected-profile RTSP URL into a playable `SnapshotSource` using the camera's stored credentials, **without persisting**, so a live preview of a specific stream (e.g. from Discover) never disturbs the camera's active RTSP URL that recording/detection rely on.
+  - `TestStreamURL(ctx, id, rtspUrl)` — probes a specific detected-profile RTSP URL with the camera's credentials but, unlike `TestStream`, does **not** persist the resolved URL/status/tracks — a non-destructive per-stream connectivity check.
 - `ILocalUserService`
   - `EnsureDefaultAdmin(ctx)` seeds the first standalone admin account
   - `Authenticate(ctx, username, password)` validates Basic Auth credentials
@@ -29,7 +40,7 @@ Declares service contracts for app-specific domain.
 - `IVisionService`
   - `GetRules(ctx, limit, offset)` and `SaveRule(ctx, req, userId)` for detection rule management
   - `DeleteRule(ctx, id)` for removing stale rules
-  - `GetAlerts(ctx, limit, offset, cameraId, createdAfter, createdBefore)` — paginated alert list with optional server-side filtering by camera ID and unix-timestamp date range
+  - `GetAlerts(ctx, limit, offset, cameraId, status, filters, sorters)` — paginated alert list. `cameraId` and `status` remain mandatory base constraints; `filters`/`sorters` (`[]sqldataenums.Filter`/`[]sqldataenums.Sorter`) come straight from the client `DataTable` (server mode) so the grid's column filters and sort run as true DB-side `WHERE`/`ORDER BY` clauses instead of a client-side slice. Defaults to `CreatedAt DESC` when no sort is supplied.
   - `CreateAlert(ctx, req, userId)` for alert event persistence
   - `AcknowledgeAlert(ctx, id, userId)` for operator acknowledgement
   - `PurgeAlerts(ctx, olderThan, onlyDiagnostics)` — delete rows and unlink snapshots for alerts older than a unix-second cutoff
@@ -53,6 +64,11 @@ Declares service contracts for app-specific domain.
 
 ## Key Request Types
 
+- `CreateCameraUserRequest` — `Username`/`Password`/`UserLevel` for adding a local ONVIF user account on the camera.
+- `SetCameraDateTimeRequest` — `DateTimeType` (`"Manual"`|`"NTP"`), `DaylightSavings`, `TimeZone`, `UTCDateTime` (RFC3339 UTC, required for Manual), `NTPFromDHCP`, `NTPServers`.
+- `SetCameraNetworkRequest` — `InterfaceToken`, `DHCP`, `IPAddress`, `PrefixLength`, `Gateway`, `DNS`.
+- `CameraCapabilities` — `Onvif`/`PTZ`/`Media`/`Imaging`/`Analytics`/`Events` service flags plus per-operation `UserMgmt`/`DateTime`/`Network` flags and static `Manufacturer`/`Model`/`FirmwareVersion`/`SerialNumber`/`HardwareID`.
+- `CameraDeviceInfo` — the read-only device identity surfaced in Live View → Camera Information: `Manufacturer`, `Model`, `FirmwareVersion`, `HardwareID`, `SerialNumber`, `Location` (parsed from ONVIF scopes), `MACAddress`, `ONVIFVersion`, `ONVIFUri`.
 - `SaveRecordingConfigRequest` — carries `CameraId`, `Enabled`, `PreRollSec`, `PostRollSec`, `StoragePath`, `RetentionDays`, `SegmentMinutes`, `StreamURL` (recording stream override), `FallbackStreamUrl` (fallback RTSP URI).
 - `VisionMonitorSettings` — carries startup-only monitor enablement, interval, capture timeout, diagnostic cooldown, `PersistSampledDiagnostics` flag, detector implementation, and a `*recording.Manager` pointer.
 - `RuntimeSettings` — carries runtime-editable decoder, stream, vision, and recording settings.
