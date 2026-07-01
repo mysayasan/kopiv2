@@ -2,9 +2,10 @@ import Icon from '../components/Icon.jsx';
 import Reveal from '../components/Reveal.jsx';
 import RotatingWord from '../components/RotatingWord.jsx';
 import MagneticButton from '../components/MagneticButton.jsx';
-import { hero } from '../content.js';
+import { useContent } from '../i18n/index.jsx';
 
 export default function Hero() {
+  const { hero } = useContent();
   return (
     <section className="hero">
       <div className="hero__glow" aria-hidden="true" />

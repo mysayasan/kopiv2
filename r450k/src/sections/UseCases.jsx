@@ -1,12 +1,13 @@
 import Reveal from '../components/Reveal.jsx';
-import { useCases } from '../content.js';
+import { useContent } from '../i18n/index.jsx';
 
 export default function UseCases() {
+  const { useCases } = useContent();
   return (
     <section className="section" id="use-cases">
       <div className="container">
         <Reveal className="section__head">
-          <p className="kicker">Use cases</p>
+          <p className="kicker">{useCases.kicker}</p>
           <h2 className="section__title">{useCases.title}</h2>
         </Reveal>
         <Reveal className="grid grid--use" stagger>

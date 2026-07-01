@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { contact } from '../content.js';
+import { useContent } from '../i18n/index.jsx';
 
 const TgIcon = ({ size = 22 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -10,6 +10,7 @@ const TgIcon = ({ size = 22 }) => (
 const initial = { name: '', message: '', website: '' }; // website = honeypot
 
 export default function ContactWidget() {
+  const { contact } = useContent();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(initial);
   const [state, setState] = useState('idle'); // idle | sending | sent | error
@@ -35,7 +36,7 @@ export default function ContactWidget() {
     e.preventDefault();
     if (state === 'sending') return;
     if (!form.message.trim()) {
-      setError('Please enter a message.');
+      setError(contact.errRequired);
       return;
     }
     setState('sending');
@@ -59,8 +60,8 @@ export default function ContactWidget() {
       setState('error');
       setError(
         err.message?.includes('Failed to fetch') || err.message?.includes('404')
-          ? 'Message endpoint not reachable. (In local dev, run the Worker — see README.)'
-          : err.message || 'Something went wrong. Please try again.'
+          ? contact.errUnreachable
+          : err.message || contact.errGeneric
       );
     }
   };
@@ -84,22 +85,22 @@ export default function ContactWidget() {
               <div className="cw__check">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
               </div>
-              <p>Thanks — your message is on its way to my Telegram.</p>
-              <button className="cw__again" onClick={() => setState('idle')}>Send another</button>
+              <p>{contact.sent}</p>
+              <button className="cw__again" onClick={() => setState('idle')}>{contact.again}</button>
             </div>
           ) : (
             <form className="cw__form" onSubmit={submit}>
               <input
                 className="cw__input"
                 type="text"
-                placeholder="Your name (optional)"
+                placeholder={contact.namePlaceholder}
                 value={form.name}
                 maxLength={100}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
               />
               <textarea
                 className="cw__input cw__textarea"
-                placeholder="How can I help?"
+                placeholder={contact.messagePlaceholder}
                 rows={3}
                 maxLength={2000}
                 value={form.message}
@@ -117,7 +118,7 @@ export default function ContactWidget() {
               />
               {error && <p className="cw__err">{error}</p>}
               <button className="cw__send" type="submit" disabled={state === 'sending'}>
-                {state === 'sending' ? 'Sending…' : 'Send message'}
+                {state === 'sending' ? contact.sending : contact.send}
               </button>
             </form>
           )}
@@ -131,7 +132,7 @@ export default function ContactWidget() {
         onClick={() => setOpen((v) => !v)}
       >
         <TgIcon />
-        <span className="cw__fab-label">Contact</span>
+        <span className="cw__fab-label">{contact.fabLabel}</span>
       </button>
     </div>
   );

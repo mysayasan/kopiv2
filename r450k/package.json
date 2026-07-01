@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && vite build --ssr src/entry-server.jsx --outDir dist-ssr && node scripts/prerender.mjs",
+    "build:client": "vite build",
     "preview": "vite preview",
     "deploy": "wrangler deploy",
     "cf-dev": "wrangler dev"

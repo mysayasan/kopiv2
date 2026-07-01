@@ -1,12 +1,13 @@
 import Reveal from '../components/Reveal.jsx';
-import { how } from '../content.js';
+import { useContent } from '../i18n/index.jsx';
 
 export default function HowItWorks() {
+  const { how } = useContent();
   return (
     <section className="section section--alt" id="how">
       <div className="container">
         <Reveal className="section__head">
-          <p className="kicker">How it works</p>
+          <p className="kicker">{how.kicker}</p>
           <h2 className="section__title">{how.title}</h2>
         </Reveal>
         <div className="steps-wrap">

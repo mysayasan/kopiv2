@@ -4,17 +4,17 @@ Standalone static marketing site for the **r450k** platform, built with React + 
 deployed to **Cloudflare Workers (Static Assets)**. It is decoupled from the Go backend; it
 ships a static `dist/` bundle served by a tiny Worker that also handles the contact endpoint.
 
-Content is sourced from the platform READMEs (primarily [`apps/mymatasan/README.md`](../apps/mymatasan/README.md))
-and lives entirely in [`src/content.js`](src/content.js) — edit copy there without touching layout.
+Content lives in per-locale files under [`src/content/`](src/content/) (`en.js`, `ms.js`, `zh.js`, `ar.js`). Edit copy in `src/content/en.js` for English; the non-English files derive their structure from the English module. The site supports four languages — **English**, **Melayu**, **中文**, and **العربية** (Arabic, RTL) — with prerendered, per-locale indexable URLs (`/`, `/ms/`, `/zh/`, `/ar/`).
 
 ## Local development
 
 ```bash
 cd r450k
 npm install
-npm run dev      # http://localhost:5173
-npm run build    # outputs static site to dist/
-npm run preview  # serve the built dist/ locally
+npm run dev           # http://localhost:5173 (client only, no prerender)
+npm run build         # client build + SSR build + prerender → dist/
+npm run build:client  # client bundle only (skips SSR/prerender)
+npm run preview       # serve the built dist/ locally
 ```
 
 Requires Node 22+ (see [`.nvmrc`](.nvmrc)) — Wrangler 4 needs Node ≥ 22.
@@ -23,23 +23,51 @@ Requires Node 22+ (see [`.nvmrc`](.nvmrc)) — Wrangler 4 needs Node ≥ 22.
 
 ```
 r450k/
-  index.html            # entry HTML + meta tags
+  index.html            # entry HTML + meta tags (template; locale variants overwritten at build time)
   vite.config.js
   wrangler.jsonc        # Cloudflare Worker + Static Assets config
   worker/
     index.js            # Worker entry: POST /api/contact + serves dist/ assets
+  scripts/
+    prerender.mjs       # build-time SSR prerender — emits dist/index.html, dist/ms/, dist/zh/, dist/ar/
   public/
     favicon.svg
     _headers            # security + cache headers (served by Workers assets)
     robots.txt, sitemap.xml, og-image.svg
   src/
-    main.jsx
+    main.jsx            # client entry (hydrateRoot)
+    entry-server.jsx    # SSR entry used by prerender.mjs
     App.jsx
-    content.js          # ALL site copy — edit here
-    styles.css          # dark theme, mirrors the apps' --theme-dark palette
-    components/         # Logo, Icon, ContactWidget, animation helpers
+    i18n/
+      index.jsx         # LangProvider, useLang, useContent, LANGS, localePath
+    content/
+      en.js             # English copy — edit here; authoritative source of structure
+      ms.js             # Malay
+      zh.js             # Chinese Simplified
+      ar.js             # Arabic (RTL)
+    styles.css          # dark theme, mirrors the apps' --theme-dark palette; RTL overrides
+    components/         # Logo, Icon, ContactWidget, LangDropdown, animation helpers
     sections/           # Nav, Hero, Features, HowItWorks, Tiers, Showcase, UseCases, Apps, FinalCta, Footer
 ```
+
+## Multi-language i18n + SEO prerender
+
+The site supports four languages with prerendered, per-locale static pages that are individually indexable:
+
+| Locale | URL | Direction |
+| --- | --- | --- |
+| English | `https://r450k.com/` | LTR |
+| Melayu | `https://r450k.com/ms/` | LTR |
+| 中文 | `https://r450k.com/zh/` | LTR |
+| العربية | `https://r450k.com/ar/` | RTL |
+
+**How it works**: `npm run build` runs three steps in sequence: (1) Vite client build → `dist/`; (2) Vite SSR build of `src/entry-server.jsx` → `dist-ssr/`; (3) `node scripts/prerender.mjs` which imports the SSR bundle, calls `render(lang)` once per locale, and writes a fully populated HTML file to `dist/` (e.g. `dist/ar/index.html`). Each output has the correct `<html lang/dir>`, translated `<title>`/meta, `<link rel="canonical">`, `<meta property="og:url">`, and `<link rel="alternate" hreflang>` tags for all four locales plus `x-default`. `public/sitemap.xml` lists all four locale URLs with hreflang alternates. `dist-ssr/` is gitignored.
+
+**Language switcher**: `src/components/LangDropdown.jsx` renders `English | Melayu | 中文 | العربية` as real `<a href>` links pointing at the per-locale paths (crawlable and functional without JS), with a JS intercept for instant no-reload switching via `window.history.pushState`. Selecting Arabic flips `<html dir>` to `rtl`.
+
+**Adding or editing copy**: edit the English source file (`src/content/en.js`) for structure and English text; update the corresponding key in `ms.js`, `zh.js`, and `ar.js` for the other locales. Rebuild (`npm run build`) to regenerate all prerendered pages.
+
+**RTL support**: `src/styles.css` includes `[dir="rtl"]` overrides for layout properties (flex-direction, text-align, padding/margin asymmetries) so the full page mirrors correctly in Arabic without per-component changes.
 
 ## Deploy to Cloudflare Workers (Git integration)
 
@@ -87,8 +115,8 @@ npm run deploy        # = npx wrangler deploy (needs `wrangler login` once)
 
 The site is wired to **`https://r450k.com`**: the canonical link + Open Graph/Twitter tags
 in [`index.html`](index.html), [`public/robots.txt`](public/robots.txt),
-[`public/sitemap.xml`](public/sitemap.xml), and the `siteUrl` constant in
-[`src/content.js`](src/content.js). To change the domain, update those (search for `r450k.com`).
+[`public/sitemap.xml`](public/sitemap.xml), and the `SITE_URL` constant in
+[`src/i18n/index.jsx`](src/i18n/index.jsx). To change the domain, update those (search for `r450k.com`).
 
 Connect the domain in Cloudflare (the same domain can host the apex and `www`):
 
@@ -152,7 +180,7 @@ npx wrangler secret put TELEGRAM_CHAT_ID
 Secrets persist across deploys, so set them once (live immediately — no redeploy needed).
 
 To hide the widget entirely, set `enabled: false` in the `contact` block of
-[`src/content.js`](src/content.js).
+[`src/content/en.js`](src/content/en.js).
 
 ### Troubleshooting
 

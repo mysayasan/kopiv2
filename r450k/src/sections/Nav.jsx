@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import Logo from '../components/Logo.jsx';
-import { nav } from '../content.js';
+import LangDropdown from '../components/LangDropdown.jsx';
+import { useContent } from '../i18n/index.jsx';
 import { useScrollSpy } from '../hooks/useScroll.js';
 
-const ids = nav.map((l) => l.href.replace('#', ''));
-
 export default function Nav() {
+  const { nav, navCta } = useContent();
+  const ids = nav.map((l) => l.href.replace('#', ''));
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
   const active = useScrollSpy(ids);
@@ -19,6 +20,9 @@ export default function Nav() {
 
   return (
     <header className={`nav ${scrolled ? 'nav--scrolled' : ''}`}>
+      <div className="topbar">
+        <LangDropdown />
+      </div>
       <div className="nav__inner">
         <Logo />
         <nav className={`nav__links ${open ? 'is-open' : ''}`}>
@@ -33,7 +37,7 @@ export default function Nav() {
             </a>
           ))}
           <a className="btn btn--sm" href="#apps" onClick={() => setOpen(false)}>
-            Explore apps
+            {navCta}
           </a>
         </nav>
         <button

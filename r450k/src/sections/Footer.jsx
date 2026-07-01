@@ -1,7 +1,8 @@
 import Logo from '../components/Logo.jsx';
-import { footer } from '../content.js';
+import { useContent } from '../i18n/index.jsx';
 
 export default function Footer() {
+  const { footer } = useContent();
   const year = new Date().getFullYear();
   return (
     <footer className="footer">
@@ -27,7 +28,7 @@ export default function Footer() {
         </div>
       </div>
       <div className="footer__bar">
-        <div className="container">© {year} r450k. All rights reserved.</div>
+        <div className="container">© {year} r450k. {footer.rights}</div>
       </div>
     </footer>
   );

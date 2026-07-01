@@ -1,7 +1,8 @@
 import Icon from '../components/Icon.jsx';
-import { finalCta } from '../content.js';
+import { useContent } from '../i18n/index.jsx';
 
 export default function FinalCta() {
+  const { finalCta } = useContent();
   return (
     <section className="section">
       <div className="container">

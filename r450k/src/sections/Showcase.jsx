@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import Screenshot from '../components/Screenshot.jsx';
 import Reveal from '../components/Reveal.jsx';
 import { LiveGridMockup, RuleEditorMockup, NotificationsMockup } from '../components/Mockups.jsx';
-import { showcase } from '../content.js';
+import { useContent } from '../i18n/index.jsx';
 
 const fallbacks = {
   live: <LiveGridMockup />,
@@ -10,14 +10,13 @@ const fallbacks = {
   notifications: <NotificationsMockup />,
 };
 
-const tabLabels = { live: 'Live view', rules: 'Detection rules', notifications: 'Notifications' };
-
 const reduce =
   typeof window !== 'undefined' &&
   window.matchMedia &&
   window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 export default function Showcase() {
+  const { showcase } = useContent();
   const shots = showcase.shots;
   const [active, setActive] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -49,7 +48,7 @@ export default function Showcase() {
     <section className="section section--alt" id="showcase">
       <div className="container">
         <Reveal className="section__head">
-          <p className="kicker">See it in action</p>
+          <p className="kicker">{showcase.kicker}</p>
           <h2 className="section__title">{showcase.title}</h2>
           <p className="section__lead">{showcase.lead}</p>
         </Reveal>
@@ -67,7 +66,7 @@ export default function Showcase() {
                   setPaused(true);
                 }}
               >
-                {tabLabels[s.key] || s.key}
+                {showcase.tabs[s.key] || s.key}
                 {i === active && !paused && <span className="showcase__progress" />}
               </button>
             ))}
