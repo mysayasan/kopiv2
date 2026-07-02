@@ -29,9 +29,16 @@ type Restarter interface {
 
 // Dependencies are shared runtime components available to each app module.
 type Dependencies struct {
-	Config      *config.AppConfigModel
-	ConfigPath  string
-	Db          dbsql.IDbCrud
+	Config     *config.AppConfigModel
+	ConfigPath string
+	// HomeDir is the read-only application root (static assets, bundled scripts,
+	// the default config). DataDir is the writable state root (config, database,
+	// recordings, logs, keys). In a source/dev checkout both point at the app's
+	// BaseDir; a packaged install sets them apart via <APP>_HOME / <APP>_DATA.
+	// Apps resolve their own writable paths against DataDir (see ResolveWritablePath).
+	HomeDir string
+	DataDir string
+	Db      dbsql.IDbCrud
 	Cache       cache.Store
 	Auth *middlewares.AuthMidware
 	// Access is the shared accessrbac authorization middleware (single-app, no

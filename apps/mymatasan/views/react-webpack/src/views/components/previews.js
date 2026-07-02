@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { Ico } from './icons';
 import { useT } from '@shared/i18n';
 import { maxCrossingLines } from '../lib/constants';
-import {fallbackLiveSource,normalizeStreamConfig,roundedPoint,parseZonePolygons,zonePolygonsText,normalizeLineConfig,waitForIceGathering,createWebRTCAnswer,shouldUseMJPEGForTracks,apiBase } from '../lib/helpers';
+import {fallbackLiveSource,normalizeStreamConfig,roundedPoint,parseZonePolygons,zonePolygonsText,normalizeLineConfig,waitForIceGathering,createWebRTCAnswer,shouldUseMJPEGForTracks,apiBase,fetchTalkCapability,createTalkAnswer } from '../lib/helpers';
 
 // DetectionFrameBackdrop shows the exact frame the AI detector samples for a
 // camera (honoring the capture mode / recording stream). Zones and lines are drawn
@@ -73,6 +73,14 @@ export function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTr
   const [fallbackSrc, setFallbackSrc] = useState('');
   const [hasAudio, setHasAudio] = useState(false);
   const [muted, setMuted] = useState(true);
+  // Talk-back (browser mic → camera speaker). talkCap is the camera's capability
+  // (null until probed); talking is true while an active mic session is open.
+  const [talkCap, setTalkCap] = useState(null);
+  const [talking, setTalking] = useState(false);
+  const [talkBusy, setTalkBusy] = useState(false);
+  const [talkError, setTalkError] = useState('');
+  const talkPcRef = useRef(null);
+  const talkStreamRef = useRef(null);
   // The health monitor is the source of truth for reachability. When a camera is
   // known offline, skip the WebRTC/MJPEG attempt entirely — both would otherwise
   // hang on the dead RTSP stream until their timeouts fire — and show an offline
@@ -224,6 +232,85 @@ export function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTr
     });
   }
 
+  // Probe talk-back capability whenever the camera changes (skip while offline).
+  useEffect(() => {
+    if (!deviceId || offline) {
+      setTalkCap(null);
+      return undefined;
+    }
+    let cancelled = false;
+    fetchTalkCapability(deviceId, authHeader)
+      .then((cap) => {
+        if (!cancelled) setTalkCap(cap);
+      })
+      .catch(() => {
+        if (!cancelled) setTalkCap(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [deviceId, authHeader, offline]);
+
+  function stopTalk() {
+    if (talkStreamRef.current) {
+      talkStreamRef.current.getTracks().forEach((track) => track.stop());
+      talkStreamRef.current = null;
+    }
+    if (talkPcRef.current) {
+      talkPcRef.current.close();
+      talkPcRef.current = null;
+    }
+    setTalking(false);
+  }
+
+  async function startTalk() {
+    setTalkError('');
+    if (typeof RTCPeerConnection === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      setTalkError(t('prev.talkUnavailable'));
+      return;
+    }
+    setTalkBusy(true);
+    try {
+      // 8 kHz mono matches the camera's G.711 speaker codec; echo cancellation
+      // stops the camera's own audio (played via the speaker button) feeding back.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1, sampleRate: 8000 },
+      });
+      talkStreamRef.current = stream;
+      const pc = new RTCPeerConnection({ iceServers: normalizeStreamConfig(streamConfig).webrtc.iceServers });
+      talkPcRef.current = pc;
+      stream.getAudioTracks().forEach((track) => pc.addTrack(track, stream));
+      pc.oniceconnectionstatechange = () => {
+        const st = pc.iceConnectionState;
+        if (st === 'failed' || st === 'closed' || st === 'disconnected') {
+          stopTalk();
+        }
+      };
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await waitForIceGathering(pc);
+      const answer = await createTalkAnswer(deviceId, pc.localDescription, authHeader);
+      await pc.setRemoteDescription(answer);
+      setTalking(true);
+    } catch (err) {
+      stopTalk();
+      setTalkError(err?.message || t('prev.talkFailed'));
+    } finally {
+      setTalkBusy(false);
+    }
+  }
+
+  function toggleTalk() {
+    if (talking) {
+      stopTalk();
+    } else {
+      startTalk();
+    }
+  }
+
+  // Stop any live mic session when the camera changes or the tile unmounts.
+  useEffect(() => stopTalk, [deviceId]);
+
   return (
     <div className="live-frame">
       {offline ? (
@@ -249,6 +336,19 @@ export function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTr
           <Ico n={muted ? 'volume-x' : 'volume-2'} sz={14} />
         </button>
       )}
+      {!offline && talkCap?.supported && (
+        <button
+          type="button"
+          className={`talk-btn${talking ? ' talking' : ''}`}
+          onClick={toggleTalk}
+          disabled={talkBusy}
+          aria-label={talking ? t('prev.talkStop') : t('prev.talkStart')}
+          title={talking ? t('prev.talkStop') : t('prev.talkStart')}
+        >
+          <Ico n={talking ? 'mic' : 'mic-off'} sz={14} />
+        </button>
+      )}
+      {talkError ? <span className="talk-error" role="alert">{talkError}</span> : null}
     </div>
   );
 }
@@ -509,6 +609,27 @@ function DrawToolbox({ groups, ariaLabel, moveLabel }) {
   );
 }
 
+// rotatePointsAround rotates normalized [x,y] points by `deg` degrees (clockwise)
+// about their centroid. `aspect` (frame width/height) corrects for the non-square
+// display so the shape rotates as it looks on screen rather than shearing. Results
+// are clamped to the [0,1] frame.
+function rotatePointsAround(points, deg, aspect = 1) {
+  if (!Array.isArray(points) || points.length < 2) return points;
+  const cx = points.reduce((s, p) => s + p[0], 0) / points.length;
+  const cy = points.reduce((s, p) => s + p[1], 0) / points.length;
+  const rad = (deg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const clamp = (v) => Math.max(0, Math.min(1, v));
+  return points.map(([x, y]) => {
+    const dx = (x - cx) * aspect;
+    const dy = y - cy;
+    const rx = dx * cos - dy * sin;
+    const ry = dx * sin + dy * cos;
+    return [clamp(cx + rx / aspect), clamp(cy + ry)];
+  });
+}
+
 export function ZoneDrawingPreview({ camera, polygonValue, onPolygon, authHeader, streamConfig, disabled }) {
   const t = useT();
   const overlayRef = useRef(null);
@@ -630,6 +751,18 @@ export function ZoneDrawingPreview({ camera, polygonValue, onPolygon, authHeader
     commitZones(nextZones);
     setActiveZone((a) => Math.max(0, Math.min(a, nextZones.length - 1)));
     setSelected(null);
+  }
+
+  // rotateActive spins the active zone 15° clockwise about its centroid (aspect-
+  // corrected so it rotates as drawn). Repeat clicks accumulate; undo reverts.
+  function rotateActive() {
+    if (disabled || points.length < 2) {
+      return;
+    }
+    const rect = overlayRef.current?.getBoundingClientRect();
+    const aspect = rect && rect.height > 0 ? rect.width / rect.height : 1;
+    pushHistory();
+    commit(rotatePointsAround(points, 15, aspect));
   }
 
   // rawPointFromEvent is the un-snapped normalized pointer position (for delta math
@@ -896,6 +1029,7 @@ export function ZoneDrawingPreview({ camera, polygonValue, onPolygon, authHeader
                 [
                   { key: 'add-zone', icon: 'plus', label: t('prev.addZone'), toggle: true, active: awaitingRect, disabled, onClick: addZone },
                   { key: 'del-zone', icon: 'trash', label: t('prev.deleteZone'), disabled: disabled || !zones.length, onClick: deleteZone },
+                  { key: 'rotate', icon: 'rotate-cw', label: t('prev.rotate'), disabled: disabled || points.length < 2, onClick: rotateActive },
                 ],
                 [
                   { key: 'undo', icon: 'undo', label: t('prev.undo'), disabled: disabled || !history.length, onClick: undo },
@@ -1090,6 +1224,20 @@ export function LineDrawingPreview({ camera, config, detectionType, onConfig, au
     commit(lines.map((line, i) => (i !== targetLineIndex
       ? line
       : { ...line, points: extendLineToBox(line.points[0], line.points[1]) })));
+  }
+
+  // rotateTargetLine spins the selected line 15° clockwise about its midpoint
+  // (aspect-corrected). Repeat clicks accumulate; undo reverts.
+  function rotateTargetLine() {
+    if (disabled || targetLineIndex < 0 || !lines[targetLineIndex]) {
+      return;
+    }
+    const rect = overlayRef.current?.getBoundingClientRect();
+    const aspect = rect && rect.height > 0 ? rect.width / rect.height : 1;
+    pushHistory();
+    commit(lines.map((line, i) => (i !== targetLineIndex
+      ? line
+      : { ...line, points: rotatePointsAround(line.points, 15, aspect) })));
   }
 
   // cycleDirection steps the crossing direction (both → forward → reverse). This is a
@@ -1309,6 +1457,7 @@ export function LineDrawingPreview({ camera, config, detectionType, onConfig, au
                 [
                   { key: 'direction', icon: 'two-way', label: t('prev.directionCycle', { dir: t(`prev.dir_${direction}`) }), disabled: disabled || !lines.length, onClick: cycleDirection },
                   { key: 'extend', icon: 'maximize', label: t('prev.extendLine'), disabled: disabled || targetLineIndex < 0, onClick: extendTargetLine },
+                  { key: 'rotate', icon: 'rotate-cw', label: t('prev.rotate'), disabled: disabled || targetLineIndex < 0, onClick: rotateTargetLine },
                   { key: 'clear', icon: 'trash', label: t('prev.clearLines'), disabled: disabled || !lines.length, onClick: () => { pushHistory(); commit([]); setSelected(null); } },
                 ],
                 [

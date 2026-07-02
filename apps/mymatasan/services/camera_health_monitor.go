@@ -282,17 +282,25 @@ func (m *CameraHealthMonitor) updateState(ctx context.Context, cam *CameraDetail
 		st = &cameraHealthState{}
 		m.state[id] = st
 	}
+	prevStatus := st.status
 	transition, offlineFor, newStatus := m.decide(st, up, now)
 	m.mu.Unlock()
 
-	if transition == "" {
-		return
+	// Persist whenever the announced status changes — including the initial
+	// "" -> online, which emits no notification. Without this, a camera that is
+	// online from startup and never fails keeps a blank ("unknown") stored badge
+	// until an on-demand ProbeAllNow happens to run, so a perfectly healthy
+	// camera can look un-probed indefinitely.
+	if newStatus != "" && newStatus != prevStatus {
+		if err := m.camera.UpdateHealth(ctx, id, newStatus, now); err != nil {
+			// Persistence is best-effort; the in-memory state remains authoritative
+			// for transition detection, so a failed write only loses the stored badge.
+			_ = err
+		}
 	}
 
-	if err := m.camera.UpdateHealth(ctx, id, newStatus, now); err != nil {
-		// Persistence is best-effort; the in-memory state remains authoritative
-		// for transition detection, so a failed write only loses the stored badge.
-		_ = err
+	if transition == "" {
+		return
 	}
 
 	name := ""

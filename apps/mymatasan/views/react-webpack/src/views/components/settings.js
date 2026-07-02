@@ -2850,6 +2850,18 @@ export function MachineHealthSettingsPanel({ settings, busy, hasChanges, metrics
             <input type="number" min="1" max="99" value={value.mitigation.resumePercent} onChange={(e) => patchMit({ resumePercent: Number(e.target.value) })} disabled={!value.enabled || !value.mitigation.enabled} />
           </label>
         </div>
+        <label className="check-row">
+          <input type="checkbox" checked={!!value.mitigation.overwriteOldest} onChange={(e) => patchMit({ overwriteOldest: e.target.checked })} disabled={!value.enabled || !value.mitigation.enabled} />
+          {t('st.overwriteOldest')}
+        </label>
+        {value.mitigation.overwriteOldest ? (
+          <div className="settings-grid">
+            <label>
+              <FieldTitle info="Safety floor for overwrite mode: footage newer than this many days is never auto-deleted. If the disk fills up with only footage inside this window, recording pauses as a last resort.">{t('st.overwriteKeepDays')}</FieldTitle>
+              <input type="number" min="1" max="365" value={value.mitigation.overwriteMinKeepDays} onChange={(e) => patchMit({ overwriteMinKeepDays: Number(e.target.value) })} disabled={!value.enabled || !value.mitigation.enabled} />
+            </label>
+          </div>
+        ) : null}
       </section>
 
       <div className="settings-actions">

@@ -79,6 +79,19 @@ This flow is for a browser live-viewing a camera attached to an adopted `mymatas
 
 **Data path summary:** camera → RTSP → mymatasan (RTP) → media channel (binary WebSocket, fleet mTLS) → myseliasan (MediaRelayHub) → WebRTC (pion) → browser.
 
+## Two-Way Audio (Talk-Back) Flow (browser mic → mymatasan → camera)
+
+This flow lets an operator speak through a camera's own speaker from the live-view tile. Direction is the reverse of live view — audio flows browser → server → camera.
+
+1. While a live-view tile is open, the frontend calls `GET /api/cameras/{id}/talk`; the handler resolves (or returns the cached, ≤10 min old) `TalkCapability` by probing the camera's RTSP endpoint for an ONVIF audio backchannel (`talk.HasBackchannel`). The mic button only renders when `supported` is true.
+2. Pressing the mic button captures the browser microphone (`getUserMedia`, 8 kHz mono, echo cancellation on) and creates a local WebRTC peer with a `sendonly` PCMA audio track; the browser generates an SDP offer and POSTs it to `POST /api/cameras/{id}/talk/offer`.
+3. The API handler calls `ICameraService.OpenTalkSession`, which re-checks capability and, if supported, dials the camera's ONVIF RTSP audio backchannel (`talk.DialONVIF`) using the camera's stored credentials — opening a live `talk.Session` ready to accept G.711 frames.
+4. `talk.AnswerBrowserTalk` builds a PCMA-only WebRTC peer, adds a `recvonly` audio transceiver, sets the browser's offer as the remote description, and answers; the SDP answer is returned to the browser, which sets it as its own remote description to complete the handshake.
+5. As the browser's peer connection receives audio, `pumpTrack` reads each RTP packet off the browser track and forwards its payload to `session.WritePCMA`, which (converting A-law → µ-law first if the camera's backchannel needs it) writes the frame into the camera's RTSP backchannel session.
+6. Toggling the mic off, closing the tile, or the peer connection failing/disconnecting closes both the WebRTC peer and the underlying `talk.Session` (`stopTalk` client-side; `closeAll` server-side).
+
+**Data path summary:** browser mic → WebRTC (PCMA, pion) → mymatasan (`infra/talk`) → RTSP ONVIF audio backchannel → camera speaker.
+
 ## Bootstrap Flow
 
 The shared bootstrap engine is called before the DB adapter is used by the rest of the app.

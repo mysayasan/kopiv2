@@ -33,6 +33,8 @@ Declares service contracts for app-specific domain.
   - `GetCameraDeviceInfo(ctx, id)` — returns `CameraDeviceInfo` for the Live View → Camera Information panel: manufacturer/model/firmware/hardware/serial/location (static, from the stored detail; location is parsed out of ONVIF scopes) plus MAC address (from `GetNetwork`) and ONVIF version (from `GetServices`), both fetched live and best-effort so a slow/offline camera never blocks the response.
   - `PreviewSource(ctx, id, rtspUrl)` — resolves an arbitrary detected-profile RTSP URL into a playable `SnapshotSource` using the camera's stored credentials, **without persisting**, so a live preview of a specific stream (e.g. from Discover) never disturbs the camera's active RTSP URL that recording/detection rely on.
   - `TestStreamURL(ctx, id, rtspUrl)` — probes a specific detected-profile RTSP URL with the camera's credentials but, unlike `TestStream`, does **not** persist the resolved URL/status/tracks — a non-destructive per-stream connectivity check.
+  - `TalkCapability(ctx, id)` — returns `TalkCapabilityResult` reporting whether the camera exposes an ONVIF audio backchannel for two-way audio (talk-back); cached (10 min TTL), safe for cheap UI polling.
+  - `OpenTalkSession(ctx, id) (talk.Session, error)` — opens a live talk-back audio session to the camera speaker over its resolved transport (currently ONVIF only); caller must `Close` it.
 - `ILocalUserService`
   - `EnsureDefaultAdmin(ctx, username, password)` seeds the first standalone admin account from `localAuth` config values (env `LOCAL_ADMIN_PASSWORD` overrides the password; empty username/password fall back to `admin`/`admin`)
   - `Authenticate(ctx, username, password)` validates Basic Auth credentials
@@ -69,6 +71,7 @@ Declares service contracts for app-specific domain.
   - `GetConfig(ctx, cameraId)` — config for one camera; returns nil when none exists
   - `SaveConfig(ctx, req SaveRecordingConfigRequest)` — upsert by camera ID
   - `PurgeOldSegments(ctx)` — removes clips older than `RetentionDays` for each enabled config
+  - `PurgeOldestSegments(ctx, keepAfter, wantBytes)` — deletes the oldest recorded segments across all cameras regardless of per-camera retention, oldest `StartedAt` first, stopping once roughly `wantBytes` have been freed; segments starting at or after `keepAfter` (unix seconds) are never touched. Returns `(deletedCount, bytesFreed, error)`. Backs the machine-health monitor's disk-mitigation "overwrite oldest" mode.
 
 ## Key Request Types
 

@@ -18,6 +18,7 @@ import (
 	"github.com/mysayasan/kopiv2/infra/onvif"
 	"github.com/mysayasan/kopiv2/infra/rtsp"
 	"github.com/mysayasan/kopiv2/infra/stream"
+	"github.com/mysayasan/kopiv2/infra/talk"
 )
 
 type cameraApi struct {
@@ -112,6 +113,8 @@ func NewCameraApi(router *mux.Router, serv services.ICameraService, settings ser
 	group.HandleFunc("/{id}/encoder", handler.getEncoder).Methods("GET")
 	group.HandleFunc("/{id}/encoder", handler.applyEncoder).Methods("POST")
 	group.HandleFunc("/{id}/lpr-capability", handler.lprCapability).Methods("GET")
+	group.HandleFunc("/{id}/talk", handler.talkCapability).Methods("GET")
+	group.HandleFunc("/{id}/talk/offer", handler.createTalkAnswer).Methods("POST")
 	group.HandleFunc("/{id}/webrtc/offer", handler.createWebRTCAnswer).Methods("POST")
 	group.HandleFunc("/{id}/live.mjpeg", handler.liveMJPEG).Methods("GET")
 	group.HandleFunc("/{id}", handler.updateDetails).Methods("PUT")
@@ -702,6 +705,56 @@ func (a *cameraApi) createWebRTCAnswer(w http.ResponseWriter, r *http.Request) {
 		ICEServers: streamSettings.WebRTC.ICEServers,
 	})
 	if err != nil {
+		sendCameraBadRequest(w, err)
+		return
+	}
+	controllers.SendResult(w, answer, "succeed")
+}
+
+// talkCapability reports whether a camera supports two-way audio (talk-back) so
+// the live view can show/enable the mic button.
+func (a *cameraApi) talkCapability(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	id, _ := strconv.ParseUint(params["id"], 10, 64)
+	controllers.SendResult(w, a.serv.TalkCapability(r.Context(), int64(id)), "succeed")
+}
+
+// createTalkAnswer negotiates a browser→camera talk-back audio session: the
+// browser offers a sendonly PCMA microphone track, the server answers and pumps
+// the audio into the camera's speaker via the resolved talk transport.
+func (a *cameraApi) createTalkAnswer(w http.ResponseWriter, r *http.Request) {
+	streamSettings, err := a.settings.Stream(r.Context())
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 2*1024*1024)
+	params := mux.Vars(r)
+	id, _ := strconv.ParseUint(params["id"], 10, 64)
+
+	var body webRTCOfferRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+
+	session, err := a.serv.OpenTalkSession(r.Context(), id)
+	if err != nil {
+		sendCameraBadRequest(w, err)
+		return
+	}
+
+	ice := make([]talk.ICEServer, 0, len(streamSettings.WebRTC.ICEServers))
+	for _, srv := range streamSettings.WebRTC.ICEServers {
+		ice = append(ice, talk.ICEServer{URLs: srv.URLs, Username: srv.Username, Credential: srv.Credential})
+	}
+
+	answer, err := talk.AnswerBrowserTalk(talk.SessionDescription{Type: body.Type, SDP: body.SDP}, session, ice)
+	if err != nil {
+		_ = session.Close()
 		sendCameraBadRequest(w, err)
 		return
 	}

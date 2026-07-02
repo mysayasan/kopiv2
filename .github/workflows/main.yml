@@ -29,12 +29,12 @@ jobs:
 
       - name: Commit version manifest
         run: |
-          if git diff --quiet -- infra/versioning/version.json changes; then
+          if git diff --quiet -- infra/versioning/version.json changes CHANGELOG.md; then
             echo "No version changes to commit"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add infra/versioning/version.json changes
+          git add infra/versioning/version.json changes CHANGELOG.md
           git commit -m "chore: update version manifest [skip version]"
           git push

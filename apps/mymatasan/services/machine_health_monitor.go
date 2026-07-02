@@ -38,6 +38,7 @@ type MachineHealthMonitor struct {
 	pauseStreak int
 	resumStreak int
 	lastPurge   time.Time
+	lastWipe    time.Time
 }
 
 // machineMetricState is the debounced level tracking for one metric (cpu, memory,
@@ -193,14 +194,14 @@ func (m *MachineHealthMonitor) runMitigation(ctx context.Context, cfg MachineHea
 	if !cfg.Mitigation.Enabled || len(metrics.Disks) == 0 {
 		return
 	}
-	maxPercent := 0.0
-	maxMount := ""
+	worst := metrics.Disks[0]
 	for _, d := range metrics.Disks {
-		if d.UsedPercent > maxPercent {
-			maxPercent = d.UsedPercent
-			maxMount = d.Mountpoint
+		if d.UsedPercent > worst.UsedPercent {
+			worst = d
 		}
 	}
+	maxPercent := worst.UsedPercent
+	maxMount := worst.Mountpoint
 
 	// Early retention purge of expired recordings (throttled).
 	if m.recording != nil && maxPercent >= float64(cfg.Mitigation.PurgeAtPercent) {
@@ -220,22 +221,25 @@ func (m *MachineHealthMonitor) runMitigation(ctx context.Context, cfg MachineHea
 	}
 
 	// Pause / resume NVR recording as a last resort to stop the volume filling.
+	// With overwrite-oldest enabled, the oldest footage is wiped first so
+	// recording stays continuous; pausing only happens when the wipe frees
+	// nothing (all remaining footage is inside the keep floor).
 	if m.recorder == nil {
 		return
 	}
+	overwrite := cfg.Mitigation.OverwriteOldest && m.recording != nil
 	pauseAt := float64(cfg.Mitigation.PauseRecordingAtPercent)
 	resumeAt := float64(cfg.Mitigation.ResumePercent)
 
 	m.mu.Lock()
-	var doPause, doResume bool
+	var doAct, doResume bool
 	switch {
 	case maxPercent >= pauseAt && !m.pausedByUs:
 		m.pauseStreak++
 		m.resumStreak = 0
 		if m.pauseStreak >= cfg.SustainedSamples {
-			m.pausedByUs = true
 			m.pauseStreak = 0
-			doPause = true
+			doAct = true
 		}
 	case m.pausedByUs && maxPercent < resumeAt:
 		m.resumStreak++
@@ -249,19 +253,79 @@ func (m *MachineHealthMonitor) runMitigation(ctx context.Context, cfg MachineHea
 		m.pauseStreak = 0
 		m.resumStreak = 0
 	}
+	stillPaused := m.pausedByUs
 	m.mu.Unlock()
 
-	if doPause {
+	if doAct {
+		if overwrite && m.overwriteOldestFootage(ctx, cfg, worst) {
+			return
+		}
+		m.mu.Lock()
+		m.pausedByUs = true
+		m.mu.Unlock()
 		m.recorder.Pause()
-		m.notify(ctx, notification.Critical, "Recording paused — low disk space",
-			fmt.Sprintf("%s reached %.1f%%. NVR recording is paused to protect the system; it resumes automatically below %d%%.", maxMount, maxPercent, cfg.Mitigation.ResumePercent),
+		body := fmt.Sprintf("%s reached %.1f%%. NVR recording is paused to protect the system; it resumes automatically below %d%%.", maxMount, maxPercent, cfg.Mitigation.ResumePercent)
+		if overwrite {
+			body = fmt.Sprintf("%s reached %.1f%% and overwriting could not free space (all remaining footage is newer than the %d-day keep floor). NVR recording is paused; it resumes automatically below %d%%.",
+				maxMount, maxPercent, cfg.Mitigation.OverwriteMinKeepDays, cfg.Mitigation.ResumePercent)
+		}
+		m.notify(ctx, notification.Critical, "Recording paused — low disk space", body,
 			map[string]any{"mountpoint": maxMount, "usedPercent": maxPercent, "action": "pause-recording"})
 	} else if doResume {
 		m.recorder.Resume()
 		m.notify(ctx, notification.Info, "Recording resumed",
 			fmt.Sprintf("%s dropped below %d%% — NVR recording resumed.", maxMount, cfg.Mitigation.ResumePercent),
 			map[string]any{"mountpoint": maxMount, "usedPercent": maxPercent, "action": "resume-recording"})
+	} else if overwrite && stillPaused && maxPercent >= resumeAt {
+		// Paused with overwrite on: keep retrying (throttled) — once footage ages
+		// past the keep floor the wipe frees space and recording resumes.
+		m.mu.Lock()
+		due := time.Since(m.lastWipe) >= machineMitigationMinPurgeGap
+		if due {
+			m.lastWipe = time.Now()
+		}
+		m.mu.Unlock()
+		if due {
+			m.overwriteOldestFootage(ctx, cfg, worst)
+		}
 	}
+}
+
+// overwriteOldestFootage deletes the oldest recorded segments (ignoring
+// per-camera retention, but never inside the OverwriteMinKeepDays floor) until
+// the given disk would drop below the resume threshold. Returns true when at
+// least one segment was deleted.
+func (m *MachineHealthMonitor) overwriteOldestFootage(ctx context.Context, cfg MachineHealthSettings, disk MachineDiskMetric) bool {
+	keepAfter := time.Now().UTC().Add(-time.Duration(cfg.Mitigation.OverwriteMinKeepDays) * 24 * time.Hour).Unix()
+	wantBytes := int64(float64(disk.TotalBytes) * (disk.UsedPercent - float64(cfg.Mitigation.ResumePercent)) / 100)
+	if wantBytes <= 0 {
+		wantBytes = 1
+	}
+	deleted, freed, err := m.recording.PurgeOldestSegments(ctx, keepAfter, wantBytes)
+	if err != nil || deleted == 0 {
+		return false
+	}
+	m.mu.Lock()
+	m.lastWipe = time.Now()
+	m.mu.Unlock()
+	m.notify(ctx, notification.Warning, "Oldest footage overwritten — low disk space",
+		fmt.Sprintf("%s reached %.1f%% — deleted the %d oldest recording segment(s) (%s freed) to keep recording continuous. Footage newer than %d day(s) is never auto-deleted.",
+			disk.Mountpoint, disk.UsedPercent, deleted, formatMitigationBytes(freed), cfg.Mitigation.OverwriteMinKeepDays),
+		map[string]any{"mountpoint": disk.Mountpoint, "usedPercent": disk.UsedPercent, "wipedSegments": deleted, "freedBytes": freed, "action": "overwrite-oldest"})
+	return true
+}
+
+// formatMitigationBytes renders a byte count for notification bodies.
+func formatMitigationBytes(n int64) string {
+	const unit = 1024.0
+	f := float64(n)
+	for _, suffix := range []string{"B", "KB", "MB", "GB"} {
+		if f < unit {
+			return fmt.Sprintf("%.1f %s", f, suffix)
+		}
+		f /= unit
+	}
+	return fmt.Sprintf("%.1f TB", f)
 }
 
 // notifyLevel emits the warning/critical/recovery notification for a metric level

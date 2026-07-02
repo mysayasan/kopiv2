@@ -13,6 +13,7 @@ import (
 	"github.com/mysayasan/kopiv2/infra/recording"
 	"github.com/mysayasan/kopiv2/infra/rtsp"
 	"github.com/mysayasan/kopiv2/infra/stream"
+	"github.com/mysayasan/kopiv2/infra/talk"
 	"github.com/mysayasan/kopiv2/infra/vision"
 )
 
@@ -116,6 +117,12 @@ type ICameraService interface {
 	// when ONVIF profiles are readable, the highest-resolution profile's RTSP URL so
 	// LPR capture can auto-pick it. Cached; safe to call on the per-frame path.
 	LPRCapability(ctx context.Context, id int64) LPRCapabilityResult
+	// TalkCapability reports whether a camera supports two-way audio (talk-back)
+	// over the ONVIF backchannel, cached for cheap UI polling.
+	TalkCapability(ctx context.Context, id int64) TalkCapabilityResult
+	// OpenTalkSession opens a live talk-back audio session to the camera speaker;
+	// the caller must Close the returned session.
+	OpenTalkSession(ctx context.Context, id uint64) (talk.Session, error)
 	TestStream(ctx context.Context, id uint64) (*rtsp.ProbeResult, error)
 	// TestStreamURL probes a specific detected-profile RTSP URL with the camera's stored
 	// credentials, WITHOUT persisting — a per-stream connectivity check that leaves the
@@ -497,6 +504,12 @@ type IRecordingService interface {
 	ListConfigs(ctx context.Context) ([]*entities.RecordingConfig, error)
 	SaveConfig(ctx context.Context, req SaveRecordingConfigRequest) (*entities.RecordingConfig, error)
 	PurgeOldSegments(ctx context.Context) (int, error)
+	// PurgeOldestSegments deletes the oldest recorded segments regardless of
+	// per-camera retention, oldest first, until roughly wantBytes have been freed.
+	// Segments that started at or after keepAfter are never touched (safety
+	// floor). Returns the segments deleted and the bytes freed. Used by disk
+	// mitigation's overwrite-oldest (continuous recording) mode.
+	PurgeOldestSegments(ctx context.Context, keepAfter int64, wantBytes int64) (int, int64, error)
 }
 
 // IVisionService manages AI detection rules and alert events.

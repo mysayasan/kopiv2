@@ -193,7 +193,11 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	if boolValue(deps.Config.Security.EncryptAtRest, true) {
 		keyPath := strings.TrimSpace(deps.Config.Security.KeyPath)
 		if keyPath == "" {
-			keyPath, _ = filepath.Abs(filepath.Join("secret", "atrest.key"))
+			// Key lives under the writable data dir, outside the media roots so a
+			// factory reset can destroy it explicitly. ResolveWritablePath keeps an
+			// existing legacy key (pre-packaging: CWD/secret/atrest.key) in place so
+			// upgrades don't render already-encrypted footage unreadable.
+			keyPath, _ = filepath.Abs(apphost.ResolveWritablePath(deps.DataDir, filepath.Join("secret", "atrest.key")))
 		}
 		ks, err := atrest.LoadOrCreate(keyPath)
 		if err != nil {

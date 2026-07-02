@@ -123,6 +123,15 @@ Config source:
 - `ENVIRONMENT=dev` -> `apps/<selected-app>/config.dev.json`
 - otherwise -> `apps/<selected-app>/config.json`
 
+Home/data directory split (`infra/apphost`, packaged installs):
+
+- `resolveHomeDir` locates the read-only app root (static assets, bundled AI scripts, the default `config.json`): an `<APP>_HOME`/`KOPIV2_HOME` env override, else the app's dev `BaseDir()` if present, else the running executable's directory (packaged/portable installs).
+- `resolveDataDir` locates the writable state root (mutable config, database, recordings, logs, encryption key): an `<APP>_DATA`/`KOPIV2_DATA` env override, else it defaults to `homeDir` — a source/dev checkout keeps the single-directory layout unchanged.
+- On first boot, if `dataDir` differs from `homeDir` and no config exists yet at `dataDir`, the shipped default `config.json` is seeded (copied) from `homeDir` into `dataDir` so the app has a writable copy to persist secrets/runtime settings back to.
+- Relative `fileStorage.path`, `logging.path`, `tls.certPath`/`keyPath`, `sso.caCertPath`, a SQLite `db.db_name`, the recordings/snapshot root, and the AI training data dir all resolve against `dataDir` (`apphost.ResolveWritablePath`), not the app's dev `BaseDir()`.
+- `ResolveWritablePath` is upgrade-safe: if the resolved `dataDir` target does not yet exist but a copy is found at the pre-packaging legacy location (CWD-relative, as an unpackaged dev checkout resolved it), the legacy path is returned instead so an upgrade never orphans in-place recordings, keys, or a database. Installed services set `WorkingDirectory=dataDir`, making the legacy path identical to the target (a no-op fallback).
+- `apphost.Dependencies.HomeDir` / `DataDir` expose both resolved roots to app modules; `mymatasan` resolves its at-rest encryption key (`secret/atrest.key`) against `DataDir` the same way.
+
 Environment overrides (runtime):
 
 - server: `SERVER_HOSTNAMES`, `SERVER_TLS_PORTS`, `SERVER_NON_TLS_PORTS`
@@ -148,7 +157,8 @@ TLS config contract (`tls` in app config):
 
 - `certPath`: certificate path used when any HTTPS listener is enabled.
 - `keyPath`: private-key path used when any HTTPS listener is enabled.
-- Relative TLS paths resolve from the selected app directory.
+- Relative TLS paths resolve from the writable data directory (see home/data directory split above).
+- If an HTTPS listener is configured and either `certPath` or `keyPath` does not exist, `apphost` generates a long-lived (10-year) self-signed ECDSA P-256 keypair covering `localhost`, every configured `server.hostnames` entry, and every local IP address, so a fresh install serves HTTPS immediately without manual cert setup. Existing files are left untouched (bring your own cert, or front the app with a TLS-terminating reverse proxy — see `deploy/README.md`).
 
 Database config contract (`db` in app config):
 
@@ -275,6 +285,7 @@ Machine (host) health monitor contract (DB-backed `machineHealth` settings, edit
 - Samples host CPU, memory, and disk usage on `intervalMs` via gopsutil. Disk volumes monitored are auto-detected from the paths the app writes to (working dir, recordings/snapshot dir, log dir, per-camera recording storage) plus any user-defined `disk.paths`, deduplicated per underlying volume.
 - Each metric has `warnPercent`/`criticalPercent`. A debounced state machine raises a Warning/Critical notification (system category) only after `sustainedSamples` consecutive breaching samples, and a recovery notice after `recoverySamples` consecutive normal samples — mirroring the camera health monitor's debounce.
 - Disk mitigation (`mitigation.enabled`): at `purgeAtPercent` it triggers an immediate retention purge of expired recordings (throttled to once per 10 min); at `pauseRecordingAtPercent` it pauses NVR recording (recorder stops writing new segments) to stop the volume filling completely; recording resumes once the disk drops below `resumePercent`. Footage is not captured while paused.
+- `mitigation.overwriteOldest` (default `false`) trades pausing for continuity: when the disk reaches `pauseRecordingAtPercent`, instead of pausing it deletes the oldest recorded segments across all cameras (ignoring their per-camera `retentionDays`) until usage would drop below `resumePercent`, via `IRecordingService.PurgeOldestSegments(ctx, keepAfter, wantBytes)`. `mitigation.overwriteMinKeepDays` (default `1`, range 1–365) is a safety floor — footage newer than this many days is never auto-deleted. If a wipe attempt frees nothing (all remaining footage is inside the keep floor), the monitor falls back to pausing recording as before; while paused with overwrite enabled, it keeps retrying the wipe (throttled to the same ~10 min cadence) so recording resumes automatically once footage ages past the floor. A distinct "Oldest footage overwritten" (warning) notification fires on each successful wipe, separate from the pause/resume notifications.
 - Normalization keeps `criticalPercent > warnPercent` and `resumePercent < pauseRecordingAtPercent`. The recorder exposes `Pause()`/`Resume()`/`IsPaused()`; resume restarts recorders from their retained configs.
 
 Vision rule schedule contract (`schedulePolicy` on `mymatasan` detection rules):

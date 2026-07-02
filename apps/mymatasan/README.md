@@ -10,10 +10,11 @@ It is designed to run on small devices such as Raspberry Pi or Jetson-style micr
 - **First-run setup wizard** (password → capacity → add camera → recording + alerts) and a **camera-capacity estimator** (`/api/capacity`) that tells you how many cameras the host can handle.
 - **Encryption at rest** (default on): recordings, snapshots, and training images are AES-256-GCM encrypted on disk so the factory reset can **crypto-erase** them by destroying the key.
 - **Secure Wipe & Reset** (factory reset: crypto-erase key + erase media + drop/rebuild DB + TRIM/scrub + restart) behind `bootstrap.allowReset`, plus secure multi-pass **shredding** of deleted footage.
+- **Machine (host) health monitor + disk mitigation** (Settings → Machine Health): CPU/memory/disk usage sampling with debounced warn/critical notifications, an early retention purge at `purgeAtPercent`, and a last-resort action at `pauseRecordingAtPercent` — by default it **pauses** NVR recording until the disk drops below `resumePercent`; enabling **Disk Mitigation → Overwrite oldest** instead keeps recording continuous by deleting the oldest recorded segments across all cameras (bypassing per-camera retention, but never newer than the configurable keep-days floor) each time the threshold is hit, only falling back to pausing if nothing old enough remains to free.
 - **Unified notification feed** (topbar bell + Notifications page) across AI detection, camera/machine health, and login security; per-event acknowledge, annotated screenshot, and in-page clip playback.
 - **Dashboard analytics**: the landing page aggregates every notification event (AI detections, camera/machine health, login security, system) into KPI tiles plus timeseries/donut/bar charts, backed by `GET /api/notifications/stats` (Go-side aggregation, works across sqlite/postgres/mariadb) and a dependency-free `@shared/charts` SVG module. Range selector (Today/7d/30d) and live refresh off the same bell signal as the notification feed.
 - ONVIF discovery, manual probe, saved-device list, save, camera password change, PTZ move/stop, stream option listing, selected stream URI resolution, RTSP test, WebRTC live view, MJPEG fallback, and delete endpoints under `/api/onvif`.
-- **Credential verification + access gate**: adding a discovered camera (or updating its saved credentials) verifies the login against the camera (ONVIF stream-URI resolve and/or RTSP `DESCRIBE`) before persisting — a camera that actively rejects the login is never saved, while an unreachable camera is still allowed through. `GET /api/cameras/{id}/auth-check` re-verifies a saved camera's stored credentials on demand; the camera node's UI blocks all tabs behind a credential-entry gate the moment stored credentials stop authenticating (e.g. after an out-of-band password change on the camera).
+- **Credential verification + access gate**: adding a discovered camera (or updating its saved credentials) verifies the login against the camera (ONVIF stream-URI resolve and/or RTSP `DESCRIBE`) before persisting — a camera that actively rejects the login is never saved, while an unreachable camera is still allowed through. `GET /api/cameras/{id}/auth-check` re-verifies a saved camera's stored credentials on demand; the camera node's UI blocks all tabs behind a credential-entry gate the moment stored credentials stop authenticating (e.g. after an out-of-band password change on the camera). The gate also offers a two-step-confirm **Remove camera** action for a camera whose new password is unknown, so it doesn't permanently lock the node out of the UI.
 - **ONVIF device management**: local user accounts (list/create/delete), reboot, factory default (soft/hard), camera clock (manual or NTP) and network (IPv4/gateway/DNS) configuration under `/api/cameras/{id}/{onvif-users,reboot,factory-default,datetime,network}`. `GET /api/cameras/{id}/capabilities` probes which of these the camera's firmware actually supports so the Settings UI only shows boxes that will work; `GET /api/cameras/{id}/device-info` surfaces manufacturer/model/firmware/serial/MAC/ONVIF version/location for the Live View → Camera Information panel.
 - Camera-first AI detection rules and alert events under `/api/vision`, backed by reusable `infra/vision` rule, schedule, motion, external-object, line-crossing, multi-line-crossing, and hybrid detection primitives.
 - Line-crossing rules support an **Anything** wildcard class (`"*"`) that triggers on any detected YOLO object regardless of label, in addition to the named class list.
@@ -29,6 +30,7 @@ It is designed to run on small devices such as Raspberry Pi or Jetson-style micr
 - ONVIF stream profile listing and live-view stream selection under `/api/recording/streams`.
 - RTSP stream validation through the reusable `infra/rtsp` module.
 - Shared RTSP-to-WebRTC sessions through the reusable `infra/stream` module, with **G.711 pass-through and AAC→Opus audio transcoding** so live view has sound regardless of the camera's audio codec.
+- **Two-way audio (talk-back)**: a mic button next to the speaker toggle in live view lets an operator speak through a supported camera's own speaker. `GET /api/cameras/{id}/talk` probes and caches (10 min) whether the camera exposes an ONVIF RTSP audio backchannel using its stored credentials; `POST /api/cameras/{id}/talk/offer` negotiates a browser→camera WebRTC session (sendonly PCMA mic track, via the reusable `infra/talk` module) that pumps the mic audio into that backchannel. Cameras without a usable RTSP stream or backchannel simply don't show the mic button. (`Camera.TalkTransport`/`TalkPassword` reserve room for a future non-ONVIF transport, e.g. TP-Link's proprietary speaker protocol; not yet implemented.)
 - **AI capture modes** (`standalone` / `siphon` / `auto`): `siphon`/`auto` read decoded frames off the recorder (the recording stream) via a tee; the rule-editor preview draws on the exact frame the detector samples (`GET /api/vision/cameras/{id}/frame`).
 - **Live Views paging**: the grid (1×1 / 2×2 / 3×2 / 3×3 / 4×3 / 4×4) is a per-page size, not a cap — all selected cameras are kept and paged through (toolbar pager + arrow keys, works in fullscreen).
 - Shared public version and Swagger APIs from the shared app host.
@@ -231,6 +233,10 @@ Persistent worker stdout can be either an array or an object with `detections` o
   {"label":"person","confidence":0.91,"box":{"x":0.2,"y":0.1,"w":0.3,"h":0.5}}
 ]
 ```
+
+## Packaged Releases
+
+Besides `go run . -app mymatasan` from a source checkout, GoReleaser (`.goreleaser.yaml`) builds cross-platform release artifacts in one run: linux/windows × amd64/arm64 archives, `.deb`/`.rpm` packages (install to `/opt/mymatasan` with a bundled systemd unit and dedicated `mymatasan` service user), and multi-arch Docker images (`ghcr.io/mysayasan/mymatasan`). All package types resolve a read-only app **home** directory (static assets, AI scripts, default config) separately from a writable **data** directory (mutable config, database, recordings, logs, encryption key) via `MYMATASAN_HOME`/`MYMATASAN_DATA` (or generic `KOPIV2_HOME`/`KOPIV2_DATA`) — a source checkout keeps both pointed at the same directory, unchanged. If HTTPS is enabled and no certificate exists yet, a self-signed one is generated on first boot so a fresh install serves HTTPS immediately. See `deploy/README.md` for install/TLS/reverse-proxy details.
 
 ## UI
 
@@ -518,6 +524,17 @@ curl -u admin:Admin123 -H "Content-Type: application/json" \
   "http://localhost:3000/api/onvif/devices/1/webrtc/offer"
 ```
 
+Check two-way audio (talk-back) capability and open a browser-mic session:
+
+```bash
+curl -u admin:Admin123 "http://localhost:3000/api/cameras/1/talk"
+# {"supported":true,"transport":"onvif"}
+
+curl -u admin:Admin123 -H "Content-Type: application/json" \
+  -d '{"type":"offer","sdp":"..."}' \
+  "http://localhost:3000/api/cameras/1/talk/offer"
+```
+
 Open the multipart MJPEG fallback stream:
 
 ```bash
@@ -594,6 +611,7 @@ Each entry in the response array includes:
 |-------------------|-------|
 | `cameraId`        | Camera identifier. |
 | `state`           | `streaming`, `stopped`, or `error`. |
+| `mode`            | `rtsp` (writing footage) or `detect` (AI frame-source pull only, no recording — set when the recorder config is detect-only). The Recording tab uses `state`+`mode` together — `streaming`+`detect` renders a distinct blue "detect-only" badge instead of the green "Recording active" badge, since a detect-only stream running while NVR recording is off must not read as "recording". |
 | `ffmpegRunning`   | Whether the ffmpeg subprocess is alive. |
 | `liveFiles`       | Number of `.ts` segments currently on disk. |
 | `liveDir`         | Path to the live segment directory. |

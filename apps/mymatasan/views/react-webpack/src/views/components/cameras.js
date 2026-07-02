@@ -531,7 +531,7 @@ function AddCameraDialog({ device, busy, onCancel, onSave }) {
             </label>
             <label>
               {t('cam.credPassword')}
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" />
+              <PasswordField value={password} onChange={setPassword} autoComplete="off" />
             </label>
           </div>
           <p className="field-hint">{t('cam.addDialogHint')}</p>
@@ -1404,6 +1404,43 @@ export function PTZRing({ busy, size, onMove, onStop }) {
 
   const cls = `ptz-sector${busy ? ' ptz-sector-busy' : ''}`;
 
+  // Press-and-hold: a pointer-down starts a continuous move and the release stops
+  // it, so one sustained press pans/tilts smoothly instead of needing repeated
+  // taps. A quick tap still nudges (down starts, up stops a moment later).
+  const holdingRef = useRef(false);
+  const safetyRef = useRef(null);
+
+  function startHold(dir) {
+    if (busy || holdingRef.current) return;
+    holdingRef.current = true;
+    onMove(dir);
+    // Safety net: auto-stop if a release event is ever missed (e.g. the tab loses
+    // focus mid-press) so the camera can never keep moving indefinitely.
+    if (safetyRef.current) clearTimeout(safetyRef.current);
+    safetyRef.current = setTimeout(endHold, 20000);
+  }
+
+  function endHold() {
+    if (safetyRef.current) {
+      clearTimeout(safetyRef.current);
+      safetyRef.current = null;
+    }
+    if (!holdingRef.current) return;
+    holdingRef.current = false;
+    onStop();
+  }
+
+  // Stop on unmount and whenever the window loses focus during a press.
+  useEffect(() => {
+    const onBlur = () => endHold();
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('blur', onBlur);
+      endHold();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function sector(d, label, dir) {
     return (
       <path
@@ -1413,8 +1450,17 @@ export function PTZRing({ busy, size, onMove, onStop }) {
         role="button"
         aria-label={label}
         tabIndex={busy ? -1 : 0}
-        onClick={busy ? undefined : () => onMove(dir)}
-        onKeyDown={(e) => !busy && e.key === 'Enter' && onMove(dir)}
+        onPointerDown={(e) => {
+          if (busy) return;
+          e.preventDefault();
+          e.currentTarget.setPointerCapture?.(e.pointerId);
+          startHold(dir);
+        }}
+        onPointerUp={(e) => { e.currentTarget.releasePointerCapture?.(e.pointerId); endHold(); }}
+        onPointerCancel={endHold}
+        onLostPointerCapture={endHold}
+        onKeyDown={(e) => { if (!busy && (e.key === 'Enter' || e.key === ' ') && !e.repeat) { e.preventDefault(); startHold(dir); } }}
+        onKeyUp={(e) => { if (e.key === 'Enter' || e.key === ' ') endHold(); }}
       />
     );
   }
@@ -1530,12 +1576,15 @@ export function CameraPreviewPanel({ preview, busy, authHeader, streamConfig, on
 // CameraAuthGate blocks a camera node's tabs when the stored credentials have stopped
 // working (e.g. the password was changed on the camera). It overlays a centered credential
 // prompt; entering a valid login re-verifies server-side and clears the gate.
-function CameraAuthGate({ device, busy, onUnlock }) {
+function CameraAuthGate({ device, busy, onUnlock, onRemove }) {
   const t = useT();
   const [username, setUsername] = useState(() => device?.username || '');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  // Two-step confirm so a forgotten-password user can delete the camera from the
+  // gate without accidentally nuking it on a stray click.
+  const [confirmRemove, setConfirmRemove] = useState(false);
 
   async function submit(e) {
     e.preventDefault();
@@ -1557,16 +1606,35 @@ function CameraAuthGate({ device, busy, onUnlock }) {
         <p className="field-hint">{t('cam.authGateHint')}</p>
         <label>
           {t('cam.credUsername')}
-          <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" placeholder="admin" />
+          <input className={error ? 'input-error' : ''} value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" placeholder="admin" />
         </label>
         <label>
           {t('cam.credPassword')}
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" />
+          <PasswordField value={password} onChange={setPassword} autoComplete="off" error={!!error} />
         </label>
         {error ? <p className="field-hint danger-text">{error}</p> : null}
         <button type="submit" disabled={saving || busy}>
           <span className="btn-icon"><Ico n="shield" /> {saving ? t('cam.verifying') : t('cam.unlock')}</span>
         </button>
+        {onRemove ? (
+          <>
+            <p className="field-hint camera-auth-remove-hint">{t('cam.authGateForgot')}</p>
+            {confirmRemove ? (
+              <div className="action-row camera-auth-remove-row">
+                <button type="button" className="danger-solid" onClick={() => onRemove(device.id)} disabled={busy}>
+                  <span className="btn-icon"><Ico n="trash" /> {t('cam.removeConfirm')}</span>
+                </button>
+                <button type="button" className="quiet" onClick={() => setConfirmRemove(false)} disabled={busy}>
+                  {t('common.cancel')}
+                </button>
+              </div>
+            ) : (
+              <button type="button" className="quiet danger-text camera-auth-remove-btn" onClick={() => setConfirmRemove(true)} disabled={busy}>
+                <span className="btn-icon"><Ico n="trash" /> {t('cam.removeCamera')}</span>
+              </button>
+            )}
+          </>
+        ) : null}
       </form>
     </div>
   );
@@ -1956,7 +2024,7 @@ export function CamerasTab({
                   />
                 )}
                 {cameraAuth && cameraAuth[selectedSaved.id] === 'unauthorized' ? (
-                  <CameraAuthGate device={selectedSaved} busy={busy} onUnlock={onUnlockCamera} />
+                  <CameraAuthGate device={selectedSaved} busy={busy} onUnlock={onUnlockCamera} onRemove={onRemove} />
                 ) : null}
               </>
             ) : (

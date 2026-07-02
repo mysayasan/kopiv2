@@ -416,7 +416,7 @@ For multi-app or service-split changes, `type` can be used as a level alias and 
 Supported `type` values that map to version levels include `major`, `minor`, `patch`, `added`, `changed`, `removed`, `deprecated`, `security`, `fixed`, `docs`, `cleanup`, and `refactor`.
 Comma-separated `scope` values can include `core` aliases (`core`, `shared`, `apphost`, `infra`, `domain`, `bootstrap`, `config`) and app names from `infra/versioning/version.json`.
 
-When pushed to `main`, GitHub Actions updates `infra/versioning/version.json` and moves processed entries to `changes/applied`.
+When pushed to `main`, GitHub Actions updates `infra/versioning/version.json`, moves processed entries to `changes/applied`, and prepends a dated `## YYYY-MM-DD — <component> <version>, ... (<short-sha>)` section to `CHANGELOG.md` at the repo root, grouping that run's summaries under Keep-a-Changelog headings (`Added`/`Changed`/`Deprecated`/`Removed`/`Fixed`/`Security`) by each change's `type`, bulleted `**<app-or-scope>**: <summary>`. Run `go run ./infra/versioning/cmd/versionbump -changelog CHANGELOG.md` locally to preview an entry before it lands on `main`; pass `-changelog ""` to skip writing the changelog (only the manifest and `changes/applied` move happen).
 
 Run Redis integration cache test (local dev):
 

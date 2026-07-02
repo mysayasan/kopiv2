@@ -1144,6 +1144,57 @@ export async function createWebRTCAnswer(deviceId, offer, authHeader, rtspUrl) {
     return unwrap(payload);
   }
 
+// fetchTalkCapability reports whether a camera supports two-way audio (talk-back)
+// over the ONVIF backchannel. Returns { supported: false } on any failure.
+export async function fetchTalkCapability(deviceId, authHeader) {
+  const headers = {};
+  if (authHeader) {
+    headers.Authorization = authHeader;
+  }
+  const response = await fetch(`${apiBase()}/api/cameras/${deviceId}/talk`, {
+    method: 'GET',
+    credentials: 'include',
+    headers,
+  });
+  if (!response.ok) {
+    return { supported: false };
+  }
+  const text = await response.text();
+  try {
+    return unwrap(JSON.parse(text)) || { supported: false };
+  } catch (_) {
+    return { supported: false };
+  }
+}
+
+// createTalkAnswer sends the browser microphone WebRTC offer (sendonly PCMA) to
+// the camera talk endpoint and returns the server's answer.
+export async function createTalkAnswer(deviceId, offer, authHeader) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (authHeader) {
+    headers.Authorization = authHeader;
+  }
+  const response = await fetch(`${apiBase()}/api/cameras/${deviceId}/talk/offer`, {
+    method: 'POST',
+    credentials: 'include',
+    headers,
+    body: JSON.stringify({ type: offer.type, sdp: offer.sdp }),
+  });
+  const text = await response.text();
+  let payload = null;
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch (_) {
+      payload = { message: text };
+    }
+  }
+  if (!response.ok) {
+    throw new Error(errorMessage(payload, `Talk offer failed with ${response.status}`));
+  }
+  return unwrap(payload);
+}
+
 export function parseTracks(value) {
   if (typeof value === 'string' && value.trim()) {
     try {
