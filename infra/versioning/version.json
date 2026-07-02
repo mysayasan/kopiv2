@@ -1,18 +1,18 @@
 {
   "core": {
-    "version": "1.41.0"
+    "version": "1.42.0"
   },
   "apps": {
     "myidsan": {
       "version": "1.11.0"
     },
     "mymatasan": {
-      "version": "1.73.0"
+      "version": "1.74.0"
     },
     "myseliasan": {
-      "version": "1.7.0"
+      "version": "1.8.0"
     }
   },
-  "commit": "842ff53d2681409c0d8cecda8c02284390b2bdeb",
-  "updatedAt": "2026-07-01T15:11:44Z"
+  "commit": "d44e4ac9eeacf486e187334c65222d3f9ac14734",
+  "updatedAt": "2026-07-02T11:51:44Z"
 }
