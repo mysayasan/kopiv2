@@ -34,3 +34,10 @@ logs/
 apps/*/data/*.db
 apps/*/data/*.db-shm
 apps/*/data/*.db-wal
+
+# tgbridge (telegram bridge): config holds the bot token; state file holds session ids
+tools/tgbridge/config.json
+tgbridge_state.json
+tools/tgbridge/outbox/
+tools/tgbridge/.gocache/
+tools/tgbridge/go-build*/
