@@ -5,7 +5,7 @@ import { DataTable } from '@shared/DataTable';
 import { FormBusyOverlay } from './ui';
 import { useSnapshotBlob } from '../hooks';
 import { scheduleDayOptions } from '../lib/constants';
-import {apiBase,fieldValue,formatTimestamp,parseMetadata,formatPercent,parseBoundingBox,formatSourceLabel,cameraTitle,parseZonePolygon,defaultZonePolygon,normalizeLineConfig,parseLineRuleConfig,lineRuleConfigText,lineCountFromRule,parseCrowdRuleConfig,parseLPRRuleConfig,lprRuleConfigText,detectionModes,modeFromDetectionType,detectionTypeForMode,targetClassesFromRule,buildRuleConfigForMode,ruleDestinationsFromConfig,applyRuleDestinations,groupedClassOptions,classDisplayName,defaultVisionRuleDraft,weeklySchedulePolicy,rangeSchedulePolicy,schedulePresetPolicy,scheduleDraftFromPolicy,scheduleSummary } from '../lib/helpers';
+import {apiBase,fieldValue,formatTimestamp,parseMetadata,formatPercent,parseBoundingBox,formatSourceLabel,cameraTitle,parseZonePolygons,defaultZonePolygon,normalizeLineConfig,parseLineRuleConfig,lineRuleConfigText,lineCountFromRule,parseCrowdRuleConfig,parseLPRRuleConfig,lprRuleConfigText,detectionModes,modeFromDetectionType,detectionTypeForMode,targetClassesFromRule,buildRuleConfigForMode,ruleDestinationsFromConfig,applyRuleDestinations,groupedClassOptions,classDisplayName,defaultVisionRuleDraft,weeklySchedulePolicy,rangeSchedulePolicy,schedulePresetPolicy,scheduleDraftFromPolicy,scheduleSummary } from '../lib/helpers';
 import { ZoneDrawingPreview, LineDrawingPreview } from './previews';
 
 // classIsLive reports whether a registry class can actually be detected right
@@ -60,7 +60,10 @@ export function CameraAiPanel({
   const ruleDestinations = ruleDestinationsFromConfig(ruleDraft.ruleConfig);
   const destinationOptions = (destinations || []).filter((d) => d && d.id);
   const classGroups = groupedClassOptions(classes);
-  const selectedZonePoints = parseZonePolygon(ruleDraft.zonePolygon);
+  // A zone rule is valid when it has at least one zone and every zone is a real
+  // polygon (>=3 points); multi-zone rules must not carry a half-drawn zone.
+  const zonePolys = parseZonePolygons(ruleDraft.zonePolygon);
+  const zonesValid = zonePolys.length > 0 && zonePolys.every((z) => z.length >= 3);
   const scheduleDraft = scheduleDraftFromPolicy(ruleDraft.schedulePolicy);
   const [logSelectedAlertId, setLogSelectedAlertId] = useState(null);
   // Whether the rule editor (and its detection-frame stream) is open. Closed by default
@@ -745,7 +748,7 @@ export function CameraAiPanel({
                     </label>
                   </div>
                   <div className="action-row">
-                    <button type="submit" disabled={busy || (!lprRule && targetClasses.length < 1) || (!lineRule && selectedZonePoints.length < 3) || (lineRule && lineRuleConfig.lines.length < (mode === 'multi_line_crossing' ? 2 : 1)) || (lprRule && lprRuleConfig.matchMode !== 'any' && lprRuleConfig.plates.length < 1)}>
+                    <button type="submit" disabled={busy || (!lprRule && targetClasses.length < 1) || (!lineRule && !zonesValid) || (lineRule && lineRuleConfig.lines.length < (mode === 'multi_line_crossing' ? 2 : 1)) || (lprRule && lprRuleConfig.matchMode !== 'any' && lprRuleConfig.plates.length < 1)}>
                       <span className="btn-icon"><Ico n="save" /> {t('vi.saveRule')}</span>
                     </button>
                     <button type="button" className="quiet" onClick={closeEditor} disabled={busy}>

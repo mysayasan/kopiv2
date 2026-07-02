@@ -20,3 +20,4 @@ Adds object-backed line crossing and ordered multi-line crossing rule behavior f
 - `direction` accepts `both`, `forward`, or `reverse` based on the configured line point order.
 - `classes` filters model labels such as `person`, `car`, or `truck`; empty values use the detector class map. Setting `classes` to `["*"]` enables a wildcard that matches **any** YOLO label — the line fires for any detected object regardless of class. The UI exposes this as an **Anything** toggle in the Object Classes panel.
 - `maxSecondsBetweenLines`, `maxTrackDistance`, and `trackTtlSeconds` tune sequence timing and track matching.
+- `lineMatches` gates candidates by the rule's `ZonePolygon` zone(s) (`parseZones` + `pointInAnyZone`, shared with every other detector in this package) before line-crossing geometry is evaluated, so a rule's line only fires for candidates whose box center is inside one of its zones.

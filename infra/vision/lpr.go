@@ -123,7 +123,7 @@ func validateLPRRule(rule DetectionRule) error {
 // confidence floor, and satisfies the rule's watchlist mode. The highest-OCR-
 // confidence qualifying plate is returned as the representative.
 func (d *ObjectRuleDetector) lprMatch(rule DetectionRule, cfg lprConfig, candidates []ObjectCandidate) (best ObjectCandidate, match *plateMatch, matched bool) {
-	zone := parseZone(rule.ZonePolygon)
+	zones := parseZones(rule.ZonePolygon)
 	for _, candidate := range candidates {
 		candidate.Label = strings.ToLower(strings.TrimSpace(candidate.Label))
 		if candidate.Label != cfg.PlateLabel {
@@ -134,7 +134,7 @@ func (d *ObjectRuleDetector) lprMatch(rule DetectionRule, cfg lprConfig, candida
 			continue
 		}
 		box := normalizeBox(candidate.Box)
-		if !boxCenterInZone(box, zone) {
+		if !boxCenterInAnyZone(box, zones) {
 			continue
 		}
 		onList := plateInList(plate, cfg.Plates)

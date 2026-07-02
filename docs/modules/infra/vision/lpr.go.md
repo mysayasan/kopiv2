@@ -8,7 +8,7 @@ Implements automatic license-plate recognition (ALPR/LPR) rule matching, plate n
 
 - Define the `lprConfig` rule config shape (`plates`, `matchMode`, `minOcrConfidence`, `plateLabel`) and parse it from the rule's `ruleConfig` JSON.
 - Validate LPR rules via `validateLPRRule` (called from `ValidateDetectionRule`).
-- Implement `lprMatch` on `ObjectRuleDetector`: iterate candidates, filter by plate label, zone membership, and OCR confidence floor, then apply the watchlist match mode (`any` / `include` / `exclude`). Return the highest-OCR-confidence qualifying plate as the representative, surface its confidence as the candidate confidence so downstream threshold/streak machinery and alerts reflect read quality.
+- Implement `lprMatch` on `ObjectRuleDetector`: iterate candidates, filter by plate label, zone membership (`boxCenterInAnyZone` against the rule's parsed zones — single polygon or multi-zone union), and OCR confidence floor, then apply the watchlist match mode (`any` / `include` / `exclude`). Return the highest-OCR-confidence qualifying plate as the representative, surface its confidence as the candidate confidence so downstream threshold/streak machinery and alerts reflect read quality.
 - Implement `plateAttributes` to extract the plate string, OCR confidence, vehicle type, and color from the candidate's free-form metadata map.
 - Implement `lprLabel` to produce a human-readable alert label (`"Plate WXY1234 (white car)"`, `"Plate WXY1234"`, or `"License plate detected"`).
 - Implement `normalizePlate` / `normalizePlateList` to uppercase and strip separators/whitespace so reads and watchlist entries compare on alphanumerics only (`"WXY 1234" == "wxy-1234"`).

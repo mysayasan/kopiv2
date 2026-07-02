@@ -460,7 +460,7 @@ type IRuntimeSettingsService interface {
 
 // ILocalUserService manages standalone mymatasan login users.
 type ILocalUserService interface {
-	EnsureDefaultAdmin(ctx context.Context) error
+	EnsureDefaultAdmin(ctx context.Context, username, password string) error
 	Authenticate(ctx context.Context, username string, password string) (*AuthenticatedUser, error)
 	AuthenticateSession(ctx context.Context, username string, sessionHash string) (*AuthenticatedUser, error)
 	Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.LocalUser, uint64, error)
@@ -558,6 +558,7 @@ type ITrainingService interface {
 type INotificationService interface {
 	INotificationPublisher
 	List(ctx context.Context, limit, offset uint64, cameraId int64, unreadOnly bool, category, source string) ([]*sharedentities.Notification, uint64, error)
+	Stats(ctx context.Context, from, to, bucketSeconds, tzOffsetSec int64) (*notification.Stats, error)
 	MarkRead(ctx context.Context, id uint64, userId int64) (*sharedentities.Notification, error)
 	MarkReadByRef(ctx context.Context, refType string, refId int64, userId int64) (int, error)
 	Purge(ctx context.Context, olderThan int64, onlyRead bool) (int, error)
@@ -602,6 +603,17 @@ type IMachineMetricsProvider interface {
 type INotificationSettingsService interface {
 	Get(ctx context.Context) (NotificationSettings, error)
 	Save(ctx context.Context, settings NotificationSettings) (NotificationSettings, error)
+	// SaveDestination upserts a single delivery destination (create when Id is
+	// empty, otherwise replace the row with that Id), leaving every other section
+	// of the persisted settings untouched. Returns the saved destination (with its
+	// assigned Id) and the full updated settings.
+	SaveDestination(ctx context.Context, dest NotificationDestination) (NotificationDestination, NotificationSettings, error)
+	// DeleteDestination removes the destination with the given Id, leaving the rest
+	// of the settings untouched. Returns the full updated settings.
+	DeleteDestination(ctx context.Context, id string) (NotificationSettings, error)
+	// SaveRetention persists only the retention section, leaving destinations (and
+	// legacy singletons) untouched. Returns the full updated settings.
+	SaveRetention(ctx context.Context, retention NotificationRetentionSettings) (NotificationSettings, error)
 	// Destinations returns the configured delivery destinations (for
 	// per-destination alert rendering). Implements INotificationDestinationsProvider.
 	Destinations(ctx context.Context) []NotificationDestination

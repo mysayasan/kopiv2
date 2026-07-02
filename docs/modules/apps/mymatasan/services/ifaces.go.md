@@ -34,7 +34,7 @@ Declares service contracts for app-specific domain.
   - `PreviewSource(ctx, id, rtspUrl)` — resolves an arbitrary detected-profile RTSP URL into a playable `SnapshotSource` using the camera's stored credentials, **without persisting**, so a live preview of a specific stream (e.g. from Discover) never disturbs the camera's active RTSP URL that recording/detection rely on.
   - `TestStreamURL(ctx, id, rtspUrl)` — probes a specific detected-profile RTSP URL with the camera's credentials but, unlike `TestStream`, does **not** persist the resolved URL/status/tracks — a non-destructive per-stream connectivity check.
 - `ILocalUserService`
-  - `EnsureDefaultAdmin(ctx)` seeds the first standalone admin account
+  - `EnsureDefaultAdmin(ctx, username, password)` seeds the first standalone admin account from `localAuth` config values (env `LOCAL_ADMIN_PASSWORD` overrides the password; empty username/password fall back to `admin`/`admin`)
   - `Authenticate(ctx, username, password)` validates Basic Auth credentials
   - CRUD and password reset operations for Settings user management
 - `IVisionService`
@@ -45,6 +45,14 @@ Declares service contracts for app-specific domain.
   - `AcknowledgeAlert(ctx, id, userId)` for operator acknowledgement
   - `PurgeAlerts(ctx, olderThan, onlyDiagnostics)` — delete rows and unlink snapshots for alerts older than a unix-second cutoff
   - `PurgeAlertsOlderThanDays(ctx, days, onlyDiagnostics)` — convenience wrapper that converts N days to a cutoff and calls `PurgeAlerts`
+- `INotificationService` (selected)
+  - `List(ctx, limit, offset, cameraId, unreadOnly, category, source)` — paginated notification feed
+  - `Stats(ctx, from, to, bucketSeconds, tzOffsetSec)` — returns `*notification.Stats`, the aggregated dashboard payload (bucketed counts/breakdowns) over `[from, to]` unix-second window; `bucketSeconds` selects hour/day buckets and `tzOffsetSec` aligns bucket boundaries to the viewer's local clock. Backs `GET /api/notifications/stats`.
+- `INotificationSettingsService` (selected)
+  - `Get(ctx)` / `Save(ctx, settings)` — full notification settings blob (destinations, retention, legacy singletons)
+  - `SaveDestination(ctx, dest)` — upserts one destination (create when `dest.Id` is empty, else replace by id) via read-modify-write against the persisted settings; other destinations and retention are untouched. Returns the saved destination and full settings.
+  - `DeleteDestination(ctx, id)` — removes one destination by id; unknown id is a no-op. Returns full settings.
+  - `SaveRetention(ctx, retention)` — persists only the retention section, leaving destinations and legacy singletons untouched. Returns full settings.
 - `ITrainingService` (selected additions)
   - `GetLPRModel(ctx)` — returns `LPRModelInfo` (current plate-detector path + catalog + OCR readiness).
   - `SetLPRModel(ctx, value, userId)` — select a plate model by catalog name, https URL, local .pt path, or `""` / `"none"` to disable.

@@ -4,7 +4,7 @@ import './styles/controlplane.css';
 import './styles/rbac-standard.css';
 import { SideNav } from './components/layout';
 import { ToastStack, LangProvider, normalizeLang, useT, LanguageDropdown, AppFooter } from '@shared';
-import { FormBusyOverlay } from './components/ui';
+import { FormBusyOverlay, ThemeDropdown } from './components/ui';
 import { DashboardTab } from './components/dashboard';
 import { NodesTab } from './components/nodes';
 import { UsersPage, RolesPage, RbacPage } from './components/rbac_admin';
@@ -114,15 +114,16 @@ function AppInner({ lang, onLangChange }) {
         busy={false}
         onTab={selectTab}
         onLogout={logout}
-        theme={theme}
-        onThemeChange={changeTheme}
         session={session}
         nodes={nodes}
         managingNodeId={managingNodeId}
         onSelectNode={selectNode}
       />
       <main className="main-workspace">
-        <div className="shared-lang-bar"><LanguageDropdown lang={lang} onLang={onLangChange} /></div>
+        <div className="shared-lang-bar">
+          <LanguageDropdown lang={lang} onLang={onLangChange} />
+          <ThemeDropdown theme={theme} onThemeChange={changeTheme} />
+        </div>
         {session?.superadminHandoffPending ? (
           <div className="handoff-banner" role="alert">
             <span className="handoff-banner-text">{t('handoff.text')}</span>

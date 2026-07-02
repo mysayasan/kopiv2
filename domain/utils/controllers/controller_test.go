@@ -92,3 +92,55 @@ func TestSendErrorIncludesDurationMs(t *testing.T) {
 		t.Fatalf("durationMs got %d want 15", resp.DurationMs)
 	}
 }
+
+// TestSendErrorRevealsClientErrorMessage checks that a 4xx (client-error) detail
+// message is surfaced to the caller regardless of ENVIRONMENT — validation text
+// like "password must be at least 8 characters" should not collapse to the bare
+// "bad request" in production.
+func TestSendErrorRevealsClientErrorMessage(t *testing.T) {
+	t.Setenv("ENVIRONMENT", "production")
+	w := httptest.NewRecorder()
+
+	if err := SendError(w, ErrBadRequest, "password must be at least 8 characters"); err != nil {
+		t.Fatalf("SendError failed: %v", err)
+	}
+
+	var resp struct {
+		StatsCode int    `json:"statsCode"`
+		Message   string `json:"message"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.StatsCode != http.StatusBadRequest {
+		t.Fatalf("status got %d want %d", resp.StatsCode, http.StatusBadRequest)
+	}
+	if resp.Message != "password must be at least 8 characters" {
+		t.Fatalf("4xx message not revealed: got %q", resp.Message)
+	}
+}
+
+// TestSendErrorHidesServerErrorMessage checks that a 5xx (server-error) detail
+// message stays hidden outside dev, so internal failures never leak to clients.
+func TestSendErrorHidesServerErrorMessage(t *testing.T) {
+	t.Setenv("ENVIRONMENT", "production")
+	w := httptest.NewRecorder()
+
+	if err := SendError(w, ErrInternalServerError, "database connection string: user:pass@host"); err != nil {
+		t.Fatalf("SendError failed: %v", err)
+	}
+
+	var resp struct {
+		StatsCode int    `json:"statsCode"`
+		Message   string `json:"message"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.StatsCode != http.StatusInternalServerError {
+		t.Fatalf("status got %d want %d", resp.StatsCode, http.StatusInternalServerError)
+	}
+	if resp.Message != ErrInternalServerError.Error() {
+		t.Fatalf("5xx detail leaked: got %q want %q", resp.Message, ErrInternalServerError.Error())
+	}
+}

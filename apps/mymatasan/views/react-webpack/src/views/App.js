@@ -63,7 +63,7 @@ function AppInner({ lang, onLangChange }) {
   const [lockoutUntil, setLockoutUntil] = useState(0);
   // First-run setup wizard: shown to an admin until setup is completed/dismissed.
   const [setupNeeded, setSetupNeeded] = useState(false);
-  const [activeTab, setActiveTab] = useState('views');
+  const [activeTab, setActiveTab] = useState('dashboard');
   const [settingsNav, setSettingsNav] = useState('runtime');
   const [cameraNav, setCameraNav] = useState('probe');
   // The saved camera whose properties the Cameras page is showing, driven by the
@@ -409,7 +409,7 @@ function AppInner({ lang, onLangChange }) {
       saveLiveViewsCookie(preference.layout, initialTiles);
       setAuthenticated(true);
       setPasswordChangeRequired(false);
-      setActiveTab('views');
+      setActiveTab('dashboard');
       setMessage('');
       // Kick off an immediate health probe (non-blocking) so offline cameras are
       // flagged right away rather than after the background sweep interval.
@@ -558,25 +558,79 @@ function AppInner({ lang, onLangChange }) {
     }
   }
 
-  async function saveNotificationSettings(event) {
-    if (event) event.preventDefault();
+  // mergeNotif fills any missing sub-sections of a server notification-settings
+  // payload with defaults (same shape the load path builds).
+  function mergeNotif(result) {
+    return {
+      ...defaultNotificationSettings,
+      ...result,
+      webhook: { ...defaultNotificationSettings.webhook, ...(result?.webhook || {}) },
+      telegram: { ...defaultNotificationSettings.telegram, ...(result?.telegram || {}) },
+      retention: { ...defaultNotificationSettings.retention, ...(result?.retention || {}) },
+      destinations: Array.isArray(result?.destinations) ? result.destinations : [],
+    };
+  }
+
+  // saveNotificationDestination persists ONE destination via the per-destination
+  // endpoint. The saved baseline becomes the server truth, but other sections keep
+  // their in-progress local edits — only the saved destination (at `index`) is
+  // reconciled to its persisted form. index -1 appends a brand-new destination.
+  async function saveNotificationDestination(index, dest) {
     setBusy(true);
     setMessage('');
     try {
-      const result = await request('/api/settings/notification', {
+      const result = await request('/api/settings/notification/destination', {
         method: 'PUT',
-        body: JSON.stringify(notificationSettings),
+        body: JSON.stringify(dest),
       });
-      const merged = {
-        ...defaultNotificationSettings,
-        ...result,
-        webhook: { ...defaultNotificationSettings.webhook, ...(result?.webhook || {}) },
-        telegram: { ...defaultNotificationSettings.telegram, ...(result?.telegram || {}) },
-        retention: { ...defaultNotificationSettings.retention, ...(result?.retention || {}) },
-        destinations: Array.isArray(result?.destinations) ? result.destinations : [],
-      };
-      setNotificationSettings(merged);
+      const savedDest = result?.destination;
+      setSavedNotificationSettings(mergeNotif(result?.settings));
+      setNotificationSettings((cur) => {
+        const dests = [...(cur.destinations || [])];
+        if (index >= 0 && index < dests.length) dests[index] = savedDest;
+        else dests.push(savedDest);
+        return { ...cur, destinations: dests };
+      });
+      setMessage(t('app.notifSaved'));
+    } catch (err) {
+      setMessage(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // deleteNotificationDestination persists removal of one saved destination.
+  async function deleteNotificationDestination(id) {
+    setBusy(true);
+    setMessage('');
+    try {
+      const result = await request(`/api/settings/notification/destination/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+      const merged = mergeNotif(result);
       setSavedNotificationSettings(merged);
+      setNotificationSettings((cur) => ({ ...cur, destinations: (cur.destinations || []).filter((d) => d.id !== id) }));
+      setMessage(t('app.notifSaved'));
+    } catch (err) {
+      setMessage(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // saveNotificationRetention persists ONLY the retention section; destinations
+  // (saved or in-progress) are left as they are.
+  async function saveNotificationRetention(retention) {
+    setBusy(true);
+    setMessage('');
+    try {
+      const result = await request('/api/settings/notification/retention', {
+        method: 'PUT',
+        body: JSON.stringify(retention),
+      });
+      const merged = mergeNotif(result);
+      setSavedNotificationSettings(merged);
+      setNotificationSettings((cur) => ({ ...cur, retention: merged.retention }));
       setMessage(t('app.notifSaved'));
     } catch (err) {
       setMessage(err.message, 'error');
@@ -1507,6 +1561,12 @@ function AppInner({ lang, onLangChange }) {
 
   async function createUser(event) {
     event.preventDefault();
+    // Validate client-side so the user gets a clear message in every environment
+    // (the server hides its own validation detail behind "bad request" in prod).
+    if ((newUser.password || '').length < 8) {
+      setMessage(t('app.passwordMin'), 'error');
+      return;
+    }
     setBusy(true);
     setMessage('');
     try {
@@ -1551,6 +1611,11 @@ function AppInner({ lang, onLangChange }) {
   }
 
   async function resetUserPassword(user) {
+    // Same client-side guard as createUser so short passwords get a clear message.
+    if ((passwordDrafts[user.id] || '').length < 8) {
+      setMessage(t('app.passwordMin'), 'error');
+      return;
+    }
     setBusy(true);
     setMessage('');
     try {
@@ -2333,6 +2398,8 @@ function AppInner({ lang, onLangChange }) {
           <ChangePasswordPage
             busy={busy}
             message={message?.text || ''}
+            lang={lang}
+            onLangChange={onLangChange}
             onSubmit={completePasswordChange}
             onCancel={logout}
           />
@@ -2342,6 +2409,8 @@ function AppInner({ lang, onLangChange }) {
             busy={busy}
             message={message?.text || ''}
             lockoutUntil={lockoutUntil}
+            lang={lang}
+            onLangChange={onLangChange}
             onChange={setCredentials}
             onSubmit={login}
           />
@@ -2396,7 +2465,6 @@ function AppInner({ lang, onLangChange }) {
         activeTab={activeTab}
         isAdmin={isAdmin}
         busy={busy}
-        username={credentials.username}
         cameras={saved}
         managingCameraId={managingCameraId}
         notifUnread={notifUnread}
@@ -2404,8 +2472,6 @@ function AppInner({ lang, onLangChange }) {
         onSelectCameraRoot={selectCameraRoot}
         onSelectCamera={selectCamera}
         onLogout={logout}
-        theme={theme}
-        onThemeChange={changeTheme}
         pinned={navPinned}
         onTogglePinned={toggleNavPinned}
       />
@@ -2413,10 +2479,19 @@ function AppInner({ lang, onLangChange }) {
         <WorkspaceHeader
           lang={lang}
           onLangChange={onLangChange}
+          theme={theme}
+          onThemeChange={changeTheme}
         />
         <ToastStack toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((t) => t.id !== id))} />
 
-      {activeTab === 'dashboard' ? <DashboardTab /> : null}
+      {activeTab === 'dashboard' ? (
+        <DashboardTab
+          authHeader={authHeader}
+          saved={saved}
+          refreshSignal={notifVersion}
+          onMessage={setMessage}
+        />
+      ) : null}
 
       {activeTab === 'views' ? (
         <ViewsTab
@@ -2570,10 +2645,12 @@ function AppInner({ lang, onLangChange }) {
           onResetPassword={resetUserPassword}
           onDeleteUser={deleteUser}
           notificationSettings={notificationSettings}
+          savedNotificationSettings={savedNotificationSettings}
           notificationHasChanges={JSON.stringify(notificationSettings) !== JSON.stringify(savedNotificationSettings)}
           onNotificationChange={setNotificationSettings}
-          onSaveNotification={saveNotificationSettings}
-          onDiscardNotification={() => setNotificationSettings(savedNotificationSettings)}
+          onSaveDestination={saveNotificationDestination}
+          onDeleteDestination={deleteNotificationDestination}
+          onSaveRetention={saveNotificationRetention}
           onTestNotification={testNotificationChannel}
           onPurgeNotifications={purgeExpiredNotifications}
           healthSettings={healthSettings}

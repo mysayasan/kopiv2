@@ -218,7 +218,7 @@ func (d *ObjectRuleDetector) detectLineCrossing(rule DetectionRule, candidates [
 }
 
 func (d *ObjectRuleDetector) lineMatches(rule DetectionRule, cfg lineCrossingConfig, candidates []ObjectCandidate) []lineMatch {
-	zone := parseZone(rule.ZonePolygon)
+	zones := parseZones(rule.ZonePolygon)
 	minConfidence := rule.Threshold
 	if minConfidence <= 0 {
 		minConfidence = DefaultDetectionThreshold
@@ -241,7 +241,7 @@ func (d *ObjectRuleDetector) lineMatches(rule DetectionRule, cfg lineCrossingCon
 		}
 		candidate.Box = normalizeBox(candidate.Box)
 		center := boxCenter(candidate.Box)
-		if !pointInPolygon(center.X, center.Y, zone) {
+		if !pointInAnyZone(center.X, center.Y, zones) {
 			lineLog("cam=%d rule=%d REJECT label=%q center=(%.3f,%.3f) outside zone polygon", rule.CameraId, rule.Id, candidate.Label, center.X, center.Y)
 			continue
 		}

@@ -19,7 +19,14 @@ import (
 
 const (
 	defaultLocalAdminUsername = "admin"
+	// defaultLocalAdminPassword is the legacy shipped default. It is NOT the
+	// first-run seed fallback anymore (see fallbackLocalAdminPassword) — it is
+	// retained only so flagDefaultAdminPassword can nudge old installs still on it.
 	defaultLocalAdminPassword = "Admin123"
+	// fallbackLocalAdminPassword is the first-run seed password used when config
+	// (and the env override) supply none, matching myseliasan's admin/admin stock
+	// superadmin. The seeded account is always flagged must-change.
+	fallbackLocalAdminPassword = "admin"
 )
 
 var (
@@ -36,7 +43,15 @@ func NewLocalUserService(repo dbsql.IGenericRepo[entities.LocalUser]) ILocalUser
 	return &localUserService{repo: repo}
 }
 
-func (s *localUserService) EnsureDefaultAdmin(ctx context.Context) error {
+// EnsureDefaultAdmin seeds the bootstrap admin on first run (empty user table).
+// The credentials come from the config file's localAuth block (username +
+// password), mirroring myseliasan: edit config, log in with those credentials.
+// Precedence for the password: the LOCAL_ADMIN_PASSWORD env var (ops override)
+// wins, then the config value, then the shipped default. The seeded account is
+// ALWAYS flagged must-change (like myseliasan's stock superadmin), so the
+// config/default password is only a bootstrap credential and the operator is
+// forced to set their own on first login.
+func (s *localUserService) EnsureDefaultAdmin(ctx context.Context, username, password string) error {
 	_, total, err := s.repo.Get(ctx, "", 1, 0, nil, nil)
 	if err != nil {
 		return err
@@ -46,22 +61,30 @@ func (s *localUserService) EnsureDefaultAdmin(ctx context.Context) error {
 		// shipped default password, force a change so old installs are protected too.
 		return s.flagDefaultAdminPassword(ctx)
 	}
-	// First run: seed the admin. An explicit LOCAL_ADMIN_PASSWORD provisions a
-	// strong password up front and skips the forced-change dance; otherwise the
-	// shipped default is seeded and flagged must-change.
-	password := strings.TrimSpace(os.Getenv("LOCAL_ADMIN_PASSWORD"))
-	mustChange := false
+	// First run: seed the admin from config (env overrides the password).
+	username = normalizeUsername(username)
+	if username == "" {
+		username = defaultLocalAdminUsername
+	}
+	password = strings.TrimSpace(password)
+	if envPass := strings.TrimSpace(os.Getenv("LOCAL_ADMIN_PASSWORD")); envPass != "" {
+		password = envPass
+	}
 	if password == "" {
-		password = defaultLocalAdminPassword
-		mustChange = true
+		// Match myseliasan's stock-superadmin fallback (admin/admin) when config
+		// supplies no credential. The must-change flag below still forces the
+		// operator off it on first login.
+		password = fallbackLocalAdminPassword
 	}
 	_, err = s.Create(ctx, CreateLocalUserRequest{
-		Username:           defaultLocalAdminUsername,
+		Username:           username,
 		Password:           password,
 		DisplayName:        "Administrator",
 		IsAdmin:            true,
 		IsActive:           true,
-		MustChangePassword: mustChange,
+		// Always force a change on first login — the bootstrap password (config,
+		// env, or shipped default) is never meant to be the operator's final one.
+		MustChangePassword: true,
 	})
 	return err
 }

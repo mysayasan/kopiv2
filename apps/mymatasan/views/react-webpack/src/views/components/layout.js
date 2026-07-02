@@ -88,12 +88,17 @@ function formatCountdown(totalSeconds) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-export function LoginPage({ credentials, busy, message, lockoutUntil, onChange, onSubmit }) {
+export function LoginPage({ credentials, busy, message, lockoutUntil, onChange, onSubmit, lang, onLangChange }) {
   const t = useT();
   const lockRemaining = useCountdown(lockoutUntil || 0);
   const locked = lockRemaining > 0;
   return (
     <main className="login-screen">
+      {onLangChange ? (
+        <div className="login-lang-switch">
+          <LanguageDropdown lang={lang} onLang={onLangChange} />
+        </div>
+      ) : null}
       <form className="login-panel" onSubmit={onSubmit}>
         <div className="login-brand">
           <BrandLogo size={104} className="brand-logo--login" />
@@ -137,7 +142,7 @@ export function LoginPage({ credentials, busy, message, lockoutUntil, onChange, 
 // ChangePasswordPage is the forced first-login password change. It reuses the
 // login-panel chrome so the transition from sign-in feels seamless. Validation
 // (match + length) happens here; the server re-checks and is the source of truth.
-export function ChangePasswordPage({ busy, message, onSubmit, onCancel }) {
+export function ChangePasswordPage({ busy, message, onSubmit, onCancel, lang, onLangChange }) {
   const t = useT();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -160,6 +165,11 @@ export function ChangePasswordPage({ busy, message, onSubmit, onCancel }) {
 
   return (
     <main className="login-screen">
+      {onLangChange ? (
+        <div className="login-lang-switch">
+          <LanguageDropdown lang={lang} onLang={onLangChange} />
+        </div>
+      ) : null}
       <form className="login-panel" onSubmit={submit}>
         <div className="login-brand">
           <BrandLogo size={104} className="brand-logo--login" />
@@ -204,14 +214,37 @@ export function ChangePasswordPage({ busy, message, onSubmit, onCancel }) {
   );
 }
 
-// WorkspaceHeader is the slim action strip at the top of the main workspace. The
-// notifications control now lives in the side rail (see SideNav's Notifications item,
-// which carries the unread badge and opens the full list), so only the language
-// picker remains here. Primary navigation lives in the side rail (SideNav).
-export function WorkspaceHeader({ lang, onLangChange }) {
+// WorkspaceHeader is the slim action strip at the top of the main workspace: the
+// language switcher plus the compact theme picker sitting just after it (top-right).
+// Primary navigation and the account/logout block live in the side rail (SideNav).
+export function WorkspaceHeader({ lang, onLangChange, theme, onThemeChange }) {
   return (
     <div className="workspace-header">
       <LanguageDropdown lang={lang} onLang={onLangChange} />
+      <ThemeDropdown theme={theme} onThemeChange={onThemeChange} />
+    </div>
+  );
+}
+
+// AccountCard is the slim sign-out pill under the brand at the top of the rail: a
+// role chip (avatar + role) and a ghost logout icon button. The username is
+// deliberately NOT shown (avoids exposing the signed-in identity in the UI).
+function AccountCard({ roleLabel, onLogout, busy }) {
+  const t = useT();
+  return (
+    <div className="side-account">
+      <span className="side-account-avatar" aria-hidden="true"><Ico n="user" sz={15} /></span>
+      <span className="side-account-role">{roleLabel}</span>
+      <button
+        type="button"
+        className="side-account-logout"
+        onClick={onLogout}
+        disabled={busy}
+        title={t('auth.logout')}
+        aria-label={t('auth.logout')}
+      >
+        <Ico n="logout" sz={16} />
+      </button>
     </div>
   );
 }
@@ -321,7 +354,7 @@ function CamerasNavItem({ cameras, active, managingCameraId, onSelectRoot, onSel
 // are grouped like myseliasan's; the Cameras entry is a bespoke tree whose root opens
 // the probe page and whose children open per-camera properties. Non-admins see only
 // the view-only surfaces (Dashboard, Live Views, Recordings, Notifications).
-export function SideNav({ activeTab, isAdmin, busy, username, cameras, managingCameraId, notifUnread = 0, onTab, onSelectCameraRoot, onSelectCamera, onLogout, theme, onThemeChange, pinned = true, onTogglePinned }) {
+export function SideNav({ activeTab, isAdmin, busy, cameras, managingCameraId, notifUnread = 0, onTab, onSelectCameraRoot, onSelectCamera, onLogout, pinned = true, onTogglePinned }) {
   const t = useT();
   const navItem = (id, label, icon, tone) => ({ id, label, icon, tone, active: id === activeTab, onClick: () => onTab(id) });
   // The Notifications entry doubles as the notifications control now that the topbar
@@ -398,18 +431,14 @@ export function SideNav({ activeTab, isAdmin, busy, username, cameras, managingC
       ) : null}
       <BrandLogo />
       <div className="side-brand-sub">{t('brand.subtitle')}</div>
+      <AccountCard
+        roleLabel={isAdmin ? t('role.admin') : t('role.viewer')}
+        onLogout={onLogout}
+        busy={busy}
+      />
     </div>
   );
-  const footer = (
-    <>
-      {username ? <div className="side-brand-sub" title={username}>{username}</div> : null}
-      <ThemeDropdown theme={theme} onThemeChange={onThemeChange} />
-      <button type="button" className="logout-button" onClick={onLogout} disabled={busy}>
-        <span className="btn-icon"><Ico n="lock" sz={15} /> {t('topbar.lock')}</span>
-      </button>
-    </>
-  );
 
-  return <SharedSideNav brand={brand} groups={groups} footer={footer} />;
+  return <SharedSideNav brand={brand} groups={groups} footer={null} />;
 }
 

@@ -8,11 +8,15 @@ Provides the dependency-free reusable detector implementation: motion detection 
 
 - Decode JPEG frames into grayscale pixel buffers.
 - Keep previous-frame state per camera.
-- Parse normalized polygon JSON and fall back to the full frame when the polygon is missing or invalid.
+- Parse the rule's `ZonePolygon` field into one or more zones (`parseZones`) and fall back to a single full-frame zone when the value is missing or invalid.
 - Compare consecutive frames using a configurable pixel delta and stride.
-- Compute the changed-pixel ratio inside each rule polygon.
+- Compute the changed-pixel ratio inside the rule's zone(s), unioned via `pointInAnyZone`.
 - Apply rule threshold, minimum frame count, and cooldown before returning detections.
 - Emit detector metadata that includes the motion source and changed-frame ratio.
+
+## Multi-zone support
+
+`ZonePolygon` accepts either a single polygon `[[x,y],...]` (legacy, unchanged) or a list of polygons `[[[x,y],...],...]` (multi-zone). `parseZones` tries the multi-polygon shape first and falls back to `parseZone` (single-polygon) when that fails, so existing single-zone rules keep working with no migration. Every polygon in the set participates as a union: a pixel/point counts if it falls inside **any** zone (`pointInAnyZone`). `toPoints`/`fullFrameZone` are shared helpers used by both `parseZone` and `parseZones`. This module owns the parsing helpers (`parseZone`, `parseZones`, `toPoints`, `fullFrameZone`, `pointInPolygon`, `pointInAnyZone`) that every other detector (`object.go`, `crowd.go`, `lpr.go`, `line_crossing.go`) also imports.
 
 ## Notes
 

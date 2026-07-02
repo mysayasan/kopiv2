@@ -109,11 +109,18 @@ func SendResult(w http.ResponseWriter, data interface{}, msgs ...string) error {
 }
 
 func SendError(w http.ResponseWriter, err error, message string, data ...interface{}) error {
+	stats := NewErrorUtils().GetHttpStatusCode(err)
+	// The caller-supplied detail message replaces the generic status text when it
+	// is safe to reveal: always in dev, and in any environment for client-error
+	// (4xx) responses. A 4xx message describes the caller's own bad input
+	// (validation, conflict, parse failure) and is meant to guide them — hiding it
+	// behind a bare "bad request" is just poor UX. Server-error (5xx) details stay
+	// hidden outside dev so internal failures never leak to clients.
 	msg := err.Error()
-	if len(message) > 0 && os.Getenv("ENVIRONMENT") == "dev" {
+	clientError := stats >= http.StatusBadRequest && stats < http.StatusInternalServerError
+	if len(message) > 0 && (clientError || os.Getenv("ENVIRONMENT") == "dev") {
 		msg = message
 	}
-	stats := NewErrorUtils().GetHttpStatusCode(err)
 	var resp ErrResponse[interface{}]
 	resp.StatsCode = stats
 	resp.Message = msg

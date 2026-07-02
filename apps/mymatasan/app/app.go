@@ -253,7 +253,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	if err := notificationSettingsService.Sync(context.Background()); err != nil {
 		deps.Logger.Warnf("mymatasan.notification", "load notification settings failed: %v", err)
 	}
-	if err := localUserService.EnsureDefaultAdmin(context.Background()); err != nil {
+	if err := localUserService.EnsureDefaultAdmin(context.Background(), deps.Config.LocalAuth.Username, deps.Config.LocalAuth.Password); err != nil {
 		return nil, fmt.Errorf("seed local admin user failed: %w", err)
 	}
 	// Resolve ffmpeg path and RTSP transport from persisted settings.

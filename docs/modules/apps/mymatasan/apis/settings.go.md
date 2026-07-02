@@ -15,6 +15,12 @@ Registers runtime settings routes for standalone `mymatasan`.
 - `POST /api/settings/decoder/ffmpeg/install`: start the background ffmpeg download/install job and return its initial state. Admin-only (a write).
 - `GET /api/settings/decoder/ffmpeg/install/status`: poll the ffmpeg install job (`running`, `status`, `log`, `path`, `supported`).
 - `GET /api/settings/fs/browse`: server-side directory picker used to choose the ffmpeg binary. Returns one directory level (`path`, `parent`, `separator`, `entries[]` of `{name, path, dir}`) for the `path` query param. Admin-only and read-only — names only, never file contents. Browsing is confined to a whitelist of roots (see `services/filesystem_browse.go`); an empty/out-of-whitelist `path` lists the allowed roots.
+- `GET /api/settings/notification`: return current notification settings (destinations, retention, and legacy singleton fields).
+- `PUT /api/settings/notification`: save the full notification settings blob.
+- `PUT /api/settings/notification/destination`: upsert a single delivery destination (create when the body has no `id`, otherwise replace the destination with that `id`) without touching other destinations or the retention section. Returns `{destination, settings}`.
+- `DELETE /api/settings/notification/destination/{id}`: remove one delivery destination by id; a no-op if the id is unknown.
+- `PUT /api/settings/notification/retention`: save only the retention section, leaving destinations and legacy singleton fields untouched.
+- `POST /api/settings/notification/test`: send a test notification through configured destinations.
 - `GET /api/settings/users`: list standalone local users.
 - `POST /api/settings/users`: create a standalone local user.
 - `PUT /api/settings/users/{id}`: update user profile, admin flag, and active flag.

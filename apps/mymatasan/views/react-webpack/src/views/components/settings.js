@@ -7,6 +7,19 @@ import { PasswordField } from './layout';
 import { defaultYoloConfig, bestYoloDefaults, defaultCaptureConfig, captureModeOptions, defaultAlertNotificationConfig, alertNotificationFields, alertFieldDataKeys, builtinPayloadKeys, notificationCategories, notificationTemplateTokens, defaultDestination, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings } from '../lib/constants';
 import {iceUrlsText,textToIceUrls,decoderTransportOptions,decoderHWAccelOptions,apiBase } from '../lib/helpers';
 
+// SETTINGS_TABS drives the top tab bar: order, icon, label, and the contextual
+// one-line description shown in the header band under the active tab.
+const SETTINGS_TABS = [
+  { id: 'runtime', labelKey: 'st.navRuntime', descKey: 'st.tabDesc.runtime', icon: 'sliders' },
+  { id: 'ai', labelKey: 'st.navAi', descKey: 'st.tabDesc.ai', icon: 'cpu' },
+  { id: 'notifications', labelKey: 'st.navNotifications', descKey: 'st.tabDesc.notifications', icon: 'bell' },
+  { id: 'health', labelKey: 'st.navCameraHealth', descKey: 'st.tabDesc.health', icon: 'wifi' },
+  { id: 'machine', labelKey: 'st.navMachineHealth', descKey: 'st.tabDesc.machine', icon: 'cpu' },
+  { id: 'users', labelKey: 'st.navUsers', descKey: 'st.tabDesc.users', icon: 'user' },
+  { id: 'pairing', labelKey: 'st.navConnectivity', descKey: 'st.tabDesc.pairing', icon: 'shield' },
+  { id: 'system', labelKey: 'st.navVersionHealth', descKey: 'st.tabDesc.system', icon: 'monitor' },
+];
+
 // stockModelHints describes the speed/accuracy trade-off of each base model.
 const stockModelHints = {
   'yolo11n.pt': 'st.modelHintNano',
@@ -887,10 +900,11 @@ export function SettingsTab({
   onResetPassword,
   onDeleteUser,
   notificationSettings,
-  notificationHasChanges,
+  savedNotificationSettings,
   onNotificationChange,
-  onSaveNotification,
-  onDiscardNotification,
+  onSaveDestination,
+  onDeleteDestination,
+  onSaveRetention,
   onTestNotification,
   onPurgeNotifications,
   healthSettings,
@@ -1046,34 +1060,36 @@ export function SettingsTab({
     });
   }
 
+  const activeTab = SETTINGS_TABS.find((tab) => tab.id === settingsNav) || SETTINGS_TABS[0];
+
   return (
-    <section className="workspace settings-workspace">
-      <aside className="settings-side-nav" aria-label={t('st.settingsAria')}>
-        <button type="button" className={settingsNav === 'runtime' ? 'active' : 'quiet'} onClick={() => onSettingsNav('runtime')}>
-          <span className="btn-icon"><Ico n="sliders" /> {t('st.navRuntime')}</span>
-        </button>
-        <button type="button" className={settingsNav === 'ai' ? 'active' : 'quiet'} onClick={() => onSettingsNav('ai')}>
-          <span className="btn-icon"><Ico n="cpu" /> {t('st.navAi')}</span>
-        </button>
-        <button type="button" className={settingsNav === 'notifications' ? 'active' : 'quiet'} onClick={() => onSettingsNav('notifications')}>
-          <span className="btn-icon"><Ico n="bell" /> {t('st.navNotifications')}</span>
-        </button>
-        <button type="button" className={settingsNav === 'health' ? 'active' : 'quiet'} onClick={() => onSettingsNav('health')}>
-          <span className="btn-icon"><Ico n="wifi" /> {t('st.navCameraHealth')}</span>
-        </button>
-        <button type="button" className={settingsNav === 'machine' ? 'active' : 'quiet'} onClick={() => onSettingsNav('machine')}>
-          <span className="btn-icon"><Ico n="cpu" /> {t('st.navMachineHealth')}</span>
-        </button>
-        <button type="button" className={settingsNav === 'users' ? 'active' : 'quiet'} onClick={() => onSettingsNav('users')}>
-          <span className="btn-icon"><Ico n="user" /> {t('st.navUsers')}</span>
-        </button>
-        <button type="button" className={settingsNav === 'pairing' ? 'active' : 'quiet'} onClick={() => onSettingsNav('pairing')}>
-          <span className="btn-icon"><Ico n="shield" /> {t('st.navConnectivity')}</span>
-        </button>
-        <button type="button" className={settingsNav === 'system' ? 'active' : 'quiet'} onClick={() => onSettingsNav('system')}>
-          <span className="btn-icon"><Ico n="monitor" /> {t('st.navVersionHealth')}</span>
-        </button>
-      </aside>
+    <section className="workspace settings-tabbed">
+      <nav className="settings-tabs" role="tablist" aria-label={t('st.settingsAria')}>
+        {SETTINGS_TABS.map((tab) => {
+          const active = settingsNav === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              className={`settings-tab${active ? ' active' : ''}`}
+              onClick={() => onSettingsNav(tab.id)}
+            >
+              <Ico n={tab.icon} sz={16} />
+              <span className="settings-tab-label">{t(tab.labelKey)}</span>
+            </button>
+          );
+        })}
+      </nav>
+
+      <header className="settings-tab-head">
+        <span className="settings-tab-head-icon"><Ico n={activeTab.icon} sz={22} /></span>
+        <div className="settings-tab-head-text">
+          <h2>{t(activeTab.labelKey)}</h2>
+          <p>{t(activeTab.descKey)}</p>
+        </div>
+      </header>
 
       <div className="settings-content">
         {(settingsNav === 'runtime' || settingsNav === 'ai') ? (
@@ -1911,11 +1927,12 @@ export function SettingsTab({
         {settingsNav === 'notifications' ? (
           <NotificationSettingsPanel
             settings={notificationSettings}
+            savedSettings={savedNotificationSettings}
             busy={busy}
-            hasChanges={notificationHasChanges}
             onChange={onNotificationChange}
-            onSave={onSaveNotification}
-            onDiscard={onDiscardNotification}
+            onSaveDestination={onSaveDestination}
+            onDeleteDestination={onDeleteDestination}
+            onSaveRetention={onSaveRetention}
             onTest={onTestNotification}
             onPurgeExpired={onPurgeNotifications}
           />
@@ -1968,10 +1985,20 @@ export const SEVERITY_OPTIONS = [
   { value: 'critical', label: 'Critical only' },
 ];
 
-export function NotificationSettingsPanel({ settings, busy, hasChanges, onChange, onSave, onDiscard, onTest, onPurgeExpired }) {
+export function NotificationSettingsPanel({ settings, savedSettings, busy, onChange, onSaveDestination, onDeleteDestination, onSaveRetention, onTest, onPurgeExpired }) {
   const t = useT();
   const retention = settings.retention || defaultNotificationSettings.retention;
   const destinations = Array.isArray(settings.destinations) ? settings.destinations : [];
+  // Last-saved snapshot, used to scope each section's own Save/Discard: a section's
+  // buttons enable only when THAT section differs from what's persisted.
+  const savedRetention = savedSettings?.retention || defaultNotificationSettings.retention;
+  const savedDestinations = Array.isArray(savedSettings?.destinations) ? savedSettings.destinations : [];
+  const retentionChanged = JSON.stringify(retention) !== JSON.stringify(savedRetention);
+  // A destination is "changed" when it has no saved counterpart yet (newly added)
+  // or differs from its saved snapshot at the same position.
+  const destChanged = (index) =>
+    index >= savedDestinations.length ||
+    JSON.stringify(destinations[index]) !== JSON.stringify(savedDestinations[index]);
   // Which destination's form is expanded (accordion — one open at a time).
   // Tracked by index since new destinations have no id until saved.
   const [openIndex, setOpenIndex] = useState(null);
@@ -1992,8 +2019,33 @@ export function NotificationSettingsPanel({ settings, busy, hasChanges, onChange
     setDestinations(destinations.filter((_, i) => i !== index));
     setOpenIndex(null);
   }
+  // A destination is persisted once it has an id that exists in the saved
+  // snapshot; removing that must go to the server (per-destination DELETE), while
+  // a never-saved row is just dropped from local state.
+  const isPersisted = (index) =>
+    index < savedDestinations.length && !!destinations[index]?.id &&
+    savedDestinations.some((d) => d.id === destinations[index].id);
+  function removeOrDelete(index) {
+    if (isPersisted(index)) {
+      onDeleteDestination(destinations[index].id);
+      setOpenIndex(null);
+      return;
+    }
+    removeDestination(index);
+  }
+  // Discard one destination's unsaved edits: revert to its saved snapshot, or drop
+  // it entirely when it was never saved.
+  function discardDestination(index) {
+    if (index >= savedDestinations.length) {
+      removeDestination(index);
+      return;
+    }
+    setDestinations(destinations.map((d, i) => (i === index ? savedDestinations[index] : d)));
+  }
+  // Each section persists independently via its own endpoint: saving one
+  // destination or the retention policy never touches the others' stored config.
   return (
-    <form className="settings-layout" onSubmit={onSave}>
+    <div className="settings-layout">
       <FormBusyOverlay busy={busy} />
 
       <section className="settings-panel span-two">
@@ -2016,10 +2068,13 @@ export function NotificationSettingsPanel({ settings, busy, hasChanges, onChange
                 key={dest.id || `new-${index}`}
                 dest={dest}
                 busy={busy}
+                changed={destChanged(index)}
                 open={openIndex === index}
                 onToggleOpen={() => setOpenIndex(openIndex === index ? null : index)}
                 onChange={(values) => updateDestination(index, values)}
-                onRemove={() => removeDestination(index)}
+                onSave={() => onSaveDestination(index, destinations[index])}
+                onDiscard={() => discardDestination(index)}
+                onRemove={() => removeOrDelete(index)}
               />
             ))}
           </AccordionList>
@@ -2089,17 +2144,16 @@ export function NotificationSettingsPanel({ settings, busy, hasChanges, onChange
             {t('st.onlyPurgeRead')}
           </label>
         </div>
+        <div className="settings-actions">
+          <button type="button" onClick={() => onSaveRetention(retention)} disabled={busy || !retentionChanged}>
+            <span className="btn-icon"><Ico n="save" /> {t('st.saveRetention')}</span>
+          </button>
+          <button type="button" className="quiet" onClick={() => onChange({ ...settings, retention: savedRetention })} disabled={busy || !retentionChanged}>
+            <span className="btn-icon"><Ico n="undo" /> {t('st.discardChanges')}</span>
+          </button>
+        </div>
       </section>
-
-      <div className="settings-actions">
-        <button type="submit" disabled={busy || !hasChanges}>
-          <span className="btn-icon"><Ico n="save" /> {t('st.saveSettings')}</span>
-        </button>
-        <button type="button" className="quiet" onClick={onDiscard} disabled={busy || !hasChanges}>
-          <span className="btn-icon"><Ico n="undo" /> {t('st.discardChanges')}</span>
-        </button>
-      </div>
-    </form>
+    </div>
   );
 }
 
@@ -2155,7 +2209,7 @@ function destinationTarget(dest, t) {
 // always-visible summary (name, type, target, enabled toggle, remove) that
 // expands to the full editing form (DestinationCard) when clicked. Built on the
 // shared AccordionItem so it matches every other list editor.
-function DestinationItem({ dest, busy, open, onToggleOpen, onChange, onRemove }) {
+function DestinationItem({ dest, busy, changed, open, onToggleOpen, onChange, onSave, onRemove, onDiscard }) {
   const t = useT();
   const enabled = dest.enabled !== false;
   const summary = (
@@ -2183,6 +2237,14 @@ function DestinationItem({ dest, busy, open, onToggleOpen, onChange, onRemove })
   return (
     <AccordionItem open={open} onToggle={onToggleOpen} summary={summary} actions={actions}>
       <DestinationCard dest={dest} busy={busy} onChange={onChange} />
+      <div className="settings-actions destination-actions">
+        <button type="button" onClick={onSave} disabled={busy || !changed}>
+          <span className="btn-icon"><Ico n="save" /> {t('st.saveDestination')}</span>
+        </button>
+        <button type="button" className="quiet" onClick={onDiscard} disabled={busy || !changed}>
+          <span className="btn-icon"><Ico n="undo" /> {t('st.discardChanges')}</span>
+        </button>
+      </div>
     </AccordionItem>
   );
 }

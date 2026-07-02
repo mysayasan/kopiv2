@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { Ico } from './icons';
 import { useT } from '@shared/i18n';
 import { maxCrossingLines } from '../lib/constants';
-import {fallbackLiveSource,normalizeStreamConfig,roundedPoint,zonePolygonText,parseZonePolygon,normalizeLineConfig,waitForIceGathering,createWebRTCAnswer,shouldUseMJPEGForTracks,apiBase } from '../lib/helpers';
+import {fallbackLiveSource,normalizeStreamConfig,roundedPoint,parseZonePolygons,zonePolygonsText,normalizeLineConfig,waitForIceGathering,createWebRTCAnswer,shouldUseMJPEGForTracks,apiBase } from '../lib/helpers';
 
 // DetectionFrameBackdrop shows the exact frame the AI detector samples for a
 // camera (honoring the capture mode / recording stream). Zones and lines are drawn
@@ -14,12 +14,15 @@ import {fallbackLiveSource,normalizeStreamConfig,roundedPoint,zonePolygonText,pa
 // so the background never blanks/blinks, and refresh PAUSES while the user is
 // dragging a point so the scene stays stable mid-draw. This is a pure UI display
 // (a cheap re-read of the cached siphon frame) — it never affects detection.
-function DetectionFrameBackdrop({ cameraId, paused }) {
+function DetectionFrameBackdrop({ cameraId, paused, refreshSignal }) {
   const t = useT();
   const [src, setSrc] = useState('');
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
 
+  // refreshSignal is a bump counter from the toolbox "refresh frame" button — it is
+  // in the dependency list so incrementing it re-runs the effect, which immediately
+  // fetches a fresh frame (and restarts the poll cadence).
   useEffect(() => {
     if (!cameraId) {
       setSrc('');
@@ -44,7 +47,7 @@ function DetectionFrameBackdrop({ cameraId, paused }) {
       cancelled = true;
       clearInterval(id);
     };
-  }, [cameraId]);
+  }, [cameraId, refreshSignal]);
 
   if (!cameraId) {
     return null;
@@ -285,36 +288,294 @@ function insertPointOnNearestEdge(pts, p) {
   return next;
 }
 
+// Grid-snap step (fraction of the frame) and keyboard-nudge step (Shift = coarse).
+const GRID_STEP = 0.05;
+const NUDGE_STEP = 0.01;
+const NUDGE_STEP_COARSE = 0.05;
+
+// snapToGrid quantizes a point to the coarse grid when snapping is on, so edges and
+// handles line up tidily; otherwise the (already rounded) point passes through.
+function snapToGrid(p, on) {
+  if (!on) {
+    return p;
+  }
+  return roundedPoint([Math.round(p[0] / GRID_STEP) * GRID_STEP, Math.round(p[1] / GRID_STEP) * GRID_STEP]);
+}
+
+// clampPoint keeps a point inside the frame (used for keyboard nudging).
+function clampPoint(p) {
+  return roundedPoint([Math.min(Math.max(p[0], 0), 1), Math.min(Math.max(p[1], 0), 1)]);
+}
+
+// pointInPolygon is an even-odd ray-cast test in normalized coords — used to detect
+// a click inside the zone body (to drag the whole shape).
+function pointInPolygon(p, pts) {
+  if (pts.length < 3) {
+    return false;
+  }
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i, i += 1) {
+    const [xi, yi] = pts[i];
+    const [xj, yj] = pts[j];
+    const hit = (yi > p[1]) !== (yj > p[1]) && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi;
+    if (hit) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+// polygonArea returns the polygon's coverage as a fraction of the frame (0–1) via
+// the shoelace formula; the frame is the unit square so the value is the coverage.
+function polygonArea(pts) {
+  if (pts.length < 3) {
+    return 0;
+  }
+  let sum = 0;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i, i += 1) {
+    sum += (pts[j][0] + pts[i][0]) * (pts[j][1] - pts[i][1]);
+  }
+  return Math.abs(sum) / 2;
+}
+
+// translatePoints shifts every point by (dx,dy), clamping the shift so the whole
+// shape stays inside the frame (rigid translation — the shape is never deformed).
+function translatePoints(pts, dx, dy) {
+  if (!pts.length) {
+    return pts;
+  }
+  const xs = pts.map((p) => p[0]);
+  const ys = pts.map((p) => p[1]);
+  const cdx = Math.min(Math.max(dx, -Math.min(...xs)), 1 - Math.max(...xs));
+  const cdy = Math.min(Math.max(dy, -Math.min(...ys)), 1 - Math.max(...ys));
+  return pts.map((p) => roundedPoint([p[0] + cdx, p[1] + cdy]));
+}
+
+// constrainToAxis snaps `moving` so the segment from `fixed` locks to the nearest
+// 45° increment (horizontal / vertical / diagonal) — used for Shift-drag on lines.
+function constrainToAxis(fixed, moving) {
+  const dx = moving[0] - fixed[0];
+  const dy = moving[1] - fixed[1];
+  const len = Math.hypot(dx, dy);
+  if (len === 0) {
+    return moving;
+  }
+  const step = Math.PI / 4;
+  const ang = Math.round(Math.atan2(dy, dx) / step) * step;
+  return roundedPoint([fixed[0] + Math.cos(ang) * len, fixed[1] + Math.sin(ang) * len]);
+}
+
+// extendLineToBox stretches segment a–b along its own direction until both ends hit
+// the frame border (slab clipping), so a tripwire spans the whole view.
+function extendLineToBox(a, b) {
+  const d = [b[0] - a[0], b[1] - a[1]];
+  if (!d[0] && !d[1]) {
+    return [a, b];
+  }
+  let t0 = -Infinity;
+  let t1 = Infinity;
+  for (let i = 0; i < 2; i += 1) {
+    if (d[i] === 0) {
+      if (a[i] < 0 || a[i] > 1) {
+        return [a, b];
+      }
+    } else {
+      let ta = (0 - a[i]) / d[i];
+      let tb = (1 - a[i]) / d[i];
+      if (ta > tb) {
+        [ta, tb] = [tb, ta];
+      }
+      t0 = Math.max(t0, ta);
+      t1 = Math.min(t1, tb);
+    }
+  }
+  if (t0 > t1) {
+    return [a, b];
+  }
+  return [
+    roundedPoint([a[0] + d[0] * t0, a[1] + d[1] * t0]),
+    roundedPoint([a[0] + d[0] * t1, a[1] + d[1] * t1]),
+  ];
+}
+
+// DIRECTION_ORDER is the cycle the line-crossing direction toggle steps through.
+const DIRECTION_ORDER = ['both', 'forward', 'reverse'];
+
+// Zone-creation drag: a pointer move shorter than RECT_CLICK_THRESHOLD (normalized)
+// counts as a click and drops a DEFAULT_BOX_SIZE square; a longer drag sizes the box.
+const RECT_CLICK_THRESHOLD = 0.025;
+const DEFAULT_BOX_SIZE = 0.2;
+
+// rectPolygon builds an axis-aligned rectangle (4 points, clockwise) from two
+// opposite corners.
+function rectPolygon(a, b) {
+  const x1 = Math.min(a[0], b[0]);
+  const y1 = Math.min(a[1], b[1]);
+  const x2 = Math.max(a[0], b[0]);
+  const y2 = Math.max(a[1], b[1]);
+  return [roundedPoint([x1, y1]), roundedPoint([x2, y1]), roundedPoint([x2, y2]), roundedPoint([x1, y2])];
+}
+
+// defaultBoxAt returns a `size`-wide square centered on `center`, nudged fully
+// inside the frame when the click lands near an edge.
+function defaultBoxAt(center, size) {
+  const half = size / 2;
+  const cx = Math.min(Math.max(center[0], half), 1 - half);
+  const cy = Math.min(Math.max(center[1], half), 1 - half);
+  return rectPolygon([cx - half, cy - half], [cx + half, cy + half]);
+}
+
+// DrawToolbox is the mode-aware floating tool palette overlaid on the drawing
+// surface (Paint/Photoshop style): a grip + a vertical column of square icon
+// buttons split into groups by a separator. `groups` is an array of item arrays;
+// each item is { key, icon, label, onClick, disabled, active?, toggle? }. Tools
+// (toggle:true) show a pressed/active state so the current interaction mode is
+// visible; actions (undo/clear/…) are plain buttons. The tool set is supplied by
+// the caller, so switching detection mode (zone vs line) swaps the whole palette.
+function DrawToolbox({ groups, ariaLabel, moveLabel }) {
+  const ref = useRef(null);
+  // Once the user drags the palette we pin it to an absolute {left,top} (px,
+  // relative to the drawing surface); until then it uses the CSS default corner.
+  const [pos, setPos] = useState(null);
+  const dragRef = useRef(null);
+
+  function onGripDown(event) {
+    const el = ref.current;
+    if (!el || event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    const box = el.getBoundingClientRect();
+    dragRef.current = { dx: event.clientX - box.left, dy: event.clientY - box.top };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }
+
+  function onGripMove(event) {
+    const el = ref.current;
+    const parent = el?.offsetParent;
+    if (!dragRef.current || !parent) {
+      return;
+    }
+    const prect = parent.getBoundingClientRect();
+    const maxLeft = Math.max(0, prect.width - el.offsetWidth);
+    const maxTop = Math.max(0, prect.height - el.offsetHeight);
+    const left = Math.min(Math.max(0, event.clientX - prect.left - dragRef.current.dx), maxLeft);
+    const top = Math.min(Math.max(0, event.clientY - prect.top - dragRef.current.dy), maxTop);
+    setPos({ left, top });
+  }
+
+  function onGripUp(event) {
+    dragRef.current = null;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+  }
+
+  return (
+    <div
+      ref={ref}
+      className="draw-toolbox"
+      role="toolbar"
+      aria-label={ariaLabel}
+      aria-orientation="vertical"
+      style={pos ? { left: pos.left, top: pos.top, right: 'auto', bottom: 'auto' } : undefined}
+    >
+      <span
+        className="draw-toolbox-grip"
+        title={moveLabel}
+        aria-label={moveLabel}
+        onPointerDown={onGripDown}
+        onPointerMove={onGripMove}
+        onPointerUp={onGripUp}
+        onPointerCancel={onGripUp}
+      />
+      {groups.filter((items) => items.length).map((items, gi) => (
+        <div className="draw-toolbox-group" key={gi}>
+          {items.map((it) => (
+            <button
+              key={it.key}
+              type="button"
+              className={`draw-tool${it.active ? ' active' : ''}`}
+              onClick={it.onClick}
+              disabled={it.disabled}
+              title={it.label}
+              aria-label={it.label}
+              aria-pressed={it.toggle ? !!it.active : undefined}
+            >
+              <Ico n={it.icon} sz={16} />
+            </button>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function ZoneDrawingPreview({ camera, polygonValue, onPolygon, authHeader, streamConfig, disabled }) {
   const t = useT();
   const overlayRef = useRef(null);
   const [draggingIndex, setDraggingIndex] = useState(null);
-  const points = useMemo(() => parseZonePolygon(polygonValue), [polygonValue]);
+  // Interaction tool mode: 'select' (drag points / drag whole zone / switch zone),
+  // 'add' (click to insert a point), 'delete' (click a point to remove it). Defaults
+  // to 'add' so a brand-new zone is drawn by clicking straight away.
+  const [tool, setTool] = useState('add');
+  const [snap, setSnap] = useState(false);
+  const [selected, setSelected] = useState(null);
+  const [bodyDragging, setBodyDragging] = useState(false);
+  const [frameRefresh, setFrameRefresh] = useState(0);
+  // Rubber-band zone creation: after "Add zone", the next press-drag-release on the
+  // frame draws a rectangle (a plain click drops a default box). awaitingRect gates
+  // it; rectPreview drives the live outline; rectRef holds the drag anchor.
+  const [awaitingRect, setAwaitingRect] = useState(false);
+  const [rectPreview, setRectPreview] = useState(null);
+  const rectRef = useRef(null);
+  // A rule can hold several zones (union — an object counts if it is inside ANY).
+  // `zones` is the parsed list; `active` is the one being edited. Setting activeZone
+  // to zones.length starts a NEW zone (the next placed point creates it).
+  const [activeZone, setActiveZone] = useState(0);
+  const zones = useMemo(() => parseZonePolygons(polygonValue), [polygonValue]);
+  const active = Math.min(activeZone, zones.length);
+  const points = zones[active] || [];
   const polygonPoints = points.map((point) => `${point[0] * 100},${point[1] * 100}`).join(' ');
+  const totalCoverage = Math.min(100, Math.round(zones.reduce((sum, z) => sum + polygonArea(z), 0) * 100));
 
-  // Undo history: each user action (add/move/clear/full-frame) snapshots the
-  // pre-action polygon so Undo steps back through them — not just the last point.
-  // lastValueRef tracks the value WE committed, so an external change (switching
-  // rule/camera, parent edit) is detected and clears the now-stale history.
+  // Undo history snapshots the WHOLE zone set before a mutating action, so undo/redo
+  // step across point edits, zone add/delete and moves alike. lastValueRef tracks the
+  // value WE committed, so an external change (switching rule/camera) clears history.
   const [history, setHistory] = useState([]);
+  const [redoStack, setRedoStack] = useState([]);
   const lastValueRef = useRef(polygonValue);
   const draggedRef = useRef(false);
+  const bodyDragRef = useRef(null);
   useEffect(() => {
     if (polygonValue !== lastValueRef.current) {
       lastValueRef.current = polygonValue;
       setHistory([]);
+      setRedoStack([]);
+      setSelected(null);
+      setActiveZone(0);
     }
   }, [polygonValue]);
 
-  function commit(nextPoints) {
-    const text = zonePolygonText(nextPoints);
+  function commitZones(nextZones) {
+    const text = zonePolygonsText(nextZones);
     lastValueRef.current = text;
     onPolygon(text);
   }
 
-  // pushHistory snapshots the current points before a mutating action.
+  // commit replaces the ACTIVE zone's points (or appends a new zone when the active
+  // index points past the end, i.e. a new zone is being started).
+  function commit(nextPoints) {
+    if (active >= zones.length) {
+      commitZones(nextPoints.length ? [...zones, nextPoints] : zones);
+      return;
+    }
+    commitZones(zones.map((z, i) => (i === active ? nextPoints : z)));
+  }
+
+  // pushHistory snapshots the current zone set before a mutating action. A fresh
+  // action invalidates the redo stack (can't redo past a divergent edit).
   function pushHistory() {
-    setHistory((h) => [...h, points]);
+    setHistory((h) => [...h, zones]);
+    setRedoStack([]);
   }
 
   function undo() {
@@ -323,15 +584,66 @@ export function ZoneDrawingPreview({ camera, polygonValue, onPolygon, authHeader
     }
     const prev = history[history.length - 1];
     setHistory(history.slice(0, -1));
-    commit(prev);
+    setRedoStack((r) => [...r, zones]);
+    setSelected(null);
+    commitZones(prev);
   }
 
-  function pointFromEvent(event) {
+  function redo() {
+    if (!redoStack.length) {
+      return;
+    }
+    const next = redoStack[redoStack.length - 1];
+    setRedoStack(redoStack.slice(0, -1));
+    setHistory((h) => [...h, zones]);
+    setSelected(null);
+    commitZones(next);
+  }
+
+  function addZone() {
+    if (disabled) {
+      return;
+    }
+    // Point the active index past the end and arm rubber-band creation — the next
+    // press-drag-release draws the new zone (see the overlay handlers + stopDrag).
+    setActiveZone(zones.length);
+    setTool('add');
+    setAwaitingRect(true);
+    setSelected(null);
+  }
+
+  // chooseTool switches the interaction tool and cancels a pending zone-rectangle
+  // (so picking Select/Add/Delete abandons an un-started "Add zone").
+  function chooseTool(next) {
+    setTool(next);
+    setAwaitingRect(false);
+    rectRef.current = null;
+    setRectPreview(null);
+  }
+
+  function deleteZone() {
+    if (disabled || !zones.length) {
+      return;
+    }
+    pushHistory();
+    const nextZones = zones.filter((_, i) => i !== active);
+    commitZones(nextZones);
+    setActiveZone((a) => Math.max(0, Math.min(a, nextZones.length - 1)));
+    setSelected(null);
+  }
+
+  // rawPointFromEvent is the un-snapped normalized pointer position (for delta math
+  // when dragging the whole shape); pointFromEvent adds grid-snap for placing points.
+  function rawPointFromEvent(event) {
     const rect = overlayRef.current?.getBoundingClientRect();
     if (!rect || rect.width <= 0 || rect.height <= 0) {
       return [0, 0];
     }
-    return roundedPoint([(event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height]);
+    return [(event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height];
+  }
+
+  function pointFromEvent(event) {
+    return snapToGrid(roundedPoint(rawPointFromEvent(event)), snap);
   }
 
   function addPoint(event) {
@@ -340,10 +652,41 @@ export function ZoneDrawingPreview({ camera, polygonValue, onPolygon, authHeader
     }
     pushHistory();
     commit(insertPointOnNearestEdge(points, pointFromEvent(event)));
+    setSelected(null);
+  }
+
+  function deletePoint(index) {
+    if (disabled) {
+      return;
+    }
+    pushHistory();
+    commit(points.filter((_, i) => i !== index));
+    setSelected(null);
   }
 
   function movePoint(event) {
-    if (disabled || draggingIndex === null) {
+    if (disabled) {
+      return;
+    }
+    // Live rubber-band rectangle while creating a new zone.
+    if (rectRef.current) {
+      setRectPreview({ start: rectRef.current.startSnap, current: pointFromEvent(event) });
+      return;
+    }
+    // Dragging the zone body translates every point rigidly (see translatePoints).
+    if (bodyDragRef.current) {
+      const p = rawPointFromEvent(event);
+      const dx = p[0] - bodyDragRef.current.last[0];
+      const dy = p[1] - bodyDragRef.current.last[1];
+      if (!draggedRef.current) {
+        pushHistory();
+        draggedRef.current = true;
+      }
+      commit(translatePoints(points, dx, dy));
+      bodyDragRef.current.last = p;
+      return;
+    }
+    if (draggingIndex === null) {
       return;
     }
     // Snapshot once per drag (on the first actual move) so the whole drag is a
@@ -358,57 +701,182 @@ export function ZoneDrawingPreview({ camera, polygonValue, onPolygon, authHeader
   }
 
   function stopDrag(event) {
-    if (draggingIndex !== null && overlayRef.current?.hasPointerCapture?.(event.pointerId)) {
+    // Finalize rubber-band zone creation: a real drag sizes the box, a bare click
+    // drops a default square centered on the cursor.
+    if (rectRef.current) {
+      if (overlayRef.current?.hasPointerCapture?.(event.pointerId)) {
+        overlayRef.current.releasePointerCapture(event.pointerId);
+      }
+      const { startRaw, startSnap } = rectRef.current;
+      const endRaw = rawPointFromEvent(event);
+      const dragged = Math.hypot(endRaw[0] - startRaw[0], endRaw[1] - startRaw[1]) >= RECT_CLICK_THRESHOLD;
+      const poly = dragged ? rectPolygon(startSnap, pointFromEvent(event)) : defaultBoxAt(startSnap, DEFAULT_BOX_SIZE);
+      pushHistory();
+      commit(poly);
+      rectRef.current = null;
+      setRectPreview(null);
+      setAwaitingRect(false);
+      setSelected(null);
+      // Drop into Select so the fresh box can be moved/resized straight away.
+      setTool('select');
+      return;
+    }
+    if ((draggingIndex !== null || bodyDragRef.current) && overlayRef.current?.hasPointerCapture?.(event.pointerId)) {
       overlayRef.current.releasePointerCapture(event.pointerId);
     }
     setDraggingIndex(null);
+    bodyDragRef.current = null;
+    setBodyDragging(false);
     draggedRef.current = false;
+  }
+
+  // nudge/delete/undo/redo via keyboard when the overlay is focused. Arrow keys move
+  // the selected vertex (Shift = coarse), Delete removes it, Ctrl/Cmd+Z / +Y undo/redo.
+  function onKeyDown(event) {
+    if (disabled) {
+      return;
+    }
+    const mod = event.ctrlKey || event.metaKey;
+    if (mod && (event.key === 'z' || event.key === 'Z')) {
+      event.preventDefault();
+      if (event.shiftKey) redo(); else undo();
+      return;
+    }
+    if (mod && (event.key === 'y' || event.key === 'Y')) {
+      event.preventDefault();
+      redo();
+      return;
+    }
+    if (selected === null || selected >= points.length) {
+      return;
+    }
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      event.preventDefault();
+      deletePoint(selected);
+      return;
+    }
+    const step = event.shiftKey ? NUDGE_STEP_COARSE : NUDGE_STEP;
+    const deltas = { ArrowUp: [0, -step], ArrowDown: [0, step], ArrowLeft: [-step, 0], ArrowRight: [step, 0] };
+    const d = deltas[event.key];
+    if (!d) {
+      return;
+    }
+    event.preventDefault();
+    pushHistory();
+    const nextPoints = [...points];
+    nextPoints[selected] = clampPoint([points[selected][0] + d[0], points[selected][1] + d[1]]);
+    commit(nextPoints);
   }
 
   return (
     <section className="zone-drawer">
       <header>
         <h3>{t('prev.detectionZone')}</h3>
-        <span className="status-pill">{t('prev.points', { n: points.length })}</span>
+        <div className="zone-drawer-pills">
+          {zones.length > 1 ? <span className="status-pill">{t('prev.zoneIndex', { i: Math.min(active + 1, zones.length), n: zones.length })}</span> : null}
+          <span className="status-pill">{t('prev.points', { n: points.length })}</span>
+          {zones.length ? <span className="status-pill">{t('prev.coverage', { pct: totalCoverage })}</span> : null}
+        </div>
       </header>
       <p className="zone-drawer-hint">{t('prev.zoneHint')}</p>
       <div className={camera ? 'zone-live' : 'zone-live empty-zone'}>
         {camera ? (
           <>
-            <DetectionFrameBackdrop cameraId={camera.id} paused={draggingIndex !== null} />
+            <DetectionFrameBackdrop cameraId={camera.id} paused={draggingIndex !== null || bodyDragging || rectPreview !== null} refreshSignal={frameRefresh} />
             <div
               ref={overlayRef}
-              className="zone-overlay"
+              className={`zone-overlay tool-${tool}${awaitingRect ? ' tool-rect' : ''}`}
               role="button"
               tabIndex={0}
               aria-label={t('prev.drawZone')}
+              onKeyDown={onKeyDown}
               onPointerDown={(event) => {
                 if (event.button !== 0) {
                   return;
                 }
-                overlayRef.current?.setPointerCapture?.(event.pointerId);
-                addPoint(event);
+                // Rubber-band new-zone creation takes precedence once armed.
+                if (awaitingRect) {
+                  overlayRef.current?.setPointerCapture?.(event.pointerId);
+                  const snap = pointFromEvent(event);
+                  rectRef.current = { startRaw: rawPointFromEvent(event), startSnap: snap };
+                  setRectPreview({ start: snap, current: snap });
+                  return;
+                }
+                if (tool === 'add') {
+                  overlayRef.current?.setPointerCapture?.(event.pointerId);
+                  addPoint(event);
+                  return;
+                }
+                // Select mode: a press inside the active zone body grabs the whole shape.
+                if (tool === 'select' && pointInPolygon(rawPointFromEvent(event), points)) {
+                  overlayRef.current?.setPointerCapture?.(event.pointerId);
+                  bodyDragRef.current = { last: rawPointFromEvent(event) };
+                  setBodyDragging(true);
+                  setSelected(null);
+                }
               }}
               onPointerMove={movePoint}
               onPointerUp={stopDrag}
               onPointerCancel={stopDrag}
             >
               <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                {points.length >= 3 ? <polygon points={polygonPoints} className="zone-shape" /> : null}
+                {zones.map((zonePts, zi) => {
+                  if (zi === active) {
+                    return null;
+                  }
+                  // Inactive zones render dimmed; clicking one in select mode makes it
+                  // the active (editable) zone.
+                  const poly = zonePts.map((p) => `${p[0] * 100},${p[1] * 100}`).join(' ');
+                  return (
+                    <g key={`zone-${zi}`}>
+                      {zonePts.length >= 3 ? (
+                        <polygon
+                          points={poly}
+                          className="zone-shape inactive"
+                          style={tool === 'select' ? { pointerEvents: 'fill', cursor: 'pointer' } : { pointerEvents: 'none' }}
+                          onPointerDown={(event) => {
+                            if (disabled || event.button !== 0 || tool !== 'select') {
+                              return;
+                            }
+                            event.stopPropagation();
+                            setActiveZone(zi);
+                            setSelected(null);
+                          }}
+                        />
+                      ) : null}
+                      {zonePts.length >= 2 ? <polyline points={poly} className="zone-line inactive" /> : null}
+                      {zonePts.length ? (
+                        <text x={zonePts[0][0] * 100} y={zonePts[0][1] * 100 - 1} className="zone-index-label">{zi + 1}</text>
+                      ) : null}
+                    </g>
+                  );
+                })}
+                {points.length >= 3 ? <polygon points={polygonPoints} className={`zone-shape${tool === 'select' ? ' grabbable' : ''}`} /> : null}
                 {points.length >= 2 ? <polyline points={polygonPoints} className="zone-line" /> : null}
+                {rectPreview ? (
+                  <polygon
+                    points={rectPolygon(rectPreview.start, rectPreview.current).map((p) => `${p[0] * 100},${p[1] * 100}`).join(' ')}
+                    className="zone-shape zone-rect-preview"
+                  />
+                ) : null}
                 {points.map((point, index) => (
                   <circle
                     key={`${point[0]}-${point[1]}-${index}`}
                     cx={point[0] * 100}
                     cy={point[1] * 100}
                     r="2.3"
-                    className="zone-point"
+                    className={`zone-point${tool === 'delete' ? ' deletable' : ''}${index === selected ? ' selected' : ''}`}
                     vectorEffect="non-scaling-stroke"
                     onPointerDown={(event) => {
                       if (disabled || event.button !== 0) {
                         return;
                       }
                       event.stopPropagation();
+                      if (tool === 'delete') {
+                        deletePoint(index);
+                        return;
+                      }
+                      setSelected(index);
                       overlayRef.current?.setPointerCapture?.(event.pointerId);
                       setDraggingIndex(index);
                     }}
@@ -416,34 +884,39 @@ export function ZoneDrawingPreview({ camera, polygonValue, onPolygon, authHeader
                 ))}
               </svg>
             </div>
+            <DrawToolbox
+              ariaLabel={t('prev.tools')}
+              moveLabel={t('prev.moveToolbox')}
+              groups={[
+                [
+                  { key: 'select', icon: 'cursor', label: t('prev.toolSelect'), toggle: true, active: tool === 'select' && !awaitingRect, disabled, onClick: () => chooseTool('select') },
+                  { key: 'add', icon: 'edit-2', label: t('prev.toolAddPoint'), toggle: true, active: tool === 'add' && !awaitingRect, disabled, onClick: () => chooseTool('add') },
+                  { key: 'delete', icon: 'eraser', label: t('prev.toolDeletePoint'), toggle: true, active: tool === 'delete', disabled: disabled || !points.length, onClick: () => chooseTool('delete') },
+                ],
+                [
+                  { key: 'add-zone', icon: 'plus', label: t('prev.addZone'), toggle: true, active: awaitingRect, disabled, onClick: addZone },
+                  { key: 'del-zone', icon: 'trash', label: t('prev.deleteZone'), disabled: disabled || !zones.length, onClick: deleteZone },
+                ],
+                [
+                  { key: 'undo', icon: 'undo', label: t('prev.undo'), disabled: disabled || !history.length, onClick: undo },
+                  { key: 'redo', icon: 'redo', label: t('prev.redo'), disabled: disabled || !redoStack.length, onClick: redo },
+                ],
+                [
+                  { key: 'full', icon: 'maximize', label: t('prev.fullFrame'), disabled, onClick: () => { pushHistory(); commit([[0, 0], [1, 0], [1, 1], [0, 1]]); setSelected(null); } },
+                  { key: 'box', icon: 'box', label: t('prev.centerBox'), disabled, onClick: () => { pushHistory(); commit([[0.25, 0.25], [0.75, 0.25], [0.75, 0.75], [0.25, 0.75]]); setSelected(null); } },
+                  { key: 'flip-h', icon: 'flip-h', label: t('prev.flipH'), disabled: disabled || !points.length, onClick: () => { pushHistory(); commit(points.map((p) => roundedPoint([1 - p[0], p[1]]))); } },
+                  { key: 'flip-v', icon: 'flip-v', label: t('prev.flipV'), disabled: disabled || !points.length, onClick: () => { pushHistory(); commit(points.map((p) => roundedPoint([p[0], 1 - p[1]]))); } },
+                ],
+                [
+                  { key: 'snap', icon: 'grid4', label: t('prev.snapGrid'), toggle: true, active: snap, disabled, onClick: () => setSnap((s) => !s) },
+                  { key: 'refresh', icon: 'refresh', label: t('prev.refreshFrame'), disabled, onClick: () => setFrameRefresh((n) => n + 1) },
+                ],
+              ]}
+            />
           </>
         ) : (
           <div className="zone-empty-state">{t('prev.selectCamera')}</div>
         )}
-      </div>
-      <div className="action-row">
-        <button type="button" className="quiet" onClick={undo} disabled={disabled || !history.length}>
-          <span className="btn-icon"><Ico n="undo" /> {t('prev.undo')}</span>
-        </button>
-        <button type="button" className="quiet" onClick={() => { pushHistory(); commit([]); }} disabled={disabled || !points.length}>
-          <span className="btn-icon"><Ico n="trash" /> {t('prev.clearZone')}</span>
-        </button>
-        <button
-          type="button"
-          className="quiet"
-          onClick={() => {
-            pushHistory();
-            commit([
-              [0, 0],
-              [1, 0],
-              [1, 1],
-              [0, 1],
-            ]);
-          }}
-          disabled={disabled}
-        >
-          <span className="btn-icon"><Ico n="video" /> {t('prev.fullFrame')}</span>
-        </button>
       </div>
     </section>
   );
@@ -498,10 +971,21 @@ export function LineDrawingPreview({ camera, config, detectionType, onConfig, au
   const t = useT();
   const overlayRef = useRef(null);
   const [dragging, setDragging] = useState(null);
+  // Interaction tool mode mirrors the zone drawer: 'select' (drag endpoints only),
+  // 'add' (click to drop a new line), 'delete' (click an endpoint to remove its line).
+  const [tool, setTool] = useState('add');
+  const [snap, setSnap] = useState(false);
+  const [selected, setSelected] = useState(null);
+  const [bodyDragging, setBodyDragging] = useState(false);
+  const [frameRefresh, setFrameRefresh] = useState(0);
+  const bodyDragRef = useRef(null);
   const maxLines = detectionType === 'multi_line_crossing' ? maxCrossingLines : 1;
   const normalizedLine = normalizeLineConfig(config, detectionType);
   const lines = normalizedLine.lines.slice(0, maxLines);
   const direction = normalizedLine.direction || 'both';
+  // Which line the shape-level actions (extend to edges) target: the selected one,
+  // or the only line when there is exactly one.
+  const targetLineIndex = selected ? selected.lineIndex : (lines.length === 1 ? 0 : -1);
 
   // Undo history mirrors the zone drawer: each action (add/move/clear) snapshots
   // the pre-action lines so Undo steps back through them. The parent re-parses and
@@ -510,6 +994,7 @@ export function LineDrawingPreview({ camera, config, detectionType, onConfig, au
   // rather than value comparison: after our own commit the next render is accepted,
   // any other change clears the now-stale history.
   const [history, setHistory] = useState([]);
+  const [redoStack, setRedoStack] = useState([]);
   const linesKey = JSON.stringify(lines);
   const lastKeyRef = useRef(linesKey);
   const selfCommitRef = useRef(false);
@@ -523,6 +1008,8 @@ export function LineDrawingPreview({ camera, config, detectionType, onConfig, au
     if (linesKey !== lastKeyRef.current) {
       lastKeyRef.current = linesKey;
       setHistory([]);
+      setRedoStack([]);
+      setSelected(null);
     }
   }, [linesKey]);
 
@@ -531,9 +1018,11 @@ export function LineDrawingPreview({ camera, config, detectionType, onConfig, au
     onConfig({ lines: nextLines.slice(0, maxLines) });
   }
 
-  // pushHistory snapshots the current lines before a mutating action.
+  // pushHistory snapshots the current lines before a mutating action. A fresh
+  // action invalidates the redo stack (can't redo past a divergent edit).
   function pushHistory() {
     setHistory((h) => [...h, lines]);
+    setRedoStack([]);
   }
 
   function undo() {
@@ -542,15 +1031,34 @@ export function LineDrawingPreview({ camera, config, detectionType, onConfig, au
     }
     const prev = history[history.length - 1];
     setHistory(history.slice(0, -1));
+    setRedoStack((r) => [...r, lines]);
+    setSelected(null);
     commit(prev);
   }
 
-  function pointFromEvent(event) {
+  function redo() {
+    if (!redoStack.length) {
+      return;
+    }
+    const next = redoStack[redoStack.length - 1];
+    setRedoStack(redoStack.slice(0, -1));
+    setHistory((h) => [...h, lines]);
+    setSelected(null);
+    commit(next);
+  }
+
+  // rawPointFromEvent is the un-snapped normalized pointer position (for delta math
+  // when dragging a whole line); pointFromEvent adds grid-snap for placing endpoints.
+  function rawPointFromEvent(event) {
     const rect = overlayRef.current?.getBoundingClientRect();
     if (!rect || rect.width <= 0 || rect.height <= 0) {
       return [0, 0];
     }
-    return roundedPoint([(event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height]);
+    return [(event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height];
+  }
+
+  function pointFromEvent(event) {
+    return snapToGrid(roundedPoint(rawPointFromEvent(event)), snap);
   }
 
   function addLine(point = null) {
@@ -561,10 +1069,59 @@ export function LineDrawingPreview({ camera, config, detectionType, onConfig, au
     const end = roundedPoint([start[0], start[1] + 0.25]);
     pushHistory();
     commit([...lines, { id: `line-${lines.length + 1}`, points: [roundedPoint(start), end] }]);
+    setSelected(null);
+  }
+
+  function deleteLine(lineIndex) {
+    if (disabled) {
+      return;
+    }
+    pushHistory();
+    commit(lines.filter((_, i) => i !== lineIndex));
+    setSelected(null);
+  }
+
+  // extendTargetLine stretches the target line to the frame edges along its heading.
+  function extendTargetLine() {
+    if (disabled || targetLineIndex < 0 || !lines[targetLineIndex]) {
+      return;
+    }
+    pushHistory();
+    commit(lines.map((line, i) => (i !== targetLineIndex
+      ? line
+      : { ...line, points: extendLineToBox(line.points[0], line.points[1]) })));
+  }
+
+  // cycleDirection steps the crossing direction (both → forward → reverse). This is a
+  // config-level property (applies to all lines) so it goes straight to onConfig; the
+  // on-canvas green arrow reflects the new value.
+  function cycleDirection() {
+    if (disabled) {
+      return;
+    }
+    const next = DIRECTION_ORDER[(DIRECTION_ORDER.indexOf(direction) + 1) % DIRECTION_ORDER.length];
+    onConfig({ direction: next });
   }
 
   function movePoint(event) {
-    if (disabled || !dragging) {
+    if (disabled) {
+      return;
+    }
+    // Dragging a line body translates both of its endpoints rigidly.
+    if (bodyDragRef.current) {
+      const p = rawPointFromEvent(event);
+      const dx = p[0] - bodyDragRef.current.last[0];
+      const dy = p[1] - bodyDragRef.current.last[1];
+      if (!draggedRef.current) {
+        pushHistory();
+        draggedRef.current = true;
+      }
+      const li = bodyDragRef.current.lineIndex;
+      commit(lines.map((line, i) => (i !== li ? line : { ...line, points: translatePoints(line.points, dx, dy) })));
+      bodyDragRef.current.last = p;
+      return;
+    }
+    if (!dragging) {
       return;
     }
     // Snapshot once per drag (on the first actual move) so the whole drag is one
@@ -578,18 +1135,67 @@ export function LineDrawingPreview({ camera, config, detectionType, onConfig, au
         return line;
       }
       const nextPoints = [...line.points];
-      nextPoints[dragging.pointIndex] = pointFromEvent(event);
+      // Shift-drag locks the segment to the nearest 45° (relative to the fixed end).
+      const moved = pointFromEvent(event);
+      nextPoints[dragging.pointIndex] = event.shiftKey
+        ? constrainToAxis(line.points[1 - dragging.pointIndex], moved)
+        : moved;
       return { ...line, points: nextPoints };
     });
     commit(nextLines);
   }
 
   function stopDrag(event) {
-    if (dragging && overlayRef.current?.hasPointerCapture?.(event.pointerId)) {
+    if ((dragging || bodyDragRef.current) && overlayRef.current?.hasPointerCapture?.(event.pointerId)) {
       overlayRef.current.releasePointerCapture(event.pointerId);
     }
     setDragging(null);
+    bodyDragRef.current = null;
+    setBodyDragging(false);
     draggedRef.current = false;
+  }
+
+  // Keyboard: arrows nudge the selected endpoint (Shift = coarse), Delete removes its
+  // line, Ctrl/Cmd+Z / +Y undo/redo.
+  function onKeyDown(event) {
+    if (disabled) {
+      return;
+    }
+    const mod = event.ctrlKey || event.metaKey;
+    if (mod && (event.key === 'z' || event.key === 'Z')) {
+      event.preventDefault();
+      if (event.shiftKey) redo(); else undo();
+      return;
+    }
+    if (mod && (event.key === 'y' || event.key === 'Y')) {
+      event.preventDefault();
+      redo();
+      return;
+    }
+    if (!selected || !lines[selected.lineIndex]) {
+      return;
+    }
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      event.preventDefault();
+      deleteLine(selected.lineIndex);
+      return;
+    }
+    const step = event.shiftKey ? NUDGE_STEP_COARSE : NUDGE_STEP;
+    const deltas = { ArrowUp: [0, -step], ArrowDown: [0, step], ArrowLeft: [-step, 0], ArrowRight: [step, 0] };
+    const d = deltas[event.key];
+    if (!d) {
+      return;
+    }
+    event.preventDefault();
+    pushHistory();
+    commit(lines.map((line, i) => {
+      if (i !== selected.lineIndex) {
+        return line;
+      }
+      const nextPoints = [...line.points];
+      nextPoints[selected.pointIndex] = clampPoint([line.points[selected.pointIndex][0] + d[0], line.points[selected.pointIndex][1] + d[1]]);
+      return { ...line, points: nextPoints };
+    }));
   }
 
   return (
@@ -602,15 +1208,16 @@ export function LineDrawingPreview({ camera, config, detectionType, onConfig, au
       <div className={camera ? 'zone-live' : 'zone-live empty-zone'}>
         {camera ? (
           <>
-            <DetectionFrameBackdrop cameraId={camera.id} paused={dragging !== null} />
+            <DetectionFrameBackdrop cameraId={camera.id} paused={dragging !== null || bodyDragging} refreshSignal={frameRefresh} />
             <div
               ref={overlayRef}
-              className="zone-overlay"
+              className={`zone-overlay tool-${tool}`}
               role="button"
               tabIndex={0}
               aria-label={t('prev.drawLines')}
+              onKeyDown={onKeyDown}
               onPointerDown={(event) => {
-                if (event.button !== 0 || lines.length >= maxLines) {
+                if (event.button !== 0 || tool !== 'add' || lines.length >= maxLines) {
                   return;
                 }
                 overlayRef.current?.setPointerCapture?.(event.pointerId);
@@ -625,6 +1232,27 @@ export function LineDrawingPreview({ camera, config, detectionType, onConfig, au
                   const [first, second] = line.points;
                   return (
                     <g key={line.id || lineIndex}>
+                      {/* Invisible fat hit-line: in select mode it grabs the whole line to
+                          drag it; in other modes it lets clicks pass through to the overlay. */}
+                      <line
+                        x1={first[0] * 100}
+                        y1={first[1] * 100}
+                        x2={second[0] * 100}
+                        y2={second[1] * 100}
+                        className="crossing-hit"
+                        style={{ pointerEvents: tool === 'select' ? 'stroke' : 'none' }}
+                        vectorEffect="non-scaling-stroke"
+                        onPointerDown={(event) => {
+                          if (disabled || event.button !== 0 || tool !== 'select') {
+                            return;
+                          }
+                          event.stopPropagation();
+                          overlayRef.current?.setPointerCapture?.(event.pointerId);
+                          bodyDragRef.current = { lineIndex, last: rawPointFromEvent(event) };
+                          setBodyDragging(true);
+                          setSelected({ lineIndex, pointIndex: 0 });
+                        }}
+                      />
                       <line
                         x1={first[0] * 100}
                         y1={first[1] * 100}
@@ -643,13 +1271,18 @@ export function LineDrawingPreview({ camera, config, detectionType, onConfig, au
                           cx={point[0] * 100}
                           cy={point[1] * 100}
                           r="2.3"
-                          className="zone-point"
+                          className={`zone-point${tool === 'delete' ? ' deletable' : ''}${selected && selected.lineIndex === lineIndex && selected.pointIndex === pointIndex ? ' selected' : ''}`}
                           vectorEffect="non-scaling-stroke"
                           onPointerDown={(event) => {
                             if (disabled || event.button !== 0) {
                               return;
                             }
                             event.stopPropagation();
+                            if (tool === 'delete') {
+                              deleteLine(lineIndex);
+                              return;
+                            }
+                            setSelected({ lineIndex, pointIndex });
                             overlayRef.current?.setPointerCapture?.(event.pointerId);
                             setDragging({ lineIndex, pointIndex });
                           }}
@@ -660,21 +1293,34 @@ export function LineDrawingPreview({ camera, config, detectionType, onConfig, au
                 })}
               </svg>
             </div>
+            <DrawToolbox
+              ariaLabel={t('prev.tools')}
+              moveLabel={t('prev.moveToolbox')}
+              groups={[
+                [
+                  { key: 'select', icon: 'cursor', label: t('prev.toolSelect'), toggle: true, active: tool === 'select', disabled, onClick: () => setTool('select') },
+                  { key: 'add', icon: 'plus', label: t('prev.toolAddLine'), toggle: true, active: tool === 'add', disabled: disabled || lines.length >= maxLines, onClick: () => setTool('add') },
+                  { key: 'delete', icon: 'eraser', label: t('prev.toolDeleteLine'), toggle: true, active: tool === 'delete', disabled: disabled || !lines.length, onClick: () => setTool('delete') },
+                ],
+                [
+                  { key: 'undo', icon: 'undo', label: t('prev.undo'), disabled: disabled || !history.length, onClick: undo },
+                  { key: 'redo', icon: 'redo', label: t('prev.redo'), disabled: disabled || !redoStack.length, onClick: redo },
+                ],
+                [
+                  { key: 'direction', icon: 'two-way', label: t('prev.directionCycle', { dir: t(`prev.dir_${direction}`) }), disabled: disabled || !lines.length, onClick: cycleDirection },
+                  { key: 'extend', icon: 'maximize', label: t('prev.extendLine'), disabled: disabled || targetLineIndex < 0, onClick: extendTargetLine },
+                  { key: 'clear', icon: 'trash', label: t('prev.clearLines'), disabled: disabled || !lines.length, onClick: () => { pushHistory(); commit([]); setSelected(null); } },
+                ],
+                [
+                  { key: 'snap', icon: 'grid4', label: t('prev.snapGrid'), toggle: true, active: snap, disabled, onClick: () => setSnap((s) => !s) },
+                  { key: 'refresh', icon: 'refresh', label: t('prev.refreshFrame'), disabled, onClick: () => setFrameRefresh((n) => n + 1) },
+                ],
+              ]}
+            />
           </>
         ) : (
           <div className="zone-empty-state">{t('prev.selectCamera')}</div>
         )}
-      </div>
-      <div className="action-row">
-        <button type="button" className="quiet" onClick={() => addLine()} disabled={disabled || lines.length >= maxLines}>
-          <span className="btn-icon"><Ico n="plus" /> {t('prev.addLine')}</span>
-        </button>
-        <button type="button" className="quiet" onClick={undo} disabled={disabled || !history.length}>
-          <span className="btn-icon"><Ico n="undo" /> {t('prev.undo')}</span>
-        </button>
-        <button type="button" className="quiet" onClick={() => { pushHistory(); commit([]); }} disabled={disabled || !lines.length}>
-          <span className="btn-icon"><Ico n="trash" /> {t('prev.clearLines')}</span>
-        </button>
       </div>
     </section>
   );

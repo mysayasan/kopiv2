@@ -66,7 +66,7 @@ func validateCrowdRule(rule DetectionRule) error {
 // object for the alert, and boxes holds every qualifying box so the snapshot can
 // outline each crowd member, not just the representative.
 func (d *ObjectRuleDetector) crowdMatch(rule DetectionRule, cfg crowdConfig, candidates []ObjectCandidate) (best ObjectCandidate, count int, matched bool, boxes []MetaBox) {
-	zone := parseZone(rule.ZonePolygon)
+	zones := parseZones(rule.ZonePolygon)
 	minConfidence := rule.Threshold
 	if minConfidence <= 0 {
 		minConfidence = DefaultDetectionThreshold
@@ -84,7 +84,7 @@ func (d *ObjectRuleDetector) crowdMatch(rule DetectionRule, cfg crowdConfig, can
 			continue
 		}
 		box := normalizeBox(candidate.Box)
-		if !boxCenterInZone(box, zone) {
+		if !boxCenterInAnyZone(box, zones) {
 			continue
 		}
 		candidate.Box = box
