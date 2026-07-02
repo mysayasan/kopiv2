@@ -1,0 +1,23 @@
+{
+  "bot_token": "PASTE_BOT_TOKEN_HERE",
+  "allowed_user_id": "PASTE_YOUR_NUMERIC_ID_HERE",
+  "workdir": "d:\\github\\mysayasan\\kopiv2",
+  "allowed_tools": [
+    "Bash(go build:*)",
+    "Bash(go test:*)",
+    "Bash(git status:*)",
+    "Bash(git diff:*)"
+  ],
+  "voice_notify": true,
+  "voice_target": "pc",
+  "ffmpeg_path": "D:\\github\\mysayasan\\kopiv2\\.tools\\ffmpeg\\ffmpeg-8.1.1-essentials_build\\bin\\ffmpeg.exe",
+  "chrome_path": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  "stream_mode": true,
+  "play_incoming_voice": true,
+  "voice_input": "play",
+  "transcribe_cmd": "",
+  "stt_api_url": "",
+  "stt_api_key": "",
+  "stt_model": "whisper-1",
+  "chrome_user_data_dir": ""
+}

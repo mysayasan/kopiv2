@@ -1,0 +1,23 @@
+# CPU-only Whisper server (no GPU required). Works on any machine, but large-v3
+# is slow on CPU — use small/medium via stt_model.
+#
+# Start:   docker compose -f docker-compose.cpu.yml up -d
+# Stop:    docker compose -f docker-compose.cpu.yml down
+#
+# Point tgbridge at it (tools/tgbridge/config.json):
+#   "stt_api_url": "http://127.0.0.1:8000/v1/audio/transcriptions",
+#   "stt_model":   "Systran/faster-whisper-small",
+#   "stt_api_key": ""
+
+services:
+  whisper:
+    image: fedirz/faster-whisper-server:latest-cpu
+    container_name: whisper-server
+    ports:
+      - "8000:8000"
+    volumes:
+      - whisper-models:/root/.cache/huggingface
+    restart: unless-stopped
+
+volumes:
+  whisper-models:
