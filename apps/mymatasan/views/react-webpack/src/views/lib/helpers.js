@@ -516,6 +516,47 @@ export function parseZonePolygon(value) {
 
 export const defaultZonePolygon = zonePolygonText(defaultZonePoints);
 
+// parseZonePolygons parses a zonePolygon field that is EITHER a single polygon
+// [[x,y],...] (legacy) OR a list of polygons [[[x,y],...],...] (multi-zone), and
+// returns an array of point-arrays. Polygons keep >=1 point so a partially-drawn
+// zone survives the controlled-value round trip; empty polygons are dropped.
+export function parseZonePolygons(value) {
+  if (!value) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      return [];
+    }
+    // Multi form: the first element is itself an array of points, so its first
+    // element is an array. Legacy single form has numbers there.
+    const isMulti = Array.isArray(parsed[0]) && Array.isArray(parsed[0][0]);
+    const polys = isMulti ? parsed : [parsed];
+    return polys
+      .map((poly) => (Array.isArray(poly)
+        ? poly.filter((point) => Array.isArray(point) && point.length >= 2).map((point) => roundedPoint([Number(point[0]), Number(point[1])]))
+        : []))
+      .filter((poly) => poly.length > 0);
+  } catch (_) {
+    return [];
+  }
+}
+
+// zonePolygonsText serializes an array of polygons back to the zonePolygon string,
+// dropping empty polygons. It writes the legacy single-polygon form when there is
+// exactly one zone (byte-identical to single-zone rules) and the nested form only
+// when there are 2+ zones — so existing rules and consumers are unaffected.
+export function zonePolygonsText(polys) {
+  const cleaned = (polys || [])
+    .map((poly) => (poly || []).map(roundedPoint))
+    .filter((poly) => poly.length > 0);
+  if (cleaned.length <= 1) {
+    return JSON.stringify(cleaned[0] || [], null, 2);
+  }
+  return JSON.stringify(cleaned, null, 2);
+}
+
 export function isLineDetectionType(value) {
   return lineDetectionTypes.includes(value);
 }

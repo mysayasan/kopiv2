@@ -8,6 +8,7 @@ import (
 	"image"
 	_ "image/jpeg"
 	"math"
+	"strings"
 	"sync"
 	"time"
 )
@@ -96,7 +97,7 @@ func (d *MotionDetector) Detect(ctx context.Context, frame Frame, rules []Detect
 			detections = append(detections, lineDetections...)
 			continue
 		}
-		changedRatio, _, _ := motionStats(state.previous, current, parseZone(rule.ZonePolygon), d.stride, d.pixelDelta)
+		changedRatio, _, _ := motionStats(state.previous, current, parseZones(rule.ZonePolygon), d.stride, d.pixelDelta)
 		confidence := math.Min(1, changedRatio*20)
 		if confidence >= rule.Threshold {
 			state.hitsByRule[rule.Id]++
@@ -153,7 +154,7 @@ func (d *MotionDetector) detectMotionLineCrossing(rule DetectionRule, state *mot
 		state.lineRules[rule.Id] = ruleState
 	}
 
-	changedRatio, center, hasCenter := motionStats(state.previous, current, parseZone(rule.ZonePolygon), d.stride, d.pixelDelta)
+	changedRatio, center, hasCenter := motionStats(state.previous, current, parseZones(rule.ZonePolygon), d.stride, d.pixelDelta)
 	confidence := math.Min(1, changedRatio*20)
 	if !hasCenter || confidence < rule.Threshold {
 		ruleState.seen = 0
@@ -257,12 +258,12 @@ func decodeGrayFrame(data []byte) (*grayFrame, error) {
 	return &grayFrame{width: width, height: height, pixels: pixels}, nil
 }
 
-func motionRatio(previous *grayFrame, current *grayFrame, polygon [][2]float64, stride int, pixelDelta int) float64 {
-	ratio, _, _ := motionStats(previous, current, polygon, stride, pixelDelta)
+func motionRatio(previous *grayFrame, current *grayFrame, zones [][][2]float64, stride int, pixelDelta int) float64 {
+	ratio, _, _ := motionStats(previous, current, zones, stride, pixelDelta)
 	return ratio
 }
 
-func motionStats(previous *grayFrame, current *grayFrame, polygon [][2]float64, stride int, pixelDelta int) (float64, point2D, bool) {
+func motionStats(previous *grayFrame, current *grayFrame, zones [][][2]float64, stride int, pixelDelta int) (float64, point2D, bool) {
 	if stride <= 0 {
 		stride = defaultMotionStride
 	}
@@ -274,7 +275,7 @@ func motionStats(previous *grayFrame, current *grayFrame, polygon [][2]float64, 
 		ny := float64(y) / float64(max(1, current.height-1))
 		for x := 0; x < current.width; x += stride {
 			nx := float64(x) / float64(max(1, current.width-1))
-			if !pointInPolygon(nx, ny, polygon) {
+			if !pointInAnyZone(nx, ny, zones) {
 				continue
 			}
 			total++
@@ -295,11 +296,13 @@ func motionStats(previous *grayFrame, current *grayFrame, polygon [][2]float64, 
 	return float64(changed) / float64(total), point2D{X: clamp(sumX / float64(changed)), Y: clamp(sumY / float64(changed))}, true
 }
 
-func parseZone(value string) [][2]float64 {
-	var raw [][]float64
-	if err := json.Unmarshal([]byte(value), &raw); err != nil || len(raw) < 3 {
-		return [][2]float64{{0, 0}, {1, 0}, {1, 1}, {0, 1}}
-	}
+func fullFrameZone() [][2]float64 {
+	return [][2]float64{{0, 0}, {1, 0}, {1, 1}, {0, 1}}
+}
+
+// toPoints converts a raw JSON polygon ([[x,y],...]) into clamped points, dropping
+// malformed entries.
+func toPoints(raw [][]float64) [][2]float64 {
 	points := make([][2]float64, 0, len(raw))
 	for _, point := range raw {
 		if len(point) < 2 {
@@ -307,10 +310,46 @@ func parseZone(value string) [][2]float64 {
 		}
 		points = append(points, [2]float64{clamp(point[0]), clamp(point[1])})
 	}
+	return points
+}
+
+func parseZone(value string) [][2]float64 {
+	var raw [][]float64
+	if err := json.Unmarshal([]byte(value), &raw); err != nil {
+		return fullFrameZone()
+	}
+	points := toPoints(raw)
 	if len(points) < 3 {
-		return [][2]float64{{0, 0}, {1, 0}, {1, 1}, {0, 1}}
+		return fullFrameZone()
 	}
 	return points
+}
+
+// parseZones parses a zone field that is EITHER a single polygon [[x,y],...]
+// (legacy) OR a list of polygons [[[x,y],...],...] (multi-zone). It returns one
+// entry per valid polygon (>=3 points). An empty/invalid value yields a single
+// full-frame polygon, so "no zone drawn" still means "whole frame" exactly as
+// before. Detection treats the set as a union (a hit in ANY zone counts).
+func parseZones(value string) [][][2]float64 {
+	if strings.TrimSpace(value) == "" {
+		return [][][2]float64{fullFrameZone()}
+	}
+	// Multi-polygon form: the outer array holds polygons, so the first element is
+	// itself an array of points ([][]float64). A legacy single polygon fails this
+	// unmarshal (its elements are numbers, not arrays) and falls through below.
+	var multi [][][]float64
+	if err := json.Unmarshal([]byte(value), &multi); err == nil && len(multi) > 0 {
+		zones := make([][][2]float64, 0, len(multi))
+		for _, poly := range multi {
+			if pts := toPoints(poly); len(pts) >= 3 {
+				zones = append(zones, pts)
+			}
+		}
+		if len(zones) > 0 {
+			return zones
+		}
+	}
+	return [][][2]float64{parseZone(value)}
 }
 
 func pointInPolygon(x float64, y float64, polygon [][2]float64) bool {
@@ -325,6 +364,17 @@ func pointInPolygon(x float64, y float64, polygon [][2]float64) bool {
 		j = i
 	}
 	return inside
+}
+
+// pointInAnyZone reports whether (x,y) falls inside at least one of the zones (the
+// multi-zone union used by every detector).
+func pointInAnyZone(x float64, y float64, zones [][][2]float64) bool {
+	for _, zone := range zones {
+		if pointInPolygon(x, y, zone) {
+			return true
+		}
+	}
+	return false
 }
 
 func clamp(value float64) float64 {

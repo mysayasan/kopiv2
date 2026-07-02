@@ -179,7 +179,8 @@ SSO relying-app config contract (`sso` in app config):
 Standalone `mymatasan` local auth contract:
 
 - `mymatasan` uses app-local HTTP Basic Auth backed by the local SQLite database instead of MyIDSan JWT/RBAC.
-- On first startup, the app seeds `admin` / `Admin123` only when no local users exist.
+- On first startup (no local users exist), `EnsureDefaultAdmin` seeds the admin account from the `localAuth` config block: `localAuth.username` (falls back to `admin` when empty) and `localAuth.password` (env `LOCAL_ADMIN_PASSWORD` overrides the configured value; falls back to `admin` when both are empty, mirroring `myseliasan`'s stock superadmin default). The seeded account is always created with `MustChangePassword=true`, so the bootstrap credential — whichever source it came from — is never usable past the first login.
+- On subsequent startups (users already exist), `flagDefaultAdminPassword` still force-flags any admin account left on the shipped legacy default (`admin` / `Admin123`) as must-change, protecting old installs that predate the config-driven seed.
 - Local user passwords are stored as bcrypt hashes.
 - User management is exposed under Settings and `/api/settings/users`.
 - The app prevents deleting, disabling, or demoting the last active admin user.

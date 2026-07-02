@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
@@ -41,6 +42,9 @@ func NewSettingsApi(router *mux.Router, serv services.IRuntimeSettingsService, c
 	group.HandleFunc("/runtime/reset", handler.resetRuntime).Methods("POST")
 	group.HandleFunc("/notification", handler.getNotification).Methods("GET")
 	group.HandleFunc("/notification", handler.saveNotification).Methods("PUT")
+	group.HandleFunc("/notification/destination", handler.saveNotificationDestination).Methods("PUT")
+	group.HandleFunc("/notification/destination/{id}", handler.deleteNotificationDestination).Methods("DELETE")
+	group.HandleFunc("/notification/retention", handler.saveNotificationRetention).Methods("PUT")
 	group.HandleFunc("/notification/test", handler.testNotification).Methods("POST")
 	group.HandleFunc("/health", handler.getHealth).Methods("GET")
 	group.HandleFunc("/health", handler.saveHealth).Methods("PUT")
@@ -147,6 +151,60 @@ func (a *settingsApi) saveNotification(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	settings, err := a.notifServ.Save(r.Context(), body)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, settings, "succeed")
+}
+
+// saveNotificationDestination upserts a single delivery destination without
+// touching the other destinations or the retention section (read-modify-write
+// against the persisted settings). Returns the saved destination + full settings.
+func (a *settingsApi) saveNotificationDestination(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
+	var body services.NotificationDestination
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	dest, settings, err := a.notifServ.SaveDestination(r.Context(), body)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, map[string]any{"destination": dest, "settings": settings}, "succeed")
+}
+
+// deleteNotificationDestination removes one destination by id, leaving the rest
+// of the settings untouched.
+func (a *settingsApi) deleteNotificationDestination(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(mux.Vars(r)["id"])
+	if id == "" {
+		controllers.SendError(w, controllers.ErrBadRequest, "destination id is required")
+		return
+	}
+	settings, err := a.notifServ.DeleteDestination(r.Context(), id)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, settings, "succeed")
+}
+
+// saveNotificationRetention persists only the retention section.
+func (a *settingsApi) saveNotificationRetention(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
+	var body services.NotificationRetentionSettings
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	settings, err := a.notifServ.SaveRetention(r.Context(), body)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return

@@ -70,11 +70,13 @@ go run . -app mymatasan
 
 For SQLite, `DB_NAME` is the database file path. Relative paths resolve from the selected app directory, so the default writes under `apps/mymatasan/data/`.
 
-Default local `mymatasan` credentials are seeded into SQLite on first startup:
+Default local `mymatasan` credentials are seeded into SQLite on first startup from the `localAuth` config block (`localAuth.username` / `localAuth.password` in `config.json`, mirroring `myseliasan`/`myidsan`); an explicit `LOCAL_ADMIN_PASSWORD` env var overrides the configured password. When config supplies no username/password, the fallback is:
 
 ```text
-admin / Admin123
+admin / admin
 ```
+
+The seeded account is always flagged must-change, so the first login forces the operator to set their own password regardless of which credential was used to bootstrap it.
 
 Manage local users from the Settings page. Passwords are stored as bcrypt hashes, and `mymatasan` prevents deleting or disabling the last active admin user.
 
@@ -138,7 +140,7 @@ In Recording → Stream Configuration:
 Discover ONVIF devices:
 
 ```bash
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:admin -H "Content-Type: application/json" \
   -d '{"timeoutMs":3000}' \
   "http://localhost:3000/api/onvif/discover"
 ```
@@ -146,7 +148,7 @@ curl -u admin:Admin123 -H "Content-Type: application/json" \
 Create a MyMataSan AI detection rule for a saved camera:
 
 ```bash
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:admin -H "Content-Type: application/json" \
   -d '{"cameraId":1,"name":"Porch person after hours","detectionType":"person","zonePolygon":"[[0.1,0.1],[0.9,0.1],[0.9,0.8],[0.1,0.8]]","schedulePolicy":"{\"preset\":\"custom\",\"timezone\":\"Asia/Kuala_Lumpur\",\"mode\":\"allow\",\"windows\":[{\"days\":[\"mon\",\"tue\",\"wed\",\"thu\",\"fri\"],\"start\":\"18:00\",\"end\":\"07:00\"}]}","threshold":0.35,"minFrames":2,"cooldownSeconds":30,"soundEnabled":true,"isEnabled":true}' \
   "http://localhost:3000/api/vision/rules"
 ```
@@ -154,7 +156,7 @@ curl -u admin:Admin123 -H "Content-Type: application/json" \
 Review alert events raised by the monitor:
 
 ```bash
-curl -u admin:Admin123 "http://localhost:3000/api/vision/alerts?limit=50&offset=0"
+curl -u admin:admin "http://localhost:3000/api/vision/alerts?limit=50&offset=0"
 ```
 
 Configure semantic detector routing with `vision.detector`. `motion` mode is dependency-free. `external` mode starts one detector command per sampled frame. `hybrid` mode combines external object detection with motion fallback for configured rule types such as intrusion. `persistent` mode keeps one detector worker process alive and is the recommended YOLO path.
@@ -206,7 +208,7 @@ The default `yolo11n.pt` model detects COCO classes such as `person`, `car`, `tr
 Create a line-crossing sequence rule. Lines are normalized from `0` to `1`, and `multi_line_crossing` requires the same tracked object to cross each line in the configured order:
 
 ```bash
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:admin -H "Content-Type: application/json" \
   -d '{"cameraId":1,"name":"Entry sequence","detectionType":"multi_line_crossing","zonePolygon":"[[0,0],[1,0],[1,1],[0,1]]","ruleConfig":"{\"classes\":[\"person\",\"car\"],\"direction\":\"both\",\"maxSecondsBetweenLines\":20,\"lines\":[{\"id\":\"start\",\"points\":[[0.35,0.2],[0.35,0.8]]},{\"id\":\"end\",\"points\":[[0.65,0.2],[0.65,0.8]]}]}","threshold":0.55,"minFrames":1,"cooldownSeconds":10,"soundEnabled":true,"isEnabled":true}' \
   "http://localhost:3000/api/vision/rules"
 ```

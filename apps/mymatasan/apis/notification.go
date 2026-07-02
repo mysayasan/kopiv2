@@ -2,6 +2,8 @@ package apis
 
 import (
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
@@ -19,6 +21,7 @@ func NewNotificationApi(router *mux.Router, serv services.INotificationService) 
 	g := router.PathPrefix("/notifications").Subrouter()
 
 	g.HandleFunc("", h.list).Methods("GET")
+	g.HandleFunc("/stats", h.stats).Methods("GET")
 	g.HandleFunc("/stream", h.stream).Methods("GET")
 	g.HandleFunc("/purge", h.purge).Methods("POST")
 	g.HandleFunc("/{id}/read", h.markRead).Methods("POST")
@@ -40,6 +43,39 @@ func (a *notificationApi) list(w http.ResponseWriter, r *http.Request) {
 		"items": items,
 		"total": total,
 	}, "succeed")
+}
+
+// stats returns the aggregated dashboard payload for the events in the given
+// time window. from/to are unix seconds (to defaults to now, from to 7 days
+// before now); bucket is "hour" or "day" (default day); tzOffset is the
+// viewer's timezone offset in minutes so buckets align to their local clock.
+func (a *notificationApi) stats(w http.ResponseWriter, r *http.Request) {
+	now := time.Now().UTC().Unix()
+	to := parseInt64Query(r, "to")
+	if to <= 0 {
+		to = now
+	}
+	from := parseInt64Query(r, "from")
+	if from <= 0 {
+		from = to - 7*86400
+	}
+	bucketSeconds := int64(86400)
+	if strings.EqualFold(r.URL.Query().Get("bucket"), "hour") {
+		bucketSeconds = 3600
+	}
+	// tzOffset is minutes (JS getTimezoneOffset is inverted, so the client sends
+	// the already-corrected value); clamp to a sane ±14h.
+	tzOffsetMin := parseInt64Query(r, "tzOffset")
+	if tzOffsetMin < -840 || tzOffsetMin > 840 {
+		tzOffsetMin = 0
+	}
+
+	result, err := a.serv.Stats(r.Context(), from, to, bucketSeconds, tzOffsetMin*60)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, result, "succeed")
 }
 
 // stream serves the live Server-Sent Events feed of new notifications.

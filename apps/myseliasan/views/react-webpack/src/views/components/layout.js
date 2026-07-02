@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { Ico, SideNav as SharedSideNav, useT } from '@shared';
-import { ThemeDropdown } from './ui';
 import { sessionCanGet } from '../lib/helpers';
 
 // BrandLogo mirrors the mymatasan mark (line-art shield + eye + check) with the
@@ -125,7 +124,31 @@ function NodesNavItem({ nodes, activeTab, managingNodeId, onSelectNode }) {
 // (grouped menu, code tiles, tone accents) reused as the shared shell. Menu entries
 // follow the same permission matrix that gates their APIs — a role needs GET on
 // /api/nodes to see Nodes; Users & Roles is superadmin-only.
-export function SideNav({ activeTab, busy, onTab, onLogout, theme, onThemeChange, session, nodes, managingNodeId, onSelectNode }) {
+// AccountCard is the slim sign-out pill under the brand at the top of the rail: a
+// role chip (avatar + role) and a ghost logout icon button. The email/identity is
+// deliberately NOT shown (avoids exposing the signed-in account in the UI).
+// Standardized with mymatasan's rail.
+function AccountCard({ roleLabel, onLogout, busy }) {
+  const t = useT();
+  return (
+    <div className="side-account">
+      <span className="side-account-avatar" aria-hidden="true"><Ico n="user" sz={15} /></span>
+      <span className="side-account-role">{roleLabel}</span>
+      <button
+        type="button"
+        className="side-account-logout"
+        onClick={onLogout}
+        disabled={busy}
+        title={t('auth.logout')}
+        aria-label={t('auth.logout')}
+      >
+        <Ico n="logout" sz={16} />
+      </button>
+    </div>
+  );
+}
+
+export function SideNav({ activeTab, busy, onTab, onLogout, session, nodes, managingNodeId, onSelectNode }) {
   const t = useT();
   const navItem = (id, label, icon, tone) => ({ id, label, icon, tone, active: id === activeTab, onClick: () => onTab(id) });
   const groups = [
@@ -151,17 +174,13 @@ export function SideNav({ activeTab, busy, onTab, onLogout, theme, onThemeChange
     <div className="side-brand">
       <BrandLogo />
       <div className="side-brand-sub">{t('brand.controlPlane')}</div>
+      <AccountCard
+        roleLabel={session?.isSuperadmin ? t('role.superadmin') : (session?.roleName || t('role.viewer'))}
+        onLogout={onLogout}
+        busy={busy}
+      />
     </div>
   );
-  const footer = (
-    <>
-      {session?.email ? <div className="side-brand-sub" title={session.email}>{session.email}</div> : null}
-      <ThemeDropdown theme={theme} onThemeChange={onThemeChange} />
-      <button type="button" className="logout-button" onClick={onLogout} disabled={busy}>
-        {t('auth.logout')}
-      </button>
-    </>
-  );
 
-  return <SharedSideNav brand={brand} groups={groups} footer={footer} />;
+  return <SharedSideNav brand={brand} groups={groups} footer={null} />;
 }

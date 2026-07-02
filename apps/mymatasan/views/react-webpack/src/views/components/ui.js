@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Ico } from './icons';
 import { useT } from '@shared/i18n';
-import { THEMES, THEME_LABELS, THEME_ICONS, liveViewLayouts } from '../lib/constants';
+import { THEMES, THEME_ICONS, liveViewLayouts } from '../lib/constants';
 import { parseTracks } from '../lib/helpers';
 
 export function ThemeDropdown({ theme, onThemeChange }) {

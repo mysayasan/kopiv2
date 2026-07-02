@@ -8,7 +8,7 @@ Maps object detector candidates to reusable vision detection rules.
 
 - Define normalized object candidate and bounding-box shapes.
 - Define the `ObjectDetector` interface for semantic detector backends.
-- Apply rule class mapping, confidence thresholds, polygon zone matching, minimum frame count, and cooldown.
+- Apply rule class mapping, confidence thresholds, zone matching (single or multi-zone union via `boxCenterInAnyZone`), minimum frame count, and cooldown.
 - Convert matching candidates into reusable `Detection` results with bounding box and detector metadata JSON.
 
 ## LPR detection branch
@@ -17,7 +17,7 @@ Maps object detector candidates to reusable vision detection rules.
 
 ## Notes
 
-- Candidate boxes are normalized from `0` to `1` and matched by box center against the rule polygon.
+- Candidate boxes are normalized from `0` to `1` and matched by box center against the rule's zone(s) via `boxCenterInAnyZone`. A rule's `ZonePolygon` can hold a single polygon or a list of polygons (multi-zone); a box counts if its center falls inside any one of them. Parsing (`parseZones`) and the underlying point-in-polygon test live in `motion.go` and are shared by every detector in this package (`bestCandidate` here, `crowdMatch` in `crowd.go`, `lprMatch` in `lpr.go`, `lineMatches` in `line_crossing.go`).
 - Default class mappings cover `fire`, `smoke`, `person`, `vehicle`, `animal`, `crowd`, `intrusion`, `line_crossing`, `multi_line_crossing`, and `lpr` (mapped to the `"license plate"` label by default).
 - `vehicle` maps common model labels such as `car`, `truck`, `bus`, `motorcycle`, and `bicycle`.
 - `animal` maps common COCO animal labels such as `bird`, `cat`, `dog`, `horse`, `sheep`, `cow`, `elephant`, `bear`, `zebra`, and `giraffe`, plus custom-model labels such as `mouse` and `rat`.

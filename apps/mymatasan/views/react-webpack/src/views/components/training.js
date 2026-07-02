@@ -819,19 +819,25 @@ export function TrainingTab({ authHeader, cameras, onMessage, onModelActivated, 
   const header = stepHeaders[step] || stepHeaders.datasets;
 
   return (
-    <section className="workspace settings-workspace training-workspace">
-      <aside className="settings-side-nav" aria-label={t('tr.trainingAria')}>
-        {steps.map(([id, label, icon]) => (
-          <button
-            key={id}
-            type="button"
-            className={step === id ? 'active' : 'quiet'}
-            onClick={() => setStep(id)}
-          >
-            <span className="btn-icon"><Ico n={icon} /> {label}</span>
-          </button>
-        ))}
-      </aside>
+    <section className="workspace settings-tabbed training-workspace">
+      <nav className="settings-tabs" role="tablist" aria-label={t('tr.trainingAria')}>
+        {steps.map(([id, label, icon]) => {
+          const active = step === id;
+          return (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              className={`settings-tab${active ? ' active' : ''}`}
+              onClick={() => setStep(id)}
+            >
+              <Ico n={icon} sz={16} />
+              <span className="settings-tab-label">{label}</span>
+            </button>
+          );
+        })}
+      </nav>
 
       <div className="settings-content">
       <header className="training-header">

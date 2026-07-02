@@ -1,0 +1,248 @@
+/* Shared chart styling. Self-contained + --ui-* tokenized so the charts follow
+   each app's theme (light AND dark) without app-specific CSS. See
+   styles/tokens.css for the token contract. */
+
+/* ---- StatCard --------------------------------------------------------- */
+.stat-card {
+  background: var(--ui-surface, #fff);
+  border: 1px solid var(--ui-border, #d6dee7);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.stat-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.stat-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ui-muted, #64748b);
+}
+.stat-icon {
+  color: var(--ui-muted, #64748b);
+  display: inline-flex;
+}
+.stat-value {
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.05;
+  color: var(--ui-text, #1f2937);
+}
+.stat-tone-danger .stat-value { color: var(--ui-danger, #ef4444); }
+.stat-tone-warning .stat-value { color: #d97706; }
+.stat-tone-success .stat-value { color: var(--ui-success, #10b981); }
+.stat-tone-accent .stat-value { color: var(--ui-accent, #2d6cdf); }
+.stat-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 18px;
+  flex-wrap: wrap;
+}
+.stat-delta {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ui-muted, #64748b);
+}
+.stat-delta.is-good { color: var(--ui-success, #10b981); }
+.stat-delta.is-bad { color: var(--ui-danger, #ef4444); }
+.stat-hint {
+  font-size: 12px;
+  color: var(--ui-muted, #64748b);
+}
+
+/* ---- ChartCard -------------------------------------------------------- */
+.chart-card {
+  background: var(--ui-surface, #fff);
+  border: 1px solid var(--ui-border, #d6dee7);
+  border-radius: 12px;
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.chart-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.chart-card-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ui-text, #1f2937);
+}
+.chart-card-subtitle {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--ui-muted, #64748b);
+}
+.chart-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.chart-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.chart-empty {
+  padding: 28px 8px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--ui-muted, #64748b);
+}
+
+/* ---- Legends (shared) ------------------------------------------------- */
+.chart-legend {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.chart-legend li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ui-text, #1f2937);
+  border-radius: 6px;
+  padding: 2px 4px;
+}
+.chart-legend li.is-hover { background: var(--ui-border, #eef2f7); }
+.legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.legend-key { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.legend-count { font-weight: 600; color: var(--ui-muted, #64748b); }
+
+/* ---- DonutChart ------------------------------------------------------- */
+.donut-wrap {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.donut-svg {
+  width: 180px;
+  height: 180px;
+  flex-shrink: 0;
+}
+.donut-svg path { cursor: pointer; transition: opacity 0.12s ease; }
+.donut-center-value {
+  font-size: 30px;
+  font-weight: 700;
+  fill: var(--ui-text, #1f2937);
+}
+.donut-center-label {
+  font-size: 11px;
+  fill: var(--ui-muted, #64748b);
+  text-transform: capitalize;
+}
+.donut-center-pct {
+  font-size: 11px;
+  font-weight: 600;
+  fill: var(--ui-muted, #64748b);
+}
+.donut-wrap .chart-legend { flex: 1; min-width: 140px; margin-top: 0; }
+
+/* ---- BarChart (horizontal) -------------------------------------------- */
+.hbar-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.hbar-row {
+  display: grid;
+  grid-template-columns: minmax(70px, 34%) 1fr auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.hbar-label {
+  color: var(--ui-text, #1f2937);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hbar-track {
+  background: var(--ui-border, #eef2f7);
+  border-radius: 5px;
+  height: 12px;
+  overflow: hidden;
+}
+.hbar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 5px;
+  transition: width 0.3s ease;
+}
+.hbar-value {
+  font-weight: 600;
+  color: var(--ui-text, #1f2937);
+  min-width: 24px;
+  text-align: right;
+}
+
+/* ---- TimeSeriesChart -------------------------------------------------- */
+.ts-wrap { position: relative; width: 100%; }
+.ts-svg {
+  width: 100%;
+  height: 240px;
+  display: block;
+}
+.ts-grid { stroke: var(--ui-border, #eef2f7); stroke-width: 1; }
+.ts-ytick, .ts-xtick {
+  font-size: 10px;
+  fill: var(--ui-muted, #64748b);
+}
+.ts-tooltip {
+  position: absolute;
+  top: 4px;
+  transform: translateX(-50%);
+  background: var(--ui-surface, #fff);
+  border: 1px solid var(--ui-border-strong, #c7d1dc);
+  box-shadow: 0 8px 20px var(--ui-shadow, rgba(0, 0, 0, 0.15));
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  pointer-events: none;
+  min-width: 120px;
+  z-index: 3;
+}
+.ts-tt-title { font-weight: 700; color: var(--ui-text, #1f2937); margin-bottom: 4px; }
+.ts-tt-row { display: flex; align-items: center; gap: 6px; }
+.ts-tt-key { flex: 1; color: var(--ui-text, #1f2937); }
+.ts-tt-val { font-weight: 600; color: var(--ui-text, #1f2937); }
+.ts-tt-total {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--ui-border, #eef2f7);
+  font-weight: 700;
+  color: var(--ui-muted, #64748b);
+}
+.ts-legend { flex-direction: row; flex-wrap: wrap; gap: 12px; }
+.ts-legend li { padding: 0; }

@@ -17,7 +17,7 @@ type fakeLocalUserService struct {
 	mustChange      bool
 }
 
-func (f *fakeLocalUserService) EnsureDefaultAdmin(context.Context) error {
+func (f *fakeLocalUserService) EnsureDefaultAdmin(context.Context, string, string) error {
 	return nil
 }
 

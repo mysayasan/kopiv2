@@ -90,6 +90,92 @@
   margin-top: 2px;
 }
 
+/* Account chip: a slim pill under the brand showing just the role (no email, for
+   privacy) + a ghost logout icon button. Deliberately minimal — not a bulky card.
+   Standardized with mymatasan's rail. */
+.side-account {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 4px 4px 4px 6px;
+  border-radius: 999px;
+  background: var(--nav-fill);
+}
+
+.side-account-avatar {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--tone-accent, #2563eb) 24%, transparent);
+  color: var(--tone-accent, #6ea8fe);
+}
+
+.side-account-role {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--nav-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.side-account-logout {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  min-height: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--nav-sub);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.side-account-logout:hover:not(:disabled) {
+  background: rgba(229, 72, 77, 0.16);
+  color: #ff7075;
+}
+
+.side-account-logout:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* The theme picker sits just after the language switcher in the top-right bar,
+   sized to match it: plain text (no button chrome), 13px, with a pipe separator. */
+.shared-lang-bar .theme-drop-wrap {
+  border-left: 1px solid var(--border-strong, var(--border-soft, #c7d1dc));
+  padding-left: 8px;
+}
+
+.shared-lang-bar .theme-toggle {
+  min-height: 0;
+  padding: 2px 4px;
+  font-size: 13px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+}
+
+.shared-lang-bar .theme-toggle:hover,
+.shared-lang-bar .theme-toggle.active {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+}
+
 .side-nav nav {
   display: grid;
   gap: 18px;

@@ -119,6 +119,67 @@
   margin-top: 2px;
 }
 
+/* Account chip: a slim pill under the brand showing just the role (no username, for
+   privacy) + a ghost logout icon button. Deliberately minimal — not a bulky card. */
+.side-account {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 4px 4px 4px 6px;
+  border-radius: 999px;
+  background: var(--nav-fill);
+}
+
+.side-account-avatar {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--tone-accent, #2563eb) 24%, transparent);
+  color: var(--tone-accent, #6ea8fe);
+}
+
+.side-account-role {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--nav-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.side-account-logout {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  min-height: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--nav-sub);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.side-account-logout:hover:not(:disabled) {
+  background: rgba(229, 72, 77, 0.16);
+  color: #ff7075;
+}
+
+.side-account-logout:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .side-nav nav {
   display: grid;
   gap: 18px;
@@ -536,8 +597,18 @@
   .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .brand-wordmark,
   .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .side-brand-sub,
   .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-pin-toggle,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .side-account-role,
   .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .side-nav-foot {
     display: none;
+  }
+
+  /* Collapsed rail: the account chip stacks the avatar over the logout icon,
+     centered, with no pill fill. */
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .side-account {
+    flex-direction: column;
+    padding: 4px 0;
+    gap: 8px;
+    background: transparent;
   }
 }
 
@@ -571,6 +642,30 @@
   gap: 8px;
   flex-wrap: wrap;
   margin-bottom: 16px;
+}
+
+/* The theme picker sits just after the language switcher, sized to match it: plain
+   text (no button chrome), 13px, with a pipe separator like the language options. */
+.workspace-header .theme-drop-wrap {
+  border-left: 1px solid var(--border-strong, var(--border-soft, #c7d1dc));
+  padding-left: 8px;
+}
+
+.workspace-header .theme-toggle {
+  min-height: 0;
+  padding: 2px 4px;
+  font-size: 13px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+}
+
+.workspace-header .theme-toggle:hover,
+.workspace-header .theme-toggle.active {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
 }
 
 /* Section tones (sidebar accent). */

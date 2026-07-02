@@ -1867,18 +1867,18 @@ export function CamerasTab({
           <main className="saved-detail">
             {selectedSaved ? (
               <>
-                <nav className="camera-detail-tabs" aria-label={t('cam.detailTabsAria')}>
-                  <button type="button" className={cameraDetailTab === 'liveview' ? 'active' : 'quiet'} onClick={() => setCameraDetailTab('liveview')}>
-                    <span className="btn-icon"><Ico n="video" /> {t('cam.detailLive')}</span>
+                <nav className="settings-tabs camera-detail-tabs" role="tablist" aria-label={t('cam.detailTabsAria')}>
+                  <button type="button" role="tab" aria-selected={cameraDetailTab === 'liveview'} className={`settings-tab${cameraDetailTab === 'liveview' ? ' active' : ''}`} onClick={() => setCameraDetailTab('liveview')}>
+                    <Ico n="video" sz={16} /> <span className="settings-tab-label">{t('cam.detailLive')}</span>
                   </button>
-                  <button type="button" className={cameraDetailTab === 'ai' ? 'active' : 'quiet'} onClick={() => setCameraDetailTab('ai')}>
-                    <span className="btn-icon"><Ico n="cpu" /> {t('cam.detailDetection')}</span>
+                  <button type="button" role="tab" aria-selected={cameraDetailTab === 'ai'} className={`settings-tab${cameraDetailTab === 'ai' ? ' active' : ''}`} onClick={() => setCameraDetailTab('ai')}>
+                    <Ico n="cpu" sz={16} /> <span className="settings-tab-label">{t('cam.detailDetection')}</span>
                   </button>
-                  <button type="button" className={cameraDetailTab === 'recordings' ? 'active' : 'quiet'} onClick={() => setCameraDetailTab('recordings')}>
-                    <span className="btn-icon"><Ico n="film" /> {t('tab.recording')}</span>
+                  <button type="button" role="tab" aria-selected={cameraDetailTab === 'recordings'} className={`settings-tab${cameraDetailTab === 'recordings' ? ' active' : ''}`} onClick={() => setCameraDetailTab('recordings')}>
+                    <Ico n="film" sz={16} /> <span className="settings-tab-label">{t('tab.recording')}</span>
                   </button>
-                  <button type="button" className={cameraDetailTab === 'settings' ? 'active' : 'quiet'} onClick={() => setCameraDetailTab('settings')}>
-                    <span className="btn-icon"><Ico n="sliders" /> {t('cam.detailSettings')}</span>
+                  <button type="button" role="tab" aria-selected={cameraDetailTab === 'settings'} className={`settings-tab${cameraDetailTab === 'settings' ? ' active' : ''}`} onClick={() => setCameraDetailTab('settings')}>
+                    <Ico n="sliders" sz={16} /> <span className="settings-tab-label">{t('cam.detailSettings')}</span>
                   </button>
                 </nav>
                 {cameraDetailTab === 'liveview' ? (

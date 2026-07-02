@@ -230,7 +230,7 @@ func (d *ObjectRuleDetector) Close() error {
 }
 
 func (d *ObjectRuleDetector) bestCandidate(rule DetectionRule, candidates []ObjectCandidate) (ObjectCandidate, bool) {
-	zone := parseZone(rule.ZonePolygon)
+	zones := parseZones(rule.ZonePolygon)
 	minConfidence := rule.Threshold
 	if minConfidence <= 0 {
 		minConfidence = DefaultDetectionThreshold
@@ -250,7 +250,7 @@ func (d *ObjectRuleDetector) bestCandidate(rule DetectionRule, candidates []Obje
 			continue
 		}
 		box := normalizeBox(candidate.Box)
-		if !boxCenterInZone(box, zone) {
+		if !boxCenterInAnyZone(box, zones) {
 			continue
 		}
 		candidate.Box = box
@@ -359,6 +359,14 @@ func boxCenterInZone(box Box, zone [][2]float64) bool {
 	centerX := clamp(box.X + box.W/2)
 	centerY := clamp(box.Y + box.H/2)
 	return pointInPolygon(centerX, centerY, zone)
+}
+
+// boxCenterInAnyZone is the multi-zone form: a box counts if its center is inside
+// at least one zone (union semantics).
+func boxCenterInAnyZone(box Box, zones [][][2]float64) bool {
+	centerX := clamp(box.X + box.W/2)
+	centerY := clamp(box.Y + box.H/2)
+	return pointInAnyZone(centerX, centerY, zones)
 }
 
 func detectionLabel(detectionType string, objectLabel string) string {

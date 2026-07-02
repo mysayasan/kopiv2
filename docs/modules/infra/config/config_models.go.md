@@ -48,7 +48,7 @@ Defines the top-level app configuration model loaded from app config JSON.
 - `sso.redirectBaseUrl` configures the relying-app public callback origin used in authorization requests.
 - `sso.redirectPath` configures the relying-app callback path.
 - `sso.authCodeTtlSeconds` and `sso.accessTokenTtlSeconds` provide MyIDSan defaults when per-client DB config does not override them.
-- `localAuth.enabled`, `localAuth.username`, and `localAuth.password` remain in the shared model for legacy standalone credentials; `mymatasan` now uses DB-backed local users instead.
+- `localAuth.enabled`, `localAuth.username`, and `localAuth.password` configure each standalone app's bootstrap local admin: `mymatasan` reads `localAuth.username`/`localAuth.password` at startup to seed its DB-backed first admin user (`ILocalUserService.EnsureDefaultAdmin`), falling back to `admin`/`admin` when empty, same as `myseliasan`'s stock superadmin.
 - `decoder.mjpeg.ffmpegPath` configures the startup default ffmpeg executable used by `mymatasan` MJPEG fallback live view and RTSP frame capture; empty defaults to resolving `ffmpeg` from `PATH`.
 - `decoder.mjpeg.quality` and `decoder.mjpeg.threads` tune MJPEG output quality and ffmpeg thread count.
 - `decoder.ffmpeg` carries RTSP transport, hardware decode mode/device, optional decoder name, probe/analyze limits, and low-latency flags for ffmpeg-backed RTSP conversion.

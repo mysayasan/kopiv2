@@ -116,6 +116,76 @@ func (s *notificationSettingsService) Save(ctx context.Context, settings Notific
 	return settings, nil
 }
 
+// SaveDestination upserts a single destination against the PERSISTED settings
+// (not a client-supplied full blob), so a save of one destination never clobbers
+// another destination's stored config or the retention section. When dest.Id is
+// empty a new id is assigned and the destination is appended; otherwise the row
+// with that id is replaced (falling back to append if it no longer exists).
+func (s *notificationSettingsService) SaveDestination(ctx context.Context, dest NotificationDestination) (NotificationDestination, NotificationSettings, error) {
+	current, err := s.Get(ctx)
+	if err != nil {
+		return NotificationDestination{}, NotificationSettings{}, err
+	}
+	dest.Id = strings.TrimSpace(dest.Id)
+	if dest.Id == "" {
+		dest.Id = newDestinationID()
+		current.Destinations = append(current.Destinations, dest)
+	} else {
+		replaced := false
+		for i := range current.Destinations {
+			if current.Destinations[i].Id == dest.Id {
+				current.Destinations[i] = dest
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			current.Destinations = append(current.Destinations, dest)
+		}
+	}
+	saved, err := s.Save(ctx, current)
+	if err != nil {
+		return NotificationDestination{}, NotificationSettings{}, err
+	}
+	// Return the persisted copy of this destination (post-normalization) so the
+	// caller gets the canonical id/fields back.
+	for _, d := range saved.Destinations {
+		if d.Id == dest.Id {
+			return d, saved, nil
+		}
+	}
+	return dest, saved, nil
+}
+
+// DeleteDestination removes one destination by id from the persisted settings,
+// leaving all other sections untouched. Removing an unknown id is a no-op.
+func (s *notificationSettingsService) DeleteDestination(ctx context.Context, id string) (NotificationSettings, error) {
+	id = strings.TrimSpace(id)
+	current, err := s.Get(ctx)
+	if err != nil {
+		return NotificationSettings{}, err
+	}
+	kept := current.Destinations[:0:0]
+	for _, d := range current.Destinations {
+		if d.Id != id {
+			kept = append(kept, d)
+		}
+	}
+	current.Destinations = kept
+	return s.Save(ctx, current)
+}
+
+// SaveRetention persists only the retention section against the stored settings,
+// leaving destinations (and the legacy singletons) as they are on disk.
+func (s *notificationSettingsService) SaveRetention(ctx context.Context, retention NotificationRetentionSettings) (NotificationSettings, error) {
+	current, err := s.Get(ctx)
+	if err != nil {
+		return NotificationSettings{}, err
+	}
+	current.Retention = retention
+	return s.Save(ctx, current)
+}
+
 // Destinations returns the configured delivery destinations for per-destination
 // alert rendering. On error it returns nil (no external delivery).
 func (s *notificationSettingsService) Destinations(ctx context.Context) []NotificationDestination {

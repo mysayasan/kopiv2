@@ -6,11 +6,12 @@ It is designed to run on small devices such as Raspberry Pi or Jetson-style micr
 
 ## Current Scope
 
-- Standalone DB-backed local Basic Auth with a first-run `admin` / `Admin123` seed, **forced password change** off the default on first login, **failed-login lockout** (escalating backoff + countdown), and **role-based access** (admin = full control; non-admin = view-only + acknowledge).
+- Standalone DB-backed local Basic Auth with a first-run admin account seeded from `localAuth.username`/`localAuth.password` in config (falls back to `admin` / `admin` when unset), **forced password change** on first login regardless of which credential seeded the account, **failed-login lockout** (escalating backoff + countdown), and **role-based access** (admin = full control; non-admin = view-only + acknowledge).
 - **First-run setup wizard** (password → capacity → add camera → recording + alerts) and a **camera-capacity estimator** (`/api/capacity`) that tells you how many cameras the host can handle.
 - **Encryption at rest** (default on): recordings, snapshots, and training images are AES-256-GCM encrypted on disk so the factory reset can **crypto-erase** them by destroying the key.
 - **Secure Wipe & Reset** (factory reset: crypto-erase key + erase media + drop/rebuild DB + TRIM/scrub + restart) behind `bootstrap.allowReset`, plus secure multi-pass **shredding** of deleted footage.
 - **Unified notification feed** (topbar bell + Notifications page) across AI detection, camera/machine health, and login security; per-event acknowledge, annotated screenshot, and in-page clip playback.
+- **Dashboard analytics**: the landing page aggregates every notification event (AI detections, camera/machine health, login security, system) into KPI tiles plus timeseries/donut/bar charts, backed by `GET /api/notifications/stats` (Go-side aggregation, works across sqlite/postgres/mariadb) and a dependency-free `@shared/charts` SVG module. Range selector (Today/7d/30d) and live refresh off the same bell signal as the notification feed.
 - ONVIF discovery, manual probe, saved-device list, save, camera password change, PTZ move/stop, stream option listing, selected stream URI resolution, RTSP test, WebRTC live view, MJPEG fallback, and delete endpoints under `/api/onvif`.
 - **Credential verification + access gate**: adding a discovered camera (or updating its saved credentials) verifies the login against the camera (ONVIF stream-URI resolve and/or RTSP `DESCRIBE`) before persisting — a camera that actively rejects the login is never saved, while an unreachable camera is still allowed through. `GET /api/cameras/{id}/auth-check` re-verifies a saved camera's stored credentials on demand; the camera node's UI blocks all tabs behind a credential-entry gate the moment stored credentials stop authenticating (e.g. after an out-of-band password change on the camera).
 - **ONVIF device management**: local user accounts (list/create/delete), reboot, factory default (soft/hard), camera clock (manual or NTP) and network (IPv4/gateway/DNS) configuration under `/api/cameras/{id}/{onvif-users,reboot,factory-default,datetime,network}`. `GET /api/cameras/{id}/capabilities` probes which of these the camera's firmware actually supports so the Settings UI only shows boxes that will work; `GET /api/cameras/{id}/device-info` surfaces manufacturer/model/firmware/serial/MAC/ONVIF version/location for the Live View → Camera Information panel.
@@ -53,14 +54,14 @@ Default dev listener:
 http://localhost:3000
 ```
 
-Default local credentials:
+Default local credentials come from the `localAuth` block in `config.json` (`localAuth.username` / `localAuth.password`; an env `LOCAL_ADMIN_PASSWORD` overrides the password). When left empty, the fallback is:
 
 ```text
 username: admin
-password: Admin123
+password: admin
 ```
 
-Change these from Settings before deploying outside a trusted local development network.
+The seeded account is always forced to change its password on first login. Change credentials from Settings before deploying outside a trusted local development network.
 
 Browser live view uses WebRTC directly from RTSP H.264 RTP packets and does not require an ffmpeg executable for the primary path. MJPEG fallback still uses the configured decoder ffmpeg path. `config.json` provides startup defaults; after first startup, the Settings page persists runtime values in SQLite and changes apply without restart.
 
@@ -659,7 +660,7 @@ The Recording tab in the browser UI shows the per-camera config form, the live r
 
 All app-specific vision routes use the same local Basic Auth as ONVIF routes.
 
-The AI page is organized by camera first. Select a saved camera, create or edit rules for that camera, and draw the detection polygon or crossing lines over the live preview. Live-view camera tiles show a visible indicator when recent AI alert events are raised for that camera.
+The AI page is organized by camera first. Select a saved camera, create or edit rules for that camera, and draw the detection zone(s) or crossing lines over the live preview using a floating Paint-style drawing toolbox (select/add/delete zone tools, undo/redo, snap-to-grid, refresh-frame, flip H/V, center box, full frame, line-direction cycle, extend-to-edges, keyboard nudge/delete). A rule can have **multiple detection zones** (drag a rectangle, or click for a default box, to add each one); a detection counts if it falls inside *any* configured zone (union). Live-view camera tiles show a visible indicator when recent AI alert events are raised for that camera.
 
 List detection rules:
 
@@ -955,6 +956,8 @@ Notifications are also delivered **per destination**. In **Settings → Notifica
 - **Custom fields** — static key/value pairs added to the payload. A custom field **overrides** a built-in field of the same key (the matching detection-field toggle is then disabled). Values may use `{{token}}` templates: `{{ruleName}}`, `{{cameraName}}`, `{{label}}`, `{{confidence}}`, `{{detectionType}}`, `{{alertId}}`, `{{ruleId}}`, `{{cameraId}}`. For LPR alerts, additionally: `{{plate}}`, `{{vehicleType}}`, `{{color}}`, `{{watchlisted}}` (empty string on non-LPR alerts).
 
 The in-app notification feed always records one entry per alert in full; destinations receive separately rendered copies. **Per-rule routing:** a detection rule's **Notification routing** panel picks which destinations its alerts go to (none selected = all).
+
+Saving is per-section: `PUT /api/settings/notification/destination` upserts one destination and `DELETE /api/settings/notification/destination/{id}` removes one, both via read-modify-write against the stored settings so editing or deleting one destination never clobbers another destination's config or the retention section; `PUT /api/settings/notification/retention` saves retention on its own the same way.
 
 **Cold-start delivery reliability.** All outbound channels (webhook, Telegram, MQTT) now retry transient failures on a short backoff schedule (1 s → 3 s → 6 s, total ≤ 10 s) before dropping a notification. This prevents the first alert after boot from being silently lost when the network, DNS, or MQTT broker is still coming up. Marshal/build failures are marked permanent and not retried.
 
