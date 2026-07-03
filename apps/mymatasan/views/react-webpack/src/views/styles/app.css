@@ -3870,23 +3870,6 @@ dd {
 .crossing-arrow-group.interactive:hover .crossing-arrow-head {
   fill: var(--accent-strong, #37c07f);
 }
-/* "Any direction" indicator: faded double-headed perpendicular arrow. */
-.crossing-arrow.any {
-  stroke: var(--accent, #2e9e6b);
-  opacity: 0.45;
-  stroke-dasharray: 2 1.5;
-}
-.crossing-arrow-head.any {
-  fill: var(--accent, #2e9e6b);
-  opacity: 0.45;
-}
-/* Repeated direction cues spread along the whole line read fainter than the main arrow. */
-.crossing-arrow.flow {
-  opacity: 0.55;
-}
-.crossing-arrow-head.flow {
-  opacity: 0.55;
-}
 /* Acceptance cone for directional (heading) mode. */
 .crossing-cone {
   fill: var(--accent, #2e9e6b);
