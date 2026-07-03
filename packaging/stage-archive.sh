@@ -17,10 +17,12 @@ mkdir -p "$stage/ai" "$stage/deploy"
 # Web UI (served from <home>/static), preserving the assets/ subtree.
 cp -r apps/mymatasan/static "$stage/static"
 
-# AI worker scripts (model weights are fetched at runtime, so not bundled).
+# AI worker scripts + the stock YOLO model (small; the heavy Python/torch runtime
+# is fetched in-app via Settings → Install AI runtime).
 cp apps/mymatasan/ai/*.py "$stage/ai/"
 cp apps/mymatasan/ai/requirements-*.txt "$stage/ai/"
 cp apps/mymatasan/ai/setup.* "$stage/ai/"
+cp apps/mymatasan/ai/yolo11n.pt "$stage/ai/"
 
 # Default config at the home root.
 cp deploy/dist/config.json "$stage/config.json"

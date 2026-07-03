@@ -136,8 +136,17 @@ func readinessCheckHandler(db dbsql.IDbCrud, cacheStore appcache.Store, extra *r
 	}
 }
 
-// Run starts a selected app module using shared runtime wiring.
+// Run starts a selected app module. On Windows, when the process is launched by
+// the Service Control Manager, it runs under the SCM (responding to start/stop)
+// via the platform dispatcher; otherwise (and on every other OS) it runs directly.
 func Run(app App) error {
+	return runWithPlatform(app)
+}
+
+// runApp is the shared runtime wiring. It returns on a graceful shutdown (OS
+// signal or, under a Windows service, an SCM stop) and os.Exit()s directly on a
+// supervised restart.
+func runApp(app App) error {
 	godotenv.Load(".env")
 
 	// When relaunched by a previous instance's self-restart (Windows detached child),
@@ -451,6 +460,11 @@ func Run(app App) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// svcStop fires when the Windows Service Control Manager asks us to stop; it is
+	// a nil (never-ready) channel on every other platform and on an interactive
+	// Windows run, so this case is inert there.
+	svcStop := platformShutdownChan()
+
 	relaunch := false
 	select {
 	case err := <-errChan:
@@ -460,6 +474,8 @@ func Run(app App) error {
 		return nil
 	case <-ctx.Done():
 		log.Println("shutdown signal received")
+	case <-svcStop:
+		log.Println("service stop received")
 	case <-restartCtx.Done():
 		relaunch = true
 		log.Printf("restart requested: %s", restarter.Reason())

@@ -20,6 +20,8 @@ ExecStart=/opt/mymatasan/mymatasan
 Environment=KOPIV2_SUPERVISED=1
 Environment=MYMATASAN_HOME=/opt/mymatasan
 Environment=MYMATASAN_DATA=/opt/mymatasan
+# Package-managed: disable in-app self-update (upgrade via apt/dnf instead).
+Environment=MYMATASAN_MANAGED=package
 Restart=always
 RestartSec=2
 LimitNOFILE=65535

@@ -632,6 +632,8 @@ MyMataSan ONVIF endpoints:
 - `POST /api/settings/decoder/ffmpeg/install` / `GET /api/settings/decoder/ffmpeg/install/status` -> run and poll the in-app ffmpeg download/installer (admin-only); on success the resolved path is persisted into runtime settings.
 - `GET /api/settings/fs/browse` -> admin-only, read-only server-side directory picker (used to choose the ffmpeg binary); returns one directory level confined to a whitelist of roots (app dir + `bin/`, user home, OS install locations, plus `decoder.browseRoots`).
 - `GET /api/settings/vision/ai-tool/status` -> check configured AI detector command, Python packages, worker script, model file, and native fallback readiness.
+- `GET /api/settings/vision/ai-runtime/status` -> report whether the self-contained AI Python runtime (Python + torch + ultralytics) is installed, and whether CUDA is available.
+- `POST /api/settings/vision/ai-runtime/install` / `GET /api/settings/vision/ai-runtime/install/status` -> run and poll the in-app AI-runtime download/installer (admin-only); on success the resolved interpreter is persisted into `vision.detector.command`.
 - `GET /api/settings/users` -> list local login users.
 - `POST /api/settings/users` -> create a local login user.
 - `PUT /api/settings/users/{id}` -> update username, display name, admin flag, and active flag.

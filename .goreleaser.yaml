@@ -89,6 +89,8 @@ nfpms:
         dst: /opt/mymatasan/ai/requirements-lpr.txt
       - src: apps/mymatasan/ai/setup.sh
         dst: /opt/mymatasan/ai/setup.sh
+      - src: apps/mymatasan/ai/yolo11n.pt
+        dst: /opt/mymatasan/ai/yolo11n.pt
       - src: deploy/dist/config.json
         dst: /opt/mymatasan/config.json
         type: "config|noreplace"

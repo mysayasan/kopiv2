@@ -27,7 +27,8 @@ COPY deploy/dist/config.json /app/config.json
 # the database, recordings, logs, and the encryption key).
 ENV MYMATASAN_HOME=/app \
     MYMATASAN_DATA=/data \
-    KOPIV2_SUPERVISED=1
+    KOPIV2_SUPERVISED=1 \
+    MYMATASAN_MANAGED=docker
 VOLUME ["/data"]
 
 EXPOSE 3000

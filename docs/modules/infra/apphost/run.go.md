@@ -4,6 +4,14 @@
 
 Implements the reusable runtime host for all app modules.
 
+## Platform dispatch (`Run` / `runApp`)
+
+`Run(app)` is now a thin platform dispatcher (`runWithPlatform`, in `service_windows.go`/`service_other.go`); the former body of `Run` is renamed `runApp` and holds all the shared runtime wiring described below.
+
+- On Windows, when the process was launched by the Service Control Manager (`svc.IsWindowsService()` true), `runWithPlatform` runs `runApp` under `svc.Run` via a `windowsService` adapter (`service_windows.go`) instead of calling it directly, so `sc start`/`services.msc`/a Windows installer service registration can control it.
+- On every other case (interactive Windows run, or any non-Windows OS via `service_other.go`), `runWithPlatform` calls `runApp` directly — identical to the previous behavior.
+- `runApp`'s shutdown `select` gained a `case <-svcStop` (via `platformShutdownChan()`) alongside the existing OS-signal and restart-request cases: an SCM Stop/Shutdown request closes `windowsServiceStop`, which triggers the same graceful shutdown path as Ctrl+C/SIGTERM. `platformShutdownChan()` returns a nil channel on non-Windows and on an interactive Windows run, so that case is inert there.
+
 ## Responsibilities
 
 - Resolve a home directory (`resolveHomeDir`: read-only app root — static assets, bundled scripts, default config) and a data directory (`resolveDataDir`: writable state root — mutable config, database, recordings, logs, keys), independently overridable via `<APP>_HOME`/`<APP>_DATA` or generic `KOPIV2_HOME`/`KOPIV2_DATA` env vars; a dev checkout has both equal to the app's `BaseDir()`, unchanged from before the split.

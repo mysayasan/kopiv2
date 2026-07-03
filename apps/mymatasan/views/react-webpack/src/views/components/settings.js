@@ -512,6 +512,209 @@ function FfmpegInstallControl({ authHeader, value, onChangePath, onMessage, onRe
   );
 }
 
+// AiRuntimeInstallControl installs a self-contained AI Python runtime (Python +
+// GPU/CPU torch + ultralytics) in-app — the heavy dependency that isn't bundled.
+// It mirrors the ffmpeg installer: a button starts a background job and the live
+// pip log streams into a scrolling box (the torch download can be 200MB–2.5GB).
+// Endpoints: GET /vision/ai-runtime/status, POST /vision/ai-runtime/install (+ /install/status).
+function AiRuntimeInstallControl({ authHeader, onMessage, onRestart }) {
+  const t = useT();
+  const [status, setStatus] = useState(undefined); // undefined = loading
+  const [installing, setInstalling] = useState(false);
+  const [log, setLog] = useState('');
+  const [done, setDone] = useState(false);
+  const [supported, setSupported] = useState(true);
+
+  async function api(path, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    if (authHeader) headers.Authorization = authHeader;
+    const resp = await fetch(`${apiBase()}${path}`, { credentials: 'include', ...options, headers });
+    const text = await resp.text();
+    let payload = null;
+    if (text) { try { payload = JSON.parse(text); } catch (_) { payload = { message: text }; } }
+    if (!resp.ok) throw new Error(payload?.message || payload?.data?.message || `Request failed (${resp.status})`);
+    return payload?.data?.result ?? payload?.result ?? payload;
+  }
+
+  async function check() {
+    try { setStatus(await api('/api/settings/vision/ai-runtime/status')); }
+    catch (_) { setStatus(null); }
+  }
+  useEffect(() => { check(); }, [authHeader]);
+
+  async function install() {
+    setInstalling(true);
+    setDone(false);
+    setLog('');
+    if (onMessage) onMessage(t('st.aiRtInstalling'), 'info');
+    try {
+      const start = await api('/api/settings/vision/ai-runtime/install', { method: 'POST' });
+      if (start && start.supported === false) { setSupported(false); throw new Error(t('st.dlUnavailablePlatform')); }
+      // Long-running (torch is large): poll up to 45 min, streaming the log.
+      const deadline = Date.now() + 45 * 60 * 1000;
+      let state = null;
+      for (;;) {
+        state = await api('/api/settings/vision/ai-runtime/install/status');
+        setLog(state?.log || '');
+        if (state?.status === 'done' || state?.status === 'failed') break;
+        if (Date.now() > deadline) { state = { status: 'failed', log: (state?.log || '') + '\nTimed out.' }; break; }
+        await new Promise((r) => setTimeout(r, 2500));
+      }
+      if (state?.status === 'done') {
+        setDone(true);
+        if (onMessage) onMessage(t('st.aiRtInstalled'));
+        await check();
+      } else if (onMessage) {
+        onMessage(t('st.aiRtInstallFailed'), 'error');
+      }
+    } catch (err) {
+      setLog((prev) => prev + '\n' + err.message);
+      if (onMessage) onMessage(err.message, 'error');
+    } finally {
+      setInstalling(false);
+    }
+  }
+
+  const found = status?.found;
+  return (
+    <div className="ai-runtime-control">
+      <div className="ai-runtime-row">
+        <span className={`ffmpeg-status-icon ${status === undefined ? 'pending' : found ? 'ok' : 'bad'}`}>
+          <Ico n={status === undefined ? 'reload' : found ? 'check-ok' : 'x'} sz={15} />
+        </span>
+        <span className="ai-runtime-summary">
+          {status === undefined
+            ? t('st.aiRtChecking')
+            : found
+              ? t('st.aiRtReady', { torch: status.torch || '?', accel: status.cuda ? 'CUDA' : 'CPU' })
+              : t('st.aiRtMissing')}
+        </span>
+        <button type="button" className="quiet" onClick={check} disabled={installing}>
+          <span className="btn-icon"><Ico n="reload" /> {t('st.check')}</span>
+        </button>
+      </div>
+      {!found && supported ? (
+        <p className="field-hint">{t('st.aiRtHint')}</p>
+      ) : null}
+      <div className="ffmpeg-status-actions">
+        {!found && supported ? (
+          <button type="button" onClick={install} disabled={installing}>
+            <span className="btn-icon"><Ico n="download" /> {installing ? t('rec.downloading') : t('st.aiRtInstall')}</span>
+          </button>
+        ) : null}
+        {done && onRestart ? (
+          <button type="button" onClick={() => onRestart()} disabled={installing}>
+            <span className="btn-icon"><Ico n="reload" /> {t('st.restartNow')}</span>
+          </button>
+        ) : null}
+      </div>
+      {log ? <pre className="install-output ai-runtime-log">{log}</pre> : null}
+    </div>
+  );
+}
+
+// UpdatePanel surfaces the self-update state: current vs latest version (checked on a
+// schedule server-side), and — on portable/installer installs — a one-click apply that
+// downloads, verifies, swaps, and restarts. Package/Docker installs get guidance
+// instead. Endpoints: GET /system/update, POST /system/update/check, POST /system/update/apply.
+function UpdatePanel({ authHeader, onRestart }) {
+  const t = useT();
+  const [info, setInfo] = useState(undefined); // undefined = loading
+  const [checking, setChecking] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [log, setLog] = useState('');
+
+  async function api(path, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    if (authHeader) headers.Authorization = authHeader;
+    const resp = await fetch(`${apiBase()}${path}`, { credentials: 'include', ...options, headers });
+    const text = await resp.text();
+    let payload = null;
+    if (text) { try { payload = JSON.parse(text); } catch (_) { payload = { message: text }; } }
+    if (!resp.ok) throw new Error(payload?.message || payload?.data?.message || `Request failed (${resp.status})`);
+    return payload?.data?.result ?? payload?.result ?? payload;
+  }
+
+  async function load() { try { setInfo(await api('/api/system/update')); } catch (_) { setInfo(null); } }
+  useEffect(() => { load(); }, [authHeader]);
+
+  async function check() {
+    setChecking(true);
+    try { setInfo(await api('/api/system/update/check', { method: 'POST' })); }
+    catch (_) { /* keep prior */ }
+    finally { setChecking(false); }
+  }
+
+  async function apply() {
+    setApplying(true);
+    setLog('');
+    try {
+      await api('/api/system/update/apply', { method: 'POST' });
+      // Poll until done/failed. On success the server restarts (requests then fail).
+      const deadline = Date.now() + 10 * 60 * 1000;
+      for (;;) {
+        let state;
+        try { state = await api('/api/system/update'); }
+        catch (_) { setLog((p) => p + '\nServer restarting…'); break; }
+        setLog(state?.applyLog || '');
+        if (state?.applyStatus === 'done') { if (onRestart) onRestart(); break; }
+        if (state?.applyStatus === 'failed') break;
+        if (Date.now() > deadline) break;
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    } catch (err) {
+      setLog((p) => p + '\n' + err.message);
+    } finally {
+      setApplying(false);
+    }
+  }
+
+  if (info === undefined) return null;
+
+  const available = info && info.updateAvailable;
+  const managedNote = info?.managed === 'package'
+    ? t('st.updManagedPackage')
+    : info?.managed === 'docker'
+      ? t('st.updManagedDocker')
+      : t('st.updManualNote');
+
+  return (
+    <section className="settings-panel span-two">
+      <header>
+        <h2><span className="btn-icon"><Ico n="download" /> {t('st.updates')}</span></h2>
+        <button type="button" className="quiet" onClick={check} disabled={checking || applying}>
+          <span className="btn-icon"><Ico n="reload" /> {checking ? t('st.updChecking') : t('st.updCheck')}</span>
+        </button>
+      </header>
+      {!info ? (
+        <p className="settings-hint">{t('st.updUnavailable')}</p>
+      ) : available ? (
+        <>
+          <p className="update-available">
+            <strong className="status-pill online">{t('st.updAvailable', { version: info.latest })}</strong>
+            <span className="field-hint"> {t('st.updCurrent', { version: info.current })}</span>
+          </p>
+          {info.canSelfUpdate ? (
+            <div className="ffmpeg-status-actions">
+              <button type="button" onClick={apply} disabled={applying}>
+                <span className="btn-icon"><Ico n="download" /> {applying ? t('st.updApplying') : t('st.updApply', { version: info.latest })}</span>
+              </button>
+            </div>
+          ) : (
+            <p className="settings-hint">{managedNote}{info.htmlUrl ? <> <a href={info.htmlUrl} target="_blank" rel="noreferrer">{t('st.updReleaseNotes')}</a></> : null}</p>
+          )}
+          {log ? <pre className="install-output ai-runtime-log">{log}</pre> : null}
+        </>
+      ) : (
+        <p className="settings-hint">
+          <strong className="status-pill online">{t('st.updUpToDate')}</strong>
+          <span className="field-hint"> v{info.current}</span>
+        </p>
+      )}
+    </section>
+  );
+}
+
 // SystemStatusPanel shows the running software version and live service health by
 // polling the public version/health/liveness/readiness endpoints. It is read-only:
 // it confirms what build is running and whether the API, database, cache, and the
@@ -611,6 +814,8 @@ function SystemStatusPanel({ authHeader, onRestart }) {
           <p className="settings-hint">{t('st.versionUnavailable')}{version?.body?.message ? ` — ${version.body.message}` : ''}.</p>
         )}
       </section>
+
+      <UpdatePanel authHeader={authHeader} onRestart={onRestart} />
 
       <section className="settings-panel span-two">
         <header>
@@ -1646,6 +1851,7 @@ export function SettingsTab({
               ) : null}
             </div>
           ) : null}
+          <AiRuntimeInstallControl authHeader={authHeader} onMessage={onMessage} onRestart={onRestart} />
         </section>
         </>)}
 

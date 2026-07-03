@@ -5498,3 +5498,10 @@ input.input-error:focus,
   justify-content: center;
   gap: 8px;
 }
+
+
+/* AI runtime installer (Settings -> AI Tool). */
+.ai-runtime-control { margin-top: 14px; border-top: 1px solid var(--border, #2a3240); padding-top: 14px; }
+.ai-runtime-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ai-runtime-summary { font-size: 13px; }
+.ai-runtime-log { max-height: 260px; overflow: auto; margin-top: 10px; }

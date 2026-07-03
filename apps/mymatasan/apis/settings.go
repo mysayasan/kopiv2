@@ -21,13 +21,14 @@ type settingsApi struct {
 	machineMetrics services.IMachineMetricsProvider
 	visionTool     services.VisionToolSettings
 	ffmpeg         *services.FFmpegInstaller
+	pyRuntime      *services.PythonInstaller
 	browseRoots    []string
 }
 
 // NewSettingsApi registers runtime settings routes. browseRoots are extra
 // site-specific directories the file picker may browse (config decoder.browseRoots).
-func NewSettingsApi(router *mux.Router, serv services.IRuntimeSettingsService, camera services.ICameraService, userServ services.ILocalUserService, notifServ services.INotificationSettingsService, healthServ services.IHealthSettingsService, machineHealth services.IMachineHealthSettingsService, machineMetrics services.IMachineMetricsProvider, visionTool services.VisionToolSettings, ffmpeg *services.FFmpegInstaller, browseRoots []string) {
-	handler := &settingsApi{serv: serv, camera: camera, userServ: userServ, notifServ: notifServ, healthServ: healthServ, machineHealth: machineHealth, machineMetrics: machineMetrics, visionTool: visionTool, ffmpeg: ffmpeg, browseRoots: browseRoots}
+func NewSettingsApi(router *mux.Router, serv services.IRuntimeSettingsService, camera services.ICameraService, userServ services.ILocalUserService, notifServ services.INotificationSettingsService, healthServ services.IHealthSettingsService, machineHealth services.IMachineHealthSettingsService, machineMetrics services.IMachineMetricsProvider, visionTool services.VisionToolSettings, ffmpeg *services.FFmpegInstaller, pyRuntime *services.PythonInstaller, browseRoots []string) {
+	handler := &settingsApi{serv: serv, camera: camera, userServ: userServ, notifServ: notifServ, healthServ: healthServ, machineHealth: machineHealth, machineMetrics: machineMetrics, visionTool: visionTool, ffmpeg: ffmpeg, pyRuntime: pyRuntime, browseRoots: browseRoots}
 	group := router.PathPrefix("/settings").Subrouter()
 
 	group.HandleFunc("/runtime", handler.getRuntime).Methods("GET")
@@ -53,6 +54,9 @@ func NewSettingsApi(router *mux.Router, serv services.IRuntimeSettingsService, c
 	group.HandleFunc("/machine-health/metrics", handler.getMachineMetrics).Methods("GET")
 	group.HandleFunc("/vision/ai-tool/status", handler.visionAIToolStatus).Methods("GET")
 	group.HandleFunc("/vision/ai-tool/install", handler.visionAIToolInstall).Methods("POST")
+	group.HandleFunc("/vision/ai-runtime/status", handler.aiRuntimeStatus).Methods("GET")
+	group.HandleFunc("/vision/ai-runtime/install", handler.aiRuntimeInstall).Methods("POST")
+	group.HandleFunc("/vision/ai-runtime/install/status", handler.aiRuntimeInstallStatus).Methods("GET")
 	group.HandleFunc("/users", handler.listUsers).Methods("GET")
 	group.HandleFunc("/users", handler.createUser).Methods("POST")
 	group.HandleFunc("/users/{id}", handler.updateUser).Methods("PUT")
@@ -313,6 +317,39 @@ func (a *settingsApi) ffmpegInstallStatus(w http.ResponseWriter, r *http.Request
 		return
 	}
 	controllers.SendResult(w, a.ffmpeg.InstallStatus(), "succeed")
+}
+
+// aiRuntimeStatus reports whether the self-contained AI Python runtime (Python +
+// torch + ultralytics) is installed.
+func (a *settingsApi) aiRuntimeStatus(w http.ResponseWriter, r *http.Request) {
+	if a.pyRuntime == nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, "AI runtime installer unavailable")
+		return
+	}
+	controllers.SendResult(w, a.pyRuntime.PythonStatus(r.Context()), "succeed")
+}
+
+// aiRuntimeInstall kicks off a background download + pip install of the AI runtime
+// (Python + GPU/CPU torch + ultralytics); the client polls the status endpoint.
+// Admin-gated (a write).
+func (a *settingsApi) aiRuntimeInstall(w http.ResponseWriter, r *http.Request) {
+	if a.pyRuntime == nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, "AI runtime installer unavailable")
+		return
+	}
+	if err := a.pyRuntime.StartInstall(r.Context()); err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, a.pyRuntime.InstallStatus(), "succeed")
+}
+
+func (a *settingsApi) aiRuntimeInstallStatus(w http.ResponseWriter, r *http.Request) {
+	if a.pyRuntime == nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, "AI runtime installer unavailable")
+		return
+	}
+	controllers.SendResult(w, a.pyRuntime.InstallStatus(), "succeed")
 }
 
 func (a *settingsApi) autoTuneRuntime(w http.ResponseWriter, r *http.Request) {

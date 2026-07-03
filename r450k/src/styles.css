@@ -785,3 +785,43 @@ a { color: inherit; text-decoration: none; }
   .rotw__word { position: static; } /* show first word inline, no overlay swap */
   .rotw__sizer { display: none; }
 }
+
+
+/* --- Downloads section --- */
+.downloads__version { color: var(--muted); font-size: 0.9rem; margin-top: 10px; }
+.downloads__version strong { color: var(--brand-green); }
+.downloads__note {
+  text-align: center; color: var(--muted);
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+}
+.downloads__foot { margin-top: 28px; text-align: center; }
+.grid--downloads { grid-template-columns: repeat(3, 1fr); }
+.dlcard {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+}
+.dlcard__head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.dlcard__icon { color: var(--brand-green); display: inline-flex; }
+.dlcard__name { margin: 0; font-size: 1.15rem; letter-spacing: -0.01em; }
+.dlcard__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.dllink {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 11px 14px; border: 1px solid var(--border); border-radius: 10px;
+  color: var(--text); text-decoration: none; font-size: 0.9rem;
+  transition: border-color 0.15s, background 0.15s;
+}
+.dllink:hover { border-color: var(--border-strong); background: var(--bg); }
+.dllink__label { display: inline-flex; align-items: center; gap: 9px; }
+.dllink__size { color: var(--muted); font-size: 0.8rem; white-space: nowrap; }
+.dlcard__hint { color: var(--muted); font-size: 0.88rem; margin: 0 0 12px; }
+.dlcard__code {
+  display: block; background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  padding: 11px 14px; font-size: 0.82rem; color: var(--text); overflow-x: auto; white-space: nowrap;
+}
+@media (max-width: 900px) {
+  .grid--downloads { grid-template-columns: 1fr; }
+}
