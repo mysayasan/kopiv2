@@ -115,6 +115,29 @@ type AppConfigModel struct {
 	Security struct {
 		EncryptAtRest *bool  `json:"encryptAtRest"`
 		KeyPath       string `json:"keyPath"`
+		// KeyProtector selects how the on-disk master key is protected:
+		//   "" / "file"          plaintext key file (default; backward compatible)
+		//   "auto"               platform default: DPAPI on Windows, systemd-creds on
+		//                        a systemd Linux host, else file
+		//   "dpapi"              Windows DPAPI, machine-scoped (host-bound)
+		//   "systemd-creds"      Linux systemd-creds, TPM2-backed when present (host-bound)
+		//   "passphrase"         Argon2id-derived KEK from Passphrase*; portable across
+		//                        hosts — the right choice for Docker and the recovery
+		//                        escrow for the host-bound protectors
+		// Switching protectors re-wraps the same key, so existing encrypted data stays
+		// readable. Host-bound protectors cannot be unwrapped on another machine.
+		KeyProtector string `json:"keyProtector"`
+		// Passphrase sources the KEK for the passphrase protector. Prefer PassphraseFile
+		// (a mounted Docker secret) or PassphraseEnv over inlining it here. Resolution
+		// order: Passphrase, PassphraseFile, PassphraseEnv, then $ATREST_PASSPHRASE.
+		Passphrase     string `json:"passphrase"`
+		PassphraseFile string `json:"passphraseFile"`
+		PassphraseEnv  string `json:"passphraseEnv"`
+		// RecoveryPath is where a disaster-recovery escrow (exported from the UI) is looked
+		// for on first start. When no key exists yet but this file does, the app restores
+		// the master key from it using the configured passphrase and migrates to the
+		// configured protector. Defaults to recovery.atrestkey beside the key file.
+		RecoveryPath string `json:"recoveryPath"`
 	} `json:"security"`
 	FileStorage struct {
 		Path    string `json:"path" validate:"required"`

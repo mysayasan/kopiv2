@@ -1,0 +1,14 @@
+{
+  "_note": "SAMPLE — automatic encryption-key recovery. Merge the \"security\" block below into your config.json. When encryption-at-rest is on and the master key is missing on startup, the app restores it from recoveryPath using the passphrase and boots normally, with NO pre-login prompt. If you do NOT configure this, a missing key instead shows the pre-login recovery screen where an operator uploads the key + passphrase by hand.",
+  "security": {
+    "encryptAtRest": true,
+    "keyProtector": "dpapi",
+    "keyPath": "secret/atrest.key",
+    "recoveryPath": "secret/recovery.atrestkey",
+    "passphraseFile": "secret/recovery.pass",
+    "_keyProtector_options": "file | passphrase | dpapi (Windows, host-bound) | systemd-creds (Linux, host-bound) | auto",
+    "_recoveryPath_note": "Path to your exported recovery key (the .atrestkey file downloaded from Settings -> Backup & Recovery). Defaults to recovery.atrestkey beside keyPath if omitted.",
+    "_passphrase_options": "Provide the passphrase via exactly one of: passphraseFile (path to a file containing it), passphraseEnv (name of an env var, e.g. ATREST_PASSPHRASE), or passphrase (inline string, discouraged in production).",
+    "_security_note": "Storing the recovery key and its passphrase together on the same host defeats the point in a real breach. Prefer a mounted secret / env var injected at deploy time (e.g. Docker secrets)."
+  }
+}

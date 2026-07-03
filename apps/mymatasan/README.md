@@ -8,7 +8,7 @@ It is designed to run on small devices such as Raspberry Pi or Jetson-style micr
 
 - Standalone DB-backed local Basic Auth with a first-run admin account seeded from `localAuth.username`/`localAuth.password` in config (falls back to `admin` / `admin` when unset), **forced password change** on first login regardless of which credential seeded the account, **failed-login lockout** (escalating backoff + countdown), and **role-based access** (admin = full control; non-admin = view-only + acknowledge).
 - **First-run setup wizard** (password → capacity → add camera → recording + alerts) and a **camera-capacity estimator** (`/api/capacity`) that tells you how many cameras the host can handle.
-- **Encryption at rest** (default on): recordings, snapshots, and training images are AES-256-GCM encrypted on disk so the factory reset can **crypto-erase** them by destroying the key.
+- **Encryption at rest** (default on): recordings, snapshots, and training images are AES-256-GCM encrypted on disk so the factory reset can **crypto-erase** them by destroying the key. The master key itself can be protected by an OS keystore (Windows DPAPI, Linux systemd-creds) or a portable passphrase (Docker), with an exportable/verifiable **recovery escrow** (Settings → Backup & Recovery) and an automatic or pre-login recovery flow if the key is ever lost.
 - **Secure Wipe & Reset** (factory reset: crypto-erase key + erase media + drop/rebuild DB + TRIM/scrub + restart) behind `bootstrap.allowReset`, plus secure multi-pass **shredding** of deleted footage.
 - **In-app self-update** (Settings → Version & Health → Updates): checks GitHub Releases on a schedule and on demand, and on portable/Windows-installer installs downloads, SHA-256-verifies, swaps, and restarts in place; `.deb`/`.rpm` and Docker installs get in-panel upgrade guidance instead (`MYMATASAN_MANAGED`).
 - **In-app AI runtime installer** (Settings → AI): downloads a self-contained Python + GPU/CPU PyTorch + `ultralytics` for hosts with no usable Python, so the YOLO detector works with no terminal setup.
@@ -316,6 +316,33 @@ The estimate and a **Run calibration** button are surfaced on the Settings → M
 ## Encryption at rest
 
 Recordings, snapshots/alert images, and training dataset images are **encrypted on disk** by default (AES-256-GCM chunked streaming, reusable `infra/atrest` module) with a master key stored outside the media roots. This makes the factory reset's wipe **guaranteed and device-independent**: destroying the key (**crypto-erase**) renders all ciphertext instantly unrecoverable regardless of size or storage medium, which plain overwrite cannot promise on SSD/NVMe. Toggle via the `security` config block (`encryptAtRest`, default `true`; `keyPath`, default `secret/atrest.key`). With encryption off, data is written as plaintext; pre-existing plaintext files are always read transparently (magic-detect passthrough), so the setting flips cleanly with no migration. Model `.pt` weights stay plaintext (the Python worker reads them directly).
+
+### Key protection & recovery
+
+The master key on disk (the DEK) can itself be wrapped by a `security.keyProtector`:
+
+- `file` (default, backward-compatible) — the bare key, plaintext.
+- `auto` — platform default: Windows DPAPI, or Linux `systemd-creds` when available (TPM2-backed when present); falls back to `file` otherwise (e.g. containers without `systemd-creds` — set `passphrase` explicitly for Docker).
+- `dpapi` / `systemd-creds` — OS-native keystore, **machine-scoped/host-bound**: unwraps with no operator input on this host, but the key file cannot be moved to another machine.
+- `passphrase` — Argon2id-derived key-encryption key from `security.passphrase`/`passphraseFile`/`passphraseEnv` (or `$ATREST_PASSPHRASE`); portable across hosts, the right choice for Docker/portable installs.
+
+Switching `keyProtector` re-wraps the same key on the next boot (a lossless migration) — existing encrypted recordings, snapshots, and training images stay readable either way.
+
+Because a host-bound key can't be unwrapped after a hardware failure, reimage, or move, **Settings → Backup & Recovery** lets an admin export a passphrase-protected **recovery escrow** (a `.atrestkey` file) of the current key and later verify a saved copy still works and still matches the active key:
+
+```bash
+curl -u admin:Admin123 -X POST -H "Content-Type: application/json" \
+  -d '{"passphrase":"a strong passphrase"}' \
+  "http://localhost:3000/api/system/recovery/export"   # downloads mymatasan-recovery-YYYYMMDD.atrestkey (base64 in the response)
+curl -u admin:Admin123 -X POST -H "Content-Type: application/json" \
+  -d '{"passphrase":"a strong passphrase","keyBase64":"<file contents, base64>"}' \
+  "http://localhost:3000/api/system/recovery/verify"
+```
+
+A non-secret **init marker** written beside the key on first use lets a later boot tell "key missing because this is a genuinely new install" apart from "key missing but data encrypted with it still exists" — the app never silently mints a replacement key in the latter case. If the key ever goes missing on a host that had one:
+
+1. If `security.recoveryPath` (default `recovery.atrestkey` beside the key) points at an escrow file and a passphrase is configured (`security.passphrase`/`passphraseFile`/`passphraseEnv`), the app restores the key from it automatically on boot — no prompt, normal startup. See `apps/mymatasan/config.sample.recovery.json` for a ready-to-merge `security` block.
+2. Otherwise the app boots into a **public, pre-login recovery gate**: no camera/vision/recording services start, and the browser can reach nothing else until an operator uploads the exported escrow file + its passphrase, at which point the key is restored and the process restarts into normal operation.
 
 ## Secure Wipe & Reset
 
