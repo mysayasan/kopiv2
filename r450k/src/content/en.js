@@ -18,6 +18,7 @@ const en = {
     { label: 'Showcase', href: '#showcase' },
     { label: 'Use cases', href: '#use-cases' },
     { label: 'Apps', href: '#apps' },
+    { label: 'Download', href: '#download' },
   ],
   navCta: 'Explore apps',
   hero: {
@@ -135,6 +136,19 @@ const en = {
       { name: 'myseliasan', status: 'Control plane', available: false, body: 'The fleet control plane that discovers, adopts, and manages edge nodes, and relays their live camera streams to operators.' },
       { name: 'myidsan', status: 'Identity', available: false, body: 'Shared identity and access: JWT auth, SSO, and role-based access control across the platform.' },
     ],
+  },
+  downloads: {
+    kicker: 'Get MyMataSan',
+    title: 'Download & self-host.',
+    subtitle: 'The mymatasan edge node is a single install. Pick your platform — the web UI, AI worker scripts, and a default config come bundled.',
+    latest: 'Latest release',
+    windows: 'Windows',
+    linux: 'Linux',
+    docker: 'Docker',
+    dockerHint: 'Run the multi-arch image (ffmpeg included):',
+    loading: 'Loading the latest release…',
+    unavailable: 'Downloads are being prepared. Check back soon, or browse all releases on GitHub.',
+    allReleases: 'All releases on GitHub',
   },
   finalCta: {
     title: 'Keep your video — and your intelligence — on your own network.',

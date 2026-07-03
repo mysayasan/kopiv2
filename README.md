@@ -446,6 +446,8 @@ docker run --rm -p 3000:3000 \
   kopiv2:latest
 ```
 
+For a prebuilt multi-arch release image with no local Go toolchain (`ghcr.io/mysayasan/mymatasan`) or `.deb`/`.rpm`/archive installers, see [`deploy/README.md`](deploy/README.md) — these are built by GoReleaser (`.goreleaser.yaml`) from `apps/mymatasan` and split a read-only app home directory from a writable data directory (`MYMATASAN_HOME`/`MYMATASAN_DATA`).
+
 ## Run with Docker Compose
 
 Use bundled app + PostgreSQL + Redis stack:
@@ -527,7 +529,7 @@ Response shape:
 ```
 
 Version bumps are driven by pending changelog entries under `changes/pending/YYYYMMDD-HHMMSS-short-title/change.json`.
-On push to `main`, `.github/workflows/main.yml` runs `go run ./infra/versioning/cmd/versionbump`, updates `infra/versioning/version.json`, and moves processed entries to `changes/applied/`.
+On push to `main`, `.github/workflows/main.yml` runs `go run ./infra/versioning/cmd/versionbump`, updates `infra/versioning/version.json`, prepends a dated release-notes section to `CHANGELOG.md` (grouped by change type — Added/Changed/Deprecated/Removed/Fixed/Security), and moves processed entries to `changes/applied/`.
 Pending entries support the legacy `level/scope/app` shape and the newer multi-target shape, for example `{"type":"minor","scope":"core,myidsan,mymatasan","summary":"..."}`. `type` is resolved to `major`, `minor`, or `patch`; comma-separated scopes can target core aliases and one or more app names from the manifest.
 
 ## Telemetry
@@ -630,6 +632,8 @@ MyMataSan ONVIF endpoints:
 - `POST /api/settings/decoder/ffmpeg/install` / `GET /api/settings/decoder/ffmpeg/install/status` -> run and poll the in-app ffmpeg download/installer (admin-only); on success the resolved path is persisted into runtime settings.
 - `GET /api/settings/fs/browse` -> admin-only, read-only server-side directory picker (used to choose the ffmpeg binary); returns one directory level confined to a whitelist of roots (app dir + `bin/`, user home, OS install locations, plus `decoder.browseRoots`).
 - `GET /api/settings/vision/ai-tool/status` -> check configured AI detector command, Python packages, worker script, model file, and native fallback readiness.
+- `GET /api/settings/vision/ai-runtime/status` -> report whether the self-contained AI Python runtime (Python + torch + ultralytics) is installed, and whether CUDA is available.
+- `POST /api/settings/vision/ai-runtime/install` / `GET /api/settings/vision/ai-runtime/install/status` -> run and poll the in-app AI-runtime download/installer (admin-only); on success the resolved interpreter is persisted into `vision.detector.command`.
 - `GET /api/settings/users` -> list local login users.
 - `POST /api/settings/users` -> create a local login user.
 - `PUT /api/settings/users/{id}` -> update username, display name, admin flag, and active flag.

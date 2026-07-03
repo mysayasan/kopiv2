@@ -11,6 +11,7 @@ Command-line entrypoint used by GitHub Actions to update runtime versions.
   - manifest: `infra/versioning/version.json`
   - pending changes: `changes/pending`
   - applied changes: `changes/applied`
+  - changelog: `CHANGELOG.md` (`-changelog` flag; pass `-changelog ""` to skip writing it)
 - Stores `GITHUB_SHA` as the manifest commit when no explicit `-commit` value is provided.
 
 ## Notes

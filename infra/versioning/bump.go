@@ -29,6 +29,9 @@ type ApplyOptions struct {
 	AppliedDir   string
 	Commit       string
 	Now          time.Time
+	// ChangelogPath, when set, gets a dated entry prepended for this bump run
+	// (the summaries that would otherwise be discarded when pending → applied).
+	ChangelogPath string
 }
 
 // ApplyResult summarizes a version bump run.
@@ -36,6 +39,8 @@ type ApplyResult struct {
 	Changed        bool
 	ProcessedFiles []string
 	Manifest       Manifest
+	// AppliedChanges are the change entries consumed this run, in file order.
+	AppliedChanges []Change
 }
 
 // ApplyPendingChanges bumps the manifest from pending changelog entries and moves them to applied.
@@ -67,13 +72,24 @@ func ApplyPendingChanges(opts ApplyOptions) (ApplyResult, error) {
 		return ApplyResult{Manifest: manifest}, nil
 	}
 
+	appliedChanges := make([]Change, 0, len(changeFiles))
+	bumpedCore := false
+	bumpedAppsSet := map[string]struct{}{}
 	for _, path := range changeFiles {
 		change, err := readChange(path)
 		if err != nil {
 			return ApplyResult{}, fmt.Errorf("%s: %w", path, err)
 		}
-		if err := applyChange(&manifest, change); err != nil {
+		targets, err := applyChange(&manifest, change)
+		if err != nil {
 			return ApplyResult{}, fmt.Errorf("%s: %w", path, err)
+		}
+		appliedChanges = append(appliedChanges, change)
+		if targets.Core {
+			bumpedCore = true
+		}
+		for _, app := range targets.Apps {
+			bumpedAppsSet[app] = struct{}{}
 		}
 	}
 
@@ -92,11 +108,24 @@ func ApplyPendingChanges(opts ApplyOptions) (ApplyResult, error) {
 		return ApplyResult{}, err
 	}
 
+	if strings.TrimSpace(opts.ChangelogPath) != "" {
+		bumpedApps := make([]string, 0, len(bumpedAppsSet))
+		for app := range bumpedAppsSet {
+			bumpedApps = append(bumpedApps, app)
+		}
+		entry := RenderChangelogEntry(appliedChanges, manifest, bumpedCore, bumpedApps, manifest.Commit, opts.Now)
+		if entry != "" {
+			if err := PrependChangelogEntry(opts.ChangelogPath, entry); err != nil {
+				return ApplyResult{}, fmt.Errorf("write changelog: %w", err)
+			}
+		}
+	}
+
 	if err := movePendingParents(changeFiles, opts.PendingDir, opts.AppliedDir); err != nil {
 		return ApplyResult{}, err
 	}
 
-	return ApplyResult{Changed: true, ProcessedFiles: changeFiles, Manifest: manifest}, nil
+	return ApplyResult{Changed: true, ProcessedFiles: changeFiles, Manifest: manifest, AppliedChanges: appliedChanges}, nil
 }
 
 func pendingChangeFiles(pendingDir string) ([]string, error) {
@@ -150,20 +179,20 @@ func validateChange(change Change) error {
 	return nil
 }
 
-func applyChange(manifest *Manifest, change Change) error {
+func applyChange(manifest *Manifest, change Change) (changeTargetSet, error) {
 	level, err := changeLevel(change)
 	if err != nil {
-		return err
+		return changeTargetSet{}, err
 	}
 	targets, err := changeTargets(*manifest, change)
 	if err != nil {
-		return err
+		return changeTargetSet{}, err
 	}
 
 	if targets.Core {
 		next, err := bumpVersion(manifest.Core.Version, level)
 		if err != nil {
-			return err
+			return changeTargetSet{}, err
 		}
 		manifest.Core.Version = next
 	}
@@ -178,13 +207,13 @@ func applyChange(manifest *Manifest, change Change) error {
 		}
 		next, err := bumpVersion(entry.Version, level)
 		if err != nil {
-			return err
+			return changeTargetSet{}, err
 		}
 		entry.Version = next
 		manifest.Apps[appName] = entry
 	}
 
-	return manifest.Validate()
+	return targets, manifest.Validate()
 }
 
 type changeTargetSet struct {

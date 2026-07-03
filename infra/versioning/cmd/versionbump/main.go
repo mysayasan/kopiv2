@@ -13,13 +13,15 @@ func main() {
 	pendingDir := flag.String("pending", "changes/pending", "pending changelog directory")
 	appliedDir := flag.String("applied", "changes/applied", "applied changelog directory")
 	commit := flag.String("commit", os.Getenv("GITHUB_SHA"), "commit SHA to store in the manifest")
+	changelogPath := flag.String("changelog", "CHANGELOG.md", "changelog file to prepend each bump's summaries to (empty to skip)")
 	flag.Parse()
 
 	result, err := versioning.ApplyPendingChanges(versioning.ApplyOptions{
-		ManifestPath: *manifestPath,
-		PendingDir:   *pendingDir,
-		AppliedDir:   *appliedDir,
-		Commit:       *commit,
+		ManifestPath:  *manifestPath,
+		PendingDir:    *pendingDir,
+		AppliedDir:    *appliedDir,
+		Commit:        *commit,
+		ChangelogPath: *changelogPath,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "version bump failed: %v\n", err)

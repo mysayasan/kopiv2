@@ -45,7 +45,7 @@ const SHOT_ALT = [
   'Suapan pemberitahuan bersepadu dengan tangkapan skrin dan tindakan pengesahan',
 ];
 
-const NAV = ['Ciri', 'Cara ia berfungsi', 'Perkakasan', 'Pameran', 'Kegunaan', 'Aplikasi'];
+const NAV = ['Ciri', 'Cara ia berfungsi', 'Perkakasan', 'Pameran', 'Kegunaan', 'Aplikasi', 'Muat turun'];
 
 export default {
   ...en,
@@ -112,6 +112,17 @@ export default {
     available: 'Tersedia',
     platform: 'Platform',
     items: en.apps.items.map((it, i) => ({ ...it, status: A[i].s, body: A[i].b })),
+  },
+  downloads: {
+    ...en.downloads,
+    kicker: 'Dapatkan MyMataSan',
+    title: 'Muat turun & host sendiri.',
+    subtitle: 'Nod edge mymatasan ialah satu pemasangan. Pilih platform anda — UI web, skrip pekerja AI, dan konfigurasi lalai disertakan.',
+    latest: 'Keluaran terkini',
+    dockerHint: 'Jalankan imej berbilang-seni bina (ffmpeg disertakan):',
+    loading: 'Memuatkan keluaran terkini…',
+    unavailable: 'Muat turun sedang disediakan. Semak semula tidak lama lagi, atau layari semua keluaran di GitHub.',
+    allReleases: 'Semua keluaran di GitHub',
   },
   finalCta: {
     ...en.finalCta,

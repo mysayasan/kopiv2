@@ -4,9 +4,18 @@
 
 Implements the reusable runtime host for all app modules.
 
+## Platform dispatch (`Run` / `runApp`)
+
+`Run(app)` is now a thin platform dispatcher (`runWithPlatform`, in `service_windows.go`/`service_other.go`); the former body of `Run` is renamed `runApp` and holds all the shared runtime wiring described below.
+
+- On Windows, when the process was launched by the Service Control Manager (`svc.IsWindowsService()` true), `runWithPlatform` runs `runApp` under `svc.Run` via a `windowsService` adapter (`service_windows.go`) instead of calling it directly, so `sc start`/`services.msc`/a Windows installer service registration can control it.
+- On every other case (interactive Windows run, or any non-Windows OS via `service_other.go`), `runWithPlatform` calls `runApp` directly — identical to the previous behavior.
+- `runApp`'s shutdown `select` gained a `case <-svcStop` (via `platformShutdownChan()`) alongside the existing OS-signal and restart-request cases: an SCM Stop/Shutdown request closes `windowsServiceStop`, which triggers the same graceful shutdown path as Ctrl+C/SIGTERM. `platformShutdownChan()` returns a nil channel on non-Windows and on an interactive Windows run, so that case is inert there.
+
 ## Responsibilities
 
-- Load selected app config from app base directory.
+- Resolve a home directory (`resolveHomeDir`: read-only app root — static assets, bundled scripts, default config) and a data directory (`resolveDataDir`: writable state root — mutable config, database, recordings, logs, keys), independently overridable via `<APP>_HOME`/`<APP>_DATA` or generic `KOPIV2_HOME`/`KOPIV2_DATA` env vars; a dev checkout has both equal to the app's `BaseDir()`, unchanged from before the split.
+- Load selected app config from the data directory (`loadConfig`), seeding it from the home directory's shipped default `config.json` on first run when the data dir has none yet (a packaged install's writable copy).
 - Apply secret and DB environment overrides.
 - Apply cache environment overrides.
 - Apply SSO environment overrides.
@@ -14,7 +23,8 @@ Implements the reusable runtime host for all app modules.
 - Apply logging and API log cleanup environment overrides.
 - Apply telemetry environment overrides.
 - Apply server environment overrides for hostnames and explicit TLS/non-TLS ports.
-- Normalize app-relative paths (TLS, SSO CA bundle, file storage, logging, and SQLite database files).
+- Normalize data-directory-relative paths (TLS, SSO CA bundle, file storage, logging, SQLite database files, the vision snapshot/recordings root, and the AI training data dir) against the data directory via `ResolveWritablePath`, which falls back to the pre-packaging legacy (CWD-relative) location when the data-dir target doesn't exist yet but the legacy path does — an upgrade-safety no-op for a dev checkout or an installed service (`WorkingDirectory=dataDir`).
+- Generate a self-signed TLS keypair (`ensureSelfSignedCert`, `selfcert.go`) before starting listeners when any listener is TLS and the configured cert/key files don't already exist, so a fresh packaged install serves HTTPS immediately.
 - Initialize the runtime logger before bootstrap and shared service wiring.
 - Initialize the shared scheduler and expose it through app dependencies.
 - Initialize the shared operation-job repository for durable file-storage uploads.
@@ -65,10 +75,10 @@ Implements the reusable runtime host for all app modules.
 - `server.tlsPorts` starts HTTPS listeners and `server.nonTlsPorts` starts HTTP listeners.
 - Empty `tlsPorts` or `nonTlsPorts` means that protocol mode is not started.
 - A port cannot appear in both `server.tlsPorts` and `server.nonTlsPorts`.
-- HTTPS listeners require non-empty `tls.certPath` and `tls.keyPath`; normalized relative paths resolve from the selected app directory.
+- HTTPS listeners require non-empty `tls.certPath` and `tls.keyPath`; normalized relative paths resolve from the data directory, and a missing cert/key pair is generated (self-signed) rather than failing startup.
 - Legacy env compatibility is preserved for `SERVER_ADDR`, `SERVER_PORTS`, `SERVER_USE_TLS`, `SERVER_ENABLE_TLS`, and `SERVER_ENABLE_NON_TLS`.
 - `DB_ENGINE` overrides `db.engine`; runtime DB adapters are available for `postgres`, `mariadb`, and `sqlite`.
-- When `db.engine=sqlite`, `db.db_name` is treated as a file path and relative values resolve from the selected app directory.
+- When `db.engine=sqlite`, `db.db_name` is treated as a file path and relative values resolve from the data directory (see `ResolveWritablePath`).
 - `LOG_ENABLED`, `LOG_PATH`, and `LOG_MAX_LINE_BYTES` override runtime logging config.
 - `LOG_CLEANUP_ENABLED`, `LOG_MAX_RETENTION_DAYS`, and `LOG_CLEANUP_FREQUENCY_MINUTES` override runtime log cleanup config.
 - `API_LOG_CLEANUP_ENABLED`, `API_LOG_MAX_RETENTION_DAYS`, and `API_LOG_CLEANUP_FREQUENCY_MINUTES` override database-backed API log cleanup config.

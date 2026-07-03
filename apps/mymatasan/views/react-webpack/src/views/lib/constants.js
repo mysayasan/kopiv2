@@ -167,7 +167,7 @@ export const defaultMachineHealthSettings = {
   cpu: { warnPercent: 85, criticalPercent: 95 },
   memory: { warnPercent: 85, criticalPercent: 95 },
   disk: { warnPercent: 80, criticalPercent: 90, paths: [] },
-  mitigation: { enabled: true, purgeAtPercent: 88, pauseRecordingAtPercent: 95, resumePercent: 80 },
+  mitigation: { enabled: true, purgeAtPercent: 88, pauseRecordingAtPercent: 95, resumePercent: 80, overwriteOldest: false, overwriteMinKeepDays: 1 },
 };
 export const defaultZonePoints = [
   [0.15, 0.15],

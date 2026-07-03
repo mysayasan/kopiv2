@@ -35,11 +35,11 @@ export function BrandLogo({ size = 40, className = '' }) {
 // PasswordField is a password input with an in-field reveal (eye) toggle. The
 // app standard for any password entry — used on the login, forced-change, and
 // settings screens — so the control looks and behaves identically everywhere.
-export function PasswordField({ value, onChange, autoComplete = 'off', autoFocus = false, placeholder, disabled = false }) {
+export function PasswordField({ value, onChange, autoComplete = 'off', autoFocus = false, placeholder, disabled = false, error = false }) {
   const t = useT();
   const [show, setShow] = useState(false);
   return (
-    <div className="password-field">
+    <div className={`password-field${error ? ' input-error' : ''}`}>
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}

@@ -45,7 +45,7 @@ const SHOT_ALT = [
   '带截图和确认操作的统一通知信息流',
 ];
 
-const NAV = ['功能', '工作原理', '硬件', '实景展示', '应用场景', '应用'];
+const NAV = ['功能', '工作原理', '硬件', '实景展示', '应用场景', '应用', '下载'];
 
 export default {
   ...en,
@@ -112,6 +112,17 @@ export default {
     available: '可用',
     platform: '平台',
     items: en.apps.items.map((it, i) => ({ ...it, status: A[i].s, body: A[i].b })),
+  },
+  downloads: {
+    ...en.downloads,
+    kicker: '获取 MyMataSan',
+    title: '下载并自托管。',
+    subtitle: 'mymatasan 边缘节点只需一次安装。选择你的平台——Web 界面、AI 工作脚本和默认配置均已打包。',
+    latest: '最新版本',
+    dockerHint: '运行多架构镜像（已含 ffmpeg）：',
+    loading: '正在加载最新版本…',
+    unavailable: '下载正在准备中。请稍后再来，或在 GitHub 上浏览所有版本。',
+    allReleases: '在 GitHub 上查看所有版本',
   },
   finalCta: {
     ...en.finalCta,

@@ -1,0 +1,30 @@
+# systemd unit installed by the MyMataSan .deb/.rpm package.
+#
+# Flat install: binary, web UI, AI scripts, config, database, recordings, logs and
+# the encryption key all live under /opt/mymatasan (home == data). Runs as the
+# dedicated unprivileged `mymatasan` user created by the package postinstall.
+#
+# KOPIV2_SUPERVISED=1 + Restart=always: an in-app factory reset / self-update
+# exits cleanly and systemd relaunches it.
+[Unit]
+Description=MyMataSan NVR
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mymatasan
+Group=mymatasan
+WorkingDirectory=/opt/mymatasan
+ExecStart=/opt/mymatasan/mymatasan
+Environment=KOPIV2_SUPERVISED=1
+Environment=MYMATASAN_HOME=/opt/mymatasan
+Environment=MYMATASAN_DATA=/opt/mymatasan
+# Package-managed: disable in-app self-update (upgrade via apt/dnf instead).
+Environment=MYMATASAN_MANAGED=package
+Restart=always
+RestartSec=2
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

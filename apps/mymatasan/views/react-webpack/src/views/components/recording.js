@@ -634,13 +634,21 @@ export function CameraRecordingConfig({ device, configs, busy, canManage = true,
       {/* Recorder status feedback */}
       {(() => {
         if (rs) {
-          const isOk = rs.state === 'streaming';
+          // A detect-only stream (AI frame source) runs even when NVR recording is
+          // OFF — it is NOT recording footage, so it must not read as "Recording
+          // active" (green). Show it as a distinct blue "detect-only" state.
+          const isDetect = rs.mode === 'detect';
           const isErr = rs.state === 'error';
+          const isOk = rs.state === 'streaming' && !isDetect;
+          const isDetectActive = isDetect && rs.state === 'streaming';
+          const tone = isErr ? '239,68,68' : isOk ? '34,197,94' : isDetectActive ? '59,130,246' : '148,163,184';
+          const dot = isErr ? '#ef4444' : isOk ? '#22c55e' : isDetectActive ? '#3b82f6' : '#94a3b8';
+          const label = isErr ? t('rec.recError') : isOk ? t('rec.recActive') : isDetectActive ? t('rec.recDetectOnly') : t('rec.recStopped');
           return (
-            <div style={{marginTop: '12px', padding: '10px 12px', borderRadius: '6px', background: isOk ? 'rgba(34,197,94,0.1)' : isErr ? 'rgba(239,68,68,0.1)' : 'rgba(148,163,184,0.1)', border: `1px solid ${isOk ? 'rgba(34,197,94,0.3)' : isErr ? 'rgba(239,68,68,0.3)' : 'rgba(148,163,184,0.3)'}`}}>
+            <div style={{marginTop: '12px', padding: '10px 12px', borderRadius: '6px', background: `rgba(${tone},0.1)`, border: `1px solid rgba(${tone},0.3)`}}>
               <div style={{display:'flex', alignItems:'center', gap:'8px', marginBottom: rs.lastError || rs.liveDir ? '6px' : '0'}}>
-                <span style={{width:'8px', height:'8px', borderRadius:'50%', background: isOk ? '#22c55e' : isErr ? '#ef4444' : '#94a3b8', display:'inline-block', flexShrink:0}} />
-                <strong style={{fontSize:'13px'}}>{isOk ? t('rec.recActive') : isErr ? t('rec.recError') : t('rec.recStopped')}</strong>
+                <span style={{width:'8px', height:'8px', borderRadius:'50%', background: dot, display:'inline-block', flexShrink:0}} />
+                <strong style={{fontSize:'13px'}}>{label}</strong>
                 <span style={{fontSize:'12px', color:'var(--text-muted, #94a3b8)', marginLeft:'auto'}}>{t('rec.liveSegs', { n: rs.liveFiles })}</span>
                 <button type="button" className="quiet" style={{fontSize:'11px', padding:'2px 6px'}} onClick={fetchStatus}>↻</button>
               </div>

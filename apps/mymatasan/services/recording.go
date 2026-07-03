@@ -182,3 +182,29 @@ func (s *recordingService) PurgeOldSegments(ctx context.Context) (int, error) {
 	}
 	return deleted, nil
 }
+
+func (s *recordingService) PurgeOldestSegments(ctx context.Context, keepAfter int64, wantBytes int64) (int, int64, error) {
+	filters := []sqldataenums.Filter{
+		{FieldName: "StartedAt", Compare: sqldataenums.LessThan, Value: keepAfter},
+	}
+	sorters := []sqldataenums.Sorter{{FieldName: "StartedAt", Sort: sqldataenums.ASC}}
+	segs, _, err := s.segments.Get(ctx, "", 1000, 0, filters, sorters)
+	if err != nil {
+		return 0, 0, err
+	}
+	deleted := 0
+	var freed int64
+	for _, seg := range segs {
+		if wantBytes > 0 && freed >= wantBytes {
+			break
+		}
+		if p := strings.TrimSpace(seg.FilePath); p != "" {
+			_ = recording.SecureRemove(p, s.shredPasses)
+		}
+		if _, err := s.segments.DeleteById(ctx, "", uint64(seg.Id)); err == nil {
+			deleted++
+			freed += seg.FileSize
+		}
+	}
+	return deleted, freed, nil
+}

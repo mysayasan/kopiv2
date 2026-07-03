@@ -7,11 +7,15 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   version:
     if: ${{ !contains(github.event.head_commit.message, '[skip version]') }}
     runs-on: ubuntu-latest
+    outputs:
+      released: ${{ steps.bump.outputs.released }}
+      tag: ${{ steps.bump.outputs.tag }}
 
     steps:
       - name: Checkout
@@ -27,14 +31,45 @@ jobs:
       - name: Apply pending version changes
         run: go run ./infra/versioning/cmd/versionbump -commit "$GITHUB_SHA"
 
-      - name: Commit version manifest
+      - name: Commit version manifest, tag & release
+        id: bump
         run: |
-          if git diff --quiet -- infra/versioning/version.json changes; then
+          if git diff --quiet -- infra/versioning/version.json changes CHANGELOG.md; then
             echo "No version changes to commit"
+            echo "released=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add infra/versioning/version.json changes
+          git add infra/versioning/version.json changes CHANGELOG.md
           git commit -m "chore: update version manifest [skip version]"
           git push
+
+          # Tag the mymatasan product release as v<mymatasan version>. If that tag
+          # already exists (a bump that changed core / another app but not
+          # mymatasan), there's nothing to release.
+          VERSION="$(jq -r '.apps.mymatasan.version' infra/versioning/version.json)"
+          TAG="v${VERSION}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "tag ${TAG} already exists (mymatasan not bumped this run); skipping release"
+            echo "released=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git tag "${TAG}"
+          git push origin "${TAG}"
+          echo "released=true" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+  # Build + publish the release when the version job cut a new mymatasan tag.
+  # Runs in the same workflow run (workflow_call), so no PAT is needed — a tag
+  # pushed with GITHUB_TOKEN would not, by itself, trigger a separate workflow.
+  release:
+    needs: version
+    if: ${{ needs.version.outputs.released == 'true' }}
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.version.outputs.tag }}
+    permissions:
+      contents: write
+      packages: write
+    secrets: inherit

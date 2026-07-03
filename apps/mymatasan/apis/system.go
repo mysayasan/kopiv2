@@ -17,19 +17,55 @@ type restarter interface {
 type systemApi struct {
 	reset     *services.SystemResetService
 	restarter restarter
+	update    *services.UpdateService
 }
 
 // NewSystemApi registers system-level operations under /system. The factory reset and
 // restart POSTs are admin-gated (write) by the router's require-admin middleware; reset
 // is additionally guarded by bootstrap.allowReset in the service.
-func NewSystemApi(router *mux.Router, reset *services.SystemResetService, restart restarter) {
-	h := &systemApi{reset: reset, restarter: restart}
+func NewSystemApi(router *mux.Router, reset *services.SystemResetService, restart restarter, update *services.UpdateService) {
+	h := &systemApi{reset: reset, restarter: restart, update: update}
 	g := router.PathPrefix("/system").Subrouter()
 	g.HandleFunc("/reset", h.startReset).Methods("POST")
 	g.HandleFunc("/reset/state", h.resetState).Methods("GET")
 	g.HandleFunc("/reset/progress", h.resetProgress).Methods("GET")
 	g.HandleFunc("/restart", h.restart).Methods("POST")
 	g.HandleFunc("/time", h.time).Methods("GET")
+	g.HandleFunc("/update", h.updateStatus).Methods("GET")
+	g.HandleFunc("/update/check", h.updateCheck).Methods("POST")
+	g.HandleFunc("/update/apply", h.updateApply).Methods("POST")
+}
+
+// updateStatus returns the cached self-update status (current/latest version, whether
+// an update is available, whether self-update can run here, and any in-flight apply).
+func (a *systemApi) updateStatus(w http.ResponseWriter, r *http.Request) {
+	if a.update == nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, "updater unavailable")
+		return
+	}
+	controllers.SendResult(w, a.update.Status(), "succeed")
+}
+
+// updateCheck forces an immediate GitHub release check.
+func (a *systemApi) updateCheck(w http.ResponseWriter, r *http.Request) {
+	if a.update == nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, "updater unavailable")
+		return
+	}
+	controllers.SendResult(w, a.update.CheckNow(r.Context()), "succeed")
+}
+
+// updateApply starts the background download + verify + swap + restart. Admin-gated.
+func (a *systemApi) updateApply(w http.ResponseWriter, r *http.Request) {
+	if a.update == nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, "updater unavailable")
+		return
+	}
+	if err := a.update.StartUpdate(r.Context()); err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, a.update.Status(), "succeed")
 }
 
 // time reports the host's timezone and current clock so the setup wizard can let the

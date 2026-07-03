@@ -20,6 +20,8 @@ Implements the `mymatasan` app module for the shared runtime host.
 - RTSP URI resolution order at startup: `cfg.StreamURL` override → ONVIF `SnapshotSource` fallback. `cfg.FallbackStreamUrl` is passed as `FallbackRTSPURI`.
 - Passes the `recording.Manager` pointer to `VisionMonitorSettings.Recorder` so alert events automatically trigger clip extraction.
 - Registers `recorderManager.Close()` in the graceful shutdown func.
+- Builds a `services.PythonInstaller` (from `deps.DataDir`/`deps.ConfigPath`) and passes it into `NewSettingsApi` so Settings can install a self-contained AI Python runtime (Python + torch + ultralytics) in-app.
+- Builds a `services.UpdateService` (current version resolved from the embedded manifest via `versioning.LoadDefault()`/`InfoForApp`, `deps.HomeDir`, `deps.Restarter`), calls `CleanupStaleFiles()` at startup to remove any leftovers from a previous update, registers its periodic release check on `deps.Scheduler.StartPeriodic` when a scheduler is available, and passes it into `NewSystemApi` for the self-update check/apply endpoints.
 - Provides API docs metadata and endpoint descriptions for shared Swagger/OpenAPI output.
 - Uses the embedded app version as the OpenAPI info version when available.
 
@@ -74,3 +76,4 @@ Within the monitor lifecycle, `app.go` also builds and runs a `MediaChannelManag
 - Vision detector modes are `motion`, `external`, `hybrid`, and `persistent`; `persistent` keeps one detector worker process alive and closes it during app shutdown.
 - At startup, per-camera recording configs with a missing RTSP URI are skipped with a warning log; recording starts only for cameras where an RTSP URI can be resolved.
 - `PersistSampledDiagnostics` from `vision.persistSampledDiagnostics` is forwarded to `VisionMonitorSettings`; when false (default), the noisy per-frame heartbeat diagnostic is suppressed and only capture/detect failures are written.
+- The default at-rest encryption key path (when `security.keyPath` is unset) resolves as `secret/atrest.key` against `deps.DataDir` via `apphost.ResolveWritablePath`, rather than a hardcoded CWD-relative path — upgrade-safe, since `ResolveWritablePath` keeps an existing legacy key (pre-packaging: CWD `secret/atrest.key`) in place so already-encrypted footage stays readable across an upgrade.

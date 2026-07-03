@@ -64,14 +64,16 @@ type onvifClient interface {
 }
 
 type cameraService struct {
-	cameraRepo dbsql.IGenericRepo[entities.Camera]
-	onvifRepo  dbsql.IGenericRepo[entities.CameraOnvif]
-	client     onvifClient
-	rtspClient rtsp.Client
-	nameMu     sync.Mutex
-	nameCache  map[int64]cachedCameraName
-	lprCapMu   sync.Mutex
-	lprCapById map[int64]cachedLPRCapability
+	cameraRepo  dbsql.IGenericRepo[entities.Camera]
+	onvifRepo   dbsql.IGenericRepo[entities.CameraOnvif]
+	client      onvifClient
+	rtspClient  rtsp.Client
+	nameMu      sync.Mutex
+	nameCache   map[int64]cachedCameraName
+	lprCapMu    sync.Mutex
+	lprCapById  map[int64]cachedLPRCapability
+	talkCapMu   sync.Mutex
+	talkCapById map[int64]cachedTalkCapability
 }
 
 // cachedCameraName memoizes a camera's resolved display name so callers (e.g. the
@@ -93,12 +95,13 @@ func NewCameraService(
 	rtspClient rtsp.Client,
 ) ICameraService {
 	return &cameraService{
-		cameraRepo: cameraRepo,
-		onvifRepo:  onvifRepo,
-		client:     client,
-		rtspClient: rtspClient,
-		nameCache:  map[int64]cachedCameraName{},
-		lprCapById: map[int64]cachedLPRCapability{},
+		cameraRepo:  cameraRepo,
+		onvifRepo:   onvifRepo,
+		client:      client,
+		rtspClient:  rtspClient,
+		nameCache:   map[int64]cachedCameraName{},
+		lprCapById:  map[int64]cachedLPRCapability{},
+		talkCapById: map[int64]cachedTalkCapability{},
 	}
 }
 

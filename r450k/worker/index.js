@@ -67,10 +67,83 @@ async function handleContact(request, env) {
   }
 }
 
+// --- Downloads: read the latest MyMataSan release from the GitHub Releases API,
+// categorize the assets by platform, and cache the result at the edge so the
+// marketing site's Download section always shows the current build without a
+// redeploy (and without hammering GitHub's rate limit). ------------------------
+
+const RELEASES_REPO = 'mysayasan/kopiv2';
+
+// categorizeAsset maps a release asset filename to a platform card, or null for
+// assets that aren't user downloads (checksums, etc.). Filenames come from
+// GoReleaser + the Windows installer job (see .goreleaser.yaml / release.yml).
+function categorizeAsset(name) {
+  const n = name.toLowerCase();
+  const arch = n.includes('arm64') ? 'arm64' : 'x64';
+  if (n.endsWith('.exe')) return { os: 'windows', kind: 'installer', arch, label: `Windows Installer (${arch})` };
+  if (n.includes('windows') && n.endsWith('.zip')) return { os: 'windows', kind: 'portable', arch, label: `Windows Portable (${arch})` };
+  if (n.endsWith('.deb')) return { os: 'linux', kind: 'deb', arch, label: `Debian / Ubuntu (${arch})` };
+  if (n.endsWith('.rpm')) return { os: 'linux', kind: 'rpm', arch, label: `Fedora / RHEL (${arch})` };
+  if (n.endsWith('.tar.gz')) return { os: 'linux', kind: 'tarball', arch, label: `Linux tarball (${arch})` };
+  return null;
+}
+
+async function handleDownloads(request, env) {
+  const cache = caches.default;
+  const cacheKey = new Request(new URL('/api/downloads', request.url).toString(), { method: 'GET' });
+  const cached = await cache.match(cacheKey);
+  if (cached) return cached;
+
+  const headers = { 'user-agent': 'r450k-site', accept: 'application/vnd.github+json' };
+  if (env.GITHUB_TOKEN) headers.authorization = `Bearer ${env.GITHUB_TOKEN}`;
+
+  let payload;
+  let status = 200;
+  try {
+    const gh = await fetch(`https://api.github.com/repos/${RELEASES_REPO}/releases/latest`, { headers });
+    if (gh.ok) {
+      const rel = await gh.json();
+      const version = String(rel.tag_name || '').replace(/^v/, '');
+      const assets = (rel.assets || [])
+        .map((a) => {
+          const cat = categorizeAsset(a.name);
+          return cat ? { ...cat, name: a.name, url: a.browser_download_url, size: a.size } : null;
+        })
+        .filter(Boolean);
+      payload = {
+        ok: true,
+        version: rel.tag_name || '',
+        publishedAt: rel.published_at || '',
+        htmlUrl: rel.html_url || `https://github.com/${RELEASES_REPO}/releases`,
+        assets,
+        docker: version ? { image: `ghcr.io/mysayasan/mymatasan:${version}` } : null,
+      };
+    } else {
+      status = 502;
+      payload = { ok: false, error: `GitHub API ${gh.status}`, htmlUrl: `https://github.com/${RELEASES_REPO}/releases` };
+    }
+  } catch {
+    status = 502;
+    payload = { ok: false, error: 'Failed to reach GitHub.', htmlUrl: `https://github.com/${RELEASES_REPO}/releases` };
+  }
+
+  const resp = new Response(JSON.stringify(payload), {
+    status,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      // 10-minute edge cache so a new release surfaces within minutes, no redeploy.
+      'cache-control': payload.ok ? 'public, max-age=600' : 'no-store',
+    },
+  });
+  if (payload.ok) await cache.put(cacheKey, resp.clone());
+  return resp;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === '/api/contact') return handleContact(request, env);
+    if (url.pathname === '/api/downloads') return handleDownloads(request, env);
     return env.ASSETS.fetch(request);
   },
 };

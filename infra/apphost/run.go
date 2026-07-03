@@ -136,8 +136,17 @@ func readinessCheckHandler(db dbsql.IDbCrud, cacheStore appcache.Store, extra *r
 	}
 }
 
-// Run starts a selected app module using shared runtime wiring.
+// Run starts a selected app module. On Windows, when the process is launched by
+// the Service Control Manager, it runs under the SCM (responding to start/stop)
+// via the platform dispatcher; otherwise (and on every other OS) it runs directly.
 func Run(app App) error {
+	return runWithPlatform(app)
+}
+
+// runApp is the shared runtime wiring. It returns on a graceful shutdown (OS
+// signal or, under a Windows service, an SCM stop) and os.Exit()s directly on a
+// supervised restart.
+func runApp(app App) error {
 	godotenv.Load(".env")
 
 	// When relaunched by a previous instance's self-restart (Windows detached child),
@@ -150,14 +159,17 @@ func Run(app App) error {
 		}
 	}
 
-	baseDir := filepath.Clean(app.BaseDir())
-	appConfig, err := loadConfig(baseDir)
+	homeDir := resolveHomeDir(app)
+	dataDir := resolveDataDir(app, homeDir)
+	log.Printf("paths app=%s home=%s data=%s", app.Name(), homeDir, dataDir)
+
+	appConfig, err := loadConfig(homeDir, dataDir)
 	if err != nil {
 		return err
 	}
 
 	sharedAPIConfig := sharedAPIConfigFor(app)
-	if err := applySensitiveConfig(appConfig, configFilePath(baseDir)); err != nil {
+	if err := applySensitiveConfig(appConfig, configFilePath(dataDir)); err != nil {
 		return err
 	}
 	applyDbConfigFromEnv(appConfig)
@@ -171,9 +183,9 @@ func Run(app App) error {
 	if err := applyServerConfigFromEnv(appConfig); err != nil {
 		return err
 	}
-	normalizePathConfig(baseDir, appConfig)
+	normalizePathConfig(dataDir, appConfig)
 
-	runtimeLogger, err := buildRuntimeLogger(app.Name(), baseDir, appConfig)
+	runtimeLogger, err := buildRuntimeLogger(app.Name(), dataDir, appConfig)
 	if err != nil {
 		return err
 	}
@@ -362,7 +374,9 @@ func Run(app App) error {
 
 	deps := Dependencies{
 		Config:      appConfig,
-		ConfigPath:  configFilePath(baseDir),
+		ConfigPath:  configFilePath(dataDir),
+		HomeDir:     homeDir,
+		DataDir:     dataDir,
 		Db:          dbCrud,
 		Cache:       cacheStore,
 		Auth:        auth,
@@ -400,11 +414,22 @@ func Run(app App) error {
 	}
 	apidocs.Register(router, app.Name(), docProvider)
 
-	router.PathPrefix("/").Handler(spaHandler{staticPath: filepath.Join(baseDir, "static"), indexPath: "index.html"})
+	router.PathPrefix("/").Handler(spaHandler{staticPath: filepath.Join(homeDir, "static"), indexPath: "index.html"})
 
 	listeners, err := buildListenerSpecs(appConfig)
 	if err != nil {
 		return err
+	}
+
+	// If any listener serves TLS, make sure a keypair exists — generate a
+	// self-signed one on first boot so a fresh install serves HTTPS out of the box.
+	for _, listener := range listeners {
+		if listener.UseTLS {
+			if err := ensureSelfSignedCert(appConfig.Tls.CertPath, appConfig.Tls.KeyPath, appConfig.Server.Hostnames); err != nil {
+				return err
+			}
+			break
+		}
 	}
 
 	servers := make([]*http.Server, 0, len(listeners))
@@ -435,6 +460,11 @@ func Run(app App) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// svcStop fires when the Windows Service Control Manager asks us to stop; it is
+	// a nil (never-ready) channel on every other platform and on an interactive
+	// Windows run, so this case is inert there.
+	svcStop := platformShutdownChan()
+
 	relaunch := false
 	select {
 	case err := <-errChan:
@@ -444,6 +474,8 @@ func Run(app App) error {
 		return nil
 	case <-ctx.Done():
 		log.Println("shutdown signal received")
+	case <-svcStop:
+		log.Println("service stop received")
 	case <-restartCtx.Done():
 		relaunch = true
 		log.Printf("restart requested: %s", restarter.Reason())
@@ -549,8 +581,26 @@ func configFilePath(baseDir string) string {
 	return filepath.Join(baseDir, configFile)
 }
 
-func loadConfig(baseDir string) (*config.AppConfigModel, error) {
-	appConfig, err := config.LoadAppConfiguration(configFilePath(baseDir))
+// loadConfig loads the app's mutable config from dataDir. On first run in a
+// packaged install (dataDir separate from homeDir) it seeds dataDir's copy from
+// the read-only default shipped in homeDir so the app has a writable config to
+// persist secrets/runtime settings back to. In a dev checkout homeDir==dataDir,
+// so the seed is a no-op and behaviour is unchanged.
+func loadConfig(homeDir, dataDir string) (*config.AppConfigModel, error) {
+	target := configFilePath(dataDir)
+	source := configFilePath(homeDir)
+	if target != source {
+		if _, err := os.Stat(target); errors.Is(err, os.ErrNotExist) {
+			if _, serr := os.Stat(source); serr == nil {
+				if cerr := copyFile(source, target); cerr != nil {
+					return nil, fmt.Errorf("seed config into data dir: %w", cerr)
+				}
+				log.Printf("seeded default config %s -> %s", source, target)
+			}
+		}
+	}
+
+	appConfig, err := config.LoadAppConfiguration(target)
 	if err != nil {
 		return nil, err
 	}
@@ -561,22 +611,108 @@ func loadConfig(baseDir string) (*config.AppConfigModel, error) {
 	return appConfig, nil
 }
 
-func normalizePathConfig(baseDir string, appConfig *config.AppConfigModel) {
-	appConfig.FileStorage.Path = resolvePath(baseDir, appConfig.FileStorage.Path)
-	appConfig.Logging.Path = resolvePath(baseDir, appConfig.Logging.Path)
-	appConfig.Tls.CertPath = resolvePath(baseDir, appConfig.Tls.CertPath)
-	appConfig.Tls.KeyPath = resolvePath(baseDir, appConfig.Tls.KeyPath)
-	appConfig.SSO.CACertPath = resolvePath(baseDir, appConfig.SSO.CACertPath)
+func normalizePathConfig(dataDir string, appConfig *config.AppConfigModel) {
+	appConfig.FileStorage.Path = ResolveWritablePath(dataDir, appConfig.FileStorage.Path)
+	appConfig.Logging.Path = ResolveWritablePath(dataDir, appConfig.Logging.Path)
+	appConfig.Tls.CertPath = ResolveWritablePath(dataDir, appConfig.Tls.CertPath)
+	appConfig.Tls.KeyPath = ResolveWritablePath(dataDir, appConfig.Tls.KeyPath)
+	appConfig.SSO.CACertPath = ResolveWritablePath(dataDir, appConfig.SSO.CACertPath)
 	if normalizeDbEngine(appConfig.Db.Engine) == "sqlite" && appConfig.Db.DbName != ":memory:" {
-		appConfig.Db.DbName = resolvePath(baseDir, appConfig.Db.DbName)
+		appConfig.Db.DbName = ResolveWritablePath(dataDir, appConfig.Db.DbName)
+	}
+	// Recordings/snapshots root. Historically defaulted (in the app) to a
+	// CWD-relative "recordings"; resolve it here so it lands under the data dir on
+	// a packaged install while the legacy fallback keeps existing footage in place.
+	snapshotDir := strings.TrimSpace(appConfig.Vision.SnapshotDir)
+	if snapshotDir == "" {
+		snapshotDir = "recordings"
+	}
+	appConfig.Vision.SnapshotDir = ResolveWritablePath(dataDir, snapshotDir)
+	if td := strings.TrimSpace(appConfig.Vision.Training.DataDir); td != "" {
+		appConfig.Vision.Training.DataDir = ResolveWritablePath(dataDir, td)
 	}
 }
 
-func resolvePath(baseDir string, target string) string {
+// ResolveWritablePath resolves a data-relative path against dataDir. Absolute
+// inputs pass through unchanged. As a one-time migration aid, when the dataDir
+// target does not yet exist but a copy exists at the current working directory
+// (how pre-packaging builds resolved these paths), the existing legacy location
+// is returned so an upgrade never orphans in-place recordings, keys, or a
+// database. Installed services set WorkingDirectory=dataDir, which makes the
+// legacy path identical to the target and the fallback a no-op.
+func ResolveWritablePath(dataDir, target string) string {
 	if target == "" || filepath.IsAbs(target) {
 		return target
 	}
-	return filepath.Clean(filepath.Join(baseDir, target))
+	resolved := filepath.Clean(filepath.Join(dataDir, target))
+	if _, err := os.Stat(resolved); err == nil {
+		return resolved
+	}
+	if legacy := filepath.Clean(target); legacy != resolved {
+		if _, err := os.Stat(legacy); err == nil {
+			return legacy
+		}
+	}
+	return resolved
+}
+
+// copyFile copies src to dst, creating parent directories as needed.
+func copyFile(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
+}
+
+// resolveHomeDir locates the read-only application root (static assets, bundled
+// scripts, default config). Resolution order: an explicit <APP>_HOME / KOPIV2_HOME
+// env override; else the app's declared BaseDir if it exists relative to the
+// working directory (source/dev checkout); else the directory of the running
+// executable (packaged/portable install).
+func resolveHomeDir(app App) string {
+	if v := envOverride(app, "HOME"); v != "" {
+		return filepath.Clean(v)
+	}
+	rel := filepath.Clean(app.BaseDir())
+	if fi, err := os.Stat(rel); err == nil && fi.IsDir() {
+		return rel
+	}
+	if exe, err := os.Executable(); err == nil {
+		return filepath.Dir(exe)
+	}
+	return rel
+}
+
+// resolveDataDir locates the writable state root (config, database, recordings,
+// logs, keys). An explicit <APP>_DATA / KOPIV2_DATA env override wins; otherwise
+// it defaults to homeDir, preserving the single-directory dev layout.
+func resolveDataDir(app App, homeDir string) string {
+	if v := envOverride(app, "DATA"); v != "" {
+		return filepath.Clean(v)
+	}
+	return homeDir
+}
+
+// envOverride reads an app-scoped path override (e.g. MYMATASAN_HOME) with a
+// generic KOPIV2_-prefixed fallback shared across apps (handy for containers).
+func envOverride(app App, suffix string) string {
+	if v := strings.TrimSpace(os.Getenv(strings.ToUpper(app.Name()) + "_" + suffix)); v != "" {
+		return v
+	}
+	return strings.TrimSpace(os.Getenv("KOPIV2_" + suffix))
 }
 
 func sharedAPIConfigFor(app App) SharedAPIConfig {

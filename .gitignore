@@ -5,6 +5,10 @@ logs
 #compiled files
 *.exe
 
+# goreleaser build output
+/dist/
+/packaging/staging/
+
 #node_modules
 node_modules
 

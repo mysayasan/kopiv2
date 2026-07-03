@@ -1,10 +1,28 @@
 package services
 
 import (
+	"context"
+	"sync"
 	"testing"
 
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
 )
+
+// recordingCameraSvc captures UpdateHealth calls so tests can assert what the
+// monitor persisted. Only the methods updateState touches are implemented.
+type recordingCameraSvc struct {
+	ICameraService
+	mu       sync.Mutex
+	statuses []string
+}
+
+func (r *recordingCameraSvc) UpdateHealth(_ context.Context, _ int64, status string, _ int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.statuses = append(r.statuses, status)
+	return nil
+}
+func (r *recordingCameraSvc) DisplayName(_ context.Context, _ int64) string { return "cam" }
 
 func newTestHealthMonitor(failureN, recoveryN int) *CameraHealthMonitor {
 	return &CameraHealthMonitor{
@@ -79,6 +97,30 @@ func TestDecideInitialOnlineDoesNotNotify(t *testing.T) {
 	}
 	if status != cameraHealthOnline {
 		t.Fatalf("expected status %q, got %q", cameraHealthOnline, status)
+	}
+}
+
+func TestUpdateStatePersistsInitialOnline(t *testing.T) {
+	svc := &recordingCameraSvc{}
+	m := newTestHealthMonitor(3, 2)
+	m.camera = svc
+	cam := &CameraDetail{Camera: entities.Camera{Id: 7}}
+
+	// recoveryN=2: the first success is below threshold, the second reaches
+	// online and must be persisted once even though it fires no notification.
+	m.updateState(context.Background(), cam, true)
+	if len(svc.statuses) != 0 {
+		t.Fatalf("no status should persist before recovery threshold, got %v", svc.statuses)
+	}
+	m.updateState(context.Background(), cam, true)
+	if len(svc.statuses) != 1 || svc.statuses[0] != cameraHealthOnline {
+		t.Fatalf("expected one persisted 'online', got %v", svc.statuses)
+	}
+
+	// Further online probes must not re-persist (announced status unchanged).
+	m.updateState(context.Background(), cam, true)
+	if len(svc.statuses) != 1 {
+		t.Fatalf("online must persist once, got %v", svc.statuses)
 	}
 }
 

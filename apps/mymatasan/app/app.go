@@ -193,7 +193,11 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	if boolValue(deps.Config.Security.EncryptAtRest, true) {
 		keyPath := strings.TrimSpace(deps.Config.Security.KeyPath)
 		if keyPath == "" {
-			keyPath, _ = filepath.Abs(filepath.Join("secret", "atrest.key"))
+			// Key lives under the writable data dir, outside the media roots so a
+			// factory reset can destroy it explicitly. ResolveWritablePath keeps an
+			// existing legacy key (pre-packaging: CWD/secret/atrest.key) in place so
+			// upgrades don't render already-encrypted footage unreadable.
+			keyPath, _ = filepath.Abs(apphost.ResolveWritablePath(deps.DataDir, filepath.Join("secret", "atrest.key")))
 		}
 		ks, err := atrest.LoadOrCreate(keyPath)
 		if err != nil {
@@ -427,7 +431,8 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewTrainingApi(protected, trainingService)
 	ffmpegBinDir, _ := filepath.Abs("bin")
 	ffmpegInstaller := services.NewFFmpegInstaller(ffmpegBinDir, settingsService)
-	apis.NewSettingsApi(protected, settingsService, cameraService, localUserService, notificationSettingsService, healthSettingsService, machineHealthSettingsService, machineHealthMonitor, visionToolSettingsFromAppConfig(deps.Config), ffmpegInstaller, deps.Config.Decoder.BrowseRoots)
+	pythonInstaller := services.NewPythonInstaller(deps.DataDir, deps.ConfigPath)
+	apis.NewSettingsApi(protected, settingsService, cameraService, localUserService, notificationSettingsService, healthSettingsService, machineHealthSettingsService, machineHealthMonitor, visionToolSettingsFromAppConfig(deps.Config), ffmpegInstaller, pythonInstaller, deps.Config.Decoder.BrowseRoots)
 	apis.NewRecordingApi(protected, recordingService, recorderManager, cameraService, settingsService, atrestCipher)
 	apis.NewNotificationApi(protected, notificationService)
 	apis.NewCapacityApi(protected, cameraService, settingsService, machineHealthMonitor, recordingService, objectBackend)
@@ -610,7 +615,20 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 			}
 		},
 	})
-	apis.NewSystemApi(protected, systemResetService, deps.Restarter)
+	// Self-update: check GitHub Releases (scheduled + on demand) and, on portable/
+	// installer installs, download+verify+swap the binary/assets and restart.
+	currentVersion := ""
+	if manifest, err := versioning.LoadDefault(); err == nil {
+		if info, err := manifest.InfoForApp(m.Name()); err == nil {
+			currentVersion = info.AppVersion
+		}
+	}
+	updateService := services.NewUpdateService(currentVersion, deps.HomeDir, deps.Restarter)
+	updateService.CleanupStaleFiles()
+	if deps.Scheduler != nil {
+		updateService.RegisterScheduler(deps.Scheduler.StartPeriodic)
+	}
+	apis.NewSystemApi(protected, systemResetService, deps.Restarter, updateService)
 
 	// Purge expired segments once at startup, then every 6 hours.
 	go func() {
@@ -1143,6 +1161,21 @@ func (m *module) APIDocs() apidocs.SpecConfig {
 			"GET /api/settings/vision/ai-tool/status": {
 				Summary:     "Check AI tool readiness",
 				Description: "Checks the configured external AI detector command, Python packages, worker script, model file, and native fallback status.",
+				Tags:        []string{"settings"},
+			},
+			"GET /api/settings/vision/ai-runtime/status": {
+				Summary:     "AI runtime status",
+				Description: "Reports whether the self-contained AI Python runtime (Python + torch + ultralytics) is installed, its path, and whether CUDA is available.",
+				Tags:        []string{"settings"},
+			},
+			"POST /api/settings/vision/ai-runtime/install": {
+				Summary:     "Install AI runtime",
+				Description: "Starts the background installer that downloads a self-contained Python and pip-installs torch (GPU build when an NVIDIA GPU is present, else CPU) + ultralytics, then points the detector at it. Admin only.",
+				Tags:        []string{"settings"},
+			},
+			"GET /api/settings/vision/ai-runtime/install/status": {
+				Summary:     "AI runtime install status",
+				Description: "Polls the background AI-runtime install job (running, status, log, python path, supported).",
 				Tags:        []string{"settings"},
 			},
 			"GET /api/settings/users": {

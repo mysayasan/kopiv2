@@ -55,6 +55,35 @@ const paths = {
     </>
   ),
   arrow: <path d="M5 12h14M13 6l6 6-6 6" />,
+  download: (
+    <>
+      <path d="M12 3v12" />
+      <path d="M8 11l4 4 4-4" />
+      <path d="M5 21h14" />
+    </>
+  ),
+  windows: (
+    <>
+      <rect x="3.5" y="4.5" width="7" height="7" rx="0.5" />
+      <rect x="13.5" y="4.5" width="7" height="7" rx="0.5" />
+      <rect x="3.5" y="12.5" width="7" height="7" rx="0.5" />
+      <rect x="13.5" y="12.5" width="7" height="7" rx="0.5" />
+    </>
+  ),
+  terminal: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M7 9l3 3-3 3" />
+      <path d="M13 15h4" />
+    </>
+  ),
+  docker: (
+    <>
+      <rect x="3" y="11" width="18" height="7" rx="1" />
+      <path d="M6 11V8M10 11V8M14 11V8" />
+      <path d="M3 15c3 2 15 2 18 0" />
+    </>
+  ),
 };
 
 export default function Icon({ name, size = 24, className }) {

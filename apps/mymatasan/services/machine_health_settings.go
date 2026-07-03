@@ -47,6 +47,15 @@ type MachineMitigationSettings struct {
 	// ResumePercent is the fullness a paused disk must drop below before recording
 	// resumes (hysteresis to avoid flapping).
 	ResumePercent int `json:"resumePercent"`
+	// OverwriteOldest keeps recording continuous: when a disk reaches
+	// PauseRecordingAtPercent, the oldest recorded segments are deleted (even if
+	// still inside their retention window) until usage would drop below
+	// ResumePercent, instead of pausing. Recording only pauses as a fallback when
+	// nothing old enough remains to delete.
+	OverwriteOldest bool `json:"overwriteOldest"`
+	// OverwriteMinKeepDays is the safety floor for OverwriteOldest: footage newer
+	// than this many days is never auto-deleted.
+	OverwriteMinKeepDays int `json:"overwriteMinKeepDays"`
 }
 
 // MachineHealthSettings is the runtime-editable host (machine) health monitor
@@ -144,6 +153,8 @@ func DefaultMachineHealthSettings() MachineHealthSettings {
 			PurgeAtPercent:          88,
 			PauseRecordingAtPercent: 95,
 			ResumePercent:           80,
+			OverwriteOldest:         false,
+			OverwriteMinKeepDays:    1,
 		},
 	}
 }
@@ -172,6 +183,7 @@ func normalizeMachineHealthSettings(s MachineHealthSettings) MachineHealthSettin
 	if s.Mitigation.ResumePercent >= s.Mitigation.PauseRecordingAtPercent {
 		s.Mitigation.ResumePercent = clampInt(s.Mitigation.PauseRecordingAtPercent-10, 1, 99)
 	}
+	s.Mitigation.OverwriteMinKeepDays = normalizeInt(s.Mitigation.OverwriteMinKeepDays, d.Mitigation.OverwriteMinKeepDays, 1, 365)
 	return s
 }
 

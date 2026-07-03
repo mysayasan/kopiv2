@@ -25,10 +25,17 @@ type Camera struct {
 	// change recorded by the monitor.
 	LastHealthCheckAt int64 `json:"lastHealthCheckAt" form:"lastHealthCheckAt" query:"lastHealthCheckAt"`
 	LastSeenAt        int64 `json:"lastSeenAt" form:"lastSeenAt" query:"lastSeenAt"`
-	DiscoveryMethods  string `json:"discoveryMethods" form:"discoveryMethods" query:"discoveryMethods"`
-	IsActive          bool   `json:"isActive" form:"isActive" query:"isActive"`
-	CreatedBy         int64  `json:"createdBy" form:"createdBy" query:"createdBy"`
-	CreatedAt         int64  `json:"createdAt" form:"createdAt" query:"createdAt"`
-	UpdatedBy         int64  `json:"updatedBy" form:"updatedBy" query:"updatedBy"`
-	UpdatedAt         int64  `json:"updatedAt" form:"updatedAt" query:"updatedAt"`
+	// TalkTransport caches the detected two-way-audio (talk-back) transport:
+	// "onvif" (ONVIF RTSP audio backchannel), "tapo"/"vigi" (TP-Link proprietary
+	// port-8800 protocol), "none" (probed, unsupported), or "" (not yet probed).
+	TalkTransport string `json:"talkTransport" form:"talkTransport" query:"talkTransport"`
+	// TalkPassword is the speaker password for transports that need one (the
+	// TP-Link cloud-account password for Tapo). Never serialized to clients.
+	TalkPassword     string `json:"-" form:"talkPassword" query:"talkPassword"`
+	DiscoveryMethods string `json:"discoveryMethods" form:"discoveryMethods" query:"discoveryMethods"`
+	IsActive         bool   `json:"isActive" form:"isActive" query:"isActive"`
+	CreatedBy        int64  `json:"createdBy" form:"createdBy" query:"createdBy"`
+	CreatedAt        int64  `json:"createdAt" form:"createdAt" query:"createdAt"`
+	UpdatedBy        int64  `json:"updatedBy" form:"updatedBy" query:"updatedBy"`
+	UpdatedAt        int64  `json:"updatedAt" form:"updatedAt" query:"updatedAt"`
 }

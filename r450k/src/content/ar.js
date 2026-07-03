@@ -45,7 +45,7 @@ const SHOT_ALT = [
   'موجز إشعارات موحّد مع لقطات وإجراءات إقرار',
 ];
 
-const NAV = ['المزايا', 'كيف يعمل', 'العتاد', 'عرض', 'حالات الاستخدام', 'التطبيقات'];
+const NAV = ['المزايا', 'كيف يعمل', 'العتاد', 'عرض', 'حالات الاستخدام', 'التطبيقات', 'تنزيل'];
 
 export default {
   ...en,
@@ -112,6 +112,17 @@ export default {
     available: 'متاح',
     platform: 'منصّة',
     items: en.apps.items.map((it, i) => ({ ...it, status: A[i].s, body: A[i].b })),
+  },
+  downloads: {
+    ...en.downloads,
+    kicker: 'احصل على MyMataSan',
+    title: 'نزّل واستضِف ذاتيًا.',
+    subtitle: 'عقدة mymatasan الطرفية عملية تثبيت واحدة. اختر منصّتك — واجهة الويب وبرامج عامل الذكاء الاصطناعي وإعداد افتراضي مضمّنة.',
+    latest: 'أحدث إصدار',
+    dockerHint: 'شغّل صورة متعددة المعماريات (ffmpeg مضمّن):',
+    loading: 'جارٍ تحميل أحدث إصدار…',
+    unavailable: 'التنزيلات قيد الإعداد. عُد قريبًا، أو تصفّح كل الإصدارات على GitHub.',
+    allReleases: 'كل الإصدارات على GitHub',
   },
   finalCta: {
     ...en.finalCta,

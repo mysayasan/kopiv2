@@ -1786,7 +1786,6 @@ function AppInner({ lang, onLangChange }) {
         playAlertSound();
       }
       setMessage(t('app.testAlertCreated'));
-      openNotificationsPage();
     } catch (err) {
       setMessage(err.message, 'error');
     } finally {
@@ -2019,7 +2018,9 @@ function AppInner({ lang, onLangChange }) {
     try {
       // Credentials are verified server-side before the camera is persisted; a camera that
       // rejects the login is not saved (the add dialog stays open with the error).
-      await request('/api/cameras/discovered', {
+      // Save returns the new camera's id so we can jump straight to its node
+      // (instead of landing on the first camera in the list).
+      const created = await request('/api/cameras/discovered', {
         method: 'POST',
         body: JSON.stringify({
           ...deviceData,
@@ -2031,7 +2032,12 @@ function AppInner({ lang, onLangChange }) {
       });
       setMessage(t('app.cameraSaved'));
       await refresh({ quiet: true });
-      setCameraNav('saved');
+      const newId = Number(created?.id ?? created) || 0;
+      if (newId) {
+        selectCamera(newId);
+      } else {
+        setCameraNav('saved');
+      }
     } catch (err) {
       setMessage(err.message, 'error');
       throw err;
@@ -2146,9 +2152,11 @@ function AppInner({ lang, onLangChange }) {
   async function movePTZ(deviceId, direction) {
     setMessage('');
     try {
+      // durationMs 0 = continuous move: the camera keeps moving until an explicit
+      // stop (sent on D-pad release), so press-and-hold pans/tilts smoothly.
       await request(`/api/cameras/${deviceId}/ptz/move`, {
         method: 'POST',
-        body: JSON.stringify({ direction, speed: 0.35, durationMs: 350 }),
+        body: JSON.stringify({ direction, speed: 0.35, durationMs: 0 }),
       });
     } catch (err) {
       setMessage(err.message, 'error');

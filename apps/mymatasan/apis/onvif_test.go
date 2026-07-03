@@ -11,6 +11,7 @@ import (
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
 	"github.com/mysayasan/kopiv2/infra/onvif"
 	"github.com/mysayasan/kopiv2/infra/rtsp"
+	"github.com/mysayasan/kopiv2/infra/talk"
 )
 
 type fakeCameraService struct {
@@ -109,6 +110,12 @@ func (f *fakeCameraService) PreviewSource(_ context.Context, _ uint64, _ string)
 }
 func (f *fakeCameraService) LPRCapability(_ context.Context, _ int64) services.LPRCapabilityResult {
 	return services.LPRCapabilityResult{}
+}
+func (f *fakeCameraService) TalkCapability(_ context.Context, _ int64) services.TalkCapabilityResult {
+	return services.TalkCapabilityResult{}
+}
+func (f *fakeCameraService) OpenTalkSession(_ context.Context, _ uint64) (talk.Session, error) {
+	return nil, nil
 }
 func (f *fakeCameraService) TestStream(_ context.Context, _ uint64) (*rtsp.ProbeResult, error) {
 	return nil, nil

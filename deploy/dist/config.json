@@ -1,0 +1,230 @@
+{
+  "_comment": "MyMataSan distribution defaults. Safe to edit. On first run a strong jwt.secret is generated and saved here, and (since server.tlsPorts is set) a self-signed TLS certificate is generated into ./certs so the app serves HTTPS on :3000 immediately — browsers show a one-time trust warning on a LAN. For a trusted chain, drop your own cert/key at the tls.certPath/keyPath below, or front the app with a TLS-terminating reverse proxy and switch to server.nonTlsPorts. This file lives in the app's data dir; runtime changes made in the UI are persisted back to it.",
+  "jwt": {
+    "secret": ""
+  },
+  "loginSecurity": {
+    "enabled": true,
+    "maxAttempts": 5,
+    "windowSeconds": 300,
+    "lockoutSeconds": 60,
+    "lockoutMaxSeconds": 900,
+    "failedDelayMs": 500,
+    "notifyOnLockout": true
+  },
+  "localAuth": {
+    "enabled": true,
+    "username": "admin",
+    "password": "changeme"
+  },
+  "decoder": {
+    "browseRoots": [],
+    "mjpeg": {
+      "ffmpegPath": "",
+      "quality": 7,
+      "threads": 1
+    },
+    "ffmpeg": {
+      "rtspTransport": "tcp",
+      "hwaccel": "none",
+      "hwaccelDevice": "",
+      "initHwDevice": "",
+      "videoDecoder": "",
+      "probeSize": 1000000,
+      "analyzeDuration": 1000000,
+      "lowDelay": true,
+      "noBuffer": true
+    }
+  },
+  "recording": {
+    "storage": {
+      "codec": "h264",
+      "quality": 0,
+      "maxConcurrentEncodes": 0
+    }
+  },
+  "stream": {
+    "webrtc": {
+      "enabled": true,
+      "iceServers": []
+    },
+    "mjpegFallback": {
+      "enabled": true
+    }
+  },
+  "vision": {
+    "enabled": true,
+    "intervalMs": 2000,
+    "captureTimeoutMs": 5000,
+    "diagnosticCooldownSeconds": 30,
+    "persistSampledDiagnostics": false,
+    "diagnosticRetentionDays": 3,
+    "alertRetentionDays": 0,
+    "alertPurgeIntervalHours": 6,
+    "detector": {
+      "mode": "persistent",
+      "command": "",
+      "args": ["./ai/yolo_worker.py"],
+      "timeoutMs": 8000,
+      "useMotionFallback": true,
+      "useMotionIntrusion": true,
+      "minObjectConfidence": 0.25,
+      "classMap": {
+        "fire": ["fire"],
+        "smoke": ["smoke"],
+        "person": ["person"],
+        "vehicle": ["vehicle", "car", "truck", "bus", "motorcycle", "bicycle"],
+        "animal": ["animal", "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "mouse", "rat", "rabbit", "deer", "goat", "pig", "monkey"],
+        "intrusion": ["person", "vehicle", "car", "truck", "bus", "motorcycle", "bicycle"],
+        "line_crossing": ["person", "vehicle", "car", "truck", "bus", "motorcycle", "bicycle"],
+        "multi_line_crossing": ["person", "vehicle", "car", "truck", "bus", "motorcycle", "bicycle"]
+      }
+    }
+  },
+  "health": {
+    "enabled": true,
+    "intervalMs": 30000,
+    "timeoutMs": 5000,
+    "failureThreshold": 3,
+    "recoveryThreshold": 2
+  },
+  "pairing": {
+    "enabled": true,
+    "multicastAddr": "239.255.90.21:49531",
+    "replayWindowSeconds": 30,
+    "mtlsPort": 49532,
+    "certTtlHours": 168,
+    "renewBeforeHours": 48,
+    "heartbeatIntervalSeconds": 60
+  },
+  "notification": {
+    "webhook": {
+      "enabled": false,
+      "url": "",
+      "minSeverity": "warning"
+    },
+    "telegram": {
+      "enabled": false,
+      "botToken": "",
+      "chatId": "",
+      "minSeverity": "warning"
+    },
+    "sseClientBuffer": 16,
+    "retentionDays": 30,
+    "purgeIntervalHours": 6,
+    "purgeReadOnly": false
+  },
+  "fileStorage": {
+    "path": "./uploads",
+    "cleanup": {
+      "enabled": false,
+      "frequencySeconds": 60,
+      "batchSize": 100
+    }
+  },
+  "cache": {
+    "provider": "default",
+    "ttlSeconds": 30,
+    "keyPrefix": "kopiv2",
+    "redis": {
+      "address": "localhost:6379",
+      "password": "",
+      "db": 0,
+      "useTls": false,
+      "connectTimeoutMs": 2000,
+      "operationTimeoutMs": 2000
+    }
+  },
+  "rateLimit": {
+    "enabled": true,
+    "endpointCacheTtlSeconds": 30,
+    "defaultWindowSeconds": 60,
+    "devOnly": {
+      "enabled": false,
+      "requests": 300,
+      "windowSeconds": 60
+    },
+    "authOnly": {
+      "enabled": true,
+      "requests": 120,
+      "windowSeconds": 20
+    },
+    "public": {
+      "enabled": true,
+      "requests": 30,
+      "windowSeconds": 60
+    }
+  },
+  "transaction": {
+    "lockProvider": "memory",
+    "lockWaitTimeoutMs": 30000,
+    "lockLeaseMs": 10000,
+    "operationTimeoutMs": 30000,
+    "stuckTimeoutMs": 30000,
+    "jobWorkerEnabled": false,
+    "jobWorkerFrequencySeconds": 5,
+    "maxAttempts": 3
+  },
+  "logging": {
+    "enabled": true,
+    "path": "./logs/mymatasan.log",
+    "maxLineBytes": 8192,
+    "cleanup": {
+      "enabled": true,
+      "maxRetentionDays": 90,
+      "frequencyMinutes": 60
+    }
+  },
+  "apiLog": {
+    "cleanup": {
+      "enabled": true,
+      "maxRetentionDays": 90,
+      "frequencyMinutes": 60
+    }
+  },
+  "telemetry": {
+    "enabled": true,
+    "prometheus": {
+      "enabled": true,
+      "metricsPath": "/metrics",
+      "apiDurationThresholdMs": 1000
+    }
+  },
+  "tls": {
+    "certPath": "./certs/cert.pem",
+    "keyPath": "./certs/key.pem"
+  },
+  "server": {
+    "hostnames": [
+      "*"
+    ],
+    "tlsPorts": [
+      3000
+    ],
+    "nonTlsPorts": [],
+    "readHeaderTimeoutSeconds": 5,
+    "readTimeoutSeconds": 0,
+    "writeTimeoutSeconds": 0,
+    "idleTimeoutSeconds": 120
+  },
+  "allowOrigins": "",
+  "bootstrap": {
+    "enabled": true,
+    "autoCreateDatabase": true,
+    "autoCreateSchema": true,
+    "autoMigrate": true,
+    "autoSeed": true,
+    "allowReset": true,
+    "setupPath": "/setup",
+    "seedStatements": []
+  },
+  "db": {
+    "engine": "sqlite",
+    "host": "",
+    "port": 0,
+    "user": "",
+    "password": "",
+    "db_name": "./data/mymatasan.db",
+    "ssl_mode": ""
+  }
+}
