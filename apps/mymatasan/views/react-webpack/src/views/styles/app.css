@@ -2196,6 +2196,15 @@ dd {
   gap: 18px;
 }
 
+/* A horizontal rule between sections of a panel/pane. Without this the bare <hr>
+   collapses to a tiny centered mark (a stray "dot") inside grid/flex containers. */
+.settings-divider {
+  width: 100%;
+  border: none;
+  border-top: 1px solid var(--border-soft);
+  margin: 4px 0;
+}
+
 .tool-status-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
