@@ -3,6 +3,12 @@
 All notable changes to this project, generated from `changes/` entries on each version bump. Newest first.
 
 
+
+## 2026-07-03 — core 1.45.1 (e866a39)
+
+### Fixed
+
+- **infra**: Fixed the reusable .github/workflows/release.yml so the 'Extract release notes from CHANGELOG.md' step writes release-notes.md to ${{ runner.temp }} instead of the repo working tree, and points GoReleaser's --release-notes flag at that path. Previously the untracked release-notes.md file left in the checkout tripped GoReleaser's release --clean dirty-state check ('git is in a dirty state'), which could abort tag-triggered releases before artifacts were published.
 ## 2026-07-03 — mymatasan 1.77.0, core 1.45.0 (e88bec2)
 
 ### Added
