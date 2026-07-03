@@ -151,6 +151,54 @@ WHERE NOT EXISTS (SELECT 1 FROM api_endpoint WHERE app_code = 'mymatasan' AND ho
 }
 
 func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (apphost.ShutdownFunc, error) {
+	// Resolve the encryption-at-rest master key FIRST, before building any service. When
+	// encryption is on and the key is missing but a key existed here before, the app enters
+	// RECOVERY mode: it mounts only the public recovery gate and returns, so nothing else
+	// starts (no service writes plaintext, no replacement key is minted) until the operator
+	// restores the key. The key lives OUTSIDE the media roots so a factory reset destroys it
+	// explicitly (KeyStore.Destroy) — the instant, device-independent secure wipe.
+	var atrestKeyStore *atrest.KeyStore
+	var atrestCipher *atrest.Cipher
+	if boolValue(deps.Config.Security.EncryptAtRest, true) {
+		keyPath := strings.TrimSpace(deps.Config.Security.KeyPath)
+		if keyPath == "" {
+			// ResolveWritablePath keeps an existing legacy key (pre-packaging:
+			// CWD/secret/atrest.key) in place so upgrades don't orphan encrypted footage.
+			keyPath, _ = filepath.Abs(apphost.ResolveWritablePath(deps.DataDir, filepath.Join("secret", "atrest.key")))
+		}
+		// A disaster-recovery escrow placed here (or configured) is restored automatically
+		// on boot when no key exists yet. Defaults to recovery.atrestkey beside the key.
+		recoveryPath := strings.TrimSpace(deps.Config.Security.RecoveryPath)
+		if recoveryPath == "" {
+			recoveryPath = filepath.Join(filepath.Dir(keyPath), "recovery.atrestkey")
+		}
+		protectorCfg := atrest.ProtectorConfig{
+			Name:           deps.Config.Security.KeyProtector,
+			Passphrase:     deps.Config.Security.Passphrase,
+			PassphraseFile: deps.Config.Security.PassphraseFile,
+			PassphraseEnv:  deps.Config.Security.PassphraseEnv,
+		}
+		outcome, err := atrest.OpenForStartup(keyPath, recoveryPath, protectorCfg)
+		if err != nil {
+			return nil, fmt.Errorf("encryption-at-rest key: %w", err)
+		}
+		if outcome.Mode == atrest.ModeRecoveryPending {
+			apis.NewRecoveryGateApi(api, keyPath, protectorCfg, deps.Restarter, outcome.KeyId)
+			log.Printf("encryption-at-rest: master key missing but a key existed here before (id %s) — starting in RECOVERY mode; open the app to restore it", outcome.KeyId)
+			return func(context.Context) error { return nil }, nil
+		}
+		atrestKeyStore = outcome.KeyStore
+		atrestCipher = atrestKeyStore.Cipher()
+		protector := strings.TrimSpace(deps.Config.Security.KeyProtector)
+		if protector == "" {
+			protector = "file"
+		}
+		if outcome.Mode == atrest.ModeRestored {
+			log.Printf("encryption-at-rest: restored master key from recovery file %s", recoveryPath)
+		}
+		log.Printf("encryption-at-rest enabled (key %s, protector %s, id %s)", keyPath, protector, outcome.KeyId)
+	}
+
 	cameraRepo := dbsql.NewGenericRepo[appentities.Camera](deps.Db)
 	cameraOnvifRepo := dbsql.NewGenericRepo[appentities.CameraOnvif](deps.Db)
 	detectionRuleRepo := dbsql.NewGenericRepo[appentities.DetectionRule](deps.Db)
@@ -184,30 +232,6 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		deps.Logger.Warnf("mymatasan.vision", "object detector backend unavailable (%v); auto-label and custom models are disabled", backendErr)
 		objectBackend = nil
 	}
-	// Encryption-at-rest key store (crypto-erase). Default ON. The key lives OUTSIDE the
-	// media roots so the factory reset destroys it explicitly (KeyStore.Destroy) — the
-	// instant, device-independent secure wipe — rather than as part of the media delete.
-	// A nil cipher (disabled) means write plaintext + read with legacy passthrough.
-	var atrestKeyStore *atrest.KeyStore
-	var atrestCipher *atrest.Cipher
-	if boolValue(deps.Config.Security.EncryptAtRest, true) {
-		keyPath := strings.TrimSpace(deps.Config.Security.KeyPath)
-		if keyPath == "" {
-			// Key lives under the writable data dir, outside the media roots so a
-			// factory reset can destroy it explicitly. ResolveWritablePath keeps an
-			// existing legacy key (pre-packaging: CWD/secret/atrest.key) in place so
-			// upgrades don't render already-encrypted footage unreadable.
-			keyPath, _ = filepath.Abs(apphost.ResolveWritablePath(deps.DataDir, filepath.Join("secret", "atrest.key")))
-		}
-		ks, err := atrest.LoadOrCreate(keyPath)
-		if err != nil {
-			return nil, fmt.Errorf("encryption-at-rest key: %w", err)
-		}
-		atrestKeyStore = ks
-		atrestCipher = ks.Cipher()
-		log.Printf("encryption-at-rest enabled (key %s)", keyPath)
-	}
-
 	trainingModelRepo := dbsql.NewGenericRepo[appentities.TrainingModel](deps.Db)
 	trainingService := services.NewTrainingService(
 		trainingDatasetRepo,
@@ -628,7 +652,18 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	if deps.Scheduler != nil {
 		updateService.RegisterScheduler(deps.Scheduler.StartPeriodic)
 	}
-	apis.NewSystemApi(protected, systemResetService, deps.Restarter, updateService)
+	// The recovery-escrow endpoints need the key store; pass nil (not a typed-nil
+	// interface) when encryption-at-rest is off so the endpoints cleanly report unavailable.
+	var escrowStore interface {
+		Enabled() bool
+		Protector() string
+		ExportEscrow(string) ([]byte, error)
+		VerifyEscrow(string, []byte) (bool, error)
+	}
+	if atrestKeyStore != nil {
+		escrowStore = atrestKeyStore
+	}
+	apis.NewSystemApi(protected, systemResetService, deps.Restarter, updateService, escrowStore)
 
 	// Purge expired segments once at startup, then every 6 hours.
 	go func() {

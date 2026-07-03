@@ -77,3 +77,12 @@ Within the monitor lifecycle, `app.go` also builds and runs a `MediaChannelManag
 - At startup, per-camera recording configs with a missing RTSP URI are skipped with a warning log; recording starts only for cameras where an RTSP URI can be resolved.
 - `PersistSampledDiagnostics` from `vision.persistSampledDiagnostics` is forwarded to `VisionMonitorSettings`; when false (default), the noisy per-frame heartbeat diagnostic is suppressed and only capture/detect failures are written.
 - The default at-rest encryption key path (when `security.keyPath` is unset) resolves as `secret/atrest.key` against `deps.DataDir` via `apphost.ResolveWritablePath`, rather than a hardcoded CWD-relative path — upgrade-safe, since `ResolveWritablePath` keeps an existing legacy key (pre-packaging: CWD `secret/atrest.key`) in place so already-encrypted footage stays readable across an upgrade.
+
+## Encryption-at-rest key resolution & recovery mode
+
+`RegisterAppRoutes` resolves the master key **first, before building any other service** (moved from its former position mid-function):
+
+- When `security.encryptAtRest` is on, it derives `keyPath` (as above) and `recoveryPath` (`security.recoveryPath`, default `recovery.atrestkey` beside the key) and builds `atrest.ProtectorConfig` from `security.keyProtector`/`passphrase`/`passphraseFile`/`passphraseEnv`, then calls `atrest.OpenForStartup(keyPath, recoveryPath, protectorCfg)`.
+- On `ModeLoaded`/`ModeCreated`/`ModeRestored`, `atrestKeyStore`/`atrestCipher` are set as before and threaded into the recorder, vision monitor, and training image store; a `ModeRestored` outcome (key rebuilt from a config-driven recovery escrow) is logged distinctly.
+- On `ModeRecoveryPending` (a key existed here before via the init marker but is now missing), `app.go` calls `apis.NewRecoveryGateApi(api, keyPath, protectorCfg, deps.Restarter, outcome.KeyId)` and **returns immediately** with a no-op shutdown func — no camera/vision/recording/API services are built, no DB writes happen, and nothing can mint a replacement key. The browser can reach nothing but the public recovery gate until the operator restores the key (see `apis/recovery_gate.go.md`) and the process restarts.
+- `NewSystemApi` now takes a fifth `keystore` argument (the escrow-export/verify seam, `apis/system.go.md`); `app.go` passes `atrestKeyStore` as a narrow local interface value, or a typed-nil-free `nil` when encryption-at-rest is disabled, so the recovery endpoints cleanly report "not enabled" rather than panicking.

@@ -2183,13 +2183,22 @@ dd {
   z-index: 3;
   display: flex;
   gap: 2px;
+  /* Horizontal scroll (swipeable on touch) for overflowing tabs; overflow-y MUST be
+     hidden, otherwise the browser promotes it to auto and the active tab's -1px
+     underline triggers a phantom vertical scrollbar. */
   overflow-x: auto;
-  scrollbar-width: thin;
+  overflow-y: hidden;
+  /* Hide the scrollbar chrome (still scrollable/swipeable) so the bar stays clean. */
+  scrollbar-width: none;
   background: var(--bg-body);
   border-bottom: 1px solid var(--border-panel);
   /* Bleed the tab bar to the workspace edges so the underline meets the divider. */
   margin: 0 -2px;
   padding: 0 2px;
+}
+
+.settings-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .settings-tab {
@@ -2263,6 +2272,27 @@ dd {
   margin: 3px 0 0;
   font-size: 13px;
   color: var(--text-muted);
+}
+
+/* Mobile: tighten the tab bar so more tabs fit per swipe, and slim the header band. */
+@media (max-width: 620px) {
+  .settings-tab {
+    gap: 6px;
+    padding: 10px 11px;
+    font-size: 12px;
+  }
+  .settings-tab-head {
+    gap: 10px;
+    padding: 14px 2px 6px;
+  }
+  .settings-tab-head-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 11px;
+  }
+  .settings-tab-head-text h2 {
+    font-size: 16px;
+  }
 }
 
 .settings-content {

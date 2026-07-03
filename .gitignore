@@ -42,6 +42,12 @@ apps/*/data/*.db-wal
 # tgbridge (telegram bridge): config holds the bot token; state file holds session ids
 tools/tgbridge/config.json
 tgbridge_state.json
+
+# encryption-at-rest runtime key material & recovery artifacts (never commit)
+apps/*/secret/
+secret/atrest.key.init
+*.atrestkey
+*.atrestkey.applied
 tools/tgbridge/outbox/
 tools/tgbridge/.gocache/
 tools/tgbridge/go-build*/

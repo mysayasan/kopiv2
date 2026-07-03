@@ -214,6 +214,81 @@ export function ChangePasswordPage({ busy, message, onSubmit, onCancel, lang, on
   );
 }
 
+// RecoveryGatePage is the pre-login screen shown when the backend is in recovery mode
+// (encryption on, master key missing but a key existed here before). It reuses the login
+// chrome — including the language switcher — and lets the operator upload their exported
+// recovery key + passphrase to restore access. The raw key file is read as bytes and
+// base64-encoded for the unlock request; nothing here needs a session.
+export function RecoveryGatePage({ keyId, busy, restarting, message, onSubmit, lang, onLangChange }) {
+  const t = useT();
+  const [passphrase, setPassphrase] = useState('');
+  const [fileName, setFileName] = useState('');
+  const [keyBase64, setKeyBase64] = useState('');
+  const [localError, setLocalError] = useState('');
+
+  async function onPickFile(event) {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let bin = '';
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      setKeyBase64(btoa(bin));
+      setFileName(file.name);
+      setLocalError('');
+    } catch (_) {
+      setLocalError(t('rg.readFail'));
+    }
+  }
+
+  function submit(event) {
+    event.preventDefault();
+    if (!keyBase64) { setLocalError(t('rg.needFile')); return; }
+    if (!passphrase) { setLocalError(t('rg.needPass')); return; }
+    setLocalError('');
+    onSubmit({ keyBase64, passphrase });
+  }
+
+  return (
+    <main className="login-screen">
+      {onLangChange ? (
+        <div className="login-lang-switch">
+          <LanguageDropdown lang={lang} onLang={onLangChange} />
+        </div>
+      ) : null}
+      <form className="login-panel" onSubmit={submit}>
+        <div className="login-brand">
+          <BrandLogo size={104} className="brand-logo--login" />
+          <p>{t('rg.subtitle')}</p>
+        </div>
+        <p className="login-note">{t('rg.note')}</p>
+        {keyId ? (
+          <p className="login-note login-keyid">{t('rg.keyId')}: <code>{keyId}</code></p>
+        ) : null}
+        <label>
+          {t('rg.file')}
+          <input type="file" accept=".atrestkey,application/octet-stream" onChange={onPickFile} disabled={busy || restarting} />
+        </label>
+        {fileName ? <p className="login-note">{fileName}</p> : null}
+        <label>
+          {t('rg.passphrase')}
+          <PasswordField
+            value={passphrase}
+            onChange={setPassphrase}
+            autoComplete="off"
+            disabled={busy || restarting}
+          />
+        </label>
+        <button type="submit" disabled={busy || restarting}>
+          <span className="btn-icon"><Ico n="key" /> {restarting ? t('rg.restarting') : t('rg.unlock')}</span>
+        </button>
+        <Message value={localError || message} />
+        <FormBusyOverlay busy={busy || restarting} />
+      </form>
+    </main>
+  );
+}
+
 // WorkspaceHeader is the slim action strip at the top of the main workspace: the
 // language switcher plus the compact theme picker sitting just after it (top-right).
 // Primary navigation and the account/logout block live in the side rail (SideNav).

@@ -7,7 +7,7 @@ import { AppFooter } from '@shared/AppFooter';
 import { messages as appMessages } from './i18n';
 import { THEMES, emptyLogin, defaultStreamConfig, defaultRuntimeSettings, defaultNewUser, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings, defaultVisionThreshold, defaultVisionMinFrames } from './lib/constants';
 import {readLiveViewsCookie,saveLiveViewsCookie,bestLiveViewLayout,unwrap,errorMessage,apiBase,parseMetadata,cameraTitle,normalizeScanDevice,orderedSavedCameras,isActionableVisionAlert,latestAlertsByCamera,sameCamera,liveSource,normalizeRuntimeSettings,normalizeMachineHealthSettings,defaultZonePolygon,isLineDetectionType,defaultLineRuleConfig,lineRuleConfigText,defaultVisionRuleDraft,playAlertSound,hasH264VideoTrack,isVisionAlertNotification } from './lib/helpers';
-import { LoginPage, ChangePasswordPage, SideNav, WorkspaceHeader } from './components/layout';
+import { LoginPage, ChangePasswordPage, RecoveryGatePage, SideNav, WorkspaceHeader } from './components/layout';
 import { DashboardTab } from './components/dashboard';
 import { SetupWizard } from './components/setup';
 import { ViewsTab, CamerasTab } from './components/cameras';
@@ -137,6 +137,11 @@ function AppInner({ lang, onLangChange }) {
   const [resetAllowed, setResetAllowed] = useState(false);
   const [wipeCountdown, setWipeCountdown] = useState(false);
   const [resetProgress, setResetProgress] = useState(null);
+  // Recovery gate: when encryption is on and the master key is missing, the backend serves
+  // only the recovery endpoints. recoveryPending=null means "not checked yet".
+  const [recoveryPending, setRecoveryPending] = useState(null);
+  const [recoveryKeyId, setRecoveryKeyId] = useState('');
+  const [recoveryRestarting, setRecoveryRestarting] = useState(false);
   const [passwordDrafts, setPasswordDrafts] = useState({});
   const [visionRules, setVisionRules] = useState([]);
   const [visionAlerts, setVisionAlerts] = useState([]);
@@ -253,6 +258,68 @@ function AppInner({ lang, onLangChange }) {
       throw error;
     }
     return unwrap(payload);
+  }
+
+  // checkRecoveryGate probes the public recovery endpoint. It only returns pending when the
+  // backend is running in recovery mode (encryption on + master key missing). In normal mode
+  // the route does not exist (404) so this resolves to not-pending. Runs once before login.
+  async function checkRecoveryGate() {
+    try {
+      const resp = await fetch(`${apiBase()}/api/system/recovery/gate`, { credentials: 'include' });
+      if (!resp.ok) { setRecoveryPending(false); return; }
+      const payload = await resp.json().catch(() => null);
+      const body = unwrap(payload);
+      if (body && body.pending) {
+        setRecoveryKeyId(body.keyId || '');
+        setRecoveryPending(true);
+      } else {
+        setRecoveryPending(false);
+      }
+    } catch (_) {
+      setRecoveryPending(false);
+    }
+  }
+
+  useEffect(() => {
+    checkRecoveryGate();
+    /* eslint-disable-next-line */
+  }, []);
+
+  // submitRecovery restores the master key from the uploaded escrow + passphrase, then waits
+  // for the backend to restart out of recovery mode and reloads into the normal login.
+  async function submitRecovery({ keyBase64, passphrase }) {
+    setBusy(true);
+    setMessage('');
+    try {
+      const resp = await fetch(`${apiBase()}/api/system/recovery/unlock`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keyBase64, passphrase }),
+      });
+      const payload = await resp.json().catch(() => null);
+      if (!resp.ok) {
+        throw new Error(errorMessage(payload, t('rg.unlockFail')));
+      }
+      // Server is restarting; poll until it comes back no longer pending, then reload.
+      setRecoveryRestarting(true);
+      const deadline = Date.now() + 90000;
+      const poll = async () => {
+        try {
+          const r = await fetch(`${apiBase()}/api/system/recovery/gate`, { credentials: 'include' });
+          if (!r.ok) { window.location.reload(); return; }
+          const b = unwrap(await r.json().catch(() => null));
+          if (!b || !b.pending) { window.location.reload(); return; }
+        } catch (_) { /* server still down — keep waiting */ }
+        if (Date.now() < deadline) { setTimeout(poll, 2000); }
+        else { setRecoveryRestarting(false); setMessage(t('rg.restartTimeout'), 'error'); }
+      };
+      setTimeout(poll, 2500);
+    } catch (err) {
+      setMessage(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function refresh({ quiet = false } = {}) {
@@ -2397,6 +2464,22 @@ function AppInner({ lang, onLangChange }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  // Recovery gate takes priority over login: while the backend is in recovery mode nothing
+  // else is reachable, so the user restores the key here before they can sign in.
+  if (recoveryPending) {
+    return (
+      <RecoveryGatePage
+        keyId={recoveryKeyId}
+        busy={busy}
+        restarting={recoveryRestarting}
+        message={message?.text || ''}
+        lang={lang}
+        onLangChange={onLangChange}
+        onSubmit={submitRecovery}
+      />
+    );
   }
 
   if (!authenticated) {

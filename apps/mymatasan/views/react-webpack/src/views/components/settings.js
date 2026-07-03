@@ -17,6 +17,7 @@ const SETTINGS_TABS = [
   { id: 'machine', labelKey: 'st.navMachineHealth', descKey: 'st.tabDesc.machine', icon: 'cpu' },
   { id: 'users', labelKey: 'st.navUsers', descKey: 'st.tabDesc.users', icon: 'user' },
   { id: 'pairing', labelKey: 'st.navConnectivity', descKey: 'st.tabDesc.pairing', icon: 'shield' },
+  { id: 'backup', labelKey: 'st.navBackup', descKey: 'st.tabDesc.backup', icon: 'key' },
   { id: 'system', labelKey: 'st.navVersionHealth', descKey: 'st.tabDesc.system', icon: 'monitor' },
 ];
 
@@ -2168,13 +2169,18 @@ export function SettingsTab({
             capacity={capacity}
             onEstimateCapacity={onEstimateCapacity}
             onCalibrateCapacity={onCalibrateCapacity}
-            resetAllowed={resetAllowed}
-            onSecureWipe={onSecureWipe}
           />
         ) : null}
 
         {settingsNav === 'pairing' ? (
           <PairingPanel authHeader={authHeader} />
+        ) : null}
+
+        {settingsNav === 'backup' ? (
+          <>
+            <RecoveryKeyPanel authHeader={authHeader} />
+            <SecureWipePanel resetAllowed={resetAllowed} onSecureWipe={onSecureWipe} />
+          </>
         ) : null}
 
         {settingsNav === 'system' ? (
@@ -2868,7 +2874,203 @@ export function CapacityRetentionNote({ capacity }) {
   );
 }
 
-export function MachineHealthSettingsPanel({ settings, busy, hasChanges, metrics, onChange, onSave, onDiscard, onRefreshMetrics, capacity, onEstimateCapacity, onCalibrateCapacity, resetAllowed, onSecureWipe }) {
+// RecoveryKeyPanel lets an admin export a passphrase-protected copy of the encryption-at-
+// rest master key (a "recovery escrow") and verify a saved copy still works. It matters
+// most for host-bound protectors (DPAPI/systemd-creds): their key can't be unwrapped on
+// another machine, so without this escrow a hardware failure or reimage would render all
+// recordings permanently unreadable. The actual restore is a documented offline step —
+// when a host-bound key is unusable the app won't boot, so there's no live button for it.
+function RecoveryKeyPanel({ authHeader }) {
+  const t = useT();
+  const [state, setState] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const [pass, setPass] = useState('');
+  const [confirmPass, setConfirmPass] = useState('');
+  const [passErr, setPassErr] = useState('');
+  const [confirmErr, setConfirmErr] = useState('');
+  const [verifyPass, setVerifyPass] = useState('');
+  const [verifyData, setVerifyData] = useState('');
+
+  async function api(path, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    if (authHeader) headers.Authorization = authHeader;
+    if (options.body) headers['Content-Type'] = 'application/json';
+    const resp = await fetch(`${apiBase()}${path}`, { credentials: 'include', ...options, headers });
+    const text = await resp.text();
+    let payload = null;
+    if (text) { try { payload = JSON.parse(text); } catch (_) { payload = { message: text }; } }
+    const body = payload?.data?.result ?? payload?.result ?? payload;
+    return { ok: resp.ok, status: resp.status, body };
+  }
+
+  useEffect(() => {
+    let alive = true;
+    api('/api/system/recovery/state').then((r) => { if (alive && r.ok) setState(r.body); }).catch(() => {});
+    return () => { alive = false; };
+    /* eslint-disable-next-line */
+  }, [authHeader]);
+
+  async function exportKey() {
+    // Field-level validation so the message sits next to the offending input, not adrift at
+    // the top of the panel where it reads like a section label.
+    setPassErr(''); setConfirmErr('');
+    if (pass.length < 8) { setPassErr(t('st.recPassMin')); return; }
+    if (pass !== confirmPass) { setConfirmErr(t('st.recPassMismatch')); return; }
+    setBusy(true);
+    try {
+      const r = await api('/api/system/recovery/export', { method: 'POST', body: JSON.stringify({ passphrase: pass }) });
+      if (!r.ok || !r.body?.keyBase64) { setMsg({ kind: 'error', text: r.body?.message || t('st.recExportFail') }); return; }
+      // Download the raw key bytes so the file is a drop-in: restoring is just placing this
+      // file at the key path (recovery.atrestkey) — no manual decoding step.
+      const raw = Uint8Array.from(atob(r.body.keyBase64), (c) => c.charCodeAt(0));
+      const blob = new Blob([raw], { type: 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = r.body.filename || 'mymatasan-recovery.atrestkey';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setMsg({ kind: 'ok', text: t('st.recExportOk') });
+      setPass(''); setConfirmPass('');
+    } catch (err) {
+      setMsg({ kind: 'error', text: err?.message || t('st.recExportFail') });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onPickFile(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    try {
+      // The recovery file is raw bytes; base64-encode them for the JSON verify request.
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let bin = '';
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      setVerifyData(btoa(bin));
+      setMsg(null);
+    } catch (_) { setMsg({ kind: 'error', text: t('st.recReadFail') }); }
+  }
+
+  async function verifyKey() {
+    if (!verifyData || !verifyPass) { setMsg({ kind: 'error', text: t('st.recVerifyNeed') }); return; }
+    setBusy(true);
+    try {
+      const r = await api('/api/system/recovery/verify', { method: 'POST', body: JSON.stringify({ passphrase: verifyPass, keyBase64: verifyData }) });
+      if (!r.ok) { setMsg({ kind: 'error', text: r.body?.message || t('st.recVerifyFail') }); return; }
+      if (!r.body?.valid) { setMsg({ kind: 'error', text: r.body?.error || t('st.recVerifyBad') }); return; }
+      setMsg({ kind: 'ok', text: r.body.matchesCurrent ? t('st.recVerifyMatch') : t('st.recVerifyValidNoMatch') });
+    } catch (err) {
+      setMsg({ kind: 'error', text: err?.message || t('st.recVerifyFail') });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (state && !state.enabled) {
+    return (
+      <div className="settings-layout">
+        <section className="settings-panel span-two">
+          <header><h2><span className="btn-icon"><Ico n="key" /> {t('st.recTitle')}</span></h2></header>
+          <p className="settings-hint">{t('st.recDisabled')}</p>
+        </section>
+      </div>
+    );
+  }
+
+  const protector = state?.protector || '';
+  const hostBound = !!state?.hostBound;
+
+  return (
+    <div className="settings-layout">
+      <FormBusyOverlay busy={busy} />
+      <section className="settings-panel span-two">
+        <header><h2><span className="btn-icon"><Ico n="key" /> {t('st.recTitle')}</span></h2></header>
+        <p className="settings-hint">{t('st.recIntro')}</p>
+        {protector ? (
+          <div className="machine-metrics">
+            <div className="machine-metric-card">
+              <dt>{t('st.recProtector')}</dt>
+              <dd><strong className="status-pill">{protector}</strong></dd>
+              <span className="field-hint">{hostBound ? t('st.recHostBound') : t('st.recPortable')}</span>
+            </div>
+          </div>
+        ) : null}
+        {hostBound ? (
+          <p className="settings-hint danger-text"><span className="btn-icon"><Ico n="warning" /></span> {t('st.recHostBoundWarn')}</p>
+        ) : null}
+        {msg ? <p className={msg.kind === 'error' ? 'settings-hint danger-text' : 'settings-hint'}>{msg.text}</p> : null}
+
+        <FieldTitle info={t('st.recExportInfo')}>{t('st.recExportHeading')}</FieldTitle>
+        <p className="field-hint">{t('st.recExportHint')}</p>
+        <div className="field-grid">
+          <label className="field">
+            <span>{t('st.recPassphrase')}</span>
+            <PasswordField value={pass} onChange={(v) => { setPass(v); if (passErr) setPassErr(''); }} autoComplete="new-password" error={!!passErr} />
+            {passErr ? <span className="field-hint danger-text">{passErr}</span> : null}
+          </label>
+          <label className="field">
+            <span>{t('st.recConfirm')}</span>
+            <PasswordField value={confirmPass} onChange={(v) => { setConfirmPass(v); if (confirmErr) setConfirmErr(''); }} autoComplete="new-password" error={!!confirmErr} />
+            {confirmErr ? <span className="field-hint danger-text">{confirmErr}</span> : null}
+          </label>
+        </div>
+        <div className="settings-actions">
+          <button type="button" className="primary" onClick={exportKey} disabled={busy}>
+            <span className="btn-icon"><Ico n="download" /> {t('st.recExportBtn')}</span>
+          </button>
+        </div>
+
+        <hr className="settings-divider" />
+
+        <FieldTitle info={t('st.recVerifyInfo')}>{t('st.recVerifyHeading')}</FieldTitle>
+        <p className="field-hint">{t('st.recVerifyHint')}</p>
+        <div className="field-grid">
+          <label className="field">
+            <span>{t('st.recFile')}</span>
+            <input type="file" accept=".atrestkey,application/octet-stream" onChange={onPickFile} />
+          </label>
+          <label className="field">
+            <span>{t('st.recPassphrase')}</span>
+            <PasswordField value={verifyPass} onChange={setVerifyPass} autoComplete="off" />
+          </label>
+        </div>
+        <div className="settings-actions">
+          <button type="button" className="quiet" onClick={verifyKey} disabled={busy}>
+            <span className="btn-icon"><Ico n="shield" /> {t('st.recVerifyBtn')}</span>
+          </button>
+        </div>
+        <p className="field-hint">{t('st.recRestoreNote')}</p>
+      </section>
+    </div>
+  );
+}
+
+// SecureWipePanel is the factory-reset "Danger Zone". It lives in the Backup & Recovery tab
+// (alongside the recovery key) since wipe/reset is the destructive counterpart to backup. It
+// only renders when the deployment permits reset (bootstrap.allowReset → resetAllowed).
+function SecureWipePanel({ resetAllowed, onSecureWipe }) {
+  const t = useT();
+  if (!resetAllowed || !onSecureWipe) return null;
+  return (
+    <div className="settings-layout">
+      <section className="settings-panel span-two danger-zone">
+        <header>
+          <h2><span className="btn-icon"><Ico n="warning" /> {t('st.dangerZone')}</span></h2>
+        </header>
+        <p className="settings-hint">{t('st.dangerHint')}</p>
+        <button type="button" className="danger-solid" onClick={onSecureWipe}>
+          <span className="btn-icon"><Ico n="warning" /> {t('st.secureWipe')}</span>
+        </button>
+      </section>
+    </div>
+  );
+}
+
+export function MachineHealthSettingsPanel({ settings, busy, hasChanges, metrics, onChange, onSave, onDiscard, onRefreshMetrics, capacity, onEstimateCapacity, onCalibrateCapacity }) {
   const t = useT();
   const d = defaultMachineHealthSettings;
   const value = {
@@ -3078,20 +3280,6 @@ export function MachineHealthSettingsPanel({ settings, busy, hasChanges, metrics
           <span className="btn-icon"><Ico n="undo" /> {t('st.discardChanges')}</span>
         </button>
       </div>
-
-      {resetAllowed && onSecureWipe ? (
-        <section className="settings-panel span-two danger-zone">
-          <header>
-            <h2><span className="btn-icon"><Ico n="warning" /> {t('st.dangerZone')}</span></h2>
-          </header>
-          <p className="settings-hint">
-            {t('st.dangerHint')}
-          </p>
-          <button type="button" className="danger-solid" onClick={onSecureWipe} disabled={busy}>
-            <span className="btn-icon"><Ico n="warning" /> {t('st.secureWipe')}</span>
-          </button>
-        </section>
-      ) : null}
     </form>
   );
 }
