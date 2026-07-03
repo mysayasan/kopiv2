@@ -107,7 +107,11 @@ async function handleDownloads(request, env) {
       const assets = (rel.assets || [])
         .map((a) => {
           const cat = categorizeAsset(a.name);
-          return cat ? { ...cat, name: a.name, url: a.browser_download_url, size: a.size } : null;
+          // Download through the Worker (/api/download/<id>) rather than the raw
+          // GitHub URL: for a PRIVATE repo the browser_download_url 404s for
+          // anonymous visitors, so the Worker authenticates and redirects to the
+          // short-lived signed CDN URL. Works for public repos too.
+          return cat ? { ...cat, name: a.name, url: `/api/download/${a.id}`, size: a.size } : null;
         })
         .filter(Boolean);
       payload = {
@@ -139,11 +143,43 @@ async function handleDownloads(request, env) {
   return resp;
 }
 
+// handleAssetDownload authenticates to GitHub for a release asset (needed for a
+// private repo) and redirects the browser to the short-lived signed CDN URL, so
+// no bytes are proxied through the Worker. The asset id comes from /api/downloads.
+async function handleAssetDownload(request, env, assetId) {
+  if (!/^\d+$/.test(assetId)) {
+    return new Response('Bad asset id', { status: 400 });
+  }
+  const headers = { 'user-agent': 'r450k-site', accept: 'application/octet-stream' };
+  if (env.GITHUB_TOKEN) headers.authorization = `Bearer ${env.GITHUB_TOKEN}`;
+  const gh = await fetch(`https://api.github.com/repos/${RELEASES_REPO}/releases/assets/${assetId}`, {
+    headers,
+    redirect: 'manual',
+  });
+  const location = gh.headers.get('location');
+  if ((gh.status === 301 || gh.status === 302 || gh.status === 307) && location) {
+    return Response.redirect(location, 302);
+  }
+  // Fallback: some responses return the bytes directly — stream them through.
+  if (gh.ok && gh.body) {
+    return new Response(gh.body, {
+      status: 200,
+      headers: {
+        'content-type': gh.headers.get('content-type') || 'application/octet-stream',
+        'content-disposition': gh.headers.get('content-disposition') || 'attachment',
+      },
+    });
+  }
+  return new Response('Download unavailable', { status: gh.status || 502 });
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === '/api/contact') return handleContact(request, env);
     if (url.pathname === '/api/downloads') return handleDownloads(request, env);
+    const dl = url.pathname.match(/^\/api\/download\/(\d+)$/);
+    if (dl) return handleAssetDownload(request, env, dl[1]);
     return env.ASSETS.fetch(request);
   },
 };

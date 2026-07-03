@@ -4,7 +4,14 @@ GoReleaser (`.goreleaser.yaml`, `packaging/stage-archive.sh`) builds every relea
 from `apps/mymatasan` in one run, published to GitHub Releases (and mirrored on the
 [Download page](https://r450k.com) — `r450k/worker/index.js` `GET /api/downloads`
 reads the same GitHub Releases API and edge-caches it, so the marketing site never
-needs a redeploy to reflect a new release):
+needs a redeploy to reflect a new release. The r450k site itself is deployed by
+`.github/workflows/deploy-r450k.yml` (Cloudflare `wrangler deploy` on any push to
+`main` under `r450k/**`; needs a `CLOUDFLARE_API_TOKEN` repo secret). Because this
+repo is **private**, downloads are proxied: `/api/downloads` hands out
+`/api/download/<assetId>` links and `r450k/worker/index.js` authenticates to GitHub
+(Worker secret `GITHUB_TOKEN`, set once via `npx wrangler secret put GITHUB_TOKEN` —
+a PAT with `Contents: read`) and redirects to GitHub's short-lived signed CDN URL, so
+anonymous visitors can download a private repo's assets):
 
 - **Archives** (`.tar.gz` linux / `.zip` windows, amd64+arm64): the `mymatasan`
   binary plus `static/` (web UI), `ai/` (Python worker scripts and the stock

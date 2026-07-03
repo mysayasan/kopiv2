@@ -1,0 +1,49 @@
+# Deploys the r450k marketing site to Cloudflare Workers when its source changes on
+# main. The Download section reads the GitHub Releases API at the edge, so after this
+# one-time-per-change deploy it self-updates as new mymatasan releases publish.
+#
+# Required repo secret:
+#   CLOUDFLARE_API_TOKEN   - a Cloudflare token with the "Edit Cloudflare Workers"
+#                            template permission (Workers Scripts: Edit).
+# Optional:
+#   CLOUDFLARE_ACCOUNT_ID  - only needed if the API token spans multiple accounts.
+#
+# Separately (once, not in CI) the Worker needs a GITHUB_TOKEN secret so it can read
+# the PRIVATE repo's releases + proxy asset downloads:
+#   cd r450k && npx wrangler secret put GITHUB_TOKEN
+# (a fine-grained PAT with Contents: read on this repo, or a classic token with repo).
+name: Deploy r450k
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "r450k/**"
+      - ".github/workflows/deploy-r450k.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install & build
+        working-directory: r450k
+        run: |
+          npm ci
+          npm run build
+
+      - name: Deploy to Cloudflare
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: r450k
+          command: deploy
