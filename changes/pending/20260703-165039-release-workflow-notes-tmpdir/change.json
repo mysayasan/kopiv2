@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "infra",
+  "summary": "Fixed the reusable .github/workflows/release.yml so the 'Extract release notes from CHANGELOG.md' step writes release-notes.md to ${{ runner.temp }} instead of the repo working tree, and points GoReleaser's --release-notes flag at that path. Previously the untracked release-notes.md file left in the checkout tripped GoReleaser's release --clean dirty-state check ('git is in a dirty state'), which could abort tag-triggered releases before artifacts were published.",
+  "compatibility": "CI-only change; no effect on shipped application behavior, config, or runtime. Existing release/tag automation (main.yml version bump -> tag push -> release.yml workflow_call, and the manual workflow_dispatch rebuild path) is otherwise unchanged."
+}

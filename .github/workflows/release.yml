@@ -59,20 +59,23 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract release notes from CHANGELOG.md
+        env:
+          NOTES: ${{ runner.temp }}/release-notes.md
         run: |
           # The newest CHANGELOG entry (first "## " block) becomes the release body.
+          # Written outside the repo so GoReleaser's clean-state check stays happy.
           if [ -f CHANGELOG.md ]; then
-            awk '/^## /{c++} c==1{print} c==2{exit}' CHANGELOG.md > release-notes.md
+            awk '/^## /{c++} c==1{print} c==2{exit}' CHANGELOG.md > "$NOTES"
           fi
-          if [ ! -s release-notes.md ]; then
-            echo "MyMataSan ${{ inputs.tag }}" > release-notes.md
+          if [ ! -s "$NOTES" ]; then
+            echo "MyMataSan ${{ inputs.tag }}" > "$NOTES"
           fi
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
           version: latest
-          args: release --clean --release-notes=release-notes.md
+          args: release --clean --release-notes=${{ runner.temp }}/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
