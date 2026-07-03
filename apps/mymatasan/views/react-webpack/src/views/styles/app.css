@@ -2150,6 +2150,40 @@ dd {
   color: var(--text-muted);
 }
 
+.backup-sections {
+  display: grid;
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+
+.backup-section {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-subtle2);
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.backup-section input {
+  flex-shrink: 0;
+  margin: 0;
+}
+
+.backup-section .backup-section-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.backup-section.is-empty {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .tool-status-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

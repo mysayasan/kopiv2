@@ -22,6 +22,7 @@ Implements the `mymatasan` app module for the shared runtime host.
 - Registers `recorderManager.Close()` in the graceful shutdown func.
 - Builds a `services.PythonInstaller` (from `deps.DataDir`/`deps.ConfigPath`) and passes it into `NewSettingsApi` so Settings can install a self-contained AI Python runtime (Python + torch + ultralytics) in-app.
 - Builds a `services.UpdateService` (current version resolved from the embedded manifest via `versioning.LoadDefault()`/`InfoForApp`, `deps.HomeDir`, `deps.Restarter`), calls `CleanupStaleFiles()` at startup to remove any leftovers from a previous update, registers its periodic release check on `deps.Scheduler.StartPeriodic` when a scheduler is available, and passes it into `NewSystemApi` for the self-update check/apply endpoints.
+- Builds a `services.NewBackupService` over the camera/camera-onvif/recording-config/detection-class/detection-rule/runtime-setting repositories plus `currentVersion`, and registers `apis.NewBackupApi` (after `NewSystemApi`) for the Settings → Backup & Recovery configuration backup/restore endpoints (`/settings/backup/*`).
 - Provides API docs metadata and endpoint descriptions for shared Swagger/OpenAPI output.
 - Uses the embedded app version as the OpenAPI info version when available.
 

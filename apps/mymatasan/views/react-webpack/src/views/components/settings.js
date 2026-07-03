@@ -2178,6 +2178,7 @@ export function SettingsTab({
 
         {settingsNav === 'backup' ? (
           <>
+            <BackupRestorePanel authHeader={authHeader} onRestart={onRestart} />
             <RecoveryKeyPanel authHeader={authHeader} />
             <SecureWipePanel resetAllowed={resetAllowed} onSecureWipe={onSecureWipe} />
           </>
@@ -2870,6 +2871,240 @@ export function CapacityRetentionNote({ capacity }) {
         {t('st.capRetentionNote', { max: capacity.estimatedMax, span: formatRetentionDays(capacity.achievableRetentionDays), target: capacity.configuredRetentionDays })}
         {constrained ? t('st.capRetentionConstrained') : ''}
       </span>
+    </div>
+  );
+}
+
+// BackupRestorePanel exports and restores a portable, passphrase-encrypted bundle of
+// the app's configuration (cameras incl. credentials, AI detection, notifications, and
+// app settings) so a fresh install can be recovered without reconfiguring. The file
+// carries plaintext secrets, so it is always protected by a user passphrase and never
+// leaves without one. See services/backup.go.
+function BackupRestorePanel({ authHeader, onRestart }) {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  // Export
+  const [sections, setSections] = useState([]);
+  const [selected, setSelected] = useState({});
+  const [pass, setPass] = useState('');
+  const [confirmPass, setConfirmPass] = useState('');
+  // Restore
+  const [fileData, setFileData] = useState('');
+  const [restorePass, setRestorePass] = useState('');
+  const [manifest, setManifest] = useState(null);
+  const [mode, setMode] = useState('replace');
+  const [result, setResult] = useState(null);
+
+  async function api(path, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    if (authHeader) headers.Authorization = authHeader;
+    if (options.body) headers['Content-Type'] = 'application/json';
+    const resp = await fetch(`${apiBase()}${path}`, { credentials: 'include', ...options, headers });
+    const text = await resp.text();
+    let payload = null;
+    if (text) { try { payload = JSON.parse(text); } catch (_) { payload = { message: text }; } }
+    const body = payload?.data?.result ?? payload?.result ?? payload;
+    return { ok: resp.ok, status: resp.status, body };
+  }
+
+  useEffect(() => {
+    let alive = true;
+    api('/api/settings/backup/sections').then((r) => {
+      if (!alive || !r.ok || !Array.isArray(r.body)) return;
+      setSections(r.body);
+      // Default: include every section that currently has data.
+      const init = {};
+      r.body.forEach((s) => { init[s.id] = s.count > 0; });
+      setSelected(init);
+    }).catch(() => {});
+    return () => { alive = false; };
+    /* eslint-disable-next-line */
+  }, [authHeader]);
+
+  const sectionLabel = (id) => t(`st.bkupSection.${id}`);
+  const chosen = sections.filter((s) => selected[s.id]).map((s) => s.id);
+
+  async function createBackup() {
+    setMsg(null);
+    if (chosen.length === 0) { setMsg({ kind: 'error', text: t('st.bkupSelectSection') }); return; }
+    if (pass.length < 8) { setMsg({ kind: 'error', text: t('st.recPassMin') }); return; }
+    if (pass !== confirmPass) { setMsg({ kind: 'error', text: t('st.recPassMismatch') }); return; }
+    setBusy(true);
+    try {
+      const r = await api('/api/settings/backup/export', { method: 'POST', body: JSON.stringify({ sections: chosen, passphrase: pass }) });
+      if (!r.ok || !r.body?.dataBase64) { setMsg({ kind: 'error', text: r.body?.message || t('st.bkupCreateFail') }); return; }
+      const raw = Uint8Array.from(atob(r.body.dataBase64), (c) => c.charCodeAt(0));
+      const blob = new Blob([raw], { type: 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = r.body.filename || 'mymatasan-backup.mmbackup';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setMsg({ kind: 'ok', text: t('st.bkupCreateOk') });
+      setPass(''); setConfirmPass('');
+    } catch (err) {
+      setMsg({ kind: 'error', text: err?.message || t('st.bkupCreateFail') });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onPickFile(e) {
+    const file = e.target.files && e.target.files[0];
+    setManifest(null); setResult(null); setMsg(null);
+    if (!file) { setFileData(''); return; }
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let bin = '';
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      setFileData(btoa(bin));
+    } catch (_) {
+      setFileData('');
+      setMsg({ kind: 'error', text: t('st.bkupReadFail') });
+    }
+  }
+
+  async function preview() {
+    setMsg(null); setResult(null);
+    if (!fileData) { setMsg({ kind: 'error', text: t('st.bkupNeedFile') }); return; }
+    if (!restorePass) { setMsg({ kind: 'error', text: t('st.bkupNeedPass') }); return; }
+    setBusy(true);
+    try {
+      const r = await api('/api/settings/backup/preview', { method: 'POST', body: JSON.stringify({ dataBase64: fileData, passphrase: restorePass }) });
+      if (!r.ok || !r.body?.app) { setMsg({ kind: 'error', text: r.body?.message || t('st.bkupPreviewFail') }); setManifest(null); return; }
+      setManifest(r.body);
+    } catch (err) {
+      setMsg({ kind: 'error', text: err?.message || t('st.bkupPreviewFail') });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function restore() {
+    setMsg(null);
+    setBusy(true);
+    try {
+      const r = await api('/api/settings/backup/restore', { method: 'POST', body: JSON.stringify({ dataBase64: fileData, passphrase: restorePass, sections: manifest?.sections || [], mode }) });
+      if (!r.ok || !r.body?.restored) { setMsg({ kind: 'error', text: r.body?.message || t('st.bkupRestoreFail') }); return; }
+      setResult(r.body);
+      setMsg({ kind: 'ok', text: t('st.bkupDoneTitle') });
+    } catch (err) {
+      setMsg({ kind: 'error', text: err?.message || t('st.bkupRestoreFail') });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const manifestSections = Array.isArray(manifest?.sections) ? manifest.sections : [];
+
+  return (
+    <div className="settings-layout">
+      <FormBusyOverlay busy={busy} />
+      <section className="settings-panel span-two">
+        <header><h2><span className="btn-icon"><Ico n="save" /> {t('st.bkupTitle')}</span></h2></header>
+        <p className="settings-hint">{t('st.bkupIntro')}</p>
+        {msg ? <p className={msg.kind === 'error' ? 'settings-hint danger-text' : 'settings-hint'}>{msg.text}</p> : null}
+
+        <FieldTitle info={t('st.bkupExportInfo')}>{t('st.bkupExportHeading')}</FieldTitle>
+        <p className="field-hint">{t('st.bkupExportHint')}</p>
+        <div className="backup-sections">
+          {sections.map((s) => (
+            <label key={s.id} className={`backup-section${s.count === 0 ? ' is-empty' : ''}`}>
+              <input
+                type="checkbox"
+                checked={!!selected[s.id]}
+                disabled={s.count === 0}
+                onChange={() => setSelected((prev) => ({ ...prev, [s.id]: !prev[s.id] }))}
+              />
+              <span className="backup-section-name">{sectionLabel(s.id)}</span>
+              <span className="status-pill">{s.count}</span>
+            </label>
+          ))}
+        </div>
+        <div className="field-grid">
+          <label className="field">
+            <span>{t('st.recPassphrase')}</span>
+            <PasswordField value={pass} onChange={setPass} autoComplete="new-password" />
+          </label>
+          <label className="field">
+            <span>{t('st.recConfirm')}</span>
+            <PasswordField value={confirmPass} onChange={setConfirmPass} autoComplete="new-password" />
+          </label>
+        </div>
+        <div className="settings-actions">
+          <button type="button" className="primary" onClick={createBackup} disabled={busy}>
+            <span className="btn-icon"><Ico n="download" /> {t('st.bkupCreateBtn')}</span>
+          </button>
+        </div>
+
+        <hr className="settings-divider" />
+
+        <FieldTitle info={t('st.bkupRestoreInfo')}>{t('st.bkupRestoreHeading')}</FieldTitle>
+        <p className="field-hint">{t('st.bkupRestoreHint')}</p>
+        <div className="field-grid">
+          <label className="field">
+            <span>{t('st.bkupFile')}</span>
+            <input type="file" accept=".mmbackup,application/octet-stream" onChange={onPickFile} />
+          </label>
+          <label className="field">
+            <span>{t('st.recPassphrase')}</span>
+            <PasswordField value={restorePass} onChange={setRestorePass} autoComplete="off" />
+          </label>
+        </div>
+        <div className="settings-actions">
+          <button type="button" className="quiet" onClick={preview} disabled={busy}>
+            <span className="btn-icon"><Ico n="search" /> {t('st.bkupPreviewBtn')}</span>
+          </button>
+        </div>
+
+        {manifest ? (
+          <div className="auto-tune-result">
+            <strong>{t('st.bkupManifestTitle')}</strong>
+            <ul>
+              <li>{t('st.bkupMadeWith', { version: manifest.appVersion || '—' })}</li>
+              {manifestSections.map((id) => (
+                <li key={id}>{sectionLabel(id)} — {(manifest.counts && manifest.counts[id]) || 0}</li>
+              ))}
+            </ul>
+            <label className="field">
+              <span>{t('st.bkupMode')}</span>
+              <select value={mode} onChange={(e) => setMode(e.target.value)}>
+                <option value="replace">{t('st.bkupModeReplace')}</option>
+                <option value="merge">{t('st.bkupModeMerge')}</option>
+              </select>
+            </label>
+            <p className="settings-hint danger-text"><span className="btn-icon"><Ico n="warning" /></span> {t('st.bkupRestoreWarn')}</p>
+            <div className="settings-actions">
+              <button type="button" className="danger-solid" onClick={restore} disabled={busy}>
+                <span className="btn-icon"><Ico n="reload" /> {t('st.bkupRestoreBtn')}</span>
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {result ? (
+          <div className="auto-tune-result">
+            <strong>{t('st.bkupDoneTitle')}</strong>
+            <ul>
+              {Object.keys(result.restored || {}).map((id) => (
+                <li key={id}>{sectionLabel(id)} — {result.restored[id]}{result.skipped && result.skipped[id] ? ` (${result.skipped[id]} skipped)` : ''}</li>
+              ))}
+              {result.schemaWarning ? <li className="danger-text">{result.schemaWarning}</li> : null}
+            </ul>
+            {onRestart ? (
+              <div className="settings-actions">
+                <button type="button" className="primary" onClick={() => onRestart()}>
+                  <span className="btn-icon"><Ico n="refresh" /> {t('st.bkupRestartBtn')}</span>
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </section>
     </div>
   );
 }

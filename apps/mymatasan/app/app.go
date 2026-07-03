@@ -665,6 +665,20 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	}
 	apis.NewSystemApi(protected, systemResetService, deps.Restarter, updateService, escrowStore)
 
+	// Settings → Backup & Restore: a portable, passphrase-encrypted bundle of
+	// cameras, AI detection, notifications, and app settings so a fresh install can
+	// be recovered without reconfiguring. Reuses the repos wired above.
+	backupService := services.NewBackupService(
+		cameraRepo,
+		cameraOnvifRepo,
+		recordingConfigRepo,
+		detectionClassRepo,
+		detectionRuleRepo,
+		runtimeSettingsRepo,
+		currentVersion,
+	)
+	apis.NewBackupApi(protected, backupService)
+
 	// Purge expired segments once at startup, then every 6 hours.
 	go func() {
 		recordingService.PurgeOldSegments(monitorCtx)
