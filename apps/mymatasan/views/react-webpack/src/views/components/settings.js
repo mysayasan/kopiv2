@@ -2177,11 +2177,11 @@ export function SettingsTab({
         ) : null}
 
         {settingsNav === 'backup' ? (
-          <>
+          <div className="settings-stack">
             <BackupRestorePanel authHeader={authHeader} onRestart={onRestart} />
             <RecoveryKeyPanel authHeader={authHeader} />
             <SecureWipePanel resetAllowed={resetAllowed} onSecureWipe={onSecureWipe} />
-          </>
+          </div>
         ) : null}
 
         {settingsNav === 'system' ? (

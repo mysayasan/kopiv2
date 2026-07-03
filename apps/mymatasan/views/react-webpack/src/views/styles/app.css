@@ -2188,6 +2188,14 @@ dd {
   cursor: not-allowed;
 }
 
+/* The Backup & Recovery tab stacks several independent panels (each its own
+   .settings-layout), so give them vertical breathing room between the cards. */
+.settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
 .tool-status-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
