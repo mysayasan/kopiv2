@@ -308,7 +308,7 @@ function WelcomeRestore({ authHeader, onRestart }) {
   return (
     <>
       <div className="setup-account">
-        <span className="field-hint"><Ico n="reload" sz={14} /> {t('setup.haveBackup')}</span>
+        <span className="field-hint">{t('setup.haveBackup')}</span>
         <button type="button" className="quiet" onClick={() => setOpen((o) => !o)} disabled={busy}>
           <span className="btn-icon"><Ico n={open ? 'x' : 'reload'} /> {open ? t('setup.cancel') : t('setup.restoreBackup')}</span>
         </button>
