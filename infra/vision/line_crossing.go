@@ -30,6 +30,13 @@ const (
 	defaultMaxSecondsBetweenLineStep = 20
 	maxLineCrossingLines             = 5
 	lineGeometryEpsilon              = 0.000001
+	// lineCrossingBand is the perpendicular dead-band (normalized image units, ~2%
+	// of the frame) around a line. A track only counts as "on a side" once its
+	// centre is farther than this from the line; movement that merely jitters
+	// within the band never registers as a crossing. Without it, sub-pixel wobble
+	// on either side of the line fired in BOTH directions, defeating the arrow
+	// (direction) filter — an object could trip a one-way line from the wrong side.
+	lineCrossingBand = 0.02
 )
 
 type point2D struct {
@@ -44,17 +51,17 @@ type lineSegment struct {
 }
 
 type lineCrossingConfig struct {
-	Classes                []string      `json:"classes"`
-	Direction              string        `json:"direction"`
-	MaxSecondsBetweenLines int           `json:"maxSecondsBetweenLines"`
-	MaxTrackDistance       float64       `json:"maxTrackDistance"`
-	TrackTTLSeconds        int           `json:"trackTtlSeconds"`
-	Lines                  []lineSegment `json:"lines"`
+	Classes                []string
+	Direction              string // "both" (either way through), "forward" (toward the arrow/positive side) or "reverse"
+	MaxSecondsBetweenLines int
+	MaxTrackDistance       float64
+	TrackTTLSeconds        int
+	Lines                  []lineSegment
 }
 
 type rawLineCrossingConfig struct {
 	Classes                []string       `json:"classes"`
-	Direction              string         `json:"direction"`
+	Direction              string         `json:"direction"` // both|forward|reverse
 	MaxSecondsBetweenLines int            `json:"maxSecondsBetweenLines"`
 	MaxTrackDistance       float64        `json:"maxTrackDistance"`
 	TrackTTLSeconds        int            `json:"trackTtlSeconds"`
@@ -81,6 +88,18 @@ type lineTrack struct {
 	lastSeen          int64
 	nextLineIndex     int
 	sequenceStartedAt int64
+	// sides holds the last confirmed side of each line (keyed by line ID). It gives
+	// the crossing detector hysteresis: a crossing is only recognised when the track
+	// moves from clearly one side of a line to clearly the other (past lineCrossingBand),
+	// which both rejects jitter and correctly handles a slow crosser stepping through
+	// the band over several frames.
+	sides map[string]*lineSideState
+}
+
+// lineSideState records where a track was last confirmed relative to one line.
+type lineSideState struct {
+	side   int     // -1 negative side, +1 positive (signedArea) side, 0 = not yet confirmed / in band
+	center point2D // the track centre at that last confirmation, used to test the actual segment crossing
 }
 
 type lineMatch struct {
@@ -119,14 +138,10 @@ func parseLineCrossingConfig(rule DetectionRule) (lineCrossingConfig, error) {
 
 	cfg := lineCrossingConfig{
 		Classes:                normalizeStringList(raw.Classes),
-		Direction:              normalizeLineDirection(raw.Direction),
 		MaxSecondsBetweenLines: raw.MaxSecondsBetweenLines,
 		MaxTrackDistance:       raw.MaxTrackDistance,
 		TrackTTLSeconds:        raw.TrackTTLSeconds,
 		Lines:                  make([]lineSegment, 0, len(raw.Lines)),
-	}
-	if cfg.Direction == "" {
-		cfg.Direction = "both"
 	}
 	if cfg.MaxSecondsBetweenLines <= 0 {
 		cfg.MaxSecondsBetweenLines = defaultMaxSecondsBetweenLineStep
@@ -156,6 +171,14 @@ func parseLineCrossingConfig(rule DetectionRule) (lineCrossingConfig, error) {
 			return lineCrossingConfig{}, fmt.Errorf("ruleConfig.lines[%d] must have two distinct points", index)
 		}
 		cfg.Lines = append(cfg.Lines, line)
+	}
+
+	// Direction filter is a simple side check: "both" fires on a crossing either way,
+	// "forward" only when the object ends up on the arrow (positive signedArea) side,
+	// "reverse" only on the other side.
+	cfg.Direction = normalizeLineDirection(raw.Direction)
+	if cfg.Direction == "" {
+		cfg.Direction = "both"
 	}
 	return cfg, nil
 }
@@ -201,6 +224,9 @@ func (d *ObjectRuleDetector) detectLineCrossing(rule DetectionRule, candidates [
 		track.lastSeen = now
 		track.seen++
 		if isNew {
+			// Record which side of each line the track starts on so the next sample
+			// that reaches the far side registers as a crossing.
+			track.seedLineSides(cfg.Lines)
 			lineLog("cam=%d rule=%d NEW track=%d label=%s conf=%.2f center=(%.3f,%.3f) — need a 2nd matched sample on the other side of the line to fire",
 				rule.CameraId, rule.Id, track.id, match.candidate.Label, match.candidate.Confidence, match.center.X, match.center.Y)
 			continue
@@ -209,7 +235,7 @@ func (d *ObjectRuleDetector) detectLineCrossing(rule DetectionRule, candidates [
 			rule.CameraId, rule.Id, track.id, match.candidate.Label, match.candidate.Confidence,
 			previous.X, previous.Y, match.center.X, match.center.Y, pointDistance(previous, match.center))
 
-		detection, crossed := d.lineCrossingDetection(rule, cfg, state, track, match.candidate, previous, now, cooldown)
+		detection, crossed := d.lineCrossingDetection(rule, cfg, state, track, match.candidate, now, cooldown)
 		if crossed {
 			detections = append(detections, detection)
 		}
@@ -262,16 +288,24 @@ func (d *ObjectRuleDetector) lineLabelAllowed(rule DetectionRule, cfg lineCrossi
 	return d.labelAllowed(rule.DetectionType, label)
 }
 
-func (d *ObjectRuleDetector) lineCrossingDetection(rule DetectionRule, cfg lineCrossingConfig, state *objectRuleState, track *lineTrack, candidate ObjectCandidate, previous point2D, now int64, cooldown int) (Detection, bool) {
+func (d *ObjectRuleDetector) lineCrossingDetection(rule DetectionRule, cfg lineCrossingConfig, state *objectRuleState, track *lineTrack, candidate ObjectCandidate, now int64, cooldown int) (Detection, bool) {
+	// Evaluate every line so each one's hysteresis state stays warm even when the
+	// track is not currently crossing it. crossings[i] is the side the track just moved
+	// TO on line i (+1 arrow side, -1 the other), or 0 for no confirmed crossing.
+	crossings := make([]int, len(cfg.Lines))
+	for i, line := range cfg.Lines {
+		crossed, side := track.evaluateLineCrossing(line, track.center)
+		if crossed {
+			crossings[i] = side
+		}
+		lineLog("cam=%d rule=%d evalLine id=%s crossed=%v side=%d allowed=%v dir=%s",
+			rule.CameraId, rule.Id, line.ID, crossed, side, crossed && lineDirectionAllows(cfg.Direction, side), cfg.Direction)
+	}
+
 	switch normalizedDetectionType(rule.DetectionType) {
 	case DetectionLineCrossing:
 		for index, line := range cfg.Lines {
-			intersects := segmentsIntersect(previous, track.center, line.A, line.B)
-			crossed := crossedLine(previous, track.center, line, cfg.Direction)
-			lineLog("cam=%d rule=%d evalLine id=%s A=(%.3f,%.3f) B=(%.3f,%.3f) intersects=%v dirMatch=%v crossed=%v",
-				rule.CameraId, rule.Id, line.ID, line.A.X, line.A.Y, line.B.X, line.B.Y,
-				intersects, directionMatches(previous, track.center, line, cfg.Direction), crossed)
-			if !crossed {
+			if crossings[index] == 0 || !lineDirectionAllows(cfg.Direction, crossings[index]) {
 				continue
 			}
 			if !ruleCooldownElapsed(state, rule.Id, now, cooldown) {
@@ -291,7 +325,7 @@ func (d *ObjectRuleDetector) lineCrossingDetection(rule DetectionRule, cfg lineC
 			track.sequenceStartedAt = 0
 		}
 		line := cfg.Lines[track.nextLineIndex]
-		if !crossedLine(previous, track.center, line, cfg.Direction) {
+		if crossings[track.nextLineIndex] == 0 || !lineDirectionAllows(cfg.Direction, crossings[track.nextLineIndex]) {
 			return Detection{}, false
 		}
 		if track.nextLineIndex == 0 {
@@ -310,6 +344,91 @@ func (d *ObjectRuleDetector) lineCrossingDetection(rule DetectionRule, cfg lineC
 		return buildLineCrossingDetection(rule, candidate, track, line, len(cfg.Lines)-1, len(cfg.Lines), "multi-line-crossing-detector"), true
 	}
 	return Detection{}, false
+}
+
+// seedLineSides records the track's current side for each line without reporting a
+// crossing, so a freshly created track has a "from" side for its first real move.
+func (t *lineTrack) seedLineSides(lines []lineSegment) {
+	for _, line := range lines {
+		t.evaluateLineCrossing(line, t.center)
+	}
+}
+
+// evaluateLineCrossing updates the track's confirmed side for one line and reports
+// whether it just crossed the segment and the side it moved TO (+1 arrow/positive
+// side, -1 the other). It applies the lineCrossingBand dead-band so jitter within the
+// band never registers, and only confirms a crossing when the straight path between
+// the last confirmed centre and the current centre actually intersects the (finite)
+// segment.
+func (t *lineTrack) evaluateLineCrossing(line lineSegment, current point2D) (bool, int) {
+	if t.sides == nil {
+		t.sides = map[string]*lineSideState{}
+	}
+	st := t.sides[line.ID]
+	if st == nil {
+		st = &lineSideState{}
+		t.sides[line.ID] = st
+	}
+
+	side := lineSideOf(line, current)
+	if side == 0 {
+		return false, 0 // inside the dead-band: keep the prior confirmed side
+	}
+	if st.side == 0 {
+		st.side = side
+		st.center = current
+		return false, 0
+	}
+	if side == st.side {
+		st.center = current // still on the same side; remember the latest position
+		return false, 0
+	}
+
+	from := st.center
+	st.side = side
+	st.center = current
+	if !segmentsIntersect(from, current, line.A, line.B) {
+		return false, 0 // moved around the segment's endpoints, not through it
+	}
+	return true, side
+}
+
+// lineSideOf returns +1 when the point is clearly on the positive signedArea side of
+// the line, -1 when clearly on the negative side, and 0 when within lineCrossingBand.
+func lineSideOf(line lineSegment, p point2D) int {
+	perp := perpendicularDistance(line, p)
+	switch {
+	case perp > lineCrossingBand:
+		return 1
+	case perp < -lineCrossingBand:
+		return -1
+	default:
+		return 0
+	}
+}
+
+// perpendicularDistance is the signed distance from p to the line, in normalized
+// image units (positive on the signedArea/arrow side).
+func perpendicularDistance(line lineSegment, p point2D) float64 {
+	length := pointDistance(line.A, line.B)
+	if length <= lineGeometryEpsilon {
+		return 0
+	}
+	return signedArea(line.A, line.B, p) / length
+}
+
+// lineDirectionAllows reports whether a crossing that moved the track to `side`
+// (+1 arrow/positive side, -1 the other) satisfies the rule's direction filter.
+// "both" accepts either side; "forward" only +1; "reverse" only -1.
+func lineDirectionAllows(direction string, side int) bool {
+	switch normalizeLineDirection(direction) {
+	case "forward":
+		return side > 0
+	case "reverse":
+		return side < 0
+	default:
+		return true
+	}
 }
 
 func buildLineCrossingDetection(rule DetectionRule, candidate ObjectCandidate, track *lineTrack, line lineSegment, lineIndex int, lineCount int, source string) Detection {
@@ -416,6 +535,10 @@ func (s *lineCrossingRuleState) cleanup(now int64, ttlSeconds int) {
 	}
 }
 
+// crossedLine reports whether the straight move previous→current passes through the
+// segment in a direction the rule accepts. Used by the motion-centroid fallback
+// detector, which has no per-object tracking; the object detector uses the
+// hysteresis path in evaluateLineCrossing instead.
 func crossedLine(previous point2D, current point2D, line lineSegment, direction string) bool {
 	if pointDistance(previous, current) <= lineGeometryEpsilon {
 		return false
@@ -426,17 +549,9 @@ func crossedLine(previous point2D, current point2D, line lineSegment, direction 
 	return directionMatches(previous, current, line, direction)
 }
 
-func segmentsIntersect(a point2D, b point2D, c point2D, d point2D) bool {
-	o1 := signedArea(a, b, c)
-	o2 := signedArea(a, b, d)
-	o3 := signedArea(c, d, a)
-	o4 := signedArea(c, d, b)
-	if oppositeSigns(o1, o2) && oppositeSigns(o3, o4) {
-		return true
-	}
-	return onSegment(a, c, b, o1) || onSegment(a, d, b, o2) || onSegment(c, a, d, o3) || onSegment(c, b, d, o4)
-}
-
+// directionMatches reports whether the move previous→current crosses the line in the
+// accepted direction (both = either way; forward = onto the positive signedArea side;
+// reverse = onto the other side).
 func directionMatches(previous point2D, current point2D, line lineSegment, direction string) bool {
 	direction = normalizeLineDirection(direction)
 	if direction == "" || direction == "both" {
@@ -452,6 +567,17 @@ func directionMatches(previous point2D, current point2D, line lineSegment, direc
 	default:
 		return true
 	}
+}
+
+func segmentsIntersect(a point2D, b point2D, c point2D, d point2D) bool {
+	o1 := signedArea(a, b, c)
+	o2 := signedArea(a, b, d)
+	o3 := signedArea(c, d, a)
+	o4 := signedArea(c, d, b)
+	if oppositeSigns(o1, o2) && oppositeSigns(o3, o4) {
+		return true
+	}
+	return onSegment(a, c, b, o1) || onSegment(a, d, b, o2) || onSegment(c, a, d, o3) || onSegment(c, b, d, o4)
 }
 
 func normalizeLineDirection(value string) string {

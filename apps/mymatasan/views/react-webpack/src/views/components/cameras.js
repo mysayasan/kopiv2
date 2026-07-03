@@ -4,7 +4,7 @@ import { useT } from '@shared/i18n';
 import { FormBusyOverlay, InfoButton, Tracks, LayoutDropdown } from './ui';
 import { CameraAiPanel } from './vision';
 import { defaultDeviceCredentials } from '../lib/constants';
-import {apiBase,fieldValue,formatTimestamp,cameraTitle,cameraDescription,orderedSavedCameras,sameCamera,streamOptionLabel,layoutCapacity,layoutColumns,layoutRows } from '../lib/helpers';
+import {apiBase,fieldValue,formatTimestamp,cameraTitle,cameraDescription,orderedSavedCameras,sameCamera,streamOptionLabel,layoutCapacity,layoutColumns,layoutRows,fetchTalkCapability,saveTalkPassword } from '../lib/helpers';
 import { LiveViewport } from './previews';
 import { PasswordField } from './layout';
 import { CameraRecordingConfig, CameraStreamConfig, CameraRecordingsPanel } from './recording';
@@ -1062,6 +1062,77 @@ function CameraCapabilities({ caps, loading, error, onRefresh, busy }) {
   );
 }
 
+// TalkAccessPanel shows the TP-Link speaker password config in the Access tab —
+// ONLY for a camera that actually speaks the TP-Link talk protocol (cap.needsPassword,
+// which the backend sets only after a genuine port-8800 "Streamd" fingerprint match).
+// ONVIF-backchannel cameras (Hikvision/Dahua/Axis) talk with their stored
+// credentials, so no field is shown; non-TP-Link / unknown cameras show nothing.
+function TalkAccessPanel({ device, authHeader, onMessage }) {
+  const t = useT();
+  const [cap, setCap] = useState(null);
+  const [pw, setPw] = useState('');
+  const [busy, setBusy] = useState(false);
+  const notify = (msg, kind) => { if (onMessage) onMessage(msg, kind); };
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchTalkCapability(device.id, authHeader)
+      .then((c) => { if (!cancelled) setCap(c); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [device.id, authHeader]);
+
+  if (!cap || !cap.supported || !cap.needsPassword) {
+    return null;
+  }
+
+  async function save() {
+    setBusy(true);
+    try {
+      const updated = await saveTalkPassword(device.id, pw, authHeader);
+      setCap(updated || cap);
+      setPw('');
+      notify(t('cam.talkPwSaved'), 'success');
+    } catch (err) {
+      notify(err?.message || t('cam.talkPwFailed'), 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="talk-access">
+      <h4><span className="btn-icon"><Ico n="mic" /> {t('cam.talkTitle')}</span></h4>
+      <p className="field-hint">{t(`cam.talkHint_${cap.transport}`)}</p>
+      <label>
+        {t('cam.talkPassword')}
+        <PasswordField
+          value={pw}
+          onChange={setPw}
+          autoComplete="off"
+          placeholder={cap.hasPassword ? t('cam.savedPwKept') : ''}
+        />
+        <span className={cap.hasPassword ? 'field-hint good' : 'field-hint'}>
+          {cap.hasPassword ? t('cam.talkPwStored') : t('cam.talkPwNeeded')}
+        </span>
+      </label>
+      <div className="action-row">
+        <button type="button" className="quiet" onClick={save} disabled={busy || !pw}>
+          <span className="btn-icon"><Ico n="save" /> {t('cam.talkSavePassword')}</span>
+        </button>
+      </div>
+      <details className="talk-help">
+        <summary>{t('cam.talkHelpTitle')}</summary>
+        <ul>
+          <li>{t('cam.talkHelp1')}</li>
+          <li>{t('cam.talkHelp2')}</li>
+          <li>{t('cam.talkHelp3')}</li>
+        </ul>
+      </details>
+    </div>
+  );
+}
+
 export function SavedCameraRow({
   device,
   onMessage,
@@ -1243,6 +1314,7 @@ export function SavedCameraRow({
             </button>
           </div>
           {caps?.userMgmt ? <CameraUsers device={device} busy={busy} authHeader={authHeader} canManage={canManage} /> : null}
+          {canManage ? <TalkAccessPanel device={device} authHeader={authHeader} onMessage={onMessage} /> : null}
         </div>
       </section>
 

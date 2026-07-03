@@ -114,6 +114,7 @@ func NewCameraApi(router *mux.Router, serv services.ICameraService, settings ser
 	group.HandleFunc("/{id}/encoder", handler.applyEncoder).Methods("POST")
 	group.HandleFunc("/{id}/lpr-capability", handler.lprCapability).Methods("GET")
 	group.HandleFunc("/{id}/talk", handler.talkCapability).Methods("GET")
+	group.HandleFunc("/{id}/talk/password", handler.saveTalkPassword).Methods("POST")
 	group.HandleFunc("/{id}/talk/offer", handler.createTalkAnswer).Methods("POST")
 	group.HandleFunc("/{id}/webrtc/offer", handler.createWebRTCAnswer).Methods("POST")
 	group.HandleFunc("/{id}/live.mjpeg", handler.liveMJPEG).Methods("GET")
@@ -716,6 +717,30 @@ func (a *cameraApi) createWebRTCAnswer(w http.ResponseWriter, r *http.Request) {
 func (a *cameraApi) talkCapability(w http.ResponseWriter, r *http.Request) {
 	params := mux.Vars(r)
 	id, _ := strconv.ParseUint(params["id"], 10, 64)
+	controllers.SendResult(w, a.serv.TalkCapability(r.Context(), int64(id)), "succeed")
+}
+
+type talkPasswordRequest struct {
+	Password string `json:"password"`
+}
+
+// saveTalkPassword stores the TP-Link cloud/speaker password used by the talk
+// transport (admin-only write).
+func (a *cameraApi) saveTalkPassword(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 65536)
+	params := mux.Vars(r)
+	id, _ := strconv.ParseUint(params["id"], 10, 64)
+	var body talkPasswordRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	if err := a.serv.SaveTalkPassword(r.Context(), id, body.Password); err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
 	controllers.SendResult(w, a.serv.TalkCapability(r.Context(), int64(id)), "succeed")
 }
 

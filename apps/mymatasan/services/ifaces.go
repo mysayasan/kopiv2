@@ -118,8 +118,11 @@ type ICameraService interface {
 	// LPR capture can auto-pick it. Cached; safe to call on the per-frame path.
 	LPRCapability(ctx context.Context, id int64) LPRCapabilityResult
 	// TalkCapability reports whether a camera supports two-way audio (talk-back)
-	// over the ONVIF backchannel, cached for cheap UI polling.
+	// and which transport/password it needs, cached for cheap UI polling.
 	TalkCapability(ctx context.Context, id int64) TalkCapabilityResult
+	// SaveTalkPassword stores the speaker/cloud password for the TP-Link talk
+	// transport (admin-only).
+	SaveTalkPassword(ctx context.Context, id uint64, password string) error
 	// OpenTalkSession opens a live talk-back audio session to the camera speaker;
 	// the caller must Close the returned session.
 	OpenTalkSession(ctx context.Context, id uint64) (talk.Session, error)

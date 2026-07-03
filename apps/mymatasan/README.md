@@ -33,7 +33,7 @@ It is designed to run on small devices such as Raspberry Pi or Jetson-style micr
 - ONVIF stream profile listing and live-view stream selection under `/api/recording/streams`.
 - RTSP stream validation through the reusable `infra/rtsp` module.
 - Shared RTSP-to-WebRTC sessions through the reusable `infra/stream` module, with **G.711 pass-through and AAC→Opus audio transcoding** so live view has sound regardless of the camera's audio codec.
-- **Two-way audio (talk-back)**: a mic button next to the speaker toggle in live view lets an operator speak through a supported camera's own speaker. `GET /api/cameras/{id}/talk` probes and caches (10 min) whether the camera exposes an ONVIF RTSP audio backchannel using its stored credentials; `POST /api/cameras/{id}/talk/offer` negotiates a browser→camera WebRTC session (sendonly PCMA mic track, via the reusable `infra/talk` module) that pumps the mic audio into that backchannel. Cameras without a usable RTSP stream or backchannel simply don't show the mic button. (`Camera.TalkTransport`/`TalkPassword` reserve room for a future non-ONVIF transport, e.g. TP-Link's proprietary speaker protocol; not yet implemented.)
+- **Two-way audio (talk-back)**: a mic button next to the speaker toggle in live view lets an operator speak through a supported camera's own speaker, over either of two transports resolved server-side (`GET /api/cameras/{id}/talk`, cached 10 min): the standard **ONVIF RTSP audio backchannel** (Hikvision/Dahua/Axis/most Profile-T cameras — reuses the camera's stored ONVIF credentials, no extra password), or the **TP-Link Tapo/VIGI proprietary port-8800 protocol** for consumer cameras that expose no RTSP backchannel at all. The TP-Link path is only ever offered when the camera's port 8800 genuinely fingerprints as TP-Link's "Streamd" talk service (`infra/talk.Probe8800`) — unrelated devices with port 8800 open are never misdetected. When it needs one, the camera's **Access tab** shows a speaker-password field (Tapo: the TP-Link cloud-account password used to log into the Tapo app, not the RTSP password; VIGI: the camera admin password) saved via `POST /api/cameras/{id}/talk/password`; `talkCapability.needsPassword`/`hasPassword` drive when that field appears and whether it's already set. `POST /api/cameras/{id}/talk/offer` negotiates the browser→camera WebRTC session (sendonly PCMA mic track, via the reusable `infra/talk` module) that pumps the mic audio into the resolved transport. Cameras without a usable RTSP stream, ONVIF backchannel, or TP-Link talk service simply don't show the mic button.
 - **AI capture modes** (`standalone` / `siphon` / `auto`): `siphon`/`auto` read decoded frames off the recorder (the recording stream) via a tee; the rule-editor preview draws on the exact frame the detector samples (`GET /api/vision/cameras/{id}/frame`).
 - **Live Views paging**: the grid (1×1 / 2×2 / 3×2 / 3×3 / 4×3 / 4×4) is a per-page size, not a cap — all selected cameras are kept and paged through (toolbar pager + arrow keys, works in fullscreen).
 - Shared public version and Swagger APIs from the shared app host.
@@ -545,7 +545,13 @@ Check two-way audio (talk-back) capability and open a browser-mic session:
 
 ```bash
 curl -u admin:Admin123 "http://localhost:3000/api/cameras/1/talk"
-# {"supported":true,"transport":"onvif"}
+# {"supported":true,"transport":"onvif","needsPassword":false,"hasPassword":false}
+# TP-Link Tapo example: {"supported":true,"transport":"tapo","needsPassword":true,"hasPassword":false}
+
+# TP-Link cameras only: save the cloud/speaker password before talk-back will connect.
+curl -u admin:Admin123 -H "Content-Type: application/json" \
+  -d '{"password":"your-tplink-cloud-password"}' \
+  "http://localhost:3000/api/cameras/1/talk/password"
 
 curl -u admin:Admin123 -H "Content-Type: application/json" \
   -d '{"type":"offer","sdp":"..."}' \

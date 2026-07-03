@@ -114,6 +114,9 @@ func (f *fakeCameraService) LPRCapability(_ context.Context, _ int64) services.L
 func (f *fakeCameraService) TalkCapability(_ context.Context, _ int64) services.TalkCapabilityResult {
 	return services.TalkCapabilityResult{}
 }
+func (f *fakeCameraService) SaveTalkPassword(_ context.Context, _ uint64, _ string) error {
+	return nil
+}
 func (f *fakeCameraService) OpenTalkSession(_ context.Context, _ uint64) (talk.Session, error) {
 	return nil, nil
 }

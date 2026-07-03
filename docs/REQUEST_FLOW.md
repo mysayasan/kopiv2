@@ -81,16 +81,16 @@ This flow is for a browser live-viewing a camera attached to an adopted `mymatas
 
 ## Two-Way Audio (Talk-Back) Flow (browser mic → mymatasan → camera)
 
-This flow lets an operator speak through a camera's own speaker from the live-view tile. Direction is the reverse of live view — audio flows browser → server → camera.
+This flow lets an operator speak through a camera's own speaker from the live-view tile. Direction is the reverse of live view — audio flows browser → server → camera. Two transports are resolved server-side, in order: the standard ONVIF RTSP audio backchannel, then the TP-Link Tapo/VIGI proprietary port-8800 protocol for consumer cameras with no RTSP backchannel.
 
-1. While a live-view tile is open, the frontend calls `GET /api/cameras/{id}/talk`; the handler resolves (or returns the cached, ≤10 min old) `TalkCapability` by probing the camera's RTSP endpoint for an ONVIF audio backchannel (`talk.HasBackchannel`). The mic button only renders when `supported` is true.
+1. While a live-view tile is open, the frontend calls `GET /api/cameras/{id}/talk`; the handler resolves (or returns the cached, ≤10 min old) `TalkCapability` by first probing the camera's RTSP endpoint for an ONVIF audio backchannel (`talk.HasBackchannel`), then — only if that fails — probing port 8800 (`talk.Probe8800`) for a genuine TP-Link "Streamd" fingerprint. The mic button only renders when `supported` is true. When the resolved transport is TP-Link and `needsPassword` is true, the camera's Access tab shows a speaker-password field; the operator saves it via `POST /api/cameras/{id}/talk/password` before talk-back will connect.
 2. Pressing the mic button captures the browser microphone (`getUserMedia`, 8 kHz mono, echo cancellation on) and creates a local WebRTC peer with a `sendonly` PCMA audio track; the browser generates an SDP offer and POSTs it to `POST /api/cameras/{id}/talk/offer`.
-3. The API handler calls `ICameraService.OpenTalkSession`, which re-checks capability and, if supported, dials the camera's ONVIF RTSP audio backchannel (`talk.DialONVIF`) using the camera's stored credentials — opening a live `talk.Session` ready to accept G.711 frames.
+3. The API handler calls `ICameraService.OpenTalkSession`, which re-checks capability and, if supported, dials the resolved transport — `talk.DialONVIF` over the camera's RTSP backchannel using its stored ONVIF credentials, or `talk.DialTapo` over port 8800 using the stored `TalkPassword` (Tapo cloud password or VIGI admin password) — opening a live `talk.Session` ready to accept G.711 frames.
 4. `talk.AnswerBrowserTalk` builds a PCMA-only WebRTC peer, adds a `recvonly` audio transceiver, sets the browser's offer as the remote description, and answers; the SDP answer is returned to the browser, which sets it as its own remote description to complete the handshake.
-5. As the browser's peer connection receives audio, `pumpTrack` reads each RTP packet off the browser track and forwards its payload to `session.WritePCMA`, which (converting A-law → µ-law first if the camera's backchannel needs it) writes the frame into the camera's RTSP backchannel session.
+5. As the browser's peer connection receives audio, `pumpTrack` reads each RTP packet off the browser track and forwards its payload to `session.WritePCMA`. Over ONVIF this converts A-law → µ-law first if the camera's backchannel needs it and writes into the RTSP backchannel session; over TP-Link it packetizes the A-law frame into an MPEG-TS PES payload (`infra/talk/mpegts.go`) and writes it as a multipart `audio/mp2t` part on the port-8800 connection.
 6. Toggling the mic off, closing the tile, or the peer connection failing/disconnecting closes both the WebRTC peer and the underlying `talk.Session` (`stopTalk` client-side; `closeAll` server-side).
 
-**Data path summary:** browser mic → WebRTC (PCMA, pion) → mymatasan (`infra/talk`) → RTSP ONVIF audio backchannel → camera speaker.
+**Data path summary:** browser mic → WebRTC (PCMA, pion) → mymatasan (`infra/talk`) → RTSP ONVIF audio backchannel **or** TP-Link port-8800 multipart/MPEG-TS session → camera speaker.
 
 ## Bootstrap Flow
 
