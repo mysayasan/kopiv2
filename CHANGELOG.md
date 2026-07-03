@@ -2,6 +2,12 @@
 
 All notable changes to this project, generated from `changes/` entries on each version bump. Newest first.
 
+
+## 2026-07-03 — mymatasan 1.77.0, core 1.45.0 (e88bec2)
+
+### Added
+
+- **mymatasan, infra**: Restores TP-Link Tapo/VIGI talk-back support as a second transport alongside the existing ONVIF audio backchannel, gated by a hardware fingerprint so it never misfires on unrelated devices. New infra/talk/tapo.go + infra/talk/mpegts.go implement the proprietary port-8800 protocol used by Tapo/VIGI consumer cameras that expose no RTSP backchannel (digest-authenticated multipart HTTP session carrying G.711 A-law audio in a minimal MPEG-TS mux, ported from go2rtc pkg/tapo, MIT). infra/talk/talk.go regained Probe8800/isTPLinkStreamd, which only report a camera as talk-capable when its port-8800 response carries TP-Link's 'Streamd'/realm fingerprint. apps/mymatasan/services/talk.go's TalkCapability now falls back to the TP-Link probe when ONVIF fails and reports transport (onvif|tapo|vigi|none) plus needsPassword/hasPassword; a new SaveTalkPassword service method + POST /api/cameras/{id}/talk/password endpoint lets an operator store the TP-Link cloud/speaker password from the camera's Access tab, which only renders when the backend confirms needsPassword. Also fixes a line-crossing direction bug (infra/vision/line_crossing.go): a new lineCrossingBand (~2% of frame) perpendicular dead-band gives each tracked object hysteresis per line, so sub-pixel centre wobble right at the line no longer flips the crossing side every frame and fires in both directions at once, which previously defeated the one-way (forward/reverse) direction filter. The line-crossing preview in the AI rule editor was reworked to match: a single clickable perpendicular arrow plus a shaded 'trigger side' indicator (replacing the old two-arrow diagram and per-rule direction dropdown), and the talk-back mic button now shows a clear 'set the speaker password first' / 'password rejected' message instead of a raw failure when a TP-Link camera needs credentials.
 ## 2026-07-03 — mymatasan 1.76.0, core 1.44.0 (aa15e10)
 
 ### Added
