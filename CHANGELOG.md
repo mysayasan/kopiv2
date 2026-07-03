@@ -4,6 +4,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-03 — mymatasan 1.78.0, core 1.46.0 (444a165)
+
+### Added
+
+- **mymatasan,infra**: The encryption-at-rest master key (already used to encrypt recordings/snapshots/training images and to crypto-erase during factory reset) can now be wrapped by an OS-native keystore instead of stored plaintext: Windows DPAPI (machine-scoped) or Linux systemd-creds (TPM2-backed when present), selected automatically via security.keyProtector=auto, or a portable Argon2id passphrase protector for Docker/portable installs. An admin can export a passphrase-protected 'recovery escrow' of the key from Settings -> Backup & Recovery and verify a saved copy still works and still matches the active key (GET/POST /api/system/recovery/state|export|verify). A non-secret init marker written beside the key lets the app distinguish a genuinely new install from a host where a key existed but is now missing, so a lost/host-bound key is never silently replaced with a fresh one (which would orphan already-encrypted media): on boot with a missing key, the app either restores automatically from a configured security.recoveryPath + passphrase (no prompt), or serves a public, pre-login recovery gate (GET/POST /api/system/recovery/gate|unlock) that mounts no other service until the operator uploads the escrow file and passphrase, after which the process restarts into normal operation.
 ## 2026-07-03 — core 1.45.1 (e866a39)
 
 ### Fixed
