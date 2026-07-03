@@ -74,7 +74,7 @@ export default function Downloads() {
                 <ul className="dlcard__list">
                   {g.items.map((a) => (
                     <li key={a.name}>
-                      <a className="dllink" href={a.url}>
+                      <a className="dllink" href={a.url} target="_blank" rel="noopener noreferrer">
                         <span className="dllink__label">
                           <Icon name="download" size={16} />
                           {a.label}
