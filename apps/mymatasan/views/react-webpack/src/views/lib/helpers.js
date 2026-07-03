@@ -627,9 +627,11 @@ export function normalizeLineConfig(config, type = 'line_crossing') {
     .filter((line) => line.points.length >= 2);
   const minimumLines = type === 'multi_line_crossing' ? 2 : 1;
   const ensuredLines = lines.length >= minimumLines ? lines : fallback.lines;
+  const direction = String(source.direction || '').toLowerCase();
+
   return {
     classes: classes.length ? classes : fallback.classes,
-    direction: ['both', 'forward', 'reverse'].includes(source.direction) ? source.direction : 'both',
+    direction: ['both', 'forward', 'reverse'].includes(direction) ? direction : 'both',
     maxSecondsBetweenLines: Math.max(1, Number(source.maxSecondsBetweenLines || fallback.maxSecondsBetweenLines || 20)),
     lines: ensuredLines.slice(0, maxCrossingLines),
   };
@@ -1191,6 +1193,33 @@ export async function createTalkAnswer(deviceId, offer, authHeader) {
   }
   if (!response.ok) {
     throw new Error(errorMessage(payload, `Talk offer failed with ${response.status}`));
+  }
+  return unwrap(payload);
+}
+
+// saveTalkPassword stores the TP-Link cloud/speaker password for a camera.
+export async function saveTalkPassword(deviceId, password, authHeader) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (authHeader) {
+    headers.Authorization = authHeader;
+  }
+  const response = await fetch(`${apiBase()}/api/cameras/${deviceId}/talk/password`, {
+    method: 'POST',
+    credentials: 'include',
+    headers,
+    body: JSON.stringify({ password }),
+  });
+  const text = await response.text();
+  let payload = null;
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch (_) {
+      payload = { message: text };
+    }
+  }
+  if (!response.ok) {
+    throw new Error(errorMessage(payload, `Save talk password failed with ${response.status}`));
   }
   return unwrap(payload);
 }

@@ -294,7 +294,10 @@ export function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTr
       setTalking(true);
     } catch (err) {
       stopTalk();
-      setTalkError(err?.message || t('prev.talkFailed'));
+      const msg = err?.message || '';
+      // A credential rejection is almost always a TP-Link account issue, not a
+      // typo — point the user at the detailed checklist in the Access tab.
+      setTalkError(msg.includes('talk-unauthorized') ? t('prev.talkRejected') : (msg || t('prev.talkFailed')));
     } finally {
       setTalkBusy(false);
     }
@@ -303,9 +306,15 @@ export function LiveViewport({ deviceId, title, authHeader, streamConfig, rtspTr
   function toggleTalk() {
     if (talking) {
       stopTalk();
-    } else {
-      startTalk();
+      return;
     }
+    // TP-Link (Tapo) cameras need a cloud/speaker password before talk works;
+    // point the user to the Access tab rather than failing with a raw 400.
+    if (talkCap?.needsPassword && !talkCap?.hasPassword) {
+      setTalkError(t('prev.talkNeedsPassword'));
+      return;
+    }
+    startTalk();
   }
 
   // Stop any live mic session when the camera changes or the tile unmounts.
@@ -498,13 +507,13 @@ function extendLineToBox(a, b) {
   ];
 }
 
-// DIRECTION_ORDER is the cycle the line-crossing direction toggle steps through.
-const DIRECTION_ORDER = ['both', 'forward', 'reverse'];
-
 // Zone-creation drag: a pointer move shorter than RECT_CLICK_THRESHOLD (normalized)
 // counts as a click and drops a DEFAULT_BOX_SIZE square; a longer drag sizes the box.
 const RECT_CLICK_THRESHOLD = 0.025;
 const DEFAULT_BOX_SIZE = 0.2;
+
+// DIRECTION_ORDER is the cycle the line-crossing direction toggle steps through.
+const DIRECTION_ORDER = ['both', 'forward', 'reverse'];
 
 // rectPolygon builds an axis-aligned rectangle (4 points, clockwise) from two
 // opposite corners.
@@ -1056,49 +1065,85 @@ export function ZoneDrawingPreview({ camera, polygonValue, onPolygon, authHeader
   );
 }
 
-// crossingDirectionArrows renders the direction indicator for a crossing line: an
-// arrow perpendicular to the line pointing to the side an object must move TOWARD
-// to trigger (a double-headed arrow for "both"). Matches the backend convention in
-// infra/vision/line_crossing.go — "forward" fires when an object crosses from the
-// negative to the POSITIVE signedArea side of A→B, and the positive side lies in
-// the direction (-dy, dx). Computed in the 0–100 SVG space; the sign of the side
-// is preserved under the preview's non-uniform stretch, so the arrow always points
-// to the correct side.
-function crossingDirectionArrows(first, second, direction) {
-  const x1 = first[0] * 100;
-  const y1 = first[1] * 100;
-  const x2 = second[0] * 100;
-  const y2 = second[1] * 100;
-  const mx = (x1 + x2) / 2;
-  const my = (y1 + y2) / 2;
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const len = Math.hypot(dx, dy) || 1;
-  const nx = -dy / len; // unit normal toward the "forward" (positive signedArea) side
-  const ny = dx / len;
-  const shaft = 8;
-  const head = 3.4;
-  const arrows = [];
-  const addArrow = (ux, uy, key) => {
-    const tx = mx + ux * shaft;
-    const ty = my + uy * shaft;
-    const px = -uy; // perpendicular to the arrow, for the head width
+// crossingDirectionIndicator renders the direction cue for a crossing line: a single
+// arrow PERPENDICULAR to the line pointing to the side that triggers (a double-headed
+// arrow for "both"), plus a fixed, non-configurable protractor — a translucent
+// half-disc sitting on the trigger side of the line — that simply illustrates "an
+// object crossing to this side fires". The arrow is not draggable: to change which way
+// triggers, click it (or the toolbox button) to cycle both → forward → reverse, or
+// re-draw the line. Everything is in the 0–100 viewBox space, so — since the overlay
+// uses preserveAspectRatio="none" — the perpendicular is drawn consistently with the
+// stretched frame and matches the backend's side convention.
+function crossingDirectionIndicator(first, second, direction, onCycle, disabled) {
+  const mx = ((first[0] + second[0]) / 2) * 100;
+  const my = ((first[1] + second[1]) / 2) * 100;
+  const dx = (second[0] - first[0]) * 100;
+  const dy = (second[1] - first[1]) * 100;
+  const axisDeg = (Math.atan2(dy, dx) * 180) / Math.PI; // the line's own angle
+  const fwdDeg = (Math.atan2(dx, -dy) * 180) / Math.PI; // toward the positive (forward) side
+  const rad = (deg) => (deg * Math.PI) / 180;
+  const shaft = 9;
+  const head = 3.6;
+  const lineLen = Math.hypot(dx, dy) || 20;
+  const parts = [];
+
+  const drawArrow = (ox, oy, deg, key, className, len) => {
+    const ux = Math.cos(rad(deg));
+    const uy = Math.sin(rad(deg));
+    const tx = ox + ux * len;
+    const ty = oy + uy * len;
+    const px = -uy;
     const py = ux;
     const points = [
       `${tx},${ty}`,
       `${tx - ux * head + px * head * 0.6},${ty - uy * head + py * head * 0.6}`,
       `${tx - ux * head - px * head * 0.6},${ty - uy * head - py * head * 0.6}`,
     ].join(' ');
-    arrows.push(<line key={`${key}-shaft`} x1={mx} y1={my} x2={tx} y2={ty} className="crossing-arrow" vectorEffect="non-scaling-stroke" />);
-    arrows.push(<polygon key={`${key}-head`} points={points} className="crossing-arrow-head" />);
+    parts.push(<line key={`${key}-shaft`} x1={ox} y1={oy} x2={tx} y2={ty} className={`crossing-arrow ${className}`} vectorEffect="non-scaling-stroke" />);
+    parts.push(<polygon key={`${key}-head`} points={points} className={`crossing-arrow-head ${className}`} />);
+    return { tx, ty };
   };
-  if (direction === 'forward' || direction === 'both') {
-    addArrow(nx, ny, 'fwd');
+
+  // Fixed protractor half-disc: flat edge along the line, bulging to the trigger side,
+  // sized to span the line. It is illustrative only (not adjustable).
+  const drawProtractor = (centreDeg, key) => {
+    const r = Math.max(lineLen * 0.55, 16);
+    const steps = 24;
+    const pts = [];
+    for (let i = 0; i <= steps; i += 1) {
+      const a = rad(centreDeg - 90 + (180 * i) / steps); // 180° sweep centred on the arrow side
+      pts.push(`${mx + Math.cos(a) * r},${my + Math.sin(a) * r}`);
+    }
+    parts.push(<polygon key={key} className="crossing-cone" points={pts.join(' ')} />);
+  };
+
+  const tips = [];
+  if (direction === 'both') {
+    // Either way through: protractors + a single double-headed arrow at the midpoint.
+    drawProtractor(fwdDeg, 'cone-fwd');
+    drawProtractor(fwdDeg + 180, 'cone-rev');
+    tips.push(drawArrow(mx, my, fwdDeg, 'b-a', '', shaft));
+    tips.push(drawArrow(mx, my, fwdDeg + 180, 'b-b', '', shaft));
+  } else {
+    // One-way: protractor on the trigger side + a single arrow at the midpoint.
+    const triggerDeg = direction === 'reverse' ? fwdDeg + 180 : fwdDeg;
+    drawProtractor(triggerDeg, 'cone');
+    tips.push(drawArrow(mx, my, triggerDeg, 'main', '', shaft));
   }
-  if (direction === 'reverse' || direction === 'both') {
-    addArrow(-nx, -ny, 'rev');
-  }
-  return arrows;
+
+  const interactive = typeof onCycle === 'function' && !disabled;
+  return (
+    <g
+      className={`crossing-arrow-group${interactive ? ' interactive' : ''}`}
+      style={interactive ? { cursor: 'pointer' } : undefined}
+      onPointerDown={interactive ? (event) => { if (event.button === 0) { event.stopPropagation(); onCycle(); } } : undefined}
+    >
+      {parts}
+      {interactive
+        ? tips.map((tp, i) => <circle key={`hit-${i}`} className="crossing-arrow-hit" cx={tp.tx} cy={tp.ty} r={5.5} />)
+        : null}
+    </g>
+  );
 }
 
 export function LineDrawingPreview({ camera, config, detectionType, onConfig, authHeader, streamConfig, disabled }) {
@@ -1240,9 +1285,9 @@ export function LineDrawingPreview({ camera, config, detectionType, onConfig, au
       : { ...line, points: rotatePointsAround(line.points, 15, aspect) })));
   }
 
-  // cycleDirection steps the crossing direction (both → forward → reverse). This is a
+  // cycleDirection steps the crossing direction (both → forward → reverse). It is a
   // config-level property (applies to all lines) so it goes straight to onConfig; the
-  // on-canvas green arrow reflects the new value.
+  // on-canvas perpendicular arrow reflects the new value.
   function cycleDirection() {
     if (disabled) {
       return;
@@ -1412,7 +1457,7 @@ export function LineDrawingPreview({ camera, config, detectionType, onConfig, au
                       <text x={(first[0] * 100 + second[0] * 100) / 2} y={(first[1] * 100 + second[1] * 100) / 2 - 2} className="crossing-label">
                         {lineIndex + 1}
                       </text>
-                      {crossingDirectionArrows(first, second, direction)}
+                      {crossingDirectionIndicator(first, second, direction, cycleDirection, disabled)}
                       {line.points.map((point, pointIndex) => (
                         <circle
                           key={`${lineIndex}-${pointIndex}`}

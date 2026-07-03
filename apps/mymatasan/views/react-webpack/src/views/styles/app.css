@@ -3855,6 +3855,30 @@ dd {
   stroke-width: 0.4;
   pointer-events: none;
 }
+/* Transparent grab target so the arrow can be dragged to any heading. */
+.crossing-arrow-hit {
+  fill: transparent;
+  pointer-events: all;
+  cursor: grab;
+}
+.crossing-arrow-group.interactive:active {
+  cursor: grabbing;
+}
+.crossing-arrow-group.interactive:hover .crossing-arrow {
+  stroke-width: 3;
+}
+.crossing-arrow-group.interactive:hover .crossing-arrow-head {
+  fill: var(--accent-strong, #37c07f);
+}
+/* Acceptance cone for directional (heading) mode. */
+.crossing-cone {
+  fill: var(--accent, #2e9e6b);
+  opacity: 0.14;
+  stroke: var(--accent, #2e9e6b);
+  stroke-opacity: 0.35;
+  stroke-width: 0.4;
+  pointer-events: none;
+}
 
 .zone-point {
   fill: var(--accent);
@@ -5471,6 +5495,37 @@ button .btn-icon {
   line-height: 1.3;
   padding: 4px 8px;
   border-radius: 6px;
+}
+
+.talk-access {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border, rgba(148, 163, 184, 0.25));
+}
+
+.talk-access h4 {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.talk-help {
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.talk-help summary {
+  cursor: pointer;
+  color: var(--muted, #94a3b8);
+}
+
+.talk-help ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.talk-help li {
+  margin-bottom: 6px;
+  line-height: 1.4;
 }
 
 

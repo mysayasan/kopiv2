@@ -491,19 +491,11 @@ export function CameraAiPanel({
                     <section className="schedule-panel">
                       <header>
                         <h3>{t('vi.lineDirection')}</h3>
-                        <span className="status-pill">{lineRuleConfig.direction}</span>
+                        <span className="status-pill">{t(`prev.dir_${lineRuleConfig.direction}`)}</span>
                       </header>
-                      <span className="field-hint">{t('vi.lineDirHint')}</span>
-                      <div className="metadata-row">
-                        <label>
-                          {t('vi.direction')}
-                          <select value={lineRuleConfig.direction} onChange={(event) => changeLineConfig({ direction: event.target.value })}>
-                            <option value="both">{t('vi.dirBoth')}</option>
-                            <option value="forward">{t('vi.dirForward')}</option>
-                            <option value="reverse">{t('vi.dirReverse')}</option>
-                          </select>
-                        </label>
-                        {mode === 'multi_line_crossing' ? (
+                      <span className="field-hint">{t('vi.lineArrowHint')}</span>
+                      {mode === 'multi_line_crossing' ? (
+                        <div className="metadata-row">
                           <label>
                             {t('vi.maxSecBetween')}
                             <input
@@ -513,8 +505,8 @@ export function CameraAiPanel({
                               onChange={(event) => changeLineConfig({ maxSecondsBetweenLines: Number(event.target.value) })}
                             />
                           </label>
-                        ) : null}
-                      </div>
+                        </div>
+                      ) : null}
                     </section>
                   ) : null}
                   <section className="schedule-panel" style={lprRule ? { display: 'none' } : undefined}>

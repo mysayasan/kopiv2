@@ -11,6 +11,11 @@
     "failedDelayMs": 500,
     "notifyOnLockout": true
   },
+  "localAuth": {
+    "enabled": true,
+    "username": "admin",
+    "password": "admin123"
+  },
   "decoder": {
     "browseRoots": [],
     "mjpeg": {
@@ -213,12 +218,12 @@
     "seedStatements": []
   },
   "db": {
-    "engine": "postgres",
-    "host": "localhost",
-    "port": 5433,
-    "user": "postgres",
-    "password": "postgres",
-    "db_name": "mymatasandb",
-    "ssl_mode": "disable"
+    "engine": "sqlite",
+    "host": "",
+    "port": 0,
+    "user": "",
+    "password": "",
+    "db_name": "./data/mymatasan.db",
+    "ssl_mode": ""
   }
 }
