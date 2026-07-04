@@ -7,6 +7,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-04 — core 1.49.1 (9981984)
+
+### Fixed
+
+- **core**: r450k downloads still didn't work after removing target="_blank": the Worker's /api/download/<id> 302-redirected the browser to GitHub's signed CDN URL, and that cross-origin download-via-redirect behaves inconsistently in browsers (blank tab, or bouncing to the top of the page, without ever downloading). The Worker now proxies the asset and streams the bytes back as a SAME-ORIGIN response with Content-Disposition: attachment (Cloudflare streams the body, so nothing is buffered), which downloads reliably from a plain same-tab link in every browser. GitHub auth (needed for the private repo) is applied to the API call and dropped automatically when fetch follows the redirect cross-origin to the signed URL.
 ## 2026-07-04 — mymatasan 1.79.7, core 1.49.0 (0b08584)
 
 ### Added
