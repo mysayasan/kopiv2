@@ -36,7 +36,6 @@ export default function Downloads() {
   const groups = ['windows', 'linux']
     .map((os) => ({ os, items: assets.filter((a) => a.os === os) }))
     .filter((g) => g.items.length > 0);
-  const githubUrl = (data && data.htmlUrl) || 'https://github.com/mysayasan/kopiv2/releases';
 
   return (
     <section className="section" id="download">
@@ -57,9 +56,6 @@ export default function Downloads() {
         ) : status === 'error' || groups.length === 0 ? (
           <Reveal className="downloads__note">
             <p>{t.unavailable}</p>
-            <a className="btn btn--ghost" href={githubUrl} target="_blank" rel="noopener noreferrer">
-              {t.allReleases} <Icon name="arrow" size={16} />
-            </a>
           </Reveal>
         ) : (
           <Reveal className="grid grid--downloads" stagger>
@@ -106,14 +102,6 @@ export default function Downloads() {
             ) : null}
           </Reveal>
         )}
-
-        {status === 'ready' && groups.length > 0 ? (
-          <Reveal className="downloads__foot">
-            <a className="link-arrow" href={githubUrl} target="_blank" rel="noopener noreferrer">
-              {t.allReleases} <Icon name="arrow" size={16} />
-            </a>
-          </Reveal>
-        ) : null}
       </div>
     </section>
   );

@@ -29,9 +29,13 @@ const T = [
 ];
 
 const U = [
+  { t: 'Pembuatan & QA', b: 'Latih model tersuai untuk mengesan kecacatan produk, bahagian hilang, atau ketiadaan PPE pada barisan pengeluaran — peribadi, di premis, tanpa yuran AI setiap pengguna.' },
   { t: 'Runcit & laman hadapan', b: 'Amaran orang ramai dan pencerobohan, serta pengecaman plat nombor untuk pemantauan laman hadapan dan pandu lalu.' },
-  { t: 'Industri & tapak', b: 'Peraturan lintasan garis dan zon pada perkakasan edge di tempat dengan sambungan huluan lemah atau tiada.' },
+  { t: 'Gudang & logistik', b: 'Pantau limbungan muatan dan halaman — pengesanan kenderaan dan orang dengan lintasan garis di pintu, semuanya pada perkakasan edge.' },
   { t: 'Hartanah & perimeter', b: 'Pengesanan pencerobohan selepas waktu kerja dengan rakaman selamat tersulit yang kekal di tapak.' },
+  { t: 'Pertanian & tapak terpencil', b: 'Kesan haiwan atau penceroboh merentas tanah dengan sambungan lemah atau tiada; pengesanan dan rakaman berjalan sepenuhnya secara tempatan.' },
+  { t: 'Rumah jagaan & klinik', b: 'Amaran pergerakan selepas waktu kerja dan gaya-terjatuh dengan rakaman yang tidak pernah meninggalkan bangunan — privasi secara lalai.' },
+  { t: 'Perindustrian & utiliti', b: 'Peraturan zon dan lintasan garis untuk kawasan larangan dan peralatan, pada perkakasan lasak di tempat sambungan tidak boleh dipercayai.' },
   { t: 'Armada berbilang tapak', b: 'Satah kawalan menggunakan banyak nod edge melalui LAN dan menyampaikan paparan langsung kembali kepada operator.' },
 ];
 
@@ -45,6 +49,9 @@ const SHOT_ALT = [
   'Grid paparan langsung berhalaman dengan kotak pengesanan AI pada bingkai',
   'Editor peraturan dua paksi dengan zon pengesanan dilukis pada bingkai langsung',
   'Suapan pemberitahuan bersepadu dengan tangkapan skrin dan tindakan pengesahan',
+  'Papan pemuka analitik peristiwa: KPI, carta pengesanan mengikut masa, donat kategori, dan pecahan setiap kamera',
+  'Destinasi pemberitahuan — webhook, Telegram, dan MQTT dengan langganan setiap kategori, togol medan, dan templat',
+  'Tetapan keselamatan — penyulitan semasa rehat, perlindungan kunci dengan eskro pemulihan, sandaran mudah alih, dan padam selamat',
 ];
 
 const NAV = ['Ciri', 'Cara ia berfungsi', 'Perkakasan', 'Pameran', 'Kegunaan', 'Aplikasi', 'Muat turun'];
@@ -96,8 +103,8 @@ export default {
     ...en.showcase,
     kicker: 'Lihat ia beraksi',
     title: 'Konsol dibina untuk operator, bukan sekadar pentadbir.',
-    lead: 'Grid berbilang kamera langsung, peraturan pengesanan dua paksi dilukis pada bingkai sebenar, dan satu suapan amaran bersepadu — semuanya dalam pelayar.',
-    tabs: { live: 'Paparan langsung', rules: 'Peraturan pengesanan', notifications: 'Pemberitahuan' },
+    lead: 'Grid berbilang kamera langsung, peraturan pengesanan pada bingkai sebenar, suapan amaran bersepadu, analitik peristiwa, penghalaan pemberitahuan, dan keselamatan atas-kotak — setiap skrin dalam pelayar.',
+    tabs: { live: 'Paparan langsung', rules: 'Peraturan pengesanan', notifications: 'Pemberitahuan', dashboard: 'Papan pemuka', destinations: 'Maklum di mana-mana', security: 'Keselamatan' },
     shots: en.showcase.shots.map((s, i) => ({ ...s, alt: SHOT_ALT[i] })),
   },
   useCases: {
@@ -123,8 +130,7 @@ export default {
     latest: 'Keluaran terkini',
     dockerHint: 'Jalankan imej berbilang-seni bina (ffmpeg disertakan):',
     loading: 'Memuatkan keluaran terkini…',
-    unavailable: 'Muat turun sedang disediakan. Semak semula tidak lama lagi, atau layari semua keluaran di GitHub.',
-    allReleases: 'Semua keluaran di GitHub',
+    unavailable: 'Muat turun sedang disediakan — semak semula sebentar lagi.',
   },
   finalCta: {
     ...en.finalCta,
