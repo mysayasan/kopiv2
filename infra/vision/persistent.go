@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mysayasan/kopiv2/infra/externaltools"
+	"github.com/mysayasan/kopiv2/infra/procutil"
 )
 
 type PersistentObjectDetectorOptions struct {
@@ -185,6 +186,7 @@ func (d *PersistentObjectDetector) startLocked() error {
 		return nil
 	}
 	cmd := exec.Command(d.command, d.args...)
+	procutil.HideWindow(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err

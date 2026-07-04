@@ -18,6 +18,7 @@ import (
 
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
 	"github.com/mysayasan/kopiv2/infra/externaltools"
+	"github.com/mysayasan/kopiv2/infra/procutil"
 )
 
 // TrainingRunConfig wires the in-app trainer: the Python command, the train
@@ -194,7 +195,9 @@ func nonEmptyPrefix(prefix, value string) string {
 func detectNvidiaGPU(ctx context.Context) string {
 	probeCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(probeCtx, "nvidia-smi", "--query-gpu=name", "--format=csv,noheader").Output()
+	probe := exec.CommandContext(probeCtx, "nvidia-smi", "--query-gpu=name", "--format=csv,noheader")
+	procutil.HideWindow(probe)
+	out, err := probe.Output()
 	if err != nil {
 		return ""
 	}
@@ -303,6 +306,7 @@ func (s *trainingService) runDepsSetup(script string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, runner, args...)
+	procutil.HideWindow(cmd)
 	writer := &setupLogWriter{s: s}
 	cmd.Stdout = writer
 	cmd.Stderr = writer
@@ -498,6 +502,7 @@ func (s *trainingService) runTraining(ctx context.Context, model entities.Traini
 		"--name", "run",
 	}
 	cmd := exec.CommandContext(ctx, s.trainCfg.PythonCmd, args...)
+	procutil.HideWindow(cmd)
 	cmd.Stderr = os.Stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -687,6 +692,7 @@ func (s *trainingService) downloadStockModel(name string) (string, error) {
 	dlCtx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(dlCtx, s.trainCfg.PythonCmd, "-c", script)
+	procutil.HideWindow(cmd)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -732,7 +738,9 @@ func (s *trainingService) readModelLabels(weightsPath string) ([]string, error) 
 		"print('LABELS:' + json.dumps([str(v).strip().lower() for v in vals]))\n"
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, py, "-c", script, weightsPath).Output()
+	probe := exec.CommandContext(ctx, py, "-c", script, weightsPath)
+	procutil.HideWindow(probe)
+	out, err := probe.Output()
 	if err != nil {
 		return nil, fmt.Errorf("could not read model labels: %v", err)
 	}

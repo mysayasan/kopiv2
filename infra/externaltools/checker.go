@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/mysayasan/kopiv2/infra/procutil"
 )
 
 const defaultProbeTimeout = 2 * time.Second
@@ -108,6 +110,7 @@ func Probe(ctx context.Context, executablePath string, args []string, timeout ti
 	defer cancel()
 
 	cmd := exec.CommandContext(probeCtx, executablePath, args...)
+	procutil.HideWindow(cmd)
 	output, err := cmd.CombinedOutput()
 	if int64(len(output)) > maxOutputBytes {
 		output = output[:maxOutputBytes]

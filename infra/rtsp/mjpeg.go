@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/mysayasan/kopiv2/infra/externaltools"
+	"github.com/mysayasan/kopiv2/infra/procutil"
 )
 
 // MJPEGOptions controls RTSP to multipart MJPEG transcoding.
@@ -80,6 +81,7 @@ func StreamMJPEG(ctx context.Context, dst io.Writer, uri string, opts MJPEGOptio
 		"pipe:1",
 	)
 	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
+	procutil.HideWindow(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("open ffmpeg stdout failed: %w", err)

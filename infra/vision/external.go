@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mysayasan/kopiv2/infra/externaltools"
+	"github.com/mysayasan/kopiv2/infra/procutil"
 )
 
 type ExternalObjectDetectorOptions struct {
@@ -61,6 +62,7 @@ func (d *ExternalObjectDetector) DetectObjects(ctx context.Context, frame Frame)
 	defer cancel()
 
 	cmd := exec.CommandContext(runCtx, d.command, d.args...)
+	procutil.HideWindow(cmd)
 	cmd.Stdin = bytes.NewReader(frame.Data)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

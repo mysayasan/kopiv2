@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mysayasan/kopiv2/infra/procutil"
 )
 
 func resolveFFmpeg(configuredPath string) (string, error) {
@@ -53,12 +55,14 @@ func probeDurationSeconds(ffprobePath, file string) float64 {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, ffprobePath,
+	probe := exec.CommandContext(ctx, ffprobePath,
 		"-v", "error",
 		"-show_entries", "format=duration",
 		"-of", "default=noprint_wrappers=1:nokey=1",
 		file,
-	).Output()
+	)
+	procutil.HideWindow(probe)
+	out, err := probe.Output()
 	if err != nil {
 		return 0
 	}
@@ -80,13 +84,15 @@ func probeVideoCodec(ffmpegPath, file string) string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, ffprobePath,
+	probe := exec.CommandContext(ctx, ffprobePath,
 		"-v", "error",
 		"-select_streams", "v:0",
 		"-show_entries", "stream=codec_name",
 		"-of", "default=noprint_wrappers=1:nokey=1",
 		file,
-	).Output()
+	)
+	procutil.HideWindow(probe)
+	out, err := probe.Output()
 	if err != nil {
 		return ""
 	}

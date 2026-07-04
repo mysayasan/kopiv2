@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/mysayasan/kopiv2/infra/procutil"
 )
 
 // CaptureJPEG captures one JPEG frame from an RTSP stream with ffmpeg.
@@ -40,6 +42,7 @@ func CaptureJPEG(ctx context.Context, uri string, opts MJPEGOptions) ([]byte, er
 		"pipe:1",
 	)
 	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
+	procutil.HideWindow(cmd)
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		return nil, fmt.Errorf("open ffmpeg stderr failed: %w", err)
