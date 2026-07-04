@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "mymatasan",
+  "summary": "The first-run setup wizard could open partway through (e.g. on the Capacity/calibration step) instead of Welcome. The wizard persisted its step in localStorage and resumed it on every load, so a stale value from an earlier session — or a fresh install/reset opened in the same browser — reopened the wizard mid-flow. It now resumes a step ONLY across an in-app restart the wizard itself triggers (installing ffmpeg or GPU deps sets a one-shot 'setupResume' flag just before restarting, consumed once on the next load); any other first-run load starts at Welcome.",
+  "compatibility": "No API/config change; frontend only. The ffmpeg/GPU-deps install-then-restart flow in the wizard still resumes where it left off."
+}

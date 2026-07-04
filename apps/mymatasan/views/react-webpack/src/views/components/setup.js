@@ -43,17 +43,27 @@ export function SetupWizard({
   onDiskInfo,
   onAddDestination,
 }) {
-  // Persist the step so an in-app restart (e.g. after installing ffmpeg / GPU deps)
-  // resumes the wizard where it left off rather than jumping back to the start.
+  // Resume the wizard's step ONLY across an in-app restart the wizard itself
+  // triggered (installing ffmpeg / GPU deps sets the one-shot `setupResume` flag just
+  // before restarting). A plain first-run load — including a fresh install or reset in
+  // a browser that still holds a stale `setupStep` — starts at Welcome, not mid-wizard.
   const [step, setStepState] = useState(() => {
+    const resume = window.localStorage.getItem('setupResume') === '1';
     const saved = Number(window.localStorage.getItem('setupStep'));
-    return Number.isInteger(saved) && saved > 0 && saved < STEP_KEYS.length ? saved : 0;
+    try { window.localStorage.removeItem('setupResume'); } catch (_) {}
+    return resume && Number.isInteger(saved) && saved > 0 && saved < STEP_KEYS.length ? saved : 0;
   });
   const setStep = (updater) => setStepState((s) => {
     const nextStep = typeof updater === 'function' ? updater(s) : updater;
     try { window.localStorage.setItem('setupStep', String(nextStep)); } catch (_) {}
     return nextStep;
   });
+  // Mark that the next load should resume at the current step, then restart. Used by
+  // the steps whose install actions require an in-app restart to take effect.
+  const restartAndResume = () => {
+    try { window.localStorage.setItem('setupResume', '1'); } catch (_) {}
+    if (onRestart) onRestart();
+  };
   const t = useT();
   const [recordingDone, setRecordingDone] = useState(false);
   const [alertsDone, setAlertsDone] = useState(false);
@@ -95,7 +105,7 @@ export function SetupWizard({
               onFfmpegStatus={onFfmpegStatus}
               onInstallFfmpeg={onInstallFfmpeg}
               onSystemTime={onSystemTime}
-              onRestart={onRestart}
+              onRestart={restartAndResume}
             />
           ) : null}
           {step === 2 ? (
@@ -105,7 +115,7 @@ export function SetupWizard({
               onInstallAiDeps={onInstallAiDeps}
               onStockModel={onStockModel}
               onApplyStockModel={onApplyStockModel}
-              onRestart={onRestart}
+              onRestart={restartAndResume}
             />
           ) : null}
           {step === 3 ? (
