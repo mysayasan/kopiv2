@@ -46,6 +46,23 @@ anonymous visitors can download a private repo's assets):
   launched it and runs under `svc.Run`, so `services.msc` Stop/Start controls it
   directly — no WinSW/NSSM wrapper needed for this path). Windows arm64 users
   should take the portable `.zip` archive instead (the installer is x64-only).
+  The `mymatasan.exe`, the installer/uninstaller, and the Start Menu shortcuts all
+  carry the brand icon (embedded into the exe at build time by
+  `packaging/gen-winres.sh` → goversioninfo `.syso`; the installer icon comes from
+  `packaging/windows/mymatasan.ico`).
+
+  **After installing (Windows).** The setup's finish page tells the user exactly
+  what to do next — it shows the console URL (`https://localhost:3000`) and, on a
+  *fresh* install, the bootstrap login: username `admin` and a **strong random
+  password generated per install** (injected into the service as
+  `LOCAL_ADMIN_PASSWORD`, which `EnsureDefaultAdmin` in
+  `apps/mymatasan/services/local_user.go` reads once to seed the admin; the account
+  is flagged must-change, so the operator sets their own on first sign-in). A ticked
+  "Open MyMataSan in your browser" checkbox launches the console when setup closes.
+  On an *upgrade* the finish page instead says the existing account is unchanged (no
+  new password is shown, since seeding is skipped when the database already exists).
+  A **MyMataSan** Start Menu group is created with: open console, Start / Stop the
+  service (self-elevating via UAC), open `services.msc`, and Uninstall.
 - **Docker images** (`ghcr.io/mysayasan/mymatasan`, linux amd64+arm64, built from
   `deploy/Dockerfile.release`): a `debian:bookworm-slim` base with `ffmpeg` +
   `python3`/`venv` baked in. `MYMATASAN_HOME=/app` (read-only: binary, static

@@ -1,0 +1,6 @@
+{
+  "type": "changed",
+  "scope": "core",
+  "summary": "The r450k marketing site's Showcase section now uses 7 real mymatasan UI captures (`live_views.png`, `ai_detection.png`, `ai_training.png`, `recordings.png`, `dashboard.png`, `backup_recovery.png`, `version_health_language_selection.png` — resized to 1920px wide with `sharp`) in place of the previous 6 enhanced/mockup `.webp` shots, restructuring the showcase tabs and per-shot alt text across all four locales (`en`/`ms`/`zh`/`ar`) to match what's actually pictured: live view, AI detection zones, custom model training, recordings, the analytics dashboard, backup & recovery, and version/health (shown in Arabic RTL). The inline SVG mockups in `Showcase.jsx` remain wired as a last-resort fallback for any image that fails to load.",
+  "compatibility": "Frontend-only content change on the r450k static marketing site; no backend/Worker change and no impact on the Go apps or their versioned releases."
+}

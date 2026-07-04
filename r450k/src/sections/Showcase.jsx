@@ -4,15 +4,16 @@ import Reveal from '../components/Reveal.jsx';
 import { LiveGridMockup, RuleEditorMockup, NotificationsMockup } from '../components/Mockups.jsx';
 import { useContent } from '../i18n/index.jsx';
 
+// Every shot is a real capture of the app; these inline mockups are only a
+// last-resort fallback if an image fails to load, so the section is never empty.
 const fallbacks = {
   live: <LiveGridMockup />,
-  rules: <RuleEditorMockup />,
-  notifications: <NotificationsMockup />,
-  // The dashboard/destinations/security shots are real captures; reuse a generic
-  // mockup only as a last-resort fallback if the image fails to load.
+  detection: <RuleEditorMockup />,
+  training: <NotificationsMockup />,
+  recordings: <NotificationsMockup />,
   dashboard: <NotificationsMockup />,
-  destinations: <NotificationsMockup />,
-  security: <RuleEditorMockup />,
+  backup: <RuleEditorMockup />,
+  health: <NotificationsMockup />,
 };
 
 const reduce =

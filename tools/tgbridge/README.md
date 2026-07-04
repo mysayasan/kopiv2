@@ -18,8 +18,10 @@ runtime dependency on kopiv2's apps/domain/infra, and is not covered by
      [@userinfobot](https://t.me/userinfobot)); the bridge only responds to
      this id
    - `workdir` — default project directory Claude runs in (e.g. this repo)
-   - optional: `ffmpeg_path`, `chrome_path` (screenshots), voice/STT settings
-     — see the `Config` struct doc comments in `main.go` for the full list
+   - optional: `ffmpeg_path`, `chrome_path` (screenshots), `camera_device`
+     (DirectShow webcam name for `/camshot`; empty = first video device),
+     voice/STT settings — see the `Config` struct doc comments in `main.go`
+     for the full list
 2. `config.json` and `tgbridge_state.json` (session/runtime state) are
    git-ignored — your bot token and session ids never hit git.
 
@@ -42,8 +44,16 @@ make clean      # remove the exe
 ## Usage
 
 Message the bot `/help` for the full command list (sessions, model/mode/
-effort, screenshots, voice notes, machine power control, `/autostart`).
-Any non-command text is sent as a prompt to the active Claude session.
+effort, screenshots, `/camshot` webcam stills, `/usage` token/cost, voice
+notes, machine power control, `/autostart`). Any non-command text is sent as a
+prompt to the active Claude session.
+
+While a task runs you can tap the **⏹ Interrupt** button (or `/stop`) to stop
+it the way Esc does in VS Code: in streaming mode this sends a graceful
+interrupt so the session stays resumable, falling back to a hard kill only if
+the process ignores it. When the model needs a decision it can end a reply with
+`ASK: <question> || opt1 || opt2`, which the bridge renders as tappable buttons;
+your tap is fed back into the session as the next message.
 
 ## Optional: local Whisper for voice-note transcription
 

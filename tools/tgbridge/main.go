@@ -77,6 +77,7 @@ type Config struct {
 	STTApiKey     string   `json:"stt_api_key"`         // optional; bearer key for the STT endpoint (defaults URL to OpenAI if set)
 	STTModel      string   `json:"stt_model"`           // optional; STT model name (default whisper-1)
 	ChromeUserDir string   `json:"chrome_user_data_dir"` // optional; persistent Chrome profile for authenticated screenshots
+	CameraDevice  string   `json:"camera_device"`        // optional; DirectShow webcam name for /camshot (else first video device)
 }
 
 var (
@@ -98,6 +99,7 @@ var (
 	sttKey        string        // bearer key for sttURL
 	sttModel      = "whisper-1" // STT model name
 	chromeUserDir string        // persistent Chrome profile for authenticated screenshots
+	cameraDevice  string        // DirectShow webcam name for /camshot (else auto-detect first)
 )
 
 // pending holds in-flight permission requests awaiting a Telegram button tap,
@@ -106,6 +108,14 @@ var pending = struct {
 	sync.Mutex
 	m map[string]chan bool
 }{m: map[string]chan bool{}}
+
+// asks holds the option text behind each ASK question button (Telegram callback
+// data is limited to 64 bytes, so we key by a short token and store the real
+// choice here). Tapping a button feeds the stored text back into the session.
+var asks = struct {
+	sync.Mutex
+	m map[string]string
+}{m: map[string]string{}}
 
 func api() string { return "https://api.telegram.org/bot" + botToken }
 
@@ -131,11 +141,20 @@ type Session struct {
 	PermMode string `json:"perm_mode,omitempty"` // "" => acceptEdits
 	Effort   string `json:"effort,omitempty"`    // "", low, medium, high, xhigh, max
 	LastUsed string `json:"last_used"`
+	// usage accounting, accumulated from each run's result event (see /usage)
+	CostUSD float64 `json:"cost_usd,omitempty"`
+	InTok   int64   `json:"in_tok,omitempty"`  // input + cache tokens
+	OutTok  int64   `json:"out_tok,omitempty"` // output tokens
+	Turns   int     `json:"turns,omitempty"`
 }
 
 type State struct {
 	Sessions []*Session       `json:"sessions"`
 	Active   map[int64]string `json:"active"` // chat_id -> session label
+	// lifetime usage totals (survive session deletion) — see /usage
+	TotalCostUSD float64 `json:"total_cost_usd,omitempty"`
+	TotalInTok   int64   `json:"total_in_tok,omitempty"`
+	TotalOutTok  int64   `json:"total_out_tok,omitempty"`
 }
 
 var (
@@ -511,14 +530,16 @@ const help = `🧠 SESSIONS
 /model             pick model (opus, sonnet, haiku, fable)
 /mode              pick permission mode (default, acceptEdits, plan, bypassPermissions, dontAsk, auto)
 /effort            pick effort (low, medium, high, xhigh, max)
-/stop              cancel the running task
+/stop              interrupt the running task (or tap ⏹ Interrupt)
+/usage             Claude token + cost usage (this session + lifetime)
 
 📦 CODE
 /diff              git status + diff of the active session's repo
 /get <path>        send a file from the PC to your phone
 
-📸 SCREENSHOTS
+📸 CAMERA / SCREENSHOTS
 /shot [url] [WxH]  screenshot a URL (headless browser); no url = grab the PC screen
+/camshot [dev]     grab a still from the webcam (default = camera 0; dev = index or name)
 (you can also just ask me to "screenshot the app")
 
 🎙 VOICE
@@ -548,6 +569,33 @@ type claudeEvent struct {
 	SessionID string          `json:"session_id"`
 	Result    string          `json:"result"`  // final text (type=result)
 	Message   json.RawMessage `json:"message"` // assistant/user content
+	// usage/cost fields, present on the final type=result event
+	TotalCostUSD float64 `json:"total_cost_usd"`
+	NumTurns     int     `json:"num_turns"`
+	Usage        struct {
+		InputTokens              int64 `json:"input_tokens"`
+		OutputTokens             int64 `json:"output_tokens"`
+		CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+		CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+	} `json:"usage"`
+}
+
+// recordUsage folds a result event's cost/token counts into the session and the
+// lifetime totals (see /usage). Safe to call with a nil session.
+func recordUsage(s *Session, ev claudeEvent) {
+	in := ev.Usage.InputTokens + ev.Usage.CacheReadInputTokens + ev.Usage.CacheCreationInputTokens
+	mu.Lock()
+	if s != nil {
+		s.CostUSD += ev.TotalCostUSD
+		s.InTok += in
+		s.OutTok += ev.Usage.OutputTokens
+		s.Turns += ev.NumTurns
+	}
+	state.TotalCostUSD += ev.TotalCostUSD
+	state.TotalInTok += in
+	state.TotalOutTok += ev.Usage.OutputTokens
+	mu.Unlock()
+	save()
 }
 
 type assistantMsg struct {
@@ -620,13 +668,15 @@ func runClaude(chat int64, prompt string) {
 		send(chat, "⚠️ failed to start claude: "+err.Error())
 		return
 	}
-	setRunning(chat, cmd)
+	setRunning(chat, cmd, nil) // one-shot mode: no live stdin to interrupt over
 	typingDone := make(chan struct{})
 	go typingLoop(chat, typingDone)
 
 	sc := bufio.NewScanner(stdout)
 	sc.Buffer(make([]byte, 1<<20), 8<<20) // JSON lines can be large
 	var newID string
+	var res claudeEvent
+	var fullText string
 
 	for sc.Scan() {
 		var ev claudeEvent
@@ -646,12 +696,15 @@ func runClaude(chat int64, prompt string) {
 				}
 			}
 		case "result":
+			res = ev
+			fullText = ev.Result
 			send(chat, ev.Result) // final answer
 		}
 	}
 	cmd.Wait()
 	close(typingDone)
 	clearRunning(chat)
+	recordUsage(s, res)
 
 	if newID != "" {
 		mu.Lock()
@@ -660,6 +713,7 @@ func runClaude(chat int64, prompt string) {
 		mu.Unlock()
 		save()
 	}
+	maybeAskButtons(chat, fullText)
 	if stderr.Len() > 0 {
 		send(chat, "stderr: "+stderr.String())
 	}
@@ -812,7 +866,7 @@ func runClaudeStream(chat int64, prompt string) {
 		send(chat, "⚠️ failed to start claude: "+err.Error())
 		return
 	}
-	setRunning(chat, cmd)
+	setRunning(chat, cmd, stdin) // stream mode: stdin stays open for graceful interrupt
 	typingDone := make(chan struct{})
 	go typingLoop(chat, typingDone)
 
@@ -826,6 +880,7 @@ func runClaudeStream(chat int64, prompt string) {
 	var liveID int64
 	var lastEdit time.Time
 	var streamedAny bool
+	var fullText strings.Builder // whole assistant transcript, scanned for ASK: at the end
 	flush := func() {
 		t := live
 		if strings.TrimSpace(t) == "" {
@@ -845,6 +900,7 @@ func runClaudeStream(chat int64, prompt string) {
 		streamedAny = true
 	}
 	addText := func(s string) {
+		fullText.WriteString(s)
 		live += s
 		if len(live) > 3900 { // overflow: finalize this bubble, start a new one
 			head := live[:3900]
@@ -874,6 +930,7 @@ func runClaudeStream(chat int64, prompt string) {
 	sc := bufio.NewScanner(stdout)
 	sc.Buffer(make([]byte, 1<<20), 16<<20)
 	var newID string
+	var res claudeEvent
 
 loop:
 	for sc.Scan() {
@@ -935,10 +992,10 @@ loop:
 
 		case "result":
 			finalizeBlock()
+			json.Unmarshal(line, &res)
 			if !streamedAny {
-				var ev claudeEvent
-				json.Unmarshal(line, &ev)
-				send(chat, ev.Result)
+				send(chat, res.Result)
+				fullText.WriteString(res.Result)
 			}
 			break loop
 		}
@@ -947,6 +1004,7 @@ loop:
 	cmd.Wait()
 	close(typingDone)
 	clearRunning(chat)
+	recordUsage(s, res)
 
 	if newID != "" {
 		mu.Lock()
@@ -959,6 +1017,7 @@ loop:
 		send(chat, "stderr: "+stderr.String())
 	}
 	flushOutbox(chat)
+	maybeAskButtons(chat, fullText.String())
 	voiceAnnounce(chat, label)
 }
 
@@ -1377,26 +1436,70 @@ func playIncomingVoice(chat int64, fileID string) {
 // running-task registry, typing indicator & conveniences
 // ---------------------------------------------------------------------------
 
+// runProc is the active claude process for a chat, plus (in stream mode) its
+// open stdin so we can send a graceful interrupt over the control protocol.
+type runProc struct {
+	cmd   *exec.Cmd
+	stdin io.Writer // nil in one-shot mode (runClaude) — only a hard kill is possible there
+}
+
 // running tracks the active claude process per chat so /stop can cancel it and
 // a guard can prevent overlapping runs on the same session.
 var running = struct {
 	sync.Mutex
-	m map[int64]*exec.Cmd
-}{m: map[int64]*exec.Cmd{}}
+	m map[int64]*runProc
+}{m: map[int64]*runProc{}}
 
-func setRunning(chat int64, cmd *exec.Cmd) { running.Lock(); running.m[chat] = cmd; running.Unlock() }
-func clearRunning(chat int64)              { running.Lock(); delete(running.m, chat); running.Unlock() }
-func isRunning(chat int64) bool            { running.Lock(); _, ok := running.m[chat]; running.Unlock(); return ok }
+func setRunning(chat int64, cmd *exec.Cmd, stdin io.Writer) {
+	running.Lock()
+	running.m[chat] = &runProc{cmd: cmd, stdin: stdin}
+	running.Unlock()
+}
+func clearRunning(chat int64) { running.Lock(); delete(running.m, chat); running.Unlock() }
+func isRunning(chat int64) bool {
+	running.Lock()
+	_, ok := running.m[chat]
+	running.Unlock()
+	return ok
+}
 
-// stopRunning kills the active task's process tree for a chat.
+// stopRunning interrupts the active task. In stream mode it sends a graceful
+// interrupt over stdin (like pressing Esc), so the session stays clean and
+// resumable; if the process ignores it, a hard kill follows after a short grace.
+// In one-shot mode (no live stdin) it hard-kills immediately.
 func stopRunning(chat int64) bool {
 	running.Lock()
-	cmd := running.m[chat]
+	rp := running.m[chat]
 	running.Unlock()
-	if cmd == nil || cmd.Process == nil {
+	if rp == nil || rp.cmd == nil || rp.cmd.Process == nil {
 		return false
 	}
-	exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(cmd.Process.Pid)).Run()
+	kill := func() {
+		exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(rp.cmd.Process.Pid)).Run()
+	}
+	if rp.stdin == nil {
+		kill()
+		return true
+	}
+	// graceful interrupt over the stream-json control channel
+	req := map[string]any{
+		"type":       "control_request",
+		"request_id": fmt.Sprintf("int-%d", time.Now().UnixNano()),
+		"request":    map[string]any{"subtype": "interrupt"},
+	}
+	if b, err := json.Marshal(req); err == nil {
+		rp.stdin.Write(append(b, '\n'))
+	}
+	// fallback: if the same run is still active after the grace period, hard-kill
+	go func() {
+		time.Sleep(5 * time.Second)
+		running.Lock()
+		cur := running.m[chat]
+		running.Unlock()
+		if cur == rp && cur.cmd.Process != nil {
+			kill()
+		}
+	}()
 	return true
 }
 
@@ -1491,6 +1594,183 @@ func sendHealth(chat int64) {
 		return
 	}
 	send(chat, "🖥 Machine health\n"+strings.TrimSpace(string(out)))
+}
+
+// commafy formats an integer with thousands separators (e.g. 1234567 -> 1,234,567).
+func commafy(n int64) string {
+	s := strconv.FormatInt(n, 10)
+	neg := strings.HasPrefix(s, "-")
+	if neg {
+		s = s[1:]
+	}
+	var out []byte
+	for i, c := range []byte(s) {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			out = append(out, ',')
+		}
+		out = append(out, c)
+	}
+	if neg {
+		return "-" + string(out)
+	}
+	return string(out)
+}
+
+// sendUsage reports Claude token/cost usage as tracked by the bridge from each
+// run's result event (dependency-free; counts only runs made through tgbridge).
+func sendUsage(chat int64) {
+	mu.Lock()
+	totCost, totIn, totOut := state.TotalCostUSD, state.TotalInTok, state.TotalOutTok
+	var b strings.Builder
+	if s := activeSession(chat); s != nil {
+		fmt.Fprintf(&b, "Active: %s\n  cost:   $%.4f\n  tokens: in %s / out %s\n  turns:  %d\n\n",
+			s.Label, s.CostUSD, commafy(s.InTok), commafy(s.OutTok), s.Turns)
+	}
+	mu.Unlock()
+	fmt.Fprintf(&b, "Lifetime (all runs):\n  cost:   $%.4f\n  tokens: in %s / out %s",
+		totCost, commafy(totIn), commafy(totOut))
+	send(chat, "📊 Claude usage (tracked by tgbridge)\n\n"+b.String()+
+		"\n\nnote: counted from runs made through this bridge only.")
+}
+
+// maybeAskButtons scans the assistant's final text for a line of the form
+//   ASK: <question> || option one || option two
+// and, if found, presents the options as tappable buttons. Tapping one feeds
+// the chosen text back into the active session (see the "qa:" callback). This is
+// how the model asks the user a multiple-choice question from headless mode.
+func maybeAskButtons(chat int64, text string) bool {
+	for _, ln := range strings.Split(text, "\n") {
+		ln = strings.TrimSpace(ln)
+		rest, ok := strings.CutPrefix(ln, "ASK:")
+		if !ok {
+			continue
+		}
+		parts := strings.Split(rest, "||")
+		question := strings.TrimSpace(parts[0])
+		if question == "" {
+			question = "Please choose:"
+		}
+		var rows [][]map[string]string
+		for i, opt := range parts[1:] {
+			opt = strings.TrimSpace(opt)
+			if opt == "" {
+				continue
+			}
+			tok := fmt.Sprintf("q%d_%d", time.Now().UnixNano(), i) // unique, well under Telegram's 64-byte cap
+			asks.Lock()
+			asks.m[tok] = opt
+			asks.Unlock()
+			rows = append(rows, []map[string]string{{"text": opt, "callback_data": "qa:" + tok}})
+		}
+		if len(rows) > 0 {
+			sendKeyboard(chat, "❓ "+question, rows)
+			return true
+		}
+	}
+	return false
+}
+
+// answerAsk resolves a tapped ASK button back to its option text and runs it as
+// the next prompt in the active session.
+func answerAsk(chat int64, tok string) {
+	asks.Lock()
+	opt := asks.m[tok]
+	delete(asks.m, tok)
+	asks.Unlock()
+	if opt == "" {
+		send(chat, "that question has expired")
+		return
+	}
+	send(chat, "➡️ "+opt)
+	runPrompt(chat, opt)
+}
+
+// runPrompt dispatches user text to the active session (shared by typed messages
+// and tapped ASK answers), guarding against overlapping runs.
+func runPrompt(chat int64, text string) {
+	if activeSession(chat) == nil {
+		send(chat, "No active session. Use /new <name> or /sessions")
+		return
+	}
+	if isRunning(chat) {
+		send(chat, "⏳ a task is already running — tap ⏹ Interrupt or /stop")
+		return
+	}
+	sendKeyboard(chat, "…working ["+state.Active[chat]+"]",
+		[][]map[string]string{{{"text": "⏹ Interrupt", "callback_data": "stop"}}})
+	if streamMode {
+		go runClaudeStream(chat, text)
+	} else {
+		go runClaude(chat, text)
+	}
+}
+
+// listCameras enumerates DirectShow video capture devices by their friendly name
+// (ffmpeg prints the list to stderr; the -i dummy probe fails, which is expected).
+func listCameras(ff string) []string {
+	out, _ := exec.Command(ff, "-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy").CombinedOutput()
+	var devs []string
+	for _, ln := range strings.Split(string(out), "\n") {
+		if !strings.Contains(ln, "(video)") {
+			continue
+		}
+		a := strings.Index(ln, "\"")
+		if a < 0 {
+			continue
+		}
+		b := strings.Index(ln[a+1:], "\"")
+		if b < 0 {
+			continue
+		}
+		devs = append(devs, ln[a+1:a+1+b])
+	}
+	return devs
+}
+
+// handleCamshot grabs a single still frame from a local webcam and sends it to
+// the phone. arg may be empty (first/default camera), a device index, or a
+// DirectShow device name.
+func handleCamshot(chat int64, arg string) {
+	ff := resolveFFmpeg()
+	if ff == "" {
+		send(chat, "ffmpeg not found (set ffmpeg_path in config)")
+		return
+	}
+	dev := strings.TrimSpace(arg)
+	if dev == "" && cameraDevice != "" {
+		dev = cameraDevice // configured default name
+	}
+	if _, err := strconv.Atoi(dev); dev == "" || err == nil { // empty or an index → enumerate
+		cams := listCameras(ff)
+		if len(cams) == 0 {
+			send(chat, "no webcam found (no DirectShow video device)")
+			return
+		}
+		idx := 0
+		if n, err := strconv.Atoi(dev); err == nil && n >= 0 && n < len(cams) {
+			idx = n
+		}
+		dev = cams[idx]
+	}
+	send(chat, "📷 capturing from "+dev+" …")
+	out := filepath.Join(os.TempDir(), fmt.Sprintf("camshot-%d.jpg", time.Now().Unix()))
+	// -rtbufsize avoids dropped-frame warnings; grab a couple of frames so the
+	// sensor auto-exposes, keeping the last one (the first frame is often dark).
+	cmd := exec.Command(ff, "-hide_banner", "-f", "dshow", "-rtbufsize", "100M",
+		"-i", "video="+dev, "-frames:v", "1", "-update", "1", "-q:v", "3", "-y", out)
+	o, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(o))
+		if len(msg) > 500 {
+			msg = msg[len(msg)-500:]
+		}
+		send(chat, "camshot failed ["+dev+"]:\n"+msg)
+		return
+	}
+	if err := sendPhoto(chat, out, "📷 "+dev); err != nil {
+		send(chat, "send failed: "+err.Error())
+	}
+	os.Remove(out)
 }
 
 // transcribeAPI sends the audio to an OpenAI-compatible /audio/transcriptions
@@ -1696,10 +1976,16 @@ func handleText(chat int64, text string) {
 
 	case text == "/stop":
 		if stopRunning(chat) {
-			send(chat, "⏹ stopping…")
+			send(chat, "⏹ interrupting…")
 		} else {
 			send(chat, "nothing running")
 		}
+
+	case text == "/usage":
+		go sendUsage(chat)
+
+	case text == "/camshot" || strings.HasPrefix(text, "/camshot "):
+		go handleCamshot(chat, strings.TrimSpace(strings.TrimPrefix(text, "/camshot")))
 
 	case text == "/health":
 		go sendHealth(chat)
@@ -1843,20 +2129,7 @@ func handleText(chat int64, text string) {
 		send(chat, "unknown command\n\n"+help)
 
 	default:
-		if activeSession(chat) == nil {
-			send(chat, "No active session. Use /new <name> or /sessions")
-			return
-		}
-		if isRunning(chat) {
-			send(chat, "⏳ a task is already running — /stop to cancel")
-			return
-		}
-		send(chat, "…working ["+state.Active[chat]+"]")
-		if streamMode {
-			go runClaudeStream(chat, text)
-		} else {
-			go runClaude(chat, text)
-		}
+		runPrompt(chat, text)
 	}
 }
 
@@ -1864,6 +2137,18 @@ func handleCallback(u *tgUpdate) {
 	cq := u.CallbackQuery
 	answerCallback(cq.ID)
 	chat := cq.Message.Chat.ID
+	if cq.Data == "stop" {
+		if stopRunning(chat) {
+			send(chat, "⏹ interrupting…")
+		} else {
+			send(chat, "nothing running")
+		}
+		return
+	}
+	if tok, ok := strings.CutPrefix(cq.Data, "qa:"); ok {
+		answerAsk(chat, tok)
+		return
+	}
 	if idxStr, ok := strings.CutPrefix(cq.Data, "sw:"); ok {
 		if idx, err := strconv.Atoi(idxStr); err == nil && idx < len(state.Sessions) {
 			mu.Lock()
@@ -2027,6 +2312,7 @@ func main() {
 		sttURL = "https://api.openai.com/v1/audio/transcriptions"
 	}
 	chromeUserDir = cfg.ChromeUserDir
+	cameraDevice = cfg.CameraDevice
 	ffmpegPath = cfg.FFmpegPath
 	if len(cfg.AllowedTools) > 0 {
 		allowedTools = cfg.AllowedTools
@@ -2055,7 +2341,11 @@ func main() {
 		"To send the user a file or image (e.g. a screenshot), save it into this directory: %s — "+
 		"anything placed there is delivered to their phone and then removed. "+
 		"When asked to screenshot the running app: start the app, wait until it is ready, capture the UI to a PNG in that directory "+
-		"using headless Chrome, then STOP the app again afterwards (do not leave it running). Chrome is at: %s",
+		"using headless Chrome, then STOP the app again afterwards (do not leave it running). Chrome is at: %s. "+
+		"When you need the user to make a choice or answer a short question, end your reply with a single line formatted exactly as: "+
+		"ASK: <your question> || <option 1> || <option 2> [|| <option 3> ...] — the bridge turns those options into tappable buttons on the "+
+		"phone, and the user's tap is sent back to you as their next message. Use this instead of a long open-ended question whenever the "+
+		"answer is one of a few choices. Keep each option short (a few words).",
 		outboxDir, chromePath)
 
 	load()

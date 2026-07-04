@@ -19,5 +19,6 @@
   "stt_api_url": "",
   "stt_api_key": "",
   "stt_model": "whisper-1",
-  "chrome_user_data_dir": ""
+  "chrome_user_data_dir": "",
+  "camera_device": ""
 }

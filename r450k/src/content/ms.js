@@ -46,12 +46,13 @@ const A = [
 ];
 
 const SHOT_ALT = [
-  'Grid paparan langsung berhalaman dengan kotak pengesanan AI pada bingkai',
-  'Editor peraturan dua paksi dengan zon pengesanan dilukis pada bingkai langsung',
-  'Suapan pemberitahuan bersepadu dengan tangkapan skrin dan tindakan pengesahan',
-  'Papan pemuka analitik peristiwa: KPI, carta pengesanan mengikut masa, donat kategori, dan pecahan setiap kamera',
-  'Destinasi pemberitahuan — webhook, Telegram, dan MQTT dengan langganan setiap kategori, togol medan, dan templat',
-  'Tetapan keselamatan — penyulitan semasa rehat, perlindungan kunci dengan eskro pemulihan, sandaran mudah alih, dan padam selamat',
+  'Grid berbilang kamera langsung dalam susun atur 3×2, dengan lencana AI “Kehadiran dikesan (orang)” pada bingkai dua suapan',
+  'Tab Pengesanan AI: peraturan kehadiran dengan zon pengesanan enam titik dilukis pada bingkai kamera sebenar dalam editor zon',
+  'Latihan model tersuai — langkah Set Data dalam aliran berpandu (Set Data, Imej & Label, Model, Kelas Objek)',
+  'Halaman Rakaman: garis masa NVR berterusan sehari dengan penanda klip peristiwa, dan senarai klip dengan main, muat turun, dan padam',
+  'Papan pemuka analitik peristiwa: KPI jumlah, belum dibaca, kritikal dan amaran, carta bar peristiwa mengikut masa, dan donat kategori serta keterukan',
+  'Tetapan Sandaran & Pemulihan: sandaran konfigurasi dilindungi frasa laluan bagi kamera, pengesanan AI, pemberitahuan dan tetapan aplikasi, dengan pemulihan',
+  'Tetapan Versi & Kesihatan dipapar dalam bahasa Arab (kanan ke kiri): versi aplikasi dan teras, semakan kemas kini, dan jubin kesihatan perkhidmatan DB, kamera dan cache',
 ];
 
 const NAV = ['Ciri', 'Cara ia berfungsi', 'Perkakasan', 'Pameran', 'Kegunaan', 'Aplikasi', 'Harga', 'Muat turun'];
@@ -103,8 +104,8 @@ export default {
     ...en.showcase,
     kicker: 'Lihat ia beraksi',
     title: 'Konsol dibina untuk operator, bukan sekadar pentadbir.',
-    lead: 'Grid berbilang kamera langsung, peraturan pengesanan pada bingkai sebenar, suapan amaran bersepadu, analitik peristiwa, penghalaan pemberitahuan, dan keselamatan atas-kotak — setiap skrin dalam pelayar.',
-    tabs: { live: 'Paparan langsung', rules: 'Peraturan pengesanan', notifications: 'Pemberitahuan', dashboard: 'Papan pemuka', destinations: 'Maklum di mana-mana', security: 'Keselamatan' },
+    lead: 'Grid berbilang kamera langsung, peraturan pengesanan dilukis pada bingkai sebenar, latihan model tersuai atas-kotak, rakaman NVR berterusan, analitik peristiwa, sandaran disulitkan, dan versi & kesihatan — setiap skrin dalam pelayar, dalam empat bahasa.',
+    tabs: { live: 'Paparan langsung', detection: 'Pengesanan AI', training: 'Latihan tersuai', recordings: 'Rakaman', dashboard: 'Papan pemuka', backup: 'Sandaran & pemulihan', health: 'Versi & kesihatan' },
     shots: en.showcase.shots.map((s, i) => ({ ...s, alt: SHOT_ALT[i] })),
   },
   useCases: {
