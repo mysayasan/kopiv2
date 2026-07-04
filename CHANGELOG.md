@@ -6,6 +6,22 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-04 — mymatasan 1.79.7, core 1.49.0 (0b08584)
+
+### Added
+
+- **core**: GoReleaser (`.goreleaser.yaml`) now cross-compiles `mymatasan` for `darwin` (amd64+arm64) in addition to linux/windows, producing macOS `.tar.gz` archives on release alongside the existing linux `.tar.gz` / windows `.zip` archives. `deploy/launchd/com.mysayasan.mymatasan.plist` already documented running MyMataSan under launchd on macOS, but no macOS build was actually being produced until now.
+
+### Changed
+
+- **core**: Refreshed the r450k marketing site to reflect the latest mymatasan features and gave the top navigation a more modern look. Content: enriched the detection card (multiple detection zones per rule, first-class fire/smoke), the live-view card (two-way audio talk-back + press-and-hold PTZ), and the security card (OS-keystore/passphrase key wrapping, exportable recovery escrow, portable passphrase-encrypted .mmbackup); added two feature cards — an analytics dashboard (KPIs / detections-over-time / per-category+camera breakdowns, server-side aggregation) and self-deploying operations (first-run wizard, capacity estimator, self-healing machine health with overwrite-oldest, in-app ffmpeg/Python/update installers). All copy translated across en/ms/zh/ar. Nav: replaced the plain text-link-with-underline bar with a glass 'pill' navigation — rounded chips, a brand-gradient active-section indicator, and a glowing gradient CTA (two new SVG icons: chart, activity).
+
+### Fixed
+
+- **core**: Fixed `make build`/`make run`/`make test` (and friends) failing on Windows: GNU Make there runs recipes under a stripped MSYS /bin/sh that carries almost none of the Windows environment the Go toolchain needs — no USERPROFILE/APPDATA (Go can't locate GOPATH, its module cache, or its env file: "module cache not found: neither GOMODCACHE nor GOPATH is set") and no TMP/TEMP (Go tries to create its build work dir under C:\Windows and fails with "Access is denied"). The Makefile now reconstructs USERPROFILE/APPDATA/LOCALAPPDATA/TMP/TEMP from the real Windows user profile (resolved via `cygpath -F 40`, which works regardless of the ambient env) and threads them through every `go` invocation in run/run-go/build/build-go/test* via a `GOENV` variable, guarded to Windows only via `uname`; it is a no-op on Linux/macOS. Windows binaries also now get an explicit `.exe` suffix (Go only auto-appends it when it derives the output name itself, not with an explicit `-o` path). Separately, `build`/`build-go` now write the binary to `apps/<app>/bin/` (was the repo-root `./bin`) and a new `make stage` target (invoked automatically after build) copies `config.json` + `static/` + `ai/` alongside it, so `apps/<app>/bin/` is a self-contained, runnable bundle rather than a bare binary. `apps/*/bin/` was added to `.gitignore`.
+- **mymatasan**: The in-app ffmpeg installer (Settings -> Runtime -> Decoder -> Download ffmpeg, and the first-run setup wizard's video-engine check) resolved its install directory as a CWD-relative `bin`, but a packaged Windows service runs with its working directory set to C:\Windows\System32, so the installer silently placed the downloaded ffmpeg binary there instead of anywhere the app could find it afterwards. It now installs under the writable `dataDir/bin` (an absolute path derived from deps.DataDir), mirroring how the self-contained Python/AI runtime already installs under `dataDir/pyruntime`.
+- **core**: The r450k marketing site's Downloads page linked each release asset with `target="_blank"`, which opened a new blank tab and silently dropped the download instead of downloading the file — the Cloudflare Worker `/api/download` proxy behind it was already correct (verified end-to-end: 302 to a signed URL served as Content-Disposition: attachment). Links now use a plain same-tab anchor (no `target="_blank"`, and no `download` attribute — which browsers ignore/block once the same-origin endpoint redirects cross-origin); the server's Content-Disposition drives the in-place download without leaving the page.
 ## 2026-07-04 — mymatasan 1.79.6, core 1.47.3 (3748dca)
 
 ### Added
