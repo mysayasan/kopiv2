@@ -9,6 +9,16 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-04 — mymatasan 1.80.0, core 1.50.0 (ef7bf54)
+
+### Added
+
+- **mymatasan**: The Windows installer and app now carry the MyMataSan brand (green shield + eye + check icon): `packaging/gen-winres.sh` runs goversioninfo in both `.goreleaser.yaml`'s before-hooks and the `windows-installer` release job to embed `packaging/windows/mymatasan.ico` plus version metadata into `mymatasan.exe` (generating gitignored `cmd/mymatasan/resource_windows_{amd64,arm64}.syso`), and the rewritten Inno Setup script (`packaging/windows/mymatasan.iss`) sets the installer's own icon, adds a Start Menu group (open console, Start/Stop the service via a self-elevating UAC prompt, open services.msc, Uninstall), an optional desktop-icon task, and a ticked post-install "Open MyMataSan in your browser" checkbox. The finish page now tells the operator exactly what to do next: the console URL, and — only on a fresh install (detected by the absence of an existing database in the data dir) — the bootstrap login `admin` plus a freshly generated strong 16-character password (passed to the service as `LOCAL_ADMIN_PASSWORD`, which `EnsureDefaultAdmin` already reads to seed the admin, must-change on first sign-in); on an upgrade it instead says the existing account is unchanged. The web UI also gets the same brand favicon (new `favicon.svg`, `.ico` fallback for older browsers) plus a meta description and theme-color.
+
+### Changed
+
+- **core**: The r450k marketing site's Showcase section now uses 7 real mymatasan UI captures (`live_views.png`, `ai_detection.png`, `ai_training.png`, `recordings.png`, `dashboard.png`, `backup_recovery.png`, `version_health_language_selection.png` — resized to 1920px wide with `sharp`) in place of the previous 6 enhanced/mockup `.webp` shots, restructuring the showcase tabs and per-shot alt text across all four locales (`en`/`ms`/`zh`/`ar`) to match what's actually pictured: live view, AI detection zones, custom model training, recordings, the analytics dashboard, backup & recovery, and version/health (shown in Arabic RTL). The inline SVG mockups in `Showcase.jsx` remain wired as a last-resort fallback for any image that fails to load.
 ## 2026-07-04 — core 1.49.2 (72bbe6a)
 
 ### Fixed
