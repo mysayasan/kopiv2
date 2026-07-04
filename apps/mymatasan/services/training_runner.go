@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
 	"github.com/mysayasan/kopiv2/infra/externaltools"
+	"github.com/mysayasan/kopiv2/infra/procutil"
 )
 
 // TrainingRunConfig wires the in-app trainer: the Python command, the train
@@ -194,7 +196,9 @@ func nonEmptyPrefix(prefix, value string) string {
 func detectNvidiaGPU(ctx context.Context) string {
 	probeCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(probeCtx, "nvidia-smi", "--query-gpu=name", "--format=csv,noheader").Output()
+	probe := exec.CommandContext(probeCtx, "nvidia-smi", "--query-gpu=name", "--format=csv,noheader")
+	procutil.HideWindow(probe)
+	out, err := probe.Output()
 	if err != nil {
 		return ""
 	}
@@ -303,6 +307,7 @@ func (s *trainingService) runDepsSetup(script string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, runner, args...)
+	procutil.HideWindow(cmd)
 	writer := &setupLogWriter{s: s}
 	cmd.Stdout = writer
 	cmd.Stderr = writer
@@ -498,7 +503,15 @@ func (s *trainingService) runTraining(ctx context.Context, model entities.Traini
 		"--name", "run",
 	}
 	cmd := exec.CommandContext(ctx, s.trainCfg.PythonCmd, args...)
-	cmd.Stderr = os.Stderr
+	procutil.HideWindow(cmd)
+	// Drain stderr to the app log via a pipe rather than inheriting os.Stderr, which is
+	// an invalid handle when the app runs without a console (relaunched/detached/service)
+	// and would kill the Python trainer at stdio init.
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		s.failModel(model.Id, err.Error())
+		return
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		s.failModel(model.Id, err.Error())
@@ -508,6 +521,13 @@ func (s *trainingService) runTraining(ctx context.Context, model entities.Traini
 		s.failModel(model.Id, err.Error())
 		return
 	}
+	go func() {
+		sc := bufio.NewScanner(stderrPipe)
+		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for sc.Scan() {
+			log.Printf("training: %s", sc.Text())
+		}
+	}()
 
 	var weights, failMsg string
 	var metrics map[string]float64
@@ -687,6 +707,7 @@ func (s *trainingService) downloadStockModel(name string) (string, error) {
 	dlCtx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(dlCtx, s.trainCfg.PythonCmd, "-c", script)
+	procutil.HideWindow(cmd)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -732,7 +753,9 @@ func (s *trainingService) readModelLabels(weightsPath string) ([]string, error) 
 		"print('LABELS:' + json.dumps([str(v).strip().lower() for v in vals]))\n"
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, py, "-c", script, weightsPath).Output()
+	probe := exec.CommandContext(ctx, py, "-c", script, weightsPath)
+	procutil.HideWindow(probe)
+	out, err := probe.Output()
 	if err != nil {
 		return nil, fmt.Errorf("could not read model labels: %v", err)
 	}

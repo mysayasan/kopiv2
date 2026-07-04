@@ -522,7 +522,14 @@ func runApp(app App) error {
 		}
 		// No supervisor (bare/dev run): relaunch ourselves. On Unix this re-execs in
 		// place (reliable, no port hand-off race, no double start); on Windows it spawns
-		// a detached child and this process exits.
+		// a detached child and this process exits. The storm guard bounds how many times
+		// we self-relaunch in a short window, so a crash-on-boot (or anything that
+		// re-requests a restart immediately) halts instead of looping forever — the
+		// runaway that would otherwise spawn processes/windows without end.
+		if !allowSelfRelaunch() {
+			log.Printf("apphost: refusing to self-relaunch — %d relaunches within %s looks like a restart loop. Staying DOWN to avoid a runaway; fix the boot failure, then start the app manually (or run it under a supervisor).", selfRelaunchMax, selfRelaunchWindow)
+			return nil
+		}
 		if err := relaunchSelf(); err != nil {
 			log.Printf("relaunch failed (%v); exiting — run under a process supervisor (systemd/launchd/Windows service/Docker) or set KOPIV2_SUPERVISED=1 to restart reliably", err)
 		}
@@ -537,10 +544,55 @@ const restartExitCode = 70
 
 // supervisedRestart reports whether the app is managed by a process supervisor that
 // will relaunch it on exit, so a restart should be a clean exit rather than a
-// self-relaunch. Enabled via KOPIV2_SUPERVISED (1/true/yes).
+// self-relaunch (which would race the supervisor and double-start). True when the
+// process runs as a Windows service (platformSupervised) or when KOPIV2_SUPERVISED
+// (1/true/yes) is set for other supervisors (systemd/launchd/Docker/WinSW).
 func supervisedRestart() bool {
+	if platformSupervised() {
+		return true
+	}
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("KOPIV2_SUPERVISED")))
 	return v == "1" || v == "true" || v == "yes"
+}
+
+// selfRelaunchWindow / selfRelaunchMax bound self-relaunches: after selfRelaunchMax
+// relaunches within selfRelaunchWindow, allowSelfRelaunch stops relaunching so a
+// crash-on-boot loop can never fork-bomb the host. The count is carried across the
+// relaunch chain via env (relaunchSelf passes the current environment to the child).
+const (
+	selfRelaunchWindow = 60 * time.Second
+	selfRelaunchMax    = 5
+)
+
+// allowSelfRelaunch reports whether we may self-relaunch now and records the running
+// count for the child via env. A window that has elapsed (the app stayed up long
+// enough) resets the count, so ordinary, deliberate restarts are never throttled —
+// only a tight relaunch loop is.
+func allowSelfRelaunch() bool {
+	gen := 0
+	if v := strings.TrimSpace(os.Getenv("KOPIV2_RESTART_GEN")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			gen = n
+		}
+	}
+	var t0 int64
+	if v := strings.TrimSpace(os.Getenv("KOPIV2_RESTART_T0")); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			t0 = n
+		}
+	}
+	now := time.Now().UnixMilli()
+	if t0 == 0 || now-t0 > selfRelaunchWindow.Milliseconds() {
+		t0 = now
+		gen = 0
+	}
+	gen++
+	if gen > selfRelaunchMax {
+		return false
+	}
+	os.Setenv("KOPIV2_RESTART_GEN", strconv.Itoa(gen))
+	os.Setenv("KOPIV2_RESTART_T0", strconv.FormatInt(t0, 10))
+	return true
 }
 
 // appRestarter implements Restarter by cancelling the run loop's restart context.

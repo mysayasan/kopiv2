@@ -19,3 +19,5 @@ Adapts a long-lived object detector worker process into the reusable `ObjectDete
 - Response shape is the same object-candidate contract as `external.go`: either an array or an object with `detections` or `objects`.
 - Worker errors can be returned as `{"error":"message"}` and become detector errors.
 - MyMataSan uses this for `vision.detector.mode=persistent`, usually with `apps/mymatasan/ai/yolo_worker.py`.
+- The worker's **stderr is drained to the app log** through a Go-created pipe, not inherited from `os.Stderr`. When the app runs without a valid console (a relaunched/detached/service process) `os.Stderr` is an invalid handle, and passing it to the child made the Python worker die at stdio init — surfacing as `persistent detector write failed: ... the pipe has been ended` on the very next write (e.g. a capacity "Run Calibration" 500 within ~100ms). The pipe is always valid and the worker's `ready:`/traceback lines now appear in the structured log.
+- Spawned with `procutil.HideWindow` so it never pops a console window on Windows (see `infra/procutil`).

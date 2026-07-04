@@ -77,6 +77,9 @@ func (a *capacityApi) calibrate(w http.ResponseWriter, r *http.Request) {
 
 	in, err := a.buildInput(r.Context())
 	if err != nil {
+		// 5xx detail is hidden from clients, so log the real cause here (the estimate
+		// input assembly — settings, GPU probe, metrics — not the benchmark itself).
+		log.Printf("capacity: calibration succeeded but building the estimate failed: %v", err)
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}

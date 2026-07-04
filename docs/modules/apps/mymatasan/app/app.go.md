@@ -15,6 +15,7 @@ Implements the `mymatasan` app module for the shared runtime host.
 - Owns the app-local stream manager used by WebRTC live view and closes it during graceful shutdown.
 - Wires SQLite-backed runtime settings seeded from `decoder` and `stream` config defaults.
 - Builds the app-local vision detector from `vision.detector` config and starts the monitor worker when `vision.enabled` allows it.
+- Resolves the detector's Python worker script (`vision.detector.args`) to an absolute path against `deps.HomeDir` via `resolveDetectorScriptArgs`/`resolveDetectorScript`, so the worker is found regardless of the process working directory: a dev run from the repo root (`HomeDir=apps/mymatasan`) or the staged `bin/` bundle (`HomeDir=<exe dir>`, with `ai/` staged alongside). The default config uses the HomeDir-relative `ai/yolo_worker.py`; legacy repo-root-relative values (`./apps/mymatasan/ai/yolo_worker.py`) are recovered by basename in `<HomeDir>/ai` (they otherwise doubled to `<bin>/apps/mymatasan/ai/...` and the worker failed to open, killing detection/calibration). The training script + base-model paths are derived from the resolved worker directory, so they follow automatically.
 - Initialises the `recording.Manager` and applies all enabled `RecordingConfig` rows at startup via `Manager.Configure`.
 - Reads the runtime `recording.storage` settings at startup: sizes the shared NVENC semaphore via `recording.SetNVENCConcurrency(maxConcurrentEncodes)` before any recorder starts, and seeds each recorder's `RecordCodec`/`RecordQuality` (at-rest codec) from it.
 - RTSP URI resolution order at startup: `cfg.StreamURL` override → ONVIF `SnapshotSource` fallback. `cfg.FallbackStreamUrl` is passed as `FallbackRTSPURI`.
@@ -22,6 +23,7 @@ Implements the `mymatasan` app module for the shared runtime host.
 - Registers `recorderManager.Close()` in the graceful shutdown func.
 - Builds a `services.PythonInstaller` (from `deps.DataDir`/`deps.ConfigPath`) and passes it into `NewSettingsApi` so Settings can install a self-contained AI Python runtime (Python + torch + ultralytics) in-app.
 - Builds a `services.UpdateService` (current version resolved from the embedded manifest via `versioning.LoadDefault()`/`InfoForApp`, `deps.HomeDir`, `deps.Restarter`), calls `CleanupStaleFiles()` at startup to remove any leftovers from a previous update, registers its periodic release check on `deps.Scheduler.StartPeriodic` when a scheduler is available, and passes it into `NewSystemApi` for the self-update check/apply endpoints.
+- Builds a `services.NewBackupService` over the camera/camera-onvif/recording-config/detection-class/detection-rule/runtime-setting repositories plus `currentVersion`, and registers `apis.NewBackupApi` (after `NewSystemApi`) for the Settings → Backup & Recovery configuration backup/restore endpoints (`/settings/backup/*`).
 - Provides API docs metadata and endpoint descriptions for shared Swagger/OpenAPI output.
 - Uses the embedded app version as the OpenAPI info version when available.
 

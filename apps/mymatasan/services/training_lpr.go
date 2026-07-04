@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/mysayasan/kopiv2/infra/procutil"
 )
 
 // LPRModelOption is one entry in the curated plate-detector catalog the app can
@@ -82,7 +84,9 @@ func (s *trainingService) lprOcrReady(ctx context.Context) bool {
 	defer cancel()
 	// importlib.util.find_spec avoids the heavy easyocr import (which loads torch);
 	// it only checks the package is installed.
-	out, err := exec.CommandContext(probeCtx, py, "-c", "import importlib.util,sys; sys.stdout.write('1' if importlib.util.find_spec('easyocr') else '0')").Output()
+	probe := exec.CommandContext(probeCtx, py, "-c", "import importlib.util,sys; sys.stdout.write('1' if importlib.util.find_spec('easyocr') else '0')")
+	procutil.HideWindow(probe)
+	out, err := probe.Output()
 	if err != nil {
 		return false
 	}
@@ -247,6 +251,7 @@ func (s *trainingService) runLPRDepsSetup(py string, requirements string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, py, args...)
+	procutil.HideWindow(cmd)
 	writer := &setupLogWriter{s: s}
 	cmd.Stdout = writer
 	cmd.Stderr = writer

@@ -16,6 +16,7 @@ import (
 	"github.com/bluenviron/gortsplib/v5/pkg/base"
 	"github.com/bluenviron/gortsplib/v5/pkg/description"
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
+	"github.com/mysayasan/kopiv2/infra/procutil"
 	"github.com/pion/rtp"
 )
 
@@ -443,6 +444,7 @@ func (s *rtspSession) runAudioTranscoder() {
 			fmt.Sprintf("rtp://127.0.0.1:%d", port),
 		}
 		cmd := exec.CommandContext(ctx, s.ffmpegPath, args...)
+		procutil.HideWindow(cmd)
 		if stderr, perr := cmd.StderrPipe(); perr == nil {
 			go func() {
 				sc := bufio.NewScanner(stderr)

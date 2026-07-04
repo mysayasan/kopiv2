@@ -43,17 +43,27 @@ export function SetupWizard({
   onDiskInfo,
   onAddDestination,
 }) {
-  // Persist the step so an in-app restart (e.g. after installing ffmpeg / GPU deps)
-  // resumes the wizard where it left off rather than jumping back to the start.
+  // Resume the wizard's step ONLY across an in-app restart the wizard itself
+  // triggered (installing ffmpeg / GPU deps sets the one-shot `setupResume` flag just
+  // before restarting). A plain first-run load — including a fresh install or reset in
+  // a browser that still holds a stale `setupStep` — starts at Welcome, not mid-wizard.
   const [step, setStepState] = useState(() => {
+    const resume = window.localStorage.getItem('setupResume') === '1';
     const saved = Number(window.localStorage.getItem('setupStep'));
-    return Number.isInteger(saved) && saved > 0 && saved < STEP_KEYS.length ? saved : 0;
+    try { window.localStorage.removeItem('setupResume'); } catch (_) {}
+    return resume && Number.isInteger(saved) && saved > 0 && saved < STEP_KEYS.length ? saved : 0;
   });
   const setStep = (updater) => setStepState((s) => {
     const nextStep = typeof updater === 'function' ? updater(s) : updater;
     try { window.localStorage.setItem('setupStep', String(nextStep)); } catch (_) {}
     return nextStep;
   });
+  // Mark that the next load should resume at the current step, then restart. Used by
+  // the steps whose install actions require an in-app restart to take effect.
+  const restartAndResume = () => {
+    try { window.localStorage.setItem('setupResume', '1'); } catch (_) {}
+    if (onRestart) onRestart();
+  };
   const t = useT();
   const [recordingDone, setRecordingDone] = useState(false);
   const [alertsDone, setAlertsDone] = useState(false);
@@ -87,7 +97,7 @@ export function SetupWizard({
 
         <div className="setup-body">
           {step === 0 ? (
-            <WelcomeStep username={username} busy={busy} onChangePassword={onChangePassword} />
+            <WelcomeStep username={username} busy={busy} onChangePassword={onChangePassword} authHeader={authHeader} onRestart={onRestart} />
           ) : null}
           {step === 1 ? (
             <SystemStep
@@ -95,7 +105,7 @@ export function SetupWizard({
               onFfmpegStatus={onFfmpegStatus}
               onInstallFfmpeg={onInstallFfmpeg}
               onSystemTime={onSystemTime}
-              onRestart={onRestart}
+              onRestart={restartAndResume}
             />
           ) : null}
           {step === 2 ? (
@@ -105,7 +115,7 @@ export function SetupWizard({
               onInstallAiDeps={onInstallAiDeps}
               onStockModel={onStockModel}
               onApplyStockModel={onApplyStockModel}
-              onRestart={onRestart}
+              onRestart={restartAndResume}
             />
           ) : null}
           {step === 3 ? (
@@ -252,7 +262,97 @@ function ConnectivityStep({ authHeader }) {
   );
 }
 
-function WelcomeStep({ username, busy, onChangePassword }) {
+// WelcomeRestore lets a fresh install recover its whole configuration from a
+// passphrase-protected .mmbackup file made on another machine, right at the start of
+// onboarding — so the operator can skip the rest of the wizard. A restart afterwards
+// lets every service pick up the restored settings. See services/backup.go.
+function WelcomeRestore({ authHeader, onRestart }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [fileData, setFileData] = useState('');
+  const [pass, setPass] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState(null);
+  const [result, setResult] = useState(null);
+
+  async function api(path, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    if (authHeader) headers.Authorization = authHeader;
+    if (options.body) headers['Content-Type'] = 'application/json';
+    const resp = await fetch(`${apiBase()}${path}`, { credentials: 'include', ...options, headers });
+    const text = await resp.text();
+    let payload = null;
+    if (text) { try { payload = JSON.parse(text); } catch (_) { payload = { message: text }; } }
+    const body = payload?.data?.result ?? payload?.result ?? payload;
+    return { ok: resp.ok, body, message: payload?.message };
+  }
+
+  async function onPickFile(e) {
+    const file = e.target.files && e.target.files[0];
+    setResult(null); setNote(null);
+    if (!file) { setFileData(''); return; }
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let bin = '';
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      setFileData(btoa(bin));
+    } catch (_) { setFileData(''); setNote({ err: true, text: t('setup.bkupFail') }); }
+  }
+
+  async function restore() {
+    if (!fileData) { setNote({ err: true, text: t('setup.bkupNeedFile') }); return; }
+    if (!pass) { setNote({ err: true, text: t('setup.bkupNeedPass') }); return; }
+    setBusy(true);
+    try {
+      // Fresh install → replace, so the backup is the source of truth.
+      const r = await api('/api/settings/backup/restore', { method: 'POST', body: JSON.stringify({ dataBase64: fileData, passphrase: pass, mode: 'replace' }) });
+      if (!r.ok || !r.body?.restored) { setNote({ err: true, text: r.message || t('setup.bkupFail') }); return; }
+      setResult(r.body); setNote(null);
+    } catch (err) {
+      setNote({ err: true, text: err?.message || t('setup.bkupFail') });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="setup-account">
+        <span className="field-hint"><Ico n="reload" sz={14} /> {t('setup.haveBackup')}</span>
+        <button type="button" className="quiet" onClick={() => setOpen((o) => !o)} disabled={busy}>
+          <span className="btn-icon"><Ico n={open ? 'x' : 'reload'} /> {open ? t('setup.cancel') : t('setup.restoreBackup')}</span>
+        </button>
+      </div>
+      {open ? (
+        <div className="setup-pw-form">
+          <label>{t('setup.bkupFile')}
+            <input type="file" accept=".mmbackup,application/octet-stream" onChange={onPickFile} disabled={busy || !!result} />
+          </label>
+          <label>{t('setup.bkupPassphrase')}
+            <PasswordField value={pass} onChange={setPass} autoComplete="off" />
+          </label>
+          {note ? <span className={note.err ? 'field-hint danger-text' : 'field-hint good'}>{note.text}</span> : null}
+          {result ? (
+            <>
+              <span className="field-hint good"><Ico n="check-ok" sz={14} /> {t('setup.bkupRestored')}</span>
+              {onRestart ? (
+                <button type="button" onClick={() => onRestart()}>
+                  <span className="btn-icon"><Ico n="reload" /> {t('setup.bkupRestartApply')}</span>
+                </button>
+              ) : null}
+            </>
+          ) : (
+            <button type="button" onClick={restore} disabled={busy}>
+              <span className="btn-icon"><Ico n="reload" /> {busy ? t('setup.bkupRestoring') : t('setup.bkupRestoreBtn')}</span>
+            </button>
+          )}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function WelcomeStep({ username, busy, onChangePassword, authHeader, onRestart }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const [current, setCurrent] = useState('');
@@ -294,6 +394,9 @@ function WelcomeStep({ username, busy, onChangePassword }) {
           </button>
         </div>
       ) : null}
+
+      <hr className="settings-divider" />
+      <WelcomeRestore authHeader={authHeader} onRestart={onRestart} />
     </div>
   );
 }

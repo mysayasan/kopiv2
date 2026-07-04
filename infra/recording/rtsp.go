@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mysayasan/kopiv2/infra/atrest"
+	"github.com/mysayasan/kopiv2/infra/procutil"
 )
 
 // fileIsEncrypted reports whether path begins with the atrest header magic.
@@ -395,6 +396,7 @@ func (r *rtspRecorder) runFFmpeg(ctx context.Context, ffmpegPath, transport stri
 			return
 		}
 		cmd := exec.CommandContext(ctx, ffmpegPath, buildArgs(currentURI)...)
+		procutil.HideWindow(cmd)
 		stderr, _ := cmd.StderrPipe()
 		var stdout io.ReadCloser
 		if siphonFPS > 0 {
@@ -623,7 +625,9 @@ func (r *rtspRecorder) remuxSegment(f liveSegInfo, endedAt int64) {
 		}
 		defer release()
 	}
-	if out, err := exec.CommandContext(ctx, ffmpegPath, args...).CombinedOutput(); err != nil {
+	remux := exec.CommandContext(ctx, ffmpegPath, args...)
+	procutil.HideWindow(remux)
+	if out, err := remux.CombinedOutput(); err != nil {
 		log.Printf("recording rtsp cam%d: remux %s: %v: %s", r.cfg.CameraId, f.stem, err, out)
 		return
 	}
@@ -834,7 +838,9 @@ func (r *rtspRecorder) extractClip(alertId int64, triggerAt time.Time, postWait 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	if out, err := exec.CommandContext(ctx, ffmpegPath, args...).CombinedOutput(); err != nil {
+	clip := exec.CommandContext(ctx, ffmpegPath, args...)
+	procutil.HideWindow(clip)
+	if out, err := clip.CombinedOutput(); err != nil {
 		log.Printf("recording rtsp cam%d alert%d: extract clip: %v: %s", r.cfg.CameraId, alertId, err, out)
 		return
 	}

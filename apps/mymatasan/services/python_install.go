@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mysayasan/kopiv2/infra/procutil"
 )
 
 // Pinned astral python-build-standalone build. `install_only` tarballs extract to a
@@ -286,6 +288,7 @@ func (p *PythonInstaller) download(url, dest string) error {
 // so the UI shows pip progress.
 func (p *PythonInstaller) runStreaming(python string, args []string) error {
 	cmd := exec.Command(python, args...)
+	procutil.HideWindow(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -350,14 +353,18 @@ func hasNvidiaGPU() bool {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return exec.CommandContext(ctx, "nvidia-smi", "-L").Run() == nil
+	probe := exec.CommandContext(ctx, "nvidia-smi", "-L")
+	procutil.HideWindow(probe)
+	return probe.Run() == nil
 }
 
 // runProbe runs a short command and returns its combined output.
 func runProbe(ctx context.Context, exe string, args []string, timeout time.Duration) (string, error) {
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	out, err := exec.CommandContext(cctx, exe, args...).CombinedOutput()
+	cmd := exec.CommandContext(cctx, exe, args...)
+	procutil.HideWindow(cmd)
+	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 

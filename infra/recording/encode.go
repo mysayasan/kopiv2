@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+
+	"github.com/mysayasan/kopiv2/infra/procutil"
 )
 
 // defaultNVENCConcurrency caps simultaneous GPU encode sessions when no limit is
@@ -92,6 +94,7 @@ func TranscodeH264(ctx context.Context, ffmpegPath string, src io.Reader, dst io
 		"-f", "mp4",
 		"pipe:1",
 	)
+	procutil.HideWindow(cmd)
 	cmd.Stdin = src
 	cmd.Stdout = dst
 	var stderr bytes.Buffer

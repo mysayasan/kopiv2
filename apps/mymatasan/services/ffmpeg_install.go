@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mysayasan/kopiv2/infra/externaltools"
+	"github.com/mysayasan/kopiv2/infra/procutil"
 )
 
 // FFmpegStatusResult reports whether a usable ffmpeg is available to the app.
@@ -318,6 +319,7 @@ func extractFFmpegFromTarXz(archivePath, tmpDir, destDir string) (string, error)
 	defer cancel()
 	// -xf autodetects xz compression on both GNU tar and bsdtar.
 	cmd := exec.CommandContext(ctx, "tar", "-xf", archivePath, "-C", extractDir)
+	procutil.HideWindow(cmd)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("tar: %v: %s", err, strings.TrimSpace(string(out)))
 	}

@@ -2150,6 +2150,61 @@ dd {
   color: var(--text-muted);
 }
 
+.backup-sections {
+  display: grid;
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+
+.backup-section {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-subtle2);
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.backup-section input[type="checkbox"] {
+  width: 18px;
+  min-width: 18px;
+  min-height: 18px;
+  margin: 0;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.backup-section .backup-section-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.backup-section.is-empty {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* The Backup & Recovery tab stacks several independent panels (each its own
+   .settings-layout), so give them vertical breathing room between the cards. */
+.settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* A horizontal rule between sections of a panel/pane. Without this the bare <hr>
+   collapses to a tiny centered mark (a stray "dot") inside grid/flex containers. */
+.settings-divider {
+  width: 100%;
+  border: none;
+  border-top: 1px solid var(--border-soft);
+  margin: 4px 0;
+}
+
 .tool-status-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

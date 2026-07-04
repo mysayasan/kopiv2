@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mysayasan/kopiv2/infra/procutil"
 	"github.com/shirou/gopsutil/v3/disk"
 )
 
@@ -30,8 +31,10 @@ func TrimVolume(ctx context.Context, path string) error {
 		if letter == "" {
 			return fmt.Errorf("could not determine a drive letter for %q", path)
 		}
-		out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive",
-			"-Command", fmt.Sprintf("Optimize-Volume -DriveLetter %s -ReTrim -ErrorAction Stop", letter)).CombinedOutput()
+		trim := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive",
+			"-Command", fmt.Sprintf("Optimize-Volume -DriveLetter %s -ReTrim -ErrorAction Stop", letter))
+		procutil.HideWindow(trim)
+		out, err := trim.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("Optimize-Volume: %v: %s", err, strings.TrimSpace(string(out)))
 		}

@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/mysayasan/kopiv2/infra/procutil"
 )
 
 type DecoderGPUDeviceOption struct {
@@ -188,7 +190,9 @@ func detectDarwinGPUDevices(ctx context.Context) ([]DecoderGPUDeviceOption, []st
 func runTool(ctx context.Context, name string, args ...string) (string, error) {
 	runCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	output, err := exec.CommandContext(runCtx, name, args...).CombinedOutput()
+	cmd := exec.CommandContext(runCtx, name, args...)
+	procutil.HideWindow(cmd)
+	output, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(output))
 	if runCtx.Err() != nil {
 		return text, runCtx.Err()

@@ -9,6 +9,7 @@ It is designed to run on small devices such as Raspberry Pi or Jetson-style micr
 - Standalone DB-backed local Basic Auth with a first-run admin account seeded from `localAuth.username`/`localAuth.password` in config (falls back to `admin` / `admin` when unset), **forced password change** on first login regardless of which credential seeded the account, **failed-login lockout** (escalating backoff + countdown), and **role-based access** (admin = full control; non-admin = view-only + acknowledge).
 - **First-run setup wizard** (password → capacity → add camera → recording + alerts) and a **camera-capacity estimator** (`/api/capacity`) that tells you how many cameras the host can handle.
 - **Encryption at rest** (default on): recordings, snapshots, and training images are AES-256-GCM encrypted on disk so the factory reset can **crypto-erase** them by destroying the key. The master key itself can be protected by an OS keystore (Windows DPAPI, Linux systemd-creds) or a portable passphrase (Docker), with an exportable/verifiable **recovery escrow** (Settings → Backup & Recovery) and an automatic or pre-login recovery flow if the key is ever lost.
+- **Configuration backup & restore** (Settings → Backup & Recovery): export a portable, passphrase-encrypted `.mmbackup` of your cameras (incl. saved credentials), AI detection, notifications, and app settings, then restore it on a fresh install — including a **"Restore from backup"** branch in the first-run wizard — so you never reconfigure by hand. Machine identity (the at-rest key, pairing, certificates) is deliberately excluded.
 - **Secure Wipe & Reset** (factory reset: crypto-erase key + erase media + drop/rebuild DB + TRIM/scrub + restart) behind `bootstrap.allowReset`, plus secure multi-pass **shredding** of deleted footage.
 - **In-app self-update** (Settings → Version & Health → Updates): checks GitHub Releases on a schedule and on demand, and on portable/Windows-installer installs downloads, SHA-256-verifies, swaps, and restarts in place; `.deb`/`.rpm` and Docker installs get in-panel upgrade guidance instead (`MYMATASAN_MANAGED`).
 - **In-app AI runtime installer** (Settings → AI): downloads a self-contained Python + GPU/CPU PyTorch + `ultralytics` for hosts with no usable Python, so the YOLO detector works with no terminal setup.
@@ -302,7 +303,7 @@ curl -u admin:Admin123 -X POST -H "Content-Type: application/json" \
 
 ## Setup wizard & camera capacity
 
-On a fresh install an admin is walked through a **setup wizard** (Welcome/password → System check → AI → Capacity → Add camera → Recording → Alerts → Done), persisted via `GET /api/setup/state` and `POST /api/setup/complete`; it shows until completed or skipped and auto-tiles the added cameras on finish. The **Add camera** step lets you rename a discovered camera (editable name, defaulting to the discovered title) before adding it, and the **Alerts** step can attach a delivery destination — **Webhook, Telegram, or MQTT** (broker URL + topic; advanced auth/TLS is configured later in Settings → Notifications). The **System check** step also offers the in-app ffmpeg installer when no video engine is found.
+On a fresh install an admin is walked through a **setup wizard** (Welcome/password → System check → AI → Capacity → Add camera → Recording → Alerts → Done), persisted via `GET /api/setup/state` and `POST /api/setup/complete`; it shows until completed or skipped and auto-tiles the added cameras on finish. The **Add camera** step lets you rename a discovered camera (editable name, defaulting to the discovered title) before adding it, and the **Alerts** step can attach a delivery destination — **Webhook, Telegram, or MQTT** (broker URL + topic; advanced auth/TLS is configured later in Settings → Notifications). The **System check** step also offers the in-app ffmpeg installer when no video engine is found. The **Welcome** step additionally offers **"Restore from backup"** — upload a `.mmbackup` from a previous install and its passphrase to adopt that whole configuration, then restart so the running services (recording, vision, notifications) pick it up. A successful restore also marks first-run setup complete, so the wizard does not reappear after the restart — the restored machine is treated as already configured. See *Configuration backup & restore* above.
 
 The **camera-capacity estimator** answers "how many cameras can this host handle?" It models AI inference (CPU/GPU), memory, and live-view decode, reports the limiting resource, and treats recording as a rolling buffer: rather than zeroing the camera count on a small disk (footage auto-purges), it caps cameras at a **~1-day minimum-retention floor** and reports the retention actually achievable at the recommended count — balancing cameras against retention. The AI figure sharpens through three tiers — a static spec-sheet model, a live extrapolation from real CPU load once cameras run, and a **calibrated** figure from a real detector benchmark:
 
@@ -343,6 +344,24 @@ A non-secret **init marker** written beside the key on first use lets a later bo
 
 1. If `security.recoveryPath` (default `recovery.atrestkey` beside the key) points at an escrow file and a passphrase is configured (`security.passphrase`/`passphraseFile`/`passphraseEnv`), the app restores the key from it automatically on boot — no prompt, normal startup. See `apps/mymatasan/config.sample.recovery.json` for a ready-to-merge `security` block.
 2. Otherwise the app boots into a **public, pre-login recovery gate**: no camera/vision/recording services start, and the browser can reach nothing else until an operator uploads the exported escrow file + its passphrase, at which point the key is restored and the process restarts into normal operation.
+
+### Configuration backup & restore
+
+Distinct from the recovery escrow above (which protects the encryption key), the **Configuration backup** panel on the same Settings → Backup & Recovery tab exports your *settings* so a new machine can be brought up without reconfiguring. Pick any of four sections — **Cameras** (camera + ONVIF rows incl. stored credentials + recording configs), **AI detection** (rules + the detection-class registry), **Notifications** (destinations + Telegram/webhook/MQTT secrets), **App settings** (decoder/vision/capture + camera & machine health) — set a passphrase, and download a single `.mmbackup` file.
+
+Because the file carries plaintext secrets the normal API never emits, it is always encrypted with your passphrase using a portable Argon2id + AES-256-GCM primitive that is **not** tied to this machine's at-rest key, so the file opens on any host. In Settings, restore previews the file's contents first, then applies it — **Replace** overwrites the selected sections, **Merge** appends — remapping foreign keys since primary keys are reassigned on insert. The first-run wizard's welcome step offers the same restore ("Restore from backup") but applies it directly in `replace` mode without a separate preview, letting a fresh install adopt an existing configuration; a restart afterwards is still needed for running services to pick it up. A restore also marks first-run setup complete, so the wizard does not reappear after the restart (the setup flag itself is not carried in the backup — it is set on restore because a restored machine is already configured).
+
+```bash
+curl -u admin:Admin123 "http://localhost:3000/api/settings/backup/sections"   # row counts per section
+curl -u admin:Admin123 -X POST -H "Content-Type: application/json" \
+  -d '{"sections":["cameras","ai","notifications","settings"],"passphrase":"a strong passphrase"}' \
+  "http://localhost:3000/api/settings/backup/export"   # returns {filename, dataBase64} — the .mmbackup bytes
+curl -u admin:Admin123 -X POST -H "Content-Type: application/json" \
+  -d '{"dataBase64":"<file contents, base64>","passphrase":"a strong passphrase","mode":"replace"}' \
+  "http://localhost:3000/api/settings/backup/restore"
+```
+
+Machine identity — the at-rest key, node pairing/enrollment, mTLS certificates, `config.json`, and the setup-complete flag — is deliberately never included, so a backup can't clone one host's identity onto another. Custom AI model `.pt` weights are referenced but not embedded (v1); local user accounts are out of scope (v1).
 
 ## Secure Wipe & Reset
 
