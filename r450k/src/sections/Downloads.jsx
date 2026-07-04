@@ -44,6 +44,11 @@ export default function Downloads() {
           <p className="kicker">{t.kicker}</p>
           <h2 className="section__title">{t.title}</h2>
           <p className="section__lead">{t.subtitle}</p>
+          {t.license ? (
+            <p className="downloads__license">
+              <Icon name="shield" size={15} /> {t.license}
+            </p>
+          ) : null}
           {status === 'ready' && data.version ? (
             <p className="downloads__version">
               {t.latest}: <strong>{data.version}</strong>

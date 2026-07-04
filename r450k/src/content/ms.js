@@ -127,6 +127,7 @@ export default {
     kicker: 'Dapatkan MyMataSan',
     title: 'Muat turun & host sendiri.',
     subtitle: 'Nod edge mymatasan ialah satu pemasangan. Pilih platform anda — UI web, skrip pekerja AI, dan konfigurasi lalai disertakan.',
+    license: 'Percuma untuk hos sendiri — untuk kegunaan peribadi dan dalaman organisasi. Menjual semula atau membungkus semula sebagai produk atau perkhidmatan komersial tidak dibenarkan.',
     latest: 'Keluaran terkini',
     dockerHint: 'Jalankan imej berbilang-seni bina (ffmpeg disertakan):',
     loading: 'Memuatkan keluaran terkini…',
