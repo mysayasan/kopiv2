@@ -5,6 +5,11 @@
 ; binary is service-aware (infra/apphost/service_windows.go), so the plain
 ; sc.exe-registered service is controlled from services.msc with no wrapper.
 ;
+; The finish page tells the user exactly what to do next: the URL to open, the
+; admin credentials (a strong password generated per fresh install), and where to
+; manage the service. Start Menu shortcuts and a brand icon everywhere Windows
+; shows one round out a trustworthy first-run experience.
+;
 ; Built in CI (release.yml, windows-latest) with:
 ;   ISCC.exe /DAppVersion=1.74.0 /DBinDir=<dir containing mymatasan.exe> packaging\windows\mymatasan.iss
 
@@ -15,15 +20,18 @@
   #define BinDir "..\..\dist\windows-installer"
 #endif
 #define ServiceName "MyMataSan"
+#define AppUrl "https://localhost:3000"
 
 [Setup]
 AppId={{B7B2B0E2-6E2E-4E7A-9E3C-8B2D4B5A9F10}
 AppName=MyMataSan
 AppVersion={#AppVersion}
 AppPublisher=mysayasan
+AppPublisherURL=https://github.com/mysayasan/kopiv2
 DefaultDirName={autopf}\MyMataSan
-DisableProgramGroupPage=yes
+DefaultGroupName=MyMataSan
 UninstallDisplayIcon={app}\mymatasan.exe
+SetupIconFile=mymatasan.ico
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
@@ -32,6 +40,9 @@ PrivilegesRequired=admin
 OutputBaseFilename=mymatasan-setup-{#AppVersion}-windows-x64
 WizardStyle=modern
 
+[Tasks]
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+
 [Dirs]
 ; Writable state root (database, recordings, logs, at-rest key). LocalSystem (the
 ; service account) can write here.
@@ -39,6 +50,8 @@ Name: "{commonappdata}\MyMataSan"
 
 [Files]
 Source: "{#BinDir}\mymatasan.exe"; DestDir: "{app}"; Flags: ignoreversion
+; Brand icon, installed so the Start Menu / desktop shortcuts can reference it.
+Source: "mymatasan.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; Default config (seeded into the data dir on first run by the app).
 Source: "..\..\deploy\dist\config.json"; DestDir: "{app}"; DestName: "config.json"; Flags: ignoreversion
 ; Web UI.
@@ -52,17 +65,61 @@ Source: "..\..\apps\mymatasan\ai\yolo11n.pt"; DestDir: "{app}\ai"; Flags: ignore
 ; Service / deployment notes.
 Source: "..\..\deploy\README.md"; DestDir: "{app}\deploy"; Flags: ignoreversion
 
+[Icons]
+; Main launcher: opens the web UI in the default browser.
+Name: "{group}\MyMataSan"; Filename: "{#AppUrl}"; IconFilename: "{app}\mymatasan.ico"; Comment: "Open the MyMataSan web console"
+Name: "{commondesktop}\MyMataSan"; Filename: "{#AppUrl}"; IconFilename: "{app}\mymatasan.ico"; Tasks: desktopicon
+; Service control (self-elevating via PowerShell so a non-admin can still toggle it).
+Name: "{group}\Start MyMataSan"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -WindowStyle Hidden -Command ""Start-Process sc.exe -Verb RunAs -ArgumentList 'start','{#ServiceName}'"""; IconFilename: "{app}\mymatasan.ico"; Comment: "Start the MyMataSan service"
+Name: "{group}\Stop MyMataSan"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -WindowStyle Hidden -Command ""Start-Process sc.exe -Verb RunAs -ArgumentList 'stop','{#ServiceName}'"""; IconFilename: "{app}\mymatasan.ico"; Comment: "Stop the MyMataSan service"
+Name: "{group}\Windows Services (manage MyMataSan)"; Filename: "{sys}\services.msc"; Comment: "Manage the MyMataSan service in the Services console"
+Name: "{group}\{cm:UninstallProgram,MyMataSan}"; Filename: "{uninstallexe}"
+
 [UninstallRun]
 ; Stop and remove the service before files are deleted.
 Filename: "{sys}\sc.exe"; Parameters: "stop {#ServiceName}"; Flags: runhidden; RunOnceId: "StopSvc"
 Filename: "{sys}\sc.exe"; Parameters: "delete {#ServiceName}"; Flags: runhidden; RunOnceId: "DelSvc"
 
+[Run]
+; Post-install: offer to open the web console (ticked by default on the finish
+; page). shellexec launches the URL in the default browser; nowait so setup
+; closes immediately. The service may take a few seconds to come up.
+Filename: "{#AppUrl}"; Description: "Open MyMataSan in your browser"; Flags: postinstall shellexec skipifsilent nowait
+
 [Code]
+var
+  AdminPassword: string;
+  IsFreshInstall: Boolean;
+
 procedure RunHidden(const Cmd, Params: string);
 var
   rc: Integer;
 begin
   Exec(Cmd, Params, '', SW_HIDE, ewWaitUntilTerminated, rc);
+end;
+
+// GenPassword builds a 16-char bootstrap admin password from an unambiguous
+// charset (no O/0/I/l/1). It only ever seeds the first-run admin, which the app
+// forces the operator to change on first login, so this is a one-time credential.
+function GenPassword(): string;
+const
+  Charset = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+var
+  i: Integer;
+begin
+  Result := '';
+  for i := 1 to 16 do
+    Result := Result + Charset[Random(Length(Charset)) + 1];
+end;
+
+procedure InitializeWizard();
+begin
+  Randomize();
+  AdminPassword := GenPassword();
+  // Fresh install == no existing database in the data dir. On an upgrade the
+  // admin account already exists and the seed password is ignored, so we must
+  // not claim a new one.
+  IsFreshInstall := not FileExists(ExpandConstant('{commonappdata}\MyMataSan\data\mymatasan.db'));
 end;
 
 procedure StopAndDeleteService();
@@ -84,10 +141,15 @@ begin
   RunHidden(ExpandConstant('{sys}\sc.exe'),
     'description {#ServiceName} ' + q + 'MyMataSan NVR / on-device camera monitor' + q);
   { Per-service environment (REG_MULTI_SZ, \0-delimited): home/data split +
-    supervised restart so a factory reset / self-update exit is relaunched. }
+    supervised restart so a factory reset / self-update exit is relaunched. On a
+    fresh install we also inject the generated bootstrap admin password, which
+    EnsureDefaultAdmin (services/local_user.go) reads via LOCAL_ADMIN_PASSWORD to
+    seed the admin. It is a one-time, must-change credential. }
   envData := 'MYMATASAN_HOME=' + ExpandConstant('{app}') + '\0' +
              'MYMATASAN_DATA=' + ExpandConstant('{commonappdata}\MyMataSan') + '\0' +
              'KOPIV2_SUPERVISED=1';
+  if IsFreshInstall then
+    envData := envData + '\0' + 'LOCAL_ADMIN_PASSWORD=' + AdminPassword;
   RunHidden(ExpandConstant('{sys}\reg.exe'),
     'add ' + q + 'HKLM\SYSTEM\CurrentControlSet\Services\{#ServiceName}' + q +
     ' /v Environment /t REG_MULTI_SZ /d ' + q + envData + q + ' /f');
@@ -103,4 +165,35 @@ begin
     StopAndDeleteService()
   else if CurStep = ssPostInstall then
     InstallService();
+end;
+
+// Rewrite the finish page into a "what next" guide: the URL to open, the login
+// to use, and where the app lives in the Start Menu.
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if CurPageID = wpFinished then
+  begin
+    // Give the multi-line guidance room and push the "open browser" checkbox
+    // below it so the two never overlap (Inno sizes the label for short text).
+    WizardForm.FinishedLabel.AutoSize := False;
+    WizardForm.FinishedLabel.WordWrap := True;
+    WizardForm.FinishedLabel.Height := ScaleY(210);
+    WizardForm.RunList.Top := WizardForm.FinishedLabel.Top + WizardForm.FinishedLabel.Height + ScaleY(8);
+    if IsFreshInstall then
+      WizardForm.FinishedLabel.Caption :=
+        'MyMataSan is installed and running as a Windows service.' + #13#10 + #13#10 +
+        'Open the web console:  {#AppUrl}' + #13#10 +
+        '(Your browser shows a one-time warning for the self-signed certificate on a LAN — choose "proceed".)' + #13#10 + #13#10 +
+        'Sign in with:' + #13#10 +
+        '    Username:  admin' + #13#10 +
+        '    Password:  ' + AdminPassword + #13#10 + #13#10 +
+        'Write this password down now — you will be asked to set your own on first sign-in.' + #13#10 + #13#10 +
+        'Manage the app any time from the "MyMataSan" group in the Start Menu (open console, start/stop service).'
+    else
+      WizardForm.FinishedLabel.Caption :=
+        'MyMataSan has been updated and the service restarted.' + #13#10 + #13#10 +
+        'Open the web console:  {#AppUrl}' + #13#10 +
+        'Sign in with your existing account. Your data and settings are unchanged.' + #13#10 + #13#10 +
+        'Manage the app any time from the "MyMataSan" group in the Start Menu.';
+  end;
 end;

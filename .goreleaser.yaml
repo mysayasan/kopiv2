@@ -17,6 +17,10 @@ project_name: mymatasan
 before:
   hooks:
     - go mod download
+    # Embed the brand icon + version metadata into the Windows exe. Emits
+    # cmd/mymatasan/*_windows_<arch>.syso (gitignored, so the tree stays clean
+    # for the dirty-state check); Go links the matching one per Windows target.
+    - bash packaging/gen-winres.sh {{ .Version }}
     # Assemble the archive payload (web UI, AI scripts, default config, service
     # files) under packaging/staging/ with the exact home-dir layout.
     - bash packaging/stage-archive.sh

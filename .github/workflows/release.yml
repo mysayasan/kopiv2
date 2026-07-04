@@ -97,6 +97,17 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Strip leading v from tag
+        id: ver
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+        run: echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Embed brand icon + version into exe
+        shell: bash
+        run: bash packaging/gen-winres.sh "${{ steps.ver.outputs.version }}"
+
       - name: Build windows/amd64 binary
         shell: pwsh
         env:
@@ -108,13 +119,6 @@ jobs:
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup -y --no-progress
-
-      - name: Strip leading v from tag
-        id: ver
-        shell: bash
-        env:
-          TAG: ${{ inputs.tag }}
-        run: echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Build installer
         shell: pwsh

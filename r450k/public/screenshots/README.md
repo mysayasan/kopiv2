@@ -5,24 +5,31 @@ mockups as automatic fallback). Current files:
 
 | File | Shows |
 | --- | --- |
-| `live-view.webp` | Paged live-view grid with on-frame AI detection boxes |
-| `rule-editor.webp` | Two-axis rule editor with a detection zone on the live frame |
-| `notifications.webp` | Unified notification feed with snapshots + acknowledge |
+| `live_views.png` | Live multi-camera grid with on-frame AI detection badges |
+| `ai_detection.png` | AI Detection tab: a rule with a detection zone drawn on the real camera frame |
+| `ai_training.png` | Custom model training — the guided Datasets/Images & Labels/Models/Object Classes flow |
+| `recordings.png` | Recordings page: continuous-NVR day timeline with event-clip markers, plus the clip list |
+| `dashboard.png` | Event-analytics dashboard: KPIs, an events-over-time chart, and category/severity donuts |
+| `backup_recovery.png` | Backup & Recovery settings: passphrase-protected configuration backup + restore |
+| `version_health_language_selection.png` | Version & Health settings shown in Arabic (RTL): versions, update check, service-health tiles |
 
-Wired up via the `src:` paths in [`../../src/content.js`](../../src/content.js)
-(the `showcase.shots` array). Any image that fails to load falls back to its SVG mockup.
+Wired up via the `src:` paths in each locale's `showcase.shots` array under
+[`../../src/content/`](../../src/content/) (`en.js`/`ms.js`/`zh.js`/`ar.js` — every locale
+points at the same screenshot files; only `alt`/`tabs`/`lead` text is translated). Any image
+that fails to load falls back to its SVG mockup in
+[`../../src/sections/Showcase.jsx`](../../src/sections/Showcase.jsx).
 
 ## Replacing / adding captures
 
-Keep them **light** — the display area is ~880px wide, so large PNGs are wasteful.
-Resize to ~1600px and convert to WebP. With the bundled ffmpeg:
+Keep them **light** — the display area is ~880px wide, so large originals are wasteful.
+Resize to 1920px wide (PNG, no re-encode quality loss) with `sharp`:
 
 ```bash
-ffmpeg -i shot.png -vf "scale='min(1600,iw)':-2" -c:v libwebp -quality 80 shot.webp
+npx sharp-cli resize 1920 --input shot.png --output shot.out.png
 ```
 
-This took the originals from ~5.5 MB total down to ~237 KB. If you use a different
-filename or extension, update the matching `src:` in `content.js`.
+If you use a different filename or extension, update the matching `src:` in every locale
+file under `src/content/`.
 
 Capture tips: run mymatasan, set the browser to the dark theme, hide personal data,
 and use a 16:10 viewport for consistent framing.
