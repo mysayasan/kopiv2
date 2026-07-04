@@ -6,6 +6,7 @@ import Tiers from './sections/Tiers.jsx';
 import Showcase from './sections/Showcase.jsx';
 import UseCases from './sections/UseCases.jsx';
 import Apps from './sections/Apps.jsx';
+import Pricing from './sections/Pricing.jsx';
 import Downloads from './sections/Downloads.jsx';
 import FinalCta from './sections/FinalCta.jsx';
 import Footer from './sections/Footer.jsx';
@@ -30,6 +31,7 @@ export default function App() {
         <Showcase />
         <UseCases />
         <Apps />
+        <Pricing />
         <Downloads />
         <FinalCta />
       </main>

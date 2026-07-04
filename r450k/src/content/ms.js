@@ -54,7 +54,7 @@ const SHOT_ALT = [
   'Tetapan keselamatan — penyulitan semasa rehat, perlindungan kunci dengan eskro pemulihan, sandaran mudah alih, dan padam selamat',
 ];
 
-const NAV = ['Ciri', 'Cara ia berfungsi', 'Perkakasan', 'Pameran', 'Kegunaan', 'Aplikasi', 'Muat turun'];
+const NAV = ['Ciri', 'Cara ia berfungsi', 'Perkakasan', 'Pameran', 'Kegunaan', 'Aplikasi', 'Harga', 'Muat turun'];
 
 export default {
   ...en,
@@ -133,6 +133,25 @@ export default {
     loading: 'Memuatkan keluaran terkini…',
     unavailable: 'Muat turun sedang disediakan — semak semula sebentar lagi.',
   },
+  pricing: {
+    ...en.pricing,
+    kicker: 'Harga',
+    title: 'Percuma untuk anda. Adil untuk perniagaan.',
+    lead: 'Kegunaan peribadi dan bukan komersial adalah percuma — selamanya. Perniagaan mengekalkan projek ini hidup dengan lesen komersial yang mudah. Ini harga awal; kita akan selaraskan bersama apabila ia berkembang.',
+    popular: 'Paling popular',
+    note: 'Harga dalam USD. Kegunaan bukan komersial kekal percuma. Tidak pasti yang mana sesuai? Hubungi kami dan kita fikirkan bersama.',
+    tiers: en.pricing.tiers.map((t, i) => ({
+      ...t,
+      name: ['Peribadi', 'Perniagaan', 'Armada & Perusahaan'][i],
+      period: ['bukan komersial', '/ tapak · tahun', 'berbilang tapak'][i],
+      cta: ['Muat turun', 'Dapatkan lesen', 'Hubungi kami'][i],
+      features: [
+        ['Setiap ciri, kamera tanpa had', 'AI atas peranti, NVR, penyulitan, sandaran', 'Peribadi, hobi, bukan untung & pendidikan', 'Sokongan komuniti'],
+        ['Lesen komersial untuk satu pelayan / tapak', 'Kamera tanpa had pada pelayan itu', 'Semua kemas kini untuk tempoh berlesen', 'Sokongan e-mel keutamaan'],
+        ['Banyak tapak melalui satah kawalan', 'Latihan & integrasi model AI tersuai', 'Onboarding & sokongan keutamaan', 'Pelesenan volum & OEM'],
+      ][i],
+    })),
+  },
   finalCta: {
     ...en.finalCta,
     title: 'Simpan video anda — dan risikan anda — pada rangkaian anda sendiri.',
@@ -159,6 +178,8 @@ export default {
     tagline: 'r450k · Kecerdasan kamera AI edge yang peribadi',
     note: 'Berjalan di premis. Rakaman anda tidak pernah meninggalkan rangkaian anda.',
     rights: 'Hak cipta terpelihara.',
-    columns: en.footer.columns.map((c) => ({ ...c, heading: 'Produk', links: c.links.map((l, j) => ({ ...l, label: ['Ciri', 'Cara ia berfungsi', 'Kegunaan', 'Aplikasi'][j] })) })),
+    support: 'Belanja saya kopi',
+    supportBlurb: 'Percuma & hos sendiri. Jika ia menjimatkan langganan awan anda, secawan kopi memastikan ia berterusan.',
+    columns: en.footer.columns.map((c) => ({ ...c, heading: 'Produk', links: c.links.map((l, j) => ({ ...l, label: ['Ciri', 'Cara ia berfungsi', 'Kegunaan', 'Harga', 'Muat turun'][j] })) })),
   },
 };
