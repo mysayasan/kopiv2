@@ -21,6 +21,7 @@ Machine identity (the at-rest key, node pairing, certificates, `config.json`, th
 - **Detection classes** are upsert-by-name (the registry is a global, name-keyed lookup shared with the built-ins this host seeds on boot), never wiped.
 - **Runtime-setting sections** are upsert-by-key.
 - **Modes**: `replace` wipes the selected sections' tables first, then inserts; `merge` appends. `replace` is the default.
+- **Setup marked complete**: after a successful restore, `markSetupComplete` writes the `setup.state` runtime-setting (the same shape `setup_state.go` uses) so the first-run wizard does not reappear — a restored machine is already configured. The flag is intentionally *not* part of the backup payload (it's host-local); it's set here. Reported via `RestoreResult.SetupCompleted` / `SetupCompleteError` (best-effort — a failure here doesn't fail the restore).
 
 ## Notes
 

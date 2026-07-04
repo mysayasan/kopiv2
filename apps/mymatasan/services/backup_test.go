@@ -179,6 +179,14 @@ func TestBackupRoundTripRemapsIDsAndKeepsSecrets(t *testing.T) {
 	if res.Restored[BackupSectionCameras] != 1 || res.Restored[BackupSectionAI] != 1 {
 		t.Fatalf("unexpected restore result: %#v", res)
 	}
+	// A restore configures the machine, so first-run setup is marked complete and the
+	// wizard won't reappear.
+	if !res.SetupCompleted {
+		t.Fatalf("restore should mark setup complete: %#v", res)
+	}
+	if row, err := dst.settings.GetByUnique(ctx, "", "key", setupStateKey); err != nil || !strings.Contains(row.Value, "\"completed\":true") {
+		t.Fatalf("setup.state not persisted as completed: %v %#v", err, row)
+	}
 
 	// The restored "Front Door" camera got a fresh id (2, after the pre-existing one).
 	var restored *entities.Camera

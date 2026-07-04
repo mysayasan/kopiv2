@@ -117,6 +117,10 @@ type RestoreResult struct {
 	Skipped       map[string]int `json:"skipped"`
 	AppVersion    string         `json:"appVersion"`
 	SchemaWarning string         `json:"schemaWarning,omitempty"`
+	// SetupCompleted is true when the restore also marked first-run setup done, so
+	// the wizard won't reappear. SetupCompleteError carries why that failed, if it did.
+	SetupCompleted     bool   `json:"setupCompleted"`
+	SetupCompleteError string `json:"setupCompleteError,omitempty"`
 }
 
 // IBackupService exports and restores the passphrase-encrypted configuration bundle.
@@ -403,7 +407,28 @@ func (s *backupService) Restore(ctx context.Context, data []byte, req RestoreReq
 			return res, err
 		}
 	}
+
+	// A restored machine is already configured, so mark first-run setup complete —
+	// otherwise the wizard would reappear even though the user just applied a backup.
+	// The setup flag is intentionally NOT part of the backup (it's host-local state),
+	// so we set it here. Best-effort: the restore itself already succeeded.
+	if err := s.markSetupComplete(ctx); err != nil {
+		res.SetupCompleteError = err.Error()
+	} else {
+		res.SetupCompleted = true
+	}
 	return res, nil
+}
+
+// markSetupComplete records first-run setup as done (the same shape setup_state.go
+// writes) so the wizard doesn't reappear after a restore.
+func (s *backupService) markSetupComplete(ctx context.Context) error {
+	state := SetupState{Completed: true, CompletedAt: time.Now().UTC().Unix()}
+	payload, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	return s.upsertSetting(ctx, setupStateKey, string(payload), state.CompletedAt)
 }
 
 func (s *backupService) restoreCameras(ctx context.Context, file *backupFile, mode string, idMap map[int64]int64, res *RestoreResult) error {
