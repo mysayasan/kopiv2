@@ -102,14 +102,14 @@ end;
 // charset (no O/0/I/l/1). It only ever seeds the first-run admin, which the app
 // forces the operator to change on first login, so this is a one-time credential.
 function GenPassword(): string;
-const
-  Charset = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
 var
+  charset: string;
   i: Integer;
 begin
+  charset := 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
   Result := '';
   for i := 1 to 16 do
-    Result := Result + Charset[Random(Length(Charset)) + 1];
+    Result := Result + charset[Random(Length(charset)) + 1];
 end;
 
 procedure InitializeWizard();
