@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -503,7 +504,14 @@ func (s *trainingService) runTraining(ctx context.Context, model entities.Traini
 	}
 	cmd := exec.CommandContext(ctx, s.trainCfg.PythonCmd, args...)
 	procutil.HideWindow(cmd)
-	cmd.Stderr = os.Stderr
+	// Drain stderr to the app log via a pipe rather than inheriting os.Stderr, which is
+	// an invalid handle when the app runs without a console (relaunched/detached/service)
+	// and would kill the Python trainer at stdio init.
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		s.failModel(model.Id, err.Error())
+		return
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		s.failModel(model.Id, err.Error())
@@ -513,6 +521,13 @@ func (s *trainingService) runTraining(ctx context.Context, model entities.Traini
 		s.failModel(model.Id, err.Error())
 		return
 	}
+	go func() {
+		sc := bufio.NewScanner(stderrPipe)
+		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for sc.Scan() {
+			log.Printf("training: %s", sc.Text())
+		}
+	}()
 
 	var weights, failMsg string
 	var metrics map[string]float64

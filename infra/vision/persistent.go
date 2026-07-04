@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
+	"log"
 	"os/exec"
 	"strings"
 	"sync"
@@ -196,12 +196,30 @@ func (d *PersistentObjectDetector) startLocked() error {
 		_ = stdin.Close()
 		return err
 	}
-	cmd.Stderr = os.Stderr
+	// Drain the worker's stderr to the app log via a Go-created pipe instead of
+	// inheriting os.Stderr. When the app runs without a valid console — a relaunched,
+	// detached, or service process — os.Stderr is an invalid handle, and passing it to
+	// the child makes the Python worker die at stdio initialization (seen as "the pipe
+	// has been ended" on the very next write, ~100ms after spawn). A pipe is always
+	// valid, and the worker's diagnostics/tracebacks land in the structured log.
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		_ = stdin.Close()
+		_ = stdoutPipe.Close()
+		return err
+	}
 	if err := cmd.Start(); err != nil {
 		_ = stdin.Close()
 		_ = stdoutPipe.Close()
 		return fmt.Errorf("start persistent detector failed: %w", err)
 	}
+	go func() {
+		scanner := bufio.NewScanner(stderrPipe)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			log.Printf("vision detector: %s", scanner.Text())
+		}
+	}()
 	d.cmd = cmd
 	d.stdin = stdin
 	d.stdoutPipe = stdoutPipe
