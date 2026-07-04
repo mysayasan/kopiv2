@@ -8,6 +8,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-04 — core 1.49.2 (72bbe6a)
+
+### Fixed
+
+- **core**: THE root cause of the r450k download never working in a browser (while curl always did): with the Cloudflare Static Assets `not_found_handling: single-page-application`, browser *navigation* requests to non-asset paths are answered with the SPA index.html BEFORE the Worker runs — so clicking a download link navigated to /api/download/<id>, got the marketing page back (scrolled to top), and never downloaded. Non-navigation requests (the frontend's fetch('/api/downloads'), curl) still reached the Worker, which is why the list rendered and curl downloaded fine. Added `run_worker_first: ["/api/*"]` to the assets config so every /api/* request (navigation or fetch) is handled by the Worker first; all other paths are still served straight from assets with SPA fallback. Confirmed via a headless-browser click test (navigation to /api/download/<id> returned the page with no download event before the fix).
 ## 2026-07-04 — core 1.49.1 (9981984)
 
 ### Fixed
