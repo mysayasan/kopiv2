@@ -74,7 +74,11 @@ export default function Downloads() {
                 <ul className="dlcard__list">
                   {g.items.map((a) => (
                     <li key={a.name}>
-                      <a className="dllink" href={a.url} target="_blank" rel="noopener noreferrer">
+                      {/* Same-origin endpoint that 302-redirects to a signed URL
+                          served as Content-Disposition: attachment, so a normal
+                          same-tab click downloads in place. target="_blank" here
+                          opens a blank tab that silently drops the download. */}
+                      <a className="dllink" href={a.url} download>
                         <span className="dllink__label">
                           <Icon name="download" size={16} />
                           {a.label}

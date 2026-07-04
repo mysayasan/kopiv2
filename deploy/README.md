@@ -13,13 +13,16 @@ repo is **private**, downloads are proxied: `/api/downloads` hands out
 a PAT with `Contents: read`) and redirects to GitHub's short-lived signed CDN URL, so
 anonymous visitors can download a private repo's assets):
 
-- **Archives** (`.tar.gz` linux / `.zip` windows, amd64+arm64): the `mymatasan`
+- **Archives** (`.tar.gz` linux/macOS / `.zip` windows, amd64+arm64): the `mymatasan`
   binary plus `static/` (web UI), `ai/` (Python worker scripts and the stock
   `yolo11n.pt` model — the heavy Python/torch runtime is instead fetched in-app via
   Settings → AI → Install AI runtime, see `docs/TECHNICAL_SPEC.md`), `deploy/`
   (supervisor examples + this README), and a default `config.json` at the archive
   root. Home dir == data dir (flat, portable layout) unless you set
-  `MYMATASAN_HOME`/`MYMATASAN_DATA`.
+  `MYMATASAN_HOME`/`MYMATASAN_DATA`. macOS (`darwin` amd64+arm64) archives ship
+  alongside linux/windows since the `.goreleaser.yaml` build matrix added `darwin`,
+  matching the `deploy/launchd/com.mysayasan.mymatasan.plist` supervisor example
+  below that already assumed a macOS build existed.
 - **`.deb` / `.rpm`** (linux, via `nfpm`): installs everything flat under
   `/opt/mymatasan` (binary, `static/`, `ai/` including `yolo11n.pt`,
   `deploy/dist/config.json` as `config|noreplace` so an upgrade never clobbers an

@@ -1,8 +1,8 @@
 # GoReleaser config for the MyMataSan NVR (github.com/mysayasan/kopiv2, app=mymatasan).
 #
 # Produces, from one `goreleaser release`:
-#   - cross-compiled binaries: linux/windows x amd64/arm64 (pure Go, CGO off)
-#   - .tar.gz (linux) / .zip (windows) archives bundling the web UI, AI worker
+#   - cross-compiled binaries: linux/windows/darwin x amd64/arm64 (pure Go, CGO off)
+#   - .tar.gz (linux/macOS) / .zip (windows) archives bundling the web UI, AI worker
 #     scripts, a default config, and the service unit files
 #   - .deb / .rpm packages that install to /opt/mymatasan with a systemd unit
 #   - multi-arch Docker images (see the `dockers` / `docker_manifests` blocks)
@@ -30,6 +30,7 @@ builds:
     goos:
       - linux
       - windows
+      - darwin
     goarch:
       - amd64
       - arm64

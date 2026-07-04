@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "core",
+  "summary": "The r450k marketing site's Downloads page linked each release asset with `target=\"_blank\"`, which opened a new blank tab and silently dropped the download instead of downloading the file — the Cloudflare Worker `/api/download` proxy behind it was already correct. Links now use a same-tab `download` attribute so clicking an asset downloads it in place, matching normal browser download behavior.",
+  "compatibility": "Frontend-only fix on the r450k static site; no backend/Worker change, no impact on the Go apps or their versioned releases."
+}

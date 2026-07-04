@@ -61,6 +61,10 @@ make build APP=myidsan
 make build APP=myseliasan
 ```
 
+Each `make build` writes the binary plus a staged `config.json`/`static/`/`ai/` into
+`apps/<app>/bin/` (gitignored), so that directory is a self-contained runnable bundle;
+on Windows the binary is named `<app>-server.exe`.
+
 `mymatasan` defaults to SQLite and the in-process default cache for small single-process runs:
 
 ```bash

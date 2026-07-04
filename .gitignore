@@ -9,6 +9,9 @@ logs
 /dist/
 /packaging/staging/
 
+# make build output (per-app)
+apps/*/bin/
+
 #node_modules
 node_modules
 
