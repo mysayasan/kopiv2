@@ -40,10 +40,14 @@ jobs:
           npm ci
           npm run build
 
+      # Deploy with the wrangler pinned in r450k/package.json (wrangler@^4, already
+      # installed by `npm ci` above). The cloudflare/wrangler-action installs its
+      # own bundled wrangler (3.90.0), which predates wrangler.jsonc config support
+      # and fails with "Missing entry-point" because it can't read `main` from the
+      # JSONC config. Using the local wrangler@4 (--no-install) avoids that.
       - name: Deploy to Cloudflare
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: r450k
-          command: deploy
+        working-directory: r450k
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --no-install wrangler deploy
