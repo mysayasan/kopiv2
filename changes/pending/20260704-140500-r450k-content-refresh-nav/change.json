@@ -1,0 +1,6 @@
+{
+  "type": "changed",
+  "scope": "core",
+  "summary": "Refreshed the r450k marketing site to reflect the latest mymatasan features and gave the top navigation a more modern look. Content: enriched the detection card (multiple detection zones per rule, first-class fire/smoke), the live-view card (two-way audio talk-back + press-and-hold PTZ), and the security card (OS-keystore/passphrase key wrapping, exportable recovery escrow, portable passphrase-encrypted .mmbackup); added two feature cards — an analytics dashboard (KPIs / detections-over-time / per-category+camera breakdowns, server-side aggregation) and self-deploying operations (first-run wizard, capacity estimator, self-healing machine health with overwrite-oldest, in-app ffmpeg/Python/update installers). All copy translated across en/ms/zh/ar. Nav: replaced the plain text-link-with-underline bar with a glass 'pill' navigation — rounded chips, a brand-gradient active-section indicator, and a glowing gradient CTA (two new SVG icons: chart, activity).",
+  "compatibility": "Frontend-only changes on the r450k static marketing site; no backend/Worker change and no impact on the Go apps or their versioned releases."
+}

@@ -54,6 +54,15 @@ const paths = {
       <path d="M9 12l2 2 4-4" />
     </>
   ),
+  chart: (
+    <>
+      <path d="M4 20V4M4 20h16" />
+      <rect x="7" y="12" width="3" height="5" rx="0.5" fill="currentColor" stroke="none" />
+      <rect x="12" y="8" width="3" height="9" rx="0.5" fill="currentColor" stroke="none" />
+      <rect x="17" y="5" width="3" height="12" rx="0.5" fill="currentColor" stroke="none" />
+    </>
+  ),
+  activity: <path d="M3 12h4l2.5 7 4-15 2.5 8h5" />,
   arrow: <path d="M5 12h14M13 6l6 6-6 6" />,
   download: (
     <>
