@@ -144,8 +144,15 @@ async function handleDownloads(request, env) {
 }
 
 // handleAssetDownload authenticates to GitHub for a release asset (needed for a
-// private repo) and redirects the browser to the short-lived signed CDN URL, so
-// no bytes are proxied through the Worker. The asset id comes from /api/downloads.
+// private repo) and streams the bytes back through the Worker as a SAME-ORIGIN
+// attachment. We deliberately do NOT 302-redirect the browser to GitHub's signed
+// CDN URL: that hop is cross-origin, and a browser navigating to a cross-origin
+// download-via-redirect behaves inconsistently (opens a blank tab, or bounces to
+// the top of the page, without ever downloading). A same-origin response with
+// Content-Disposition: attachment downloads reliably everywhere. The asset id
+// comes from /api/downloads. Cloudflare streams the body, so the file is never
+// buffered in the Worker. Authorization is dropped automatically when fetch
+// follows GitHub's redirect cross-origin to the signed URL (which needs none).
 async function handleAssetDownload(request, env, assetId) {
   if (!/^\d+$/.test(assetId)) {
     return new Response('Bad asset id', { status: 400 });
@@ -154,23 +161,18 @@ async function handleAssetDownload(request, env, assetId) {
   if (env.GITHUB_TOKEN) headers.authorization = `Bearer ${env.GITHUB_TOKEN}`;
   const gh = await fetch(`https://api.github.com/repos/${RELEASES_REPO}/releases/assets/${assetId}`, {
     headers,
-    redirect: 'manual',
+    redirect: 'follow',
   });
-  const location = gh.headers.get('location');
-  if ((gh.status === 301 || gh.status === 302 || gh.status === 307) && location) {
-    return Response.redirect(location, 302);
+  if (!gh.ok || !gh.body) {
+    return new Response('Download unavailable', { status: gh.status || 502 });
   }
-  // Fallback: some responses return the bytes directly — stream them through.
-  if (gh.ok && gh.body) {
-    return new Response(gh.body, {
-      status: 200,
-      headers: {
-        'content-type': gh.headers.get('content-type') || 'application/octet-stream',
-        'content-disposition': gh.headers.get('content-disposition') || 'attachment',
-      },
-    });
-  }
-  return new Response('Download unavailable', { status: gh.status || 502 });
+  const out = new Headers();
+  out.set('content-type', gh.headers.get('content-type') || 'application/octet-stream');
+  // Preserve GitHub's filename; fall back to a bare attachment if absent.
+  out.set('content-disposition', gh.headers.get('content-disposition') || 'attachment');
+  const len = gh.headers.get('content-length');
+  if (len) out.set('content-length', len);
+  return new Response(gh.body, { status: 200, headers: out });
 }
 
 export default {
