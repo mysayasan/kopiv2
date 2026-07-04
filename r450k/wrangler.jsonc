@@ -2,7 +2,7 @@
   // Cloudflare Worker + Static Assets config for the r450k site.
   // Build: `npm run build` (Vite → dist/). Deploy: `npx wrangler deploy`.
   // Static files in dist/ are served directly; the Worker (worker/index.js)
-  // handles POST /api/contact and falls through to assets for everything else.
+  // handles the /api/* routes and falls through to assets for everything else.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "r450k",
   "main": "worker/index.js",
@@ -10,7 +10,14 @@
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
-    "not_found_handling": "single-page-application"
+    // SPA fallback serves index.html for unmatched *navigation* requests — which
+    // otherwise swallows browser navigations to /api/download/<id> (a link click)
+    // and returns the page instead of invoking the Worker, so downloads never
+    // start. run_worker_first forces /api/* through the Worker first (for both
+    // navigations and fetches); everything else is still served straight from
+    // assets with the SPA fallback.
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
   },
   "observability": {
     "enabled": true
