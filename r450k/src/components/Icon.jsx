@@ -63,6 +63,14 @@ const paths = {
     </>
   ),
   activity: <path d="M3 12h4l2.5 7 4-15 2.5 8h5" />,
+  check: <path d="M5 12l5 5 9-11" />,
+  coffee: (
+    <>
+      <path d="M4 8h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V8Z" />
+      <path d="M17 9h2a2.5 2.5 0 0 1 0 5h-2" />
+      <path d="M8 3v2M11.5 3v2" />
+    </>
+  ),
   arrow: <path d="M5 12h14M13 6l6 6-6 6" />,
   download: (
     <>

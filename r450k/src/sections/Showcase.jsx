@@ -8,6 +8,11 @@ const fallbacks = {
   live: <LiveGridMockup />,
   rules: <RuleEditorMockup />,
   notifications: <NotificationsMockup />,
+  // The dashboard/destinations/security shots are real captures; reuse a generic
+  // mockup only as a last-resort fallback if the image fails to load.
+  dashboard: <NotificationsMockup />,
+  destinations: <NotificationsMockup />,
+  security: <RuleEditorMockup />,
 };
 
 const reduce =

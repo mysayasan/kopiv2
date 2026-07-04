@@ -29,9 +29,13 @@ const T = [
 ];
 
 const U = [
+  { t: 'Pembuatan & QA', b: 'Latih model tersuai untuk mengesan kecacatan produk, bahagian hilang, atau ketiadaan PPE pada barisan pengeluaran — peribadi, di premis, tanpa yuran AI setiap pengguna.' },
   { t: 'Runcit & laman hadapan', b: 'Amaran orang ramai dan pencerobohan, serta pengecaman plat nombor untuk pemantauan laman hadapan dan pandu lalu.' },
-  { t: 'Industri & tapak', b: 'Peraturan lintasan garis dan zon pada perkakasan edge di tempat dengan sambungan huluan lemah atau tiada.' },
+  { t: 'Gudang & logistik', b: 'Pantau limbungan muatan dan halaman — pengesanan kenderaan dan orang dengan lintasan garis di pintu, semuanya pada perkakasan edge.' },
   { t: 'Hartanah & perimeter', b: 'Pengesanan pencerobohan selepas waktu kerja dengan rakaman selamat tersulit yang kekal di tapak.' },
+  { t: 'Pertanian & tapak terpencil', b: 'Kesan haiwan atau penceroboh merentas tanah dengan sambungan lemah atau tiada; pengesanan dan rakaman berjalan sepenuhnya secara tempatan.' },
+  { t: 'Rumah jagaan & klinik', b: 'Amaran pergerakan selepas waktu kerja dan gaya-terjatuh dengan rakaman yang tidak pernah meninggalkan bangunan — privasi secara lalai.' },
+  { t: 'Perindustrian & utiliti', b: 'Peraturan zon dan lintasan garis untuk kawasan larangan dan peralatan, pada perkakasan lasak di tempat sambungan tidak boleh dipercayai.' },
   { t: 'Armada berbilang tapak', b: 'Satah kawalan menggunakan banyak nod edge melalui LAN dan menyampaikan paparan langsung kembali kepada operator.' },
 ];
 
@@ -45,9 +49,12 @@ const SHOT_ALT = [
   'Grid paparan langsung berhalaman dengan kotak pengesanan AI pada bingkai',
   'Editor peraturan dua paksi dengan zon pengesanan dilukis pada bingkai langsung',
   'Suapan pemberitahuan bersepadu dengan tangkapan skrin dan tindakan pengesahan',
+  'Papan pemuka analitik peristiwa: KPI, carta pengesanan mengikut masa, donat kategori, dan pecahan setiap kamera',
+  'Destinasi pemberitahuan — webhook, Telegram, dan MQTT dengan langganan setiap kategori, togol medan, dan templat',
+  'Tetapan keselamatan — penyulitan semasa rehat, perlindungan kunci dengan eskro pemulihan, sandaran mudah alih, dan padam selamat',
 ];
 
-const NAV = ['Ciri', 'Cara ia berfungsi', 'Perkakasan', 'Pameran', 'Kegunaan', 'Aplikasi', 'Muat turun'];
+const NAV = ['Ciri', 'Cara ia berfungsi', 'Perkakasan', 'Pameran', 'Kegunaan', 'Aplikasi', 'Harga', 'Muat turun'];
 
 export default {
   ...en,
@@ -96,8 +103,8 @@ export default {
     ...en.showcase,
     kicker: 'Lihat ia beraksi',
     title: 'Konsol dibina untuk operator, bukan sekadar pentadbir.',
-    lead: 'Grid berbilang kamera langsung, peraturan pengesanan dua paksi dilukis pada bingkai sebenar, dan satu suapan amaran bersepadu — semuanya dalam pelayar.',
-    tabs: { live: 'Paparan langsung', rules: 'Peraturan pengesanan', notifications: 'Pemberitahuan' },
+    lead: 'Grid berbilang kamera langsung, peraturan pengesanan pada bingkai sebenar, suapan amaran bersepadu, analitik peristiwa, penghalaan pemberitahuan, dan keselamatan atas-kotak — setiap skrin dalam pelayar.',
+    tabs: { live: 'Paparan langsung', rules: 'Peraturan pengesanan', notifications: 'Pemberitahuan', dashboard: 'Papan pemuka', destinations: 'Maklum di mana-mana', security: 'Keselamatan' },
     shots: en.showcase.shots.map((s, i) => ({ ...s, alt: SHOT_ALT[i] })),
   },
   useCases: {
@@ -120,11 +127,30 @@ export default {
     kicker: 'Dapatkan MyMataSan',
     title: 'Muat turun & host sendiri.',
     subtitle: 'Nod edge mymatasan ialah satu pemasangan. Pilih platform anda — UI web, skrip pekerja AI, dan konfigurasi lalai disertakan.',
+    license: 'Percuma untuk kegunaan peribadi dan bukan komersial — individu, badan bukan untung, pendidikan, dan penyelidikan. Kegunaan komersial atau dalam perniagaan, dan sebarang penjualan semula, memerlukan lesen komersial.',
     latest: 'Keluaran terkini',
     dockerHint: 'Jalankan imej berbilang-seni bina (ffmpeg disertakan):',
     loading: 'Memuatkan keluaran terkini…',
-    unavailable: 'Muat turun sedang disediakan. Semak semula tidak lama lagi, atau layari semua keluaran di GitHub.',
-    allReleases: 'Semua keluaran di GitHub',
+    unavailable: 'Muat turun sedang disediakan — semak semula sebentar lagi.',
+  },
+  pricing: {
+    ...en.pricing,
+    kicker: 'Harga',
+    title: 'Percuma untuk anda. Adil untuk perniagaan.',
+    lead: 'Kegunaan peribadi dan bukan komersial adalah percuma — selamanya. Perniagaan mengekalkan projek ini hidup dengan lesen komersial yang mudah. Ini harga awal; kita akan selaraskan bersama apabila ia berkembang.',
+    popular: 'Paling popular',
+    note: 'Harga dalam USD. Kegunaan bukan komersial kekal percuma. Tidak pasti yang mana sesuai? Hubungi kami dan kita fikirkan bersama.',
+    tiers: en.pricing.tiers.map((t, i) => ({
+      ...t,
+      name: ['Peribadi', 'Perniagaan', 'Armada & Perusahaan'][i],
+      period: ['bukan komersial', '/ tapak · tahun', 'berbilang tapak'][i],
+      cta: ['Muat turun', 'Dapatkan lesen', 'Hubungi kami'][i],
+      features: [
+        ['Setiap ciri, kamera tanpa had', 'AI atas peranti, NVR, penyulitan, sandaran', 'Peribadi, hobi, bukan untung & pendidikan', 'Sokongan komuniti'],
+        ['Lesen komersial untuk satu pelayan / tapak', 'Kamera tanpa had pada pelayan itu', 'Semua kemas kini untuk tempoh berlesen', 'Sokongan e-mel keutamaan'],
+        ['Banyak tapak melalui satah kawalan', 'Latihan & integrasi model AI tersuai', 'Onboarding & sokongan keutamaan', 'Pelesenan volum & OEM'],
+      ][i],
+    })),
   },
   finalCta: {
     ...en.finalCta,
@@ -152,6 +178,8 @@ export default {
     tagline: 'r450k · Kecerdasan kamera AI edge yang peribadi',
     note: 'Berjalan di premis. Rakaman anda tidak pernah meninggalkan rangkaian anda.',
     rights: 'Hak cipta terpelihara.',
-    columns: en.footer.columns.map((c) => ({ ...c, heading: 'Produk', links: c.links.map((l, j) => ({ ...l, label: ['Ciri', 'Cara ia berfungsi', 'Kegunaan', 'Aplikasi'][j] })) })),
+    support: 'Belanja saya kopi',
+    supportBlurb: 'Percuma & hos sendiri. Jika ia menjimatkan langganan awan anda, secawan kopi memastikan ia berterusan.',
+    columns: en.footer.columns.map((c) => ({ ...c, heading: 'Produk', links: c.links.map((l, j) => ({ ...l, label: ['Ciri', 'Cara ia berfungsi', 'Kegunaan', 'Harga', 'Muat turun'][j] })) })),
   },
 };
