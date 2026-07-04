@@ -12,3 +12,9 @@ func runWithPlatform(app App) error {
 func platformShutdownChan() <-chan struct{} {
 	return nil
 }
+
+// platformSupervised is false off Windows: systemd/launchd/Docker supervision is
+// signalled via KOPIV2_SUPERVISED instead (there is no in-process way to detect it).
+func platformSupervised() bool {
+	return false
+}

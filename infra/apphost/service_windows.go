@@ -13,9 +13,21 @@ import (
 // running as a service, so an interactive run leaves it nil (inert).
 var windowsServiceStop chan struct{}
 
+// runningAsWindowsService is set once when the process is launched by the SCM. When
+// true, a restart must exit for the service manager rather than self-relaunch a
+// detached child (which would escape the service and race a fresh service instance
+// for the listen port — a classic restart storm).
+var runningAsWindowsService bool
+
 // platformShutdownChan exposes the SCM stop signal to runApp's shutdown select.
 func platformShutdownChan() <-chan struct{} {
 	return windowsServiceStop
+}
+
+// platformSupervised reports whether the OS process supervisor owns our lifecycle.
+// Under the Windows SCM we exit (restartExitCode) and let the service restart us.
+func platformSupervised() bool {
+	return runningAsWindowsService
 }
 
 // runWithPlatform runs under the Windows Service Control Manager when the process
@@ -29,6 +41,7 @@ func runWithPlatform(app App) error {
 	if !isService {
 		return runApp(app)
 	}
+	runningAsWindowsService = true
 	windowsServiceStop = make(chan struct{})
 	return svc.Run(app.Name(), &windowsService{app: app})
 }
