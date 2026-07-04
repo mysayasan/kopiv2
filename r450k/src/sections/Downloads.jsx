@@ -74,13 +74,11 @@ export default function Downloads() {
                 <ul className="dlcard__list">
                   {g.items.map((a) => (
                     <li key={a.name}>
-                      {/* Same-origin endpoint that 302-redirects to a signed URL
-                          served as Content-Disposition: attachment, so a plain
-                          same-tab click downloads in place without leaving the
-                          page. No target="_blank" (opens a blank tab that drops
-                          the download) and no download attr (ignored/blocked once
-                          the redirect goes cross-origin) — the server's
-                          Content-Disposition drives the filename. */}
+                      {/* Same-origin endpoint that streams the bytes with
+                          Content-Disposition: attachment (the Worker proxies
+                          GitHub rather than redirecting), so a plain same-tab
+                          click downloads in place without leaving the page. No
+                          target="_blank" (blank tab that drops the download). */}
                       <a className="dllink" href={a.url}>
                         <span className="dllink__label">
                           <Icon name="download" size={16} />
