@@ -158,7 +158,7 @@ const en = {
     kicker: 'Get MyMataSan',
     title: 'Download & self-host.',
     subtitle: 'The mymatasan edge node is a single install. Pick your platform — the web UI, AI worker scripts, and a default config come bundled.',
-    license: 'Free to self-host — for personal and internal organizational use. Reselling or repackaging it as a commercial product or service isn’t permitted.',
+    license: 'Free for personal and non-commercial use — individuals, non-profits, education, and research. Commercial or in-business use, and any reselling, needs a commercial license.',
     latest: 'Latest release',
     windows: 'Windows',
     linux: 'Linux',

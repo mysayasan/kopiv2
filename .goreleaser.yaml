@@ -70,7 +70,7 @@ nfpms:
     homepage: https://github.com/mysayasan/kopiv2
     maintainer: mysayasan <mysayasan@gmail.com>
     description: MyMataSan NVR / camera monitor with on-device AI detection.
-    license: Proprietary
+    license: PolyForm-Noncommercial-1.0.0
     formats:
       - deb
       - rpm

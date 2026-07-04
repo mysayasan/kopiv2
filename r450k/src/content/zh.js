@@ -127,7 +127,7 @@ export default {
     kicker: '获取 MyMataSan',
     title: '下载并自托管。',
     subtitle: 'mymatasan 边缘节点只需一次安装。选择你的平台——Web 界面、AI 工作脚本和默认配置均已打包。',
-    license: '可免费自托管——供个人和组织内部使用。不得转售或将其重新包装为商业产品或服务。',
+    license: '个人和非商业用途免费——个人、非营利组织、教育和研究。商业或企业内使用，以及任何转售，均需商业许可。',
     latest: '最新版本',
     dockerHint: '运行多架构镜像（已含 ffmpeg）：',
     loading: '正在加载最新版本…',

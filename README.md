@@ -1,24 +1,11 @@
-# kopiv2
 
-Lightweight Go backend for Linux-first deployments, including small devices, with JWT auth, RBAC, camera streaming, and selectable SQL persistence.
+## License
 
-## Table of Contents
+`kopiv2` (including **mymatasan**) is offered under a **dual license** — see [LICENSE](LICENSE):
 
-- [Quickstart](#quickstart)
-- [Overview](#overview)
-- [Architecture](#architecture)
-- [Documentation](#documentation)
-- [Project Structure](#project-structure)
-- [Requirements](#requirements)
-- [Configuration](#configuration)
-- [Makefile Commands](#makefile-commands)
-- [Run Locally](#run-locally)
-- [Run with Docker](#run-with-docker)
-- [Run with Docker Compose](#run-with-docker-compose)
-- [Linux systemd Deployment](#linux-systemd-deployment)
-- [API Health Endpoints](#api-health-endpoints)
-- [Versioning](#versioning)
-- [Telemetry](#telemetry)
+- **Noncommercial use is free** under the [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0): personal use (study, hobby, private/home use, experiment and testing) and use by charitable, educational, public-research, public-safety/health, environmental, and government organizations.
+- **Commercial use requires a paid commercial license** — any use in or for a for-profit business, providing a paid product/service, hosting it as a service for third parties, or reselling/sublicensing/repackaging the software. Contact **mysayasan@gmail.com** for a commercial license.
+etry](#telemetry)
 - [API Documentation (Swagger)](#api-documentation-swagger)
 - [Testing](#testing)
 - [Production Checklist](#production-checklist)
