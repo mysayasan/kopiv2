@@ -217,6 +217,14 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	if err := detectionClassService.EnsureBuiltins(context.Background(), deps.Config.Vision.Detector.ClassMap); err != nil {
 		deps.Logger.Warnf("mymatasan.vision", "seed detection classes failed: %v", err)
 	}
+	// Resolve the detector's Python worker script to an absolute path against the app
+	// HomeDir so it is found regardless of the process working directory: a dev run from
+	// the repo root, or the staged bin/ bundle (where the script sits in <HomeDir>/ai and
+	// a repo-root-relative config path would otherwise double up as
+	// <bin>/apps/mymatasan/ai/...). Downstream consumers (live detector, auto-labeler,
+	// and the training script/base-model paths derived from the worker dir) all read the
+	// resolved args. Also drives MYMATASAN_YOLO worker discovery for training.
+	deps.Config.Vision.Detector.Args = resolveDetectorScriptArgs(deps.HomeDir, deps.Config.Vision.Detector.Args)
 	// Build the object-detection backend once and share it between the live
 	// monitor and the training auto-labeler. The YOLO worker reads the active-model
 	// pointer file (set via env) so a trained/imported model can be hot-swapped.
@@ -988,6 +996,40 @@ func visionToolSettingsFromAppConfig(cfg *config.AppConfigModel) services.Vision
 // visionDetectorFromAppConfig but returns the unwrapped ObjectDetector (no rule
 // mapping / motion dispatch). Auto-label requires an external/persistent object
 // detector; motion mode has no object backend.
+// resolveDetectorScriptArgs makes any relative Python worker script in the detector
+// args absolute against homeDir, so the worker is found no matter the process working
+// directory. Non-script args are left untouched.
+func resolveDetectorScriptArgs(homeDir string, args []string) []string {
+	out := make([]string, len(args))
+	for i, arg := range args {
+		out[i] = resolveDetectorScript(homeDir, arg)
+	}
+	return out
+}
+
+// resolveDetectorScript resolves one worker-script arg. It prefers the script relative
+// to homeDir (the intended "ai/yolo_worker.py" layout), then recovers legacy
+// repo-root-relative values (e.g. "./apps/mymatasan/ai/yolo_worker.py") by basename in
+// <homeDir>/ai, and finally leaves the value untouched (CWD-relative, old behavior).
+func resolveDetectorScript(homeDir, arg string) string {
+	a := strings.TrimSpace(arg)
+	if a == "" || filepath.IsAbs(a) || !strings.HasSuffix(strings.ToLower(a), ".py") {
+		return arg
+	}
+	if p, err := filepath.Abs(filepath.Join(homeDir, a)); err == nil && isRegularFile(p) {
+		return p
+	}
+	if p, err := filepath.Abs(filepath.Join(homeDir, "ai", filepath.Base(a))); err == nil && isRegularFile(p) {
+		return p
+	}
+	return arg
+}
+
+func isRegularFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
 func buildTrainingObjectDetector(detectorCfg config.VisionDetectorConfigModel) (vision.ObjectDetector, error) {
 	mode := strings.ToLower(strings.TrimSpace(detectorCfg.Mode))
 	timeout := time.Duration(detectorCfg.TimeoutMs) * time.Millisecond
