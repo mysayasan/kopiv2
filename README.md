@@ -367,7 +367,8 @@ If `make` is not installed in your shell, use the direct commands shown in the R
 ```bash
 make help          # list available commands
 make run APP=...   # run selected app locally (requires DB + env)
-make build APP=... # build selected app binary only
+make build APP=... # build frontend + selected app binary, then stage config/static/ai into apps/<app>/bin/
+make stage APP=... # (internal, run automatically by build/build-go) copy config.json + static/ + ai/ into apps/<app>/bin/
 make test          # run all tests
 make test-app APP=... # run selected app tests only
 make test-mid      # run middleware tests only
@@ -377,6 +378,17 @@ make up            # start docker compose stack
 make down          # stop docker compose stack
 make logs          # tail compose logs
 ```
+
+`build`/`build-go` output the binary to `apps/<app>/bin/<app>-server` (`.exe` suffix on
+Windows) rather than the repo-root `./bin`, then run `stage` so `apps/<app>/bin/` becomes
+a self-contained, runnable bundle (binary + `config.json` + `static/` + `ai/`). This
+directory is gitignored (`apps/*/bin/`).
+
+On Windows, the `run`/`run-go`/`build`/`build-go`/`test*` recipes are invoked via a
+`GOENV` wrapper that reconstructs `USERPROFILE`/`APPDATA`/`LOCALAPPDATA`/`TMP`/`TEMP`
+from the real Windows user profile (via `cygpath -F 40`) before calling `go`, because
+GNU Make on Windows runs recipes under a stripped MSYS shell that otherwise leaves Go
+unable to find its module cache or a writable temp dir. No-op on Linux/macOS.
 
 ## Run Locally
 

@@ -44,7 +44,7 @@ const en = {
       {
         icon: 'eye',
         title: 'Camera-first AI detection',
-        body: 'Two-axis detection rules combine a mode — presence, crowd, intrusion, line crossing, multi-line crossing, or LPR — with target classes from a data-driven class registry. An "Anything" wildcard fires on any detected object.',
+        body: 'Two-axis rules pair a mode — presence, crowd, intrusion, line crossing, multi-line crossing, or LPR — with target classes from a data-driven registry, scoped to multiple detection zones per rule. Fire and smoke ship as first-class event classes, and an "Anything" wildcard fires on any detected object.',
       },
       {
         icon: 'car',
@@ -58,13 +58,13 @@ const en = {
       },
       {
         icon: 'play',
-        title: 'WebRTC live view',
-        body: 'Direct H.264 RTP-to-WebRTC live view with MJPEG fallback. G.711 pass-through and AAC→Opus transcoding mean live sound regardless of the camera audio codec. Paged grids from 1×1 up to 4×4.',
+        title: 'Live view you can talk back through',
+        body: 'Direct H.264 RTP-to-WebRTC live view with MJPEG fallback and live sound on any camera codec (G.711 pass-through, AAC→Opus transcoding). Two-way audio talk-back and press-and-hold PTZ let operators respond, not just watch — across paged grids from 1×1 to 4×4.',
       },
       {
         icon: 'lock',
-        title: 'Encryption at rest + secure wipe',
-        body: 'Recordings, snapshots, and training images are AES-256-GCM encrypted on disk. Factory reset crypto-erases by destroying the key; deleted footage is securely multi-pass shredded.',
+        title: 'Encryption, backup & recovery',
+        body: 'Recordings, snapshots, and training images are AES-256-GCM encrypted on disk; factory reset crypto-erases by destroying the key and multi-pass shreds deleted footage. The key is wrapped by an OS keystore (DPAPI / systemd-creds) or a portable passphrase with an exportable recovery escrow — and a passphrase-encrypted .mmbackup moves cameras, rules, and settings between hosts.',
       },
       {
         icon: 'brain',
@@ -80,6 +80,16 @@ const en = {
         icon: 'link',
         title: 'Fleet pairing over the LAN',
         body: 'Authenticated UDP multicast discovery + single-parent adoption with a short-lived claim code. Nodes enroll for a fleet-CA certificate and serve a mutual-TLS management channel — no inbound ports, no cloud broker.',
+      },
+      {
+        icon: 'chart',
+        title: 'Analytics dashboard',
+        body: 'A live dashboard turns the unified event feed into insight — KPI tiles, detections over time, and per-category and per-camera breakdowns with a range selector and auto-refresh. Aggregation runs server-side, so it works on SQLite or a full database engine.',
+      },
+      {
+        icon: 'activity',
+        title: 'Deploys and runs itself',
+        body: 'A first-run wizard walks setup end to end, a capacity estimator sizes your host, and machine-health monitoring self-heals — overwriting the oldest footage before the disk fills. ffmpeg, the Python AI runtime, and app updates all install from inside the app.',
       },
     ],
   },

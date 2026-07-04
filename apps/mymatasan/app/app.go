@@ -461,7 +461,11 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewCameraApi(protected, cameraService, settingsService, streamManager, cameraHealthMonitor)
 	apis.NewVisionApi(protected, visionService, detectionClassService, recorderManager, notificationService, cameraService, settingsService, notificationSettingsService, atrestCipher)
 	apis.NewTrainingApi(protected, trainingService)
-	ffmpegBinDir, _ := filepath.Abs("bin")
+	// ffmpeg installs under the writable data dir (not the CWD): a packaged
+	// Windows service runs with CWD=C:\Windows\System32, so a CWD-relative "bin"
+	// would land ffmpeg there instead of MYMATASAN_DATA. Mirrors the Python
+	// runtime, which lives under dataDir/pyruntime.
+	ffmpegBinDir, _ := filepath.Abs(filepath.Join(deps.DataDir, "bin"))
 	ffmpegInstaller := services.NewFFmpegInstaller(ffmpegBinDir, settingsService)
 	pythonInstaller := services.NewPythonInstaller(deps.DataDir, deps.ConfigPath)
 	apis.NewSettingsApi(protected, settingsService, cameraService, localUserService, notificationSettingsService, healthSettingsService, machineHealthSettingsService, machineHealthMonitor, visionToolSettingsFromAppConfig(deps.Config), ffmpegInstaller, pythonInstaller, deps.Config.Decoder.BrowseRoots)

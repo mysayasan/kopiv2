@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "core",
+  "summary": "GoReleaser (`.goreleaser.yaml`) now cross-compiles `mymatasan` for `darwin` (amd64+arm64) in addition to linux/windows, producing macOS `.tar.gz` archives on release alongside the existing linux `.tar.gz` / windows `.zip` archives. `deploy/launchd/com.mysayasan.mymatasan.plist` already documented running MyMataSan under launchd on macOS, but no macOS build was actually being produced until now.",
+  "compatibility": "Additive only — existing linux/windows archives, `.deb`/`.rpm` packages, and Docker images are unchanged. No config/schema changes; macOS users now get an official release archive to pair with the existing launchd supervisor example instead of having to build from source."
+}

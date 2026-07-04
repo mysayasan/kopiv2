@@ -291,23 +291,49 @@ a { color: inherit; text-decoration: none; }
 }
 .logo { display: inline-flex; align-items: center; gap: 9px; font-weight: 700; }
 .logo-word { font-size: 1.15rem; letter-spacing: -0.02em; }
-.nav__links { display: flex; align-items: center; gap: 22px; }
-.nav__links > a { position: relative; color: var(--text-2); font-size: 0.95rem; font-weight: 500; padding-bottom: 3px; }
-.nav__links > a:hover { color: var(--text); }
-.nav__links > a::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 100%;
-  bottom: -2px;
-  height: 2px;
-  border-radius: 2px;
-  background: var(--brand-green);
-  transition: right 0.25s ease;
+/* Glass "pill" nav: links become rounded chips; the active section lights up
+   with the brand gradient, and the CTA is a glowing gradient button. */
+.nav__links {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  transition: background 0.25s ease, border-color 0.25s ease;
 }
-.nav__links > a:hover::after { right: 30%; }
-.nav__links > a.is-active { color: var(--text); }
-.nav__links > a.is-active::after { right: 0; }
+.nav--scrolled .nav__links {
+  background: rgba(255, 255, 255, 0.035);
+  border-color: var(--border);
+}
+.nav__links > a:not(.btn) {
+  position: relative;
+  color: var(--text-2);
+  font-size: 0.9rem;
+  font-weight: 500;
+  padding: 8px 14px;
+  border-radius: 999px;
+  transition: color 0.18s ease, background 0.18s ease;
+}
+.nav__links > a:not(.btn):hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
+.nav__links > a.is-active {
+  color: #fff;
+  background: linear-gradient(135deg, var(--brand-green), var(--accent));
+  box-shadow: 0 6px 18px -6px rgba(74, 132, 232, 0.6);
+}
+.nav__links > .btn--sm {
+  margin-left: 8px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--brand-green), var(--accent));
+  background-size: 160% 160%;
+  box-shadow: 0 6px 20px -6px rgba(74, 132, 232, 0.55);
+  transition: transform 0.18s ease, box-shadow 0.25s ease, background-position 0.5s ease;
+}
+.nav__links > .btn--sm:hover {
+  transform: translateY(-1px);
+  background-position: 100% 100%;
+  box-shadow: 0 10px 26px -6px rgba(74, 132, 232, 0.72);
+}
 .nav__toggle {
   display: none;
   flex-direction: column;
@@ -756,14 +782,18 @@ a { color: inherit; text-decoration: none; }
     right: 0;
     flex-direction: column;
     align-items: flex-start;
-    gap: 14px;
+    gap: 6px;
     padding: 18px 24px 24px;
+    border-radius: 0;
+    border: 0;
+    border-bottom: 1px solid var(--border);
     background: rgba(13, 17, 23, 0.96);
     backdrop-filter: blur(12px);
-    border-bottom: 1px solid var(--border);
     display: none;
   }
+  .nav--scrolled .nav__links { background: rgba(13, 17, 23, 0.96); }
   .nav__links.is-open { display: flex; }
+  .nav__links > .btn--sm { margin-left: 0; margin-top: 6px; }
   .hero { padding: 64px 0 52px; }
   .section { padding: 60px 0; }
 }

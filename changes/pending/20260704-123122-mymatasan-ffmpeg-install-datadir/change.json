@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "mymatasan",
+  "summary": "The in-app ffmpeg installer (Settings -> Runtime -> Decoder -> Download ffmpeg, and the first-run setup wizard's video-engine check) resolved its install directory as a CWD-relative `bin`, but a packaged Windows service runs with its working directory set to C:\\Windows\\System32, so the installer silently placed the downloaded ffmpeg binary there instead of anywhere the app could find it afterwards. It now installs under the writable `dataDir/bin` (an absolute path derived from deps.DataDir), mirroring how the self-contained Python/AI runtime already installs under `dataDir/pyruntime`.",
+  "compatibility": "Fresh installs and any install that has not yet run the in-app ffmpeg installer are unaffected (installer just writes to the new correct location going forward). Existing installs where the installer previously wrote a working ffmpeg under a CWD-relative `bin` on a non-service run (e.g. dev, Docker, portable archive where CWD is the app directory) keep that ffmpeg working via the already-persisted `decoder.mjpeg.ffmpegPath`; only the previously-broken Windows-service case changes behavior (now installs correctly instead of silently failing)."
+}
