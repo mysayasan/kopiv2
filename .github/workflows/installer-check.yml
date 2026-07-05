@@ -1,0 +1,46 @@
+# Compile the Windows Inno Setup script on PRs that touch it, so Inno Pascal
+# Script syntax errors are caught BEFORE merge. Otherwise the .iss is only ever
+# compiled by the release `windows-installer` job (release.yml runs on a tag, not
+# on PRs), so a syntax slip (Randomize, a local const, SetFocus, ...) isn't found
+# until it fails a release and ships a version with no installer .exe.
+#
+# Compile-only: a placeholder mymatasan.exe satisfies the [Files] section's
+# `{#BinDir}\mymatasan.exe` reference; every other [Files] source (static/, ai/,
+# config.json, deploy/README) is committed in the repo, so ISCC compiles the real
+# script exactly as the release job does. We validate the .iss, not a shippable
+# build, so no Go compile is needed.
+name: Installer check
+
+on:
+  pull_request:
+    paths:
+      - 'packaging/windows/**'
+      - '.github/workflows/installer-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  compile-iss:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Stage a placeholder binary for the [Files] section
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist\windows-installer | Out-Null
+          Set-Content -Path dist\windows-installer\mymatasan.exe -Value 'placeholder'
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Compile installer script (mirrors release.yml's ISCC invocation)
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
+            /DAppVersion=0.0.0 `
+            /DBinDir=${{ github.workspace }}\dist\windows-installer `
+            packaging\windows\mymatasan.iss
