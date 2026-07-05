@@ -13,6 +13,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-05 — mymatasan 1.81.2 (c3cf8cf)
+
+### Fixed
+
+- **mymatasan**: The release now publishes the multi-arch Docker image again. The `docker_manifests` step looped forever retrying `docker manifest create` for `ghcr.io/mysayasan/mymatasan:latest` (and the versioned tag) with "manifest verification failed for digest", so the combined image was never pushed. Docker Buildx attaches provenance/SBOM attestations by default, which turn each single-arch push (`latest-amd64`, `latest-arm64`) into an OCI image index (image + an `unknown/unknown` attestation manifest) rather than a plain image manifest, and `docker manifest create` cannot verify or combine those child digests. The amd64 and arm64 Docker builds now pass `--provenance=false --sbom=false`, so each arch pushes a plain image manifest and the manifest list assembles cleanly.
 ## 2026-07-05 — mymatasan 1.81.1 (fa7922e)
 
 ### Fixed
