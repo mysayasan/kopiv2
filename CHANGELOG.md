@@ -11,6 +11,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-05 — mymatasan 1.81.0 (a77dd4f)
+
+### Added
+
+- **mymatasan**: New **Teach** wizard lets anyone teach a camera a new detection skill without any AI knowledge — you name it in plain words, pick one of three kinds (**Recognize a new object**, **Tell good from bad**, or **Spot anything unusual**), draw where it appears, then show the camera real examples while it auto-collects labelled samples. Ask **"How accurate would this be?"** and it quick-trains, tests itself on held-back samples, and answers in plain language ("I got 19 of 20 right") with a gallery of the ones that fooled it. **Test drive** the result live before committing, then **Turn it on** with one tap — it trains the final model, hot-swaps it in alongside the stock detector, and auto-creates the detection rule + alert for you. A **Keep teaching** loop lets you confirm/correct live alerts (✓/✗) so the skill improves on real-world cases, and skills can be shared to other MyMataSan devices as a passphrase-encrypted **.mmskill** file. "Spot anything unusual" learns from good-only footage using an image-embedding memory bank and alerts on deviations, running alongside object detection (its own per-camera slot). The old manual **Training** page is retired: model import/activate and object-class management moved to **Settings → AI**, and AI Detection rules created by a taught skill now carry a **"Taught"** badge.
 ## 2026-07-05 — mymatasan 1.80.1 (8145e00)
 
 ### Fixed
