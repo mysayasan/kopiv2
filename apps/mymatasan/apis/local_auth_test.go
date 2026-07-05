@@ -22,6 +22,10 @@ func (f *fakeLocalUserService) EnsureDefaultAdmin(context.Context, string, strin
 	return services.AdminSeedResult{}, nil
 }
 
+func (f *fakeLocalUserService) ResetAdmin(context.Context, string, string) (services.AdminSeedResult, error) {
+	return services.AdminSeedResult{}, nil
+}
+
 func (f *fakeLocalUserService) Authenticate(_ context.Context, username string, password string) (*services.AuthenticatedUser, error) {
 	if username != "admin" || password != "secret" {
 		return nil, services.ErrLocalUserInvalidCredential

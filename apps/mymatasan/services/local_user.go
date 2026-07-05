@@ -63,22 +63,9 @@ func (s *localUserService) EnsureDefaultAdmin(ctx context.Context, username, pas
 	if username == "" {
 		username = defaultLocalAdminUsername
 	}
-	password = strings.TrimSpace(password)
-	if envPass := strings.TrimSpace(os.Getenv("LOCAL_ADMIN_PASSWORD")); envPass != "" {
-		password = envPass
-	}
-	generated := false
-	if password == "" {
-		// No credential supplied by config or env (the packaged config.json ships an
-		// empty localAuth.password for exactly this): generate a strong per-install
-		// password rather than seed a known default. The caller reveals it (first-run
-		// console banner + recovery file), and the must-change flag below still forces
-		// the operator off it on first login. Mirrors the Windows installer, which
-		// generates its own and passes it via LOCAL_ADMIN_PASSWORD.
-		if password, err = generateBootstrapPassword(); err != nil {
-			return AdminSeedResult{}, err
-		}
-		generated = true
+	password, generated, err := resolveBootstrapPassword(password)
+	if err != nil {
+		return AdminSeedResult{}, err
 	}
 	if _, err = s.Create(ctx, CreateLocalUserRequest{
 		Username:    username,
@@ -93,6 +80,87 @@ func (s *localUserService) EnsureDefaultAdmin(ctx context.Context, username, pas
 		return AdminSeedResult{}, err
 	}
 	return AdminSeedResult{Seeded: true, Username: username, Password: password, Generated: generated}, nil
+}
+
+// ResetAdmin forces the admin account's password back to a bootstrap credential —
+// the recovery path for an operator locked out of an existing install (e.g. a
+// Windows reinstall over a data dir whose admin password is unknown). It is a
+// deliberate, one-shot action driven by the caller (the app consumes an installer
+// reset marker before calling this), NOT something that runs on every start.
+// Resolution mirrors seeding: LOCAL_ADMIN_PASSWORD wins, then the config value,
+// else a strong password is generated. The account is flagged must-change so the
+// operator sets their own on next login. Returns the reset credential (Seeded set)
+// so the caller can reveal it. On an empty user table it seeds instead.
+func (s *localUserService) ResetAdmin(ctx context.Context, username, password string) (AdminSeedResult, error) {
+	username = normalizeUsername(username)
+	if username == "" {
+		username = defaultLocalAdminUsername
+	}
+	target, err := s.findAdminToReset(ctx, username)
+	if err != nil {
+		return AdminSeedResult{}, err
+	}
+	if target == nil {
+		// Nothing to reset (no users at all) — seed a fresh admin instead.
+		return s.EnsureDefaultAdmin(ctx, username, password)
+	}
+	effPassword, generated, err := resolveBootstrapPassword(password)
+	if err != nil {
+		return AdminSeedResult{}, err
+	}
+	hashed, err := hashLocalPassword(effPassword)
+	if err != nil {
+		return AdminSeedResult{}, err
+	}
+	target.PasswordHash = hashed
+	target.MustChangePassword = true
+	target.IsActive = true
+	target.UpdatedAt = time.Now().UTC().Unix()
+	if _, err := s.repo.UpdateById(ctx, "", *target); err != nil {
+		return AdminSeedResult{}, err
+	}
+	return AdminSeedResult{Seeded: true, Username: target.Username, Password: effPassword, Generated: generated}, nil
+}
+
+// findAdminToReset picks the account ResetAdmin should act on: the configured
+// username if it exists, otherwise the first admin (covers a renamed admin). Nil
+// (no error) means the user table has no admin to reset.
+func (s *localUserService) findAdminToReset(ctx context.Context, username string) (*entities.LocalUser, error) {
+	if u, err := s.repo.GetByUnique(ctx, "", "username", username); err == nil && u != nil {
+		return u, nil
+	} else if err != nil && !isNoResultFoundErr(err) {
+		return nil, err
+	}
+	users, _, err := s.repo.Get(ctx, "", 1000, 0, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	for _, u := range users {
+		if u != nil && u.IsAdmin {
+			return u, nil
+		}
+	}
+	return nil, nil
+}
+
+// resolveBootstrapPassword returns the bootstrap password to seed/reset with, and
+// whether it was randomly generated (so the caller knows the operator does not yet
+// know it and must be shown it). Precedence: LOCAL_ADMIN_PASSWORD env override,
+// then the supplied config value, else a strong generated one. The packaged
+// config.json ships an empty localAuth.password so non-Windows installs generate.
+func resolveBootstrapPassword(password string) (string, bool, error) {
+	password = strings.TrimSpace(password)
+	if envPass := strings.TrimSpace(os.Getenv("LOCAL_ADMIN_PASSWORD")); envPass != "" {
+		return envPass, false, nil
+	}
+	if password != "" {
+		return password, false, nil
+	}
+	generated, err := generateBootstrapPassword()
+	if err != nil {
+		return "", false, err
+	}
+	return generated, true, nil
 }
 
 // generateBootstrapPassword returns a 16-char random password from an unambiguous
