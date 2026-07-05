@@ -17,6 +17,13 @@ function classIsLive(cls, activeModelClasses) {
   return (cls.memberList || []).some((label) => active.includes(String(label).toLowerCase()));
 }
 
+// taughtSkillKindKey maps a Teach skill type to the badge's short label key.
+function taughtSkillKindKey(skillType) {
+  if (skillType === 'inspect') return 'vi.taughtInspect';
+  if (skillType === 'anomaly') return 'vi.taughtAnomaly';
+  return 'vi.taughtObject';
+}
+
 // CameraAiPanel is the per-camera AI surface — the detection rules editor plus that
 // camera's alert log. It used to be the standalone AI module's "rules" view (which
 // carried its own camera picker); now the camera is chosen from the side-nav tree and
@@ -28,6 +35,7 @@ export function CameraAiPanel({
   alerts,
   classes,
   activeModelClasses,
+  taughtByRuleId,
   destinations,
   ruleDraft,
   busy,
@@ -778,7 +786,14 @@ export function CameraAiPanel({
                         className={`rule-list-item${ruleEditorOpen && Number(ruleDraft.id) === Number(rule.id) ? ' active' : ''}`}
                       >
                         <button type="button" className="rule-list-main" onClick={() => editRule(rule)}>
-                          <span className="rule-list-name">{rule.name || rule.detectionType}</span>
+                          <span className="rule-list-name">
+                            {rule.name || rule.detectionType}
+                            {(taughtByRuleId || {})[rule.id] ? (
+                              <span className="rule-taught-badge" title={t('vi.taughtBy', { name: (taughtByRuleId[rule.id].name) })}>
+                                <Ico n="wand" sz={11} /> {t(taughtSkillKindKey(taughtByRuleId[rule.id].skillType))}
+                              </span>
+                            ) : null}
+                          </span>
                           <span className="rule-list-meta">{rule.detectionType}{lineCountFromRule(rule) ? ` · ${lineCountFromRule(rule)}` : ''} · {scheduleSummary(rule.schedulePolicy)}</span>
                         </button>
                         <span className={`status-pill ${rule.isEnabled ? 'online' : 'unknown'}`}>{rule.isEnabled ? t('vi.enabled') : t('vi.disabled')}</span>

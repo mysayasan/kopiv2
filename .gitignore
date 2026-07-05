@@ -30,6 +30,10 @@ apps/mymatasan/models/.venv/
 apps/mymatasan/models/__pycache__/
 apps/mymatasan/models/*.pt
 apps/mymatasan/models/*.onnx
+apps/mymatasan/ai/__pycache__/
+
+# throwaway local verification scaffolding (isolated test instances, drivers)
+.artifacts/
 
 # ignore recordings on the root of the project
 /recordings/

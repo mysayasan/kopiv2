@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -22,6 +23,10 @@ type PersistentObjectDetectorOptions struct {
 	Command string
 	Args    []string
 	Timeout time.Duration
+	// Env entries are appended to the parent environment for the worker process
+	// only (e.g. the Teach test drive sets MYMATASAN_YOLO_MODEL to candidate
+	// weights without touching the live worker's environment).
+	Env []string
 }
 
 // PersistentObjectDetector keeps one model runner process alive and exchanges
@@ -31,6 +36,7 @@ type PersistentObjectDetector struct {
 	command    string
 	args       []string
 	timeout    time.Duration
+	env        []string
 	cmd        *exec.Cmd
 	stdin      io.WriteCloser
 	stdoutPipe io.ReadCloser
@@ -58,6 +64,7 @@ func NewPersistentObjectDetector(opts PersistentObjectDetectorOptions) (*Persist
 		command: resolved,
 		args:    append([]string(nil), opts.Args...),
 		timeout: timeout,
+		env:     append([]string(nil), opts.Env...),
 	}, nil
 }
 
@@ -186,6 +193,9 @@ func (d *PersistentObjectDetector) startLocked() error {
 		return nil
 	}
 	cmd := exec.Command(d.command, d.args...)
+	if len(d.env) > 0 {
+		cmd.Env = append(os.Environ(), d.env...)
+	}
 	procutil.HideWindow(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

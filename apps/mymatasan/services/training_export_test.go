@@ -33,6 +33,23 @@ func TestTrainingClassNamesDropsUnusedDeclared(t *testing.T) {
 	}
 }
 
+func TestCappedBackgroundCount(t *testing.T) {
+	cases := []struct {
+		labeled, backgrounds, want int
+	}{
+		{100, 30, 15}, // capped to 15% of labeled
+		{100, 5, 5},   // under the cap → keep all
+		{0, 0, 0},     // nothing
+		{3, 4, 1},     // tiny dataset → at least one background survives
+		{100, 0, 0},   // no backgrounds → none
+	}
+	for _, c := range cases {
+		if got := cappedBackgroundCount(c.labeled, c.backgrounds); got != c.want {
+			t.Fatalf("cappedBackgroundCount(%d,%d) = %d, want %d", c.labeled, c.backgrounds, got, c.want)
+		}
+	}
+}
+
 func TestParseAnnotationsJSONDropsDegenerate(t *testing.T) {
 	in := `[{"className":"Courier","x":0.1,"y":0.1,"w":0.2,"h":0.2},{"className":"x","x":0,"y":0,"w":0,"h":0.1},{"className":"","x":0,"y":0,"w":0.3,"h":0.3}]`
 	out := parseAnnotationsJSON(in)

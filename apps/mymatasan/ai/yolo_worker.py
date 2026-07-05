@@ -97,9 +97,21 @@ def _lpr_model_path() -> str:
     return ""
 
 
+def _anomaly_manifest_path() -> str:
+    """The optional anomaly-model manifest (written by the Teach wizard's
+    activate step): a JSON list of {cameraId, label, modelPath, roi, skillId}
+    entries. Cameras listed here get an extra "spot anything unusual" pass on
+    every frame — MYMATASAN_ANOMALY_FILE env or anomaly_models.json next to
+    this script. Returns "" when absent (feature off)."""
+    pointer = os.environ.get("MYMATASAN_ANOMALY_FILE", "").strip()
+    path = Path(pointer) if pointer else (SCRIPT_DIR / "anomaly_models.json")
+    return str(path) if path.is_file() else ""
+
+
 STOCK_MODEL_PATH = _stock_model_path()
 CUSTOM_MODEL_PATH = _custom_model_path()
 LPR_MODEL_PATH = _lpr_model_path()
+ANOMALY_MANIFEST_PATH = _anomaly_manifest_path()
 # OCR backend confidence is read per-character/line; this floors what we emit so a
 # blurry partial read is reported as "" (no plate) rather than a wrong string.
 LPR_OCR_MIN_CONF = float(os.environ.get("MYMATASAN_LPR_OCR_MIN_CONF", "0.3"))
@@ -234,6 +246,136 @@ def _merge(stock_dets: list[dict[str, Any]], custom_dets: list[dict[str, Any]]) 
             continue
         kept.append(det)
     return kept
+
+
+# --- Anomaly ("spot anything unusual") stage ------------------------------------
+#
+# Taught anomaly skills score each frame against a memory bank of NORMAL
+# embeddings (built by anomaly_worker.py). Everything here is lazy and guarded:
+# a missing/broken model or torchvision disables that entry without touching
+# stock/custom detection. Fires a synthetic detection labeled with the skill's
+# class when the frame's distance exceeds the calibrated threshold, so the Go
+# rule/alert pipeline needs no special casing.
+
+_ANOMALY_ENTRIES: list[dict[str, Any]] | None = None
+_ANOMALY_BACKBONE: Any = None
+_ANOMALY_PREP: Any = None
+_ANOMALY_DISABLED = False
+
+
+def _anomaly_entries() -> list[dict[str, Any]]:
+    global _ANOMALY_ENTRIES
+    if _ANOMALY_ENTRIES is not None:
+        return _ANOMALY_ENTRIES
+    _ANOMALY_ENTRIES = []
+    if not ANOMALY_MANIFEST_PATH:
+        return _ANOMALY_ENTRIES
+    try:
+        raw = json.loads(Path(ANOMALY_MANIFEST_PATH).read_text(encoding="utf-8"))
+        if isinstance(raw, list):
+            _ANOMALY_ENTRIES = [e for e in raw if isinstance(e, dict) and e.get("modelPath")]
+    except Exception as exc:  # noqa: BLE001
+        print(f"anomaly: manifest unreadable, disabled: {exc}", file=sys.stderr, flush=True)
+    return _ANOMALY_ENTRIES
+
+
+def _anomaly_backbone():
+    """Shared resnet18 embedder, loaded once on first use."""
+    global _ANOMALY_BACKBONE, _ANOMALY_PREP, _ANOMALY_DISABLED
+    if _ANOMALY_DISABLED:
+        return None, None
+    if _ANOMALY_BACKBONE is not None:
+        return _ANOMALY_BACKBONE, _ANOMALY_PREP
+    try:
+        import torch
+        import torchvision
+        from torchvision import transforms
+
+        with contextlib.redirect_stdout(sys.stderr):
+            backbone = torchvision.models.resnet18(weights=torchvision.models.ResNet18_Weights.IMAGENET1K_V1)
+        backbone.fc = torch.nn.Identity()
+        backbone.eval()
+        if _HAS_CUDA:
+            backbone = backbone.to("cuda")
+        _ANOMALY_BACKBONE = backbone
+        _ANOMALY_PREP = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
+    except Exception as exc:  # noqa: BLE001
+        print(f"anomaly: backbone unavailable, disabled: {exc}", file=sys.stderr, flush=True)
+        _ANOMALY_DISABLED = True
+        return None, None
+    return _ANOMALY_BACKBONE, _ANOMALY_PREP
+
+
+def _anomaly_model(entry: dict[str, Any]) -> dict[str, Any] | None:
+    """Lazily load one entry's memory bank; cache (or a failure marker) on it."""
+    if "_state" in entry:
+        return entry["_state"]  # may be None after a failed load
+    entry["_state"] = None
+    try:
+        import torch
+
+        blob = torch.load(entry["modelPath"], map_location="cpu", weights_only=False)
+        bank = blob["bank"]
+        if _HAS_CUDA:
+            bank = bank.to("cuda")
+        entry["_state"] = {"bank": bank, "threshold": float(blob["threshold"]), "knn": int(blob.get("knn", 3))}
+    except Exception as exc:  # noqa: BLE001
+        print(f"anomaly: model load failed ({entry.get('modelPath')}): {exc}", file=sys.stderr, flush=True)
+    return entry["_state"]
+
+
+def _anomaly_detect(camera_id: int, tmp_path: str) -> list[dict[str, Any]]:
+    entries = [e for e in _anomaly_entries() if int(e.get("cameraId") or 0) == camera_id]
+    if not entries:
+        return []
+    backbone, prep = _anomaly_backbone()
+    if backbone is None:
+        return []
+    detections: list[dict[str, Any]] = []
+    try:
+        import torch
+        from PIL import Image
+
+        image = Image.open(tmp_path).convert("RGB")
+        width, height = image.size
+        for entry in entries:
+            state = _anomaly_model(entry)
+            if state is None:
+                continue
+            roi = entry.get("roi") or [0.0, 0.0, 1.0, 1.0]
+            x, y, w, h = [float(v) for v in roi[:4]]
+            if w <= 0 or h <= 0:
+                x, y, w, h = 0.0, 0.0, 1.0, 1.0
+            crop = image.crop((int(x * width), int(y * height), int((x + w) * width), int((y + h) * height)))
+            with torch.no_grad():
+                tensor = prep(crop).unsqueeze(0)
+                if _HAS_CUDA:
+                    tensor = tensor.to("cuda")
+                feat = torch.nn.functional.normalize(backbone(tensor).squeeze(0), dim=0)
+                sims = state["bank"] @ feat
+                k = min(state["knn"], sims.shape[0])
+                score = float(1.0 - torch.topk(sims, k).values.mean().item())
+            threshold = state["threshold"]
+            if score <= threshold:
+                continue
+            # Map "how far past the threshold" into 0.5..0.99 so the auto-created
+            # rule's 0.5 confidence floor lines up with "at the threshold".
+            margin = max(threshold * 0.5, 1e-6)
+            confidence = 0.5 + 0.49 * min(1.0, (score - threshold) / margin)
+            detections.append({
+                "label": str(entry.get("label") or "unusual"),
+                "confidence": confidence,
+                "box": {"x": x, "y": y, "w": w, "h": h},
+                "metadata": {"model": "anomaly", "score": round(score, 6), "threshold": round(threshold, 6)},
+            })
+    except Exception as exc:  # noqa: BLE001
+        print(f"anomaly: scoring failed: {exc}", file=sys.stderr, flush=True)
+        return []
+    return detections
 
 
 # --- License-plate (LPR) stage -------------------------------------------------
@@ -429,12 +571,14 @@ def _detect(stock_model: Any, custom_model: Any, plate_model: Any, request: dict
         # stock detections (for vehicle type/color), so enabling LPR adds only OCR
         # compute, not another decode — see the per-camera gating note.
         lpr_dets = _lpr_detect(plate_model, tmp_path, kwargs, stock_dets) if want_lpr else []
+        anomaly_dets = _anomaly_detect(camera_id, tmp_path)
     finally:
         if tmp_path:
             Path(tmp_path).unlink(missing_ok=True)
 
     detections = _merge(stock_dets, custom_dets) if custom_dets else list(stock_dets)
     detections += lpr_dets
+    detections += anomaly_dets
 
     if DEBUG:
         if detections:

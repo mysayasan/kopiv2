@@ -590,6 +590,86 @@ func (s *trainingService) runTraining(ctx context.Context, model entities.Traini
 	s.completeModel(model.Id, dest, string(mustJSON(metrics)))
 }
 
+// EvalDetection is one predicted label on a holdout image.
+type EvalDetection struct {
+	Label      string  `json:"label"`
+	Confidence float64 `json:"confidence"`
+}
+
+// EvalPrediction is one holdout image's predictions; ImageBase is the export
+// file's base name, which is the TrainingImage id (buildExportDir names files
+// that way), so callers can map predictions back to stored images.
+type EvalPrediction struct {
+	ImageBase  string          `json:"image"`
+	Detections []EvalDetection `json:"detections"`
+}
+
+// EvaluateHoldout runs the eval worker with the given weights over the
+// dataset's export val split (the slice training never learned from) and
+// returns per-image predictions. The export must exist — StartTraining builds
+// it, so call this after a training run on the same dataset.
+func (s *trainingService) EvaluateHoldout(ctx context.Context, datasetId int64, weightsPath string) ([]EvalPrediction, error) {
+	if strings.TrimSpace(s.trainCfg.PythonCmd) == "" || strings.TrimSpace(s.trainCfg.TrainScript) == "" {
+		return nil, errors.New("in-app training is not configured on this host")
+	}
+	script := filepath.Join(filepath.Dir(s.trainCfg.TrainScript), "eval_worker.py")
+	valDir := filepath.Join(s.datasetDir(datasetId), "export", "images", "val")
+	if _, err := os.Stat(valDir); err != nil {
+		return nil, fmt.Errorf("holdout images not found (train first): %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, s.trainCfg.PythonCmd, script, "--weights", weightsPath, "--images", valDir)
+	procutil.HideWindow(cmd)
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	go func() {
+		sc := bufio.NewScanner(stderrPipe)
+		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for sc.Scan() {
+			log.Printf("teach-eval: %s", sc.Text())
+		}
+	}()
+
+	var predictions []EvalPrediction
+	var failMsg string
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		var ev struct {
+			Event      string          `json:"event"`
+			Image      string          `json:"image"`
+			Detections []EvalDetection `json:"detections"`
+			Message    string          `json:"message"`
+		}
+		if json.Unmarshal([]byte(strings.TrimSpace(scanner.Text())), &ev) != nil {
+			continue
+		}
+		switch ev.Event {
+		case "prediction":
+			predictions = append(predictions, EvalPrediction{ImageBase: ev.Image, Detections: ev.Detections})
+		case "error":
+			failMsg = ev.Message
+		}
+	}
+	waitErr := cmd.Wait()
+	if failMsg != "" {
+		return nil, errors.New(failMsg)
+	}
+	if waitErr != nil {
+		return nil, fmt.Errorf("eval process failed: %w", waitErr)
+	}
+	return predictions, nil
+}
+
 func (s *trainingService) setModelProgress(id int64, status string, progress int, metrics string) {
 	model, err := s.models.GetById(context.Background(), modelTable, uint64(id))
 	if err != nil {
