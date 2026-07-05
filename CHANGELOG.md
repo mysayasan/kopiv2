@@ -12,6 +12,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-05 — mymatasan 1.81.1 (fa7922e)
+
+### Fixed
+
+- **mymatasan**: The Windows installer compiles again after the previous fix exposed a second Inno Setup Pascal Script incompatibility: `ISCC` aborted with "Unknown identifier 'Randomize'" because Inno's scripting engine does not expose `Randomize`. The installer generates the first-run admin password with a random draw, so the release `windows-installer` job failed and `mymatasan-setup-<version>-windows-x64.exe` was again not built. Inno's own `Random` is unusable here regardless: it is backed by Delphi's global `RandSeed` (initialised to 0) that the script cannot seed, so every install would have produced the identical bootstrap password. The password generator now uses a self-contained LCG seeded from the install-time `GetTickCount` (perturbed by the wall-clock time of day), so it both compiles and yields a distinct one-time admin password per install.
 ## 2026-07-05 — mymatasan 1.81.0 (a77dd4f)
 
 ### Added
