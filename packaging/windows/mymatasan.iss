@@ -219,11 +219,11 @@ end;
 procedure CopyBtnClick(Sender: TObject);
 begin
   CopyToClipboard(AdminPassword);
+  // Highlight the value too (a visual confirm + lets the user Ctrl+C as a fallback).
+  // Inno's Pascal Script does not expose TWinControl.SetFocus, so we only select —
+  // the clipboard copy above is the actual action, so focus is not required.
   if PwEdit <> nil then
-  begin
     PwEdit.SelectAll();
-    PwEdit.SetFocus();
-  end;
   CopyBtn.Caption := 'Copied';
 end;
 
