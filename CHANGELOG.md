@@ -14,6 +14,16 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-05 — mymatasan 1.82.0 (811f9de)
+
+### Added
+
+- **mymatasan**: First-run admin credentials are now surfaced on every install path, not just the Windows installer. On a fresh install where neither `localAuth.password` (the packaged `deploy/dist/config.json` now ships it empty) nor `LOCAL_ADMIN_PASSWORD` supplies a password, `EnsureDefaultAdmin` generates a strong random 16-char per-install password (crypto/rand) instead of a shared default, and returns an `AdminSeedResult`. `app.go` then prints a console sign-in banner (URL + username + password) and saves an `INITIAL_ADMIN_LOGIN.txt` recovery file (0600) to the data dir — visible for CLI (terminal), Docker (`docker logs`, file at `/data`), and `.deb`/`.rpm` systemd (`journalctl -u mymatasan`, file at `/opt/mymatasan`); the nfpm postinstall script prints where to look. A config/env-supplied password is used verbatim and neither echoed nor written (the operator already knows it). The account is still must-change on first login. The Windows installer finish page additionally gained a copyable password field with a one-click Copy button and now writes the same recovery file, so the generated password is no longer a plain un-selectable label that is lost once the page closes.
+
+### Fixed
+
+- **mymatasan**: A legitimate operator could be locked out of the standalone login after a single sign-in attempt ("too many failed attempts") on a fresh install. The failed-login lockout (`apis.LoginGuard`) was wired into every protected `/api/*` route and counted a wrong Basic credential on any of them. The SPA replays its stored credential on every request, so when that credential goes stale — a reinstall/factory-reset reseeds the admin password, or a password change in another tab — one page load fires a burst of parallel background/data requests (teach/active, cameras, vision/*, notifications, the SSE reconnect) that each recorded a failure and drained the 5-attempt budget, locking the source IP before the user ever typed. Fix: the lockout now applies ONLY to the interactive login probe `GET /auth/session` (`isLoginAttemptPath`); a wrong credential on any other protected route is still denied `401` but no longer counts toward or trips the lockout. Genuine repeated wrong logins still lock as before.
 ## 2026-07-05 — mymatasan 1.81.2 (c3cf8cf)
 
 ### Fixed
