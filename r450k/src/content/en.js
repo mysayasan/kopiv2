@@ -35,7 +35,7 @@ const en = {
       { value: '100%', label: 'On-prem, private by default' },
       { value: 'WebRTC', label: 'Low-latency live view' },
     ],
-    note: 'Entry tier runs on a Raspberry Pi 4 (a couple of cameras with motion or nano-model AI). Real-time, multi-camera detection and in-app training scale up to mini-PCs and NVIDIA GPUs.',
+    note: 'Entry tier runs on a Raspberry Pi 4 (a couple of cameras with motion or nano-model AI). Real-time, multi-camera detection and teaching the camera your own skills scale up to mini-PCs and NVIDIA GPUs.',
   },
   features: {
     kicker: 'Capabilities',
@@ -69,8 +69,8 @@ const en = {
       },
       {
         icon: 'brain',
-        title: 'Train your own models',
-        body: 'Build labeled datasets from uploads or alert snapshots, draw boxes in-browser, auto-label with the running model, train a custom YOLO model in-app on a GPU or offline, then hot-swap the live detector.',
+        title: 'Teach it new skills',
+        body: 'No ML jargon, no dataset wrangling. A guided wizard teaches the camera a new skill — name it, pick a goal (recognize a new object, tell good from bad, or spot anything unusual), show a few examples, check the accuracy, and turn it on. It builds and trains a real custom model behind the scenes, then hot-swaps the live detector.',
       },
       {
         icon: 'bell',
@@ -118,12 +118,12 @@ const en = {
   showcase: {
     kicker: 'See it in action',
     title: 'A console built for operators, not just admins.',
-    lead: 'Live multi-camera grids, detection rules drawn on the real frame, custom on-box model training, continuous NVR recordings, event analytics, encrypted backups, and version & health — every screen in the browser, in four languages.',
-    tabs: { live: 'Live view', detection: 'AI detection', training: 'Custom training', recordings: 'Recordings', dashboard: 'Dashboard', backup: 'Backup & recovery', health: 'Version & health' },
+    lead: 'Live multi-camera grids, detection rules drawn on the real frame, guided camera teaching with no ML jargon, continuous NVR recordings, event analytics, encrypted backups, and version & health — every screen in the browser, in four languages.',
+    tabs: { live: 'Live view', detection: 'AI detection', teach: 'Teach', recordings: 'Recordings', dashboard: 'Dashboard', backup: 'Backup & recovery', health: 'Version & health' },
     shots: [
       { key: 'live', src: '/screenshots/live_views.png', alt: 'Live multi-camera grid in a 3×2 layout, with on-frame “Presence detected (person)” AI badges on two of the feeds', url: 'mymatasan.local/live' },
       { key: 'detection', src: '/screenshots/ai_detection.png', alt: 'AI Detection tab: a presence rule with a six-point detection zone drawn over the real camera frame in the zone editor', url: 'mymatasan.local/detection' },
-      { key: 'training', src: '/screenshots/ai_training.png', alt: 'Custom model training — the Datasets step of the guided flow (Datasets, Images & Labels, Models, Object Classes)', url: 'mymatasan.local/training' },
+      { key: 'teach', src: '/screenshots/teach.png', alt: 'Teach — the guided, no-jargon wizard for teaching the camera a new skill (Name it · What kind · Where · Show examples · Check accuracy · Turn it on), on the “What kind of skill is this?” step with three choices: recognize a new object, tell good from bad, or spot anything unusual', url: 'mymatasan.local/teach' },
       { key: 'recordings', src: '/screenshots/recordings.png', alt: 'Recordings page: a continuous-NVR day timeline with event-clip markers, and a list of clips with play, download, and delete', url: 'mymatasan.local/recordings' },
       { key: 'dashboard', src: '/screenshots/dashboard.png', alt: 'Event-analytics dashboard: total, unread, critical and warning KPIs, an events-over-time bar chart, and category and severity donuts', url: 'mymatasan.local/dashboard' },
       { key: 'backup', src: '/screenshots/backup_recovery.png', alt: 'Backup & Recovery settings: a passphrase-protected configuration backup of cameras, AI detection, notifications and app settings, with restore', url: 'mymatasan.local/settings/backup' },
@@ -224,6 +224,7 @@ const en = {
     errUnreachable: 'Message endpoint not reachable. (In local dev, run the Worker — see README.)',
     errGeneric: 'Something went wrong. Please try again.',
     support: 'Buy me a coffee',
+    supportNudge: 'Even a small tip helps 💛',
     supportBlurb: 'If r450k saves you a cloud subscription, a coffee keeps it going.',
     supportUrl: 'https://buymeacoffee.com/mysayasan',
   },
