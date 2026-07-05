@@ -27,4 +27,21 @@ if command -v systemctl >/dev/null 2>&1; then
     fi
 fi
 
+# Tell the operator where the first-run admin login is. On a fresh install the app
+# generates a one-time password and prints it to the service log; it is also saved
+# to a recovery file in the data dir. (Nothing is printed here on an upgrade — the
+# app only seeds on an empty database.)
+cat <<'EOF'
+
+MyMataSan is installed. Open https://localhost:3000 to sign in.
+
+First-run admin login (fresh install only):
+  - Username: admin
+  - Password: shown in the service log and saved to
+              /opt/mymatasan/INITIAL_ADMIN_LOGIN.txt
+  - View the log:  journalctl -u mymatasan --no-pager | grep -A6 'MyMataSan is ready'
+  - You will be asked to set your own password on first sign-in.
+
+EOF
+
 exit 0

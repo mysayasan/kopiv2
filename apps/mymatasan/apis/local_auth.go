@@ -59,11 +59,27 @@ func NewLocalBasicAuth(userService services.ILocalUserService, guard *LoginGuard
 			gotUser, gotPass, ok := r.BasicAuth()
 			keys := loginGuardKeys(r)
 
+			// The failed-login lockout applies ONLY to the interactive login probe
+			// (GET /auth/session), never to the rest of the protected surface. The
+			// SPA replays its stored Basic credential on every request — background
+			// polls, the notification SSE reconnect, media tiles, page-load data
+			// fetches — so counting a wrong credential on any of those lets a single
+			// page load from a client whose credential just went stale (e.g. after a
+			// reinstall/factory-reset reseeds the admin password, or a password
+			// change in another tab) fire a burst of parallel requests that drains
+			// the whole attempt budget and self-locks a legitimate user before they
+			// ever type anything. Volumetric abuse of other endpoints is bounded
+			// separately by the global rate limiter; credential guessing happens at
+			// the login probe, which is where the lockout belongs.
+			loginAttempt := isLoginAttemptPath(r.URL.Path)
+
 			// Locked-out keys are rejected before any bcrypt work so the lockout
 			// is both enforced and cheap to serve under a flood.
-			if locked, retry := guard.Locked(keys...); locked {
-				writeLoginLockout(w, retry)
-				return
+			if loginAttempt {
+				if locked, retry := guard.Locked(keys...); locked {
+					writeLoginLockout(w, retry)
+					return
+				}
 			}
 
 			// serve grants access, but first enforces the forced-password-change
@@ -85,13 +101,23 @@ func NewLocalBasicAuth(userService services.ILocalUserService, guard *LoginGuard
 			if ok {
 				user, err := userService.Authenticate(r.Context(), gotUser, gotPass)
 				if err == nil {
-					guard.RecordSuccess(keys...)
+					if loginAttempt {
+						guard.RecordSuccess(keys...)
+					}
 					setLocalAuthCookie(w, user)
 					serve(user)
 					return
 				}
-				// Wrong credentials: slow the attempt, then count it. A newly
-				// tripped lockout is reported (once) and surfaced as an event.
+				// Wrong credentials on a non-login request (a background poll, SSE
+				// reconnect, or media tile whose stored credential went stale): deny
+				// without touching the lockout so it can't be drained by page churn.
+				if !loginAttempt {
+					deny("access denied")
+					return
+				}
+				// A real login attempt with wrong credentials: slow it, then count
+				// it. A newly tripped lockout is reported (once) and surfaced as an
+				// event.
 				if delay := guard.FailedDelay(); delay > 0 {
 					time.Sleep(delay)
 				}
@@ -136,6 +162,15 @@ func NewLocalBasicAuth(userService services.ILocalUserService, guard *LoginGuard
 // lockout DoS).
 func loginGuardKeys(r *http.Request) []string {
 	return []string{"ip:" + clientIP(r)}
+}
+
+// isLoginAttemptPath reports whether a request is the interactive login probe —
+// the only surface the failed-login lockout counts and enforces against. The SPA
+// verifies a credential by calling GET /auth/session (apis.NewLocalAuthApi), so a
+// wrong password there is a deliberate sign-in attempt; a wrong credential on any
+// other protected route is stale-client churn, not credential guessing.
+func isLoginAttemptPath(path string) bool {
+	return strings.HasSuffix(path, "/auth/session")
 }
 
 // isPasswordChangeAllowedPath reports whether a path stays reachable while a user

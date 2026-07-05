@@ -37,7 +37,7 @@ Declares service contracts for app-specific domain.
   - `SaveTalkPassword(ctx, id, password)` — stores the speaker/cloud password used by the TP-Link talk transport and invalidates the cached capability so `HasPassword` refreshes immediately.
   - `OpenTalkSession(ctx, id) (talk.Session, error)` — opens a live talk-back audio session to the camera speaker over its resolved transport (ONVIF backchannel or TP-Link Tapo/VIGI); caller must `Close` it.
 - `ILocalUserService`
-  - `EnsureDefaultAdmin(ctx, username, password)` seeds the first standalone admin account from `localAuth` config values (env `LOCAL_ADMIN_PASSWORD` overrides the password; empty username/password fall back to `admin`/`admin`)
+  - `EnsureDefaultAdmin(ctx, username, password) (AdminSeedResult, error)` seeds the first standalone admin account from `localAuth` config values (env `LOCAL_ADMIN_PASSWORD` overrides the password; when none is supplied a strong per-install password is generated). Returns `AdminSeedResult{Seeded, Username, Password, Generated}` so the caller can reveal the bootstrap login (first-run console banner + recovery file) on non-Windows installs.
   - `Authenticate(ctx, username, password)` validates Basic Auth credentials
   - CRUD and password reset operations for Settings user management
 - `IVisionService`

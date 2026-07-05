@@ -72,6 +72,31 @@ anonymous visitors can download a private repo's assets):
   set, which disables in-app self-update — pull the new image and recreate the
   container to upgrade instead.
 
+**After installing (Linux / macOS / Docker / portable).** There is no GUI installer
+finish page on these paths, so the app itself surfaces the bootstrap login on a
+*fresh* install (empty database). `EnsureDefaultAdmin`
+(`apps/mymatasan/services/local_user.go`) seeds the `admin` account and, when
+neither `localAuth.password` (the packaged `deploy/dist/config.json` ships it
+**empty** on purpose) nor the `LOCAL_ADMIN_PASSWORD` env var supplies one,
+**generates a strong random per-install password**. The app then prints a sign-in
+banner to the console — username, password, and URL — and saves the same to
+`INITIAL_ADMIN_LOGIN.txt` in the data dir. The account is flagged must-change, so
+the operator sets their own on first sign-in. Where to read it per path:
+
+- **Portable archive / CLI:** the banner prints to the terminal at startup; the
+  file is `INITIAL_ADMIN_LOGIN.txt` in the data dir (the flat home dir, or
+  `MYMATASAN_DATA` if set).
+- **`.deb` / `.rpm` (systemd):** `journalctl -u mymatasan --no-pager | grep -A6 'MyMataSan is ready'`;
+  the file is `/opt/mymatasan/INITIAL_ADMIN_LOGIN.txt`. The postinstall script also
+  prints these directions.
+- **Docker:** `docker logs <container>` shows the banner; the file is
+  `/data/INITIAL_ADMIN_LOGIN.txt` (in the mounted volume). To set your own instead,
+  pass `-e LOCAL_ADMIN_PASSWORD=…` (or edit `localAuth.password`) — then it is used
+  verbatim and not printed.
+
+If you supply the password yourself (config or env), it is used as-is and the banner
+does **not** echo it or write the file (you already know it).
+
 All package types resolve their read-only app root vs writable state root
 the same way (see "Home/data directory split" in `docs/TECHNICAL_SPEC.md`): an
 explicit `MYMATASAN_HOME`/`MYMATASAN_DATA` (or generic `KOPIV2_HOME`/`KOPIV2_DATA`)

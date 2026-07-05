@@ -11,7 +11,7 @@ Implements the `mymatasan` app module for the shared runtime host.
 - Registers built-in and config-driven seeders.
 - Wires app-specific APIs (`onvif`, `settings`, `vision`, `recording`).
 - Mounts app-specific APIs behind standalone DB-backed local Basic Auth.
-- Seeds the first local admin user when no local users exist, via `localUserService.EnsureDefaultAdmin(ctx, deps.Config.LocalAuth.Username, deps.Config.LocalAuth.Password)`; falls back to `admin` / `admin` when config supplies neither, and always flags the seeded account must-change.
+- Seeds the first local admin user when no local users exist, via `localUserService.EnsureDefaultAdmin(ctx, deps.Config.LocalAuth.Username, deps.Config.LocalAuth.Password)` (generates a per-install password when config/env supply none; always flags the seeded account must-change). When the result reports `Seeded`, `announceFirstRunAdmin` reveals the bootstrap login on the non-Windows install paths (CLI/Docker/systemd/portable, which have no GUI installer finish page): it prints a console sign-in banner (URL via `firstRunConsoleURL` — https on a TLS port else http, first configured port, default 3000; username; and the generated password) and, when the password was generated, writes an `INITIAL_ADMIN_LOGIN.txt` recovery file (0600) to the data dir via `writeFirstRunCredentialFile`. A config/env-supplied password (`Generated=false`) is neither echoed nor written.
 - Owns the app-local stream manager used by WebRTC live view and closes it during graceful shutdown.
 - Wires SQLite-backed runtime settings seeded from `decoder` and `stream` config defaults.
 - Builds the app-local vision detector from `vision.detector` config and starts the monitor worker when `vision.enabled` allows it.

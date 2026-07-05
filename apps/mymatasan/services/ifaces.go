@@ -468,9 +468,26 @@ type IRuntimeSettingsService interface {
 	Recording(ctx context.Context) (RecordingSettings, error)
 }
 
+// AdminSeedResult reports what EnsureDefaultAdmin did on startup so the caller can
+// surface the bootstrap credentials on a fresh install (first-run console banner +
+// recovery file for CLI / Docker / package / portable runs, which have no GUI
+// installer finish page). The seeded account is always must-change on first login.
+type AdminSeedResult struct {
+	// Seeded is true only when a fresh admin was created this run (empty user table).
+	Seeded bool
+	// Username is the seeded admin's username.
+	Username string
+	// Password is the plaintext bootstrap password. Set only when Seeded.
+	Password string
+	// Generated is true when the password was randomly generated because neither the
+	// config nor the LOCAL_ADMIN_PASSWORD env var supplied one — i.e. it is not known
+	// to the operator yet and must be revealed.
+	Generated bool
+}
+
 // ILocalUserService manages standalone mymatasan login users.
 type ILocalUserService interface {
-	EnsureDefaultAdmin(ctx context.Context, username, password string) error
+	EnsureDefaultAdmin(ctx context.Context, username, password string) (AdminSeedResult, error)
 	Authenticate(ctx context.Context, username string, password string) (*AuthenticatedUser, error)
 	AuthenticateSession(ctx context.Context, username string, sessionHash string) (*AuthenticatedUser, error)
 	Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.LocalUser, uint64, error)
