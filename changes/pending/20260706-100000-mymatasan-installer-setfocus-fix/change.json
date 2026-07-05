@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "mymatasan",
+  "summary": "The Windows installer is built and published again. v1.82.0 shipped without `mymatasan-setup-<version>-windows-x64.exe` because the release `windows-installer` job's Inno Setup compile aborted with \"Unknown identifier 'SETFOCUS'\": the finish-page Copy button's handler called `TNewEdit.SetFocus`, which Inno Setup's Pascal Script does not expose. The clipboard copy (via `clip.exe`) is the actual action, so the `SetFocus` call was dropped and the value-highlighting `SelectAll` kept. This release entry re-cuts the mymatasan version so the release pipeline rebuilds and uploads the now-compiling installer.",
+  "compatibility": "Backward compatible; finish-page behavior is unchanged except that the one-time admin password no longer briefly steals focus when copied. Windows x64 users of v1.82.0 (which lacked the installer .exe) can take this version's installer, or the portable .zip that shipped with v1.82.0. A PR-time installer-compile check was added so this class of Inno Pascal Script error is caught before merge instead of during a release."
+}
