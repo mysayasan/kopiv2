@@ -15,6 +15,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-05 — mymatasan 1.82.1 (4e0a9aa)
+
+### Fixed
+
+- **mymatasan**: The Windows installer is built and published again. v1.82.0 shipped without `mymatasan-setup-<version>-windows-x64.exe` because the release `windows-installer` job's Inno Setup compile aborted with "Unknown identifier 'SETFOCUS'": the finish-page Copy button's handler called `TNewEdit.SetFocus`, which Inno Setup's Pascal Script does not expose. The clipboard copy (via `clip.exe`) is the actual action, so the `SetFocus` call was dropped and the value-highlighting `SelectAll` kept. This release entry re-cuts the mymatasan version so the release pipeline rebuilds and uploads the now-compiling installer.
 ## 2026-07-05 — mymatasan 1.82.0 (811f9de)
 
 ### Added
