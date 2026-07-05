@@ -133,7 +133,7 @@ To make `www` and the apex agree, add a redirect (Cloudflare **Bulk Redirects** 
 
 The **Showcase** section displays 7 real mymatasan UI captures from
 [`public/screenshots/`](public/screenshots/) (`live_views.png`, `ai_detection.png`,
-`ai_training.png`, `recordings.png`, `dashboard.png`, `backup_recovery.png`,
+`teach.png`, `recordings.png`, `dashboard.png`, `backup_recovery.png`,
 `version_health_language_selection.png`). Any image that fails to load falls back to its SVG
 mockup, so the section never breaks. To replace or add captures, see the instructions and
 `sharp` resize command in [`public/screenshots/README.md`](public/screenshots/README.md).

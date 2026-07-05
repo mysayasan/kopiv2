@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { useContent } from '../i18n/index.jsx';
-import Icon from './Icon.jsx';
 
 const TgIcon = ({ size = 22 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -131,10 +130,29 @@ export default function ContactWidget() {
               target="_blank"
               rel="noopener noreferrer"
             >
-              <span className="cw__coffee"><Icon name="coffee" size={16} /></span>
+              <span className="cw__coffee" aria-hidden="true">
+                <span className="cw__steam" />
+                <span className="cw__steam" />
+                <span className="cw__steam" />
+                <svg
+                  className="cw__coffeeIcon"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M4 9h13v4.5a4.5 4.5 0 0 1-4.5 4.5H8.5A4.5 4.5 0 0 1 4 13.5V9Z" />
+                  <path d="M17 10h2a2.5 2.5 0 0 1 0 5h-2" />
+                </svg>
+              </span>
               <span className="cw__support-text">
                 <b>{contact.support}</b>
-                {contact.supportBlurb ? <span>{contact.supportBlurb}</span> : null}
+                {contact.supportNudge ? <span className="cw__support-nudge">{contact.supportNudge}</span> : null}
+                {contact.supportBlurb ? <span className="cw__support-blurb">{contact.supportBlurb}</span> : null}
               </span>
             </a>
           ) : null}

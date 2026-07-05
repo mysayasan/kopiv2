@@ -9,7 +9,7 @@ import { useContent } from '../i18n/index.jsx';
 const fallbacks = {
   live: <LiveGridMockup />,
   detection: <RuleEditorMockup />,
-  training: <NotificationsMockup />,
+  teach: <NotificationsMockup />,
   recordings: <NotificationsMockup />,
   dashboard: <NotificationsMockup />,
   backup: <RuleEditorMockup />,

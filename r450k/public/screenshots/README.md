@@ -7,7 +7,7 @@ mockups as automatic fallback). Current files:
 | --- | --- |
 | `live_views.png` | Live multi-camera grid with on-frame AI detection badges |
 | `ai_detection.png` | AI Detection tab: a rule with a detection zone drawn on the real camera frame |
-| `ai_training.png` | Custom model training — the guided Datasets/Images & Labels/Models/Object Classes flow |
+| `teach.png` | Teach — the guided, no-jargon wizard for teaching the camera a new skill (Name it / What kind / Where / Show examples / Check accuracy / Turn it on) |
 | `recordings.png` | Recordings page: continuous-NVR day timeline with event-clip markers, plus the clip list |
 | `dashboard.png` | Event-analytics dashboard: KPIs, an events-over-time chart, and category/severity donuts |
 | `backup_recovery.png` | Backup & Recovery settings: passphrase-protected configuration backup + restore |

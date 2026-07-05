@@ -8,7 +8,7 @@ const F = [
   { t: 'Rakaman NVR + pemampatan', b: 'Penimbal segmen bergolek dengan pengekstrakan klip MP4 dicetus peristiwa, serta mod penimbal cincin JPEG sumber rendah. Pilihan pengekodan semula GPU H.265/H.264 sekali lalu mengecilkan rakaman dengan transkod main balik serta-merta untuk mana-mana pelayar.' },
   { t: 'Paparan langsung dengan cakap balik', b: 'Paparan langsung RTP H.264 ke WebRTC secara terus dengan sandaran MJPEG dan bunyi langsung pada mana-mana kodek kamera (laluan terus G.711, transkod AAC→Opus). Cakap balik audio dua hala dan PTZ tekan-dan-tahan membolehkan operator bertindak balas, bukan sekadar menonton — merentas grid berhalaman dari 1×1 hingga 4×4.' },
   { t: 'Penyulitan, sandaran & pemulihan', b: 'Rakaman, tangkapan skrin, dan imej latihan disulitkan AES-256-GCM pada cakera; tetapan semula kilang melakukan padam-kripto dengan memusnahkan kunci dan mencincang rakaman terpadam berbilang-laluan. Kunci dibalut oleh stor kunci OS (DPAPI / systemd-creds) atau frasa laluan mudah alih dengan eskro pemulihan boleh eksport — dan .mmbackup tersulit frasa laluan memindahkan kamera, peraturan, dan tetapan antara hos.' },
-  { t: 'Latih model anda sendiri', b: 'Bina set data berlabel daripada muat naik atau tangkapan amaran, lukis kotak dalam pelayar, auto-label dengan model yang berjalan, latih model YOLO tersuai dalam aplikasi pada GPU atau luar talian, kemudian tukar pengesan langsung serta-merta.' },
+  { t: 'Ajar ia kemahiran baharu', b: 'Tanpa jargon ML atau pengurusan set data. Bestari berpandu mengajar kamera kemahiran baharu — namakannya, pilih matlamat (kenali objek baharu, bezakan baik daripada rosak, atau kesan apa-apa yang luar biasa), tunjuk beberapa contoh, semak ketepatan, dan hidupkannya. Ia membina dan melatih model tersuai sebenar di sebalik tabir, kemudian menukar pengesan langsung serta-merta.' },
   { t: 'Suapan pemberitahuan bersepadu', b: 'Satu suapan merentas pengesanan AI, kesihatan kamera dan mesin, dan keselamatan log masuk — dengan pengesahan setiap peristiwa, tangkapan skrin beranotasi, dan main balik klip dalam halaman. Halakan ke webhook, Telegram, atau MQTT.' },
   { t: 'Pemadanan armada melalui LAN', b: 'Penemuan multicast UDP disahkan + penggunaan induk tunggal dengan kod tuntutan jangka pendek. Nod mendaftar untuk sijil CA-armada dan menyediakan saluran pengurusan TLS bersama — tiada port masuk, tiada broker awan.' },
   { t: 'Papan pemuka analitik', b: 'Papan pemuka langsung menjadikan suapan peristiwa bersepadu sebagai wawasan — jubin KPI, pengesanan mengikut masa, dan pecahan mengikut kategori dan kamera dengan pemilih julat dan auto-segar. Pengagregatan berjalan di pihak pelayan, jadi ia berfungsi pada SQLite atau enjin pangkalan data penuh.' },
@@ -48,7 +48,7 @@ const A = [
 const SHOT_ALT = [
   'Grid berbilang kamera langsung dalam susun atur 3×2, dengan lencana AI “Kehadiran dikesan (orang)” pada bingkai dua suapan',
   'Tab Pengesanan AI: peraturan kehadiran dengan zon pengesanan enam titik dilukis pada bingkai kamera sebenar dalam editor zon',
-  'Latihan model tersuai — langkah Set Data dalam aliran berpandu (Set Data, Imej & Label, Model, Kelas Objek)',
+  'Ajar — bestari berpandu tanpa jargon untuk mengajar kamera kemahiran baharu (Namakan · Jenis apa · Di mana · Tunjuk contoh · Semak ketepatan · Hidupkannya), pada langkah “Kemahiran jenis apa ini?” dengan tiga pilihan: kenali objek baharu, bezakan baik daripada rosak, atau kesan apa-apa yang luar biasa',
   'Halaman Rakaman: garis masa NVR berterusan sehari dengan penanda klip peristiwa, dan senarai klip dengan main, muat turun, dan padam',
   'Papan pemuka analitik peristiwa: KPI jumlah, belum dibaca, kritikal dan amaran, carta bar peristiwa mengikut masa, dan donat kategori serta keterukan',
   'Tetapan Sandaran & Pemulihan: sandaran konfigurasi dilindungi frasa laluan bagi kamera, pengesanan AI, pemberitahuan dan tetapan aplikasi, dengan pemulihan',
@@ -77,7 +77,7 @@ export default {
     primaryCta: { ...en.hero.primaryCta, label: 'Lihat ciri' },
     secondaryCta: { ...en.hero.secondaryCta, label: 'Cara ia berfungsi' },
     stats: en.hero.stats.map((s, i) => ({ ...s, label: ['Bermula pada Pi 4 — berskala ke pelayan GPU', 'Di premis, peribadi secara lalai', 'Paparan langsung kependaman rendah'][i] })),
-    note: 'Peringkat permulaan berjalan pada Raspberry Pi 4 (beberapa kamera dengan AI gerakan atau model-nano). Pengesanan masa nyata berbilang kamera dan latihan dalam aplikasi berskala ke mini-PC dan GPU NVIDIA.',
+    note: 'Peringkat permulaan berjalan pada Raspberry Pi 4 (beberapa kamera dengan AI gerakan atau model-nano). Pengesanan masa nyata berbilang kamera dan mengajar kamera kemahiran anda sendiri berskala ke mini-PC dan GPU NVIDIA.',
   },
   features: {
     ...en.features,
@@ -104,8 +104,8 @@ export default {
     ...en.showcase,
     kicker: 'Lihat ia beraksi',
     title: 'Konsol dibina untuk operator, bukan sekadar pentadbir.',
-    lead: 'Grid berbilang kamera langsung, peraturan pengesanan dilukis pada bingkai sebenar, latihan model tersuai atas-kotak, rakaman NVR berterusan, analitik peristiwa, sandaran disulitkan, dan versi & kesihatan — setiap skrin dalam pelayar, dalam empat bahasa.',
-    tabs: { live: 'Paparan langsung', detection: 'Pengesanan AI', training: 'Latihan tersuai', recordings: 'Rakaman', dashboard: 'Papan pemuka', backup: 'Sandaran & pemulihan', health: 'Versi & kesihatan' },
+    lead: 'Grid berbilang kamera langsung, peraturan pengesanan dilukis pada bingkai sebenar, mengajar kamera secara berpandu tanpa jargon ML, rakaman NVR berterusan, analitik peristiwa, sandaran disulitkan, dan versi & kesihatan — setiap skrin dalam pelayar, dalam empat bahasa.',
+    tabs: { live: 'Paparan langsung', detection: 'Pengesanan AI', teach: 'Ajar', recordings: 'Rakaman', dashboard: 'Papan pemuka', backup: 'Sandaran & pemulihan', health: 'Versi & kesihatan' },
     shots: en.showcase.shots.map((s, i) => ({ ...s, alt: SHOT_ALT[i] })),
   },
   useCases: {
@@ -174,6 +174,7 @@ export default {
     errUnreachable: 'Titik akhir mesej tidak dapat dihubungi. (Dalam pembangunan tempatan, jalankan Worker — lihat README.)',
     errGeneric: 'Sesuatu tidak kena. Sila cuba lagi.',
     support: 'Belanja saya kopi',
+    supportNudge: 'Walau tip kecil pun membantu 💛',
     supportBlurb: 'Jika r450k menjimatkan langganan awan anda, secawan kopi memastikan ia berterusan.',
   },
   footer: {
