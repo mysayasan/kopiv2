@@ -16,6 +16,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-05 — mymatasan 1.82.2 (1c34fb0)
+
+### Fixed
+
+- **mymatasan**: Reinstalling the Windows app over an existing data dir no longer locks you out. The installer decides fresh-vs-upgrade by whether the data-dir database exists; on an upgrade it neither generates nor shows an admin password, so a reinstall over leftover data (whose admin password is unknown) left no way in — worsened by the packaged config shipping an empty localAuth.password. Added a recovery path: on a reinstall the installer now offers a "Reset the admin login" checkbox; ticking it injects a fresh generated password (shown on the finish page + saved to INITIAL_ADMIN_LOGIN.txt) and drops a one-shot RESET_ADMIN marker in the data dir. The app consumes the marker exactly once on next start (deleting it before acting, so a normal restart never clobbers a chosen password) and force-resets the admin via the new ILocalUserService.ResetAdmin (must-change). The app now also ALWAYS writes the INITIAL_ADMIN_LOGIN.txt recovery file whenever it seeds or resets — so the bootstrap login is recoverable on Windows too, not only when the password was generated. The plain-upgrade finish page points locked-out operators at the reset option.
 ## 2026-07-05 — mymatasan 1.82.1 (4e0a9aa)
 
 ### Fixed
