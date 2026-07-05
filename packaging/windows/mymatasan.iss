@@ -90,6 +90,24 @@ Filename: "{#AppUrl}"; Description: "Open MyMataSan in your browser"; Flags: pos
 var
   AdminPassword: string;
   IsFreshInstall: Boolean;
+  RngState: Cardinal;
+
+// Inno's built-in Random() draws from Delphi's global RandSeed, which the script
+// cannot seed — Randomize is not exposed — so an unseeded Random() would hand
+// every install the identical admin password. GetTickCount (imported below) seeds
+// a self-contained generator instead so each install gets its own.
+function GetTickCount: DWord; external 'GetTickCount@kernel32.dll stdcall';
+
+// NextRandom returns a value in [0, Range) from a seeded LCG (glibc constants).
+// The high bits are used (shr 16) because an LCG's low bits cycle short.
+function NextRandom(Range: Integer): Integer;
+var
+  v: Integer;
+begin
+  RngState := RngState * 1103515245 + 12345;
+  v := (RngState shr 16) and $7FFF;
+  Result := v mod Range;
+end;
 
 procedure RunHidden(const Cmd, Params: string);
 var
@@ -109,12 +127,15 @@ begin
   charset := 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
   Result := '';
   for i := 1 to 16 do
-    Result := Result + charset[Random(Length(charset)) + 1];
+    Result := Result + charset[NextRandom(Length(charset)) + 1];
 end;
 
 procedure InitializeWizard();
 begin
-  Randomize();
+  // Seed from the install-time tick count (ms since boot), perturbed by the
+  // wall-clock time of day, so the generated password differs per install.
+  RngState := GetTickCount;
+  RngState := RngState xor StrToIntDef(GetDateTimeString('hhnnss', #0, #0), 0);
   AdminPassword := GenPassword();
   // Fresh install == no existing database in the data dir. On an upgrade the
   // admin account already exists and the seed password is ignored, so we must
