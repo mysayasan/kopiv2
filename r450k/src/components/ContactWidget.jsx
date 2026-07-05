@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useContent } from '../i18n/index.jsx';
+import Icon from './Icon.jsx';
 
 const TgIcon = ({ size = 22 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -122,6 +123,21 @@ export default function ContactWidget() {
               </button>
             </form>
           )}
+
+          {contact.supportUrl ? (
+            <a
+              className="cw__support"
+              href={contact.supportUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <span className="cw__coffee"><Icon name="coffee" size={16} /></span>
+              <span className="cw__support-text">
+                <b>{contact.support}</b>
+                {contact.supportBlurb ? <span>{contact.supportBlurb}</span> : null}
+              </span>
+            </a>
+          ) : null}
         </div>
       )}
 

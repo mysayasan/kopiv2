@@ -173,14 +173,14 @@ export default {
     errRequired: 'Sila masukkan mesej.',
     errUnreachable: 'Titik akhir mesej tidak dapat dihubungi. (Dalam pembangunan tempatan, jalankan Worker — lihat README.)',
     errGeneric: 'Sesuatu tidak kena. Sila cuba lagi.',
+    support: 'Belanja saya kopi',
+    supportBlurb: 'Jika r450k menjimatkan langganan awan anda, secawan kopi memastikan ia berterusan.',
   },
   footer: {
     ...en.footer,
     tagline: 'r450k · Kecerdasan kamera AI edge yang peribadi',
     note: 'Berjalan di premis. Rakaman anda tidak pernah meninggalkan rangkaian anda.',
     rights: 'Hak cipta terpelihara.',
-    support: 'Belanja saya kopi',
-    supportBlurb: 'Percuma & hos sendiri. Jika ia menjimatkan langganan awan anda, secawan kopi memastikan ia berterusan.',
     columns: en.footer.columns.map((c) => ({ ...c, heading: 'Produk', links: c.links.map((l, j) => ({ ...l, label: ['Ciri', 'Cara ia berfungsi', 'Kegunaan', 'Harga', 'Muat turun'][j] })) })),
   },
 };
