@@ -223,14 +223,14 @@ const en = {
     errRequired: 'Please enter a message.',
     errUnreachable: 'Message endpoint not reachable. (In local dev, run the Worker — see README.)',
     errGeneric: 'Something went wrong. Please try again.',
+    support: 'Buy me a coffee',
+    supportBlurb: 'If r450k saves you a cloud subscription, a coffee keeps it going.',
+    supportUrl: 'https://buymeacoffee.com/mysayasan',
   },
   footer: {
     tagline: 'r450k · Private edge AI camera intelligence',
     note: 'Runs on-prem. Your footage never leaves your network.',
     rights: 'All rights reserved.',
-    support: 'Buy me a coffee',
-    supportBlurb: 'Free & self-hosted. If it saves you a cloud subscription, a coffee keeps it going.',
-    supportUrl: 'https://buymeacoffee.com/mysayasan',
     columns: [
       {
         heading: 'Product',

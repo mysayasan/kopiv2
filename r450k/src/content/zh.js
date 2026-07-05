@@ -173,14 +173,14 @@ export default {
     errRequired: '请输入消息。',
     errUnreachable: '无法连接消息端点。（本地开发时，请运行 Worker——参见 README。）',
     errGeneric: '出了点问题。请重试。',
+    support: '请我喝杯咖啡',
+    supportBlurb: '如果 r450k 为你省下云订阅费，一杯咖啡就能让它继续下去。',
   },
   footer: {
     ...en.footer,
     tagline: 'r450k · 私有边缘 AI 摄像头智能',
     note: '本地运行。您的录像永远不会离开您的网络。',
     rights: '保留所有权利。',
-    support: '请我喝杯咖啡',
-    supportBlurb: '免费且自托管。如果它为你省下云订阅费，一杯咖啡就能让它继续下去。',
     columns: en.footer.columns.map((c) => ({ ...c, heading: '产品', links: c.links.map((l, j) => ({ ...l, label: ['功能', '工作原理', '应用场景', '价格', '下载'][j] })) })),
   },
 };
