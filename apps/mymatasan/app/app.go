@@ -302,9 +302,25 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	if adminSeed.Seeded {
 		// Fresh install: surface the bootstrap login. On Windows the GUI installer
 		// owns the reveal (finish page); everywhere else — CLI, Docker, systemd,
-		// portable — this console banner (and a recovery file for a generated
-		// password) is the only place the operator learns the credentials.
+		// portable — this console banner (and a recovery file) is the only place the
+		// operator learns the credentials.
 		announceFirstRunAdmin(deps, adminSeed)
+	} else {
+		// One-shot admin reset: the Windows installer's "Reset admin login" option
+		// (a reinstall over an existing data dir whose admin password is unknown)
+		// drops a marker in the data dir + injects LOCAL_ADMIN_PASSWORD. Consume the
+		// marker exactly once — deleting it before acting — so a normal service
+		// restart never re-runs the reset and clobbers the operator's chosen password.
+		if marker := filepath.Join(deps.DataDir, adminResetMarkerFile); fileExists(marker) {
+			if rmErr := os.Remove(marker); rmErr != nil {
+				deps.Logger.Warnf("mymatasan.setup", "could not consume admin-reset marker %s (skipping reset to avoid a loop): %v", marker, rmErr)
+			} else if reset, rErr := localUserService.ResetAdmin(context.Background(), deps.Config.LocalAuth.Username, deps.Config.LocalAuth.Password); rErr != nil {
+				deps.Logger.Warnf("mymatasan.setup", "admin reset failed: %v", rErr)
+			} else if reset.Seeded {
+				deps.Logger.Infof("mymatasan.setup", "admin login reset on request (must change on next login)")
+				announceFirstRunAdmin(deps, reset)
+			}
+		}
 	}
 	// Resolve ffmpeg path and RTSP transport from persisted settings.
 	ffmpegPath := ""
@@ -845,17 +861,35 @@ func loginGuardConfigFromAppConfig(cfg *config.AppConfigModel) apis.LoginGuardCo
 }
 
 // firstRunCredentialFile is the recovery file (in the data dir) that holds the
-// generated bootstrap login, so it survives the console banner scrolling away.
+// bootstrap login, so it survives the console banner scrolling away.
 const firstRunCredentialFile = "INITIAL_ADMIN_LOGIN.txt"
 
-// announceFirstRunAdmin prints the bootstrap admin credentials to the console on a
-// fresh install and, when the password was generated (no config/env value the
-// operator already knows), saves them to a recovery file in the data dir. This is
-// the credential-reveal path for every non-Windows-installer run: CLI, Docker
-// (visible via `docker logs`), systemd (`journalctl -u mymatasan`), and the
-// portable archive. The account is must-change on first sign-in.
+// adminResetMarkerFile is the one-shot marker the Windows installer's "reset admin
+// login" option drops in the data dir to request a password reset on next start.
+// The app deletes it before acting so the reset runs exactly once.
+const adminResetMarkerFile = "RESET_ADMIN"
+
+// fileExists reports whether path is an existing (non-directory-agnostic) file.
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+// announceFirstRunAdmin surfaces the bootstrap admin credentials established this
+// run (a fresh seed or a one-shot reset). It always writes a recovery file in the
+// data dir — the reliable, platform-independent place to find the login (Windows
+// service consoles are invisible; a Docker/journal banner scrolls away) — and
+// prints a console banner. The password is echoed in the banner only when it was
+// generated (the operator doesn't already know it); a config/env-supplied one is
+// pointed at, not logged. The account is must-change on next sign-in.
 func announceFirstRunAdmin(deps apphost.Dependencies, seed services.AdminSeedResult) {
 	url := firstRunConsoleURL(deps.Config)
+	credPath := filepath.Join(deps.DataDir, firstRunCredentialFile)
+	saved := writeFirstRunCredentialFile(credPath, url, seed) == nil
+	if !saved {
+		deps.Logger.Warnf("mymatasan.setup", "could not write credential recovery file %s", credPath)
+	}
+
 	const bar = "======================================================================"
 	var b strings.Builder
 	fmt.Fprintf(&b, "\n%s\n", bar)
@@ -863,24 +897,21 @@ func announceFirstRunAdmin(deps apphost.Dependencies, seed services.AdminSeedRes
 	fmt.Fprintf(&b, "  Open:      %s\n", url)
 	fmt.Fprintf(&b, "  Username:  %s\n", seed.Username)
 	if seed.Generated {
-		credPath := filepath.Join(deps.DataDir, firstRunCredentialFile)
 		fmt.Fprintf(&b, "  Password:  %s\n", seed.Password)
 		fmt.Fprint(&b, "\n  This one-time password was generated for this install; you must set\n")
 		fmt.Fprint(&b, "  your own on first sign-in.\n")
-		if err := writeFirstRunCredentialFile(credPath, url, seed); err == nil {
-			fmt.Fprintf(&b, "\n  Saved to:  %s  (delete after you sign in)\n", credPath)
-		} else {
-			deps.Logger.Warnf("mymatasan.setup", "could not write credential file %s: %v", credPath, err)
-		}
 	} else {
 		fmt.Fprint(&b, "  Password:  the value from your config.json localAuth / LOCAL_ADMIN_PASSWORD\n")
 		fmt.Fprint(&b, "\n  You must change it on first sign-in.\n")
+	}
+	if saved {
+		fmt.Fprintf(&b, "\n  Saved to:  %s  (delete after you sign in)\n", credPath)
 	}
 	fmt.Fprintf(&b, "%s\n", bar)
 	// Print to stdout so it lands verbatim in `docker logs` / journal / the terminal,
 	// then log a password-free line for the persistent log.
 	fmt.Print(b.String())
-	deps.Logger.Infof("mymatasan.setup", "first-run admin %q seeded (must change on first login); sign-in banner printed to console", seed.Username)
+	deps.Logger.Infof("mymatasan.setup", "bootstrap admin %q established (must change on next login); sign-in details written to %s", seed.Username, credPath)
 }
 
 // firstRunConsoleURL builds the console sign-in URL from the server config: https

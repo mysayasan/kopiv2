@@ -57,12 +57,20 @@ anonymous visitors can download a private repo's assets):
   password generated per install** (injected into the service as
   `LOCAL_ADMIN_PASSWORD`, which `EnsureDefaultAdmin` in
   `apps/mymatasan/services/local_user.go` reads once to seed the admin; the account
-  is flagged must-change, so the operator sets their own on first sign-in). A ticked
+  is flagged must-change, so the operator sets their own on first sign-in). The app
+  also always writes the same login to `C:\ProgramData\MyMataSan\INITIAL_ADMIN_LOGIN.txt`
+  (delete after signing in), so it's recoverable if the finish page is missed. A ticked
   "Open MyMataSan in your browser" checkbox launches the console when setup closes.
-  On an *upgrade* the finish page instead says the existing account is unchanged (no
-  new password is shown, since seeding is skipped when the database already exists).
-  A **MyMataSan** Start Menu group is created with: open console, Start / Stop the
-  service (self-elevating via UAC), open `services.msc`, and Uninstall.
+  On an *upgrade* the finish page says the existing account is unchanged (no new
+  password is shown, since seeding is skipped when the database already exists) —
+  because uninstall leaves the data dir in place, a reinstall over old data is an
+  upgrade. **If you're locked out** of an existing install, re-run the installer and
+  tick **"Reset the admin login"** (offered only on an upgrade): it sets a fresh
+  generated password — shown on the finish page and saved to `INITIAL_ADMIN_LOGIN.txt` —
+  by dropping a one-shot `RESET_ADMIN` marker the app consumes on next start (your
+  cameras, recordings and settings are untouched). A **MyMataSan** Start Menu group is
+  created with: open console, Start / Stop the service (self-elevating via UAC), open
+  `services.msc`, and Uninstall.
 - **Docker images** (`ghcr.io/mysayasan/mymatasan`, linux amd64+arm64, built from
   `deploy/Dockerfile.release`): a `debian:bookworm-slim` base with `ffmpeg` +
   `python3`/`venv` baked in. `MYMATASAN_HOME=/app` (read-only: binary, static

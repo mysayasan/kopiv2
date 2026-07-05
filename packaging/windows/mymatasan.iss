@@ -42,6 +42,10 @@ WizardStyle=modern
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+; Only shown on a reinstall over existing data (Check: IsUpgrade). Ticking it
+; resets the admin login to a fresh generated password shown on the finish page —
+; the recovery path when the operator is locked out of an existing install.
+Name: "resetadmin"; Description: "Reset the admin login (use if you are locked out of this existing install)"; GroupDescription: "Existing installation:"; Flags: unchecked; Check: IsUpgrade
 
 [Dirs]
 ; Writable state root (database, recordings, logs, at-rest key). LocalSystem (the
@@ -154,6 +158,27 @@ begin
   RunHidden(ExpandConstant('{sys}\sc.exe'), 'delete {#ServiceName}');
 end;
 
+// IsUpgrade is the [Tasks] Check for the reset-admin task: it is offered only on a
+// reinstall over an existing data dir (where the admin password may be unknown).
+function IsUpgrade(): Boolean;
+begin
+  Result := not IsFreshInstall;
+end;
+
+// ResetRequested reports whether the operator ticked "Reset the admin login" on an
+// upgrade. On a fresh install there is nothing to reset (the task isn't shown).
+function ResetRequested(): Boolean;
+begin
+  Result := IsUpgrade() and WizardIsTaskSelected('resetadmin');
+end;
+
+// ShowCredentials reports whether the finish page should reveal a bootstrap
+// password: a fresh install always does; an upgrade only when a reset was asked.
+function ShowCredentials(): Boolean;
+begin
+  Result := IsFreshInstall or ResetRequested();
+end;
+
 procedure InstallService();
 var
   q, binPath, envData: string;
@@ -168,17 +193,24 @@ begin
     'description {#ServiceName} ' + q + 'MyMataSan NVR / on-device camera monitor' + q);
   { Per-service environment (REG_MULTI_SZ, \0-delimited): home/data split +
     supervised restart so a factory reset / self-update exit is relaunched. On a
-    fresh install we also inject the generated bootstrap admin password, which
-    EnsureDefaultAdmin (services/local_user.go) reads via LOCAL_ADMIN_PASSWORD to
-    seed the admin. It is a one-time, must-change credential. }
+    fresh install (or a requested admin reset) we also inject the generated
+    bootstrap admin password, which EnsureDefaultAdmin / ResetAdmin
+    (services/local_user.go) reads via LOCAL_ADMIN_PASSWORD. It is a one-time,
+    must-change credential. }
   envData := 'MYMATASAN_HOME=' + ExpandConstant('{app}') + '\0' +
              'MYMATASAN_DATA=' + ExpandConstant('{commonappdata}\MyMataSan') + '\0' +
              'KOPIV2_SUPERVISED=1';
-  if IsFreshInstall then
+  if ShowCredentials() then
     envData := envData + '\0' + 'LOCAL_ADMIN_PASSWORD=' + AdminPassword;
   RunHidden(ExpandConstant('{sys}\reg.exe'),
     'add ' + q + 'HKLM\SYSTEM\CurrentControlSet\Services\{#ServiceName}' + q +
     ' /v Environment /t REG_MULTI_SZ /d ' + q + envData + q + ' /f');
+  { On a requested reset over existing data, drop the one-shot marker the app
+    consumes on next start to force the admin password to LOCAL_ADMIN_PASSWORD
+    (deleting the marker first, so a later restart never re-runs it). }
+  if ResetRequested() then
+    SaveStringToFile(ExpandConstant('{commonappdata}\MyMataSan\RESET_ADMIN'),
+      'Admin reset requested by the installer. Safe to delete.' + #13#10, False);
   RunHidden(ExpandConstant('{sys}\sc.exe'),
     'failure {#ServiceName} reset= 86400 actions= restart/5000/restart/5000/restart/5000');
   RunHidden(ExpandConstant('{sys}\sc.exe'), 'start {#ServiceName}');
@@ -235,8 +267,9 @@ begin
   else if CurStep = ssPostInstall then
   begin
     InstallService();
-    { Save the generated login so it is recoverable if the finish page is missed. }
-    if IsFreshInstall then
+    { Save the generated login so it is recoverable if the finish page is missed —
+      on a fresh install or a requested admin reset. }
+    if ShowCredentials() then
       WriteCredentialFile();
   end;
 end;
@@ -251,16 +284,25 @@ begin
     // below it so the two never overlap (Inno sizes the label for short text).
     WizardForm.FinishedLabel.AutoSize := False;
     WizardForm.FinishedLabel.WordWrap := True;
-    if IsFreshInstall then
+    if ShowCredentials() then
     begin
       WizardForm.FinishedLabel.Height := ScaleY(150);
-      WizardForm.FinishedLabel.Caption :=
-        'MyMataSan is installed and running as a Windows service.' + #13#10 + #13#10 +
-        'Open the web console:  {#AppUrl}' + #13#10 +
-        '(Your browser shows a one-time warning for the self-signed certificate on a LAN — choose "proceed".)' + #13#10 + #13#10 +
-        'Sign in as  Username: admin  with the one-time password below (also saved to' + #13#10 +
-        CredFilePath() + ').' + #13#10 +
-        'You will be asked to set your own password on first sign-in.';
+      if IsFreshInstall then
+        WizardForm.FinishedLabel.Caption :=
+          'MyMataSan is installed and running as a Windows service.' + #13#10 + #13#10 +
+          'Open the web console:  {#AppUrl}' + #13#10 +
+          '(Your browser shows a one-time warning for the self-signed certificate on a LAN — choose "proceed".)' + #13#10 + #13#10 +
+          'Sign in as  Username: admin  with the one-time password below (also saved to' + #13#10 +
+          CredFilePath() + ').' + #13#10 +
+          'You will be asked to set your own password on first sign-in.'
+      else
+        WizardForm.FinishedLabel.Caption :=
+          'MyMataSan has been updated and your admin login was reset.' + #13#10 + #13#10 +
+          'Open the web console:  {#AppUrl}' + #13#10 + #13#10 +
+          'Sign in as  Username: admin  with the new one-time password below (also saved to' + #13#10 +
+          CredFilePath() + ').' + #13#10 +
+          'You will be asked to set your own password on first sign-in. Your cameras,' + #13#10 +
+          'recordings and settings are unchanged.';
 
       // Selectable password field + one-click Copy, so the operator never has to
       // retype the 16-char string. Created once; reused if the page is revisited.
@@ -310,6 +352,8 @@ begin
         'MyMataSan has been updated and the service restarted.' + #13#10 + #13#10 +
         'Open the web console:  {#AppUrl}' + #13#10 +
         'Sign in with your existing account. Your data and settings are unchanged.' + #13#10 + #13#10 +
+        'Locked out? Re-run this installer and tick "Reset the admin login" to set a' + #13#10 +
+        'new one-time password.' + #13#10 + #13#10 +
         'Manage the app any time from the "MyMataSan" group in the Start Menu.';
     end;
   end;

@@ -488,6 +488,10 @@ type AdminSeedResult struct {
 // ILocalUserService manages standalone mymatasan login users.
 type ILocalUserService interface {
 	EnsureDefaultAdmin(ctx context.Context, username, password string) (AdminSeedResult, error)
+	// ResetAdmin forces the admin password back to a bootstrap credential (locked-out
+	// recovery, e.g. an installer "reset admin login" reinstall). Must-change; the
+	// result carries the credential to reveal.
+	ResetAdmin(ctx context.Context, username, password string) (AdminSeedResult, error)
 	Authenticate(ctx context.Context, username string, password string) (*AuthenticatedUser, error)
 	AuthenticateSession(ctx context.Context, username string, sessionHash string) (*AuthenticatedUser, error)
 	Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.LocalUser, uint64, error)

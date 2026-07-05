@@ -42,6 +42,16 @@ func (f *fakeLocalUserRepo) Create(_ context.Context, _ string, model entities.L
 	return f.nextID, nil
 }
 
+func (f *fakeLocalUserRepo) UpdateById(_ context.Context, _ string, model entities.LocalUser) (uint64, error) {
+	for _, r := range f.rows {
+		if r.Id == model.Id {
+			*r = model
+			return 1, nil
+		}
+	}
+	return 0, nil
+}
+
 // TestEnsureDefaultAdminGeneratesWhenNoPassword covers the Linux/Docker/portable
 // path: with no config or env password, a fresh install seeds a per-install
 // generated password (must-change) and reports it so the caller can reveal it.
@@ -111,5 +121,81 @@ func TestEnsureDefaultAdminSkipsWhenUsersExist(t *testing.T) {
 	}
 	if len(repo.rows) != 1 {
 		t.Fatalf("row count changed: %d", len(repo.rows))
+	}
+}
+
+// TestResetAdminUsesEnvOverride covers the installer "reset admin login" path: an
+// existing admin's password is force-reset to LOCAL_ADMIN_PASSWORD (the installer's
+// generated value), flagged must-change, without creating a new row.
+func TestResetAdminUsesEnvOverride(t *testing.T) {
+	t.Setenv("LOCAL_ADMIN_PASSWORD", "InstallerGenerated9")
+	oldHash, _ := hashLocalPassword("whatever-old")
+	repo := &fakeLocalUserRepo{
+		nextID: 1,
+		rows:   []*entities.LocalUser{{Id: 1, Username: "admin", PasswordHash: oldHash, IsAdmin: true, IsActive: true, MustChangePassword: false}},
+	}
+	svc := NewLocalUserService(repo)
+
+	res, err := svc.ResetAdmin(context.Background(), "admin", "")
+	if err != nil {
+		t.Fatalf("ResetAdmin: %v", err)
+	}
+	if !res.Seeded || res.Generated {
+		t.Fatalf("want reset with env-supplied (not generated) password, got %#v", res)
+	}
+	if res.Password != "InstallerGenerated9" {
+		t.Fatalf("password = %q, want the env override", res.Password)
+	}
+	if len(repo.rows) != 1 {
+		t.Fatalf("reset must not add a row, got %d", len(repo.rows))
+	}
+	row := repo.rows[0]
+	if !row.MustChangePassword {
+		t.Fatal("reset admin must be flagged must-change")
+	}
+	if bcrypt.CompareHashAndPassword([]byte(row.PasswordHash), []byte("InstallerGenerated9")) != nil {
+		t.Fatal("stored hash does not match the reset password")
+	}
+	if bcrypt.CompareHashAndPassword([]byte(row.PasswordHash), []byte("whatever-old")) == nil {
+		t.Fatal("old password should no longer verify after reset")
+	}
+}
+
+// TestResetAdminGeneratesWhenNoPassword confirms a reset with no config/env value
+// generates a fresh password and reports it as generated (so the caller reveals it).
+func TestResetAdminGeneratesWhenNoPassword(t *testing.T) {
+	t.Setenv("LOCAL_ADMIN_PASSWORD", "")
+	oldHash, _ := hashLocalPassword("old-secret")
+	repo := &fakeLocalUserRepo{
+		nextID: 1,
+		rows:   []*entities.LocalUser{{Id: 1, Username: "admin", PasswordHash: oldHash, IsAdmin: true, IsActive: true}},
+	}
+	svc := NewLocalUserService(repo)
+
+	res, err := svc.ResetAdmin(context.Background(), "admin", "")
+	if err != nil {
+		t.Fatalf("ResetAdmin: %v", err)
+	}
+	if !res.Seeded || !res.Generated || len(res.Password) < 12 {
+		t.Fatalf("want a generated reset password, got %#v", res)
+	}
+	if bcrypt.CompareHashAndPassword([]byte(repo.rows[0].PasswordHash), []byte(res.Password)) != nil {
+		t.Fatal("reported reset password does not match stored hash")
+	}
+}
+
+// TestResetAdminSeedsWhenNoUsers confirms a reset on an empty table falls back to
+// seeding a fresh admin rather than failing.
+func TestResetAdminSeedsWhenNoUsers(t *testing.T) {
+	t.Setenv("LOCAL_ADMIN_PASSWORD", "")
+	repo := &fakeLocalUserRepo{}
+	svc := NewLocalUserService(repo)
+
+	res, err := svc.ResetAdmin(context.Background(), "admin", "")
+	if err != nil {
+		t.Fatalf("ResetAdmin: %v", err)
+	}
+	if !res.Seeded || len(repo.rows) != 1 {
+		t.Fatalf("empty table reset should seed one admin, got res=%#v rows=%d", res, len(repo.rows))
 	}
 }
