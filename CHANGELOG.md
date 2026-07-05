@@ -10,6 +10,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-05 — mymatasan 1.80.1 (8145e00)
+
+### Fixed
+
+- **mymatasan**: The Windows installer now compiles again, so releases ship the setup `.exe`. In v1.80.0 the `windows-installer` release job aborted because Inno Setup's Pascal Script rejects a local `const` section inside a function (`ISCC` reported "'BEGIN' expected" at the `const` in `GenPassword`), so `mymatasan-setup-<version>-windows-x64.exe` was never built or uploaded and the r450k download page showed no Windows installer. Declaring the password charset as a local `var` instead fixes the compile; the release's `windows-installer` job produces the branded setup `.exe` again.
 ## 2026-07-04 — mymatasan 1.80.0, core 1.50.0 (ef7bf54)
 
 ### Added
