@@ -29,6 +29,23 @@ type ImportModelRequest struct {
 	BaseModel string   `json:"baseModel"`
 }
 
+// BuildExport materializes the dataset's YOLO export directory (images/labels
+// train-val split) and returns its path. The Teach anomaly fitter reads
+// images/train (learn normal) and images/val (calibrate the threshold) from it.
+func (s *trainingService) BuildExport(ctx context.Context, datasetId int64) (string, error) {
+	dir, _, err := s.buildExportDir(ctx, datasetId)
+	return dir, err
+}
+
+// ReloadDetector restarts the shared YOLO worker so it re-reads its pointer
+// files and the anomaly manifest (used when a Teach anomaly skill is activated
+// or deactivated — those don't go through ActivateModel).
+func (s *trainingService) ReloadDetector() {
+	if reloader, ok := s.detector.(interface{ Reload() error }); ok {
+		_ = reloader.Reload()
+	}
+}
+
 // ExportZip materializes the dataset as a YOLO dataset directory and zips it,
 // returning the zip path. This is the dataset you train on (in app, or offline)
 // to produce a best.pt.
@@ -110,8 +127,20 @@ func (s *trainingService) buildExportDir(ctx context.Context, datasetId int64) (
 		anns []TrainingAnnotation
 	}
 	labeled := make([]labeledImage, 0, len(images))
+	// Background images teach the model what NOT to fire on (false-positive
+	// corrections): YOLO reads them as an image with an EMPTY label file. They
+	// carry no annotations, so they're collected separately and capped below.
+	backgrounds := make([]labeledImage, 0)
 	used := map[string]bool{}
 	for _, img := range images {
+		if img.Status == ImageStatusBackground {
+			data, err := os.ReadFile(img.FilePath)
+			if err != nil {
+				continue
+			}
+			backgrounds = append(backgrounds, labeledImage{base: fmt.Sprintf("%d", img.Id), data: s.decryptImage(data)})
+			continue
+		}
 		if img.Status != ImageStatusLabeled && img.Status != ImageStatusReviewed {
 			continue
 		}
@@ -131,6 +160,11 @@ func (s *trainingService) buildExportDir(ctx context.Context, datasetId int64) (
 	}
 	if len(labeled) == 0 {
 		return "", nil, errors.New("no labeled images to export — label some images first")
+	}
+	// Cap backgrounds at ~15% of labeled images (ultralytics' guidance) so a
+	// flood of false-positive corrections can't drown out the positive signal.
+	if keep := cappedBackgroundCount(len(labeled), len(backgrounds)); keep < len(backgrounds) {
+		backgrounds = backgrounds[:keep]
 	}
 
 	// Class list = used declared classes (declared order kept for stable indices),
@@ -179,6 +213,13 @@ func (s *trainingService) buildExportDir(ctx context.Context, datasetId int64) (
 			return "", nil, err
 		}
 	}
+	// Background images always go to train (they carry no positives to validate
+	// against, and the holdout accuracy check grades class predictions).
+	for _, bg := range backgrounds {
+		if err := write("train", bg); err != nil {
+			return "", nil, err
+		}
+	}
 
 	// ultralytics resolves a relative data.yaml `path` against its datasets dir /
 	// cwd, NOT the yaml's folder — so use an absolute path to the export dir.
@@ -192,6 +233,23 @@ func (s *trainingService) buildExportDir(ctx context.Context, datasetId int64) (
 		return "", nil, err
 	}
 	return exportDir, names, nil
+}
+
+// cappedBackgroundCount returns how many background (negative) images to keep in
+// an export: ~15% of the labeled positives (ultralytics' guidance), but at
+// least one whenever any background exists so a single correction still counts.
+func cappedBackgroundCount(labeled, backgrounds int) int {
+	if backgrounds <= 0 {
+		return 0
+	}
+	max := labeled * 15 / 100
+	if max < 1 {
+		max = 1
+	}
+	if backgrounds < max {
+		return backgrounds
+	}
+	return max
 }
 
 // buildDataYAML renders an ultralytics data.yaml for the export. Paths are

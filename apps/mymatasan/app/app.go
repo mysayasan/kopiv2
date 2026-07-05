@@ -84,6 +84,7 @@ func (m *module) Entities() []any {
 		appentities.TrainingDataset{},
 		appentities.TrainingImage{},
 		appentities.TrainingModel{},
+		appentities.TeachSkill{},
 		appentities.RuntimeSetting{},
 		appentities.LocalUser{},
 		appentities.RecordingSegment{},
@@ -109,6 +110,7 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Local Users", Description: "standalone mymatasan user management access", Path: "/api/settings/users", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Recording", Description: "video recording segments and per-camera recording config access", Path: "/api/recording", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "AI Training", Description: "custom-model training datasets and labeled images access", Path: "/api/training", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Teach", Description: "Teach-wizard camera-taught skill access", Path: "/api/teach", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Notifications", Description: "unified notification feed and live stream access", Path: "/api/notifications", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Pairing", Description: "control-plane discovery and adoption (adopt/release are crypto-authenticated)", Path: "/api/pairing", AccessTier: apiaccessenums.Public},
 	}
@@ -235,6 +237,10 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	_ = os.Setenv("MYMATASAN_STOCK_MODEL_FILE", stockModelFile)
 	lprModelFile, _ := filepath.Abs(filepath.Join(trainingDir, "lpr_model.txt"))
 	_ = os.Setenv("MYMATASAN_LPR_MODEL_FILE", lprModelFile)
+	// Activated Teach anomaly skills register here; the worker scores listed
+	// cameras against their normal-memory banks on every frame.
+	anomalyManifestFile, _ := filepath.Abs(filepath.Join(trainingDir, "anomaly_models.json"))
+	_ = os.Setenv("MYMATASAN_ANOMALY_FILE", anomalyManifestFile)
 	objectBackend, backendErr := buildTrainingObjectDetector(deps.Config.Vision.Detector)
 	if backendErr != nil {
 		deps.Logger.Warnf("mymatasan.vision", "object detector backend unavailable (%v); auto-label and custom models are disabled", backendErr)
@@ -308,6 +314,26 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// Each camera is configured in its own goroutine so RTSP URI lookups and
 	// ffmpeg process launches happen in parallel across all cameras.
 	recorderManager := recording.NewManager(recordingService)
+
+	// Teach wizard: skill registry + session capture engine. Constructed here
+	// (not with the other services) because its frame source needs the recorder
+	// manager for the siphon path.
+	teachSkillRepo := dbsql.NewGenericRepo[appentities.TeachSkill](deps.Db)
+	teachService := services.NewTeachService(
+		teachSkillRepo,
+		detectionClassService,
+		trainingService,
+		visionService,
+		services.NewDetectionSource(cameraService, recorderManager, settingsService, nil),
+		services.TeachDetectorConfig{
+			Command:         deps.Config.Vision.Detector.Command,
+			Args:            deps.Config.Vision.Detector.Args,
+			TimeoutMs:       deps.Config.Vision.Detector.TimeoutMs,
+			AnomalyManifest: anomalyManifestFile,
+		},
+		appVersion(m.Name()),
+		atrestCipher,
+	)
 	siphonFPS, siphonWidth := services.SiphonTeeParams(settingsService)
 	siphonHWAccel, siphonHWDevice, siphonInitHWDevice, siphonVideoDecoder := services.SiphonDecoderParams(settingsService)
 	if cfgs, err := recordingService.ListConfigs(context.Background()); err == nil {
@@ -461,6 +487,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewCameraApi(protected, cameraService, settingsService, streamManager, cameraHealthMonitor)
 	apis.NewVisionApi(protected, visionService, detectionClassService, recorderManager, notificationService, cameraService, settingsService, notificationSettingsService, atrestCipher)
 	apis.NewTrainingApi(protected, trainingService)
+	apis.NewTeachApi(protected, teachService)
 	// ffmpeg installs under the writable data dir (not the CWD): a packaged
 	// Windows service runs with CWD=C:\Windows\System32, so a CWD-relative "bin"
 	// would land ffmpeg there instead of MYMATASAN_DATA. Mirrors the Python

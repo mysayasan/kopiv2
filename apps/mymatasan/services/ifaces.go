@@ -540,11 +540,15 @@ type ITrainingService interface {
 	GetImage(ctx context.Context, id uint64) (*entities.TrainingImage, error)
 	GetImageBytes(ctx context.Context, id uint64) ([]byte, error)
 	StoreUpload(ctx context.Context, datasetId int64, data []byte, userId int64) (*entities.TrainingImage, error)
+	StoreCapture(ctx context.Context, datasetId int64, data []byte, seed []TrainingAnnotation, userId int64) (*entities.TrainingImage, error)
+	StoreBackground(ctx context.Context, datasetId int64, data []byte, userId int64) (*entities.TrainingImage, error)
 	AddFromAlert(ctx context.Context, datasetId int64, alertId int64, userId int64) (*entities.TrainingImage, error)
 	SaveAnnotations(ctx context.Context, imageId int64, annotations []TrainingAnnotation, userId int64) (*entities.TrainingImage, error)
 	AutoLabel(ctx context.Context, imageId int64, userId int64) (*entities.TrainingImage, error)
 	DeleteImage(ctx context.Context, id uint64) (uint64, error)
 	ExportZip(ctx context.Context, datasetId int64) (string, error)
+	BuildExport(ctx context.Context, datasetId int64) (string, error)
+	ReloadDetector()
 	ListModels(ctx context.Context) ([]*entities.TrainingModel, error)
 	GetModel(ctx context.Context, id uint64) (*entities.TrainingModel, error)
 	ImportModel(ctx context.Context, req ImportModelRequest, weights []byte, userId int64) (*entities.TrainingModel, error)
@@ -553,6 +557,7 @@ type ITrainingService interface {
 	DeleteModel(ctx context.Context, id uint64) (uint64, error)
 	MachineCapability(ctx context.Context) MachineCapability
 	StartTraining(ctx context.Context, req StartTrainingRequest, userId int64) (*entities.TrainingModel, error)
+	EvaluateHoldout(ctx context.Context, datasetId int64, weightsPath string) ([]EvalPrediction, error)
 	StartDepsSetup(ctx context.Context) error
 	DepsSetupStatus() DepsSetupState
 	GetStockModel(ctx context.Context) StockModelInfo
@@ -566,6 +571,44 @@ type ITrainingService interface {
 	// StartLPRDepsSetup installs the OCR dependencies (easyocr) into the app's
 	// Python, streaming to the shared installer log (poll via DepsSetupStatus).
 	StartLPRDepsSetup(ctx context.Context) error
+}
+
+// ITeachService manages Teach-wizard skills: plain-language camera-taught
+// detection classes. T1 covers the wizard shell (draft CRUD through the ROI
+// step); capture, training, and activation build on it in later phases.
+type ITeachService interface {
+	ListSkills(ctx context.Context) ([]*entities.TeachSkill, error)
+	GetSkill(ctx context.Context, id uint64) (*entities.TeachSkill, error)
+	CreateSkill(ctx context.Context, req TeachSkillRequest, userId int64) (*entities.TeachSkill, error)
+	UpdateSkill(ctx context.Context, id uint64, req TeachSkillRequest, userId int64) (*entities.TeachSkill, error)
+	DeleteSkill(ctx context.Context, id uint64) (uint64, error)
+	// Teaching sessions (capture engine): one at a time, presence-gated frames
+	// stored into the skill's dataset under the session's class label.
+	StartSession(ctx context.Context, skillId uint64, classLabel string, userId int64) (*TeachSessionInfo, error)
+	StopSession(ctx context.Context, skillId uint64, userId int64) (*TeachSessionInfo, error)
+	SessionInfo(ctx context.Context, skillId uint64) (*TeachSessionInfo, error)
+	ActiveSessions(ctx context.Context) []TeachActiveSession
+	// Accuracy check: quick-train on the skill's samples, then grade the model
+	// on the holdout split and persist a plain-language report.
+	StartEvaluation(ctx context.Context, skillId uint64, userId int64) (*TeachEvalState, error)
+	EvaluationState(ctx context.Context, skillId uint64) (*TeachEvalState, error)
+	// Test drive: a second detector worker on the candidate weights, live
+	// annotated frames, no impact on the live pipeline.
+	StartTestDrive(ctx context.Context, skillId uint64, userId int64) error
+	StopTestDrive(ctx context.Context, skillId uint64)
+	TestDriveFrame(ctx context.Context, skillId uint64) (*TeachDriveFrame, error)
+	// Activation: hot-swap the checked model + auto-create the detection rule;
+	// deactivation undoes both (samples and model stay).
+	ActivateSkill(ctx context.Context, skillId uint64, userId int64) (*TeachActivateResult, error)
+	DeactivateSkill(ctx context.Context, skillId uint64, userId int64) (*entities.TeachSkill, error)
+	// Cross-node sharing: passphrase-encrypted .mmskill export/preview/import.
+	ExportSkill(ctx context.Context, skillId uint64, passphrase string, includeImages bool) (string, []byte, error)
+	PreviewSkillPackage(ctx context.Context, sealed []byte, passphrase string) (*TeachSkillManifest, error)
+	ImportSkill(ctx context.Context, sealed []byte, passphrase string, userId int64) (*entities.TeachSkill, error)
+	// Keep-teaching feedback loop: confirm/correct live alerts from an active
+	// skill back into its dataset.
+	ListSkillFeedback(ctx context.Context, skillId uint64) ([]*TeachFeedbackAlert, error)
+	AddSkillFeedback(ctx context.Context, skillId uint64, alertId int64, verdict string, userId int64) error
 }
 
 // INotificationService is the unified notification feed: it publishes events to

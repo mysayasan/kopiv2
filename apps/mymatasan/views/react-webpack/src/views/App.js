@@ -11,7 +11,7 @@ import { LoginPage, ChangePasswordPage, RecoveryGatePage, SideNav, WorkspaceHead
 import { DashboardTab } from './components/dashboard';
 import { SetupWizard } from './components/setup';
 import { ViewsTab, CamerasTab } from './components/cameras';
-import { TrainingTab } from './components/training';
+import { TeachTab } from './components/teach';
 import { SettingsTab } from './components/settings';
 import { NotificationsTab } from './components/notifications';
 import { SecureWipeCountdown, ResetProgressOverlay } from './components/securewipe';
@@ -148,6 +148,11 @@ function AppInner({ lang, onLangChange }) {
   const [visionClasses, setVisionClasses] = useState([]);
   const [visionLabels, setVisionLabels] = useState([]);
   const [activeModelClasses, setActiveModelClasses] = useState([]);
+  // Cameras with a live teaching session — drives the side-nav "learning" badge.
+  const [teachingCameraIds, setTeachingCameraIds] = useState([]);
+  // Map of ruleId → { name, skillType } for detection rules auto-created by a
+  // Teach skill, so the AI Detection list can badge them.
+  const [taughtRuleMap, setTaughtRuleMap] = useState({});
   const [visionRuleDraft, setVisionRuleDraft] = useState(defaultVisionRuleDraft());
   const [recordingSegments, setRecordingSegments] = useState([]);
   const [recordingConfigs, setRecordingConfigs] = useState([]);
@@ -1213,6 +1218,45 @@ function AppInner({ lang, onLangChange }) {
     }
   }
 
+  // Poll active teaching sessions so the camera tree can show a "learning"
+  // badge wherever the user is in the app (a session keeps running server-side
+  // when they navigate away from the Teach page).
+  useEffect(() => {
+    if (!authenticated || !isAdmin) {
+      setTeachingCameraIds([]);
+      return undefined;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const result = await request('/api/teach/active');
+        const items = Array.isArray(result) ? result : result?.items || [];
+        if (!cancelled) setTeachingCameraIds(items.map((s) => Number(s.cameraId)).filter(Boolean));
+      } catch (_) { /* badge is best-effort */ }
+    };
+    load();
+    const id = window.setInterval(load, 10000);
+    return () => { cancelled = true; window.clearInterval(id); };
+  }, [authenticated, isAdmin]);
+
+  // Builds the ruleId → taught-skill map from the Teach skills' stored configs
+  // (each active/trained skill's config carries the auto-created rule's id).
+  async function loadTaughtRuleMap() {
+    try {
+      const result = await request('/api/teach/skills');
+      const items = Array.isArray(result) ? result : result?.items || [];
+      const map = {};
+      items.forEach((skill) => {
+        let cfg = {};
+        try { cfg = JSON.parse(skill.config || '{}'); } catch (_) { cfg = {}; }
+        if (cfg.ruleId) map[cfg.ruleId] = { name: skill.name, skillType: skill.skillType };
+      });
+      setTaughtRuleMap(map);
+    } catch (_) {
+      setTaughtRuleMap({});
+    }
+  }
+
   async function loadVision({ quiet = false, notifyNew = false } = {}) {
     if (!quiet) {
       setBusy(true);
@@ -1236,6 +1280,7 @@ function AppInner({ lang, onLangChange }) {
       setVisionAlerts(alerts);
       setVisionClasses(classes);
       setVisionLabels(labels);
+      loadTaughtRuleMap();
       // The unread badge is owned by the unified notification feed; loadVision
       // only needs the new-alert set to decide whether to chime. Diagnostics
       // never become notifications, so they are excluded from the sound trigger.
@@ -2558,6 +2603,7 @@ function AppInner({ lang, onLangChange }) {
         busy={busy}
         cameras={saved}
         managingCameraId={managingCameraId}
+        teachingCameraIds={teachingCameraIds}
         notifUnread={notifUnread}
         onTab={selectTab}
         onSelectCameraRoot={selectCameraRoot}
@@ -2664,6 +2710,7 @@ function AppInner({ lang, onLangChange }) {
             alerts: visionAlerts,
             classes: visionClasses,
             activeModelClasses,
+            taughtByRuleId: taughtRuleMap,
             destinations: notificationSettings.destinations,
             ruleDraft: visionRuleDraft,
             onRuleDraft: setVisionRuleDraft,
@@ -2687,17 +2734,14 @@ function AppInner({ lang, onLangChange }) {
         />
       ) : null}
 
-      {activeTab === 'training' ? (
-        <TrainingTab
+      {activeTab === 'teach' ? (
+        <TeachTab
           authHeader={authHeader}
-          cameras={saved}
           onMessage={setMessage}
-          onModelActivated={() => { loadVision({ quiet: true }); loadActiveModelClasses(); }}
-          classes={visionClasses}
+          cameras={saved}
+          streamConfig={streamConfig}
           labelCatalog={visionLabels}
-          activeModelClasses={activeModelClasses}
-          onSaveClass={saveVisionClass}
-          onDeleteClass={deleteVisionClass}
+          onOpenModels={() => { setActiveTab('settings'); openSettingsSection('ai'); }}
         />
       ) : null}
 
@@ -2761,6 +2805,12 @@ function AppInner({ lang, onLangChange }) {
           onCalibrateCapacity={calibrateCapacity}
           resetAllowed={resetAllowed}
           onSecureWipe={() => setWipeCountdown(true)}
+          onModelActivated={() => { loadVision({ quiet: true }); loadActiveModelClasses(); }}
+          visionClasses={visionClasses}
+          visionLabels={visionLabels}
+          activeModelClasses={activeModelClasses}
+          onSaveClass={saveVisionClass}
+          onDeleteClass={deleteVisionClass}
         />
       ) : null}
 

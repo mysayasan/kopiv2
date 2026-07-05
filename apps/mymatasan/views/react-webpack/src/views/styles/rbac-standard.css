@@ -939,9 +939,23 @@
 .rule-list-name {
   font-weight: 700;
   color: var(--text-base);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.rule-taught-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #d99a2b;
+  background: rgba(217, 154, 43, 0.12);
+  border: 1px solid rgba(217, 154, 43, 0.35);
 }
 
 .rule-list-meta {

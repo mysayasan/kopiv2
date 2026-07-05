@@ -333,7 +333,7 @@ const CAMERA_FILTER_THRESHOLD = 8;
 // that camera's properties (details/access/stream/recording/onvif). A caret toggles
 // the branch without leaving the current view. The status dot mirrors the camera's
 // live reachability (online/offline). Large sets get a search filter + scroll.
-function CamerasNavItem({ cameras, active, managingCameraId, onSelectRoot, onSelectCamera }) {
+function CamerasNavItem({ cameras, active, managingCameraId, teachingCameraIds = [], onSelectRoot, onSelectCamera }) {
   const t = useT();
   const [open, setOpen] = useState(active);
   const [query, setQuery] = useState('');
@@ -365,6 +365,13 @@ function CamerasNavItem({ cameras, active, managingCameraId, onSelectRoot, onSel
         >
           <span className="nav-ico"><Ico n="camera" sz={17} /></span>
           <span className="nav-label">{t('nav.cameras')}</span>
+          {teachingCameraIds.length > 0 ? (
+            // Root-level "learning" badge so an active teaching session is
+            // visible even while the camera branch is collapsed.
+            <span className="nav-teach-badge" title={t('teach.learningBadge')}>
+              <Ico n="wand" sz={12} />
+            </span>
+          ) : null}
           {list.length > 0 ? <span className="nav-tree-count">{list.length}</span> : null}
         </button>
       </div>
@@ -408,6 +415,11 @@ function CamerasNavItem({ cameras, active, managingCameraId, onSelectRoot, onSel
                       <Ico n="camera" sz={16} />
                     </span>
                     <span className="nav-label">{cameraTitle(c)}</span>
+                    {teachingCameraIds.includes(Number(c.id)) ? (
+                      <span className="nav-teach-badge" title={t('teach.learningBadge')}>
+                        <Ico n="wand" sz={12} />
+                      </span>
+                    ) : null}
                     {description ? (
                       <span className="nav-tip" role="tooltip">
                         <span className="nav-tip-title">{cameraTitle(c)}</span>
@@ -429,7 +441,7 @@ function CamerasNavItem({ cameras, active, managingCameraId, onSelectRoot, onSel
 // are grouped like myseliasan's; the Cameras entry is a bespoke tree whose root opens
 // the probe page and whose children open per-camera properties. Non-admins see only
 // the view-only surfaces (Dashboard, Live Views, Recordings, Notifications).
-export function SideNav({ activeTab, isAdmin, busy, cameras, managingCameraId, notifUnread = 0, onTab, onSelectCameraRoot, onSelectCamera, onLogout, pinned = true, onTogglePinned }) {
+export function SideNav({ activeTab, isAdmin, busy, cameras, managingCameraId, teachingCameraIds = [], notifUnread = 0, onTab, onSelectCameraRoot, onSelectCamera, onLogout, pinned = true, onTogglePinned }) {
   const t = useT();
   const navItem = (id, label, icon, tone) => ({ id, label, icon, tone, active: id === activeTab, onClick: () => onTab(id) });
   // The Notifications entry doubles as the notifications control now that the topbar
@@ -468,6 +480,7 @@ export function SideNav({ activeTab, isAdmin, busy, cameras, managingCameraId, n
                 cameras={cameras}
                 active={activeTab === 'cameras'}
                 managingCameraId={managingCameraId}
+                teachingCameraIds={teachingCameraIds}
                 onSelectRoot={onSelectCameraRoot}
                 onSelectCamera={onSelectCamera}
               />
@@ -478,7 +491,7 @@ export function SideNav({ activeTab, isAdmin, busy, cameras, managingCameraId, n
     {
       label: t('group.intelligence'),
       items: isAdmin
-        ? [navItem('training', t('tab.training'), 'folder', 'amber')]
+        ? [navItem('teach', t('tab.teach'), 'wand', 'amber')]
         : [],
     },
     {

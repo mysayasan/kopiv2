@@ -919,15 +919,27 @@ curl -u admin:Admin123 -X POST "http://localhost:3000/api/vision/alerts/purge?da
 curl -u admin:Admin123 -X POST "http://localhost:3000/api/vision/alerts/purge?days=30"
 ```
 
+## Teach wizard
+
+The **Teach** page (`/api/teach`) is the primary, zero-ML-knowledge way to give a camera a new detection skill — it drives the training/detection machinery below without exposing datasets, boxes, epochs, or the word "YOLO". A skill has three kinds:
+
+- **Recognize a new object** — spot a thing anywhere in view (e.g. a courier uniform, a forklift). Standard object detection.
+- **Tell good from bad** — inspection: judge items that appear in the same spot (good product vs defective). Trains a contrast pair (`<slug>` / `not <slug>`).
+- **Spot anything unusual** — anomaly detection from good-only footage: an image-embedding memory bank (resnet18) learns what normal looks like and alerts on deviations. Anomaly models run **alongside** stock/custom detection via a per-camera manifest (`ai/anomaly_worker.py` fits, `yolo_worker.py` scores), so they never occupy the single custom-model slot.
+
+The wizard is a six-step flow, each step resumable (the skill row stores its progress): **name it → what kind → where (draw an ROI on the live frame) → show examples → check accuracy → turn it on**. Sample collection is *session-based* — you press "show me good ones" and the camera auto-captures presence-gated, deduplicated frames labelled by the session, with a live filmstrip and a plain-language sample coach. "Check accuracy" quick-trains and evaluates on a held-back split, reporting in human terms ("I got 19 of 20 right") with a gallery of the misses and an F1-tuned suggested threshold. A **test drive** runs the candidate model on the live camera (a second, throwaway detector worker via an env override — the live pipeline is untouched) before you commit. **Turn it on** trains the final model, hot-swaps it in, and auto-creates the detection rule + alert; **Keep teaching** files ✓/✗ verdicts on live alerts back into the dataset so the skill improves. Skills export/import between devices as passphrase-encrypted **`.mmskill`** packages (`infra/atrest` Argon2id + AES-GCM). Rules created by a taught skill carry a **"Taught"** badge in AI Detection.
+
+> **Where the old Training page went.** The manual Training tab was retired. Its lower-level surfaces live on: the **model registry** (import a `best.pt` / activate / deactivate) and **Object Classes** management moved to **Settings → AI**, and the dataset/label/train/model REST endpoints below are unchanged (the Teach wizard drives them server-side).
+
 ## Custom Model Training API
 
-The **Training** tab (and `/api/training`) lets you teach the detector new object classes end to end: collect images → label → train → activate. All routes use the same local Basic Auth. Training artifacts are stored under `vision.training.dataDir` (defaults to a `training` sibling of `snapshotDir`).
+The `/api/training` endpoints power the model registry and the datasets the Teach wizard builds (and are still usable directly for advanced offline workflows): collect images → label → train → activate. All routes use the same local Basic Auth. Training artifacts are stored under `vision.training.dataDir` (defaults to a `training` sibling of `snapshotDir`).
 
-The workflow has three steps in the UI (mirrored by the API):
+The underlying workflow has three stages (mirrored by the API):
 
 1. **Datasets** — a dataset is a named collection of labeled images for one set of classes.
-2. **Images & Labels** — upload JPEGs or import alert snapshots (which arrive pre-labeled from the alert's detection box), then draw/move/delete bounding boxes and assign a class per box in the in-browser editor. **Auto-label** runs the active detector on an image and fills boxes for you to correct. Classes you assign are saved back onto the dataset.
-3. **Models** — **Train** the dataset (in-app when a CUDA GPU is present, or **Export** a YOLO zip to train elsewhere), then **Activate** a model.
+2. **Images & Labels** — upload JPEGs or import alert snapshots (which arrive pre-labeled from the alert's detection box), then draw/move/delete bounding boxes and assign a class per box. **Auto-label** runs the active detector on an image and fills boxes for you to correct. Background images (false-positive corrections) export as YOLO empty-label frames, capped at ~15% of the labelled set.
+3. **Models** — **Train** the dataset (in-app when a CUDA GPU is present, or **Export** a YOLO zip to train elsewhere), then **Activate** a model. Model import/activate is available from **Settings → AI**.
 
 ```bash
 # Datasets

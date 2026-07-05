@@ -26,10 +26,15 @@ import (
 const (
 	ImageSourceUpload = "upload"
 	ImageSourceAlert  = "alert"
+	ImageSourceTeach  = "teach"
 
 	ImageStatusUnlabeled = "unlabeled"
 	ImageStatusLabeled   = "labeled"
 	ImageStatusReviewed  = "reviewed"
+	// ImageStatusBackground marks a deliberate negative: an image the model
+	// should NOT fire on (a false-positive correction). Exported as a YOLO
+	// background (empty label file), capped in buildExportDir.
+	ImageStatusBackground = "background"
 
 	maxTrainingImageBytes = 12 * 1024 * 1024
 )
@@ -253,6 +258,29 @@ func (s *trainingService) StoreUpload(ctx context.Context, datasetId int64, data
 		return nil, fmt.Errorf("dataset not found: %w", err)
 	}
 	return s.storeImage(ctx, datasetId, data, ImageSourceUpload, nil, userId)
+}
+
+// StoreCapture stores a Teach-session frame with its auto-generated annotation
+// (session label + presence box) — the image lands already "labeled", exactly
+// like an alert import with a seeded box.
+func (s *trainingService) StoreCapture(ctx context.Context, datasetId int64, data []byte, seed []TrainingAnnotation, userId int64) (*entities.TrainingImage, error) {
+	return s.storeImage(ctx, datasetId, data, ImageSourceTeach, seed, userId)
+}
+
+// StoreBackground stores a negative/background image (a false-positive
+// correction): no annotations, status "background", so the export includes it
+// as a YOLO background frame the model learns NOT to fire on.
+func (s *trainingService) StoreBackground(ctx context.Context, datasetId int64, data []byte, userId int64) (*entities.TrainingImage, error) {
+	img, err := s.storeImage(ctx, datasetId, data, ImageSourceTeach, nil, userId)
+	if err != nil {
+		return nil, err
+	}
+	img.Status = ImageStatusBackground
+	if _, err := s.images.UpdateById(ctx, "", *img); err != nil {
+		return nil, err
+	}
+	_ = s.refreshDatasetCounts(ctx, datasetId)
+	return img, nil
 }
 
 // AddFromAlert copies an alert's snapshot into the dataset and seeds an

@@ -4,6 +4,7 @@ import { useT } from '@shared/i18n';
 import { FormBusyOverlay, FieldTitle, AccordionList, AccordionItem } from './ui';
 import { ConsoleLog } from './console';
 import { PasswordField } from './layout';
+import { ObjectClassesPanel } from './vision';
 import { defaultYoloConfig, bestYoloDefaults, defaultCaptureConfig, captureModeOptions, defaultAlertNotificationConfig, alertNotificationFields, alertFieldDataKeys, builtinPayloadKeys, notificationCategories, notificationTemplateTokens, defaultDestination, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings } from '../lib/constants';
 import {iceUrlsText,textToIceUrls,decoderTransportOptions,decoderHWAccelOptions,apiBase } from '../lib/helpers';
 
@@ -297,6 +298,234 @@ function LPRModelPanel({ authHeader, onMessage }) {
           {t('st.ocrHint')}
         </span>
         {ocrLog ? <ConsoleLog title={t('st.ocrInstallTitle')} log={ocrLog} running={installingOcr} /> : null}
+      </div>
+    </section>
+  );
+}
+
+// modelClasses decodes a model row's JSON class list (best-effort).
+function modelClasses(model) {
+  try {
+    const parsed = JSON.parse(model?.classes || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_) { return []; }
+}
+
+// DetectionModelsPanel is the custom-model registry (relocated from the retired
+// Training page): import a trained best.pt, activate/deactivate it (hot-swapped
+// alongside the stock model), and install GPU training dependencies. Deliberately
+// form-free — it renders inside the runtime settings <form>.
+function DetectionModelsPanel({ authHeader, onMessage, onModelActivated }) {
+  const t = useT();
+  const [models, setModels] = useState([]);
+  const [capability, setCapability] = useState(null);
+  const [modelDraft, setModelDraft] = useState({ name: '', classes: '' });
+  const [installing, setInstalling] = useState(false);
+  const [installLog, setInstallLog] = useState('');
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef(null);
+
+  async function api(path, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    if (authHeader) headers.Authorization = authHeader;
+    if (options.body && !(options.body instanceof FormData)) headers['Content-Type'] = 'application/json';
+    const resp = await fetch(`${apiBase()}${path}`, { credentials: 'include', ...options, headers });
+    const text = await resp.text();
+    let payload = null;
+    if (text) { try { payload = JSON.parse(text); } catch (_) { payload = { message: text }; } }
+    if (!resp.ok) throw new Error(payload?.message || payload?.data?.message || `Request failed (${resp.status})`);
+    return payload?.data?.result ?? payload?.result ?? payload;
+  }
+
+  const notify = (msg, kind) => { if (onMessage) onMessage(msg, kind); };
+
+  async function loadModels() {
+    try {
+      const result = await api('/api/training/models');
+      setModels(Array.isArray(result?.items) ? result.items : []);
+    } catch (_) { /* best effort */ }
+  }
+  async function loadCapability() {
+    try { setCapability(await api('/api/training/capability')); } catch (_) { /* best effort */ }
+  }
+  useEffect(() => { loadModels(); loadCapability(); }, [authHeader]);
+
+  // Poll while any model is training so status/progress stays live (a run kicked
+  // off elsewhere — e.g. the Teach wizard — surfaces here too).
+  const trainingActive = models.some((m) => m.status === 'pending' || m.status === 'running');
+  useEffect(() => {
+    if (!trainingActive) return undefined;
+    const id = window.setInterval(() => { loadModels(); }, 4000);
+    return () => window.clearInterval(id);
+  }, [trainingActive, authHeader]);
+
+  async function run(action, okMessage) {
+    setBusy(true);
+    try {
+      await action();
+      if (okMessage) notify(okMessage);
+    } catch (err) {
+      notify(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Kick off the in-app GPU dependency install, then poll status until it ends.
+  function installDeps() {
+    run(async () => {
+      const st = await api('/api/training/setup-deps', { method: 'POST' });
+      setInstallLog(st?.log || '');
+      setInstalling(true);
+    }, t('tr.installingGpu'));
+  }
+  useEffect(() => {
+    if (!installing) return undefined;
+    const id = window.setInterval(async () => {
+      try {
+        const st = await api('/api/training/setup-deps');
+        setInstallLog(st?.log || '');
+        if (!st?.running) {
+          window.clearInterval(id);
+          setInstalling(false);
+          await loadCapability();
+          notify(st?.status === 'done' ? t('tr.gpuInstalled') : t('tr.gpuInstallErr'), st?.status === 'done' ? 'success' : 'error');
+        }
+      } catch (_) { /* keep polling */ }
+    }, 3000);
+    return () => window.clearInterval(id);
+  }, [installing, authHeader]);
+
+  function importModel() {
+    const file = fileRef.current?.files?.[0];
+    if (!file) { notify(t('tr.choosePt'), 'error'); return; }
+    run(async () => {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('name', modelDraft.name);
+      form.append('classes', modelDraft.classes);
+      const model = await api('/api/training/models/import', { method: 'POST', body: form });
+      setModelDraft({ name: '', classes: '' });
+      if (fileRef.current) fileRef.current.value = '';
+      await loadModels();
+      const cls = modelClasses(model);
+      notify(cls.length ? t('tr.modelImportedCls', { cls: cls.join(', ') }) : t('tr.modelImported'));
+    });
+  }
+
+  function activateModel(id) {
+    run(async () => {
+      const model = await api(`/api/training/models/${id}/activate`, { method: 'POST' });
+      await loadModels();
+      // Refresh the app-level class registry so the model's classes appear in the
+      // rule "Detect" picker (and the Object Classes list) without a reload.
+      if (onModelActivated) onModelActivated();
+      const cls = modelClasses(model);
+      notify(cls.length ? t('tr.modelActivatedCls', { cls: cls.join(', ') }) : t('tr.modelActivated'));
+    });
+  }
+
+  function deactivateModel() {
+    run(async () => {
+      await api('/api/training/models/deactivate', { method: 'POST' });
+      await loadModels();
+      if (onModelActivated) onModelActivated();
+    }, t('tr.modelDeactivated'));
+  }
+
+  function deleteModel(id) {
+    run(async () => {
+      await api(`/api/training/models/${id}`, { method: 'DELETE' });
+      await loadModels();
+    }, t('tr.modelDeleted'));
+  }
+
+  const active = models.find((m) => m.isActive);
+  const activeCls = active ? modelClasses(active) : [];
+
+  return (
+    <section className="settings-panel span-two">
+      <header>
+        <h2>
+          <FieldTitle info={t('tr.modelsHint')}>
+            {t('st.customModels')}
+          </FieldTitle>
+        </h2>
+        {capability ? (
+          <span className={`status-pill ${capability.cuda ? 'ok' : ''}`}>
+            {capability.cuda ? t('tr.gpuReady') : capability.available ? t('tr.cpuOnly') : t('tr.unavailable')}
+          </span>
+        ) : null}
+      </header>
+      {active ? (
+        <div className="training-active-banner">
+          <Ico n="check-ok" /> {t('tr.activeRunning', { name: active.name })}
+          {activeCls.length ? t('tr.activeUseClasses', { cls: activeCls.join(', ') }) : null}
+        </div>
+      ) : null}
+      {capability && capability.canInstall && !capability.cuda ? (
+        <div className="install-deps">
+          <div className="action-row">
+            <button type="button" onClick={installDeps} disabled={busy || installing}>
+              <span className="btn-icon">
+                <Ico n={installing ? 'refresh' : 'download'} /> {installing ? t('tr.installingGpuBtn') : t('tr.installGpuBtn')}
+              </span>
+            </button>
+            <span className="field-hint">{t('tr.detectedGpu', { gpu: capability.gpu })}</span>
+          </div>
+          {installing ? <span className="field-hint">{t('tr.downloadingInstalling')}</span> : null}
+          {installLog ? <ConsoleLog title={t('tr.gpuInstallTitle')} log={installLog} running={installing} /> : null}
+        </div>
+      ) : null}
+      <ul className="class-registry-list">
+        {models.map((m) => (
+          <li key={m.id} className="class-registry-row">
+            <div>
+              <strong>{m.name}</strong>
+              {m.isActive ? <span className="status-pill ok"> {t('tr.activePill')}</span> : null}
+              <span className="field-hint">
+                {' '}{m.status}{m.status === 'running' ? ` · ${m.progress || 0}%` : ''} · {modelClasses(m).join(', ') || t('tr.noClasses')}
+                {(() => { try { const mt = JSON.parse(m.metrics || '{}'); return mt.map50 ? ` · mAP50 ${(mt.map50 * 100).toFixed(0)}%` : (mt.error ? ` · ${mt.error}` : ''); } catch (_) { return ''; } })()}
+              </span>
+              {m.status === 'running' ? (
+                <div className="training-progress"><div className="training-progress-bar" style={{ width: `${m.progress || 0}%` }} /></div>
+              ) : null}
+            </div>
+            <div className="class-registry-actions">
+              {!m.isActive && m.status !== 'running' && m.status !== 'pending' ? (
+                <button type="button" onClick={() => activateModel(m.id)} disabled={busy || !m.filePath}>{t('tr.activate')}</button>
+              ) : null}
+              {m.isActive ? (
+                <button type="button" className="quiet" onClick={deactivateModel} disabled={busy} title={t('tr.deactivateTitle')}>{t('tr.deactivate')}</button>
+              ) : null}
+              <button type="button" className="quiet danger" onClick={() => deleteModel(m.id)} disabled={busy || m.isActive || m.status === 'running'} title={m.isActive ? t('tr.deactivateFirst') : t('tr.deleteModel')}>{t('common.delete')}</button>
+            </div>
+          </li>
+        ))}
+        {models.length === 0 ? <li className="field-hint">{t('st.noModelsImport')}</li> : null}
+      </ul>
+      <div className="vision-rule-form">
+        <header><h3>{t('tr.importTrainedModel')}</h3></header>
+        <div className="metadata-row">
+          <label>
+            {t('common.name')}
+            <input value={modelDraft.name} onChange={(e) => setModelDraft({ ...modelDraft, name: e.target.value })} placeholder={t('tr.phCouriersV1')} disabled={busy} />
+          </label>
+          <label>
+            {t('tr.classesOptional')}
+            <input value={modelDraft.classes} onChange={(e) => setModelDraft({ ...modelDraft, classes: e.target.value })} placeholder={t('tr.phAutoDetected')} disabled={busy} />
+          </label>
+        </div>
+        <label>
+          {t('tr.weightsFile')}
+          <input ref={fileRef} type="file" accept=".pt" disabled={busy} />
+          <span className="field-hint">{t('tr.weightsHint')}</span>
+        </label>
+        <div className="action-row">
+          <button type="button" onClick={importModel} disabled={busy || !modelDraft.name.trim()}>
+            <span className="btn-icon"><Ico n="save" /> {t('tr.importModel')}</span>
+          </button>
+        </div>
       </div>
     </section>
   );
@@ -1130,6 +1359,12 @@ export function SettingsTab({
   onCalibrateCapacity,
   resetAllowed,
   onSecureWipe,
+  onModelActivated,
+  visionClasses,
+  visionLabels,
+  activeModelClasses,
+  onSaveClass,
+  onDeleteClass,
 }) {
   const t = useT();
   const iceServers = settings.stream.webrtc.iceServers || [];
@@ -1539,6 +1774,7 @@ export function SettingsTab({
         {settingsNav === 'ai' && (<>
         <StockModelPanel authHeader={authHeader} onMessage={onMessage} />
         <LPRModelPanel authHeader={authHeader} onMessage={onMessage} />
+        <DetectionModelsPanel authHeader={authHeader} onMessage={onMessage} onModelActivated={onModelActivated} />
         <section className="settings-panel span-two">
           <header>
             <h2>
@@ -1983,6 +2219,21 @@ export function SettingsTab({
           </button>
         </div>
           </form>
+        ) : null}
+
+        {settingsNav === 'ai' ? (
+          // Outside the runtime-settings <form>: the class editor modal contains its
+          // own <form>, and nested forms are invalid HTML.
+          <div className="settings-layout">
+            <ObjectClassesPanel
+              classes={visionClasses}
+              labelCatalog={visionLabels}
+              activeModelClasses={activeModelClasses}
+              busy={busy}
+              onSaveClass={onSaveClass}
+              onDeleteClass={onDeleteClass}
+            />
+          </div>
         ) : null}
 
         {settingsNav === 'users' ? (
