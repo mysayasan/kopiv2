@@ -139,6 +139,13 @@ dockers:
       - "ghcr.io/mysayasan/mymatasan:latest-amd64"
     build_flag_templates:
       - "--platform=linux/amd64"
+      # Buildx attaches provenance/SBOM attestations by default, which turns each
+      # single-arch push into an OCI image index (image + unknown/unknown
+      # attestation). `docker manifest create` for the combined :latest tag then
+      # can't verify those child digests ("manifest verification failed"). Push
+      # plain image manifests so the manifest list combines cleanly.
+      - "--provenance=false"
+      - "--sbom=false"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
       - "--label=org.opencontainers.image.source=https://github.com/mysayasan/kopiv2"
@@ -156,6 +163,10 @@ dockers:
       - "ghcr.io/mysayasan/mymatasan:latest-arm64"
     build_flag_templates:
       - "--platform=linux/arm64"
+      # See amd64 block: disable attestations so the pushed image is a plain
+      # manifest the :latest manifest list can combine.
+      - "--provenance=false"
+      - "--sbom=false"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
       - "--label=org.opencontainers.image.source=https://github.com/mysayasan/kopiv2"
