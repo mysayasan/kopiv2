@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
@@ -17,8 +18,8 @@ type fakeLocalUserService struct {
 	mustChange      bool
 }
 
-func (f *fakeLocalUserService) EnsureDefaultAdmin(context.Context, string, string) error {
-	return nil
+func (f *fakeLocalUserService) EnsureDefaultAdmin(context.Context, string, string) (services.AdminSeedResult, error) {
+	return services.AdminSeedResult{}, nil
 }
 
 func (f *fakeLocalUserService) Authenticate(_ context.Context, username string, password string) (*services.AuthenticatedUser, error) {
@@ -136,6 +137,55 @@ func TestLocalBasicAuthWrongBasicDoesNotRideCookie(t *testing.T) {
 	handler.ServeHTTP(rr, req)
 	if rr.Code != http.StatusNoContent {
 		t.Fatalf("no-Basic + valid cookie: status = %d, want 204", rr.Code)
+	}
+}
+
+// TestLocalBasicAuthLockoutOnlyCountsLoginAttempts guards the fix for a
+// self-lockout: the SPA replays its stored credential on every protected route,
+// so a client whose credential just went stale (reinstall/reseed, password change
+// in another tab) fires a burst of failing background/data requests. Only the
+// interactive login probe (GET /auth/session) may consume the attempt budget —
+// otherwise one page load locks a legitimate user out.
+func TestLocalBasicAuthLockoutOnlyCountsLoginAttempts(t *testing.T) {
+	userService := &fakeLocalUserService{}
+	guard := NewLoginGuard(LoginGuardConfig{
+		Enabled:     true,
+		MaxAttempts: 3,
+		Window:      time.Minute,
+		BaseLockout: time.Minute,
+		FailedDelay: 0,
+	})
+	middleware := NewLocalBasicAuth(userService, guard, nil)
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	wrong := func(path string) int {
+		req := httptest.NewRequest(http.MethodGet, "http://example.com"+path, nil)
+		req.SetBasicAuth("admin", "wrong")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		return rr.Code
+	}
+
+	// A flood of wrong credentials on ordinary protected routes (background polls,
+	// media, page-load fetches) must never trip the lockout — each is denied 401.
+	for i := 0; i < 10; i++ {
+		if code := wrong("/api/cameras"); code != http.StatusUnauthorized {
+			t.Fatalf("non-login attempt %d: status = %d, want 401 (must not count toward lockout)", i, code)
+		}
+	}
+
+	// The login probe still locks after MaxAttempts. If the flood above had counted,
+	// this would already be locked; instead it takes a full run of real attempts.
+	if code := wrong("/api/auth/session"); code != http.StatusUnauthorized {
+		t.Fatalf("login attempt 1: status = %d, want 401", code)
+	}
+	if code := wrong("/api/auth/session"); code != http.StatusUnauthorized {
+		t.Fatalf("login attempt 2: status = %d, want 401", code)
+	}
+	if code := wrong("/api/auth/session"); code != http.StatusTooManyRequests {
+		t.Fatalf("login attempt 3: status = %d, want 429 (lockout trips)", code)
 	}
 }
 

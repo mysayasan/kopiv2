@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -19,14 +20,10 @@ import (
 
 const (
 	defaultLocalAdminUsername = "admin"
-	// defaultLocalAdminPassword is the legacy shipped default. It is NOT the
-	// first-run seed fallback anymore (see fallbackLocalAdminPassword) — it is
+	// defaultLocalAdminPassword is the legacy shipped default. It is NOT a first-run
+	// seed fallback (an unset password now generates a per-install one) — it is
 	// retained only so flagDefaultAdminPassword can nudge old installs still on it.
 	defaultLocalAdminPassword = "Admin123"
-	// fallbackLocalAdminPassword is the first-run seed password used when config
-	// (and the env override) supply none, matching myseliasan's admin/admin stock
-	// superadmin. The seeded account is always flagged must-change.
-	fallbackLocalAdminPassword = "admin"
 )
 
 var (
@@ -51,15 +48,15 @@ func NewLocalUserService(repo dbsql.IGenericRepo[entities.LocalUser]) ILocalUser
 // ALWAYS flagged must-change (like myseliasan's stock superadmin), so the
 // config/default password is only a bootstrap credential and the operator is
 // forced to set their own on first login.
-func (s *localUserService) EnsureDefaultAdmin(ctx context.Context, username, password string) error {
+func (s *localUserService) EnsureDefaultAdmin(ctx context.Context, username, password string) (AdminSeedResult, error) {
 	_, total, err := s.repo.Get(ctx, "", 1, 0, nil, nil)
 	if err != nil {
-		return err
+		return AdminSeedResult{}, err
 	}
 	if total > 0 {
 		// An install already exists: don't seed, but if the admin is still on the
 		// shipped default password, force a change so old installs are protected too.
-		return s.flagDefaultAdminPassword(ctx)
+		return AdminSeedResult{}, s.flagDefaultAdminPassword(ctx)
 	}
 	// First run: seed the admin from config (env overrides the password).
 	username = normalizeUsername(username)
@@ -70,23 +67,49 @@ func (s *localUserService) EnsureDefaultAdmin(ctx context.Context, username, pas
 	if envPass := strings.TrimSpace(os.Getenv("LOCAL_ADMIN_PASSWORD")); envPass != "" {
 		password = envPass
 	}
+	generated := false
 	if password == "" {
-		// Match myseliasan's stock-superadmin fallback (admin/admin) when config
-		// supplies no credential. The must-change flag below still forces the
-		// operator off it on first login.
-		password = fallbackLocalAdminPassword
+		// No credential supplied by config or env (the packaged config.json ships an
+		// empty localAuth.password for exactly this): generate a strong per-install
+		// password rather than seed a known default. The caller reveals it (first-run
+		// console banner + recovery file), and the must-change flag below still forces
+		// the operator off it on first login. Mirrors the Windows installer, which
+		// generates its own and passes it via LOCAL_ADMIN_PASSWORD.
+		if password, err = generateBootstrapPassword(); err != nil {
+			return AdminSeedResult{}, err
+		}
+		generated = true
 	}
-	_, err = s.Create(ctx, CreateLocalUserRequest{
-		Username:           username,
-		Password:           password,
-		DisplayName:        "Administrator",
-		IsAdmin:            true,
-		IsActive:           true,
+	if _, err = s.Create(ctx, CreateLocalUserRequest{
+		Username:    username,
+		Password:    password,
+		DisplayName: "Administrator",
+		IsAdmin:     true,
+		IsActive:    true,
 		// Always force a change on first login — the bootstrap password (config,
-		// env, or shipped default) is never meant to be the operator's final one.
+		// env, or generated) is never meant to be the operator's final one.
 		MustChangePassword: true,
-	})
-	return err
+	}); err != nil {
+		return AdminSeedResult{}, err
+	}
+	return AdminSeedResult{Seeded: true, Username: username, Password: password, Generated: generated}, nil
+}
+
+// generateBootstrapPassword returns a 16-char random password from an unambiguous
+// charset (no O/0/I/l/1), sourced from crypto/rand. It only ever seeds the
+// first-run admin, which is must-change on first login, so a small modulo bias is
+// irrelevant. Mirrors the Windows installer's GenPassword so every platform hands
+// out a per-install credential instead of a shared default.
+func generateBootstrapPassword() (string, error) {
+	const charset = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	for i, b := range buf {
+		buf[i] = charset[int(b)%len(charset)]
+	}
+	return string(buf), nil
 }
 
 // flagDefaultAdminPassword sets MustChangePassword on the seeded admin when it is

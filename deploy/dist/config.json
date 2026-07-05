@@ -15,7 +15,7 @@
   "localAuth": {
     "enabled": true,
     "username": "admin",
-    "password": "changeme"
+    "password": ""
   },
   "decoder": {
     "browseRoots": [],

@@ -91,6 +91,11 @@ var
   AdminPassword: string;
   IsFreshInstall: Boolean;
   RngState: Cardinal;
+  { Finish-page widgets that surface the one-time admin password so the operator
+    can copy it rather than retype a 16-char string by eye. Created lazily. }
+  PwLabel: TNewStaticText;
+  PwEdit: TNewEdit;
+  CopyBtn: TNewButton;
 
 // Inno's built-in Random() draws from Delphi's global RandSeed, which the script
 // cannot seed — Randomize is not exposed — so an unseeded Random() would hand
@@ -179,13 +184,61 @@ begin
   RunHidden(ExpandConstant('{sys}\sc.exe'), 'start {#ServiceName}');
 end;
 
+// CredFilePath is where the one-time admin login is saved on a fresh install, so
+// the operator can recover the generated password if they close the finish page
+// before writing it down. It sits in the writable data root (admin-only) and is
+// safe to delete once they have signed in and set their own password.
+function CredFilePath(): string;
+begin
+  Result := ExpandConstant('{commonappdata}\MyMataSan\INITIAL_ADMIN_LOGIN.txt');
+end;
+
+// WriteCredentialFile drops the bootstrap credentials to disk (best-effort). The
+// password charset is alphanumeric, so no escaping is needed.
+procedure WriteCredentialFile();
+begin
+  SaveStringToFile(CredFilePath(),
+    'MyMataSan - one-time administrator login' + #13#10 +
+    '=========================================' + #13#10 + #13#10 +
+    'Open:      {#AppUrl}' + #13#10 +
+    'Username:  admin' + #13#10 +
+    'Password:  ' + AdminPassword + #13#10 + #13#10 +
+    'You will be asked to set your own password on first sign-in.' + #13#10 +
+    'Delete this file once you have signed in.' + #13#10, False);
+end;
+
+// CopyToClipboard puts S on the clipboard without a trailing newline (the
+// echo|set /p= trick). S is alphanumeric only, so it is safe on a command line.
+procedure CopyToClipboard(const S: string);
+var
+  rc: Integer;
+begin
+  Exec(ExpandConstant('{cmd}'), '/C echo|set /p=' + S + '|clip', '', SW_HIDE, ewWaitUntilTerminated, rc);
+end;
+
+procedure CopyBtnClick(Sender: TObject);
+begin
+  CopyToClipboard(AdminPassword);
+  if PwEdit <> nil then
+  begin
+    PwEdit.SelectAll();
+    PwEdit.SetFocus();
+  end;
+  CopyBtn.Caption := 'Copied';
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssInstall then
     { On an upgrade, stop the running service so its exe isn't locked. }
     StopAndDeleteService()
   else if CurStep = ssPostInstall then
+  begin
     InstallService();
+    { Save the generated login so it is recoverable if the finish page is missed. }
+    if IsFreshInstall then
+      WriteCredentialFile();
+  end;
 end;
 
 // Rewrite the finish page into a "what next" guide: the URL to open, the login
@@ -198,23 +251,66 @@ begin
     // below it so the two never overlap (Inno sizes the label for short text).
     WizardForm.FinishedLabel.AutoSize := False;
     WizardForm.FinishedLabel.WordWrap := True;
-    WizardForm.FinishedLabel.Height := ScaleY(210);
-    WizardForm.RunList.Top := WizardForm.FinishedLabel.Top + WizardForm.FinishedLabel.Height + ScaleY(8);
     if IsFreshInstall then
+    begin
+      WizardForm.FinishedLabel.Height := ScaleY(150);
       WizardForm.FinishedLabel.Caption :=
         'MyMataSan is installed and running as a Windows service.' + #13#10 + #13#10 +
         'Open the web console:  {#AppUrl}' + #13#10 +
         '(Your browser shows a one-time warning for the self-signed certificate on a LAN — choose "proceed".)' + #13#10 + #13#10 +
-        'Sign in with:' + #13#10 +
-        '    Username:  admin' + #13#10 +
-        '    Password:  ' + AdminPassword + #13#10 + #13#10 +
-        'Write this password down now — you will be asked to set your own on first sign-in.' + #13#10 + #13#10 +
-        'Manage the app any time from the "MyMataSan" group in the Start Menu (open console, start/stop service).'
+        'Sign in as  Username: admin  with the one-time password below (also saved to' + #13#10 +
+        CredFilePath() + ').' + #13#10 +
+        'You will be asked to set your own password on first sign-in.';
+
+      // Selectable password field + one-click Copy, so the operator never has to
+      // retype the 16-char string. Created once; reused if the page is revisited.
+      if PwLabel = nil then
+      begin
+        PwLabel := TNewStaticText.Create(WizardForm);
+        PwLabel.Parent := WizardForm.FinishedPage;
+        PwLabel.Caption := 'Admin password:';
+
+        PwEdit := TNewEdit.Create(WizardForm);
+        PwEdit.Parent := WizardForm.FinishedPage;
+        PwEdit.ReadOnly := True;
+
+        CopyBtn := TNewButton.Create(WizardForm);
+        CopyBtn.Parent := WizardForm.FinishedPage;
+        CopyBtn.Caption := 'Copy';
+        CopyBtn.OnClick := @CopyBtnClick;
+      end;
+
+      PwLabel.Left := WizardForm.FinishedLabel.Left;
+      PwLabel.Top := WizardForm.FinishedLabel.Top + WizardForm.FinishedLabel.Height + ScaleY(6);
+      PwLabel.Width := WizardForm.FinishedLabel.Width;
+
+      PwEdit.Text := AdminPassword;
+      PwEdit.Left := WizardForm.FinishedLabel.Left;
+      PwEdit.Top := PwLabel.Top + PwLabel.Height + ScaleY(2);
+      PwEdit.Width := ScaleX(190);
+
+      CopyBtn.Left := PwEdit.Left + PwEdit.Width + ScaleX(8);
+      CopyBtn.Top := PwEdit.Top - ScaleY(1);
+      CopyBtn.Width := ScaleX(75);
+      CopyBtn.Height := PwEdit.Height + ScaleY(2);
+      CopyBtn.Caption := 'Copy';
+
+      WizardForm.RunList.Top := PwEdit.Top + PwEdit.Height + ScaleY(12);
+    end
     else
+    begin
+      // Upgrade: no new password, so hide the copy widgets if a prior page created
+      // them and restore the plain layout.
+      if PwLabel <> nil then PwLabel.Visible := False;
+      if PwEdit <> nil then PwEdit.Visible := False;
+      if CopyBtn <> nil then CopyBtn.Visible := False;
+      WizardForm.FinishedLabel.Height := ScaleY(150);
+      WizardForm.RunList.Top := WizardForm.FinishedLabel.Top + WizardForm.FinishedLabel.Height + ScaleY(8);
       WizardForm.FinishedLabel.Caption :=
         'MyMataSan has been updated and the service restarted.' + #13#10 + #13#10 +
         'Open the web console:  {#AppUrl}' + #13#10 +
         'Sign in with your existing account. Your data and settings are unchanged.' + #13#10 + #13#10 +
         'Manage the app any time from the "MyMataSan" group in the Start Menu.';
+    end;
   end;
 end;
