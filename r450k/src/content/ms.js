@@ -133,6 +133,9 @@ export default {
     dockerHint: 'Jalankan imej berbilang-seni bina (ffmpeg disertakan):',
     loading: 'Memuatkan keluaran terkini…',
     unavailable: 'Muat turun sedang disediakan — semak semula sebentar lagi.',
+    formTitle: 'Muat turun anda telah bermula 🎉',
+    formBlurb: 'Sudi kongsi sedikit tentang cara anda akan menggunakannya? Kurang seminit, dan ia membantu kami membina perkara yang betul.',
+    formClose: 'Tutup',
   },
   pricing: {
     ...en.pricing,

@@ -168,6 +168,9 @@ const en = {
     dockerHint: 'Run the multi-arch image (ffmpeg included):',
     loading: 'Loading the latest release…',
     unavailable: 'Downloads are being prepared — check back shortly.',
+    formTitle: 'Your download has started 🎉',
+    formBlurb: 'Mind sharing a bit about how you’ll use it? Under a minute, and it helps us build the right things.',
+    formClose: 'Close',
   },
   pricing: {
     kicker: 'Pricing',

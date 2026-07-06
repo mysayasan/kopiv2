@@ -1,8 +1,31 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Reveal from '../components/Reveal.jsx';
 import SpotlightCard from '../components/SpotlightCard.jsx';
 import Icon from '../components/Icon.jsx';
 import { useContent } from '../i18n/index.jsx';
+
+// Tally feedback form shown right after a download starts (see TALLY_FORM below).
+// It's shown at most once per visitor — a localStorage flag suppresses it on every
+// later download so we never nag repeat downloaders. Both helpers are wrapped in
+// try/catch so SSR / private-mode (no localStorage) degrades to "just don't show".
+const TALLY_FORM = 'https://tally.so/r/A75Jzl';
+const TALLY_SEEN_KEY = 'r450k:downloadFeedbackSeen';
+
+function hasSeenTally() {
+  try {
+    return typeof localStorage !== 'undefined' && localStorage.getItem(TALLY_SEEN_KEY) === '1';
+  } catch (_) {
+    return false;
+  }
+}
+
+function markTallySeen() {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(TALLY_SEEN_KEY, '1');
+  } catch (_) {
+    /* ignore — worst case the form shows again next time */
+  }
+}
 
 function formatSize(bytes) {
   if (!bytes) return '';
@@ -19,6 +42,8 @@ const OS_META = {
 export default function Downloads() {
   const { downloads: t } = useContent();
   const [state, setState] = useState({ status: 'loading', data: null });
+  const [tallyOpen, setTallyOpen] = useState(false);
+  const tallyPanelRef = useRef(null);
 
   useEffect(() => {
     let alive = true;
@@ -30,6 +55,26 @@ export default function Downloads() {
       alive = false;
     };
   }, []);
+
+  // While the Tally modal is open: close on Escape / outside click, and lock the
+  // page scroll behind it. This is purely additive — it never touches the actual
+  // download <a>, which streams in the same tab as before.
+  useEffect(() => {
+    if (!tallyOpen) return undefined;
+    const onKey = (e) => e.key === 'Escape' && setTallyOpen(false);
+    const onDown = (e) => {
+      if (tallyPanelRef.current && !tallyPanelRef.current.contains(e.target)) setTallyOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onDown);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('mousedown', onDown);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [tallyOpen]);
 
   const { status, data } = state;
   const assets = (data && data.assets) || [];
@@ -79,8 +124,19 @@ export default function Downloads() {
                           Content-Disposition: attachment (the Worker proxies
                           GitHub rather than redirecting), so a plain same-tab
                           click downloads in place without leaving the page. No
-                          target="_blank" (blank tab that drops the download). */}
-                      <a className="dllink" href={a.url}>
+                          target="_blank" (blank tab that drops the download).
+                          The onClick only opens the Tally form as a side effect
+                          (and only once per visitor) — it never preventDefaults,
+                          so the download is untouched. */}
+                      <a
+                        className="dllink"
+                        href={a.url}
+                        onClick={() => {
+                          if (hasSeenTally()) return;
+                          markTallySeen();
+                          setTallyOpen(true);
+                        }}
+                      >
                         <span className="dllink__label">
                           <Icon name="download" size={16} />
                           {a.label}
@@ -108,6 +164,35 @@ export default function Downloads() {
           </Reveal>
         )}
       </div>
+
+      {tallyOpen ? (
+        <div className="dlmodal" role="dialog" aria-modal="true" aria-label={t.formTitle}>
+          <div className="dlmodal__panel" ref={tallyPanelRef}>
+            <div className="dlmodal__head">
+              <div className="dlmodal__heading">
+                <p className="dlmodal__title">{t.formTitle}</p>
+                {t.formBlurb ? <p className="dlmodal__blurb">{t.formBlurb}</p> : null}
+              </div>
+              <button
+                type="button"
+                className="dlmodal__x"
+                aria-label={t.formClose || 'Close'}
+                onClick={() => setTallyOpen(false)}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+              </button>
+            </div>
+            <div className="dlmodal__body">
+              <iframe
+                className="dlmodal__frame"
+                src={`${TALLY_FORM}?hideTitle=1`}
+                title={t.formTitle}
+                loading="lazy"
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

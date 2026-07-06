@@ -133,6 +133,9 @@ export default {
     dockerHint: '运行多架构镜像（已含 ffmpeg）：',
     loading: '正在加载最新版本…',
     unavailable: '下载正在准备中——请稍后再来。',
+    formTitle: '您的下载已开始 🎉',
+    formBlurb: '介意分享一下您将如何使用它吗？不到一分钟，这有助于我们打造正确的功能。',
+    formClose: '关闭',
   },
   pricing: {
     ...en.pricing,

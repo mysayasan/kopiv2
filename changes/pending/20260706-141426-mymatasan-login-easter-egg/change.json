@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "mymatasan",
+  "summary": "Added a cosmetic Jurassic Park homage on the login page: after the 3rd consecutive failed sign-in attempt, a full-screen green-CRT overlay shows a cartoon 'big head' that wags side to side and speaks \"Ah, ah, ah… You didn't say the magic word!\" via the Web Speech API. The speech engine is silently pre-warmed on the login click to avoid TTS cold-start lag. The overlay dismisses on click, Escape, or a short timeout and never blocks or alters the real error message underneath.",
+  "compatibility": "Purely client-side and presentational — no change to authentication logic, the server-side failed-login lockout/backoff, or any API contract. The consecutive-failure counter lives only in browser state and resets on a successful login or page reload; existing installs get the easter egg automatically after the next frontend rebuild with no configuration needed."
+}

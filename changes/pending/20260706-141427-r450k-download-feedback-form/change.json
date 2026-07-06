@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "core",
+  "summary": "r450k Downloads section now opens a small modal with an embedded Tally feedback form (https://tally.so/r/A75Jzl) the first time a visitor clicks a download link, asking how they plan to use the app. A localStorage flag (r450k:downloadFeedbackSeen) caps this at once per visitor so repeat downloads never re-prompt. The download link itself is unchanged (no preventDefault, no new tab), so the same-origin attachment stream added in the earlier download fix keeps working exactly as before; the modal is only a side effect on click. Copy is localized across all four site languages (en/ms/zh/ar).",
+  "compatibility": "Frontend-only change on the static r450k marketing site; no impact on the Go apps, their versioned releases, or the download mechanism itself. No migration — first-time visitors simply see one extra modal after their first download click."
+}

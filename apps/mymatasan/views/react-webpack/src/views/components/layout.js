@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import { Ico } from './icons';
 import { SideNav as SharedSideNav } from '@shared/SideNav';
 import { useT } from '@shared/i18n';
@@ -136,6 +136,141 @@ export function LoginPage({ credentials, busy, message, lockoutUntil, onChange, 
         <FormBusyOverlay busy={busy} />
       </form>
     </main>
+  );
+}
+
+// NedryFace is a self-contained cartoon "big head" — an oversized chubby face with
+// round glasses, mustache and a taunting open mouth on a small body. The whole
+// head wags/wobbles side to side (animated in CSS on the .nedry-head group,
+// pivoting at the neck) like the lockout gag. Deliberately generic/caricature so
+// it evokes the joke without shipping any binary asset. Used only by the login
+// easter egg below.
+function NedryFace({ alt }) {
+  return (
+    <svg className="nedry" viewBox="0 0 260 260" width="200" height="200" role="img"
+      aria-label={alt}>
+      {/* small static body/shoulders — the head is deliberately oversized on top */}
+      <path d="M78 260 Q78 224 118 220 L142 220 Q182 224 182 260 Z" fill="#2f9e8f" stroke="#1f7367" strokeWidth="3" />
+      {/* neck (also static, the head swivels above it) */}
+      <rect x="116" y="196" width="28" height="30" rx="12" fill="#e6ad78" />
+      {/* the big head — this whole group wags */}
+      <g className="nedry-head">
+        {/* ears */}
+        <ellipse cx="44" cy="118" rx="13" ry="18" fill="#e6ad78" />
+        <ellipse cx="216" cy="118" rx="13" ry="18" fill="#e6ad78" />
+        {/* head */}
+        <ellipse cx="130" cy="112" rx="94" ry="88" fill="#f0c091" />
+        {/* hair */}
+        <path d="M40 104 Q34 20 130 20 Q226 20 220 104 Q212 58 178 50 Q152 36 130 38 Q94 36 76 54 Q48 60 40 104 Z" fill="#3a2c22" />
+        {/* rosy cheeks */}
+        <circle cx="76" cy="138" r="16" fill="#f0a9a0" opacity="0.55" />
+        <circle cx="184" cy="138" r="16" fill="#f0a9a0" opacity="0.55" />
+        {/* mischievous eyebrows */}
+        <path d="M68 82 Q94 70 120 84" stroke="#3a2c22" strokeWidth="6" fill="none" strokeLinecap="round" />
+        <path d="M140 84 Q166 70 192 82" stroke="#3a2c22" strokeWidth="6" fill="none" strokeLinecap="round" />
+        {/* glasses: lenses, bridge, temples */}
+        <g stroke="#241f1c" strokeWidth="5">
+          <circle cx="94" cy="110" r="28" fill="#ffffff" fillOpacity="0.16" />
+          <circle cx="166" cy="110" r="28" fill="#ffffff" fillOpacity="0.16" />
+          <path d="M122 110 H138" />
+          <path d="M66 106 L46 98" strokeLinecap="round" />
+          <path d="M194 106 L214 98" strokeLinecap="round" />
+        </g>
+        {/* eyes */}
+        <circle cx="94" cy="112" r="7" fill="#241f1c" />
+        <circle cx="166" cy="112" r="7" fill="#241f1c" />
+        <circle cx="96.5" cy="109.5" r="2.2" fill="#fff" />
+        <circle cx="168.5" cy="109.5" r="2.2" fill="#fff" />
+        {/* nose */}
+        <path d="M130 120 Q120 148 130 154 Q140 148 130 120" fill="#e2a06f" />
+        {/* mustache */}
+        <path d="M100 162 Q130 156 160 162 Q141 174 130 169 Q119 174 100 162 Z" fill="#3a2c22" />
+        {/* open taunting mouth + teeth */}
+        <path d="M106 172 Q130 200 154 172 Q130 182 106 172 Z" fill="#7a2b2b" />
+        <path d="M111 173 Q130 179 149 173 Q130 176 111 173 Z" fill="#fff" />
+        {/* chin goatee */}
+        <path d="M112 190 Q130 214 148 190 Q130 204 112 190 Z" fill="#3a2c22" />
+      </g>
+    </svg>
+  );
+}
+
+// MagicWordEasterEgg is a Jurassic Park homage played on a failed sign-in: Dennis
+// Nedry's lockout gag. A cartoon big-head wags its finger and taunts on a green
+// CRT while the browser speaks the line. Pure fun — it never blocks the real
+// error message underneath and dismisses on click, Escape, or after a few
+// seconds. Self-contained: inline SVG + Web Speech, no assets shipped.
+export function MagicWordEasterEgg({ onDismiss }) {
+  const t = useT();
+  // Keep the latest onDismiss in a ref so the setup effect can run exactly once on
+  // mount (see below) without being torn down and re-run — which would cancel the
+  // in-flight speech — every time the parent re-renders with a new callback.
+  const dismissRef = useRef(onDismiss);
+  dismissRef.current = onDismiss;
+
+  // Mount-only: the overlay is remounted per trigger via a `key`, so speaking here
+  // fires once each time it appears. Empty deps keep parent re-renders from
+  // cancelling the utterance mid-sentence.
+  useEffect(() => {
+    const synth = window.speechSynthesis;
+    let spoke = false;
+    function speak() {
+      if (spoke || !synth) return;
+      spoke = true;
+      try {
+        synth.cancel();   // clear any stuck queue
+        synth.resume();   // Chrome sometimes parks the queue until resumed
+        // Prefer a male voice (e.g. Microsoft David); fall back to any English
+        // voice, then the engine default. Normal pitch — no robot/kid effect.
+        const voices = synth.getVoices() || [];
+        const voice = voices.find((v) => /david|mark|george|james|male/i.test(v.name || ''))
+          || voices.find((v) => /^en/i.test(v.lang || ''));
+        const mk = (text, rate, pitch) => {
+          const u = new SpeechSynthesisUtterance(text);
+          u.rate = rate;
+          u.pitch = pitch;
+          u.volume = 1;
+          if (voice) u.voice = voice;
+          return u;
+        };
+        // Two queued utterances at a normal male voice: a plain "ah, ah, ah"
+        // (commas give the three-beat taunt) then the line, both natural pace.
+        synth.speak(mk('Ah, ah, ah.', 1, 1));
+        synth.speak(mk("You didn't say the magic word!", 1, 1));
+      } catch (_) { /* no voice — the animation still carries the joke */ }
+    }
+    // Voices load asynchronously in some browsers; speak as soon as they're ready,
+    // with a timed fallback in case the event never fires.
+    if (synth && (synth.getVoices() || []).length === 0) {
+      synth.addEventListener('voiceschanged', speak, { once: true });
+      setTimeout(speak, 350);
+    } else {
+      speak();
+    }
+
+    const timer = setTimeout(() => dismissRef.current(), 6500);
+    const onKey = (event) => { if (event.key === 'Escape') dismissRef.current(); };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('keydown', onKey);
+      try {
+        if (synth) { synth.removeEventListener('voiceschanged', speak); synth.cancel(); }
+      } catch (_) { /* ignore */ }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const banner = "YOU DIDN'T SAY THE MAGIC WORD!   ".repeat(6);
+  return (
+    <div className="magic-word" role="dialog" aria-label={t('login.magicWordDialog')} onClick={onDismiss}>
+      <div className="magic-word-crt">
+        <div className="magic-word-scroll"><div className="magic-word-track">{banner}{banner}</div></div>
+        <div className="magic-word-face"><NedryFace alt={t('login.magicWordFaceAlt')} /></div>
+        <p className="magic-word-line">Ah ah ah! You didn&apos;t say the magic word!</p>
+        <p className="magic-word-hint">{t('login.magicWordHint')}</p>
+      </div>
+    </div>
   );
 }
 
