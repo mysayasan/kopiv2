@@ -193,7 +193,7 @@ const en = {
         featured: true,
         features: ['Commercial license for one server / site', 'Unlimited cameras on that server', 'All updates for the licensed term', 'Priority email support'],
         cta: 'Get a license',
-        href: 'mailto:mysayasan@gmail.com?subject=MyMataSan%20commercial%20license',
+        tallyForm: 'https://tally.so/r/rjWKeN',
       },
       {
         name: 'Fleet & Enterprise',

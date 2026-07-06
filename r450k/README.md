@@ -158,12 +158,12 @@ click, or the × button, and locks background scroll while open. Two places use 
   streaming the attachment same-tab exactly as before; the modal is a side effect on `onClick`, not
   a gate. Copy (`formTitle`, `formBlurb`, `formClose`) lives in `src/content/{en,ms,zh,ar}.js` under
   the `downloads` key. To change the form, update the `TALLY_FORM` constant in `Downloads.jsx`.
-- **Contact us** — the Fleet & Enterprise pricing tier's "Contact us" button
-  (`src/sections/Pricing.jsx`) opens the same modal with a different Tally form
-  (`https://tally.so/r/rjWKeN`) instead of a `mailto:` link, so enterprise leads stay on-site. A
-  tier opts into this by setting `tallyForm` (the Tally URL) instead of `href` in its content entry.
-  Copy (`contactTitle`, `contactBlurb`, `contactClose`) lives in `src/content/{en,ms,zh,ar}.js` under
-  the `pricing` key.
+- **Contact us / Get a license** — both paid pricing tiers open the same modal with the same
+  Tally form (`https://tally.so/r/rjWKeN`) instead of a `mailto:` link, so leads stay on-site: the
+  Business tier's "Get a license" button and the Fleet & Enterprise tier's "Contact us" button
+  (`src/sections/Pricing.jsx`). A tier opts into this by setting `tallyForm` (the Tally URL)
+  instead of `href` in its content entry. Copy (`contactTitle`, `contactBlurb`, `contactClose`)
+  lives in `src/content/{en,ms,zh,ar}.js` under the `pricing` key.
 
 ## Contact form (Telegram via the Worker)
 
