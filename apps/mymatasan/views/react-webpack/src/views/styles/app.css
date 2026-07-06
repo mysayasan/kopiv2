@@ -474,6 +474,127 @@ label {
   line-height: 1.45;
 }
 
+/* ---- Jurassic Park "you didn't say the magic word" login easter egg ----
+   A full-screen green-CRT overlay with a finger-wagging cartoon, shown on a
+   failed sign-in. Dismisses on click/Escape/timeout (handled in JS). */
+.magic-word {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+  background: rgba(0, 8, 3, 0.86);
+  cursor: pointer;
+  animation: magic-word-in 0.18s ease-out;
+}
+
+@keyframes magic-word-in { from { opacity: 0; } to { opacity: 1; } }
+
+.magic-word-crt {
+  position: relative;
+  width: min(92vw, 560px);
+  padding: 26px 24px 20px;
+  border-radius: 12px;
+  background: radial-gradient(ellipse at 50% 28%, #06381f, #021109 72%);
+  border: 2px solid #1e8f4e;
+  box-shadow: 0 0 44px rgba(46, 220, 120, 0.35), inset 0 0 70px rgba(0, 40, 15, 0.85);
+  color: #5ff08a;
+  text-align: center;
+  overflow: hidden;
+  font-family: 'Courier New', ui-monospace, monospace;
+}
+
+/* CRT scanlines drawn on top of the panel content. */
+.magic-word-crt::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(rgba(0, 0, 0, 0) 0 2px, rgba(0, 0, 0, 0.18) 2px 4px);
+}
+
+.magic-word-scroll {
+  overflow: hidden;
+  white-space: nowrap;
+  margin-bottom: 4px;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+}
+
+.magic-word-track {
+  display: inline-block;
+  white-space: pre;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 1px;
+  color: #7dff9f;
+  text-shadow: 0 0 8px rgba(60, 255, 130, 0.7);
+  animation: magic-word-marquee 9s linear infinite;
+}
+
+@keyframes magic-word-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+.magic-word-face {
+  width: 200px;
+  height: 200px;
+  margin: 6px auto 2px;
+}
+
+.magic-word-face .nedry {
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.5));
+}
+
+/* The oversized head wags side to side, pivoting at the neck (bottom-centre of
+   its own box) — the "ah ah ah" head-shake. */
+.nedry-head {
+  transform-box: fill-box;
+  transform-origin: 50% 96%;
+  animation: nedry-headwag 0.52s ease-in-out infinite;
+}
+
+@keyframes nedry-headwag {
+  0%, 100% { transform: rotate(-10deg); }
+  50% { transform: rotate(10deg); }
+}
+
+.magic-word-line {
+  margin: 6px 0 2px;
+  font-size: clamp(18px, 5vw, 26px);
+  font-weight: 800;
+  color: #8dffb0;
+  letter-spacing: 0.5px;
+  text-shadow: 0 0 12px rgba(70, 255, 140, 0.8), 0 0 3px rgba(70, 255, 140, 0.9);
+  animation: magic-word-flicker 2.4s infinite;
+}
+
+@keyframes magic-word-flicker {
+  0%, 46%, 50%, 92%, 100% { opacity: 1; }
+  48% { opacity: 0.72; }
+  93% { opacity: 0.6; }
+}
+
+.magic-word-hint {
+  margin: 4px 0 0;
+  color: #3ea968;
+  font-size: 12px;
+  letter-spacing: 1px;
+}
+
+/* Respect reduced-motion: keep the gag, drop the wiggling. */
+@media (prefers-reduced-motion: reduce) {
+  .magic-word,
+  .magic-word-track,
+  .nedry-head,
+  .magic-word-line {
+    animation: none;
+  }
+}
+
 /* First-run setup wizard (shares the centered .login-screen backdrop). */
 .setup-wizard {
   position: relative;

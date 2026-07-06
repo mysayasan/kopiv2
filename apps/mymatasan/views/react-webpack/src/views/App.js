@@ -7,7 +7,7 @@ import { AppFooter } from '@shared/AppFooter';
 import { messages as appMessages } from './i18n';
 import { THEMES, emptyLogin, defaultStreamConfig, defaultRuntimeSettings, defaultNewUser, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings, defaultVisionThreshold, defaultVisionMinFrames } from './lib/constants';
 import {readLiveViewsCookie,saveLiveViewsCookie,bestLiveViewLayout,unwrap,errorMessage,apiBase,parseMetadata,cameraTitle,normalizeScanDevice,orderedSavedCameras,isActionableVisionAlert,latestAlertsByCamera,sameCamera,liveSource,normalizeRuntimeSettings,normalizeMachineHealthSettings,defaultZonePolygon,isLineDetectionType,defaultLineRuleConfig,lineRuleConfigText,defaultVisionRuleDraft,playAlertSound,hasH264VideoTrack,isVisionAlertNotification } from './lib/helpers';
-import { LoginPage, ChangePasswordPage, RecoveryGatePage, SideNav, WorkspaceHeader } from './components/layout';
+import { LoginPage, ChangePasswordPage, RecoveryGatePage, MagicWordEasterEgg, SideNav, WorkspaceHeader } from './components/layout';
 import { DashboardTab } from './components/dashboard';
 import { SetupWizard } from './components/setup';
 import { ViewsTab, CamerasTab } from './components/cameras';
@@ -61,6 +61,12 @@ function AppInner({ lang, onLangChange }) {
   const [passwordChangeRequired, setPasswordChangeRequired] = useState(false);
   // Epoch ms until which login is locked (0 = not locked); drives the countdown.
   const [lockoutUntil, setLockoutUntil] = useState(0);
+  // Jurassic Park "magic word" easter egg — shown only after the 3rd consecutive
+  // failed sign-in (so genuine typos are spared). The nonce is bumped each time it
+  // fires so the overlay remounts and replays its voice/animation.
+  const [magicWord, setMagicWord] = useState(false);
+  const [magicWordNonce, setMagicWordNonce] = useState(0);
+  const failedLoginsRef = useRef(0);
   // First-run setup wizard: shown to an admin until setup is completed/dismissed.
   const [setupNeeded, setSetupNeeded] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -412,6 +418,17 @@ function AppInner({ lang, onLangChange }) {
 
   async function login(event) {
     event.preventDefault();
+    // Pre-warm the speech engine on this click gesture: the Windows TTS voices have
+    // a ~1-2s cold start, so a silent priming utterance here means the "magic word"
+    // easter egg (shown on the 3rd failure) speaks instantly instead of lagging.
+    try {
+      const synth = window.speechSynthesis;
+      if (synth) {
+        const warm = new SpeechSynthesisUtterance('a');
+        warm.volume = 0;
+        synth.speak(warm);
+      }
+    } catch (_) { /* ignore */ }
     if (!credentials.username || !credentials.password) {
       setMessage(t('app.userPassRequired'), 'error');
       return;
@@ -429,10 +446,15 @@ function AppInner({ lang, onLangChange }) {
         setMessage('');
       } else {
         setMessage(err.status === 401 ? 'Invalid username or password.' : err.message, 'error');
+        if (err.status === 401 && (failedLoginsRef.current += 1) >= 3) {
+          setMagicWordNonce((n) => n + 1);
+          setMagicWord(true);
+        }
       }
       setBusy(false);
       return;
     }
+    failedLoginsRef.current = 0;  // credentials accepted — reset the easter-egg counter
     const adminUser = Boolean(session && session.isAdmin);
     setIsAdmin(adminUser);
     if (session && session.mustChangePassword) {
@@ -2530,6 +2552,9 @@ function AppInner({ lang, onLangChange }) {
   if (!authenticated) {
     return (
       <div>
+        {magicWord ? (
+          <MagicWordEasterEgg key={magicWordNonce} onDismiss={() => setMagicWord(false)} />
+        ) : null}
         {passwordChangeRequired ? (
           <ChangePasswordPage
             busy={busy}
