@@ -548,6 +548,18 @@ label {
   min-height: 200px;
 }
 
+/* Restore-in-progress wait pane: the whole wizard collapses to two centered lines
+   while the app restarts to apply the restored settings. */
+.setup-restarting {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  padding: 32px 16px;
+}
+
 .setup-pane {
   display: grid;
   gap: 12px;
