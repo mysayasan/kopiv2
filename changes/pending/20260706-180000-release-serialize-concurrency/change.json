@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "mymatasan",
+  "summary": "Releases are now serialized so multi-arch Docker publishing can't corrupt the `:latest` manifest. Merging two PRs in quick succession ran two version+release workflows concurrently; both pushed the mutable `ghcr.io/mysayasan/mymatasan:latest-amd64` / `:latest-arm64` tags at the same time, so `docker manifest create` for the combined `:latest` failed with \"manifest verification failed for digest …\" (and, because the release job failed, that version's Windows installer job was skipped). Added a `concurrency` group to both the Main pipeline and the reusable Release workflow (queue, don't cancel), so only one release runs at a time and the shared Docker tags are never pushed concurrently. This entry also re-cuts a clean release after the raced one.",
+  "compatibility": "CI/release-pipeline only; no runtime behavior change. Rapid successive merges now queue their releases instead of racing."
+}

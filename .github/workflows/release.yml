@@ -26,6 +26,14 @@ on:
         required: true
         type: string
 
+# Never let two releases run at once — concurrent pushes to the shared Docker
+# `:latest-*` tags corrupt the multi-arch manifest ("manifest verification failed").
+# Also guards a manual re-run from colliding with an in-flight auto release. Queue,
+# don't cancel, so a second release still publishes after the first finishes.
+concurrency:
+  group: mymatasan-release
+  cancel-in-progress: false
+
 permissions:
   contents: write
   packages: write

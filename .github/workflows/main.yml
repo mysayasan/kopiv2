@@ -5,6 +5,15 @@ on:
     branches:
       - main
 
+# Serialize the pipeline: merging two PRs in quick succession otherwise runs two
+# version+release jobs concurrently, which race on the version-manifest push and on
+# the mutable Docker `:latest-*` tags (multi-arch `docker manifest create` then fails
+# with "manifest verification failed"). Queue runs instead of cancelling, so no
+# release is dropped.
+concurrency:
+  group: mymatasan-pipeline
+  cancel-in-progress: false
+
 permissions:
   contents: write
   packages: write
