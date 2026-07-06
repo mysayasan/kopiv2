@@ -70,7 +70,11 @@ anonymous visitors can download a private repo's assets):
   by dropping a one-shot `RESET_ADMIN` marker the app consumes on next start (your
   cameras, recordings and settings are untouched). A **MyMataSan** Start Menu group is
   created with: open console, Start / Stop the service (self-elevating via UAC), open
-  `services.msc`, and Uninstall.
+  `services.msc`, and Uninstall. **Uninstalling** removes the app and service and then
+  *asks* whether to also delete the data dir (`C:\ProgramData\MyMataSan` — recordings,
+  database, settings, encryption key), defaulting to **No** so footage/config survive a
+  reinstall; answer **Yes** for a clean first-run slate. (A silent uninstall always keeps
+  the data.)
 - **Docker images** (`ghcr.io/mysayasan/mymatasan`, linux amd64+arm64, built from
   `deploy/Dockerfile.release`): a `debian:bookworm-slim` base with `ffmpeg` +
   `python3`/`venv` baked in. `MYMATASAN_HOME=/app` (read-only: binary, static

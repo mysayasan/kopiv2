@@ -358,3 +358,27 @@ begin
     end;
   end;
 end;
+
+// On uninstall, offer to remove the writable data root (recordings, database,
+// settings, at-rest key). The default is to KEEP it — an uninstall must never
+// silently destroy footage, and preserving it lets a later reinstall keep the
+// operator's setup. A tester wanting a clean first-run experience just answers Yes.
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  dataDir: string;
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    dataDir := ExpandConstant('{commonappdata}\MyMataSan');
+    if not DirExists(dataDir) then
+      Exit;
+    // Silent/unattended uninstall (e.g. scripted): keep data, never prompt.
+    if UninstallSilent then
+      Exit;
+    if MsgBox('Also delete all MyMataSan data — recordings, the database, settings' + #13#10 +
+              'and the encryption key — under' + #13#10 + dataDir + '?' + #13#10 + #13#10 +
+              'Choose No to keep your data for a future reinstall. This cannot be undone.',
+              mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+      DelTree(dataDir, True, True, True);
+  end;
+end;
