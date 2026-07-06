@@ -19,6 +19,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-06 — mymatasan 1.83.1 (15d4e93)
+
+### Fixed
+
+- **mymatasan**: Releases are now serialized so multi-arch Docker publishing can't corrupt the `:latest` manifest. Merging two PRs in quick succession ran two version+release workflows concurrently; both pushed the mutable `ghcr.io/mysayasan/mymatasan:latest-amd64` / `:latest-arm64` tags at the same time, so `docker manifest create` for the combined `:latest` failed with "manifest verification failed for digest …" (and, because the release job failed, that version's Windows installer job was skipped). Added a `concurrency` group to both the Main pipeline and the reusable Release workflow (queue, don't cancel), so only one release runs at a time and the shared Docker tags are never pushed concurrently. This entry also re-cuts a clean release after the raced one.
 ## 2026-07-06 — mymatasan 1.83.0 (c6a5bb0)
 
 ### Added
