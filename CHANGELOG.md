@@ -22,6 +22,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-06 — mymatasan 1.85.0 (5b430f1)
+
+### Added
+
+- **mymatasan**: Recording no longer silently fails on hosts without a usable NVIDIA NVENC GPU when the at-rest storage codec (Settings → Recording storage) is set to H.264/H.265. infra/recording now probes once whether the configured NVENC encoder actually runs on this host (NVENCUsable, cached) and, when it doesn't, proactively stores segments as plain stream-copy instead of attempting a re-encode that would fail; a re-encode that fails at runtime (transient driver/session issue) also falls back to stream-copy instead of dropping the segment. A new "Fall back to Copy if GPU re-encode fails" checkbox (default on) controls this in Settings → Recording storage, a new GET /api/recording/storage/status endpoint reports {codec, reEncode, nvencUsable, fallbackToCopy, compatible}, and the app shows a sticky dismissible warning that deep-links to the setting whenever the configured codec can't actually run on the current hardware. The camera-capacity estimator also no longer reports a 0-camera re-encode ceiling on a GPU-less host when fallback is on, since recording is unaffected (segments are just larger on disk).
 ## 2026-07-06 — core 1.53.0 (f70210c)
 
 ### Added
