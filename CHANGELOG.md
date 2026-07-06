@@ -20,6 +20,13 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-06 — mymatasan 1.84.0, core 1.51.0 (46b41f0)
+
+### Added
+
+- **mymatasan**: Added a cosmetic Jurassic Park homage on the login page: after the 3rd consecutive failed sign-in attempt, a full-screen green-CRT overlay shows a cartoon 'big head' that wags side to side and speaks "Ah, ah, ah… You didn't say the magic word!" via the Web Speech API. The speech engine is silently pre-warmed on the login click to avoid TTS cold-start lag. The overlay dismisses on click, Escape, or a short timeout and never blocks or alters the real error message underneath.
+- **core**: r450k Downloads section now opens a small modal with an embedded Tally feedback form (https://tally.so/r/A75Jzl) the first time a visitor clicks a download link, asking how they plan to use the app. A localStorage flag (r450k:downloadFeedbackSeen) caps this at once per visitor so repeat downloads never re-prompt. The download link itself is unchanged (no preventDefault, no new tab), so the same-origin attachment stream added in the earlier download fix keeps working exactly as before; the modal is only a side effect on click. Copy is localized across all four site languages (en/ms/zh/ar).
 ## 2026-07-06 — mymatasan 1.83.1 (15d4e93)
 
 ### Fixed
