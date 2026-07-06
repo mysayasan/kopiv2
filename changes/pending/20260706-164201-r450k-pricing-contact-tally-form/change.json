@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "core",
+  "summary": "r450k Pricing section's Fleet & Enterprise 'Contact us' CTA now opens an embedded Tally form (https://tally.so/r/rjWKeN) in the same on-site modal used for post-download feedback, instead of opening a mailto: link that depended on the visitor having a mail client configured. The shared modal was extracted into src/components/TallyModal.jsx (Escape/outside-click/scroll-lock, closes on the x) so both the Downloads and Pricing sections reuse one implementation. A pricing tier now opts into the modal by carrying a `tallyForm` URL in its content entry instead of `href`; tiers that still set `href` keep behaving as a plain link. New pricing.contactTitle / contactBlurb / contactClose copy was added to all four site languages (en/ms/zh/ar).",
+  "compatibility": "Frontend-only change on the static r450k marketing site; no impact on the Go apps or their versioned releases. Existing pricing tiers with a plain `href` are unaffected — only the enterprise tier was switched to `tallyForm`. No migration; visitors clicking Contact us now stay on-site instead of leaving to their mail client."
+}

@@ -134,7 +134,7 @@ export default {
     loading: '正在加载最新版本…',
     unavailable: '下载正在准备中——请稍后再来。',
     formTitle: '您的下载已开始 🎉',
-    formBlurb: '介意分享一下您将如何使用它吗？不到一分钟，这有助于我们打造正确的功能。',
+    formBlurb: '走之前一个小问题——您是怎么知道我们的？只需 10 秒，帮助很大。',
     formClose: '关闭',
   },
   pricing: {
@@ -144,6 +144,9 @@ export default {
     lead: '个人和非商业用途永久免费。企业通过简单的商业许可让项目持续下去。这是早期定价；我们会随着发展一起调整。',
     popular: '最受欢迎',
     note: '价格以美元计。非商业用途保持免费。不确定哪种合适？联系我们，一起商量。',
+    contactTitle: '联系我们',
+    contactBlurb: '告诉我们您的站点和需求——我们会尽快回复您。',
+    contactClose: '关闭',
     tiers: en.pricing.tiers.map((t, i) => ({
       ...t,
       name: ['个人', '企业', '车队与企业版'][i],
