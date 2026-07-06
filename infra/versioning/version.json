@@ -1,6 +1,6 @@
 {
   "core": {
-    "version": "1.51.0"
+    "version": "1.53.0"
   },
   "apps": {
     "myidsan": {
@@ -13,6 +13,6 @@
       "version": "1.8.0"
     }
   },
-  "commit": "46b41f0e0601fcb3a663e984194b28b29ed13c22",
-  "updatedAt": "2026-07-06T08:18:49Z"
+  "commit": "f70210c2fd9ec8f89cd90e13a8c48855e4e57aff",
+  "updatedAt": "2026-07-06T09:26:48Z"
 }

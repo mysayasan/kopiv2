@@ -21,6 +21,13 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-06 — core 1.53.0 (f70210c)
+
+### Added
+
+- **core**: r450k Pricing section's Fleet & Enterprise 'Contact us' CTA now opens an embedded Tally form (https://tally.so/r/rjWKeN) in the same on-site modal used for post-download feedback, instead of opening a mailto: link that depended on the visitor having a mail client configured. The shared modal was extracted into src/components/TallyModal.jsx (Escape/outside-click/scroll-lock, closes on the x) so both the Downloads and Pricing sections reuse one implementation. A pricing tier now opts into the modal by carrying a `tallyForm` URL in its content entry instead of `href`; tiers that still set `href` keep behaving as a plain link. New pricing.contactTitle / contactBlurb / contactClose copy was added to all four site languages (en/ms/zh/ar).
+- **core**: r450k Pricing section's Business tier 'Get a license' CTA now opens the same embedded Tally form (https://tally.so/r/rjWKeN) used by the Fleet & Enterprise tier's 'Contact us' button, instead of opening a mailto: link that depended on the visitor having a mail client configured. This reuses the existing shared TallyModal component and the pricing.contactTitle/contactBlurb/contactClose copy already present in all four site languages (en/ms/zh/ar) from the earlier Contact-us Tally switch — the tier simply carries `tallyForm` instead of `href` in src/content/en.js, and the other language files inherit it via `en.pricing.tiers.map(...)`.
 ## 2026-07-06 — mymatasan 1.84.0, core 1.51.0 (46b41f0)
 
 ### Added
