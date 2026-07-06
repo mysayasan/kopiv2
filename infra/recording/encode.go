@@ -5,9 +5,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mysayasan/kopiv2/infra/procutil"
 )
@@ -105,6 +107,53 @@ func TranscodeH264(ctx context.Context, ffmpegPath string, src io.Reader, dst io
 	return nil
 }
 
+var (
+	nvencProbeMu sync.Mutex
+	nvencProbe   = map[string]bool{} // encoder name -> usable on this host
+)
+
+// NVENCUsable reports whether the given NVENC encoder actually works on this host —
+// i.e. ffmpeg was built with it AND a compatible NVIDIA GPU/driver is present. It
+// runs one tiny throwaway encode of a generated frame the first time and caches the
+// result per encoder, so the check costs at most a single short ffmpeg run. Empty /
+// copy encoders are always "usable" (they never touch the GPU).
+//
+// This lets the recorder decide up front to store segments as plain stream-copy when
+// the configured re-encode codec can't run, instead of failing every segment remux.
+func NVENCUsable(ffmpegPath, encoder string) bool {
+	if strings.TrimSpace(encoder) == "" {
+		return true
+	}
+	nvencProbeMu.Lock()
+	defer nvencProbeMu.Unlock()
+	if v, ok := nvencProbe[encoder]; ok {
+		return v
+	}
+	resolved, err := resolveFFmpeg(ffmpegPath)
+	if err != nil {
+		nvencProbe[encoder] = false
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	// Encode two frames of a generated source to the null muxer. If NVENC can't
+	// initialise (no GPU, driver mismatch, encoder not compiled in) ffmpeg exits
+	// non-zero and we treat the encoder as unavailable.
+	cmd := exec.CommandContext(ctx, resolved,
+		"-hide_banner", "-loglevel", "error",
+		"-f", "lavfi", "-i", "color=c=black:s=256x256:r=5:d=1",
+		"-frames:v", "2", "-c:v", encoder, "-f", "null", "-",
+	)
+	procutil.HideWindow(cmd)
+	runErr := cmd.Run()
+	usable := runErr == nil
+	if !usable {
+		log.Printf("recording: NVENC encoder %q is not usable on this host (%v); segments configured for it will be stored as stream-copy instead", encoder, runErr)
+	}
+	nvencProbe[encoder] = usable
+	return usable
+}
+
 // nvencEncoder maps a storage codec name to its NVENC encoder. Returns "" for
 // copy / empty / unrecognized values (meaning: do not re-encode).
 func nvencEncoder(codec string) string {
@@ -133,6 +182,18 @@ func canonicalCodec(codec string) string {
 // reencodes reports whether the given record codec triggers a GPU re-encode at
 // remux (vs. plain stream copy).
 func reencodes(codec string) bool { return nvencEncoder(codec) != "" }
+
+// ReEncodes reports whether the given storage codec re-encodes at remux (h264/hevc)
+// rather than plain stream-copy. Exported for the API layer so it can report whether
+// a codec depends on the GPU.
+func ReEncodes(codec string) bool { return reencodes(codec) }
+
+// StorageCodecUsable reports whether the given storage codec can actually be produced
+// on this host: copy/empty codecs are always usable; a re-encode codec (h264/hevc) is
+// usable only when its NVENC encoder works here (probed and cached by NVENCUsable).
+func StorageCodecUsable(ffmpegPath, codec string) bool {
+	return NVENCUsable(ffmpegPath, nvencEncoder(codec))
+}
 
 // remuxVideoArgs returns the ffmpeg output args for finalizing a segment. For
 // copy / empty codec it returns the historical stream-copy args. For h264/hevc it

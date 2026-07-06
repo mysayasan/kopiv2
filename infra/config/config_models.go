@@ -356,6 +356,11 @@ type RecordingConfigModel struct {
 		// re-encoding and playback transcode, matching the GPU's session limit. 0 =
 		// default.
 		MaxConcurrentEncodes int `json:"maxConcurrentEncodes"`
+		// FallbackToCopy stores a segment as plain stream-copy when the GPU re-encode
+		// can't run (no usable NVENC encoder, or a runtime encode failure) instead of
+		// dropping it. Pointer so an omitted value defaults to enabled; ignored in copy
+		// mode.
+		FallbackToCopy *bool `json:"fallbackToCopy"`
 	} `json:"storage"`
 }
 

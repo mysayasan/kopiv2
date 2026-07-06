@@ -106,6 +106,11 @@ type CameraCapacityInput struct {
 	// configured NVENC session cap (0 = default). These add a GPU-encode ceiling.
 	RecordReencode       bool
 	MaxConcurrentEncodes int
+	// RecordFallbackToCopy is true when the recorder stores segments as plain stream-
+	// copy if the GPU re-encode can't run. With it on, a re-encode codec on a host
+	// without a GPU no longer fails recording — it silently degrades to copy — so no
+	// GPU-encode ceiling (and no 0-camera cap) applies.
+	RecordFallbackToCopy bool
 	// CaptureMode is the AI frame-source mode ("auto" | "siphon" | "standalone";
 	// empty = auto). siphon/auto keep a continuous per-camera decode (counted as the
 	// detection-decode workload); standalone uses cheaper one-shot grabs.
@@ -263,9 +268,15 @@ func EstimateCameraCapacity(in CameraCapacityInput) CameraCapacityEstimate {
 	if reencodeSessions <= 0 {
 		reencodeSessions = defaultNVENCSessions
 	}
+	reencodeFallback := false
 	if in.RecordReencode && in.RecordingEnabled {
 		if in.GPUPresent {
 			reencodeMax = clampNonNeg(int(math.Floor(float64(reencodeSessions) * nvencEncodeRealtimeFactor)))
+		} else if in.RecordFallbackToCopy {
+			// No GPU, but the recorder degrades to stream-copy instead of failing — so
+			// there is no GPU-encode ceiling and recording is unaffected (just larger
+			// on disk than the re-encoded size). Leave reencodeMax at -1 (no workload).
+			reencodeFallback = true
 		} else {
 			reencodeMax = 0
 		}
@@ -347,6 +358,9 @@ func EstimateCameraCapacity(in CameraCapacityInput) CameraCapacityEstimate {
 			Name: "recording", Label: "Recording", MaxCameras: recMax, Limit: "disk",
 			Note: fmt.Sprintf("Max cameras that keep at least ~%s of footage on free disk; more would shorten retention (oldest auto-purges).", humanizeDays(floorDays)), Continuous: true,
 		})
+	}
+	if reencodeFallback {
+		assumptions = append(assumptions, "Recording re-encode is configured but no GPU is present; segments automatically store as stream-copy instead of failing — recording is unaffected, though footage is larger on disk than the re-encoded size would be.")
 	}
 	if reencodeMax >= 0 {
 		if in.GPUPresent {

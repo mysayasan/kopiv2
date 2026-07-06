@@ -1765,6 +1765,16 @@ export function SettingsTab({
               />
             </label>
           </div>
+          <label className="check-row" style={{marginTop:'8px'}}>
+            <input
+              type="checkbox"
+              checked={!(settings.recording && settings.recording.storage && settings.recording.storage.fallbackToCopy === false)}
+              onChange={(event) => updateRecordingStorage({ fallbackToCopy: event.target.checked })}
+            />
+            <FieldTitle info="When the GPU re-encode can't run — no compatible NVIDIA GPU/driver, or a re-encode fails at runtime — store the segment as plain stream-copy (the camera's native codec) instead of dropping it. Checked once on this host and cached. Strongly recommended: without it, a re-encode codec on a machine with no usable GPU records nothing. Ignored in Copy mode.">
+              {t('st.fallbackToCopy')}
+            </FieldTitle>
+          </label>
           <p className="field-hint" style={{marginTop:'8px'}}>
             {t('st.recStorageHint')}
           </p>
