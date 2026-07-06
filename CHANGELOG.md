@@ -17,6 +17,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-06 — mymatasan 1.82.3 (25d47d6)
+
+### Fixed
+
+- **mymatasan**: Restoring a configuration backup in the first-run wizard now collapses the whole wizard to a single "Restarting… please wait" pane and restarts automatically, instead of leaving the Restore / Cancel / Skip / Back / Next buttons clickable while the restart is in flight. A restore replaces the entire config (cameras, AI detection, notifications, settings) and needs a restart for every service to pick it up — and the wizard is bypassed afterwards — so there is nothing left for the operator to do but wait. The restart is triggered once on a successful restore and the app reloads when it is back up.
 ## 2026-07-05 — mymatasan 1.82.2 (1c34fb0)
 
 ### Fixed
