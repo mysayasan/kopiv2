@@ -18,6 +18,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-06 — mymatasan 1.83.0 (c6a5bb0)
+
+### Added
+
+- **mymatasan**: The Windows uninstaller now offers to remove all MyMataSan data. Previously uninstall only stopped/removed the service and left the writable data root (C:\ProgramData\MyMataSan) in place, so recordings survived an uninstall — but a later reinstall was then treated as an upgrade over that data. On uninstall the installer now prompts (CurUninstallStepChanged / usPostUninstall) whether to also delete the data dir — recordings, database, settings and the at-rest encryption key — defaulting to No (keep). Answer Yes for a true clean slate (e.g. testing a first-run experience); answer No to preserve footage/config for a future reinstall. A silent/unattended uninstall never prompts and always keeps the data.
 ## 2026-07-06 — mymatasan 1.82.3 (25d47d6)
 
 ### Fixed
