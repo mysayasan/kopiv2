@@ -289,6 +289,10 @@ type RecordingStorageSettings struct {
 	// MaxConcurrentEncodes caps simultaneous NVENC sessions shared by remux-time
 	// re-encoding and playback transcode. 0 = default.
 	MaxConcurrentEncodes int `json:"maxConcurrentEncodes"`
+	// FallbackToCopy stores a segment as plain stream-copy when the GPU re-encode
+	// can't run (no usable NVENC encoder, or a runtime failure) instead of dropping
+	// it. Pointer so an omitted value defaults to enabled; ignored in copy mode.
+	FallbackToCopy *bool `json:"fallbackToCopy"`
 }
 
 // VisionSettings holds AI detection tuning parameters that can be changed at runtime.

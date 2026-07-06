@@ -40,6 +40,7 @@ func NewRecordingApi(router *mux.Router, serv services.IRecordingService, record
 	g.HandleFunc("/config", h.saveConfig).Methods("PUT")
 	g.HandleFunc("/config/{cameraId}", h.getConfig).Methods("GET")
 	g.HandleFunc("/status", h.recorderStatus).Methods("GET")
+	g.HandleFunc("/storage/status", h.storageStatus).Methods("GET")
 	g.HandleFunc("/streams/{cameraId}", h.listCameraStreams).Methods("GET")
 	g.HandleFunc("/streams/{cameraId}/live", h.setLiveStream).Methods("POST")
 }
@@ -229,26 +230,27 @@ func (a *recordingApi) saveConfig(w http.ResponseWriter, r *http.Request) {
 			// the next time any camera's recording config is saved.
 			recStorage, _ := a.settings.Recording(r.Context())
 			if cerr := a.recorder.Configure(recording.RecorderConfig{
-				CameraId:        cfg.CameraId,
-				Enabled:         cfg.Enabled,
-				PreRollSec:      cfg.PreRollSec,
-				PostRollSec:     cfg.PostRollSec,
-				StoragePath:     cfg.StoragePath,
-				FFmpegPath:      ffmpegPath,
-				RTSPTransport:   rtspTransport,
-				RTSPURI:         rtspURI,
-				FallbackRTSPURI: fallbackURI,
-				SegmentMinutes:  cfg.SegmentMinutes,
-				RetentionDays:   cfg.RetentionDays,
-				SiphonFPS:       siphonFPS,
-				SiphonWidth:     siphonWidth,
-				HWAccel:         siphonHWAccel,
-				HWAccelDevice:   siphonHWDevice,
-				InitHWDevice:    siphonInitHWDevice,
-				VideoDecoder:    siphonVideoDecoder,
-				RecordCodec:     recStorage.Storage.Codec,
-				RecordQuality:   recStorage.Storage.Quality,
-				Cipher:          a.cipher,
+				CameraId:           cfg.CameraId,
+				Enabled:            cfg.Enabled,
+				PreRollSec:         cfg.PreRollSec,
+				PostRollSec:        cfg.PostRollSec,
+				StoragePath:        cfg.StoragePath,
+				FFmpegPath:         ffmpegPath,
+				RTSPTransport:      rtspTransport,
+				RTSPURI:            rtspURI,
+				FallbackRTSPURI:    fallbackURI,
+				SegmentMinutes:     cfg.SegmentMinutes,
+				RetentionDays:      cfg.RetentionDays,
+				SiphonFPS:          siphonFPS,
+				SiphonWidth:        siphonWidth,
+				HWAccel:            siphonHWAccel,
+				HWAccelDevice:      siphonHWDevice,
+				InitHWDevice:       siphonInitHWDevice,
+				VideoDecoder:       siphonVideoDecoder,
+				RecordCodec:        recStorage.Storage.Codec,
+				RecordQuality:      recStorage.Storage.Quality,
+				RecordFallbackCopy: recStorage.Storage.FallbackToCopy == nil || *recStorage.Storage.FallbackToCopy,
+				Cipher:             a.cipher,
 			}); cerr != nil {
 				recorderWarning = cerr.Error()
 				log.Printf("recording: configure cam%d: %v", cfg.CameraId, cerr)
@@ -268,6 +270,36 @@ func (a *recordingApi) recorderStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	controllers.SendResult(w, a.recorder.Statuses(), "succeed")
+}
+
+// storageStatus reports whether the configured at-rest storage codec can actually be
+// produced on this host. A re-encode codec (h264/hevc) needs a working NVENC GPU
+// encoder; when none is present the recorder stores segments as plain stream-copy
+// (if fallback is on) or drops them (if off). The UI uses `compatible=false` to warn
+// the operator that the storage codec setting doesn't match the hardware.
+func (a *recordingApi) storageStatus(w http.ResponseWriter, r *http.Request) {
+	codec := "copy"
+	fallback := true
+	if a.settings != nil {
+		if rec, err := a.settings.Recording(r.Context()); err == nil {
+			if c := strings.ToLower(strings.TrimSpace(rec.Storage.Codec)); c != "" {
+				codec = c
+			}
+			fallback = rec.Storage.FallbackToCopy == nil || *rec.Storage.FallbackToCopy
+		}
+	}
+	reEncode := recording.ReEncodes(codec)
+	usable := true
+	if reEncode {
+		usable = recording.StorageCodecUsable(a.recordFFmpegPath(r), codec)
+	}
+	controllers.SendResult(w, map[string]any{
+		"codec":          codec,
+		"reEncode":       reEncode,
+		"nvencUsable":    usable,
+		"fallbackToCopy": fallback,
+		"compatible":     !reEncode || usable,
+	}, "succeed")
 }
 
 // listCameraStreams returns all ONVIF stream profiles for a camera using stored credentials.

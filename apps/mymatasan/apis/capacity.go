@@ -146,6 +146,7 @@ func (a *capacityApi) buildInput(ctx context.Context) (services.CameraCapacityIn
 		in.RecordReencode = true
 	}
 	in.MaxConcurrentEncodes = settings.Recording.Storage.MaxConcurrentEncodes
+	in.RecordFallbackToCopy = settings.Recording.Storage.FallbackToCopy == nil || *settings.Recording.Storage.FallbackToCopy
 
 	a.mu.Lock()
 	if a.calibration != nil {

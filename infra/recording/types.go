@@ -66,6 +66,12 @@ type RecorderConfig struct {
 	// RecordQuality is the NVENC constant-quality (CQ) target used when re-encoding
 	// (lower = better quality / larger file; ~23-28 typical). 0 = default.
 	RecordQuality int
+	// RecordFallbackCopy, when true (the default), stores a segment as plain stream-
+	// copy if the configured GPU re-encode can't run — either because the host has no
+	// usable NVENC encoder (checked once up front) or a re-encode fails at runtime.
+	// This guarantees the segment is saved rather than dropped. It only matters when
+	// RecordCodec re-encodes (h264/hevc); copy mode never encodes.
+	RecordFallbackCopy bool
 	// Cipher (optional) encrypts finalized recording segments at rest so they can be
 	// crypto-erased. nil = plaintext. The live .ts and the in-progress remux are
 	// briefly plaintext until the segment is finalized.

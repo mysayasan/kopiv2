@@ -272,6 +272,8 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	recSettings, _ := settingsService.Recording(context.Background())
 	recStorage := recSettings.Storage
 	recordCodec, recordQuality := recStorage.Codec, recStorage.Quality
+	// Auto-fallback to stream-copy when the GPU re-encode can't run; defaults on.
+	recordFallbackCopy := recStorage.FallbackToCopy == nil || *recStorage.FallbackToCopy
 	// Size the shared NVENC semaphore before any recorder starts so remux-time
 	// re-encoding (and playback transcode) never oversubscribes the GPU.
 	recording.SetNVENCConcurrency(recStorage.MaxConcurrentEncodes)
@@ -379,31 +381,38 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 					fallbackURI = services.RTSPURIWithCredentials(fallbackURI, src.Username, src.Password)
 				}
 				_ = recorderManager.Configure(recording.RecorderConfig{
-					CameraId:        cfg.CameraId,
-					Enabled:         cfg.Enabled,
-					PreRollSec:      cfg.PreRollSec,
-					PostRollSec:     cfg.PostRollSec,
-					StoragePath:     cfg.StoragePath,
-					FFmpegPath:      ffmpegPath,
-					RTSPTransport:   rtspTransport,
-					RTSPURI:         rtspURI,
-					FallbackRTSPURI: fallbackURI,
-					SegmentMinutes:  cfg.SegmentMinutes,
-					RetentionDays:   cfg.RetentionDays,
-					SiphonFPS:       siphonFPS,
-					SiphonWidth:     siphonWidth,
-					HWAccel:         siphonHWAccel,
-					HWAccelDevice:   siphonHWDevice,
-					InitHWDevice:    siphonInitHWDevice,
-					VideoDecoder:    siphonVideoDecoder,
-					ShredPasses:     shredPasses,
-					RecordCodec:     recordCodec,
-					RecordQuality:   recordQuality,
-					Cipher:          atrestCipher,
+					CameraId:           cfg.CameraId,
+					Enabled:            cfg.Enabled,
+					PreRollSec:         cfg.PreRollSec,
+					PostRollSec:        cfg.PostRollSec,
+					StoragePath:        cfg.StoragePath,
+					FFmpegPath:         ffmpegPath,
+					RTSPTransport:      rtspTransport,
+					RTSPURI:            rtspURI,
+					FallbackRTSPURI:    fallbackURI,
+					SegmentMinutes:     cfg.SegmentMinutes,
+					RetentionDays:      cfg.RetentionDays,
+					SiphonFPS:          siphonFPS,
+					SiphonWidth:        siphonWidth,
+					HWAccel:            siphonHWAccel,
+					HWAccelDevice:      siphonHWDevice,
+					InitHWDevice:       siphonInitHWDevice,
+					VideoDecoder:       siphonVideoDecoder,
+					ShredPasses:        shredPasses,
+					RecordCodec:        recordCodec,
+					RecordQuality:      recordQuality,
+					RecordFallbackCopy: recordFallbackCopy,
+					Cipher:             atrestCipher,
 				})
 			}(cfg)
 		}
 		wg.Wait()
+	}
+	// Warm the NVENC capability probe in the background when the storage codec
+	// re-encodes, so the recording-storage status endpoint (and its incompatibility
+	// warning) answers instantly instead of running ffmpeg on the first request.
+	if recording.ReEncodes(recordCodec) {
+		go recording.StorageCodecUsable(ffmpegPath, recordCodec)
 	}
 
 	// Built before route registration so the camera API can expose an on-demand
@@ -1029,6 +1038,7 @@ func runtimeSettingsFromAppConfig(cfg *config.AppConfigModel) services.RuntimeSe
 				Codec:                cfg.Recording.Storage.Codec,
 				Quality:              cfg.Recording.Storage.Quality,
 				MaxConcurrentEncodes: cfg.Recording.Storage.MaxConcurrentEncodes,
+				FallbackToCopy:       cfg.Recording.Storage.FallbackToCopy,
 			},
 		},
 	}

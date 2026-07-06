@@ -115,6 +115,10 @@ function AppInner({ lang, onLangChange }) {
   // bridged into this stack for the authenticated app; login/setup render it inline.
   const [toasts, setToasts] = useState([]);
   const toastIdRef = useRef(0);
+  // Sticky bottom-right warning shown when the configured recording storage codec
+  // can't run on this host (no compatible GPU to re-encode). Holds { codec, fallback }
+  // or null; clicking it jumps to Settings → Recording storage.
+  const [codecWarning, setCodecWarning] = useState(null);
   const [busy, setBusy] = useState(false);
   const [deviceDrafts, setDeviceDrafts] = useState({});
   const [deviceCredentials, setDeviceCredentials] = useState({});
@@ -1366,6 +1370,24 @@ function AppInner({ lang, onLangChange }) {
   }
   loadNotificationsRef.current = loadNotifications;
 
+  // checkStorageCodec asks the server whether the configured at-rest recording codec
+  // can actually run on this host. A re-encode codec (H.264/H.265) needs a working
+  // NVENC GPU; without one the recorder silently degrades to Copy (or, if fallback is
+  // off, drops segments). Either way the setting is wrong for the hardware, so we
+  // raise a sticky bottom-right warning that deep-links to the storage setting.
+  async function checkStorageCodec() {
+    try {
+      const status = await request('/api/recording/storage/status');
+      if (status && status.compatible === false) {
+        setCodecWarning({ codec: status.codec, fallback: status.fallbackToCopy !== false });
+      } else {
+        setCodecWarning(null);
+      }
+    } catch (_) {
+      /* best-effort; a transient failure just leaves the warning as-is */
+    }
+  }
+
   // markNotificationRead dismisses one notification: optimistically drop it from
   // the feed and decrement the badge, then persist and reconcile.
   async function markNotificationRead(id) {
@@ -1399,6 +1421,7 @@ function AppInner({ lang, onLangChange }) {
     }
     loadVision({ quiet: true }).catch(() => {});
     loadNotifications({ quiet: true }).catch(() => {});
+    checkStorageCodec();
     loadActiveModelClasses();
     // Load notification settings so the rule editor's per-rule routing knows the
     // configured delivery destinations (also refreshed when the Notifications
@@ -1503,6 +1526,8 @@ function AppInner({ lang, onLangChange }) {
       setRuntimeAutoTune(null);
       setVisionToolStatus(null);
       setMessage(t('app.settingsSaved'));
+      // Re-check codec compatibility: the save may have changed the storage codec.
+      checkStorageCodec();
     } catch (err) {
       setMessage(err.message, 'error');
     } finally {
@@ -2645,6 +2670,31 @@ function AppInner({ lang, onLangChange }) {
           onThemeChange={changeTheme}
         />
         <ToastStack toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((t) => t.id !== id))} />
+
+        {codecWarning ? (
+          <div
+            className="codec-warning-toast"
+            role="alert"
+            tabIndex={0}
+            title={t('app.codecWarnHint')}
+            onClick={() => { setActiveTab('settings'); openSettingsSection('runtime'); }}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { setActiveTab('settings'); openSettingsSection('runtime'); } }}
+          >
+            <span className="codec-warning-icon" aria-hidden="true">⚠</span>
+            <div className="codec-warning-text">
+              <strong>{t('app.codecWarnTitle')}</strong>
+              <span>{codecWarning.fallback ? t('app.codecWarnBodyFallback') : t('app.codecWarnBodyDrop')}</span>
+            </div>
+            <button
+              type="button"
+              className="codec-warning-close"
+              aria-label={t('app.dismiss')}
+              onClick={(e) => { e.stopPropagation(); setCodecWarning(null); }}
+            >
+              ×
+            </button>
+          </div>
+        ) : null}
 
       {activeTab === 'dashboard' ? (
         <DashboardTab

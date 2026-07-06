@@ -223,6 +223,13 @@ func normalizeRecordingStorage(s RecordingStorageSettings) RecordingStorageSetti
 	} else if s.MaxConcurrentEncodes > 8 {
 		s.MaxConcurrentEncodes = 8
 	}
+	// Auto-fallback to stream-copy defaults ON (nil = enabled) so a re-encode codec
+	// configured on a host without a usable GPU keeps recording instead of losing
+	// segments; the UI can turn it off explicitly.
+	if s.FallbackToCopy == nil {
+		enabled := true
+		s.FallbackToCopy = &enabled
+	}
 	return s
 }
 

@@ -602,32 +602,64 @@ func (r *rtspRecorder) remuxSegment(f liveSegInfo, endedAt int64) {
 	// the segment. Re-encoding decodes the input, so it needs the same hardware-decode
 	// input options the siphon tee uses; copy never decodes and takes none.
 	videoArgs, storedCodec := remuxVideoArgs(r.cfg.RecordCodec, r.cfg.RecordQuality)
-	args := []string{"-hide_banner", "-loglevel", "error", "-fflags", "+genpts"}
 	encoding := reencodes(r.cfg.RecordCodec)
-	if encoding {
-		args = append(args, r.hwAccelInputArgs()...)
+	// Proactively fall back to stream-copy when the configured NVENC encoder can't run
+	// on this host (no NVIDIA GPU/driver, or ffmpeg built without it). The probe is
+	// cached, so we skip re-encoding entirely rather than failing every segment.
+	if encoding && r.cfg.RecordFallbackCopy && !NVENCUsable(ffmpegPath, nvencEncoder(r.cfg.RecordCodec)) {
+		encoding = false
+		videoArgs, storedCodec = remuxVideoArgs("", 0)
 	}
-	args = append(args, "-i", filepath.ToSlash(f.tsPath))
-	args = append(args, videoArgs...)
-	args = append(args, "-movflags", "+faststart", "-y", filepath.ToSlash(mp4Path))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	// GPU re-encode is gated by the shared NVENC semaphore so concurrent remuxes (and
-	// playback transcodes) never exceed the card's session cap. The .ts is already on
-	// disk, so blocking here only delays finalize — it can't drop footage. Stream copy
-	// is cheap and takes no slot.
+
+	// buildArgs assembles the ffmpeg finalize command. Re-encoding decodes the input,
+	// so it needs the siphon's hardware-decode input options; stream-copy never
+	// decodes and takes none. runRemux executes it and returns ffmpeg's output.
+	buildArgs := func(vArgs []string, decode bool) []string {
+		a := []string{"-hide_banner", "-loglevel", "error", "-fflags", "+genpts"}
+		if decode {
+			a = append(a, r.hwAccelInputArgs()...)
+		}
+		a = append(a, "-i", filepath.ToSlash(f.tsPath))
+		a = append(a, vArgs...)
+		return append(a, "-movflags", "+faststart", "-y", filepath.ToSlash(mp4Path))
+	}
+	runRemux := func(vArgs []string, decode bool) ([]byte, error) {
+		cmd := exec.CommandContext(ctx, ffmpegPath, buildArgs(vArgs, decode)...)
+		procutil.HideWindow(cmd)
+		return cmd.CombinedOutput()
+	}
+
 	if encoding {
+		// GPU re-encode is gated by the shared NVENC semaphore so concurrent remuxes
+		// (and playback transcodes) never exceed the card's session cap. The .ts is
+		// already on disk, so blocking here only delays finalize — it can't drop footage.
 		release, acqErr := AcquireNVENC(ctx)
 		if acqErr != nil {
 			log.Printf("recording rtsp cam%d: remux %s: nvenc acquire: %v", r.cfg.CameraId, f.stem, acqErr)
 			return
 		}
-		defer release()
-	}
-	remux := exec.CommandContext(ctx, ffmpegPath, args...)
-	procutil.HideWindow(remux)
-	if out, err := remux.CombinedOutput(); err != nil {
+		out, err := runRemux(videoArgs, true)
+		release()
+		if err != nil {
+			// A late NVENC failure (a transient driver/session issue that slipped past
+			// the capability probe) still shouldn't drop footage — fall back to plain
+			// stream-copy when enabled instead of losing the segment.
+			if !r.cfg.RecordFallbackCopy {
+				log.Printf("recording rtsp cam%d: remux %s: %v: %s", r.cfg.CameraId, f.stem, err, out)
+				return
+			}
+			log.Printf("recording rtsp cam%d: remux %s re-encode failed (%v); storing as stream-copy", r.cfg.CameraId, f.stem, err)
+			copyArgs, _ := remuxVideoArgs("", 0)
+			if out2, err2 := runRemux(copyArgs, false); err2 != nil {
+				log.Printf("recording rtsp cam%d: remux %s copy fallback: %v: %s", r.cfg.CameraId, f.stem, err2, out2)
+				return
+			}
+			storedCodec = "" // probe the copied stream's native codec below
+		}
+	} else if out, err := runRemux(videoArgs, false); err != nil {
 		log.Printf("recording rtsp cam%d: remux %s: %v: %s", r.cfg.CameraId, f.stem, err, out)
 		return
 	}

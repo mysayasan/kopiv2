@@ -15,6 +15,7 @@ Defines the shared contracts and configuration types for the reusable recording 
   - `ShredPasses` — secure-overwrite pass count applied to segment files on retention purge (`>0` shreds; `0` = plain delete)
   - `RecordCodec` — at-rest video codec for finalized segments: `""`/`copy` (store the camera's native codec, no re-encode — default), `h264`, or `hevc` (re-encode once at remux time on the GPU). Live capture and event clips always stay stream-copy.
   - `RecordQuality` — NVENC constant-quality (CQ) target used when re-encoding (`0` = default 26)
+  - `RecordFallbackCopy` — when `true` (the default), a segment is stored as plain stream-copy if the configured GPU re-encode can't run: either the host has no usable NVENC encoder (checked once up front via `NVENCUsable`) or a re-encode fails at runtime. Guarantees the segment is saved rather than dropped. Only matters when `RecordCodec` re-encodes; copy mode never encodes.
 - `FrameEntry` — one captured JPEG frame with its Unix-second capture timestamp; the atomic unit held in the ring buffer.
 - `SegmentResult` — produced by a recorder after a clip is written to disk; carries camera ID, alert ID, file path, start/end timestamps, file size, and `Codec` (the on-disk video codec, e.g. `h264`/`hevc`, so playback knows whether it must transcode for the browser without re-probing).
 - `SegmentSink` — interface implemented by apps to persist segment metadata; decouples the infra recorder from any app-specific storage layer.
