@@ -72,6 +72,28 @@ export function SetupWizard({
   const next = () => setStep((s) => Math.min(STEP_KEYS.length - 1, s + 1));
   const back = () => setStep((s) => Math.max(0, s - 1));
 
+  // A Welcome-step restore replaces the whole configuration and needs a restart for
+  // every service to pick it up (and the wizard is bypassed afterwards). When it
+  // fires, collapse the entire wizard to a single wait pane — no Skip / Back / Next /
+  // step content left to click — and kick off the restart; the app reloads when it's
+  // back up.
+  const [restarting, setRestarting] = useState(false);
+  const restoreRestart = () => { setRestarting(true); if (onRestart) onRestart(); };
+
+  if (restarting) {
+    return (
+      <main className="login-screen">
+        <div className="setup-wizard">
+          <div className="setup-head"><BrandLogo size={44} /></div>
+          <div className="setup-body setup-restarting">
+            <span className="field-hint good"><Ico n="check-ok" sz={16} /> {t('setup.bkupRestored')}</span>
+            <span className="field-hint"><Ico n="reload" sz={16} /> {t('setup.bkupRestartingWait')}</span>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="login-screen">
       <div className="setup-wizard">
@@ -97,7 +119,7 @@ export function SetupWizard({
 
         <div className="setup-body">
           {step === 0 ? (
-            <WelcomeStep username={username} busy={busy} onChangePassword={onChangePassword} authHeader={authHeader} onRestart={onRestart} />
+            <WelcomeStep username={username} busy={busy} onChangePassword={onChangePassword} authHeader={authHeader} onRestart={restoreRestart} />
           ) : null}
           {step === 1 ? (
             <SystemStep
@@ -274,6 +296,7 @@ function WelcomeRestore({ authHeader, onRestart }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState(null);
   const [result, setResult] = useState(null);
+  const [restarting, setRestarting] = useState(false);
 
   async function api(path, options = {}) {
     const headers = { ...(options.headers || {}) };
@@ -315,6 +338,27 @@ function WelcomeRestore({ authHeader, onRestart }) {
     }
   }
 
+  // Once the restore succeeds there is nothing left for the operator to do but wait:
+  // a restart is required for every service to pick up the restored settings, and the
+  // wizard is bypassed afterwards (restore marks setup complete). Kick off the restart
+  // automatically, exactly once, and collapse the form below to a wait state — so no
+  // stray "Restore"/"Cancel" buttons remain clickable mid-restart.
+  useEffect(() => {
+    if (result && !restarting) {
+      setRestarting(true);
+      if (onRestart) onRestart();
+    }
+  }, [result]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (result) {
+    return (
+      <div className="setup-account setup-restore-done">
+        <span className="field-hint good"><Ico n="check-ok" sz={14} /> {t('setup.bkupRestored')}</span>
+        <span className="field-hint"><Ico n="reload" sz={14} /> {t('setup.bkupRestartingWait')}</span>
+      </div>
+    );
+  }
+
   return (
     <>
       <div className="setup-account">
@@ -326,26 +370,15 @@ function WelcomeRestore({ authHeader, onRestart }) {
       {open ? (
         <div className="setup-pw-form">
           <label>{t('setup.bkupFile')}
-            <input type="file" accept=".mmbackup,application/octet-stream" onChange={onPickFile} disabled={busy || !!result} />
+            <input type="file" accept=".mmbackup,application/octet-stream" onChange={onPickFile} disabled={busy} />
           </label>
           <label>{t('setup.bkupPassphrase')}
             <PasswordField value={pass} onChange={setPass} autoComplete="off" />
           </label>
           {note ? <span className={note.err ? 'field-hint danger-text' : 'field-hint good'}>{note.text}</span> : null}
-          {result ? (
-            <>
-              <span className="field-hint good"><Ico n="check-ok" sz={14} /> {t('setup.bkupRestored')}</span>
-              {onRestart ? (
-                <button type="button" onClick={() => onRestart()}>
-                  <span className="btn-icon"><Ico n="reload" /> {t('setup.bkupRestartApply')}</span>
-                </button>
-              ) : null}
-            </>
-          ) : (
-            <button type="button" onClick={restore} disabled={busy}>
-              <span className="btn-icon"><Ico n="reload" /> {busy ? t('setup.bkupRestoring') : t('setup.bkupRestoreBtn')}</span>
-            </button>
-          )}
+          <button type="button" onClick={restore} disabled={busy}>
+            <span className="btn-icon"><Ico n="reload" /> {busy ? t('setup.bkupRestoring') : t('setup.bkupRestoreBtn')}</span>
+          </button>
         </div>
       ) : null}
     </>

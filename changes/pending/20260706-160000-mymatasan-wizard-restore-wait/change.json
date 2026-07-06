@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "mymatasan",
+  "summary": "Restoring a configuration backup in the first-run wizard now collapses the whole wizard to a single \"Restarting… please wait\" pane and restarts automatically, instead of leaving the Restore / Cancel / Skip / Back / Next buttons clickable while the restart is in flight. A restore replaces the entire config (cameras, AI detection, notifications, settings) and needs a restart for every service to pick it up — and the wizard is bypassed afterwards — so there is nothing left for the operator to do but wait. The restart is triggered once on a successful restore and the app reloads when it is back up.",
+  "compatibility": "Backward compatible; frontend-only UX change to the setup wizard's Welcome-step restore. The manual \"Restart to apply\" button is gone (restore now restarts automatically). New i18n string setup.bkupRestartingWait added (en/ms/zh/ar); setup.bkupRestored reworded (no longer says \"restart to apply\")."
+}
