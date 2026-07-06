@@ -134,7 +134,7 @@ export default {
     loading: 'Memuatkan keluaran terkini…',
     unavailable: 'Muat turun sedang disediakan — semak semula sebentar lagi.',
     formTitle: 'Muat turun anda telah bermula 🎉',
-    formBlurb: 'Sudi kongsi sedikit tentang cara anda akan menggunakannya? Kurang seminit, dan ia membantu kami membina perkara yang betul.',
+    formBlurb: 'Satu soalan ringkas sebelum anda pergi — bagaimana anda mengetahui tentang kami? Ambil 10 saat sahaja dan banyak membantu.',
     formClose: 'Tutup',
   },
   pricing: {
@@ -144,6 +144,9 @@ export default {
     lead: 'Kegunaan peribadi dan bukan komersial adalah percuma — selamanya. Perniagaan mengekalkan projek ini hidup dengan lesen komersial yang mudah. Ini harga awal; kita akan selaraskan bersama apabila ia berkembang.',
     popular: 'Paling popular',
     note: 'Harga dalam USD. Kegunaan bukan komersial kekal percuma. Tidak pasti yang mana sesuai? Hubungi kami dan kita fikirkan bersama.',
+    contactTitle: 'Hubungi kami',
+    contactBlurb: 'Beritahu kami tentang tapak anda dan apa yang anda perlukan — kami akan hubungi anda semula.',
+    contactClose: 'Tutup',
     tiers: en.pricing.tiers.map((t, i) => ({
       ...t,
       name: ['Peribadi', 'Perniagaan', 'Armada & Perusahaan'][i],
