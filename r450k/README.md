@@ -144,17 +144,26 @@ mockup, so the section never breaks. To replace or add captures, see the instruc
 (Facebook, some Twitter paths) don't render SVG — for best compatibility, export a **1200×630 PNG**
 to `public/og-image.png` and point the `og:image` / `twitter:image` tags in `index.html` at it.
 
-## Download feedback (Tally form)
+## Tally forms (download feedback + Contact us)
 
-`src/sections/Downloads.jsx` opens a small modal with an embedded [Tally](https://tally.so) form
-(`https://tally.so/r/A75Jzl`) the first time a visitor clicks a download link, inviting a quick note
-on how they'll use the app. It's shown **at most once per visitor** — a `localStorage` flag
-(`r450k:downloadFeedbackSeen`) suppresses it on every later download in that browser. The download
-`<a>` itself is untouched (no `preventDefault`, no `target="_blank"`), so it keeps streaming the
-attachment same-tab exactly as before; the modal is a side effect on `onClick`, not a gate. The
-modal closes on `Escape`, an outside click, or the × button, and locks background scroll while
-open. Copy (`formTitle`, `formBlurb`, `formClose`) lives in `src/content/{en,ms,zh,ar}.js` under the
-`downloads` key. To change the form, update the `TALLY_FORM` constant in `Downloads.jsx`.
+[`src/components/TallyModal.jsx`](src/components/TallyModal.jsx) is a shared, reusable modal that
+hosts an embedded [Tally](https://tally.so) form in an iframe. It closes on `Escape`, an outside
+click, or the × button, and locks background scroll while open. Two places use it:
+
+- **Download feedback** — `src/sections/Downloads.jsx` opens the modal with a Tally form
+  (`https://tally.so/r/A75Jzl`) the first time a visitor clicks a download link, asking a quick
+  "how did you hear about us?" question. It's shown **at most once per visitor** — a `localStorage`
+  flag (`r450k:downloadFeedbackSeen`) suppresses it on every later download in that browser. The
+  download `<a>` itself is untouched (no `preventDefault`, no `target="_blank"`), so it keeps
+  streaming the attachment same-tab exactly as before; the modal is a side effect on `onClick`, not
+  a gate. Copy (`formTitle`, `formBlurb`, `formClose`) lives in `src/content/{en,ms,zh,ar}.js` under
+  the `downloads` key. To change the form, update the `TALLY_FORM` constant in `Downloads.jsx`.
+- **Contact us / Get a license** — both paid pricing tiers open the same modal with the same
+  Tally form (`https://tally.so/r/rjWKeN`) instead of a `mailto:` link, so leads stay on-site: the
+  Business tier's "Get a license" button and the Fleet & Enterprise tier's "Contact us" button
+  (`src/sections/Pricing.jsx`). A tier opts into this by setting `tallyForm` (the Tally URL)
+  instead of `href` in its content entry. Copy (`contactTitle`, `contactBlurb`, `contactClose`)
+  lives in `src/content/{en,ms,zh,ar}.js` under the `pricing` key.
 
 ## Contact form (Telegram via the Worker)
 

@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "core",
+  "summary": "r450k Pricing section's Business tier 'Get a license' CTA now opens the same embedded Tally form (https://tally.so/r/rjWKeN) used by the Fleet & Enterprise tier's 'Contact us' button, instead of opening a mailto: link that depended on the visitor having a mail client configured. This reuses the existing shared TallyModal component and the pricing.contactTitle/contactBlurb/contactClose copy already present in all four site languages (en/ms/zh/ar) from the earlier Contact-us Tally switch — the tier simply carries `tallyForm` instead of `href` in src/content/en.js, and the other language files inherit it via `en.pricing.tiers.map(...)`.",
+  "compatibility": "Frontend-only change on the static r450k marketing site; no impact on the Go apps or their versioned releases. No migration needed — both paid tiers (Business and Fleet & Enterprise) now open the on-site Tally modal on their CTA button instead of leaving to a mail client."
+}

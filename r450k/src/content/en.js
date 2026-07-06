@@ -169,7 +169,7 @@ const en = {
     loading: 'Loading the latest release…',
     unavailable: 'Downloads are being prepared — check back shortly.',
     formTitle: 'Your download has started 🎉',
-    formBlurb: 'Mind sharing a bit about how you’ll use it? Under a minute, and it helps us build the right things.',
+    formBlurb: 'Quick one before you go — how did you hear about us? It takes 10 seconds and helps a lot.',
     formClose: 'Close',
   },
   pricing: {
@@ -193,7 +193,7 @@ const en = {
         featured: true,
         features: ['Commercial license for one server / site', 'Unlimited cameras on that server', 'All updates for the licensed term', 'Priority email support'],
         cta: 'Get a license',
-        href: 'mailto:mysayasan@gmail.com?subject=MyMataSan%20commercial%20license',
+        tallyForm: 'https://tally.so/r/rjWKeN',
       },
       {
         name: 'Fleet & Enterprise',
@@ -201,10 +201,13 @@ const en = {
         period: 'multi-site',
         features: ['Many sites via the control plane', 'Custom AI model training & integration', 'Onboarding & priority support', 'Volume & OEM licensing'],
         cta: 'Contact us',
-        href: 'mailto:mysayasan@gmail.com?subject=MyMataSan%20enterprise%20licensing',
+        tallyForm: 'https://tally.so/r/rjWKeN',
       },
     ],
     note: 'Prices in USD. Non-commercial use stays free. Not sure which fits? Reach out and we’ll figure it out together.',
+    contactTitle: 'Contact us',
+    contactBlurb: 'Tell us about your sites and what you need — we’ll get back to you.',
+    contactClose: 'Close',
   },
   finalCta: {
     title: 'Keep your video — and your intelligence — on your own network.',
