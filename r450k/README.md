@@ -144,6 +144,18 @@ mockup, so the section never breaks. To replace or add captures, see the instruc
 (Facebook, some Twitter paths) don't render SVG — for best compatibility, export a **1200×630 PNG**
 to `public/og-image.png` and point the `og:image` / `twitter:image` tags in `index.html` at it.
 
+## Download feedback (Tally form)
+
+`src/sections/Downloads.jsx` opens a small modal with an embedded [Tally](https://tally.so) form
+(`https://tally.so/r/A75Jzl`) the first time a visitor clicks a download link, inviting a quick note
+on how they'll use the app. It's shown **at most once per visitor** — a `localStorage` flag
+(`r450k:downloadFeedbackSeen`) suppresses it on every later download in that browser. The download
+`<a>` itself is untouched (no `preventDefault`, no `target="_blank"`), so it keeps streaming the
+attachment same-tab exactly as before; the modal is a side effect on `onClick`, not a gate. The
+modal closes on `Escape`, an outside click, or the × button, and locks background scroll while
+open. Copy (`formTitle`, `formBlurb`, `formClose`) lives in `src/content/{en,ms,zh,ar}.js` under the
+`downloads` key. To change the form, update the `TALLY_FORM` constant in `Downloads.jsx`.
+
 ## Contact form (Telegram via the Worker)
 
 The floating **Contact** button (bottom-left) opens a popover with a short **message form**. The
