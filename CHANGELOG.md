@@ -24,6 +24,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-07 — mymatasan 1.85.1 (d4ad341)
+
+### Fixed
+
+- **mymatasan**: Cut a MyMataSan release carrying the motion/intrusion alert bounding-box fix. The fix itself (infra/vision/motion.go now reuses the motionBounds helper so motion and intrusion alerts populate Detection.BoundingBox and their notification/delivery-destination snapshots draw the same box+label overlay as object detections) landed in commit 451a647 but was version-scoped to core only, so the manifest bumped core without bumping the mymatasan app. That left the mymatasan tag unchanged, so no downloadable release was published. This entry bumps the mymatasan app version so the tag-triggered release workflow builds and publishes the binaries/installer the r450k site links to.
 ## 2026-07-07 — core 1.53.1 (3a63734)
 
 ### Fixed
