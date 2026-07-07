@@ -97,7 +97,7 @@ func (d *MotionDetector) Detect(ctx context.Context, frame Frame, rules []Detect
 			detections = append(detections, lineDetections...)
 			continue
 		}
-		changedRatio, _, _ := motionStats(state.previous, current, parseZones(rule.ZonePolygon), d.stride, d.pixelDelta)
+		changedRatio, motionBox, hasBox := motionBounds(state.previous, current, parseZones(rule.ZonePolygon), d.stride, d.pixelDelta)
 		confidence := math.Min(1, changedRatio*20)
 		if confidence >= rule.Threshold {
 			state.hitsByRule[rule.Id]++
@@ -123,6 +123,15 @@ func (d *MotionDetector) Detect(ctx context.Context, frame Frame, rules []Detect
 			"source":       "motion-detector",
 			"changedRatio": changedRatio,
 		})
+		// Attach a box around the changed region so the alert snapshot outlines what
+		// moved, matching object-detection alerts. Empty when no change box could be
+		// derived (BuildAlertSnapshot then just leaves the frame unannotated).
+		boundingBox := ""
+		if hasBox {
+			if raw, err := json.Marshal(motionBox); err == nil {
+				boundingBox = string(raw)
+			}
+		}
 		detections = append(detections, Detection{
 			RuleId:        rule.Id,
 			CameraId:      rule.CameraId,
@@ -130,6 +139,7 @@ func (d *MotionDetector) Detect(ctx context.Context, frame Frame, rules []Detect
 			Label:         fmt.Sprintf("Motion in %s zone", rule.DetectionType),
 			Confidence:    confidence,
 			ZonePolygon:   rule.ZonePolygon,
+			BoundingBox:   boundingBox,
 			Metadata:      string(metadata),
 		})
 	}
