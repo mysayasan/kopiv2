@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "mymatasan",
+  "summary": "Cut a MyMataSan release carrying the motion/intrusion alert bounding-box fix. The fix itself (infra/vision/motion.go now reuses the motionBounds helper so motion and intrusion alerts populate Detection.BoundingBox and their notification/delivery-destination snapshots draw the same box+label overlay as object detections) landed in commit 451a647 but was version-scoped to core only, so the manifest bumped core without bumping the mymatasan app. That left the mymatasan tag unchanged, so no downloadable release was published. This entry bumps the mymatasan app version so the tag-triggered release workflow builds and publishes the binaries/installer the r450k site links to.",
+  "compatibility": "Backward compatible, no config or schema change. Version/release-plumbing correction only; no additional code change beyond the already-merged motion bounding-box fix. Existing installs are unaffected."
+}
