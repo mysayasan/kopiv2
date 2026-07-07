@@ -23,6 +23,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-07 — core 1.53.1 (3a63734)
+
+### Fixed
+
+- **core**: Motion and intrusion alerts (rules routed to the native motion detector, including hybrid/persistent mode's useMotionIntrusion fallback) now carry a bounding box around the region that moved. infra/vision/motion.go previously computed only the changed-pixel ratio and left Detection.BoundingBox empty, so motion/intrusion notification and delivery-destination snapshots showed the raw frame with no outline even though object-detection alerts already drew one. Detect now reuses the existing motionBounds helper (shared with the Teach capture gate) to derive a tight, padded normalized box and JSON-encodes it into BoundingBox, so BuildAlertSnapshot draws the same box+label overlay for motion/intrusion alerts as it does for object detections.
 ## 2026-07-06 — mymatasan 1.85.0 (5b430f1)
 
 ### Added
