@@ -13,6 +13,7 @@ Provides the dependency-free reusable detector implementation: motion detection 
 - Compute the changed-pixel ratio inside the rule's zone(s), unioned via `pointInAnyZone`.
 - Apply rule threshold, minimum frame count, and cooldown before returning detections.
 - Emit detector metadata that includes the motion source and changed-frame ratio.
+- Compute a normalized bounding box around the changed region via `motionBounds` (defined in `teach_gate.go`, shared with the Teach capture gate) and store it as `Detection.BoundingBox` (JSON-encoded `Box`), so motion/intrusion alert notification snapshots outline what moved the same way object-detection alerts do. Left empty when no change box can be derived. Motion line-crossing detections (`buildMotionLineCrossingDetection`) do not set a bounding box; they carry the crossing line/center in `Metadata` instead.
 
 ## Multi-zone support
 

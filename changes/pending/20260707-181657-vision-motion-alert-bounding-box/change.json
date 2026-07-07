@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "core",
+  "summary": "Motion and intrusion alerts (rules routed to the native motion detector, including hybrid/persistent mode's useMotionIntrusion fallback) now carry a bounding box around the region that moved. infra/vision/motion.go previously computed only the changed-pixel ratio and left Detection.BoundingBox empty, so motion/intrusion notification and delivery-destination snapshots showed the raw frame with no outline even though object-detection alerts already drew one. Detect now reuses the existing motionBounds helper (shared with the Teach capture gate) to derive a tight, padded normalized box and JSON-encodes it into BoundingBox, so BuildAlertSnapshot draws the same box+label overlay for motion/intrusion alerts as it does for object detections.",
+  "compatibility": "Backward compatible, no config or schema change. Motion/intrusion alerts simply gain a populated BoundingBox where it was previously an empty string; the includeBoundingBox notification toggle and AI Log overlay behavior are unchanged and now apply visibly to motion-based alerts too. Motion line-crossing detections are unaffected and still carry no bounding box (they report the crossing line/center via Metadata instead). No action required for existing installs."
+}

@@ -3,6 +3,7 @@ package vision
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -43,6 +44,22 @@ func TestMotionDetectorDetectsMotionInsideZone(t *testing.T) {
 	}
 	if detections[0].RuleId != rule.Id || detections[0].CameraId != rule.CameraId {
 		t.Fatalf("unexpected detection = %#v", detections[0])
+	}
+	// The motion alert must carry a bounding box around the changed region so the
+	// notification/delivery snapshot can outline what moved (the moving block sits
+	// in the right-of-centre lower half of the 80x60 frame).
+	if detections[0].BoundingBox == "" {
+		t.Fatalf("motion detection has no BoundingBox; snapshot would show no box")
+	}
+	var box Box
+	if err := json.Unmarshal([]byte(detections[0].BoundingBox), &box); err != nil {
+		t.Fatalf("BoundingBox %q not valid JSON: %v", detections[0].BoundingBox, err)
+	}
+	if box.W <= 0 || box.H <= 0 {
+		t.Fatalf("degenerate motion box = %#v", box)
+	}
+	if box.X < 0.4 || box.Y < 0.2 {
+		t.Fatalf("motion box not over the moving region = %#v", box)
 	}
 }
 
