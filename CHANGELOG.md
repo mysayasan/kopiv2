@@ -25,6 +25,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-08 — mymatasan 1.86.0 (b6fc40a)
+
+### Added
+
+- **mymatasan**: Ships the Dashboard Intelligence analytics suite: an hourly notification rollup table (RollupMaintainer, incrementally aggregated, resumable via a persisted cursor) backs a new activity heatmap (GET /api/notifications/heatmap), an expected-activity band drawn behind the events-over-time chart (GET /api/notifications/baseline, robust median +/- k*MAD over an 8-week lookback), and an opt-in statistical anomaly monitor that scores each closed hour per camera against its own learned baseline and raises analytics.anomaly notifications for spikes or "unusual silence" (tunable sensitivity/debounce/cooldown via GET/PUT /api/anomaly/settings, previewable via GET /api/anomaly/scan). Also ships an object metadata recorder: a per-camera, searchable text log of "what objects the camera saw" (presence intervals) fed by the same AI inference the detection rules already run (no second video decode), including for cameras with no alert rules at all, searchable and linked to the covering recording segment for click-to-play (GET /api/observations, /api/observations/labels). Bundles two supporting fixes: the generic repo's page-size cap was causing the dashboard's stats/heatmap/baseline paging loops to terminate early on a short page instead of an empty one (undercounting multi-window ranges); and the factory reset's database wipe now closes the app's own DB connection pool before dropping the database (with a short removal retry), fixing a bug where the reset silently left old data behind on sqlite/Windows because the file couldn't be deleted while the process still held it open — a new ResetGate middleware also 503s other requests cleanly while a reset is in progress instead of letting them 500 against the closed pool.
 ## 2026-07-07 — mymatasan 1.85.1 (d4ad341)
 
 ### Fixed
