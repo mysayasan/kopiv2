@@ -5,9 +5,26 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
+
+// removeWithRetry deletes a file, retrying briefly on the Windows "file is in use by
+// another process" error. The caller closes the app's connection pool before the drop,
+// but the OS can take a moment to actually release the sqlite file handles after
+// database/sql's pool closes, so a couple of short retries avoids a spurious wipe
+// failure. A missing file (already gone) returns its os.IsNotExist error unchanged.
+func removeWithRetry(path string) error {
+	var err error
+	for attempt := 0; attempt < 10; attempt++ {
+		if err = os.Remove(path); err == nil || os.IsNotExist(err) {
+			return err
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return err
+}
 
 // Reset performs a destructive factory reset of the database described by opts: it
 // drops the whole database (honouring the configured engine and name), then re-runs
@@ -52,7 +69,7 @@ func dropDatabase(ctx context.Context, cfg dbsql.DbConfigModel, engine string) e
 			return nil
 		}
 		for _, p := range []string{name, name + "-wal", name + "-shm", name + "-journal"} {
-			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			if err := removeWithRetry(p); err != nil && !os.IsNotExist(err) {
 				return err
 			}
 		}

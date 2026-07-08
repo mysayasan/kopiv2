@@ -10,6 +10,7 @@ MariaDB implementation of `IDbCrud` for runtime repository operations.
 - Expose transaction lifecycle methods, including request-scoped transaction handles through `BeginScopedTx`.
 - Expose `Ping(ctx)` for readiness checks.
 - Reuse the existing SQL CRUD generation strategy used by shared repositories.
+- `Close() error` releases the underlying connection pool (`nil` if never opened) so a factory reset's `DROP DATABASE` isn't blocked by this app's own sessions. Safe to call once at shutdown/reset; the pool is unusable afterwards.
 
 ## Connection Contract
 

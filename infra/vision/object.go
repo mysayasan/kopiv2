@@ -45,6 +45,25 @@ type ObjectDetector interface {
 	DetectObjects(ctx context.Context, frame Frame) ([]ObjectCandidate, error)
 }
 
+// ObservationSink receives the full object-candidate list produced by a detection
+// pass so an app can record "what the camera saw" (metadata recording) regardless
+// of whether any alert rule matched. capturedAt is the source frame's unix second.
+// Implementations must be non-blocking and safe for concurrent calls.
+type ObservationSink interface {
+	Observe(cameraID int64, capturedAt int64, candidates []ObjectCandidate)
+}
+
+// ObservationCapable is implemented by the live-monitor detectors that can surface
+// their object candidates for metadata recording without a second video decode.
+// SetObservationSink wires the sink (call once before detection starts); ObserveOnly
+// runs a detection pass purely to emit observations, evaluating no rules — used for
+// cameras with metadata recording on but no object rules whose inference could be
+// reused (so they still get exactly one inference, not two).
+type ObservationCapable interface {
+	SetObservationSink(sink ObservationSink)
+	ObserveOnly(ctx context.Context, frame Frame) error
+}
+
 type ObjectRuleDetectorOptions struct {
 	ClassMap            map[string][]string
 	MinObjectConfidence float64
@@ -66,6 +85,9 @@ type ObjectRuleDetector struct {
 	source              string
 	byCamera            map[int64]*objectRuleState
 	now                 func() time.Time
+	// observer, when set, receives the full candidate list on every Detect/ObserveOnly
+	// pass for metadata recording. Set once before detection starts.
+	observer ObservationSink
 }
 
 func NewObjectRuleDetector(backend ObjectDetector, opts ObjectRuleDetectorOptions) *ObjectRuleDetector {
@@ -86,6 +108,14 @@ func (d *ObjectRuleDetector) Detect(ctx context.Context, frame Frame, rules []De
 	candidates, err := d.backend.DetectObjects(ctx, frame)
 	if err != nil {
 		return nil, err
+	}
+
+	// Metadata siphon: forward every candidate the model saw (not just rule matches)
+	// so the recorder logs the full picture. Emitted from the shared inference here,
+	// so a camera that already runs object rules pays nothing extra. Done before the
+	// lock — the sink is non-blocking and the candidate slice is not mutated below.
+	if d.observer != nil {
+		d.observer.Observe(frame.CameraId, frame.CapturedAt, candidates)
 	}
 
 	d.mu.Lock()
@@ -226,6 +256,29 @@ func (d *ObjectRuleDetector) Close() error {
 	if closer, ok := d.backend.(io.Closer); ok {
 		return closer.Close()
 	}
+	return nil
+}
+
+// SetObservationSink wires an observation sink so every Detect/ObserveOnly pass
+// forwards its full candidate list for metadata recording. Set once before the live
+// monitor starts; a nil sink disables observation. Implements ObservationCapable.
+func (d *ObjectRuleDetector) SetObservationSink(sink ObservationSink) {
+	d.observer = sink
+}
+
+// ObserveOnly runs object detection on a frame purely to emit observations to the
+// sink; it evaluates no rules and returns no detections. No-op when no sink is set.
+// Used for cameras with metadata recording on but no object rules to piggyback, so
+// they still get exactly one inference per sampled frame. Implements ObservationCapable.
+func (d *ObjectRuleDetector) ObserveOnly(ctx context.Context, frame Frame) error {
+	if d.observer == nil || d.backend == nil {
+		return nil
+	}
+	candidates, err := d.backend.DetectObjects(ctx, frame)
+	if err != nil {
+		return err
+	}
+	d.observer.Observe(frame.CameraId, frame.CapturedAt, candidates)
 	return nil
 }
 

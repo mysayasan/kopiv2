@@ -89,7 +89,9 @@ func (m *module) Entities() []any {
 		appentities.LocalUser{},
 		appentities.RecordingSegment{},
 		appentities.RecordingConfig{},
+		appentities.ObjectObservation{},
 		sharedentities.Notification{},
+		sharedentities.NotificationRollup{},
 	}
 }
 
@@ -112,6 +114,8 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "AI Training", Description: "custom-model training datasets and labeled images access", Path: "/api/training", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Teach", Description: "Teach-wizard camera-taught skill access", Path: "/api/teach", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Notifications", Description: "unified notification feed and live stream access", Path: "/api/notifications", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Anomaly Detection", Description: "statistical anomaly monitor settings and on-demand scan access", Path: "/api/anomaly", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Object Observations", Description: "object metadata recorder search (what objects a camera saw) access", Path: "/api/observations", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Pairing", Description: "control-plane discovery and adoption (adopt/release are crypto-authenticated)", Path: "/api/pairing", AccessTier: apiaccessenums.Public},
 	}
 
@@ -142,6 +146,21 @@ WHERE NOT EXISTS (SELECT 1 FROM api_endpoint WHERE app_code = 'mymatasan' AND ho
 		bootstrap.NewSQLSeeder("mymatasan-camera-health-backfill", []string{
 			`UPDATE camera SET last_health_check_at = 0 WHERE last_health_check_at IS NULL;`,
 			`UPDATE camera SET health_status = '' WHERE health_status IS NULL;`,
+		}),
+		// The metadata-recorder columns are added to recording_config via ALTER TABLE,
+		// which leaves existing rows NULL. The bool/int row scanner cannot read a NULL,
+		// so backfill both to their disabled defaults. The IS NULL guard makes this a
+		// no-op once applied.
+		bootstrap.NewSQLSeeder("mymatasan-recording-metadata-backfill", []string{
+			`UPDATE recording_config SET metadata_enabled = FALSE WHERE metadata_enabled IS NULL;`,
+			`UPDATE recording_config SET metadata_gap_seconds = 0 WHERE metadata_gap_seconds IS NULL;`,
+		}),
+		// Secondary indexes for the object-observation search (the ORM only emits unique
+		// indexes from struct tags). CREATE INDEX IF NOT EXISTS is valid on sqlite,
+		// postgres, and mariadb, so one statement set covers every engine.
+		bootstrap.NewSQLSeeder("mymatasan-object-observation-indexes", []string{
+			`CREATE INDEX IF NOT EXISTS ix_object_observation_camera_started ON object_observation (camera_id, started_at);`,
+			`CREATE INDEX IF NOT EXISTS ix_object_observation_label_started ON object_observation (label, started_at);`,
 		}),
 	}
 
@@ -278,8 +297,29 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// re-encoding (and playback transcode) never oversubscribes the GPU.
 	recording.SetNVENCConcurrency(recStorage.MaxConcurrentEncodes)
 	recordingService := services.NewRecordingService(recordingSegmentRepo, recordingConfigRepo, shredPasses)
+	// Metadata recorder: logs "what objects each camera saw" as searchable presence
+	// intervals, reusing the detector's inference (no second decode). The recorder is
+	// the write side (fed candidates via the detector's observation sink); the
+	// observation service is the read/maintenance side (search + footage linkage + purge).
+	objectObservationRepo := dbsql.NewGenericRepo[appentities.ObjectObservation](deps.Db)
+	metadataRecorder := services.NewMetadataRecorder(objectObservationRepo, recordingService, deps.Config.Vision.Detector.MinObjectConfidence)
+	observationService := services.NewObservationService(objectObservationRepo, recordingService)
 	notificationRepo := dbsql.NewGenericRepo[sharedentities.Notification](deps.Db)
 	notificationService := notification.NewService(notificationRepo, notificationOptionsFromAppConfig(deps.Config, deps.Logger))
+	// Incrementally aggregate the notifications feed into the hourly rollup table
+	// that powers the dashboard's baseline/anomaly analytics (Phase 0). The cursor
+	// persists the last-folded notification id so sweeps are exactly-once and the
+	// first sweep on an existing database backfills all history.
+	notificationRollupRepo := dbsql.NewGenericRepo[sharedentities.NotificationRollup](deps.Db)
+	// Enable the dashboard analytics reads (heatmap + future baselines) off the rollup.
+	notificationService.WithRollups(notificationRollupRepo)
+	notificationRollupMaintainer := notification.NewRollupMaintainer(
+		notificationRepo,
+		notificationRollupRepo,
+		services.NewRollupCursor(runtimeSettingsRepo),
+		0,
+		0,
+	)
 	notificationSettingsService := services.NewNotificationSettingsService(
 		runtimeSettingsRepo,
 		notificationService,
@@ -292,6 +332,10 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	machineHealthSettingsService := services.NewMachineHealthSettingsService(
 		runtimeSettingsRepo,
 		services.DefaultMachineHealthSettings(),
+	)
+	anomalySettingsService := services.NewAnomalySettingsService(
+		runtimeSettingsRepo,
+		services.DefaultAnomalySettings(),
 	)
 	// Load persisted notification delivery settings and apply them to the hub.
 	if err := notificationSettingsService.Sync(context.Background()); err != nil {
@@ -510,7 +554,17 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// must be registered before the session catch-all so requests match here first.
 	apis.NewPairingPublicApi(api, pairingService, enrollmentManager.Kick)
 
+	// systemResetService is built further down (after the monitors/recorder exist), but
+	// the reset gate below needs to consult it, so declare it here and read it via a
+	// closure at request time.
+	var systemResetService *services.SystemResetService
+
 	protected := api.PathPrefix("").Subrouter()
+	// Shed load with a clean 503 while a factory reset is running: the reset closes the DB
+	// pool and keeps serving through the slow free-space scrub, so DB-backed requests would
+	// otherwise 500 (including the login probe) until the restart. Runs FIRST — before auth —
+	// so a request never hits the closed database.
+	protected.Use(apis.NewResetGate(func() bool { return systemResetService != nil && systemResetService.InProgress() }))
 	protected.Use(apis.NewLocalBasicAuth(localUserService, loginGuard, loginLockoutNotifier))
 	// Non-admins are read-only (plus a small viewer allow-list); admins get full
 	// access. Registered after auth so the authenticated user is in context.
@@ -530,7 +584,9 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	pythonInstaller := services.NewPythonInstaller(deps.DataDir, deps.ConfigPath)
 	apis.NewSettingsApi(protected, settingsService, cameraService, localUserService, notificationSettingsService, healthSettingsService, machineHealthSettingsService, machineHealthMonitor, visionToolSettingsFromAppConfig(deps.Config), ffmpegInstaller, pythonInstaller, deps.Config.Decoder.BrowseRoots)
 	apis.NewRecordingApi(protected, recordingService, recorderManager, cameraService, settingsService, atrestCipher)
+	apis.NewObservationApi(protected, observationService)
 	apis.NewNotificationApi(protected, notificationService)
+	apis.NewAnomalyApi(protected, anomalySettingsService, notificationService, cameraService)
 	apis.NewCapacityApi(protected, cameraService, settingsService, machineHealthMonitor, recordingService, objectBackend)
 	apis.NewSetupApi(protected, setupStateService)
 	apis.NewPairingApi(protected, pairingService)
@@ -569,6 +625,13 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	monitorSettings.NotificationDestinations = notificationSettingsService
 	monitorSettings.Resolver = detectionClassService
 	monitorSettings.SnapshotCipher = atrestCipher
+	// Metadata recorder: wire it as the detector's observation sink (so rule cameras
+	// record metadata for free off their existing inference) and hand it to the monitor
+	// (so metadata-enabled cameras are sampled even without alert rules).
+	if oc, ok := monitorSettings.Detector.(vision.ObservationCapable); ok {
+		oc.SetObservationSink(metadataRecorder)
+	}
+	monitorSettings.Metadata = metadataRecorder
 	// Resolver for the detection-only frame stream the monitor runs when a camera
 	// has AI rules but NVR recording is off (siphon/auto). It reuses the same stream
 	// selection + credential injection + siphon params as the real recorder so the
@@ -634,6 +697,9 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 				}
 			}()
 		}
+		// The metadata recorder shares the monitor's lifecycle: it aggregates the
+		// observations the monitor feeds it and flushes open intervals on shutdown.
+		metadataRecorder.Start(monitorCtx)
 		services.NewVisionMonitor(cameraService, visionService, settingsService, monitorSettings).Start(monitorCtx)
 	}
 
@@ -648,6 +714,16 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// notifications, and runs disk mitigation (early purge + pause/resume
 	// recording). Reads its settings live, so it can be retuned without a restart.
 	machineHealthMonitor.Start(monitorCtx)
+
+	// Notification rollup maintainer: incrementally aggregates the notifications
+	// feed into the hourly rollup table for dashboard analytics. Shares the monitor
+	// lifecycle; the first sweep backfills existing history.
+	notificationRollupMaintainer.Start(monitorCtx)
+
+	// Statistical anomaly monitor: scores each closed hour against per-camera
+	// baselines (built from the rollup) and raises spike / "unusual silence" alerts.
+	// Reads its settings live and is opt-in (disabled until enabled in Settings).
+	services.NewAnalyticsMonitor(notificationService, notificationService, anomalySettingsService, cameraService).Start(monitorCtx)
 
 	// Discovery responder: answers authenticated pairing probes while the node is
 	// unpaired and a fleet key is set, then goes silent once adopted. The fleet key
@@ -682,7 +758,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// recorder exist — so its StopServices hook can quiesce them before wiping: the
 	// recorder's ffmpeg holds the live .ts segment open (and keeps writing), which
 	// otherwise leaves files behind and stalls the shred on a near-full disk.
-	systemResetService := services.NewSystemResetService(services.SystemResetConfig{
+	systemResetService = services.NewSystemResetService(services.SystemResetConfig{
 		CollectMediaPaths: resetMediaPaths,
 		ShredPasses:       shredPasses,
 		BootstrapOpts: bootstrap.Options{
@@ -709,6 +785,14 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 			if c, ok := objectBackend.(io.Closer); ok {
 				_ = c.Close() // stops the detector worker process
 			}
+		},
+		// Close our DB pool right before the wipe drops the database. Required for sqlite
+		// on Windows, where the file can't be deleted while this process holds it open.
+		CloseDatabase: func() error {
+			if c, ok := deps.Db.(io.Closer); ok {
+				return c.Close()
+			}
+			return nil
 		},
 	})
 	// Self-update: check GitHub Releases (scheduled + on demand) and, on portable/
@@ -751,15 +835,18 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	)
 	apis.NewBackupApi(protected, backupService)
 
-	// Purge expired segments once at startup, then every 6 hours.
+	// Purge expired segments and metadata observations once at startup, then every 6
+	// hours. Observation retention aligns with each camera's recording retention.
 	go func() {
 		recordingService.PurgeOldSegments(monitorCtx)
+		observationService.PurgeOldObservations(monitorCtx)
 		ticker := time.NewTicker(6 * time.Hour)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
 				recordingService.PurgeOldSegments(monitorCtx)
+				observationService.PurgeOldObservations(monitorCtx)
 			case <-monitorCtx.Done():
 				return
 			}

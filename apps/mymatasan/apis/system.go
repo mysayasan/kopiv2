@@ -18,6 +18,35 @@ type restarter interface {
 	Restart(reason string)
 }
 
+// NewResetGate short-circuits protected API requests with a clean 503 while a factory
+// reset is running. The reset closes the database pool up front, then keeps the process
+// alive through the slow free-space scrub before restarting — so without this gate every
+// DB-backed request (including the login/session probe) returns a raw 500 for the whole
+// window. Returning 503 "reset in progress" instead lets the SPA keep its reset overlay
+// up and reload once the server restarts. It runs BEFORE the auth middleware so a request
+// never touches the closed DB. The reset's own progress/state endpoints stay reachable so
+// the overlay can keep polling; /health is public (outside this subrouter) and unaffected.
+// isResetting is read per request because the reset service is created after this
+// middleware is wired.
+func NewResetGate(isResetting func() bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if isResetting != nil && isResetting() && !strings.Contains(r.URL.Path, "/system/reset") {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Retry-After", "5")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"status":  "failed",
+					"message": "factory reset in progress",
+					"code":    "reset_in_progress",
+				})
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // escrowKeyStore is the subset of atrest.KeyStore the recovery endpoints need. It stays an
 // interface so this package doesn't depend on infra/atrest and to keep the seam testable.
 type escrowKeyStore interface {

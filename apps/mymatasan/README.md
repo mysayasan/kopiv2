@@ -17,6 +17,8 @@ It is designed to run on small devices such as Raspberry Pi or Jetson-style micr
 - **Machine (host) health monitor + disk mitigation** (Settings → Machine Health): CPU/memory/disk usage sampling with debounced warn/critical notifications, an early retention purge at `purgeAtPercent`, and a last-resort action at `pauseRecordingAtPercent` — by default it **pauses** NVR recording until the disk drops below `resumePercent`; enabling **Disk Mitigation → Overwrite oldest** instead keeps recording continuous by deleting the oldest recorded segments across all cameras (bypassing per-camera retention, but never newer than the configurable keep-days floor) each time the threshold is hit, only falling back to pausing if nothing old enough remains to free.
 - **Unified notification feed** (topbar bell + Notifications page) across AI detection, camera/machine health, and login security; per-event acknowledge, annotated screenshot, and in-page clip playback.
 - **Dashboard analytics**: the landing page aggregates every notification event (AI detections, camera/machine health, login security, system) into KPI tiles plus timeseries/donut/bar charts, backed by `GET /api/notifications/stats` (Go-side aggregation, works across sqlite/postgres/mariadb) and a dependency-free `@shared/charts` SVG module. Range selector (Today/7d/30d) and live refresh off the same bell signal as the notification feed.
+- **Dashboard Intelligence** (heatmap, expected-activity band, statistical anomaly alerts): an hourly rollup table incrementally aggregated from the notification feed powers an **activity heatmap** (`GET /api/notifications/heatmap` — local day-of-week × hour-of-day grid) and an **expected-activity band** drawn behind the events-over-time chart (`GET /api/notifications/baseline` — robust median ± k·MAD, an 8-week trailing lookback). A statistical **anomaly monitor** (Settings → AI, opt-in) scores each closed hour per camera against its own learned baseline and raises a distinct `analytics.anomaly` notification for a spike or "unusual silence" (a normally-active camera going quiet — the tamper/obstruction/offline signal), tunable sensitivity/consecutive-hour debounce/cooldown, and previewable on demand (`GET /api/anomaly/scan`) before it's ever enabled.
+- **Object metadata recorder** (per camera, Recording tab): a searchable text log of "what objects this camera saw" — presence intervals (label, start/end, peak confidence/count) coalesced from the same AI inference the detection rules already run, so cameras with no rules at all can still log activity for free. Search by camera, label, or time (`GET /api/observations`, DataTable-style server-side filter/sort/paging), with each result linked to the recording segment covering it for one-click playback. Retention follows the camera's own recording retention.
 - ONVIF discovery, manual probe, saved-device list, save, camera password change, PTZ move/stop, stream option listing, selected stream URI resolution, RTSP test, WebRTC live view, MJPEG fallback, and delete endpoints under `/api/onvif`.
 - **Credential verification + access gate**: adding a discovered camera (or updating its saved credentials) verifies the login against the camera (ONVIF stream-URI resolve and/or RTSP `DESCRIBE`) before persisting — a camera that actively rejects the login is never saved, while an unreachable camera is still allowed through. `GET /api/cameras/{id}/auth-check` re-verifies a saved camera's stored credentials on demand; the camera node's UI blocks all tabs behind a credential-entry gate the moment stored credentials stop authenticating (e.g. after an out-of-band password change on the camera). The gate also offers a two-step-confirm **Remove camera** action for a camera whose new password is unknown, so it doesn't permanently lock the node out of the UI.
 - **ONVIF device management**: local user accounts (list/create/delete), reboot, factory default (soft/hard), camera clock (manual or NTP) and network (IPv4/gateway/DNS) configuration under `/api/cameras/{id}/{onvif-users,reboot,factory-default,datetime,network}`. `GET /api/cameras/{id}/capabilities` probes which of these the camera's firmware actually supports so the Settings UI only shows boxes that will work; `GET /api/cameras/{id}/device-info` surfaces manufacturer/model/firmware/serial/MAC/ONVIF version/location for the Live View → Camera Information panel.
@@ -367,9 +369,9 @@ Machine identity — the at-rest key, node pairing/enrollment, mTLS certificates
 
 ## Secure Wipe & Reset
 
-A **factory reset** returns the appliance to a clean state. Ordered so the irreversible work survives an interrupt, it: stops camera services → **destroys the at-rest encryption key (crypto-erase)** → fast-erases all media (snapshots, training data, uploads, per-camera recordings — instant unlink) → drops and rebuilds the database (schema + stock seed) → securely scrubs the freed disk space (per-volume TRIM/discard then a best-effort, time-budgeted random overwrite for HDDs) → restarts the process. It is **disabled by default** and hidden unless `bootstrap.allowReset` is `true`; it is irreversible and does not touch `config.json` (runtime settings live in the DB and reset with it). Deleted footage during normal operation is also shredded by default, controlled by the `recording.shred` config block (`enabled`, `passes`, default 3).
+A **factory reset** returns the appliance to a clean state. Ordered so the irreversible work survives an interrupt, it: stops camera services → **destroys the at-rest encryption key (crypto-erase)** → fast-erases all media (snapshots, training data, uploads, per-camera recordings — instant unlink) → closes the app's own database connection → drops and rebuilds the database (schema + stock seed) → securely scrubs the freed disk space (per-volume TRIM/discard then a best-effort, time-budgeted random overwrite for HDDs) → restarts the process. It is **disabled by default** and hidden unless `bootstrap.allowReset` is `true`; it is irreversible and does not touch `config.json` (runtime settings live in the DB and reset with it). Deleted footage during normal operation is also shredded by default, controlled by the `recording.shred` config block (`enabled`, `passes`, default 3). While a reset is running, every other API request gets a clean `503 reset in progress` instead of failing outright, since the database connection is already closed.
 
-As a security measure the wipe is **intentionally unstoppable and best-effort**: the Postgres drop uses `DROP DATABASE ... WITH (FORCE)` to evict any connection still holding the database, and the orchestrator records a stage problem (an un-erasable file, a failed key destroy, a database-wipe error) as a non-fatal *warning* rather than aborting — it always drives to a restart (which re-runs bootstrap and can finish an interrupted rebuild). The real wipe guarantees are the crypto-erase and the instant unlink; TRIM + free-space scrub are defense-in-depth (no overwrite reliably erases original cells on flash). In the UI the button lives in a **Danger Zone** on Settings → Machine Health, behind a 10-second auto-proceed countdown (cancel to stop), then a full-screen progress overlay that polls progress and reloads once the restarted server's health recovers.
+As a security measure the wipe is **intentionally unstoppable and best-effort**: the Postgres drop uses `DROP DATABASE ... WITH (FORCE)` to evict any connection still holding the database, and the orchestrator records a stage problem (an un-erasable file, a failed key destroy, a database-wipe error) as a non-fatal *warning* rather than aborting — it always drives to a restart (which re-runs bootstrap and can finish an interrupted rebuild). The real wipe guarantees are the crypto-erase and the instant unlink; TRIM + free-space scrub are defense-in-depth (no overwrite reliably erases original cells on flash) and a missing TRIM privilege (no Administrator/root) is reported as a warning, not a failure, since it doesn't affect the real guarantees. On sqlite, the database file couldn't previously be deleted on Windows because this process still held it open — the reset now closes its own connection first so the drop actually succeeds. In the UI the button lives in a **Danger Zone** on Settings → Machine Health, behind a 10-second auto-proceed countdown (cancel to stop), then a full-screen progress overlay that polls progress and reloads once the restarted server's health recovers.
 
 ```bash
 curl -u admin:Admin123 "http://localhost:3000/api/system/reset/state"      # is reset allowed?
@@ -1045,6 +1047,46 @@ Old notifications are purged automatically on the configured **Retention** (Sett
 ```bash
 curl -u admin:Admin123 -X POST "http://localhost:3000/api/notifications/purge?olderThanDays=30&onlyRead=true"
 ```
+
+### Dashboard Intelligence: heatmap, expected-activity band, anomaly alerts
+
+An hourly rollup table (`notification_rollup`), incrementally aggregated from the notification feed by a background maintainer, backs three analytics on the Dashboard without re-scanning raw history:
+
+```bash
+# Activity heatmap: local day-of-week x hour-of-day grid over the last 28 days (default)
+curl -u admin:Admin123 "http://localhost:3000/api/notifications/heatmap?tzOffset=-480"
+# Expected-activity band for the events-over-time chart (bucket=hour or day)
+curl -u admin:Admin123 "http://localhost:3000/api/notifications/baseline?bucket=hour&tzOffset=-480"
+```
+
+`cameraId=` scopes either endpoint to one camera. The baseline is a robust median ± k·MAD band (Poisson floor for sparse slots) built from the trailing 8 weeks of the same weekday+hour (or day-of-week) slot; a bucket reports `learning: true` until it has at least 2 historical samples.
+
+A **statistical anomaly monitor** (Settings → AI, **opt-in** — off until you have a few weeks of activity history) reuses the same per-camera baseline to score each closed hour and raise a distinct `analytics.anomaly` notification for a spike or "unusual silence" (a normally-active camera going quiet — the tamper/obstruction/offline signal that a plain motion/AI rule can't catch):
+
+```bash
+curl -u admin:Admin123 "http://localhost:3000/api/anomaly/settings"
+curl -u admin:Admin123 -X PUT -H "Content-Type: application/json" \
+  -d '{"enabled":true,"sensitivity":3.0,"detectHigh":true,"detectLow":true,"minActivity":3,"requireConsecutive":1,"cooldownHours":6,"checkIntervalMs":300000}' \
+  "http://localhost:3000/api/anomaly/settings"
+# Preview what would alert right now, without waiting for the background monitor or affecting its debounce/cooldown state
+curl -u admin:Admin123 "http://localhost:3000/api/anomaly/scan"
+```
+
+`sensitivity` (k, 1.0–6.0, default 3.0 — lower is more sensitive) sets the band half-width; `minActivity` keeps genuinely-quiet hours from being flagged as "unusual silence"; `requireConsecutive` debounces one-off blips and `cooldownHours` prevents a sustained anomaly from alerting every hour.
+
+### Object metadata recorder
+
+Per camera (Recording tab → **Object metadata recording**), a searchable text log of "what objects this camera saw" — presence intervals coalesced from the same AI inference the detection rules already run (a metadata-only camera with no rules still gets exactly one inference pass per sample, no extra decode):
+
+```bash
+curl -u admin:Admin123 -X PUT -H "Content-Type: application/json" \
+  -d '{"cameraId":1,"metadataEnabled":true,"metadataGapSeconds":5}' \
+  "http://localhost:3000/api/recording/config"
+curl -u admin:Admin123 "http://localhost:3000/api/observations?cameraId=1&limit=50"
+curl -u admin:Admin123 "http://localhost:3000/api/observations/labels?cameraId=1"
+```
+
+Each result is enriched with the recording segment covering it (`segmentId`, `segmentCodec`, `seekSeconds`) for one-click playback. `metadataGapSeconds` (default ~5s) is how long a label may go unseen before its interval closes — a brief occlusion or dropped frame doesn't split one presence into many rows. Retention follows the camera's own recording `retentionDays` (30-day fallback for metadata-only cameras).
 
 ### Outbound delivery destinations
 

@@ -128,10 +128,12 @@ func (s *recordingService) SaveConfig(ctx context.Context, req SaveRecordingConf
 		StoragePath:       strings.TrimSpace(req.StoragePath),
 		RetentionDays:     req.RetentionDays,
 		SegmentMinutes:    req.SegmentMinutes,
-		LiveStreamUrl:     strings.TrimSpace(req.LiveStreamUrl),
-		StreamURL:         strings.TrimSpace(req.StreamURL),
-		FallbackStreamUrl: strings.TrimSpace(req.FallbackStreamUrl),
-		UpdatedAt:         now,
+		LiveStreamUrl:      strings.TrimSpace(req.LiveStreamUrl),
+		StreamURL:          strings.TrimSpace(req.StreamURL),
+		FallbackStreamUrl:  strings.TrimSpace(req.FallbackStreamUrl),
+		MetadataEnabled:    req.MetadataEnabled,
+		MetadataGapSeconds: req.MetadataGapSeconds,
+		UpdatedAt:          now,
 	}
 
 	if existing != nil {

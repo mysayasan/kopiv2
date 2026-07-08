@@ -165,10 +165,10 @@ The app can redirect to the setup page when bootstrap mode is active.
 1. **Drops the whole database**, honouring the configured engine:
    - **postgres** — best-effort `pg_terminate_backend` of other sessions (errors ignored), then `DROP DATABASE IF EXISTS <db> WITH (FORCE)` so any remaining connection is evicted (PG13+); falls back to a plain `DROP DATABASE` for older servers.
    - **mariadb** — `DROP DATABASE IF EXISTS <db>`.
-   - **sqlite** — deletes the database file and its `-wal` / `-shm` / `-journal` sidecars.
+   - **sqlite** — deletes the database file and its `-wal` / `-shm` / `-journal` sidecars, via `removeWithRetry` (a few short retries on a lingering Windows "file in use" error, since the OS can take a moment to release handles after the caller closes its connection pool).
 2. **Re-runs `Ensure()`** with the create/migrate/seed flags forced on, recreating the schema and re-seeding stock data from a clean slate.
 
-The caller stops anything holding a connection/file handle first and restarts the process afterwards (the live connection pool is invalid once the database is dropped). In `mymatasan` this is orchestrated by `services.SystemResetService` (shred media → `Reset` → restart via `apphost.Restarter`) behind `POST /api/system/reset`. The reset is best-effort: a wipe error is reported as a warning and the process still restarts, which re-runs bootstrap and can complete an interrupted rebuild.
+The caller stops anything holding a connection/file handle first and restarts the process afterwards (the live connection pool is invalid once the database is dropped). In `mymatasan` this is orchestrated by `services.SystemResetService` (shred media → close its own DB pool via `SystemResetConfig.CloseDatabase`, now implemented by all three `IDbCrud` engines — required on sqlite/Windows, where the file can't otherwise be deleted while the process holds it open → `Reset` → restart via `apphost.Restarter`) behind `POST /api/system/reset`; a `ResetGate` middleware 503s other requests while `InProgress()`, since the DB pool is already closed at that point. The reset is best-effort: a wipe error is reported as a warning and the process still restarts, which re-runs bootstrap and can complete an interrupted rebuild.
 
 ## Config Proposal
 

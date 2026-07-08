@@ -13,6 +13,13 @@ type RecordingConfig struct {
 	LiveStreamUrl     string `json:"liveStreamUrl" form:"liveStreamUrl" query:"liveStreamUrl"`
 	StreamURL         string `json:"streamUrl" form:"streamUrl" query:"streamUrl"`
 	FallbackStreamUrl string `json:"fallbackStreamUrl" form:"fallbackStreamUrl" query:"fallbackStreamUrl"`
-	CreatedAt         int64  `json:"createdAt" form:"createdAt" query:"createdAt"`
+	// MetadataEnabled turns on the object metadata recorder for this camera: a text
+	// log of what objects the camera saw, on the recording timeline and searchable
+	// (see services.MetadataRecorder). Independent of NVR recording, but aligns with
+	// it when both are on. MetadataGapSeconds is the absence window that closes a
+	// presence interval (0 = default).
+	MetadataEnabled    bool  `json:"metadataEnabled" form:"metadataEnabled" query:"metadataEnabled"`
+	MetadataGapSeconds int   `json:"metadataGapSeconds" form:"metadataGapSeconds" query:"metadataGapSeconds"`
+	CreatedAt          int64 `json:"createdAt" form:"createdAt" query:"createdAt"`
 	UpdatedAt         int64  `json:"updatedAt" form:"updatedAt" query:"updatedAt"`
 }

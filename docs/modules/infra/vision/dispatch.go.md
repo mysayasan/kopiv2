@@ -10,6 +10,7 @@ Routes detection rules between object and motion detector implementations.
 - Run object-backed rules through a semantic detector implementation.
 - Run motion-backed rules through the reusable motion detector.
 - Merge detections into one result list for the monitor.
+- Implements `ObservationCapable` by delegating to the underlying object detector: `SetObservationSink` forwards the sink so object candidates are recorded for the metadata recorder even though dispatch itself only routes rules; `ObserveOnly` forwards to the object detector's observe-only pass so a metadata-only camera (no object rules, so dispatch never calls `object.Detect`) still gets exactly one inference with its candidates recorded.
 
 ## Notes
 
@@ -17,3 +18,4 @@ Routes detection rules between object and motion detector implementations.
 - MyMataSan can also use this for `persistent` YOLO mode when `intrusion` should stay motion-based.
 - If a detector side is not configured, rules assigned to that side produce no detections rather than failing the whole monitor tick.
 - If a routed detector implements `io.Closer`, shutdown closes it through this wrapper.
+- `ObservationCapable` methods are no-ops (`SetObservationSink`) or return `nil` (`ObserveOnly`) when the underlying object detector doesn't implement the interface.

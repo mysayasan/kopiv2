@@ -22,6 +22,13 @@ func (f *fakeStatsRepo) Get(_ context.Context, _ string, limit, offset uint64, _
 	if offset >= total {
 		return nil, total, nil
 	}
+	// Emulate the real repo's hard 100-row-per-query cap (tiny here) so fetchWindow
+	// must page by offset to cover the window; a loop that trusts a short page would
+	// read only the first page and undercount.
+	const hardCap = uint64(2)
+	if limit > hardCap {
+		limit = hardCap
+	}
 	end := offset + limit
 	if end > total {
 		end = total

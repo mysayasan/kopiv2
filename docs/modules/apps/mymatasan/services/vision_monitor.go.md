@@ -9,6 +9,7 @@ Runs the MyMataSan background vision monitor that samples saved cameras and pers
 - Poll detection rules on a configured fixed interval.
 - Filter disabled rules, invalid camera IDs, and rules whose `schedulePolicy` is inactive.
 - Group active rules by camera to avoid unnecessary frame captures.
+- When `VisionMonitorSettings.Metadata` (a `*MetadataRecorder`) is set, sample the union of rule-bearing cameras and metadata-enabled cameras (`MetadataRecorder.EnabledCameras`) — a camera with metadata recording on but no alert rules is still captured and its frames run through an observe-only inference pass (`vision.ObservationCapable.ObserveOnly`) so the recorder logs what it saw; `MetadataRecorder.Observed` prevents a frame from being inferred twice when a rule `Detect` already ran on it. Metadata-only cameras write no alert snapshots (no rules, no detections to accompany).
 - Capture JPEG frames from the saved RTSP URI when available, otherwise from the ONVIF snapshot URI.
 - Forward every captured JPEG frame to the `recording.Manager` via `WriteFrame` so the ring buffer stays populated for pre-roll capture.
 - Run the configured reusable `infra/vision` detector against each captured frame and active camera rule set.

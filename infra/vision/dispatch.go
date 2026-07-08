@@ -63,6 +63,25 @@ func (d *DispatchDetector) Detect(ctx context.Context, frame Frame, rules []Dete
 	return detections, nil
 }
 
+// SetObservationSink forwards the sink to the underlying object detector so object
+// candidates are recorded for metadata even though dispatch itself only routes rules.
+// Implements ObservationCapable.
+func (d *DispatchDetector) SetObservationSink(sink ObservationSink) {
+	if oc, ok := d.object.(ObservationCapable); ok {
+		oc.SetObservationSink(sink)
+	}
+}
+
+// ObserveOnly delegates to the object detector's observation pass, so a metadata-only
+// camera (no object rules, hence dispatch never calls object.Detect) still gets one
+// inference and its candidates recorded. Implements ObservationCapable.
+func (d *DispatchDetector) ObserveOnly(ctx context.Context, frame Frame) error {
+	if oc, ok := d.object.(ObservationCapable); ok {
+		return oc.ObserveOnly(ctx, frame)
+	}
+	return nil
+}
+
 func (d *DispatchDetector) Close() error {
 	var result error
 	if closer, ok := d.object.(io.Closer); ok {

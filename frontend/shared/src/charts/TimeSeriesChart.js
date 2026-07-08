@@ -9,12 +9,28 @@ import './charts.css';
 // bar reveals a tooltip with the per-category breakdown. `categories` is the
 // ordered key list (stacking order); `formatX` renders a bucket start (unix s)
 // as an axis tick; `label` maps a category key to a display name.
-export function TimeSeriesChart({ buckets, categories, formatX, label, emptyText }) {
+//
+// `band` (optional) is the expected-activity envelope aligned to the same buckets:
+// [{ start, lo, hi, mid, learning }]. It draws behind the bars as a translucent
+// range with a dashed median, and buckets whose total falls outside [lo, hi] get a
+// breach marker (amber = unusually quiet, red = unusually high). Learning buckets
+// (too little history) draw no band.
+export function TimeSeriesChart({ buckets, categories, formatX, label, emptyText, band }) {
   const t = useT();
   const [hover, setHover] = useState(-1);
   const data = buckets || [];
   const cats = categories && categories.length ? categories : ['total'];
   const maxTotal = data.reduce((m, b) => Math.max(m, b.total || 0), 0);
+
+  // Index the expected band by bucket start and find its ceiling so the y-axis
+  // includes the whole band even when it rises above the tallest bar.
+  const bandByStart = {};
+  let bandMax = 0;
+  (band || []).forEach((x) => {
+    bandByStart[x.start] = x;
+    if (!x.learning && x.hi > bandMax) bandMax = x.hi;
+  });
+  const hasBand = (band || []).some((x) => !x.learning);
 
   if (data.length === 0 || maxTotal === 0) {
     return <div className="chart-empty">{emptyText != null ? emptyText : t('common.noData')}</div>;
@@ -29,7 +45,7 @@ export function TimeSeriesChart({ buckets, categories, formatX, label, emptyText
   const padB = 28;
   const plotW = W - padL - padR;
   const plotH = H - padT - padB;
-  const yMax = niceMax(maxTotal);
+  const yMax = niceMax(Math.max(maxTotal, bandMax));
   const n = data.length;
   const slot = plotW / n;
   const barW = Math.max(2, Math.min(slot * 0.7, 40));
@@ -46,6 +62,7 @@ export function TimeSeriesChart({ buckets, categories, formatX, label, emptyText
   const tickEvery = Math.max(1, Math.ceil(n / 8));
 
   const hovered = hover >= 0 ? data[hover] : null;
+  const hoveredBand = hovered ? bandByStart[hovered.start] : null;
 
   return (
     <div className="ts-wrap">
@@ -59,6 +76,10 @@ export function TimeSeriesChart({ buckets, categories, formatX, label, emptyText
         {data.map((b, i) => {
           const cx = padL + slot * i + slot / 2;
           const x = cx - barW / 2;
+          const bd = bandByStart[b.start];
+          const showBand = bd && !bd.learning;
+          const breachHigh = showBand && b.total > bd.hi;
+          const breachLow = showBand && b.total < bd.lo;
           let yCursor = padT + plotH;
           return (
             <g
@@ -68,6 +89,25 @@ export function TimeSeriesChart({ buckets, categories, formatX, label, emptyText
             >
               {/* Full-slot hit area so hover works even on empty buckets. */}
               <rect x={padL + slot * i} y={padT} width={slot} height={plotH} fill="transparent" />
+              {/* Expected-range band + median, behind the bars. */}
+              {showBand ? (
+                <rect
+                  className="ts-band"
+                  x={padL + slot * i + slot * 0.1}
+                  y={yFor(bd.hi)}
+                  width={slot * 0.8}
+                  height={Math.max(0.5, yFor(bd.lo) - yFor(bd.hi))}
+                />
+              ) : null}
+              {showBand ? (
+                <line
+                  className="ts-band-mid"
+                  x1={padL + slot * i + slot * 0.1}
+                  y1={yFor(bd.mid)}
+                  x2={padL + slot * i + slot * 0.9}
+                  y2={yFor(bd.mid)}
+                />
+              ) : null}
               {cats.map((cat, ci) => {
                 const v = (b.byCategory && b.byCategory[cat]) || 0;
                 if (v <= 0) return null;
@@ -86,6 +126,9 @@ export function TimeSeriesChart({ buckets, categories, formatX, label, emptyText
                   />
                 );
               })}
+              {/* Breach marker on top: red = unusually high, amber = unusually quiet. */}
+              {breachHigh ? <circle className="ts-breach-high" cx={cx} cy={yFor(b.total) - 6} r={3.2} /> : null}
+              {breachLow ? <circle className="ts-breach-low" cx={cx} cy={yFor(Math.max(b.total, 0)) - 6} r={3.2} /> : null}
               {i % tickEvery === 0 ? (
                 <text x={cx} y={H - 8} className="ts-xtick" textAnchor="middle">{formatX(b.start)}</text>
               ) : null}
@@ -110,6 +153,13 @@ export function TimeSeriesChart({ buckets, categories, formatX, label, emptyText
               </div>
             ))}
           <div className="ts-tt-total">{t('common.total')} {hovered.total}</div>
+          {hoveredBand && !hoveredBand.learning ? (
+            <div className="ts-tt-band">
+              {t('charts.expected')} {Math.round(hoveredBand.lo)}–{Math.round(hoveredBand.hi)}
+              {hovered.total > hoveredBand.hi ? ` · ${t('charts.unusualHigh')}` : ''}
+              {hovered.total < hoveredBand.lo ? ` · ${t('charts.unusualLow')}` : ''}
+            </div>
+          ) : null}
         </div>
       ) : null}
       <ul className="chart-legend ts-legend">
@@ -119,6 +169,12 @@ export function TimeSeriesChart({ buckets, categories, formatX, label, emptyText
             <span className="legend-key">{label ? label(cat) : cat}</span>
           </li>
         ))}
+        {hasBand ? (
+          <li>
+            <span className="legend-swatch ts-band-swatch" />
+            <span className="legend-key">{t('charts.expected')}</span>
+          </li>
+        ) : null}
       </ul>
     </div>
   );

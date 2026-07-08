@@ -4688,6 +4688,11 @@ dd {
   gap: 14px;
 }
 
+/* Sub-tab bar inside the Recordings panel (Footage | Object search). */
+.recording-subtabs {
+  margin-bottom: 14px;
+}
+
 .recording-config-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4703,6 +4708,60 @@ dd {
 .field-label span {
   font-weight: 600;
   color: var(--text-secondary);
+}
+
+/* Object metadata recorder: a grouped sub-section inside the Recording config form,
+   set off with a subtle surface + border so its toggle, hint, and gap field read as
+   one feature distinct from the NVR recording controls above it. */
+.metadata-recorder-field {
+  margin-top: 4px;
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  display: grid;
+  gap: 10px;
+}
+
+/* Quick-filter bar above the object-search table: a little breathing room below it. */
+.object-search-bar {
+  margin-bottom: 12px;
+}
+
+.metadata-recorder-toggle {
+  font-weight: 600;
+  align-items: center;
+}
+
+.metadata-recorder-hint {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.metadata-recorder-gap {
+  max-width: 200px;
+}
+
+/* Shown in the Recordings search panel when metadata recording is off for the camera:
+   explains why there is nothing to search and links to the AI Detection tab. */
+.metadata-disabled-notice {
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+  padding: 16px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+
+.metadata-disabled-notice p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
 }
 
 .segment-list {
@@ -5949,6 +6008,44 @@ button .btn-icon {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* Anomaly detection card (dashboard). */
+.anomaly-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ui-text, #1f2937);
+  cursor: pointer;
+}
+.anomaly-body { display: flex; flex-direction: column; gap: 12px; }
+.anomaly-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.anomaly-field { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ui-muted, #64748b); }
+.anomaly-field select { padding: 4px 8px; }
+.anomaly-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ui-text, #1f2937); cursor: pointer; }
+.anomaly-hint { font-size: 13px; color: var(--ui-muted, #64748b); margin: 0; }
+.anomaly-ok { color: var(--ui-success, #10b981); }
+.anomaly-findings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.anomaly-findings li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--ui-border, #e5e7eb);
+}
+.anomaly-findings li.is-high { border-left: 3px solid var(--ui-danger, #ef4444); }
+.anomaly-findings li.is-low { border-left: 3px solid #d97706; }
+.anomaly-findings li svg { color: var(--ui-muted, #64748b); flex-shrink: 0; }
+.anomaly-f-name { font-weight: 600; color: var(--ui-text, #1f2937); }
+.anomaly-f-desc { color: var(--ui-muted, #64748b); }
 
 
 /* Two-way audio (talk-back): mic button in live view, beside the speaker/mute. */

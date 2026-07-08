@@ -13,6 +13,7 @@ SQLite implementation of `IDbCrud`.
 - Execute ping checks via `Ping(ctx)`.
 - Handle transaction lifecycle, including request-scoped transaction handles through `BeginScopedTx`.
 - Build SQL fragments for joins, filters, sorting, and columns.
+- `Close() error` releases the underlying `*sql.DB` pool (and with it the sqlite file handles), returning `nil` if the pool was never opened. Safe to call once at shutdown/reset — needed so a factory reset can delete the database file on Windows, which refuses removal while this process still holds it open (see `infra/db/bootstrap/reset.go`'s `removeWithRetry`).
 
 ## Connection Contract
 

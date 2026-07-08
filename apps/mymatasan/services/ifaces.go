@@ -253,6 +253,11 @@ type VisionMonitorSettings struct {
 	// so the monitor reuses the exact stream/credential/ffmpeg resolution as the
 	// recorder. When nil, the monitor never starts detection-only streams.
 	DetectStreamConfig func(ctx context.Context, cameraID int64) (recording.RecorderConfig, bool)
+	// Metadata, when set, records "what objects each camera saw" as presence intervals
+	// (the metadata recorder). The monitor samples metadata-enabled cameras even when
+	// they have no alert rules, and runs a dedicated observe pass only for frames whose
+	// inference wasn't already shared with a rule detection. nil disables it.
+	Metadata *MetadataRecorder
 }
 
 // INotificationDestinationsProvider supplies the configured delivery destinations
@@ -518,6 +523,10 @@ type SaveRecordingConfigRequest struct {
 	LiveStreamUrl     string `json:"liveStreamUrl"`
 	StreamURL         string `json:"streamUrl"`
 	FallbackStreamUrl string `json:"fallbackStreamUrl"`
+	// MetadataEnabled toggles the object metadata recorder for this camera;
+	// MetadataGapSeconds overrides the presence-interval close window (0 = default).
+	MetadataEnabled    bool `json:"metadataEnabled"`
+	MetadataGapSeconds int  `json:"metadataGapSeconds"`
 }
 
 // IRecordingService manages per-camera recording configs and saved video segments.
@@ -643,6 +652,8 @@ type INotificationService interface {
 	INotificationPublisher
 	List(ctx context.Context, limit, offset uint64, cameraId int64, unreadOnly bool, category, source string) ([]*sharedentities.Notification, uint64, error)
 	Stats(ctx context.Context, from, to, bucketSeconds, tzOffsetSec int64) (*notification.Stats, error)
+	Heatmap(ctx context.Context, from, to, cameraId, tzOffsetSec int64) (*notification.Heatmap, error)
+	Baseline(ctx context.Context, from, to, bucketSeconds, tzOffsetSec, cameraId int64) (*notification.Baseline, error)
 	MarkRead(ctx context.Context, id uint64, userId int64) (*sharedentities.Notification, error)
 	MarkReadByRef(ctx context.Context, refType string, refId int64, userId int64) (int, error)
 	Purge(ctx context.Context, olderThan int64, onlyRead bool) (int, error)
@@ -674,6 +685,13 @@ type IHealthSettingsService interface {
 type IMachineHealthSettingsService interface {
 	Get(ctx context.Context) (MachineHealthSettings, error)
 	Save(ctx context.Context, settings MachineHealthSettings) (MachineHealthSettings, error)
+}
+
+// IAnomalySettingsService reads and persists the statistical anomaly monitor's
+// runtime configuration.
+type IAnomalySettingsService interface {
+	Get(ctx context.Context) (AnomalySettings, error)
+	Save(ctx context.Context, settings AnomalySettings) (AnomalySettings, error)
 }
 
 // IMachineMetricsProvider returns a one-shot snapshot of current host metrics,

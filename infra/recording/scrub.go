@@ -36,18 +36,42 @@ func TrimVolume(ctx context.Context, path string) error {
 		procutil.HideWindow(trim)
 		out, err := trim.CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("Optimize-Volume: %v: %s", err, strings.TrimSpace(string(out)))
+			detail := strings.TrimSpace(string(out))
+			// TRIM via Optimize-Volume needs elevation; without it PowerShell returns
+			// "Access denied" (StorageWMI 40001). Report that plainly instead of dumping
+			// the whole CIM stack trace — the free-space overwrite that follows still runs,
+			// and crypto-erase already made the data unrecoverable.
+			if isAccessDenied(detail) {
+				return fmt.Errorf("TRIM requires Administrator privileges; skipped (crypto-erase + free-space overwrite still applied)")
+			}
+			return fmt.Errorf("Optimize-Volume: %v: %s", err, detail)
 		}
 		return nil
 	case "linux":
 		out, err := exec.CommandContext(ctx, "fstrim", path).CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("fstrim: %v: %s", err, strings.TrimSpace(string(out)))
+			detail := strings.TrimSpace(string(out))
+			if isAccessDenied(detail) {
+				return fmt.Errorf("TRIM requires root privileges; skipped (crypto-erase + free-space overwrite still applied)")
+			}
+			return fmt.Errorf("fstrim: %v: %s", err, detail)
 		}
 		return nil
 	default:
 		return nil // darwin: automatic TRIM; other OSes: no portable command, skip
 	}
+}
+
+// isAccessDenied reports whether a command's output indicates a permission/elevation
+// failure (Windows Optimize-Volume without admin, or a Unix EACCES from fstrim).
+func isAccessDenied(detail string) bool {
+	lower := strings.ToLower(detail)
+	for _, needle := range []string{"access denied", "access is denied", "permissiondenied", "40001", "permission denied", "operation not permitted"} {
+		if strings.Contains(lower, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 // scrubBufferSize is the chunk written when filling free space.

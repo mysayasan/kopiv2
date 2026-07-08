@@ -84,6 +84,14 @@ type SystemResetConfig struct {
 	// It must be safe to call once; the app's normal shutdown may close the same things
 	// again. Optional but strongly recommended.
 	StopServices func()
+	// CloseDatabase closes the app's own database connection pool right before the wipe
+	// drops the database. This is REQUIRED for a sqlite database on Windows: the file
+	// can't be deleted while this process still holds it open ("The process cannot access
+	// the file because it is being used by another process"), so without it the DB wipe
+	// silently fails and old data survives the reset. For postgres/mariadb it lets the
+	// DROP proceed without the app's sessions blocking it. The pool is invalid afterwards,
+	// but the reset restarts the process immediately. Optional but strongly recommended.
+	CloseDatabase func() error
 }
 
 // SystemResetService performs a destructive factory reset: securely shred all media,
@@ -110,6 +118,19 @@ func (s *SystemResetService) Progress() ResetProgress {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.progress
+}
+
+// InProgress reports whether a factory reset is currently running. While it is, the app
+// has closed its database pool and is finishing the (slow) free-space scrub before
+// restarting, so DB-backed requests would fail — callers use this to shed load with a
+// clean 503 instead of raw 500s.
+func (s *SystemResetService) InProgress() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Stay "in progress" through the restarting stage too: run() flips Running to false
+	// ~1.5s before the process actually relaunches, but the DB pool is already closed, so
+	// the gate must keep shedding load until this process dies. A fresh process starts idle.
+	return s.progress.Running || s.progress.Stage == ResetRestarting
 }
 
 // Start kicks off the reset in the background. It errors if reset is disabled or one
@@ -193,6 +214,14 @@ func (s *SystemResetService) run() {
 
 	// 2. Reset the database + factory defaults — guaranteed before the slow scrub.
 	s.set(ResetWipingDB, 50, "Wiping database & restoring factory defaults…")
+	// Close our own connection pool first so the drop can proceed. For sqlite on Windows
+	// the file is otherwise locked by this process and can't be removed, so the wipe would
+	// silently fail and old data would survive the reset.
+	if s.cfg.CloseDatabase != nil {
+		if err := s.cfg.CloseDatabase(); err != nil {
+			s.warn(fmt.Sprintf("could not close the database before wiping it: %v", err))
+		}
+	}
 	if _, err := bootstrap.Reset(ctx, s.cfg.BootstrapOpts); err != nil {
 		s.warn(fmt.Sprintf("database wipe reported an error (restarting to retry the rebuild): %v", err))
 	}
