@@ -191,7 +191,12 @@ func (s *Service) fetchWindow(ctx context.Context, lo, hi int64) ([]*entities.No
 		}
 		all = append(all, page...)
 		offset += uint64(len(page))
-		if len(page) < statsPageSize || offset >= total || len(all) >= statsMaxRows {
+		// The generic repo caps every query at 100 rows regardless of the requested
+		// limit, so a short page is NOT the drained signal — page by offset until the
+		// reported total is covered. (A `len(page) < statsPageSize` check here read only
+		// the first 100 rows, undercounting the dashboard and, for multi-window ranges,
+		// dropping the whole current window into the previous one — total 0.)
+		if len(page) == 0 || offset >= total || len(all) >= statsMaxRows {
 			break
 		}
 	}

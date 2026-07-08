@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useT } from '@shared/i18n';
-import { StatCard, DonutChart, BarChart, TimeSeriesChart, ChartCard } from '@shared/charts';
+import { StatCard, DonutChart, BarChart, TimeSeriesChart, Heatmap, ChartCard } from '@shared/charts';
 import { Ico } from './icons';
 import {
   apiBase,
@@ -45,6 +45,19 @@ export function DashboardTab({ authHeader, saved, refreshSignal, onMessage }) {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
+  // The activity heatmap has its own camera scope (0 = all) and a fixed 28-day
+  // window: a stable weekly rhythm needs weeks of history regardless of the KPI
+  // range above.
+  const [heatCamera, setHeatCamera] = useState(0);
+  const [heatmap, setHeatmap] = useState(null);
+  // Expected-activity band for the events-over-time chart, aligned to the same
+  // range/bucket as the KPI stats above.
+  const [baseline, setBaseline] = useState(null);
+  // Statistical anomaly monitor: its runtime config + an on-demand "scan last hour"
+  // preview of what it would flag with the current sensitivity.
+  const [anomalyCfg, setAnomalyCfg] = useState(null);
+  const [anomalyFindings, setAnomalyFindings] = useState(null);
+  const [anomalyScanning, setAnomalyScanning] = useState(false);
 
   const fetchStats = useCallback(async () => {
     setLoading(true);
@@ -74,9 +87,113 @@ export function DashboardTab({ authHeader, saved, refreshSignal, onMessage }) {
     }
   }, [range, authHeader, onMessage, t]);
 
+  // The heatmap fetch is independent of the KPI range and camera-scoped. It is
+  // supplementary, so a failure is swallowed rather than blocking the dashboard.
+  const fetchHeatmap = useCallback(async () => {
+    try {
+      const to = Math.floor(Date.now() / 1000);
+      const from = to - 28 * 86400;
+      const tzOffset = -new Date().getTimezoneOffset();
+      const params = new URLSearchParams({ from: String(from), to: String(to), tzOffset: String(tzOffset) });
+      if (heatCamera > 0) params.set('cameraId', String(heatCamera));
+      const headers = authHeader ? { Authorization: authHeader } : {};
+      const resp = await fetch(`${apiBase()}/api/notifications/heatmap?${params}`, { credentials: 'include', headers, cache: 'no-store' });
+      if (!resp.ok) throw new Error(`${resp.status}`);
+      const payload = await resp.json();
+      const result = payload?.data?.result ?? payload?.result ?? payload;
+      setHeatmap(result);
+    } catch (_) {
+      setHeatmap(null);
+    }
+  }, [heatCamera, authHeader]);
+
+  // The expected-activity band tracks the same range/bucket as the KPI stats so it
+  // overlays the events-over-time chart cleanly. Supplementary → failure is swallowed.
+  const fetchBaseline = useCallback(async () => {
+    try {
+      const { from, to, bucket } = resolveWindow(range);
+      const tzOffset = -new Date().getTimezoneOffset();
+      const params = new URLSearchParams({ from: String(from), to: String(to), bucket, tzOffset: String(tzOffset) });
+      const headers = authHeader ? { Authorization: authHeader } : {};
+      const resp = await fetch(`${apiBase()}/api/notifications/baseline?${params}`, { credentials: 'include', headers, cache: 'no-store' });
+      if (!resp.ok) throw new Error(`${resp.status}`);
+      const payload = await resp.json();
+      const result = payload?.data?.result ?? payload?.result ?? payload;
+      setBaseline(result);
+    } catch (_) {
+      setBaseline(null);
+    }
+  }, [range, authHeader]);
+
   useEffect(() => {
     fetchStats();
   }, [fetchStats]);
+
+  useEffect(() => {
+    fetchHeatmap();
+  }, [fetchHeatmap]);
+
+  useEffect(() => {
+    fetchBaseline();
+  }, [fetchBaseline]);
+
+  const authFetch = useCallback((path, opts = {}) => {
+    const headers = { ...(opts.headers || {}) };
+    if (authHeader) headers.Authorization = authHeader;
+    return fetch(`${apiBase()}${path}`, { credentials: 'include', cache: 'no-store', ...opts, headers });
+  }, [authHeader]);
+
+  const fetchAnomalyCfg = useCallback(async () => {
+    try {
+      const resp = await authFetch('/api/anomaly/settings');
+      if (!resp.ok) throw new Error(`${resp.status}`);
+      const payload = await resp.json();
+      setAnomalyCfg(payload?.data?.result ?? payload?.result ?? payload);
+    } catch (_) {
+      setAnomalyCfg(null);
+    }
+  }, [authFetch]);
+
+  useEffect(() => {
+    fetchAnomalyCfg();
+  }, [fetchAnomalyCfg]);
+
+  // Persist a partial change to the anomaly config (optimistic; re-syncs from the
+  // normalized server response).
+  const saveAnomalyCfg = useCallback(async (patch) => {
+    if (!anomalyCfg) return;
+    const next = { ...anomalyCfg, ...patch };
+    setAnomalyCfg(next);
+    try {
+      const resp = await authFetch('/api/anomaly/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(next),
+      });
+      if (!resp.ok) throw new Error(`${resp.status}`);
+      const payload = await resp.json();
+      setAnomalyCfg(payload?.data?.result ?? payload?.result ?? next);
+    } catch (_) {
+      if (onMessage) onMessage(t('dash.anomalySaveFailed'), 'error');
+    }
+  }, [anomalyCfg, authFetch, onMessage, t]);
+
+  const runAnomalyScan = useCallback(async () => {
+    setAnomalyScanning(true);
+    try {
+      const tzOffset = -new Date().getTimezoneOffset();
+      const resp = await authFetch(`/api/anomaly/scan?tzOffset=${tzOffset}`);
+      if (!resp.ok) throw new Error(`${resp.status}`);
+      const payload = await resp.json();
+      const result = payload?.data?.result ?? payload?.result ?? payload;
+      setAnomalyFindings(result?.findings || []);
+    } catch (_) {
+      setAnomalyFindings([]);
+      if (onMessage) onMessage(t('dash.anomalyScanFailed'), 'error');
+    } finally {
+      setAnomalyScanning(false);
+    }
+  }, [authFetch, onMessage, t]);
 
   // Live refresh when the bell feed changes, debounced so a burst of arrivals
   // triggers a single refetch.
@@ -86,9 +203,9 @@ export function DashboardTab({ authHeader, saved, refreshSignal, onMessage }) {
     if (refreshSignal === lastSignalRef.current) return undefined;
     lastSignalRef.current = refreshSignal;
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(fetchStats, 1500);
+    debounceRef.current = setTimeout(() => { fetchStats(); fetchHeatmap(); fetchBaseline(); }, 1500);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [refreshSignal, fetchStats]);
+  }, [refreshSignal, fetchStats, fetchHeatmap, fetchBaseline]);
 
   // Camera id → display name from the saved cameras list.
   const cameraNames = useMemo(() => {
@@ -111,6 +228,14 @@ export function DashboardTab({ authHeader, saved, refreshSignal, onMessage }) {
   const severityLabel = useCallback((key) => t(`dash.sev.${key}`, {}) || key, [t]);
   const cameraLabel = useCallback((id) => cameraNames.get(Number(id)) || t('dash.cameraN', { id }), [cameraNames, t]);
   const capitalize = useCallback((s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s), []);
+
+  // Localized short weekday names (index 0 = Sunday, matching the backend grid)
+  // and the per-cell hover/aria label for the activity heatmap.
+  const dayLabels = useMemo(() => t('dash.weekdaysShort').split(','), [t]);
+  const heatmapCellTitle = useCallback(
+    (d, h, c) => `${dayLabels[d]} ${String(h).padStart(2, '0')}:00 · ${c} ${t('dash.eventsWord')}`,
+    [dayLabels, t],
+  );
 
   // Ordered category keys for the stacked timeseries (well-known first, then any
   // extras present in the data), so band colors stay stable across refreshes.
@@ -157,7 +282,7 @@ export function DashboardTab({ authHeader, saved, refreshSignal, onMessage }) {
               </button>
             ))}
           </div>
-          <button type="button" className="quiet" onClick={fetchStats} disabled={loading}>
+          <button type="button" className="quiet" onClick={() => { fetchStats(); fetchHeatmap(); fetchBaseline(); }} disabled={loading}>
             <span className="btn-icon"><Ico n="refresh" /> {t('dash.refresh')}</span>
           </button>
         </div>
@@ -211,8 +336,99 @@ export function DashboardTab({ authHeader, saved, refreshSignal, onMessage }) {
               formatX={formatX}
               label={categoryLabel}
               emptyText={t('dash.noData')}
+              band={baseline?.buckets}
             />
           </ChartCard>
+
+          <ChartCard
+            title={t('dash.activityHeatmap')}
+            subtitle={t('dash.activityHeatmapSub')}
+            className="dashboard-span-2"
+            actions={(
+              <select
+                className="quiet heatmap-camera-select"
+                value={heatCamera}
+                onChange={(e) => setHeatCamera(Number(e.target.value))}
+                aria-label={t('dash.allCameras')}
+              >
+                <option value={0}>{t('dash.allCameras')}</option>
+                {(saved || []).map((c) => (
+                  <option key={c.id} value={c.id}>{cameraTitle(c)}</option>
+                ))}
+              </select>
+            )}
+          >
+            <Heatmap
+              cells={heatmap?.cells}
+              max={heatmap?.max}
+              dayLabels={dayLabels}
+              cellTitle={heatmapCellTitle}
+              emptyText={t('dash.noData')}
+            />
+          </ChartCard>
+
+          {anomalyCfg ? (
+            <ChartCard
+              title={t('dash.anomalyTitle')}
+              subtitle={t('dash.anomalySub')}
+              className="dashboard-span-2 anomaly-card"
+              actions={(
+                <label className="anomaly-switch">
+                  <input
+                    type="checkbox"
+                    checked={!!anomalyCfg.enabled}
+                    onChange={(e) => saveAnomalyCfg({ enabled: e.target.checked })}
+                  />
+                  <span>{anomalyCfg.enabled ? t('dash.anomalyOn') : t('dash.anomalyOff')}</span>
+                </label>
+              )}
+            >
+              <div className="anomaly-body">
+                <div className="anomaly-controls">
+                  <label className="anomaly-field">
+                    <span>{t('dash.anomalySensitivity')}</span>
+                    <select
+                      className="quiet"
+                      value={String(anomalyCfg.sensitivity)}
+                      onChange={(e) => saveAnomalyCfg({ sensitivity: Number(e.target.value) })}
+                    >
+                      <option value="2">{t('dash.sensHigh')}</option>
+                      <option value="2.5">{t('dash.sensMedium')}</option>
+                      <option value="3">{t('dash.sensLow')}</option>
+                    </select>
+                  </label>
+                  <label className="anomaly-check">
+                    <input type="checkbox" checked={!!anomalyCfg.detectHigh} onChange={(e) => saveAnomalyCfg({ detectHigh: e.target.checked })} />
+                    <span>{t('dash.anomalyDetectHigh')}</span>
+                  </label>
+                  <label className="anomaly-check">
+                    <input type="checkbox" checked={!!anomalyCfg.detectLow} onChange={(e) => saveAnomalyCfg({ detectLow: e.target.checked })} />
+                    <span>{t('dash.anomalyDetectLow')}</span>
+                  </label>
+                  <button type="button" className="quiet" onClick={runAnomalyScan} disabled={anomalyScanning}>
+                    <span className="btn-icon"><Ico n="refresh" /> {t('dash.anomalyScan')}</span>
+                  </button>
+                </div>
+                {anomalyFindings === null ? (
+                  <p className="anomaly-hint">{t('dash.anomalyScanHint')}</p>
+                ) : anomalyFindings.length === 0 ? (
+                  <p className="anomaly-hint anomaly-ok">{t('dash.anomalyNone')}</p>
+                ) : (
+                  <ul className="anomaly-findings">
+                    {anomalyFindings.map((f, i) => (
+                      <li key={i} className={f.direction === 'high' ? 'is-high' : 'is-low'}>
+                        <Ico n="warning" sz={14} />
+                        <span className="anomaly-f-name">{f.cameraName || t('dash.cameraN', { id: f.cameraId })}</span>
+                        <span className="anomaly-f-desc">
+                          {f.direction === 'high' ? t('dash.anomalyHighDesc', { actual: f.actual, hi: Math.round(f.hi) }) : t('dash.anomalyLowDesc', { actual: f.actual, median: Math.round(f.median) })}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </ChartCard>
+          ) : null}
 
           <ChartCard title={t('dash.byCategory')}>
             <DonutChart

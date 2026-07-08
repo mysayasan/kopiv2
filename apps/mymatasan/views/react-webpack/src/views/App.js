@@ -925,30 +925,35 @@ function AppInner({ lang, onLangChange }) {
 
   function pollResetProgress() {
     let phase = 'progress';
-    let healthWasDown = false;
+    let restartingSince = 0;
     const id = setInterval(async () => {
       if (phase === 'progress') {
         try {
           const progress = await request('/api/system/reset/progress');
           setResetProgress(progress);
           if (progress?.stage === 'failed') { clearInterval(id); return; }
-          if (progress?.stage === 'restarting') phase = 'restarting';
+          if (progress?.stage === 'restarting') { phase = 'restarting'; restartingSince = Date.now(); }
         } catch {
           // Progress endpoint unreachable/401 — the database has been wiped and the
           // server is finishing the secure overwrite + restart. Show a clean state
           // instead of leaving the bar frozen on the last DB-backed reading.
           phase = 'restarting';
+          restartingSince = Date.now();
           setResetProgress({ stage: 'restarting', percent: 100, message: 'Finalizing & restarting…', running: true });
         }
         return;
       }
-      // Restarting: wait for the server to drop, then come back, then reload.
+      // Restarting: the server relaunches ~1.5s after entering this stage. Give the old
+      // process a moment to exit, then reload as soon as /health answers — matching the
+      // wizard-restore restart. We deliberately do NOT wait to observe /health go "down"
+      // first: a fast relaunch (or the OS queuing the socket instead of refusing it) can
+      // slip between polls, and requiring that transition left the overlay stuck forever.
+      if (Date.now() - restartingSince < 3500) return;
       try {
         const health = await fetch(`${apiBase()}/health`, { cache: 'no-store' });
-        if (!health.ok) throw new Error('down');
-        if (healthWasDown) { clearInterval(id); window.location.reload(); }
+        if (health.ok) { clearInterval(id); window.location.reload(); }
       } catch {
-        healthWasDown = true;
+        // still down — keep waiting for the new process to answer
       }
     }, 1000);
   }
@@ -2080,6 +2085,11 @@ function AppInner({ lang, onLangChange }) {
       loadHealthSettings({ quiet: true }).catch(() => {});
     } else if (section === 'machine') {
       loadMachineHealthSettings({ quiet: true }).catch(() => {});
+      loadResetState();
+    } else if (section === 'backup') {
+      // The Secure Wipe panel lives in this tab and only renders when reset is
+      // allowed, so load that flag here too — otherwise it stays hidden until the
+      // Machine Health tab (the only other caller) has been opened once.
       loadResetState();
     }
   }

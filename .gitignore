@@ -39,6 +39,9 @@ apps/mymatasan/ai/__pycache__/
 /recordings/
 /runs/
 
+# per-app runtime recordings written while the app runs (NVR segments + AI snapshots)
+apps/*/recordings/
+
 # logs
 logs/
 
@@ -56,9 +59,13 @@ tgbridge_state.json
 
 # encryption-at-rest runtime key material & recovery artifacts (never commit)
 apps/*/secret/
+secret/atrest.key
 secret/atrest.key.init
 *.atrestkey
 *.atrestkey.applied
+
+# GitHub CLI local machine state (device-id etc.); not project data
+.local/
 tools/tgbridge/outbox/
 tools/tgbridge/.gocache/
 tools/tgbridge/go-build*/

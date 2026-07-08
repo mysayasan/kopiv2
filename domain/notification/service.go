@@ -113,6 +113,7 @@ type ChannelConfig struct {
 // from it.
 type Service struct {
 	repo     dbsql.IGenericRepo[entities.Notification]
+	rollups  dbsql.IGenericRepo[entities.NotificationRollup]
 	hub      *infranotif.Hub
 	sse      *infranotif.SSEChannel
 	outbound *infranotif.ReloadableChannel
@@ -139,6 +140,15 @@ func NewService(repo dbsql.IGenericRepo[entities.Notification], opts Options) *S
 	hub.Register(outbound)
 
 	return &Service{repo: repo, hub: hub, sse: sse, outbound: outbound, logger: opts.Logger}
+}
+
+// WithRollups attaches the notification-rollup read repository, enabling the
+// dashboard analytics reads (Heatmap and, later, baseline queries). It is set
+// separately from NewService so control-plane apps that never aggregate can omit
+// it. Returns the service for chaining.
+func (s *Service) WithRollups(rollups dbsql.IGenericRepo[entities.NotificationRollup]) *Service {
+	s.rollups = rollups
+	return s
 }
 
 // Configure rebuilds the outbound delivery channels from cfg — one filtered

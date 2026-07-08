@@ -10,6 +10,7 @@ PostgreSQL implementation of `IDbCrud`.
 - Execute ping checks via `Ping(ctx)`.
 - Handle transaction lifecycle, including request-scoped transaction handles through `BeginScopedTx`.
 - Build SQL fragments for joins, filters, sorting, and columns.
+- `Close() error` releases the underlying connection pool (`nil` if never opened) so a factory reset's `DROP DATABASE ... WITH (FORCE)` isn't blocked by this app's own sessions. Safe to call once at shutdown/reset; the pool is unusable afterwards.
 
 ## Connection Contract
 

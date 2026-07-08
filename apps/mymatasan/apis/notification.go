@@ -22,6 +22,8 @@ func NewNotificationApi(router *mux.Router, serv services.INotificationService) 
 
 	g.HandleFunc("", h.list).Methods("GET")
 	g.HandleFunc("/stats", h.stats).Methods("GET")
+	g.HandleFunc("/heatmap", h.heatmap).Methods("GET")
+	g.HandleFunc("/baseline", h.baseline).Methods("GET")
 	g.HandleFunc("/stream", h.stream).Methods("GET")
 	g.HandleFunc("/purge", h.purge).Methods("POST")
 	g.HandleFunc("/{id}/read", h.markRead).Methods("POST")
@@ -71,6 +73,65 @@ func (a *notificationApi) stats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := a.serv.Stats(r.Context(), from, to, bucketSeconds, tzOffsetMin*60)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, result, "succeed")
+}
+
+// heatmap returns the activity-rhythm grid (local day-of-week × hour-of-day) for
+// the given window. from/to are unix seconds (to defaults to now, from to 28 days
+// before — enough history for a stable weekly rhythm); cameraId>0 scopes to one
+// camera; tzOffset is the viewer's timezone offset in minutes.
+func (a *notificationApi) heatmap(w http.ResponseWriter, r *http.Request) {
+	now := time.Now().UTC().Unix()
+	to := parseInt64Query(r, "to")
+	if to <= 0 {
+		to = now
+	}
+	from := parseInt64Query(r, "from")
+	if from <= 0 {
+		from = to - 28*86400
+	}
+	cameraId := parseInt64Query(r, "cameraId")
+	tzOffsetMin := parseInt64Query(r, "tzOffset")
+	if tzOffsetMin < -840 || tzOffsetMin > 840 {
+		tzOffsetMin = 0
+	}
+
+	result, err := a.serv.Heatmap(r.Context(), from, to, cameraId, tzOffsetMin*60)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, result, "succeed")
+}
+
+// baseline returns the expected-activity band for each bucket of the events-over-
+// time chart in the given window, matching its granularity (bucket "hour" or "day").
+// It shares the stats window params (from/to/tzOffset) plus an optional cameraId.
+func (a *notificationApi) baseline(w http.ResponseWriter, r *http.Request) {
+	now := time.Now().UTC().Unix()
+	to := parseInt64Query(r, "to")
+	if to <= 0 {
+		to = now
+	}
+	from := parseInt64Query(r, "from")
+	if from <= 0 {
+		from = to - 7*86400
+	}
+	bucketSeconds := int64(86400)
+	if strings.EqualFold(r.URL.Query().Get("bucket"), "hour") {
+		bucketSeconds = 3600
+	}
+	cameraId := parseInt64Query(r, "cameraId")
+	tzOffsetMin := parseInt64Query(r, "tzOffset")
+	if tzOffsetMin < -840 || tzOffsetMin > 840 {
+		tzOffsetMin = 0
+	}
+
+	result, err := a.serv.Baseline(r.Context(), from, to, bucketSeconds, tzOffsetMin*60, cameraId)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return

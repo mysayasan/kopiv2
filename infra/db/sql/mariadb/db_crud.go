@@ -39,6 +39,16 @@ func NewDbCrud(config dbsql.DbConfigModel) (dbsql.IDbCrud, error) {
 	}, nil
 }
 
+// Close releases the underlying connection pool so a factory reset can drop the
+// database without the app's own sessions blocking it. Safe to call once at
+// shutdown/reset; the pool is unusable afterwards.
+func (m *dbCrud) Close() error {
+	if m.db == nil {
+		return nil
+	}
+	return m.db.Close()
+}
+
 func (m *dbCrud) BeginTx(ctx context.Context) error {
 	if m.txMu != nil {
 		m.txMu.Lock()

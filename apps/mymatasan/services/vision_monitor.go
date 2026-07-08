@@ -32,6 +32,7 @@ type VisionMonitor struct {
 	client      *http.Client
 	source      *DetectionSource
 	detectCfg   func(ctx context.Context, cameraID int64) (recording.RecorderConfig, bool)
+	metadata    *MetadataRecorder
 	snapCipher  *atrest.Cipher
 	interval    time.Duration
 	refresh     time.Duration
@@ -80,6 +81,7 @@ func NewVisionMonitor(camera ICameraService, visionService IVisionService, setti
 		client:      client,
 		source:      NewDetectionSource(camera, monitor.Recorder, settings, client),
 		detectCfg:   monitor.DetectStreamConfig,
+		metadata:    monitor.Metadata,
 		snapCipher:  monitor.SnapshotCipher,
 		interval:       interval,
 		refresh:        refresh,
@@ -140,8 +142,22 @@ func (m *VisionMonitor) reconcileSamplers(ctx context.Context, samplers map[int6
 		}
 	}
 
-	for cameraID, cameraRules := range byCamera {
-		cameraRules = m.resolveRuleClasses(ctx, cameraRules)
+	// Metadata recording samples a camera even with no alert rules, so the set of
+	// cameras to sample is the union of rule-bearing and metadata-enabled cameras.
+	sampleIDs := make(map[int64]bool, len(byCamera))
+	for cameraID := range byCamera {
+		sampleIDs[cameraID] = true
+	}
+	if m.metadata != nil {
+		for cameraID := range m.metadata.EnabledCameras() {
+			sampleIDs[cameraID] = true
+		}
+	}
+
+	for cameraID := range sampleIDs {
+		// byCamera[cameraID] is nil for a metadata-only camera; resolveRuleClasses is
+		// nil-safe and sampleCamera runs the observe-only pass when there are no rules.
+		cameraRules := m.resolveRuleClasses(ctx, byCamera[cameraID])
 		m.reconcileDetectionStream(cameraID, captureMode)
 		if s, ok := samplers[cameraID]; ok {
 			s.setState(cameraRules, inference)
@@ -154,10 +170,11 @@ func (m *VisionMonitor) reconcileSamplers(ctx context.Context, samplers map[int6
 		go s.loop(sctx)
 	}
 	for cameraID, s := range samplers {
-		if _, ok := byCamera[cameraID]; !ok {
+		if !sampleIDs[cameraID] {
 			s.cancel()
 			delete(samplers, cameraID)
-			// Camera no longer has active rules — tear down any detect-only stream.
+			// Camera no longer has active rules nor metadata recording — tear down any
+			// detect-only stream.
 			if m.recorder != nil {
 				m.recorder.StopDetectionStream(cameraID)
 			}
@@ -239,7 +256,9 @@ func (s *cameraSampler) loop(ctx context.Context) {
 // sampleCamera captures one frame from a camera, runs detection against its
 // rules, and raises alerts. It is the per-camera body of the sampling loop.
 func (m *VisionMonitor) sampleCamera(ctx context.Context, cameraID int64, cameraRules []vision.DetectionRule, inference vision.InferenceParams) {
-	if len(cameraRules) == 0 {
+	// Sample when the camera has alert rules OR metadata recording is on for it.
+	metaOn := m.metadata != nil && m.metadata.IsEnabled(cameraID)
+	if len(cameraRules) == 0 && !metaOn {
 		return
 	}
 	// A camera with an active LPR rule captures a dedicated high-resolution frame
@@ -260,26 +279,48 @@ func (m *VisionMonitor) sampleCamera(ctx context.Context, cameraID int64, camera
 	if m.recorder != nil {
 		m.recorder.WriteFrame(cameraID, frame.Data, frame.CapturedAt)
 	}
-	detections, err := m.detector.Detect(ctx, frame, cameraRules)
-	if err != nil {
-		m.emitDiagnostics(ctx, cameraRules, "detect_failed", err.Error(), map[string]any{
-			"cameraId":   cameraID,
-			"capturedAt": frame.CapturedAt,
-		})
-		return
+	var detections []vision.Detection
+	if len(cameraRules) > 0 {
+		detections, err = m.detector.Detect(ctx, frame, cameraRules)
+		if err != nil {
+			m.emitDiagnostics(ctx, cameraRules, "detect_failed", err.Error(), map[string]any{
+				"cameraId":   cameraID,
+				"capturedAt": frame.CapturedAt,
+			})
+			return
+		}
+	}
+	// Metadata recording: if this frame's inference was not already shared with a rule
+	// detection (a metadata-only camera, or one whose only rules are motion-based), run
+	// a dedicated observe-only pass so the recorder still logs what the camera saw. The
+	// Observed check keeps a frame from being inferred twice when Detect already emitted.
+	if metaOn && !m.metadata.Observed(cameraID, frame.CapturedAt) {
+		if oc, ok := m.detector.(vision.ObservationCapable); ok {
+			if oerr := oc.ObserveOnly(ctx, frame); oerr != nil {
+				m.emitDiagnostics(ctx, cameraRules, "observe_failed", oerr.Error(), map[string]any{
+					"cameraId":   cameraID,
+					"capturedAt": frame.CapturedAt,
+				})
+			}
+		}
 	}
 	// The "sampled" heartbeat (frame captured, nothing detected) is a noisy
 	// per-rule diagnostic that bloats the alert log, so it is only persisted when
 	// explicitly enabled for troubleshooting. Capture/detect FAILURES above are
 	// always logged so real problems still surface.
-	if len(detections) == 0 && m.persistSampled {
+	if len(cameraRules) > 0 && len(detections) == 0 && m.persistSampled {
 		m.emitDiagnostics(ctx, cameraRules, "sampled", "frame captured; no detection above threshold", map[string]any{
 			"cameraId":   cameraID,
 			"capturedAt": frame.CapturedAt,
 			"format":     frame.Format,
 		})
 	}
-	snapPath := m.saveSnapshot(cameraID, frame.Data, frame.CapturedAt)
+	// Alert snapshots exist only to accompany a detection; a metadata-only camera has
+	// no rules and no detections, so it writes none (avoids per-frame snapshot spam).
+	snapPath := ""
+	if len(cameraRules) > 0 {
+		snapPath = m.saveSnapshot(cameraID, frame.Data, frame.CapturedAt)
+	}
 	// Resolve the camera's display name and the alert-notification field config
 	// once per sample so notifications carry the real name and the user's chosen
 	// fields/image instead of recomputing per detection.

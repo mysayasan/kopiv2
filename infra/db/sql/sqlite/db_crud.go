@@ -56,6 +56,17 @@ func NewDbCrud(config dbsql.DbConfigModel) (dbsql.IDbCrud, error) {
 	return crud, nil
 }
 
+// Close releases the underlying connection pool (and the sqlite file handles) so a
+// factory reset can delete the database file — Windows refuses to remove a file this
+// process still holds open. Safe to call once at shutdown/reset; the pool is unusable
+// afterwards.
+func (m *dbCrud) Close() error {
+	if m.db == nil {
+		return nil
+	}
+	return m.db.Close()
+}
+
 func (m *dbCrud) configure(ctx context.Context) error {
 	for _, stmt := range []string{
 		"PRAGMA foreign_keys = ON",

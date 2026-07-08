@@ -52,11 +52,15 @@ Declares service contracts for app-specific domain.
 - `INotificationService` (selected)
   - `List(ctx, limit, offset, cameraId, unreadOnly, category, source)` — paginated notification feed
   - `Stats(ctx, from, to, bucketSeconds, tzOffsetSec)` — returns `*notification.Stats`, the aggregated dashboard payload (bucketed counts/breakdowns) over `[from, to]` unix-second window; `bucketSeconds` selects hour/day buckets and `tzOffsetSec` aligns bucket boundaries to the viewer's local clock. Backs `GET /api/notifications/stats`.
+  - `Heatmap(ctx, from, to, cameraId, tzOffsetSec)` — returns `*notification.Heatmap`, the activity-rhythm grid (local day-of-week × hour-of-day cell counts) over `[from, to]`, folded from the `notification_rollup` table; `cameraId>0` scopes to one camera. Backs `GET /api/notifications/heatmap`.
+  - `Baseline(ctx, from, to, bucketSeconds, tzOffsetSec, cameraId)` — returns `*notification.Baseline`, the expected-activity band (robust median ± k·MAD, Poisson floor) for each bucket of the events-over-time chart, built from the trailing 8 weeks of rollup history. Backs `GET /api/notifications/baseline`.
 - `INotificationSettingsService` (selected)
   - `Get(ctx)` / `Save(ctx, settings)` — full notification settings blob (destinations, retention, legacy singletons)
   - `SaveDestination(ctx, dest)` — upserts one destination (create when `dest.Id` is empty, else replace by id) via read-modify-write against the persisted settings; other destinations and retention are untouched. Returns the saved destination and full settings.
   - `DeleteDestination(ctx, id)` — removes one destination by id; unknown id is a no-op. Returns full settings.
   - `SaveRetention(ctx, retention)` — persists only the retention section, leaving destinations and legacy singletons untouched. Returns full settings.
+- `IAnomalySettingsService`
+  - `Get(ctx)` / `Save(ctx, settings)` — read/persist `AnomalySettings`, the runtime config for the statistical anomaly monitor (Phase 3): `Enabled`, `Sensitivity` (band half-width in robust sigmas), `DetectHigh`/`DetectLow`, `MinActivity` (suppresses "unusual silence" for normally-quiet slots), `RequireConsecutive` (debounce), `CooldownHours`, `CheckIntervalMs`. Persisted under a single `anomalyDetection` runtime-setting key; opt-in (disabled by default).
 - `ITrainingService` (selected additions)
   - `GetLPRModel(ctx)` — returns `LPRModelInfo` (current plate-detector path + catalog + OCR readiness).
   - `SetLPRModel(ctx, value, userId)` — select a plate model by catalog name, https URL, local .pt path, or `""` / `"none"` to disable.
@@ -82,8 +86,8 @@ Declares service contracts for app-specific domain.
 - `SetCameraNetworkRequest` — `InterfaceToken`, `DHCP`, `IPAddress`, `PrefixLength`, `Gateway`, `DNS`.
 - `CameraCapabilities` — `Onvif`/`PTZ`/`Media`/`Imaging`/`Analytics`/`Events` service flags plus per-operation `UserMgmt`/`DateTime`/`Network` flags and static `Manufacturer`/`Model`/`FirmwareVersion`/`SerialNumber`/`HardwareID`.
 - `CameraDeviceInfo` — the read-only device identity surfaced in Live View → Camera Information: `Manufacturer`, `Model`, `FirmwareVersion`, `HardwareID`, `SerialNumber`, `Location` (parsed from ONVIF scopes), `MACAddress`, `ONVIFVersion`, `ONVIFUri`.
-- `SaveRecordingConfigRequest` — carries `CameraId`, `Enabled`, `PreRollSec`, `PostRollSec`, `StoragePath`, `RetentionDays`, `SegmentMinutes`, `StreamURL` (recording stream override), `FallbackStreamUrl` (fallback RTSP URI).
-- `VisionMonitorSettings` — carries startup-only monitor enablement, interval, capture timeout, diagnostic cooldown, `PersistSampledDiagnostics` flag, detector implementation, and a `*recording.Manager` pointer.
+- `SaveRecordingConfigRequest` — carries `CameraId`, `Enabled`, `PreRollSec`, `PostRollSec`, `StoragePath`, `RetentionDays`, `SegmentMinutes`, `StreamURL` (recording stream override), `FallbackStreamUrl` (fallback RTSP URI), `MetadataEnabled`/`MetadataGapSeconds` (object metadata recorder toggle + presence-interval close window).
+- `VisionMonitorSettings` — carries startup-only monitor enablement, interval, capture timeout, diagnostic cooldown, `PersistSampledDiagnostics` flag, detector implementation, a `*recording.Manager` pointer, and `Metadata *MetadataRecorder` (when set, the monitor also samples metadata-enabled cameras that have no alert rules, and runs an observe-only inference pass for frames not already shared with a rule detection).
 - `RuntimeSettings` — carries runtime-editable decoder, stream, vision, and recording settings.
 - `RecordingSettings` / `RecordingStorageSettings` — at-rest recording storage: `Storage.Codec` (`copy`/`h264`/`hevc`), `Storage.Quality` (NVENC CQ), `Storage.MaxConcurrentEncodes` (shared NVENC session cap), `Storage.FallbackToCopy` (`*bool`, `nil` = enabled — store a segment as stream-copy instead of dropping it when the configured re-encode codec can't run on this host). Default codec `copy`.
 - `ApplyCameraEncoderRequest` — `Encoding` (`h264`/`h265`) + `BitrateLimitKbps` (≤0 keeps the camera's current bitrate) pushed to the camera encoder.

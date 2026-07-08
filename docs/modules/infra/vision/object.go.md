@@ -10,6 +10,7 @@ Maps object detector candidates to reusable vision detection rules.
 - Define the `ObjectDetector` interface for semantic detector backends.
 - Apply rule class mapping, confidence thresholds, zone matching (single or multi-zone union via `boxCenterInAnyZone`), minimum frame count, and cooldown.
 - Convert matching candidates into reusable `Detection` results with bounding box and detector metadata JSON.
+- Define `ObservationSink` (`Observe(cameraID, capturedAt, candidates)`) and `ObservationCapable` (`SetObservationSink`, `ObserveOnly`) — the seam the object metadata recorder (`apps/mymatasan/services.MetadataRecorder`) plugs into. `ObjectRuleDetector.Detect` forwards every candidate from the shared inference to the wired `observer` (not just rule matches) before evaluating rules, so a camera that already runs object rules pays no extra inference cost; `ObserveOnly` runs a detection pass purely to emit observations (no rule evaluation, no `Detection` results) for cameras with metadata recording on but no object rules to piggyback on.
 
 ## LPR detection branch
 
