@@ -10,7 +10,7 @@ Implements `IRecordingService`, persisting per-camera recording configs and clip
 - Create a segment row from a `recording.SegmentResult` produced by the infra recorder.
 - Delete a segment row and securely remove the corresponding file from disk.
 - Fetch, create, and update per-camera `RecordingConfig` rows; upsert by camera ID.
-- Persist all config fields including `LiveStreamUrl`, `StreamURL`, `FallbackStreamUrl`, and `MetadataEnabled`/`MetadataGapSeconds` (the object metadata recorder toggle + presence-interval close window) on save.
+- Persist all config fields including `LiveStreamUrl`, `StreamURL`, `FallbackStreamUrl`, and `MetadataEnabled`/`MetadataGapSeconds` (the object metadata recorder / Object Search toggle + presence-interval close window) on save. `MetadataEnabled` is written from the request's `Enabled` field, not a separate `MetadataEnabled` input — object-metadata capture always tracks whether recording itself is on (without footage there is nothing for a search result to link to), so there is no independent UI toggle for it.
 - Purge segments older than the camera's configured `RetentionDays` by iterating all enabled configs, querying segments by `StartedAt < cutoff`, deleting files, and removing rows.
 - `PurgeOldestSegments(ctx, keepAfter, wantBytes)`: delete the globally oldest segments (across all cameras, ignoring per-camera `RetentionDays`) — sorted `StartedAt` ascending, stopping once `wantBytes` have been freed — but never a segment starting at or after `keepAfter`. Returns the count deleted and bytes freed. Used by the machine-health monitor's disk-mitigation "overwrite oldest" (continuous recording) mode instead of pausing.
 

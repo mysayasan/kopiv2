@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
@@ -14,6 +15,8 @@ type localBootstrapEntity struct {
 	Code    string `validate:"required" ukey:"code"`
 	Enabled bool
 	Count   int64
+	OwnerId int64 `idx:"owner_when"`
+	SeenAt  int64 `idx:"owner_when"`
 }
 
 func TestEnsureSQLiteCreatesDatabaseAndSchema(t *testing.T) {
@@ -70,6 +73,23 @@ func TestEnsureSQLiteCreatesDatabaseAndSchema(t *testing.T) {
 	}
 	if indexCount != 1 {
 		t.Fatalf("unique index count = %d", indexCount)
+	}
+
+	// The composite idx:"owner_when" tag must create a non-unique secondary index
+	// spanning both tagged columns in field-declaration order.
+	var secondaryCount int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'ix_local_bootstrap_entity_owner_when'`).Scan(&secondaryCount); err != nil {
+		t.Fatalf("secondary index lookup error = %v", err)
+	}
+	if secondaryCount != 1 {
+		t.Fatalf("secondary index count = %d", secondaryCount)
+	}
+	var indexSQL string
+	if err := db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'ix_local_bootstrap_entity_owner_when'`).Scan(&indexSQL); err != nil {
+		t.Fatalf("secondary index sql error = %v", err)
+	}
+	if !strings.Contains(indexSQL, "owner_id") || !strings.Contains(indexSQL, "seen_at") {
+		t.Fatalf("secondary index columns = %q", indexSQL)
 	}
 
 	var stateCount int

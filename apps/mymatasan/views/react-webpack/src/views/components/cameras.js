@@ -7,7 +7,7 @@ import { defaultDeviceCredentials } from '../lib/constants';
 import {apiBase,fieldValue,formatTimestamp,cameraTitle,cameraDescription,orderedSavedCameras,sameCamera,streamOptionLabel,layoutCapacity,layoutColumns,layoutRows,fetchTalkCapability,saveTalkPassword } from '../lib/helpers';
 import { LiveViewport } from './previews';
 import { PasswordField } from './layout';
-import { CameraRecordingConfig, CameraStreamConfig, CameraRecordingsPanel, CameraObjectSearchPanel } from './recording';
+import { CameraRecordingConfig, CameraStreamConfig, CameraRecordingsPanel } from './recording';
 
 // healthPillProps maps a camera's live health status into a pill class and label.
 // The status-pill online/offline/unknown classes are shared with the RTSP pill.
@@ -2017,9 +2017,6 @@ export function CamerasTab({
                   <button type="button" role="tab" aria-selected={cameraDetailTab === 'recordings'} className={`settings-tab${cameraDetailTab === 'recordings' ? ' active' : ''}`} onClick={() => setCameraDetailTab('recordings')}>
                     <Ico n="film" sz={16} /> <span className="settings-tab-label">{t('tab.recording')}</span>
                   </button>
-                  <button type="button" role="tab" aria-selected={cameraDetailTab === 'objectsearch'} className={`settings-tab${cameraDetailTab === 'objectsearch' ? ' active' : ''}`} onClick={() => setCameraDetailTab('objectsearch')}>
-                    <Ico n="eye" sz={16} /> <span className="settings-tab-label">{t('meta.tabSearch')}</span>
-                  </button>
                   <button type="button" role="tab" aria-selected={cameraDetailTab === 'settings'} className={`settings-tab${cameraDetailTab === 'settings' ? ' active' : ''}`} onClick={() => setCameraDetailTab('settings')}>
                     <Ico n="sliders" sz={16} /> <span className="settings-tab-label">{t('cam.detailSettings')}</span>
                   </button>
@@ -2087,14 +2084,6 @@ export function CamerasTab({
                     authHeader={authHeader}
                     canManage={canManage}
                     {...(recordings || {})}
-                  />
-                ) : cameraDetailTab === 'objectsearch' ? (
-                  <CameraObjectSearchPanel
-                    key={`obs-${selectedSaved.id}`}
-                    camera={selectedSaved}
-                    busy={busy}
-                    authHeader={authHeader}
-                    canManage={canManage}
                   />
                 ) : (
                   <CameraAiPanel

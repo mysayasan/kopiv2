@@ -1040,21 +1040,23 @@ export function ObjectClassesPanel({ classes, labelCatalog, activeModelClasses, 
   }
 
   return (
-    <section className="settings-panel">
-      <header>
-        <h2>{t('vi.objectClasses')}</h2>
-        <span className="status-pill">{(classes || []).length}</span>
-      </header>
-      <span className="field-hint">
-        {t('vi.classesIntro')}
-      </span>
+    <section className="object-classes-page">
+      <div className="toolbar">
+        <div>
+          <h2 className="section-title">{t('vi.objectClasses')}</h2>
+          <p className="section-subtitle">{t('vi.classesIntro')}</p>
+        </div>
+        <div className="toolbar-actions">
+          <span className="status-pill">{(classes || []).length}</span>
+        </div>
+      </div>
 
+      <section className="settings-panel">
       <div className="action-row">
         <button type="button" onClick={openNew} disabled={busy}>
           <span className="btn-icon"><Ico n="plus" /> {t('vi.addCategoryGroup')}</span>
         </button>
       </div>
-
       <ul className="class-registry-list">
         {(classes || []).map((cls) => (
           <li key={cls.id} className="class-registry-row">
@@ -1079,6 +1081,7 @@ export function ObjectClassesPanel({ classes, labelCatalog, activeModelClasses, 
           </li>
         ))}
       </ul>
+      </section>
 
       {editorOpen ? (
       <div className="video-overlay" onClick={closeEditor}>

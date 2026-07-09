@@ -12,6 +12,8 @@ import { DashboardTab } from './components/dashboard';
 import { SetupWizard } from './components/setup';
 import { ViewsTab, CamerasTab } from './components/cameras';
 import { TeachTab } from './components/teach';
+import { CameraObjectSearchPanel } from './components/recording';
+import { ObjectClassesPanel } from './components/vision';
 import { SettingsTab } from './components/settings';
 import { NotificationsTab } from './components/notifications';
 import { SecureWipeCountdown, ResetProgressOverlay } from './components/securewipe';
@@ -2827,6 +2829,25 @@ function AppInner({ lang, onLangChange }) {
           streamConfig={streamConfig}
           labelCatalog={visionLabels}
           onOpenModels={() => { setActiveTab('settings'); openSettingsSection('ai'); }}
+        />
+      ) : null}
+
+      {activeTab === 'objectsearch' ? (
+        <CameraObjectSearchPanel
+          authHeader={authHeader}
+          busy={busy}
+          canManage={isAdmin}
+        />
+      ) : null}
+
+      {activeTab === 'objectclasses' ? (
+        <ObjectClassesPanel
+          classes={visionClasses}
+          labelCatalog={visionLabels}
+          activeModelClasses={activeModelClasses}
+          busy={busy}
+          onSaveClass={saveVisionClass}
+          onDeleteClass={deleteVisionClass}
         />
       ) : null}
 

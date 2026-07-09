@@ -2576,6 +2576,20 @@ dd {
   grid-column: 1 / -1;
 }
 
+/* Lay a set of checkbox rows out side-by-side (e.g. Live Stream's WebRTC + MJPEG)
+   instead of stacking them, wrapping on narrow widths. */
+.check-row-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 28px;
+}
+
+/* When a checkbox sits in a settings grid beside label-over-input fields, center it
+   vertically so it lines up with the input boxes rather than floating at the top. */
+.settings-grid > .check-row {
+  align-self: center;
+}
+
 .settings-hint {
   margin: 0;
   font-size: 12px;
@@ -4724,9 +4738,326 @@ dd {
   gap: 10px;
 }
 
-/* Quick-filter bar above the object-search table: a little breathing room below it. */
-.object-search-bar {
-  margin-bottom: 12px;
+/* Object Search filter bar: an elegant row of label-over-control fields, divided
+   from the results table below by a hairline rule (no nested boxes). Fields wrap
+   gracefully on narrow widths; the Search action stays pinned to the right. */
+.object-search-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 14px 18px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-panel);
+}
+.object-search-filters .field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.object-search-filters .field-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.object-search-filters .field select,
+.object-search-filters .field input[type='date'],
+.object-search-filters .field input[type='number'] {
+  height: 36px;
+  box-sizing: border-box;
+  min-width: 150px;
+}
+.object-search-filters .field--camera select,
+.object-search-filters .field--object select {
+  min-width: 180px;
+}
+.object-search-filters .conf-input {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.object-search-filters .conf-input input {
+  width: 92px;
+  min-width: 92px;
+  padding-right: 26px;
+}
+.object-search-filters .conf-input .conf-unit {
+  position: absolute;
+  right: 10px;
+  font-size: 13px;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+.object-search-filters .field-actions {
+  margin-left: auto;
+  align-self: flex-end;
+}
+.object-search-filters .field-actions button {
+  height: 36px;
+}
+
+/* Object Search: multi-select checklist dropdown for picking several object labels. */
+.multi-select {
+  position: relative;
+}
+.multi-select-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 36px;
+  min-width: 180px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  border: 1px solid var(--border-input, var(--border-panel));
+  border-radius: 6px;
+  background: var(--bg-input, var(--bg-surface));
+  color: inherit;
+  cursor: pointer;
+}
+.multi-select-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.multi-select-caret {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.multi-select-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 220px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--border-panel);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+.multi-select-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  margin: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.multi-select-option:hover {
+  background: var(--bg-hover, rgba(127, 127, 127, 0.1));
+}
+.multi-select-option input[type='checkbox'] {
+  margin: 0;
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  align-self: center;
+}
+.multi-select-option .object-tag {
+  line-height: 1.4;
+}
+.multi-select-clear {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 4px 6px;
+  margin-bottom: 4px;
+  border: none;
+  border-bottom: 1px solid var(--border-panel);
+  border-radius: 0;
+  background: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.multi-select-empty {
+  padding: 8px 6px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+/* Object Search: export dropdown (CSV / PDF) in the panel toolbar. */
+.export-menu {
+  position: relative;
+}
+.export-menu-list {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 168px;
+  padding: 6px;
+  border: 1px solid var(--border-panel);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+.export-menu-list button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 13px;
+}
+.export-menu-list button:hover {
+  background: var(--bg-hover, rgba(127, 127, 127, 0.1));
+}
+
+/* Object Search: the footage cell — a screenshot of the moment (detection box drawn)
+   with translucent play + camera(maximize) overlay buttons. Fixed size keeps rows
+   symmetric. */
+.obs-thumb {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 132px;
+  height: 74px;
+  padding: 0;
+  border: 1px solid var(--border-panel);
+  border-radius: 6px;
+  overflow: hidden;
+  background: #10151f;
+}
+.obs-thumb--sm {
+  width: 104px;
+  height: 58px;
+}
+.obs-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.obs-thumb--empty {
+  cursor: pointer;
+  color: var(--text-muted);
+  background: var(--bg-hover, rgba(127, 127, 127, 0.08));
+  border-style: dashed;
+}
+.obs-thumb-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: rgba(255, 255, 255, 0.75);
+  border-radius: 50%;
+  animation: obsThumbSpin 0.8s linear infinite;
+}
+@keyframes obsThumbSpin { to { transform: rotate(360deg); } }
+/* Overlay action buttons: faintly visible at rest, solid on hover/focus. */
+.obs-thumb-actions {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.05);
+  opacity: 0.85;
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+.obs-thumb:hover .obs-thumb-actions,
+.obs-thumb:focus-within .obs-thumb-actions {
+  background: rgba(0, 0, 0, 0.4);
+  opacity: 1;
+}
+.obs-thumb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  /* Override the global button min-height:38px, which would stretch these into an
+     ellipse; a square box is what makes border-radius:50% a true circle. */
+  min-height: 0;
+  min-width: 0;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  padding: 0;
+  line-height: 0;
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(20, 24, 33, 0.55);
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+.obs-thumb-btn:hover {
+  background: rgba(37, 99, 235, 0.9);
+  transform: scale(1.08);
+}
+
+/* Maximized snapshot dialog (camera button) — reuses the .video-overlay backdrop. */
+.snap-dialog {
+  background: #10151f;
+  border-radius: 10px;
+  overflow: hidden;
+  max-width: min(92vw, 1100px);
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+}
+.snap-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  min-height: 200px;
+  overflow: auto;
+}
+.snap-image {
+  display: block;
+  max-width: 100%;
+  max-height: 78vh;
+}
+.snap-dialog .video-dialog-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.snap-play {
+  margin-left: auto;
+}
+
+/* Object Search: a sighting recorded into the still-writing segment — footage exists
+   but isn't finalized/playable yet, shown in place of the Play button. */
+.footage-pending {
+  font-size: 12px;
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+/* Object Search: notice shown when the searched camera has recording (and thus
+   metadata logging) off — explains the empty result rather than leaving the user
+   guessing why nothing shows. */
+.obs-recording-off {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-panel);
+  border-left: 3px solid #d97706;
+  border-radius: 6px;
+  background: rgba(217, 119, 6, 0.08);
+  color: var(--text-secondary, var(--text-muted));
+  font-size: 13px;
+}
+.obs-recording-off svg {
+  flex: 0 0 auto;
+  color: #d97706;
 }
 
 .metadata-recorder-toggle {
@@ -5145,6 +5476,52 @@ dd {
   display: block;
 }
 
+/* Object Search playback: a stage that shrink-wraps the video (no letterbox) so the
+   normalized detection box overlays exactly onto the frame. */
+.video-stage {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+  max-width: 100%;
+}
+.video-stage .video-player {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 72vh;
+}
+.detect-box {
+  position: absolute;
+  border: 2px solid #22c55e;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55);
+  border-radius: 3px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+.detect-box.show {
+  opacity: 1;
+  animation: detectPulse 1.2s ease-out 2;
+}
+@keyframes detectPulse {
+  0% { box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55), 0 0 0 3px rgba(34, 197, 94, 0.55); }
+  100% { box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55), 0 0 0 13px rgba(34, 197, 94, 0); }
+}
+.detect-box-label {
+  position: absolute;
+  left: -2px;
+  top: -2px;
+  transform: translateY(-100%);
+  background: #22c55e;
+  color: #04140a;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.5;
+  padding: 1px 6px;
+  border-radius: 3px 3px 3px 0;
+  white-space: nowrap;
+}
+
 .video-loading-msg {
   color: #6688aa;
   font-size: 14px;
@@ -5309,6 +5686,7 @@ dd {
 }
 
 .notification-snap {
+  position: relative;
   flex-shrink: 0;
   width: 132px;
   height: 84px;
@@ -5320,7 +5698,13 @@ dd {
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: zoom-in;
+}
+/* Reuse the Object Search snapshot overlay buttons (play + camera) on the event
+   snapshot: faint at rest, solid on hover/focus. */
+.notification-snap:hover .obs-thumb-actions,
+.notification-snap:focus-within .obs-thumb-actions {
+  background: rgba(0, 0, 0, 0.4);
+  opacity: 1;
 }
 
 .notification-snap:disabled {
@@ -6009,7 +6393,34 @@ button .btn-icon {
   }
 }
 
+/* Sliding on/off toggle switch (reusable). */
+.switch-row { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.switch { position: relative; display: inline-block; width: 38px; height: 20px; flex-shrink: 0; }
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.switch-slider { position: absolute; inset: 0; background: var(--ui-border-strong, #c7d1dc); border-radius: 999px; transition: background 0.18s ease; }
+.switch-slider::before {
+  content: '';
+  position: absolute;
+  height: 16px;
+  width: 16px;
+  left: 2px;
+  top: 2px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 0.18s ease;
+}
+.switch input:checked + .switch-slider { background: var(--ui-accent, #2d6cdf); }
+.switch input:checked + .switch-slider::before { transform: translateX(18px); }
+.switch input:focus-visible + .switch-slider { outline: 2px solid var(--ui-accent, #2d6cdf); outline-offset: 2px; }
+.switch input:disabled + .switch-slider { opacity: 0.5; cursor: not-allowed; }
+.switch-label { font-size: 13px; color: var(--ui-text, #1f2937); }
+.info-tip { display: inline-flex; align-items: center; color: var(--ui-muted, #64748b); cursor: help; vertical-align: middle; }
+.info-tip:hover, .info-tip:focus { color: var(--ui-accent, #2d6cdf); outline: none; }
+
 /* Anomaly detection card (dashboard). */
+.anomaly-enable { display: inline-flex; align-items: center; gap: 8px; }
+.anomaly-enable-label { font-size: 13px; font-weight: 600; color: var(--ui-text, #1f2937); }
 .anomaly-switch {
   display: inline-flex;
   align-items: center;
@@ -6028,6 +6439,7 @@ button .btn-icon {
 }
 .anomaly-field { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ui-muted, #64748b); }
 .anomaly-field select { padding: 4px 8px; }
+.anomaly-num { width: 72px; padding: 4px 8px; }
 .anomaly-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ui-text, #1f2937); cursor: pointer; }
 .anomaly-hint { font-size: 13px; color: var(--ui-muted, #64748b); margin: 0; }
 .anomaly-ok { color: var(--ui-success, #10b981); }
@@ -6046,6 +6458,85 @@ button .btn-icon {
 .anomaly-findings li svg { color: var(--ui-muted, #64748b); flex-shrink: 0; }
 .anomaly-f-name { font-weight: 600; color: var(--ui-text, #1f2937); }
 .anomaly-f-desc { color: var(--ui-muted, #64748b); }
+
+/* Camera reliability scorecard (dashboard). */
+.reliability-table-wrap { width: 100%; overflow-x: auto; }
+.reliability-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.reliability-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ui-muted, #64748b);
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--ui-border, #e5e7eb);
+}
+.reliability-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--ui-border, #eef2f7);
+  color: var(--ui-text, #1f2937);
+  font-variant-numeric: tabular-nums;
+}
+.reliability-table tr:last-child td { border-bottom: none; }
+.reliability-table .rel-name { font-weight: 600; }
+.reliability-table .rel-uptime { font-weight: 600; }
+.reliability-table tr.is-warn .rel-uptime { color: #d97706; }
+.reliability-table tr.is-down .rel-uptime { color: var(--ui-danger, #ef4444); }
+.rel-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.rel-badge-up { color: var(--ui-success, #10b981); background: rgba(16, 185, 129, 0.12); }
+.rel-badge-down { color: var(--ui-danger, #ef4444); background: rgba(239, 68, 68, 0.12); }
+
+/* Noisiest-cameras list (dashboard). */
+.noise-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.noise-list li {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--ui-border, #eef2f7);
+}
+.noise-list li:last-child { border-bottom: none; }
+.noise-name { font-weight: 600; color: var(--ui-text, #1f2937); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.noise-count { color: var(--ui-muted, #64748b); font-variant-numeric: tabular-nums; }
+.noise-unread {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ui-muted, #64748b);
+  min-width: 72px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.noise-unread.is-high { color: #d97706; }
+
+/* Object pill in the Object Search results, color-coded by object family
+   (person / vehicle / animal / fire / other). */
+.object-tag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 1px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-muted);
+  text-transform: capitalize;
+  font-variant-numeric: tabular-nums;
+}
+.object-tag--person { color: #2563eb; border-color: #bcd0f7; }
+.object-tag--vehicle { color: #0d9488; border-color: #a2ded7; }
+.object-tag--animal { color: #d97706; border-color: #f0cfa0; }
+.object-tag--fire { color: #dc2626; border-color: #f2b8b8; }
+.object-tag--other { color: var(--text-muted); border-color: var(--border-subtle); }
 
 
 /* Two-way audio (talk-back): mic button in live view, beside the speaker/mute. */

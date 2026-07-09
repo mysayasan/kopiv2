@@ -180,15 +180,22 @@ func (m *dbCrud) genWhereSqlStr(props reflect.Value, filters []sqldataenums.Filt
 			}
 		}
 
+		fieldValue := props.FieldByName(filter.FieldName)
+		if !fieldValue.IsValid() {
+			continue
+		}
+		if filter.Compare == sqldataenums.In {
+			if clause := inSqlClause(fieldValue, filter.Value); clause != "" {
+				res = append(res, fmt.Sprintf("%s %s", fieldNm, clause))
+			}
+			continue
+		}
+
 		op := filterCompareOperator(filter.Compare)
 		if op == "" {
 			continue
 		}
 
-		fieldValue := props.FieldByName(filter.FieldName)
-		if !fieldValue.IsValid() {
-			continue
-		}
 		res = append(res, fmt.Sprintf("%s %s %s", fieldNm, op, sqlFilterValue(fieldValue, filter.Value)))
 	}
 
@@ -217,6 +224,21 @@ func sqlFilterValue(fieldValue reflect.Value, value any) string {
 
 func escapeSQLString(value string) string {
 	return strings.ReplaceAll(value, "'", "''")
+}
+
+// inSqlClause builds an `IN (v1, v2, ...)` clause from a slice value, formatting each
+// element as the field's SQL literal (so escaping matches scalar filters). Returns ""
+// for a non-slice or empty value so the caller drops the constraint entirely.
+func inSqlClause(fieldValue reflect.Value, value any) string {
+	rv := reflect.ValueOf(value)
+	if !rv.IsValid() || rv.Kind() != reflect.Slice || rv.Len() == 0 {
+		return ""
+	}
+	parts := make([]string, 0, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		parts = append(parts, sqlFilterValue(fieldValue, rv.Index(i).Interface()))
+	}
+	return "IN (" + strings.Join(parts, ", ") + ")"
 }
 
 func filterCompareOperator(compare sqldataenums.Compare) string {

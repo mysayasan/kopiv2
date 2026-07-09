@@ -9,10 +9,10 @@ Declares the `RecordingSegment` entity that persists metadata for one recorded v
 | Field       | Type   | Notes |
 |-------------|--------|-------|
 | `Id`        | int64  | Auto-increment primary key. |
-| `CameraId`  | int64  | FK reference to the camera that was recorded. |
+| `CameraId`  | int64  | FK reference to the camera that was recorded. Carries `idx:"cam_time"`. |
 | `AlertId`   | int64  | Optional; the alert event that triggered this clip. |
 | `FilePath`  | string | Absolute or relative path to the MP4 file on the server filesystem. |
-| `StartedAt` | int64  | Unix seconds; beginning of the recorded window (trigger time minus pre-roll). |
+| `StartedAt` | int64  | Unix seconds; beginning of the recorded window (trigger time minus pre-roll). Carries `idx:"cam_time"`. |
 | `EndedAt`   | int64  | Unix seconds; end of the recorded window (trigger time plus post-roll). |
 | `FileSize`  | int64  | File size in bytes after encoding. |
 | `Codec`     | string | On-disk video codec (`h264`/`hevc`); empty for legacy rows. The playback path reads it to decide whether the browser needs an on-the-fly transcode. |
@@ -21,5 +21,6 @@ Declares the `RecordingSegment` entity that persists metadata for one recorded v
 ## Notes
 
 - The bootstrap schema creates the `recording_segment` table automatically on first startup; the additive `codec` column is reconciled onto existing installs by the bootstrap drift check.
+- `CameraId`+`StartedAt` form a `(camera_id, started_at)` secondary index (`idx:"cam_time"`, `infra/db/bootstrap/schema.go`'s non-unique `idx:"group"` tag), keeping the Object Search footage-linkage sweep (`services.ObservationService.fetchCoveringCandidates`) and other camera+time-range segment queries off a full-table scan as the table grows.
 - `FilePath` is used by the download endpoint to open and stream the file; the delete endpoint removes both the row and the file.
 - `AlertId` is zero when the clip was not triggered by a detector alert (reserved for future manual recording).

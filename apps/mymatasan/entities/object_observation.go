@@ -10,14 +10,18 @@ package entities
 // tracking + color/clothing) — they ship empty and need no migration to populate.
 type ObjectObservation struct {
 	Id            int64   `json:"id" form:"id" query:"id" params:"id" skipWhenInsert:"true" pkey:"true" validate:"required"`
-	CameraId      int64   `json:"cameraId" form:"cameraId" query:"cameraId" validate:"required"`
+	CameraId      int64   `json:"cameraId" form:"cameraId" query:"cameraId" validate:"required" idx:"cam_time"`
 	Label         string  `json:"label" form:"label" query:"label"`
-	StartedAt     int64   `json:"startedAt" form:"startedAt" query:"startedAt"`
+	StartedAt     int64   `json:"startedAt" form:"startedAt" query:"startedAt" idx:"cam_time"`
 	EndedAt       int64   `json:"endedAt" form:"endedAt" query:"endedAt"`
 	MaxConfidence float64 `json:"maxConfidence" form:"maxConfidence" query:"maxConfidence"`
 	MaxCount      int     `json:"maxCount" form:"maxCount" query:"maxCount"`
 	SampleCount   int     `json:"sampleCount" form:"sampleCount" query:"sampleCount"`
 	PeakBox       string  `json:"peakBox" form:"peakBox" query:"peakBox"`
+	// PeakAt is the unix second of the frame where PeakBox was captured (max
+	// confidence). Playback seeks here so the drawn box lines up with the object's
+	// clearest on-screen moment. 0 for rows recorded before this was tracked.
+	PeakAt int64 `json:"peakAt" form:"peakAt" query:"peakAt"`
 	Attributes    string  `json:"attributes" form:"attributes" query:"attributes"`
 	TrackId       string  `json:"trackId" form:"trackId" query:"trackId"`
 	SegmentId     int64   `json:"segmentId" form:"segmentId" query:"segmentId"`

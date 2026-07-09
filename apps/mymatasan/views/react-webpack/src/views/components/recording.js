@@ -32,254 +32,146 @@ function segmentPlaybackUrl(seg) {
   return base;
 }
 
-// CameraObjectSearchPanel is the "Object Search" camera tab: it owns the metadata
-// recorder's per-camera enable toggle and a searchable, paged table of everything the
-// camera saw (object label, presence time span, peak confidence), each row linking to
-// the footage that covers it. The table runs the shared DataTable in serverMode — its
-// column filters (Time range, Object), sort, and pager emit a query the backend runs
-// over the DB, so a camera with thousands of observations never pulls them all at once,
-// mirroring the AI Detection Alert Log.
-export function CameraObjectSearchPanel({ camera, busy, authHeader, canManage = true }) {
-  const t = useT();
-  const cameraId = Number(camera?.id) || 0;
+// DEFAULT_MIN_CONF_PCT is the confidence floor the Object Search filter starts at, so
+// results skip low-confidence noise by default; the user can lower it to 0 to see all.
+const DEFAULT_MIN_CONF_PCT = 60;
 
-  // — Enable toggle. Persisted on the recording config (merged so NVR settings/stream
-  // URLs are kept), read back so the table shows only when recording is actually on.
-  const [cfg, setCfg] = useState(null);
-  const [enabled, setEnabled] = useState(false);
-  const [gap, setGap] = useState(0);
-  const [saving, setSaving] = useState(false);
-  const persistedEnabled = !!cfg?.metadataEnabled;
-  const dirty = enabled !== persistedEnabled || Number(gap || 0) !== Number(cfg?.metadataGapSeconds ?? 0);
-
-  const loadCfg = useCallback(async () => {
-    if (!cameraId) { setCfg(null); setEnabled(false); setGap(0); return; }
-    try {
-      const headers = authHeader ? { Authorization: authHeader } : {};
-      const resp = await fetch(`${apiBase()}/api/recording/config/${cameraId}`, { credentials: 'include', headers });
-      const payload = resp.ok ? await resp.json() : null;
-      const rc = payload?.data?.result ?? payload?.result ?? payload ?? null;
-      setCfg(rc || null); setEnabled(!!rc?.metadataEnabled); setGap(rc?.metadataGapSeconds ?? 0);
-    } catch (_) { setCfg(null); setEnabled(false); setGap(0); }
-  }, [cameraId, authHeader]);
-  useEffect(() => { loadCfg(); }, [loadCfg]);
-
-  async function saveMetadata() {
-    if (!cameraId || saving) return;
-    setSaving(true);
-    try {
-      const headers = { 'Content-Type': 'application/json', ...(authHeader ? { Authorization: authHeader } : {}) };
-      const body = { ...configDraftFor(cfg, cameraId), metadataEnabled: enabled, metadataGapSeconds: Number(gap) || 0 };
-      const resp = await fetch(`${apiBase()}/api/recording/config`, { method: 'PUT', credentials: 'include', headers, body: JSON.stringify(body) });
-      if (!resp.ok) throw new Error(`${resp.status}`);
-      const payload = await resp.json();
-      const saved = payload?.data?.result?.config ?? payload?.result?.config ?? null;
-      if (saved) { setCfg(saved); setEnabled(!!saved.metadataEnabled); setGap(saved.metadataGapSeconds ?? 0); }
-      else { await loadCfg(); }
-    } catch (_) { await loadCfg(); } finally { setSaving(false); }
-  }
-
-  // — Quick-filter bar (Object + Confidence %). These are applied on Search and merged
-  // into every table query (paging/sort still work). appliedRef holds the applied
-  // values so loadObs reads them without becoming a changing dependency.
-  const [labels, setLabels] = useState([]);
-  const [objLabel, setObjLabel] = useState('');
-  const [minConfPct, setMinConfPct] = useState(0);
-  const appliedRef = useRef({ obj: '', conf: 0 });
-
+// ObjectMultiSelect is a compact checklist dropdown for picking several object labels
+// at once (e.g. car + person). Closed, it summarizes the selection; open, it shows a
+// scrollable, color-coded checkbox list. Selecting none means "any object".
+function ObjectMultiSelect({ options, value, onChange, anyLabel, someLabel, clearLabel, emptyLabel }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
   useEffect(() => {
-    if (!cameraId) { setLabels([]); return undefined; }
+    if (!open) return undefined;
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+  const toggle = (label) => {
+    const set = new Set(value);
+    if (set.has(label)) set.delete(label); else set.add(label);
+    onChange([...set]);
+  };
+  const summary = value.length === 0 ? anyLabel : (value.length <= 2 ? value.join(', ') : someLabel(value.length));
+  return (
+    <div className={`multi-select${open ? ' open' : ''}`} ref={ref}>
+      <button type="button" className="multi-select-toggle" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        <span className="multi-select-summary">{summary}</span>
+        <span className="multi-select-caret" aria-hidden="true">▾</span>
+      </button>
+      {open && (
+        <div className="multi-select-menu" role="listbox">
+          {value.length > 0 && (
+            <button type="button" className="multi-select-clear" onClick={() => onChange([])}>{clearLabel}</button>
+          )}
+          {options.length === 0 ? (
+            <div className="multi-select-empty">{emptyLabel}</div>
+          ) : options.map((o) => (
+            <label key={o} className="multi-select-option">
+              <input type="checkbox" checked={value.includes(o)} onChange={() => toggle(o)} />
+              <span className={`object-tag object-tag--${objectCategory(o)}`}>{o}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// boxStrFromPeak turns a stored peakBox JSON ({x,y,w,h} normalized) into the "x,y,w,h"
+// query form the frame endpoint draws, or "" when there is no usable box.
+function boxStrFromPeak(peakBox) {
+  if (!peakBox) return '';
+  try {
+    const b = JSON.parse(peakBox);
+    if (b && Number(b.w) > 0 && Number(b.h) > 0) return `${b.x},${b.y},${b.w},${b.h}`;
+  } catch (_) {}
+  return '';
+}
+
+// segmentFrameUrl builds the footage-frame endpoint URL for a segment at `seek`, with an
+// optional detection box + label and render width.
+function segmentFrameUrl(segmentId, { seek = 0, boxStr = '', label = '', width } = {}) {
+  const params = new URLSearchParams({ seek: String(Number(seek) || 0) });
+  if (width) params.set('w', String(width));
+  if (boxStr) {
+    params.set('box', boxStr);
+    if (label) params.set('label', label);
+  }
+  return `${apiBase()}/api/recording/segments/${segmentId}/frame?${params}`;
+}
+
+// SnapshotButton is a reusable footage cell: a screenshot of the moment (detection box
+// drawn server-side when given), with translucent overlay buttons — play always, and
+// camera (maximize) when onMaximize is supplied. Used both by Object Search results and
+// the Recordings list, replacing plain play buttons with a self-identifying preview.
+function SnapshotButton({ segmentId, seek = 0, boxStr = '', label = '', size, authHeader, onPlay, onMaximize }) {
+  const t = useT();
+  const [url, setUrl] = useState(null);
+  const [failed, setFailed] = useState(false);
+  const segId = Number(segmentId) || 0;
+  const cls = `obs-thumb${size === 'sm' ? ' obs-thumb--sm' : ''}`;
+  useEffect(() => {
+    if (!segId) return undefined;
     let cancelled = false;
+    let obj = null;
     (async () => {
       try {
         const headers = authHeader ? { Authorization: authHeader } : {};
-        const resp = await fetch(`${apiBase()}/api/observations/labels?cameraId=${cameraId}`, { credentials: 'include', headers });
-        if (!resp.ok) return;
-        const payload = await resp.json();
-        const items = payload?.data?.result ?? payload?.result ?? payload;
-        if (!cancelled) setLabels(Array.isArray(items) ? items : []);
-      } catch (_) {}
+        const resp = await fetch(segmentFrameUrl(segId, { seek, boxStr, label }), { credentials: 'include', headers });
+        if (!resp.ok) throw new Error(`${resp.status}`);
+        obj = URL.createObjectURL(await resp.blob());
+        if (cancelled) { URL.revokeObjectURL(obj); return; }
+        setUrl(obj);
+      } catch (_) { if (!cancelled) setFailed(true); }
     })();
-    return () => { cancelled = true; };
-  }, [cameraId, authHeader]);
+    return () => { cancelled = true; if (obj) URL.revokeObjectURL(obj); };
+  }, [segId, seek, boxStr, label, authHeader]);
 
-  // — Server-mode observation table (filters/sort/paging run in the DB).
-  const OBS_PAGE_SIZE = 15;
-  const [rows, setRows] = useState([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [reloadKey, setReloadKey] = useState(0);
-  const [prevCam, setPrevCam] = useState(cameraId);
-  if (cameraId !== prevCam) { setPrevCam(cameraId); appliedRef.current = { obj: '', conf: 0 }; setObjLabel(''); setMinConfPct(0); setReloadKey((k) => k + 1); }
-
-  // applySearch pins the quick-filter values and remounts the grid so it re-queries
-  // from page 1 with them applied (the Time column filter, if any, resets — the bar is
-  // the primary filter). minConfPct is a percent (0–100) → converted to the 0–1 scale.
-  function applySearch() {
-    appliedRef.current = { obj: objLabel.trim().toLowerCase(), conf: Number(minConfPct) || 0 };
-    setReloadKey((k) => k + 1);
+  if (!segId || failed) {
+    return (
+      <button type="button" className={`${cls} obs-thumb--empty`} onClick={onPlay} title={t('meta.playFootage')} aria-label={t('meta.playFootage')}>
+        <Ico n="play" sz={16} />
+      </button>
+    );
   }
-
-  const loadObs = useCallback(async (cid, { filters, sorters, offset, limit }) => {
-    if (!cid) { setRows([]); setTotal(0); return; }
-    setLoading(true);
-    try {
-      const headers = authHeader ? { Authorization: authHeader } : {};
-      const params = new URLSearchParams({ limit: String(limit || OBS_PAGE_SIZE), offset: String(offset || 0), cameraId: String(cid) });
-      // Merge the quick-filter bar (object label / min confidence) with the table's own
-      // column filters (e.g. a Time range).
-      const merged = [...(filters || [])];
-      const { obj, conf } = appliedRef.current;
-      if (obj) merged.push({ fieldName: 'label', compare: 1, value: obj });
-      if (conf > 0) merged.push({ fieldName: 'maxConfidence', compare: 5, value: conf / 100 });
-      if (merged.length) params.set('filters', JSON.stringify(merged));
-      if ((sorters || []).length) params.set('sorters', JSON.stringify(sorters));
-      const resp = await fetch(`${apiBase()}/api/observations?${params}`, { credentials: 'include', headers });
-      if (!resp.ok) throw new Error(`${resp.status}`);
-      const payload = await resp.json();
-      const result = payload?.data?.result ?? payload?.result ?? payload;
-      setRows(Array.isArray(result?.items) ? result.items : []);
-      setTotal(typeof result?.total === 'number' ? result.total : 0);
-    } catch (_) { setRows([]); setTotal(0); } finally { setLoading(false); }
-  }, [authHeader]);
-
-  // — Footage playback for a row's covering segment, seeking to the sighting moment.
-  const [playing, setPlaying] = useState(null);
-  const [videoUrl, setVideoUrl] = useState(null);
-  const [loadingVideo, setLoadingVideo] = useState(false);
-  const [seekSeconds, setSeekSeconds] = useState(0);
-  async function playFootage(segmentId, seek, codec) {
-    if (!segmentId) return;
-    const seg = { id: segmentId, codec };
-    setSeekSeconds(seek > 0 ? seek : 0);
-    setPlaying(seg); setVideoUrl(null); setLoadingVideo(true);
-    try {
-      const headers = authHeader ? { Authorization: authHeader } : {};
-      const resp = await fetch(segmentPlaybackUrl(seg), { credentials: 'include', headers });
-      if (!resp.ok) throw new Error(`${resp.status}`);
-      setVideoUrl(URL.createObjectURL(await resp.blob()));
-    } catch (_) { setPlaying(null); } finally { setLoadingVideo(false); }
-  }
-  function closeVideo() {
-    setVideoUrl((p) => { if (p) URL.revokeObjectURL(p); return null; });
-    setPlaying(null); setLoadingVideo(false);
-  }
-  useEffect(() => {
-    if (!playing) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') closeVideo(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [playing]);
-
-  // Column keys are real ObjectObservation fields so the DB can filter/sort on them.
-  // Time is a daterange (over StartedAt); Object is a text match on the label;
-  // Confidence is display-only (shown as a percentage) and Footage is the play action.
-  const columns = [
-    { key: 'startedAt', label: t('meta.thTime'), filterType: 'daterange', render: (_v, row) => `${formatTimestamp(row.startedAt)} – ${formatTimestamp(row.endedAt)}` },
-    { key: 'label', label: t('meta.thObject'), filterable: false, render: (_v, row) => (<span style={{ textTransform: 'capitalize' }}>{row.label}{row.maxCount > 1 ? ` ×${row.maxCount}` : ''}</span>) },
-    { key: 'maxConfidence', label: t('meta.thConfidence'), filterable: false, render: (v) => `${Math.round((Number(v) || 0) * 100)}%` },
-    {
-      key: 'actions', label: t('meta.thFootage'), filterable: false,
-      render: (_v, row) => Number(row.segmentId) > 0 ? (
-        <button type="button" className="quiet" onClick={() => playFootage(Number(row.segmentId), Number(row.seekSeconds) || 0, row.segmentCodec)}>
-          <span className="btn-icon"><Ico n="play" /> {t('meta.playFootage')}</span>
-        </button>
-      ) : (<span className="segment-event-label">{t('meta.noFootage')}</span>),
-    },
-  ];
-
   return (
-    <section className="camera-object-search-panel">
-      <div className="toolbar">
-        <div>
-          <h2 className="section-title">{t('meta.searchTitle')}</h2>
-          <p className="section-subtitle">{t('meta.searchSub')}</p>
-        </div>
-        {persistedEnabled ? (
-          <button type="button" className="quiet" onClick={() => setReloadKey((k) => k + 1)} disabled={loading}>
-            <span className="btn-icon"><Ico n="reload" /> {t('common.reload')}</span>
+    <div className={cls}>
+      {url ? <img src={url} alt="" /> : <span className="obs-thumb-spinner" />}
+      {url && (
+        <div className="obs-thumb-actions">
+          <button type="button" className="obs-thumb-btn" onClick={onPlay} title={t('meta.playFootage')} aria-label={t('meta.playFootage')}>
+            <Ico n="play" sz={16} />
           </button>
-        ) : null}
-      </div>
-
-      {/* Enable/disable the recorder right here. */}
-      <div className="metadata-recorder-field">
-        <label className="check-row metadata-recorder-toggle">
-          <input type="checkbox" checked={enabled} disabled={!canManage || saving} onChange={(e) => setEnabled(e.target.checked)} />
-          <span>{t('rec.metadataEnable')}</span>
-        </label>
-        <p className="metadata-recorder-hint">{t('rec.metadataHint')}</p>
-        {enabled ? (
-          <label className="field-label metadata-recorder-gap">
-            <span>{t('rec.metadataGap')}</span>
-            <input type="number" min="0" max="120" value={gap || 0} placeholder="5" disabled={!canManage || saving} onChange={(e) => setGap(Number(e.target.value))} />
-          </label>
-        ) : null}
-        {dirty ? (
-          <div className="settings-actions">
-            <button type="button" onClick={saveMetadata} disabled={saving || !canManage}>
-              <span className="btn-icon"><Ico n="save" /> {saving ? t('common.loading') : t('rec.saveConfig')}</span>
+          {onMaximize && (
+            <button type="button" className="obs-thumb-btn" onClick={onMaximize} title={t('meta.maximizeSnapshot')} aria-label={t('meta.maximizeSnapshot')}>
+              <Ico n="camera" sz={16} />
             </button>
-          </div>
-        ) : null}
-      </div>
-
-      {!persistedEnabled ? (
-        <p className="empty-hint">{t('meta.disabledInfo')}</p>
-      ) : (
-        <>
-          <div className="log-toolbar object-search-bar" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-            <label style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', margin: 0 }}>
-              {t('meta.object')}
-              <select value={objLabel} onChange={(e) => setObjLabel(e.target.value)}>
-                <option value="">{t('meta.anyObject')}</option>
-                {labels.map((l) => (<option key={l} value={l}>{l}</option>))}
-              </select>
-            </label>
-            <label style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', margin: 0 }}>
-              {t('meta.minConfidence')}
-              <input type="number" min="0" max="100" step="5" value={minConfPct} style={{ width: '4.5rem' }}
-                onChange={(e) => setMinConfPct(Math.max(0, Math.min(100, Number(e.target.value) || 0)))} />
-              <span style={{ color: 'var(--text-muted)' }}>%</span>
-            </label>
-            <button type="button" onClick={applySearch} disabled={loading}>
-              <span className="btn-icon"><Ico n="search" /> {t('meta.search')}</span>
-            </button>
-          </div>
-          <DataTable
-            key={`obs-${cameraId}-${reloadKey}`}
-            serverMode
-            rows={rows}
-            columns={columns}
-            total={total}
-            pageSize={OBS_PAGE_SIZE}
-            pageSizeOptions={[15, 30, 50, 100]}
-            busy={loading}
-            onQuery={(q) => loadObs(cameraId, q)}
-            emptyText={t('meta.noResults')}
-          />
-        </>
-      )}
-
-      {playing && (
-        <div className="video-overlay" onClick={closeVideo}>
-          <div className="video-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="video-dialog-header">
-              <span className="video-dialog-title">{t('meta.footageTitle')}</span>
-              <button type="button" className="video-dialog-close" onClick={closeVideo} aria-label={t('common.close')}>✕</button>
-            </div>
-            <div className="video-dialog-body">
-              {loadingVideo && <div className="video-loading-msg">{t('rec.loadingVideo')}</div>}
-              {videoUrl && (
-                <video className="video-player" controls autoPlay src={videoUrl}
-                  onLoadedMetadata={(e) => { if (seekSeconds > 0) { try { e.currentTarget.currentTime = seekSeconds; } catch (_) {} } }} />
-              )}
-            </div>
-          </div>
+          )}
         </div>
       )}
-    </section>
+    </div>
   );
+}
+
+// objectCategory buckets a detected object label into a broad family so the object
+// pills in the search results can be color-coded (person / vehicle / animal / fire).
+const OBJECT_CATEGORY = {
+  person: 'person',
+  vehicle: 'vehicle', car: 'vehicle', truck: 'vehicle', bus: 'vehicle', motorcycle: 'vehicle', bicycle: 'vehicle', train: 'vehicle', boat: 'vehicle',
+  animal: 'animal', bird: 'animal', cat: 'animal', dog: 'animal', horse: 'animal', sheep: 'animal', cow: 'animal', elephant: 'animal', bear: 'animal', zebra: 'animal', giraffe: 'animal', deer: 'animal', goat: 'animal', pig: 'animal', monkey: 'animal', rabbit: 'animal',
+  fire: 'fire', smoke: 'fire',
+};
+function objectCategory(label) {
+  return OBJECT_CATEGORY[String(label || '').toLowerCase()] || 'other';
+}
+
+// defaultSearchFrom returns the ISO date 7 days ago (the default search range start).
+function defaultSearchFrom() {
+  const d = new Date();
+  d.setDate(d.getDate() - 7);
+  return d.toISOString().slice(0, 10);
 }
 
 // CameraRecordingsPanel is the per-camera recordings browser (date timeline, segment
@@ -459,11 +351,13 @@ export function CameraRecordingsPanel({ camera, canManage = true, busy, authHead
         }}
         className={`segment-row${isFocused ? ' focused' : ''}${extraClass ? ` ${extraClass}` : ''}`}
       >
-        <button type="button" className="segment-thumb-btn" onClick={() => playSegment(seg)} title={t('rec.play')}>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <path d="M8 5v14l11-7z"/>
-          </svg>
-        </button>
+        <SnapshotButton
+          segmentId={seg.id}
+          seek={0}
+          size="sm"
+          authHeader={authHeader}
+          onPlay={() => playSegment(seg)}
+        />
         <div className="segment-info">
           <div className="segment-title-row">
             <strong className="segment-filename">{segmentFilename(seg)}</strong>
@@ -487,9 +381,6 @@ export function CameraRecordingsPanel({ camera, canManage = true, busy, authHead
               <span className="btn-icon"><Ico n="acknowledge" /> {t('rec.acknowledge')}</span>
             </button>
           )}
-          <button type="button" className="quiet" onClick={() => playSegment(seg)}>
-            <span className="btn-icon"><Ico n="play" /> {t('rec.play')}</span>
-          </button>
           <button type="button" className="quiet" disabled={downloading === seg.id} onClick={() => downloadSegment(seg)}>
             <span className="btn-icon"><Ico n="download" /> {downloading === seg.id ? t('rec.downloading') : t('common.download')}</span>
           </button>
@@ -725,6 +616,528 @@ export function CameraRecordingsPanel({ camera, canManage = true, busy, authHead
   );
 }
 
+// CameraObjectSearchPanel is the dedicated "Object Search" tab: a detection-oriented
+// search across a DATE RANGE, by camera, object and minimum confidence, with paged
+// results. It defaults to the camera whose node it is opened from but can search any
+// or all cameras (the camera filter + a Camera column). Object metadata is bound to
+// recording, so every hit has footage — clicking Play opens the covering segment and
+// seeks to the exact moment the object was seen.
+export function CameraObjectSearchPanel({ camera, busy, authHeader, canManage = true }) {
+  const t = useT();
+  const currentCameraId = Number(camera?.id) || 0;
+
+  // Camera list (for the camera filter + resolving the Camera column name).
+  const [cameras, setCameras] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const headers = authHeader ? { Authorization: authHeader } : {};
+        const resp = await fetch(`${apiBase()}/api/cameras?limit=500`, { credentials: 'include', headers });
+        if (!resp.ok) return;
+        const payload = await resp.json();
+        const items = payload?.data?.result?.items ?? payload?.result?.items ?? payload?.items ?? payload?.data?.result ?? payload?.result ?? payload;
+        if (!cancelled) setCameras(Array.isArray(items) ? items : []);
+      } catch (_) {}
+    })();
+    return () => { cancelled = true; };
+  }, [authHeader]);
+  const cameraName = useCallback((id) => {
+    const c = cameras.find((x) => Number(x.id) === Number(id));
+    return (c && (c.name || c.model || c.host)) || t('dash.cameraN', { id });
+  }, [cameras, t]);
+
+  // Recording configs tell us which cameras actually log object metadata (metadata is
+  // bound to recording). Cameras with it off are still listed and searchable — but the
+  // result area explains they have nothing to find until recording is turned on.
+  const [configs, setConfigs] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const headers = authHeader ? { Authorization: authHeader } : {};
+        const resp = await fetch(`${apiBase()}/api/recording/config`, { credentials: 'include', headers });
+        if (!resp.ok) return;
+        const payload = await resp.json();
+        const items = payload?.data?.result ?? payload?.result ?? payload;
+        if (!cancelled) setConfigs(Array.isArray(items) ? items : []);
+      } catch (_) {}
+    })();
+    return () => { cancelled = true; };
+  }, [authHeader]);
+  const recordingOff = useCallback((id) => {
+    if (!Number(id)) return false;
+    const c = configs.find((x) => Number(x.cameraId) === Number(id));
+    return !c || !(c.metadataEnabled ?? c.enabled);
+  }, [configs]);
+
+  const [camFilter, setCamFilter] = useState(currentCameraId);
+  const [searchedCam, setSearchedCam] = useState(currentCameraId);
+  const [fromDate, setFromDate] = useState(defaultSearchFrom);
+  const [toDate, setToDate] = useState(todayDateString);
+  const [labels, setLabels] = useState([]);
+  const [objLabels, setObjLabels] = useState([]);
+  const [minConfPct, setMinConfPct] = useState(DEFAULT_MIN_CONF_PCT);
+  // Applied (searched) filters, read by loadObs without becoming a changing dep.
+  const buildApplied = () => ({
+    cam: camFilter,
+    from: fromDate ? Math.floor(new Date(fromDate + 'T00:00:00').getTime() / 1000) : 0,
+    to: toDate ? Math.floor(new Date(toDate + 'T23:59:59').getTime() / 1000) : 0,
+    objs: objLabels.map((l) => l.trim().toLowerCase()).filter(Boolean),
+    conf: Number(minConfPct) || 0,
+  });
+  const appliedRef = useRef({
+    cam: currentCameraId,
+    from: Math.floor(new Date(defaultSearchFrom() + 'T00:00:00').getTime() / 1000),
+    to: Math.floor(new Date(todayDateString() + 'T23:59:59').getTime() / 1000),
+    objs: [], conf: DEFAULT_MIN_CONF_PCT,
+  });
+
+  // Reset to this camera when the panel is opened from a different node.
+  const [prevCam, setPrevCam] = useState(currentCameraId);
+  const [reloadKey, setReloadKey] = useState(0);
+  if (currentCameraId !== prevCam) {
+    setPrevCam(currentCameraId);
+    setCamFilter(currentCameraId);
+    setSearchedCam(currentCameraId);
+    setObjLabels([]); setMinConfPct(DEFAULT_MIN_CONF_PCT); setFromDate(defaultSearchFrom()); setToDate(todayDateString());
+    appliedRef.current = { cam: currentCameraId, from: Math.floor(new Date(defaultSearchFrom() + 'T00:00:00').getTime() / 1000), to: Math.floor(new Date(todayDateString() + 'T23:59:59').getTime() / 1000), objs: [], conf: DEFAULT_MIN_CONF_PCT };
+    setReloadKey((k) => k + 1);
+  }
+
+  // Object labels for the dropdown (scoped to the selected camera, or all).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const headers = authHeader ? { Authorization: authHeader } : {};
+        const q = camFilter > 0 ? `?cameraId=${camFilter}` : '';
+        const resp = await fetch(`${apiBase()}/api/observations/labels${q}`, { credentials: 'include', headers });
+        if (!resp.ok) return;
+        const payload = await resp.json();
+        const items = payload?.data?.result ?? payload?.result ?? payload;
+        if (!cancelled) setLabels(Array.isArray(items) ? items : []);
+      } catch (_) {}
+    })();
+    return () => { cancelled = true; };
+  }, [camFilter, authHeader]);
+
+  const OBS_PAGE_SIZE = 20;
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+
+  function applySearch() {
+    appliedRef.current = buildApplied();
+    setSearchedCam(camFilter);
+    setReloadKey((k) => k + 1);
+  }
+
+  // buildObsParams turns the applied filters (+ optional grid filters/sorters) into the
+  // /api/observations query string. Shared by the paged grid and the export sweep so
+  // an export always matches exactly what the table shows. compare codes: 5=>=, 6=<=,
+  // 7=IN (a multi-value label match).
+  const buildObsParams = useCallback((offset, limit, gridFilters, sorters) => {
+    const { cam, from, to, objs, conf } = appliedRef.current;
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (cam > 0) params.set('cameraId', String(cam));
+    const merged = [...(gridFilters || [])];
+    if (from) merged.push({ fieldName: 'startedAt', compare: 5, value: from });
+    if (to) merged.push({ fieldName: 'startedAt', compare: 6, value: to });
+    if (objs && objs.length) merged.push({ fieldName: 'label', compare: 7, value: objs });
+    if (conf > 0) merged.push({ fieldName: 'maxConfidence', compare: 5, value: conf / 100 });
+    if (merged.length) params.set('filters', JSON.stringify(merged));
+    if ((sorters || []).length) params.set('sorters', JSON.stringify(sorters));
+    return params;
+  }, []);
+
+  const loadObs = useCallback(async ({ filters, sorters, offset, limit }) => {
+    setLoading(true);
+    try {
+      const headers = authHeader ? { Authorization: authHeader } : {};
+      const params = buildObsParams(offset || 0, limit || OBS_PAGE_SIZE, filters, sorters);
+      const resp = await fetch(`${apiBase()}/api/observations?${params}`, { credentials: 'include', headers });
+      if (!resp.ok) throw new Error(`${resp.status}`);
+      const payload = await resp.json();
+      const result = payload?.data?.result ?? payload?.result ?? payload;
+      setRows(Array.isArray(result?.items) ? result.items : []);
+      setTotal(typeof result?.total === 'number' ? result.total : 0);
+    } catch (_) { setRows([]); setTotal(0); } finally { setLoading(false); }
+  }, [authHeader, buildObsParams]);
+
+  // Export: sweep every page of the current search (the repo caps each read at 100) so
+  // the report covers the whole result set, not just the visible page, then generate
+  // the file entirely client-side (no server round-trip beyond the data fetch).
+  const [exporting, setExporting] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportRef = useRef(null);
+  useEffect(() => {
+    if (!exportOpen) return undefined;
+    const onDoc = (e) => { if (exportRef.current && !exportRef.current.contains(e.target)) setExportOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [exportOpen]);
+  const fetchAllRows = useCallback(async () => {
+    const headers = authHeader ? { Authorization: authHeader } : {};
+    const limit = 100;
+    const all = [];
+    let offset = 0;
+    let total = limit;
+    while (offset < total && offset < 100000) {
+      const params = buildObsParams(offset, limit, [], []);
+      const resp = await fetch(`${apiBase()}/api/observations?${params}`, { credentials: 'include', headers });
+      if (!resp.ok) break;
+      const payload = await resp.json();
+      const result = payload?.data?.result ?? payload?.result ?? payload;
+      const items = Array.isArray(result?.items) ? result.items : [];
+      all.push(...items);
+      total = typeof result?.total === 'number' ? result.total : all.length;
+      offset += limit;
+    }
+    return all;
+  }, [authHeader, buildObsParams]);
+  const exportRowFields = (r) => ([
+    cameraName(r.cameraId),
+    r.label,
+    r.maxCount > 1 ? r.maxCount : 1,
+    `${Math.round((Number(r.maxConfidence) || 0) * 100)}%`,
+    formatTimestamp(r.startedAt),
+    formatTimestamp(r.endedAt),
+    r.footagePending ? t('meta.footagePending') : t('meta.footageAvailable'),
+  ]);
+  async function doExport(kind) {
+    setExportOpen(false);
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const data = await fetchAllRows();
+      if (kind === 'csv') exportCSV(data); else exportPDF(data);
+    } catch (_) {} finally { setExporting(false); }
+  }
+  function exportCSV(data) {
+    const esc = (v) => { const s = String(v ?? ''); return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const head = [t('meta.thCamera'), t('meta.thObject'), t('meta.count'), t('meta.thConfidence'), t('meta.detectedFrom'), t('meta.detectedTo'), t('meta.thFootage')];
+    const lines = [head.map(esc).join(',')];
+    for (const r of data) lines.push(exportRowFields(r).map(esc).join(','));
+    const csv = '﻿' + lines.join('\r\n'); // BOM so Excel/Calc read UTF-8
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `object-search-${todayDateString()}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+  function exportPDF(data) {
+    const w = window.open('', '_blank');
+    if (!w) return;
+    const esc = (s) => String(s ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    const head = [t('meta.thCamera'), t('meta.thObject'), t('meta.count'), t('meta.thConfidence'), t('meta.detectedFrom'), t('meta.detectedTo'), t('meta.thFootage')];
+    const camPart = appliedRef.current.cam > 0 ? cameraName(appliedRef.current.cam) : t('meta.allCameras');
+    const objsPart = (appliedRef.current.objs && appliedRef.current.objs.length) ? appliedRef.current.objs.join(', ') : t('meta.anyObject');
+    const sub = `${camPart} · ${objsPart} · ≥ ${appliedRef.current.conf}% · ${data.length} ${t('meta.results')}`;
+    const rowsHtml = data.map((r) => `<tr>${exportRowFields(r).map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`).join('');
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(t('meta.searchTitle'))}</title>
+      <style>body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:24px}h1{font-size:18px;margin:0 0 4px}p.sub{color:#555;font-size:12px;margin:0 0 16px}
+      table{border-collapse:collapse;width:100%;font-size:11px}th,td{border:1px solid #ccc;padding:5px 7px;text-align:left}th{background:#f2f4f7}tr:nth-child(even) td{background:#fafbfc}</style>
+      </head><body><h1>${esc(t('meta.searchTitle'))}</h1><p class="sub">${esc(sub)}</p>
+      <table><thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody></table></body></html>`);
+    w.document.close();
+    w.focus();
+    setTimeout(() => { try { w.print(); } catch (_) {} }, 350);
+  }
+
+  // Footage playback: open the covering segment and seek to the sighting moment.
+  const [playing, setPlaying] = useState(null);
+  const [playingRow, setPlayingRow] = useState(null);
+  const [videoUrl, setVideoUrl] = useState(null);
+  const [loadingVideo, setLoadingVideo] = useState(false);
+  const [seekSeconds, setSeekSeconds] = useState(0);
+  const [boxVisible, setBoxVisible] = useState(false);
+  const seekedRef = useRef(false);
+  // The peak-confidence bounding box (normalized 0..1) for the sighting being played,
+  // drawn over the video so it's self-evident which object the row refers to.
+  const peakBox = useMemo(() => {
+    if (!playingRow || !playingRow.peakBox) return null;
+    try {
+      const b = JSON.parse(playingRow.peakBox);
+      if (b && Number(b.w) > 0 && Number(b.h) > 0) return b;
+    } catch (_) {}
+    return null;
+  }, [playingRow]);
+  async function playFootage(row) {
+    const segmentId = Number(row?.segmentId) || 0;
+    if (!segmentId) return;
+    const seg = { id: segmentId, codec: row.segmentCodec };
+    const seek = Number(row.seekSeconds) || 0;
+    setSeekSeconds(seek > 0 ? seek : 0);
+    seekedRef.current = false;
+    setBoxVisible(true);
+    setPlayingRow(row);
+    setPlaying(seg); setVideoUrl(null); setLoadingVideo(true);
+    try {
+      const headers = authHeader ? { Authorization: authHeader } : {};
+      const resp = await fetch(segmentPlaybackUrl(seg), { credentials: 'include', headers });
+      if (!resp.ok) throw new Error(`${resp.status}`);
+      setVideoUrl(URL.createObjectURL(await resp.blob()));
+    } catch (_) { setPlaying(null); setPlayingRow(null); } finally { setLoadingVideo(false); }
+  }
+  // Jump the player to the detected moment. Setting currentTime on loadedmetadata
+  // alone is unreliable on transcoded/streamed footage (the browser can reset it
+  // once real data arrives), so we (re)assert the seek on both loadedmetadata and
+  // canplay until it takes, and clamp to the clip's real duration.
+  function applySeek(v) {
+    if (!v || seekSeconds <= 0 || seekedRef.current) return;
+    const dur = v.duration;
+    const target = Number.isFinite(dur) && dur > 0 ? Math.min(seekSeconds, dur - 0.5) : seekSeconds;
+    if (target <= 0) return;
+    if (Math.abs(v.currentTime - target) < 0.75) { seekedRef.current = true; return; }
+    try { v.currentTime = target; } catch (_) {}
+  }
+  // Match the video element to the footage aspect ratio so it never letterboxes —
+  // that keeps the normalized box coordinates mapping straight onto the element.
+  function fitAspect(v) {
+    if (v && v.videoWidth > 0 && v.videoHeight > 0) {
+      v.style.aspectRatio = `${v.videoWidth} / ${v.videoHeight}`;
+    }
+  }
+  // Reveal the box only around the detection moment so it tracks the object honestly
+  // instead of sitting static while the scene moves on.
+  function onVideoTime(e) {
+    if (!peakBox) return;
+    const near = Math.abs(e.currentTarget.currentTime - Math.max(seekSeconds, 0)) < 2.5;
+    setBoxVisible((prev) => (prev === near ? prev : near));
+  }
+  function closeVideo() {
+    setVideoUrl((p) => { if (p) URL.revokeObjectURL(p); return null; });
+    setPlaying(null); setPlayingRow(null); setLoadingVideo(false); setBoxVisible(false);
+  }
+  useEffect(() => {
+    if (!playing) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') closeVideo(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [playing]);
+
+  // Maximize: open the snapshot large (a higher-res render of the same boxed frame).
+  const [maxRow, setMaxRow] = useState(null);
+  const [maxUrl, setMaxUrl] = useState(null);
+  const [maxLoading, setMaxLoading] = useState(false);
+  async function openMaximize(row) {
+    setMaxRow(row); setMaxUrl(null); setMaxLoading(true);
+    try {
+      const headers = authHeader ? { Authorization: authHeader } : {};
+      const url = segmentFrameUrl(Number(row.segmentId), { seek: row.seekSeconds, boxStr: boxStrFromPeak(row.peakBox), label: row.label, width: 1280 });
+      const resp = await fetch(url, { credentials: 'include', headers });
+      if (!resp.ok) throw new Error(`${resp.status}`);
+      setMaxUrl(URL.createObjectURL(await resp.blob()));
+    } catch (_) { setMaxRow(null); } finally { setMaxLoading(false); }
+  }
+  function closeMaximize() {
+    setMaxUrl((p) => { if (p) URL.revokeObjectURL(p); return null; });
+    setMaxRow(null); setMaxLoading(false);
+  }
+  useEffect(() => {
+    if (!maxRow) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') closeMaximize(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [maxRow]);
+
+  const columns = [
+    { key: 'startedAt', label: t('meta.thTime'), filterable: false, render: (_v, row) => `${formatTimestamp(row.startedAt)} – ${formatTimestamp(row.endedAt)}` },
+    { key: 'cameraId', label: t('meta.thCamera'), filterable: false, render: (_v, row) => cameraName(row.cameraId) },
+    { key: 'label', label: t('meta.thObject'), filterable: false, render: (_v, row) => (<span className={`object-tag object-tag--${objectCategory(row.label)}`}>{row.label}{row.maxCount > 1 ? ` ×${row.maxCount}` : ''}</span>) },
+    { key: 'maxConfidence', label: t('meta.thConfidence'), filterable: false, render: (v) => `${Math.round((Number(v) || 0) * 100)}%` },
+    {
+      key: 'actions', label: t('meta.thFootage'), filterable: false,
+      render: (_v, row) => (
+        row.footagePending || !Number(row.segmentId) ? (
+          <span className="footage-pending" title={t('meta.footagePendingHint')}>{t('meta.footagePending')}</span>
+        ) : (
+          <SnapshotButton
+            segmentId={row.segmentId}
+            seek={row.seekSeconds}
+            boxStr={boxStrFromPeak(row.peakBox)}
+            label={row.label}
+            authHeader={authHeader}
+            onPlay={() => playFootage(row)}
+            onMaximize={() => openMaximize(row)}
+          />
+        )
+      ),
+    },
+  ];
+
+  return (
+    <section className="camera-object-search-panel">
+      <div className="toolbar">
+        <div>
+          <h2 className="section-title">{t('meta.searchTitle')}</h2>
+          <p className="section-subtitle">{t('meta.searchSub')}</p>
+        </div>
+        <div className="toolbar-actions">
+          <div className={`export-menu${exportOpen ? ' open' : ''}`} ref={exportRef}>
+            <button type="button" className="quiet" onClick={() => setExportOpen((o) => !o)} disabled={exporting || total === 0} aria-expanded={exportOpen}>
+              <span className="btn-icon"><Ico n="download" /> {exporting ? t('meta.exporting') : t('meta.export')}</span>
+            </button>
+            {exportOpen && (
+              <div className="export-menu-list" role="menu">
+                <button type="button" role="menuitem" onClick={() => doExport('csv')}>{t('meta.exportCsv')}</button>
+                <button type="button" role="menuitem" onClick={() => doExport('pdf')}>{t('meta.exportPdf')}</button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <section className="settings-panel">
+      <form className="object-search-filters" onSubmit={(e) => { e.preventDefault(); applySearch(); }}>
+        <div className="field field--camera">
+          <span className="field-label">{t('meta.camera')}</span>
+          <select value={camFilter} onChange={(e) => setCamFilter(Number(e.target.value))}>
+            <option value={0}>{t('meta.allCameras')}</option>
+            {cameras.map((c) => (
+              <option key={c.id} value={c.id}>
+                {(c.name || c.model || c.host || `#${c.id}`)}{recordingOff(c.id) ? ` · ${t('meta.recordingOffTag')}` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <span className="field-label">{t('meta.from')}</span>
+          <input type="date" value={fromDate} max={toDate || todayDateString()} onChange={(e) => setFromDate(e.target.value)} />
+        </div>
+        <div className="field">
+          <span className="field-label">{t('meta.to')}</span>
+          <input type="date" value={toDate} max={todayDateString()} onChange={(e) => setToDate(e.target.value)} />
+        </div>
+        <div className="field field--object">
+          <span className="field-label">{t('meta.object')}</span>
+          <ObjectMultiSelect
+            options={labels}
+            value={objLabels}
+            onChange={setObjLabels}
+            anyLabel={t('meta.anyObject')}
+            someLabel={(n) => t('meta.objectsN', { n })}
+            clearLabel={t('meta.clearSelection')}
+            emptyLabel={t('meta.noObjectsYet')}
+          />
+        </div>
+        <div className="field field--conf">
+          <span className="field-label">{t('meta.minConfidence')}</span>
+          <div className="conf-input">
+            <input type="number" min="0" max="100" step="5" value={minConfPct}
+              onChange={(e) => setMinConfPct(Math.max(0, Math.min(100, Number(e.target.value) || 0)))} />
+            <span className="conf-unit">%</span>
+          </div>
+        </div>
+        <div className="field field-actions">
+          <button type="submit" disabled={loading}>
+            <span className="btn-icon"><Ico n="search" /> {t('meta.search')}</span>
+          </button>
+        </div>
+      </form>
+
+      {searchedCam > 0 && recordingOff(searchedCam) && (
+        <div className="obs-recording-off">
+          <Ico n="info" sz={16} />
+          <span>{t('meta.recordingOff', { camera: cameraName(searchedCam) })}</span>
+        </div>
+      )}
+
+      <DataTable
+        key={`obs-${reloadKey}`}
+        serverMode
+        rows={rows}
+        columns={columns}
+        total={total}
+        pageSize={OBS_PAGE_SIZE}
+        pageSizeOptions={[20, 50, 100]}
+        busy={loading}
+        onQuery={(q) => loadObs(q)}
+        emptyText={t('meta.noResults')}
+      />
+      </section>
+
+      {playing && (
+        <div className="video-overlay" onClick={closeVideo}>
+          <div className="video-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="video-dialog-header">
+              <div className="video-dialog-title-group">
+                <span className="video-dialog-title">{playingRow ? cameraName(playingRow.cameraId) : t('meta.footageTitle')}</span>
+                {playingRow && (
+                  <span className={`object-tag object-tag--${objectCategory(playingRow.label)}`}>
+                    {playingRow.label}{playingRow.maxCount > 1 ? ` ×${playingRow.maxCount}` : ''}
+                  </span>
+                )}
+              </div>
+              <button type="button" className="video-dialog-close" onClick={closeVideo} aria-label={t('common.close')}>✕</button>
+            </div>
+            <div className="video-dialog-body">
+              {loadingVideo && <div className="video-loading-msg">{t('rec.loadingVideo')}</div>}
+              {videoUrl && (
+                <div className="video-stage">
+                  <video className="video-player" controls autoPlay src={videoUrl}
+                    onLoadedMetadata={(e) => { applySeek(e.currentTarget); fitAspect(e.currentTarget); }}
+                    onCanPlay={(e) => applySeek(e.currentTarget)}
+                    onTimeUpdate={onVideoTime} />
+                  {peakBox && (
+                    <div
+                      className={`detect-box${boxVisible ? ' show' : ''}`}
+                      style={{
+                        left: `${Math.max(0, Math.min(100, Number(peakBox.x) * 100))}%`,
+                        top: `${Math.max(0, Math.min(100, Number(peakBox.y) * 100))}%`,
+                        width: `${Math.max(0, Math.min(100, Number(peakBox.w) * 100))}%`,
+                        height: `${Math.max(0, Math.min(100, Number(peakBox.h) * 100))}%`,
+                      }}
+                    >
+                      <span className="detect-box-label">
+                        {playingRow.label} · {Math.round((Number(playingRow.maxConfidence) || 0) * 100)}%
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            {playingRow && (
+              <div className="video-dialog-meta">
+                {formatTimestamp(playingRow.startedAt)} · {Math.round((Number(playingRow.maxConfidence) || 0) * 100)}%
+                {seekSeconds > 0 ? ` · ${t('meta.jumpedTo', { time: `${Math.floor(seekSeconds / 60)}:${String(Math.floor(seekSeconds % 60)).padStart(2, '0')}` })}` : ''}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {maxRow && (
+        <div className="video-overlay" onClick={closeMaximize}>
+          <div className="snap-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="video-dialog-header">
+              <div className="video-dialog-title-group">
+                <span className="video-dialog-title">{cameraName(maxRow.cameraId)}</span>
+                <span className={`object-tag object-tag--${objectCategory(maxRow.label)}`}>
+                  {maxRow.label}{maxRow.maxCount > 1 ? ` ×${maxRow.maxCount}` : ''}
+                </span>
+              </div>
+              <button type="button" className="video-dialog-close" onClick={closeMaximize} aria-label={t('common.close')}>✕</button>
+            </div>
+            <div className="snap-body">
+              {maxLoading && <div className="video-loading-msg">{t('rec.loadingVideo')}</div>}
+              {maxUrl && <img className="snap-image" src={maxUrl} alt="" />}
+            </div>
+            <div className="video-dialog-meta">
+              {formatTimestamp(maxRow.startedAt)} · {Math.round((Number(maxRow.maxConfidence) || 0) * 100)}%
+              <button type="button" className="quiet snap-play" onClick={() => { const r = maxRow; closeMaximize(); playFootage(r); }}>
+                <span className="btn-icon"><Ico n="play" /> {t('meta.playFootage')}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 // configDraftFor builds the full recording-config shape for a camera from its existing
 // config (or sane defaults), so the per-camera Recording and Stream tabs — which both
 // edit the SAME entity — always submit a complete config and never wipe each other's
@@ -789,9 +1202,9 @@ export function CameraRecordingConfig({ device, configs, busy, canManage = true,
       retentionDays: draft.retentionDays,
       segmentMinutes: draft.segmentMinutes,
       storagePath: draft.storagePath,
-      // metadataEnabled/metadataGapSeconds are managed in the Recordings tab; the
-      // configDraftFor(existing) spread above preserves them so saving recording
-      // settings here never clobbers the metadata recorder toggle.
+      // Object-metadata sighting cooldown (seconds): how long an object may be unseen
+      // before its next appearance is logged as a new Object Search entry. 0 = default.
+      metadataGapSeconds: draft.metadataGapSeconds ?? 0,
     });
   }
 
@@ -882,6 +1295,13 @@ export function CameraRecordingConfig({ device, configs, busy, canManage = true,
           <span>{t('rec.storagePath')}</span>
           <input type="text" value={draft.storagePath || ''} placeholder="recordings"
             onChange={(e) => setDraft({ ...draft, storagePath: e.target.value })} />
+        </label>
+        <label className="field-label">
+          <span>{t('rec.metaCooldown')}</span>
+          <input type="number" min="0" max="600" value={draft.metadataGapSeconds ?? 0}
+            title={t('rec.metaCooldownHint')}
+            onChange={(e) => setDraft({ ...draft, metadataGapSeconds: Math.max(0, Number(e.target.value) || 0) })} />
+          <span className="field-hint">{t('rec.metaCooldownHint')}</span>
         </label>
       </div>
 

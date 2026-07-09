@@ -22,6 +22,7 @@ const (
 	LessThan                                // EnumIndex = 4
 	GreaterThanOrEqualTo                    // EnumIndex = 5
 	LessThanOrEqualTo                       // EnumIndex = 6
+	In                                      // EnumIndex = 7 — value is a slice; builds `col IN (...)`
 )
 
 // Sorter

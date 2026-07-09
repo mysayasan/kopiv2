@@ -2,6 +2,7 @@ package apis
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/onvif"
 	"github.com/mysayasan/kopiv2/infra/recording"
+	"github.com/mysayasan/kopiv2/infra/vision"
 )
 
 type recordingApi struct {
@@ -36,6 +38,7 @@ func NewRecordingApi(router *mux.Router, serv services.IRecordingService, record
 	g.HandleFunc("/segments/purge", h.purgeExpired).Methods("POST")
 	g.HandleFunc("/segments/{id}", h.deleteSegment).Methods("DELETE")
 	g.HandleFunc("/segments/{id}/download", h.downloadSegment).Methods("GET")
+	g.HandleFunc("/segments/{id}/frame", h.segmentFrame).Methods("GET")
 	g.HandleFunc("/config", h.listConfigs).Methods("GET")
 	g.HandleFunc("/config", h.saveConfig).Methods("PUT")
 	g.HandleFunc("/config/{cameraId}", h.getConfig).Methods("GET")
@@ -144,6 +147,100 @@ func (a *recordingApi) downloadSegment(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", strconv.FormatInt(seg.FileSize, 10))
 	}
 	io.Copy(w, src)
+}
+
+// segmentFrame returns a small JPEG thumbnail of the segment at ?seek=<seconds>, with
+// the detection box drawn on it (?box=x,y,w,h&label=...). The extracted frame depends
+// only on (segment, seek), so it is cached on disk; the box is drawn per request (it
+// is cheap and keeps the cache box-agnostic). Backs the Object Search result previews.
+func (a *recordingApi) segmentFrame(w http.ResponseWriter, r *http.Request) {
+	id, ok := readRecordingID(w, r)
+	if !ok {
+		return
+	}
+	seg, err := a.serv.GetSegmentById(r.Context(), id)
+	if err != nil || seg == nil {
+		controllers.SendError(w, controllers.ErrBadRequest, "segment not found")
+		return
+	}
+	seek := parseInt64Query(r, "seek")
+	if seek < 0 {
+		seek = 0
+	}
+	// Width: small thumbnail by default, a larger frame for the maximized view. Clamped
+	// so a caller can't request an unbounded render.
+	width := int(parseInt64Query(r, "w"))
+	if width <= 0 {
+		width = 480
+	}
+	if width < 160 {
+		width = 160
+	}
+	if width > 1920 {
+		width = 1920
+	}
+
+	cacheDir := filepath.Join(os.TempDir(), "mymatasan-thumbs")
+	_ = os.MkdirAll(cacheDir, 0o755)
+	cachePath := filepath.Join(cacheDir, fmt.Sprintf("%d_%d_%d.jpg", seg.Id, seek, width))
+
+	frame, rerr := os.ReadFile(cachePath)
+	if rerr != nil || len(frame) == 0 {
+		f, oerr := os.Open(seg.FilePath)
+		if oerr != nil {
+			controllers.SendError(w, controllers.ErrBadRequest, "video file not available")
+			return
+		}
+		defer f.Close()
+		var src io.Reader = f
+		if a.cipher != nil {
+			dr, derr := a.cipher.MaybeDecryptingReader(f)
+			if derr != nil {
+				controllers.SendError(w, controllers.ErrInternalServerError, "decrypt failed")
+				return
+			}
+			src = dr
+		}
+		frame, err = recording.ExtractFrameJPEG(r.Context(), a.recordFFmpegPath(r), src, seek, width)
+		if err != nil || len(frame) == 0 {
+			controllers.SendError(w, controllers.ErrInternalServerError, "frame extract failed")
+			return
+		}
+		_ = os.WriteFile(cachePath, frame, 0o644)
+	}
+
+	if box, ok := parseBoxQuery(r.URL.Query().Get("box")); ok {
+		label := strings.TrimSpace(r.URL.Query().Get("label"))
+		frame = vision.AnnotateJPEG(frame, []vision.AnnotatedBox{{Box: box, Label: label}}, 82)
+	}
+
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	w.Write(frame)
+}
+
+// parseBoxQuery parses a "x,y,w,h" query value (normalized 0..1) into a vision.Box.
+func parseBoxQuery(raw string) (vision.Box, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return vision.Box{}, false
+	}
+	parts := strings.Split(raw, ",")
+	if len(parts) != 4 {
+		return vision.Box{}, false
+	}
+	vals := make([]float64, 4)
+	for i, p := range parts {
+		v, perr := strconv.ParseFloat(strings.TrimSpace(p), 64)
+		if perr != nil {
+			return vision.Box{}, false
+		}
+		vals[i] = v
+	}
+	if vals[2] <= 0 || vals[3] <= 0 {
+		return vision.Box{}, false
+	}
+	return vision.Box{X: vals[0], Y: vals[1], W: vals[2], H: vals[3]}, true
 }
 
 // recordFFmpegPath resolves the ffmpeg binary the serve-time transcode should use,

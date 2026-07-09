@@ -69,3 +69,6 @@ secret/atrest.key.init
 tools/tgbridge/outbox/
 tools/tgbridge/.gocache/
 tools/tgbridge/go-build*/
+# first-run generated admin credential (secret; regenerated per install)
+INITIAL_ADMIN_LOGIN.txt
+apps/*/INITIAL_ADMIN_LOGIN.txt

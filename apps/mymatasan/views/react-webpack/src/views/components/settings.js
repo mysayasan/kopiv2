@@ -4,7 +4,6 @@ import { useT } from '@shared/i18n';
 import { FormBusyOverlay, FieldTitle, AccordionList, AccordionItem } from './ui';
 import { ConsoleLog } from './console';
 import { PasswordField } from './layout';
-import { ObjectClassesPanel } from './vision';
 import { defaultYoloConfig, bestYoloDefaults, defaultCaptureConfig, captureModeOptions, defaultAlertNotificationConfig, alertNotificationFields, alertFieldDataKeys, builtinPayloadKeys, notificationCategories, notificationTemplateTokens, defaultDestination, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings } from '../lib/constants';
 import {iceUrlsText,textToIceUrls,decoderTransportOptions,decoderHWAccelOptions,apiBase } from '../lib/helpers';
 
@@ -2103,42 +2102,44 @@ export function SettingsTab({
         </>)}
 
         {settingsNav === 'runtime' && (<>
-        <section className="settings-panel">
+        <section className="settings-panel span-two">
           <header>
             <h2>{t('st.liveStream')}</h2>
           </header>
-          <label className="check-row">
-            <input
-              type="checkbox"
-              checked={settings.stream.webrtc.enabled}
-              onChange={(event) =>
-                update((current) => ({
-                  ...current,
-                  stream: {
-                    ...current.stream,
-                    webrtc: { ...current.stream.webrtc, enabled: event.target.checked },
-                  },
-                }))
-              }
-            />
-            {t('st.webrtc')}
-          </label>
-          <label className="check-row">
-            <input
-              type="checkbox"
-              checked={settings.stream.mjpegFallback.enabled}
-              onChange={(event) =>
-                update((current) => ({
-                  ...current,
-                  stream: {
-                    ...current.stream,
-                    mjpegFallback: { enabled: event.target.checked },
-                  },
-                }))
-              }
-            />
-            {t('st.mjpegFallback')}
-          </label>
+          <div className="check-row-inline">
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={settings.stream.webrtc.enabled}
+                onChange={(event) =>
+                  update((current) => ({
+                    ...current,
+                    stream: {
+                      ...current.stream,
+                      webrtc: { ...current.stream.webrtc, enabled: event.target.checked },
+                    },
+                  }))
+                }
+              />
+              {t('st.webrtc')}
+            </label>
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={settings.stream.mjpegFallback.enabled}
+                onChange={(event) =>
+                  update((current) => ({
+                    ...current,
+                    stream: {
+                      ...current.stream,
+                      mjpegFallback: { enabled: event.target.checked },
+                    },
+                  }))
+                }
+              />
+              {t('st.mjpegFallback')}
+            </label>
+          </div>
         </section>
 
         <section className="settings-panel span-two">
@@ -2229,21 +2230,6 @@ export function SettingsTab({
           </button>
         </div>
           </form>
-        ) : null}
-
-        {settingsNav === 'ai' ? (
-          // Outside the runtime-settings <form>: the class editor modal contains its
-          // own <form>, and nested forms are invalid HTML.
-          <div className="settings-layout">
-            <ObjectClassesPanel
-              classes={visionClasses}
-              labelCatalog={visionLabels}
-              activeModelClasses={activeModelClasses}
-              busy={busy}
-              onSaveClass={onSaveClass}
-              onDeleteClass={onDeleteClass}
-            />
-          </div>
         ) : null}
 
         {settingsNav === 'users' ? (

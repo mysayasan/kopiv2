@@ -144,13 +144,28 @@ func parseQueryFilters(values []string, fields map[string]queryField) ([]sqldata
 			if !ok {
 				return nil, fmt.Errorf("unknown filter field %q", filter.FieldName)
 			}
-			if filter.Compare < sqldataenums.Equal || filter.Compare > sqldataenums.LessThanOrEqualTo {
+			if filter.Compare < sqldataenums.Equal || filter.Compare > sqldataenums.In {
 				return nil, fmt.Errorf("unsupported filter compare %d", filter.Compare)
 			}
 
-			value, err := normalizeQueryValue(filter.Value, field.Type)
-			if err != nil {
-				return nil, fmt.Errorf("invalid filter value for %s: %w", filter.FieldName, err)
+			var value any
+			if filter.Compare == sqldataenums.In {
+				// IN takes a list: normalize each element to the field type so escaping
+				// and typing match scalar filters. An empty list yields no filter.
+				elems, err := normalizeQueryValueList(filter.Value, field.Type)
+				if err != nil {
+					return nil, fmt.Errorf("invalid filter value for %s: %w", filter.FieldName, err)
+				}
+				if len(elems) == 0 {
+					continue
+				}
+				value = elems
+			} else {
+				v, err := normalizeQueryValue(filter.Value, field.Type)
+				if err != nil {
+					return nil, fmt.Errorf("invalid filter value for %s: %w", filter.FieldName, err)
+				}
+				value = v
 			}
 
 			filters = append(filters, sqldataenums.Filter{
@@ -209,6 +224,36 @@ func decodeQueryJSON(raw string, target any) error {
 	dec := json.NewDecoder(strings.NewReader(raw))
 	dec.UseNumber()
 	return dec.Decode(target)
+}
+
+// normalizeQueryValueList normalizes an IN-filter value (a JSON array, or a single
+// scalar treated as a one-element list) into a typed slice, each element normalized to
+// the field type. Empty/blank elements are skipped.
+func normalizeQueryValueList(value any, typ reflect.Type) ([]any, error) {
+	var raw []any
+	switch v := value.(type) {
+	case []any:
+		raw = v
+	case nil:
+		return nil, nil
+	default:
+		raw = []any{v}
+	}
+	out := make([]any, 0, len(raw))
+	for _, elem := range raw {
+		if elem == nil {
+			continue
+		}
+		norm, err := normalizeQueryValue(elem, typ)
+		if err != nil {
+			return nil, err
+		}
+		if s, ok := norm.(string); ok && strings.TrimSpace(s) == "" {
+			continue
+		}
+		out = append(out, norm)
+	}
+	return out, nil
 }
 
 func normalizeQueryValue(value any, typ reflect.Type) (any, error) {
