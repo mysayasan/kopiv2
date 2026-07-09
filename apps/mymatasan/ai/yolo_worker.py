@@ -235,16 +235,34 @@ def _iou(a: dict[str, float], b: dict[str, float]) -> float:
 
 
 def _merge(stock_dets: list[dict[str, Any]], custom_dets: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Merge stock + custom detections, dropping near-duplicate boxes of the SAME
-    label (e.g. both models seeing the same person) so crowd counts aren't doubled.
-    Different labels at the same spot (e.g. stock "person" + custom "papa") are
-    both kept — that physical object is both."""
-    combined = sorted(stock_dets + custom_dets, key=lambda d: d["confidence"], reverse=True)
+    """Merge stock + custom detections, with the taught (custom) model taking
+    PRIORITY where it fires.
+
+    A custom model is a deliberate, per-deployment refinement, so where it detects an
+    object it should own that object's label: a stock box it overlaps is dropped even
+    when the labels differ (e.g. stock "dog" + custom "cat" on the same animal → just
+    "cat"). That saves a duplicate presence row in Object Search and avoids the
+    confusing "it's both" result, while still collapsing same-label near-duplicates so
+    crowd counts aren't doubled. Stock detections the custom model does NOT cover are
+    kept untouched, so activating a skill never blinds the stock classes elsewhere in
+    the frame."""
     kept: list[dict[str, Any]] = []
-    for det in combined:
+    # Custom detections first (highest confidence first), collapsing same-label dupes.
+    for det in sorted(custom_dets, key=lambda d: d["confidence"], reverse=True):
         if any(k["label"] == det["label"] and _iou(k["box"], det["box"]) > 0.55 for k in kept):
             continue
         kept.append(det)
+    custom_kept = list(kept)
+    # Then stock: a custom detection wins any box it overlaps (ANY label), so suppress
+    # stock boxes a taught detection already owns; then the usual same-label dedup.
+    for det in sorted(stock_dets, key=lambda d: d["confidence"], reverse=True):
+        if any(_iou(c["box"], det["box"]) > 0.55 for c in custom_kept):
+            continue
+        if any(k["label"] == det["label"] and _iou(k["box"], det["box"]) > 0.55 for k in kept):
+            continue
+        kept.append(det)
+    # Restore the confidence-desc ordering the rest of the pipeline expects.
+    kept.sort(key=lambda d: d["confidence"], reverse=True)
     return kept
 
 
