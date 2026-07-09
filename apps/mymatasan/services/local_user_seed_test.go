@@ -17,6 +17,9 @@ type fakeLocalUserRepo struct {
 	dbsql.IGenericRepo[entities.LocalUser]
 	rows   []*entities.LocalUser
 	nextID uint64
+	// call counters so tests can assert the auth cache short-circuits DB work.
+	getByUniqueCount int
+	updateCount      int
 }
 
 func (f *fakeLocalUserRepo) Get(_ context.Context, _ string, _ uint64, _ uint64, _ []sqldataenums.Filter, _ []sqldataenums.Sorter) ([]*entities.LocalUser, uint64, error) {
@@ -24,9 +27,20 @@ func (f *fakeLocalUserRepo) Get(_ context.Context, _ string, _ uint64, _ uint64,
 }
 
 func (f *fakeLocalUserRepo) GetByUnique(_ context.Context, _ string, _ string, uids ...any) (*entities.LocalUser, error) {
+	f.getByUniqueCount++
 	username, _ := uids[0].(string)
 	for _, r := range f.rows {
 		if r.Username == username {
+			cp := *r
+			return &cp, nil
+		}
+	}
+	return nil, errors.New("no result found")
+}
+
+func (f *fakeLocalUserRepo) GetById(_ context.Context, _ string, id uint64) (*entities.LocalUser, error) {
+	for _, r := range f.rows {
+		if r.Id == int64(id) {
 			cp := *r
 			return &cp, nil
 		}
@@ -43,6 +57,7 @@ func (f *fakeLocalUserRepo) Create(_ context.Context, _ string, model entities.L
 }
 
 func (f *fakeLocalUserRepo) UpdateById(_ context.Context, _ string, model entities.LocalUser) (uint64, error) {
+	f.updateCount++
 	for _, r := range f.rows {
 		if r.Id == model.Id {
 			*r = model

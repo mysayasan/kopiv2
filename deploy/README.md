@@ -172,6 +172,14 @@ For a **trusted** setup, pick one:
   browser and app), so the reverse proxy only needs to carry the HTTPS signaling
   traffic shown above.
 
+  Also set `rateLimit.trustedProxies` in the app's config to the proxy's address
+  (e.g. `["127.0.0.1"]` for a local nginx/Caddy as above). Without it, the app
+  ignores the `X-Forwarded-For` header it sets and rate-limits/lockouts every
+  client behind the proxy as one shared bucket keyed on the proxy's own address
+  — this is the secure default (a directly-exposed instance can't be spoofed by
+  a forged header), but behind a real proxy it needs to be told which peer to
+  trust.
+
 ---
 
 # Running MyMataSan under a process supervisor

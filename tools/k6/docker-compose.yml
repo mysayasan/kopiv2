@@ -1,0 +1,70 @@
+# k6 + InfluxDB + Grafana load-testing stack for mymatasan.
+#
+# Bring up the metrics backend (Grafana + InfluxDB) once, then run k6 as many
+# times as you like against it — every run streams live into the dashboard.
+#
+#   docker compose up -d influxdb grafana        # start backend (persists)
+#   docker compose run --rm k6 run /scripts/load.js
+#   docker compose down                          # stop backend
+#
+# The run.ps1 / run.sh wrappers do all of this for you; compose is here so the
+# stack is reproducible and CI-friendly.
+
+services:
+  # Time-series store for k6's per-request metrics (InfluxDB 1.8 line protocol,
+  # which k6's built-in `--out influxdb` speaks natively — no plugins).
+  influxdb:
+    image: influxdb:1.8
+    container_name: k6-influxdb
+    ports:
+      - "8086:8086"
+    environment:
+      - INFLUXDB_DB=k6
+      - INFLUXDB_HTTP_MAX_BODY_SIZE=0   # don't reject large metric batches
+    volumes:
+      - influxdb-data:/var/lib/influxdb
+
+  # Dashboards. Datasource + the k6 dashboard are auto-provisioned from
+  # ./grafana, so it comes up ready — open http://localhost:3300 (anonymous
+  # admin, no login) and pick the "k6 Load Testing Results" dashboard.
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: k6-grafana
+    ports:
+      - "3300:3000"     # 3000 is mymatasan's port; expose Grafana on 3300
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_BASIC_ENABLED=false
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_DEFAULT_THEME=dark
+    depends_on:
+      - influxdb
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+
+  # The load generator itself. Not started by `up`; invoked on demand via
+  # `docker compose run --rm k6 run /scripts/<name>.js`. Being a compose service
+  # puts it on the same network as influxdb (reachable at http://influxdb:8086),
+  # while the app under test is reached via host.docker.internal.
+  k6:
+    image: grafana/k6:latest
+    container_name: k6-runner
+    profiles: ["run"]     # excluded from `up`; only `compose run` starts it
+    environment:
+      - K6_OUT=influxdb=http://influxdb:8086/k6
+      - BASE_URL=${BASE_URL:-https://host.docker.internal:3000}
+      - AUTH_USER=${AUTH_USER:-}
+      - AUTH_PASS=${AUTH_PASS:-}
+      - SCENARIO=${SCENARIO:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./results:/results:rw
+    depends_on:
+      - influxdb
+
+volumes:
+  influxdb-data:

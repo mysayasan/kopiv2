@@ -333,6 +333,7 @@ Rate limit config contract (`rateLimit` in app config):
 - `enabled`: enables sliding-window API rate limiting.
 - `endpointCacheTtlSeconds`: caches endpoint tier metadata to avoid DB reads on every request.
 - `defaultWindowSeconds`: fallback window for tiers that omit `windowSeconds`.
+- `trustedProxies`: IPs/CIDRs of reverse proxies permitted to declare the client's real address via `X-Forwarded-For`/`X-Real-IP`. `X-Forwarded-For`/`X-Real-IP` are honored only when the direct TCP peer matches an entry here; otherwise the peer address is used as-is. Defaults to empty (trust none), so a directly internet-exposed instance can't be tricked into bucketing by a forged header.
 - `devOnly`, `authOnly`, `public`: per-tier `enabled`, `requests`, and `windowSeconds`.
 
 Transaction config contract (`transaction` in app config):

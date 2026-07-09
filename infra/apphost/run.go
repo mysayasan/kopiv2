@@ -1167,6 +1167,7 @@ func rateLimitMiddlewareConfig(appConfig *config.AppConfigModel) middlewares.Rat
 	return middlewares.RateLimitConfig{
 		Enabled:          appConfig.RateLimit.Enabled,
 		EndpointCacheTTL: endpointCacheTTL,
+		TrustedProxies:   appConfig.RateLimit.TrustedProxies,
 		DevOnly:          rateLimitTierMiddlewareConfig(appConfig.RateLimit.DevOnly, defaultWindow),
 		AuthOnly:         rateLimitTierMiddlewareConfig(appConfig.RateLimit.AuthOnly, defaultWindow),
 		Public:           rateLimitTierMiddlewareConfig(appConfig.RateLimit.Public, defaultWindow),

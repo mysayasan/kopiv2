@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mysayasan/kopiv2/infra/procutil"
@@ -28,7 +29,66 @@ type DecoderGPUDeviceResult struct {
 	Observations []string                 `json:"observations"`
 }
 
+// gpuDeviceCacheTTL bounds how long a GPU probe is reused. Discovering the host's
+// GPUs spawns external tools (on Windows: powershell CIM query + nvidia-smi),
+// which costs seconds — yet the answer is effectively static hardware that does
+// not change while the process runs. Without caching, every GET /capacity (a
+// dashboard poll) re-ran the full probe and blocked for ~3s. The TTL still lets
+// a driver/hardware change surface within a few minutes.
+const gpuDeviceCacheTTL = 5 * time.Minute
+
+var (
+	gpuDeviceCacheMu         sync.Mutex
+	gpuDeviceCacheResult     DecoderGPUDeviceResult
+	gpuDeviceCacheValid      bool
+	gpuDeviceCacheExpires    time.Time
+	gpuDeviceCacheRefreshing bool
+)
+
+// DetectDecoderGPUDevices returns the host's selectable GPU decode devices,
+// served from a stale-while-revalidate cache so repeated callers (capacity
+// estimate, settings device list, auto-tune) don't each pay the multi-second
+// hardware probe. Only the very first call blocks on the probe; once the cache
+// is warm an expired entry is served immediately while a single background
+// goroutine refreshes it — hardware is static, so brief staleness is harmless
+// and no request ever blocks on the probe again. The probe itself is
+// detectDecoderGPUDevices.
 func DetectDecoderGPUDevices(ctx context.Context) DecoderGPUDeviceResult {
+	gpuDeviceCacheMu.Lock()
+	if gpuDeviceCacheValid {
+		cached := gpuDeviceCacheResult
+		if time.Now().After(gpuDeviceCacheExpires) && !gpuDeviceCacheRefreshing {
+			// Expired: refresh in the background and serve the (still-valid) stale
+			// hardware answer now. Use a detached context so a cancelled request
+			// can't abort the shared refresh.
+			gpuDeviceCacheRefreshing = true
+			go refreshGPUDeviceCache(context.Background())
+		}
+		gpuDeviceCacheMu.Unlock()
+		return cached
+	}
+	gpuDeviceCacheMu.Unlock()
+
+	// Cold: first ever call. Probe synchronously and seed the cache.
+	result := detectDecoderGPUDevices(ctx)
+	gpuDeviceCacheMu.Lock()
+	gpuDeviceCacheResult = result
+	gpuDeviceCacheValid = true
+	gpuDeviceCacheExpires = time.Now().Add(gpuDeviceCacheTTL)
+	gpuDeviceCacheMu.Unlock()
+	return result
+}
+
+func refreshGPUDeviceCache(ctx context.Context) {
+	result := detectDecoderGPUDevices(ctx)
+	gpuDeviceCacheMu.Lock()
+	gpuDeviceCacheResult = result
+	gpuDeviceCacheExpires = time.Now().Add(gpuDeviceCacheTTL)
+	gpuDeviceCacheRefreshing = false
+	gpuDeviceCacheMu.Unlock()
+}
+
+func detectDecoderGPUDevices(ctx context.Context) DecoderGPUDeviceResult {
 	result := DecoderGPUDeviceResult{GOOS: runtime.GOOS}
 	switch runtime.GOOS {
 	case "windows":
