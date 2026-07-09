@@ -28,6 +28,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-09 — mymatasan 1.89.1 (a9840c3)
+
+### Fixed
+
+- **mymatasan**: Object Search results no longer include sightings from cameras that aren't actually recording footage. Object metadata capture is independent of continuous NVR recording: a camera can be in detect-only mode (recording disabled) and still log observations from the same detector pass, but a detect-only recorder keeps no video segments at all, so those sightings had nothing to link to and showed up as rows permanently stuck on "Finalizing..." that could never resolve. GetObservations now restricts the search at the query level to cameras whose recording config is enabled (a new camerasRecording helper reads all RecordingConfigs and returns the enabled set; on a config-read error it returns nil and the search fails open, i.e. unrestricted, rather than hiding real results) - an explicit camera pick that isn't recording short-circuits to an empty page, and the all-cameras search adds a CameraId IN (...) filter over the recording set, so paging and the total count both stay correct. Also cleaned up the Object Search results grid: the Time column now shows a single sighting timestamp instead of a redundant start-dash-end range (every row already spans at most metadataGapSeconds, so the range added no information).
 ## 2026-07-09 — mymatasan 1.89.0 (bd1f63c)
 
 ### Security
