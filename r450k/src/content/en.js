@@ -85,7 +85,12 @@ const en = {
       {
         icon: 'chart',
         title: 'Analytics dashboard',
-        body: 'A live dashboard turns the unified event feed into insight — KPI tiles, detections over time, and per-category and per-camera breakdowns with a range selector and auto-refresh. Aggregation runs server-side, so it works on SQLite or a full database engine.',
+        body: 'The unified event feed becomes insight — KPI tiles, detections over time, and per-category, per-camera breakdowns with a range selector and auto-refresh. It goes past charts: an activity heatmap by hour and weekday, an expected-range band that flags when a camera breaks its own normal pattern, spike and "unusual silence" anomaly alerts, a per-camera reliability scorecard, and a notification noise ratio. Aggregation runs server-side, so it works on SQLite or a full database engine.',
+      },
+      {
+        icon: 'search',
+        title: 'Object Search',
+        body: 'Search your footage by what the cameras actually saw. Every detection is coalesced onto a searchable timeline — filter by camera, date range, one or more object types at once, and confidence, then jump straight to the exact moment in the recording, with the object boxed on a preview thumbnail. Export the results to CSV or PDF. It taps the live detector\'s own output, so there is no second video pass.',
       },
       {
         icon: 'activity',
