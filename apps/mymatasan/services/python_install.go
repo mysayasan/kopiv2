@@ -87,21 +87,67 @@ func (p *PythonInstaller) pythonExe() string {
 	return filepath.Join(p.dataDir, "pyruntime", rel)
 }
 
-// PythonStatus probes the installed interpreter for ultralytics + torch.
+// pythonProbeScript prints "<torch-version> <cuda-bool> <has-ultralytics>" for an
+// interpreter, so one run tells us whether the AI stack is usable.
+const pythonProbeScript = "import importlib.util as u;\n" +
+	"tv=''; cu='False'; ul='False'\n" +
+	"try:\n import torch; tv=torch.__version__; cu=str(torch.cuda.is_available())\n" +
+	"except Exception: pass\n" +
+	"ul=str(u.find_spec('ultralytics') is not None)\n" +
+	"print(tv, cu, ul)"
+
+// PythonStatus reports the AI runtime the app will actually use. It probes candidates in
+// priority order — the configured detector command (vision.detector.command, i.e. what
+// really runs detection, which may be a user-supplied system Python with a GPU torch
+// build) first, then the app's own bundled runtime under dataDir/pyruntime — and returns
+// the first that both exists and has ultralytics. This stops a "bring your own Python"
+// setup from being falsely reported as "not installed" just because the bundled runtime
+// was never downloaded. If a candidate exists but lacks the packages, that is reported
+// (found, but ultralytics/torch missing) rather than a bare "not found".
 func (p *PythonInstaller) PythonStatus(ctx context.Context) PythonRuntimeStatus {
-	exe := p.pythonExe()
-	if _, err := os.Stat(exe); err != nil {
+	candidates := make([]string, 0, 2)
+	if cmd := strings.TrimSpace(p.detectorCommand()); cmd != "" {
+		candidates = append(candidates, cmd)
+	}
+	if bundled := p.pythonExe(); !containsString(candidates, bundled) {
+		candidates = append(candidates, bundled)
+	}
+
+	var firstFound PythonRuntimeStatus
+	for _, exe := range candidates {
+		st := p.probeInterpreter(ctx, exe)
+		if !st.Found {
+			continue
+		}
+		if st.Ultralytic {
+			return st // a usable runtime (has ultralytics) — report it
+		}
+		if !firstFound.Found {
+			firstFound = st // present but incomplete; keep as fallback report
+		}
+	}
+	return firstFound
+}
+
+// probeInterpreter checks that exe exists (resolving a bare command via PATH) and runs
+// the torch/ultralytics probe. A missing interpreter returns a zero (not-found) status.
+func (p *PythonInstaller) probeInterpreter(ctx context.Context, exe string) PythonRuntimeStatus {
+	exe = strings.TrimSpace(exe)
+	if exe == "" {
 		return PythonRuntimeStatus{}
 	}
-	res := PythonRuntimeStatus{Found: true, Python: exe}
-	// One probe prints "<torch-version> <cuda-bool> <has-ultralytics>".
-	out, err := runProbe(ctx, exe, []string{"-c",
-		"import importlib.util as u;\n" +
-			"tv=''; cu='False'; ul='False'\n" +
-			"try:\n import torch; tv=torch.__version__; cu=str(torch.cuda.is_available())\n" +
-			"except Exception: pass\n" +
-			"ul=str(u.find_spec('ultralytics') is not None)\n" +
-			"print(tv, cu, ul)"}, 20*time.Second)
+	resolved := exe
+	if filepath.IsAbs(exe) {
+		if _, err := os.Stat(exe); err != nil {
+			return PythonRuntimeStatus{}
+		}
+	} else if lp, err := exec.LookPath(exe); err == nil {
+		resolved = lp
+	} else {
+		return PythonRuntimeStatus{}
+	}
+	res := PythonRuntimeStatus{Found: true, Python: resolved}
+	out, err := runProbe(ctx, resolved, []string{"-c", pythonProbeScript}, 20*time.Second)
 	if err == nil {
 		fields := strings.Fields(strings.TrimSpace(out))
 		if len(fields) == 3 {
@@ -111,6 +157,32 @@ func (p *PythonInstaller) PythonStatus(ctx context.Context) PythonRuntimeStatus 
 		}
 	}
 	return res
+}
+
+// detectorCommand reads vision.detector.command from the app config (the interpreter the
+// detector runs with), or "" when unset/unreadable.
+func (p *PythonInstaller) detectorCommand() string {
+	if strings.TrimSpace(p.configPath) == "" {
+		return ""
+	}
+	data, err := os.ReadFile(p.configPath)
+	if err != nil {
+		return ""
+	}
+	var cfg map[string]any
+	if json.Unmarshal(data, &cfg) != nil {
+		return ""
+	}
+	vision, _ := cfg["vision"].(map[string]any)
+	if vision == nil {
+		return ""
+	}
+	detector, _ := vision["detector"].(map[string]any)
+	if detector == nil {
+		return ""
+	}
+	cmd, _ := detector["command"].(string)
+	return cmd
 }
 
 // InstallStatus returns the current install state for polling.

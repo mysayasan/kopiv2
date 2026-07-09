@@ -369,7 +369,7 @@ func ensureSchema(ctx context.Context, db *sql.DB, engine string, manifest Manif
 				tablesUpdated = true
 			}
 		}
-		if err := ensureUniqueIndexes(ctx, db, engine, table); err != nil {
+		if err := ensureIndexes(ctx, db, engine, table); err != nil {
 			return false, false, err
 		}
 	}
@@ -398,7 +398,7 @@ func createTable(ctx context.Context, db *sql.DB, engine string, table TableSpec
 	if err != nil {
 		return err
 	}
-	return ensureUniqueIndexes(ctx, db, engine, table)
+	return ensureIndexes(ctx, db, engine, table)
 }
 
 func migrateTable(ctx context.Context, db *sql.DB, engine string, table TableSpec) (bool, error) {
@@ -417,13 +417,13 @@ func migrateTable(ctx context.Context, db *sql.DB, engine string, table TableSpe
 		}
 		updated = true
 	}
-	if err := ensureUniqueIndexes(ctx, db, engine, table); err != nil {
+	if err := ensureIndexes(ctx, db, engine, table); err != nil {
 		return false, err
 	}
 	return updated, nil
 }
 
-func ensureUniqueIndexes(ctx context.Context, db *sql.DB, engine string, table TableSpec) error {
+func ensureIndexes(ctx context.Context, db *sql.DB, engine string, table TableSpec) error {
 	existing := map[string]struct{}{}
 	if engine == "mariadb" {
 		indexes, err := existingIndexes(ctx, db, table.Name)
@@ -432,15 +432,30 @@ func ensureUniqueIndexes(ctx context.Context, db *sql.DB, engine string, table T
 		}
 		existing = indexes
 	}
+	if err := createIndexes(ctx, db, engine, table.Name, table.Unique, true, existing); err != nil {
+		return err
+	}
+	return createIndexes(ctx, db, engine, table.Name, table.Index, false, existing)
+}
 
-	for _, uniqueIndex := range table.Unique {
-		columns := make([]string, 0, len(uniqueIndex.Columns))
-		for _, column := range uniqueIndex.Columns {
+// createIndexes issues CREATE (UNIQUE) INDEX for each spec. Postgres/SQLite use
+// IF NOT EXISTS; MariaDB (which lacks it for CREATE INDEX on older versions) is
+// guarded by the pre-fetched `existing` index-name set instead.
+func createIndexes(ctx context.Context, db *sql.DB, engine, tableName string, specs []IndexSpec, unique bool, existing map[string]struct{}) error {
+	keyword := "INDEX"
+	defaultPrefix := "ix"
+	if unique {
+		keyword = "UNIQUE INDEX"
+		defaultPrefix = "ux"
+	}
+	for _, spec := range specs {
+		columns := make([]string, 0, len(spec.Columns))
+		for _, column := range spec.Columns {
 			columns = append(columns, quoteIdent(column, engine))
 		}
-		indexName := uniqueIndex.Name
+		indexName := spec.Name
 		if indexName == "" {
-			indexName = fmt.Sprintf("ux_%s_%s", table.Name, strings.Join(uniqueIndex.Columns, "_"))
+			indexName = fmt.Sprintf("%s_%s_%s", defaultPrefix, tableName, strings.Join(spec.Columns, "_"))
 		}
 
 		if engine == "mariadb" {
@@ -449,13 +464,12 @@ func ensureUniqueIndexes(ctx context.Context, db *sql.DB, engine string, table T
 			}
 		}
 
-		query := fmt.Sprintf("CREATE UNIQUE INDEX IF NOT EXISTS %s ON %s (%s)", quoteIdent(indexName, engine), quoteIdent(table.Name, engine), strings.Join(columns, ", "))
+		query := fmt.Sprintf("CREATE %s IF NOT EXISTS %s ON %s (%s)", keyword, quoteIdent(indexName, engine), quoteIdent(tableName, engine), strings.Join(columns, ", "))
 		if engine == "mariadb" {
-			query = fmt.Sprintf("CREATE UNIQUE INDEX %s ON %s (%s)", quoteIdent(indexName, engine), quoteIdent(table.Name, engine), strings.Join(columns, ", "))
+			query = fmt.Sprintf("CREATE %s %s ON %s (%s)", keyword, quoteIdent(indexName, engine), quoteIdent(tableName, engine), strings.Join(columns, ", "))
 		}
 
-		_, err := db.ExecContext(ctx, query)
-		if err != nil {
+		if _, err := db.ExecContext(ctx, query); err != nil {
 			return err
 		}
 	}

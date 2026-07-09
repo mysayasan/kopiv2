@@ -12,9 +12,10 @@
     <meta name="description" content="MyMataSan — on-device NVR and AI camera monitor.">
     <meta name="theme-color" content="#0f1a14">
     <meta name="author" content="mysayasan">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet">
+    <!-- Quicksand is self-hosted (assets/fonts.css) rather than loaded from
+         Google Fonts: no cross-origin request (fixes the ZAP SRI finding and
+         lets the CSP drop the Google font domains), plus privacy + offline. -->
+    <link rel="stylesheet" href="/assets/fonts.css">
     <title><%= htmlWebpackPlugin.options.title %></title>
   </head>
   <body>

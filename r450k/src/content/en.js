@@ -85,7 +85,12 @@ const en = {
       {
         icon: 'chart',
         title: 'Analytics dashboard',
-        body: 'A live dashboard turns the unified event feed into insight — KPI tiles, detections over time, and per-category and per-camera breakdowns with a range selector and auto-refresh. Aggregation runs server-side, so it works on SQLite or a full database engine.',
+        body: 'The unified event feed becomes insight — KPI tiles, detections over time, and per-category, per-camera breakdowns with a range selector and auto-refresh. It goes past charts: an activity heatmap by hour and weekday, an expected-range band that flags when a camera breaks its own normal pattern, spike and "unusual silence" anomaly alerts, a per-camera reliability scorecard, and a notification noise ratio. Aggregation runs server-side, so it works on SQLite or a full database engine.',
+      },
+      {
+        icon: 'search',
+        title: 'Object Search',
+        body: 'Search your footage by what the cameras actually saw. Every detection is coalesced onto a searchable timeline — filter by camera, date range, one or more object types at once, and confidence, then jump straight to the exact moment in the recording, with the object boxed on a preview thumbnail. Export the results to CSV or PDF. It taps the live detector\'s own output, so there is no second video pass.',
       },
       {
         icon: 'activity',
@@ -119,13 +124,15 @@ const en = {
     kicker: 'See it in action',
     title: 'A console built for operators, not just admins.',
     lead: 'Live multi-camera grids, detection rules drawn on the real frame, guided camera teaching with no ML jargon, continuous NVR recordings, event analytics, encrypted backups, and version & health — every screen in the browser, in four languages.',
-    tabs: { live: 'Live view', detection: 'AI detection', teach: 'Teach', recordings: 'Recordings', dashboard: 'Dashboard', backup: 'Backup & recovery', health: 'Version & health' },
+    tabs: { live: 'Live view', detection: 'AI detection', teach: 'Teach', recordings: 'Recordings', objectsearch: 'Object search', dashboard: 'Dashboard', heatmap: 'Activity heatmap', backup: 'Backup & recovery', health: 'Version & health' },
     shots: [
       { key: 'live', src: '/screenshots/live_views.png', alt: 'Live multi-camera grid in a 3×2 layout, with on-frame “Presence detected (person)” AI badges on two of the feeds', url: 'mymatasan.local/live' },
       { key: 'detection', src: '/screenshots/ai_detection.png', alt: 'AI Detection tab: a presence rule with a six-point detection zone drawn over the real camera frame in the zone editor', url: 'mymatasan.local/detection' },
       { key: 'teach', src: '/screenshots/teach.png', alt: 'Teach — the guided, no-jargon wizard for teaching the camera a new skill (Name it · What kind · Where · Show examples · Check accuracy · Turn it on), on the “What kind of skill is this?” step with three choices: recognize a new object, tell good from bad, or spot anything unusual', url: 'mymatasan.local/teach' },
       { key: 'recordings', src: '/screenshots/recordings.png', alt: 'Recordings page: a continuous-NVR day timeline with event-clip markers, and a list of clips with play, download, and delete', url: 'mymatasan.local/recordings' },
+      { key: 'objectsearch', src: '/screenshots/object_search.png', alt: 'Object Search: a cross-camera, timeline search of what each camera saw — filtered by camera, date range, object type and confidence — where each result carries a footage thumbnail with the detected object boxed, plus play and maximize actions', url: 'mymatasan.local/object-search' },
       { key: 'dashboard', src: '/screenshots/dashboard.png', alt: 'Event-analytics dashboard: total, unread, critical and warning KPIs, an events-over-time bar chart, and category and severity donuts', url: 'mymatasan.local/dashboard' },
+      { key: 'heatmap', src: '/screenshots/activity_heatmap.png', alt: 'Dashboard analytics: an activity heatmap of detections by hour of day and day of week, revealing when each camera is busiest', url: 'mymatasan.local/dashboard' },
       { key: 'backup', src: '/screenshots/backup_recovery.png', alt: 'Backup & Recovery settings: a passphrase-protected configuration backup of cameras, AI detection, notifications and app settings, with restore', url: 'mymatasan.local/settings/backup' },
       { key: 'health', src: '/screenshots/version_health_language_selection.png', alt: 'Version & Health settings shown in Arabic (right-to-left): app and core versions, an update check, and DB, cameras and cache service-health tiles', url: 'mymatasan.local/settings/version' },
     ],

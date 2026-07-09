@@ -7,6 +7,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
+	"github.com/mysayasan/kopiv2/domain/notification"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 )
 
@@ -68,7 +69,12 @@ func (a *anomalyApi) scan(w http.ResponseWriter, r *http.Request) {
 		tzOffsetMin = 0
 	}
 
-	findings, err := a.scanner.AnomalyScan(r.Context(), hour, tzOffsetMin*60, cfg.Sensitivity, cfg.MinActivity)
+	var findings []notification.AnomalyFinding
+	if cfg.Mode == "manual" {
+		findings, err = a.scanner.ManualScan(r.Context(), hour, cfg.ManualUpper, cfg.ManualLower)
+	} else {
+		findings, err = a.scanner.AnomalyScan(r.Context(), hour, tzOffsetMin*60, cfg.Sensitivity, cfg.MinActivity)
+	}
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return

@@ -626,7 +626,11 @@ export function SideNav({ activeTab, isAdmin, busy, cameras, managingCameraId, t
     {
       label: t('group.intelligence'),
       items: isAdmin
-        ? [navItem('teach', t('tab.teach'), 'wand', 'amber')]
+        ? [
+            navItem('teach', t('tab.teach'), 'wand', 'amber'),
+            navItem('objectclasses', t('vi.objectClasses'), 'list', 'steel'),
+            navItem('objectsearch', t('meta.tabSearch'), 'eye', 'teal'),
+          ]
         : [],
     },
     {

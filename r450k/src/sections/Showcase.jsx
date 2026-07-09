@@ -11,7 +11,9 @@ const fallbacks = {
   detection: <RuleEditorMockup />,
   teach: <NotificationsMockup />,
   recordings: <NotificationsMockup />,
+  objectsearch: <RuleEditorMockup />,
   dashboard: <NotificationsMockup />,
+  heatmap: <NotificationsMockup />,
   backup: <RuleEditorMockup />,
   health: <NotificationsMockup />,
 };

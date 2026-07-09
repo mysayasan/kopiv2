@@ -34,6 +34,29 @@ function resolveWindow(rangeId) {
   return { from: startOfToday - (days - 1) * 86400, to: now, bucket: 'day' };
 }
 
+// Toggle is a small sliding on/off switch (an accessible styled checkbox) used in
+// the Anomaly detection card in place of plain checkboxes.
+function Toggle({ checked, disabled, onChange, label }) {
+  return (
+    <label className="switch-row">
+      <span className="switch">
+        <input type="checkbox" checked={checked} disabled={disabled} onChange={onChange} />
+        <span className="switch-slider" />
+      </span>
+      {label ? <span className="switch-label">{label}</span> : null}
+    </label>
+  );
+}
+
+// InfoTip is a small muted info icon with a hover/focus tooltip explaining a control.
+function InfoTip({ text }) {
+  return (
+    <span className="info-tip" tabIndex={0} role="img" aria-label={text} title={text}>
+      <Ico n="info" sz={14} />
+    </span>
+  );
+}
+
 // DashboardTab is the landing surface: KPI tiles plus hand-rolled SVG charts of
 // every notification event (AI detections, camera/machine health, login
 // security, settings). It owns its own aggregated fetch from
@@ -58,6 +81,10 @@ export function DashboardTab({ authHeader, saved, refreshSignal, onMessage }) {
   const [anomalyCfg, setAnomalyCfg] = useState(null);
   const [anomalyFindings, setAnomalyFindings] = useState(null);
   const [anomalyScanning, setAnomalyScanning] = useState(false);
+  // Per-camera reliability (uptime/outages) over the last 7 days.
+  const [reliability, setReliability] = useState(null);
+  // Noisiest cameras (AI-alert volume + unreviewed ratio) over the last 7 days.
+  const [noise, setNoise] = useState(null);
 
   const fetchStats = useCallback(async () => {
     setLoading(true);
@@ -158,6 +185,40 @@ export function DashboardTab({ authHeader, saved, refreshSignal, onMessage }) {
     fetchAnomalyCfg();
   }, [fetchAnomalyCfg]);
 
+  const fetchReliability = useCallback(async () => {
+    try {
+      const to = Math.floor(Date.now() / 1000);
+      const from = to - 7 * 86400;
+      const resp = await authFetch(`/api/notifications/reliability?from=${from}&to=${to}`);
+      if (!resp.ok) throw new Error(`${resp.status}`);
+      const payload = await resp.json();
+      setReliability(payload?.data?.result ?? payload?.result ?? payload);
+    } catch (_) {
+      setReliability(null);
+    }
+  }, [authFetch]);
+
+  useEffect(() => {
+    fetchReliability();
+  }, [fetchReliability]);
+
+  const fetchNoise = useCallback(async () => {
+    try {
+      const to = Math.floor(Date.now() / 1000);
+      const from = to - 7 * 86400;
+      const resp = await authFetch(`/api/notifications/noise?from=${from}&to=${to}`);
+      if (!resp.ok) throw new Error(`${resp.status}`);
+      const payload = await resp.json();
+      setNoise(payload?.data?.result ?? payload?.result ?? payload);
+    } catch (_) {
+      setNoise(null);
+    }
+  }, [authFetch]);
+
+  useEffect(() => {
+    fetchNoise();
+  }, [fetchNoise]);
+
   // Persist a partial change to the anomaly config (optimistic; re-syncs from the
   // normalized server response).
   const saveAnomalyCfg = useCallback(async (patch) => {
@@ -203,9 +264,9 @@ export function DashboardTab({ authHeader, saved, refreshSignal, onMessage }) {
     if (refreshSignal === lastSignalRef.current) return undefined;
     lastSignalRef.current = refreshSignal;
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => { fetchStats(); fetchHeatmap(); fetchBaseline(); }, 1500);
+    debounceRef.current = setTimeout(() => { fetchStats(); fetchHeatmap(); fetchBaseline(); fetchReliability(); fetchNoise(); }, 1500);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [refreshSignal, fetchStats, fetchHeatmap, fetchBaseline]);
+  }, [refreshSignal, fetchStats, fetchHeatmap, fetchBaseline, fetchReliability, fetchNoise]);
 
   // Camera id → display name from the saved cameras list.
   const cameraNames = useMemo(() => {
@@ -231,6 +292,44 @@ export function DashboardTab({ authHeader, saved, refreshSignal, onMessage }) {
 
   // Localized short weekday names (index 0 = Sunday, matching the backend grid)
   // and the per-cell hover/aria label for the activity heatmap.
+  // Human "1h 20m" / "45m" / "—" for an offline-seconds duration.
+  const formatDuration = useCallback((seconds) => {
+    if (!seconds || seconds <= 0) return '—';
+    const h = Math.floor(seconds / 3600);
+    const m = Math.round((seconds % 3600) / 60);
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+  }, []);
+
+  // Merge the per-camera reliability response with the full saved-camera list so
+  // every camera shows (cameras with no health events = 100% / healthy), worst first.
+  const reliabilityRows = useMemo(() => {
+    const byId = new Map((reliability?.cameras || []).map((c) => [Number(c.cameraId), c]));
+    const ids = (saved && saved.length) ? saved.map((c) => Number(c.id)) : [...byId.keys()];
+    const rows = ids.map((id) => {
+      const r = byId.get(id);
+      return {
+        id,
+        name: cameraNames.get(id) || t('dash.cameraN', { id }),
+        uptime: r ? r.uptimePercent : 100,
+        offline: r ? r.offlineSeconds : 0,
+        incidents: r ? r.incidents : 0,
+        down: r ? r.currentlyOffline : false,
+        known: !!r,
+      };
+    });
+    rows.sort((a, b) => a.uptime - b.uptime || b.incidents - a.incidents);
+    return rows;
+  }, [reliability, saved, cameraNames, t]);
+
+  const noiseRows = useMemo(() => (noise?.cameras || []).map((c) => ({
+    id: Number(c.cameraId),
+    name: cameraNames.get(Number(c.cameraId)) || t('dash.cameraN', { id: c.cameraId }),
+    count: c.count,
+    unread: c.unread,
+    unreadPct: c.count > 0 ? Math.round((c.unread / c.count) * 100) : 0,
+  })), [noise, cameraNames, t]);
+
   const dayLabels = useMemo(() => t('dash.weekdaysShort').split(','), [t]);
   const heatmapCellTitle = useCallback(
     (d, h, c) => `${dayLabels[d]} ${String(h).padStart(2, '0')}:00 · ${c} ${t('dash.eventsWord')}`,
@@ -282,7 +381,7 @@ export function DashboardTab({ authHeader, saved, refreshSignal, onMessage }) {
               </button>
             ))}
           </div>
-          <button type="button" className="quiet" onClick={() => { fetchStats(); fetchHeatmap(); fetchBaseline(); }} disabled={loading}>
+          <button type="button" className="quiet" onClick={() => { fetchStats(); fetchHeatmap(); fetchBaseline(); fetchReliability(); fetchNoise(); }} disabled={loading}>
             <span className="btn-icon"><Ico n="refresh" /> {t('dash.refresh')}</span>
           </button>
         </div>
@@ -369,42 +468,60 @@ export function DashboardTab({ authHeader, saved, refreshSignal, onMessage }) {
 
           {anomalyCfg ? (
             <ChartCard
-              title={t('dash.anomalyTitle')}
+              title={<>{t('dash.anomalyTitle')} <InfoTip text={t('dash.anomalyInfo')} /></>}
               subtitle={t('dash.anomalySub')}
               className="dashboard-span-2 anomaly-card"
               actions={(
-                <label className="anomaly-switch">
-                  <input
-                    type="checkbox"
-                    checked={!!anomalyCfg.enabled}
-                    onChange={(e) => saveAnomalyCfg({ enabled: e.target.checked })}
-                  />
-                  <span>{anomalyCfg.enabled ? t('dash.anomalyOn') : t('dash.anomalyOff')}</span>
-                </label>
+                <div className="anomaly-enable">
+                  <Toggle checked={!!anomalyCfg.enabled} onChange={(e) => saveAnomalyCfg({ enabled: e.target.checked })} />
+                  <span className="anomaly-enable-label">{anomalyCfg.enabled ? t('dash.anomalyOn') : t('dash.anomalyOff')}</span>
+                </div>
               )}
             >
               <div className="anomaly-body">
                 <div className="anomaly-controls">
                   <label className="anomaly-field">
-                    <span>{t('dash.anomalySensitivity')}</span>
+                    <span>{t('dash.anomalyMode')}</span>
                     <select
                       className="quiet"
-                      value={String(anomalyCfg.sensitivity)}
-                      onChange={(e) => saveAnomalyCfg({ sensitivity: Number(e.target.value) })}
+                      value={anomalyCfg.mode || 'smart'}
+                      onChange={(e) => saveAnomalyCfg({ mode: e.target.value })}
                     >
-                      <option value="2">{t('dash.sensHigh')}</option>
-                      <option value="2.5">{t('dash.sensMedium')}</option>
-                      <option value="3">{t('dash.sensLow')}</option>
+                      <option value="smart">{t('dash.anomalyModeSmart')}</option>
+                      <option value="manual">{t('dash.anomalyModeManual')}</option>
                     </select>
                   </label>
-                  <label className="anomaly-check">
-                    <input type="checkbox" checked={!!anomalyCfg.detectHigh} onChange={(e) => saveAnomalyCfg({ detectHigh: e.target.checked })} />
-                    <span>{t('dash.anomalyDetectHigh')}</span>
-                  </label>
-                  <label className="anomaly-check">
-                    <input type="checkbox" checked={!!anomalyCfg.detectLow} onChange={(e) => saveAnomalyCfg({ detectLow: e.target.checked })} />
-                    <span>{t('dash.anomalyDetectLow')}</span>
-                  </label>
+                  {(anomalyCfg.mode || 'smart') === 'manual' ? (
+                    <>
+                      <label className="anomaly-field">
+                        <span>{t('dash.anomalyAbove')}</span>
+                        <input type="number" min="0" className="quiet anomaly-num" value={anomalyCfg.manualUpper ?? 0}
+                          onChange={(e) => saveAnomalyCfg({ manualUpper: Number(e.target.value) })} />
+                      </label>
+                      <label className="anomaly-field">
+                        <span>{t('dash.anomalyBelow')}</span>
+                        <input type="number" min="0" className="quiet anomaly-num" value={anomalyCfg.manualLower ?? 0}
+                          onChange={(e) => saveAnomalyCfg({ manualLower: Number(e.target.value) })} />
+                      </label>
+                    </>
+                  ) : (
+                    <>
+                      <label className="anomaly-field">
+                        <span>{t('dash.anomalySensitivity')}</span>
+                        <select
+                          className="quiet"
+                          value={String(anomalyCfg.sensitivity)}
+                          onChange={(e) => saveAnomalyCfg({ sensitivity: Number(e.target.value) })}
+                        >
+                          <option value="2">{t('dash.sensHigh')}</option>
+                          <option value="2.5">{t('dash.sensMedium')}</option>
+                          <option value="3">{t('dash.sensLow')}</option>
+                        </select>
+                      </label>
+                      <Toggle checked={!!anomalyCfg.detectHigh} onChange={(e) => saveAnomalyCfg({ detectHigh: e.target.checked })} label={t('dash.anomalyDetectHigh')} />
+                      <Toggle checked={!!anomalyCfg.detectLow} onChange={(e) => saveAnomalyCfg({ detectLow: e.target.checked })} label={t('dash.anomalyDetectLow')} />
+                    </>
+                  )}
                   <button type="button" className="quiet" onClick={runAnomalyScan} disabled={anomalyScanning}>
                     <span className="btn-icon"><Ico n="refresh" /> {t('dash.anomalyScan')}</span>
                   </button>
@@ -418,15 +535,72 @@ export function DashboardTab({ authHeader, saved, refreshSignal, onMessage }) {
                     {anomalyFindings.map((f, i) => (
                       <li key={i} className={f.direction === 'high' ? 'is-high' : 'is-low'}>
                         <Ico n="warning" sz={14} />
-                        <span className="anomaly-f-name">{f.cameraName || t('dash.cameraN', { id: f.cameraId })}</span>
+                        <span className="anomaly-f-name">{f.cameraId ? (f.cameraName || t('dash.cameraN', { id: f.cameraId })) : t('dash.anomalyOverall')}</span>
                         <span className="anomaly-f-desc">
-                          {f.direction === 'high' ? t('dash.anomalyHighDesc', { actual: f.actual, hi: Math.round(f.hi) }) : t('dash.anomalyLowDesc', { actual: f.actual, median: Math.round(f.median) })}
+                          {f.direction === 'high'
+                            ? (f.cameraId
+                              ? t('dash.anomalyHighDesc', { actual: f.actual, hi: Math.round(f.hi) })
+                              : t('dash.anomalyAboveDesc', { actual: f.actual, hi: Math.round(f.hi) }))
+                            : (f.cameraId
+                              ? t('dash.anomalyLowDesc', { actual: f.actual, median: Math.round(f.median) })
+                              : t('dash.anomalyBelowDesc', { actual: f.actual, lo: Math.round(f.lo) }))}
                         </span>
                       </li>
                     ))}
                   </ul>
                 )}
               </div>
+            </ChartCard>
+          ) : null}
+
+          {reliabilityRows.length > 0 ? (
+            <ChartCard
+              title={t('dash.reliabilityTitle')}
+              subtitle={t('dash.reliabilitySub')}
+              className="dashboard-span-2 reliability-card"
+            >
+              <div className="reliability-table-wrap">
+                <table className="reliability-table">
+                  <thead>
+                    <tr>
+                      <th>{t('dash.relCamera')}</th>
+                      <th>{t('dash.relUptime')}</th>
+                      <th>{t('dash.relOfflineTime')}</th>
+                      <th>{t('dash.relIncidents')}</th>
+                      <th>{t('dash.relStatus')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reliabilityRows.map((r) => (
+                      <tr key={r.id} className={r.down ? 'is-down' : (r.uptime < 99 ? 'is-warn' : '')}>
+                        <td className="rel-name">{r.name}</td>
+                        <td className="rel-uptime">{r.uptime.toFixed(1)}%</td>
+                        <td>{formatDuration(r.offline)}</td>
+                        <td>{r.incidents}</td>
+                        <td>
+                          {r.down
+                            ? <span className="rel-badge rel-badge-down">{t('dash.relOff')}</span>
+                            : <span className="rel-badge rel-badge-up">{t('dash.relOnline')}</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </ChartCard>
+          ) : null}
+
+          {noiseRows.length > 0 ? (
+            <ChartCard title={t('dash.noiseTitle')} subtitle={t('dash.noiseSub')} className="noise-card">
+              <ul className="noise-list">
+                {noiseRows.map((r) => (
+                  <li key={r.id}>
+                    <span className="noise-name">{r.name}</span>
+                    <span className="noise-count">{t('dash.noiseAlerts', { count: r.count })}</span>
+                    <span className={`noise-unread${r.unreadPct >= 50 ? ' is-high' : ''}`}>{t('dash.noiseUnread', { pct: r.unreadPct })}</span>
+                  </li>
+                ))}
+              </ul>
             </ChartCard>
           ) : null}
 

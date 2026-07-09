@@ -455,19 +455,26 @@ function NotificationRow({
 
     return (
       <article ref={rowRef} className={`${baseClass} notification-row--ai`}>
-        <button
-          type="button"
-          className="notification-snap"
-          onClick={() => snapUrl && onZoomImage(Number(notif.refId))}
-          disabled={!snapUrl}
-          title={snapUrl ? t('notif.clickEnlarge') : undefined}
-          aria-label={snapUrl ? t('notif.enlargeSnapshot') : undefined}
-        >
+        <div className="notification-snap">
           {snapLoading ? <span className="notification-snap-ph">…</span> : null}
-          {!snapLoading && snapUrl ? <img src={snapUrl} alt={t('notif.eventSnapshot')} /> : null}
+          {!snapLoading && snapUrl ? (
+            <>
+              <img src={snapUrl} alt={t('notif.eventSnapshot')} />
+              <div className="obs-thumb-actions">
+                {clip ? (
+                  <button type="button" className="obs-thumb-btn" onClick={() => onPlayClip(clip)} title={t('notif.viewClip')} aria-label={t('notif.viewClip')}>
+                    <Ico n="play" sz={16} />
+                  </button>
+                ) : null}
+                <button type="button" className="obs-thumb-btn" onClick={() => onZoomImage(Number(notif.refId))} title={t('notif.enlargeSnapshot')} aria-label={t('notif.enlargeSnapshot')}>
+                  <Ico n="camera" sz={16} />
+                </button>
+              </div>
+            </>
+          ) : null}
           {!snapLoading && !snapUrl ? <span className="notification-snap-ph"><Ico n="camera" sz={20} /></span> : null}
           {snapError ? null : null}
-        </button>
+        </div>
         <div className="notification-body">
           <div className="notification-title-row">
             <span className={`notif-sev notif-sev--${severity}`} aria-hidden="true" />
@@ -498,11 +505,7 @@ function NotificationRow({
               <span className="btn-icon"><Ico n="check-ok" /> {t('notif.dismiss')}</span>
             </button>
           ) : null}
-          {clip ? (
-            <button type="button" className="quiet" onClick={() => onPlayClip(clip)}>
-              <span className="btn-icon"><Ico n="play" /> {t('notif.viewClip')}</span>
-            </button>
-          ) : noClip ? (
+          {!clip && noClip ? (
             <span className="notification-noclip"><Ico n="film" sz={13} /> {t('notif.noClip')}</span>
           ) : null}
         </div>

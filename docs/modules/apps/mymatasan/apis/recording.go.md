@@ -11,6 +11,7 @@ Exposes HTTP endpoints for managing per-camera recording configs, downloading or
 | `GET`    | `/api/recording/segments`                  | List recorded clips with optional `cameraId`, `alertId`, `startedAfter`, `startedBefore` query filters and `limit`/`offset` paging. |
 | `DELETE` | `/api/recording/segments/{id}`             | Delete a clip by ID (removes the DB row and the file on disk). |
 | `GET`    | `/api/recording/segments/{id}/download`    | Stream the MP4 file to the browser with `Content-Type: video/mp4`. Accepts `?transcode=h264`: when the segment is stored as HEVC and the request asks for h264 (the player sets this only for browsers that can't decode HEVC), the decrypted stream is transcoded HEVC→H.264 on the fly (fragmented MP4, via the shared NVENC semaphore). Capable browsers and non-HEVC segments stream the stored bytes untouched. |
+| `GET`    | `/api/recording/segments/{id}/frame`       | Return a small JPEG frame of the segment at `?seek=<seconds>` (see below). |
 | `GET`    | `/api/recording/config`                    | List all per-camera recording configs. |
 | `GET`    | `/api/recording/config/{cameraId}`         | Fetch the recording config for one camera. |
 | `PUT`    | `/api/recording/config`                    | Create or update the recording config for a camera (see below). |
@@ -75,6 +76,10 @@ Reports whether the currently configured at-rest storage codec (`recording.stora
 - `nvencUsable` — result of `recording.StorageCodecUsable` (probed and cached via `NVENCUsable`; always `true` when `reEncode` is `false`).
 - `fallbackToCopy` — the effective `recording.storage.fallbackToCopy` value (`nil` config = `true`).
 - `compatible` — `!reEncode || nvencUsable`; `false` means the configured codec needs a GPU this host doesn't have. The recorder still records — as stream-copy if `fallbackToCopy` is on, or by dropping segments if it's off — but the storage codec setting itself is wrong for the hardware.
+
+### GET /api/recording/segments/{id}/frame
+
+Extracts a single JPEG frame of the segment at `?seek=<seconds>` via `recording.ExtractFrameJPEG` (fast-seek ffmpeg grab; decrypted first when at-rest encryption is on). `?w=` sets the output width (default 480, clamped 160–1920 — a larger width is used for the maximized/full view). The extracted frame is cached on disk (`os.TempDir()/mymatasan-thumbs`, keyed by segment id + seek + width) since it depends only on those three inputs; an optional `?box=x,y,w,h` (normalized 0..1) plus `?label=` draws a detection box on top via `vision.AnnotateJPEG` **after** the cache read/write, so the same cached frame serves any box. Backs the Object Search result-row footage screenshot as well as the Recordings-tab and Notifications-event play thumbnails.
 
 ### GET /api/recording/streams/{cameraId}
 

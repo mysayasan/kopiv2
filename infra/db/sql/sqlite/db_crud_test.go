@@ -75,6 +75,42 @@ func TestSQLiteDbCrudRepositoryCRUD(t *testing.T) {
 	}
 }
 
+// TestSQLiteInFilter checks the In compare builds a correct `col IN (...)` clause so a
+// multi-value filter (e.g. Object Search selecting several labels at once) matches any
+// listed value, and an empty list drops the constraint rather than matching nothing.
+func TestSQLiteInFilter(t *testing.T) {
+	ctx := context.Background()
+	crud := newTestCrud(t)
+	repo := dbsql.NewGenericRepo[localCrudTestModel](crud)
+
+	for _, name := range []string{"car", "person", "dog", "truck"} {
+		if _, err := repo.Create(ctx, "", localCrudTestModel{Name: name, Age: 1}); err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+	}
+
+	rows, total, err := repo.Get(ctx, "", 10, 0, []sqldataenums.Filter{
+		{FieldName: "Name", Compare: sqldataenums.In, Value: []any{"car", "person"}},
+	}, []sqldataenums.Sorter{{FieldName: "Name", Sort: sqldataenums.ASC}})
+	if err != nil {
+		t.Fatalf("Get(In) error = %v", err)
+	}
+	if total != 2 || len(rows) != 2 || rows[0].Name != "car" || rows[1].Name != "person" {
+		t.Fatalf("Get(In) rows=%+v total=%d", rows, total)
+	}
+
+	// An empty IN list must not constrain (returns everything), never match-nothing.
+	_, allTotal, err := repo.Get(ctx, "", 10, 0, []sqldataenums.Filter{
+		{FieldName: "Name", Compare: sqldataenums.In, Value: []any{}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Get(In empty) error = %v", err)
+	}
+	if allTotal != 4 {
+		t.Fatalf("Get(In empty) total = %d, want 4", allTotal)
+	}
+}
+
 // TestSQLiteSelectByUniqueUnknownKeyGroup guards against a severe auth bug: a
 // GetByUnique whose key group matches NO field on the model used to resolve to an
 // empty filter set and run an unfiltered `LIMIT 1` query, returning the FIRST row.

@@ -104,3 +104,42 @@ func (s *Service) AnomalyScan(ctx context.Context, hourStart, tzOffsetSec int64,
 	sort.Slice(findings, func(i, j int) bool { return findings[i].CameraId < findings[j].CameraId })
 	return findings, nil
 }
+
+// ManualScan is the non-statistical "manual thresholds" tier: it compares the whole
+// system's event total for one closed hour against fixed upper/lower limits (0
+// disables a side) and returns a site-level finding (CameraId 0) on breach. Unlike
+// AnomalyScan it needs no history, so it works from day one.
+func (s *Service) ManualScan(ctx context.Context, hourStart, upper, lower int64) ([]AnomalyFinding, error) {
+	if s.rollups == nil || hourStart <= 0 {
+		return nil, nil
+	}
+	hourStart -= hourStart % 3600
+
+	filters := []sqldataenums.Filter{
+		{FieldName: "BucketStart", Compare: sqldataenums.Equal, Value: hourStart},
+	}
+	var total int64
+	var offset uint64
+	for {
+		page, pageTotal, err := s.rollups.Get(ctx, "", statsPageSize, offset, filters, nil)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range page {
+			total += row.Count
+		}
+		offset += uint64(len(page))
+		if len(page) == 0 || offset >= pageTotal || offset >= statsMaxRows {
+			break
+		}
+	}
+
+	var findings []AnomalyFinding
+	if upper > 0 && total > upper {
+		findings = append(findings, AnomalyFinding{Direction: AnomalyHigh, HourStart: hourStart, Actual: total, Hi: float64(upper)})
+	}
+	if lower > 0 && total < lower {
+		findings = append(findings, AnomalyFinding{Direction: AnomalyLow, HourStart: hourStart, Actual: total, Lo: float64(lower)})
+	}
+	return findings, nil
+}

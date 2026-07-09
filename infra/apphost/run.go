@@ -222,8 +222,13 @@ func runApp(app App) error {
 
 	router := mux.NewRouter()
 
-	greetMidware := middlewares.NewGreet()
-	router.Use(greetMidware.GreetHandler)
+	// Security headers run first so every response — including auth 401s,
+	// rate-limit 429s, static assets, and the setup page — is hardened. Replaces
+	// the old greet middleware, which advertised the server via a Server header.
+	if !appConfig.SecurityHeaders.Disabled {
+		securityMidware := middlewares.NewSecurityHeaders(securityHeadersConfig(appConfig))
+		router.Use(securityMidware.Middleware)
+	}
 	corsMidware := middlewares.NewCors(appConfig.AllowOrigin)
 	router.Use(corsMidware.CorsHandler)
 	requestLogMidware := middlewares.NewRequestLog(runtimeLogger)
@@ -1125,6 +1130,24 @@ func applyTelemetryConfigFromEnv(appConfig *config.AppConfigModel) {
 func applyRateLimitConfigFromEnv(appConfig *config.AppConfigModel) {
 	if v := strings.TrimSpace(os.Getenv("RATE_LIMIT_ENABLED")); v != "" {
 		appConfig.RateLimit.Enabled = getBoolEnv("RATE_LIMIT_ENABLED", appConfig.RateLimit.Enabled)
+	}
+}
+
+// securityHeadersConfig maps the app config's securityHeaders block onto the
+// middleware config. Unset (nil) fields are passed through so the middleware
+// applies its own hardened defaults.
+func securityHeadersConfig(appConfig *config.AppConfigModel) middlewares.SecurityConfig {
+	s := appConfig.SecurityHeaders
+	return middlewares.SecurityConfig{
+		ContentSecurityPolicy: s.ContentSecurityPolicy,
+		FrameOptions:          s.FrameOptions,
+		ReferrerPolicy:        s.ReferrerPolicy,
+		ContentTypeOptions:    s.ContentTypeOptions,
+		ServerHeader:          s.ServerHeader,
+		HSTSEnabled:           s.Hsts.Enabled,
+		HSTSMaxAgeSeconds:     s.Hsts.MaxAgeSeconds,
+		HSTSIncludeSubDomains: s.Hsts.IncludeSubDomains,
+		HSTSPreload:           s.Hsts.Preload,
 	}
 }
 

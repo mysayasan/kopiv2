@@ -48,7 +48,7 @@ Primary goals:
 High-level flow:
 
 1. Incoming HTTP requests are handled by Gorilla Mux.
-2. Global middleware applies CORS, request logging, and request ID tracing.
+2. Global middleware applies hardened security response headers (nosniff, X-Frame-Options, Referrer-Policy, HSTS on TLS, opt-in CSP, no `Server` header), CORS, request logging, and request ID tracing.
 3. API routes under `/api` persist activity and elapsed duration into `api_log`, apply access-tier rate limiting, then protected routes pass through JWT authentication and RBAC authorization.
 4. A shared bootstrap engine checks/creates the database and syncs schema from registered entity types before the server starts.
 5. Business services orchestrate repository access, ONVIF devices, live stream sessions, and app workers such as the MyMataSan vision monitor.

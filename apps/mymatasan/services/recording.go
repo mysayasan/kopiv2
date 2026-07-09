@@ -131,7 +131,10 @@ func (s *recordingService) SaveConfig(ctx context.Context, req SaveRecordingConf
 		LiveStreamUrl:      strings.TrimSpace(req.LiveStreamUrl),
 		StreamURL:          strings.TrimSpace(req.StreamURL),
 		FallbackStreamUrl:  strings.TrimSpace(req.FallbackStreamUrl),
-		MetadataEnabled:    req.MetadataEnabled,
+		// Object-metadata capture is paired with recording: without footage there is
+		// nothing for a metadata search to jump to, so it tracks Enabled directly
+		// rather than being a separate toggle. Enable recording → object search works.
+		MetadataEnabled:    req.Enabled,
 		MetadataGapSeconds: req.MetadataGapSeconds,
 		UpdatedAt:          now,
 	}

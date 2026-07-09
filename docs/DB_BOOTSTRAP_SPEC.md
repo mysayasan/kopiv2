@@ -104,6 +104,8 @@ Recommended tags:
 - foreign key hint
 - seed hint when needed
 
+Two of these are implemented as concrete struct tags read by `infra/db/bootstrap/schema.go`: `ukey:"group"` groups fields into a **unique** index, `idx:"group"` groups fields into a **non-unique** secondary index (composite when more than one field shares the group name, column order = field declaration order). Both are reconciled the same way on every bootstrap run (`ensureIndexes` in `infra/db/bootstrap/bootstrap.go`, `CREATE [UNIQUE] INDEX IF NOT EXISTS`), so adding an `idx` tag to an existing entity is a safe additive migration — no hand-written seeder needed for a plain composite index.
+
 Example intent:
 
 - struct field names remain Go-friendly

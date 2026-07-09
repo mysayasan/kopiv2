@@ -24,6 +24,7 @@ type TableSpec struct {
 	Type    string       `json:"type"`
 	Columns []ColumnSpec `json:"columns"`
 	Unique  []IndexSpec  `json:"unique"`
+	Index   []IndexSpec  `json:"index,omitempty"`
 }
 
 type ColumnSpec struct {
@@ -59,6 +60,7 @@ func BuildManifest(appName string, items []any) (Manifest, string, error) {
 	sort.SliceStable(tables, func(i, j int) bool { return tables[i].Name < tables[j].Name })
 	for idx := range tables {
 		sort.SliceStable(tables[idx].Unique, func(i, j int) bool { return tables[idx].Unique[i].Name < tables[idx].Unique[j].Name })
+		sort.SliceStable(tables[idx].Index, func(i, j int) bool { return tables[idx].Index[i].Name < tables[idx].Index[j].Name })
 	}
 
 	manifest := Manifest{AppName: appName, Tables: tables}
@@ -84,6 +86,7 @@ func buildTableSpec(item any) (TableSpec, error) {
 
 	columns := make([]ColumnSpec, 0, typeOf.NumField())
 	uniqueGroups := map[string][]string{}
+	indexGroups := map[string][]string{}
 
 	for idx := 0; idx < typeOf.NumField(); idx++ {
 		field := typeOf.Field(idx)
@@ -118,6 +121,13 @@ func buildTableSpec(item any) (TableSpec, error) {
 			column.UniqueGroup = group
 			uniqueGroups[group] = append(uniqueGroups[group], columnName)
 		}
+		// idx:"group" builds a non-unique secondary index; fields sharing a group name
+		// form one composite index, ordered by field declaration (so put the higher-
+		// selectivity / equality column first). Used to keep range+sort queries off
+		// full-table scans as tables grow.
+		if group := field.Tag.Get("idx"); group != "" {
+			indexGroups[group] = append(indexGroups[group], columnName)
+		}
 		columns = append(columns, column)
 	}
 
@@ -133,11 +143,20 @@ func buildTableSpec(item any) (TableSpec, error) {
 		})
 	}
 
+	secondaryIndexes := make([]IndexSpec, 0, len(indexGroups))
+	for group, cols := range indexGroups {
+		secondaryIndexes = append(secondaryIndexes, IndexSpec{
+			Name:    fmt.Sprintf("ix_%s_%s", strcase.ToSnake(typeOf.Name()), sanitizeIdentifier(group)),
+			Columns: cols,
+		})
+	}
+
 	return TableSpec{
 		Name:    strcase.ToSnake(typeOf.Name()),
 		Type:    typeOf.String(),
 		Columns: columns,
 		Unique:  uniqueIndexes,
+		Index:   secondaryIndexes,
 	}, nil
 }
 

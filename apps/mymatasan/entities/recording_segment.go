@@ -3,10 +3,10 @@ package entities
 // RecordingSegment stores metadata for one recorded video clip.
 type RecordingSegment struct {
 	Id        int64  `json:"id" form:"id" query:"id" params:"id" skipWhenInsert:"true" pkey:"true" validate:"required"`
-	CameraId  int64  `json:"cameraId" form:"cameraId" query:"cameraId" validate:"required"`
+	CameraId  int64  `json:"cameraId" form:"cameraId" query:"cameraId" validate:"required" idx:"cam_time"`
 	AlertId   int64  `json:"alertId" form:"alertId" query:"alertId"`
 	FilePath  string `json:"filePath" form:"filePath" query:"filePath" validate:"required"`
-	StartedAt int64  `json:"startedAt" form:"startedAt" query:"startedAt"`
+	StartedAt int64  `json:"startedAt" form:"startedAt" query:"startedAt" idx:"cam_time"`
 	EndedAt   int64  `json:"endedAt" form:"endedAt" query:"endedAt"`
 	FileSize  int64  `json:"fileSize" form:"fileSize" query:"fileSize"`
 	// Codec is the on-disk video codec (e.g. "h264", "hevc"); empty for legacy rows.

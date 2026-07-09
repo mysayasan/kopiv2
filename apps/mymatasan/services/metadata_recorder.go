@@ -50,6 +50,7 @@ type openObservation struct {
 	sampleCount   int
 	peakConf      float64
 	peakBox       vision.Box
+	peakAt        int64
 }
 
 // MetadataRecorder records "what objects each camera saw" as presence intervals. It
@@ -167,6 +168,7 @@ func (r *MetadataRecorder) Observe(cameraID int64, capturedAt int64, candidates 
 		if a.bestConf > iv.peakConf {
 			iv.peakConf = a.bestConf
 			iv.peakBox = a.bestBox
+			iv.peakAt = capturedAt
 		}
 	}
 }
@@ -307,6 +309,7 @@ func (r *MetadataRecorder) toEntity(cam int64, iv *openObservation) entities.Obj
 		MaxCount:      iv.maxCount,
 		SampleCount:   iv.sampleCount,
 		PeakBox:       string(boxJSON),
+		PeakAt:        iv.peakAt,
 		CreatedAt:     r.now().UTC().Unix(),
 	}
 }

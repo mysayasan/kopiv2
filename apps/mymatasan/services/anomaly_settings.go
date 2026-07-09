@@ -21,6 +21,14 @@ const anomalySettingsKey = "anomalyDetection"
 type AnomalySettings struct {
 	// Enabled turns anomaly alerting on/off.
 	Enabled bool `json:"enabled"`
+	// Mode selects the detection tier: "smart" = the statistical per-camera baseline
+	// (Sensitivity), "manual" = fixed site-wide hourly thresholds (ManualUpper/Lower).
+	Mode string `json:"mode"`
+	// ManualUpper/ManualLower are the fixed per-hour total-event thresholds used in
+	// manual mode (0 disables that side): alert when the whole system's events in the
+	// last hour exceed ManualUpper or fall below ManualLower.
+	ManualUpper int64 `json:"manualUpper"`
+	ManualLower int64 `json:"manualLower"`
 	// Sensitivity is the band half-width in robust sigmas (k): lower = more
 	// sensitive (more alerts), higher = only large deviations. Typical 2.0–3.0.
 	Sensitivity float64 `json:"sensitivity"`
@@ -102,6 +110,9 @@ func (s *anomalySettingsService) Save(ctx context.Context, settings AnomalySetti
 func DefaultAnomalySettings() AnomalySettings {
 	return AnomalySettings{
 		Enabled:            false,
+		Mode:               "smart",
+		ManualUpper:        0,
+		ManualLower:        0,
 		Sensitivity:        3.0,
 		DetectHigh:         true,
 		DetectLow:          true,
@@ -114,6 +125,15 @@ func DefaultAnomalySettings() AnomalySettings {
 
 func normalizeAnomalySettings(s AnomalySettings) AnomalySettings {
 	d := DefaultAnomalySettings()
+	if s.Mode != "manual" {
+		s.Mode = "smart"
+	}
+	if s.ManualUpper < 0 {
+		s.ManualUpper = 0
+	}
+	if s.ManualLower < 0 {
+		s.ManualLower = 0
+	}
 	if s.Sensitivity < 1.0 || s.Sensitivity > 6.0 {
 		s.Sensitivity = d.Sensitivity
 	}

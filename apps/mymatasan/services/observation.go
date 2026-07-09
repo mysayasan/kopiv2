@@ -17,12 +17,15 @@ const defaultObservationRetentionDays = 30
 
 // ObservationResult is one presence interval enriched with the footage link the UI
 // needs for click-to-play: the covering recording segment (0 when none) and the
-// seek offset into it.
+// seek offset into it. FootagePending marks a sighting that was recorded but whose
+// segment file has not been finalized to disk/DB yet (the current, still-writing
+// segment) — it has no playable link *yet*, but footage exists and is coming.
 type ObservationResult struct {
 	*entities.ObjectObservation
-	SegmentId    int64  `json:"segmentId"`
-	SegmentCodec string `json:"segmentCodec"`
-	SeekSeconds  int64  `json:"seekSeconds"`
+	SegmentId      int64  `json:"segmentId"`
+	SegmentCodec   string `json:"segmentCodec"`
+	SeekSeconds    int64  `json:"seekSeconds"`
+	FootagePending bool   `json:"footagePending,omitempty"`
 }
 
 // ObservationService is the read/maintenance side of the metadata recorder: it
@@ -61,37 +64,154 @@ func (s *ObservationService) GetObservations(ctx context.Context, limit, offset 
 	if err != nil {
 		return nil, 0, err
 	}
+	// Resolve every row's covering footage segment in one batched sweep (grouped by
+	// camera) rather than a query per row — the old per-row lookup was an N+1 that
+	// scaled badly once the table grew. newestEnd[camera] is where that camera's saved
+	// footage currently ends, used to tell a still-recording tail from a real gap.
+	segs, newestEnd := s.resolveCoveringSegments(ctx, rows)
 	results := make([]ObservationResult, 0, len(rows))
-	for _, row := range rows {
-		res := ObservationResult{ObjectObservation: row}
-		if seg := s.coveringSegment(ctx, row.CameraId, row.StartedAt); seg != nil {
-			res.SegmentId = seg.Id
-			res.SegmentCodec = seg.Codec
-			if row.StartedAt > seg.StartedAt {
-				res.SeekSeconds = row.StartedAt - seg.StartedAt
+	for i, row := range rows {
+		seg := segs[i]
+		if seg != nil {
+			// Recorded footage exists and is finalized — link it for click-to-play.
+			// Seek to the peak-confidence frame (when known) rather than the interval
+			// start, so the object is at its clearest and lines up with the drawn box.
+			seekAt := row.StartedAt
+			if row.PeakAt > 0 && row.PeakAt >= seg.StartedAt {
+				seekAt = row.PeakAt
 			}
+			res := ObservationResult{ObjectObservation: row, SegmentId: seg.Id, SegmentCodec: seg.Codec}
+			if seekAt > seg.StartedAt {
+				res.SeekSeconds = seekAt - seg.StartedAt
+			}
+			results = append(results, res)
+			continue
 		}
-		results = append(results, res)
+		// No finalized segment covers the sighting. Two very different cases:
+		//   • it is newer than the camera's newest saved footage → it falls in the
+		//     current, still-writing segment (segments persist only on close), so the
+		//     footage exists but isn't playable yet — surface it as pending, not gone.
+		//   • it sits in an older gap (recording was off then, or footage was purged)
+		//     → nothing to play, so omit it rather than show an un-openable row.
+		if row.StartedAt >= newestEnd[row.CameraId] {
+			results = append(results, ObservationResult{ObjectObservation: row, FootagePending: true})
+		}
 	}
 	return results, total, nil
 }
 
-// coveringSegment returns the recording segment whose time span contains `at`, or nil
-// when the moment was not recorded (recording off, or a gap). It fetches the single
-// segment with the greatest StartedAt <= at and checks it actually spans `at`.
-func (s *ObservationService) coveringSegment(ctx context.Context, cameraId, at int64) *entities.RecordingSegment {
-	if s.recording == nil || at <= 0 {
+// resolveCoveringSegments maps each row (by position) to the recording segment that
+// covers its sighting moment, or nil when the moment was not recorded. It groups the
+// page's rows by camera and fetches each camera's candidate segments once — over the
+// [earliest..latest] sighting window — instead of issuing one query per row. Segments
+// come back newest-first; pickCovering then matches each row in memory. It also
+// returns, per camera, where that camera's saved footage currently ends (the newest
+// candidate's end), so the caller can distinguish a still-writing tail from a gap.
+func (s *ObservationService) resolveCoveringSegments(ctx context.Context, rows []*entities.ObjectObservation) ([]*entities.RecordingSegment, map[int64]int64) {
+	out := make([]*entities.RecordingSegment, len(rows))
+	newestEnd := map[int64]int64{}
+	if s.recording == nil || len(rows) == 0 {
+		return out, newestEnd
+	}
+	type camSpan struct {
+		min, max int64
+		idxs     []int
+	}
+	byCam := map[int64]*camSpan{}
+	for i, row := range rows {
+		if row == nil || row.StartedAt <= 0 {
+			continue
+		}
+		sp := byCam[row.CameraId]
+		if sp == nil {
+			sp = &camSpan{min: row.StartedAt, max: row.StartedAt}
+			byCam[row.CameraId] = sp
+		}
+		if row.StartedAt < sp.min {
+			sp.min = row.StartedAt
+		}
+		if row.StartedAt > sp.max {
+			sp.max = row.StartedAt
+		}
+		sp.idxs = append(sp.idxs, i)
+	}
+	for cam, sp := range byCam {
+		candidates := s.fetchCoveringCandidates(ctx, cam, sp.min, sp.max)
+		for _, seg := range candidates {
+			if seg == nil {
+				continue
+			}
+			end := seg.EndedAt
+			if end == 0 {
+				end = seg.StartedAt // open/in-progress segment
+			}
+			if end > newestEnd[cam] {
+				newestEnd[cam] = end
+			}
+		}
+		for _, i := range sp.idxs {
+			out[i] = pickCovering(candidates, rows[i].StartedAt)
+		}
+	}
+	return out, newestEnd
+}
+
+// fetchCoveringCandidates loads a camera's segments that could cover any moment in
+// [minAt, maxAt], newest-first. It pages back (the repo caps each read at 100 rows)
+// only until it reaches a *continuous* segment starting at/before minAt — the nearest
+// full-footage segment preceding the earliest sighting is enough to cover it — then
+// stops, so the sweep stays bounded regardless of how far back footage extends. The
+// stop deliberately ignores short event clips: one can start after (yet end before)
+// the moment a continuous segment actually covers, so stopping on it would miss the
+// covering footage at a page boundary.
+func (s *ObservationService) fetchCoveringCandidates(ctx context.Context, cameraId, minAt, maxAt int64) []*entities.RecordingSegment {
+	const pageSize = 100
+	const maxPages = 50 // safety bound: at most ~5000 candidate segments
+	var candidates []*entities.RecordingSegment
+	for page := 0; page < maxPages; page++ {
+		batch, _, err := s.recording.GetSegments(ctx, pageSize, uint64(page*pageSize), cameraId, 0, 0, maxAt+1)
+		if err != nil || len(batch) == 0 {
+			break
+		}
+		reachedStart := false
+		for _, seg := range batch {
+			candidates = append(candidates, seg)
+			if seg != nil && seg.AlertId == 0 && seg.StartedAt <= minAt {
+				reachedStart = true
+			}
+		}
+		if reachedStart || len(batch) < pageSize {
+			break
+		}
+	}
+	return candidates
+}
+
+// pickCovering returns the segment from candidates (ordered newest-first) whose span
+// contains `at`, preferring a continuous segment (full footage) over a short event
+// clip. Mirrors the original per-row logic, just over an in-memory slice.
+func pickCovering(candidates []*entities.RecordingSegment, at int64) *entities.RecordingSegment {
+	if at <= 0 {
 		return nil
 	}
-	segs, _, err := s.recording.GetSegments(ctx, 1, 0, cameraId, 0, 0, at+1)
-	if err != nil || len(segs) == 0 {
-		return nil
+	var fallback *entities.RecordingSegment
+	for _, seg := range candidates {
+		if seg == nil || seg.StartedAt > at {
+			continue
+		}
+		// A segment covers `at` when it started at/before it and has not ended before it
+		// (EndedAt == 0 means a still-open/in-progress segment).
+		if seg.EndedAt != 0 && seg.EndedAt < at {
+			continue
+		}
+		if seg.AlertId == 0 {
+			return seg // continuous footage — best for context + accurate seeking
+		}
+		if fallback == nil {
+			fallback = seg // an event clip that spans it, used only if no continuous one does
+		}
 	}
-	seg := segs[0]
-	if seg == nil || seg.StartedAt > at || (seg.EndedAt > 0 && seg.EndedAt < at) {
-		return nil
-	}
-	return seg
+	return fallback
 }
 
 // Labels returns the distinct object labels observed for a camera (all cameras when

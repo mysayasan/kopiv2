@@ -11,7 +11,8 @@ const F = [
   { t: 'Ajar ia kemahiran baharu', b: 'Tanpa jargon ML atau pengurusan set data. Bestari berpandu mengajar kamera kemahiran baharu — namakannya, pilih matlamat (kenali objek baharu, bezakan baik daripada rosak, atau kesan apa-apa yang luar biasa), tunjuk beberapa contoh, semak ketepatan, dan hidupkannya. Ia membina dan melatih model tersuai sebenar di sebalik tabir, kemudian menukar pengesan langsung serta-merta.' },
   { t: 'Suapan pemberitahuan bersepadu', b: 'Satu suapan merentas pengesanan AI, kesihatan kamera dan mesin, dan keselamatan log masuk — dengan pengesahan setiap peristiwa, tangkapan skrin beranotasi, dan main balik klip dalam halaman. Halakan ke webhook, Telegram, atau MQTT.' },
   { t: 'Pemadanan armada melalui LAN', b: 'Penemuan multicast UDP disahkan + penggunaan induk tunggal dengan kod tuntutan jangka pendek. Nod mendaftar untuk sijil CA-armada dan menyediakan saluran pengurusan TLS bersama — tiada port masuk, tiada broker awan.' },
-  { t: 'Papan pemuka analitik', b: 'Papan pemuka langsung menjadikan suapan peristiwa bersepadu sebagai wawasan — jubin KPI, pengesanan mengikut masa, dan pecahan mengikut kategori dan kamera dengan pemilih julat dan auto-segar. Pengagregatan berjalan di pihak pelayan, jadi ia berfungsi pada SQLite atau enjin pangkalan data penuh.' },
+  { t: 'Papan pemuka analitik', b: 'Suapan peristiwa bersepadu menjadi wawasan — jubin KPI, pengesanan mengikut masa, dan pecahan mengikut kategori dan kamera dengan pemilih julat dan auto-segar. Ia melangkaui carta: peta haba aktiviti mengikut jam dan hari minggu, jalur julat dijangka yang menandakan apabila kamera menyimpang daripada corak normalnya, amaran anomali lonjakan dan "senyap luar biasa", kad skor kebolehpercayaan setiap kamera, dan nisbah bising pemberitahuan. Pengagregatan berjalan di pihak pelayan, jadi ia berfungsi pada SQLite atau enjin pangkalan data penuh.' },
+  { t: 'Carian Objek', b: 'Cari rakaman anda mengikut apa yang benar-benar dilihat kamera. Setiap pengesanan dikumpulkan pada garis masa boleh cari — tapis mengikut kamera, julat tarikh, satu atau lebih jenis objek sekaligus, dan keyakinan, kemudian lompat terus ke saat tepat dalam rakaman, dengan objek dikotakkan pada lakaran kecil pratonton. Eksport hasil ke CSV atau PDF. Ia memanfaatkan output pengesan langsung, jadi tiada laluan video kedua.' },
   { t: 'Pasang dan jalan sendiri', b: 'Bestari larian pertama memandu persediaan dari mula ke akhir, penganggar kapasiti menyaiz hos anda, dan pemantauan kesihatan mesin memulih sendiri — menulis ganti rakaman terlama sebelum cakera penuh. ffmpeg, masa jalan AI Python, dan kemas kini aplikasi semuanya dipasang dari dalam aplikasi.' },
 ];
 
@@ -50,7 +51,9 @@ const SHOT_ALT = [
   'Tab Pengesanan AI: peraturan kehadiran dengan zon pengesanan enam titik dilukis pada bingkai kamera sebenar dalam editor zon',
   'Ajar — bestari berpandu tanpa jargon untuk mengajar kamera kemahiran baharu (Namakan · Jenis apa · Di mana · Tunjuk contoh · Semak ketepatan · Hidupkannya), pada langkah “Kemahiran jenis apa ini?” dengan tiga pilihan: kenali objek baharu, bezakan baik daripada rosak, atau kesan apa-apa yang luar biasa',
   'Halaman Rakaman: garis masa NVR berterusan sehari dengan penanda klip peristiwa, dan senarai klip dengan main, muat turun, dan padam',
+  'Carian Objek: carian merentas kamera pada garis masa tentang apa yang dilihat setiap kamera — ditapis mengikut kamera, julat tarikh, jenis objek dan keyakinan — di mana setiap hasil membawa lakaran kecil rakaman dengan objek dikesan dikotakkan, serta tindakan main dan besarkan',
   'Papan pemuka analitik peristiwa: KPI jumlah, belum dibaca, kritikal dan amaran, carta bar peristiwa mengikut masa, dan donat kategori serta keterukan',
+  'Analitik papan pemuka: peta haba aktiviti pengesanan mengikut jam dalam sehari dan hari dalam seminggu, mendedahkan bila setiap kamera paling sibuk',
   'Tetapan Sandaran & Pemulihan: sandaran konfigurasi dilindungi frasa laluan bagi kamera, pengesanan AI, pemberitahuan dan tetapan aplikasi, dengan pemulihan',
   'Tetapan Versi & Kesihatan dipapar dalam bahasa Arab (kanan ke kiri): versi aplikasi dan teras, semakan kemas kini, dan jubin kesihatan perkhidmatan DB, kamera dan cache',
 ];
@@ -105,7 +108,7 @@ export default {
     kicker: 'Lihat ia beraksi',
     title: 'Konsol dibina untuk operator, bukan sekadar pentadbir.',
     lead: 'Grid berbilang kamera langsung, peraturan pengesanan dilukis pada bingkai sebenar, mengajar kamera secara berpandu tanpa jargon ML, rakaman NVR berterusan, analitik peristiwa, sandaran disulitkan, dan versi & kesihatan — setiap skrin dalam pelayar, dalam empat bahasa.',
-    tabs: { live: 'Paparan langsung', detection: 'Pengesanan AI', teach: 'Ajar', recordings: 'Rakaman', dashboard: 'Papan pemuka', backup: 'Sandaran & pemulihan', health: 'Versi & kesihatan' },
+    tabs: { live: 'Paparan langsung', detection: 'Pengesanan AI', teach: 'Ajar', recordings: 'Rakaman', objectsearch: 'Carian objek', dashboard: 'Papan pemuka', heatmap: 'Peta haba aktiviti', backup: 'Sandaran & pemulihan', health: 'Versi & kesihatan' },
     shots: en.showcase.shots.map((s, i) => ({ ...s, alt: SHOT_ALT[i] })),
   },
   useCases: {

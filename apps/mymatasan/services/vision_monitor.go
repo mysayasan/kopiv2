@@ -132,14 +132,19 @@ func (m *VisionMonitor) reconcileSamplers(ctx context.Context, samplers map[int6
 	}
 	byCamera := activeRulesByCamera(rules, time.Now().UTC())
 
-	// Read YOLO inference + capture settings once per reconcile.
+	// Read YOLO inference + capture settings once per reconcile. The capture Interval
+	// (ms) is the live detector-rate throttle: it sets how often each camera is sampled
+	// for detection, applied to every sampler below so a change takes effect on the next
+	// reconcile without a restart.
 	inference := vision.InferenceParams{}
 	captureMode := "auto"
+	sampleInterval := m.interval
 	if settings, err := m.settings.Get(ctx); err == nil {
 		inference = YoloInferenceParamsFromSettings(settings.Vision.Yolo)
 		if mode := strings.ToLower(strings.TrimSpace(settings.Vision.Capture.Mode)); mode != "" {
 			captureMode = mode
 		}
+		sampleInterval = m.sampleIntervalFromSettings(settings.Vision.Capture.IntervalMs)
 	}
 
 	// Metadata recording samples a camera even with no alert rules, so the set of
@@ -160,12 +165,12 @@ func (m *VisionMonitor) reconcileSamplers(ctx context.Context, samplers map[int6
 		cameraRules := m.resolveRuleClasses(ctx, byCamera[cameraID])
 		m.reconcileDetectionStream(cameraID, captureMode)
 		if s, ok := samplers[cameraID]; ok {
-			s.setState(cameraRules, inference)
+			s.setState(cameraRules, inference, sampleInterval)
 			continue
 		}
 		sctx, cancel := context.WithCancel(ctx)
 		s := &cameraSampler{monitor: m, cameraID: cameraID, cancel: cancel}
-		s.setState(cameraRules, inference)
+		s.setState(cameraRules, inference, sampleInterval)
 		samplers[cameraID] = s
 		go s.loop(sctx)
 	}
@@ -223,19 +228,21 @@ type cameraSampler struct {
 	mu        sync.Mutex
 	rules     []vision.DetectionRule
 	inference vision.InferenceParams
+	interval  time.Duration
 }
 
-func (s *cameraSampler) setState(rules []vision.DetectionRule, inference vision.InferenceParams) {
+func (s *cameraSampler) setState(rules []vision.DetectionRule, inference vision.InferenceParams, interval time.Duration) {
 	s.mu.Lock()
 	s.rules = rules
 	s.inference = inference
+	s.interval = interval
 	s.mu.Unlock()
 }
 
-func (s *cameraSampler) state() ([]vision.DetectionRule, vision.InferenceParams) {
+func (s *cameraSampler) state() ([]vision.DetectionRule, vision.InferenceParams, time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.rules, s.inference
+	return s.rules, s.inference, s.interval
 }
 
 func (s *cameraSampler) loop(ctx context.Context) {
@@ -246,11 +253,32 @@ func (s *cameraSampler) loop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-timer.C:
-			rules, inference := s.state()
+			rules, inference, interval := s.state()
 			s.monitor.sampleCamera(ctx, s.cameraID, rules, inference)
-			timer.Reset(s.monitor.interval)
+			if interval <= 0 {
+				interval = s.monitor.interval
+			}
+			timer.Reset(interval)
 		}
 	}
+}
+
+// sampleIntervalFromSettings turns the runtime "Interval (ms)" capture setting into the
+// live per-camera sampling cadence (the detector-rate throttle configured in
+// Settings → AI → Capture). 0 falls back to the built-in interval; anything set is
+// clamped to a sane [250ms, 60s] range so a stray value can't peg or stall the loop.
+func (m *VisionMonitor) sampleIntervalFromSettings(intervalMs int) time.Duration {
+	if intervalMs <= 0 {
+		return m.interval
+	}
+	d := time.Duration(intervalMs) * time.Millisecond
+	if d < 250*time.Millisecond {
+		d = 250 * time.Millisecond
+	}
+	if d > 60*time.Second {
+		d = 60 * time.Second
+	}
+	return d
 }
 
 // sampleCamera captures one frame from a camera, runs detection against its

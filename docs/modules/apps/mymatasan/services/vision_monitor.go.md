@@ -6,7 +6,7 @@ Runs the MyMataSan background vision monitor that samples saved cameras and pers
 
 ## Responsibilities
 
-- Poll detection rules on a configured fixed interval.
+- Poll detection rules on a configured fixed interval, unless overridden per camera by the live capture `Interval (ms)` setting (see below).
 - Filter disabled rules, invalid camera IDs, and rules whose `schedulePolicy` is inactive.
 - Group active rules by camera to avoid unnecessary frame captures.
 - When `VisionMonitorSettings.Metadata` (a `*MetadataRecorder`) is set, sample the union of rule-bearing cameras and metadata-enabled cameras (`MetadataRecorder.EnabledCameras`) — a camera with metadata recording on but no alert rules is still captured and its frames run through an observe-only inference pass (`vision.ObservationCapable.ObserveOnly`) so the recorder logs what it saw; `MetadataRecorder.Observed` prevents a frame from being inferred twice when a rule `Detect` already ran on it. Metadata-only cameras write no alert snapshots (no rules, no detections to accompany).
@@ -21,6 +21,10 @@ Runs the MyMataSan background vision monitor that samples saved cameras and pers
 ## LPR capture path
 
 When any rule for a camera has `detectionType = "lpr"`, `sampleCamera` sets `wantLPR = true` (via `rulesContainLPR`). This has two effects: (1) `captureFrame` calls `DetectionSource.CaptureForLPR` instead of `Capture`, which forces standalone mode and grabs a full-resolution (default 1920 px wide) frame — bypassing the low-res siphon frame that would make plates unreadable; (2) `Frame.WantLPR` is set so the persistent worker runs its OCR stage. Non-LPR cameras are never affected: the OCR path and high-res capture never run for them.
+
+## Capture-rate throttle
+
+Each `reconcileSamplers` pass reads `settings.Vision.Capture.IntervalMs` and converts it via `sampleIntervalFromSettings` into the live per-camera detector-sampling cadence: `0`/unset falls back to the monitor's built-in `m.interval`; anything set is clamped to `[250ms, 60s]` so a stray value can't peg or stall a camera's loop. The resolved interval is pushed into each `cameraSampler.setState` and used to `Reset` its timer after every sample, so a Settings → AI → Capture interval change takes effect for every camera on the next reconcile without a restart — previously the sampler's own tick period ignored this setting and always ran on the monitor's fixed interval.
 
 ## Sampled-diagnostic suppression
 

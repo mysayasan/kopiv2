@@ -17,6 +17,8 @@
   --nav-line: #d5dbe5;
   --nav-fill: rgba(20, 30, 50, 0.05);
   --nav-code: #3a4660;
+  --nav-scroll: rgba(30, 45, 70, 0.26);
+  --nav-scroll-hover: rgba(30, 45, 70, 0.48);
 }
 .theme-dark {
   --nav-bg: linear-gradient(180deg, #161d2b 0%, #0f1622 100%);
@@ -27,6 +29,8 @@
   --nav-line: rgba(255, 255, 255, 0.14);
   --nav-fill: rgba(255, 255, 255, 0.08);
   --nav-code: #d7e2f2;
+  --nav-scroll: rgba(255, 255, 255, 0.20);
+  --nav-scroll-hover: rgba(255, 255, 255, 0.40);
 }
 .theme-slate {
   --nav-bg: linear-gradient(180deg, #1a2436 0%, #131b29 100%);
@@ -37,6 +41,8 @@
   --nav-line: rgba(255, 255, 255, 0.16);
   --nav-fill: rgba(255, 255, 255, 0.08);
   --nav-code: #dbe6f6;
+  --nav-scroll: rgba(255, 255, 255, 0.22);
+  --nav-scroll-hover: rgba(255, 255, 255, 0.42);
 }
 
 /* Override app.css's centered-column .app-shell with the two-pane sidebar grid. */
@@ -183,6 +189,46 @@
 .side-nav nav {
   display: grid;
   gap: 18px;
+  /* Take the space left under the brand block and scroll internally when the menu is
+     taller than the viewport, so items never spill out of the nav panel. min-height:0
+     is required for a flex child to be allowed to shrink and scroll. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Slim, overlay-style scrollbar that stays invisible until you interact with the
+     rail, so it never crowds the menu. Theme-aware via the nav palette. Firefox uses
+     the standard properties; WebKit uses the pseudo-elements below. */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.25s ease;
+}
+.side-nav nav:hover,
+.side-nav nav:focus-within {
+  scrollbar-color: var(--nav-scroll) transparent;
+}
+.side-nav nav::-webkit-scrollbar {
+  width: 8px;
+}
+.side-nav nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+.side-nav nav::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+  /* Inset the pill with a transparent border so it reads as a thin floating bar with
+     breathing room on both sides rather than a chunky edge-to-edge block. */
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background-color 0.25s ease;
+}
+.side-nav nav:hover::-webkit-scrollbar-thumb,
+.side-nav nav:focus-within::-webkit-scrollbar-thumb {
+  background-color: var(--nav-scroll);
+}
+.side-nav nav::-webkit-scrollbar-thumb:hover,
+.side-nav nav::-webkit-scrollbar-thumb:active {
+  background-color: var(--nav-scroll-hover);
 }
 
 .nav-group {
@@ -699,7 +745,9 @@
 .camera-ai-panel,
 .camera-settings-panel,
 .camera-recordings-panel,
-.camera-live-panel {
+.camera-object-search-panel,
+.camera-live-panel,
+.object-classes-page {
   display: grid;
   gap: 16px;
 }

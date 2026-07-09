@@ -24,6 +24,8 @@ func NewNotificationApi(router *mux.Router, serv services.INotificationService) 
 	g.HandleFunc("/stats", h.stats).Methods("GET")
 	g.HandleFunc("/heatmap", h.heatmap).Methods("GET")
 	g.HandleFunc("/baseline", h.baseline).Methods("GET")
+	g.HandleFunc("/reliability", h.reliability).Methods("GET")
+	g.HandleFunc("/noise", h.noise).Methods("GET")
 	g.HandleFunc("/stream", h.stream).Methods("GET")
 	g.HandleFunc("/purge", h.purge).Methods("POST")
 	g.HandleFunc("/{id}/read", h.markRead).Methods("POST")
@@ -132,6 +134,47 @@ func (a *notificationApi) baseline(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := a.serv.Baseline(r.Context(), from, to, bucketSeconds, tzOffsetMin*60, cameraId)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, result, "succeed")
+}
+
+// reliability returns per-camera uptime/outage stats over the window (from/to unix
+// seconds; defaults to the last 7 days), worst-first.
+func (a *notificationApi) reliability(w http.ResponseWriter, r *http.Request) {
+	now := time.Now().UTC().Unix()
+	to := parseInt64Query(r, "to")
+	if to <= 0 {
+		to = now
+	}
+	from := parseInt64Query(r, "from")
+	if from <= 0 {
+		from = to - 7*86400
+	}
+	result, err := a.serv.CameraReliability(r.Context(), from, to)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, result, "succeed")
+}
+
+// noise returns the noisiest cameras (top AI-alert volume + unread count) over the
+// window (from/to unix seconds; defaults to the last 7 days).
+func (a *notificationApi) noise(w http.ResponseWriter, r *http.Request) {
+	now := time.Now().UTC().Unix()
+	to := parseInt64Query(r, "to")
+	if to <= 0 {
+		to = now
+	}
+	from := parseInt64Query(r, "from")
+	if from <= 0 {
+		from = to - 7*86400
+	}
+	limit := int(parseInt64Query(r, "limit"))
+	result, err := a.serv.NoisyCameras(r.Context(), from, to, limit)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return

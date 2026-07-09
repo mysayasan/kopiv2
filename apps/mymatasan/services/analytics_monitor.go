@@ -18,6 +18,7 @@ const anomalyCategory = "analytics.anomaly"
 // notification.Service satisfies it.
 type IAnomalyScanner interface {
 	AnomalyScan(ctx context.Context, hourStart, tzOffsetSec int64, k, minActivity float64) ([]notification.AnomalyFinding, error)
+	ManualScan(ctx context.Context, hourStart, upper, lower int64) ([]notification.AnomalyFinding, error)
 }
 
 // AnalyticsMonitor is the statistical anomaly monitor: on an interval it scores the
@@ -99,7 +100,13 @@ func (m *AnalyticsMonitor) tick(ctx context.Context) time.Duration {
 	// Baselines are seasonal by local clock; score in the server's local timezone.
 	_, tzOffset := time.Now().Zone()
 
-	findings, err := m.scanner.AnomalyScan(ctx, closedHour, int64(tzOffset), cfg.Sensitivity, cfg.MinActivity)
+	var findings []notification.AnomalyFinding
+	var err error
+	if cfg.Mode == "manual" {
+		findings, err = m.scanner.ManualScan(ctx, closedHour, cfg.ManualUpper, cfg.ManualLower)
+	} else {
+		findings, err = m.scanner.AnomalyScan(ctx, closedHour, int64(tzOffset), cfg.Sensitivity, cfg.MinActivity)
+	}
 	if err != nil {
 		return interval
 	}
@@ -153,16 +160,27 @@ func (m *AnalyticsMonitor) emit(ctx context.Context, f notification.AnomalyFindi
 	if m.notifier == nil {
 		return
 	}
-	name := m.cameraName(ctx, f.CameraId)
 	var title, body string
-	if f.Direction == notification.AnomalyHigh {
-		title = "Unusual activity spike — " + name
-		body = fmt.Sprintf("%s recorded %d events in the last hour, well above its usual %d–%d for this time.",
-			name, f.Actual, roundI(f.Lo), roundI(f.Hi))
+	if f.CameraId == 0 {
+		// Site-wide manual-threshold breach.
+		if f.Direction == notification.AnomalyHigh {
+			title = "High overall activity"
+			body = fmt.Sprintf("The system recorded %d events in the last hour, above the configured threshold of %d.", f.Actual, roundI(f.Hi))
+		} else {
+			title = "Low overall activity"
+			body = fmt.Sprintf("The system recorded only %d events in the last hour, below the configured threshold of %d.", f.Actual, roundI(f.Lo))
+		}
 	} else {
-		title = "Unusual quiet — " + name
-		body = fmt.Sprintf("%s recorded only %d events in the last hour, below its usual %d–%d for this time — the camera may be blocked, offline, or tampered with.",
-			name, f.Actual, roundI(f.Lo), roundI(f.Hi))
+		name := m.cameraName(ctx, f.CameraId)
+		if f.Direction == notification.AnomalyHigh {
+			title = "Unusual activity spike — " + name
+			body = fmt.Sprintf("%s recorded %d events in the last hour, well above its usual %d–%d for this time.",
+				name, f.Actual, roundI(f.Lo), roundI(f.Hi))
+		} else {
+			title = "Unusual quiet — " + name
+			body = fmt.Sprintf("%s recorded only %d events in the last hour, below its usual %d–%d for this time — the camera may be blocked, offline, or tampered with.",
+				name, f.Actual, roundI(f.Lo), roundI(f.Hi))
+		}
 	}
 	m.notifier.Publish(ctx, notification.Notification{
 		Category: anomalyCategory,

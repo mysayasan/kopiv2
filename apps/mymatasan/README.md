@@ -17,8 +17,8 @@ It is designed to run on small devices such as Raspberry Pi or Jetson-style micr
 - **Machine (host) health monitor + disk mitigation** (Settings → Machine Health): CPU/memory/disk usage sampling with debounced warn/critical notifications, an early retention purge at `purgeAtPercent`, and a last-resort action at `pauseRecordingAtPercent` — by default it **pauses** NVR recording until the disk drops below `resumePercent`; enabling **Disk Mitigation → Overwrite oldest** instead keeps recording continuous by deleting the oldest recorded segments across all cameras (bypassing per-camera retention, but never newer than the configurable keep-days floor) each time the threshold is hit, only falling back to pausing if nothing old enough remains to free.
 - **Unified notification feed** (topbar bell + Notifications page) across AI detection, camera/machine health, and login security; per-event acknowledge, annotated screenshot, and in-page clip playback.
 - **Dashboard analytics**: the landing page aggregates every notification event (AI detections, camera/machine health, login security, system) into KPI tiles plus timeseries/donut/bar charts, backed by `GET /api/notifications/stats` (Go-side aggregation, works across sqlite/postgres/mariadb) and a dependency-free `@shared/charts` SVG module. Range selector (Today/7d/30d) and live refresh off the same bell signal as the notification feed.
-- **Dashboard Intelligence** (heatmap, expected-activity band, statistical anomaly alerts): an hourly rollup table incrementally aggregated from the notification feed powers an **activity heatmap** (`GET /api/notifications/heatmap` — local day-of-week × hour-of-day grid) and an **expected-activity band** drawn behind the events-over-time chart (`GET /api/notifications/baseline` — robust median ± k·MAD, an 8-week trailing lookback). A statistical **anomaly monitor** (Settings → AI, opt-in) scores each closed hour per camera against its own learned baseline and raises a distinct `analytics.anomaly` notification for a spike or "unusual silence" (a normally-active camera going quiet — the tamper/obstruction/offline signal), tunable sensitivity/consecutive-hour debounce/cooldown, and previewable on demand (`GET /api/anomaly/scan`) before it's ever enabled.
-- **Object metadata recorder** (per camera, Recording tab): a searchable text log of "what objects this camera saw" — presence intervals (label, start/end, peak confidence/count) coalesced from the same AI inference the detection rules already run, so cameras with no rules at all can still log activity for free. Search by camera, label, or time (`GET /api/observations`, DataTable-style server-side filter/sort/paging), with each result linked to the recording segment covering it for one-click playback. Retention follows the camera's own recording retention.
+- **Dashboard Intelligence** (heatmap, expected-activity band, anomaly alerts, camera reliability, alert noise): an hourly rollup table incrementally aggregated from the notification feed powers an **activity heatmap** (`GET /api/notifications/heatmap` — local day-of-week × hour-of-day grid) and an **expected-activity band** drawn behind the events-over-time chart (`GET /api/notifications/baseline` — robust median ± k·MAD, an 8-week trailing lookback). An **anomaly monitor** (Settings → AI / Dashboard card, opt-in) has two tiers: the default **smart** mode scores each closed hour per camera against its own learned baseline and raises a distinct `analytics.anomaly` notification for a spike or "unusual silence" (a normally-active camera going quiet — the tamper/obstruction/offline signal), tunable sensitivity/consecutive-hour debounce/cooldown; a **manual** mode instead compares the whole system's hourly event total against fixed upper/lower thresholds — no learning period needed, usable from day one. Both are previewable on demand (`GET /api/anomaly/scan`) before ever being enabled. Two further cards need no history at all: a **camera reliability scorecard** (`GET /api/notifications/reliability`, worst-first — per-camera uptime %, offline duration, incident count, currently-offline) derived from the camera-health monitor's own event stream, and an **alert noise ratio** (`GET /api/notifications/noise` — top cameras by AI-alert volume + unread %) to spot mis-tuned rules generating alerts nobody reviews.
+- **Object Search** (dedicated Intelligence nav item, cross-camera): a searchable text log of "what objects each camera saw" — presence intervals (label, start/end, peak confidence/count) coalesced from the same AI inference the detection rules already run, so cameras with no rules at all can still log activity for free. Capture is tied to recording itself (Recording tab → **Object sighting cooldown (s)**, no separate on/off toggle — recording on means metadata capture is on). Filter by date range, camera, one or more objects (multi-select), and minimum confidence (`GET /api/observations`, DataTable-style server-side filter/sort/paging, including a multi-value `In` filter for the object picker); each paged result shows a footage screenshot with the detection box drawn on it plus play and maximize overlay buttons, seeking playback to the sighting's clearest (peak-confidence) frame; results export to CSV or PDF. The same footage-screenshot-with-play-overlay treatment also replaced the plain play buttons on the Recordings tab and the Notifications event snapshot. Retention follows the camera's own recording retention.
 - ONVIF discovery, manual probe, saved-device list, save, camera password change, PTZ move/stop, stream option listing, selected stream URI resolution, RTSP test, WebRTC live view, MJPEG fallback, and delete endpoints under `/api/onvif`.
 - **Credential verification + access gate**: adding a discovered camera (or updating its saved credentials) verifies the login against the camera (ONVIF stream-URI resolve and/or RTSP `DESCRIBE`) before persisting — a camera that actively rejects the login is never saved, while an unreachable camera is still allowed through. `GET /api/cameras/{id}/auth-check` re-verifies a saved camera's stored credentials on demand; the camera node's UI blocks all tabs behind a credential-entry gate the moment stored credentials stop authenticating (e.g. after an out-of-band password change on the camera). The gate also offers a two-step-confirm **Remove camera** action for a camera whose new password is unknown, so it doesn't permanently lock the node out of the UI.
 - **ONVIF device management**: local user accounts (list/create/delete), reboot, factory default (soft/hard), camera clock (manual or NTP) and network (IPv4/gateway/DNS) configuration under `/api/cameras/{id}/{onvif-users,reboot,factory-default,datetime,network}`. `GET /api/cameras/{id}/capabilities` probes which of these the camera's firmware actually supports so the Settings UI only shows boxes that will work; `GET /api/cameras/{id}/device-info` surfaces manufacturer/model/firmware/serial/MAC/ONVIF version/location for the Live View → Camera Information panel.
@@ -295,6 +295,7 @@ MyMataSan is an internet-of-things appliance, so the auth defaults are hardened:
 - **"Magic word" easter egg (cosmetic only).** On the 3rd consecutive failed sign-in attempt (client-side counter, resets on success), the login page shows a full-screen green-CRT overlay with a wagging cartoon "big head" that speaks "Ah, ah, ah… You didn't say the magic word!" via the Web Speech API (a Jurassic Park/Dennis Nedry homage). It dismisses on click, `Escape`, or after ~6.5s. Purely presentational — it never affects the real lockout counter/backoff above and adds no server-side state.
 - **Role-based access.** Admins have full control; non-admin users are **view-only + acknowledge** — they can watch Live Views, browse/play Recordings, see Notifications, and acknowledge alerts, but every other mutating request returns `403` (enforced server-side, secure by default). Non-admins only see the Live Views, Recording, and Notifications tabs.
 - **JWT secret hardening (shared host).** On startup an empty/placeholder/too-short `jwt.secret` is auto-replaced with a generated 32-byte secret written back into the config file (or supply `JWT_SECRET`). The mymatasan session cookie is sha256-based, not JWT, so rotating the secret does not log local users out.
+- **Hardened response headers.** Every response — including auth 401s, rate-limit 429s, static assets, and the setup page — gets `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: strict-origin-when-cross-origin`, `Strict-Transport-Security` over TLS, and never advertises a `Server` header/version. Tunable via the `securityHeaders` config block. mymatasan additionally ships a tested opt-in `Content-Security-Policy` (`securityHeaders.contentSecurityPolicy` in `config.json`); the front-end also self-hosts its Quicksand font (`assets/fonts.css`) instead of loading it from Google Fonts, so there is no cross-origin font request for the CSP to allow.
 
 ```bash
 # Who am I + must-change/role flags
@@ -933,7 +934,7 @@ The **Teach** page (`/api/teach`) is the primary, zero-ML-knowledge way to give 
 
 The wizard is a six-step flow, each step resumable (the skill row stores its progress): **name it → what kind → where (draw an ROI on the live frame) → show examples → check accuracy → turn it on**. Sample collection is *session-based* — you press "show me good ones" and the camera auto-captures presence-gated, deduplicated frames labelled by the session, with a live filmstrip and a plain-language sample coach. "Check accuracy" quick-trains and evaluates on a held-back split, reporting in human terms ("I got 19 of 20 right") with a gallery of the misses and an F1-tuned suggested threshold. A **test drive** runs the candidate model on the live camera (a second, throwaway detector worker via an env override — the live pipeline is untouched) before you commit. **Turn it on** trains the final model, hot-swaps it in, and auto-creates the detection rule + alert; **Keep teaching** files ✓/✗ verdicts on live alerts back into the dataset so the skill improves. Skills export/import between devices as passphrase-encrypted **`.mmskill`** packages (`infra/atrest` Argon2id + AES-GCM). Rules created by a taught skill carry a **"Taught"** badge in AI Detection.
 
-> **Where the old Training page went.** The manual Training tab was retired. Its lower-level surfaces live on: the **model registry** (import a `best.pt` / activate / deactivate) and **Object Classes** management moved to **Settings → AI**, and the dataset/label/train/model REST endpoints below are unchanged (the Teach wizard drives them server-side).
+> **Where the old Training page went.** The manual Training tab was retired. Its lower-level surfaces live on: the **model registry** (import a `best.pt` / activate / deactivate, Settings → AI) and **Object Classes** management, now its own top-level **Intelligence → Object Classes** nav item (alongside Teach and Object Search) rather than nested in Settings; the dataset/label/train/model REST endpoints below are unchanged (the Teach wizard drives them server-side).
 
 ## Custom Model Training API
 
@@ -1048,7 +1049,7 @@ Old notifications are purged automatically on the configured **Retention** (Sett
 curl -u admin:Admin123 -X POST "http://localhost:3000/api/notifications/purge?olderThanDays=30&onlyRead=true"
 ```
 
-### Dashboard Intelligence: heatmap, expected-activity band, anomaly alerts
+### Dashboard Intelligence: heatmap, expected-activity band, anomaly alerts, reliability, noise
 
 An hourly rollup table (`notification_rollup`), incrementally aggregated from the notification feed by a background maintainer, backs three analytics on the Dashboard without re-scanning raw history:
 
@@ -1061,32 +1062,56 @@ curl -u admin:Admin123 "http://localhost:3000/api/notifications/baseline?bucket=
 
 `cameraId=` scopes either endpoint to one camera. The baseline is a robust median ± k·MAD band (Poisson floor for sparse slots) built from the trailing 8 weeks of the same weekday+hour (or day-of-week) slot; a bucket reports `learning: true` until it has at least 2 historical samples.
 
-A **statistical anomaly monitor** (Settings → AI, **opt-in** — off until you have a few weeks of activity history) reuses the same per-camera baseline to score each closed hour and raise a distinct `analytics.anomaly` notification for a spike or "unusual silence" (a normally-active camera going quiet — the tamper/obstruction/offline signal that a plain motion/AI rule can't catch):
+An **anomaly monitor** (Settings → AI / Dashboard card, **opt-in**) has two tiers, selected by `mode`:
+
+- **`smart`** (default) reuses the per-camera baseline above to score each closed hour and raise a distinct `analytics.anomaly` notification for a spike or "unusual silence" (a normally-active camera going quiet — the tamper/obstruction/offline signal that a plain motion/AI rule can't catch). Needs a few weeks of activity history to be meaningful.
+- **`manual`** compares the whole system's hourly event total against fixed `manualUpper`/`manualLower` thresholds instead (`0` disables a side) — no learning period, usable from day one; findings are site-wide (`cameraId: 0`), not per-camera.
 
 ```bash
 curl -u admin:Admin123 "http://localhost:3000/api/anomaly/settings"
+# Smart mode
 curl -u admin:Admin123 -X PUT -H "Content-Type: application/json" \
-  -d '{"enabled":true,"sensitivity":3.0,"detectHigh":true,"detectLow":true,"minActivity":3,"requireConsecutive":1,"cooldownHours":6,"checkIntervalMs":300000}' \
+  -d '{"enabled":true,"mode":"smart","sensitivity":3.0,"detectHigh":true,"detectLow":true,"minActivity":3,"requireConsecutive":1,"cooldownHours":6,"checkIntervalMs":300000}' \
   "http://localhost:3000/api/anomaly/settings"
-# Preview what would alert right now, without waiting for the background monitor or affecting its debounce/cooldown state
+# Manual mode: alert when the whole system logs >500 or <5 events in an hour
+curl -u admin:Admin123 -X PUT -H "Content-Type: application/json" \
+  -d '{"enabled":true,"mode":"manual","manualUpper":500,"manualLower":5,"requireConsecutive":1,"cooldownHours":6}' \
+  "http://localhost:3000/api/anomaly/settings"
+# Preview what would alert right now (runs whichever tier `mode` selects), without waiting for the background monitor or affecting its debounce/cooldown state
 curl -u admin:Admin123 "http://localhost:3000/api/anomaly/scan"
 ```
 
-`sensitivity` (k, 1.0–6.0, default 3.0 — lower is more sensitive) sets the band half-width; `minActivity` keeps genuinely-quiet hours from being flagged as "unusual silence"; `requireConsecutive` debounces one-off blips and `cooldownHours` prevents a sustained anomaly from alerting every hour.
+`sensitivity` (k, 1.0–6.0, default 3.0 — lower is more sensitive, smart mode) sets the band half-width; `minActivity` keeps genuinely-quiet hours from being flagged as "unusual silence" (smart mode); `requireConsecutive` debounces one-off blips and `cooldownHours` prevents a sustained anomaly from alerting every hour (both modes).
 
-### Object metadata recorder
+Two further cards need no baseline/history at all:
 
-Per camera (Recording tab → **Object metadata recording**), a searchable text log of "what objects this camera saw" — presence intervals coalesced from the same AI inference the detection rules already run (a metadata-only camera with no rules still gets exactly one inference pass per sample, no extra decode):
+```bash
+# Camera reliability scorecard: worst-uptime-first, last 7 days (from/to default)
+curl -u admin:Admin123 "http://localhost:3000/api/notifications/reliability"
+# Alert noise ratio: top cameras by AI-alert volume + unread count, last 7 days
+curl -u admin:Admin123 "http://localhost:3000/api/notifications/noise?limit=8"
+```
+
+`reliability` derives per-camera uptime %, offline seconds, incident count, and whether it's currently offline by pairing the camera-health monitor's own offline/recovery notification events over the window (a still-open outage at the window's end is extended to `to` rather than dropped). `noise` surfaces which cameras are generating the most AI alerts and what fraction go unread — a camera firing constantly while being ignored is usually a tuning candidate (threshold, zone, or schedule).
+
+### Object Search (object metadata recorder)
+
+A dedicated **Intelligence → Object Search** page: a searchable, cross-camera text log of "what each camera saw" — presence intervals coalesced from the same AI inference the detection rules already run (a metadata-only camera with no rules still gets exactly one inference pass per sample, no extra decode). Capture tracks the camera's recording `enabled` flag directly — there is no separate metadata on/off toggle, only the per-camera cooldown:
 
 ```bash
 curl -u admin:Admin123 -X PUT -H "Content-Type: application/json" \
-  -d '{"cameraId":1,"metadataEnabled":true,"metadataGapSeconds":5}' \
+  -d '{"cameraId":1,"enabled":true,"metadataGapSeconds":5}' \
   "http://localhost:3000/api/recording/config"
 curl -u admin:Admin123 "http://localhost:3000/api/observations?cameraId=1&limit=50"
 curl -u admin:Admin123 "http://localhost:3000/api/observations/labels?cameraId=1"
+# Multi-select object filter (any of "person"/"car") via the In compare operator (7)
+curl -u admin:Admin123 -G "http://localhost:3000/api/observations" \
+  --data-urlencode 'filters=[{"fieldName":"Label","compare":7,"value":["person","car"]}]'
 ```
 
-Each result is enriched with the recording segment covering it (`segmentId`, `segmentCodec`, `seekSeconds`) for one-click playback. `metadataGapSeconds` (default ~5s) is how long a label may go unseen before its interval closes — a brief occlusion or dropped frame doesn't split one presence into many rows. Retention follows the camera's own recording `retentionDays` (30-day fallback for metadata-only cameras).
+`metadataGapSeconds` (default ~5s, the Recording tab's **"Object sighting cooldown (s)"** field) is how long a label may go unseen before its interval closes — a brief occlusion or dropped frame doesn't split one presence into many rows. Each result is enriched with the recording segment covering it (`segmentId`, `segmentCodec`, `seekSeconds` — seeking to the sighting's peak-confidence frame, not the interval start) for one-click playback, or `footagePending: true` when the sighting is inside the camera's still-recording (not yet finalized) segment rather than a genuine gap. Retention follows the camera's own recording `retentionDays` (30-day fallback for metadata-only cameras).
+
+The search UI adds date-range, camera, multi-object, and minimum-confidence filters over a paged results grid; each row shows a footage screenshot (`GET /api/recording/segments/{id}/frame?seek=&box=&label=` — extracted and disk-cached, with the detection box drawn on request) with play and maximize/camera overlay buttons, and results export to CSV or PDF. The same footage-screenshot-with-play-overlay treatment replaced the plain play buttons on the Recordings tab and the Notifications event snapshot.
 
 ### Outbound delivery destinations
 
