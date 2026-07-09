@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
@@ -31,13 +32,75 @@ var (
 	ErrLocalUserInactive          = errors.New("account is inactive")
 )
 
+// authCacheTTL bounds how long a verified Basic credential is trusted without
+// re-running bcrypt. The mymatasan SPA replays its HTTP Basic credential on
+// EVERY request, so without this cache every authenticated call pays a full
+// bcrypt.CompareHashAndPassword (~tens of ms of CPU) plus a LastLoginAt DB
+// write — which caps throughput at roughly cores/bcrypt-cost regardless of what
+// the endpoint does. Caching successful verifications collapses that to a hash
+// lookup for the (identical) credential a client repeats. The TTL keeps
+// staleness (deactivation, role change) short; password rotation is handled
+// eagerly by flushing on every user mutation, so an old credential can never
+// outlive its change. Only successes are cached — a wrong password always pays
+// bcrypt, so the cache can't be used to cheapen credential guessing or be
+// blown up by an attacker (its size is bounded by the real user count).
+const authCacheTTL = 30 * time.Second
+
+type authCacheEntry struct {
+	identity *AuthenticatedUser
+	expires  time.Time
+}
+
 type localUserService struct {
 	repo dbsql.IGenericRepo[entities.LocalUser]
+
+	authMu    sync.RWMutex
+	authCache map[string]authCacheEntry
 }
 
 // NewLocalUserService creates a standalone local user service for mymatasan.
 func NewLocalUserService(repo dbsql.IGenericRepo[entities.LocalUser]) ILocalUserService {
-	return &localUserService{repo: repo}
+	return &localUserService{
+		repo:      repo,
+		authCache: make(map[string]authCacheEntry),
+	}
+}
+
+// authCacheKey binds a verification to the exact username+password pair. The
+// password is hashed (never stored in clear) with a fast digest — this is a
+// cache key, not a credential store, and only ever holds pairs that already
+// verified against bcrypt.
+func authCacheKey(username, password string) string {
+	sum := sha256.Sum256([]byte(username + "\x00" + password))
+	return username + "\x00" + hex.EncodeToString(sum[:])
+}
+
+func (s *localUserService) authCacheGet(key string) (*AuthenticatedUser, bool) {
+	s.authMu.RLock()
+	entry, ok := s.authCache[key]
+	s.authMu.RUnlock()
+	if !ok || time.Now().After(entry.expires) {
+		return nil, false
+	}
+	// Return a copy so callers can't mutate the shared cached identity.
+	cp := *entry.identity
+	return &cp, true
+}
+
+func (s *localUserService) authCachePut(key string, identity *AuthenticatedUser) {
+	cp := *identity
+	s.authMu.Lock()
+	s.authCache[key] = authCacheEntry{identity: &cp, expires: time.Now().Add(authCacheTTL)}
+	s.authMu.Unlock()
+}
+
+// authCacheFlush drops every cached verification. Called on any user mutation
+// (password change, role/active toggle, delete, admin reset) so a stale or
+// rotated credential can never be served from cache.
+func (s *localUserService) authCacheFlush() {
+	s.authMu.Lock()
+	s.authCache = make(map[string]authCacheEntry)
+	s.authMu.Unlock()
 }
 
 // EnsureDefaultAdmin seeds the bootstrap admin on first run (empty user table).
@@ -119,6 +182,8 @@ func (s *localUserService) ResetAdmin(ctx context.Context, username, password st
 	if _, err := s.repo.UpdateById(ctx, "", *target); err != nil {
 		return AdminSeedResult{}, err
 	}
+	// The prior admin credential must stop authenticating immediately.
+	s.authCacheFlush()
 	return AdminSeedResult{Seeded: true, Username: target.Username, Password: effPassword, Generated: generated}, nil
 }
 
@@ -209,6 +274,13 @@ func (s *localUserService) Authenticate(ctx context.Context, username string, pa
 	if username == "" || password == "" {
 		return nil, ErrLocalUserInvalidCredential
 	}
+	// Fast path: this exact credential verified within the TTL. Skips both the
+	// bcrypt compare and the LastLoginAt write — the two per-request costs that
+	// otherwise cap throughput, since the SPA replays Basic auth on every call.
+	key := authCacheKey(username, password)
+	if identity, ok := s.authCacheGet(key); ok {
+		return identity, nil
+	}
 	user, err := s.repo.GetByUnique(ctx, "", "username", username)
 	if err != nil {
 		if isNoResultFoundErr(err) {
@@ -228,7 +300,9 @@ func (s *localUserService) Authenticate(ctx context.Context, username string, pa
 	user.LastLoginAt = time.Now().UTC().Unix()
 	user.UpdatedAt = user.LastLoginAt
 	_, _ = s.repo.UpdateById(ctx, "", *user)
-	return localUserIdentity(user), nil
+	identity := localUserIdentity(user)
+	s.authCachePut(key, identity)
+	return identity, nil
 }
 
 func (s *localUserService) AuthenticateSession(ctx context.Context, username string, sessionHash string) (*AuthenticatedUser, error) {
@@ -339,6 +413,8 @@ func (s *localUserService) Update(ctx context.Context, id uint64, req UpdateLoca
 	if _, err := s.repo.UpdateById(ctx, "", *user); err != nil {
 		return nil, err
 	}
+	// A rename / role / active-state change must invalidate any cached auth.
+	s.authCacheFlush()
 	return user, nil
 }
 
@@ -365,6 +441,8 @@ func (s *localUserService) ResetPassword(ctx context.Context, id uint64, passwor
 	if _, err := s.repo.UpdateById(ctx, "", *user); err != nil {
 		return nil, err
 	}
+	// Old password must stop working immediately.
+	s.authCacheFlush()
 	return user, nil
 }
 
@@ -409,6 +487,8 @@ func (s *localUserService) ChangePassword(ctx context.Context, userId int64, cur
 	if _, err := s.repo.UpdateById(ctx, "", *user); err != nil {
 		return nil, err
 	}
+	// Old password must stop working immediately.
+	s.authCacheFlush()
 	return localUserIdentity(user), nil
 }
 
@@ -420,7 +500,12 @@ func (s *localUserService) Delete(ctx context.Context, id uint64) (uint64, error
 	if err := s.ensureNotRemovingLastAdmin(ctx, user, false, false); err != nil {
 		return 0, err
 	}
-	return s.repo.DeleteById(ctx, "", id)
+	deleted, err := s.repo.DeleteById(ctx, "", id)
+	if err == nil {
+		// A deleted user must not keep authenticating from cache.
+		s.authCacheFlush()
+	}
+	return deleted, err
 }
 
 func (s *localUserService) ensureNotRemovingLastAdmin(ctx context.Context, user *entities.LocalUser, nextIsAdmin bool, nextIsActive bool) error {

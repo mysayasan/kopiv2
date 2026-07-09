@@ -40,6 +40,7 @@ Defines the top-level app configuration model loaded from app config JSON.
 - `telemetry.prometheus.metricsPath` controls the metrics scrape route.
 - `telemetry.prometheus.apiDurationThresholdMs` controls slow API request metrics.
 - `rateLimit.enabled` enables API sliding-window rate limiting.
+- `rateLimit.trustedProxies` lists IPs/CIDRs of reverse proxies allowed to supply the client's real address via `X-Forwarded-For`/`X-Real-IP`; empty (default) means those headers are ignored and the direct TCP peer is used, so a directly-exposed instance can't have its rate-limit/login-lockout bucket spoofed. Set it to your proxy's address(es) when deploying behind one (see `domain/utils/middlewares/rate_limit.go.md`).
 - `rateLimit.devOnly`, `rateLimit.authOnly`, and `rateLimit.public` configure per-tier request counts and windows.
 - `sso.issuer` configures the expected/issued JWT issuer.
 - `sso.audience` configures comma-separated accepted JWT audiences.

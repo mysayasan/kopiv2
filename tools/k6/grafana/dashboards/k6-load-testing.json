@@ -1,0 +1,87 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "time": { "from": "now-15m", "to": "now" },
+  "refresh": "5s",
+  "title": "k6 Load Testing Results",
+  "uid": "k6-mymatasan",
+  "schemaVersion": 39,
+  "tags": ["k6", "mymatasan", "load"],
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Virtual Users",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "blue", "value": null }] } } },
+      "targets": [
+        { "measurement": "vus", "select": [[{ "type": "field", "params": ["value"] }, { "type": "last" }]], "groupBy": [], "resultFormat": "time_series" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Requests/s",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "green", "value": null }] } } },
+      "targets": [
+        { "measurement": "http_reqs", "select": [[{ "type": "field", "params": ["value"] }, { "type": "count" }]], "groupBy": [{ "type": "time", "params": ["1s"] }], "resultFormat": "time_series" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Error rate",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.01 }, { "color": "red", "value": 0.05 }] } } },
+      "targets": [
+        { "measurement": "http_req_failed", "select": [[{ "type": "field", "params": ["value"] }, { "type": "mean" }]], "groupBy": [{ "type": "time", "params": ["5s"] }], "resultFormat": "time_series" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "p95 latency",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "fieldConfig": { "defaults": { "unit": "ms", "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 500 }, { "color": "red", "value": 1000 }] } } },
+      "targets": [
+        { "measurement": "http_req_duration", "select": [[{ "type": "field", "params": ["value"] }, { "type": "percentile", "params": ["95"] }]], "groupBy": [{ "type": "time", "params": ["5s"] }], "resultFormat": "time_series" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Request latency (p50 / p95 / p99)",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 5 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
+      "targets": [
+        { "alias": "p50", "measurement": "http_req_duration", "select": [[{ "type": "field", "params": ["value"] }, { "type": "percentile", "params": ["50"] }]], "groupBy": [{ "type": "time", "params": ["$__interval"] }], "resultFormat": "time_series" },
+        { "alias": "p95", "measurement": "http_req_duration", "select": [[{ "type": "field", "params": ["value"] }, { "type": "percentile", "params": ["95"] }]], "groupBy": [{ "type": "time", "params": ["$__interval"] }], "resultFormat": "time_series" },
+        { "alias": "p99", "measurement": "http_req_duration", "select": [[{ "type": "field", "params": ["value"] }, { "type": "percentile", "params": ["99"] }]], "groupBy": [{ "type": "time", "params": ["$__interval"] }], "resultFormat": "time_series" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Throughput vs VUs",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 5 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
+      "targets": [
+        { "alias": "req/s", "measurement": "http_reqs", "select": [[{ "type": "field", "params": ["value"] }, { "type": "count" }]], "groupBy": [{ "type": "time", "params": ["1s"] }], "resultFormat": "time_series" },
+        { "alias": "VUs", "measurement": "vus", "select": [[{ "type": "field", "params": ["value"] }, { "type": "max" }]], "groupBy": [{ "type": "time", "params": ["1s"] }], "resultFormat": "time_series" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "p95 latency by endpoint",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 14 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
+      "targets": [
+        { "measurement": "endpoint_duration", "select": [[{ "type": "field", "params": ["value"] }, { "type": "percentile", "params": ["95"] }]], "groupBy": [{ "type": "time", "params": ["$__interval"] }, { "type": "tag", "params": ["endpoint"] }], "resultFormat": "time_series", "alias": "$tag_endpoint" }
+      ]
+    }
+  ]
+}

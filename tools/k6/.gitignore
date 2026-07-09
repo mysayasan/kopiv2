@@ -1,0 +1,6 @@
+# Local target config (may hold credentials)
+config/target.env
+
+# Generated run artifacts
+results/*
+!results/.gitkeep

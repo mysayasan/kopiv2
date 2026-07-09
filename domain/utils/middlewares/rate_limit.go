@@ -32,16 +32,20 @@ type RateLimitTierConfig struct {
 type RateLimitConfig struct {
 	Enabled          bool
 	EndpointCacheTTL time.Duration
-	DevOnly          RateLimitTierConfig
-	AuthOnly         RateLimitTierConfig
-	Public           RateLimitTierConfig
+	// TrustedProxies are IPs/CIDRs permitted to declare the real client address
+	// via X-Forwarded-For / X-Real-IP. Empty = trust none (use the direct peer).
+	TrustedProxies []string
+	DevOnly        RateLimitTierConfig
+	AuthOnly       RateLimitTierConfig
+	Public         RateLimitTierConfig
 }
 
 type RateLimitMidware struct {
-	endpoints apiEndpointLister
-	store     cache.Store
-	auth      *AuthMidware
-	config    RateLimitConfig
+	endpoints      apiEndpointLister
+	store          cache.Store
+	auth           *AuthMidware
+	config         RateLimitConfig
+	trustedProxies []*net.IPNet
 }
 
 type endpointTierEntry struct {
@@ -55,11 +59,38 @@ func NewRateLimit(endpoints apiEndpointLister, store cache.Store, auth *AuthMidw
 		config.EndpointCacheTTL = 30 * time.Second
 	}
 	return &RateLimitMidware{
-		endpoints: endpoints,
-		store:     store,
-		auth:      auth,
-		config:    config,
+		endpoints:      endpoints,
+		store:          store,
+		auth:           auth,
+		config:         config,
+		trustedProxies: parseTrustedProxies(config.TrustedProxies),
 	}
+}
+
+// parseTrustedProxies turns the configured IP/CIDR strings into networks. Bare
+// IPs become /32 (v4) or /128 (v6). Unparseable entries are skipped (logged).
+func parseTrustedProxies(entries []string) []*net.IPNet {
+	nets := make([]*net.IPNet, 0, len(entries))
+	for _, raw := range entries {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		if _, cidr, err := net.ParseCIDR(raw); err == nil {
+			nets = append(nets, cidr)
+			continue
+		}
+		if ip := net.ParseIP(raw); ip != nil {
+			bits := 32
+			if ip.To4() == nil {
+				bits = 128
+			}
+			nets = append(nets, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
+			continue
+		}
+		log.Printf("rate-limit: ignoring unparseable trustedProxies entry %q", raw)
+	}
+	return nets
 }
 
 func (m *RateLimitMidware) Middleware(next http.Handler) http.Handler {
@@ -195,7 +226,53 @@ func (m *RateLimitMidware) identityForRequest(r *http.Request, accessTier apiacc
 			return fmt.Sprintf("user:%d", claims.Id)
 		}
 	}
-	return "ip:" + clientIPFromRequest(r)
+	return "ip:" + m.clientIP(r)
+}
+
+// clientIP resolves the address to rate-limit by. It honors X-Forwarded-For /
+// X-Real-IP ONLY when the immediate peer (RemoteAddr) is a configured trusted
+// proxy; otherwise it uses the peer address directly. This prevents a directly-
+// reachable client from spoofing a forwarding header to mint an unlimited number
+// of buckets (which would defeat both the rate limiter and the login lockout
+// that shares this keying), while still giving per-client buckets behind a real
+// reverse proxy.
+func (m *RateLimitMidware) clientIP(r *http.Request) string {
+	peer := strings.TrimSpace(r.RemoteAddr)
+	if host, _, err := net.SplitHostPort(peer); err == nil {
+		peer = host
+	}
+	if !m.peerIsTrustedProxy(peer) {
+		return peer
+	}
+	if fwd := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); fwd != "" {
+		// Left-most entry is the original client the trusted proxy saw.
+		if i := strings.Index(fwd, ","); i >= 0 {
+			fwd = strings.TrimSpace(fwd[:i])
+		}
+		if fwd != "" {
+			return fwd
+		}
+	}
+	if real := strings.TrimSpace(r.Header.Get("X-Real-IP")); real != "" {
+		return real
+	}
+	return peer
+}
+
+func (m *RateLimitMidware) peerIsTrustedProxy(peer string) bool {
+	if len(m.trustedProxies) == 0 {
+		return false
+	}
+	ip := net.ParseIP(peer)
+	if ip == nil {
+		return false
+	}
+	for _, cidr := range m.trustedProxies {
+		if cidr.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func rateLimitKey(accessTier apiaccessenums.AccessTier, identity string, path string) string {

@@ -13,9 +13,11 @@ Implements standalone DB-backed user management for `mymatasan`.
 - Authenticates Basic Auth credentials and DB-backed auth cookies.
 - Lists, creates, updates, resets passwords, and deletes local users.
 - Prevents deleting, disabling, or demoting the last active admin user.
+- `Authenticate` caches a **successful** Basic Auth verification for `authCacheTTL` (30s), keyed by `username + sha256(password)`, so the SPA replaying the same Basic credential on every request skips both the bcrypt compare and the `LastLoginAt` DB write on a cache hit — the two per-request costs that otherwise cap throughput under load. Only successes are cached (a wrong password always pays bcrypt, so the cache can't cheapen credential guessing), and the cache is bounded by the real user count. The cache is flushed on any user mutation (`Update`, `ResetPassword`, `ChangePassword`, `Delete`, `ResetAdmin`) so a rotated, deactivated, or deleted credential can never keep authenticating from a stale entry.
 
 ## Notes
 
 - This service is intentionally separate from MyIDSan identity and RBAC services.
 - `EnsureDefaultAdmin`'s signature takes `username, password` and now returns `(AdminSeedResult, error)`; `app.go` passes `deps.Config.LocalAuth.Username` / `deps.Config.LocalAuth.Password` and, when `Seeded`, calls `announceFirstRunAdmin`.
 - The Windows installer generates its own per-install password and injects it via `LOCAL_ADMIN_PASSWORD`, so on Windows the password is env-supplied (`Generated=false`) and the installer's finish page owns the reveal; the app's banner/file path is for CLI/Docker/systemd/portable.
+- The auth cache (`authCache`/`authMu` on `localUserService`) is in-process and unbounded by TTL cleanup other than lazy expiry-on-read; it holds at most one entry per currently-valid username+password pair actually presented, so its size tracks real traffic, not the user table.

@@ -164,9 +164,16 @@ type AppConfigModel struct {
 		Enabled                 bool                     `json:"enabled"`
 		EndpointCacheTTLSeconds int                      `json:"endpointCacheTtlSeconds"`
 		DefaultWindowSeconds    int                      `json:"defaultWindowSeconds"`
-		DevOnly                 RateLimitTierConfigModel `json:"devOnly"`
-		AuthOnly                RateLimitTierConfigModel `json:"authOnly"`
-		Public                  RateLimitTierConfigModel `json:"public"`
+		// TrustedProxies lists IPs/CIDRs of reverse proxies allowed to set the
+		// client's real address via X-Forwarded-For / X-Real-IP. When empty (the
+		// default) those headers are ignored and the direct peer address is used,
+		// so a directly-exposed instance can't be rate-limit/lockout-bypassed by
+		// spoofing the header. Set this to your proxy's address(es) when deploying
+		// behind one so per-client rate limiting works.
+		TrustedProxies []string                 `json:"trustedProxies"`
+		DevOnly        RateLimitTierConfigModel `json:"devOnly"`
+		AuthOnly       RateLimitTierConfigModel `json:"authOnly"`
+		Public         RateLimitTierConfigModel `json:"public"`
 	} `json:"rateLimit"`
 	Transaction struct {
 		LockProvider              string `json:"lockProvider"`
