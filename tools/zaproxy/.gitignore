@@ -1,0 +1,6 @@
+# Local secrets — real target + credentials
+config/target.env
+
+# Scan output
+reports/*
+!reports/.gitkeep

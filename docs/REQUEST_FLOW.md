@@ -5,7 +5,7 @@
 1. Client hits server at one of the configured runtime listeners (`server.hostnames x server.tlsPorts/server.nonTlsPorts`, optionally overridden by `SERVER_HOSTNAMES`, `SERVER_TLS_PORTS`, and `SERVER_NON_TLS_PORTS`).
 2. Router (`gorilla/mux`) matches route.
 3. Global middleware executes:
-   - greet middleware
+   - security-headers middleware (nosniff, X-Frame-Options, Referrer-Policy, HSTS on TLS, opt-in Content-Security-Policy, and strips the `Server` header) — runs first so every response, including auth 401s, rate-limit 429s, static assets, and the setup page, is hardened
    - CORS middleware
    - request log middleware (adds/propagates `X-Request-ID` and writes through runtime logger)
 4. For `/api/*` routes:

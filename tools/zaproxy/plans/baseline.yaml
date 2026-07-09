@@ -1,0 +1,78 @@
+# OWASP ZAP Automation Framework plan — BASELINE (passive, non-destructive).
+#
+# What it does: spiders the app, then runs ZAP's PASSIVE scan rules only
+# (security-header checks, cookie flags, info disclosure, mixed content, etc.).
+# It NEVER sends attack payloads and NEVER submits forms, so it is safe to run
+# against a live/production mymatasan instance.
+#
+# Driven by scan.ps1 / scan.sh, which substitute the ${...} tokens from env.
+env:
+  contexts:
+    - name: mymatasan
+      urls:
+        - ${TARGET}
+      includePaths:
+        - "${TARGET}.*"
+      excludePaths:
+        # Never touch destructive control-plane routes, even passively — a
+        # spider can follow a GET link that triggers side effects.
+        - ".*/api/system/.*"        # factory reset / restart / update / restore
+        - ".*/purge.*"              # recording + alert purges
+        - ".*/factory-default.*"    # camera factory reset
+        - ".*/auth/change-password.*"
+        - ".*/logout.*"
+  parameters:
+    failOnError: true
+    failOnWarning: false
+    progressToStdout: true
+  vars:
+    TARGET: ${TARGET}
+
+jobs:
+  # Inject HTTP Basic credentials on every request. mymatasan's SPA replays a
+  # Basic header on each call, so this is all that authenticated scanning needs.
+  # When ZAP_AUTH_HEADER is empty the header is set to an empty string and the
+  # app treats the session as anonymous (still a useful unauth surface scan).
+  - type: replacer
+    rules:
+      - description: basic-auth
+        matchType: req_header
+        matchString: Authorization
+        matchRegex: false
+        replacementString: ${ZAP_AUTH_HEADER}
+        tokenProcessing: false
+
+  - type: spider
+    parameters:
+      context: mymatasan
+      url: ${TARGET}
+      maxDuration: 5
+      maxDepth: 10
+      maxChildren: 0
+    tests:
+      - name: at-least-one-url
+        type: stats
+        statistic: automation.spider.urls.added
+        operator: ">="
+        value: 1
+        onFail: warn
+
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 10
+
+  - type: passiveScan-config
+    parameters:
+      scanOnlyInScope: true
+
+  - type: report
+    parameters:
+      template: traditional-html
+      reportDir: /zap/wrk/reports
+      reportFile: baseline-${STAMP}
+      reportTitle: mymatasan ZAP Baseline (passive)
+  - type: report
+    parameters:
+      template: traditional-json
+      reportDir: /zap/wrk/reports
+      reportFile: baseline-${STAMP}

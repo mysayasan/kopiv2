@@ -33,6 +33,7 @@ Implements the reusable runtime host for all app modules.
 - Start scheduled runtime log cleanup when configured.
 - Start scheduled API log cleanup when configured.
 - Run shared bootstrap engine using app-provided entities and seeders.
+- Register the security-headers middleware (`middlewares.NewSecurityHeaders`, via the `securityHeadersConfig` helper) first in the router chain — ahead of CORS and request logging — so every response is hardened, unless `securityHeaders.disabled` is set. Replaces the old greet middleware, which only set `Server: r450k`.
 - Wire global middleware and shared API modules.
 - Honor app-provided shared API module selection when an app implements `SharedAPIConfigurator`.
 - Create shared DTO service adapters from core shared services before mounting shared API modules.

@@ -204,7 +204,27 @@ type AppConfigModel struct {
 		} `json:"prometheus"`
 	} `json:"telemetry"`
 	AllowOrigin string `json:"allowOrigins" validate:"required"`
-	Tls         struct {
+	// SecurityHeaders configures the hardening response headers applied by
+	// middlewares.SecurityHeaders. Every field is optional: when the block (or a
+	// field) is omitted, hardened defaults apply (nosniff, X-Frame-Options
+	// SAMEORIGIN, Referrer-Policy, HSTS on TLS, and the Server header stripped).
+	// ContentSecurityPolicy is the exception — it is only sent when set, so an
+	// app opts in after verifying its own front-end against the policy.
+	SecurityHeaders struct {
+		Disabled              bool    `json:"disabled"`
+		ContentSecurityPolicy string  `json:"contentSecurityPolicy"`
+		FrameOptions          *string `json:"frameOptions"`
+		ReferrerPolicy        *string `json:"referrerPolicy"`
+		ContentTypeOptions    *bool   `json:"contentTypeOptions"`
+		ServerHeader          *string `json:"serverHeader"`
+		Hsts                  struct {
+			Enabled           *bool `json:"enabled"`
+			MaxAgeSeconds     int   `json:"maxAgeSeconds"`
+			IncludeSubDomains *bool `json:"includeSubDomains"`
+			Preload           bool  `json:"preload"`
+		} `json:"hsts"`
+	} `json:"securityHeaders"`
+	Tls struct {
 		CertPath string `json:"certPath" validate:"required"`
 		KeyPath  string `json:"keyPath" validate:"required"`
 	} `json:"tls"`
