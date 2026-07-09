@@ -51,7 +51,9 @@ const SHOT_ALT = [
   'Tab Pengesanan AI: peraturan kehadiran dengan zon pengesanan enam titik dilukis pada bingkai kamera sebenar dalam editor zon',
   'Ajar — bestari berpandu tanpa jargon untuk mengajar kamera kemahiran baharu (Namakan · Jenis apa · Di mana · Tunjuk contoh · Semak ketepatan · Hidupkannya), pada langkah “Kemahiran jenis apa ini?” dengan tiga pilihan: kenali objek baharu, bezakan baik daripada rosak, atau kesan apa-apa yang luar biasa',
   'Halaman Rakaman: garis masa NVR berterusan sehari dengan penanda klip peristiwa, dan senarai klip dengan main, muat turun, dan padam',
+  'Carian Objek: carian merentas kamera pada garis masa tentang apa yang dilihat setiap kamera — ditapis mengikut kamera, julat tarikh, jenis objek dan keyakinan — di mana setiap hasil membawa lakaran kecil rakaman dengan objek dikesan dikotakkan, serta tindakan main dan besarkan',
   'Papan pemuka analitik peristiwa: KPI jumlah, belum dibaca, kritikal dan amaran, carta bar peristiwa mengikut masa, dan donat kategori serta keterukan',
+  'Analitik papan pemuka: peta haba aktiviti pengesanan mengikut jam dalam sehari dan hari dalam seminggu, mendedahkan bila setiap kamera paling sibuk',
   'Tetapan Sandaran & Pemulihan: sandaran konfigurasi dilindungi frasa laluan bagi kamera, pengesanan AI, pemberitahuan dan tetapan aplikasi, dengan pemulihan',
   'Tetapan Versi & Kesihatan dipapar dalam bahasa Arab (kanan ke kiri): versi aplikasi dan teras, semakan kemas kini, dan jubin kesihatan perkhidmatan DB, kamera dan cache',
 ];
@@ -106,7 +108,7 @@ export default {
     kicker: 'Lihat ia beraksi',
     title: 'Konsol dibina untuk operator, bukan sekadar pentadbir.',
     lead: 'Grid berbilang kamera langsung, peraturan pengesanan dilukis pada bingkai sebenar, mengajar kamera secara berpandu tanpa jargon ML, rakaman NVR berterusan, analitik peristiwa, sandaran disulitkan, dan versi & kesihatan — setiap skrin dalam pelayar, dalam empat bahasa.',
-    tabs: { live: 'Paparan langsung', detection: 'Pengesanan AI', teach: 'Ajar', recordings: 'Rakaman', dashboard: 'Papan pemuka', backup: 'Sandaran & pemulihan', health: 'Versi & kesihatan' },
+    tabs: { live: 'Paparan langsung', detection: 'Pengesanan AI', teach: 'Ajar', recordings: 'Rakaman', objectsearch: 'Carian objek', dashboard: 'Papan pemuka', heatmap: 'Peta haba aktiviti', backup: 'Sandaran & pemulihan', health: 'Versi & kesihatan' },
     shots: en.showcase.shots.map((s, i) => ({ ...s, alt: SHOT_ALT[i] })),
   },
   useCases: {
