@@ -944,7 +944,7 @@ export function CameraObjectSearchPanel({ camera, busy, authHeader, canManage = 
   }, [maxRow]);
 
   const columns = [
-    { key: 'startedAt', label: t('meta.thTime'), filterable: false, render: (_v, row) => `${formatTimestamp(row.startedAt)} – ${formatTimestamp(row.endedAt)}` },
+    { key: 'startedAt', label: t('meta.thTime'), filterable: false, render: (_v, row) => formatTimestamp(row.startedAt) },
     { key: 'cameraId', label: t('meta.thCamera'), filterable: false, render: (_v, row) => cameraName(row.cameraId) },
     { key: 'label', label: t('meta.thObject'), filterable: false, render: (_v, row) => (<span className={`object-tag object-tag--${objectCategory(row.label)}`}>{row.label}{row.maxCount > 1 ? ` ×${row.maxCount}` : ''}</span>) },
     { key: 'maxConfidence', label: t('meta.thConfidence'), filterable: false, render: (v) => `${Math.round((Number(v) || 0) * 100)}%` },

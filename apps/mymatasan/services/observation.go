@@ -51,9 +51,32 @@ func (s *ObservationService) GetObservations(ctx context.Context, limit, offset 
 	if limit == 0 {
 		limit = 50
 	}
+	// Metadata recording is independent of NVR footage recording: a camera can log
+	// observations in detect-only mode with continuous recording off, and detect-only
+	// recorders keep no segments — so those sightings have no footage and never will.
+	// Restrict the search to cameras actually recording footage so their footage-less
+	// sightings don't fill pages with un-openable / forever-"Finalizing" rows. Doing it
+	// at the query level (not post-fetch) keeps paging and the total count correct.
+	// recordingOn is nil only when the config can't be read, in which case we don't
+	// restrict (fail open — show everything rather than hide real results).
+	recordingOn := s.camerasRecording(ctx)
+
 	var filters []sqldataenums.Filter
 	if cameraId > 0 {
+		// Explicit camera pick: if we know it isn't recording, it has no footage to show.
+		if recordingOn != nil && !recordingOn[cameraId] {
+			return []ObservationResult{}, 0, nil
+		}
 		filters = append(filters, sqldataenums.Filter{FieldName: "CameraId", Compare: sqldataenums.Equal, Value: cameraId})
+	} else if recordingOn != nil {
+		ids := make([]int64, 0, len(recordingOn))
+		for id := range recordingOn {
+			ids = append(ids, id)
+		}
+		if len(ids) == 0 {
+			return []ObservationResult{}, 0, nil // no camera is recording → nothing to show
+		}
+		filters = append(filters, sqldataenums.Filter{FieldName: "CameraId", Compare: sqldataenums.In, Value: ids})
 	}
 	filters = append(filters, extraFilters...)
 	sorters := extraSorters
@@ -87,17 +110,41 @@ func (s *ObservationService) GetObservations(ctx context.Context, limit, offset 
 			results = append(results, res)
 			continue
 		}
-		// No finalized segment covers the sighting. Two very different cases:
+		// No finalized segment covers the sighting. The camera is recording (query is
+		// restricted to those), so two cases remain:
 		//   • it is newer than the camera's newest saved footage → it falls in the
 		//     current, still-writing segment (segments persist only on close), so the
 		//     footage exists but isn't playable yet — surface it as pending, not gone.
-		//   • it sits in an older gap (recording was off then, or footage was purged)
-		//     → nothing to play, so omit it rather than show an un-openable row.
+		//   • it sits in an older gap (footage since purged) → nothing to play, so omit
+		//     it rather than show an un-openable row.
 		if row.StartedAt >= newestEnd[row.CameraId] {
 			results = append(results, ObservationResult{ObjectObservation: row, FootagePending: true})
 		}
 	}
 	return results, total, nil
+}
+
+// camerasRecording returns the set of cameras whose continuous NVR recording is on, so
+// GetObservations can restrict the search to cameras that actually produce footage
+// (detect-only cameras record metadata but keep no segments — nothing to watch). It
+// returns a non-nil (possibly empty) map when the configs were read, and nil only on a
+// read error, so callers can distinguish "nothing is recording" (empty map → show no
+// results) from "unknown" (nil → don't restrict, fail open).
+func (s *ObservationService) camerasRecording(ctx context.Context) map[int64]bool {
+	if s.recording == nil {
+		return nil
+	}
+	cfgs, err := s.recording.ListConfigs(ctx)
+	if err != nil {
+		return nil
+	}
+	on := make(map[int64]bool, len(cfgs))
+	for _, cfg := range cfgs {
+		if cfg != nil && cfg.Enabled {
+			on[cfg.CameraId] = true
+		}
+	}
+	return on
 }
 
 // resolveCoveringSegments maps each row (by position) to the recording segment that
