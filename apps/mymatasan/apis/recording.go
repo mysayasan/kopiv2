@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
@@ -105,16 +106,60 @@ func (a *recordingApi) downloadSegment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	wantTranscode := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("transcode")), "h264") &&
+		strings.EqualFold(seg.Codec, "hevc")
+	hasRange := strings.TrimSpace(r.Header.Get("Range")) != ""
+
+	w.Header().Set("Content-Type", "video/mp4")
+	w.Header().Set("Content-Disposition", `inline; filename="`+filepath.Base(seg.FilePath)+`"`)
+
+	// A Range request (control-plane tunnel playback, or a <video> element seeking) needs a
+	// SEEKABLE source so http.ServeContent can answer 206 Partial Content. Plaintext files
+	// are already seekable; encrypted or transcoded clips have non-seekable decode streams,
+	// so materialize a plaintext (optionally H.264) copy to a short-lived temp cache first.
+	// This is what makes recording playback work over the tunnel (its per-message cap can't
+	// carry a whole clip — the control plane fetches bounded byte ranges instead).
+	if hasRange {
+		var seekable io.ReadSeeker
+		closeFn := func() {}
+		if a.cipher == nil && !wantTranscode {
+			pf, oerr := os.Open(seg.FilePath)
+			if oerr != nil {
+				controllers.SendError(w, controllers.ErrBadRequest, "video file not available")
+				return
+			}
+			seekable, closeFn = pf, func() { pf.Close() }
+		} else {
+			path, perr := a.segmentPlayFile(r, seg.FilePath, seg.Id, wantTranscode)
+			if perr != nil {
+				controllers.SendError(w, controllers.ErrInternalServerError, "prepare playback failed")
+				return
+			}
+			pf, oerr := os.Open(path)
+			if oerr != nil {
+				controllers.SendError(w, controllers.ErrBadRequest, "video file not available")
+				return
+			}
+			seekable, closeFn = pf, func() { pf.Close() }
+		}
+		defer closeFn()
+		modtime := time.Time{}
+		if seg.StartedAt > 0 {
+			modtime = time.Unix(seg.StartedAt, 0)
+		}
+		http.ServeContent(w, r, filepath.Base(seg.FilePath), modtime, seekable)
+		return
+	}
+
+	// Non-range: stream the whole clip, decrypting (and transcoding HEVC on request) on
+	// the fly. The stored FileSize is ciphertext size, so Content-Length is only the
+	// plaintext pass-through case.
 	f, err := os.Open(seg.FilePath)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrBadRequest, "video file not available")
 		return
 	}
 	defer f.Close()
-
-	// Source reader: decrypt on the fly when encryption-at-rest is on, else the raw
-	// file. The stored FileSize is the ciphertext size, so Content-Length is only set
-	// for the plaintext pass-through path (no decrypt, no transcode).
 	var src io.Reader = f
 	plaintextPassthrough := true
 	if a.cipher != nil {
@@ -126,27 +171,83 @@ func (a *recordingApi) downloadSegment(w http.ResponseWriter, r *http.Request) {
 		src = dr
 		plaintextPassthrough = false
 	}
-
-	w.Header().Set("Content-Type", "video/mp4")
-	w.Header().Set("Content-Disposition", `inline; filename="`+filepath.Base(seg.FilePath)+`"`)
-
-	// HEVC-on-disk playback for browsers that can't decode it: the player appends
-	// ?transcode=h264 when its <video> element can't play hev1/hvc1 (Firefox, older
-	// browsers). Transcode the (decrypted) stream to H.264 fragmented MP4 on the fly
-	// through the shared NVENC semaphore. Capable browsers omit the flag and stream
-	// the stored bytes untouched, so they pay nothing.
-	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("transcode")), "h264") &&
-		strings.EqualFold(seg.Codec, "hevc") {
+	if wantTranscode {
 		if err := recording.TranscodeH264(r.Context(), a.recordFFmpegPath(r), src, w); err != nil {
 			log.Printf("recording: transcode segment %d to h264: %v", seg.Id, err)
 		}
 		return
 	}
-
 	if plaintextPassthrough && seg.FileSize > 0 {
 		w.Header().Set("Content-Length", strconv.FormatInt(seg.FileSize, 10))
 	}
 	io.Copy(w, src)
+}
+
+// segmentPlayFile materializes a seekable, plaintext (optionally H.264-transcoded) copy of
+// a segment to a short-lived temp cache, so http.ServeContent can serve Range requests for
+// clips whose on-disk form is encrypted and/or HEVC. The cached file is reused on later
+// requests; stale files are swept after an hour.
+func (a *recordingApi) segmentPlayFile(r *http.Request, filePath string, segID int64, transcode bool) (string, error) {
+	cacheDir := filepath.Join(os.TempDir(), "mymatasan-playcache")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		return "", err
+	}
+	a.cleanupPlayCache(cacheDir)
+	suffix := ""
+	if transcode {
+		suffix = "_h264"
+	}
+	path := filepath.Join(cacheDir, fmt.Sprintf("seg_%d%s.mp4", segID, suffix))
+	if fi, err := os.Stat(path); err == nil && fi.Size() > 0 {
+		return path, nil
+	}
+	f, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	var src io.Reader = f
+	if a.cipher != nil {
+		dr, derr := a.cipher.MaybeDecryptingReader(f)
+		if derr != nil {
+			return "", derr
+		}
+		src = dr
+	}
+	tmp := path + ".tmp"
+	out, err := os.Create(tmp)
+	if err != nil {
+		return "", err
+	}
+	if transcode {
+		err = recording.TranscodeH264(r.Context(), a.recordFFmpegPath(r), src, out)
+	} else {
+		_, err = io.Copy(out, src)
+	}
+	out.Close()
+	if err != nil {
+		os.Remove(tmp)
+		return "", err
+	}
+	if rerr := os.Rename(tmp, path); rerr != nil {
+		os.Remove(tmp)
+		return "", rerr
+	}
+	return path, nil
+}
+
+// cleanupPlayCache best-effort removes materialized playback files older than an hour.
+func (a *recordingApi) cleanupPlayCache(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-time.Hour)
+	for _, e := range entries {
+		if info, ierr := e.Info(); ierr == nil && info.ModTime().Before(cutoff) {
+			_ = os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
 }
 
 // segmentFrame returns a small JPEG thumbnail of the segment at ?seek=<seconds>, with

@@ -23,7 +23,12 @@ module.exports = {
   },
   resolve: {
     // '@shared' -> the in-repo shared UI module (frontend/shared/src).
-    alias: { '@shared': path.resolve(__dirname, '../../../../frontend/shared/src') },
+    // '@mymatasan' -> the mymatasan app's view source, so myseliasan can embed the node's
+    // real pages/CSS (styled in an isolated Shadow DOM) and follow mymatasan design changes.
+    alias: {
+      '@shared': path.resolve(__dirname, '../../../../frontend/shared/src'),
+      '@mymatasan': path.resolve(__dirname, '../../../mymatasan/views/react-webpack/src/views'),
+    },
     // Shared files do bare `import ... from 'react'`; resolve them from THIS app's
     // node_modules so there's a single React copy.
     modules: [path.resolve(__dirname, 'node_modules'), 'node_modules']
@@ -37,7 +42,16 @@ module.exports = {
   module: {
     rules: [
       {
+        // CSS imported with `?raw` is returned as a plain string (not injected into the
+        // document) so it can be injected into a Shadow DOM — this is how the embedded
+        // mymatasan node pages get mymatasan's real, isolated styling.
         test: /\.css$/,
+        resourceQuery: /raw/,
+        type: 'asset/source'
+      },
+      {
+        test: /\.css$/,
+        resourceQuery: { not: [/raw/] },
         use: ['style-loader', 'css-loader']
       },
       {

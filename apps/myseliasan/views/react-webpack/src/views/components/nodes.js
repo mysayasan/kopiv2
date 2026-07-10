@@ -18,7 +18,7 @@ export const DEFAULT_NODE_ICON = 'monitor';
 // management, LAN discovery, claim-code adoption (incl. manual address for other
 // subnets), and the adopted-nodes table with release. Uses the shared settings
 // panel / metric-card visual language.
-export function NodesTab({ onToast, nodes, reloadNodes, managingNodeId, onManage, onBack }) {
+export function NodesTab({ onToast, nodes, reloadNodes, managingNodeId, managingCameraId, onManage, onClearFocus, onBack }) {
   const t = useT();
   const [fleetKey, setFleetKey] = useState(null);
   const [discovered, setDiscovered] = useState(null);
@@ -109,6 +109,8 @@ export function NodesTab({ onToast, nodes, reloadNodes, managingNodeId, onManage
       <NodeManager
         node={managing}
         onToast={toast}
+        focusCameraId={managingCameraId}
+        onClearFocus={onClearFocus}
         onBack={() => { onBack(); reloadNodes(); }}
       />
     );

@@ -474,6 +474,61 @@
   color: var(--nav-label);
 }
 
+/* Second tree level: each node is itself expandable into its cameras. The node row
+   reuses the caret+main rootrow layout; a narrower caret keeps the deeper indent tidy.
+   Camera leaves (grandchildren) are lighter than node rows and carry no status dot. */
+.nav-subtree {
+  display: flex;
+  flex-direction: column;
+}
+
+.nav-subtree-caret {
+  width: 18px;
+}
+
+.nav-cam-children {
+  margin-left: 18px;
+}
+
+.nav-tree-grandchild {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.nav-tree-grandchild .nav-label {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.nav-cam-ico {
+  width: 26px;
+  color: var(--nav-label);
+}
+
+/* Cameras have no online/offline dot — the node above already conveys liveness. */
+.nav-cam-ico::after {
+  display: none;
+}
+
+/* Clickable "couldn't load — retry" row shown when the node can't be reached. */
+.nav-cam-retry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--nav-label);
+  text-align: left;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.nav-cam-retry:hover {
+  background: var(--nav-hover);
+  color: var(--nav-text);
+}
+
 /* Bottom-of-sidebar actions: theme toggle + log out, styled to sit on the dark bg. */
 .side-nav-foot {
   margin-top: auto;
@@ -539,6 +594,18 @@
 /* The embedded workspace already supplies its own top gap. */
 .main-workspace > .workspace {
   padding-top: 0;
+}
+
+/* Let the active page grow to fill the column so the footer anchors to the bottom
+   (instead of floating right under short content), with a clear gap above it. */
+.main-workspace > .workspace,
+.main-workspace > .page-placeholder {
+  flex: 1 0 auto;
+}
+.main-workspace .shared-footer {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-divider, rgba(128, 128, 128, 0.2));
 }
 
 /* Section tones (sidebar accent + matches myidsan). */

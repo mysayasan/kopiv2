@@ -252,6 +252,10 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// capability surface. The operator's per-node grant decides viewer vs admin (no
 	// read access → 403). Registered after NewNodesApi/NewNodeAccessApi so their
 	// specific routes win; mux falls through to the proxy for /nodes/{id}/proxy/...
+	// Range-capable recording playback over the tunnel (chunks each byte range under the
+	// control-channel message cap). Registered before the generic proxy so its specific
+	// /nodes/{id}/recording-stream/{segId} route wins.
+	apis.NewRecordingStreamApi(api, *deps.Auth, controlServer, accessService, controlSession)
 	apis.NewNodeProxyApi(api, *deps.Auth, controlServer, accessService, controlSession)
 
 	return func(context.Context) error { stopBackground(); return nil }, nil
@@ -293,6 +297,11 @@ func (m *module) RegisterWebRoutes(router *mux.Router, deps apphost.Dependencies
 	// the old straight-to-SSO redirect so the local bootstrap login is reachable.
 	staticIndex := filepath.Join(m.BaseDir(), "static", "index.html")
 	serveIndex := func(w http.ResponseWriter, r *http.Request) {
+		// index.html references content-hashed chunk files, so it MUST NOT be cached:
+		// a stale index.html keeps the browser on an old bundle even after a rebuild
+		// (which is exactly what left a fixed request-storm still running client-side).
+		// The hashed .js/.css can still be cached immutably — only this entry points to them.
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		http.ServeFile(w, r, staticIndex)
 	}
 	router.HandleFunc("/", serveIndex).Methods("GET")

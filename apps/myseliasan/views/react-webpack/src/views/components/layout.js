@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Ico, SideNav as SharedSideNav, useT } from '@shared';
-import { sessionCanGet } from '../lib/helpers';
+import { api, sessionCanGet } from '../lib/helpers';
 
 // BrandLogo mirrors the mymatasan mark (line-art shield + eye + check) with the
 // rounded lowercase wordmark, so the control plane shares the product's identity.
@@ -26,13 +26,127 @@ export function BrandLogo({ size = 40, className = '' }) {
 // scroll area, so the rail stays usable with dozens–hundreds of nodes.
 const NODE_FILTER_THRESHOLD = 8;
 const NODE_FALLBACK_ICON = 'monitor';
+const CAMERA_ICON = 'video';
+
+// NodeTreeChild is one adopted node in the nav tree, now itself expandable into its
+// cameras. The node row navigates to that node's manage surface (all cameras); its
+// caret reveals a lazily-loaded camera sub-branch (fetched over the node's command
+// tunnel the first time it's opened). Each camera leaf jumps straight to that single
+// camera's live view. The branch auto-opens when a camera on this node is focused.
+function NodeTreeChild({ node, onNodes, managingNodeId, managingCameraId, onSelectNode }) {
+  const t = useT();
+  const isManaged = onNodes && managingNodeId === node.nodeId;
+  const nodeActive = isManaged && !managingCameraId;
+  const status = node.status === 'online' ? 'online' : 'offline';
+  const [open, setOpen] = useState(false);
+  const [cams, setCams] = useState(null); // null = never loaded; [] = loaded, empty
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(''); // set when the node couldn't be reached / listed
+
+  async function loadCams() {
+    setLoading(true);
+    setError('');
+    const r = await api(`/api/nodes/${encodeURIComponent(node.nodeId)}/proxy/api/cameras?limit=100`, { noRedirect: true })
+      .catch(() => ({ ok: false }));
+    setLoading(false);
+    if (r.ok) {
+      setCams(Array.isArray(r.body) ? r.body : (r.body?.items || []));
+      return;
+    }
+    // Distinguish "reached the node, it has no cameras" from "couldn't reach it" — the
+    // proxy returns 404 when the node is offline and 403 when the role lacks access.
+    setCams([]);
+    if (r.status === 403) setError(t('nodes.camsNoAccess'));
+    else if (r.status === 404) setError(t('nodes.nodeOffline'));
+    else setError(r.message || t('nodes.camsFailed'));
+  }
+
+  function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && cams === null && !loading) loadCams();
+  }
+
+  // Reflect a camera opened from elsewhere (e.g. deep-link / page) by expanding this
+  // node and loading its cameras so the active leaf is visible.
+  useEffect(() => {
+    if (isManaged && managingCameraId && !open) {
+      setOpen(true);
+      if (cams === null && !loading) loadCams();
+    }
+    // eslint-disable-next-line
+  }, [isManaged, managingCameraId]);
+
+  return (
+    <div className="nav-subtree">
+      <div className="nav-tree-rootrow nav-subtree-row">
+        <button
+          type="button"
+          className="nav-tree-caret nav-subtree-caret"
+          onClick={toggle}
+          aria-label={open ? t('nodes.collapseCams') : t('nodes.expandCams')}
+          aria-expanded={open}
+        >
+          <Ico n="chev-down" sz={12} style={open ? undefined : { transform: 'rotate(-90deg)' }} />
+        </button>
+        <button
+          type="button"
+          className={`nav-item tone-blue nav-tree-child nav-tree-main${nodeActive ? ' active' : ''}`}
+          onClick={() => onSelectNode(node.nodeId)}
+          title={node.description ? undefined : (node.name || node.nodeId)}
+        >
+          <span className="nav-tree-ico" data-status={status}>
+            <Ico n={node.icon || NODE_FALLBACK_ICON} sz={16} />
+          </span>
+          <span className="nav-label">{node.name || node.nodeId}</span>
+          {node.description ? (
+            <span className="nav-tip" role="tooltip">
+              <span className="nav-tip-title">{node.name || node.nodeId}</span>
+              <span className="nav-tip-body">{node.description}</span>
+            </span>
+          ) : null}
+        </button>
+      </div>
+      {open ? (
+        <div className="nav-tree-children nav-cam-children">
+          {loading ? (
+            <div className="nav-tree-empty">{t('nodes.loadingCams')}</div>
+          ) : error ? (
+            <button type="button" className="nav-tree-empty nav-cam-retry" onClick={loadCams}>
+              <Ico n="reload" sz={12} /> {error}
+            </button>
+          ) : cams === null ? null
+            : cams.length === 0 ? (
+              <div className="nav-tree-empty">{t('nodes.noCams')}</div>
+            ) : (
+              cams.map((c) => {
+                const camActive = isManaged && String(managingCameraId) === String(c.id);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className={`nav-item tone-blue nav-tree-child nav-tree-grandchild${camActive ? ' active' : ''}`}
+                    onClick={() => onSelectNode(node.nodeId, c.id)}
+                    title={c.name || t('nodes.cameraN', { id: c.id })}
+                  >
+                    <span className="nav-tree-ico nav-cam-ico"><Ico n={CAMERA_ICON} sz={14} /></span>
+                    <span className="nav-label">{c.name || t('nodes.cameraN', { id: c.id })}</span>
+                  </button>
+                );
+              })
+            )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 // NodesNavItem renders the Nodes entry as an expandable tree: the root row navigates
 // to the fleet management page (discovery/adoption/list), while each adopted node is a
 // child branch that jumps straight to that node's manage surface. A caret toggles the
 // branch without leaving the current view. Large fleets get a search filter and a
 // scrollable branch.
-function NodesNavItem({ nodes, activeTab, managingNodeId, onSelectNode }) {
+function NodesNavItem({ nodes, activeTab, managingNodeId, managingCameraId, onSelectNode }) {
   const t = useT();
   const onNodes = activeTab === 'nodes';
   const [open, setOpen] = useState(onNodes);
@@ -88,30 +202,16 @@ function NodesNavItem({ nodes, activeTab, managingNodeId, onSelectNode }) {
             ) : shown.length === 0 ? (
               <div className="nav-tree-empty">{t('nodes.noMatches')}</div>
             ) : (
-              shown.map((n) => {
-                const active = onNodes && managingNodeId === n.nodeId;
-                const status = n.status === 'online' ? 'online' : 'offline';
-                return (
-                  <button
-                    key={n.nodeId}
-                    type="button"
-                    className={`nav-item tone-blue nav-tree-child${active ? ' active' : ''}`}
-                    onClick={() => onSelectNode(n.nodeId)}
-                    title={n.description ? undefined : (n.name || n.nodeId)}
-                  >
-                    <span className="nav-tree-ico" data-status={status}>
-                      <Ico n={n.icon || NODE_FALLBACK_ICON} sz={16} />
-                    </span>
-                    <span className="nav-label">{n.name || n.nodeId}</span>
-                    {n.description ? (
-                      <span className="nav-tip" role="tooltip">
-                        <span className="nav-tip-title">{n.name || n.nodeId}</span>
-                        <span className="nav-tip-body">{n.description}</span>
-                      </span>
-                    ) : null}
-                  </button>
-                );
-              })
+              shown.map((n) => (
+                <NodeTreeChild
+                  key={n.nodeId}
+                  node={n}
+                  onNodes={onNodes}
+                  managingNodeId={managingNodeId}
+                  managingCameraId={managingCameraId}
+                  onSelectNode={onSelectNode}
+                />
+              ))
             )}
           </div>
         </div>
@@ -148,7 +248,7 @@ function AccountCard({ roleLabel, onLogout, busy }) {
   );
 }
 
-export function SideNav({ activeTab, busy, onTab, onLogout, session, nodes, managingNodeId, onSelectNode }) {
+export function SideNav({ activeTab, busy, onTab, onLogout, session, nodes, managingNodeId, managingCameraId, onSelectNode }) {
   const t = useT();
   const navItem = (id, label, icon, tone) => ({ id, label, icon, tone, active: id === activeTab, onClick: () => onTab(id) });
   const groups = [
@@ -157,9 +257,12 @@ export function SideNav({ activeTab, busy, onTab, onLogout, session, nodes, mana
       label: t('group.fleet'),
       items: sessionCanGet(session, '/api/nodes')
         // The Nodes entry is a bespoke tree — injected via the shell's render hook.
-        ? [{ id: 'nodes', render: () => (
-            <NodesNavItem nodes={nodes} activeTab={activeTab} managingNodeId={managingNodeId} onSelectNode={onSelectNode} />
-          ) }]
+        ? [
+            { id: 'nodes', render: () => (
+              <NodesNavItem nodes={nodes} activeTab={activeTab} managingNodeId={managingNodeId} managingCameraId={managingCameraId} onSelectNode={onSelectNode} />
+            ) },
+            navItem('liveviews', t('nav.liveViews'), 'video', 'steel'),
+          ]
         : [],
     },
     {

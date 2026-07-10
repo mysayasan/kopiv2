@@ -45,9 +45,14 @@ func NewControlDispatcher(router http.Handler) services.ControlDispatcher {
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, hr)
 
+		// Forward all response headers so range/streaming metadata (Content-Range,
+		// Accept-Ranges, Content-Length, Content-Type) reaches the control plane intact —
+		// required for tunneled recording playback to seek.
 		headers := map[string]string{}
-		if ct := rec.Header().Get("Content-Type"); ct != "" {
-			headers["Content-Type"] = ct
+		for k := range rec.Header() {
+			if v := rec.Header().Get(k); v != "" {
+				headers[k] = v
+			}
 		}
 		return control.Response{Status: rec.Code, Headers: headers, Body: rec.Body.Bytes()}
 	}

@@ -57,6 +57,10 @@
   display: grid; gap: 14px; margin-top: 12px;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
 }
+/* A single focused camera gets a wider, prominent tile instead of a lone grid cell. */
+.node-cam-grid--single {
+  grid-template-columns: minmax(0, 640px);
+}
 .node-cam-card {
   margin: 0; border: 1px solid var(--border-soft, #2a3850); border-radius: 10px; overflow: hidden;
   background: var(--bg-body, #0f172a);

@@ -2,11 +2,14 @@ import { useEffect, useState } from 'react';
 import './styles/app.css';
 import './styles/controlplane.css';
 import './styles/rbac-standard.css';
+import './styles/node-dashboard.css';
+import './styles/live-views.css';
 import { SideNav } from './components/layout';
 import { ToastStack, LangProvider, normalizeLang, useT, LanguageDropdown, AppFooter } from '@shared';
 import { FormBusyOverlay, ThemeDropdown } from './components/ui';
 import { DashboardTab } from './components/dashboard';
 import { NodesTab } from './components/nodes';
+import { LiveViewsPage } from './components/live_views';
 import { UsersPage, RolesPage, RbacPage } from './components/rbac_admin';
 import { LoginScreen, ChangePasswordScreen, PendingClearanceScreen } from './components/auth_screens';
 import { api, sessionCanGet, apiBase } from './lib/helpers';
@@ -38,6 +41,9 @@ function AppInner({ lang, onLangChange }) {
   // the tree lists adopted nodes and `managingNodeId` selects which one the page opens.
   const [nodes, setNodes] = useState([]);
   const [managingNodeId, setManagingNodeId] = useState(null);
+  // A focused camera (chosen from the node's camera sub-tree) narrows the node's
+  // Cameras view to that single live tile; null shows every camera on the node.
+  const [managingCameraId, setManagingCameraId] = useState(null);
 
   async function loadNodes() {
     if (!sessionCanGet(session, '/api/nodes')) { setNodes([]); return; }
@@ -50,14 +56,16 @@ function AppInner({ lang, onLangChange }) {
   }, [authState, session]);
 
   // selectNode drives both nav surfaces: null opens the fleet list/management page,
-  // a nodeId jumps straight to that node's manage view.
-  function selectNode(nodeId) {
+  // a nodeId jumps straight to that node's manage view. An optional cameraId focuses
+  // that node's Cameras tab on a single camera; omitting it shows all cameras.
+  function selectNode(nodeId, cameraId = null) {
     setManagingNodeId(nodeId);
+    setManagingCameraId(cameraId);
     setActiveTab('nodes');
   }
-  // Leaving the Nodes section clears the managed node so returning lands on the list.
+  // Leaving the Nodes section clears the managed node/camera so returning lands on the list.
   function selectTab(id) {
-    if (id !== 'nodes') setManagingNodeId(null);
+    if (id !== 'nodes') { setManagingNodeId(null); setManagingCameraId(null); }
     setActiveTab(id);
   }
 
@@ -105,7 +113,7 @@ function AppInner({ lang, onLangChange }) {
   const canNodes = sessionCanGet(session, '/api/nodes');
   const adminTabs = ['users', 'roles', 'rbac'];
   if (adminTabs.includes(activeTab) && !session?.isSuperadmin) setActiveTab('dashboard');
-  if (activeTab === 'nodes' && !canNodes) setActiveTab('dashboard');
+  if ((activeTab === 'nodes' || activeTab === 'liveviews') && !canNodes) setActiveTab('dashboard');
 
   return (
     <div className="app-shell">
@@ -117,6 +125,7 @@ function AppInner({ lang, onLangChange }) {
         session={session}
         nodes={nodes}
         managingNodeId={managingNodeId}
+        managingCameraId={managingCameraId}
         onSelectNode={selectNode}
       />
       <main className="main-workspace">
@@ -133,14 +142,17 @@ function AppInner({ lang, onLangChange }) {
         <ToastStack toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((t) => t.id !== id))} />
 
         {activeTab === 'dashboard' ? <DashboardTab session={session} /> : null}
+        {activeTab === 'liveviews' && canNodes ? <LiveViewsPage /> : null}
         {activeTab === 'nodes' && canNodes ? (
           <NodesTab
             onToast={pushToast}
             nodes={nodes}
             reloadNodes={loadNodes}
             managingNodeId={managingNodeId}
+            managingCameraId={managingCameraId}
             onManage={selectNode}
-            onBack={() => setManagingNodeId(null)}
+            onClearFocus={() => setManagingCameraId(null)}
+            onBack={() => { setManagingNodeId(null); setManagingCameraId(null); }}
           />
         ) : null}
         {activeTab === 'users' && session?.isSuperadmin ? (

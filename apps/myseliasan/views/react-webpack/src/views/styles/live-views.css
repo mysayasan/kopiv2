@@ -1,0 +1,116 @@
+/* myseliasan's cross-node Live Views wall. Tiles reuse the relay video tile (which renders
+   a `.live-frame` > <video>/<img>), so this styles that markup for the wall (the camera page
+   gets the same look from mymatasan's scoped CSS instead). */
+.live-views-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.live-views-tile {
+  margin: 0;
+  border: 1px solid var(--border-divider, #2a3850);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg-surface, #0f172a);
+}
+
+.live-views-tile .camera-live-view {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: #0b1119;
+}
+
+.live-views-tile .live-frame {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.live-views-tile .live-frame video,
+.live-views-tile .live-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.node-live-badge {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+}
+
+/* Mute toggle on wall tiles (the camera page gets this from mymatasan's scoped CSS). */
+.live-views-tile .audio-mute-btn {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  cursor: pointer;
+}
+
+.live-views-tile .audio-mute-btn:hover {
+  background: rgba(0, 0, 0, 0.78);
+}
+
+.live-views-cap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+}
+
+.live-views-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.live-views-name {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text-primary, #e2eaf4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-views-node {
+  font-size: 12px;
+  color: var(--text-muted, #8a9fb8);
+}
+
+.live-views-remove {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted, #8a9fb8);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+}
+
+.live-views-remove:hover {
+  background: var(--nav-hover, rgba(0, 0, 0, 0.08));
+  color: var(--danger, #ef4444);
+}
