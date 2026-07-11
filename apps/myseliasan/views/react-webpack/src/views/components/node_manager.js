@@ -167,7 +167,7 @@ function NodeLiveView({ node, cam, iceServers, onToast }) {
 
   const title = cam.name || cam.model || cam.host || t('nm.cameraN', { id: cam.id });
   function addToViews() {
-    addLiveView({ nodeId, cameraId: cam.id, name: title, nodeName: node.name || nodeId });
+    addLiveView({ nodeId, cameraId: cam.id, name: title, nodeName: node.name || nodeId, ptzSupported: cam.ptzSupported });
     if (onToast) onToast(t('cam.addToLiveViews'));
   }
   function removeFromViews() { removeLiveView(nodeId, cam.id); }

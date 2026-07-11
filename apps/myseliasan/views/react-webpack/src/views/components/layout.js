@@ -67,6 +67,17 @@ function NodeTreeChild({ node, onNodes, managingNodeId, managingCameraId, onSele
     if (next && cams === null && !loading) loadCams();
   }
 
+  // Double-clicking the node row toggles its camera children (a file-explorer gesture),
+  // in addition to the caret: first double-click expands, the next collapses. The single
+  // click still navigates to the node. Loads the camera list the first time it opens.
+  function reveal() {
+    setOpen((prev) => {
+      const next = !prev;
+      if (next && cams === null && !loading) loadCams();
+      return next;
+    });
+  }
+
   // Reflect a camera opened from elsewhere (e.g. deep-link / page) by expanding this
   // node and loading its cameras so the active leaf is visible.
   useEffect(() => {
@@ -93,6 +104,7 @@ function NodeTreeChild({ node, onNodes, managingNodeId, managingCameraId, onSele
           type="button"
           className={`nav-item tone-blue nav-tree-child nav-tree-main${nodeActive ? ' active' : ''}`}
           onClick={() => onSelectNode(node.nodeId)}
+          onDoubleClick={reveal}
           title={node.description ? undefined : (node.name || node.nodeId)}
         >
           <span className="nav-tree-ico" data-status={status}>
@@ -154,6 +166,11 @@ function NodesNavItem({ nodes, activeTab, managingNodeId, managingCameraId, onSe
   const rootActive = onNodes && !managingNodeId;
   const list = Array.isArray(nodes) ? nodes : [];
 
+  // Auto-expand the tree when you land on the Nodes tab, so the fleet is visible. Beyond
+  // that the caret and a double-click on the root own the open/closed state (single click
+  // just navigates), matching how each node row toggles its own cameras.
+  useEffect(() => { if (onNodes) setOpen(true); }, [onNodes]);
+
   const big = list.length > NODE_FILTER_THRESHOLD;
   const q = query.trim().toLowerCase();
   const shown = q
@@ -175,7 +192,8 @@ function NodesNavItem({ nodes, activeTab, managingNodeId, managingCameraId, onSe
         <button
           type="button"
           className={`nav-item tone-blue nav-tree-main${rootActive ? ' active' : ''}`}
-          onClick={() => { onSelectNode(null); setOpen(true); }}
+          onClick={() => onSelectNode(null)}
+          onDoubleClick={() => setOpen((o) => !o)}
         >
           <span className="nav-ico"><Ico n="shield" sz={17} /></span>
           <span className="nav-label">{t('nav.nodes')}</span>
@@ -248,20 +266,38 @@ function AccountCard({ roleLabel, onLogout, busy }) {
   );
 }
 
-export function SideNav({ activeTab, busy, onTab, onLogout, session, nodes, managingNodeId, managingCameraId, onSelectNode }) {
+export function SideNav({ activeTab, busy, onTab, onLogout, session, nodes, managingNodeId, managingCameraId, onSelectNode, notifUnread = 0 }) {
   const t = useT();
   const navItem = (id, label, icon, tone) => ({ id, label, icon, tone, active: id === activeTab, onClick: () => onTab(id) });
+  // The consolidated Notifications entry carries an unread badge (control-plane + every
+  // node's pushed events), mirroring mymatasan's own Notifications nav item.
+  const notificationsItem = {
+    id: 'notifications',
+    render: () => (
+      <button
+        type="button"
+        className={`nav-item nav-item-badged tone-green${activeTab === 'notifications' ? ' active' : ''}`}
+        onClick={() => onTab('notifications')}
+        aria-label={notifUnread > 0 ? t('notif.navAriaUnread', { n: notifUnread }) : t('notif.navAria')}
+      >
+        <span className="nav-ico"><Ico n="bell" sz={17} /></span>
+        <span className="nav-label">{t('tab.notifications')}</span>
+        {notifUnread > 0 ? <span className="nav-item-badge">{notifUnread > 99 ? '99+' : notifUnread}</span> : null}
+      </button>
+    ),
+  };
   const groups = [
     { label: t('group.workspace'), items: [navItem('dashboard', t('nav.dashboard'), 'monitor', 'steel')] },
     {
       label: t('group.fleet'),
       items: sessionCanGet(session, '/api/nodes')
-        // The Nodes entry is a bespoke tree — injected via the shell's render hook.
+        // Live Views sits above the Nodes tree; the Nodes entry is a bespoke tree
+        // injected via the shell's render hook.
         ? [
+            navItem('liveviews', t('nav.liveViews'), 'video', 'steel'),
             { id: 'nodes', render: () => (
               <NodesNavItem nodes={nodes} activeTab={activeTab} managingNodeId={managingNodeId} managingCameraId={managingCameraId} onSelectNode={onSelectNode} />
             ) },
-            navItem('liveviews', t('nav.liveViews'), 'video', 'steel'),
           ]
         : [],
     },
@@ -271,6 +307,8 @@ export function SideNav({ activeTab, busy, onTab, onLogout, session, nodes, mana
         ? [navItem('users', t('nav.users'), 'user', 'blue'), navItem('roles', t('nav.roles'), 'key', 'violet'), navItem('rbac', t('nav.rbac'), 'lock', 'green')]
         : [],
     },
+    // System: the consolidated notification feed, available to any signed-in operator.
+    { label: t('group.system'), items: [notificationsItem] },
   ];
 
   const brand = (

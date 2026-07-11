@@ -12,8 +12,9 @@ Both routes require a myseliasan session + accessrbac middleware.
 |---|---|---|
 | `GET` | `/api/notifications` | Paginated list. `?nodeId=ID` scopes to one node's events. `?unread=true` filters to unread only. `?limit=` / `?offset=` for pagination (default limit 100). Returns `{items, total}`. |
 | `GET` | `/api/notifications/stream` | Server-Sent Events feed for live notification delivery to the dashboard. |
+| `POST` | `/api/notifications/{id}/read` | Mark one notification read, clearing it from the unread count/badge. The feed has a single shared unread state (not per-user) — a read here is a read for every operator. Returns the updated notification. |
 
 ## Notes
 
 - Notifications are stored in the shared `notification` entity table and published by `ingestNodeEvent` in `app.go` when the control channel server receives a node-pushed event frame.
-- Both endpoints are protected by `auth.Middleware` + `session.Middleware` (the shared `AccessSessionMidware`).
+- All endpoints are protected by `auth.Middleware` + `session.Middleware` (the shared `AccessSessionMidware`).

@@ -1,0 +1,119 @@
+/* Node Settings dialog (opened from Manage in the Adopted Nodes table): a wide, tabbed modal.
+   The content is wrapped in NodeEmbed (.nodecam-embed), so mymatasan's SCOPED stylesheet
+   supplies the typography (Inter), the settings-panel/tab/table look, and the tokens — making
+   it read exactly like the node's own Settings page. This file only lays out the modal frame
+   and the pieces mymatasan's CSS doesn't provide (the head bar + the read-only info grid). */
+.node-settings-dialog {
+  width: min(940px, 94vw);
+  max-width: 94vw;
+  max-height: 88vh;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+}
+
+/* The NodeEmbed wrapper becomes the flex column that fills the card: head fixed, body scrolls.
+   It also paints mymatasan's surface colour, so the dialog matches the node app. */
+.node-settings-dialog .node-settings-embed {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.node-settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px 0;
+}
+
+/* Adopt-a-node pop-up: reuses the settings-head chrome; body scrolls, actions pinned. */
+.node-adopt-dialog {
+  width: min(680px, 94vw);
+  max-height: 88vh;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+}
+
+.node-adopt-body {
+  padding: 16px 20px;
+  overflow-y: auto;
+}
+
+.node-adopt-dialog .modal-actions {
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--border-panel);
+  margin: 0;
+}
+
+/* The dialog title must NOT be red — the shared `.modal-card h2` rule (used by the wipe
+   confirmation) colours headings red, so override it here with a normal heading colour. */
+.node-settings-dialog .node-settings-head h2 {
+  margin: 0;
+  font-size: 17px;
+  color: var(--text-primary, #1c2533);
+}
+
+/* The tab buttons are styled by mymatasan's scoped `.settings-tabs`/`.settings-tab` rules
+   for parity — but that scoped rule (`.nodecam-embed .settings-tabs`) is more specific than
+   a bare `.node-settings-tabs`, so it wins and zeroes the top gap. Beat it with a 3-class
+   selector and drop the sticky/negative-margin so the tabs sit clearly below the header. */
+.node-settings-dialog .node-settings-embed .node-settings-tabs {
+  padding: 18px 16px 0;
+  margin: 0;
+  position: static;
+  overflow-x: auto;
+}
+
+.node-settings-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 18px 20px;
+  overflow-y: auto;
+}
+
+/* Read-only key/value grid used by the Version & Health and Backup tabs (mymatasan has no
+   direct equivalent, so it's defined here; tokens resolve to mymatasan's inside the embed). */
+.node-info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px 20px;
+  margin: 4px 0 0;
+}
+
+.node-info-grid div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.node-info-grid dt {
+  font-size: 12px;
+  color: var(--text-muted, #6b7280);
+}
+
+.node-info-grid dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+/* Host-health "warn" pill (green/red come from mymatasan's scoped .status-pill.online/
+   .offline). The extra `.machine-metrics` in the selector lifts specificity above the
+   embed's base .status-pill rule so the yellow reliably wins. */
+.node-settings-dialog .machine-metrics .status-pill.hh-warn {
+  background: rgba(217, 119, 6, 0.18);
+  color: #b45309;
+}
+@media (prefers-color-scheme: dark) {
+  .node-settings-dialog .machine-metrics .status-pill.hh-warn {
+    background: rgba(234, 179, 8, 0.22);
+    color: #fde68a;
+  }
+}

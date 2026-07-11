@@ -1,8 +1,85 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Ico, useT } from '@shared';
 import { FormBusyOverlay, IconDropdown } from './ui';
 import { NodeManager } from './node_manager';
+import { NodeSettingsDialog } from './node_settings_dialog';
 import { api, formatTimestamp } from '../lib/helpers';
+
+// NodeWipeCountdown mirrors mymatasan's SecureWipeCountdown: a confirmation modal that
+// AUTO-PROCEEDS when the countdown hits zero unless cancelled. Cancel is focused so the
+// safe action is one keypress away. Used to remotely factory-reset an adopted node.
+function NodeWipeCountdown({ node, seconds = 10, onCancel, onProceed }) {
+  const t = useT();
+  const [remaining, setRemaining] = useState(seconds);
+  const proceedRef = useRef(onProceed);
+  proceedRef.current = onProceed;
+  useEffect(() => {
+    const started = Date.now();
+    const id = setInterval(() => {
+      const left = Math.max(0, seconds - Math.floor((Date.now() - started) / 1000));
+      setRemaining(left);
+      if (left <= 0) { clearInterval(id); if (proceedRef.current) proceedRef.current(); }
+    }, 250);
+    return () => clearInterval(id);
+  }, [seconds]);
+  return (
+    <div className="modal-backdrop">
+      <div className="modal-card danger-modal" role="alertdialog" aria-modal="true">
+        <h2><span className="btn-icon"><Ico n="warning" /> {t('nwipe.title', { name: node.name || node.nodeId })}</span></h2>
+        <p>{t('nwipe.warning')}</p>
+        <p className="wipe-countdown">{t('nwipe.countdown', { n: remaining })}</p>
+        <div className="modal-actions">
+          <button type="button" className="quiet" autoFocus onClick={onCancel}>
+            <span className="btn-icon"><Ico n="x" /> {t('nwipe.cancel')}</span>
+          </button>
+          <button type="button" className="danger-solid" onClick={() => proceedRef.current && proceedRef.current()}>
+            <span className="btn-icon"><Ico n="warning" /> {t('nwipe.wipeNow')}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// AdoptDialog is the pop-up adoption form, opened from a discovered node (pre-filled with
+// its address + hostname) or the "Adopt manually" button (blank, for a node on another
+// subnet). Address + claim code are required; name/description/icon are operator-facing and
+// can be edited later from the node's Manage → Details tab. Closes itself on success.
+function AdoptDialog({ initial, busy, onClose, onAdopt }) {
+  const t = useT();
+  const [form, setForm] = useState(initial);
+  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  async function submit(e) {
+    e.preventDefault();
+    const ok = await onAdopt(form);
+    if (ok) onClose();
+  }
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <form className="modal-card node-adopt-dialog" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+        <header className="node-settings-head">
+          <h2><span className="btn-icon"><Ico n="plus" /> {t('node.adoptTitle')}</span></h2>
+          <button type="button" className="icon-button" onClick={onClose} aria-label={t('nset.close')}><Ico n="x" sz={16} /></button>
+        </header>
+        <div className="node-adopt-body">
+          <p className="settings-hint">{t('node.adoptHint')}</p>
+          <div className="settings-field-grid">
+            <label>{t('node.nodeIp')}<input value={form.ip} onChange={(e) => set({ ip: e.target.value })} placeholder="192.168.1.40" disabled={busy} autoFocus /></label>
+            <label>{t('node.httpsPort')}<input value={form.httpsPort} onChange={(e) => set({ httpsPort: e.target.value })} placeholder="3000" disabled={busy} /></label>
+            <label className="field-span-two">{t('node.claimCode')}<input value={form.claimCode} onChange={(e) => set({ claimCode: e.target.value })} placeholder={t('node.claimPlaceholder')} disabled={busy} /></label>
+            <label>{t('node.name')} <span className="settings-field-opt">{t('node.optional')}</span><input value={form.name} onChange={(e) => set({ name: e.target.value })} placeholder={t('node.defaultsHostname')} disabled={busy} /></label>
+            <label>{t('node.icon')}<IconDropdown value={form.icon} options={NODE_ICONS} onChange={(name) => set({ icon: name })} disabled={busy} /></label>
+            <label className="field-span-two">{t('node.description')} <span className="settings-field-opt">{t('node.optional')}</span><textarea value={form.description} onChange={(e) => set({ description: e.target.value })} rows={2} placeholder={t('node.descPlaceholder')} disabled={busy} /></label>
+          </div>
+        </div>
+        <div className="modal-actions">
+          <button type="button" className="quiet" onClick={onClose} disabled={busy}>{t('nset.close')}</button>
+          <button type="submit" disabled={busy}><span className="btn-icon"><Ico n="check-ok" /> {t('node.adopt')}</span></button>
+        </div>
+      </form>
+    </div>
+  );
+}
 
 // NODE_ICONS is the curated set of pre-installed glyphs an operator can assign to a
 // node so it's recognisable at a glance in the nav (site type / fixture). Every name
@@ -25,7 +102,13 @@ export function NodesTab({ onToast, nodes, reloadNodes, managingNodeId, managing
   const [busy, setBusy] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [adoptForm, setAdoptForm] = useState({ ip: '', httpsPort: '', claimCode: '', name: '', description: '', icon: DEFAULT_NODE_ICON });
+  // Adopt dialog: null = closed; an object = open, pre-filled (from a discovered node or
+  // blank for manual address entry).
+  const [adoptInitial, setAdoptInitial] = useState(null);
+  // The node awaiting the wipe-countdown confirmation, or null when the modal is closed.
+  const [wipeNode, setWipeNode] = useState(null);
+  // The node whose Settings dialog (Camera Health / Users / Backup / Version & Health) is open.
+  const [settingsNode, setSettingsNode] = useState(null);
 
   const nodeList = Array.isArray(nodes) ? nodes : [];
   // The managed node is selected from the side-nav tree or the table; resolve it from
@@ -71,26 +154,32 @@ export function NodesTab({ onToast, nodes, reloadNodes, managingNodeId, managing
     setDiscovered(Array.isArray(r.body) ? r.body : []);
   }
 
+  // Clicking a discovered node opens the Adopt dialog pre-filled with its address + hostname.
   function selectDiscovered(node) {
-    // Pre-fill the name with the node's reported hostname so it's the default the
-    // operator can keep or rename.
-    setAdoptForm({ ip: node.ip || '', httpsPort: String(node.httpsPort || ''), claimCode: '', name: node.name || '', description: '', icon: DEFAULT_NODE_ICON });
+    setAdoptInitial({ ip: node.ip || '', httpsPort: String(node.httpsPort || ''), claimCode: '', name: node.name || '', description: '', icon: DEFAULT_NODE_ICON });
+  }
+  // Manual entry (node on another subnet / not discovered): open a blank Adopt dialog.
+  function openManualAdopt() {
+    setAdoptInitial({ ip: '', httpsPort: '', claimCode: '', name: '', description: '', icon: DEFAULT_NODE_ICON });
   }
 
-  async function adopt() {
-    const ip = adoptForm.ip.trim();
-    const port = parseInt(adoptForm.httpsPort, 10);
-    const code = adoptForm.claimCode.trim();
-    if (!ip || !port) { toast(t('node.enterIpPort')); return; }
-    if (!code) { toast(t('node.enterClaim')); return; }
+  // doAdopt performs the adoption from the dialog's form; returns true so the dialog can
+  // close itself on success.
+  async function doAdopt(form) {
+    const ip = form.ip.trim();
+    const port = parseInt(form.httpsPort, 10);
+    const code = form.claimCode.trim();
+    if (!ip || !port) { toast(t('node.enterIpPort')); return false; }
+    if (!code) { toast(t('node.enterClaim')); return false; }
     setBusy(true);
     const r = await api('/api/nodes/adopt', {
       method: 'POST',
-      body: JSON.stringify({ ip, httpsPort: port, claimCode: code, name: adoptForm.name.trim(), description: adoptForm.description.trim(), icon: adoptForm.icon }),
+      body: JSON.stringify({ ip, httpsPort: port, claimCode: code, name: form.name.trim(), description: form.description.trim(), icon: form.icon }),
     });
     setBusy(false);
-    if (r.ok) { toast(t('node.nodeAdopted')); setAdoptForm({ ip: '', httpsPort: '', claimCode: '', name: '', description: '', icon: DEFAULT_NODE_ICON }); reloadNodes(); }
-    else toast(r.message || t('node.adoptFailed'));
+    if (r.ok) { toast(t('node.nodeAdopted')); reloadNodes(); return true; }
+    toast(r.message || t('node.adoptFailed'));
+    return false;
   }
 
   async function release(node) {
@@ -100,6 +189,31 @@ export function NodesTab({ onToast, nodes, reloadNodes, managingNodeId, managing
     setBusy(false);
     if (r.ok) { toast(t('node.nodeReleased')); if (managingNodeId === node.nodeId) onBack(); reloadNodes(); }
     else toast(r.message || t('node.releaseFailed'));
+  }
+
+  // Wipe = remotely factory-reset the node (erases its recordings/config) over the control
+  // tunnel, the same secure-wipe mymatasan runs locally. Gate on the node's reset-allowed
+  // flag (bootstrap.allowReset) before showing the countdown so we fail fast when disabled.
+  async function requestWipe(node) {
+    setBusy(true);
+    const st = await api(`/api/nodes/${encodeURIComponent(node.nodeId)}/proxy/api/system/reset/state`, { noRedirect: true }).catch(() => ({ ok: false }));
+    setBusy(false);
+    if (!st.ok) { toast(t('nwipe.offlineOrUnsupported')); return; }
+    if (!st.body?.allowed) { toast(t('nwipe.notAllowed')); return; }
+    setWipeNode(node);
+  }
+
+  async function confirmWipe() {
+    const node = wipeNode;
+    setWipeNode(null);
+    if (!node) return;
+    setBusy(true);
+    // The node starts the reset asynchronously and returns the initial progress before it
+    // wipes its DB and restarts — so this POST returns, then the node drops offline.
+    const r = await api(`/api/nodes/${encodeURIComponent(node.nodeId)}/proxy/api/system/reset`, { method: 'POST', noRedirect: true }).catch(() => ({ ok: false }));
+    setBusy(false);
+    if (r.ok) { toast(t('nwipe.initiated', { name: node.name || node.nodeId })); reloadNodes(); }
+    else toast(r.message || t('nwipe.failed'));
   }
 
   const keySet = !!fleetKey?.set;
@@ -119,6 +233,16 @@ export function NodesTab({ onToast, nodes, reloadNodes, managingNodeId, managing
   return (
     <section className="workspace">
       <FormBusyOverlay busy={busy} />
+      {wipeNode ? <NodeWipeCountdown node={wipeNode} onCancel={() => setWipeNode(null)} onProceed={confirmWipe} /> : null}
+      {settingsNode ? (
+        <NodeSettingsDialog
+          node={settingsNode}
+          onClose={() => setSettingsNode(null)}
+          onToast={toast}
+          onWipe={(n) => { setSettingsNode(null); requestWipe(n); }}
+          onNodeUpdated={(updated) => { reloadNodes(); setSettingsNode((s) => (s ? { ...s, ...updated } : s)); }}
+        />
+      ) : null}
 
       <section className="settings-panel span-two">
         <header>
@@ -150,6 +274,9 @@ export function NodesTab({ onToast, nodes, reloadNodes, managingNodeId, managing
         <header>
           <h2><span className="btn-icon"><Ico n="search" /> {t('node.discover')}</span></h2>
           <div className="settings-header-actions">
+            <button type="button" className="quiet" onClick={openManualAdopt}>
+              <span className="btn-icon"><Ico n="plus" /> {t('node.adoptManual')}</span>
+            </button>
             <button type="button" onClick={scan} disabled={scanning || !keySet}>
               <span className="btn-icon"><Ico n="wifi" /> {scanning ? t('node.scanning') : t('node.scanLan')}</span>
             </button>
@@ -171,7 +298,7 @@ export function NodesTab({ onToast, nodes, reloadNodes, managingNodeId, managing
                   <td>
                     {n.adopted
                       ? <span className="status-pill online">{t('node.adopted')}</span>
-                      : <button type="button" className="quiet" onClick={() => selectDiscovered(n)}>{t('node.select')}</button>}
+                      : <button type="button" className="quiet" onClick={() => selectDiscovered(n)}><span className="btn-icon"><Ico n="plus" /> {t('node.adopt')}</span></button>}
                   </td>
                 </tr>
               ))}
@@ -180,40 +307,9 @@ export function NodesTab({ onToast, nodes, reloadNodes, managingNodeId, managing
         ) : null}
       </section>
 
-      <section className="settings-panel span-two">
-        <header><h2><span className="btn-icon"><Ico n="plus" /> {t('node.adoptTitle')}</span></h2></header>
-        <p className="settings-hint">{t('node.adoptHint')}</p>
-        <div className="settings-field-grid">
-          <label>{t('node.nodeIp')}
-            <input value={adoptForm.ip} onChange={(e) => setAdoptForm({ ...adoptForm, ip: e.target.value })} placeholder="192.168.1.40" disabled={busy} />
-          </label>
-          <label>{t('node.httpsPort')}
-            <input value={adoptForm.httpsPort} onChange={(e) => setAdoptForm({ ...adoptForm, httpsPort: e.target.value })} placeholder="3000" disabled={busy} />
-          </label>
-          <label>{t('node.claimCode')}
-            <input value={adoptForm.claimCode} onChange={(e) => setAdoptForm({ ...adoptForm, claimCode: e.target.value })} placeholder={t('node.claimPlaceholder')} disabled={busy} />
-          </label>
-          <label>{t('node.name')} <span className="settings-field-opt">{t('node.optional')}</span>
-            <input value={adoptForm.name} onChange={(e) => setAdoptForm({ ...adoptForm, name: e.target.value })} placeholder={t('node.defaultsHostname')} disabled={busy} />
-          </label>
-          <label className="field-span-two">{t('node.description')} <span className="settings-field-opt">{t('node.optional')}</span>
-            <textarea value={adoptForm.description} onChange={(e) => setAdoptForm({ ...adoptForm, description: e.target.value })} rows={2} placeholder={t('node.descPlaceholder')} disabled={busy} />
-          </label>
-          <label>{t('node.icon')}
-            <IconDropdown
-              value={adoptForm.icon}
-              options={NODE_ICONS}
-              onChange={(name) => setAdoptForm({ ...adoptForm, icon: name })}
-              disabled={busy}
-            />
-          </label>
-        </div>
-        <div className="settings-actions">
-          <button type="button" onClick={adopt} disabled={busy}>
-            <span className="btn-icon"><Ico n="check-ok" /> {t('node.adopt')}</span>
-          </button>
-        </div>
-      </section>
+      {adoptInitial ? (
+        <AdoptDialog initial={adoptInitial} busy={busy} onClose={() => setAdoptInitial(null)} onAdopt={doAdopt} />
+      ) : null}
 
       <section className="settings-panel span-two">
         <header>
@@ -238,8 +334,11 @@ export function NodesTab({ onToast, nodes, reloadNodes, managingNodeId, managing
                   <td>{n.certExpiresAt ? formatTimestamp(n.certExpiresAt) : '—'}</td>
                   <td>{n.adoptedAt ? formatTimestamp(n.adoptedAt) : '—'}</td>
                   <td className="node-row-actions">
-                    <button type="button" className="quiet" onClick={() => onManage(n.nodeId)}>
+                    <button type="button" className="quiet" onClick={() => setSettingsNode(n)}>
                       <span className="btn-icon"><Ico n="sliders" /> {t('node.manage')}</span>
+                    </button>
+                    <button type="button" className="quiet node-wipe-btn" onClick={() => requestWipe(n)} disabled={busy}>
+                      <span className="btn-icon"><Ico n="warning" /> {t('node.wipe')}</span>
                     </button>
                     <button type="button" className="quiet danger-text" onClick={() => release(n)} disabled={busy}>{t('node.release')}</button>
                   </td>

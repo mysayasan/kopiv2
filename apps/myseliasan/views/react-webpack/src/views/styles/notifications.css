@@ -1,0 +1,173 @@
+/* myseliasan's consolidated Notifications feed (control-plane + node-pushed events). The
+   page lives in a normal myseliasan workspace (not the scoped node embed), so it uses the
+   app's own design tokens. The nav badge styles below are shared by the side-nav item. */
+
+.notifications-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 4px 0 16px;
+}
+
+.notifications-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.notifications-source select {
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.notifications-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.notification-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-panel);
+  border-radius: 12px;
+  background: var(--bg-surface);
+}
+
+.notification-row.is-read {
+  opacity: 0.62;
+}
+
+/* Annotated event snapshot thumbnail for node AI-detection rows. */
+.notification-snap {
+  flex: 0 0 auto;
+  width: 116px;
+  height: 68px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-video, #0b1119);
+  display: block;
+  border: 1px solid var(--border-soft);
+}
+
+.notification-snap img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.notification-snap--ph {
+  display: grid;
+  place-items: center;
+  color: var(--text-faint, var(--text-muted));
+}
+
+.notification-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.notification-title-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.notification-title-row strong {
+  font-size: 14px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Severity marker dot. */
+.notif-sev {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+.notif-sev--warning { background: #d9930b; }
+.notif-sev--critical { background: var(--danger, #ef4444); }
+
+/* Origin chip: which node the event came from, or "Control plane". */
+.notification-kind {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-badge);
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.notification-sub {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.notification-meta {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-faint, var(--text-muted));
+}
+
+.notification-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+}
+
+.notifications-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 14px;
+}
+
+.notifications-sentinel {
+  height: 1px;
+}
+
+/* Side-nav unread badge. The nav-item is a 2-column grid (icon + label), so the badge
+   is taken out of flow and pinned to the right edge — otherwise a third grid child wraps
+   onto a new row. Reserve right padding so a long label truncates before the badge. */
+.nav-item-badged {
+  position: relative;
+  padding-right: 36px;
+}
+
+.nav-item-badge {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  border-radius: 999px;
+  background: var(--danger, #ef4444);
+  color: #fff;
+}

@@ -25,6 +25,7 @@ Shared JSON response helpers include `durationMs`, measured from request middlew
 
 - `GET /health`: immediate alive response.
 - `GET /ready`: performs DB and cache pings with timeout (`2s`), reports up/down.
+- `GET /api/ready`: same handler, mirrored under `/api` so it is reachable over a reverse control tunnel (e.g. myseliasan's parent→node channel, which only dispatches against the `/api` subrouter) — lets a control plane surface a managed node's readiness in its own UI.
 - `GET /api/version`: returns the selected app SemVer and shared core SemVer from the embedded version manifest.
 
 ## Startup Flow

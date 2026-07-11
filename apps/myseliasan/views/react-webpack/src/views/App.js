@@ -4,12 +4,15 @@ import './styles/controlplane.css';
 import './styles/rbac-standard.css';
 import './styles/node-dashboard.css';
 import './styles/live-views.css';
+import './styles/notifications.css';
+import './styles/node-settings.css';
 import { SideNav } from './components/layout';
 import { ToastStack, LangProvider, normalizeLang, useT, LanguageDropdown, AppFooter } from '@shared';
 import { FormBusyOverlay, ThemeDropdown } from './components/ui';
 import { DashboardTab } from './components/dashboard';
 import { NodesTab } from './components/nodes';
 import { LiveViewsPage } from './components/live_views';
+import { NotificationsPage } from './components/notifications';
 import { UsersPage, RolesPage, RbacPage } from './components/rbac_admin';
 import { LoginScreen, ChangePasswordScreen, PendingClearanceScreen } from './components/auth_screens';
 import { api, sessionCanGet, apiBase } from './lib/helpers';
@@ -44,6 +47,36 @@ function AppInner({ lang, onLangChange }) {
   // A focused camera (chosen from the node's camera sub-tree) narrows the node's
   // Cameras view to that single live tile; null shows every camera on the node.
   const [managingCameraId, setManagingCameraId] = useState(null);
+  // Consolidated notification feed state: notifUnread drives the side-nav badge; notifVersion
+  // bumps on each SSE arrival so the Notifications page live-reloads its top page.
+  const [notifUnread, setNotifUnread] = useState(0);
+  const [notifVersion, setNotifVersion] = useState(0);
+
+  async function loadNotifUnread() {
+    const r = await api('/api/notifications?unread=true&limit=1&offset=0', { noRedirect: true }).catch(() => ({ ok: false }));
+    if (r.ok) setNotifUnread(Number(r.body?.total || 0));
+  }
+  // Refresh the badge on login, and open one SSE stream that bumps the version + badge on
+  // every new notification (control-plane or node-pushed). EventSource auto-reconnects.
+  useEffect(() => {
+    if (authState !== 'ready') { setNotifUnread(0); return undefined; }
+    loadNotifUnread();
+    if (typeof window.EventSource === 'undefined') return undefined;
+    let source = null;
+    let closed = false;
+    const connect = () => {
+      if (closed) return;
+      try { source = new EventSource(`${apiBase()}/api/notifications/stream`, { withCredentials: true }); }
+      catch (_) { return; }
+      source.addEventListener('notification', () => { setNotifVersion((v) => v + 1); loadNotifUnread(); });
+      source.onerror = () => {
+        if (source && source.readyState === EventSource.CLOSED && !closed) { source.close(); window.setTimeout(connect, 5000); }
+      };
+    };
+    connect();
+    return () => { closed = true; if (source) source.close(); };
+    // eslint-disable-next-line
+  }, [authState]);
 
   async function loadNodes() {
     if (!sessionCanGet(session, '/api/nodes')) { setNodes([]); return; }
@@ -127,6 +160,7 @@ function AppInner({ lang, onLangChange }) {
         managingNodeId={managingNodeId}
         managingCameraId={managingCameraId}
         onSelectNode={selectNode}
+        notifUnread={notifUnread}
       />
       <main className="main-workspace">
         <div className="shared-lang-bar">
@@ -142,7 +176,8 @@ function AppInner({ lang, onLangChange }) {
         <ToastStack toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((t) => t.id !== id))} />
 
         {activeTab === 'dashboard' ? <DashboardTab session={session} /> : null}
-        {activeTab === 'liveviews' && canNodes ? <LiveViewsPage /> : null}
+        {activeTab === 'liveviews' && canNodes ? <LiveViewsPage nodes={nodes} /> : null}
+        {activeTab === 'notifications' ? <NotificationsPage nodes={nodes} refreshSignal={notifVersion} onChanged={loadNotifUnread} /> : null}
         {activeTab === 'nodes' && canNodes ? (
           <NodesTab
             onToast={pushToast}

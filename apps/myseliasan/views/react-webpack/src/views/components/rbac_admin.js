@@ -116,7 +116,7 @@ export function UsersPage({ session, onToast, onSessionChanged }) {
           </div>
         </header>
         <p className="settings-hint">{t('rb.usersHint')}</p>
-        <DataTable rows={users} columns={columns} emptyText={t('rb.noUsers')} />
+        <DataTable rows={users} columns={columns} pageSize={5} emptyText={t('rb.noUsers')} />
       </section>
     </section>
   );
@@ -144,6 +144,15 @@ export function RolesPage({ onToast }) {
     setBusy(false);
     if (r.ok) { setNewName(''); load(); } else toast(r.message || t('rb.failedCreateRole'));
   }
+  async function renameRole(role) {
+    const name = window.prompt(t('rb.renameRolePrompt', { name: role.name }), role.name);
+    if (name === null) return;
+    if (!name.trim()) { toast(t('rb.enterRoleName')); return; }
+    setBusy(true);
+    const r = await api(`/api/access-rbac/roles/${role.id}`, { method: 'PUT', noRedirect: true, body: JSON.stringify({ name: name.trim(), description: role.description || '' }) });
+    setBusy(false);
+    if (r.ok) { toast(t('rb.roleRenamed'), 'success'); load(); } else toast(r.message || t('rb.failedRenameRole'), 'error');
+  }
   async function deleteRole(role) {
     if (!window.confirm(t('rb.confirmDeleteRole', { name: role.name }))) return;
     setBusy(true);
@@ -166,6 +175,7 @@ export function RolesPage({ onToast }) {
       filterable: false,
       render: (_v, r) => (
         <div className="node-row-actions">
+          {!r.builtin && !r.isSuperadmin ? <button type="button" className="quiet" onClick={() => renameRole(r)}>{t('rb.rename')}</button> : null}
           {!r.builtin ? <button type="button" className="quiet danger-text" onClick={() => deleteRole(r)}>{t('rb.delete')}</button> : null}
         </div>
       ),
@@ -176,13 +186,18 @@ export function RolesPage({ onToast }) {
     <section className="workspace">
       <FormBusyOverlay busy={busy} />
       <section className="settings-panel span-two">
-        <header><h2><span className="btn-icon"><Ico n="shield" /> {t('rb.roles')}</span></h2></header>
+        <header>
+          <h2><span className="btn-icon"><Ico n="shield" /> {t('rb.roles')}</span></h2>
+          <div className="settings-header-actions">
+            <button type="button" className="quiet" onClick={load}><span className="btn-icon"><Ico n="reload" /> {t('rb.refresh')}</span></button>
+          </div>
+        </header>
         <p className="settings-hint">{t('rb.rolesHint')}</p>
         <div className="table-toolbar">
           <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder={t('rb.newRoleName')} style={{ maxWidth: 260 }} />
           <button type="button" onClick={createRole}><span className="btn-icon"><Ico n="plus" /> {t('rb.addRole')}</span></button>
         </div>
-        <DataTable rows={roles} columns={columns} emptyText={t('rb.noRoles')} />
+        <DataTable rows={roles} columns={columns} pageSize={5} emptyText={t('rb.noRoles')} />
       </section>
     </section>
   );
@@ -233,19 +248,20 @@ export function RbacPage({ onToast }) {
 
   const selectedRole = roles.find((x) => x.id === Number(roleId));
 
-  // Resolve the role's current access level on a node: owner (implicit full),
-  // superadmin (read+write), viewer (read-only), or none.
+  // Resolve the role's current access level on the node DEVICE (over the tunnel): owner
+  // (implicit full), admin (read+write), viewer (read-only), or none. This is separate
+  // from the /api/nodes/* path matrix above — that gates myseliasan's own endpoints.
   function nodeLevel(node) {
     if (node.ownerRoleId && node.ownerRoleId === Number(roleId)) return 'owner';
     const g = nodeGrants.find((x) => x.nodeId === node.nodeId);
     if (!g) return 'none';
-    if (g.canWrite) return 'superadmin';
+    if (g.canWrite) return 'admin';
     if (g.canRead) return 'viewer';
     return 'none';
   }
-  // Set the role's access level on a node. "none" removes any grant; viewer/superadmin
-  // upsert it. Superadmin = read+write (drives the node as admin); viewer = read-only —
-  // mirroring how mymatasan's superadmin/viewer behave.
+  // Set the role's access level on a node. "none" removes any grant; viewer/admin upsert
+  // it. Admin = read+write (the tunnel drives the node as its admin); viewer = read-only —
+  // exactly mymatasan's two local levels (admin / viewer).
   async function setNodeLevel(node, level) {
     setBusy(true);
     let r;
@@ -255,7 +271,7 @@ export function RbacPage({ onToast }) {
     } else {
       r = await api('/api/nodes/access', {
         method: 'POST', noRedirect: true,
-        body: JSON.stringify({ roleId: Number(roleId), nodeId: node.nodeId, canRead: true, canWrite: level === 'superadmin' }),
+        body: JSON.stringify({ roleId: Number(roleId), nodeId: node.nodeId, canRead: true, canWrite: level === 'admin' }),
       });
     }
     setBusy(false);
@@ -374,7 +390,7 @@ export function RbacPage({ onToast }) {
                               <select value={level} onChange={(e) => setNodeLevel(n, e.target.value)} disabled={busy} aria-label={`${t('rb.colAccess')} ${n.name || n.nodeId}`}>
                                 <option value="none">{t('rb.accessNone')}</option>
                                 <option value="viewer">{t('rb.accessViewer')}</option>
-                                <option value="superadmin">{t('rb.accessSuperadmin')}</option>
+                                <option value="admin">{t('rb.accessAdmin')}</option>
                               </select>
                             )}
                           </td>

@@ -19,10 +19,12 @@ type nodeAccessApi struct {
 	session *middlewares.AccessSessionMidware
 }
 
-// NewNodeAccessApi registers per-node access-grant management. Grants may be viewed
-// or changed by the node's owning role (the role that adopted it) OR by any superadmin
-// — the latter drives the central RBAC node-access matrix where a superadmin assigns
-// per-node access (viewer / superadmin) to any role:
+// NewNodeAccessApi registers per-node DEVICE access-grant management (distinct from the
+// /api/nodes/* path matrix, which gates myseliasan's own endpoints). Grants may be viewed
+// or changed by the node's owning role (the role that adopted it) OR by any superadmin —
+// the latter drives the central RBAC node-access matrix where a superadmin assigns each
+// role one of two levels on a node, mirroring mymatasan's local levels: viewer (canRead,
+// read-only) or admin (canRead+canWrite, drives the node as its admin):
 //
 //	GET    /api/nodes/access?nodeId=ID  — list the grants on a node (owner or superadmin)
 //	GET    /api/nodes/access?roleId=ID  — list a role's grants across nodes (superadmin)
