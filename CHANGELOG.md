@@ -31,6 +31,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-12 — myseliasan 1.16.0 (03687e0)
+
+### Security
+
+- **myseliasan**: Extends the OWASP-ZAP-driven security-headers hardening already shipped for mymatasan to myseliasan: config.json/config.dev.json now set the same tested securityHeaders.contentSecurityPolicy on the shared infra/apphost security-headers middleware, closing a ZAP 'CSP header not set' Medium finding. The front-end's Quicksand font is now self-hosted (assets/fonts.css + woff2, copied from mymatasan) instead of loaded from Google Fonts, removing the app's only cross-origin resource and closing a ZAP 'Sub-Resource-Integrity missing' Medium finding; a broken %PUBLIC_URL%/favicon.ico template token was also fixed to /favicon.ico. tools/zaproxy/ dev tooling was extended to scan myseliasan (JSON-login auth, cookie session, OpenAPI import, CSRF double-submit HttpSender script) — that tooling is developer-only, like tools/tgbridge, with no shipped-app doc/changelog coverage of its own.
 ## 2026-07-12 — mymatasan 1.94.0 (26b8f4e)
 
 ### Changed
