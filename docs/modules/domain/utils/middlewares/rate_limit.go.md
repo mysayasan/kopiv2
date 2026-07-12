@@ -14,6 +14,7 @@ Applies config-driven sliding-window rate limits to `/api` requests by API acces
 
 ## Notes
 
+- **myseliasan node-fanout exemption**: before tier resolution, `isNodeFanoutPath` exempts three high-volume per-node control-plane path shapes from this generic per-path limiter — `/api/nodes/{id}/proxy[/...]` (the command tunnel that fans a whole node's UI, dashboard/cameras/settings/notifications, through one path), `/api/nodes/{id}/.../webrtc/...` (live-view WebRTC signaling), and `/api/nodes/{id}/recording-stream/...` (range-streamed recording playback, which issues many `Range` requests per clip). Without this, all of a node session's traffic collapses into the single `/api/nodes` bucket and a normal session trips `429`, making the node "go online but can't load data." These surfaces are authenticated + per-node-access-gated at their own handlers, and the node enforces its own limits downstream, so the exemption is safe. Node CRUD/adopt/release/wipe/access (`/api/nodes`, `/api/nodes/{id}`, `/api/nodes/access`) don't match the shape and stay rate-limited.
 - Rate limiting runs after API activity logging so `429` responses are still persisted in `api_log`.
 - Endpoint tier loading calls the shared endpoint service with empty filters/sorters so it can use the common list service signature.
 - `DevOnly` does not bypass authorization. Dev-only routes still require auth/RBAC when mounted behind protected handlers.

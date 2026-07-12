@@ -50,6 +50,7 @@
 
 /* Annotated event snapshot thumbnail for node AI-detection rows. */
 .notification-snap {
+  position: relative;
   flex: 0 0 auto;
   width: 116px;
   height: 68px;
@@ -65,6 +66,45 @@
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+/* Play + enlarge buttons overlaid on the snapshot, mirroring mymatasan's Notifications
+   thumbnail: always visible (faint), darkening on hover/focus. */
+.obs-thumb-actions {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.05);
+  opacity: 0.85;
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+.notification-snap:hover .obs-thumb-actions,
+.notification-snap:focus-within .obs-thumb-actions {
+  background: rgba(0, 0, 0, 0.4);
+  opacity: 1;
+}
+
+.obs-thumb-btn {
+  width: 30px;
+  height: 30px;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #0b1119;
+  cursor: pointer;
+}
+
+.obs-thumb-btn:hover {
+  background: var(--accent);
+  color: #fff;
 }
 
 .notification-snap--ph {

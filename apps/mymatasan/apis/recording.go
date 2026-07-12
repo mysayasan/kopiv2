@@ -28,15 +28,17 @@ type recordingApi struct {
 	camera   services.ICameraService
 	settings services.IRuntimeSettingsService
 	cipher   *atrest.Cipher
+	vision   services.IVisionService
 }
 
 // NewRecordingApi registers recording routes under /recording.
-func NewRecordingApi(router *mux.Router, serv services.IRecordingService, recorder *recording.Manager, camera services.ICameraService, settings services.IRuntimeSettingsService, cipher *atrest.Cipher) {
-	h := &recordingApi{serv: serv, recorder: recorder, camera: camera, settings: settings, cipher: cipher}
+func NewRecordingApi(router *mux.Router, serv services.IRecordingService, recorder *recording.Manager, camera services.ICameraService, settings services.IRuntimeSettingsService, cipher *atrest.Cipher, vision services.IVisionService) {
+	h := &recordingApi{serv: serv, recorder: recorder, camera: camera, settings: settings, cipher: cipher, vision: vision}
 	g := router.PathPrefix("/recording").Subrouter()
 
 	g.HandleFunc("/segments", h.listSegments).Methods("GET")
 	g.HandleFunc("/segments/purge", h.purgeExpired).Methods("POST")
+	g.HandleFunc("/purge-camera", h.purgeCameraNow).Methods("POST")
 	g.HandleFunc("/segments/{id}", h.deleteSegment).Methods("DELETE")
 	g.HandleFunc("/segments/{id}/download", h.downloadSegment).Methods("GET")
 	g.HandleFunc("/segments/{id}/frame", h.segmentFrame).Methods("GET")
@@ -77,6 +79,39 @@ func (a *recordingApi) purgeExpired(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	controllers.SendResult(w, map[string]int{"deleted": deleted}, "succeed")
+}
+
+// purgeCameraNow deletes ALL footage AND AI-event snapshots for one camera, ignoring
+// expiry — the per-camera "Purge now" action. Body/query: cameraId. Footage removal is
+// authoritative (its error fails the request); snapshot removal is best-effort so a
+// snapshot hiccup can't leave the footage half-purged.
+func (a *recordingApi) purgeCameraNow(w http.ResponseWriter, r *http.Request) {
+	cameraId := parseInt64Query(r, "cameraId")
+	if cameraId <= 0 {
+		var body struct {
+			CameraId int64 `json:"cameraId"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		cameraId = body.CameraId
+	}
+	if cameraId <= 0 {
+		controllers.SendError(w, controllers.ErrBadRequest, "cameraId is required")
+		return
+	}
+	segments, err := a.serv.PurgeAllForCamera(r.Context(), cameraId)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	snapshots := 0
+	if a.vision != nil {
+		if n, verr := a.vision.PurgeAlertsForCamera(r.Context(), cameraId); verr != nil {
+			log.Printf("purge-camera %d: snapshot purge warning: %v", cameraId, verr)
+		} else {
+			snapshots = n
+		}
+	}
+	controllers.SendResult(w, map[string]int{"segments": segments, "snapshots": snapshots}, "succeed")
 }
 
 func (a *recordingApi) deleteSegment(w http.ResponseWriter, r *http.Request) {

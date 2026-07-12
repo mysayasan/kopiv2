@@ -1,0 +1,6 @@
+{
+  "type": "refactor",
+  "scope": "shared,mymatasan,myseliasan",
+  "summary": "Added a standardized Tabs component to the shared frontend module (frontend/shared/src/Tabs.js + styles/tabs.css) and migrated every tab bar across mymatasan (Cameras, Objects, Settings, Teach) and myseliasan (Objects, Teach, node Settings dialog, node manager) onto it, replacing hand-rolled per-page tab markup that had drifted to inconsistent bar-to-content gaps (18px/16px/12px across different pages) and button heights. The shared component now owns one fixed 16px gap and a uniform 38px tab height with an accent-underline active state everywhere, and adds a new --ui-accent-soft design token (mapped in every app's theme, including myidsan) for the active-tab tint. Dead per-page tab CSS (.settings-tabs, .camera-detail-tabs, etc.) was removed from mymatasan's and myseliasan's stylesheets now that the shared component supplies it.",
+  "compatibility": "Visual/structural refactor only; no behavior, API, or config changes. Tab pages render identically in function, with corrected/unified spacing. No migration needed for existing installs — takes effect on the next frontend build."
+}

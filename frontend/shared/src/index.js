@@ -2,6 +2,7 @@
 // Ico } from '@shared'` (each app aliases @shared -> frontend/shared/src via webpack).
 export { Ico, icoSvg } from './icons';
 export { DataTable, printable } from './DataTable';
+export { Tabs } from './Tabs';
 export { ToastStack } from './Toast';
 export { SideNav } from './SideNav';
 export { LangProvider, useT, LANGUAGES, normalizeLang } from './i18n';

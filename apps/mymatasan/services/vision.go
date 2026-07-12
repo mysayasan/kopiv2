@@ -193,6 +193,45 @@ func (s *visionService) PurgeAlerts(ctx context.Context, olderThan int64, onlyDi
 	return deleted, nil
 }
 
+// PurgeAlertsForCamera deletes EVERY alert event for one camera regardless of age,
+// reclaiming both the rows and their snapshot image files (deduped, since snapshots are
+// shared per frame). Reads oldest-first batches. Returns the number of alerts deleted.
+// Used by the per-camera "Purge now" action.
+func (s *visionService) PurgeAlertsForCamera(ctx context.Context, cameraId int64) (int, error) {
+	if cameraId <= 0 {
+		return 0, fmt.Errorf("cameraId is required")
+	}
+	filters := []sqldataenums.Filter{
+		{FieldName: "CameraId", Compare: sqldataenums.Equal, Value: cameraId},
+	}
+	sorters := []sqldataenums.Sorter{{FieldName: "CreatedAt", Sort: sqldataenums.ASC}}
+	deleted := 0
+	removedSnaps := map[string]bool{}
+	for {
+		batch, _, err := s.alerts.Get(ctx, "", 500, 0, filters, sorters)
+		if err != nil {
+			return deleted, err
+		}
+		if len(batch) == 0 {
+			break
+		}
+		for _, a := range batch {
+			if _, err := s.alerts.DeleteById(ctx, "", uint64(a.Id)); err != nil {
+				return deleted, err
+			}
+			deleted++
+			if p := strings.TrimSpace(a.SnapshotPath); p != "" && !removedSnaps[p] {
+				removedSnaps[p] = true
+				_ = os.Remove(p)
+			}
+		}
+		if len(batch) < 500 {
+			break
+		}
+	}
+	return deleted, nil
+}
+
 // PurgeAlertsOlderThanDays purges alerts older than the given number of days. A
 // days value <= 0 purges everything up to now (olderThan = current time).
 func (s *visionService) PurgeAlertsOlderThanDays(ctx context.Context, days int, onlyDiagnostics bool) (int, error) {

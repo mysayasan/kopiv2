@@ -67,15 +67,17 @@ function NodeTreeChild({ node, onNodes, managingNodeId, managingCameraId, onSele
     if (next && cams === null && !loading) loadCams();
   }
 
-  // Double-clicking the node row toggles its camera children (a file-explorer gesture),
-  // in addition to the caret: first double-click expands, the next collapses. The single
-  // click still navigates to the node. Loads the camera list the first time it opens.
-  function reveal() {
-    setOpen((prev) => {
-      const next = !prev;
-      if (next && cams === null && !loading) loadCams();
-      return next;
-    });
+  // expand opens (never collapses) the camera sub-branch and lazy-loads it the first time.
+  function expand() {
+    setOpen(true);
+    if (cams === null && !loading) loadCams();
+  }
+
+  // A single click navigates to the node AND expands its cameras — consistent with the
+  // Nodes root row. Collapse via the caret (or a double-click, which toggles).
+  function selectAndExpand() {
+    onSelectNode(node.nodeId);
+    expand();
   }
 
   // Reflect a camera opened from elsewhere (e.g. deep-link / page) by expanding this
@@ -103,8 +105,8 @@ function NodeTreeChild({ node, onNodes, managingNodeId, managingCameraId, onSele
         <button
           type="button"
           className={`nav-item tone-blue nav-tree-child nav-tree-main${nodeActive ? ' active' : ''}`}
-          onClick={() => onSelectNode(node.nodeId)}
-          onDoubleClick={reveal}
+          onClick={selectAndExpand}
+          onDoubleClick={toggle}
           title={node.description ? undefined : (node.name || node.nodeId)}
         >
           <span className="nav-tree-ico" data-status={status}>
@@ -133,6 +135,13 @@ function NodeTreeChild({ node, onNodes, managingNodeId, managingCameraId, onSele
             ) : (
               cams.map((c) => {
                 const camActive = isManaged && String(managingCameraId) === String(c.id);
+                // Per-camera liveness dot (green online / red offline / grey unknown),
+                // mirroring mymatasan's camera nav — driven by the node-reported health.
+                const camStatus = (c.healthStatus || '').toLowerCase() === 'online'
+                  ? 'online'
+                  : (c.healthStatus || '').toLowerCase() === 'offline'
+                    ? 'offline'
+                    : 'unknown';
                 return (
                   <button
                     key={c.id}
@@ -141,7 +150,7 @@ function NodeTreeChild({ node, onNodes, managingNodeId, managingCameraId, onSele
                     onClick={() => onSelectNode(node.nodeId, c.id)}
                     title={c.name || t('nodes.cameraN', { id: c.id })}
                   >
-                    <span className="nav-tree-ico nav-cam-ico"><Ico n={CAMERA_ICON} sz={14} /></span>
+                    <span className="nav-tree-ico nav-cam-ico" data-status={camStatus}><Ico n={CAMERA_ICON} sz={14} /></span>
                     <span className="nav-label">{c.name || t('nodes.cameraN', { id: c.id })}</span>
                   </button>
                 );
@@ -166,9 +175,7 @@ function NodesNavItem({ nodes, activeTab, managingNodeId, managingCameraId, onSe
   const rootActive = onNodes && !managingNodeId;
   const list = Array.isArray(nodes) ? nodes : [];
 
-  // Auto-expand the tree when you land on the Nodes tab, so the fleet is visible. Beyond
-  // that the caret and a double-click on the root own the open/closed state (single click
-  // just navigates), matching how each node row toggles its own cameras.
+  // Auto-expand the tree when you land on the Nodes tab, so the fleet is visible.
   useEffect(() => { if (onNodes) setOpen(true); }, [onNodes]);
 
   const big = list.length > NODE_FILTER_THRESHOLD;
@@ -192,7 +199,7 @@ function NodesNavItem({ nodes, activeTab, managingNodeId, managingCameraId, onSe
         <button
           type="button"
           className={`nav-item tone-blue nav-tree-main${rootActive ? ' active' : ''}`}
-          onClick={() => onSelectNode(null)}
+          onClick={() => { onSelectNode(null); setOpen(true); }}
           onDoubleClick={() => setOpen((o) => !o)}
         >
           <span className="nav-ico"><Ico n="shield" sz={17} /></span>
@@ -295,6 +302,8 @@ export function SideNav({ activeTab, busy, onTab, onLogout, session, nodes, mana
         // injected via the shell's render hook.
         ? [
             navItem('liveviews', t('nav.liveViews'), 'video', 'steel'),
+            navItem('objects', t('nav.objects'), 'eye', 'teal'),
+            navItem('teach', t('nav.teach'), 'wand', 'amber'),
             { id: 'nodes', render: () => (
               <NodesNavItem nodes={nodes} activeTab={activeTab} managingNodeId={managingNodeId} managingCameraId={managingCameraId} onSelectNode={onSelectNode} />
             ) },
@@ -304,7 +313,7 @@ export function SideNav({ activeTab, busy, onTab, onLogout, session, nodes, mana
     {
       label: t('group.administration'),
       items: session?.isSuperadmin
-        ? [navItem('users', t('nav.users'), 'user', 'blue'), navItem('roles', t('nav.roles'), 'key', 'violet'), navItem('rbac', t('nav.rbac'), 'lock', 'green')]
+        ? [navItem('users', t('nav.users'), 'user', 'blue'), navItem('roles', t('nav.roles'), 'lock', 'violet')]
         : [],
     },
     // System: the consolidated notification feed, available to any signed-in operator.

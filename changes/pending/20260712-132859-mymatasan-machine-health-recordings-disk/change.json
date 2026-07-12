@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "mymatasan",
+  "summary": "Fixed the machine-health disk-mitigation monitor to evaluate its pause/overwrite-oldest last-resort decision against the fullest disk that actually hosts recording storage (resolved by matching each enabled camera's configured storagePath to its monitored disk mountpoint), instead of the globally fullest monitored disk. Previously, if an unrelated volume (e.g. the OS/DB disk) was the fullest one, the monitor would pause recording for a disk that deleting footage could never relieve, and the overwrite-oldest disk-mitigation mode could never actually free space or lift the pause. The monitor now also lifts an active pause immediately once an overwrite frees space, rather than waiting for the disk to independently drop below the resume threshold on its next sample.",
+  "compatibility": "No config or schema changes; falls back to the previous global-worst-disk behavior when no recordings volume can be resolved (e.g. no enabled recording configs). Existing installs with recordings and the OS/DB on the same volume see no behavior change; installs with recordings on a separate, less-full volume will now correctly avoid an unnecessary pause and get working overwrite-oldest mitigation."
+}

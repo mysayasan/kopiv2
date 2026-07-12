@@ -541,6 +541,9 @@ type IRecordingService interface {
 	ListConfigs(ctx context.Context) ([]*entities.RecordingConfig, error)
 	SaveConfig(ctx context.Context, req SaveRecordingConfigRequest) (*entities.RecordingConfig, error)
 	PurgeOldSegments(ctx context.Context) (int, error)
+	// PurgeAllForCamera deletes every recorded segment for one camera regardless of
+	// expiry (files + rows). Powers the per-camera "Purge now" action.
+	PurgeAllForCamera(ctx context.Context, cameraId int64) (int, error)
 	// PurgeOldestSegments deletes the oldest recorded segments regardless of
 	// per-camera retention, oldest first, until roughly wantBytes have been freed.
 	// Segments that started at or after keepAfter are never touched (safety
@@ -560,6 +563,9 @@ type IVisionService interface {
 	AcknowledgeAlert(ctx context.Context, id uint64, userId int64) (*entities.AlertEvent, error)
 	PurgeAlerts(ctx context.Context, olderThan int64, onlyDiagnostics bool) (int, error)
 	PurgeAlertsOlderThanDays(ctx context.Context, days int, onlyDiagnostics bool) (int, error)
+	// PurgeAlertsForCamera deletes every alert event (+ snapshot files) for one camera
+	// regardless of age. Powers the per-camera "Purge now" action.
+	PurgeAlertsForCamera(ctx context.Context, cameraId int64) (int, error)
 }
 
 // ITrainingService manages custom-model training datasets and their labeled

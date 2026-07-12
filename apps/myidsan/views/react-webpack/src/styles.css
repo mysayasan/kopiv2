@@ -107,6 +107,7 @@
   --ui-border: var(--line);
   --ui-border-strong: var(--line-strong);
   --ui-accent: var(--blue);
+  --ui-accent-soft: var(--row-active);
   --ui-success: var(--green);
   --ui-danger: var(--red);
   --ui-shadow: rgba(17, 24, 39, 0.16);

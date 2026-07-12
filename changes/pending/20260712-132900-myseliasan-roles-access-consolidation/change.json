@@ -1,0 +1,6 @@
+{
+  "type": "changed",
+  "scope": "myseliasan",
+  "summary": "Merged myseliasan's separate Roles list page and RBAC permission-matrix page into one 'Roles' admin page. Creating a role now auto-seeds it with a viewer default (read-only on the fleet and notifications feed, plus read-only access on every currently-adopted node as a one-time snapshot -- nodes adopted later still need a manual grant) instead of leaving a permission-less role behind, a new Copy action duplicates a role's full permission matrix and per-node access grants onto a new role, and per-role access is granted through curated feature toggles (View fleet, Manage fleet, Notifications) that merge the right verbs onto the underlying /api/nodes and /api/notifications permission rows instead of requiring raw path entry. The raw path+verb matrix is still available, collapsed by default under an Advanced disclosure, for edge cases the curated toggles don't cover.",
+  "compatibility": "No backend API or schema changes -- this is a frontend consolidation over the existing /api/access-rbac and /api/nodes/access endpoints. Existing roles and their permissions/grants are unaffected; the viewer-default seeding only applies to newly created roles going forward."
+}

@@ -4,6 +4,8 @@ import './styles/controlplane.css';
 import './styles/rbac-standard.css';
 import './styles/node-dashboard.css';
 import './styles/live-views.css';
+import './styles/objects.css';
+import './styles/teach.css';
 import './styles/notifications.css';
 import './styles/node-settings.css';
 import { SideNav } from './components/layout';
@@ -12,8 +14,10 @@ import { FormBusyOverlay, ThemeDropdown } from './components/ui';
 import { DashboardTab } from './components/dashboard';
 import { NodesTab } from './components/nodes';
 import { LiveViewsPage } from './components/live_views';
+import { ObjectsPage } from './components/objects';
+import { TeachPage } from './components/teach';
 import { NotificationsPage } from './components/notifications';
-import { UsersPage, RolesPage, RbacPage } from './components/rbac_admin';
+import { UsersPage, RolesAccessPage } from './components/rbac_admin';
 import { LoginScreen, ChangePasswordScreen, PendingClearanceScreen } from './components/auth_screens';
 import { api, sessionCanGet, apiBase } from './lib/helpers';
 import { messages as appMessages } from './i18n';
@@ -144,9 +148,9 @@ function AppInner({ lang, onLangChange }) {
   // Demote to the dashboard if the active tab is no longer permitted (e.g. after a
   // handoff that retired the current stock account, or a role that lost node access).
   const canNodes = sessionCanGet(session, '/api/nodes');
-  const adminTabs = ['users', 'roles', 'rbac'];
+  const adminTabs = ['users', 'roles'];
   if (adminTabs.includes(activeTab) && !session?.isSuperadmin) setActiveTab('dashboard');
-  if ((activeTab === 'nodes' || activeTab === 'liveviews') && !canNodes) setActiveTab('dashboard');
+  if ((activeTab === 'nodes' || activeTab === 'liveviews' || activeTab === 'objects' || activeTab === 'teach') && !canNodes) setActiveTab('dashboard');
 
   return (
     <div className="app-shell">
@@ -175,8 +179,10 @@ function AppInner({ lang, onLangChange }) {
         ) : null}
         <ToastStack toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((t) => t.id !== id))} />
 
-        {activeTab === 'dashboard' ? <DashboardTab session={session} /> : null}
+        {activeTab === 'dashboard' ? <DashboardTab nodes={nodes} /> : null}
         {activeTab === 'liveviews' && canNodes ? <LiveViewsPage nodes={nodes} /> : null}
+        {activeTab === 'objects' && canNodes ? <ObjectsPage nodes={nodes} onToast={pushToast} /> : null}
+        {activeTab === 'teach' && canNodes ? <TeachPage nodes={nodes} onToast={pushToast} /> : null}
         {activeTab === 'notifications' ? <NotificationsPage nodes={nodes} refreshSignal={notifVersion} onChanged={loadNotifUnread} /> : null}
         {activeTab === 'nodes' && canNodes ? (
           <NodesTab
@@ -193,8 +199,7 @@ function AppInner({ lang, onLangChange }) {
         {activeTab === 'users' && session?.isSuperadmin ? (
           <UsersPage session={session} onToast={pushToast} onSessionChanged={loadSession} />
         ) : null}
-        {activeTab === 'roles' && session?.isSuperadmin ? <RolesPage onToast={pushToast} /> : null}
-        {activeTab === 'rbac' && session?.isSuperadmin ? <RbacPage onToast={pushToast} /> : null}
+        {activeTab === 'roles' && session?.isSuperadmin ? <RolesAccessPage onToast={pushToast} /> : null}
         <AppFooter appName="MySeliaSan" apiBase={apiBase()} />
       </main>
     </div>

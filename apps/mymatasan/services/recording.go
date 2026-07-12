@@ -188,6 +188,43 @@ func (s *recordingService) PurgeOldSegments(ctx context.Context) (int, error) {
 	return deleted, nil
 }
 
+// PurgeAllForCamera deletes EVERY recorded segment for one camera regardless of its
+// retention/expiry, securely removing each file. It reads oldest-first batches (deleting
+// each batch before the next read, so the window advances without offset drift). Returns
+// the number of segments deleted. Used by the per-camera "Purge now" action.
+func (s *recordingService) PurgeAllForCamera(ctx context.Context, cameraId int64) (int, error) {
+	if cameraId <= 0 {
+		return 0, errors.New("cameraId is required")
+	}
+	filters := []sqldataenums.Filter{
+		{FieldName: "CameraId", Compare: sqldataenums.Equal, Value: cameraId},
+	}
+	sorters := []sqldataenums.Sorter{{FieldName: "StartedAt", Sort: sqldataenums.ASC}}
+	deleted := 0
+	for {
+		batch, _, err := s.segments.Get(ctx, "", 500, 0, filters, sorters)
+		if err != nil {
+			return deleted, err
+		}
+		if len(batch) == 0 {
+			break
+		}
+		for _, seg := range batch {
+			if _, err := s.segments.DeleteById(ctx, "", uint64(seg.Id)); err != nil {
+				return deleted, err
+			}
+			deleted++
+			if p := strings.TrimSpace(seg.FilePath); p != "" {
+				_ = recording.SecureRemove(p, s.shredPasses)
+			}
+		}
+		if len(batch) < 500 {
+			break
+		}
+	}
+	return deleted, nil
+}
+
 func (s *recordingService) PurgeOldestSegments(ctx context.Context, keepAfter int64, wantBytes int64) (int, int64, error) {
 	filters := []sqldataenums.Filter{
 		{FieldName: "StartedAt", Compare: sqldataenums.LessThan, Value: keepAfter},

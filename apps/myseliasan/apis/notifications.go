@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/domain/notification"
@@ -26,8 +27,41 @@ func NewNotificationApi(router *mux.Router, auth middlewares.AuthMidware, sessio
 	g.Use(auth.Middleware)
 	g.Use(session.Middleware)
 	g.HandleFunc("", h.list).Methods("GET")
+	g.HandleFunc("/stats", h.stats).Methods("GET")
 	g.HandleFunc("/stream", h.stream).Methods("GET")
 	g.HandleFunc("/{id:[0-9]+}/read", h.markRead).Methods("POST")
+}
+
+// stats returns the aggregated dashboard payload over myseliasan's OWN notifications
+// table (node-pushed events + control-plane events) for the given window. from/to are
+// unix seconds (to defaults to now, from to 7 days before); bucket is "hour" or "day"
+// (default day); tzOffset is the viewer's timezone offset in minutes so buckets align
+// to the local clock. The per-node breakdown is Stats.BySource (source = "node:<id>").
+func (a *notificationApi) stats(w http.ResponseWriter, r *http.Request) {
+	now := time.Now().UTC().Unix()
+	to := queryInt64(r, "to", 0)
+	if to <= 0 {
+		to = now
+	}
+	from := queryInt64(r, "from", 0)
+	if from <= 0 {
+		from = to - 7*86400
+	}
+	bucketSeconds := int64(86400)
+	if strings.EqualFold(r.URL.Query().Get("bucket"), "hour") {
+		bucketSeconds = 3600
+	}
+	tzOffsetMin := queryInt64(r, "tzOffset", 0)
+	if tzOffsetMin < -840 || tzOffsetMin > 840 {
+		tzOffsetMin = 0
+	}
+
+	result, err := a.serv.Stats(r.Context(), from, to, bucketSeconds, tzOffsetMin*60)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, result, "succeed")
 }
 
 func (a *notificationApi) list(w http.ResponseWriter, r *http.Request) {
@@ -74,6 +108,18 @@ func queryUint(r *http.Request, key string, def uint64) uint64 {
 		return def
 	}
 	n, err := strconv.ParseUint(v, 10, 64)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+func queryInt64(r *http.Request, key string, def int64) int64 {
+	v := strings.TrimSpace(r.URL.Query().Get(key))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil {
 		return def
 	}

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Ico } from './icons';
+import { Tabs } from '@shared/Tabs';
 import { useT } from '@shared/i18n';
 import { FormBusyOverlay, InfoButton, Tracks, LayoutDropdown } from './ui';
 import { CameraAiPanel } from './vision';
@@ -2007,20 +2008,17 @@ export function CamerasTab({
           <main className="saved-detail">
             {selectedSaved ? (
               <>
-                <nav className="settings-tabs camera-detail-tabs" role="tablist" aria-label={t('cam.detailTabsAria')}>
-                  <button type="button" role="tab" aria-selected={cameraDetailTab === 'liveview'} className={`settings-tab${cameraDetailTab === 'liveview' ? ' active' : ''}`} onClick={() => setCameraDetailTab('liveview')}>
-                    <Ico n="video" sz={16} /> <span className="settings-tab-label">{t('cam.detailLive')}</span>
-                  </button>
-                  <button type="button" role="tab" aria-selected={cameraDetailTab === 'ai'} className={`settings-tab${cameraDetailTab === 'ai' ? ' active' : ''}`} onClick={() => setCameraDetailTab('ai')}>
-                    <Ico n="cpu" sz={16} /> <span className="settings-tab-label">{t('cam.detailDetection')}</span>
-                  </button>
-                  <button type="button" role="tab" aria-selected={cameraDetailTab === 'recordings'} className={`settings-tab${cameraDetailTab === 'recordings' ? ' active' : ''}`} onClick={() => setCameraDetailTab('recordings')}>
-                    <Ico n="film" sz={16} /> <span className="settings-tab-label">{t('tab.recording')}</span>
-                  </button>
-                  <button type="button" role="tab" aria-selected={cameraDetailTab === 'settings'} className={`settings-tab${cameraDetailTab === 'settings' ? ' active' : ''}`} onClick={() => setCameraDetailTab('settings')}>
-                    <Ico n="sliders" sz={16} /> <span className="settings-tab-label">{t('cam.detailSettings')}</span>
-                  </button>
-                </nav>
+                <Tabs
+                  ariaLabel={t('cam.detailTabsAria')}
+                  active={cameraDetailTab}
+                  onChange={setCameraDetailTab}
+                  tabs={[
+                    { id: 'liveview', label: t('cam.detailLive'), icon: 'video' },
+                    { id: 'ai', label: t('cam.detailDetection'), icon: 'cpu' },
+                    { id: 'recordings', label: t('tab.recording'), icon: 'film' },
+                    { id: 'settings', label: t('cam.detailSettings'), icon: 'sliders' },
+                  ]}
+                />
                 {cameraDetailTab === 'liveview' ? (
                   <CameraLiveView
                     key={`live-${selectedSaved.id}`}

@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "myseliasan",
+  "summary": "Added a fleet-wide Teach nav item to myseliasan. Because teaching (capture -> train -> activate) runs entirely on the node itself, the flow is 'Where-first': the operator picks a target camera through a Node-to-Camera tree dropdown, and the real mymatasan Teach wizard (its source copied under components/nodecam/teach.js, matching the existing embedded-node-page pattern) then runs against that camera's node over the control tunnel, pre-scoped to the chosen camera. A second 'Share' tab lets an operator push a trained skill across the fleet in one action: export a skill from a source node as an encrypted .mmskill package over the proxy, then import it into any number of selected target nodes; because both the export payload and each import travel through the control tunnel's frame/body size caps, the push defaults to model-only (no training images).",
+  "compatibility": "No database schema changes; reuses each node's existing /api/teach/* endpoints and .mmskill export/import format unchanged. Existing myseliasan installs gain the Teach nav item automatically after upgrade with no configuration changes. Requires the target nodes to already support /api/teach/*; an older node's proxy call fails with the standard error toast rather than breaking the page."
+}

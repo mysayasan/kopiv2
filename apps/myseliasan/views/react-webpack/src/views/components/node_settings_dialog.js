@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Ico, useT } from '@shared';
+import { Ico, Tabs, useT } from '@shared';
 import { NodeEmbed } from './node_embed';
 import { IconDropdown } from './ui';
 import { NODE_ICONS, DEFAULT_NODE_ICON } from './nodes';
@@ -43,20 +43,12 @@ export function NodeSettingsDialog({ node, onClose, onToast, onWipe, onNodeUpdat
             <h2><span className="btn-icon"><Ico n={node.icon || 'monitor'} /> {t('nset.title', { name: node.name || nodeId })}</span></h2>
             <button type="button" className="icon-button" onClick={onClose} aria-label={t('nset.close')}><Ico n="x" sz={16} /></button>
           </header>
-          <nav className="settings-tabs node-settings-tabs" role="tablist">
-            {TABS.map((tb) => (
-              <button
-                key={tb.id}
-                type="button"
-                role="tab"
-                aria-selected={tab === tb.id}
-                className={`settings-tab${tab === tb.id ? ' active' : ''}`}
-                onClick={() => setTab(tb.id)}
-              >
-                <Ico n={tb.icon} sz={16} /> <span className="settings-tab-label">{t(tb.labelKey)}</span>
-              </button>
-            ))}
-          </nav>
+          <Tabs
+            className="node-settings-tabs"
+            active={tab}
+            onChange={setTab}
+            tabs={TABS.map((tb) => ({ id: tb.id, label: t(tb.labelKey), icon: tb.icon }))}
+          />
           <div className="node-settings-body">
             {tab === 'details' ? <NodeDetailsPanel node={node} t={t} onToast={onToast} onNodeUpdated={onNodeUpdated} /> : null}
             {tab === 'system' ? <VersionHealthPanel node={node} px={px} t={t} onToast={onToast} /> : null}

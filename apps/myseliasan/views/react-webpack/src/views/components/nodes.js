@@ -55,8 +55,10 @@ function AdoptDialog({ initial, busy, onClose, onAdopt }) {
     if (ok) onClose();
   }
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <form className="modal-card node-adopt-dialog" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+    // No backdrop onClick: the adoption form must only be dismissed via the X / Cancel
+    // buttons, so an accidental click outside can't wipe a half-filled claim code.
+    <div className="modal-backdrop">
+      <form className="modal-card node-adopt-dialog" role="dialog" aria-modal="true" onSubmit={submit}>
         <header className="node-settings-head">
           <h2><span className="btn-icon"><Ico n="plus" /> {t('node.adoptTitle')}</span></h2>
           <button type="button" className="icon-button" onClick={onClose} aria-label={t('nset.close')}><Ico n="x" sz={16} /></button>

@@ -35,6 +35,7 @@
   --ui-border: var(--border-panel);
   --ui-border-strong: var(--border-soft);
   --ui-accent: var(--accent);
+  --ui-accent-soft: var(--accent-bg);
   --ui-success: var(--ok-text);
   --ui-danger: var(--danger);
   --ui-shadow: var(--shadow-panel);
@@ -76,6 +77,7 @@
   --ui-border: var(--border-panel);
   --ui-border-strong: var(--border-soft);
   --ui-accent: var(--accent);
+  --ui-accent-soft: var(--accent-bg);
   --ui-success: var(--ok-text);
   --ui-danger: var(--danger);
   --ui-shadow: var(--shadow-panel);
@@ -117,6 +119,7 @@
   --ui-border: var(--border-panel);
   --ui-border-strong: var(--border-soft);
   --ui-accent: var(--accent);
+  --ui-accent-soft: var(--accent-bg);
   --ui-success: var(--ok-text);
   --ui-danger: var(--danger);
   --ui-shadow: var(--shadow-panel);
@@ -1060,6 +1063,12 @@ body .toast-stack {
   padding-top: 0;
 }
 
+/* Objects page: the shared <Tabs> bar owns the 16px gap to the active panel, so the
+   workspace grid must not add its own row gap around it. */
+.objects-page {
+  gap: 0;
+}
+
 .toolbar {
   display: flex;
   justify-content: space-between;
@@ -1470,7 +1479,8 @@ body .toast-stack {
 .saved-detail {
   min-width: 0;
   display: grid;
-  gap: 12px;
+  /* gap:0 — the shared <Tabs> bar owns the standard 16px gap to the panel below it. */
+  gap: 0;
 }
 
 .empty-detail h2 {
@@ -2439,79 +2449,18 @@ dd {
   align-items: start;
 }
 
-.settings-tabs {
-  position: sticky;
-  top: 0;
-  z-index: 3;
-  display: flex;
-  gap: 2px;
-  /* Horizontal scroll (swipeable on touch) for overflowing tabs; overflow-y MUST be
-     hidden, otherwise the browser promotes it to auto and the active tab's -1px
-     underline triggers a phantom vertical scrollbar. */
-  overflow-x: auto;
-  overflow-y: hidden;
-  /* Hide the scrollbar chrome (still scrollable/swipeable) so the bar stays clean. */
-  scrollbar-width: none;
-  background: var(--bg-body);
-  border-bottom: 1px solid var(--border-panel);
-  /* Bleed the tab bar to the workspace edges so the underline meets the divider. */
-  margin: 0 -2px;
-  padding: 0 2px;
-}
-
-.settings-tabs::-webkit-scrollbar {
-  display: none;
-}
-
-.settings-tab {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex: 0 0 auto;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 600;
-  padding: 11px 15px;
-  border-radius: 9px 9px 0 0;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: color 0.15s ease, background 0.15s ease;
-}
-
-.settings-tab:hover {
-  color: var(--text-primary);
-  background: var(--bg-subtle2);
-}
-
-.settings-tab.active,
-.settings-tab.active:hover {
-  /* Override the base button.active fill (accent bg) so the active tab reads as
-     accent TEXT on a subtle surface, not accent-on-accent (unreadable in dark). */
-  color: var(--accent);
-  background: var(--accent-bg);
-}
-
-/* Sliding-style accent underline on the active tab, sitting on the divider. */
-.settings-tab.active::after {
-  content: '';
-  position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: -1px;
-  height: 3px;
-  border-radius: 3px 3px 0 0;
-  background: var(--accent);
-}
+/* The tab bar itself is the shared <Tabs> component (.ui-tabs / .ui-tab, styled by
+   @shared/styles/tabs.css) — the single standard across all apps. Only the layout that
+   surrounds it (.settings-tabbed workspace, .settings-tab-head band, .settings-content)
+   stays here. */
 
 /* Contextual header band under the tabs: section icon + title + description. */
 .settings-tab-head {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 18px 2px 6px;
+  /* No top padding: the shared <Tabs> bar owns the standard 16px gap above this band. */
+  padding: 0 2px 6px;
 }
 
 .settings-tab-head-icon {
@@ -2536,16 +2485,11 @@ dd {
   color: var(--text-muted);
 }
 
-/* Mobile: tighten the tab bar so more tabs fit per swipe, and slim the header band. */
+/* Mobile: slim the header band (the tab bar itself is handled by the shared tabs.css). */
 @media (max-width: 620px) {
-  .settings-tab {
-    gap: 6px;
-    padding: 10px 11px;
-    font-size: 12px;
-  }
   .settings-tab-head {
     gap: 10px;
-    padding: 14px 2px 6px;
+    padding: 0 2px 6px;
   }
   .settings-tab-head-icon {
     width: 36px;
@@ -2941,6 +2885,16 @@ dd {
   display: grid;
   gap: 12px;
   align-content: start;
+}
+/* Wizard branch: the shared <Tabs> bar owns the standard 16px gap to the step panel, so
+   this column must not add its own row gap around it. The header gets an explicit gap to
+   the tab bar instead. (The teach LANDING branch keeps the .settings-content 12px gap for
+   its stacked panels.) */
+.teach-tab .teach-wizard-body {
+  gap: 0;
+}
+.teach-tab .teach-wizard-body .training-header {
+  margin-bottom: 12px;
 }
 .teach-tab .training-header {
   margin-bottom: 0;

@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "myseliasan",
+  "summary": "myseliasan's landing Dashboard tab, previously minimal, is rebuilt into a fleet-wide analytics view mirroring mymatasan's own camera dashboard (same @shared/charts KPI/timeseries layout), but aggregated by adopted NODE instead of camera. It is backed by a new GET /api/notifications/stats endpoint that aggregates myseliasan's own notifications table (both its own control-plane events and every node-pushed event already ingested into that table) over a selectable Today/7-day/30-day window, bucketed by hour or day and aligned to the viewer's local timezone offset, with a per-node activity breakdown (Stats.BySource, keyed 'node:<id>'). No per-node fan-out request is needed since the control plane already stores every event locally.",
+  "compatibility": "No database schema changes; reuses the existing shared notification/notification_rollup tables and INotificationService.Stats contract already used by mymatasan's own dashboard. Existing myseliasan installs get the new landing dashboard automatically after upgrade with no configuration changes."
+}

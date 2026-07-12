@@ -13,6 +13,7 @@ Persists MyMataSan AI detection rules and alert events using the reusable `infra
 - Normalize and validate alert events before persistence.
 - Mark alert events as acknowledged with local user and timestamp audit fields.
 - Purge alert events older than a unix-seconds cutoff (`PurgeAlerts`) or older than N days (`PurgeAlertsOlderThanDays`), unlinking each row's snapshot image file. Operates in oldest-first batches of 500 so large backlogs do not build an unbounded result set. The `onlyDiagnostics` flag restricts deletion to diagnostic rows (no snapshot to unlink), leaving real detections untouched.
+- `PurgeAlertsForCamera(ctx, cameraId)`: delete EVERY alert event for one camera regardless of age, oldest-first in batches of 500, unlinking each row's (deduped) snapshot file. Returns the count deleted. Powers the per-camera "Purge now" action alongside `recordingService.PurgeAllForCamera`.
 
 ## Notes
 

@@ -185,15 +185,55 @@ function defaultSearchFrom() {
   return d.toISOString().slice(0, 10);
 }
 
+// PurgeNowCountdown is the cancellable confirmation for "Purge now": it deletes ALL
+// footage + snapshots for the camera regardless of expiry, so — mirroring the factory-reset
+// wipe — it counts down (default 5s) and auto-proceeds unless cancelled, with Cancel focused.
+function PurgeNowCountdown({ cameraName, seconds = 5, onCancel, onProceed }) {
+  const t = useT();
+  const [remaining, setRemaining] = useState(seconds);
+  const proceedRef = useRef(onProceed);
+  proceedRef.current = onProceed;
+  useEffect(() => {
+    const started = Date.now();
+    const id = setInterval(() => {
+      const left = Math.max(0, seconds - Math.floor((Date.now() - started) / 1000));
+      setRemaining(left);
+      if (left <= 0) {
+        clearInterval(id);
+        if (proceedRef.current) proceedRef.current();
+      }
+    }, 250);
+    return () => clearInterval(id);
+  }, [seconds]);
+  return (
+    <div className="modal-backdrop">
+      <div className="modal-card danger-modal" role="alertdialog" aria-modal="true">
+        <h2><span className="btn-icon"><Ico n="warning" /> {t('rec.purgeNowTitle')}</span></h2>
+        <p>{t('rec.purgeNowWarning', { name: cameraName || t('rec.thisCamera') })}</p>
+        <p className="wipe-countdown">{t('rec.purgeNowCountdown', { n: remaining })}</p>
+        <div className="modal-actions">
+          <button type="button" className="quiet" autoFocus onClick={onCancel}>
+            <span className="btn-icon"><Ico n="x" /> {t('rec.purgeNowCancel')}</span>
+          </button>
+          <button type="button" className="danger-solid" onClick={() => proceedRef.current && proceedRef.current()}>
+            <span className="btn-icon"><Ico n="trash" /> {t('rec.purgeNowConfirm')}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // CameraRecordingsPanel is the per-camera recordings browser (date timeline, segment
 // list, and playback) shown as a tab inside the camera node, beside AI. Per-camera
 // recording config and stream URLs live in the Saved-camera Settings panel
 // (CameraRecordingConfig / CameraStreamConfig). The camera is fixed by the caller —
 // the camera node's tree drives selection — so there is no in-panel camera picker.
-export function CameraRecordingsPanel({ camera, canManage = true, busy, authHeader, onDeleteSegment, onPurgeExpired, onReload, unacknowledgedAlertIds, onAcknowledgeAlert, alerts }) {
+export function CameraRecordingsPanel({ camera, canManage = true, busy, authHeader, onDeleteSegment, onPurgeExpired, onPurgeNow, onReload, unacknowledgedAlertIds, onAcknowledgeAlert, alerts }) {
   const t = useT();
   const effectiveCameraId = Number(camera?.id) || 0;
   const selectedCamera = camera || null;
+  const [purgeArmed, setPurgeArmed] = useState(false);
   const alertById = useMemo(
     () => new Map((alerts || []).map((a) => [Number(a.id), a])),
     [alerts],
@@ -397,6 +437,19 @@ export function CameraRecordingsPanel({ camera, canManage = true, busy, authHead
 
   return (
     <section className="camera-recordings-panel">
+      {purgeArmed ? (
+        <PurgeNowCountdown
+          cameraName={selectedCamera?.name || selectedCamera?.model || selectedCamera?.host}
+          onCancel={() => setPurgeArmed(false)}
+          onProceed={async () => {
+            setPurgeArmed(false);
+            if (onPurgeNow) await onPurgeNow(effectiveCameraId);
+            // Refresh only this panel's segment list (not the whole page) so the
+            // purged footage clears from the timeline immediately.
+            loadBrowseSegments();
+          }}
+        />
+      ) : null}
       <div className="toolbar">
         <div>
           <h2 className="section-title">{t('rec.title')}</h2>
@@ -416,6 +469,17 @@ export function CameraRecordingsPanel({ camera, canManage = true, busy, authHead
               }}
             >
               <span className="btn-icon"><Ico n="trash" /> {t('rec.purgeExpired')}</span>
+            </button>
+          ) : null}
+          {canManage && onPurgeNow ? (
+            <button
+              type="button"
+              className="quiet danger-text"
+              disabled={busy}
+              title={t('rec.purgeNowTitle')}
+              onClick={() => setPurgeArmed(true)}
+            >
+              <span className="btn-icon"><Ico n="trash" /> {t('rec.purgeNow')}</span>
             </button>
           ) : null}
           <button type="button" className="quiet" onClick={onReload} disabled={busy}>

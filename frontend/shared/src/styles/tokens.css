@@ -13,6 +13,7 @@
  *   --ui-border         hairline border
  *   --ui-border-strong  stronger border
  *   --ui-accent         brand / primary accent
+ *   --ui-accent-soft    soft accent tint (active tab / row background)
  *   --ui-success        success accent (green)
  *   --ui-danger         error/destructive accent (red)
  *   --ui-shadow         elevation shadow color (rgba)

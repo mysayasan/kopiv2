@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Ico } from './icons';
+import { Tabs } from '@shared/Tabs';
 import { useT } from '@shared/i18n';
 import { ZoneDrawingPreview } from './previews';
 import { apiBase, cameraTitle } from '../lib/helpers';
@@ -945,33 +946,27 @@ export function TeachTab({ authHeader, onMessage, cameras, streamConfig, labelCa
 
   return (
     <section className="workspace teach-tab">
-      <div className="settings-content">
+      <div className="settings-content teach-wizard-body">
         <header className="training-header">
           <span className="training-eyebrow">{t('tab.teach')}</span>
           <h1>{wizard.name ? t('teach.wizardTitleNamed', { name: wizard.name }) : t('teach.wizardTitle')}</h1>
         </header>
 
-        <nav className="settings-tabs" aria-label={t('teach.wizardAria')}>
-          {WIZARD_STEPS.map((s) => {
-            const active = s.step === wizard.step;
+        <Tabs
+          ariaLabel={t('teach.wizardAria')}
+          active={wizard.step}
+          onChange={(step) => setWizard((w) => ({ ...w, step }))}
+          tabs={WIZARD_STEPS.map((s) => {
             const reachable = !s.locked && s.step <= wizard.step && wizard.id;
-            return (
-              <button
-                key={s.step}
-                type="button"
-                className={`settings-tab${active ? ' active' : ''}`}
-                disabled={s.locked || (!reachable && !active)}
-                title={s.locked ? t('teach.stepSoon') : undefined}
-                onClick={() => { if (reachable) setWizard((w) => ({ ...w, step: s.step })); }}
-              >
-                <Ico n={s.icon} sz={16} />
-                <span className="settings-tab-label">
-                  {t(s.labelKey)}{s.locked ? ` · ${t('teach.stepSoonTag')}` : ''}
-                </span>
-              </button>
-            );
+            return {
+              id: s.step,
+              label: `${t(s.labelKey)}${s.locked ? ` · ${t('teach.stepSoonTag')}` : ''}`,
+              icon: s.icon,
+              disabled: s.locked || (!reachable && s.step !== wizard.step),
+              title: s.locked ? t('teach.stepSoon') : undefined,
+            };
           })}
-        </nav>
+        />
 
         {wizard.step === 1 ? (
           <section className="settings-panel">

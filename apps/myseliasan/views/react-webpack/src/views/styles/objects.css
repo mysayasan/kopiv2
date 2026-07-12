@@ -1,0 +1,255 @@
+/* Fleet Objects page — native (non-embedded) fleet search + per-node classes editor.
+   The Search view renders outside .nodecam-embed, so it needs its own copies of the
+   object-search / multi-select / object-tag styles (mymatasan's scoped CSS can't reach it). */
+
+/* The shared <Tabs> bar owns the 16px gap to the active view. */
+.objects-page {
+  gap: 0;
+}
+
+.object-search-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin: 8px 0 14px;
+}
+.object-search-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.object-search-filters input,
+.object-search-filters select {
+  min-width: 150px;
+}
+
+/* Object label pill — matches mymatasan: an OUTLINE tag (transparent fill, coloured
+   border + text by category), not a filled chip. */
+.object-tag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 1px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--text-muted);
+  text-transform: capitalize;
+  font-variant-numeric: tabular-nums;
+}
+.object-tag--person { color: #2563eb; border-color: #bcd0f7; }
+.object-tag--vehicle { color: #0d9488; border-color: #a2ded7; }
+.object-tag--animal { color: #d97706; border-color: #f0cfa0; }
+.object-tag--fire { color: #dc2626; border-color: #f2b8b8; }
+.object-tag--other { color: var(--text-muted); border-color: var(--border-soft); }
+
+.footage-pending {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Multi-select dropdown (object labels). */
+.multi-select {
+  position: relative;
+}
+.multi-select-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 150px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.multi-select-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 220px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--border-panel);
+  border-radius: 10px;
+  background: var(--bg-surface);
+  box-shadow: 0 12px 30px var(--shadow-panel);
+}
+.multi-select-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  cursor: pointer;
+}
+.multi-select-empty {
+  padding: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* Footage cell — copied from mymatasan's Object Search so the fleet search behaves and
+   looks identical: a boxed snapshot with Play + Maximize overlay buttons. (This view
+   renders outside .nodecam-embed, so it needs its own copy of these styles.) All obs-thumb
+   rules are scoped to .objects-page so notifications.css's own .obs-thumb-btn (a lighter
+   variant) can't override them and vice-versa. */
+.objects-page .obs-thumb {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 132px;
+  height: 74px;
+  padding: 0;
+  border: 1px solid var(--border-panel);
+  border-radius: 6px;
+  overflow: hidden;
+  background: #10151f;
+}
+.objects-page .obs-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.objects-page .obs-thumb--empty {
+  cursor: pointer;
+  color: var(--text-muted);
+  background: var(--bg-hover, rgba(127, 127, 127, 0.08));
+  border-style: dashed;
+}
+/* Overlay action buttons: faintly visible at rest, solid on hover/focus. */
+.objects-page .obs-thumb-actions {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.05);
+  opacity: 0.85;
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+.objects-page .obs-thumb:hover .obs-thumb-actions,
+.objects-page .obs-thumb:focus-within .obs-thumb-actions {
+  background: rgba(0, 0, 0, 0.4);
+  opacity: 1;
+}
+.objects-page .obs-thumb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  min-height: 0;
+  min-width: 0;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  padding: 0;
+  line-height: 0;
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(20, 24, 33, 0.55);
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+.objects-page .obs-thumb-btn:hover {
+  background: rgba(37, 99, 235, 0.9);
+  transform: scale(1.08);
+}
+
+/* Play dialog: video stage + bounding box overlay drawn at the sighting moment. */
+.video-stage {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+  max-width: 100%;
+}
+.video-stage .video-player {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 72vh;
+}
+.detect-box {
+  position: absolute;
+  border: 2px solid #22c55e;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55);
+  border-radius: 3px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+.detect-box.show {
+  opacity: 1;
+  animation: detectPulse 1.2s ease-out 2;
+}
+@keyframes detectPulse {
+  0% { box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55), 0 0 0 3px rgba(34, 197, 94, 0.55); }
+  100% { box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55), 0 0 0 13px rgba(34, 197, 94, 0); }
+}
+.detect-box-label {
+  position: absolute;
+  left: -2px;
+  top: -2px;
+  transform: translateY(-100%);
+  background: #22c55e;
+  color: #04140a;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.5;
+  padding: 1px 6px;
+  border-radius: 3px 3px 3px 0;
+  white-space: nowrap;
+}
+
+/* Maximized snapshot dialog (camera button) — reuses the .video-overlay backdrop. */
+.snap-dialog {
+  background: #10151f;
+  border-radius: 10px;
+  overflow: hidden;
+  max-width: min(92vw, 1100px);
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+}
+.snap-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  min-height: 200px;
+  overflow: auto;
+}
+.snap-image {
+  display: block;
+  max-width: 100%;
+  max-height: 78vh;
+}
+.snap-dialog .video-dialog-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.snap-play {
+  margin-left: auto;
+}
+
+.obj-node-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.obj-node-pick select {
+  min-width: 220px;
+}

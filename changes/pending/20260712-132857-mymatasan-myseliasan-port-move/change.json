@@ -1,0 +1,6 @@
+{
+  "type": "changed",
+  "scope": "mymatasan,myseliasan",
+  "summary": "The shipped default fleet pairing ports were moved off the 4953x range to avoid a Windows port conflict: mtlsPort 49532 -> 39532, controlPort 49533 -> 39533, mediaPort 49534 -> 39534, set explicitly in both apps' config.json (mymatasan) and myseliasan's config.json/config.dev.json. The Go-side fallback constants used only when a pairing port is left unset/zero are unchanged (still 49532/49533/49534), so this is a shipped-configuration change, not a code default change.",
+  "compatibility": "Fresh installs using the shipped config.json now listen on/dial 39532-39534 instead of 49532-49534; firewall rules and any manual port references must be updated to match. Existing installs that already have explicit pairing.mtlsPort/controlPort/mediaPort values in their own config.json are unaffected (their existing values are not overwritten by this change). A parent and its already-adopted nodes must agree on the same ports after any upgrade that changes these values, or the control/media channels will fail to reconnect until the mismatched side's config is corrected."
+}

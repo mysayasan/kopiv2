@@ -55,6 +55,22 @@ export function NodeRecordingsTab({ node, camera, onToast }) {
     if (r.ok) { const n = Number(r.body?.deleted) || 0; toast(n > 0 ? t('rec.purgedClips', { n }) : t('rec.noExpiredClips')); }
   }, [px, toast, t]);
 
+  // onPurgeNow deletes ALL footage + snapshots for the camera regardless of expiry
+  // (the 5s cancellable confirmation is handled inside the panel before this fires).
+  const onPurgeNow = useCallback(async (cameraId) => {
+    const id = Number(cameraId) || 0;
+    if (id <= 0) return;
+    const r = await px(`/api/recording/purge-camera?cameraId=${id}`, { method: 'POST' });
+    if (r.ok) {
+      const segments = Number(r.body?.segments) || 0;
+      const snapshots = Number(r.body?.snapshots) || 0;
+      toast(t('rec.purgeNowDone', { segments, snapshots }));
+      loadAlerts();
+    } else {
+      toast(t('rec.deleteClipFailed'));
+    }
+  }, [px, toast, t, loadAlerts]);
+
   const onAcknowledgeAlert = useCallback(async (id) => {
     setAlerts((cur) => cur.map((a) => (Number(a.id) === Number(id) ? { ...a, isAcknowledged: true } : a)));
     await px(`/api/vision/alerts/${id}/ack`, { method: 'POST' });
@@ -71,6 +87,7 @@ export function NodeRecordingsTab({ node, camera, onToast }) {
       authHeader={undefined}
       onDeleteSegment={onDeleteSegment}
       onPurgeExpired={onPurgeExpired}
+      onPurgeNow={onPurgeNow}
       onReload={loadAlerts}
       unacknowledgedAlertIds={unacknowledgedAlertIds}
       onAcknowledgeAlert={onAcknowledgeAlert}

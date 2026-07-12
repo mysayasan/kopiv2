@@ -104,6 +104,7 @@
   --ui-border: var(--border-soft);
   --ui-border-strong: var(--border-panel);
   --ui-accent: var(--accent);
+  --ui-accent-soft: var(--accent-bg);
   --ui-success: var(--ok-text);
   --ui-danger: var(--danger);
   --ui-shadow: var(--shadow-panel);
@@ -1304,7 +1305,8 @@ label {
 .saved-detail {
   min-width: 0;
   display: grid;
-  gap: 12px;
+  /* gap:0 — the shared <Tabs> bar owns the standard 16px gap to the panel below it. */
+  gap: 0;
 }
 
 .empty-detail h2 {

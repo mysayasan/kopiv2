@@ -550,11 +550,8 @@
   width: 26px;
   color: var(--nav-label);
 }
-
-/* Cameras have no online/offline dot — the node above already conveys liveness. */
-.nav-cam-ico::after {
-  display: none;
-}
+/* Cameras show their own liveness dot (green online / red offline), driven by
+   data-status via the shared .nav-tree-ico[data-status] rules above — matching mymatasan. */
 
 /* Clickable "couldn't load — retry" row shown when the node can't be reached. */
 .nav-cam-retry {
@@ -1220,6 +1217,61 @@
 .menu-access-item input {
   width: 18px;
   min-height: 18px;
+}
+
+/* Friendly, curated access toggles (grant a role by feature, not by raw path). */
+.access-feature-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.access-feature {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-divider);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  cursor: pointer;
+}
+
+.access-feature input {
+  width: 18px;
+  min-height: 18px;
+  margin-top: 1px;
+  flex: 0 0 auto;
+}
+
+.access-feature-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.access-feature-label {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.access-feature-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Advanced (raw path matrix) disclosure. */
+.rbac-advanced {
+  margin-top: 14px;
+}
+
+.rbac-advanced-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
 }
 
 @media (max-width: 1080px) {

@@ -1,0 +1,83 @@
+/* Shared, standardized tab bar (the <Tabs> component). Uses ONLY --ui-* design tokens
+   (see styles/tokens.css) so it renders correctly in every app's light/dark theme, and
+   is the single source of truth for tab look + spacing across mymatasan / myseliasan /
+   myidsan. Do not fork these values per app — pass a className for horizontal alignment
+   only; the vertical rhythm (bar height, divider, the 16px bar→content gap) is fixed.
+
+   NOTE ON SPECIFICITY: the buttons are selected as `.ui-tabs .ui-tab` (0,2,0), not a bare
+   `.ui-tab` (0,1,0). myseliasan embeds these tabs inside `.nodecam-embed`, whose scoped
+   mymatasan stylesheet has a generic `button { background: var(--accent) }` rule that
+   becomes `.nodecam-embed button` (0,1,1) at runtime — that OUT-ranks a bare `.ui-tab` and
+   made the tabs render as solid accent buttons. The 2-class selectors win it back so the
+   tabs look identical inside and outside the embed. */
+
+.ui-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  background: var(--ui-bg, #f4f6f8);
+  border-bottom: 1px solid var(--ui-border, #d6dee7);
+  /* The ONE standard gap between the tab bar and the content below it. */
+  margin: 0 0 16px;
+  padding: 0;
+}
+.ui-tabs::-webkit-scrollbar { display: none; }
+
+.ui-tabs .ui-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-height: 38px;          /* uniform button height everywhere */
+  border: none;
+  background: transparent;
+  color: var(--ui-muted, #59687a);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 9px 15px;
+  border-radius: 9px 9px 0 0;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.ui-tabs .ui-tab:hover:not(:disabled) {
+  color: var(--ui-text, #18212f);
+  background: transparent;
+}
+
+.ui-tabs .ui-tab.active,
+.ui-tabs .ui-tab.active:hover {
+  color: var(--ui-accent, #2d6cdf);
+  background: var(--ui-accent-soft, #edf4ff);
+}
+
+.ui-tabs .ui-tab:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Active-tab underline, sitting on top of the bar's 1px divider. */
+.ui-tabs .ui-tab.active::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: -1px;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: var(--ui-accent, #2d6cdf);
+}
+
+.ui-tabs .ui-tab-label { display: inline-block; }
+
+@media (max-width: 620px) {
+  .ui-tabs .ui-tab { gap: 6px; padding: 7px 11px; font-size: 12px; min-height: 34px; }
+}

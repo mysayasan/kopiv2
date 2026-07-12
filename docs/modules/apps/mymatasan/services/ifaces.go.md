@@ -49,6 +49,7 @@ Declares service contracts for app-specific domain.
   - `AcknowledgeAlert(ctx, id, userId)` for operator acknowledgement
   - `PurgeAlerts(ctx, olderThan, onlyDiagnostics)` — delete rows and unlink snapshots for alerts older than a unix-second cutoff
   - `PurgeAlertsOlderThanDays(ctx, days, onlyDiagnostics)` — convenience wrapper that converts N days to a cutoff and calls `PurgeAlerts`
+  - `PurgeAlertsForCamera(ctx, cameraId)` — deletes EVERY alert event (+ deduped snapshot files) for one camera regardless of age, oldest-first in batches of 500. Returns the count deleted. Powers the per-camera "Purge now" action alongside `IRecordingService.PurgeAllForCamera`.
 - `INotificationService` (selected)
   - `List(ctx, limit, offset, cameraId, unreadOnly, category, source)` — paginated notification feed
   - `Stats(ctx, from, to, bucketSeconds, tzOffsetSec)` — returns `*notification.Stats`, the aggregated dashboard payload (bucketed counts/breakdowns) over `[from, to]` unix-second window; `bucketSeconds` selects hour/day buckets and `tzOffsetSec` aligns bucket boundaries to the viewer's local clock. Backs `GET /api/notifications/stats`.
@@ -79,6 +80,7 @@ Declares service contracts for app-specific domain.
   - `GetConfig(ctx, cameraId)` — config for one camera; returns nil when none exists
   - `SaveConfig(ctx, req SaveRecordingConfigRequest)` — upsert by camera ID
   - `PurgeOldSegments(ctx)` — removes clips older than `RetentionDays` for each enabled config
+  - `PurgeAllForCamera(ctx, cameraId)` — deletes EVERY recorded segment for one camera regardless of expiry (files + rows), oldest-first in batches of 500. Returns the count deleted. Powers the per-camera "Purge now" action (`POST /api/recording/purge-camera`).
   - `PurgeOldestSegments(ctx, keepAfter, wantBytes)` — deletes the oldest recorded segments across all cameras regardless of per-camera retention, oldest `StartedAt` first, stopping once roughly `wantBytes` have been freed; segments starting at or after `keepAfter` (unix seconds) are never touched. Returns `(deletedCount, bytesFreed, error)`. Backs the machine-health monitor's disk-mitigation "overwrite oldest" mode.
 
 ## Key Request Types

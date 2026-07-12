@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Ico, useT } from '@shared';
+import { Ico, Tabs, useT } from '@shared';
 import { FormBusyOverlay } from './ui';
 import { NodeDashboard } from './node_dashboard';
 import { NodeEmbed } from './node_embed';
@@ -112,20 +112,17 @@ function NodeCameraPage({ node, cameraId, onToast }) {
 
         {cam ? (
           <NodeEmbed className="saved-detail">
-            <nav className="settings-tabs camera-detail-tabs" role="tablist" aria-label={t('cam.detailTabsAria')}>
-              <button type="button" role="tab" aria-selected={camTab === 'liveview'} className={`settings-tab${camTab === 'liveview' ? ' active' : ''}`} onClick={() => setCamTab('liveview')}>
-                <Ico n="video" sz={16} /> <span className="settings-tab-label">{t('cam.detailLive')}</span>
-              </button>
-              <button type="button" role="tab" aria-selected={camTab === 'detection'} className={`settings-tab${camTab === 'detection' ? ' active' : ''}`} onClick={() => setCamTab('detection')}>
-                <Ico n="cpu" sz={16} /> <span className="settings-tab-label">{t('cam.detailDetection')}</span>
-              </button>
-              <button type="button" role="tab" aria-selected={camTab === 'recordings'} className={`settings-tab${camTab === 'recordings' ? ' active' : ''}`} onClick={() => setCamTab('recordings')}>
-                <Ico n="film" sz={16} /> <span className="settings-tab-label">{t('tab.recording')}</span>
-              </button>
-              <button type="button" role="tab" aria-selected={camTab === 'settings'} className={`settings-tab${camTab === 'settings' ? ' active' : ''}`} onClick={() => setCamTab('settings')}>
-                <Ico n="sliders" sz={16} /> <span className="settings-tab-label">{t('cam.detailSettings')}</span>
-              </button>
-            </nav>
+            <Tabs
+              ariaLabel={t('cam.detailTabsAria')}
+              active={camTab}
+              onChange={setCamTab}
+              tabs={[
+                { id: 'liveview', label: t('cam.detailLive'), icon: 'video' },
+                { id: 'detection', label: t('cam.detailDetection'), icon: 'cpu' },
+                { id: 'recordings', label: t('tab.recording'), icon: 'film' },
+                { id: 'settings', label: t('cam.detailSettings'), icon: 'sliders' },
+              ]}
+            />
 
             {camTab === 'detection' ? <NodeDetectionTab node={node} camera={cam} onToast={onToast} /> : null}
             {camTab === 'settings' ? <NodeSettingsTab node={node} camera={cam} onToast={onToast} /> : null}

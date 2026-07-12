@@ -9,6 +9,8 @@ Exposes HTTP endpoints for managing per-camera recording configs, downloading or
 | Method   | Path                                       | Description |
 |----------|--------------------------------------------|-------------|
 | `GET`    | `/api/recording/segments`                  | List recorded clips with optional `cameraId`, `alertId`, `startedAfter`, `startedBefore` query filters and `limit`/`offset` paging. |
+| `POST`   | `/api/recording/segments/purge`            | Purge segments already past each camera's `retentionDays` (the same safe sweep the disk-mitigation job runs automatically). |
+| `POST`   | `/api/recording/purge-camera`              | The per-camera **"Purge now"** action: deletes ALL footage and AI-event snapshots for one camera regardless of expiry (see below). |
 | `DELETE` | `/api/recording/segments/{id}`             | Delete a clip by ID (removes the DB row and the file on disk). |
 | `GET`    | `/api/recording/segments/{id}/download`    | Stream the MP4 file to the browser with `Content-Type: video/mp4`. Accepts `?transcode=h264`: when the segment is stored as HEVC and the request asks for h264 (the player sets this only for browsers that can't decode HEVC), the decrypted stream is transcoded HEVC→H.264 on the fly (fragmented MP4, via the shared NVENC semaphore). Capable browsers and non-HEVC segments stream the stored bytes untouched. Honors `Range` (see below); a `Range` request is required for tunneled playback (`myseliasan`'s `/api/nodes/{id}/recording-stream/{segId}`) since it can only forward bounded chunks. |
 | `GET`    | `/api/recording/segments/{id}/frame`       | Return a small JPEG frame of the segment at `?seek=<seconds>` (see below). |
@@ -100,6 +102,10 @@ concurrent reader never sees a partial file); a later request for the same segme
 reuses the cached file instead of re-decrypting/re-transcoding. `cleanupPlayCache` is run
 (best-effort) on each call and removes cached files whose mtime is older than one hour, so
 the cache is self-pruning with no dedicated sweep job.
+
+### POST /api/recording/purge-camera
+
+Body or query: `cameraId`. The per-camera **"Purge now"** action (Recording tab): unlike the retention sweep, this deletes every recorded segment for the camera regardless of expiry via `recordingService.PurgeAllForCamera`, plus every alert event and its snapshot file for the camera via `visionService.PurgeAlertsForCamera` (injected as `IVisionService` on `recordingApi`). Footage removal is authoritative — its error fails the request — while snapshot removal is best-effort (logged, not fatal) so a snapshot hiccup can't leave the footage half-purged. Returns `{"segments": N, "snapshots": N}`. The UI gates this behind a 5-second cancellable countdown confirmation, mirroring the factory-reset wipe, and refreshes only the Recording tab's own segment list afterward (no full-page reload). Reachable from `myseliasan`'s embedded node camera Recording tab over the node proxy tunnel.
 
 ### GET /api/recording/streams/{cameraId}
 
