@@ -33,6 +33,21 @@
 .node-manage-tabs .active { background: var(--accent-bg, #e6f4ec); color: var(--accent, #2f8f5b); }
 .node-row-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
+/* Wipe is the fiercest row action: bold red font + red outline that fills solid red on hover. */
+.node-wipe-btn {
+  border-color: rgba(220, 38, 38, 0.6);
+  color: #dc2626;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+.node-wipe-btn .btn-icon { color: #dc2626; }
+.node-wipe-btn:hover:not(:disabled) {
+  background: #dc2626;
+  border-color: #b91c1c;
+  color: #fff;
+}
+.node-wipe-btn:hover:not(:disabled) .btn-icon { color: #fff; }
+
 .status-pill.warn { background: rgba(217, 119, 6, 0.15); color: #b45309; }
 
 .node-access-check { flex-direction: row !important; align-items: center; gap: 8px; white-space: nowrap; }
@@ -56,6 +71,10 @@
 .node-cam-grid {
   display: grid; gap: 14px; margin-top: 12px;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+/* A single focused camera gets a wider, prominent tile instead of a lone grid cell. */
+.node-cam-grid--single {
+  grid-template-columns: minmax(0, 640px);
 }
 .node-cam-card {
   margin: 0; border: 1px solid var(--border-soft, #2a3850); border-radius: 10px; overflow: hidden;

@@ -583,7 +583,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	ffmpegInstaller := services.NewFFmpegInstaller(ffmpegBinDir, settingsService)
 	pythonInstaller := services.NewPythonInstaller(deps.DataDir, deps.ConfigPath)
 	apis.NewSettingsApi(protected, settingsService, cameraService, localUserService, notificationSettingsService, healthSettingsService, machineHealthSettingsService, machineHealthMonitor, visionToolSettingsFromAppConfig(deps.Config), ffmpegInstaller, pythonInstaller, deps.Config.Decoder.BrowseRoots)
-	apis.NewRecordingApi(protected, recordingService, recorderManager, cameraService, settingsService, atrestCipher)
+	apis.NewRecordingApi(protected, recordingService, recorderManager, cameraService, settingsService, atrestCipher, visionService)
 	apis.NewObservationApi(protected, observationService)
 	apis.NewNotificationApi(protected, notificationService)
 	apis.NewAnomalyApi(protected, anomalySettingsService, notificationService, cameraService)

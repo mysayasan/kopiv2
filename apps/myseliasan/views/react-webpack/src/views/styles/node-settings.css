@@ -1,0 +1,174 @@
+/* Node Settings dialog (opened from Manage in the Adopted Nodes table): a wide, tabbed modal.
+   The content is wrapped in NodeEmbed (.nodecam-embed), so mymatasan's SCOPED stylesheet
+   supplies the typography (Inter), the settings-panel/tab/table look, and the tokens — making
+   it read exactly like the node's own Settings page. This file only lays out the modal frame
+   and the pieces mymatasan's CSS doesn't provide (the head bar + the read-only info grid). */
+.node-settings-dialog {
+  width: min(940px, 94vw);
+  max-width: 94vw;
+  /* Height follows the content; only cap it at 88vh so a long tab scrolls inside
+     .node-settings-body instead of overflowing the viewport. */
+  max-height: 88vh;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+}
+
+/* The NodeEmbed wrapper becomes the flex column that fills the card: head fixed, body scrolls.
+   It also paints mymatasan's surface colour, so the dialog matches the node app. */
+.node-settings-dialog .node-settings-embed {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.node-settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px 0;
+}
+
+/* Adopt-a-node pop-up: reuses the settings-head chrome; body scrolls, actions pinned. */
+.node-adopt-dialog {
+  width: min(680px, 94vw);
+  max-height: 88vh;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+}
+
+.node-adopt-body {
+  padding: 16px 20px;
+  overflow-y: auto;
+}
+
+.node-adopt-dialog .modal-actions {
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--border-panel);
+  margin: 0;
+}
+
+/* The dialog title must NOT be red — the shared `.modal-card h2` rule (used by the wipe
+   confirmation) colours headings red, so override it here with a normal heading colour. */
+.node-settings-dialog .node-settings-head h2 {
+  margin: 0;
+  font-size: 17px;
+  color: var(--text-primary, #1c2533);
+}
+
+/* The tabs are the shared <Tabs> (.ui-tabs), which owns the standard look + the 16px gap
+   to the content below. Here we only align it horizontally with the dialog header/body
+   (20px inset) and give it a little breathing room below the header. */
+.node-settings-embed .ui-tabs.node-settings-tabs {
+  margin-top: 12px;
+  padding-left: 20px;
+  padding-right: 20px;
+}
+
+.node-settings-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  /* No top padding: the .ui-tabs bar's 16px bottom margin is the standard gap to content. */
+  padding: 0 20px 18px;
+  overflow-y: auto;
+  /* Slim scrollbar (Firefox + WebKit) so the overflow indicator is unobtrusive. */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.55) transparent;
+}
+.node-settings-body::-webkit-scrollbar {
+  width: 8px;
+}
+.node-settings-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+.node-settings-body::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.55);
+  border-radius: 4px;
+}
+.node-settings-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.85);
+}
+
+/* The Details tab embeds myseliasan's own IconDropdown inside the mymatasan-scoped wrapper,
+   whose bare `button { background: var(--accent) }` rule (specificity 0,1,1) out-weighs
+   `.icon-drop-toggle` (0,1,0) and was filling the control with the accent colour — swallowing
+   the glyph. These 2-class selectors win it back so the dropdown reads like the panel's other
+   inputs: a plain surface field with the accent glyph and a hover/active accent border. */
+.node-settings-embed .icon-drop-toggle {
+  min-height: 38px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border-color: var(--border-soft);
+}
+.node-settings-embed .icon-drop-toggle:hover,
+.node-settings-embed .icon-drop-toggle.active {
+  background: var(--bg-surface);
+  border-color: var(--accent);
+}
+.node-settings-embed .icon-drop-current {
+  color: var(--accent);
+}
+/* The open grid's option buttons are also bare <button>s — keep them transparent so each
+   glyph stays visible, with the accent only as a ring/tint on hover + the active choice. */
+.node-settings-embed .icon-drop-item {
+  min-height: 0;
+  background: transparent;
+  color: var(--text-muted);
+  border-color: transparent;
+}
+.node-settings-embed .icon-drop-item:hover {
+  background: transparent;
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+.node-settings-embed .icon-drop-item.active {
+  color: var(--accent);
+  background: var(--accent-bg, rgba(37, 99, 235, 0.12));
+  border-color: var(--accent);
+}
+
+/* Read-only key/value grid used by the Version & Health and Backup tabs (mymatasan has no
+   direct equivalent, so it's defined here; tokens resolve to mymatasan's inside the embed). */
+.node-info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px 20px;
+  margin: 4px 0 0;
+}
+
+.node-info-grid div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.node-info-grid dt {
+  font-size: 12px;
+  color: var(--text-muted, #6b7280);
+}
+
+.node-info-grid dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+/* Host-health "warn" pill (green/red come from mymatasan's scoped .status-pill.online/
+   .offline). The extra `.machine-metrics` in the selector lifts specificity above the
+   embed's base .status-pill rule so the yellow reliably wins. */
+.node-settings-dialog .machine-metrics .status-pill.hh-warn {
+  background: rgba(217, 119, 6, 0.18);
+  color: #b45309;
+}
+@media (prefers-color-scheme: dark) {
+  .node-settings-dialog .machine-metrics .status-pill.hh-warn {
+    background: rgba(234, 179, 8, 0.22);
+    color: #fde68a;
+  }
+}

@@ -13,6 +13,7 @@ Exposes the control-plane node-management HTTP endpoints: fleet-key management, 
 | GET | `/api/nodes` | List all adopted nodes (`ManagedNode` rows). |
 | POST | `/api/nodes/scan` | Discover unpaired nodes on the LAN. Body: `{"timeoutMs": N}` (default 4000). Returns `[]DiscoveredNode` (with `adopted` flag). Returns 400 when no fleet key is set. |
 | POST | `/api/nodes/adopt` | Adopt a node. Body: `AdoptInput` (`nodeId`, `name`, `ip`, `httpsPort`, `claimCode`). Returns the saved `ManagedNode`. Returns 400 on missing fleet key; 409 when the node rejected adoption (already paired). |
+| PUT | `/api/nodes/{id}` | Edit an adopted node's operator-facing fields: `{name, description, icon}`. Identity/trust fields are untouched. Returns the updated `ManagedNode`; 400 on an unknown node or bad body. |
 | POST | `/api/nodes/{id}/release` | Release an adopted node. Calls the node's release endpoint (best-effort) then drops the registry row. |
 | GET | `/api/nodes/fleet-key` | Return `{"fleetKey": "...", "set": bool}`. |
 | POST | `/api/nodes/fleet-key` | Generate (rotate) the fleet key. Returns `{"fleetKey": "...", "set": true}`. |

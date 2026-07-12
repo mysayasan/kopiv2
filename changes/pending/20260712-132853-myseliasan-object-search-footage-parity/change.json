@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "myseliasan",
+  "summary": "myseliasan's fleet-wide Objects > Search page (the cross-node counterpart to mymatasan's Object Search) now renders its footage results exactly like mymatasan's own: a boxed snapshot (detection box + confidence label drawn server-side) with translucent Play and Maximize overlay buttons, a play modal that reliably seeks to the detected moment by re-asserting currentTime on both loadedmetadata and canplay (clamped to clip duration, since a single loadedmetadata-only seek is unreliable on range-streamed footage), a green bounding-box overlay drawn over the video near the sighting moment, and a separate maximize modal for the snapshot alone. Previously the footage cell was a plainer, less complete treatment than mymatasan's; this closes that gap so an operator gets the same result-row experience whether searching one node's footage in mymatasan or the whole fleet's in myseliasan.",
+  "compatibility": "Frontend-only change (apps/myseliasan/views/react-webpack/src/views/components/objects.js); no API or schema changes. Existing installs get the improved footage cell automatically after the next frontend build with no configuration changes."
+}

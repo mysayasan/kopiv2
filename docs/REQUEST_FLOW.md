@@ -25,6 +25,7 @@ Shared JSON response helpers include `durationMs`, measured from request middlew
 
 - `GET /health`: immediate alive response.
 - `GET /ready`: performs DB and cache pings with timeout (`2s`), reports up/down.
+- `GET /api/ready`: same handler, mirrored under `/api` so it is reachable over a reverse control tunnel (e.g. myseliasan's parent→node channel, which only dispatches against the `/api` subrouter) — lets a control plane surface a managed node's readiness in its own UI.
 - `GET /api/version`: returns the selected app SemVer and shared core SemVer from the embedded version manifest.
 
 ## Startup Flow
@@ -78,6 +79,47 @@ This flow is for a browser live-viewing a camera attached to an adopted `mymatas
 9. When the browser disconnects, `Subscription.Close` triggers `relayConnector`'s `stopStream`, which sends `FrameStop` to the node and stops the RTSP subscription.
 
 **Data path summary:** camera → RTSP → mymatasan (RTP) → media channel (binary WebSocket, fleet mTLS) → myseliasan (MediaRelayHub) → WebRTC (pion) → browser.
+
+## Recording Playback over the Control Tunnel Flow (myseliasan → mymatasan)
+
+This flow is for a browser playing/seeking a recorded clip that lives on an adopted node,
+through myseliasan's embedded node camera pages. The control channel that carries tunneled
+commands caps each message at 16 MiB (`infra/control.maxFrameBytes`) and can't itself seek a
+clip end-to-end, so playback is chunked instead of proxied as a single request/response.
+
+1. The embedded Recordings tab (`nodecam/recording.js`, reused unmodified from `mymatasan`)
+   detects it is running inside myseliasan's commander proxy and points the `<video>` `src`
+   at `GET /api/nodes/{id}/recording-stream/{segId}` instead of the node's own
+   `.../download` URL.
+2. `apps/myseliasan/apis/recording_stream.go` authorizes the caller exactly like the command
+   proxy (live role via `INodeAccessService.Resolve`), parses the browser's `Range` header,
+   and caps the requested span to `recordingStreamChunk` (8 MiB) — comfortably under the
+   16 MiB control-channel frame cap.
+3. It builds a tunneled `control.Request` for the node's
+   `GET /api/recording/segments/{segId}/download` with the capped `Range` header (forwarding
+   `?transcode=h264` when the browser can't decode HEVC) and sends it via
+   `ControlSender.SendRequest`.
+4. On the node, `apps/mymatasan/apis/recording.go`'s `downloadSegment` sees the `Range` header
+   and serves it via `http.ServeContent`, which needs a seekable source: a plaintext,
+   non-transcoded segment is opened directly; an encrypted and/or HEVC-transcoded segment is
+   first materialized to a plaintext (optionally H.264) temp copy (`segmentPlayFile`, cached
+   under `os.TempDir()/mymatasan-playcache`, reused on later requests, swept after 1h) so it
+   can be range-served too.
+5. `apps/mymatasan/apis/control_dispatch.go` forwards **all** response headers (not just
+   `Content-Type`) back through the tunnel, so `Content-Range`/`Accept-Ranges`/
+   `Content-Length` survive the round trip.
+6. `recording_stream.go` requires the node to have answered `206 Partial Content`; anything
+   else (an older node without Range support, or a segment that couldn't be made seekable) is
+   surfaced to the browser as a "not streamable over the link" error rather than a full-clip
+   fallback. On success it forwards the relevant headers and writes `206` with the chunk body.
+7. The browser's `<video>` element repeats step 2–6 for each subsequent byte range it needs
+   (playback continuation or a seek), so an arbitrarily large clip is played/sought without
+   any single control-channel message exceeding its cap.
+
+**Data path summary:** browser `<video>` Range request → myseliasan (`recording_stream.go`,
+capped to 8 MiB) → control channel (`control.Request`, fleet mTLS) → mymatasan
+(`downloadSegment`, decrypt/transcode/materialize as needed) → control channel
+(`control.Response`, all headers) → myseliasan (`206 Partial Content`) → browser.
 
 ## Two-Way Audio (Talk-Back) Flow (browser mic → mymatasan → camera)
 

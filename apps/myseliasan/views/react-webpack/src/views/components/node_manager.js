@@ -1,107 +1,222 @@
-import { useEffect, useRef, useState } from 'react';
-import { Ico, useT } from '@shared';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Ico, Tabs, useT } from '@shared';
 import { FormBusyOverlay } from './ui';
-import { api, apiBase, formatTimestamp } from '../lib/helpers';
+import { NodeDashboard } from './node_dashboard';
+import { NodeEmbed } from './node_embed';
+import { NodeDetectionTab } from './node_detection';
+import { NodeSettingsTab } from './node_settings';
+import { NodeRecordingsTab } from './node_recordings';
+import { PTZRing, onvifLocation } from './nodecam/ptz';
+import { installProxyCsrf } from './nodecam/lib/helpers';
+import { addLiveView, removeLiveView, isInLiveViews, subscribeLiveViews } from '../lib/live_views_store';
+import { api, apiBase, csrfToken, formatTimestamp } from '../lib/helpers';
 
-// Tab ids drive both the icon and the localized label (nm.tab<Id>).
-const TABS = [
-  { id: 'cameras', icon: 'camera' },
-  { id: 'events', icon: 'bell' },
-  { id: 'remote', icon: 'send' },
-];
-const tabKey = (id) => `nm.tab${id[0].toUpperCase()}${id.slice(1)}`;
+// The copied camera-page components issue their own raw fetch() writes; teach window.fetch
+// to attach the CSRF token on proxy writes so those pass myseliasan's auth gate. Idempotent.
+installProxyCsrf(csrfToken);
 
-// NodeManager is the per-node commander surface: a live event feed, per-role access
-// management, and a remote console that drives the node's own API over the control
-// tunnel (the node enforces its own authorization on every proxied request).
-export function NodeManager({ node, onToast, onBack }) {
-  const t = useT();
-  const [tab, setTab] = useState('cameras');
-  return (
-    <section className="workspace">
-      <section className="settings-panel span-two">
-        <header>
-          <h2><span className="btn-icon"><Ico n="monitor" /> {node.name || node.nodeId}</span></h2>
-          <div className="settings-header-actions">
-            {node.baseUrl ? (
-              <a className="quiet btn-link" href={node.baseUrl} target="_blank" rel="noreferrer" title={t('nm.openNodeUiTitle')}>
-                <span className="btn-icon"><Ico n="login" /> {t('nm.openNodeUi')}</span>
-              </a>
-            ) : null}
-            <button type="button" className="quiet" onClick={onBack}>
-              <span className="btn-icon"><Ico n="arr-left" /> {t('nm.back')}</span>
-            </button>
-          </div>
-        </header>
-        <p className="settings-hint">
-          {node.baseUrl} · <span className={`status-pill ${node.status === 'online' ? 'online' : 'offline'}`}>{node.status || 'online'}</span>
-        </p>
-        <div className="node-manage-tabs">
-          {TABS.map((tb) => (
-            <button key={tb.id} type="button" className={`quiet${tab === tb.id ? ' active' : ''}`} onClick={() => setTab(tb.id)}>
-              <span className="btn-icon"><Ico n={tb.icon} /> {t(tabKey(tb.id))}</span>
-            </button>
-          ))}
-        </div>
-      </section>
-
-      {tab === 'cameras' ? <NodeCameras node={node} onToast={onToast} /> : null}
-      {tab === 'events' ? <NodeEvents node={node} /> : null}
-      {tab === 'remote' ? <NodeRemote node={node} onToast={onToast} /> : null}
-    </section>
-  );
+// NodeManager mirrors the node's own app inside the control plane: navigation lives
+// entirely in the nav tree (no tabs/back button here), so selecting the node shows its
+// dashboard and selecting a camera shows that camera's page — the same surfaces the
+// operator sees on the node itself, driven over the control tunnel.
+export function NodeManager({ node, onToast, focusCameraId, onClearFocus }) {
+  if (focusCameraId != null) {
+    return <NodeCameraPage node={node} cameraId={focusCameraId} onToast={onToast} />;
+  }
+  return <NodeDashboard node={node} onToast={onToast} />;
 }
 
-// NodeCameras shows full-frame-rate live view of the node's cameras over WebRTC: the
-// node relays each camera's RTP up its media channel and myseliasan re-broadcasts it
-// to the browser (the browser peers only with myseliasan). If WebRTC can't establish,
-// each tile falls back to the low-bandwidth snapshot poll over the command tunnel.
-function NodeCameras({ node, onToast }) {
+// fieldValue mirrors the node app's helper: shows a dash for empty values (but keeps 0).
+const fieldValue = (v) => (v === 0 || v === '0' ? '0' : (v || '—'));
+const healthLabelKey = (status) => {
+  switch ((status || '').toLowerCase()) {
+    case 'online': return 'cam.online';
+    case 'offline': return 'cam.offline';
+    default: return 'cam.unknown';
+  }
+};
+
+// NodeCameraPage mirrors the mymatasan camera node page for a managed node: a persistent
+// live stage (over myseliasan's media relay) plus the camera's details, health, and ONVIF
+// info — read from and written to the node over the control tunnel. Stage 1 of the port;
+// Detection/Settings/Recordings tabs follow.
+function NodeCameraPage({ node, cameraId, onToast }) {
   const t = useT();
-  const [cams, setCams] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const nodeId = node.nodeId;
+  const [cam, setCam] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [iceServers, setIceServers] = useState([]);
+  const [draft, setDraft] = useState({ name: '', description: '' });
+  const [saving, setSaving] = useState(false);
+  const [camTab, setCamTab] = useState('liveview');
 
-  async function load() {
+  const px = useCallback(
+    (path, opts = {}) => api(`/api/nodes/${encodeURIComponent(nodeId)}/proxy${path}`, { noRedirect: true, ...opts }).catch(() => ({ ok: false })),
+    [nodeId],
+  );
+
+  const load = useCallback(async () => {
     setLoading(true);
-    const r = await api(`/api/nodes/${encodeURIComponent(node.nodeId)}/proxy/api/cameras?limit=100`, { noRedirect: true })
-      .catch(() => ({ ok: false }));
+    setError('');
+    const r = await px('/api/cameras?limit=200');
     setLoading(false);
-    if (r.status === 403) { setError(t('nm.noAccess')); setCams([]); return; }
-    if (r.ok) { setError(''); setCams(Array.isArray(r.body) ? r.body : (r.body?.items || [])); }
-    else { setError(r.message || t('nm.failedCameras')); if (onToast) onToast(r.message || t('nm.failedCameras')); }
-  }
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [node.nodeId]);
+    if (!r.ok) { setError(r.status === 404 ? t('nodes.nodeOffline') : t('nm.failedCameras')); return; }
+    const list = Array.isArray(r.body) ? r.body : (r.body?.items || []);
+    const found = list.find((c) => String(c.id) === String(cameraId)) || null;
+    setCam(found);
+    if (found) setDraft({ name: found.name || '', description: found.description || '' });
+  }, [px, cameraId, t]);
+  useEffect(() => { load(); }, [load]);
 
-  // ICE config (STUN/TURN) for cross-network browser↔parent peering; empty on same LAN.
+  // ICE config for the relay-backed live tile (empty on same LAN).
   useEffect(() => {
     api('/api/node-stream/config', { noRedirect: true })
       .then((r) => { if (r.ok && Array.isArray(r.body?.iceServers)) setIceServers(r.body.iceServers); })
       .catch(() => {});
   }, []);
 
+  async function saveDetails(e) {
+    e.preventDefault();
+    if (!cam) return;
+    setSaving(true);
+    const r = await px(`/api/cameras/${cam.id}`, { method: 'PUT', body: JSON.stringify({ name: draft.name, description: draft.description }) });
+    setSaving(false);
+    if (r.ok) { if (onToast) onToast(t('cam.detailsSaved')); load(); }
+    else if (onToast) onToast(t('cam.saveFailed'));
+  }
+
+  const title = cam ? (cam.name || cam.model || cam.host || t('nm.cameraN', { id: cam.id })) : t('nm.cameraN', { id: cameraId });
+  const detailsChanged = cam && (draft.name !== (cam.name || '') || draft.description !== (cam.description || ''));
+  const isOnvif = !!cam?.xAddr;
+
   return (
-    <section className="settings-panel span-two">
-      <header>
-        <h2><span className="btn-icon"><Ico n="camera" /> {t('nm.tabCameras')}</span></h2>
-        <div className="settings-header-actions">
-          <button type="button" className="quiet" onClick={load} disabled={loading}>
-            <span className="btn-icon"><Ico n="reload" /> {t('nm.refresh')}</span>
-          </button>
+    <section className="workspace">
+      {loading ? <FormBusyOverlay busy /> : null}
+      <div className="settings-boxes">
+        <div className="device-title-row">
+          <div>
+            <h3>{title}</h3>
+            <p>{cam?.xAddr || cam?.host || ''}</p>
+          </div>
+          {cam ? (
+            <div className="device-pill-group">
+              <strong className={`status-pill ${(cam.healthStatus || 'unknown').toLowerCase()}`}>{t(healthLabelKey(cam.healthStatus))}</strong>
+              <strong className={`status-pill ${cam.rtspStatus || 'unknown'}`}>{cam.rtspStatus || t('cam.notReady')}</strong>
+            </div>
+          ) : null}
         </div>
-      </header>
-      <p className="settings-hint">{t('nm.camerasHint')}</p>
-      {error ? <p className="settings-hint danger-text">{error}</p> : null}
-      {cams.length === 0 && !error ? (
-        <p className="settings-hint">{t('nm.noCameras')}</p>
-      ) : (
-        <div className="node-cam-grid">
-          {cams.map((c) => (
-            <NodeCameraTile key={c.id} nodeId={node.nodeId} cam={c} iceServers={iceServers} />
-          ))}
+
+        {error ? <p className="settings-hint danger-text">{error}</p> : null}
+        {!cam && !loading && !error ? <p className="settings-hint">{t('nm.noCameras')}</p> : null}
+
+        {cam ? (
+          <NodeEmbed className="saved-detail">
+            <Tabs
+              ariaLabel={t('cam.detailTabsAria')}
+              active={camTab}
+              onChange={setCamTab}
+              tabs={[
+                { id: 'liveview', label: t('cam.detailLive'), icon: 'video' },
+                { id: 'detection', label: t('cam.detailDetection'), icon: 'cpu' },
+                { id: 'recordings', label: t('tab.recording'), icon: 'film' },
+                { id: 'settings', label: t('cam.detailSettings'), icon: 'sliders' },
+              ]}
+            />
+
+            {camTab === 'detection' ? <NodeDetectionTab node={node} camera={cam} onToast={onToast} /> : null}
+            {camTab === 'settings' ? <NodeSettingsTab node={node} camera={cam} onToast={onToast} /> : null}
+            {camTab === 'recordings' ? <NodeRecordingsTab node={node} camera={cam} onToast={onToast} /> : null}
+
+            {camTab === 'liveview' ? (
+              <NodeLiveView node={node} cam={cam} iceServers={iceServers} onToast={onToast} />
+            ) : null}
+          </NodeEmbed>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+// NodeLiveView reproduces the node app's Live View tab (mymatasan CameraLiveView markup:
+// centered stage, PTZ ring overlay, name/status bar, add-to-live-views, info chips) but
+// with the relay-backed video tile and PTZ routed over the control tunnel. "Add to Live
+// Views" targets myseliasan's OWN cross-node wall (not the node's), per the fleet model.
+function NodeLiveView({ node, cam, iceServers, onToast }) {
+  const t = useT();
+  const nodeId = node.nodeId;
+  const [ptzBusy, setPtzBusy] = useState(false);
+  const [inViews, setInViews] = useState(() => isInLiveViews(nodeId, cam.id));
+
+  useEffect(() => subscribeLiveViews(() => setInViews(isInLiveViews(nodeId, cam.id))), [nodeId, cam.id]);
+
+  const px = useCallback(
+    (path, opts = {}) => api(`/api/nodes/${encodeURIComponent(nodeId)}/proxy${path}`, { noRedirect: true, ...opts }).catch(() => ({ ok: false })),
+    [nodeId],
+  );
+
+  async function ptzMove(dir) {
+    setPtzBusy(true);
+    await px(`/api/cameras/${cam.id}/ptz/move`, { method: 'POST', body: JSON.stringify({ direction: dir, speed: 0.35, durationMs: 0 }) });
+    setPtzBusy(false);
+  }
+  function ptzStop() { px(`/api/cameras/${cam.id}/ptz/stop`, { method: 'POST' }); }
+
+  const title = cam.name || cam.model || cam.host || t('nm.cameraN', { id: cam.id });
+  function addToViews() {
+    addLiveView({ nodeId, cameraId: cam.id, name: title, nodeName: node.name || nodeId, ptzSupported: cam.ptzSupported });
+    if (onToast) onToast(t('cam.addToLiveViews'));
+  }
+  function removeFromViews() { removeLiveView(nodeId, cam.id); }
+
+  const status = (cam.healthStatus || '').toLowerCase();
+  const dotState = status === 'online' ? 'online' : status === 'offline' ? 'offline' : 'unknown';
+  const location = onvifLocation(cam.scopes);
+  const info = [
+    [t('cam.manufacturer'), fieldValue(cam.manufacturer)],
+    [t('cam.model'), fieldValue(cam.model)],
+    [t('cam.firmware'), fieldValue(cam.firmwareVersion)],
+    [t('cam.serial'), fieldValue(cam.serialNumber)],
+    ...(location ? [[t('cam.location'), location]] : []),
+    [t('cam.host'), fieldValue(cam.host)],
+    [t('cam.port'), fieldValue(cam.port)],
+    ...(cam.xAddr ? [[t('cam.onvifUri'), cam.xAddr]] : []),
+    [t('cam.lastCheckedLabel'), cam.lastHealthCheckAt ? formatTimestamp(cam.lastHealthCheckAt) : '-'],
+  ];
+
+  return (
+    <section className="camera-live-panel">
+      <div className="camera-live-stage">
+        <div className="camera-live-view">
+          <NodeCameraTile nodeId={nodeId} cam={cam} iceServers={iceServers} />
+          {cam.ptzSupported ? (
+            <div className="ptz-ring-overlay">
+              <PTZRing busy={ptzBusy} size={120} onMove={ptzMove} onStop={ptzStop} />
+            </div>
+          ) : null}
         </div>
-      )}
+        <div className="camera-live-bar">
+          <span className="camera-live-name">
+            <span className={`live-dot ${dotState}`} aria-hidden="true" />
+            <span className="camera-live-name-text">{title}</span>
+          </span>
+          {inViews ? (
+            <button type="button" className="camera-live-add is-remove" onClick={removeFromViews}>
+              <span className="btn-icon"><Ico n="trash" /> {t('cam.removeFromLiveViews')}</span>
+            </button>
+          ) : (
+            <button type="button" className="camera-live-add" onClick={addToViews}>
+              <span className="btn-icon"><Ico n="plus" /> {t('cam.addToLiveViews')}</span>
+            </button>
+          )}
+        </div>
+      </div>
+      {cam.description ? <p className="camera-live-desc">{cam.description}</p> : null}
+      <dl className="camera-live-info">
+        {info.map(([lbl, value]) => (
+          <div key={lbl} className="live-info-chip"><dt>{lbl}</dt><dd>{value}</dd></div>
+        ))}
+      </dl>
     </section>
   );
 }
@@ -109,11 +224,16 @@ function NodeCameras({ node, onToast }) {
 // NodeCameraTile renders one camera: it negotiates a WebRTC stream against myseliasan
 // (which relays the node's RTP) and shows it in a <video>; on any failure it switches
 // to snapshot polling over the command tunnel so the tile always shows something.
-function NodeCameraTile({ nodeId, cam, iceServers }) {
+export function NodeCameraTile({ nodeId, cam, iceServers }) {
   const t = useT();
   const videoRef = useRef(null);
+  const audioRef = useRef(null);
   const [mode, setMode] = useState('connecting'); // connecting | live | snapshot
   const [tick, setTick] = useState(Date.now());
+  // Audio rides a dedicated <audio> element (video stays muted for autoplay); a mute
+  // button controls it, matching mymatasan's live view.
+  const [hasAudio, setHasAudio] = useState(false);
+  const [muted, setMuted] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -121,6 +241,8 @@ function NodeCameraTile({ nodeId, cam, iceServers }) {
     if (typeof RTCPeerConnection === 'undefined') { setMode('snapshot'); return () => {}; }
 
     const fallback = () => { if (!cancelled) setMode('snapshot'); };
+    setHasAudio(false);
+    setMuted(true);
 
     (async () => {
       try {
@@ -128,13 +250,24 @@ function NodeCameraTile({ nodeId, cam, iceServers }) {
         pc.addTransceiver('video', { direction: 'recvonly' });
         pc.addTransceiver('audio', { direction: 'recvonly' });
         pc.ontrack = (event) => {
-          if (cancelled || !videoRef.current) return;
+          if (cancelled) return;
+          if (event.track.kind === 'audio') {
+            // Route audio to its own element so the video can stay muted (autoplay) while
+            // audio is user-toggled independently.
+            if (audioRef.current) {
+              audioRef.current.srcObject = new MediaStream([event.track]);
+              audioRef.current.muted = true; // starts muted; the button unmutes + plays
+            }
+            setHasAudio(true);
+            return;
+          }
+          if (!videoRef.current) return;
           const stream = videoRef.current.srcObject instanceof MediaStream
             ? videoRef.current.srcObject : new MediaStream();
           stream.addTrack(event.track);
           videoRef.current.srcObject = stream;
           videoRef.current.play().catch(() => {});
-          if (event.track.kind === 'video') setMode('live');
+          setMode('live');
         };
         pc.onconnectionstatechange = () => {
           if (cancelled) return;
@@ -163,10 +296,30 @@ function NodeCameraTile({ nodeId, cam, iceServers }) {
           videoRef.current.srcObject = null;
         }
       } catch (_) { /* ignore */ }
+      try {
+        if (audioRef.current && audioRef.current.srcObject) {
+          audioRef.current.srcObject.getTracks().forEach((trk) => trk.stop());
+          audioRef.current.srcObject = null;
+        }
+      } catch (_) { /* ignore */ }
       if (pc) pc.close();
     };
     // eslint-disable-next-line
   }, [nodeId, cam.id]);
+
+  // Mute button: unmuting starts audio playback (a user gesture, so autoplay policies
+  // allow it); muting pauses it.
+  function toggleMute() {
+    setMuted((prev) => {
+      const next = !prev;
+      if (audioRef.current) {
+        audioRef.current.muted = next;
+        if (next) audioRef.current.pause();
+        else audioRef.current.play().catch(() => {});
+      }
+      return next;
+    });
+  }
 
   // Snapshot fallback: refresh the still frame on an interval while in snapshot mode.
   useEffect(() => {
@@ -179,21 +332,29 @@ function NodeCameraTile({ nodeId, cam, iceServers }) {
   const badge = mode === 'live' ? t('nm.badgeLive') : mode === 'snapshot' ? t('nm.badgeSnapshot') : t('nm.badgeConnecting');
   const snapUrl = `${apiBase()}/api/nodes/${encodeURIComponent(nodeId)}/proxy/api/vision/cameras/${cam.id}/frame?t=${tick}`;
 
+  // Mirror mymatasan's LiveViewport markup (`.live-frame` > bare <video>/<img>) so the
+  // scoped `.camera-live-view img/video` rules center and size the footage identically.
   return (
-    <figure className="node-cam-card">
+    <div className="live-frame">
       {mode === 'snapshot' ? (
-        <img
-          className="node-cam-img"
-          src={snapUrl}
-          alt={label}
-          onError={(e) => { e.currentTarget.classList.add('node-cam-img--err'); }}
-          onLoad={(e) => { e.currentTarget.classList.remove('node-cam-img--err'); }}
-        />
+        <img src={snapUrl} alt={label} onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }} onLoad={(e) => { e.currentTarget.style.visibility = 'visible'; }} />
       ) : (
-        <video ref={videoRef} className="node-cam-img" autoPlay playsInline muted />
+        <video ref={videoRef} autoPlay playsInline muted aria-label={label} />
       )}
-      <figcaption className="node-cam-cap">{label} · {badge}</figcaption>
-    </figure>
+      <audio ref={audioRef} playsInline style={{ display: 'none' }} />
+      {hasAudio ? (
+        <button
+          type="button"
+          className="audio-mute-btn"
+          onClick={toggleMute}
+          aria-label={muted ? t('prev.unmute') : t('prev.mute')}
+          title={muted ? t('prev.unmute') : t('prev.mute')}
+        >
+          <Ico n={muted ? 'volume-x' : 'volume-2'} sz={14} />
+        </button>
+      ) : null}
+      <span className="node-live-badge">{badge}</span>
+    </div>
   );
 }
 
@@ -212,146 +373,4 @@ function waitForIceGathering(pc) {
     pc.addEventListener('icegatheringstatechange', done);
     setTimeout(resolve, 3000);
   });
-}
-
-// NodeEvents shows the node's slice of the control plane's unified feed (history via
-// the list endpoint, live via the SSE stream filtered to this node).
-function NodeEvents({ node }) {
-  const t = useT();
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(false);
-
-  async function load() {
-    setLoading(true);
-    const r = await api(`/api/notifications?nodeId=${encodeURIComponent(node.nodeId)}&limit=100`).catch(() => ({ ok: false }));
-    setLoading(false);
-    if (r.ok && r.body) setItems(Array.isArray(r.body.items) ? r.body.items : []);
-  }
-
-  useEffect(() => {
-    load();
-    let es;
-    try {
-      es = new EventSource(`${apiBase()}/api/notifications/stream`, { withCredentials: true });
-      es.addEventListener('notification', (ev) => {
-        try {
-          const n = JSON.parse(ev.data);
-          const nid = n && n.data && n.data.nodeId;
-          if (nid === node.nodeId) setItems((cur) => [n, ...cur].slice(0, 100));
-        } catch (_) { /* ignore malformed frame */ }
-      });
-    } catch (_) { /* SSE unavailable — manual refresh still works */ }
-    return () => { if (es) es.close(); };
-    // eslint-disable-next-line
-  }, [node.nodeId]);
-
-  return (
-    <section className="settings-panel span-two">
-      <header>
-        <h2><span className="btn-icon"><Ico n="bell" /> {t('nm.tabEvents')}</span></h2>
-        <div className="settings-header-actions">
-          <button type="button" className="quiet" onClick={load} disabled={loading}>
-            <span className="btn-icon"><Ico n="reload" /> {t('nm.refresh')}</span>
-          </button>
-        </div>
-      </header>
-      <p className="settings-hint">{t('nm.eventsHint')}</p>
-      {items.length === 0 ? (
-        <p className="settings-hint">{t('nm.noEvents')}</p>
-      ) : (
-        <table className="event-table">
-          <thead><tr><th>{t('nm.colTime')}</th><th>{t('nm.colSeverity')}</th><th>{t('nm.colCategory')}</th><th>{t('nm.colEvent')}</th></tr></thead>
-          <tbody>
-            {items.map((n, i) => (
-              <tr key={n.id || i}>
-                <td>{formatTimestamp(n.createdAt)}</td>
-                <td><span className={`status-pill ${severityClass(n.severity)}`}>{n.severity || 'info'}</span></td>
-                <td>{n.category || '—'}</td>
-                <td><strong>{n.title}</strong>{n.body ? <><br /><span className="settings-hint">{n.body}</span></> : null}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </section>
-  );
-}
-
-function severityClass(sev) {
-  if (sev === 'critical') return 'offline';
-  if (sev === 'warning') return 'warn';
-  return 'online';
-}
-
-// Quick-action presets for the remote console; label localized via tkey.
-const QUICK = [
-  { tkey: 'nm.quickVersion', method: 'GET', path: '/api/version' },
-  { tkey: 'nm.quickRuntime', method: 'GET', path: '/api/settings/runtime' },
-  { tkey: 'nm.quickAiRules', method: 'GET', path: '/api/vision/rules' },
-  { tkey: 'nm.quickNotifications', method: 'GET', path: '/api/notifications' },
-];
-
-// NodeRemote drives the node's own API over the tunnel. The node authorizes each
-// request as if it were local (the operator's grant decides viewer vs admin), so a
-// read-only operator's writes come back 403 here.
-function NodeRemote({ node, onToast }) {
-  const t = useT();
-  const [method, setMethod] = useState('GET');
-  const [path, setPath] = useState('/api/settings/runtime');
-  const [body, setBody] = useState('');
-  const [resp, setResp] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const respRef = useRef(null);
-
-  async function send() {
-    const p = path.trim();
-    if (!p.startsWith('/')) { if (onToast) onToast(t('nm.pathStartSlash')); return; }
-    setBusy(true);
-    const opts = { method, noRedirect: true };
-    if (method !== 'GET' && body.trim()) opts.body = body;
-    const r = await api(`/api/nodes/${encodeURIComponent(node.nodeId)}/proxy${p}`, opts).catch((e) => ({ ok: false, message: String(e) }));
-    setBusy(false);
-    setResp(r);
-    if (respRef.current) respRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  }
-
-  return (
-    <section className="settings-panel span-two">
-      <FormBusyOverlay busy={busy} />
-      <header><h2><span className="btn-icon"><Ico n="send" /> {t('nm.remoteConsole')}</span></h2></header>
-      <p className="settings-hint">{t('nm.remoteHint')}</p>
-      <div className="node-remote-quick">
-        {QUICK.map((q) => (
-          <button key={q.tkey} type="button" className="quiet" onClick={() => { setMethod(q.method); setPath(q.path); setBody(''); }}>
-            {t(q.tkey)}
-          </button>
-        ))}
-      </div>
-      <div className="node-remote-bar">
-        <select value={method} onChange={(e) => setMethod(e.target.value)} disabled={busy}>
-          {['GET', 'POST', 'PUT', 'DELETE'].map((m) => <option key={m} value={m}>{m}</option>)}
-        </select>
-        <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/api/settings/runtime" disabled={busy} />
-        <button type="button" onClick={send} disabled={busy}><span className="btn-icon"><Ico n="send" /> {t('nm.send')}</span></button>
-      </div>
-      {method !== 'GET' ? (
-        <label className="node-remote-body">{t('nm.requestBody')}
-          <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={5} placeholder='{ "key": "value" }' disabled={busy} />
-        </label>
-      ) : null}
-      {resp ? (
-        <div className="node-remote-resp" ref={respRef}>
-          <div className={`status-pill ${resp.ok ? 'online' : 'offline'}`}>HTTP {resp.status || '—'}</div>
-          <pre className="node-remote-pre">{formatResp(resp, t)}</pre>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function formatResp(r, t) {
-  if (r.body !== undefined && r.body !== null) {
-    try { return JSON.stringify(r.body, null, 2); } catch (_) { return String(r.body); }
-  }
-  return r.message || t('nm.emptyResp');
 }

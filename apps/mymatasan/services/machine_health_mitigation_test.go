@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"path/filepath"
 	"sort"
 	"testing"
 	"time"
@@ -112,14 +113,15 @@ func TestPurgeOldestSegmentsHonorsKeepFloor(t *testing.T) {
 }
 
 // fakeRecordingPurger stubs IRecordingService for the monitor tests; only
-// PurgeOldestSegments is implemented.
+// PurgeOldestSegments and ListConfigs are implemented.
 type fakeRecordingPurger struct {
 	IRecordingService
-	deleted   int
-	freed     int64
-	calls     int
-	wantBytes int64
-	keepAfter int64
+	deleted     int
+	freed       int64
+	calls       int
+	wantBytes   int64
+	keepAfter   int64
+	storagePath string
 }
 
 func (f *fakeRecordingPurger) PurgeOldestSegments(_ context.Context, keepAfter int64, wantBytes int64) (int, int64, error) {
@@ -127,6 +129,18 @@ func (f *fakeRecordingPurger) PurgeOldestSegments(_ context.Context, keepAfter i
 	f.keepAfter = keepAfter
 	f.wantBytes = wantBytes
 	return f.deleted, f.freed, nil
+}
+
+// ListConfigs advertises where recordings live so recordingsDisk can map the storage
+// path to a disk metric. The default "." resolves to the working-dir volume, which
+// keeps the single-disk tests platform-independent (it matches the sole disk when they
+// share a volume, else recordingsDisk simply falls back to the global worst — same disk).
+func (f *fakeRecordingPurger) ListConfigs(_ context.Context) ([]*entities.RecordingConfig, error) {
+	sp := f.storagePath
+	if sp == "" {
+		sp = "."
+	}
+	return []*entities.RecordingConfig{{CameraId: 1, Enabled: true, StoragePath: sp}}, nil
 }
 
 func overwriteTestSettings() MachineHealthSettings {
@@ -190,6 +204,33 @@ func TestRunMitigationOverwriteFallsBackToPauseWhenNothingFreed(t *testing.T) {
 	}
 	if !m.recorder.IsPaused() || !m.pausedByUs {
 		t.Fatal("recording must pause when the overwrite could not free anything")
+	}
+}
+
+func TestRunMitigationOverwriteIgnoresFullNonRecordingsDisk(t *testing.T) {
+	// The full volume is an OS/DB disk; recordings live on a different, healthy volume.
+	// Pausing or overwriting footage can never relieve the full disk, so recording must
+	// stay running and no wipe should be attempted (the previous behaviour paused here).
+	recDir := t.TempDir()
+	purger := &fakeRecordingPurger{deleted: 0, freed: 0, storagePath: filepath.Join(recDir, "cam1")}
+	m := &MachineHealthMonitor{
+		recorder:  &recording.Manager{},
+		recording: purger,
+		states:    map[string]*machineMetricState{},
+	}
+	cfg := overwriteTestSettings()
+	metrics := MachineMetrics{Disks: []MachineDiskMetric{
+		{Mountpoint: filepath.Join(recDir, "..", "definitely-not-an-ancestor"), UsedPercent: 98, TotalBytes: 1000 * 1000},
+		{Mountpoint: recDir, UsedPercent: 42, TotalBytes: 1000 * 1000},
+	}}
+
+	m.runMitigation(context.Background(), cfg, metrics)
+
+	if m.recorder.IsPaused() || m.pausedByUs {
+		t.Fatal("recording must not pause when only a non-recordings disk is full")
+	}
+	if purger.calls != 0 {
+		t.Fatalf("overwrite must not run for a non-recordings disk, calls=%d", purger.calls)
 	}
 }
 

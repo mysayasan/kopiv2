@@ -12,8 +12,7 @@ import { DashboardTab } from './components/dashboard';
 import { SetupWizard } from './components/setup';
 import { ViewsTab, CamerasTab } from './components/cameras';
 import { TeachTab } from './components/teach';
-import { CameraObjectSearchPanel } from './components/recording';
-import { ObjectClassesPanel } from './components/vision';
+import { ObjectsPage } from './components/objects';
 import { SettingsTab } from './components/settings';
 import { NotificationsTab } from './components/notifications';
 import { SecureWipeCountdown, ResetProgressOverlay } from './components/securewipe';
@@ -1686,6 +1685,27 @@ function AppInner({ lang, onLangChange }) {
     }
   }
 
+  // purgeCameraNow deletes ALL footage + snapshots for one camera regardless of expiry
+  // (the countdown confirmation is handled in CameraRecordingsPanel before this fires).
+  async function purgeCameraNow(cameraId) {
+    const id = Number(cameraId) || 0;
+    if (id <= 0) return;
+    setBusy(true);
+    setMessage('');
+    try {
+      const result = await request(`/api/recording/purge-camera?cameraId=${id}`, { method: 'POST' });
+      const segments = Number(result?.segments) || 0;
+      const snapshots = Number(result?.snapshots) || 0;
+      // The recordings panel refreshes its own segment list after this resolves;
+      // no full-page reload here so only the results update, not the whole view.
+      setMessage(t('rec.purgeNowDone', { segments, snapshots }));
+    } catch (err) {
+      setMessage(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function checkVisionTool() {
     setBusy(true);
     setMessage('');
@@ -2815,6 +2835,7 @@ function AppInner({ lang, onLangChange }) {
             unacknowledgedAlertIds,
             onDeleteSegment: deleteRecordingSegment,
             onPurgeExpired: purgeExpiredRecordings,
+            onPurgeNow: purgeCameraNow,
             onAcknowledgeAlert: acknowledgeAlert,
             onReload: () => loadRecording(),
           }}
@@ -2832,20 +2853,14 @@ function AppInner({ lang, onLangChange }) {
         />
       ) : null}
 
-      {activeTab === 'objectsearch' ? (
-        <CameraObjectSearchPanel
+      {activeTab === 'objects' ? (
+        <ObjectsPage
           authHeader={authHeader}
           busy={busy}
-          canManage={isAdmin}
-        />
-      ) : null}
-
-      {activeTab === 'objectclasses' ? (
-        <ObjectClassesPanel
+          isAdmin={isAdmin}
           classes={visionClasses}
           labelCatalog={visionLabels}
           activeModelClasses={activeModelClasses}
-          busy={busy}
           onSaveClass={saveVisionClass}
           onDeleteClass={deleteVisionClass}
         />

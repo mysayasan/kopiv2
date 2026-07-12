@@ -2,7 +2,7 @@
 
 ## Purpose
 
-HTTP endpoints for managing per-role node access grants. The node's owning role and superadmins may view or change grants; a new `?roleId=` lens lets superadmins query a role's grants across all nodes for the central RBAC node-access matrix.
+HTTP endpoints for managing per-role node **device** access grants — distinct from the `/api/nodes/*` path matrix, which gates myseliasan's own endpoints. A grant's level is one of two, mirroring mymatasan's own local levels: `viewer` (`canRead`, read-only) or `admin` (`canRead`+`canWrite`, drives the node as its admin). The node's owning role and RBAC superadmins may view or change grants; a `?roleId=` lens lets superadmins query a role's grants across all nodes for the central RBAC node-access matrix.
 
 ## Endpoints
 

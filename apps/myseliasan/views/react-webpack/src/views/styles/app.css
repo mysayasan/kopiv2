@@ -104,6 +104,7 @@
   --ui-border: var(--border-soft);
   --ui-border-strong: var(--border-panel);
   --ui-accent: var(--accent);
+  --ui-accent-soft: var(--accent-bg);
   --ui-success: var(--ok-text);
   --ui-danger: var(--danger);
   --ui-shadow: var(--shadow-panel);
@@ -237,6 +238,11 @@ button:disabled {
 
 .modal-card h2 {
   margin-top: 0;
+}
+
+/* Red headings are only for the danger (wipe/reset) confirmation modal — NOT for every
+   modal. The Node Settings dialog reuses .modal-card and must keep normal heading colours. */
+.modal-card.danger-modal h2 {
   color: #dc2626;
 }
 
@@ -809,6 +815,11 @@ label {
   display: grid;
   gap: 16px;
   padding-top: 18px;
+  /* The page is stretched to fill the column (`.main-workspace > .workspace { flex:1 }`) so
+     the footer anchors to the bottom. Without this, the grid stretches its panels to fill
+     that height and the content floats to the vertical middle — pin rows to the top instead,
+     leaving the extra space (and the footer) below. */
+  align-content: start;
 }
 
 /* When a workspace is embedded inside another (the Cameras → Recording config
@@ -1294,7 +1305,8 @@ label {
 .saved-detail {
   min-width: 0;
   display: grid;
-  gap: 12px;
+  /* gap:0 — the shared <Tabs> bar owns the standard 16px gap to the panel below it. */
+  gap: 0;
 }
 
 .empty-detail h2 {
@@ -1800,8 +1812,10 @@ dd {
 }
 
 .icon-drop-item.active {
-  color: #fff;
-  background: var(--accent);
+  /* A tinted highlight with an accent ring — NOT a solid fill, so the glyph stays clearly
+     visible instead of being engulfed by the accent colour. */
+  color: var(--accent);
+  background: var(--accent-bg);
   border-color: var(--accent);
 }
 

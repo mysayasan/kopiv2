@@ -10,7 +10,7 @@ Implements the commander's reverse-tunnel proxy: forwards any HTTP method sent t
 ANY /api/nodes/{id}/proxy/{node-path...}
 ```
 
-Registered on its own `/nodes` subrouter, matched after `NewNodesApi`'s specific routes so the path catch-all only fires for proxy requests.
+Registered on its own `/nodes` subrouter, matched after `NewNodesApi`'s specific routes and after `NewRecordingStreamApi`'s `/nodes/{id}/recording-stream/{segId}` route (see `recording_stream.go.md`), so the path catch-all only fires for proxy requests.
 
 ## Constructor
 

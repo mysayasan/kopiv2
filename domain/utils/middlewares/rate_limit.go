@@ -104,6 +104,20 @@ func (m *RateLimitMidware) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
+		// myseliasan fans an entire managed node's UI through a few per-node control-plane
+		// paths: the proxy tunnel (dashboard/cameras/settings/notifications), WebRTC live-view
+		// signaling, and range-streamed recording playback (MANY Range requests per clip).
+		// This limiter keys by the matched endpoint path, so all of those collapse into the
+		// single /api/nodes bucket — a normal node session then trips 429 and the node "goes
+		// online but can't load data". These surfaces are authenticated + per-node-access-gated
+		// at their own handlers AND the node enforces its own limits downstream, so they are
+		// exempt from this generic per-path limiter. Node CRUD/adopt/release/wipe/access stay
+		// limited (they don't match here).
+		if r != nil && r.URL != nil && isNodeFanoutPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		accessTier, matchedPath, err := m.resolveAccessTier(r)
 		if err != nil {
 			controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
@@ -139,6 +153,39 @@ func (m *RateLimitMidware) Middleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isNodeFanoutPath reports whether p is one of myseliasan's high-volume per-node data
+// surfaces that fan a whole node's UI through a single control-plane path and so must not
+// be rate-limited as one endpoint (see the exemption in Middleware):
+//   - /api/nodes/{id}/proxy[/...]              the control-tunnel proxy (dashboard/cameras/…)
+//   - /api/nodes/{id}/.../webrtc/...           live-view WebRTC signaling
+//   - /api/nodes/{id}/recording-stream/...     range-streamed recording playback
+//
+// Node CRUD/adopt/release/wipe (/api/nodes, /api/nodes/{id}), grants (/api/nodes/access),
+// enroll, and self-dropped are NOT matched and stay rate-limited. No other app registers
+// these path shapes.
+func isNodeFanoutPath(p string) bool {
+	const prefix = "/api/nodes/"
+	if !strings.HasPrefix(p, prefix) {
+		return false
+	}
+	rest := p[len(prefix):] // "{id}/..." (or just "{id}")
+	slash := strings.IndexByte(rest, '/')
+	if slash < 0 {
+		return false // "/api/nodes/{id}" — node CRUD, stays limited
+	}
+	after := rest[slash:] // "/proxy/...", "/cameras/{cam}/webrtc/offer", "/recording-stream/{seg}", "/access", …
+	switch {
+	case after == "/proxy" || strings.HasPrefix(after, "/proxy/"):
+		return true
+	case strings.HasPrefix(after, "/recording-stream/"):
+		return true
+	case strings.Contains(after, "/webrtc/"):
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *RateLimitMidware) resolveAccessTier(r *http.Request) (apiaccessenums.AccessTier, string, error) {

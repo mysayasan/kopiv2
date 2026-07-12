@@ -3,6 +3,8 @@ package services
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -231,17 +233,31 @@ func (m *MachineHealthMonitor) runMitigation(ctx context.Context, cfg MachineHea
 	pauseAt := float64(cfg.Mitigation.PauseRecordingAtPercent)
 	resumeAt := float64(cfg.Mitigation.ResumePercent)
 
+	// Pausing the recorder or overwriting footage can only relieve the volume the
+	// recordings actually live on — not the global worst disk, which may well be the
+	// OS/DB volume. Basing this last-resort decision on the fullest RECORDINGS disk is
+	// what makes overwrite-oldest actually trim footage (and pause-mode pause for the
+	// right reason) instead of pausing because some unrelated disk is full — the wipe
+	// can never lower that disk, so it would otherwise fall through to Pause(). Falls
+	// back to the global worst when the recordings volume can't be resolved.
+	decDisk := worst
+	if rd, ok := m.recordingsDisk(ctx, metrics); ok {
+		decDisk = rd
+	}
+	decPercent := decDisk.UsedPercent
+	decMount := decDisk.Mountpoint
+
 	m.mu.Lock()
 	var doAct, doResume bool
 	switch {
-	case maxPercent >= pauseAt && !m.pausedByUs:
+	case decPercent >= pauseAt && !m.pausedByUs:
 		m.pauseStreak++
 		m.resumStreak = 0
 		if m.pauseStreak >= cfg.SustainedSamples {
 			m.pauseStreak = 0
 			doAct = true
 		}
-	case m.pausedByUs && maxPercent < resumeAt:
+	case m.pausedByUs && decPercent < resumeAt:
 		m.resumStreak++
 		m.pauseStreak = 0
 		if m.resumStreak >= cfg.RecoverySamples {
@@ -257,38 +273,108 @@ func (m *MachineHealthMonitor) runMitigation(ctx context.Context, cfg MachineHea
 	m.mu.Unlock()
 
 	if doAct {
-		if overwrite && m.overwriteOldestFootage(ctx, cfg, worst) {
+		if overwrite && m.overwriteOldestFootage(ctx, cfg, decDisk) {
 			return
 		}
 		m.mu.Lock()
 		m.pausedByUs = true
 		m.mu.Unlock()
 		m.recorder.Pause()
-		body := fmt.Sprintf("%s reached %.1f%%. NVR recording is paused to protect the system; it resumes automatically below %d%%.", maxMount, maxPercent, cfg.Mitigation.ResumePercent)
+		body := fmt.Sprintf("%s reached %.1f%%. NVR recording is paused to protect the system; it resumes automatically below %d%%.", decMount, decPercent, cfg.Mitigation.ResumePercent)
 		if overwrite {
 			body = fmt.Sprintf("%s reached %.1f%% and overwriting could not free space (all remaining footage is newer than the %d-day keep floor). NVR recording is paused; it resumes automatically below %d%%.",
-				maxMount, maxPercent, cfg.Mitigation.OverwriteMinKeepDays, cfg.Mitigation.ResumePercent)
+				decMount, decPercent, cfg.Mitigation.OverwriteMinKeepDays, cfg.Mitigation.ResumePercent)
 		}
 		m.notify(ctx, notification.Critical, "Recording paused — low disk space", body,
-			map[string]any{"mountpoint": maxMount, "usedPercent": maxPercent, "action": "pause-recording"})
+			map[string]any{"mountpoint": decMount, "usedPercent": decPercent, "action": "pause-recording"})
 	} else if doResume {
 		m.recorder.Resume()
 		m.notify(ctx, notification.Info, "Recording resumed",
-			fmt.Sprintf("%s dropped below %d%% — NVR recording resumed.", maxMount, cfg.Mitigation.ResumePercent),
-			map[string]any{"mountpoint": maxMount, "usedPercent": maxPercent, "action": "resume-recording"})
-	} else if overwrite && stillPaused && maxPercent >= resumeAt {
-		// Paused with overwrite on: keep retrying (throttled) — once footage ages
-		// past the keep floor the wipe frees space and recording resumes.
+			fmt.Sprintf("%s dropped below %d%% — NVR recording resumed.", decMount, cfg.Mitigation.ResumePercent),
+			map[string]any{"mountpoint": decMount, "usedPercent": decPercent, "action": "resume-recording"})
+	} else if overwrite && stillPaused && decPercent >= resumeAt {
+		// Paused with overwrite on: keep retrying (throttled). Once the wipe frees space
+		// — because footage has aged past the keep floor, or the recordings disk is now
+		// the one being evaluated — lift our pause immediately rather than waiting for the
+		// disk to independently fall below the resume threshold.
 		m.mu.Lock()
 		due := time.Since(m.lastWipe) >= machineMitigationMinPurgeGap
 		if due {
 			m.lastWipe = time.Now()
 		}
 		m.mu.Unlock()
-		if due {
-			m.overwriteOldestFootage(ctx, cfg, worst)
+		if due && m.overwriteOldestFootage(ctx, cfg, decDisk) {
+			m.mu.Lock()
+			m.pausedByUs = false
+			m.resumStreak = 0
+			m.mu.Unlock()
+			m.recorder.Resume()
+			m.notify(ctx, notification.Info, "Recording resumed",
+				fmt.Sprintf("%s — freed space by overwriting the oldest footage; NVR recording resumed.", decMount),
+				map[string]any{"mountpoint": decMount, "usedPercent": decPercent, "action": "resume-recording"})
 		}
 	}
+}
+
+// recordingsDisk returns the fullest monitored disk that hosts recording storage, and
+// whether one was resolved. Each camera's configured StoragePath is matched to the disk
+// metric whose mountpoint contains it, so the pause/overwrite last resort targets the
+// volume footage actually occupies rather than the global worst disk (which may be the
+// OS/DB volume that deleting recordings can never relieve). Configs are read live, so a
+// storage-path change applies on the next sample.
+func (m *MachineHealthMonitor) recordingsDisk(ctx context.Context, metrics MachineMetrics) (MachineDiskMetric, bool) {
+	if m.recording == nil || len(metrics.Disks) == 0 {
+		return MachineDiskMetric{}, false
+	}
+	cfgs, err := m.recording.ListConfigs(ctx)
+	if err != nil {
+		return MachineDiskMetric{}, false
+	}
+	recMounts := map[string]bool{}
+	for _, c := range cfgs {
+		if c == nil {
+			continue
+		}
+		p := absClean(c.StoragePath)
+		if p == "" {
+			continue
+		}
+		// The recordings disk is the metric whose mountpoint is the deepest ancestor of
+		// this storage path (longest match wins so nested mounts resolve correctly).
+		best := ""
+		for _, d := range metrics.Disks {
+			if pathHasPrefix(p, d.Mountpoint) && len(d.Mountpoint) > len(best) {
+				best = d.Mountpoint
+			}
+		}
+		if best != "" {
+			recMounts[best] = true
+		}
+	}
+	if len(recMounts) == 0 {
+		return MachineDiskMetric{}, false
+	}
+	var pick MachineDiskMetric
+	found := false
+	for _, d := range metrics.Disks {
+		if recMounts[d.Mountpoint] && (!found || d.UsedPercent > pick.UsedPercent) {
+			pick = d
+			found = true
+		}
+	}
+	return pick, found
+}
+
+// absClean resolves a path to an absolute, cleaned form for mountpoint matching; a blank
+// input stays blank.
+func absClean(p string) string {
+	if strings.TrimSpace(p) == "" {
+		return ""
+	}
+	if a, err := filepath.Abs(p); err == nil {
+		return filepath.Clean(a)
+	}
+	return filepath.Clean(p)
 }
 
 // overwriteOldestFootage deletes the oldest recorded segments (ignoring

@@ -1,0 +1,133 @@
+/* myseliasan's cross-node Live Views wall. The grid, toolbar, and tile chrome are inherited
+   from mymatasan's (scoped) stylesheet because the wall renders inside `.nodecam-embed`
+   (see NodeEmbed), so this file only styles the myseliasan-specific extras: the relay tile's
+   status badge, the per-tile node label, and the cross-node "Add camera" picker. Tokens
+   (--bg-surface, --accent, …) resolve to mymatasan's theme inside `.nodecam-embed`. */
+
+/* The embed wrapper is a plain block; the inner mymatasan `.workspace` supplies padding. */
+.live-views-embed {
+  min-height: 0;
+}
+
+/* Live/Snapshot/Connecting badge on each relay tile (myseliasan-only; the camera page gets
+   its own copy from mymatasan's scoped CSS). */
+.node-live-badge {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  z-index: 3;
+}
+
+/* The node a tile's camera belongs to — a compact chip in the tile header, so one wall of
+   cross-node cameras stays legible about "which node is this". */
+.nodecam-embed .tile-node-name {
+  flex: 0 0 auto;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #e6eefc;
+}
+
+/* Cross-node "Add camera" picker: a node list that lazily reveals each node's cameras. */
+.add-camera-wrap {
+  position: relative;
+}
+
+.add-camera-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  border-color: var(--border-soft);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+}
+
+.add-camera-toggle:hover,
+.add-camera-toggle.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.add-camera-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 260px;
+  max-width: 340px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-panel);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px var(--shadow-panel);
+  z-index: 300;
+  padding: 6px;
+}
+
+.add-camera-empty {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-muted, var(--text-secondary));
+}
+
+.add-camera-node-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--text-secondary);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.add-camera-node-btn:hover,
+.add-camera-node-btn.active {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.add-camera-cams {
+  padding: 2px 0 4px 12px;
+}
+
+.add-camera-cam-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--text-secondary);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+}
+
+.add-camera-cam-btn:hover {
+  background: var(--accent-badge);
+  color: var(--accent);
+}

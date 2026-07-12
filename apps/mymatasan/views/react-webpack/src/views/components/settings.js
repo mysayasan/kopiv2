@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Ico } from './icons';
+import { Tabs } from '@shared/Tabs';
 import { useT } from '@shared/i18n';
 import { FormBusyOverlay, FieldTitle, AccordionList, AccordionItem } from './ui';
 import { ConsoleLog } from './console';
@@ -1504,24 +1505,12 @@ export function SettingsTab({
 
   return (
     <section className="workspace settings-tabbed">
-      <nav className="settings-tabs" role="tablist" aria-label={t('st.settingsAria')}>
-        {SETTINGS_TABS.map((tab) => {
-          const active = settingsNav === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              className={`settings-tab${active ? ' active' : ''}`}
-              onClick={() => onSettingsNav(tab.id)}
-            >
-              <Ico n={tab.icon} sz={16} />
-              <span className="settings-tab-label">{t(tab.labelKey)}</span>
-            </button>
-          );
-        })}
-      </nav>
+      <Tabs
+        ariaLabel={t('st.settingsAria')}
+        active={settingsNav}
+        onChange={onSettingsNav}
+        tabs={SETTINGS_TABS.map((tab) => ({ id: tab.id, label: t(tab.labelKey), icon: tab.icon }))}
+      />
 
       <header className="settings-tab-head">
         <span className="settings-tab-head-icon"><Ico n={activeTab.icon} sz={22} /></span>

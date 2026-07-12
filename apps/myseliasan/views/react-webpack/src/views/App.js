@@ -2,12 +2,22 @@ import { useEffect, useState } from 'react';
 import './styles/app.css';
 import './styles/controlplane.css';
 import './styles/rbac-standard.css';
+import './styles/node-dashboard.css';
+import './styles/live-views.css';
+import './styles/objects.css';
+import './styles/teach.css';
+import './styles/notifications.css';
+import './styles/node-settings.css';
 import { SideNav } from './components/layout';
 import { ToastStack, LangProvider, normalizeLang, useT, LanguageDropdown, AppFooter } from '@shared';
 import { FormBusyOverlay, ThemeDropdown } from './components/ui';
 import { DashboardTab } from './components/dashboard';
 import { NodesTab } from './components/nodes';
-import { UsersPage, RolesPage, RbacPage } from './components/rbac_admin';
+import { LiveViewsPage } from './components/live_views';
+import { ObjectsPage } from './components/objects';
+import { TeachPage } from './components/teach';
+import { NotificationsPage } from './components/notifications';
+import { UsersPage, RolesAccessPage } from './components/rbac_admin';
 import { LoginScreen, ChangePasswordScreen, PendingClearanceScreen } from './components/auth_screens';
 import { api, sessionCanGet, apiBase } from './lib/helpers';
 import { messages as appMessages } from './i18n';
@@ -38,6 +48,39 @@ function AppInner({ lang, onLangChange }) {
   // the tree lists adopted nodes and `managingNodeId` selects which one the page opens.
   const [nodes, setNodes] = useState([]);
   const [managingNodeId, setManagingNodeId] = useState(null);
+  // A focused camera (chosen from the node's camera sub-tree) narrows the node's
+  // Cameras view to that single live tile; null shows every camera on the node.
+  const [managingCameraId, setManagingCameraId] = useState(null);
+  // Consolidated notification feed state: notifUnread drives the side-nav badge; notifVersion
+  // bumps on each SSE arrival so the Notifications page live-reloads its top page.
+  const [notifUnread, setNotifUnread] = useState(0);
+  const [notifVersion, setNotifVersion] = useState(0);
+
+  async function loadNotifUnread() {
+    const r = await api('/api/notifications?unread=true&limit=1&offset=0', { noRedirect: true }).catch(() => ({ ok: false }));
+    if (r.ok) setNotifUnread(Number(r.body?.total || 0));
+  }
+  // Refresh the badge on login, and open one SSE stream that bumps the version + badge on
+  // every new notification (control-plane or node-pushed). EventSource auto-reconnects.
+  useEffect(() => {
+    if (authState !== 'ready') { setNotifUnread(0); return undefined; }
+    loadNotifUnread();
+    if (typeof window.EventSource === 'undefined') return undefined;
+    let source = null;
+    let closed = false;
+    const connect = () => {
+      if (closed) return;
+      try { source = new EventSource(`${apiBase()}/api/notifications/stream`, { withCredentials: true }); }
+      catch (_) { return; }
+      source.addEventListener('notification', () => { setNotifVersion((v) => v + 1); loadNotifUnread(); });
+      source.onerror = () => {
+        if (source && source.readyState === EventSource.CLOSED && !closed) { source.close(); window.setTimeout(connect, 5000); }
+      };
+    };
+    connect();
+    return () => { closed = true; if (source) source.close(); };
+    // eslint-disable-next-line
+  }, [authState]);
 
   async function loadNodes() {
     if (!sessionCanGet(session, '/api/nodes')) { setNodes([]); return; }
@@ -50,14 +93,16 @@ function AppInner({ lang, onLangChange }) {
   }, [authState, session]);
 
   // selectNode drives both nav surfaces: null opens the fleet list/management page,
-  // a nodeId jumps straight to that node's manage view.
-  function selectNode(nodeId) {
+  // a nodeId jumps straight to that node's manage view. An optional cameraId focuses
+  // that node's Cameras tab on a single camera; omitting it shows all cameras.
+  function selectNode(nodeId, cameraId = null) {
     setManagingNodeId(nodeId);
+    setManagingCameraId(cameraId);
     setActiveTab('nodes');
   }
-  // Leaving the Nodes section clears the managed node so returning lands on the list.
+  // Leaving the Nodes section clears the managed node/camera so returning lands on the list.
   function selectTab(id) {
-    if (id !== 'nodes') setManagingNodeId(null);
+    if (id !== 'nodes') { setManagingNodeId(null); setManagingCameraId(null); }
     setActiveTab(id);
   }
 
@@ -103,9 +148,9 @@ function AppInner({ lang, onLangChange }) {
   // Demote to the dashboard if the active tab is no longer permitted (e.g. after a
   // handoff that retired the current stock account, or a role that lost node access).
   const canNodes = sessionCanGet(session, '/api/nodes');
-  const adminTabs = ['users', 'roles', 'rbac'];
+  const adminTabs = ['users', 'roles'];
   if (adminTabs.includes(activeTab) && !session?.isSuperadmin) setActiveTab('dashboard');
-  if (activeTab === 'nodes' && !canNodes) setActiveTab('dashboard');
+  if ((activeTab === 'nodes' || activeTab === 'liveviews' || activeTab === 'objects' || activeTab === 'teach') && !canNodes) setActiveTab('dashboard');
 
   return (
     <div className="app-shell">
@@ -117,7 +162,9 @@ function AppInner({ lang, onLangChange }) {
         session={session}
         nodes={nodes}
         managingNodeId={managingNodeId}
+        managingCameraId={managingCameraId}
         onSelectNode={selectNode}
+        notifUnread={notifUnread}
       />
       <main className="main-workspace">
         <div className="shared-lang-bar">
@@ -132,22 +179,27 @@ function AppInner({ lang, onLangChange }) {
         ) : null}
         <ToastStack toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((t) => t.id !== id))} />
 
-        {activeTab === 'dashboard' ? <DashboardTab session={session} /> : null}
+        {activeTab === 'dashboard' ? <DashboardTab nodes={nodes} /> : null}
+        {activeTab === 'liveviews' && canNodes ? <LiveViewsPage nodes={nodes} /> : null}
+        {activeTab === 'objects' && canNodes ? <ObjectsPage nodes={nodes} onToast={pushToast} /> : null}
+        {activeTab === 'teach' && canNodes ? <TeachPage nodes={nodes} onToast={pushToast} /> : null}
+        {activeTab === 'notifications' ? <NotificationsPage nodes={nodes} refreshSignal={notifVersion} onChanged={loadNotifUnread} /> : null}
         {activeTab === 'nodes' && canNodes ? (
           <NodesTab
             onToast={pushToast}
             nodes={nodes}
             reloadNodes={loadNodes}
             managingNodeId={managingNodeId}
+            managingCameraId={managingCameraId}
             onManage={selectNode}
-            onBack={() => setManagingNodeId(null)}
+            onClearFocus={() => setManagingCameraId(null)}
+            onBack={() => { setManagingNodeId(null); setManagingCameraId(null); }}
           />
         ) : null}
         {activeTab === 'users' && session?.isSuperadmin ? (
           <UsersPage session={session} onToast={pushToast} onSessionChanged={loadSession} />
         ) : null}
-        {activeTab === 'roles' && session?.isSuperadmin ? <RolesPage onToast={pushToast} /> : null}
-        {activeTab === 'rbac' && session?.isSuperadmin ? <RbacPage onToast={pushToast} /> : null}
+        {activeTab === 'roles' && session?.isSuperadmin ? <RolesAccessPage onToast={pushToast} /> : null}
         <AppFooter appName="MySeliaSan" apiBase={apiBase()} />
       </main>
     </div>

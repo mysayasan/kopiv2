@@ -105,3 +105,61 @@ func TestRateLimitUsesLongestEndpointTierMatch(t *testing.T) {
 		}
 	}
 }
+
+func TestIsNodeFanoutPath(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"/api/nodes/abc/proxy", true},
+		{"/api/nodes/abc/proxy/api/cameras", true},
+		{"/api/nodes/12/proxy/api/settings/machine-health/metrics", true},
+		{"/api/nodes/abc/cameras/2/webrtc/offer", true},   // live view signaling
+		{"/api/nodes/abc/recording-stream/99", true},      // recording playback (Range)
+		{"/api/nodes", false},                             // list nodes — still limited
+		{"/api/nodes/abc", false},                         // single node CRUD — still limited
+		{"/api/nodes/abc/access", false},                  // grants — still limited
+		{"/api/nodes/abc/proxying", false},                // not the proxy segment
+		{"/api/nodes/abc/recording-streaming/1", false},   // not the recording-stream segment
+		{"/api/notifications", false},
+		{"/api/nodesX/abc/proxy", false},
+	}
+	for _, c := range cases {
+		if got := isNodeFanoutPath(c.path); got != c.want {
+			t.Errorf("isNodeFanoutPath(%q) = %v, want %v", c.path, got, c.want)
+		}
+	}
+}
+
+func TestRateLimitExemptsNodeFanout(t *testing.T) {
+	// The node fan-out surfaces must never be rate-limited, even when the /api/nodes bucket
+	// would otherwise be exhausted (Requests: 1). Every such call should pass.
+	service := &fakeEndpointTierService{
+		endpoints: []*entities.ApiEndpoint{
+			{Host: "*", Path: "/api/nodes", AccessTier: apiaccessenums.AuthOnly, IsActive: true},
+		},
+	}
+	mid := NewRateLimit(service, cache.NewMemoryStore(time.Minute, time.Minute), nil, RateLimitConfig{
+		Enabled:          true,
+		EndpointCacheTTL: time.Minute,
+		AuthOnly:         RateLimitTierConfig{Enabled: true, Requests: 1, Window: time.Minute},
+	})
+	handler := mid.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	for _, path := range []string{
+		"/api/nodes/abc/proxy/api/cameras",
+		"/api/nodes/abc/recording-stream/1",
+		"/api/nodes/abc/cameras/2/webrtc/offer",
+	} {
+		for i := 0; i < 5; i++ {
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "http://example.com"+path, nil)
+			req.RemoteAddr = "192.0.2.30:1000"
+			handler.ServeHTTP(rr, req)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("%s request %d got %d want %d (fan-out must be exempt)", path, i+1, rr.Code, http.StatusOK)
+			}
+		}
+	}
+}

@@ -48,6 +48,7 @@ func NewNodesApi(router *mux.Router, auth middlewares.AuthMidware, session *midd
 	g.HandleFunc("", h.list).Methods("GET")
 	g.HandleFunc("/scan", h.scan).Methods("POST")
 	g.HandleFunc("/adopt", h.adopt).Methods("POST")
+	g.HandleFunc("/{id}", h.update).Methods("PUT")
 	g.HandleFunc("/fleet-key", h.fleetKey).Methods("GET")
 	g.HandleFunc("/fleet-key", h.generateFleetKey).Methods("POST")
 	g.HandleFunc("/{id}/release", h.release).Methods("POST")
@@ -105,6 +106,31 @@ func (a *nodesApi) adopt(w http.ResponseWriter, r *http.Request) {
 		default:
 			controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		}
+		return
+	}
+	controllers.SendResult(w, node, "succeed")
+}
+
+// update edits an adopted node's operator-facing fields (display name, description, nav
+// icon) — the editable side of what adoption captured. Identity/trust fields are untouched.
+func (a *nodesApi) update(w http.ResponseWriter, r *http.Request) {
+	nodeID := mux.Vars(r)["id"]
+	var body struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Icon        string `json:"icon"`
+	}
+	if err := decodeJSON(w, r, &body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	var updatedBy int64
+	if claims, ok := r.Context().Value(enumauth.Claims).(*models.JwtCustomClaims); ok && claims != nil {
+		updatedBy = claims.Id
+	}
+	node, err := a.registry.UpdateMeta(r.Context(), nodeID, body.Name, body.Description, body.Icon, updatedBy)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
 	}
 	controllers.SendResult(w, node, "succeed")

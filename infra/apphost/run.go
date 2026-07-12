@@ -412,6 +412,10 @@ func runApp(app App) error {
 	api.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 	})
+	// Mirror the root readiness probe under /api so it is reachable over the parent→node
+	// control tunnel (which dispatches against the /api subrouter only). This lets the
+	// control plane surface a node's db/cache/machine/cameras readiness in its UI.
+	api.HandleFunc("/ready", readinessCheckHandler(dbCrud, cacheStore, readyHolder)).Methods("GET")
 
 	var docProvider apidocs.Provider
 	if provider, ok := app.(apidocs.Provider); ok {

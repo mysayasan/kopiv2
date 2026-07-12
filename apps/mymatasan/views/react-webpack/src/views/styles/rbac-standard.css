@@ -723,22 +723,6 @@
 .tone-green { --tone: #138a5b; }
 .tone-amber { --tone: #b45309; }
 
-/* Per-camera detail: a top-level tab strip (Settings | AI) above the selected
-   camera's content. Settings hosts the accordion of property groups; AI hosts the
-   detection-rules panel that used to be the standalone AI module. */
-.camera-detail-tabs {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 16px;
-  border-bottom: 1px solid var(--border-divider);
-  padding-bottom: 10px;
-}
-
-.camera-detail-tabs button {
-  min-height: 38px;
-  font-weight: 700;
-}
-
 /* The embedded per-camera AI surface (rules + alert log), no longer a full page. */
 /* The camera-node tabs (Live View / AI / Recordings / Settings) share one panel shape:
    a title+description header, then the content, with a consistent 16px gap. */
@@ -1712,10 +1696,5 @@ body .toast-stack {
   }
   .pager-controls {
     justify-content: center;
-  }
-
-  /* Per-camera + AI toolbars wrap cleanly. */
-  .camera-detail-tabs {
-    overflow-x: auto;
   }
 }

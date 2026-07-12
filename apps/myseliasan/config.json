@@ -23,7 +23,9 @@
     "enabled": true,
     "multicastAddr": "239.255.90.21:49531",
     "replayWindowSeconds": 30,
-    "mtlsPort": 49532,
+    "mtlsPort": 39532,
+    "controlPort": 39533,
+    "mediaPort": 39534,
     "certTtlHours": 168,
     "renewBeforeHours": 48,
     "heartbeatIntervalSeconds": 60
@@ -60,7 +62,7 @@
     },
     "authOnly": {
       "enabled": true,
-      "requests": 120,
+      "requests": 1200,
       "windowSeconds": 60
     },
     "public": {

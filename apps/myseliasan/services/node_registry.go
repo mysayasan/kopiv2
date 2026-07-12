@@ -76,6 +76,9 @@ type INodeRegistry interface {
 	List(ctx context.Context) ([]*entities.ManagedNode, error)
 	Scan(ctx context.Context, timeout time.Duration) ([]DiscoveredNode, error)
 	Adopt(ctx context.Context, in AdoptInput) (*entities.ManagedNode, error)
+	// UpdateMeta edits an adopted node's operator-facing fields (display name,
+	// description, nav icon). It never touches identity/trust fields.
+	UpdateMeta(ctx context.Context, nodeID, name, description, icon string, updatedBy int64) (*entities.ManagedNode, error)
 	Release(ctx context.Context, nodeID string) error
 	MarkSelfDropped(ctx context.Context, nodeID, nonce string, ts int64, assertion string) error
 	// Enroll signs a node's CSR (token-authenticated) and returns its cert + the CA
@@ -329,6 +332,28 @@ func (s *nodeRegistry) certTTL() time.Duration {
 		return s.cfg.CertTTL
 	}
 	return defaultCertTTL
+}
+
+// UpdateMeta edits an adopted node's operator-facing fields only (name/description/icon).
+func (s *nodeRegistry) UpdateMeta(ctx context.Context, nodeID, name, description, icon string, updatedBy int64) (*entities.ManagedNode, error) {
+	node, err := s.nodes.GetByUnique(ctx, "", "node_id", nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if node == nil {
+		return nil, ErrNodeUnknown
+	}
+	node.Name = strings.TrimSpace(name)
+	node.Description = strings.TrimSpace(description)
+	if i := strings.TrimSpace(icon); i != "" {
+		node.Icon = i
+	}
+	node.UpdatedBy = updatedBy
+	node.UpdatedAt = time.Now().Unix()
+	if _, err := s.nodes.UpdateById(ctx, "", *node); err != nil {
+		return nil, err
+	}
+	return node, nil
 }
 
 func (s *nodeRegistry) Release(ctx context.Context, nodeID string) error {

@@ -16,6 +16,8 @@
   --nav-line: #d5dbe5;
   --nav-fill: rgba(20, 30, 50, 0.05);
   --nav-code: #3a4660;
+  --nav-scroll: rgba(30, 45, 70, 0.26);
+  --nav-scroll-hover: rgba(30, 45, 70, 0.48);
 }
 .theme-dark {
   --nav-bg: linear-gradient(180deg, #161d2b 0%, #0f1622 100%);
@@ -26,6 +28,8 @@
   --nav-line: rgba(255, 255, 255, 0.14);
   --nav-fill: rgba(255, 255, 255, 0.08);
   --nav-code: #d7e2f2;
+  --nav-scroll: rgba(255, 255, 255, 0.20);
+  --nav-scroll-hover: rgba(255, 255, 255, 0.40);
 }
 .theme-contrast {
   --nav-bg: #000000;
@@ -36,6 +40,8 @@
   --nav-line: rgba(255, 255, 255, 0.55);
   --nav-fill: rgba(255, 255, 255, 0.14);
   --nav-code: #ffffff;
+  --nav-scroll: rgba(255, 255, 255, 0.22);
+  --nav-scroll-hover: rgba(255, 255, 255, 0.42);
 }
 
 .boot-screen {
@@ -179,6 +185,46 @@
 .side-nav nav {
   display: grid;
   gap: 18px;
+  /* Take the space left under the brand block and scroll internally when the menu is
+     taller than the viewport, so items never spill out of the nav panel. min-height:0
+     is required for a flex child to be allowed to shrink and scroll. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Slim, overlay-style scrollbar that stays invisible until you interact with the
+     rail, so it never crowds the menu. Theme-aware via the nav palette. Firefox uses
+     the standard properties; WebKit uses the pseudo-elements below. */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.25s ease;
+}
+.side-nav nav:hover,
+.side-nav nav:focus-within {
+  scrollbar-color: var(--nav-scroll) transparent;
+}
+.side-nav nav::-webkit-scrollbar {
+  width: 8px;
+}
+.side-nav nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+.side-nav nav::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+  /* Inset the pill with a transparent border so it reads as a thin floating bar with
+     breathing room on both sides rather than a chunky edge-to-edge block. */
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background-color 0.25s ease;
+}
+.side-nav nav:hover::-webkit-scrollbar-thumb,
+.side-nav nav:focus-within::-webkit-scrollbar-thumb {
+  background-color: var(--nav-scroll);
+}
+.side-nav nav::-webkit-scrollbar-thumb:hover,
+.side-nav nav::-webkit-scrollbar-thumb:active {
+  background-color: var(--nav-scroll-hover);
 }
 
 .nav-group {
@@ -474,6 +520,58 @@
   color: var(--nav-label);
 }
 
+/* Second tree level: each node is itself expandable into its cameras. The node row
+   reuses the caret+main rootrow layout; a narrower caret keeps the deeper indent tidy.
+   Camera leaves (grandchildren) are lighter than node rows and carry no status dot. */
+.nav-subtree {
+  display: flex;
+  flex-direction: column;
+}
+
+.nav-subtree-caret {
+  width: 18px;
+}
+
+.nav-cam-children {
+  margin-left: 18px;
+}
+
+.nav-tree-grandchild {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.nav-tree-grandchild .nav-label {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.nav-cam-ico {
+  width: 26px;
+  color: var(--nav-label);
+}
+/* Cameras show their own liveness dot (green online / red offline), driven by
+   data-status via the shared .nav-tree-ico[data-status] rules above — matching mymatasan. */
+
+/* Clickable "couldn't load — retry" row shown when the node can't be reached. */
+.nav-cam-retry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--nav-label);
+  text-align: left;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.nav-cam-retry:hover {
+  background: var(--nav-hover);
+  color: var(--nav-text);
+}
+
 /* Bottom-of-sidebar actions: theme toggle + log out, styled to sit on the dark bg. */
 .side-nav-foot {
   margin-top: auto;
@@ -539,6 +637,18 @@
 /* The embedded workspace already supplies its own top gap. */
 .main-workspace > .workspace {
   padding-top: 0;
+}
+
+/* Let the active page grow to fill the column so the footer anchors to the bottom
+   (instead of floating right under short content), with a clear gap above it. */
+.main-workspace > .workspace,
+.main-workspace > .page-placeholder {
+  flex: 1 0 auto;
+}
+.main-workspace .shared-footer {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-divider, rgba(128, 128, 128, 0.2));
 }
 
 /* Section tones (sidebar accent + matches myidsan). */
@@ -1107,6 +1217,61 @@
 .menu-access-item input {
   width: 18px;
   min-height: 18px;
+}
+
+/* Friendly, curated access toggles (grant a role by feature, not by raw path). */
+.access-feature-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.access-feature {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-divider);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  cursor: pointer;
+}
+
+.access-feature input {
+  width: 18px;
+  min-height: 18px;
+  margin-top: 1px;
+  flex: 0 0 auto;
+}
+
+.access-feature-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.access-feature-label {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.access-feature-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Advanced (raw path matrix) disclosure. */
+.rbac-advanced {
+  margin-top: 14px;
+}
+
+.rbac-advanced-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
 }
 
 @media (max-width: 1080px) {

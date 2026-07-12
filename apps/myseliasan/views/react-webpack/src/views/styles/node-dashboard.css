@@ -1,0 +1,215 @@
+/* Per-node dashboard — ported from the mymatasan app dashboard so a managed node
+   landing view matches the node itself. Reuses the shared @shared/charts SVG
+   components (themed via the --ui-*/--text-* tokens myseliasan already defines). Only
+   the classes not already in app.css live here (section-title/subtitle and seg-toggle
+   are reused from app.css). */
+
+/* ---- Dashboard layout -------------------------------------------------- */
+.dashboard-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.dashboard-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.dashboard-kpis {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+/* The events-over-time chart spans the full width above the smaller cards. */
+.dashboard-span-2 {
+  grid-column: 1 / -1;
+}
+@media (max-width: 900px) {
+  .dashboard-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dashboard-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Empty-state placeholder (no events yet / load failed). */
+.page-placeholder {
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  min-height: 340px;
+  text-align: center;
+  color: var(--text-muted);
+}
+.page-placeholder h2 {
+  margin: 0;
+  color: var(--text-primary);
+}
+.page-placeholder p {
+  margin: 0;
+  max-width: 420px;
+}
+
+/* Sliding on/off toggle switch (reusable). */
+.switch-row { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.switch { position: relative; display: inline-block; width: 38px; height: 20px; flex-shrink: 0; }
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.switch-slider { position: absolute; inset: 0; background: var(--ui-border-strong, #c7d1dc); border-radius: 999px; transition: background 0.18s ease; }
+.switch-slider::before {
+  content: "";
+  position: absolute;
+  height: 16px;
+  width: 16px;
+  left: 2px;
+  top: 2px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 0.18s ease;
+}
+.switch input:checked + .switch-slider { background: var(--ui-accent, #2d6cdf); }
+.switch input:checked + .switch-slider::before { transform: translateX(18px); }
+.switch input:focus-visible + .switch-slider { outline: 2px solid var(--ui-accent, #2d6cdf); outline-offset: 2px; }
+.switch input:disabled + .switch-slider { opacity: 0.5; cursor: not-allowed; }
+.switch-label { font-size: 13px; color: var(--ui-text, #1f2937); }
+.info-tip { display: inline-flex; align-items: center; color: var(--ui-muted, #64748b); cursor: help; vertical-align: middle; }
+.info-tip:hover, .info-tip:focus { color: var(--ui-accent, #2d6cdf); outline: none; }
+
+/* Anomaly detection card. */
+.anomaly-enable { display: inline-flex; align-items: center; gap: 8px; }
+.anomaly-enable-label { font-size: 13px; font-weight: 600; color: var(--ui-text, #1f2937); }
+.anomaly-body { display: flex; flex-direction: column; gap: 12px; }
+.anomaly-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.anomaly-field { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ui-muted, #64748b); }
+.anomaly-field select { padding: 4px 8px; }
+.anomaly-num { width: 72px; padding: 4px 8px; }
+.anomaly-hint { font-size: 13px; color: var(--ui-muted, #64748b); margin: 0; }
+.anomaly-ok { color: var(--ui-success, #10b981); }
+.anomaly-findings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.anomaly-findings li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--ui-border, #e5e7eb);
+}
+.anomaly-findings li.is-high { border-left: 3px solid var(--ui-danger, #ef4444); }
+.anomaly-findings li.is-low { border-left: 3px solid #d97706; }
+.anomaly-findings li svg { color: var(--ui-muted, #64748b); flex-shrink: 0; }
+.anomaly-f-name { font-weight: 600; color: var(--ui-text, #1f2937); }
+.anomaly-f-desc { color: var(--ui-muted, #64748b); }
+
+/* Camera reliability scorecard. */
+.reliability-table-wrap { width: 100%; overflow-x: auto; }
+.reliability-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.reliability-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ui-muted, #64748b);
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--ui-border, #e5e7eb);
+}
+.reliability-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--ui-border, #eef2f7);
+  color: var(--ui-text, #1f2937);
+  font-variant-numeric: tabular-nums;
+}
+.reliability-table tr:last-child td { border-bottom: none; }
+.reliability-table .rel-name { font-weight: 600; }
+.reliability-table .rel-uptime { font-weight: 600; }
+.reliability-table tr.is-warn .rel-uptime { color: #d97706; }
+.reliability-table tr.is-down .rel-uptime { color: var(--ui-danger, #ef4444); }
+.rel-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.rel-badge-up { color: var(--ui-success, #10b981); background: rgba(16, 185, 129, 0.12); }
+.rel-badge-down { color: var(--ui-danger, #ef4444); background: rgba(239, 68, 68, 0.12); }
+
+/* Noisiest-cameras list. */
+.noise-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.noise-list li {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--ui-border, #eef2f7);
+}
+.noise-list li:last-child { border-bottom: none; }
+.noise-name { font-weight: 600; color: var(--ui-text, #1f2937); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.noise-count { color: var(--ui-muted, #64748b); font-variant-numeric: tabular-nums; }
+.noise-unread {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ui-muted, #64748b);
+  min-width: 72px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.noise-unread.is-high { color: #d97706; }
+
+/* Slim per-node tab strip (replaces the old header panel; navigation is the nav tree). */
+.node-manage-tabs--bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.node-manage-tabs--bar .node-manage-open {
+  margin-left: auto;
+}
+
+/* Per-section "feature unavailable on this node version" notice. */
+.node-feature-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border-divider, rgba(128, 128, 128, 0.25));
+  background: var(--bg-subtle, rgba(128, 128, 128, 0.06));
+  color: var(--text-muted, #64748b);
+  font-size: 13px;
+}
+.node-feature-banner svg {
+  flex: 0 0 auto;
+}
+
+/* Camera-page tab bar (Overview / Detection / …). */
+.node-manage-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.node-cam-tabs {
+  margin: 4px 0 12px;
+}
