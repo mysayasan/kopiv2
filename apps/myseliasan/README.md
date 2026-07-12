@@ -70,6 +70,14 @@ The trail is read-only over `GET /api/audit?limit=&offset=&action=&targetType=&t
 
 `myseliasan` is its own on-prem certificate authority (ECDSA P-256, 10-year root). The CA key is stored in the local `ControlSetting` table (`pairing.caCert`/`pairing.caKey`) and is never transmitted off-prem. Node private keys are generated on the node and never sent to the control plane — only a CSR crosses the wire. Revocation is "refuse to renew + short TTL" (no CRL/OCSP). The `ManagedNode.Fingerprint` field is reserved for future use; identity is currently verified through the certificate CN.
 
+### Fleet secret encryption at rest
+
+The CA private key (`pairing.caKey`), the control plane's own parent leaf private key (`pairing.parentKey`), and the fleet PSK (`pairing.fleetKey`) previously sat in **plaintext** in the control-plane database — anyone who could read that DB could impersonate the fleet CA or the shared secret. These three values are now encrypted at rest (AES-256-GCM, the same reusable `infra/atrest` module mymatasan uses for its recordings/snapshots/training images) whenever encryption at rest is enabled. Public certificates and the revocation list are not secrets and remain plaintext.
+
+- **Config**: this reuses the exact same `security` block mymatasan documents (`security.encryptAtRest`, `keyPath`, `keyProtector`, `passphrase`/`passphraseFile`/`passphraseEnv`, `recoveryPath` — see the root `README.md` and `docs/TECHNICAL_SPEC.md` "Security Model"); it is not a myseliasan-specific config surface. `encryptAtRest` defaults to **true**, and `keyPath` defaults to `<dataDir>/secret/atrest.key` (myseliasan's own data dir, so its key is independent of mymatasan's).
+- **No migration needed**: a legacy plaintext value written before encryption was enabled is read back transparently — enabling the feature (or upgrading to a build that has it) requires no data migration or manual re-encryption step.
+- **Fail-closed recovery**: unlike mymatasan (which falls back to a public recovery gate page), myseliasan has no equivalent gate for the control plane — if the key existed before but is missing at startup, `myseliasan` **refuses to boot** rather than mint a new key, since a replacement key would silently orphan the encrypted CA key/PSK and reset the whole fleet's trust (every node would need re-enrollment). Restore the key file or configure `security.recoveryPath`, then restart.
+
 ## Frontend
 
 The UI is a React/webpack SPA under `apps/myseliasan/views/react-webpack/`, built into `apps/myseliasan/static/` (content-hashed bundles), mirroring `mymatasan`'s frontend architecture. Myseliasan-only styling lives in `styles/app.css` and the shared RBAC-standard rail in `styles/rbac-standard.css`. Build with `npm install && npm run build` in that directory.

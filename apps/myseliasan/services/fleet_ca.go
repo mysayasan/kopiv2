@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mysayasan/kopiv2/apps/myseliasan/entities"
+	"github.com/mysayasan/kopiv2/infra/atrest"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/fleetca"
 )
@@ -34,16 +35,19 @@ type fleetCA struct {
 	settings dbsql.IGenericRepo[entities.ControlSetting]
 	parentID string
 	certTTL  time.Duration
+	// secretCipher, when set, encrypts the CA + parent PRIVATE keys at rest in the DB
+	// (public certs and the revoked list stay plaintext). Nil = plaintext (encryption off).
+	secretCipher *atrest.Cipher
 
 	mu sync.Mutex
 	ca *fleetca.CA
 }
 
-func newFleetCA(settings dbsql.IGenericRepo[entities.ControlSetting], parentID string, certTTL time.Duration) *fleetCA {
+func newFleetCA(settings dbsql.IGenericRepo[entities.ControlSetting], parentID string, certTTL time.Duration, secretCipher *atrest.Cipher) *fleetCA {
 	if certTTL <= 0 {
 		certTTL = defaultCertTTL
 	}
-	return &fleetCA{settings: settings, parentID: parentID, certTTL: certTTL}
+	return &fleetCA{settings: settings, parentID: parentID, certTTL: certTTL, secretCipher: secretCipher}
 }
 
 // ensure loads the CA from storage or creates and persists a new one.
@@ -54,7 +58,7 @@ func (f *fleetCA) ensure(ctx context.Context) (*fleetca.CA, error) {
 		return f.ca, nil
 	}
 	certPEM, _ := f.read(ctx, caCertKey)
-	keyPEM, _ := f.read(ctx, caKeyKey)
+	keyPEM, _ := f.readSecret(ctx, caKeyKey)
 	if certPEM != "" && keyPEM != "" {
 		ca, err := fleetca.LoadCA([]byte(certPEM), []byte(keyPEM))
 		if err == nil {
@@ -70,7 +74,7 @@ func (f *fleetCA) ensure(ctx context.Context) (*fleetca.CA, error) {
 	if err := f.write(ctx, caCertKey, string(ca.CertPEM())); err != nil {
 		return nil, err
 	}
-	if err := f.write(ctx, caKeyKey, string(ca.KeyPEM())); err != nil {
+	if err := f.writeSecret(ctx, caKeyKey, string(ca.KeyPEM())); err != nil {
 		return nil, err
 	}
 	f.ca = ca
@@ -138,7 +142,7 @@ func (f *fleetCA) ParentServerTLS(ctx context.Context) (*tls.Config, error) {
 
 func (f *fleetCA) parentCert(ctx context.Context, ca *fleetca.CA) (certPEM, keyPEM []byte, err error) {
 	cert, _ := f.read(ctx, parentCertKey)
-	key, _ := f.read(ctx, parentKeyKey)
+	key, _ := f.readSecret(ctx, parentKeyKey)
 	if cert != "" && key != "" && !certNearExpiry([]byte(cert), parentRenewAt) {
 		return []byte(cert), []byte(key), nil
 	}
@@ -147,7 +151,7 @@ func (f *fleetCA) parentCert(ctx context.Context, ca *fleetca.CA) (certPEM, keyP
 		return nil, nil, err
 	}
 	_ = f.write(ctx, parentCertKey, string(c))
-	_ = f.write(ctx, parentKeyKey, string(k))
+	_ = f.writeSecret(ctx, parentKeyKey, string(k))
 	return c, k, nil
 }
 
@@ -202,6 +206,25 @@ func (f *fleetCA) writeRevoked(ctx context.Context, set map[string]bool) error {
 	}
 	payload, _ := json.Marshal(list)
 	return f.write(ctx, revokedKey, string(payload))
+}
+
+// readSecret reads a setting and decrypts it if it was stored encrypted (transparently
+// passing through legacy plaintext).
+func (f *fleetCA) readSecret(ctx context.Context, key string) (string, error) {
+	v, err := f.read(ctx, key)
+	if err != nil {
+		return "", err
+	}
+	return decodeSecret(f.secretCipher, v), nil
+}
+
+// writeSecret encrypts a value at rest (when a cipher is configured) before storing it.
+func (f *fleetCA) writeSecret(ctx context.Context, key, value string) error {
+	enc, err := encodeSecret(f.secretCipher, value)
+	if err != nil {
+		return err
+	}
+	return f.write(ctx, key, enc)
 }
 
 func (f *fleetCA) read(ctx context.Context, key string) (string, error) {

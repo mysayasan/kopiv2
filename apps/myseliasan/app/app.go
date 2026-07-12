@@ -18,6 +18,7 @@ import (
 	"github.com/mysayasan/kopiv2/domain/notification"
 	"github.com/mysayasan/kopiv2/infra/apidocs"
 	"github.com/mysayasan/kopiv2/infra/apphost"
+	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/db/bootstrap"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/mediarelay"
@@ -158,6 +159,18 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	if hbInterval <= 0 {
 		hbInterval = 60 * time.Second
 	}
+
+	// Encryption at rest for FLEET SECRETS. The fleet mTLS CA private key and the fleet
+	// PSK live in the control-plane database; without this, anyone who can read the DB
+	// owns the whole fleet's trust. When enabled (default), those secret settings are
+	// AES-256-GCM encrypted (infra/atrest) with a master key stored OUTSIDE the DB.
+	// Reads transparently pass through legacy plaintext, so enabling it needs no
+	// migration; public certs and the revocation list stay plaintext.
+	secretCipher, secErr := openFleetSecretCipher(deps)
+	if secErr != nil {
+		return nil, secErr
+	}
+
 	registry := services.NewNodeRegistry(deps.Db, services.NodeRegistryConfig{
 		MulticastAddr:     p.MulticastAddr,
 		ParentID:          parentID,
@@ -169,6 +182,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		// Warn when a still-valid node cert is within its renewal window of expiring:
 		// at that point automatic re-enrollment is overdue, so the operator should know.
 		CertWarnBefore: time.Duration(p.RenewBeforeHours) * time.Hour,
+		SecretCipher:   secretCipher,
 	})
 	apis.NewNodesApi(api, *deps.Auth, controlSession, registry, auditService)
 
@@ -428,6 +442,49 @@ func publishFleetEvent(svc *notification.Service, e services.FleetEvent) {
 			Data:     data,
 		})
 	}
+}
+
+// openFleetSecretCipher resolves the at-rest master key for fleet secrets, mirroring
+// mymatasan's encryption-at-rest boot (infra/atrest). Returns nil (no encryption) when
+// the feature is disabled. When a key that existed here before is now missing it FAILS
+// CLOSED — refusing to boot rather than minting a new key and silently orphaning the
+// encrypted CA key/PSK (which would reset the whole fleet's trust); restore the key
+// file or configure security.recoveryPath and restart.
+func openFleetSecretCipher(deps apphost.Dependencies) (*atrest.Cipher, error) {
+	if !boolValue(deps.Config.Security.EncryptAtRest, true) {
+		return nil, nil
+	}
+	keyPath := strings.TrimSpace(deps.Config.Security.KeyPath)
+	if keyPath == "" {
+		keyPath, _ = filepath.Abs(apphost.ResolveWritablePath(deps.DataDir, filepath.Join("secret", "atrest.key")))
+	}
+	recoveryPath := strings.TrimSpace(deps.Config.Security.RecoveryPath)
+	if recoveryPath == "" {
+		recoveryPath = filepath.Join(filepath.Dir(keyPath), "recovery.atrestkey")
+	}
+	protectorCfg := atrest.ProtectorConfig{
+		Name:           deps.Config.Security.KeyProtector,
+		Passphrase:     deps.Config.Security.Passphrase,
+		PassphraseFile: deps.Config.Security.PassphraseFile,
+		PassphraseEnv:  deps.Config.Security.PassphraseEnv,
+	}
+	outcome, err := atrest.OpenForStartup(keyPath, recoveryPath, protectorCfg)
+	if err != nil {
+		return nil, fmt.Errorf("fleet-secret encryption key: %w", err)
+	}
+	if outcome.Mode == atrest.ModeRecoveryPending {
+		return nil, fmt.Errorf("fleet-secret encryption key missing (id %s): restore %s or set security.recoveryPath, then restart — refusing to reset fleet trust", outcome.KeyId, keyPath)
+	}
+	deps.Logger.Infof("myseliasan.security", "fleet-secret encryption enabled (key %s, mode %s, id %s)", keyPath, outcome.Mode, outcome.KeyId)
+	return outcome.KeyStore.Cipher(), nil
+}
+
+// boolValue dereferences an optional bool config flag, using fallback when unset.
+func boolValue(value *bool, fallback bool) bool {
+	if value == nil {
+		return fallback
+	}
+	return *value
 }
 
 // humanizeHours renders an hour count as a compact "Nd Mh" / "Nh" string.

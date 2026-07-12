@@ -18,10 +18,11 @@ Implements `INodeRegistry`, the control-plane service for fleet-key management, 
 | `CertTTL` | Lifetime of issued node certificates (default 7 days). |
 | `HeartbeatInterval` | Interval for the background heartbeat loop (managed by app.go, not the registry itself). |
 | `CertWarnBefore` | How far ahead of a node certificate's expiry `Heartbeat` raises a fleet-health warning via the event sink — a still-valid cert this close to expiry means automatic re-enrollment is overdue or failing. `0` defaults to 7 days. `app.go` wires this from `pairing.renewBeforeHours` (previously read only by the node side). |
+| `SecretCipher` | `*atrest.Cipher` used to encrypt the fleet PSK and (passed through to the internal `fleetCA`) the CA/parent private keys at rest. `nil` = plaintext (encryption disabled). `app.go` resolves this once via `openFleetSecretCipher` before constructing the registry — see `app.go.md` and `secret_store.go.md`. |
 
 ## Responsibilities
 
-- `FleetKey` / `SetFleetKey` / `GenerateFleetKey` — read, set (minimum 16 chars), or generate (32-byte CSPRNG, base64 raw-URL) the shared HMAC fleet key, persisted in `ControlSetting` under `pairing.fleetKey`.
+- `FleetKey` / `SetFleetKey` / `GenerateFleetKey` — read, set (minimum 16 chars), or generate (32-byte CSPRNG, base64 raw-URL) the shared HMAC fleet key, persisted in `ControlSetting` under `pairing.fleetKey`. The PSK is stored and read as a secret: `SetFleetKey`/`GenerateFleetKey` write it through `upsertFleetKey` (encrypts via `cfg.SecretCipher` when configured, see "Encryption at rest" below), and `FleetKey` decrypts it via `decodeSecret` on read (transparently passing through legacy plaintext).
 - `List` — return all adopted `ManagedNode` rows (up to 1000).
 - `FleetStatus(ctx)` — rolls up liveness (`Total`/`Online`/`Lost`/`SelfDropped`/`Unknown`, by `ManagedNode.Status`) and certificate health (`CertsExpiring` — valid but within the warn window, `CertsExpired`, and `CertWarnDays`, the warn window in whole days) across all adopted nodes. Backs `GET /api/nodes/fleet-status` for the dashboard's "certs expiring" KPI.
 - `UpdateMeta(ctx, nodeID, name, description, icon, updatedBy)` — edit an adopted node's operator-facing fields (display name, description, nav icon) after adoption; looks up the node by `NodeId`, trims and applies the fields (an empty icon leaves the existing one), stamps `UpdatedBy`/`UpdatedAt`, and persists. Never touches identity/trust fields. Returns `ErrNodeUnknown` for an unrecognized node ID.
@@ -42,6 +43,10 @@ The registry no longer just tracks liveness passively — it edge-triggers notif
 - Both liveness events are strictly edge-triggered: a node that stays lost across sweeps is not re-notified (the write and the event are both skipped once already `"lost"`), and a node that stays online never fires `FleetEventNodeRecovered` (only the lost→online transition does).
 - `checkCertExpiry(node, now)` dedups per-node via `certWarned` (`nodeID → last-warned CertExpiresAt`): a renewal that pushes the expiry out re-arms the warning for the next approach; a node whose cert is healthy and outside the window has its dedup entry cleared so a later approach can warn again. It never writes the node record — the expiry was persisted at enrollment.
 - `FleetEvent` carries `Kind`, `Node` (the affected `*entities.ManagedNode`), and — for cert events only — `ExpiresAt` (unix) and `HoursLeft` (whole hours until expiry, negative if already expired).
+
+## Encryption at rest
+
+The fleet PSK (`pairing.fleetKey`) and, via the embedded `fleetCA`, the CA and parent-leaf private keys (`pairing.caKey` / `pairing.parentKey`) are the control plane's most sensitive secrets — anyone who can read them from the `ControlSetting` table can impersonate the fleet or mint trusted node certificates. When `NodeRegistryConfig.SecretCipher` is set (resolved once at startup in `app.go` via `openFleetSecretCipher`, from the shared `security` config block, default on), these values are AES-256-GCM encrypted at rest (`infra/atrest`, see `services/secret_store.go.md`). `SecretCipher` nil = plaintext, unchanged from before this feature. Legacy plaintext rows (written before encryption was enabled) are read transparently, so enabling the feature on an existing installation needs no migration. Public certs and the revocation list are unaffected and stay plaintext.
 
 ## HTTP Clients
 

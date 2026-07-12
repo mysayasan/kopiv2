@@ -26,6 +26,7 @@ Reusable **encryption-at-rest** module that makes the Secure Wipe & Reset's wipe
 - **Recordings** (`infra/recording`): `remuxSegment` encrypts the finished `.mp4` in place (size accounted as ciphertext); `extractClip` decrypts segments to temp for the ffmpeg concat and encrypts the output; download serves via `MaybeDecryptingReader` (omits Content-Length when encryption is on). The live `.ts` and in-progress remux are briefly plaintext (covered by delete + TRIM during a wipe).
 - **Snapshots / alert images**: vision monitor encrypts on save; the snapshot API decrypts on read; alert *notifications* use the in-memory frame (no disk read).
 - **Training images**: dataset images are encrypted on store and decrypted for serving/auto-label/export. **Model `.pt` weights stay plaintext** (the Python worker reads them directly); exports write plaintext for the trainer.
+- **myseliasan fleet secrets** (`apps/myseliasan/services/secret_store.go`): the fleet mTLS CA private key, the parent leaf private key, and the fleet PSK — otherwise plaintext `ControlSetting` rows in the control-plane DB — are `EncryptBytes`/`DecryptBytes`-wrapped (base64, since the storage column is TEXT) via `encodeSecret`/`decodeSecret`. Public certs and the revocation list stay plaintext. Resolved via the same `security` config block and `OpenForStartup` boot sequence as mymatasan's media encryption, but as a separate cipher instance scoped to myseliasan's own data dir/key. See `docs/modules/apps/myseliasan/services/secret_store.go.md`.
 
 ## Notes
 

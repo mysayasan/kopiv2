@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mysayasan/kopiv2/apps/myseliasan/entities"
+	"github.com/mysayasan/kopiv2/infra/atrest"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/fleetca"
 	"github.com/mysayasan/kopiv2/infra/pairing"
@@ -120,6 +121,9 @@ type NodeRegistryConfig struct {
 	// raises a fleet-health warning (a still-valid cert this close to expiry means
 	// the node's automatic re-enrollment is overdue or failing). 0 = default (7d).
 	CertWarnBefore time.Duration
+	// SecretCipher, when set, encrypts the fleet PSK and the fleet CA private keys at
+	// rest in the control-plane DB. Nil = plaintext (encryption disabled).
+	SecretCipher *atrest.Cipher
 }
 
 // FleetEventKind classifies a fleet-health transition the registry detects while
@@ -173,6 +177,7 @@ type nodeRegistry struct {
 	ca            *fleetCA
 	cfg           NodeRegistryConfig
 	parentBaseURL string
+	secretCipher  *atrest.Cipher
 	bootstrapHTTP *http.Client
 
 	presenceMu sync.RWMutex
@@ -211,9 +216,10 @@ func newNodeRegistry(
 	return &nodeRegistry{
 		nodes:         nodes,
 		settings:      settings,
-		ca:            newFleetCA(settings, cfg.ParentID, cfg.CertTTL),
+		ca:            newFleetCA(settings, cfg.ParentID, cfg.CertTTL, cfg.SecretCipher),
 		cfg:           cfg,
 		parentBaseURL: strings.TrimRight(cfg.ParentBaseURL, "/"),
+		secretCipher:  cfg.SecretCipher,
 		certWarned:    map[string]int64{},
 		bootstrapHTTP: &http.Client{
 			Timeout:   adoptCallTimeout,
@@ -233,7 +239,8 @@ func (s *nodeRegistry) FleetKey(ctx context.Context) (string, error) {
 	if row == nil {
 		return "", nil
 	}
-	return row.Value, nil
+	// The PSK is a secret stored encrypted at rest (legacy plaintext passes through).
+	return decodeSecret(s.secretCipher, row.Value), nil
 }
 
 func (s *nodeRegistry) SetFleetKey(ctx context.Context, key string) error {
@@ -241,7 +248,7 @@ func (s *nodeRegistry) SetFleetKey(ctx context.Context, key string) error {
 	if len(key) < 16 {
 		return fmt.Errorf("fleet key must be at least 16 characters")
 	}
-	return s.upsertSetting(ctx, fleetKeySettingKey, key)
+	return s.upsertFleetKey(ctx, key)
 }
 
 func (s *nodeRegistry) GenerateFleetKey(ctx context.Context) (string, error) {
@@ -250,10 +257,19 @@ func (s *nodeRegistry) GenerateFleetKey(ctx context.Context) (string, error) {
 		return "", err
 	}
 	key := base64.RawURLEncoding.EncodeToString(b)
-	if err := s.upsertSetting(ctx, fleetKeySettingKey, key); err != nil {
+	if err := s.upsertFleetKey(ctx, key); err != nil {
 		return "", err
 	}
 	return key, nil
+}
+
+// upsertFleetKey stores the fleet PSK, encrypting it at rest when a cipher is configured.
+func (s *nodeRegistry) upsertFleetKey(ctx context.Context, key string) error {
+	stored, err := encodeSecret(s.secretCipher, key)
+	if err != nil {
+		return err
+	}
+	return s.upsertSetting(ctx, fleetKeySettingKey, stored)
 }
 
 func (s *nodeRegistry) List(ctx context.Context) ([]*entities.ManagedNode, error) {
