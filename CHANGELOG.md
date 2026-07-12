@@ -30,6 +30,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-12 — mymatasan 1.94.0 (26b8f4e)
+
+### Changed
+
+- **mymatasan**: The YOLO worker's stock+custom detection merge (_merge in ai/yolo_worker.py) now gives a taught (custom) model priority over the stock model where it fires: custom detections are kept first, then any stock detection whose box overlaps a kept custom detection (IoU > 0.55) is dropped regardless of label, so e.g. a stock "dog" and custom "cat" on the same animal collapse to one "cat" detection instead of both. Stock detections outside a custom detection's footprint are untouched, so activating a skill still adds its classes elsewhere in the frame rather than blinding stock detection. Because _merge output feeds the whole detection pipeline (not just the Object Search metadata siphon), this also changes AI alert-rule evaluation: a rule targeting a stock class will no longer fire on an object the active taught model has relabeled to a different class.
 ## 2026-07-12 — mymatasan 1.93.1, myseliasan 1.15.0, core 1.53.3 (e4ac91b)
 
 ### Added
