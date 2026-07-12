@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mysayasan/kopiv2/infra/control"
@@ -49,6 +50,8 @@ type ControlServer struct {
 	port     int
 	onEvent  NodeEventHandler
 	logf     func(string, ...any)
+
+	running atomic.Bool // true while the control listener's serve loop is active
 
 	mu    sync.Mutex
 	conns map[string]*control.Conn // nodeID -> current live connection
@@ -176,9 +179,24 @@ func (cs *ControlServer) Run(ctx context.Context) {
 	}
 	srv := control.NewServer(fmt.Sprintf(":%d", cs.port), tlsCfg, cs.handleConn, cs.logf)
 	cs.logf("control channel listening on :%d", cs.port)
+	cs.running.Store(true)
+	defer cs.running.Store(false)
 	if err := srv.Run(ctx); err != nil {
 		cs.logf("control server stopped: %v", err)
 	}
+}
+
+// IsListening reports whether the control-channel serve loop is currently active. It
+// feeds the app's readiness probe so an operator can see the fleet listener is up
+// (advisory — it does not gate the process's db/cache readiness).
+func (cs *ControlServer) IsListening() bool { return cs.running.Load() }
+
+// ConnectedCount returns the number of nodes currently holding a live control channel.
+func (cs *ControlServer) ConnectedCount() int {
+	cs.mu.Lock()
+	n := len(cs.conns)
+	cs.mu.Unlock()
+	return n
 }
 
 // handleConn runs for the lifetime of one node connection.

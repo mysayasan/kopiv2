@@ -214,6 +214,62 @@ func TestControlServerSendRequestOffline(t *testing.T) {
 	if _, err := cs.SendRequest(context.Background(), "ghost", control.Request{Method: "GET", Path: "/x"}); !errors.Is(err, ErrNodeOffline) {
 		t.Fatalf("offline node: got %v want ErrNodeOffline", err)
 	}
+	// A server that never ran reports not-listening with zero connections (advisory
+	// readiness signals).
+	if cs.IsListening() {
+		t.Fatal("un-run control server should not report listening")
+	}
+	if cs.ConnectedCount() != 0 {
+		t.Fatalf("un-run control server ConnectedCount = %d, want 0", cs.ConnectedCount())
+	}
+}
+
+// TestControlServerReadinessSignals verifies IsListening flips true once the serve
+// loop is active and ConnectedCount reflects a live node connection.
+func TestControlServerReadinessSignals(t *testing.T) {
+	reg, nodes := newTestRegistry()
+	ctx := context.Background()
+
+	const nodeID = "node-ready"
+	nodes.rows = append(nodes.rows, &entities.ManagedNode{Id: 1, NodeId: nodeID, Token: "tok", Status: "online"})
+	nodeKey, csr, err := fleetca.GenerateKeyAndCSR(nodeID)
+	if err != nil {
+		t.Fatalf("node key/csr: %v", err)
+	}
+	nodeCert, caRoot, err := reg.Enroll(ctx, nodeID, "tok", csr)
+	if err != nil {
+		t.Fatalf("enroll: %v", err)
+	}
+	clientTLS, err := fleetca.ClientTLSConfig(nodeCert, nodeKey, caRoot, "parent-1")
+	if err != nil {
+		t.Fatalf("client tls: %v", err)
+	}
+
+	port := freePort(t)
+	cs := NewControlServer(reg, port, nil, nil)
+	srvCtx, cancelSrv := context.WithCancel(ctx)
+	defer cancelSrv()
+	go cs.Run(srvCtx)
+	waitTCP(t, port)
+
+	for i := 0; i < 100 && !cs.IsListening(); i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !cs.IsListening() {
+		t.Fatal("control server should report listening after Run")
+	}
+
+	conn, err := control.Dial(ctx, wsURLForPort(port), clientTLS)
+	if err != nil {
+		t.Fatalf("node dial: %v", err)
+	}
+	defer conn.Close()
+	for i := 0; i < 150 && cs.ConnectedCount() == 0; i++ {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if cs.ConnectedCount() != 1 {
+		t.Fatalf("ConnectedCount = %d, want 1", cs.ConnectedCount())
+	}
 }
 
 func freePort(t *testing.T) int {

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -26,10 +28,39 @@ import (
 	"github.com/mysayasan/kopiv2/infra/versioning"
 )
 
-type module struct{}
+type module struct {
+	// Set during RegisterAppRoutes so the readiness probe can report fleet-listener
+	// health. apphost uses one module instance for the process lifetime, so these are
+	// safe to read from ReadinessStatus after routes are registered.
+	controlServer  *services.ControlServer
+	mediaListening *atomic.Bool
+}
 
 func New() apphost.App {
 	return &module{}
+}
+
+// ReadinessStatus reports fleet-listener health as ADVISORY fields on /api/ready. Per
+// the apphost contract these never flip the process's ok/HTTP status (that stays gated
+// on db + cache) — they give operators/monitoring visibility that a listener has died
+// even while the process itself is otherwise healthy.
+func (m *module) ReadinessStatus(ctx context.Context) map[string]string {
+	status := map[string]string{}
+	if m.controlServer != nil {
+		status["controlChannel"] = upDown(m.controlServer.IsListening())
+		status["connectedNodes"] = strconv.Itoa(m.controlServer.ConnectedCount())
+	}
+	if m.mediaListening != nil {
+		status["mediaRelay"] = upDown(m.mediaListening.Load())
+	}
+	return status
+}
+
+func upDown(up bool) string {
+	if up {
+		return "up"
+	}
+	return "down"
 }
 
 func (m *module) Name() string {
@@ -209,6 +240,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// a node holding a live connection is online even when the parent cannot reach its
 	// mTLS port directly. Wire its presence into the heartbeat reconciler so the mTLS
 	// poll becomes a fallback that can no longer flap a control-connected node offline.
+	m.controlServer = controlServer
 	registry.SetControlPresence(controlServer.IsConnected)
 	// Proactive fleet-health alerting: the heartbeat reconciler detects a node dropping
 	// to "lost", recovering, or a certificate nearing expiry and hands each transition
@@ -265,6 +297,9 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	if mediaPort <= 0 {
 		mediaPort = 49534
 	}
+	// Advisory readiness: track whether the media listener's serve loop is active so
+	// /api/ready can surface it (it never gates the process's db/cache readiness).
+	m.mediaListening = &atomic.Bool{}
 	go func() {
 		tlsCfg, terr := registry.ParentServerTLS(bgCtx)
 		if terr != nil {
@@ -274,6 +309,8 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		srv := mediarelay.NewServer(fmt.Sprintf(":%d", mediaPort), tlsCfg, mediaHub.HandleConn,
 			func(format string, args ...any) { deps.Logger.Infof("myseliasan.media", format, args...) })
 		deps.Logger.Infof("myseliasan.media", "media channel listening on :%d", mediaPort)
+		m.mediaListening.Store(true)
+		defer m.mediaListening.Store(false)
 		if rerr := srv.Run(bgCtx); rerr != nil {
 			deps.Logger.Warnf("myseliasan.media", "media server stopped: %v", rerr)
 		}
