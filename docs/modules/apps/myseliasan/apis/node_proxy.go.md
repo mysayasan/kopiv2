@@ -26,7 +26,7 @@ Registered on its own `/nodes` subrouter, matched after `NewNodesApi`'s specific
    - Read-only → node request runs as viewer on the node.
 3. Read request body (capped at 8 MiB).
 4. Build `control.Request{Method, Path, Role, Actor, Headers, Body}` and send via `ControlSender.SendRequest`.
-5. Return the node's response status + body verbatim. `ErrNodeOffline` → 404.
+5. Return the node's response status + body verbatim. `ErrNodeOffline` (never connected) or `ErrNodeDisconnected` (control channel dropped mid-command — see `control_server.go.md`) → 404 `"node is not connected"`. A disconnect mid-command fails fast instead of hanging to `controlRequestTimeout`; the caller cannot tell from the 404 alone whether a non-idempotent write had already applied on the node before the drop.
 
 ## Actor Attribution
 

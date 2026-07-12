@@ -101,7 +101,9 @@ func (a *nodeProxyApi) proxy(w http.ResponseWriter, r *http.Request) {
 	resp, err := a.sender.SendRequest(r.Context(), nodeID, req)
 	if err != nil {
 		a.recordCommand(r, nodeID, nodePath, "error", 0)
-		if errors.Is(err, services.ErrNodeOffline) {
+		// Both "never connected" and "dropped mid-command" mean the node is unreachable
+		// now; surface a fast, clear error instead of a generic 500 (or a 30s hang).
+		if errors.Is(err, services.ErrNodeOffline) || errors.Is(err, services.ErrNodeDisconnected) {
 			controllers.SendError(w, controllers.ErrNotFound, "node is not connected")
 			return
 		}

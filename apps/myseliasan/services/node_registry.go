@@ -272,15 +272,32 @@ func (s *nodeRegistry) upsertFleetKey(ctx context.Context, key string) error {
 	return s.upsertSetting(ctx, fleetKeySettingKey, stored)
 }
 
+// nodeListPageSize is the page size List uses to walk the whole fleet. Paging (rather
+// than a single hardcoded cap) means the operator list, Scan dedup, and Heartbeat all
+// see every adopted node instead of silently truncating at a fixed limit.
+const nodeListPageSize = 500
+
 func (s *nodeRegistry) List(ctx context.Context) ([]*entities.ManagedNode, error) {
-	rows, _, err := s.nodes.Get(ctx, "", 1000, 0, nil, nil)
-	if err != nil {
-		if isNoResultFoundErr(err) {
-			return []*entities.ManagedNode{}, nil
+	var all []*entities.ManagedNode
+	var offset uint64
+	for {
+		rows, _, err := s.nodes.Get(ctx, "", nodeListPageSize, offset, nil, nil)
+		if err != nil {
+			if isNoResultFoundErr(err) {
+				break
+			}
+			return nil, err
 		}
-		return nil, err
+		all = append(all, rows...)
+		if uint64(len(rows)) < nodeListPageSize {
+			break
+		}
+		offset += nodeListPageSize
 	}
-	return rows, nil
+	if all == nil {
+		return []*entities.ManagedNode{}, nil
+	}
+	return all, nil
 }
 
 // FleetStatus rolls up liveness and certificate health across all adopted nodes.
@@ -601,19 +618,38 @@ func (s *nodeRegistry) Heartbeat(ctx context.Context) {
 		return
 	}
 	grace := s.lostGraceSeconds()
+	now := time.Now().Unix()
+
+	// Phase 1 — liveness. Control-channel presence is an in-memory lookup (instant);
+	// the mTLS poll is a synchronous network call with a per-probe timeout, so a fleet
+	// with several unreachable nodes would blow the whole sweep past the heartbeat
+	// interval if probed serially. Probe only the not-control-connected nodes, and do
+	// so concurrently under a bounded worker pool + a per-sweep budget.
+	var toProbe []*entities.ManagedNode
+	controlAlive := make(map[string]bool, len(nodes))
 	for _, node := range nodes {
 		if node.Status == "self-dropped" {
 			continue
 		}
-		now := time.Now().Unix()
-		// Certificate health is independent of liveness — a reachable node with a
-		// stale cert still needs attention — so check it every sweep for every node.
+		// Certificate health is independent of liveness — a reachable node with a stale
+		// cert still needs attention — so check it every sweep for every node.
 		s.checkCertExpiry(node, now)
-		prev := node.Status
-		alive := s.controlConnected(node.NodeId)
-		if !alive {
-			alive = s.probeOverMTLS(ctx, node)
+		if s.controlConnected(node.NodeId) {
+			controlAlive[node.NodeId] = true
+		} else {
+			toProbe = append(toProbe, node)
 		}
+	}
+	probeAlive := s.probeNodesConcurrently(ctx, toProbe)
+
+	// Phase 2 — reconcile + persist. Writes stay serial (the on-prem store is a
+	// single-writer sqlite) but the slow part (the probes) already happened in parallel.
+	for _, node := range nodes {
+		if node.Status == "self-dropped" {
+			continue
+		}
+		prev := node.Status
+		alive := controlAlive[node.NodeId] || probeAlive[node.NodeId]
 		switch {
 		case alive:
 			node.Status = "online"
@@ -637,6 +673,61 @@ func (s *nodeRegistry) Heartbeat(ctx context.Context) {
 		node.UpdatedAt = now
 		_, _ = s.nodes.UpdateById(ctx, "", *node)
 	}
+}
+
+// heartbeatProbeConcurrency bounds how many mTLS liveness probes run at once so a
+// large fleet doesn't open an unbounded number of sockets in a single sweep.
+const heartbeatProbeConcurrency = 16
+
+// heartbeatSweepBudget caps the wall-clock time all probes in one sweep may take, so
+// a batch of unreachable nodes (each hitting the per-probe timeout) can never stall
+// reconciliation indefinitely. Nodes not resolved within the budget are treated as
+// not-yet-alive this sweep; the grace window keeps them from flapping offline.
+const heartbeatSweepBudget = 30 * time.Second
+
+// probeNodesConcurrently mTLS-probes the given nodes with a bounded worker pool and a
+// per-sweep budget, returning the set of node ids that answered.
+func (s *nodeRegistry) probeNodesConcurrently(ctx context.Context, nodes []*entities.ManagedNode) map[string]bool {
+	alive := make(map[string]bool, len(nodes))
+	if len(nodes) == 0 {
+		return alive
+	}
+	sweepCtx, cancel := context.WithTimeout(ctx, heartbeatSweepBudget)
+	defer cancel()
+
+	workers := heartbeatProbeConcurrency
+	if len(nodes) < workers {
+		workers = len(nodes)
+	}
+	jobs := make(chan *entities.ManagedNode)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			for node := range jobs {
+				if s.probeOverMTLS(sweepCtx, node) {
+					mu.Lock()
+					alive[node.NodeId] = true
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+	for _, node := range nodes {
+		select {
+		case <-sweepCtx.Done():
+			// Budget exhausted — stop dispatching; unprobed nodes are handled by grace.
+			close(jobs)
+			wg.Wait()
+			return alive
+		case jobs <- node:
+		}
+	}
+	close(jobs)
+	wg.Wait()
+	return alive
 }
 
 // ParentServerTLS returns the mTLS server config for the parent control listener.

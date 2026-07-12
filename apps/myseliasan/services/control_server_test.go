@@ -135,6 +135,79 @@ func TestControlServerForwardsEvents(t *testing.T) {
 	}
 }
 
+// TestControlServerSendRequestFailsFastOnDisconnect verifies that when a node's
+// control channel drops while a tunneled request is in flight, SendRequest returns
+// ErrNodeDisconnected promptly instead of hanging until controlRequestTimeout (30s).
+func TestControlServerSendRequestFailsFastOnDisconnect(t *testing.T) {
+	reg, nodes := newTestRegistry()
+	ctx := context.Background()
+
+	const nodeID = "node-drop"
+	nodes.rows = append(nodes.rows, &entities.ManagedNode{Id: 1, NodeId: nodeID, Token: "tok", Status: "online"})
+	nodeKey, csr, err := fleetca.GenerateKeyAndCSR(nodeID)
+	if err != nil {
+		t.Fatalf("node key/csr: %v", err)
+	}
+	nodeCert, caRoot, err := reg.Enroll(ctx, nodeID, "tok", csr)
+	if err != nil {
+		t.Fatalf("enroll: %v", err)
+	}
+	clientTLS, err := fleetca.ClientTLSConfig(nodeCert, nodeKey, caRoot, "parent-1")
+	if err != nil {
+		t.Fatalf("client tls: %v", err)
+	}
+
+	port := freePort(t)
+	cs := NewControlServer(reg, port, nil, nil)
+	srvCtx, cancelSrv := context.WithCancel(ctx)
+	defer cancelSrv()
+	go cs.Run(srvCtx)
+	waitTCP(t, port)
+
+	dialCtx, cancelDial := context.WithTimeout(ctx, 5*time.Second)
+	conn, err := control.Dial(dialCtx, wsURLForPort(port), clientTLS)
+	cancelDial()
+	if err != nil {
+		t.Fatalf("node dial: %v", err)
+	}
+	// Node reads frames but NEVER answers a request — so SendRequest can only return via
+	// the disconnect signal, not a real response.
+	go func() {
+		for {
+			if _, rerr := conn.ReadFrame(); rerr != nil {
+				return
+			}
+		}
+	}()
+
+	// Wait for the server to register the connection.
+	for i := 0; i < 150 && !cs.IsConnected(nodeID); i++ {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !cs.IsConnected(nodeID) {
+		t.Fatal("node never registered on the control server")
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, e := cs.SendRequest(ctx, nodeID, control.Request{Method: "POST", Path: "/api/wipe", Role: "admin"})
+		done <- e
+	}()
+
+	// Let SendRequest register its pending waiter + write the frame, then drop the node.
+	time.Sleep(200 * time.Millisecond)
+	_ = conn.Close()
+
+	select {
+	case e := <-done:
+		if !errors.Is(e, ErrNodeDisconnected) {
+			t.Fatalf("got %v, want ErrNodeDisconnected", e)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("SendRequest hung after disconnect (expected fast ErrNodeDisconnected)")
+	}
+}
+
 func TestControlServerSendRequestOffline(t *testing.T) {
 	reg, _ := newTestRegistry()
 	cs := NewControlServer(reg, 0, nil, nil)

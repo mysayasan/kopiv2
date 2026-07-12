@@ -131,6 +131,41 @@ func TestRegistryScanRequiresFleetKey(t *testing.T) {
 	}
 }
 
+// pagingNodesRepo honors limit/offset so List's pagination loop can be exercised
+// (the default fakeNodesRepo returns every row regardless of paging).
+type pagingNodesRepo struct {
+	dbsql.IGenericRepo[entities.ManagedNode]
+	rows []*entities.ManagedNode
+}
+
+func (f *pagingNodesRepo) Get(_ context.Context, _ string, limit uint64, offset uint64, _ []sqldataenums.Filter, _ []sqldataenums.Sorter) ([]*entities.ManagedNode, uint64, error) {
+	if offset >= uint64(len(f.rows)) {
+		return nil, uint64(len(f.rows)), nil
+	}
+	end := offset + limit
+	if end > uint64(len(f.rows)) {
+		end = uint64(len(f.rows))
+	}
+	return f.rows[offset:end], uint64(len(f.rows)), nil
+}
+
+func TestRegistryListPaginatesBeyondPageSize(t *testing.T) {
+	// More nodes than one page → List must accumulate every node, not truncate.
+	total := nodeListPageSize*2 + 7
+	repo := &pagingNodesRepo{}
+	for i := 0; i < total; i++ {
+		repo.rows = append(repo.rows, &entities.ManagedNode{Id: int64(i + 1), NodeId: strconv.Itoa(i)})
+	}
+	reg := newNodeRegistry(repo, &fakeSettingsRepo{}, NodeRegistryConfig{ParentID: "p"})
+	got, err := reg.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != total {
+		t.Fatalf("List truncated: got %d want %d", len(got), total)
+	}
+}
+
 func TestRegistryListEmpty(t *testing.T) {
 	reg, _ := newTestRegistry()
 	nodes, err := reg.List(context.Background())
