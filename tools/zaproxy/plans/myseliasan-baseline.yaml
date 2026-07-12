@@ -1,0 +1,94 @@
+# OWASP ZAP Automation Framework plan — myseliasan BASELINE (passive, safe).
+#
+# What it does: authenticates (JSON login), spiders the authenticated SPA, then
+# runs ZAP's PASSIVE scan rules only (security headers, cookie flags, info
+# disclosure, mixed content, etc.). It NEVER sends attack payloads and NEVER
+# submits forms, so it is safe to run against a live myseliasan instance.
+#
+# Auth is different from mymatasan: myseliasan has NO HTTP Basic. It issues a
+# session cookie from POST /api/auth/local-login {username,password} and, on
+# writes, requires a double-submit CSRF token. Passive scanning only needs the
+# session cookie, so this plan uses JSON authentication + cookie session
+# management (no CSRF script — that's only needed by the active plans).
+#
+# Driven by scan.ps1 / scan.sh, which substitute the ${...} tokens from env.
+env:
+  contexts:
+    - name: myseliasan
+      urls:
+        - ${TARGET}
+      includePaths:
+        - "${TARGET}.*"
+      excludePaths:
+        # Never touch destructive / trust-breaking routes, even passively — the
+        # spider can follow a GET link and some of these have GET side effects.
+        - ".*/api/auth/logout.*"
+        - ".*/api/auth/change-password.*"
+        - ".*/api/nodes/fleet-key.*"        # regenerating the PSK breaks node trust
+        - ".*/proxy/api/system/.*"          # node factory reset/restart over the tunnel
+        - ".*/wipe.*"                       # remote node wipe
+        - ".*/purge.*"                      # recording / snapshot purge
+        - ".*/reset.*"
+      authentication:
+        method: "json"
+        parameters:
+          loginPageUrl: "${TARGET}/"
+          loginRequestUrl: "${TARGET}/api/auth/local-login"
+          loginRequestBody: '{"username":"{%username%}","password":"{%password%}"}'
+        verification:
+          method: "poll"
+          pollUrl: "${TARGET}/api/session/me"
+          pollFrequency: 60
+          pollUnits: "requests"
+          loggedInRegex: '.*(\"isSuperadmin\"|\"role\"|\"permissions\").*'
+          loggedOutRegex: '.*(not authenticated|401|403).*'
+      sessionManagement:
+        method: "cookie"
+      users:
+        - name: "admin"
+          credentials:
+            username: "${ZAP_AUTH_USER}"
+            password: "${ZAP_AUTH_PASS}"
+  parameters:
+    failOnError: true
+    failOnWarning: false
+    progressToStdout: true
+  vars:
+    TARGET: ${TARGET}
+
+jobs:
+  - type: spider
+    parameters:
+      context: myseliasan
+      user: admin
+      url: ${TARGET}
+      maxDuration: 5
+      maxDepth: 10
+      maxChildren: 0
+    tests:
+      - name: at-least-one-url
+        type: stats
+        statistic: automation.spider.urls.added
+        operator: ">="
+        value: 1
+        onFail: warn
+
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 10
+
+  - type: passiveScan-config
+    parameters:
+      scanOnlyInScope: true
+
+  - type: report
+    parameters:
+      template: traditional-html
+      reportDir: /zap/wrk/reports
+      reportFile: myseliasan-baseline-${STAMP}
+      reportTitle: myseliasan ZAP Baseline (passive)
+  - type: report
+    parameters:
+      template: traditional-json
+      reportDir: /zap/wrk/reports
+      reportFile: myseliasan-baseline-${STAMP}

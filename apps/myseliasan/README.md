@@ -69,6 +69,8 @@ The shell uses the standardized dark icon side-nav (`SideNav` from `components/l
 
 `index.html` is served with `Cache-Control: no-cache, no-store, must-revalidate` (`app.go`'s `serveIndex`): it references content-hashed bundle filenames, so a cached stale copy can keep a browser on an old bundle after a rebuild — the hashed `.js`/`.css` chunks themselves can still be cached immutably.
 
+**Hardened response headers.** Like mymatasan, every response gets the shared `securityHeaders` hardening (`X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: strict-origin-when-cross-origin`, `Strict-Transport-Security` over TLS, no `Server` header) — see `docs/modules/domain/utils/middlewares/security_headers.go.md`. `myseliasan`'s `config.json`/`config.dev.json` now also ship the same tested opt-in `Content-Security-Policy` mymatasan uses (`securityHeaders.contentSecurityPolicy`). To keep the CSP free of cross-origin allowances, the front-end self-hosts its Quicksand font (`assets/fonts.css`, copied from mymatasan) instead of loading it from Google Fonts.
+
 **Shared footer**: an `AppFooter` component (`@shared`) renders at the bottom of the workspace, showing the app name, version, shared-core version, short commit hash, and build date (from `/api/version`) and the r450k product tagline. Version fields degrade gracefully when the endpoint is unreachable.
 
 An **access pending screen** is shown to authenticated users with no role assigned (`session/me` returns `pending: true`), instructing them to contact an administrator.

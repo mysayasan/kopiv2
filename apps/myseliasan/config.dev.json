@@ -109,6 +109,9 @@
     "nonTlsPorts": []
   },
   "allowOrigins": "*",
+  "securityHeaders": {
+    "contentSecurityPolicy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self'; worker-src 'self' blob:; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+  },
   "bootstrap": {
     "enabled": true,
     "autoCreateDatabase": true,

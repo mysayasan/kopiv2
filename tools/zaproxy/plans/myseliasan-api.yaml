@@ -1,0 +1,127 @@
+# OWASP ZAP Automation Framework plan — myseliasan API ACTIVE scan (/api only).
+#
+# What it does: authenticates (JSON login), loads the CSRF double-submit script
+# so writes aren't 403'd, spiders /api, then runs ACTIVE attack rules (injection,
+# XSS, path traversal, etc.) against the /api surface ONLY, with every
+# destructive / trust-breaking route excluded. Active scanning SENDS ATTACK
+# PAYLOADS and can create/modify/delete data. Run against a THROWAWAY instance,
+# never production. (See ../README.md.)
+env:
+  contexts:
+    - name: myseliasan
+      urls:
+        - ${TARGET}/api
+      includePaths:
+        - "${TARGET}/api.*"
+      excludePaths:
+        - ".*/api/auth/logout.*"
+        - ".*/api/auth/change-password.*"
+        - ".*/api/nodes/fleet-key.*"        # regenerating the PSK breaks node trust
+        - ".*/api/nodes/adopt.*"
+        - ".*/api/nodes/scan.*"
+        - ".*/api/nodes/[0-9]+/elevate.*"   # bootstrap handoff
+        - ".*/proxy/api/system/.*"          # node factory reset/restart over the tunnel
+        - ".*/wipe.*"                       # remote node wipe
+        - ".*/purge.*"
+        - ".*/reset.*"
+        - ".*/restore.*"
+        - ".*/backup.*"
+        - ".*/api/nodes/[0-9]+$"            # DELETE node (release)
+        - ".*/api/nodes/.*/release.*"       # POST release (revokes cert, drops node)
+        - ".*/api/nodes/self-dropped.*"     # marks a node self-dropped
+        - ".*/api/rbac/users/.*"            # disable/elevate/role/delete user — could disable admin mid-scan
+        - ".*/api/access-rbac.*"            # mutating the permission matrix locks the scan out
+        - ".*/api/nodes/access.*"
+        - ".*/recording-stream.*"
+        - ".*/recording/segments/.*"        # DELETE segment (footage loss)
+        - ".*/notifications/stream.*"       # SSE long-lived response — stalls active scanners
+      authentication:
+        method: "json"
+        parameters:
+          loginPageUrl: "${TARGET}/"
+          loginRequestUrl: "${TARGET}/api/auth/local-login"
+          loginRequestBody: '{"username":"{%username%}","password":"{%password%}"}'
+        verification:
+          method: "poll"
+          pollUrl: "${TARGET}/api/session/me"
+          pollFrequency: 60
+          pollUnits: "requests"
+          loggedInRegex: '.*(\"isSuperadmin\"|\"role\"|\"permissions\").*'
+          loggedOutRegex: '.*(not authenticated|401|403).*'
+      sessionManagement:
+        method: "cookie"
+      users:
+        - name: "admin"
+          credentials:
+            username: "${ZAP_AUTH_USER}"
+            password: "${ZAP_AUTH_PASS}"
+  parameters:
+    # false: the OpenAPI import logs a non-fatal warning for myseliasan's spec
+    # (its swagger generator emits the Gorilla-mux path param `{id:[0-9]+}`,
+    # which isn't valid OpenAPI) — it still imports the other 26 endpoints. With
+    # failOnError:true that warning aborts the plan before activeScan/report.
+    failOnError: false
+    progressToStdout: true
+
+jobs:
+  # Mirror the CSRF cookie into the X-CSRF-Token header on every request, so
+  # active-scan writes reach the handlers instead of being 403'd.
+  - type: script
+    parameters:
+      action: "add"
+      type: "httpsender"
+      engine: "ECMAScript : Graal.js"
+      name: "csrf-doublesubmit"
+      file: "/zap/wrk/scripts/csrf-doublesubmit.js"
+  - type: script
+    parameters:
+      action: "enable"
+      name: "csrf-doublesubmit"
+
+  # myseliasan is an API-first control plane whose SPA calls /api/* via JS that
+  # ZAP's spiders can't see (and the AJAX spider can't stay logged in through the
+  # __Host- HttpOnly session cookie). Import the OpenAPI spec so activeScan
+  # attacks the REAL endpoint surface (all documented /api paths), authenticated
+  # via the JSON login + CSRF script above. This is where the active coverage
+  # actually comes from.
+  - type: openapi
+    parameters:
+      apiUrl: ${TARGET}/swagger/openapi.json
+      targetUrl: ${TARGET}
+      context: myseliasan
+      user: admin
+
+  - type: spider
+    parameters:
+      context: myseliasan
+      user: admin
+      url: ${TARGET}/api
+      maxDuration: 5
+
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 10
+
+  - type: activeScan
+    parameters:
+      context: myseliasan
+      user: admin
+      url: ${TARGET}/api
+      maxRuleDurationInMins: 2
+      maxScanDurationInMins: 30
+    policyDefinition:
+      defaultStrength: medium
+      defaultThreshold: medium
+      rules: []
+
+  - type: report
+    parameters:
+      template: traditional-html
+      reportDir: /zap/wrk/reports
+      reportFile: myseliasan-api-${STAMP}
+      reportTitle: myseliasan ZAP API active scan
+  - type: report
+    parameters:
+      template: traditional-json
+      reportDir: /zap/wrk/reports
+      reportFile: myseliasan-api-${STAMP}
