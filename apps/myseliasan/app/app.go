@@ -60,6 +60,7 @@ func (m *module) Entities() []any {
 		appentities.ControlSetting{},
 		appentities.NodeAccessGrant{},
 		appentities.ControlUser{},
+		appentities.AuditLog{},
 		sharedentities.AccessRole{},
 		sharedentities.AccessRolePermission{},
 	}
@@ -82,6 +83,7 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Nodes", Description: "mymatasan node discovery, adoption, and management", Path: "/api/nodes", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Node Access", Description: "per-node read/write access grants (owner-role managed)", Path: "/api/nodes/access", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Node Self-Drop", Description: "node-initiated unpair notice (fleet-key authenticated)", Path: "/api/nodes/self-dropped", AccessTier: apiaccessenums.Public},
+		{Title: "Audit", Description: "append-only audit trail of sensitive actions (superadmin-gated)", Path: "/api/audit", AccessTier: apiaccessenums.AuthOnly},
 	}
 
 	statements := make([]string, 0, len(endpoints)*2)
@@ -118,9 +120,17 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	controlSession := deps.Access
 	controlSession.SetResolver(userService)
 
+	// Immutable audit trail for sensitive actions (adopt/release/wipe, RBAC changes,
+	// fleet-key rotation). Append-only: handlers only Record; the read API is
+	// superadmin-gated. Distinct from api_log (HTTP access log with retention).
+	auditService := services.NewAuditService(deps.Db, func(format string, args ...any) {
+		deps.Logger.Warnf("myseliasan.audit", format, args...)
+	})
+
 	apis.NewAuthApi(api, deps.Config, deps.Auth, deps.Cache, userService)
 	apis.NewSessionApi(api, *deps.Auth, userService, roleService, deps.AccessPerms)
-	apis.NewRbacAdminApi(api, *deps.Auth, controlSession, roleService, userService)
+	apis.NewRbacAdminApi(api, *deps.Auth, controlSession, roleService, userService, auditService)
+	apis.NewAuditApi(api, *deps.Auth, controlSession, auditService)
 
 	// Node management: discover, adopt, and release mymatasan nodes over the
 	// fleet-key-authenticated pairing protocol. ParentBaseURL is recorded on each
@@ -160,7 +170,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		// at that point automatic re-enrollment is overdue, so the operator should know.
 		CertWarnBefore: time.Duration(p.RenewBeforeHours) * time.Hour,
 	})
-	apis.NewNodesApi(api, *deps.Auth, controlSession, registry)
+	apis.NewNodesApi(api, *deps.Auth, controlSession, registry, auditService)
 
 	bgCtx, stopBackground := context.WithCancel(context.Background())
 
@@ -216,7 +226,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// whatever explicit grants it has elsewhere. Drives the tunnel's viewer/admin
 	// decision and gates grant management.
 	accessService := services.NewNodeAccessService(deps.Db, roleService)
-	apis.NewNodeAccessApi(api, *deps.Auth, accessService, controlSession)
+	apis.NewNodeAccessApi(api, *deps.Auth, accessService, controlSession, auditService)
 
 	// Node camera media relay: a dedicated fleet-mTLS listener accepts the node-dialed
 	// media channel; per browser WebRTC subscription it asks the node to stream that
@@ -266,7 +276,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// control-channel message cap). Registered before the generic proxy so its specific
 	// /nodes/{id}/recording-stream/{segId} route wins.
 	apis.NewRecordingStreamApi(api, *deps.Auth, controlServer, accessService, controlSession)
-	apis.NewNodeProxyApi(api, *deps.Auth, controlServer, accessService, controlSession)
+	apis.NewNodeProxyApi(api, *deps.Auth, controlServer, accessService, controlSession, auditService)
 
 	return func(context.Context) error { stopBackground(); return nil }, nil
 }

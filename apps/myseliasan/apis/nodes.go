@@ -3,6 +3,7 @@ package apis
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 
 type nodesApi struct {
 	registry services.INodeRegistry
+	audit    services.IAuditService
 }
 
 // NewNodesApi registers control-plane node-management endpoints.
@@ -33,8 +35,8 @@ type nodesApi struct {
 // Public route (called by a node, authenticated by a fleet-key assertion):
 //
 //	POST /nodes/self-dropped  — a node reports it unpaired itself
-func NewNodesApi(router *mux.Router, auth middlewares.AuthMidware, session *middlewares.AccessSessionMidware, registry services.INodeRegistry) {
-	h := &nodesApi{registry: registry}
+func NewNodesApi(router *mux.Router, auth middlewares.AuthMidware, session *middlewares.AccessSessionMidware, registry services.INodeRegistry, audit services.IAuditService) {
+	h := &nodesApi{registry: registry, audit: audit}
 
 	// Public self-drop notice — node has no session, carries its own signature.
 	router.HandleFunc("/nodes/self-dropped", h.selfDropped).Methods("POST")
@@ -54,6 +56,28 @@ func NewNodesApi(router *mux.Router, auth middlewares.AuthMidware, session *midd
 	g.HandleFunc("/fleet-key", h.fleetKey).Methods("GET")
 	g.HandleFunc("/fleet-key", h.generateFleetKey).Methods("POST")
 	g.HandleFunc("/{id}/release", h.release).Methods("POST")
+}
+
+// recordNodeAction writes an audit entry for a node-targeted operator action,
+// attributing it to the caller's session identity. Best-effort (never blocks the
+// request); no-op if auditing isn't wired.
+func (a *nodesApi) recordNodeAction(r *http.Request, action, nodeID, outcome, detail string, meta map[string]any) {
+	if a.audit == nil {
+		return
+	}
+	actorID, actorLabel, roleID := auditActor(r)
+	a.audit.Record(r.Context(), services.AuditEntry{
+		Action:     action,
+		ActorId:    actorID,
+		ActorEmail: actorLabel,
+		ActorRole:  roleID,
+		TargetType: "node",
+		TargetId:   nodeID,
+		Outcome:    outcome,
+		Detail:     detail,
+		Metadata:   meta,
+		ClientIp:   clientIP(r),
+	})
 }
 
 func (a *nodesApi) list(w http.ResponseWriter, r *http.Request) {
@@ -111,6 +135,7 @@ func (a *nodesApi) adopt(w http.ResponseWriter, r *http.Request) {
 	}
 	node, err := a.registry.Adopt(r.Context(), in)
 	if err != nil {
+		a.recordNodeAction(r, "node.adopt", in.NodeID, "error", "adopt failed: "+err.Error(), map[string]any{"ip": in.IP})
 		switch {
 		case errors.Is(err, services.ErrFleetKeyUnset):
 			controllers.SendError(w, controllers.ErrBadRequest, err.Error())
@@ -121,6 +146,8 @@ func (a *nodesApi) adopt(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	a.recordNodeAction(r, "node.adopt", node.NodeId, "success",
+		fmt.Sprintf("adopted node %q (%s)", node.Name, node.NodeId), map[string]any{"ip": node.IP, "name": node.Name})
 	controllers.SendResult(w, node, "succeed")
 }
 
@@ -152,9 +179,11 @@ func (a *nodesApi) update(w http.ResponseWriter, r *http.Request) {
 func (a *nodesApi) release(w http.ResponseWriter, r *http.Request) {
 	nodeID := mux.Vars(r)["id"]
 	if err := a.registry.Release(r.Context(), nodeID); err != nil {
+		a.recordNodeAction(r, "node.release", nodeID, "error", "release failed: "+err.Error(), nil)
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
+	a.recordNodeAction(r, "node.release", nodeID, "success", "released node "+nodeID+" (certificate revoked)", nil)
 	controllers.SendResult(w, map[string]any{"released": true}, "succeed")
 }
 
@@ -170,10 +199,31 @@ func (a *nodesApi) fleetKey(w http.ResponseWriter, r *http.Request) {
 func (a *nodesApi) generateFleetKey(w http.ResponseWriter, r *http.Request) {
 	key, err := a.registry.GenerateFleetKey(r.Context())
 	if err != nil {
+		a.recordFleetAction(r, "fleet.key_rotate", "error", "fleet-key rotation failed: "+err.Error())
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
+	// The key itself is never recorded in the audit trail — only that it was rotated.
+	a.recordFleetAction(r, "fleet.key_rotate", "success", "rotated the fleet key")
 	controllers.SendResult(w, map[string]any{"fleetKey": key, "set": true}, "succeed")
+}
+
+// recordFleetAction audits a fleet-wide (non-node-specific) operator action.
+func (a *nodesApi) recordFleetAction(r *http.Request, action, outcome, detail string) {
+	if a.audit == nil {
+		return
+	}
+	actorID, actorLabel, roleID := auditActor(r)
+	a.audit.Record(r.Context(), services.AuditEntry{
+		Action:     action,
+		ActorId:    actorID,
+		ActorEmail: actorLabel,
+		ActorRole:  roleID,
+		TargetType: "fleet",
+		Outcome:    outcome,
+		Detail:     detail,
+		ClientIp:   clientIP(r),
+	})
 }
 
 func (a *nodesApi) enroll(w http.ResponseWriter, r *http.Request) {
@@ -215,6 +265,17 @@ func (a *nodesApi) selfDropped(w http.ResponseWriter, r *http.Request) {
 	if err := a.registry.MarkSelfDropped(r.Context(), body.NodeID, body.Nonce, body.Timestamp, body.Assertion); err != nil {
 		controllers.SendError(w, controllers.ErrPermission, err.Error())
 		return
+	}
+	// Node-initiated (fleet-key authenticated, no operator session): attribute to the node.
+	if a.audit != nil {
+		a.audit.Record(r.Context(), services.AuditEntry{
+			Action:     "node.self_dropped",
+			ActorEmail: "node:" + body.NodeID,
+			TargetType: "node",
+			TargetId:   body.NodeID,
+			Detail:     "node " + body.NodeID + " reported it unpaired itself",
+			ClientIp:   clientIP(r),
+		})
 	}
 	controllers.SendResult(w, map[string]any{"acknowledged": true}, "succeed")
 }

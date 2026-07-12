@@ -313,7 +313,11 @@ export function SideNav({ activeTab, busy, onTab, onLogout, session, nodes, mana
     {
       label: t('group.administration'),
       items: session?.isSuperadmin
-        ? [navItem('users', t('nav.users'), 'user', 'blue'), navItem('roles', t('nav.roles'), 'lock', 'violet')]
+        ? [
+            navItem('users', t('nav.users'), 'user', 'blue'),
+            navItem('roles', t('nav.roles'), 'lock', 'violet'),
+            navItem('audit', t('nav.audit'), 'list', 'steel'),
+          ]
         : [],
     },
     // System: the consolidated notification feed, available to any signed-in operator.

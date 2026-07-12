@@ -23,9 +23,18 @@ All routes require a myseliasan session (`auth.Middleware`).
 
 ## Constructor
 
-`NewNodeAccessApi(router, auth, access, session)` — now takes the `*AccessSessionMidware` so live-role checks can be performed inside the handlers.
+`NewNodeAccessApi(router, auth, access, session, audit)` — now also takes `services.IAuditService`. The `*AccessSessionMidware` lets live-role checks be performed inside the handlers.
 
 ## Notes
 
 - Registered on its own `/nodes/access` subrouter; mux matches these specific paths before the proxy catch-all.
 - `CanWrite=true` forces `CanRead=true` at the service layer.
+
+## Audit trail
+
+`upsert` and `delete` each record an entry (`TargetType: "node-access"`, `TargetId` = the grant's node id) via `recordGrantAction`, best-effort:
+
+| Action | Handler | Detail / Metadata |
+|---|---|---|
+| `node_access.set` | `upsert` | Detail notes the granted role/node and read/write flags; `Metadata: {roleId, canRead, canWrite}`. |
+| `node_access.revoke` | `delete` | Detail notes the revoked role/node; `Metadata: {roleId, grantId}`. |

@@ -7,12 +7,13 @@ Implements the `myseliasan` relying control-plane app for the shared runtime hos
 ## Responsibilities
 
 - Provides app identity and base directory.
-- Registers `ManagedNode`, `ControlSetting`, `NodeAccessGrant`, `ControlUser`, and the shared `AccessRole`/`AccessRolePermission` entities for DB bootstrap.
+- Registers `ManagedNode`, `ControlSetting`, `NodeAccessGrant`, `ControlUser`, `AuditLog`, and the shared `AccessRole`/`AccessRolePermission` entities for DB bootstrap.
 - Enables only `Version` and `AccessRbac` from the shared API surface (`SharedAPIs()`); operational APIs (log, file storage, cache, app registry, etc.) are disabled for the control plane.
-- Seeds the local endpoint catalog for rate limiting and runtime metadata, including `Notifications` and `Node Access` endpoints.
+- Seeds the local endpoint catalog for rate limiting and runtime metadata, including `Notifications`, `Node Access`, and `Audit` (`/api/audit`) endpoints.
 - On startup, seeds the stock superadmin local account via `EnsureStockSuperadmin` using credentials from `localAuth.username` / `localAuth.password` in config (or defaults `admin` / `admin`).
 - Binds the `ControlUser` service as the `AccessUserResolver` for `deps.Access`, so the shared accessrbac middleware enforces the permission matrix on myseliasan's own endpoints.
 - Registers auth/session routes (`NewAuthApi`, `NewSessionApi`).
+- Builds the shared, append-only `IAuditService` (`services.NewAuditService(deps.Db, logf)`) before any API that records to it; `logf` routes write-failure diagnostics through `deps.Logger.Warnf("myseliasan.audit", ...)`. It is passed into `NewRbacAdminApi`, `NewNodesApi`, `NewNodeAccessApi`, and `NewNodeProxyApi` so each can record sensitive actions (see each file's own `.go.md` "Audit trail" section), and into `NewAuditApi` (`/api/audit`, superadmin-only read) which is the only way to read the trail back.
 - Registers myseliasan-specific RBAC admin surface (`NewRbacAdminApi` at `/api/rbac/*`) for user management and the bootstrap superadmin handoff.
 - Builds `INodeRegistry` with `ParentBaseURL` derived from `pairing.parentBaseUrl` (when set) or `sso.redirectBaseUrl` (fallback). `pairing.parentBaseUrl` must be the parent's LAN-reachable URL for deployments where node and parent are on separate machines.
 - Registers node-management routes (`NewNodesApi`).

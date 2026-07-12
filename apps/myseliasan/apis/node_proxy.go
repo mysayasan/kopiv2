@@ -23,6 +23,7 @@ type nodeProxyApi struct {
 	sender  services.ControlSender
 	access  services.INodeAccessService
 	session *middlewares.AccessSessionMidware
+	audit   services.IAuditService
 }
 
 // NewNodeProxyApi registers the commander's reverse tunnel: any method under
@@ -37,8 +38,8 @@ type nodeProxyApi struct {
 // Registered as its own /nodes subrouter; it shares the session-auth middleware and
 // is matched after NewNodesApi's specific routes (mux falls through to it when the
 // path is /nodes/{id}/proxy/...).
-func NewNodeProxyApi(router *mux.Router, auth middlewares.AuthMidware, sender services.ControlSender, access services.INodeAccessService, session *middlewares.AccessSessionMidware) {
-	h := &nodeProxyApi{sender: sender, access: access, session: session}
+func NewNodeProxyApi(router *mux.Router, auth middlewares.AuthMidware, sender services.ControlSender, access services.INodeAccessService, session *middlewares.AccessSessionMidware, audit services.IAuditService) {
+	h := &nodeProxyApi{sender: sender, access: access, session: session, audit: audit}
 	g := router.PathPrefix("/nodes").Subrouter()
 	g.Use(auth.Middleware)
 	g.PathPrefix("/{id}/proxy").HandlerFunc(h.proxy)
@@ -99,6 +100,7 @@ func (a *nodeProxyApi) proxy(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := a.sender.SendRequest(r.Context(), nodeID, req)
 	if err != nil {
+		a.recordCommand(r, nodeID, nodePath, "error", 0)
 		if errors.Is(err, services.ErrNodeOffline) {
 			controllers.SendError(w, controllers.ErrNotFound, "node is not connected")
 			return
@@ -114,8 +116,57 @@ func (a *nodeProxyApi) proxy(w http.ResponseWriter, r *http.Request) {
 	if status == 0 {
 		status = http.StatusBadGateway
 	}
+	a.recordCommand(r, nodeID, nodePath, outcomeForStatus(status), status)
 	w.WriteHeader(status)
 	_, _ = w.Write(resp.Body)
+}
+
+// recordCommand audits a MUTATING command tunneled to a node (POST/PUT/PATCH/DELETE)
+// — this is the single choke point through which remote wipe / factory-reset /
+// settings changes reach a node. Read-only tunneled traffic (GET/HEAD) is not
+// audited to avoid drowning the trail in routine page loads.
+func (a *nodeProxyApi) recordCommand(r *http.Request, nodeID, nodePath, outcome string, status int) {
+	if a.audit == nil {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return
+	}
+	// Strip any query string from the recorded path for a stable action detail.
+	cleanPath := nodePath
+	if i := strings.IndexByte(cleanPath, '?'); i >= 0 {
+		cleanPath = cleanPath[:i]
+	}
+	actorID, actorLabel, roleID := auditActor(r)
+	meta := map[string]any{"method": r.Method, "path": cleanPath}
+	if status > 0 {
+		meta["nodeStatus"] = status
+	}
+	a.audit.Record(r.Context(), services.AuditEntry{
+		Action:     "node.command",
+		ActorId:    actorID,
+		ActorEmail: actorLabel,
+		ActorRole:  roleID,
+		TargetType: "node",
+		TargetId:   nodeID,
+		Outcome:    outcome,
+		Detail:     r.Method + " " + cleanPath,
+		Metadata:   meta,
+		ClientIp:   clientIP(r),
+	})
+}
+
+// outcomeForStatus maps an HTTP status from the node into an audit outcome.
+func outcomeForStatus(status int) string {
+	switch {
+	case status >= 200 && status < 300:
+		return "success"
+	case status == http.StatusForbidden || status == http.StatusUnauthorized:
+		return "denied"
+	default:
+		return "error"
+	}
 }
 
 // operatorIdentity returns the requesting operator's RoleId (for the per-node

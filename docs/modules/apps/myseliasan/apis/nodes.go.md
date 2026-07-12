@@ -31,3 +31,16 @@ Exposes the control-plane node-management HTTP endpoints: fleet-key management, 
 - `NewNodesApi` registers public routes (self-drop, enroll) directly on the top-level router so they are reachable without a session.
 - The session-protected group uses `auth.Middleware` + `session.Middleware` (the shared `AccessSessionMidware`). The accessrbac matrix gates operator node operations (viewer role needs GET access to `/api/nodes`; mutations need POST/DELETE; superadmin bypasses).
 - Request bodies are capped at 64 KiB and parsed with `DisallowUnknownFields`.
+
+## Audit trail
+
+`NewNodesApi(router, auth, session, registry, audit)` now also takes `services.IAuditService`. The following actions are recorded (best-effort; never blocks the request) via `services.AuditEntry` with `TargetType: "node"` (or `"fleet"` for the key rotation):
+
+| Action | When | Target | Notes |
+|---|---|---|---|
+| `node.adopt` | `adopt` succeeds or fails | node id | Failure entries carry `outcome: "error"`; success entries include `{ip, name}` in `Metadata`. |
+| `node.release` | `release` succeeds or fails | node id | Success detail notes the certificate was revoked. |
+| `fleet.key_rotate` | `generateFleetKey` succeeds or fails | fleet (no target id) | **The rotated key value is never recorded** — only that a rotation happened. |
+| `node.self_dropped` | a node calls `POST /api/nodes/self-dropped` | node id | Node-initiated: no operator session, so `ActorEmail` is set to `"node:<id>"` and `ActorId`/`ActorRole` are left zero. |
+
+`recordNodeAction` / `recordFleetAction` are the two small wrappers that fill in the actor (via `auditActor(r)`) and client IP (via `clientIP(r)`) before calling `audit.Record`.

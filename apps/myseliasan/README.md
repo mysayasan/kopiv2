@@ -49,6 +49,23 @@ Both app and node must be on the same LAN segment for UDP multicast discovery to
 
 A consolidated **Notifications** page (its own badged nav item under a **System** group) lists the control plane's unified feed — `myseliasan`'s own events (node going-offline, login/security, and now proactive fleet-health alerts — see below), and every event a managed node pushes up its control channel, tagged `source: node:<id>` by `ingestNodeEvent` in `app.go` (any event kind the node reports, not just recognized ones, now surfaces here rather than being dropped). It reads `GET /api/notifications`, with **Unread**/**All** toggle, a per-node source filter, and infinite scroll. The side-nav badge and an SSE-driven live update both come from `GET /api/notifications/stream`: the App shell keeps one `EventSource` open and bumps a refresh signal + re-polls the unread count on every arrival. Clicking **Acknowledge** marks the notification read (`POST /api/notifications/{id}/read`) and — for a node AI detection (`refType: "alert_event"`) — also propagates the acknowledgement to the source alert on the node over the proxy (`POST /api/nodes/{id}/proxy/api/vision/alerts/{id}/ack`), so the node's own review state stays in sync. AI-detection rows show the annotated event snapshot, streamed through the node proxy so the browser never contacts the node directly.
 
+## Audit log
+
+`myseliasan` keeps an immutable, append-only audit trail of sensitive control-plane actions in its own `audit_log` table — distinct from `api_log`, which is a per-request HTTP access log subject to retention-based deletion and carries no action semantics. There is no update/delete path and no retention cleanup for `audit_log`: entries are written once by the handler that performed the action and never touched again.
+
+Actions recorded:
+
+- **Node adopt / release** (`node.adopt`, `node.release`) — release notes that the node's certificate was revoked.
+- **Node self-drop** (`node.self_dropped`) — a node reports it unpaired itself; attributed to the node (`"node:<id>"`), not an operator.
+- **Fleet-key rotation** (`fleet.key_rotate`) — records that a rotation happened; **the key value itself is never recorded**.
+- **RBAC changes** (`rbac.set_role`, `rbac.set_disabled`, `rbac.elevate`) — role changes record the before→after role transition.
+- **Node access grant changes** (`node_access.set`, `node_access.revoke`).
+- **Mutating tunneled node commands** (`node.command`) — every `POST`/`PUT`/`PATCH`/`DELETE` sent through the reverse command tunnel (`/api/nodes/{id}/proxy/...`) is audited, since that single choke point is how remote wipe, factory-reset, and settings writes reach a node. Read-only tunneled traffic (`GET`/`HEAD`) is intentionally not audited, to keep the trail free of routine page-load noise.
+
+Recording is best-effort: a failure to write an audit entry is logged but never blocks or fails the action being audited. Each entry captures the actor (user id, email/name, role), the target (type + id), an outcome (`success`/`denied`/`error`), a short detail string, optional structured `Metadata`, and the client IP.
+
+The trail is read-only over `GET /api/audit?limit=&offset=&action=&targetType=&targetId=`, gated to **superadmins only** (the audit log can expose sensitive operator activity). The SPA exposes it as its own **Audit Log** nav item under **Administration** (superadmin-only), with filters by action and target type.
+
 ## Fleet CA
 
 `myseliasan` is its own on-prem certificate authority (ECDSA P-256, 10-year root). The CA key is stored in the local `ControlSetting` table (`pairing.caCert`/`pairing.caKey`) and is never transmitted off-prem. Node private keys are generated on the node and never sent to the control plane — only a CSR crosses the wire. Revocation is "refuse to renew + short TTL" (no CRL/OCSP). The `ManagedNode.Fingerprint` field is reserved for future use; identity is currently verified through the certificate CN.

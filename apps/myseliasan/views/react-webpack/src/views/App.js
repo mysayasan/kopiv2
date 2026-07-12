@@ -18,6 +18,7 @@ import { ObjectsPage } from './components/objects';
 import { TeachPage } from './components/teach';
 import { NotificationsPage } from './components/notifications';
 import { UsersPage, RolesAccessPage } from './components/rbac_admin';
+import { AuditLogPage } from './components/audit_log';
 import { LoginScreen, ChangePasswordScreen, PendingClearanceScreen } from './components/auth_screens';
 import { api, sessionCanGet, apiBase } from './lib/helpers';
 import { messages as appMessages } from './i18n';
@@ -148,7 +149,7 @@ function AppInner({ lang, onLangChange }) {
   // Demote to the dashboard if the active tab is no longer permitted (e.g. after a
   // handoff that retired the current stock account, or a role that lost node access).
   const canNodes = sessionCanGet(session, '/api/nodes');
-  const adminTabs = ['users', 'roles'];
+  const adminTabs = ['users', 'roles', 'audit'];
   if (adminTabs.includes(activeTab) && !session?.isSuperadmin) setActiveTab('dashboard');
   if ((activeTab === 'nodes' || activeTab === 'liveviews' || activeTab === 'objects' || activeTab === 'teach') && !canNodes) setActiveTab('dashboard');
 
@@ -200,6 +201,7 @@ function AppInner({ lang, onLangChange }) {
           <UsersPage session={session} onToast={pushToast} onSessionChanged={loadSession} />
         ) : null}
         {activeTab === 'roles' && session?.isSuperadmin ? <RolesAccessPage onToast={pushToast} /> : null}
+        {activeTab === 'audit' && session?.isSuperadmin ? <AuditLogPage onToast={pushToast} /> : null}
         <AppFooter appName="MySeliaSan" apiBase={apiBase()} />
       </main>
     </div>
