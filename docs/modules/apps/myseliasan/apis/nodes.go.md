@@ -11,6 +11,7 @@ Exposes the control-plane node-management HTTP endpoints: fleet-key management, 
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/api/nodes` | List all adopted nodes (`ManagedNode` rows). |
+| GET | `/api/nodes/fleet-status` | Fleet liveness + certificate-health rollup: `{total, online, lost, selfDropped, unknown, certsExpiring, certsExpired, certWarnDays}`. Backs the dashboard's "certs expiring" KPI. |
 | POST | `/api/nodes/scan` | Discover unpaired nodes on the LAN. Body: `{"timeoutMs": N}` (default 4000). Returns `[]DiscoveredNode` (with `adopted` flag). Returns 400 when no fleet key is set. |
 | POST | `/api/nodes/adopt` | Adopt a node. Body: `AdoptInput` (`nodeId`, `name`, `ip`, `httpsPort`, `claimCode`). Returns the saved `ManagedNode`. Returns 400 on missing fleet key; 409 when the node rejected adoption (already paired). |
 | PUT | `/api/nodes/{id}` | Edit an adopted node's operator-facing fields: `{name, description, icon}`. Identity/trust fields are untouched. Returns the updated `ManagedNode`; 400 on an unknown node or bad body. |

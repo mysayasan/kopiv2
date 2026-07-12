@@ -225,6 +225,113 @@ func TestRegistryHeartbeatGraceWindow(t *testing.T) {
 	}
 }
 
+func TestRegistryHeartbeatEmitsLostOnceThenRecovered(t *testing.T) {
+	reg, nodes := newTestRegistry()
+	ctx := context.Background()
+	now := time.Now().Unix()
+	// Online node with no contact well past grace → should flip to lost and emit exactly
+	// one lost event; a second sweep (still lost) must NOT re-emit (edge-triggered).
+	nodes.rows = append(nodes.rows, &entities.ManagedNode{Id: 1, NodeId: "node-x", Status: "online", LastSeenAt: now - 1000})
+
+	var events []FleetEvent
+	reg.SetFleetEventSink(func(e FleetEvent) { events = append(events, e) })
+
+	reg.Heartbeat(ctx)
+	reg.Heartbeat(ctx) // still lost, no contact
+
+	lost := 0
+	for _, e := range events {
+		if e.Kind == FleetEventNodeLost {
+			lost++
+			if e.Node == nil || e.Node.NodeId != "node-x" {
+				t.Fatalf("lost event missing node identity: %+v", e.Node)
+			}
+		}
+	}
+	if lost != 1 {
+		t.Fatalf("expected exactly 1 lost event, got %d (events=%+v)", lost, events)
+	}
+	if nodes.rows[0].Status != "lost" {
+		t.Fatalf("node should be lost, got %q", nodes.rows[0].Status)
+	}
+
+	// Now the node reconnects (control presence) → recovered event on the lost→online edge.
+	reg.SetControlPresence(func(id string) bool { return id == "node-x" })
+	events = nil
+	reg.Heartbeat(ctx)
+	if len(events) != 1 || events[0].Kind != FleetEventNodeRecovered {
+		t.Fatalf("expected 1 recovered event, got %+v", events)
+	}
+	if nodes.rows[0].Status != "online" {
+		t.Fatalf("node should be online after recovery, got %q", nodes.rows[0].Status)
+	}
+}
+
+func TestRegistryHeartbeatWarnsOnExpiringCertOncePerExpiry(t *testing.T) {
+	reg, nodes := newTestRegistry()
+	reg.cfg.CertWarnBefore = 7 * 24 * time.Hour
+	ctx := context.Background()
+	now := time.Now().Unix()
+	// A reachable node (control-connected, so liveness is fine) whose cert expires in 2
+	// days — inside the 7-day warn window — must warn exactly once across repeated sweeps.
+	nodes.rows = append(nodes.rows, &entities.ManagedNode{
+		Id: 1, NodeId: "node-cert", Status: "online", LastSeenAt: now,
+		CertExpiresAt: now + 2*24*3600,
+	})
+	reg.SetControlPresence(func(string) bool { return true })
+
+	var certEvents []FleetEvent
+	reg.SetFleetEventSink(func(e FleetEvent) {
+		if e.Kind == FleetEventCertExpiring {
+			certEvents = append(certEvents, e)
+		}
+	})
+
+	reg.Heartbeat(ctx)
+	reg.Heartbeat(ctx)
+	if len(certEvents) != 1 {
+		t.Fatalf("expected exactly 1 cert-expiring event, got %d", len(certEvents))
+	}
+	if certEvents[0].HoursLeft <= 0 || certEvents[0].HoursLeft > 48 {
+		t.Fatalf("unexpected HoursLeft: %d", certEvents[0].HoursLeft)
+	}
+
+	// Renewal pushes the expiry out of the window → re-arms; a later cert with a new
+	// (still-in-window) expiry warns again.
+	nodes.rows[0].CertExpiresAt = now + 30*24*3600 // healthy, outside window
+	reg.Heartbeat(ctx)
+	nodes.rows[0].CertExpiresAt = now + 3*24*3600 // back inside window, new value
+	reg.Heartbeat(ctx)
+	if len(certEvents) != 2 {
+		t.Fatalf("expected re-armed cert warning after renewal cycle, got %d total", len(certEvents))
+	}
+}
+
+func TestRegistryFleetStatusRollup(t *testing.T) {
+	reg, nodes := newTestRegistry()
+	reg.cfg.CertWarnBefore = 7 * 24 * time.Hour
+	now := time.Now().Unix()
+	nodes.rows = append(nodes.rows,
+		&entities.ManagedNode{Id: 1, NodeId: "a", Status: "online", CertExpiresAt: now + 30*24*3600},
+		&entities.ManagedNode{Id: 2, NodeId: "b", Status: "lost", CertExpiresAt: now + 2*24*3600}, // expiring
+		&entities.ManagedNode{Id: 3, NodeId: "c", Status: "self-dropped"},
+		&entities.ManagedNode{Id: 4, NodeId: "d", Status: "online", CertExpiresAt: now - 3600}, // expired
+	)
+	st, err := reg.FleetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("FleetStatus: %v", err)
+	}
+	if st.Total != 4 || st.Online != 2 || st.Lost != 1 || st.SelfDropped != 1 {
+		t.Fatalf("liveness counts wrong: %+v", st)
+	}
+	if st.CertsExpiring != 1 || st.CertsExpired != 1 {
+		t.Fatalf("cert counts wrong: expiring=%d expired=%d", st.CertsExpiring, st.CertsExpired)
+	}
+	if st.CertWarnDays != 7 {
+		t.Fatalf("CertWarnDays: got %d want 7", st.CertWarnDays)
+	}
+}
+
 func TestRegistryMarkSelfDroppedVerifiesAssertion(t *testing.T) {
 	reg, nodes := newTestRegistry()
 	ctx := context.Background()

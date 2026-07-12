@@ -90,6 +90,14 @@ type INodeRegistry interface {
 	// live control connection is authoritatively online; the mTLS poll is only a
 	// fallback. Set once at startup, after the control server is built.
 	SetControlPresence(connected func(nodeID string) bool)
+	// SetFleetEventSink injects the callback the registry invokes when it detects a
+	// fleet-health transition during reconciliation (a node dropping to "lost",
+	// recovering, or a certificate nearing expiry). Optional; nil-safe. Set once at
+	// startup, before the heartbeat loop begins.
+	SetFleetEventSink(sink FleetEventSink)
+	// FleetStatus returns a rollup of the fleet's liveness and certificate health
+	// (counts of online/lost/self-dropped nodes and certs expiring/expired).
+	FleetStatus(ctx context.Context) (FleetStatus, error)
 	// ParentServerTLS returns the mTLS server config for the parent's control-channel
 	// listener (presents the parent's fleet leaf, requires a node client cert).
 	ParentServerTLS(ctx context.Context) (*tls.Config, error)
@@ -108,6 +116,55 @@ type NodeRegistryConfig struct {
 	MTLSPort          int
 	CertTTL           time.Duration
 	HeartbeatInterval time.Duration
+	// CertWarnBefore is how far ahead of a node certificate's expiry the registry
+	// raises a fleet-health warning (a still-valid cert this close to expiry means
+	// the node's automatic re-enrollment is overdue or failing). 0 = default (7d).
+	CertWarnBefore time.Duration
+}
+
+// FleetEventKind classifies a fleet-health transition the registry detects while
+// reconciling node liveness and certificate health.
+type FleetEventKind string
+
+const (
+	// FleetEventNodeLost fires the moment a node transitions to "lost" (no control
+	// channel and no mTLS contact past the grace window).
+	FleetEventNodeLost FleetEventKind = "node-lost"
+	// FleetEventNodeRecovered fires when a previously lost node becomes reachable again.
+	FleetEventNodeRecovered FleetEventKind = "node-recovered"
+	// FleetEventCertExpiring fires once per distinct expiry when a node certificate is
+	// within CertWarnBefore of expiring (or has already expired).
+	FleetEventCertExpiring FleetEventKind = "cert-expiring"
+)
+
+// FleetEvent is a fleet-health transition emitted to the registry's event sink so
+// the control plane can surface it (notifications / alerting). Node is a snapshot
+// of the affected node; the cert fields are set only for FleetEventCertExpiring.
+type FleetEvent struct {
+	Kind      FleetEventKind
+	Node      *entities.ManagedNode
+	ExpiresAt int64 // unix expiry of the node cert (cert events only)
+	HoursLeft int   // whole hours until expiry, negative if already expired (cert events only)
+}
+
+// FleetEventSink receives fleet-health events. It is invoked synchronously from the
+// heartbeat reconciler, so implementations should return promptly (hand off async work).
+type FleetEventSink func(FleetEvent)
+
+// defaultCertWarnBefore is the fallback lead time for certificate-expiry warnings.
+const defaultCertWarnBefore = 7 * 24 * time.Hour
+
+// FleetStatus is a rollup of the adopted fleet's liveness and certificate health,
+// suitable for a dashboard header ("X online / Y lost / Z certs expiring").
+type FleetStatus struct {
+	Total         int `json:"total"`
+	Online        int `json:"online"`
+	Lost          int `json:"lost"`
+	SelfDropped   int `json:"selfDropped"`
+	Unknown       int `json:"unknown"`
+	CertsExpiring int `json:"certsExpiring"` // valid but within the warn window
+	CertsExpired  int `json:"certsExpired"`  // already past expiry
+	CertWarnDays  int `json:"certWarnDays"`  // the warn window, in whole days
 }
 
 type nodeRegistry struct {
@@ -120,6 +177,15 @@ type nodeRegistry struct {
 
 	presenceMu sync.RWMutex
 	presence   func(nodeID string) bool
+
+	eventMu   sync.RWMutex
+	eventSink FleetEventSink
+
+	// certMu guards certWarned, the per-node dedup of certificate-expiry warnings:
+	// nodeID → the CertExpiresAt value last warned about, so a renewal (which pushes
+	// the expiry out) re-arms the warning for the next approach.
+	certMu     sync.Mutex
+	certWarned map[string]int64
 }
 
 // NewNodeRegistry builds the registry. ParentBaseURL is this control plane's own
@@ -148,6 +214,7 @@ func newNodeRegistry(
 		ca:            newFleetCA(settings, cfg.ParentID, cfg.CertTTL),
 		cfg:           cfg,
 		parentBaseURL: strings.TrimRight(cfg.ParentBaseURL, "/"),
+		certWarned:    map[string]int64{},
 		bootstrapHTTP: &http.Client{
 			Timeout:   adoptCallTimeout,
 			Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
@@ -198,6 +265,38 @@ func (s *nodeRegistry) List(ctx context.Context) ([]*entities.ManagedNode, error
 		return nil, err
 	}
 	return rows, nil
+}
+
+// FleetStatus rolls up liveness and certificate health across all adopted nodes.
+func (s *nodeRegistry) FleetStatus(ctx context.Context) (FleetStatus, error) {
+	nodes, err := s.List(ctx)
+	if err != nil {
+		return FleetStatus{}, err
+	}
+	warn := s.certWarnSeconds()
+	now := time.Now().Unix()
+	out := FleetStatus{Total: len(nodes), CertWarnDays: int(warn / 86400)}
+	for _, node := range nodes {
+		switch strings.ToLower(node.Status) {
+		case "online":
+			out.Online++
+		case "lost":
+			out.Lost++
+		case "self-dropped":
+			out.SelfDropped++
+		default:
+			out.Unknown++
+		}
+		if exp := node.CertExpiresAt; exp > 0 {
+			switch {
+			case exp <= now:
+				out.CertsExpired++
+			case exp-now <= warn:
+				out.CertsExpiring++
+			}
+		}
+	}
+	return out, nil
 }
 
 func (s *nodeRegistry) Scan(ctx context.Context, timeout time.Duration) ([]DiscoveredNode, error) {
@@ -397,6 +496,66 @@ func (s *nodeRegistry) controlConnected(nodeID string) bool {
 	return fn != nil && fn(nodeID)
 }
 
+func (s *nodeRegistry) SetFleetEventSink(sink FleetEventSink) {
+	s.eventMu.Lock()
+	s.eventSink = sink
+	s.eventMu.Unlock()
+}
+
+// emitFleetEvent hands a detected fleet-health transition to the sink (if any).
+func (s *nodeRegistry) emitFleetEvent(e FleetEvent) {
+	s.eventMu.RLock()
+	sink := s.eventSink
+	s.eventMu.RUnlock()
+	if sink != nil {
+		sink(e)
+	}
+}
+
+// certWarnSeconds is the certificate-expiry warning lead time in seconds.
+func (s *nodeRegistry) certWarnSeconds() int64 {
+	w := s.cfg.CertWarnBefore
+	if w <= 0 {
+		w = defaultCertWarnBefore
+	}
+	return int64(w.Seconds())
+}
+
+// checkCertExpiry raises a one-shot warning when a node's certificate is within the
+// warn window (or already expired). It emits at most once per distinct expiry value,
+// so a renewal that pushes the expiry out re-arms the warning; a node that renews
+// before the window is reached never warns. It never writes the node record — the
+// expiry was persisted at enrollment.
+func (s *nodeRegistry) checkCertExpiry(node *entities.ManagedNode, now int64) {
+	exp := node.CertExpiresAt
+	if exp <= 0 {
+		return
+	}
+	if exp-now > s.certWarnSeconds() {
+		// Healthy and outside the window: forget any prior warning so a later approach
+		// (e.g. after this session already warned once) can warn again.
+		s.certMu.Lock()
+		delete(s.certWarned, node.NodeId)
+		s.certMu.Unlock()
+		return
+	}
+	s.certMu.Lock()
+	already := s.certWarned[node.NodeId] == exp
+	if !already {
+		s.certWarned[node.NodeId] = exp
+	}
+	s.certMu.Unlock()
+	if already {
+		return
+	}
+	s.emitFleetEvent(FleetEvent{
+		Kind:      FleetEventCertExpiring,
+		Node:      node,
+		ExpiresAt: exp,
+		HoursLeft: int((exp - now) / 3600),
+	})
+}
+
 // lostGraceSeconds is how long a node may go with no contact — neither a live control
 // channel nor a successful mTLS poll — before it is declared lost. Three heartbeat
 // intervals (floored at 90s) absorbs a control-channel reconnect or a single missed
@@ -431,6 +590,10 @@ func (s *nodeRegistry) Heartbeat(ctx context.Context) {
 			continue
 		}
 		now := time.Now().Unix()
+		// Certificate health is independent of liveness — a reachable node with a
+		// stale cert still needs attention — so check it every sweep for every node.
+		s.checkCertExpiry(node, now)
+		prev := node.Status
 		alive := s.controlConnected(node.NodeId)
 		if !alive {
 			alive = s.probeOverMTLS(ctx, node)
@@ -439,8 +602,17 @@ func (s *nodeRegistry) Heartbeat(ctx context.Context) {
 		case alive:
 			node.Status = "online"
 			node.LastSeenAt = now
+			if prev == "lost" {
+				s.emitFleetEvent(FleetEvent{Kind: FleetEventNodeRecovered, Node: node})
+			}
 		case now-node.LastSeenAt >= grace:
+			if prev == "lost" {
+				// Already lost and still is: nothing changed, skip the write and the
+				// re-notification (the lost event is edge-triggered, fired once).
+				continue
+			}
 			node.Status = "lost"
+			s.emitFleetEvent(FleetEvent{Kind: FleetEventNodeLost, Node: node})
 		default:
 			// Within the grace window with no contact: hold the prior status (still
 			// online) rather than flap, and skip the needless write.

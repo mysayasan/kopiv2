@@ -156,6 +156,9 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		MTLSPort:          mtlsPort,
 		CertTTL:           time.Duration(p.CertTTLHours) * time.Hour,
 		HeartbeatInterval: hbInterval,
+		// Warn when a still-valid node cert is within its renewal window of expiring:
+		// at that point automatic re-enrollment is overdue, so the operator should know.
+		CertWarnBefore: time.Duration(p.RenewBeforeHours) * time.Hour,
 	})
 	apis.NewNodesApi(api, *deps.Auth, controlSession, registry)
 
@@ -183,6 +186,13 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// mTLS port directly. Wire its presence into the heartbeat reconciler so the mTLS
 	// poll becomes a fallback that can no longer flap a control-connected node offline.
 	registry.SetControlPresence(controlServer.IsConnected)
+	// Proactive fleet-health alerting: the heartbeat reconciler detects a node dropping
+	// to "lost", recovering, or a certificate nearing expiry and hands each transition
+	// to this sink, which surfaces it in the unified notification feed (so a
+	// crashed/partitioned node no longer fails silently). Set before the heartbeat loop.
+	registry.SetFleetEventSink(func(e services.FleetEvent) {
+		publishFleetEvent(notificationService, e)
+	})
 	go controlServer.Run(bgCtx)
 
 	// Heartbeat reconciliation: every interval, reconcile each adopted node's liveness —
@@ -264,7 +274,10 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 // ingestNodeEvent maps an event a node pushed up its control channel into the
 // control plane's notification feed. "notification" events are re-published as-is
 // (re-tagged with the node so the feed shows their origin and the parent assigns a
-// fresh id); "going-offline" becomes a system warning.
+// fresh id); "going-offline" becomes a system warning. Any other kind (health,
+// disk-full, alert, system, …) is surfaced rather than dropped: the frame is parsed
+// as a notification when it carries one, otherwise wrapped in a generic message
+// tagged with the raw kind — so a node reporting trouble is never silently lost.
 func ingestNodeEvent(svc *notification.Service, nodeID, kind string, body []byte) {
 	switch kind {
 	case "notification":
@@ -272,13 +285,7 @@ func ingestNodeEvent(svc *notification.Service, nodeID, kind string, body []byte
 		if err := json.Unmarshal(body, &n); err != nil {
 			return
 		}
-		n.ID = "" // parent assigns its own id in its own feed
-		n.Source = "node:" + nodeID
-		if n.Data == nil {
-			n.Data = map[string]any{}
-		}
-		n.Data["nodeId"] = nodeID
-		svc.Publish(context.Background(), n)
+		republishNodeNotification(svc, nodeID, n)
 	case "going-offline":
 		svc.Publish(context.Background(), notification.Notification{
 			Category: notification.CategorySystem,
@@ -288,7 +295,142 @@ func ingestNodeEvent(svc *notification.Service, nodeID, kind string, body []byte
 			Source:   "node:" + nodeID,
 			Data:     map[string]any{"nodeId": nodeID},
 		})
+	default:
+		// Unknown-but-present frame: prefer a structured notification payload, else
+		// wrap the raw body so the operator still sees that the node reported something.
+		var n notification.Notification
+		if err := json.Unmarshal(body, &n); err == nil && (n.Title != "" || n.Body != "") {
+			if n.Category == "" {
+				n.Category = categoryForNodeKind(kind)
+			}
+			if n.Severity == "" {
+				n.Severity = severityForNodeKind(kind)
+			}
+			republishNodeNotification(svc, nodeID, n)
+			return
+		}
+		svc.Publish(context.Background(), notification.Notification{
+			Category: categoryForNodeKind(kind),
+			Severity: severityForNodeKind(kind),
+			Title:    "Node " + kind + " event",
+			Body:     truncateBody(string(body), 500),
+			Source:   "node:" + nodeID,
+			Data:     map[string]any{"nodeId": nodeID, "kind": kind},
+		})
 	}
+}
+
+// republishNodeNotification re-tags a node-originated notification with its origin
+// node and lets the parent assign a fresh id in its own feed.
+func republishNodeNotification(svc *notification.Service, nodeID string, n notification.Notification) {
+	n.ID = "" // parent assigns its own id in its own feed
+	n.Source = "node:" + nodeID
+	if n.Data == nil {
+		n.Data = map[string]any{}
+	}
+	n.Data["nodeId"] = nodeID
+	svc.Publish(context.Background(), n)
+}
+
+// categoryForNodeKind maps a node event kind to a notification category so unknown
+// frames still land in a sensible bucket.
+func categoryForNodeKind(kind string) string {
+	k := strings.ToLower(kind)
+	switch {
+	case strings.Contains(k, "health"), strings.Contains(k, "disk"), strings.Contains(k, "cert"):
+		return notification.CategoryHealthCheck
+	case strings.Contains(k, "alert"):
+		return notification.CategoryVisionAlert
+	default:
+		return notification.CategorySystem
+	}
+}
+
+// severityForNodeKind guesses an urgency for an unlabeled node event kind.
+func severityForNodeKind(kind string) notification.Severity {
+	k := strings.ToLower(kind)
+	switch {
+	case strings.Contains(k, "alert"), strings.Contains(k, "full"), strings.Contains(k, "critical"), strings.Contains(k, "fail"):
+		return notification.Critical
+	case strings.Contains(k, "health"), strings.Contains(k, "warn"), strings.Contains(k, "disk"):
+		return notification.Warning
+	default:
+		return notification.Info
+	}
+}
+
+func truncateBody(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
+}
+
+// publishFleetEvent turns a fleet-health transition the registry detected during
+// reconciliation into a notification in the unified feed. Each event is tagged with
+// its origin node ("node:<id>") so it attributes correctly in the dashboard's
+// per-node breakdown alongside the events that node pushed itself.
+func publishFleetEvent(svc *notification.Service, e services.FleetEvent) {
+	node := e.Node
+	if node == nil {
+		return
+	}
+	name := node.Name
+	if name == "" {
+		name = node.NodeId
+	}
+	source := "node:" + node.NodeId
+	data := map[string]any{"nodeId": node.NodeId}
+	switch e.Kind {
+	case services.FleetEventNodeLost:
+		svc.Publish(context.Background(), notification.Notification{
+			Category: notification.CategoryHealthCheck,
+			Severity: notification.Critical,
+			Title:    "Node offline",
+			Body:     fmt.Sprintf("Node %q is unreachable — no control channel and no heartbeat past the grace window — and has been marked lost.", name),
+			Source:   source,
+			Data:     data,
+		})
+	case services.FleetEventNodeRecovered:
+		svc.Publish(context.Background(), notification.Notification{
+			Category: notification.CategoryHealthCheck,
+			Severity: notification.Info,
+			Title:    "Node back online",
+			Body:     fmt.Sprintf("Node %q is reachable again.", name),
+			Source:   source,
+			Data:     data,
+		})
+	case services.FleetEventCertExpiring:
+		data["certExpiresAt"] = e.ExpiresAt
+		data["hoursLeft"] = e.HoursLeft
+		var body string
+		if e.HoursLeft <= 0 {
+			body = fmt.Sprintf("Node %q certificate has expired; automatic re-enrollment is failing and the node cannot re-establish trust.", name)
+		} else {
+			body = fmt.Sprintf("Node %q certificate expires in about %s; automatic re-enrollment is overdue.", name, humanizeHours(e.HoursLeft))
+		}
+		svc.Publish(context.Background(), notification.Notification{
+			Category: notification.CategoryHealthCheck,
+			Severity: notification.Warning,
+			Title:    "Node certificate expiring",
+			Body:     body,
+			Source:   source,
+			Data:     data,
+		})
+	}
+}
+
+// humanizeHours renders an hour count as a compact "Nd Mh" / "Nh" string.
+func humanizeHours(hours int) string {
+	if hours >= 48 {
+		days := hours / 24
+		rem := hours % 24
+		if rem == 0 {
+			return fmt.Sprintf("%d days", days)
+		}
+		return fmt.Sprintf("%dd %dh", days, rem)
+	}
+	return fmt.Sprintf("%d hours", hours)
 }
 
 func (m *module) RegisterWebRoutes(router *mux.Router, deps apphost.Dependencies) error {

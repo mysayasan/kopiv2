@@ -23,6 +23,7 @@ type nodesApi struct {
 // Operator routes (require a myseliasan session):
 //
 //	GET  /nodes               — list adopted nodes
+//	GET  /nodes/fleet-status  — fleet liveness + cert-health rollup (counts)
 //	POST /nodes/scan          — discover unpaired nodes on the LAN
 //	POST /nodes/adopt         — adopt a node (by ip+port+claim code)
 //	POST /nodes/{id}/release  — release an adopted node
@@ -46,6 +47,7 @@ func NewNodesApi(router *mux.Router, auth middlewares.AuthMidware, session *midd
 	// Axis-1 RBAC: viewers can list nodes (GET) but not adopt/release/rotate keys.
 	g.Use(session.Middleware)
 	g.HandleFunc("", h.list).Methods("GET")
+	g.HandleFunc("/fleet-status", h.fleetStatus).Methods("GET")
 	g.HandleFunc("/scan", h.scan).Methods("POST")
 	g.HandleFunc("/adopt", h.adopt).Methods("POST")
 	g.HandleFunc("/{id}", h.update).Methods("PUT")
@@ -61,6 +63,17 @@ func (a *nodesApi) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	controllers.SendResult(w, nodes, "succeed")
+}
+
+// fleetStatus returns a rollup of the fleet's liveness and certificate health so the
+// dashboard can show "X online / Y lost / Z certs expiring" at a glance.
+func (a *nodesApi) fleetStatus(w http.ResponseWriter, r *http.Request) {
+	status, err := a.registry.FleetStatus(r.Context())
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, status, "succeed")
 }
 
 func (a *nodesApi) scan(w http.ResponseWriter, r *http.Request) {
