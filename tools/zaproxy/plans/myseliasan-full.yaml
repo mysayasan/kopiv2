@@ -1,0 +1,136 @@
+# OWASP ZAP Automation Framework plan — myseliasan FULL ACTIVE scan (whole app).
+#
+# DANGER: authenticates, loads the CSRF script, spiders the whole app (UI + API,
+# incl. an AJAX spider that drives a real browser through the SPA), then runs
+# ACTIVE attack rules against everything in scope except the destructive routes
+# excluded below. Active scanning SENDS ATTACK PAYLOADS and WILL create/modify/
+# delete data and stress the box. NEVER run against production — use a THROWAWAY
+# instance (see ../README.md).
+env:
+  contexts:
+    - name: myseliasan
+      urls:
+        - ${TARGET}
+      includePaths:
+        - "${TARGET}.*"
+      excludePaths:
+        - ".*/api/auth/logout.*"
+        - ".*/api/auth/change-password.*"
+        - ".*/api/nodes/fleet-key.*"
+        - ".*/api/nodes/adopt.*"
+        - ".*/api/nodes/scan.*"
+        - ".*/api/nodes/[0-9]+/elevate.*"
+        - ".*/proxy/api/system/.*"
+        - ".*/wipe.*"
+        - ".*/purge.*"
+        - ".*/reset.*"
+        - ".*/restore.*"
+        - ".*/backup.*"
+        - ".*/api/nodes/[0-9]+$"
+        - ".*/api/nodes/.*/release.*"       # POST release (revokes cert, drops node)
+        - ".*/api/nodes/self-dropped.*"     # marks a node self-dropped
+        - ".*/api/rbac/users/.*"            # disable/elevate/role/delete user — could disable admin mid-scan
+        - ".*/api/access-rbac.*"
+        - ".*/api/nodes/access.*"
+        - ".*/recording-stream.*"
+        - ".*/recording/segments/.*"
+        - ".*/notifications/stream.*"       # SSE long-lived response — stalls active scanners
+      authentication:
+        method: "json"
+        parameters:
+          loginPageUrl: "${TARGET}/"
+          loginRequestUrl: "${TARGET}/api/auth/local-login"
+          loginRequestBody: '{"username":"{%username%}","password":"{%password%}"}'
+        verification:
+          method: "poll"
+          pollUrl: "${TARGET}/api/session/me"
+          pollFrequency: 60
+          pollUnits: "requests"
+          loggedInRegex: '.*(\"isSuperadmin\"|\"role\"|\"permissions\").*'
+          loggedOutRegex: '.*(not authenticated|401|403).*'
+      sessionManagement:
+        method: "cookie"
+      users:
+        - name: "admin"
+          credentials:
+            username: "${ZAP_AUTH_USER}"
+            password: "${ZAP_AUTH_PASS}"
+  parameters:
+    # false: the OpenAPI import logs a non-fatal warning for myseliasan's spec
+    # (Gorilla-mux path param `{id:[0-9]+}` isn't valid OpenAPI); it still
+    # imports the other endpoints. failOnError:true would abort before activeScan.
+    failOnError: false
+    progressToStdout: true
+
+jobs:
+  - type: script
+    parameters:
+      action: "add"
+      type: "httpsender"
+      engine: "ECMAScript : Graal.js"
+      name: "csrf-doublesubmit"
+      file: "/zap/wrk/scripts/csrf-doublesubmit.js"
+  - type: script
+    parameters:
+      action: "enable"
+      name: "csrf-doublesubmit"
+
+  # Import the OpenAPI spec so activeScan attacks the real /api endpoint surface
+  # (the SPA calls /api/* via JS the spiders can't see). This — not the AJAX
+  # spider — is where the authenticated active coverage comes from here.
+  - type: openapi
+    parameters:
+      apiUrl: ${TARGET}/swagger/openapi.json
+      targetUrl: ${TARGET}
+      context: myseliasan
+      user: admin
+
+  - type: spider
+    parameters:
+      context: myseliasan
+      user: admin
+      url: ${TARGET}
+      maxDuration: 8
+
+  # The traditional spider can't execute JS, so it never sees the /api calls a
+  # SPA makes at runtime. The AJAX spider drives a real (headless) browser —
+  # proxied through ZAP, logged in via the session cookie — clicks through the
+  # authenticated UI, and captures the /api/* requests the app fires. Those
+  # requests are what activeScan then attacks.
+  - type: spiderAjax
+    parameters:
+      context: myseliasan
+      user: admin
+      url: ${TARGET}
+      maxDuration: 8
+      browserId: firefox-headless
+      # One browser: two headless Firefox instances alongside ZAP's ~8 GB JVM
+      # heap OOM-kill the container inside Docker Desktop. The real API coverage
+      # comes from the openapi import above, so the AJAX spider is only a bonus.
+      numberOfBrowsers: 1
+
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 15
+
+  - type: activeScan
+    parameters:
+      context: myseliasan
+      user: admin
+      maxRuleDurationInMins: 3
+      maxScanDurationInMins: 60
+    policyDefinition:
+      defaultStrength: medium
+      defaultThreshold: medium
+
+  - type: report
+    parameters:
+      template: traditional-html
+      reportDir: /zap/wrk/reports
+      reportFile: myseliasan-full-${STAMP}
+      reportTitle: myseliasan ZAP full active scan
+  - type: report
+    parameters:
+      template: traditional-json
+      reportDir: /zap/wrk/reports
+      reportFile: myseliasan-full-${STAMP}
