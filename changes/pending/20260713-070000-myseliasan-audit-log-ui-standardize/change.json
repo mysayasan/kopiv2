@@ -1,0 +1,6 @@
+{
+  "type": "changed",
+  "scope": "myseliasan",
+  "summary": "Restyled the superadmin Audit Log page to match the app's standard admin-page layout (settings-panel + header + settings-hint, the same shape as the Users and Roles pages), replacing the bespoke action/target-type <select> filter controls with the shared DataTable's native per-column filtering and sorting. Removed the now-dead .filter-select and .audit-tab.* CSS and 4 i18n keys (audit.allActions/allTargets/filterAction/filterTarget) that backed the old controls.",
+  "compatibility": "Frontend-only presentation change; no behavior, endpoint, entity, or config changes. GET /api/audit still accepts action/targetType/targetId query params server-side (unused by the SPA now, but unaffected for any other caller); the audit feature itself is unchanged."
+}

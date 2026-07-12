@@ -64,7 +64,7 @@ Actions recorded:
 
 Recording is best-effort: a failure to write an audit entry is logged but never blocks or fails the action being audited. Each entry captures the actor (user id, email/name, role), the target (type + id), an outcome (`success`/`denied`/`error`), a short detail string, optional structured `Metadata`, and the client IP.
 
-The trail is read-only over `GET /api/audit?limit=&offset=&action=&targetType=&targetId=`, gated to **superadmins only** (the audit log can expose sensitive operator activity). The SPA exposes it as its own **Audit Log** nav item under **Administration** (superadmin-only), with filters by action and target type.
+The trail is read-only over `GET /api/audit?limit=&offset=&action=&targetType=&targetId=`, gated to **superadmins only** (the audit log can expose sensitive operator activity). The SPA exposes it as its own **Audit Log** nav item under **Administration** (superadmin-only), styled as a standard admin page (settings-panel + header, like Users/Roles) with per-column filtering and sorting on the shared `DataTable`.
 
 ## Fleet CA
 
