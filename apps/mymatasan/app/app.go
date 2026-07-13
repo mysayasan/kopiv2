@@ -30,6 +30,7 @@ import (
 	"github.com/mysayasan/kopiv2/infra/recording"
 	"github.com/mysayasan/kopiv2/infra/rtsp"
 	"github.com/mysayasan/kopiv2/infra/safego"
+	"github.com/mysayasan/kopiv2/infra/telemetry"
 	"github.com/mysayasan/kopiv2/infra/stream"
 	"github.com/mysayasan/kopiv2/infra/versioning"
 	"github.com/mysayasan/kopiv2/infra/vision"
@@ -180,6 +181,11 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		deps.Logger.Warnf(component, format, args...)
 	})
 
+	// Register metric help text so a /metrics scrape is readable by whoever is debugging
+	// a customer box, not just by whoever wrote the instrumentation.
+	services.DescribeMetrics(deps.Metrics)
+	recording.DescribeMetrics(deps.Metrics)
+
 	// Resolve the encryption-at-rest master key FIRST, before building any service. When
 	// encryption is on and the key is missing but a key existed here before, the app enters
 	// RECOVERY mode: it mounts only the public recovery gate and returns, so nothing else
@@ -313,7 +319,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	metadataRecorder := services.NewMetadataRecorder(objectObservationRepo, recordingService, deps.Config.Vision.Detector.MinObjectConfidence)
 	observationService := services.NewObservationService(objectObservationRepo, recordingService)
 	notificationRepo := dbsql.NewGenericRepo[sharedentities.Notification](deps.Db)
-	notificationService := notification.NewService(notificationRepo, notificationOptionsFromAppConfig(deps.Config, deps.Logger))
+	notificationService := notification.NewService(notificationRepo, notificationOptionsFromAppConfig(deps.Config, deps.Logger, deps.Metrics))
 	// Incrementally aggregate the notifications feed into the hourly rollup table
 	// that powers the dashboard's baseline/anomaly analytics (Phase 0). The cursor
 	// persists the last-folded notification id so sweeps are exactly-once and the
@@ -493,6 +499,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 					RecordQuality:      recordQuality,
 					RecordFallbackCopy: recordFallbackCopy,
 					Cipher:             atrestCipher,
+					Metrics:            deps.Metrics,
 				})
 			}(cfg)
 		}
@@ -507,7 +514,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	// Built before route registration so the camera API can expose an on-demand
 	// health probe; started later alongside the other background monitors.
-	cameraHealthMonitor := services.NewCameraHealthMonitor(cameraService, rtsp.NewClient(), healthSettingsService, notificationService)
+	cameraHealthMonitor := services.NewCameraHealthMonitor(cameraService, rtsp.NewClient(), healthSettingsService, notificationService, deps.Metrics)
 	m.cameraHealth = cameraHealthMonitor
 
 	// Host (machine) health monitor: samples CPU/memory/disk and runs disk
@@ -528,7 +535,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 			}
 		}
 	}
-	machineHealthMonitor := services.NewMachineHealthMonitor(machineHealthSettingsService, notificationService, recorderManager, recordingService, machineAutoPaths)
+	machineHealthMonitor := services.NewMachineHealthMonitor(machineHealthSettingsService, notificationService, recorderManager, recordingService, machineAutoPaths, deps.Metrics)
 	m.machineHealth = machineHealthMonitor
 
 	loginGuard := apis.NewLoginGuard(loginGuardConfigFromAppConfig(deps.Config))
@@ -629,7 +636,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	ffmpegInstaller := services.NewFFmpegInstaller(ffmpegBinDir, settingsService)
 	pythonInstaller := services.NewPythonInstaller(deps.DataDir, deps.ConfigPath)
 	apis.NewSettingsApi(protected, settingsService, cameraService, localUserService, notificationSettingsService, healthSettingsService, machineHealthSettingsService, machineHealthMonitor, visionToolSettingsFromAppConfig(deps.Config), ffmpegInstaller, pythonInstaller, deps.Config.Decoder.BrowseRoots)
-	apis.NewRecordingApi(protected, recordingService, recorderManager, cameraService, settingsService, atrestCipher, visionService, shredPasses)
+	apis.NewRecordingApi(protected, recordingService, recorderManager, cameraService, settingsService, atrestCipher, visionService, shredPasses, deps.Metrics)
 	apis.NewObservationApi(protected, observationService)
 	apis.NewNotificationApi(protected, notificationService)
 	apis.NewAnomalyApi(protected, anomalySettingsService, notificationService, cameraService)
@@ -678,6 +685,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		oc.SetObservationSink(metadataRecorder)
 	}
 	monitorSettings.Metadata = metadataRecorder
+	monitorSettings.Metrics = deps.Metrics
 	// Resolver for the detection-only frame stream the monitor runs when a camera
 	// has AI rules but NVR recording is off (siphon/auto). It reuses the same stream
 	// selection + credential injection + siphon params as the real recorder so the
@@ -725,6 +733,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 			HWAccelDevice:   hwDevice,
 			InitHWDevice:    initHWDevice,
 			VideoDecoder:    videoDecoder,
+			Metrics:         deps.Metrics,
 		}, true
 	}
 	if monitorSettings.Enabled {
@@ -1065,10 +1074,11 @@ func writeFirstRunCredentialFile(path, url string, seed services.AdminSeedResult
 // notificationOptionsFromAppConfig builds always-on notification options. The
 // outbound delivery channels (webhook, telegram) are applied separately from the
 // persisted, runtime-editable notification settings.
-func notificationOptionsFromAppConfig(cfg *config.AppConfigModel, logger applog.Logger) notification.Options {
+func notificationOptionsFromAppConfig(cfg *config.AppConfigModel, logger applog.Logger, metrics telemetry.Metrics) notification.Options {
 	return notification.Options{
 		Logger:          logger,
 		SSEClientBuffer: cfg.Notification.SSEClientBuffer,
+		Metrics:         metrics,
 	}
 }
 

@@ -27,6 +27,14 @@ When any rule for a camera has `detectionType = "lpr"`, `sampleCamera` sets `wan
 
 Each `reconcileSamplers` pass reads `settings.Vision.Capture.IntervalMs` and converts it via `sampleIntervalFromSettings` into the live per-camera detector-sampling cadence: `0`/unset falls back to the monitor's built-in `m.interval`; anything set is clamped to `[250ms, 60s]` so a stray value can't peg or stall a camera's loop. The resolved interval is pushed into each `cameraSampler.setState` and used to `Reset` its timer after every sample, so a Settings → AI → Capture interval change takes effect for every camera on the next reconcile without a restart — previously the sampler's own tick period ignored this setting and always ran on the monitor's fixed interval.
 
+## Metrics
+
+`VisionMonitor` records three metrics (see `apps/mymatasan/services/metrics.go.md`) via nil-safe helpers (`countFrame`, `observeInference`, `countAlert`) fed from `VisionMonitorSettings.Metrics`:
+
+- Every `sampleCamera` pass counts `mymatasan_frames_total{camera,outcome}` — `capture_failed` on a capture error, `detect_failed` on a detector error, `ok` otherwise.
+- `mymatasan_inference_duration_ms{camera}` times `detector.Detect` on **both** the success and failure path — timing only success would hide a detector that is failing slowly (e.g. a wedged worker hitting the capture timeout every pass), which is exactly the case worth seeing.
+- `mymatasan_alerts_total{camera,kind}` counts real detections (`kind="detection"`, in the per-detection persist loop) separately from diagnostic events (`kind="diagnostic"`, in `emitDiagnostics`) so a diagnostic flood — the same failure mode that once emptied the events panel — is legible in a scrape rather than only in the alert log.
+
 ## Sampled-diagnostic suppression
 
 The `"sampled"` heartbeat diagnostic (frame captured; nothing detected) is now only written when `persistSampledDiagnostics` is `true` (off by default). Capture and detect failures are still written regardless. This prevents the noisy heartbeat from bloating the `alert_event` table; the setting is exposed in `VisionMonitorSettings.PersistSampledDiagnostics` and in the config as `vision.persistSampledDiagnostics`.

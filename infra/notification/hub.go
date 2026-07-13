@@ -8,6 +8,8 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"github.com/mysayasan/kopiv2/infra/telemetry"
 )
 
 // Hub fans one published notification out to every registered channel whose
@@ -17,10 +19,26 @@ import (
 //
 // Hub is safe for concurrent use.
 type Hub struct {
-	mu     sync.RWMutex
-	subs   []subscription
-	logger Logger
-	now    func() time.Time
+	mu      sync.RWMutex
+	subs    []subscription
+	logger  Logger
+	now     func() time.Time
+	metrics telemetry.Metrics
+}
+
+// MetricDeliveryTotal counts notification delivery attempts by channel and outcome
+// (ok | failed | panic). Emitted by shared infra, hence the neutral kopiv2_ prefix.
+const MetricDeliveryTotal = "kopiv2_notification_delivery_total"
+
+// SetMetrics attaches a telemetry recorder. Optional; delivery counting is a no-op
+// until one is set.
+func (h *Hub) SetMetrics(m telemetry.Metrics) {
+	h.mu.Lock()
+	h.metrics = m
+	h.mu.Unlock()
+	if m != nil {
+		m.Describe(MetricDeliveryTotal, "Notification delivery attempts by channel and outcome (ok, failed, panic).")
+	}
 }
 
 type subscription struct {
@@ -89,14 +107,33 @@ func (h *Hub) Publish(ctx context.Context, n Notification) Notification {
 // deliver sends to one channel, recovering from panics so a misbehaving channel
 // cannot take down the publisher.
 func (h *Hub) deliver(ctx context.Context, channel Channel, n Notification) {
+	outcome := "ok"
 	defer func() {
 		if r := recover(); r != nil {
+			outcome = "panic"
 			h.logf("error", "notification.hub", "channel %q panicked: %v", channel.Name(), r)
 		}
+		// Counted per channel, per outcome. Notification delivery is at-most-once (a full
+		// queue or exhausted retries drops the message), and until now a drop was a log
+		// line nobody reads. A rising `failed` on one channel is the difference between
+		// "the alerts stopped" and "the alerts are still firing, the webhook is down".
+		h.countDelivery(channel.Name(), outcome)
 	}()
 	if err := channel.Send(ctx, n); err != nil {
+		outcome = "failed"
 		h.logf("warn", "notification.hub", "channel %q send failed: %v", channel.Name(), err)
 	}
+}
+
+// countDelivery records one delivery attempt. Nil-safe: telemetry is optional.
+func (h *Hub) countDelivery(channel string, outcome string) {
+	h.mu.RLock()
+	metrics := h.metrics
+	h.mu.RUnlock()
+	if metrics == nil {
+		return
+	}
+	metrics.Inc(MetricDeliveryTotal, telemetry.Labels{"channel": channel, "outcome": outcome})
 }
 
 // Close closes every registered channel that implements io.Closer, so internal

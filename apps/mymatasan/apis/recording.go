@@ -19,6 +19,7 @@ import (
 	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/onvif"
 	"github.com/mysayasan/kopiv2/infra/recording"
+	"github.com/mysayasan/kopiv2/infra/telemetry"
 	"github.com/mysayasan/kopiv2/infra/vision"
 )
 
@@ -29,16 +30,23 @@ type recordingApi struct {
 	settings services.IRuntimeSettingsService
 	cipher   *atrest.Cipher
 	vision   services.IVisionService
-	// shredPasses must be carried into every RecorderConfig this handler builds. It is
-	// a boot-time setting, so omitting it here silently rebuilt the recorder with
-	// ShredPasses=0 — secure shred degraded to a plain unlink on the retention purge the
-	// moment an operator saved any recording setting, until the next restart.
+	// shredPasses and metrics must be carried into every RecorderConfig this handler
+	// builds. They are boot-time settings, so omitting one silently rebuilds the recorder
+	// without it — which is exactly what happened to shredPasses: secure shred degraded
+	// to a plain unlink the moment an operator saved any recording setting, until the
+	// next restart.
+	//
+	// NOTE: this handler reconstructs a RecorderConfig field-by-field, duplicating the
+	// one in app.go. Every new RecorderConfig field has to be remembered in BOTH places
+	// or it is silently dropped here. A shared builder would remove the trap; until then,
+	// treat adding a field to RecorderConfig as a two-site change.
 	shredPasses int
+	metrics     telemetry.Metrics
 }
 
 // NewRecordingApi registers recording routes under /recording.
-func NewRecordingApi(router *mux.Router, serv services.IRecordingService, recorder *recording.Manager, camera services.ICameraService, settings services.IRuntimeSettingsService, cipher *atrest.Cipher, vision services.IVisionService, shredPasses int) {
-	h := &recordingApi{serv: serv, recorder: recorder, camera: camera, settings: settings, cipher: cipher, vision: vision, shredPasses: shredPasses}
+func NewRecordingApi(router *mux.Router, serv services.IRecordingService, recorder *recording.Manager, camera services.ICameraService, settings services.IRuntimeSettingsService, cipher *atrest.Cipher, vision services.IVisionService, shredPasses int, metrics telemetry.Metrics) {
+	h := &recordingApi{serv: serv, recorder: recorder, camera: camera, settings: settings, cipher: cipher, vision: vision, shredPasses: shredPasses, metrics: metrics}
 	g := router.PathPrefix("/recording").Subrouter()
 
 	g.HandleFunc("/segments", h.listSegments).Methods("GET")
@@ -490,6 +498,7 @@ func (a *recordingApi) saveConfig(w http.ResponseWriter, r *http.Request) {
 				RecordFallbackCopy: recStorage.Storage.FallbackToCopy == nil || *recStorage.Storage.FallbackToCopy,
 				ShredPasses:        a.shredPasses,
 				Cipher:             a.cipher,
+				Metrics:            a.metrics,
 			}); cerr != nil {
 				recorderWarning = cerr.Error()
 				log.Printf("recording: configure cam%d: %v", cfg.CameraId, cerr)

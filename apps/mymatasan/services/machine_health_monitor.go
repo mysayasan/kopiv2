@@ -11,6 +11,7 @@ import (
 	"github.com/mysayasan/kopiv2/domain/notification"
 	"github.com/mysayasan/kopiv2/infra/recording"
 	"github.com/mysayasan/kopiv2/infra/safego"
+	"github.com/mysayasan/kopiv2/infra/telemetry"
 )
 
 // machineMitigationMinPurgeGap throttles the on-demand retention purge so a
@@ -42,6 +43,18 @@ type MachineHealthMonitor struct {
 	resumStreak int
 	lastPurge   time.Time
 	lastWipe    time.Time
+
+	metrics telemetry.Metrics
+}
+
+// countMitigation records a disk-guard action. These are the moments the app changed the
+// system's behaviour to protect itself; without them, "why did recording stop overnight?"
+// is unanswerable from a scrape.
+func (m *MachineHealthMonitor) countMitigation(action string) {
+	if m.metrics == nil {
+		return
+	}
+	m.metrics.Inc(MetricDiskMitigationTotal, telemetry.Labels{"action": action})
 }
 
 // machineMetricState is the debounced level tracking for one metric (cpu, memory,
@@ -63,6 +76,7 @@ func NewMachineHealthMonitor(
 	recorder *recording.Manager,
 	recordingService IRecordingService,
 	autoPaths []string,
+	metrics telemetry.Metrics,
 ) *MachineHealthMonitor {
 	return &MachineHealthMonitor{
 		settings:  settings,
@@ -71,6 +85,7 @@ func NewMachineHealthMonitor(
 		recording: recordingService,
 		autoPaths: normalizePathList(autoPaths),
 		states:    map[string]*machineMetricState{},
+		metrics:   metrics,
 	}
 }
 
@@ -169,6 +184,19 @@ func (m *MachineHealthMonitor) tick(ctx context.Context) time.Duration {
 	for _, d := range metrics.Disks {
 		label := "Disk " + d.Mountpoint
 		m.evaluate(ctx, "disk:"+d.Mountpoint, label, d.UsedPercent, diskThreshold, cfg)
+		if m.metrics != nil {
+			// Mountpoints are a bounded set on an appliance, so this is a safe label.
+			m.metrics.Set(MetricDiskUsedPercent, telemetry.Labels{"mount": d.Mountpoint}, d.UsedPercent)
+		}
+	}
+	if m.metrics != nil && m.recorder != nil {
+		// The most important single bit on the box: while this is 1, no footage is being
+		// written at all.
+		paused := 0.0
+		if m.recorder.IsPaused() {
+			paused = 1
+		}
+		m.metrics.Set(MetricRecordingPaused, telemetry.Labels{}, paused)
 	}
 
 	m.runMitigation(ctx, cfg, metrics)
@@ -285,6 +313,7 @@ func (m *MachineHealthMonitor) runMitigation(ctx context.Context, cfg MachineHea
 		m.pausedByUs = true
 		m.mu.Unlock()
 		m.recorder.Pause()
+		m.countMitigation("pause")
 		body := fmt.Sprintf("%s reached %.1f%%. NVR recording is paused to protect the system; it resumes automatically below %d%%.", decMount, decPercent, cfg.Mitigation.ResumePercent)
 		if overwrite {
 			body = fmt.Sprintf("%s reached %.1f%% and overwriting could not free space (all remaining footage is newer than the %d-day keep floor). NVR recording is paused; it resumes automatically below %d%%.",
@@ -294,6 +323,7 @@ func (m *MachineHealthMonitor) runMitigation(ctx context.Context, cfg MachineHea
 			map[string]any{"mountpoint": decMount, "usedPercent": decPercent, "action": "pause-recording"})
 	} else if doResume {
 		m.recorder.Resume()
+		m.countMitigation("resume")
 		m.notify(ctx, notification.Info, "Recording resumed",
 			fmt.Sprintf("%s dropped below %d%% — NVR recording resumed.", decMount, cfg.Mitigation.ResumePercent),
 			map[string]any{"mountpoint": decMount, "usedPercent": decPercent, "action": "resume-recording"})
@@ -399,6 +429,7 @@ func (m *MachineHealthMonitor) overwriteOldestFootage(ctx context.Context, cfg M
 	m.mu.Lock()
 	m.lastWipe = time.Now()
 	m.mu.Unlock()
+	m.countMitigation("overwrite")
 	m.notify(ctx, notification.Warning, "Oldest footage overwritten — low disk space",
 		fmt.Sprintf("%s reached %.1f%% — deleted the %d oldest recording segment(s) (%s freed) to keep recording continuous. Footage newer than %d day(s) is never auto-deleted.",
 			disk.Mountpoint, disk.UsedPercent, deleted, formatMitigationBytes(freed), cfg.Mitigation.OverwriteMinKeepDays),

@@ -1197,3 +1197,30 @@ Notes:
 - Identifiers (`data.alertId/ruleId/cameraName/detectionType`) are always present; the other `data.*` keys and the `snapshot*` fields appear only when that destination enables them.
 - `boundingBox` and `zonePolygon` are JSON **strings** (parse them as nested JSON on the receiving end).
 - Custom fields appear in `data` **and** as `key: value` lines appended to `body`, so text-only channels (Telegram) display them too.
+
+## Runtime Metrics
+
+Prometheus is enabled by default (`telemetry.prometheus.enabled`, see root `README.md` → Telemetry) and scraped from `/metrics`. On top of the shared `kopiv2_api_*`/`kopiv2_tx_*` series, mymatasan records the app-specific numbers an operator needs to diagnose a site they can't log into — most of these were previously answerable only by reading logs, if at all.
+
+| Metric | Type | Labels | What it tells you |
+|---|---|---|---|
+| `mymatasan_inference_duration_ms` | histogram | `camera` | Detector pass latency. First thing to check when detection "feels slow" or frames are being skipped. Timed on both success and failure. |
+| `mymatasan_frames_total` | counter | `camera`, `outcome` (`ok`/`capture_failed`/`detect_failed`) | Sampled-frame outcomes. A camera silently failing every capture is otherwise indistinguishable from a quiet one. |
+| `mymatasan_alerts_total` | counter | `camera`, `kind` (`detection`/`diagnostic`) | Emitted alerts by kind, so a diagnostic flood is distinguishable from real activity. |
+| `mymatasan_camera_online` | gauge | `camera` | `1` when the camera's last health probe succeeded, else `0`. |
+| `mymatasan_cameras_offline` | gauge | — | Count of currently unreachable cameras. |
+| `mymatasan_disk_used_percent` | gauge | `mount` | Disk usage per mount, including the recordings volume. |
+| `mymatasan_recording_paused` | gauge | — | `1` while the disk guard has recording paused — no footage is being written while this is `1`. |
+| `mymatasan_disk_mitigation_total` | counter | `action` (`pause`/`resume`/`overwrite`) | Disk-guard actions taken; explains "why did recording stop overnight?" |
+| `kopiv2_recording_ffmpeg_restarts_total` | counter | `camera` | Capture-ffmpeg restarts. Thrashing here means a camera is failing to hold its RTSP connection — the earliest signal of a flapping stream. |
+| `kopiv2_recording_segment_finalize_total` | counter | `camera`, `outcome` (`saved`/`discarded`/`failed`/`unsaved`/`quarantined`) | Segment finalize attempts by outcome. Anything but `saved` accumulating means footage isn't reaching the recordings list. |
+| `kopiv2_notification_delivery_total` | counter | `channel`, `outcome` (`ok`/`failed`/`panic`) | Outbound notification delivery attempts (webhook/telegram/MQTT/etc). Delivery is at-most-once — a drop here used to be invisible outside a log line. |
+
+What's worth alerting on:
+- `mymatasan_cameras_offline > 0` sustained — a camera the health monitor can no longer reach.
+- `mymatasan_recording_paused == 1` sustained — the disk guard has stopped all recording to protect the host.
+- Any increase in `kopiv2_recording_segment_finalize_total{outcome="quarantined"}` — footage is on disk but will never appear in the recordings list; page on this one.
+- A rising `kopiv2_notification_delivery_total{outcome="failed"}` on one `channel` — the difference between "alerts stopped" and "alerts are still firing, that one destination is down".
+- `mymatasan_disk_used_percent` approaching the configured mitigation threshold, or a rising `kopiv2_recording_ffmpeg_restarts_total` for one camera (a flapping stream).
+
+All of the above are emitted via the shared `infra/telemetry.Metrics` registry (see root `README.md` → Telemetry → App-defined metrics), which caps cardinality per metric name and surfaces truncation in the scrape rather than silently dropping series.

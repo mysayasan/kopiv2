@@ -46,6 +46,7 @@ Implements the reusable runtime host for all app modules.
 - Seed built-in accessrbac roles (`superadmin`, `viewer`) and enforce viewer least-privilege when `SharedAPIConfig.AccessRbac` is true, then mount the shared `/api/access-rbac` management surface protected by the accessrbac middleware. `EnsureViewerDefaults` is called **to strip** the legacy read-everything `GET /api` wildcard from existing deployments (viewer now starts with no permissions; an admin grants specific read paths via the matrix).
 - Load the embedded version manifest and register the shared public version endpoint under `/api/version`.
 - Initialize Prometheus telemetry when configured and mount the metrics endpoint.
+- Populate `Dependencies.Metrics` from the telemetry recorder (the same recorder backing `/metrics`), so app modules can record their own counters/gauges/histograms via `telemetry.Metrics` without wiring Prometheus themselves. Falls back to the shared no-op recorder when telemetry is disabled — `deps.Metrics` is never nil.
 - Mount shared operational route groups; identity apps such as `myidsan` register login/user routes from their own app package.
 - Build and validate cache provider (`default`, `redis`, `inmemory`, or `memory`) from runtime config.
 - Build and validate transaction lock provider (`redis`, `memory`, or `inmemory`) from runtime config.

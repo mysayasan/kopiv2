@@ -17,6 +17,7 @@ import (
 	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/procutil"
 	"github.com/mysayasan/kopiv2/infra/safego"
+	"github.com/mysayasan/kopiv2/infra/telemetry"
 )
 
 // fileIsEncrypted reports whether path begins with the atrest header magic.
@@ -62,6 +63,21 @@ const (
 	                                   // the adoption path retries persistence, so this is
 	                                   // not a segment fault and burns no retry attempt
 )
+
+// String is the metric label for a finalize outcome. Keep these values stable — they are
+// a bounded label set on kopiv2_recording_segment_finalize_total.
+func (o remuxOutcome) String() string {
+	switch o {
+	case remuxSaved:
+		return "saved"
+	case remuxDiscarded:
+		return "discarded"
+	case remuxUnsaved:
+		return "unsaved"
+	default:
+		return "failed"
+	}
+}
 
 // liveSegInfo describes one live segment.  path is the best available file for
 // that segment: .mp4 if the TS has been remuxed, otherwise .ts.  tsPath is set
@@ -592,6 +608,7 @@ func (r *rtspRecorder) runFFmpeg(ctx context.Context, ffmpegPath, transport stri
 			restartDelay = 5 * time.Second
 		}
 		log.Printf("recording rtsp cam%d: ffmpeg exited; restarting in %s", r.cfg.CameraId, restartDelay)
+		r.cfg.countMetric(MetricFFmpegRestartsTotal, nil)
 		select {
 		case <-ctx.Done():
 			return
@@ -634,6 +651,12 @@ func (r *rtspRecorder) claimStem(stem string) bool {
 // it — the previous code marked a stem saved BEFORE attempting the remux, so any
 // failure stranded the segment permanently and retention later shredded it.
 func (r *rtspRecorder) finishStem(ctx context.Context, f liveSegInfo, outcome remuxOutcome) {
+	// Every finalize attempt funnels through here, so this is the one place that sees
+	// the whole picture. Anything other than `saved` accumulating means footage is not
+	// reaching the recordings list — which is otherwise invisible until someone goes
+	// looking for a clip that isn't there.
+	r.cfg.countMetric(MetricSegmentFinalizeTotal, telemetry.Labels{"outcome": outcome.String()})
+
 	r.segMu.Lock()
 	delete(r.segBusy, f.stem)
 	switch {
@@ -658,6 +681,11 @@ func (r *rtspRecorder) finishStem(ctx context.Context, f liveSegInfo, outcome re
 	// Repeatedly unfinalizable. Park the source TS in quarantine/ rather than leaving
 	// it in live/ where the retention purge would silently shred footage we never
 	// managed to save, and stop retrying so it cannot spin ffmpeg forever.
+	//
+	// Counted separately: a non-zero quarantined count is footage that exists on disk but
+	// will never appear in the recordings list. It is the one recorder metric worth
+	// paging someone about.
+	r.cfg.countMetric(MetricSegmentFinalizeTotal, telemetry.Labels{"outcome": "quarantined"})
 	r.quarantineSegment(f)
 	r.segMu.Lock()
 	r.segDone[f.stem] = true
