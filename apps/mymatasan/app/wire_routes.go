@@ -23,7 +23,6 @@ import (
 // backup) are built LAST — they need the monitors and recorder to exist so they can quiesce
 // them — and must still mount behind the same middleware chain.
 func registerRoutes(api *mux.Router, w *wiring) *mux.Router {
-	deps := w.deps
 
 	// Public (unauthenticated) routes first — the pairing claim endpoint must be
 	// registered before the session catch-all so requests match here rather than being
@@ -45,7 +44,7 @@ func registerRoutes(api *mux.Router, w *wiring) *mux.Router {
 	apis.NewTrainingApi(protected, w.training)
 	apis.NewTeachApi(protected, w.teach)
 	apis.NewSettingsApi(protected, w.settings, w.camera, w.localUser, w.notificationSettings, w.healthSettings, w.machineHealthSettings, w.machineHealth,
-		visionToolSettingsFromAppConfig(deps.Config, w.detectorPaths.DetectorArgs), w.ffmpegInstaller, w.pythonInstaller, deps.Config.Decoder.BrowseRoots)
+		visionToolSettingsFromAppConfig(w.appCfg, w.detectorPaths.DetectorArgs), w.ffmpegInstaller, w.pythonInstaller, w.appCfg.Decoder.BrowseRoots)
 	apis.NewRecordingApi(protected, w.recording, w.recorder, w.camera, w.settings, w.atrestCipher, w.vision, w.recorderConfig)
 	apis.NewObservationApi(protected, w.observation)
 	apis.NewNotificationApi(protected, w.notification)

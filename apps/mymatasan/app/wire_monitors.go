@@ -131,15 +131,15 @@ func startRetentionPurges(ctx context.Context, w *wiring) {
 	// Expired AI detection alerts. DiagnosticRetentionDays trims the noisy vision-monitor
 	// diagnostics; AlertRetentionDays (0 = keep forever) trims real detections too. Both
 	// also unlink the snapshot image files of the rows they remove.
-	periodic(ctx, "mymatasan.purge.alerts", interval(deps.Config.Vision.AlertPurgeIntervalHours), func(ctx context.Context) {
-		if days := deps.Config.Vision.DiagnosticRetentionDays; days > 0 {
+	periodic(ctx, "mymatasan.purge.alerts", interval(w.appCfg.Vision.AlertPurgeIntervalHours), func(ctx context.Context) {
+		if days := w.appCfg.Vision.DiagnosticRetentionDays; days > 0 {
 			if deleted, err := w.vision.PurgeAlertsOlderThanDays(ctx, days, true); err != nil {
 				deps.Logger.Warnf("mymatasan.vision", "diagnostic alert purge failed: %v", err)
 			} else if deleted > 0 {
 				deps.Logger.Infof("mymatasan.vision", "purged %d diagnostic alerts older than %d day(s)", deleted, days)
 			}
 		}
-		if days := deps.Config.Vision.AlertRetentionDays; days > 0 {
+		if days := w.appCfg.Vision.AlertRetentionDays; days > 0 {
 			if deleted, err := w.vision.PurgeAlertsOlderThanDays(ctx, days, false); err != nil {
 				deps.Logger.Warnf("mymatasan.vision", "alert purge failed: %v", err)
 			} else if deleted > 0 {

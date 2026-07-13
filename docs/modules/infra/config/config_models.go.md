@@ -2,13 +2,46 @@
 
 ## Purpose
 
-Defines the top-level app configuration model loaded from app config JSON.
+Defines the top-level app configuration model loaded from app config JSON — the blocks a
+*second* app already uses or obviously will. It is deliberately no longer every app's whole
+config: see "Per-app config seam" below.
 
 ## Responsibilities
 
 - Model optional OAuth provider configuration for Google and GitHub.
 - Model server listener hostnames and explicit TLS/non-TLS ports.
-- Model bootstrap, JWT, SSO, local app auth, decoder startup defaults, live stream startup defaults, vision detector startup settings, file storage, cache, rate limiting, transaction coordination, logging, API log cleanup, telemetry, TLS, and DB settings.
+- Model bootstrap, JWT, SSO, local app auth, notification startup defaults, login-lockout
+  security, encryption-at-rest, pairing/fleet, file storage, cache, rate limiting,
+  transaction coordination, logging, API log cleanup, telemetry, TLS, and DB settings.
+- Retain the raw config document (`raw []byte`, unexported/untagged) that
+  `LoadAppConfiguration` (`app_config.go.md`) decoded it from, exposed via `Raw()`, so an app
+  that owns config blocks of its own can decode them from the same bytes. See "Per-app
+  config seam" below.
+
+## Per-app config seam
+
+`Camera`, `Decoder`, `Stream`, `Vision`, `Health`, and `Recording` — six blocks that were
+mymatasan-only (nothing else in the codebase read them) — are **no longer part of this
+model**. They moved to `apps/mymatasan/config` (`Config`, decoded via
+`apphost.AppConfigDecoder.DecodeAppConfig`, see `infra/apphost/types.go.md`), along with the
+model types `StreamConfigModel`, `WebRTCConfigModel`, `MJPEGFallbackConfigModel`,
+`HealthConfigModel`, `RecordingConfigModel`, `VisionConfigModel`,
+`VisionTrainingConfigModel`, and `VisionDetectorConfigModel` (all now under
+`apps/mymatasan/config`, not here). `WebRTCICEServerModel` stayed here because `NodeStream`
+(shared, the fleet media relay) also uses it.
+
+This is **not** a nested `"app"` key in `config.json` — the moved blocks stay exactly where
+they were, at the top level, so no deployed config file has to change. An app decodes its
+own blocks from the same raw document this model already parsed (`Raw()`). What moved was
+ownership (who has a Go type for the block, and who resolves its data-relative paths), not
+the file format. See `docs/modules/apps/mymatasan/config/config.go.md` and
+`docs/MYMATASAN_TIER2_PLAN.md` (phase C).
+
+What stayed here is anything a second app already uses or obviously will: `Security`
+(encryption-at-rest — `myseliasan` uses it too), `Pairing`/`NodeStream` (the fleet),
+`Notification`, `LoginSecurity`, and every infra block (`server`, `db`, `cache`, `rateLimit`,
+`sso`, `tls`, `telemetry`, `fileStorage`, `logging`, `apiLog`, `transaction`,
+`securityHeaders`, `bootstrap`, `localAuth`, `login`).
 
 ## Notes
 
@@ -18,7 +51,6 @@ Defines the top-level app configuration model loaded from app config JSON.
 - `tls.certPath` and `tls.keyPath` are required when HTTPS listeners are enabled; relative paths are app-relative.
 - Legacy `server.ports`, `server.enableTls`, and `server.enableNonTls` remain available only as a fallback when explicit port lists are empty.
 - `logging.path` is app-relative unless absolute, and is resolved with Go `filepath` for Windows, Linux, and macOS.
-- `recording.shred.*` configures secure-overwrite of deleted footage; `recording.storage.{codec,quality,maxConcurrentEncodes,fallbackToCopy}` seeds the at-rest recording codec defaults (codec default `copy` = no host re-encode) which are then runtime-editable via Settings → Recording. `fallbackToCopy` is a `*bool`; `nil`/omitted defaults to enabled, storing a segment as stream-copy instead of dropping it when the configured re-encode codec can't run on the host (no usable NVENC GPU, or a runtime encode failure).
 - `security.keyProtector` selects how the on-disk encryption-at-rest master key is protected: `""`/`"file"` (plaintext, default/backward-compatible), `"auto"` (platform default: DPAPI on Windows, systemd-creds on a systemd Linux host, else file), `"dpapi"` (Windows, machine-scoped, host-bound), `"systemd-creds"` (Linux, TPM2-backed when present, host-bound), or `"passphrase"` (Argon2id-derived KEK, portable — the right choice for Docker). Switching protectors re-wraps the same key on the next boot, so existing encrypted data stays readable; host-bound protectors cannot be unwrapped on another machine.
 - `security.passphrase`/`passphraseFile`/`passphraseEnv` source the KEK for the `passphrase` protector, resolved in that order, then `$ATREST_PASSPHRASE`; prefer `passphraseFile` (a mounted Docker secret) or `passphraseEnv` over inlining the passphrase in config.
 - `security.recoveryPath` (default `recovery.atrestkey` beside `keyPath`) is where a disaster-recovery escrow (exported from Settings → Backup & Recovery) is looked for on first boot. When the master key is missing but this file is present and a passphrase resolves, the app restores the key from it automatically (no prompt) and migrates it to the configured protector; see `infra/atrest/startup.go.md`.
@@ -54,22 +86,9 @@ Defines the top-level app configuration model loaded from app config JSON.
 - `sso.redirectPath` configures the relying-app callback path.
 - `sso.authCodeTtlSeconds` and `sso.accessTokenTtlSeconds` provide MyIDSan defaults when per-client DB config does not override them.
 - `localAuth.enabled`, `localAuth.username`, and `localAuth.password` configure each standalone app's bootstrap local admin: `mymatasan` reads `localAuth.username`/`localAuth.password` at startup to seed its DB-backed first admin user (`ILocalUserService.EnsureDefaultAdmin`), falling back to `admin`/`admin` when empty, same as `myseliasan`'s stock superadmin.
-- `decoder.mjpeg.ffmpegPath` configures the startup default ffmpeg executable used by `mymatasan` MJPEG fallback live view and RTSP frame capture; empty defaults to resolving `ffmpeg` from `PATH`.
-- `decoder.mjpeg.quality` and `decoder.mjpeg.threads` tune MJPEG output quality and ffmpeg thread count.
-- `decoder.ffmpeg` carries RTSP transport, hardware decode mode/device, optional decoder name, probe/analyze limits, and low-latency flags for ffmpeg-backed RTSP conversion.
-- Legacy `camera.ffmpegPath` remains in the config model only as a migration fallback.
-- `stream.webrtc.enabled` controls whether browser live view attempts WebRTC first; omitted defaults to disabled.
-- `stream.webrtc.iceServers` optionally configures STUN/TURN servers as browser-compatible `urls`, `username`, and `credential` entries.
-- `stream.mjpegFallback.enabled` controls whether the MJPEG endpoint can be used as fallback or primary mode when WebRTC is disabled; omitted defaults to enabled.
-- `vision.enabled` controls whether the MyMataSan vision monitor worker starts; omitted defaults to enabled.
-- `vision.intervalMs`, `vision.captureTimeoutMs`, and `vision.diagnosticCooldownSeconds` control monitor polling, per-frame capture timeout, and diagnostic alert throttling.
-- `vision.persistSampledDiagnostics` (default `false`) — when `false`, the noisy per-frame heartbeat diagnostic (frame captured; nothing detected) is suppressed. Capture and detect failures are always logged.
-- `vision.diagnosticRetentionDays` — purge Vision-monitor diagnostic alert rows older than N days (default no purge when 0).
-- `vision.alertRetentionDays` — purge all alert event rows (real detections included) older than N days; 0 = keep forever.
-- `vision.alertPurgeIntervalHours` — how often the background purge job runs (default 6 hours).
-- `vision.detector.mode` selects `motion`, `external`, `hybrid`, or `persistent`; `motion` is the dependency-free default.
-- `vision.detector.command` and `vision.detector.args` configure either a per-frame detector process (`external`/`hybrid`) or a long-lived newline-JSON worker (`persistent`).
-- `vision.detector.classMap` maps rule detection types such as `fire`, `smoke`, `person`, `vehicle`, `animal`, `crowd`, `intrusion`, `line_crossing`, `multi_line_crossing`, and `lpr` to model labels.
+- `camera`, `decoder`, `stream`, `vision`, `health`, and `recording` are documented in
+  `docs/modules/apps/mymatasan/config/config.go.md` — they are `mymatasan`-owned blocks, no
+  longer part of this model (see "Per-app config seam" above).
 - `transaction.lockProvider` selects Redis or in-memory FIFO transaction locking; empty inherits `cache.provider`.
 - `transaction.lockWaitTimeoutMs` bounds queue wait time.
 - `transaction.lockLeaseMs` controls Redis owner lease duration.

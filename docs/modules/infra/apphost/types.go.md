@@ -27,6 +27,17 @@ Defines the app module contract used by the shared runtime host.
   - optional app interface for resource apps that should expose only a subset of shared APIs
 - `WebRouteRegistrar`
   - optional app interface for non-API routes registered before static asset fallback
+- `AppConfigDecoder`
+  - optional app interface (`DecodeAppConfig(raw []byte, dataDir string) error`) for an app
+    that owns config blocks of its own, decoded from the same raw `config.json` document the
+    host already parsed (`config.AppConfigModel.Raw()`) rather than being added to the
+    shared model. `mymatasan` implements it (`apps/mymatasan/config`, see
+    `docs/modules/apps/mymatasan/config/config.go.md`) for its `camera`/`decoder`/`stream`/
+    `vision`/`health`/`recording` blocks. `run.go` calls it, when implemented, after the
+    shared config is loaded and normalized and before any route is registered; a returned
+    error aborts startup — a config the app cannot understand must not boot on silent
+    defaults. The blocks stay at the top level of `config.json`, not nested under an `"app"`
+    key, so no deployed config file has to change; only ownership moves.
 - `ShutdownFunc`
   - optional app worker shutdown callback
 

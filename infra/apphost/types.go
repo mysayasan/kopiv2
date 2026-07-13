@@ -100,6 +100,26 @@ type WebRouteRegistrar interface {
 	RegisterWebRoutes(router *mux.Router, deps Dependencies) error
 }
 
+// AppConfigDecoder is implemented by an app that owns config blocks of its own.
+//
+// The shared config.AppConfigModel used to carry every app's blocks — nine of its ~25 were
+// mymatasan-only, dead weight for the others — and the host itself resolved YOLO training
+// directories, so it carried hardcoded knowledge of a vision feature. Neither survives a
+// fourth app.
+//
+// An app now decodes its own blocks from the SAME raw config document the host parsed
+// (config.AppConfigModel.Raw()), and normalizes its own data-relative paths against
+// dataDir. Nothing nests under an "app" key: the blocks stay at the top level of
+// config.json exactly where they are, so no deployed config file has to change. What moved
+// is ownership, not format.
+//
+// It is called after the shared config is loaded and normalized, and before any route is
+// registered. An error here aborts startup — a config the app cannot understand must not
+// boot on silent defaults.
+type AppConfigDecoder interface {
+	DecodeAppConfig(raw []byte, dataDir string) error
+}
+
 // ReadinessReporter can be implemented by an app module to add extra status
 // fields to the /ready payload (e.g. machine and camera health). The values are
 // advisory and do NOT change the ready/not-ready verdict — that stays gated on

@@ -1,15 +1,16 @@
 # MyMataSan — Tier 2 (architecture) Plan
 
-Status: **IN PROGRESS** (started 2026-07-13).
+Status: **IN PROGRESS** (started 2026-07-13). D1/D2 and now C are done; M and R remain.
 
 Tier 0 (data-loss correctness, PR #75) and Tier 1 (resilience + metrics, PRs #76/#77) are
 done. Tier 2 is the architectural debt — the tier that decides whether [MyIotSan](./MYIOTSAN_PLAN.md)
 inherits a clean platform or a copy of the problems.
 
 Agreed sequence: **D → C → M → R.** Decomposing first is cheap and makes the config seam
-far easier to cut, because the wiring is already split by subsystem. The config seam is
-myiotsan's actual blocker. Migrations are the highest *latent* risk but block nothing
-today. RBAC is the biggest product change and goes last.
+far easier to cut, because the wiring is already split by subsystem. The config seam was
+myiotsan's actual blocker — it is now shipped (Phase C, below), so myiotsan is unblocked on
+this front. Migrations are the highest *latent* risk but block nothing today. RBAC is the
+biggest product change and goes last.
 
 ---
 
@@ -18,7 +19,7 @@ today. RBAC is the biggest product change and goes last.
 `RegisterAppRoutes` is **792 lines** holding 14 responsibilities, with ordering contracts
 enforced by comments rather than types.
 
-### D1 — One `RecorderConfig` builder  ← *first, and it fixes real bugs*
+### D1 — One `RecorderConfig` builder  ← *first, and it fixes real bugs* — **DONE**
 
 A `RecorderConfig` is built **three times**, in three places, each subtly different:
 
@@ -90,21 +91,44 @@ See `docs/modules/apps/mymatasan/app/*.go.md` for the full per-file breakdown.
 
 ---
 
-## Phase C — Per-app config seam  *(myiotsan's blocker)*
+## Phase C — Per-app config seam  *(myiotsan's blocker)* — **DONE**
 
-Nine of ~25 blocks in the shared `config.AppConfigModel` are mymatasan-only (`Camera`,
-`Decoder`, `Stream`, `Vision`, `Health`, `Recording`, `Notification`, `LoginSecurity`,
-`Security`). Worse, the leak runs both ways: `infra/apphost/run.go:687` resolves **YOLO
-training directories** — the generic application host has hardcoded knowledge of a vision
-feature.
+Nine of ~25 blocks in the shared `config.AppConfigModel` were mymatasan-only. Worse, the
+leak ran both ways: `infra/apphost/run.go` resolved **YOLO training directories** — the
+generic application host had hardcoded knowledge of a vision feature.
 
-**Deliverable:** `AppConfigModel.App json.RawMessage` + an optional
-`apphost.App.DecodeAppConfig(raw)`. mymatasan decodes its own typed config; the
-`ResolveWritablePath` calls for vision/recording move into its wiring.
+**Shipped, six of those nine blocks moved** (`Camera`, `Decoder`, `Stream`, `Vision`,
+`Health`, `Recording`) to a new `apps/mymatasan/config` package. The other three
+(`Notification`, `LoginSecurity`, `Security`) turned out to belong shared, not
+mymatasan-only, on inspection (`Security` in particular — `myseliasan` also uses
+encryption-at-rest) — the seam line was a judgement call verified by grep, not a mechanical
+"is this app's" test: what moved is only what nothing else reads.
 
-Collapses, as a side effect, the 3× struct triplication (config model ↔ service settings
-↔ hand-written mapper) for Decoder, Stream and Recording, and most of the eight
-`*FromAppConfig` mappers.
+**What was actually built** differs from the original sketch below in one deliberate way:
+no nested `"app"` key. `infra/config.AppConfigModel` gained an unexported `raw []byte` field
++ `Raw()` accessor instead, retaining the exact document `LoadAppConfiguration` decoded. An
+app implementing the new `apphost.AppConfigDecoder` interface
+(`DecodeAppConfig(raw []byte, dataDir string) error`) decodes its own blocks straight out of
+that same raw document — the blocks stay at the top level of `config.json`, unchanged, so no
+deployed config file needs migrating. `infra/apphost/run.go` calls it once, after the shared
+config is loaded and normalized and before any route is registered; an error aborts
+startup. `apps/mymatasan/config.Config.Normalize(dataDir)` replaced the `ResolveWritablePath`
+calls that used to live in `infra/apphost/run.go`'s `normalizePathConfig` for the snapshot
+dir and training dir.
+
+**Bug fix found along the way:** `infra/config.LoadAppConfiguration` used to call `Decode`
+and discard the error — a malformed `config.json` silently produced an all-zero config with
+no indication anything was wrong. It now returns the error, and both the shared loader and
+`apps/mymatasan/config.Load` fail loudly on a syntax error instead.
+
+Collapsed, as a side effect, 7 of the 11 `*FromAppConfig` mappers in `config_map.go` now
+take `*mmconfig.Config` instead of `*config.AppConfigModel` (the other 4, for blocks that
+stayed shared, are unchanged) — not full struct-triplication removal, but the blocks these
+mappers translate are no longer duplicated between the shared model and the app.
+
+See `docs/modules/apps/mymatasan/config/config.go.md`,
+`docs/modules/infra/config/config_models.go.md`, and `docs/modules/infra/apphost/types.go.md`
+for the full breakdown.
 
 ---
 

@@ -29,7 +29,9 @@ previously just inline statements in the middle of an 800-line function.
        closed on everything.
   3. Registers every protected API group in order: `NewLocalAuthApi`, `NewOnvifApi`,
      `NewCameraApi`, `NewVisionApi`, `NewTrainingApi`, `NewTeachApi`, `NewSettingsApi`
-     (passing `visionToolSettingsFromAppConfig(deps.Config, w.detectorPaths.DetectorArgs)`),
+     (passing `visionToolSettingsFromAppConfig(w.appCfg, w.detectorPaths.DetectorArgs)` and
+     `w.appCfg.Decoder.BrowseRoots` — both off mymatasan's own config since Tier 2 phase C,
+     previously `deps.Config`),
      `NewRecordingApi`, `NewObservationApi`, `NewNotificationApi`, `NewAnomalyApi`,
      `NewCapacityApi`, `NewSetupApi`, `NewPairingApi`.
   4. Returns `protected` — a few API groups (system reset, self-update, backup) are built

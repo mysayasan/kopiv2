@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	"github.com/mysayasan/kopiv2/infra/config"
+	mmconfig "github.com/mysayasan/kopiv2/apps/mymatasan/config"
 	"github.com/mysayasan/kopiv2/infra/vision"
 )
 
@@ -19,7 +19,7 @@ func TestMymatasanSharedAPIsExposeOnlyPublicVersion(t *testing.T) {
 
 // buildAndWrapDetector mirrors RegisterAppRoutes: build the shared object backend
 // (nil on failure / motion mode) then wrap it into the live monitor detector.
-func buildAndWrapDetector(cfg *config.AppConfigModel) vision.Detector {
+func buildAndWrapDetector(cfg *mmconfig.Config) vision.Detector {
 	backend, err := buildTrainingObjectDetector(cfg.Vision.Detector)
 	if err != nil {
 		backend = nil
@@ -28,14 +28,14 @@ func buildAndWrapDetector(cfg *config.AppConfigModel) vision.Detector {
 }
 
 func TestVisionDetectorDefaultsToMotion(t *testing.T) {
-	detector := buildAndWrapDetector(&config.AppConfigModel{})
+	detector := buildAndWrapDetector(&mmconfig.Config{})
 	if _, ok := detector.(*vision.MotionDetector); !ok {
 		t.Fatalf("detector = %T, want *vision.MotionDetector", detector)
 	}
 }
 
 func TestHybridVisionDetectorFallsBackToMotionWhenCommandMissing(t *testing.T) {
-	cfg := &config.AppConfigModel{}
+	cfg := &mmconfig.Config{}
 	cfg.Vision.Detector.Mode = vision.DetectorModeHybrid
 	cfg.Vision.Detector.Command = "definitely-missing-ai-tool"
 
@@ -45,7 +45,7 @@ func TestHybridVisionDetectorFallsBackToMotionWhenCommandMissing(t *testing.T) {
 }
 
 func TestPersistentVisionDetectorFallsBackToMotionWhenCommandMissing(t *testing.T) {
-	cfg := &config.AppConfigModel{}
+	cfg := &mmconfig.Config{}
 	cfg.Vision.Detector.Mode = vision.DetectorModePersistent
 	cfg.Vision.Detector.Command = "definitely-missing-ai-tool"
 

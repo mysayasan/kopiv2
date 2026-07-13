@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	mmconfig "github.com/mysayasan/kopiv2/apps/mymatasan/config"
+
 	"github.com/mysayasan/kopiv2/apps/mymatasan/apis"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
 	"github.com/mysayasan/kopiv2/domain/notification"
@@ -81,7 +83,7 @@ func notificationSettingsDefaultsFromAppConfig(cfg *config.AppConfigModel) servi
 	}
 }
 
-func runtimeSettingsFromAppConfig(cfg *config.AppConfigModel) services.RuntimeSettings {
+func runtimeSettingsFromAppConfig(cfg *mmconfig.Config) services.RuntimeSettings {
 	ffmpegPath := cfg.Decoder.MJPEG.FFmpegPath
 	if ffmpegPath == "" {
 		ffmpegPath = cfg.Camera.FFmpegPath
@@ -139,7 +141,7 @@ func runtimeSettingsFromAppConfig(cfg *config.AppConfigModel) services.RuntimeSe
 // visionMonitorSettingsFromAppConfig builds the monitor settings WITHOUT the
 // detector; the caller assigns Detector from the shared object backend via
 // wrapMonitorDetector so the same backend serves live detection and auto-label.
-func visionMonitorSettingsFromAppConfig(cfg *config.AppConfigModel) services.VisionMonitorSettings {
+func visionMonitorSettingsFromAppConfig(cfg *mmconfig.Config) services.VisionMonitorSettings {
 	snapshotDir := cfg.Vision.SnapshotDir
 	if snapshotDir == "" {
 		snapshotDir = "recordings"
@@ -157,7 +159,7 @@ func visionMonitorSettingsFromAppConfig(cfg *config.AppConfigModel) services.Vis
 // healthSettingsDefaultsFromAppConfig maps the config.json health block into the
 // default runtime-editable health settings. These seed the persisted settings on
 // first run; thereafter the UI-edited copy wins.
-func healthSettingsDefaultsFromAppConfig(cfg *config.AppConfigModel) services.HealthSettings {
+func healthSettingsDefaultsFromAppConfig(cfg *mmconfig.Config) services.HealthSettings {
 	h := cfg.Health
 	return services.HealthSettings{
 		Enabled:           boolValue(h.Enabled, true),
@@ -168,7 +170,7 @@ func healthSettingsDefaultsFromAppConfig(cfg *config.AppConfigModel) services.He
 	}
 }
 
-func resolveShredPasses(cfg *config.AppConfigModel) int {
+func resolveShredPasses(cfg *mmconfig.Config) int {
 	s := cfg.Recording.Shred
 	if s.Enabled != nil && !*s.Enabled {
 		return 0
@@ -182,7 +184,7 @@ func resolveShredPasses(cfg *config.AppConfigModel) int {
 // trainingDataDir resolves the on-disk root for training datasets and models.
 // It defaults to a "training" sibling of the snapshot dir so all AI artifacts
 // live together under the same volume the machine health monitor watches.
-func trainingDataDir(cfg *config.AppConfigModel) string {
+func trainingDataDir(cfg *mmconfig.Config) string {
 	if dir := strings.TrimSpace(cfg.Vision.Training.DataDir); dir != "" {
 		return dir
 	}
@@ -204,7 +206,7 @@ func trainingDataDir(cfg *config.AppConfigModel) string {
 // directly, which only worked because the composition root had mutated the shared config
 // in place a few lines earlier — an ordering contract enforced by a comment. Now the
 // compiler enforces it.
-func trainingRunConfigFromAppConfig(cfg *config.AppConfigModel, configPath string, detectorArgs []string) services.TrainingRunConfig {
+func trainingRunConfigFromAppConfig(cfg *mmconfig.Config, configPath string, detectorArgs []string) services.TrainingRunConfig {
 	detectorCfg := cfg.Vision.Detector
 	workerScript := ""
 	for _, arg := range detectorArgs {
@@ -225,7 +227,7 @@ func trainingRunConfigFromAppConfig(cfg *config.AppConfigModel, configPath strin
 // visionToolSettingsFromAppConfig builds the on-demand vision tool's settings.
 // detectorArgs must be the RESOLVED worker-script arguments — see
 // trainingRunConfigFromAppConfig for why they are a parameter rather than read from cfg.
-func visionToolSettingsFromAppConfig(cfg *config.AppConfigModel, detectorArgs []string) services.VisionToolSettings {
+func visionToolSettingsFromAppConfig(cfg *mmconfig.Config, detectorArgs []string) services.VisionToolSettings {
 	detectorCfg := cfg.Vision.Detector
 	return services.VisionToolSettings{
 		Mode:              detectorCfg.Mode,
