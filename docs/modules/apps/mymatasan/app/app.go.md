@@ -29,6 +29,14 @@ sequencing, and the helpers that don't belong to any one subsystem.
   `docs/modules/apps/mymatasan/config/config.go.md` and `docs/MYMATASAN_TIER2_PLAN.md`
   (phase C).
 - Provides app identity (`Name() = "mymatasan"`) and base directory.
+- `(*module) Migrations() []bootstrap.Migration` implements `apphost.Migrator`
+  (`infra/apphost/types.go.md`, Tier 2 phase M): returns `nil`, which is the normal state —
+  an additive field change needs no migration, only a rename/drop/type-change/data-transform
+  does. `infra/apphost/run.go` passes the result into the shared bootstrap `Options`. The
+  factory-reset path in `RegisterAppRoutes` (below) passes the same `m.Migrations()` into its
+  own `bootstrap.Options` too — omitting it there would leave a rebuilt database unable to
+  baseline, and every migration would replay against a brand-new schema and fail. See
+  `docs/modules/infra/db/bootstrap/migration.go.md`.
 - `ReadinessStatus` contributes machine and camera health (captured on the `module` struct
   during `RegisterAppRoutes`) to the shared `/ready` payload — advisory only, never flips
   the ready/not-ready verdict.

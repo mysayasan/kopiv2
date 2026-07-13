@@ -216,14 +216,25 @@ func runApp(app App) error {
 			SetupPath:          appConfig.Bootstrap.SetupPath,
 			SeedStatements:     appConfig.Bootstrap.SeedStatements,
 		},
-		Entities: app.Entities(),
-		Seeders:  app.Seeders(appConfig.Bootstrap.SeedStatements),
+		Entities:   app.Entities(),
+		Migrations: appMigrations(app),
+		Seeders:    app.Seeders(appConfig.Bootstrap.SeedStatements),
 	})
 	if err != nil {
 		return err
 	}
 
 	log.Printf("bootstrap status app=%s ready=%t drift=%t db_created=%t schema_created=%t schema_updated=%t seeded=%t message=%s", app.Name(), bootstrapStatus.Ready, bootstrapStatus.DriftDetected, bootstrapStatus.DatabaseCreated, bootstrapStatus.SchemaCreated, bootstrapStatus.SchemaUpdated, bootstrapStatus.Seeded, bootstrapStatus.Message)
+	if len(bootstrapStatus.MigrationsApplied) > 0 {
+		log.Printf("bootstrap %s: applied migrations %v", app.Name(), bootstrapStatus.MigrationsApplied)
+	}
+	// Schema drift is what the additive auto-migrator CANNOT fix (a changed column type, a
+	// column the entities no longer declare). It is never auto-repaired — that is what a
+	// migration is for — so it has to be loud, or it goes unnoticed until a row scan fails
+	// on a customer's box.
+	for _, drift := range bootstrapStatus.SchemaDrift {
+		log.Printf("bootstrap %s: SCHEMA DRIFT — %s", app.Name(), drift)
+	}
 
 	setupPath := appConfig.Bootstrap.SetupPath
 	if setupPath == "" {

@@ -40,8 +40,8 @@ type Dependencies struct {
 	HomeDir string
 	DataDir string
 	Db      dbsql.IDbCrud
-	Cache       cache.Store
-	Auth *middlewares.AuthMidware
+	Cache   cache.Store
+	Auth    *middlewares.AuthMidware
 	// Access is the shared accessrbac authorization middleware (single-app, no
 	// app_code). apphost builds it with a settable resolver; the app binds its own
 	// user store via deps.Access.SetResolver(...) during RegisterAppRoutes. AccessRoles
@@ -98,6 +98,29 @@ type SharedAPIConfigurator interface {
 // WebRouteRegistrar can be implemented by apps that need non-API routes before static assets.
 type WebRouteRegistrar interface {
 	RegisterWebRoutes(router *mux.Router, deps Dependencies) error
+}
+
+// Migrator is implemented by an app that has schema changes the additive auto-migrator
+// cannot express: renames, drops, type changes, data transforms.
+//
+// Additive changes need NO migration — add a field to the entity and the auto-migrator
+// picks it up. Write one only for what additive cannot do, which used to be simply
+// impossible: a rename added the new column and left the data stranded in the old one, a
+// drop left the column forever, and a type change was not even detected.
+//
+// Migrations run in ID order, once each, BEFORE the auto-migrator (a rename has to happen
+// while the column still has its old name), and a fresh database baselines them rather than
+// replaying them. See infra/db/bootstrap/migration.go.
+type Migrator interface {
+	Migrations() []bootstrap.Migration
+}
+
+// appMigrations returns an app's migrations, or none if it declares none.
+func appMigrations(app App) []bootstrap.Migration {
+	if migrator, ok := app.(Migrator); ok {
+		return migrator.Migrations()
+	}
+	return nil
 }
 
 // AppConfigDecoder is implemented by an app that owns config blocks of its own.

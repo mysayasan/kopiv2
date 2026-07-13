@@ -16,9 +16,9 @@ type stubApp struct {
 	baseDir string
 }
 
-func (s stubApp) Name() string    { return s.name }
-func (s stubApp) BaseDir() string { return s.baseDir }
-func (s stubApp) Entities() []any { return nil }
+func (s stubApp) Name() string                          { return s.name }
+func (s stubApp) BaseDir() string                       { return s.baseDir }
+func (s stubApp) Entities() []any                       { return nil }
 func (s stubApp) Seeders(_ []string) []bootstrap.Seeder { return nil }
 func (s stubApp) RegisterAppRoutes(_ *mux.Router, _ Dependencies) (ShutdownFunc, error) {
 	return nil, nil

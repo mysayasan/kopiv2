@@ -27,6 +27,14 @@ Defines the app module contract used by the shared runtime host.
   - optional app interface for resource apps that should expose only a subset of shared APIs
 - `WebRouteRegistrar`
   - optional app interface for non-API routes registered before static asset fallback
+- `Migrator`
+  - optional app interface (`Migrations() []bootstrap.Migration`) for an app with schema
+    changes the additive auto-migrator cannot express: renames, drops, type changes, data
+    transforms (Tier 2 phase M, `docs/DB_BOOTSTRAP_SPEC.md`,
+    `docs/modules/infra/db/bootstrap/migration.go.md`). `appMigrations(app)` type-asserts
+    `Migrator` and returns `nil` for an app that doesn't implement it; `run.go` passes the
+    result into `bootstrap.Options.Migrations`. `mymatasan` implements it and currently
+    returns `nil` — additive changes need no migration at all.
 - `AppConfigDecoder`
   - optional app interface (`DecodeAppConfig(raw []byte, dataDir string) error`) for an app
     that owns config blocks of its own, decoded from the same raw `config.json` document the
