@@ -1,5 +1,6 @@
 # Local target config (may hold credentials)
 config/target.env
+config/myseliasan.target.env
 
 # Generated run artifacts
 results/*
