@@ -30,6 +30,8 @@
 #>
 [CmdletBinding()]
 param(
+  [ValidateSet('mymatasan', 'myseliasan')]
+  [string]$App = 'mymatasan',
   [ValidateSet('smoke', 'load', 'stress')]
   [string]$Script = 'smoke',
   [string]$BaseUrl,
@@ -47,8 +49,24 @@ $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $here
 
-# --- Load config/target.env (KEY=VALUE) unless overridden by params ----------
-$envFile = Join-Path $here 'config\target.env'
+# --- Per-app wiring ----------------------------------------------------------
+# mymatasan authenticates with HTTP Basic replayed on every request (common.js);
+# its scripts are scripts/<name>.js and it listens on :3000. myseliasan does a
+# JSON login + cookie session (session.js); its scripts are prefixed
+# myseliasan-<name>.js and it listens on :3002. Each app has its own target.env.
+if ($App -eq 'myseliasan') {
+  $envFileName = 'myseliasan.target.env'
+  $scriptFile = "myseliasan-$Script"
+  $defaultBaseUrl = 'https://host.docker.internal:3002'
+}
+else {
+  $envFileName = 'target.env'
+  $scriptFile = "$Script"
+  $defaultBaseUrl = 'https://host.docker.internal:3000'
+}
+
+# --- Load config/<app>.env (KEY=VALUE) unless overridden by params -----------
+$envFile = Join-Path $here (Join-Path 'config' $envFileName)
 $cfg = @{}
 if (Test-Path $envFile) {
   Get-Content $envFile | ForEach-Object {
@@ -60,7 +78,7 @@ if (Test-Path $envFile) {
   }
 }
 if (-not $BaseUrl) { $BaseUrl = $cfg['BASE_URL'] }
-if (-not $BaseUrl) { $BaseUrl = 'https://host.docker.internal:3000' }
+if (-not $BaseUrl) { $BaseUrl = $defaultBaseUrl }
 if (-not $PSBoundParameters.ContainsKey('User')) { $User = $cfg['AUTH_USER'] }
 if (-not $PSBoundParameters.ContainsKey('Pass')) { $Pass = $cfg['AUTH_PASS'] }
 $BaseUrl = $BaseUrl.TrimEnd('/')
@@ -74,10 +92,14 @@ $env:BASE_URL = $BaseUrl
 $env:AUTH_USER = $User
 $env:AUTH_PASS = $Pass
 
-if ($User) { Write-Host "Auth   : HTTP Basic as '$User'" -ForegroundColor Cyan }
+if ($User) {
+  if ($App -eq 'myseliasan') { Write-Host "Auth   : JSON login as '$User' (cookie session, once per VU)" -ForegroundColor Cyan }
+  else { Write-Host "Auth   : HTTP Basic as '$User'" -ForegroundColor Cyan }
+}
 else { Write-Host 'Auth   : none (anonymous surface only)' -ForegroundColor Yellow }
+Write-Host "App    : $App"
 Write-Host "Target : $BaseUrl"
-Write-Host "Script : $Script.js"
+Write-Host "Script : $scriptFile.js"
 
 # --- Bring up the metrics backend --------------------------------------------
 # docker streams progress to stderr, which PS 5.1 turns into a terminating error
@@ -100,9 +122,9 @@ if ($Ramp) { $k6env += @('-e', "RAMP=$Ramp") }
 if ($Hold) { $k6env += @('-e', "HOLD=$Hold") }
 
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$summary = "/results/$Script-$stamp.summary.json"
+$summary = "/results/$scriptFile-$stamp.summary.json"
 
-Write-Host "Report : results/$Script-$stamp.summary.json" -ForegroundColor DarkGray
+Write-Host "Report : results/$scriptFile-$stamp.summary.json" -ForegroundColor DarkGray
 Write-Host ''
 
 # --- Run k6 ------------------------------------------------------------------
@@ -110,7 +132,7 @@ $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 docker compose run --rm `
   -e "K6_OUT=influxdb=http://influxdb:8086/k6" `
   $k6env `
-  k6 run --summary-export=$summary /scripts/$Script.js
+  k6 run --summary-export=$summary /scripts/$scriptFile.js
 $code = $LASTEXITCODE
 $ErrorActionPreference = $eap
 Write-Host ''
