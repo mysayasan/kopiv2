@@ -39,6 +39,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-13 — mymatasan 1.99.0 (22d5b05)
+
+### Changed
+
+- **mymatasan**: Replaced three hand-rolled, drift-prone constructions of recording.RecorderConfig (the startup recorder fan-out, the recording-settings save handler, and the detect-only stream resolver) with one shared services.RecorderConfigBuilder that every site calls. This removes the class of bug where a RecorderConfig field had to be remembered in three places or was silently dropped in the others — most notably ShredPasses, which was missing from the settings-save site and silently degraded secure shred to a plain unlink whenever an operator saved a recording setting. As a side effect, the at-rest storage codec (Settings -> Recording) is now read live on every recorder build instead of being captured once at process boot, so changing it now applies the next time a camera's recording config is saved instead of requiring a restart. The startup path also now logs (instead of silently swallowing) a failure to list recording configs, so a startup DB error no longer means recording silently never starts with nothing in the logs to explain why.
 ## 2026-07-13 — mymatasan 1.98.0, core 1.57.0 (d13d497)
 
 ### Added
