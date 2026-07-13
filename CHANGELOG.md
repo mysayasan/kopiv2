@@ -35,6 +35,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-13 — mymatasan 1.97.0, myseliasan 1.27.0, core 1.56.0 (a485631)
+
+### Changed
+
+- **shared,mymatasan,myseliasan**: Added a new shared @shared/CameraHero component (breadcrumb trail + status-tinted camera tile + name/description + health/stream status chips, tokenized CSS via color-mix) and made it THE standardized camera-page header across the suite: mymatasan's camera detail page, which previously had no header at all above its tab bar, now renders it with a 'Cameras > <camera>' breadcrumb wired through the side-nav's own root selector so the rail highlight follows; myseliasan's Nodes -> Camera page now renders it in place of its old flat title row (which used to show the camera's ONVIF/host URL under the name - that URL moved out of the header but is still shown as ONVIF URI/Host chips in the Live tab's info grid), with a 'Nodes > <node> > <camera>' breadcrumb. Also in this batch: (1) the shared dashboard header (.dashboard-head, duplicated in both apps' CSS) changed from a wrapping flex row to a column - title/subtitle on their own line, then the Today/7 Days/30 Days range + Refresh toolbar right-aligned on the line below - fixing a bug where the toolbar rendered inline in one app and wrapped to the left edge in the other because the old row layout was column-width-dependent; (2) myseliasan's login/forced-password-change/pending-clearance screens were missing '.login-screen { position: relative }' and the '.login-lang-switch { position: absolute }' rule mymatasan already has, so the top-corner language switcher was an in-flow flex child that pushed the centered login card off-center - fixed to match mymatasan; (3) myseliasan's side-nav gained the pin/auto-hide toggle already shipped in mymatasan (collapses the rail to a 68px hover-expanding icon strip, persisted to localStorage as myseliasan_nav_pinned), guarded at min-width:1081px since myseliasan's rail stacks at a different breakpoint (<=1080px) than mymatasan's (<=860px); (4) added shared i18n keys common.breadcrumb and nav.pin/nav.autohide (all 4 locales); the nav.pin/nav.autohide additions back myseliasan's new toggle, which has no app-level override, and their wording deliberately matches mymatasan's existing app-dictionary strings so the two rails show identical tooltips.
 ## 2026-07-13 — myseliasan 1.26.0 (2353e2b)
 
 ### Added
