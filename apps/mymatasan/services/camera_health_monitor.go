@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mysayasan/kopiv2/infra/rtsp"
+	"github.com/mysayasan/kopiv2/infra/safego"
 )
 
 // Camera health states persisted on the camera row and used in notifications.
@@ -81,8 +82,9 @@ func NewCameraHealthMonitor(camera ICameraService, rtspClient rtsp.Client, setti
 }
 
 // Start launches the monitor loop in its own goroutine; it stops when ctx is done.
+// Supervised: a panic here would silently stop all camera health/offline reporting.
 func (m *CameraHealthMonitor) Start(ctx context.Context) {
-	go m.run(ctx)
+	safego.Supervise(ctx, "mymatasan.health.camera", m.run)
 }
 
 func (m *CameraHealthMonitor) run(ctx context.Context) {

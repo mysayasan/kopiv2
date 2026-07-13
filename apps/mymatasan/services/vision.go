@@ -66,6 +66,34 @@ func (s *visionService) DeleteRule(ctx context.Context, id uint64) (uint64, erro
 	return s.rules.DeleteById(ctx, "", id)
 }
 
+// MarkRuleTriggered persists the moment a rule fired, so its cooldown survives a restart.
+//
+// Cooldown is otherwise process-local: it starts empty on every boot, so a rule with a
+// 30-minute cooldown re-fires immediately after a restart, and a crash-restart loop turns
+// that into an alert storm, a notification storm, and an ffmpeg storm (every alert
+// extracts a clip). LastTriggeredAt was already being read back into the detector — it
+// just was never written.
+func (s *visionService) MarkRuleTriggered(ctx context.Context, ruleId int64, at int64) error {
+	if ruleId <= 0 || at <= 0 {
+		return nil
+	}
+	rule, err := s.rules.GetById(ctx, "", uint64(ruleId))
+	if err != nil {
+		return err
+	}
+	if rule == nil {
+		return nil
+	}
+	// Samples can land out of order (a slow camera's frame arriving after a fast one);
+	// never move the trigger time backwards or the cooldown would shorten.
+	if rule.LastTriggeredAt >= at {
+		return nil
+	}
+	rule.LastTriggeredAt = at
+	_, err = s.rules.UpdateById(ctx, "", *rule)
+	return err
+}
+
 // DeleteRulesForCamera removes every detection rule belonging to one camera. Used by
 // the camera-delete cascade: an orphaned rule keeps the vision monitor sampling a
 // camera that no longer exists, which fails every interval and writes a capture-failed

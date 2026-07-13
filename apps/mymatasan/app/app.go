@@ -29,6 +29,7 @@ import (
 	"github.com/mysayasan/kopiv2/infra/pairing"
 	"github.com/mysayasan/kopiv2/infra/recording"
 	"github.com/mysayasan/kopiv2/infra/rtsp"
+	"github.com/mysayasan/kopiv2/infra/safego"
 	"github.com/mysayasan/kopiv2/infra/stream"
 	"github.com/mysayasan/kopiv2/infra/versioning"
 	"github.com/mysayasan/kopiv2/infra/vision"
@@ -172,6 +173,13 @@ WHERE NOT EXISTS (SELECT 1 FROM api_endpoint WHERE app_code = 'mymatasan' AND ho
 }
 
 func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (apphost.ShutdownFunc, error) {
+	// Route recovered background-goroutine panics into the app logger before anything
+	// starts, so a panic is never lost to stdout on a service install. Until this runs,
+	// safego falls back to the standard logger — it is never silent.
+	safego.SetLogger(func(component string, format string, args ...any) {
+		deps.Logger.Warnf(component, format, args...)
+	})
+
 	// Resolve the encryption-at-rest master key FIRST, before building any service. When
 	// encryption is on and the key is missing but a key existed here before, the app enters
 	// RECOVERY mode: it mounts only the public recovery gate and returns, so nothing else
@@ -725,7 +733,9 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		// which would kill and restart the worker in a loop and never warm. Runs in the
 		// background so boot isn't blocked by the (potentially 10–15s) model load.
 		if objectBackend != nil {
-			go func() {
+			// One-shot: guarded but never restarted — if warmup panics, live detection
+			// simply warms on the first real inference instead.
+			safego.Go("mymatasan.vision.warmup", func() {
 				warmCtx, cancel := context.WithTimeout(monitorCtx, 120*time.Second)
 				defer cancel()
 				if err := services.WarmupInference(warmCtx, objectBackend); err != nil {
@@ -733,7 +743,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 				} else {
 					log.Printf("vision: detector model warmed up")
 				}
-			}()
+			})
 		}
 		// The metadata recorder shares the monitor's lifecycle: it aggregates the
 		// observations the monitor feeds it and flushes open intervals on shutdown.
@@ -776,11 +786,13 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 			ReplayWindow:  time.Duration(deps.Config.Pairing.ReplayWindowSeconds) * time.Second,
 			Logf:          func(format string, args ...any) { deps.Logger.Infof("mymatasan.pairing", format, args...) },
 		})
-		go func() {
-			if err := pairingResponder.Run(monitorCtx); err != nil && monitorCtx.Err() == nil {
+		// Supervised: if the discovery responder dies the node stops answering pairing
+		// probes and simply becomes un-adoptable, with nothing to say why.
+		safego.Supervise(monitorCtx, "mymatasan.pairing.responder", func(ctx context.Context) {
+			if err := pairingResponder.Run(ctx); err != nil && ctx.Err() == nil {
 				deps.Logger.Warnf("mymatasan.pairing", "discovery responder stopped: %v", err)
 			}
-		}()
+		})
 		// Enrollment manager (mTLS): enroll after adoption, serve the management
 		// listener, and renew certs. Shares the monitor lifecycle.
 		go enrollmentManager.Run(monitorCtx)
@@ -873,97 +885,61 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	)
 	apis.NewBackupApi(protected, backupService)
 
-	// Purge expired segments and metadata observations once at startup, then every 6
-	// hours. Observation retention aligns with each camera's recording retention.
-	go func() {
-		recordingService.PurgeOldSegments(monitorCtx)
-		observationService.PurgeOldObservations(monitorCtx)
-		ticker := time.NewTicker(6 * time.Hour)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				recordingService.PurgeOldSegments(monitorCtx)
-				observationService.PurgeOldObservations(monitorCtx)
-			case <-monitorCtx.Done():
-				return
-			}
+	// The retention purges. Each runs once at startup and then on its own interval, and
+	// each is supervised: a panic in a purge used to kill the process, and simply
+	// recovering would be no better — nothing else notices a dead purge loop, so the
+	// disk quietly fills until writes (including the database's) start failing.
+	purgeInterval := func(hours int) time.Duration {
+		if d := time.Duration(hours) * time.Hour; d > 0 {
+			return d
 		}
-	}()
-
-	// Purge expired notifications once at startup, then on a configured interval.
-	// Retention (days / onlyRead) is read live from the notification settings each
-	// run, so changes made in the UI take effect without a restart.
-	{
-		interval := time.Duration(deps.Config.Notification.PurgeIntervalHours) * time.Hour
-		if interval <= 0 {
-			interval = 6 * time.Hour
-		}
-		go func() {
-			purge := func() {
-				days, onlyRead := notificationSettingsService.Retention(monitorCtx)
-				if days <= 0 {
-					return
-				}
-				if deleted, err := notificationService.PurgeOlderThanDays(monitorCtx, days, onlyRead); err != nil {
-					deps.Logger.Warnf("mymatasan.notification", "notification purge failed: %v", err)
-				} else if deleted > 0 {
-					deps.Logger.Infof("mymatasan.notification", "purged %d expired notifications", deleted)
-				}
-			}
-			purge()
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ticker.C:
-					purge()
-				case <-monitorCtx.Done():
-					return
-				}
-			}
-		}()
+		return 6 * time.Hour
 	}
 
-	// Purge expired AI detection alerts on a configured interval (and once at
-	// startup). DiagnosticRetentionDays trims the noisy Vision-monitor diagnostics;
-	// AlertRetentionDays (0 = keep forever) trims real detections too. Both also
-	// unlink the snapshot image files of the rows they remove.
-	{
-		interval := time.Duration(deps.Config.Vision.AlertPurgeIntervalHours) * time.Hour
-		if interval <= 0 {
-			interval = 6 * time.Hour
+	// Expired segments + metadata observations. Observation retention aligns with each
+	// camera's recording retention.
+	periodic(monitorCtx, "mymatasan.purge.segments", 6*time.Hour, func(ctx context.Context) {
+		if _, err := recordingService.PurgeOldSegments(ctx); err != nil {
+			deps.Logger.Warnf("mymatasan.recording", "segment retention purge failed: %v", err)
 		}
-		go func() {
-			purge := func() {
-				if days := deps.Config.Vision.DiagnosticRetentionDays; days > 0 {
-					if deleted, err := visionService.PurgeAlertsOlderThanDays(monitorCtx, days, true); err != nil {
-						deps.Logger.Warnf("mymatasan.vision", "diagnostic alert purge failed: %v", err)
-					} else if deleted > 0 {
-						deps.Logger.Infof("mymatasan.vision", "purged %d diagnostic alerts older than %d day(s)", deleted, days)
-					}
-				}
-				if days := deps.Config.Vision.AlertRetentionDays; days > 0 {
-					if deleted, err := visionService.PurgeAlertsOlderThanDays(monitorCtx, days, false); err != nil {
-						deps.Logger.Warnf("mymatasan.vision", "alert purge failed: %v", err)
-					} else if deleted > 0 {
-						deps.Logger.Infof("mymatasan.vision", "purged %d alerts older than %d day(s)", deleted, days)
-					}
-				}
+		if _, err := observationService.PurgeOldObservations(ctx); err != nil {
+			deps.Logger.Warnf("mymatasan.recording", "observation retention purge failed: %v", err)
+		}
+	})
+
+	// Expired notifications. Retention (days / onlyRead) is read live from the
+	// notification settings each run, so UI changes take effect without a restart.
+	periodic(monitorCtx, "mymatasan.purge.notifications", purgeInterval(deps.Config.Notification.PurgeIntervalHours), func(ctx context.Context) {
+		days, onlyRead := notificationSettingsService.Retention(ctx)
+		if days <= 0 {
+			return
+		}
+		if deleted, err := notificationService.PurgeOlderThanDays(ctx, days, onlyRead); err != nil {
+			deps.Logger.Warnf("mymatasan.notification", "notification purge failed: %v", err)
+		} else if deleted > 0 {
+			deps.Logger.Infof("mymatasan.notification", "purged %d expired notifications", deleted)
+		}
+	})
+
+	// Expired AI detection alerts. DiagnosticRetentionDays trims the noisy vision-monitor
+	// diagnostics; AlertRetentionDays (0 = keep forever) trims real detections too. Both
+	// also unlink the snapshot image files of the rows they remove.
+	periodic(monitorCtx, "mymatasan.purge.alerts", purgeInterval(deps.Config.Vision.AlertPurgeIntervalHours), func(ctx context.Context) {
+		if days := deps.Config.Vision.DiagnosticRetentionDays; days > 0 {
+			if deleted, err := visionService.PurgeAlertsOlderThanDays(ctx, days, true); err != nil {
+				deps.Logger.Warnf("mymatasan.vision", "diagnostic alert purge failed: %v", err)
+			} else if deleted > 0 {
+				deps.Logger.Infof("mymatasan.vision", "purged %d diagnostic alerts older than %d day(s)", deleted, days)
 			}
-			purge()
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ticker.C:
-					purge()
-				case <-monitorCtx.Done():
-					return
-				}
+		}
+		if days := deps.Config.Vision.AlertRetentionDays; days > 0 {
+			if deleted, err := visionService.PurgeAlertsOlderThanDays(ctx, days, false); err != nil {
+				deps.Logger.Warnf("mymatasan.vision", "alert purge failed: %v", err)
+			} else if deleted > 0 {
+				deps.Logger.Infof("mymatasan.vision", "purged %d alerts older than %d day(s)", deleted, days)
 			}
-		}()
-	}
+		}
+	})
 
 	return func(ctx context.Context) error {
 		stopMonitor()
@@ -1216,6 +1192,28 @@ func healthSettingsDefaultsFromAppConfig(cfg *config.AppConfigModel) services.He
 // deleting recorded footage. Shredding is on by default (DefaultShredPasses);
 // recording.shred.enabled=false disables it (plain delete), and a positive
 // recording.shred.passes overrides the count.
+// periodic runs fn once immediately, then on every interval tick, until ctx is done.
+//
+// It is supervised: a panic inside fn restarts the loop with backoff instead of killing
+// the process. That matters more than it looks — these loops are the retention purges,
+// and a dead purge loop is invisible. Nothing re-creates it, so the disk simply fills
+// until every write fails, the database included.
+func periodic(ctx context.Context, name string, interval time.Duration, fn func(context.Context)) {
+	safego.Supervise(ctx, name, func(ctx context.Context) {
+		fn(ctx)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				fn(ctx)
+			case <-ctx.Done():
+				return
+			}
+		}
+	})
+}
+
 func resolveShredPasses(cfg *config.AppConfigModel) int {
 	s := cfg.Recording.Shred
 	if s.Enabled != nil && !*s.Enabled {

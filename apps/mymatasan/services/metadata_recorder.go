@@ -10,6 +10,7 @@ import (
 
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	"github.com/mysayasan/kopiv2/infra/safego"
 	"github.com/mysayasan/kopiv2/infra/vision"
 )
 
@@ -96,8 +97,10 @@ func NewMetadataRecorder(repo dbsql.IGenericRepo[entities.ObjectObservation], co
 // DB writer. On ctx cancellation it flushes every open interval so no presence is
 // lost on shutdown.
 func (r *MetadataRecorder) Start(ctx context.Context) {
-	go r.run(ctx)
-	go r.writer(ctx)
+	// Supervised: the writer drains the observation queue, so if it dies the queue
+	// backs up and every sighting is lost with no signal.
+	safego.Supervise(ctx, "mymatasan.metadata.recorder", r.run)
+	safego.Supervise(ctx, "mymatasan.metadata.writer", r.writer)
 }
 
 // Observe implements vision.ObservationSink. It is called per sampled frame with the

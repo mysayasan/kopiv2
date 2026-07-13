@@ -565,6 +565,9 @@ type IVisionService interface {
 	// camera-delete cascade: an orphaned rule keeps the vision monitor sampling a
 	// camera that no longer exists.
 	DeleteRulesForCamera(ctx context.Context, cameraId int64) (int, error)
+	// MarkRuleTriggered persists the moment a rule fired so its cooldown survives a
+	// restart. Never moves the stored time backwards.
+	MarkRuleTriggered(ctx context.Context, ruleId int64, at int64) error
 	GetAlerts(ctx context.Context, limit uint64, offset uint64, cameraId int64, status string, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.AlertEvent, uint64, error)
 	GetAlertById(ctx context.Context, id uint64) (*entities.AlertEvent, error)
 	CreateAlert(ctx context.Context, req AlertEventRequest, userId int64) (*entities.AlertEvent, error)

@@ -10,6 +10,7 @@ import (
 
 	"github.com/mysayasan/kopiv2/domain/notification"
 	"github.com/mysayasan/kopiv2/infra/recording"
+	"github.com/mysayasan/kopiv2/infra/safego"
 )
 
 // machineMitigationMinPurgeGap throttles the on-demand retention purge so a
@@ -74,7 +75,11 @@ func NewMachineHealthMonitor(
 }
 
 // Start launches the monitor loop in its own goroutine; it stops when ctx is done.
-func (m *MachineHealthMonitor) Start(ctx context.Context) { go m.run(ctx) }
+// Supervised: a panic here would silently stop the disk guard that keeps a full volume
+// from breaking every write, including the database.
+func (m *MachineHealthMonitor) Start(ctx context.Context) {
+	safego.Supervise(ctx, "mymatasan.health.machine", m.run)
+}
 
 func (m *MachineHealthMonitor) run(ctx context.Context) {
 	timer := time.NewTimer(2 * time.Second)

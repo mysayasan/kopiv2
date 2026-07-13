@@ -16,6 +16,7 @@ import (
 
 	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/procutil"
+	"github.com/mysayasan/kopiv2/infra/safego"
 )
 
 // fileIsEncrypted reports whether path begins with the atrest header magic.
@@ -321,13 +322,20 @@ func (r *rtspRecorder) Start(ctx context.Context) error {
 		transport = "tcp"
 	}
 
-	go r.runFFmpeg(recCtx, ffmpegPath, transport, segSec)
+	// All three are supervised: a panic in any of them used to take the whole process
+	// down, and merely recovering would be no better — if the segment watcher dies the
+	// camera keeps writing .ts files that are never finalized, and if the purge loop
+	// dies the disk fills. Nothing else would notice, so they must restart.
+	cam := fmt.Sprintf("recording.cam%d", r.cfg.CameraId)
+	safego.Supervise(recCtx, cam+".ffmpeg", func(ctx context.Context) {
+		r.runFFmpeg(ctx, ffmpegPath, transport, segSec)
+	})
 	// Detect-only recorders produce no segment files, so the segment watcher and
 	// retention purge have nothing to do.
 	if !r.cfg.DetectOnly {
-		go r.watchSegments(recCtx)
+		safego.Supervise(recCtx, cam+".segments", r.watchSegments)
 		if r.cfg.RetentionDays > 0 {
-			go r.purgeOldFiles(recCtx)
+			safego.Supervise(recCtx, cam+".purge", r.purgeOldFiles)
 		}
 	}
 	return nil
