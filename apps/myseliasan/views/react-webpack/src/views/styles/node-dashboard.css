@@ -5,18 +5,32 @@
    are reused from app.css). */
 
 /* ---- Dashboard layout -------------------------------------------------- */
+/* THE standard dashboard header, used by BOTH the fleet dashboard and the node landing
+   page here, and duplicated byte-for-byte in mymatasan (app.css). Change one, change the
+   other — the two apps' dashboards are meant to read the same.
+
+   The header is a COLUMN: the title/subtitle block on its own row, then the range/refresh
+   toolbar on the row below it, right-aligned. This is deliberately not a "sit side by side
+   until they no longer fit" row — that made the toolbar's position depend on the column
+   width and the length of the translated subtitle, so the same header rendered inline in
+   one app and wrapped in the other. Stacking is width-independent, so it is identical
+   everywhere. Separation from the content below is the .workspace grid's 16px gap. */
 .dashboard-head {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: stretch;
   gap: 12px;
-  flex-wrap: wrap;
 }
 .dashboard-toolbar {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
   flex-wrap: wrap;
+  /* Right-aligned on its own row — an auto margin, not space-between, so a wrapped
+     toolbar can never fall back to the left edge. */
+  align-self: flex-end;
+  margin-inline-start: auto;
 }
 .dashboard-grid {
   display: grid;

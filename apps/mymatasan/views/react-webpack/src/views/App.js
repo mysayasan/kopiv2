@@ -2785,6 +2785,7 @@ function AppInner({ lang, onLangChange }) {
           onCameraNav={(nav) => {
             setCameraNav(nav);
           }}
+          onSelectCameraRoot={selectCameraRoot}
           onManualAddress={setManualAddress}
           onTimeout={setTimeoutMs}
           onScan={scan}

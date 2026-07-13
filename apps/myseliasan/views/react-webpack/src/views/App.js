@@ -24,6 +24,7 @@ import { api, sessionCanGet, apiBase } from './lib/helpers';
 import { messages as appMessages } from './i18n';
 
 const THEME_KEY = 'myseliasan_theme';
+const NAV_PIN_KEY = 'myseliasan_nav_pinned';
 
 function AppInner({ lang, onLangChange }) {
   const t = useT();
@@ -38,6 +39,19 @@ function AppInner({ lang, onLangChange }) {
   function changeTheme(t) {
     setTheme(t);
     try { localStorage.setItem(THEME_KEY, t); } catch (_) {}
+  }
+  // Side-nav display mode: pinned (default, always in-flow) vs auto-hide (collapses to a
+  // slim hover edge and slides in on hover). Persisted like the theme. Standardized with
+  // mymatasan's rail — see .app-shell.nav-autohide in rbac-standard.css.
+  const [navPinned, setNavPinned] = useState(() => {
+    try { return localStorage.getItem(NAV_PIN_KEY) !== 'false'; } catch (_) { return true; }
+  });
+  function toggleNavPinned() {
+    setNavPinned((p) => {
+      const next = !p;
+      try { localStorage.setItem(NAV_PIN_KEY, String(next)); } catch (_) {}
+      return next;
+    });
   }
 
   // authState: 'loading' | 'anon' | 'mustchange' | 'ready'
@@ -156,7 +170,7 @@ function AppInner({ lang, onLangChange }) {
   if ((activeTab === 'nodes' || activeTab === 'liveviews' || activeTab === 'objects' || activeTab === 'teach') && !canNodes) setActiveTab('dashboard');
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${navPinned ? '' : ' nav-autohide'}`}>
       <SideNav
         activeTab={activeTab}
         busy={false}
@@ -168,6 +182,8 @@ function AppInner({ lang, onLangChange }) {
         managingCameraId={managingCameraId}
         onSelectNode={selectNode}
         notifUnread={notifUnread}
+        pinned={navPinned}
+        onTogglePinned={toggleNavPinned}
       />
       <main className="main-workspace">
         <div className="shared-lang-bar">

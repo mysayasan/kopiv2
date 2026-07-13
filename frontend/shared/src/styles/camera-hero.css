@@ -1,0 +1,184 @@
+/* Shared camera-page hero (the <CameraHero> component): breadcrumb trail, status-tinted
+   camera tile, name + description, and the status chips. This is the ONE camera page
+   header across the suite — mymatasan's own camera page and myseliasan's Nodes → Camera
+   page render the identical component, so do not fork these values per app.
+
+   Uses ONLY --ui-* tokens (see tokens.css). The status tints are derived from
+   --ui-success / --ui-danger / --ui-accent with color-mix rather than added as new
+   tokens, so an app only has to map the token contract it already maps for <Tabs>. */
+
+.cam-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+  border: 1px solid var(--ui-border, #d6dee7);
+  border-radius: 10px;
+  background:
+    linear-gradient(90deg, var(--ui-accent-soft, #edf4ff), transparent 45%),
+    var(--ui-surface, #fff);
+  box-shadow: 0 1px 2px var(--ui-shadow, rgba(32, 42, 54, 0.08));
+}
+
+/* ---- Breadcrumb trail ---------------------------------------------------- */
+.cam-hero-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.cam-hero-crumb {
+  border: none;
+  background: none;
+  padding: 2px 4px;
+  margin: 0;
+  border-radius: 5px;
+  font: inherit;
+  color: var(--ui-muted, #59687a);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.cam-hero-crumb:hover {
+  color: var(--ui-accent, #2d6cdf);
+  background: var(--ui-accent-soft, #edf4ff);
+}
+
+/* The trailing crumb is the page you are already on: styled as text, not a control. */
+.cam-hero-crumb.is-current {
+  color: var(--ui-text, #18212f);
+  font-weight: 600;
+  cursor: default;
+  background: none;
+  padding: 2px 4px;
+}
+
+.cam-hero-crumb-sep {
+  display: inline-flex;
+  align-items: center;
+  color: var(--ui-muted, #59687a);
+  opacity: 0.55;
+}
+
+/* ---- Identity row -------------------------------------------------------- */
+.cam-hero-main {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.cam-hero-avatar {
+  position: relative;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ui-muted, #59687a) 12%, transparent);
+  color: var(--ui-muted, #59687a);
+}
+
+.cam-hero-avatar.is-online {
+  background: color-mix(in srgb, var(--ui-success, #247455) 15%, transparent);
+  color: var(--ui-success, #247455);
+}
+
+.cam-hero-avatar.is-offline {
+  background: color-mix(in srgb, var(--ui-danger, #9f3434) 15%, transparent);
+  color: var(--ui-danger, #9f3434);
+}
+
+/* Reachability dot on the tile's corner, ringed in the surface colour so it reads as a
+   badge rather than a smudge against the tint behind it. */
+.cam-hero-avatar::after {
+  content: '';
+  position: absolute;
+  inset-inline-end: -3px;
+  bottom: -3px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid var(--ui-surface, #fff);
+  background: var(--ui-muted, #59687a);
+}
+
+.cam-hero-avatar.is-online::after { background: var(--ui-success, #247455); }
+.cam-hero-avatar.is-offline::after { background: var(--ui-danger, #9f3434); }
+
+.cam-hero-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cam-hero-name {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--ui-text, #18212f);
+  overflow-wrap: anywhere;
+}
+
+.cam-hero-desc {
+  margin: 3px 0 0;
+  color: var(--ui-muted, #59687a);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* ---- Status chips -------------------------------------------------------- */
+.cam-hero-chips {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cam-hero-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ui-muted, #59687a) 12%, transparent);
+  color: var(--ui-muted, #59687a);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.cam-hero-chip.is-online {
+  background: color-mix(in srgb, var(--ui-success, #247455) 15%, transparent);
+  color: var(--ui-success, #247455);
+}
+
+.cam-hero-chip.is-offline {
+  background: color-mix(in srgb, var(--ui-danger, #9f3434) 15%, transparent);
+  color: var(--ui-danger, #9f3434);
+}
+
+.cam-hero-chip.is-pending {
+  background: var(--ui-accent-soft, #edf4ff);
+  color: var(--ui-accent, #2d6cdf);
+}
+
+.cam-hero-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* Backend status strings arrive lowercase ("online", "resolved"). */
+.cam-hero-chip-cap { text-transform: capitalize; }
+
+@media (max-width: 720px) {
+  .cam-hero-main { flex-wrap: wrap; }
+  .cam-hero-chips { width: 100%; }
+}
