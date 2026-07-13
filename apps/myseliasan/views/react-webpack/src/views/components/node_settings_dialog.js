@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Ico, Tabs, useT } from '@shared';
 import { NodeEmbed } from './node_embed';
+import { NodeDiscoverPanel } from './node_discover';
 import { IconDropdown } from './ui';
 import { NODE_ICONS, DEFAULT_NODE_ICON } from './nodes';
 import { api } from '../lib/helpers';
@@ -8,9 +9,11 @@ import { api } from '../lib/helpers';
 // NodeSettingsDialog is the node-level "Settings" surface, opened from the Manage button in
 // the Adopted Nodes table. It mirrors mymatasan's Settings page as a modal with tabs, but
 // every read/write tunnels to the node over the control-channel proxy (the browser never
-// contacts the node directly). Tabs: Camera Health, Users, Backup & Recovery, Version & Health.
+// contacts the node directly). Tabs: Details, Cameras (discover/add), Camera Health, Users,
+// Backup & Recovery, Version & Health.
 const TABS = [
   { id: 'details', labelKey: 'nset.tabDetails', icon: 'sliders' },
+  { id: 'cameras', labelKey: 'nset.tabCameras', icon: 'video' },
   { id: 'health', labelKey: 'nset.tabHealth', icon: 'wifi' },
   { id: 'users', labelKey: 'nset.tabUsers', icon: 'user' },
   { id: 'backup', labelKey: 'nset.tabBackup', icon: 'key' },
@@ -51,6 +54,7 @@ export function NodeSettingsDialog({ node, onClose, onToast, onWipe, onNodeUpdat
           />
           <div className="node-settings-body">
             {tab === 'details' ? <NodeDetailsPanel node={node} t={t} onToast={onToast} onNodeUpdated={onNodeUpdated} /> : null}
+            {tab === 'cameras' ? <NodeDiscoverPanel px={px} t={t} onToast={onToast} /> : null}
             {tab === 'system' ? <VersionHealthPanel node={node} px={px} t={t} onToast={onToast} /> : null}
             {tab === 'health' ? <CameraHealthPanel px={px} t={t} onToast={onToast} /> : null}
             {tab === 'users' ? <UsersPanel px={px} t={t} onToast={onToast} /> : null}
