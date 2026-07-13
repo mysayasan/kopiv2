@@ -12,6 +12,7 @@ import (
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	applog "github.com/mysayasan/kopiv2/infra/logging"
 	"github.com/mysayasan/kopiv2/infra/scheduler"
+	"github.com/mysayasan/kopiv2/infra/telemetry"
 )
 
 // ShutdownFunc is called during graceful shutdown when app-specific workers exist.
@@ -51,6 +52,11 @@ type Dependencies struct {
 	AppRegistry sharedservices.IAppRegistryService
 	Logger      applog.Logger
 	Scheduler   *scheduler.Scheduler
+	// Metrics records app-defined runtime metrics, exposed on the Prometheus scrape
+	// endpoint alongside the shared API/coordination series. It is never nil — when
+	// telemetry is disabled it is a no-op recorder, so instrumentation on a hot path
+	// never needs a guard.
+	Metrics telemetry.Metrics
 	// Restarter gracefully restarts the process (factory reset, future self-update).
 	Restarter Restarter
 }

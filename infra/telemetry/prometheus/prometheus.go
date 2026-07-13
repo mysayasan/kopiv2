@@ -53,6 +53,12 @@ type Recorder struct {
 	buckets         []float64
 	series          map[metricKey]*series
 	coordination    map[coordinationKey]*coordinationSeries
+	// custom holds app-defined metrics (see metrics.go): the domain numbers an operator
+	// needs to diagnose a site remotely — inference latency, segment finalize outcomes,
+	// ffmpeg restarts, cameras offline, delivery failures. help carries descriptions
+	// registered via Describe before the metric is first observed.
+	custom map[string]*customMetric
+	help   map[string]string
 }
 
 // NewRecorder creates a Prometheus telemetry recorder.
@@ -65,6 +71,8 @@ func NewRecorder(cfg Config) *Recorder {
 		buckets:         []float64{10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000},
 		series:          map[metricKey]*series{},
 		coordination:    map[coordinationKey]*coordinationSeries{},
+		custom:          map[string]*customMetric{},
+		help:            map[string]string{},
 	}
 }
 
@@ -254,6 +262,8 @@ func (r *Recorder) Collect() string {
 			fmt.Fprintf(&b, "kopiv2_tx_lock_stuck_total%s %d\n", coordinationLabels(key, ""), entry.Total)
 		}
 	}
+
+	r.collectCustom(&b)
 
 	return b.String()
 }

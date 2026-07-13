@@ -19,6 +19,7 @@ import (
 	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/recording"
 	"github.com/mysayasan/kopiv2/infra/safego"
+	"github.com/mysayasan/kopiv2/infra/telemetry"
 	"github.com/mysayasan/kopiv2/infra/vision"
 )
 
@@ -44,6 +45,38 @@ type VisionMonitor struct {
 	snapshotDir    string
 	mu             sync.Mutex
 	lastDiag       map[string]int64
+	metrics        telemetry.Metrics
+}
+
+// countFrame records one sampled frame's outcome, and observeInference records how long
+// a detector pass took. Both nil-safe: tests construct the monitor without telemetry.
+func (m *VisionMonitor) countFrame(cameraID int64, outcome string) {
+	if m.metrics == nil {
+		return
+	}
+	m.metrics.Inc(MetricFramesTotal, telemetry.Labels{
+		"camera":  strconv.FormatInt(cameraID, 10),
+		"outcome": outcome,
+	})
+}
+
+func (m *VisionMonitor) observeInference(cameraID int64, d time.Duration) {
+	if m.metrics == nil {
+		return
+	}
+	m.metrics.Observe(MetricInferenceDurationMs, telemetry.Labels{
+		"camera": strconv.FormatInt(cameraID, 10),
+	}, float64(d.Milliseconds()))
+}
+
+func (m *VisionMonitor) countAlert(cameraID int64, kind string) {
+	if m.metrics == nil {
+		return
+	}
+	m.metrics.Inc(MetricAlertsTotal, telemetry.Labels{
+		"camera": strconv.FormatInt(cameraID, 10),
+		"kind":   kind,
+	})
 }
 
 func NewVisionMonitor(camera ICameraService, visionService IVisionService, settings IRuntimeSettingsService, monitor VisionMonitorSettings) *VisionMonitor {
@@ -92,6 +125,7 @@ func NewVisionMonitor(camera ICameraService, visionService IVisionService, setti
 		persistSampled: monitor.PersistSampledDiagnostics,
 		snapshotDir:    monitor.SnapshotDir,
 		lastDiag:       map[string]int64{},
+		metrics:        monitor.Metrics,
 	}
 }
 
@@ -308,6 +342,9 @@ func (m *VisionMonitor) sampleCamera(ctx context.Context, cameraID int64, camera
 	frame.Inference = inference
 	frame.WantLPR = wantLPR
 	if err != nil {
+		// A camera that silently fails every capture looks identical to a quiet camera in
+		// the alert log. This counter is what tells them apart.
+		m.countFrame(cameraID, "capture_failed")
 		m.emitDiagnostics(ctx, cameraRules, "capture_failed", err.Error(), map[string]any{
 			"cameraId": cameraID,
 		})
@@ -318,8 +355,14 @@ func (m *VisionMonitor) sampleCamera(ctx context.Context, cameraID int64, camera
 	}
 	var detections []vision.Detection
 	if len(cameraRules) > 0 {
+		startedAt := time.Now()
 		detections, err = m.detector.Detect(ctx, frame, cameraRules)
+		// Timed on both paths: a detector that is failing slowly (a wedged worker hitting
+		// the capture timeout every pass) is the case worth seeing, and timing only the
+		// success path would hide it.
+		m.observeInference(cameraID, time.Since(startedAt))
 		if err != nil {
+			m.countFrame(cameraID, "detect_failed")
 			m.emitDiagnostics(ctx, cameraRules, "detect_failed", err.Error(), map[string]any{
 				"cameraId":   cameraID,
 				"capturedAt": frame.CapturedAt,
@@ -327,6 +370,7 @@ func (m *VisionMonitor) sampleCamera(ctx context.Context, cameraID int64, camera
 			return
 		}
 	}
+	m.countFrame(cameraID, "ok")
 	// Metadata recording: if this frame's inference was not already shared with a rule
 	// detection (a metadata-only camera, or one whose only rules are motion-based), run
 	// a dedicated observe-only pass so the recorder still logs what the camera saw. The
@@ -389,6 +433,7 @@ func (m *VisionMonitor) sampleCamera(ctx context.Context, cameraID int64, camera
 			// discarded before; at minimum it must be visible in the log.
 			log.Printf("vision: cam%d rule%d: persist alert failed: %v", detection.CameraId, detection.RuleId, err)
 		}
+		m.countAlert(detection.CameraId, "detection")
 
 		at := detection.FrameCapturedAt
 		if at <= 0 {
@@ -542,6 +587,9 @@ func (m *VisionMonitor) emitDiagnostics(ctx context.Context, rules []vision.Dete
 			ZonePolygon:   rule.ZonePolygon,
 			Metadata:      string(payload),
 		}, 0)
+		// Counted apart from real detections so a diagnostic flood — which is what
+		// emptied the events panel once before — is legible in a scrape.
+		m.countAlert(rule.CameraId, "diagnostic")
 	}
 }
 

@@ -7,6 +7,7 @@ Implements the `mymatasan` app module for the shared runtime host.
 ## Responsibilities
 
 - At the very top of `RegisterAppRoutes`, calls `infra/safego.SetLogger` to route recovered background-goroutine panics into the app logger (`deps.Logger.Warnf`), before any service is built — so a panic is never lost to stdout on a service install (until this runs, `safego` falls back to the standard logger, so nothing is ever silent either way).
+- Calls `services.DescribeMetrics(deps.Metrics)` and `recording.DescribeMetrics(deps.Metrics)` early in `RegisterAppRoutes` (right after the safego logger wire-up) so `/metrics` help text is registered before anything can observe those metrics. `deps.Metrics` is then threaded into: `VisionMonitorSettings.Metrics`, both `recording.RecorderConfig` literals this file builds (initial startup config and the config rebuilt for each configured camera), `NewCameraHealthMonitor`, `NewMachineHealthMonitor`, `notificationOptionsFromAppConfig` (→ `notification.Options.Metrics` → `hub.SetMetrics`), and `apis.NewRecordingApi` (so the hot-reload path in `PUT /api/recording/config` also counts).
 - Provides app identity and base directory.
 - Registers app entities for bootstrap schema generation.
 - Registers built-in and config-driven seeders.

@@ -14,6 +14,7 @@ import (
 	"github.com/mysayasan/kopiv2/infra/rtsp"
 	"github.com/mysayasan/kopiv2/infra/stream"
 	"github.com/mysayasan/kopiv2/infra/talk"
+	"github.com/mysayasan/kopiv2/infra/telemetry"
 	"github.com/mysayasan/kopiv2/infra/vision"
 )
 
@@ -258,6 +259,10 @@ type VisionMonitorSettings struct {
 	// they have no alert rules, and runs a dedicated observe pass only for frames whose
 	// inference wasn't already shared with a rule detection. nil disables it.
 	Metadata *MetadataRecorder
+	// Metrics records inference latency, frame outcomes and alert counts. Never nil in
+	// practice (apphost supplies a no-op recorder when telemetry is off), but the monitor
+	// guards anyway so tests can leave it unset.
+	Metrics telemetry.Metrics
 }
 
 // INotificationDestinationsProvider supplies the configured delivery destinations

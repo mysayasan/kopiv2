@@ -551,6 +551,12 @@ Slow-request metrics increment only when API duration is greater than or equal t
 Transaction lock metrics use restrained labels: `app`, `provider`, low-cardinality `resource`, and `outcome`.
 Stuck transaction locks and stale async upload jobs are visible through telemetry/logging: lock-level stuck observations increment Prometheus metrics, and recovered/processed upload jobs are logged by the scheduler.
 
+### App-defined metrics
+
+Beyond the initial shared series above, `infra/telemetry.Metrics` (`Describe`/`Inc`/`Add`/`Set`/`Observe`, exposed to every app module as `apphost.Dependencies.Metrics`, never nil) lets shared infra and apps record their own counters, gauges, and millisecond histograms with arbitrary label sets — all emitted in the same `/metrics` scrape. Naming convention: `kopiv2_*` for metrics emitted by shared infra (app-neutral, e.g. `infra/recording`'s `kopiv2_recording_ffmpeg_restarts_total`/`kopiv2_recording_segment_finalize_total` or `infra/notification`'s `kopiv2_notification_delivery_total`), an app-specific prefix (e.g. `mymatasan_*`) for metrics owned by one app. Label values must stay bounded (ids, small outcome enums) — the Prometheus backend caps cardinality at 500 distinct label combinations per metric name and surfaces truncation as a `<name>_series_truncated` gauge instead of silently dropping series unnoticed.
+
+`mymatasan` is the first consumer, instrumenting runtime health that used to be invisible outside logs on a box an operator can't log into: detector inference latency and frame/alert outcomes, camera reachability, disk usage and recording-pause state, recorder ffmpeg restarts and segment finalize outcomes, and notification delivery outcomes per channel. See `apps/mymatasan/README.md`'s Runtime Metrics section for the full list and what's worth alerting on.
+
 ## Cache Admin Endpoints
 
 Protected endpoints (admin via RBAC):

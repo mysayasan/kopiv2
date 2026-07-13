@@ -12,6 +12,7 @@ import (
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	infranotif "github.com/mysayasan/kopiv2/infra/notification"
+	"github.com/mysayasan/kopiv2/infra/telemetry"
 )
 
 // Re-export the engine's core types and severities so apps depend on this one
@@ -45,6 +46,11 @@ type Options struct {
 
 	// SSEClientBuffer is the per-connection SSE queue depth (0 = engine default).
 	SSEClientBuffer int
+
+	// Metrics (optional) counts delivery attempts per channel and outcome. Delivery is
+	// at-most-once — a full queue or exhausted retries drops the notification — so
+	// without this a drop is only ever a log line nobody reads.
+	Metrics telemetry.Metrics
 }
 
 // WebhookConfig configures the outbound webhook delivery channel.
@@ -130,6 +136,7 @@ type Service struct {
 // enable webhook/telegram delivery.
 func NewService(repo dbsql.IGenericRepo[entities.Notification], opts Options) *Service {
 	hub := infranotif.NewHub(infranotif.WithLogger(opts.Logger))
+	hub.SetMetrics(opts.Metrics)
 	sse := infranotif.NewSSEChannel(infranotif.SSEOptions{ClientBuffer: opts.SSEClientBuffer})
 	outbound := infranotif.NewReloadableChannel("outbound")
 

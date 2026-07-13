@@ -29,3 +29,4 @@ Provides the first telemetry backend: a Prometheus text exporter.
 - Transaction lock metrics use low-cardinality resource labels such as `file-storage`.
 - Stuck lock metrics increment when a lock is held longer than the configured transaction stuck timeout.
 - The exporter is implemented with the Go standard library and does not require an external Prometheus client dependency.
+- `Recorder` also implements `telemetry.Metrics` (`custom`/`help` maps, `Collect()` calls `collectCustom()`), the app-defined metric registry described in `infra/telemetry/prometheus/metrics.go.md`. Those series are emitted in the same scrape, after the `kopiv2_api_*`/`kopiv2_tx_*` series above.

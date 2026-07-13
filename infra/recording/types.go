@@ -2,8 +2,10 @@ package recording
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/mysayasan/kopiv2/infra/atrest"
+	"github.com/mysayasan/kopiv2/infra/telemetry"
 )
 
 const (
@@ -76,6 +78,45 @@ type RecorderConfig struct {
 	// crypto-erased. nil = plaintext. The live .ts and the in-progress remux are
 	// briefly plaintext until the segment is finalized.
 	Cipher *atrest.Cipher
+	// Metrics (optional) records recorder telemetry — ffmpeg restarts and segment
+	// finalize outcomes. nil is fine; use recordMetric/observeMetric, which are nil-safe.
+	Metrics telemetry.Metrics
+}
+
+// Recorder metric names. These are emitted by shared infra, so they carry the neutral
+// kopiv2_ prefix rather than an app name — any app that records video reports the same
+// numbers.
+const (
+	// MetricFFmpegRestartsTotal counts capture-ffmpeg restarts per camera. A camera
+	// thrashing here is failing to hold its RTSP connection; it is the earliest signal
+	// of a flapping stream, well before footage goes visibly missing.
+	MetricFFmpegRestartsTotal = "kopiv2_recording_ffmpeg_restarts_total"
+	// MetricSegmentFinalizeTotal counts segment finalize attempts by outcome (saved,
+	// discarded, failed, unsaved, quarantined). Anything but `saved` accumulating means
+	// footage is not reaching the recordings list.
+	MetricSegmentFinalizeTotal = "kopiv2_recording_segment_finalize_total"
+)
+
+// DescribeMetrics registers help text for the recorder's metrics. Call once at startup.
+func DescribeMetrics(m telemetry.Metrics) {
+	if m == nil {
+		return
+	}
+	m.Describe(MetricFFmpegRestartsTotal, "Capture ffmpeg restarts, per camera.")
+	m.Describe(MetricSegmentFinalizeTotal, "Segment finalize attempts by outcome (saved, discarded, failed, unsaved, quarantined).")
+}
+
+// countMetric increments a recorder counter. Nil-safe: telemetry is optional, and an
+// instrumentation call on a hot path must never need a guard at the call site.
+func (c RecorderConfig) countMetric(name string, labels telemetry.Labels) {
+	if c.Metrics == nil {
+		return
+	}
+	if labels == nil {
+		labels = telemetry.Labels{}
+	}
+	labels["camera"] = strconv.FormatInt(c.CameraId, 10)
+	c.Metrics.Inc(name, labels)
 }
 
 // SegmentResult is produced when a video segment is written to disk.

@@ -11,6 +11,7 @@ import (
 
 	"github.com/mysayasan/kopiv2/infra/rtsp"
 	"github.com/mysayasan/kopiv2/infra/safego"
+	"github.com/mysayasan/kopiv2/infra/telemetry"
 )
 
 // Camera health states persisted on the camera row and used in notifications.
@@ -45,6 +46,8 @@ type CameraHealthMonitor struct {
 
 	mu    sync.Mutex
 	state map[int64]*cameraHealthState
+
+	metrics telemetry.Metrics
 }
 
 // cameraHealthState is the in-memory liveness tracking for one camera.
@@ -71,13 +74,14 @@ var healthFallbackSettings = HealthSettings{
 // NewCameraHealthMonitor builds a health monitor. Tunables (interval, timeout,
 // thresholds, enabled) are read live from the settings service on every sweep,
 // so changes made in the Settings UI take effect without a restart.
-func NewCameraHealthMonitor(camera ICameraService, rtspClient rtsp.Client, settings IHealthSettingsService, notifier INotificationPublisher) *CameraHealthMonitor {
+func NewCameraHealthMonitor(camera ICameraService, rtspClient rtsp.Client, settings IHealthSettingsService, notifier INotificationPublisher, metrics telemetry.Metrics) *CameraHealthMonitor {
 	return &CameraHealthMonitor{
 		camera:   camera,
 		rtsp:     rtspClient,
 		settings: settings,
 		notifier: notifier,
 		state:    map[int64]*cameraHealthState{},
+		metrics:  metrics,
 	}
 }
 
@@ -151,14 +155,47 @@ func (m *CameraHealthMonitor) tick(ctx context.Context) time.Duration {
 			break
 		}
 		wg.Add(1)
-		go func(cam *CameraDetail) {
+		cam := cam
+		// Guarded: these are child goroutines, so the supervisor around run() does NOT
+		// catch a panic in here — it would still take the process down.
+		safego.Go("mymatasan.health.camera.probe", func() {
 			defer wg.Done()
 			up := m.probe(ctx, cam)
 			m.updateState(ctx, cam, up)
-		}(cam)
+		})
 	}
 	wg.Wait()
+	m.reportMetrics()
 	return interval
+}
+
+// reportMetrics publishes camera reachability as gauges. mymatasan_cameras_offline is
+// the single number worth alerting on; the per-camera gauge says which ones.
+func (m *CameraHealthMonitor) reportMetrics() {
+	if m.metrics == nil {
+		return
+	}
+	m.mu.Lock()
+	statuses := make(map[int64]string, len(m.state))
+	for id, st := range m.state {
+		if st != nil {
+			statuses[id] = st.status
+		}
+	}
+	m.mu.Unlock()
+
+	offline := 0
+	for id, status := range statuses {
+		online := 0.0
+		if status == cameraHealthOnline {
+			online = 1
+		}
+		if status == cameraHealthOffline {
+			offline++
+		}
+		m.metrics.Set(MetricCameraOnline, telemetry.Labels{"camera": strconv.FormatInt(id, 10)}, online)
+	}
+	m.metrics.Set(MetricCamerasOffline, telemetry.Labels{}, float64(offline))
 }
 
 // ReadinessStatus returns a compact camera-health summary for the /ready payload,

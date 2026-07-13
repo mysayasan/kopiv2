@@ -392,6 +392,7 @@ func runApp(app App) error {
 		Logger:      runtimeLogger,
 		Scheduler:   runtimeScheduler,
 		Restarter:   restarter,
+		Metrics:     telemetryRecorder,
 	}
 
 	shutdownHook, err := app.RegisterAppRoutes(api, deps)

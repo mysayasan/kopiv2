@@ -88,6 +88,8 @@ The runtime now uses a reusable multi-app launcher pattern:
 - Shared runtime log listing and monthly log-file deletion are exposed under `/api/log-service` for authenticated/RBAC-protected operators.
 - Shared telemetry can expose Prometheus-format metrics at the configured metrics path.
 - API telemetry records request counts, duration histograms, and slow request counts using a configurable duration threshold.
+- `infra/telemetry.Metrics` (`Describe`/`Inc`/`Add`/`Set`/`Observe`, `apphost.Dependencies.Metrics`, never nil) lets any app or shared module record its own counters/gauges/histograms with arbitrary label sets, emitted in the same `/metrics` scrape as the API/coordination series. Naming convention: `kopiv2_*` for metrics emitted by shared infra (app-neutral — e.g. `infra/recording`, `infra/notification`), an app prefix (e.g. `mymatasan_*`) for app-owned metrics. The Prometheus backend caps cardinality per metric name (500 distinct label combinations) and surfaces truncation as a `<name>_series_truncated` gauge rather than silently dropping series unnoticed.
+- `mymatasan` uses this to instrument runtime health that was previously invisible outside logs: detector inference latency and frame/alert outcomes (`vision_monitor.go`), camera reachability (`camera_health_monitor.go`), disk usage and recording-pause state (`machine_health_monitor.go`), recorder ffmpeg restarts and segment finalize outcomes (`infra/recording`), and notification delivery outcomes per channel (`infra/notification`).
 
 ## Transaction Coordination
 
