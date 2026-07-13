@@ -196,8 +196,8 @@ func (m *Manager) Pause() {
 		return
 	}
 	m.paused = true
-	for id, r := range m.recorders {
-		r.Close()
+	closeAll(m.recorders)
+	for id := range m.recorders {
 		delete(m.recorders, id)
 		// Detect-only streams aren't config-retained (the vision monitor re-creates
 		// them on its next reconcile once paused clears), so forget them here.
@@ -276,13 +276,28 @@ func (m *Manager) Statuses() []CameraStatus {
 	return out
 }
 
+// closeAll shuts recorders down concurrently. recorder.Close waits for that camera's
+// in-flight segment finalization to unwind, so closing a large fleet serially would
+// add up; fanning out keeps teardown bounded by the slowest single camera.
+func closeAll(recorders map[int64]recorder) {
+	var wg sync.WaitGroup
+	for _, r := range recorders {
+		wg.Add(1)
+		go func(rec recorder) {
+			defer wg.Done()
+			rec.Close()
+		}(r)
+	}
+	wg.Wait()
+}
+
 // Close shuts down all recorders.
 func (m *Manager) Close() {
 	m.cancel()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for id, r := range m.recorders {
-		r.Close()
+	closeAll(m.recorders)
+	for id := range m.recorders {
 		delete(m.recorders, id)
 	}
 }

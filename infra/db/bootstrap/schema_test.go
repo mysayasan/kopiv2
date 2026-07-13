@@ -12,6 +12,41 @@ type sliceFieldFixture struct {
 	Pics []string `json:"pics"`
 }
 
+// multiIndexFixture exercises a column joining several index groups. A timestamp
+// typically needs this: it is the trailing column of a scoped composite index AND the
+// sole column of the index a retention purge scans.
+type multiIndexFixture struct {
+	Id        int64 `pkey:"true" skipWhenInsert:"true"`
+	CameraId  int64 `idx:"cam_time"`
+	CreatedAt int64 `idx:"cam_time, time"`
+}
+
+func TestBuildManifestFieldCanJoinMultipleIndexGroups(t *testing.T) {
+	manifest, _, err := BuildManifest("mymatasan", []any{multiIndexFixture{}})
+	if err != nil {
+		t.Fatalf("BuildManifest returned error: %v", err)
+	}
+	if len(manifest.Tables) != 1 {
+		t.Fatalf("expected 1 table, got %d", len(manifest.Tables))
+	}
+
+	got := map[string][]string{}
+	for _, ix := range manifest.Tables[0].Index {
+		got[ix.Name] = ix.Columns
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 indexes (cam_time, time), got %d: %v", len(got), got)
+	}
+	// Composite order follows field declaration, so the equality column leads the range.
+	if cols := got["ix_multi_index_fixture_cam_time"]; len(cols) != 2 || cols[0] != "camera_id" || cols[1] != "created_at" {
+		t.Fatalf("cam_time index = %v, want [camera_id created_at]", cols)
+	}
+	// Whitespace around a comma-separated group name must be tolerated.
+	if cols := got["ix_multi_index_fixture_time"]; len(cols) != 1 || cols[0] != "created_at" {
+		t.Fatalf("time index = %v, want [created_at]", cols)
+	}
+}
+
 func TestBuildManifest(t *testing.T) {
 	manifest, hash, err := BuildManifest("mymatasan", []any{
 		sharedentities.ApiEndpoint{},

@@ -29,11 +29,16 @@ type recordingApi struct {
 	settings services.IRuntimeSettingsService
 	cipher   *atrest.Cipher
 	vision   services.IVisionService
+	// shredPasses must be carried into every RecorderConfig this handler builds. It is
+	// a boot-time setting, so omitting it here silently rebuilt the recorder with
+	// ShredPasses=0 — secure shred degraded to a plain unlink on the retention purge the
+	// moment an operator saved any recording setting, until the next restart.
+	shredPasses int
 }
 
 // NewRecordingApi registers recording routes under /recording.
-func NewRecordingApi(router *mux.Router, serv services.IRecordingService, recorder *recording.Manager, camera services.ICameraService, settings services.IRuntimeSettingsService, cipher *atrest.Cipher, vision services.IVisionService) {
-	h := &recordingApi{serv: serv, recorder: recorder, camera: camera, settings: settings, cipher: cipher, vision: vision}
+func NewRecordingApi(router *mux.Router, serv services.IRecordingService, recorder *recording.Manager, camera services.ICameraService, settings services.IRuntimeSettingsService, cipher *atrest.Cipher, vision services.IVisionService, shredPasses int) {
+	h := &recordingApi{serv: serv, recorder: recorder, camera: camera, settings: settings, cipher: cipher, vision: vision, shredPasses: shredPasses}
 	g := router.PathPrefix("/recording").Subrouter()
 
 	g.HandleFunc("/segments", h.listSegments).Methods("GET")
@@ -483,6 +488,7 @@ func (a *recordingApi) saveConfig(w http.ResponseWriter, r *http.Request) {
 				RecordCodec:        recStorage.Storage.Codec,
 				RecordQuality:      recStorage.Storage.Quality,
 				RecordFallbackCopy: recStorage.Storage.FallbackToCopy == nil || *recStorage.Storage.FallbackToCopy,
+				ShredPasses:        a.shredPasses,
 				Cipher:             a.cipher,
 			}); cerr != nil {
 				recorderWarning = cerr.Error()

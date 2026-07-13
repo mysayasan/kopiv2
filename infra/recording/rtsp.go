@@ -33,6 +33,35 @@ func fileIsEncrypted(path string) bool {
 // segTimeFormat is the strftime/Go time layout used for live segment filenames.
 const segTimeFormat = "20060102_150405"
 
+// partSuffix is appended to a segment's MP4 while it is being built. The finished
+// file only ever appears at its real name via an atomic rename, and only after it
+// has been encrypted, so a bare <stem>.mp4 on disk is ALWAYS a complete, encrypted
+// segment. That invariant is what makes crash recovery unambiguous: if a <stem>.ts
+// still exists, the stem was never finalized and the TS is the source of truth.
+const partSuffix = ".part"
+
+// maxRemuxAttempts bounds how many times a segment is re-remuxed before its source
+// TS is quarantined. Without a cap, a permanently unreadable TS would respawn an
+// ffmpeg process on every 5 s watch tick forever.
+const maxRemuxAttempts = 3
+
+// remuxDrainTimeout bounds how long Close waits for in-flight segment finalization.
+// Cancelling the recorder context kills the child ffmpeg, so the real wait is
+// sub-second; this is only a backstop against a wedged child hanging shutdown.
+const remuxDrainTimeout = 10 * time.Second
+
+// remuxOutcome is the result of finalizing one segment.
+type remuxOutcome int
+
+const (
+	remuxSaved     remuxOutcome = iota // finalized on disk and persisted to the sink
+	remuxDiscarded                     // empty/absent segment, intentionally dropped
+	remuxFailed                        // could not finalize; source TS intact, retry later
+	remuxUnsaved                       // MP4 finalized on disk but the sink save failed;
+	                                   // the adoption path retries persistence, so this is
+	                                   // not a segment fault and burns no retry attempt
+)
+
 // liveSegInfo describes one live segment.  path is the best available file for
 // that segment: .mp4 if the TS has been remuxed, otherwise .ts.  tsPath is set
 // while the raw TS file still exists on disk.
@@ -68,10 +97,29 @@ type rtspRecorder struct {
 	frameMu     sync.RWMutex
 	lastFrame   []byte
 	lastFrameAt int64 // unix seconds the frame was decoded
+
+	// Segment finalization bookkeeping. segDone marks stems already persisted (or
+	// deliberately discarded); segBusy marks stems with finalization in flight, so the
+	// 5 s watch tick never launches a second remux for a stem already being remuxed;
+	// segFails counts consecutive failures per stem to drive the quarantine cap.
+	// remuxWG lets Close wait for in-flight remuxes — Manager.Configure closes the old
+	// recorder and immediately starts a new one on the SAME live directory, so without
+	// the wait two ffmpeg processes could write the same output file concurrently.
+	segMu    sync.Mutex
+	segDone  map[string]bool
+	segBusy  map[string]bool
+	segFails map[string]int
+	remuxWG  sync.WaitGroup
 }
 
 func newRTSPRecorder(cfg RecorderConfig, sink SegmentSink) *rtspRecorder {
-	return &rtspRecorder{cfg: cfg, sink: sink}
+	return &rtspRecorder{
+		cfg:      cfg,
+		sink:     sink,
+		segDone:  map[string]bool{},
+		segBusy:  map[string]bool{},
+		segFails: map[string]int{},
+	}
 }
 
 func (r *rtspRecorder) WriteFrame(_ []byte, _ int64) {}
@@ -156,12 +204,44 @@ func (r *rtspRecorder) TriggerEvent(alertId int64, frameCapturedAt int64) {
 	go r.extractClip(alertId, triggerAt, time.Duration(post)*time.Second)
 }
 
+// Close stops the recorder and waits for in-flight segment finalization to unwind.
+//
+// The wait is load-bearing: Manager.Configure closes the old recorder and immediately
+// starts a new one on the SAME live directory, so without it a remux from the old
+// generation would still be writing (and deleting) files the new recorder now owns —
+// two ffmpeg processes racing the same segment. Cancelling the context kills the child
+// ffmpeg, so in practice this returns in milliseconds; the timeout is only a backstop.
 func (r *rtspRecorder) Close() {
 	r.mu.Lock()
 	cancel := r.cancel
 	r.mu.Unlock()
 	if cancel != nil {
 		cancel()
+	}
+
+	done := make(chan struct{})
+	go func() {
+		r.remuxWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(remuxDrainTimeout):
+		log.Printf("recording rtsp cam%d: timed out waiting for segment finalization to stop", r.cfg.CameraId)
+	}
+}
+
+// cleanStaleParts removes partial MP4s left by an interrupted remux. Their source TS
+// files are still on disk and will be re-remuxed, so the partials are pure garbage.
+func (r *rtspRecorder) cleanStaleParts() {
+	entries, err := os.ReadDir(r.liveDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), partSuffix) {
+			_ = os.Remove(filepath.Join(r.liveDir, e.Name()))
+		}
 	}
 }
 
@@ -227,6 +307,7 @@ func (r *rtspRecorder) Start(ctx context.Context) error {
 				return fmt.Errorf("recording: mkdir %s: %w", d, err)
 			}
 		}
+		r.cleanStaleParts()
 	}
 
 	recCtx, cancel := context.WithCancel(ctx)
@@ -516,19 +597,87 @@ func (r *rtspRecorder) runFFmpeg(ctx context.Context, ffmpegPath, transport stri
 func (r *rtspRecorder) watchSegments(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
-	saved := map[string]bool{}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			r.saveCompletedSegments(ctx, saved)
+			r.saveCompletedSegments(ctx)
 		}
 	}
 }
 
-func (r *rtspRecorder) saveCompletedSegments(ctx context.Context, saved map[string]bool) {
+// claimStem reserves a stem for finalization. It returns false when the stem is
+// already persisted, already discarded, or has finalization in flight — so a slow
+// remux is never started twice by successive watch ticks.
+func (r *rtspRecorder) claimStem(stem string) bool {
+	r.segMu.Lock()
+	defer r.segMu.Unlock()
+	if r.segDone[stem] || r.segBusy[stem] {
+		return false
+	}
+	r.segBusy[stem] = true
+	return true
+}
+
+// finishStem records the outcome of finalizing a stem and releases the in-flight
+// mark. A failed stem is deliberately left NOT done so the next watch tick retries
+// it — the previous code marked a stem saved BEFORE attempting the remux, so any
+// failure stranded the segment permanently and retention later shredded it.
+func (r *rtspRecorder) finishStem(ctx context.Context, f liveSegInfo, outcome remuxOutcome) {
+	r.segMu.Lock()
+	delete(r.segBusy, f.stem)
+	switch {
+	case outcome == remuxSaved || outcome == remuxDiscarded:
+		r.segDone[f.stem] = true
+		delete(r.segFails, f.stem)
+		r.segMu.Unlock()
+		return
+	case outcome == remuxUnsaved || ctx.Err() != nil:
+		// Either the MP4 is safely on disk and only the DB write failed, or the recorder
+		// is shutting down. Neither is the segment's fault, so don't burn a retry.
+		r.segMu.Unlock()
+		return
+	}
+	r.segFails[f.stem]++
+	attempts := r.segFails[f.stem]
+	r.segMu.Unlock()
+
+	if attempts < maxRemuxAttempts {
+		return
+	}
+	// Repeatedly unfinalizable. Park the source TS in quarantine/ rather than leaving
+	// it in live/ where the retention purge would silently shred footage we never
+	// managed to save, and stop retrying so it cannot spin ffmpeg forever.
+	r.quarantineSegment(f)
+	r.segMu.Lock()
+	r.segDone[f.stem] = true
+	delete(r.segFails, f.stem)
+	r.segMu.Unlock()
+}
+
+// quarantineSegment moves a TS that could not be finalized out of the live directory
+// so it survives retention and an operator can see it.
+func (r *rtspRecorder) quarantineSegment(f liveSegInfo) {
+	if f.tsPath == "" {
+		return
+	}
+	dir := filepath.Join(filepath.Dir(r.liveDir), "quarantine")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		log.Printf("recording rtsp cam%d: quarantine mkdir: %v", r.cfg.CameraId, err)
+		return
+	}
+	dst := filepath.Join(dir, f.stem+".ts")
+	if err := os.Rename(f.tsPath, dst); err != nil {
+		log.Printf("recording rtsp cam%d: quarantine %s: %v", r.cfg.CameraId, f.stem, err)
+		return
+	}
+	log.Printf("recording rtsp cam%d: segment %s could not be finalized after %d attempts — moved to %s; footage is preserved but will not appear in the recordings list",
+		r.cfg.CameraId, f.stem, maxRemuxAttempts, dst)
+}
+
+func (r *rtspRecorder) saveCompletedSegments(ctx context.Context) {
 	files := r.listLiveSegments()
 	// Need ≥2 files to know which are complete (all but the newest TS).
 	if len(files) < 2 {
@@ -538,48 +687,101 @@ func (r *rtspRecorder) saveCompletedSegments(ctx context.Context, saved map[stri
 	complete := files[:len(files)-1]
 
 	for i, f := range complete {
-		if saved[f.stem] {
+		if !r.claimStem(f.stem) {
 			continue
 		}
-		saved[f.stem] = true
 		endedAt := files[i+1].startedAt
 		if endedAt == 0 {
 			endedAt = f.startedAt + int64(segMinutes(r.cfg)*60)
 		}
 
-		if f.tsPath != "" && strings.HasSuffix(f.path, ".ts") {
-			// TS not yet remuxed — convert to MP4 in background.
-			go r.remuxSegment(f, endedAt)
-		} else if strings.HasSuffix(f.path, ".mp4") {
-			// MP4 already exists (e.g. server restarted after a prior remux).
-			// Persist to DB; the dedup in SaveSegment prevents double-inserts.
-			fi, err := os.Stat(f.path)
-			if err != nil || fi.Size() == 0 {
-				continue
-			}
-			if ffmpegPath, ferr := resolveFFmpeg(r.cfg.FFmpegPath); ferr == nil {
-				endedAt = segmentEndedAt(ffmpegPath, f.path, f.startedAt, endedAt)
-			}
-			if r.sink != nil {
-				if err := r.sink.SaveSegment(ctx, SegmentResult{
-					CameraId:  r.cfg.CameraId,
-					AlertId:   0,
-					FilePath:  f.path,
-					StartedAt: f.startedAt,
-					EndedAt:   endedAt,
-					FileSize:  fi.Size(),
-				}); err != nil {
-					log.Printf("recording rtsp cam%d: save segment %s: %v", r.cfg.CameraId, f.stem, err)
-				}
-			}
+		if f.tsPath != "" {
+			// A .ts sibling means this stem was NEVER finalized: either it has not been
+			// remuxed yet, or a previous run was interrupted mid-remux. The TS is the
+			// source of truth, so remux it and let the rename replace any partial MP4
+			// left behind. (Previously an interrupted remux left a truncated .mp4 which
+			// was then adopted as the canonical footage while the intact .ts was
+			// abandoned to the retention purge — silent footage loss on every restart.)
+			f := f
+			r.remuxWG.Add(1)
+			go func() {
+				defer r.remuxWG.Done()
+				r.finishStem(ctx, f, r.remuxSegment(ctx, f, endedAt))
+			}()
+			continue
 		}
+		// Bare MP4, no TS: by the encrypt-then-rename invariant this is a complete,
+		// encrypted segment that a previous run finalized but did not manage to persist.
+		// Adopt it. This is also the retry path for a failed DB save.
+		r.finishStem(ctx, f, r.adoptSegment(ctx, f, endedAt))
 	}
 }
 
-// remuxSegment converts a completed TS file to MP4 and persists it to the DB.
-// The original TS is deleted after a successful remux.
-func (r *rtspRecorder) remuxSegment(f liveSegInfo, endedAt int64) {
+// adoptSegment persists an already-finalized MP4 that has no DB row. It only ever
+// runs when no .ts sibling exists; a stem with a TS is an unfinished remux and goes
+// back through remuxSegment instead.
+func (r *rtspRecorder) adoptSegment(ctx context.Context, f liveSegInfo, endedAt int64) remuxOutcome {
+	fi, err := os.Stat(f.path)
+	if err != nil || fi.Size() == 0 {
+		return remuxDiscarded
+	}
+
+	encrypted := r.cfg.Cipher != nil && fileIsEncrypted(f.path)
+	codec := ""
+	if !encrypted {
+		// Probe only while the file is plaintext — ffprobe cannot read ciphertext, and
+		// spawning it on every encrypted segment in the live dir on the first tick after
+		// a restart is a pure process storm for a result we always discard.
+		if ffmpegPath, ferr := resolveFFmpeg(r.cfg.FFmpegPath); ferr == nil {
+			endedAt = segmentEndedAt(ffmpegPath, f.path, f.startedAt, endedAt)
+			codec = probeVideoCodec(ffmpegPath, f.path)
+		}
+	}
+	if r.cfg.Cipher != nil && !encrypted {
+		// Legacy safety net: a segment finalized by an older build (which encrypted in
+		// place AFTER publishing the .mp4) can still be plaintext on disk. Encrypt it
+		// now — otherwise it would sit unencrypted and survive a crypto-erase wipe.
+		if err := r.cfg.Cipher.EncryptFileInPlace(f.path); err != nil {
+			log.Printf("recording rtsp cam%d: encrypt orphaned segment %s: %v", r.cfg.CameraId, f.stem, err)
+			return remuxFailed
+		}
+		if efi, statErr := os.Stat(f.path); statErr == nil {
+			fi = efi
+		}
+	}
+
+	if r.sink == nil {
+		return remuxSaved
+	}
+	// Detached from the recorder context: a segment that is already finalized on disk
+	// must still be persisted while the recorder is shutting down, or it is orphaned.
+	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	if err := r.sink.SaveSegment(saveCtx, SegmentResult{
+		CameraId:  r.cfg.CameraId,
+		AlertId:   0,
+		FilePath:  f.path,
+		StartedAt: f.startedAt,
+		EndedAt:   endedAt,
+		FileSize:  fi.Size(),
+		Codec:     codec,
+	}); err != nil {
+		log.Printf("recording rtsp cam%d: save segment %s: %v", r.cfg.CameraId, f.stem, err)
+		// The file is intact; only the DB write failed. Retry on the next tick.
+		return remuxUnsaved
+	}
+	return remuxSaved
+}
+
+// remuxSegment converts a completed TS file to MP4 and persists it to the sink.
+//
+// The MP4 is built at <stem>.mp4.part and only renamed into place once it is
+// complete AND encrypted, so a bare <stem>.mp4 is always a finished segment and an
+// interrupted remux leaves the source TS intact for the next run to retry. The
+// original TS is deleted only once the finished MP4 has been published.
+func (r *rtspRecorder) remuxSegment(ctx context.Context, f liveSegInfo, endedAt int64) remuxOutcome {
 	mp4Path := filepath.Join(r.liveDir, f.stem+".mp4")
+	partPath := mp4Path + partSuffix
 
 	// Skip empty segments. When the RTSP stream stalls or drops at a segment
 	// boundary, ffmpeg's segment muxer still creates the .ts file but writes no
@@ -588,13 +790,14 @@ func (r *rtspRecorder) remuxSegment(f liveSegInfo, endedAt int64) {
 	if fi, statErr := os.Stat(f.tsPath); statErr == nil && fi.Size() == 0 {
 		log.Printf("recording rtsp cam%d: skipping empty segment %s (no stream data)", r.cfg.CameraId, f.stem)
 		_ = os.Remove(f.tsPath)
-		return
+		_ = os.Remove(partPath)
+		return remuxDiscarded
 	}
 
 	ffmpegPath, err := resolveFFmpeg(r.cfg.FFmpegPath)
 	if err != nil {
 		log.Printf("recording rtsp cam%d: remux ffmpeg not found: %v", r.cfg.CameraId, err)
-		return
+		return remuxFailed
 	}
 
 	// Storage codec: "copy" (default) streams the camera's native video through
@@ -611,8 +814,21 @@ func (r *rtspRecorder) remuxSegment(f liveSegInfo, endedAt int64) {
 		videoArgs, storedCodec = remuxVideoArgs("", 0)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	// Bound the remux, but keep it tied to the RECORDER context so a shutdown or a
+	// reconfigure tears the ffmpeg child down instead of orphaning it on
+	// context.Background() for up to 10 minutes, writing into a live directory that a
+	// freshly-started recorder now owns.
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
+
+	// Any early exit below leaves a partial file behind; drop it so it neither wastes
+	// disk nor confuses the next attempt. Cleared once the part is published.
+	removePart := true
+	defer func() {
+		if removePart {
+			_ = os.Remove(partPath)
+		}
+	}()
 
 	// buildArgs assembles the ffmpeg finalize command. Re-encoding decodes the input,
 	// so it needs the siphon's hardware-decode input options; stream-copy never
@@ -624,7 +840,11 @@ func (r *rtspRecorder) remuxSegment(f liveSegInfo, endedAt int64) {
 		}
 		a = append(a, "-i", filepath.ToSlash(f.tsPath))
 		a = append(a, vArgs...)
-		return append(a, "-movflags", "+faststart", "-y", filepath.ToSlash(mp4Path))
+		// -f mp4 is REQUIRED, not belt-and-braces: we write to <stem>.mp4.part, and ffmpeg
+		// picks the output container from the file extension. ".part" is not a container it
+		// knows, so without an explicit format it aborts with "Unable to choose an output
+		// format" and every segment fails to finalize.
+		return append(a, "-movflags", "+faststart", "-f", "mp4", "-y", filepath.ToSlash(partPath))
 	}
 	runRemux := func(vArgs []string, decode bool) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, ffmpegPath, buildArgs(vArgs, decode)...)
@@ -639,7 +859,7 @@ func (r *rtspRecorder) remuxSegment(f liveSegInfo, endedAt int64) {
 		release, acqErr := AcquireNVENC(ctx)
 		if acqErr != nil {
 			log.Printf("recording rtsp cam%d: remux %s: nvenc acquire: %v", r.cfg.CameraId, f.stem, acqErr)
-			return
+			return remuxFailed
 		}
 		out, err := runRemux(videoArgs, true)
 		release()
@@ -649,49 +869,72 @@ func (r *rtspRecorder) remuxSegment(f liveSegInfo, endedAt int64) {
 			// stream-copy when enabled instead of losing the segment.
 			if !r.cfg.RecordFallbackCopy {
 				log.Printf("recording rtsp cam%d: remux %s: %v: %s", r.cfg.CameraId, f.stem, err, out)
-				return
+				return remuxFailed
 			}
 			log.Printf("recording rtsp cam%d: remux %s re-encode failed (%v); storing as stream-copy", r.cfg.CameraId, f.stem, err)
 			copyArgs, _ := remuxVideoArgs("", 0)
 			if out2, err2 := runRemux(copyArgs, false); err2 != nil {
 				log.Printf("recording rtsp cam%d: remux %s copy fallback: %v: %s", r.cfg.CameraId, f.stem, err2, out2)
-				return
+				return remuxFailed
 			}
 			storedCodec = "" // probe the copied stream's native codec below
 		}
 	} else if out, err := runRemux(videoArgs, false); err != nil {
 		log.Printf("recording rtsp cam%d: remux %s: %v: %s", r.cfg.CameraId, f.stem, err, out)
-		return
+		return remuxFailed
 	}
 
-	fi, err := os.Stat(mp4Path)
+	fi, err := os.Stat(partPath)
 	if err != nil || fi.Size() == 0 {
-		return
+		return remuxFailed
 	}
 	// Use the actual media duration; the inferred endedAt overstates segments
 	// that were cut short by an ffmpeg restart. (Probe BEFORE encryption — ffprobe
 	// needs the plaintext mp4.)
-	endedAt = segmentEndedAt(ffmpegPath, mp4Path, f.startedAt, endedAt)
+	endedAt = segmentEndedAt(ffmpegPath, partPath, f.startedAt, endedAt)
 
 	// Record the on-disk video codec so the playback path can decide whether to
 	// transcode for the browser without re-probing the encrypted file. When we
 	// re-encoded we already know it; in copy mode probe the (still plaintext) mp4.
 	if storedCodec == "" {
-		storedCodec = probeVideoCodec(ffmpegPath, mp4Path)
+		storedCodec = probeVideoCodec(ffmpegPath, partPath)
 	}
 
 	// Encrypt the finalized segment at rest so it can be crypto-erased. Done after the
 	// duration probe; the on-disk size becomes the ciphertext size (correct for disk
 	// accounting). Playback decrypts on the fly.
+	//
+	// A failure here is fatal to the attempt: publishing an unencrypted segment would
+	// silently break the at-rest guarantee (crypto-erase would not shred it), so bail
+	// and let the next tick retry from the still-intact TS.
 	if r.cfg.Cipher != nil {
-		if err := r.cfg.Cipher.EncryptFileInPlace(mp4Path); err != nil {
+		if err := r.cfg.Cipher.EncryptFileInPlace(partPath); err != nil {
 			log.Printf("recording rtsp cam%d: encrypt segment %s: %v", r.cfg.CameraId, f.stem, err)
-		} else if efi, statErr := os.Stat(mp4Path); statErr == nil {
+			return remuxFailed
+		}
+		if efi, statErr := os.Stat(partPath); statErr == nil {
 			fi = efi
 		}
 	}
+
+	// Atomic publish. Past this line the segment exists on disk only in its finished,
+	// encrypted form — which is what lets a bare .mp4 be trusted after a crash.
+	if err := os.Rename(partPath, mp4Path); err != nil {
+		log.Printf("recording rtsp cam%d: publish segment %s: %v", r.cfg.CameraId, f.stem, err)
+		return remuxFailed
+	}
+	removePart = false
+
+	// The MP4 is complete and encrypted, so the source TS is now redundant. Drop it
+	// before the sink write: if that write fails, the next watch tick sees a bare .mp4
+	// and retries persistence through adoptSegment instead of re-encoding the segment.
+	_ = os.Remove(f.tsPath)
+
 	if r.sink != nil {
-		if err := r.sink.SaveSegment(context.Background(), SegmentResult{
+		// Detached from the recorder context so a segment that finished remuxing during
+		// shutdown is still persisted rather than orphaned.
+		saveCtx, saveCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		err := r.sink.SaveSegment(saveCtx, SegmentResult{
 			CameraId:  r.cfg.CameraId,
 			AlertId:   0,
 			FilePath:  mp4Path,
@@ -699,13 +942,15 @@ func (r *rtspRecorder) remuxSegment(f liveSegInfo, endedAt int64) {
 			EndedAt:   endedAt,
 			FileSize:  fi.Size(),
 			Codec:     storedCodec,
-		}); err != nil {
+		})
+		saveCancel()
+		if err != nil {
 			log.Printf("recording rtsp cam%d: save remuxed segment %s: %v", r.cfg.CameraId, f.stem, err)
+			return remuxUnsaved
 		}
 	}
-	// Remove the source TS only after a successful DB save.
-	_ = os.Remove(f.tsPath)
 	log.Printf("recording rtsp cam%d: segment %s saved (%d bytes)", r.cfg.CameraId, f.stem, fi.Size())
+	return remuxSaved
 }
 
 // listLiveSegments returns all segments in liveDir sorted by start time.
@@ -956,6 +1201,26 @@ func (r *rtspRecorder) purgeOldFiles(ctx context.Context) {
 					}
 				}
 			}
+			r.purgeQuarantine(cutoff)
 		}
+	}
+}
+
+// purgeQuarantine applies the same retention rule to quarantined segments, so a
+// camera that persistently fails to finalize cannot fill the disk with files that
+// will never be looked at.
+func (r *rtspRecorder) purgeQuarantine(cutoff time.Time) {
+	dir := filepath.Join(filepath.Dir(r.liveDir), "quarantine")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		stem := strings.TrimSuffix(e.Name(), ".ts")
+		t, err := time.ParseInLocation(segTimeFormat, stem, time.Local)
+		if err != nil || !t.Before(cutoff) {
+			continue
+		}
+		_ = SecureRemove(filepath.Join(dir, e.Name()), r.cfg.ShredPasses)
 	}
 }

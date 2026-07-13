@@ -427,6 +427,10 @@ curl -u admin:Admin123 "http://localhost:3000/api/cameras/1/auth-check"
 # {"status":"ok"}  |  {"status":"unauthorized"}  |  {"status":"unreachable"}
 ```
 
+### Deleting a camera
+
+`DELETE /api/cameras/{id}` cascades: before the camera row is removed, the app stops its recorder and detect-only stream, purges its recorded footage and object-metadata rows, deletes its detection rules, purges its alert events/snapshots, and deletes its recording config — in that order, so nothing is ever left half-torn-down. Any step failing aborts the whole delete (the camera row is untouched and the request errors) rather than leaving an orphaned recorder still writing segments or a stale rule that keeps the vision monitor sampling a camera that no longer exists.
+
 ### ONVIF device management (`/api/cameras/{id}/...`)
 
 ```bash
@@ -632,6 +636,10 @@ Two recording modes are supported:
 - **tick** — reuses the JPEG frames the vision monitor already captures (~1–2 fps). Zero extra CPU/network cost. Clip quality matches the monitor frame rate.
 - **rtsp** — opens a dedicated full-fps RTSP connection to the camera and writes rolling `.ts` segments. Clip quality matches the camera stream. Requires an extra RTSP connection and an ffmpeg executable.
 
+### Segment finalization & crash safety (RTSP mode)
+
+A completed `.ts` segment is remuxed to `<stem>.mp4.part` and only renamed into place at `<stem>.mp4` **after** it has been encrypted (when encryption at rest is on); the source `.ts` is deleted only once that rename succeeds. This makes a bare `.mp4` on disk unambiguous proof of a complete, encrypted segment, and a `.ts` sibling unambiguous proof the segment was never finalized — so an interrupted remux (crash, restart, out-of-space) can never be mistaken for good footage, and the app always retries from the intact `.ts` instead of adopting a truncated file. A segment that fails to finalize after 3 attempts is moved to a `quarantine/` directory (a sibling of `live/` under each camera's storage path) rather than being left for the retention purge to silently discard — the footage is preserved and still ages out under the camera's normal retention, but it will not appear in the recordings list until an operator investigates.
+
 ### Split-stream setup (recommended for RTSP mode)
 
 Many budget cameras allow only one concurrent RTSP connection. If the recorder holds the main stream, the live view tile goes black. The solution is to record on the sub-stream and keep the main stream for live view:
@@ -744,7 +752,7 @@ Delete a clip (removes the DB row and the file on disk; the file is securely shr
 curl -u admin:Admin123 -X DELETE "http://localhost:3000/api/recording/segments/1"
 ```
 
-Purge expired clips on demand — deletes only segments already past each camera's `retentionDays` (the same safe sweep the disk-mitigation job runs automatically), returning the count removed:
+Purge expired clips on demand — deletes only segments already past each camera's `retentionDays` (the same safe sweep the disk-mitigation job runs automatically), returning the count removed. Retention applies as soon as `retentionDays > 0`, regardless of whether recording is currently enabled for that camera — turning recording off only stops new segments being written, it does not freeze existing footage on disk forever:
 
 ```bash
 curl -u admin:Admin123 -X POST "http://localhost:3000/api/recording/segments/purge"

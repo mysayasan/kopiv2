@@ -63,11 +63,25 @@ type onvifClient interface {
 	ConfigureRecording(ctx context.Context, req onvif.ConfigureRecordingRequest) (*onvif.VideoEncoderConfig, error)
 }
 
+// CameraCleanupFunc releases one subsystem's resources for a camera that is being
+// deleted. The camera service owns no recorder, no detection rules and no footage, so
+// rather than reaching across layers it runs the cleanups that the owning subsystems
+// register at wiring time (see AddCameraCleanup and CameraDeletionCascade).
+type CameraCleanupFunc func(ctx context.Context, cameraId int64) error
+
+// CameraDeletionCascade is the wiring-time seam for registering camera cleanups. It is
+// kept off ICameraService deliberately: it is a composition-root concern, not part of
+// the camera API surface that handlers consume.
+type CameraDeletionCascade interface {
+	AddCameraCleanup(fn CameraCleanupFunc)
+}
+
 type cameraService struct {
 	cameraRepo  dbsql.IGenericRepo[entities.Camera]
 	onvifRepo   dbsql.IGenericRepo[entities.CameraOnvif]
 	client      onvifClient
 	rtspClient  rtsp.Client
+	cleanups    []CameraCleanupFunc
 	nameMu      sync.Mutex
 	nameCache   map[int64]cachedCameraName
 	lprCapMu    sync.Mutex
@@ -1130,7 +1144,34 @@ func (s *cameraService) UpdateHealth(ctx context.Context, id int64, status strin
 
 // — Delete -------------------------------------------------------------------
 
+// AddCameraCleanup registers a cleanup that runs before a camera row is deleted.
+// See CameraCleanupFunc — the camera service owns no recorder, rules or footage, so
+// the owning subsystems register their own teardown at wiring time.
+func (s *cameraService) AddCameraCleanup(fn CameraCleanupFunc) {
+	if fn == nil {
+		return
+	}
+	s.cleanups = append(s.cleanups, fn)
+}
+
 func (s *cameraService) Delete(ctx context.Context, id uint64) (uint64, error) {
+	// Tear down everything that belongs to this camera BEFORE dropping its row.
+	//
+	// Deleting the row alone used to leave the camera's recorder running — ffmpeg still
+	// connected, still writing segments to disk and rows to the DB — and its detection
+	// rules still alive, so the vision monitor kept sampling a camera that no longer
+	// existed and wrote a capture-failed diagnostic every interval. Both leaked until
+	// the next restart.
+	//
+	// A cleanup failure aborts the delete: leaving the camera in place is recoverable
+	// (the operator retries), whereas deleting the row on top of a half-torn-down
+	// camera orphans its recorder and footage with nothing left to own them.
+	for _, fn := range s.cleanups {
+		if err := fn(ctx, int64(id)); err != nil {
+			return 0, fmt.Errorf("camera %d cleanup: %w", id, err)
+		}
+	}
+
 	// Remove ONVIF child row first (if any).
 	if ov, err := s.onvifRepo.GetByUnique(ctx, "", "camera_id", int64(id)); err == nil && ov != nil {
 		_, _ = s.onvifRepo.DeleteById(ctx, "", uint64(ov.Id))

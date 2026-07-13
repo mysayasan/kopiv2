@@ -21,6 +21,7 @@ Builds the code-first manifest and table specifications from registered entity s
 - `validate:"required"` makes a field non-null during table creation.
 - `ukey:"group"` tags are grouped into unique indexes (`table.Unique`).
 - `idx:"group"` tags are grouped into non-unique secondary indexes (`table.Index`) — fields sharing a group name form one composite index, column order following field declaration order (put the higher-selectivity/equality column first). Named `ix_<table>_<group>`; used to keep range/sort-heavy queries (e.g. camera + time-range lookups) off full-table scans as a table grows, without requiring a hand-written seeder migration.
+- A field may join **multiple** index groups by listing them comma-separated: `idx:"cam_time, time"` puts that column in both the `cam_time` and `time` indexes. Group names are trimmed of surrounding whitespace. A trailing timestamp column typically needs this — it is the last column of a scoped composite index (e.g. `camera_id, created_at`) *and* the sole column of the plain index a retention purge scans (`created_at < cutoff`).
 - slice fields are ignored so embedded relations do not become columns.
 - Reflected entity field order is the source of truth for `CREATE TABLE` column order.
 

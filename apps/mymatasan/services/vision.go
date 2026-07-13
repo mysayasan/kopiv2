@@ -66,6 +66,35 @@ func (s *visionService) DeleteRule(ctx context.Context, id uint64) (uint64, erro
 	return s.rules.DeleteById(ctx, "", id)
 }
 
+// DeleteRulesForCamera removes every detection rule belonging to one camera. Used by
+// the camera-delete cascade: an orphaned rule keeps the vision monitor sampling a
+// camera that no longer exists, which fails every interval and writes a capture-failed
+// diagnostic alert each time.
+func (s *visionService) DeleteRulesForCamera(ctx context.Context, cameraId int64) (int, error) {
+	if cameraId <= 0 {
+		return 0, fmt.Errorf("cameraId is required")
+	}
+	filters := []sqldataenums.Filter{
+		{FieldName: "CameraId", Compare: sqldataenums.Equal, Value: cameraId},
+	}
+	deleted := 0
+	for {
+		batch, _, err := s.rules.Get(ctx, "", 500, 0, filters, nil)
+		if err != nil {
+			return deleted, err
+		}
+		if len(batch) == 0 {
+			return deleted, nil
+		}
+		for _, rule := range batch {
+			if _, err := s.rules.DeleteById(ctx, "", uint64(rule.Id)); err != nil {
+				return deleted, err
+			}
+			deleted++
+		}
+	}
+}
+
 // GetAlerts lists alert events with true DB-side filtering/sorting/paging. The camera
 // and status are mandatory base constraints; extraFilters/extraSorters come straight
 // from the client DataTable (column filters + sort), letting the grid drive the query.

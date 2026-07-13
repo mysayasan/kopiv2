@@ -12,6 +12,10 @@ import (
 	"github.com/mysayasan/kopiv2/infra/recording"
 )
 
+// purgeBatchSize is how many expired segments one retention pass claims at a time.
+// Purges drain in batches rather than one capped page, so a backlog can be caught up.
+const purgeBatchSize = 500
+
 type recordingService struct {
 	segments dbsql.IGenericRepo[entities.RecordingSegment]
 	configs  dbsql.IGenericRepo[entities.RecordingConfig]
@@ -157,6 +161,21 @@ func (s *recordingService) SaveConfig(ctx context.Context, req SaveRecordingConf
 	return &cfg, nil
 }
 
+// DeleteConfigForCamera removes a camera's recording config. Used by the camera-delete
+// cascade, after that camera's segments have been purged — dropping the config first
+// would strand the footage, since retention is driven off the config row.
+func (s *recordingService) DeleteConfigForCamera(ctx context.Context, cameraId int64) error {
+	if cameraId <= 0 {
+		return errors.New("cameraId is required")
+	}
+	cfg, err := s.GetConfig(ctx, cameraId)
+	if err != nil || cfg == nil {
+		return err
+	}
+	_, err = s.configs.DeleteById(ctx, "", uint64(cfg.Id))
+	return err
+}
+
 func (s *recordingService) PurgeOldSegments(ctx context.Context) (int, error) {
 	cfgs, err := s.ListConfigs(ctx)
 	if err != nil {
@@ -164,7 +183,11 @@ func (s *recordingService) PurgeOldSegments(ctx context.Context) (int, error) {
 	}
 	deleted := 0
 	for _, cfg := range cfgs {
-		if !cfg.Enabled || cfg.RetentionDays <= 0 {
+		// NOTE: retention deliberately does NOT check cfg.Enabled. Turning recording off
+		// must not freeze that camera's existing footage on disk forever — it only stops
+		// NEW segments being written. Gating the purge on Enabled meant a camera with 30
+		// days of footage kept it indefinitely the moment an operator disabled recording.
+		if cfg.RetentionDays <= 0 {
 			continue
 		}
 		cutoff := time.Now().UTC().Add(-time.Duration(cfg.RetentionDays) * 24 * time.Hour).Unix()
@@ -172,16 +195,30 @@ func (s *recordingService) PurgeOldSegments(ctx context.Context) (int, error) {
 			{FieldName: "CameraId", Compare: sqldataenums.Equal, Value: cfg.CameraId},
 			{FieldName: "StartedAt", Compare: sqldataenums.LessThan, Value: cutoff},
 		}
-		segs, _, err := s.segments.Get(ctx, "", 1000, 0, filters, nil)
-		if err != nil {
-			continue
-		}
-		for _, seg := range segs {
-			if p := strings.TrimSpace(seg.FilePath); p != "" {
-				_ = recording.SecureRemove(p, s.shredPasses)
+		// Oldest first, and drain in batches until the camera has no expired segments
+		// left. The previous single capped page meant a backlog (retention shortened, or
+		// the app offline for a while) could never be caught up: each run deleted at most
+		// one page and left the rest to accumulate.
+		sorters := []sqldataenums.Sorter{{FieldName: "StartedAt", Sort: sqldataenums.ASC}}
+		for {
+			segs, _, err := s.segments.Get(ctx, "", purgeBatchSize, 0, filters, sorters)
+			if err != nil || len(segs) == 0 {
+				break
 			}
-			if _, err := s.segments.DeleteById(ctx, "", uint64(seg.Id)); err == nil {
-				deleted++
+			progressed := false
+			for _, seg := range segs {
+				if p := strings.TrimSpace(seg.FilePath); p != "" {
+					_ = recording.SecureRemove(p, s.shredPasses)
+				}
+				if _, err := s.segments.DeleteById(ctx, "", uint64(seg.Id)); err == nil {
+					deleted++
+					progressed = true
+				}
+			}
+			// Every row in the batch failed to delete — the next query would return the
+			// same page forever, so stop rather than spin.
+			if !progressed {
+				break
 			}
 		}
 	}

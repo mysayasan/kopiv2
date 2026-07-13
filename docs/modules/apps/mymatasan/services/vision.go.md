@@ -9,6 +9,7 @@ Persists MyMataSan AI detection rules and alert events using the reusable `infra
 - List detection rules ordered by latest update.
 - Normalize and validate rule requests before persistence.
 - Preserve original creation audit fields and `LastTriggeredAt` when updating an existing rule.
+- `DeleteRulesForCamera(ctx, cameraId)`: delete every detection rule belonging to one camera, in batches of 500. Part of the camera-delete cascade (`app.go`): an orphaned rule previously kept the vision monitor sampling a camera that no longer existed, failing every interval and writing a capture-failed diagnostic alert each time.
 - List alert events with true DB-side filtering, sorting, and paging: `cameraId` and `status` are mandatory base constraints, and arbitrary extra filters/sorters supplied by the caller (in `[]sqldataenums.Filter`/`[]sqldataenums.Sorter` form) are appended so a client grid's column filters/sort drive the query directly. Defaults to `CreatedAt DESC` when no sort is supplied.
 - Normalize and validate alert events before persistence.
 - Mark alert events as acknowledged with local user and timestamp audit fields.
