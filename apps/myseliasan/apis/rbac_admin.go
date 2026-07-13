@@ -1,6 +1,7 @@
 package apis
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -15,6 +16,7 @@ type rbacAdminApi struct {
 	roles   sharedservices.IAccessRoleService
 	users   services.IControlUserService
 	session *middlewares.AccessSessionMidware
+	audit   services.IAuditService
 }
 
 // NewRbacAdminApi mounts the superadmin-only, myseliasan-specific user-management
@@ -27,8 +29,8 @@ type rbacAdminApi struct {
 //	POST   /api/rbac/users/{id}/disabled   — {disabled} enable/disable a user
 //	POST   /api/rbac/users/{id}/elevate    — make superadmin + retire stock (handoff)
 func NewRbacAdminApi(router *mux.Router, auth middlewares.AuthMidware, session *middlewares.AccessSessionMidware,
-	roles sharedservices.IAccessRoleService, users services.IControlUserService) {
-	h := &rbacAdminApi{roles: roles, users: users, session: session}
+	roles sharedservices.IAccessRoleService, users services.IControlUserService, audit services.IAuditService) {
+	h := &rbacAdminApi{roles: roles, users: users, session: session, audit: audit}
 	g := router.PathPrefix("/rbac").Subrouter()
 	g.Use(auth.Middleware)
 	g.Use(session.Middleware) // disabled/must-change gate; superadmin bypasses the matrix
@@ -80,10 +82,19 @@ func (a *rbacAdminApi) setUserRole(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Capture the prior role so the audit trail records the before/after transition.
+	var prevRole int64 = -1
+	if target, terr := a.users.GetById(r.Context(), id); terr == nil && target != nil {
+		prevRole = target.RoleId
+	}
 	if err := a.users.SetRole(r.Context(), id, body.RoleId); err != nil {
+		a.recordUserAction(r, "rbac.set_role", id, "error", "set role failed: "+err.Error(), nil)
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
+	a.recordUserAction(r, "rbac.set_role", id, "success",
+		fmt.Sprintf("changed user %d role %d → %d", id, prevRole, body.RoleId),
+		map[string]any{"prevRoleId": prevRole, "newRoleId": body.RoleId})
 	controllers.SendResult(w, map[string]any{"ok": true}, "succeed")
 }
 
@@ -107,9 +118,16 @@ func (a *rbacAdminApi) setUserDisabled(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := a.users.SetDisabled(r.Context(), id, body.Disabled); err != nil {
+		a.recordUserAction(r, "rbac.set_disabled", id, "error", "set disabled failed: "+err.Error(), nil)
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
+	verb := "enabled"
+	if body.Disabled {
+		verb = "disabled"
+	}
+	a.recordUserAction(r, "rbac.set_disabled", id, "success",
+		fmt.Sprintf("%s user %d", verb, id), map[string]any{"disabled": body.Disabled})
 	controllers.SendResult(w, map[string]any{"ok": true}, "succeed")
 }
 
@@ -142,9 +160,13 @@ func (a *rbacAdminApi) elevateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.users.SetRole(r.Context(), id, super.Id); err != nil {
+		a.recordUserAction(r, "rbac.elevate", id, "error", "elevate failed: "+err.Error(), nil)
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
+	a.recordUserAction(r, "rbac.elevate", id, "success",
+		fmt.Sprintf("elevated user %q (id %d) to superadmin", target.Email, id),
+		map[string]any{"superadminRoleId": super.Id})
 	// The stock account is intentionally left active: instead of auto-retiring it (and
 	// risking lockout), the SPA shows a persistent banner prompting the operator to
 	// disable it from the Users list once they're satisfied with the new superadmin.
@@ -152,6 +174,26 @@ func (a *rbacAdminApi) elevateUser(w http.ResponseWriter, r *http.Request) {
 		"ok":      true,
 		"warning": "Superadmin granted. The stock superadmin is still active — disable it from the Users list to finish the handoff.",
 	}, "succeed")
+}
+
+// recordUserAction audits an RBAC change targeting a control-plane user.
+func (a *rbacAdminApi) recordUserAction(r *http.Request, action string, targetUserID int64, outcome, detail string, meta map[string]any) {
+	if a.audit == nil {
+		return
+	}
+	actorID, actorLabel, roleID := auditActor(r)
+	a.audit.Record(r.Context(), services.AuditEntry{
+		Action:     action,
+		ActorId:    actorID,
+		ActorEmail: actorLabel,
+		ActorRole:  roleID,
+		TargetType: "user",
+		TargetId:   strconv.FormatInt(targetUserID, 10),
+		Outcome:    outcome,
+		Detail:     detail,
+		Metadata:   meta,
+		ClientIp:   clientIP(r),
+	})
 }
 
 func pathInt64(r *http.Request, key string) int64 {

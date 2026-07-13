@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -18,6 +20,7 @@ import (
 	"github.com/mysayasan/kopiv2/domain/notification"
 	"github.com/mysayasan/kopiv2/infra/apidocs"
 	"github.com/mysayasan/kopiv2/infra/apphost"
+	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/db/bootstrap"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/mediarelay"
@@ -25,10 +28,39 @@ import (
 	"github.com/mysayasan/kopiv2/infra/versioning"
 )
 
-type module struct{}
+type module struct {
+	// Set during RegisterAppRoutes so the readiness probe can report fleet-listener
+	// health. apphost uses one module instance for the process lifetime, so these are
+	// safe to read from ReadinessStatus after routes are registered.
+	controlServer  *services.ControlServer
+	mediaListening *atomic.Bool
+}
 
 func New() apphost.App {
 	return &module{}
+}
+
+// ReadinessStatus reports fleet-listener health as ADVISORY fields on /api/ready. Per
+// the apphost contract these never flip the process's ok/HTTP status (that stays gated
+// on db + cache) — they give operators/monitoring visibility that a listener has died
+// even while the process itself is otherwise healthy.
+func (m *module) ReadinessStatus(ctx context.Context) map[string]string {
+	status := map[string]string{}
+	if m.controlServer != nil {
+		status["controlChannel"] = upDown(m.controlServer.IsListening())
+		status["connectedNodes"] = strconv.Itoa(m.controlServer.ConnectedCount())
+	}
+	if m.mediaListening != nil {
+		status["mediaRelay"] = upDown(m.mediaListening.Load())
+	}
+	return status
+}
+
+func upDown(up bool) string {
+	if up {
+		return "up"
+	}
+	return "down"
 }
 
 func (m *module) Name() string {
@@ -60,6 +92,7 @@ func (m *module) Entities() []any {
 		appentities.ControlSetting{},
 		appentities.NodeAccessGrant{},
 		appentities.ControlUser{},
+		appentities.AuditLog{},
 		sharedentities.AccessRole{},
 		sharedentities.AccessRolePermission{},
 	}
@@ -82,6 +115,7 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Nodes", Description: "mymatasan node discovery, adoption, and management", Path: "/api/nodes", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Node Access", Description: "per-node read/write access grants (owner-role managed)", Path: "/api/nodes/access", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Node Self-Drop", Description: "node-initiated unpair notice (fleet-key authenticated)", Path: "/api/nodes/self-dropped", AccessTier: apiaccessenums.Public},
+		{Title: "Audit", Description: "append-only audit trail of sensitive actions (superadmin-gated)", Path: "/api/audit", AccessTier: apiaccessenums.AuthOnly},
 	}
 
 	statements := make([]string, 0, len(endpoints)*2)
@@ -118,9 +152,17 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	controlSession := deps.Access
 	controlSession.SetResolver(userService)
 
+	// Immutable audit trail for sensitive actions (adopt/release/wipe, RBAC changes,
+	// fleet-key rotation). Append-only: handlers only Record; the read API is
+	// superadmin-gated. Distinct from api_log (HTTP access log with retention).
+	auditService := services.NewAuditService(deps.Db, func(format string, args ...any) {
+		deps.Logger.Warnf("myseliasan.audit", format, args...)
+	})
+
 	apis.NewAuthApi(api, deps.Config, deps.Auth, deps.Cache, userService)
 	apis.NewSessionApi(api, *deps.Auth, userService, roleService, deps.AccessPerms)
-	apis.NewRbacAdminApi(api, *deps.Auth, controlSession, roleService, userService)
+	apis.NewRbacAdminApi(api, *deps.Auth, controlSession, roleService, userService, auditService)
+	apis.NewAuditApi(api, *deps.Auth, controlSession, auditService)
 
 	// Node management: discover, adopt, and release mymatasan nodes over the
 	// fleet-key-authenticated pairing protocol. ParentBaseURL is recorded on each
@@ -148,6 +190,18 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	if hbInterval <= 0 {
 		hbInterval = 60 * time.Second
 	}
+
+	// Encryption at rest for FLEET SECRETS. The fleet mTLS CA private key and the fleet
+	// PSK live in the control-plane database; without this, anyone who can read the DB
+	// owns the whole fleet's trust. When enabled (default), those secret settings are
+	// AES-256-GCM encrypted (infra/atrest) with a master key stored OUTSIDE the DB.
+	// Reads transparently pass through legacy plaintext, so enabling it needs no
+	// migration; public certs and the revocation list stay plaintext.
+	secretCipher, secErr := openFleetSecretCipher(deps)
+	if secErr != nil {
+		return nil, secErr
+	}
+
 	registry := services.NewNodeRegistry(deps.Db, services.NodeRegistryConfig{
 		MulticastAddr:     p.MulticastAddr,
 		ParentID:          parentID,
@@ -156,8 +210,12 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		MTLSPort:          mtlsPort,
 		CertTTL:           time.Duration(p.CertTTLHours) * time.Hour,
 		HeartbeatInterval: hbInterval,
+		// Warn when a still-valid node cert is within its renewal window of expiring:
+		// at that point automatic re-enrollment is overdue, so the operator should know.
+		CertWarnBefore: time.Duration(p.RenewBeforeHours) * time.Hour,
+		SecretCipher:   secretCipher,
 	})
-	apis.NewNodesApi(api, *deps.Auth, controlSession, registry)
+	apis.NewNodesApi(api, *deps.Auth, controlSession, registry, auditService)
 
 	bgCtx, stopBackground := context.WithCancel(context.Background())
 
@@ -182,7 +240,15 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// a node holding a live connection is online even when the parent cannot reach its
 	// mTLS port directly. Wire its presence into the heartbeat reconciler so the mTLS
 	// poll becomes a fallback that can no longer flap a control-connected node offline.
+	m.controlServer = controlServer
 	registry.SetControlPresence(controlServer.IsConnected)
+	// Proactive fleet-health alerting: the heartbeat reconciler detects a node dropping
+	// to "lost", recovering, or a certificate nearing expiry and hands each transition
+	// to this sink, which surfaces it in the unified notification feed (so a
+	// crashed/partitioned node no longer fails silently). Set before the heartbeat loop.
+	registry.SetFleetEventSink(func(e services.FleetEvent) {
+		publishFleetEvent(notificationService, e)
+	})
 	go controlServer.Run(bgCtx)
 
 	// Heartbeat reconciliation: every interval, reconcile each adopted node's liveness —
@@ -206,7 +272,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// whatever explicit grants it has elsewhere. Drives the tunnel's viewer/admin
 	// decision and gates grant management.
 	accessService := services.NewNodeAccessService(deps.Db, roleService)
-	apis.NewNodeAccessApi(api, *deps.Auth, accessService, controlSession)
+	apis.NewNodeAccessApi(api, *deps.Auth, accessService, controlSession, auditService)
 
 	// Node camera media relay: a dedicated fleet-mTLS listener accepts the node-dialed
 	// media channel; per browser WebRTC subscription it asks the node to stream that
@@ -231,6 +297,9 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	if mediaPort <= 0 {
 		mediaPort = 49534
 	}
+	// Advisory readiness: track whether the media listener's serve loop is active so
+	// /api/ready can surface it (it never gates the process's db/cache readiness).
+	m.mediaListening = &atomic.Bool{}
 	go func() {
 		tlsCfg, terr := registry.ParentServerTLS(bgCtx)
 		if terr != nil {
@@ -240,6 +309,8 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		srv := mediarelay.NewServer(fmt.Sprintf(":%d", mediaPort), tlsCfg, mediaHub.HandleConn,
 			func(format string, args ...any) { deps.Logger.Infof("myseliasan.media", format, args...) })
 		deps.Logger.Infof("myseliasan.media", "media channel listening on :%d", mediaPort)
+		m.mediaListening.Store(true)
+		defer m.mediaListening.Store(false)
 		if rerr := srv.Run(bgCtx); rerr != nil {
 			deps.Logger.Warnf("myseliasan.media", "media server stopped: %v", rerr)
 		}
@@ -256,7 +327,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// control-channel message cap). Registered before the generic proxy so its specific
 	// /nodes/{id}/recording-stream/{segId} route wins.
 	apis.NewRecordingStreamApi(api, *deps.Auth, controlServer, accessService, controlSession)
-	apis.NewNodeProxyApi(api, *deps.Auth, controlServer, accessService, controlSession)
+	apis.NewNodeProxyApi(api, *deps.Auth, controlServer, accessService, controlSession, auditService)
 
 	return func(context.Context) error { stopBackground(); return nil }, nil
 }
@@ -264,7 +335,10 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 // ingestNodeEvent maps an event a node pushed up its control channel into the
 // control plane's notification feed. "notification" events are re-published as-is
 // (re-tagged with the node so the feed shows their origin and the parent assigns a
-// fresh id); "going-offline" becomes a system warning.
+// fresh id); "going-offline" becomes a system warning. Any other kind (health,
+// disk-full, alert, system, …) is surfaced rather than dropped: the frame is parsed
+// as a notification when it carries one, otherwise wrapped in a generic message
+// tagged with the raw kind — so a node reporting trouble is never silently lost.
 func ingestNodeEvent(svc *notification.Service, nodeID, kind string, body []byte) {
 	switch kind {
 	case "notification":
@@ -272,13 +346,7 @@ func ingestNodeEvent(svc *notification.Service, nodeID, kind string, body []byte
 		if err := json.Unmarshal(body, &n); err != nil {
 			return
 		}
-		n.ID = "" // parent assigns its own id in its own feed
-		n.Source = "node:" + nodeID
-		if n.Data == nil {
-			n.Data = map[string]any{}
-		}
-		n.Data["nodeId"] = nodeID
-		svc.Publish(context.Background(), n)
+		republishNodeNotification(svc, nodeID, n)
 	case "going-offline":
 		svc.Publish(context.Background(), notification.Notification{
 			Category: notification.CategorySystem,
@@ -288,7 +356,185 @@ func ingestNodeEvent(svc *notification.Service, nodeID, kind string, body []byte
 			Source:   "node:" + nodeID,
 			Data:     map[string]any{"nodeId": nodeID},
 		})
+	default:
+		// Unknown-but-present frame: prefer a structured notification payload, else
+		// wrap the raw body so the operator still sees that the node reported something.
+		var n notification.Notification
+		if err := json.Unmarshal(body, &n); err == nil && (n.Title != "" || n.Body != "") {
+			if n.Category == "" {
+				n.Category = categoryForNodeKind(kind)
+			}
+			if n.Severity == "" {
+				n.Severity = severityForNodeKind(kind)
+			}
+			republishNodeNotification(svc, nodeID, n)
+			return
+		}
+		svc.Publish(context.Background(), notification.Notification{
+			Category: categoryForNodeKind(kind),
+			Severity: severityForNodeKind(kind),
+			Title:    "Node " + kind + " event",
+			Body:     truncateBody(string(body), 500),
+			Source:   "node:" + nodeID,
+			Data:     map[string]any{"nodeId": nodeID, "kind": kind},
+		})
 	}
+}
+
+// republishNodeNotification re-tags a node-originated notification with its origin
+// node and lets the parent assign a fresh id in its own feed.
+func republishNodeNotification(svc *notification.Service, nodeID string, n notification.Notification) {
+	n.ID = "" // parent assigns its own id in its own feed
+	n.Source = "node:" + nodeID
+	if n.Data == nil {
+		n.Data = map[string]any{}
+	}
+	n.Data["nodeId"] = nodeID
+	svc.Publish(context.Background(), n)
+}
+
+// categoryForNodeKind maps a node event kind to a notification category so unknown
+// frames still land in a sensible bucket.
+func categoryForNodeKind(kind string) string {
+	k := strings.ToLower(kind)
+	switch {
+	case strings.Contains(k, "health"), strings.Contains(k, "disk"), strings.Contains(k, "cert"):
+		return notification.CategoryHealthCheck
+	case strings.Contains(k, "alert"):
+		return notification.CategoryVisionAlert
+	default:
+		return notification.CategorySystem
+	}
+}
+
+// severityForNodeKind guesses an urgency for an unlabeled node event kind.
+func severityForNodeKind(kind string) notification.Severity {
+	k := strings.ToLower(kind)
+	switch {
+	case strings.Contains(k, "alert"), strings.Contains(k, "full"), strings.Contains(k, "critical"), strings.Contains(k, "fail"):
+		return notification.Critical
+	case strings.Contains(k, "health"), strings.Contains(k, "warn"), strings.Contains(k, "disk"):
+		return notification.Warning
+	default:
+		return notification.Info
+	}
+}
+
+func truncateBody(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
+}
+
+// publishFleetEvent turns a fleet-health transition the registry detected during
+// reconciliation into a notification in the unified feed. Each event is tagged with
+// its origin node ("node:<id>") so it attributes correctly in the dashboard's
+// per-node breakdown alongside the events that node pushed itself.
+func publishFleetEvent(svc *notification.Service, e services.FleetEvent) {
+	node := e.Node
+	if node == nil {
+		return
+	}
+	name := node.Name
+	if name == "" {
+		name = node.NodeId
+	}
+	source := "node:" + node.NodeId
+	data := map[string]any{"nodeId": node.NodeId}
+	switch e.Kind {
+	case services.FleetEventNodeLost:
+		svc.Publish(context.Background(), notification.Notification{
+			Category: notification.CategoryHealthCheck,
+			Severity: notification.Critical,
+			Title:    "Node offline",
+			Body:     fmt.Sprintf("Node %q is unreachable — no control channel and no heartbeat past the grace window — and has been marked lost.", name),
+			Source:   source,
+			Data:     data,
+		})
+	case services.FleetEventNodeRecovered:
+		svc.Publish(context.Background(), notification.Notification{
+			Category: notification.CategoryHealthCheck,
+			Severity: notification.Info,
+			Title:    "Node back online",
+			Body:     fmt.Sprintf("Node %q is reachable again.", name),
+			Source:   source,
+			Data:     data,
+		})
+	case services.FleetEventCertExpiring:
+		data["certExpiresAt"] = e.ExpiresAt
+		data["hoursLeft"] = e.HoursLeft
+		var body string
+		if e.HoursLeft <= 0 {
+			body = fmt.Sprintf("Node %q certificate has expired; automatic re-enrollment is failing and the node cannot re-establish trust.", name)
+		} else {
+			body = fmt.Sprintf("Node %q certificate expires in about %s; automatic re-enrollment is overdue.", name, humanizeHours(e.HoursLeft))
+		}
+		svc.Publish(context.Background(), notification.Notification{
+			Category: notification.CategoryHealthCheck,
+			Severity: notification.Warning,
+			Title:    "Node certificate expiring",
+			Body:     body,
+			Source:   source,
+			Data:     data,
+		})
+	}
+}
+
+// openFleetSecretCipher resolves the at-rest master key for fleet secrets, mirroring
+// mymatasan's encryption-at-rest boot (infra/atrest). Returns nil (no encryption) when
+// the feature is disabled. When a key that existed here before is now missing it FAILS
+// CLOSED — refusing to boot rather than minting a new key and silently orphaning the
+// encrypted CA key/PSK (which would reset the whole fleet's trust); restore the key
+// file or configure security.recoveryPath and restart.
+func openFleetSecretCipher(deps apphost.Dependencies) (*atrest.Cipher, error) {
+	if !boolValue(deps.Config.Security.EncryptAtRest, true) {
+		return nil, nil
+	}
+	keyPath := strings.TrimSpace(deps.Config.Security.KeyPath)
+	if keyPath == "" {
+		keyPath, _ = filepath.Abs(apphost.ResolveWritablePath(deps.DataDir, filepath.Join("secret", "atrest.key")))
+	}
+	recoveryPath := strings.TrimSpace(deps.Config.Security.RecoveryPath)
+	if recoveryPath == "" {
+		recoveryPath = filepath.Join(filepath.Dir(keyPath), "recovery.atrestkey")
+	}
+	protectorCfg := atrest.ProtectorConfig{
+		Name:           deps.Config.Security.KeyProtector,
+		Passphrase:     deps.Config.Security.Passphrase,
+		PassphraseFile: deps.Config.Security.PassphraseFile,
+		PassphraseEnv:  deps.Config.Security.PassphraseEnv,
+	}
+	outcome, err := atrest.OpenForStartup(keyPath, recoveryPath, protectorCfg)
+	if err != nil {
+		return nil, fmt.Errorf("fleet-secret encryption key: %w", err)
+	}
+	if outcome.Mode == atrest.ModeRecoveryPending {
+		return nil, fmt.Errorf("fleet-secret encryption key missing (id %s): restore %s or set security.recoveryPath, then restart — refusing to reset fleet trust", outcome.KeyId, keyPath)
+	}
+	deps.Logger.Infof("myseliasan.security", "fleet-secret encryption enabled (key %s, mode %s, id %s)", keyPath, outcome.Mode, outcome.KeyId)
+	return outcome.KeyStore.Cipher(), nil
+}
+
+// boolValue dereferences an optional bool config flag, using fallback when unset.
+func boolValue(value *bool, fallback bool) bool {
+	if value == nil {
+		return fallback
+	}
+	return *value
+}
+
+// humanizeHours renders an hour count as a compact "Nd Mh" / "Nh" string.
+func humanizeHours(hours int) string {
+	if hours >= 48 {
+		days := hours / 24
+		rem := hours % 24
+		if rem == 0 {
+			return fmt.Sprintf("%d days", days)
+		}
+		return fmt.Sprintf("%dd %dh", days, rem)
+	}
+	return fmt.Sprintf("%d hours", hours)
 }
 
 func (m *module) RegisterWebRoutes(router *mux.Router, deps apphost.Dependencies) error {

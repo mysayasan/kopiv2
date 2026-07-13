@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mysayasan/kopiv2/infra/control"
@@ -23,6 +24,11 @@ const controlRequestTimeout = 30 * time.Second
 // ErrNodeOffline is returned when a command targets a node that has no live
 // control-channel connection.
 var ErrNodeOffline = errors.New("node is not connected to the control channel")
+
+// ErrNodeDisconnected is returned when a node's control channel drops while a
+// tunneled command is still awaiting its response — so the caller fails fast instead
+// of hanging until controlRequestTimeout.
+var ErrNodeDisconnected = errors.New("node control channel disconnected before response")
 
 // ControlSender sends a tunneled request to a node and returns its response. The
 // proxy API depends on this narrow interface (ControlServer implements it).
@@ -45,11 +51,21 @@ type ControlServer struct {
 	onEvent  NodeEventHandler
 	logf     func(string, ...any)
 
+	running atomic.Bool // true while the control listener's serve loop is active
+
 	mu    sync.Mutex
 	conns map[string]*control.Conn // nodeID -> current live connection
 
 	pendingMu sync.Mutex
-	pending   map[string]chan *control.Frame // correlation id -> response waiter
+	pending   map[string]pendingReq // correlation id -> response waiter
+}
+
+// pendingReq is an in-flight tunneled request awaiting its node response. nodeID lets
+// a control-channel drop fail exactly the waiters bound to that node. A nil frame
+// delivered on ch signals the connection was lost.
+type pendingReq struct {
+	ch     chan *control.Frame
+	nodeID string
 }
 
 // NewControlServer builds the control server. port<=0 uses defaultControlPort.
@@ -67,7 +83,7 @@ func NewControlServer(registry INodeRegistry, port int, onEvent NodeEventHandler
 		onEvent:  onEvent,
 		logf:     logf,
 		conns:    map[string]*control.Conn{},
-		pending:  map[string]chan *control.Frame{},
+		pending:  map[string]pendingReq{},
 	}
 }
 
@@ -92,7 +108,7 @@ func (cs *ControlServer) SendRequest(ctx context.Context, nodeID string, req con
 	id := newCorrelationID()
 	waiter := make(chan *control.Frame, 1)
 	cs.pendingMu.Lock()
-	cs.pending[id] = waiter
+	cs.pending[id] = pendingReq{ch: waiter, nodeID: nodeID}
 	cs.pendingMu.Unlock()
 	defer func() {
 		cs.pendingMu.Lock()
@@ -108,6 +124,12 @@ func (cs *ControlServer) SendRequest(ctx context.Context, nodeID string, req con
 	case <-ctx.Done():
 		return control.Response{}, ctx.Err()
 	case f := <-waiter:
+		if f == nil {
+			// The control channel dropped before the node answered — fail fast rather
+			// than hang. The write may have applied on the node, so the caller must treat
+			// the outcome as unknown (no automatic retry for non-idempotent commands).
+			return control.Response{}, ErrNodeDisconnected
+		}
 		return control.ResponseFromFrame(f), nil
 	}
 }
@@ -115,14 +137,30 @@ func (cs *ControlServer) SendRequest(ctx context.Context, nodeID string, req con
 // deliverResponse routes a FrameRes to its waiting SendRequest, if still pending.
 func (cs *ControlServer) deliverResponse(f *control.Frame) {
 	cs.pendingMu.Lock()
-	waiter := cs.pending[f.ID]
+	req, ok := cs.pending[f.ID]
 	cs.pendingMu.Unlock()
-	if waiter != nil {
+	if ok {
 		select {
-		case waiter <- f:
+		case req.ch <- f:
 		default:
 		}
 	}
+}
+
+// failPending signals every in-flight request bound to nodeID that its connection is
+// gone (nil frame), so their SendRequest calls return ErrNodeDisconnected immediately
+// instead of blocking until the request timeout. Called when a node disconnects.
+func (cs *ControlServer) failPending(nodeID string) {
+	cs.pendingMu.Lock()
+	for _, req := range cs.pending {
+		if req.nodeID == nodeID {
+			select {
+			case req.ch <- nil:
+			default:
+			}
+		}
+	}
+	cs.pendingMu.Unlock()
 }
 
 // newCorrelationID returns a short random id for request/response matching.
@@ -141,9 +179,24 @@ func (cs *ControlServer) Run(ctx context.Context) {
 	}
 	srv := control.NewServer(fmt.Sprintf(":%d", cs.port), tlsCfg, cs.handleConn, cs.logf)
 	cs.logf("control channel listening on :%d", cs.port)
+	cs.running.Store(true)
+	defer cs.running.Store(false)
 	if err := srv.Run(ctx); err != nil {
 		cs.logf("control server stopped: %v", err)
 	}
+}
+
+// IsListening reports whether the control-channel serve loop is currently active. It
+// feeds the app's readiness probe so an operator can see the fleet listener is up
+// (advisory — it does not gate the process's db/cache readiness).
+func (cs *ControlServer) IsListening() bool { return cs.running.Load() }
+
+// ConnectedCount returns the number of nodes currently holding a live control channel.
+func (cs *ControlServer) ConnectedCount() int {
+	cs.mu.Lock()
+	n := len(cs.conns)
+	cs.mu.Unlock()
+	return n
 }
 
 // handleConn runs for the lifetime of one node connection.
@@ -213,13 +266,18 @@ func (cs *ControlServer) add(nodeID string, conn *control.Conn) {
 	}
 }
 
-// remove clears a node's connection if it is still the current one.
+// remove clears a node's connection if it is still the current one, and fails any
+// in-flight tunneled requests waiting on it so callers don't hang to the timeout.
 func (cs *ControlServer) remove(nodeID string, conn *control.Conn) {
 	cs.mu.Lock()
-	if cs.conns[nodeID] == conn {
+	current := cs.conns[nodeID] == conn
+	if current {
 		delete(cs.conns, nodeID)
 	}
 	cs.mu.Unlock()
+	if current {
+		cs.failPending(nodeID)
+	}
 	_ = conn.Close()
 }
 

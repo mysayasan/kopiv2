@@ -1,6 +1,7 @@
 package apis
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 type nodeAccessApi struct {
 	access  services.INodeAccessService
 	session *middlewares.AccessSessionMidware
+	audit   services.IAuditService
 }
 
 // NewNodeAccessApi registers per-node DEVICE access-grant management (distinct from the
@@ -33,8 +35,8 @@ type nodeAccessApi struct {
 //
 // Registered as its own /nodes subrouter; mux matches these before the proxy
 // catch-all falls through.
-func NewNodeAccessApi(router *mux.Router, auth middlewares.AuthMidware, access services.INodeAccessService, session *middlewares.AccessSessionMidware) {
-	h := &nodeAccessApi{access: access, session: session}
+func NewNodeAccessApi(router *mux.Router, auth middlewares.AuthMidware, access services.INodeAccessService, session *middlewares.AccessSessionMidware, audit services.IAuditService) {
+	h := &nodeAccessApi{access: access, session: session, audit: audit}
 	g := router.PathPrefix("/nodes/access").Subrouter()
 	g.Use(auth.Middleware)
 	g.HandleFunc("", h.list).Methods("GET")
@@ -113,7 +115,30 @@ func (a *nodeAccessApi) upsert(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
+	a.recordGrantAction(r, "node_access.set", body.NodeId, "success",
+		fmt.Sprintf("set role %d access on node %s (read=%v write=%v)", body.RoleId, body.NodeId, body.CanRead, body.CanWrite),
+		map[string]any{"roleId": body.RoleId, "canRead": body.CanRead, "canWrite": body.CanWrite})
 	controllers.SendResult(w, grant, "succeed")
+}
+
+// recordGrantAction audits a node-access grant change.
+func (a *nodeAccessApi) recordGrantAction(r *http.Request, action, nodeID, outcome, detail string, meta map[string]any) {
+	if a.audit == nil {
+		return
+	}
+	actorID, actorLabel, roleID := auditActor(r)
+	a.audit.Record(r.Context(), services.AuditEntry{
+		Action:     action,
+		ActorId:    actorID,
+		ActorEmail: actorLabel,
+		ActorRole:  roleID,
+		TargetType: "node-access",
+		TargetId:   nodeID,
+		Outcome:    outcome,
+		Detail:     detail,
+		Metadata:   meta,
+		ClientIp:   clientIP(r),
+	})
 }
 
 func (a *nodeAccessApi) delete(w http.ResponseWriter, r *http.Request) {
@@ -139,6 +164,9 @@ func (a *nodeAccessApi) delete(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
+	a.recordGrantAction(r, "node_access.revoke", grant.NodeId, "success",
+		fmt.Sprintf("revoked role %d access on node %s", grant.RoleId, grant.NodeId),
+		map[string]any{"roleId": grant.RoleId, "grantId": id})
 	controllers.SendResult(w, map[string]any{"deleted": true}, "succeed")
 }
 

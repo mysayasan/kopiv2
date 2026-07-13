@@ -24,3 +24,15 @@ All routes require a myseliasan session and the caller's role must be superadmin
 
 - `elevate` rejects a stock target (`IsStock=true`) to prevent elevating the bootstrap account instead of a real federated user.
 - After elevation, the response body includes `ok: true` and a `warning` message instructing the operator to disable the stock account from the Users list. The `retired` field (and the auto-retire behavior) has been removed; the stock account stays active until explicitly disabled by the operator.
+
+## Audit trail
+
+`NewRbacAdminApi(router, auth, session, roles, users, audit)` now also takes `services.IAuditService`. Every mutating handler records an entry (`TargetType: "user"`, `TargetId` = the affected user id) via the `recordUserAction` helper, best-effort and after the underlying change succeeds or fails:
+
+| Action | Handler | Detail / Metadata |
+|---|---|---|
+| `rbac.set_role` | `setUserRole` | Detail notes the before→after role transition; `Metadata: {prevRoleId, newRoleId}`. The prior role is fetched via `users.GetById` before the change is applied. |
+| `rbac.set_disabled` | `setUserDisabled` | Detail notes "enabled"/"disabled"; `Metadata: {disabled}`. |
+| `rbac.elevate` | `elevateUser` | Detail includes the elevated user's email; `Metadata: {superadminRoleId}`. |
+
+Failures are also recorded with `outcome: "error"` before the error response is sent.

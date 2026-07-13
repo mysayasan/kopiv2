@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mysayasan/kopiv2/apps/myseliasan/entities"
+	"github.com/mysayasan/kopiv2/infra/atrest"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/fleetca"
 	"github.com/mysayasan/kopiv2/infra/pairing"
@@ -90,6 +91,14 @@ type INodeRegistry interface {
 	// live control connection is authoritatively online; the mTLS poll is only a
 	// fallback. Set once at startup, after the control server is built.
 	SetControlPresence(connected func(nodeID string) bool)
+	// SetFleetEventSink injects the callback the registry invokes when it detects a
+	// fleet-health transition during reconciliation (a node dropping to "lost",
+	// recovering, or a certificate nearing expiry). Optional; nil-safe. Set once at
+	// startup, before the heartbeat loop begins.
+	SetFleetEventSink(sink FleetEventSink)
+	// FleetStatus returns a rollup of the fleet's liveness and certificate health
+	// (counts of online/lost/self-dropped nodes and certs expiring/expired).
+	FleetStatus(ctx context.Context) (FleetStatus, error)
 	// ParentServerTLS returns the mTLS server config for the parent's control-channel
 	// listener (presents the parent's fleet leaf, requires a node client cert).
 	ParentServerTLS(ctx context.Context) (*tls.Config, error)
@@ -108,6 +117,58 @@ type NodeRegistryConfig struct {
 	MTLSPort          int
 	CertTTL           time.Duration
 	HeartbeatInterval time.Duration
+	// CertWarnBefore is how far ahead of a node certificate's expiry the registry
+	// raises a fleet-health warning (a still-valid cert this close to expiry means
+	// the node's automatic re-enrollment is overdue or failing). 0 = default (7d).
+	CertWarnBefore time.Duration
+	// SecretCipher, when set, encrypts the fleet PSK and the fleet CA private keys at
+	// rest in the control-plane DB. Nil = plaintext (encryption disabled).
+	SecretCipher *atrest.Cipher
+}
+
+// FleetEventKind classifies a fleet-health transition the registry detects while
+// reconciling node liveness and certificate health.
+type FleetEventKind string
+
+const (
+	// FleetEventNodeLost fires the moment a node transitions to "lost" (no control
+	// channel and no mTLS contact past the grace window).
+	FleetEventNodeLost FleetEventKind = "node-lost"
+	// FleetEventNodeRecovered fires when a previously lost node becomes reachable again.
+	FleetEventNodeRecovered FleetEventKind = "node-recovered"
+	// FleetEventCertExpiring fires once per distinct expiry when a node certificate is
+	// within CertWarnBefore of expiring (or has already expired).
+	FleetEventCertExpiring FleetEventKind = "cert-expiring"
+)
+
+// FleetEvent is a fleet-health transition emitted to the registry's event sink so
+// the control plane can surface it (notifications / alerting). Node is a snapshot
+// of the affected node; the cert fields are set only for FleetEventCertExpiring.
+type FleetEvent struct {
+	Kind      FleetEventKind
+	Node      *entities.ManagedNode
+	ExpiresAt int64 // unix expiry of the node cert (cert events only)
+	HoursLeft int   // whole hours until expiry, negative if already expired (cert events only)
+}
+
+// FleetEventSink receives fleet-health events. It is invoked synchronously from the
+// heartbeat reconciler, so implementations should return promptly (hand off async work).
+type FleetEventSink func(FleetEvent)
+
+// defaultCertWarnBefore is the fallback lead time for certificate-expiry warnings.
+const defaultCertWarnBefore = 7 * 24 * time.Hour
+
+// FleetStatus is a rollup of the adopted fleet's liveness and certificate health,
+// suitable for a dashboard header ("X online / Y lost / Z certs expiring").
+type FleetStatus struct {
+	Total         int `json:"total"`
+	Online        int `json:"online"`
+	Lost          int `json:"lost"`
+	SelfDropped   int `json:"selfDropped"`
+	Unknown       int `json:"unknown"`
+	CertsExpiring int `json:"certsExpiring"` // valid but within the warn window
+	CertsExpired  int `json:"certsExpired"`  // already past expiry
+	CertWarnDays  int `json:"certWarnDays"`  // the warn window, in whole days
 }
 
 type nodeRegistry struct {
@@ -116,10 +177,20 @@ type nodeRegistry struct {
 	ca            *fleetCA
 	cfg           NodeRegistryConfig
 	parentBaseURL string
+	secretCipher  *atrest.Cipher
 	bootstrapHTTP *http.Client
 
 	presenceMu sync.RWMutex
 	presence   func(nodeID string) bool
+
+	eventMu   sync.RWMutex
+	eventSink FleetEventSink
+
+	// certMu guards certWarned, the per-node dedup of certificate-expiry warnings:
+	// nodeID → the CertExpiresAt value last warned about, so a renewal (which pushes
+	// the expiry out) re-arms the warning for the next approach.
+	certMu     sync.Mutex
+	certWarned map[string]int64
 }
 
 // NewNodeRegistry builds the registry. ParentBaseURL is this control plane's own
@@ -145,9 +216,11 @@ func newNodeRegistry(
 	return &nodeRegistry{
 		nodes:         nodes,
 		settings:      settings,
-		ca:            newFleetCA(settings, cfg.ParentID, cfg.CertTTL),
+		ca:            newFleetCA(settings, cfg.ParentID, cfg.CertTTL, cfg.SecretCipher),
 		cfg:           cfg,
 		parentBaseURL: strings.TrimRight(cfg.ParentBaseURL, "/"),
+		secretCipher:  cfg.SecretCipher,
+		certWarned:    map[string]int64{},
 		bootstrapHTTP: &http.Client{
 			Timeout:   adoptCallTimeout,
 			Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
@@ -166,7 +239,8 @@ func (s *nodeRegistry) FleetKey(ctx context.Context) (string, error) {
 	if row == nil {
 		return "", nil
 	}
-	return row.Value, nil
+	// The PSK is a secret stored encrypted at rest (legacy plaintext passes through).
+	return decodeSecret(s.secretCipher, row.Value), nil
 }
 
 func (s *nodeRegistry) SetFleetKey(ctx context.Context, key string) error {
@@ -174,7 +248,7 @@ func (s *nodeRegistry) SetFleetKey(ctx context.Context, key string) error {
 	if len(key) < 16 {
 		return fmt.Errorf("fleet key must be at least 16 characters")
 	}
-	return s.upsertSetting(ctx, fleetKeySettingKey, key)
+	return s.upsertFleetKey(ctx, key)
 }
 
 func (s *nodeRegistry) GenerateFleetKey(ctx context.Context) (string, error) {
@@ -183,21 +257,79 @@ func (s *nodeRegistry) GenerateFleetKey(ctx context.Context) (string, error) {
 		return "", err
 	}
 	key := base64.RawURLEncoding.EncodeToString(b)
-	if err := s.upsertSetting(ctx, fleetKeySettingKey, key); err != nil {
+	if err := s.upsertFleetKey(ctx, key); err != nil {
 		return "", err
 	}
 	return key, nil
 }
 
-func (s *nodeRegistry) List(ctx context.Context) ([]*entities.ManagedNode, error) {
-	rows, _, err := s.nodes.Get(ctx, "", 1000, 0, nil, nil)
+// upsertFleetKey stores the fleet PSK, encrypting it at rest when a cipher is configured.
+func (s *nodeRegistry) upsertFleetKey(ctx context.Context, key string) error {
+	stored, err := encodeSecret(s.secretCipher, key)
 	if err != nil {
-		if isNoResultFoundErr(err) {
-			return []*entities.ManagedNode{}, nil
-		}
-		return nil, err
+		return err
 	}
-	return rows, nil
+	return s.upsertSetting(ctx, fleetKeySettingKey, stored)
+}
+
+// nodeListPageSize is the page size List uses to walk the whole fleet. Paging (rather
+// than a single hardcoded cap) means the operator list, Scan dedup, and Heartbeat all
+// see every adopted node instead of silently truncating at a fixed limit.
+const nodeListPageSize = 500
+
+func (s *nodeRegistry) List(ctx context.Context) ([]*entities.ManagedNode, error) {
+	var all []*entities.ManagedNode
+	var offset uint64
+	for {
+		rows, _, err := s.nodes.Get(ctx, "", nodeListPageSize, offset, nil, nil)
+		if err != nil {
+			if isNoResultFoundErr(err) {
+				break
+			}
+			return nil, err
+		}
+		all = append(all, rows...)
+		if uint64(len(rows)) < nodeListPageSize {
+			break
+		}
+		offset += nodeListPageSize
+	}
+	if all == nil {
+		return []*entities.ManagedNode{}, nil
+	}
+	return all, nil
+}
+
+// FleetStatus rolls up liveness and certificate health across all adopted nodes.
+func (s *nodeRegistry) FleetStatus(ctx context.Context) (FleetStatus, error) {
+	nodes, err := s.List(ctx)
+	if err != nil {
+		return FleetStatus{}, err
+	}
+	warn := s.certWarnSeconds()
+	now := time.Now().Unix()
+	out := FleetStatus{Total: len(nodes), CertWarnDays: int(warn / 86400)}
+	for _, node := range nodes {
+		switch strings.ToLower(node.Status) {
+		case "online":
+			out.Online++
+		case "lost":
+			out.Lost++
+		case "self-dropped":
+			out.SelfDropped++
+		default:
+			out.Unknown++
+		}
+		if exp := node.CertExpiresAt; exp > 0 {
+			switch {
+			case exp <= now:
+				out.CertsExpired++
+			case exp-now <= warn:
+				out.CertsExpiring++
+			}
+		}
+	}
+	return out, nil
 }
 
 func (s *nodeRegistry) Scan(ctx context.Context, timeout time.Duration) ([]DiscoveredNode, error) {
@@ -397,6 +529,66 @@ func (s *nodeRegistry) controlConnected(nodeID string) bool {
 	return fn != nil && fn(nodeID)
 }
 
+func (s *nodeRegistry) SetFleetEventSink(sink FleetEventSink) {
+	s.eventMu.Lock()
+	s.eventSink = sink
+	s.eventMu.Unlock()
+}
+
+// emitFleetEvent hands a detected fleet-health transition to the sink (if any).
+func (s *nodeRegistry) emitFleetEvent(e FleetEvent) {
+	s.eventMu.RLock()
+	sink := s.eventSink
+	s.eventMu.RUnlock()
+	if sink != nil {
+		sink(e)
+	}
+}
+
+// certWarnSeconds is the certificate-expiry warning lead time in seconds.
+func (s *nodeRegistry) certWarnSeconds() int64 {
+	w := s.cfg.CertWarnBefore
+	if w <= 0 {
+		w = defaultCertWarnBefore
+	}
+	return int64(w.Seconds())
+}
+
+// checkCertExpiry raises a one-shot warning when a node's certificate is within the
+// warn window (or already expired). It emits at most once per distinct expiry value,
+// so a renewal that pushes the expiry out re-arms the warning; a node that renews
+// before the window is reached never warns. It never writes the node record — the
+// expiry was persisted at enrollment.
+func (s *nodeRegistry) checkCertExpiry(node *entities.ManagedNode, now int64) {
+	exp := node.CertExpiresAt
+	if exp <= 0 {
+		return
+	}
+	if exp-now > s.certWarnSeconds() {
+		// Healthy and outside the window: forget any prior warning so a later approach
+		// (e.g. after this session already warned once) can warn again.
+		s.certMu.Lock()
+		delete(s.certWarned, node.NodeId)
+		s.certMu.Unlock()
+		return
+	}
+	s.certMu.Lock()
+	already := s.certWarned[node.NodeId] == exp
+	if !already {
+		s.certWarned[node.NodeId] = exp
+	}
+	s.certMu.Unlock()
+	if already {
+		return
+	}
+	s.emitFleetEvent(FleetEvent{
+		Kind:      FleetEventCertExpiring,
+		Node:      node,
+		ExpiresAt: exp,
+		HoursLeft: int((exp - now) / 3600),
+	})
+}
+
 // lostGraceSeconds is how long a node may go with no contact — neither a live control
 // channel nor a successful mTLS poll — before it is declared lost. Three heartbeat
 // intervals (floored at 90s) absorbs a control-channel reconnect or a single missed
@@ -426,21 +618,53 @@ func (s *nodeRegistry) Heartbeat(ctx context.Context) {
 		return
 	}
 	grace := s.lostGraceSeconds()
+	now := time.Now().Unix()
+
+	// Phase 1 — liveness. Control-channel presence is an in-memory lookup (instant);
+	// the mTLS poll is a synchronous network call with a per-probe timeout, so a fleet
+	// with several unreachable nodes would blow the whole sweep past the heartbeat
+	// interval if probed serially. Probe only the not-control-connected nodes, and do
+	// so concurrently under a bounded worker pool + a per-sweep budget.
+	var toProbe []*entities.ManagedNode
+	controlAlive := make(map[string]bool, len(nodes))
 	for _, node := range nodes {
 		if node.Status == "self-dropped" {
 			continue
 		}
-		now := time.Now().Unix()
-		alive := s.controlConnected(node.NodeId)
-		if !alive {
-			alive = s.probeOverMTLS(ctx, node)
+		// Certificate health is independent of liveness — a reachable node with a stale
+		// cert still needs attention — so check it every sweep for every node.
+		s.checkCertExpiry(node, now)
+		if s.controlConnected(node.NodeId) {
+			controlAlive[node.NodeId] = true
+		} else {
+			toProbe = append(toProbe, node)
 		}
+	}
+	probeAlive := s.probeNodesConcurrently(ctx, toProbe)
+
+	// Phase 2 — reconcile + persist. Writes stay serial (the on-prem store is a
+	// single-writer sqlite) but the slow part (the probes) already happened in parallel.
+	for _, node := range nodes {
+		if node.Status == "self-dropped" {
+			continue
+		}
+		prev := node.Status
+		alive := controlAlive[node.NodeId] || probeAlive[node.NodeId]
 		switch {
 		case alive:
 			node.Status = "online"
 			node.LastSeenAt = now
+			if prev == "lost" {
+				s.emitFleetEvent(FleetEvent{Kind: FleetEventNodeRecovered, Node: node})
+			}
 		case now-node.LastSeenAt >= grace:
+			if prev == "lost" {
+				// Already lost and still is: nothing changed, skip the write and the
+				// re-notification (the lost event is edge-triggered, fired once).
+				continue
+			}
 			node.Status = "lost"
+			s.emitFleetEvent(FleetEvent{Kind: FleetEventNodeLost, Node: node})
 		default:
 			// Within the grace window with no contact: hold the prior status (still
 			// online) rather than flap, and skip the needless write.
@@ -449,6 +673,61 @@ func (s *nodeRegistry) Heartbeat(ctx context.Context) {
 		node.UpdatedAt = now
 		_, _ = s.nodes.UpdateById(ctx, "", *node)
 	}
+}
+
+// heartbeatProbeConcurrency bounds how many mTLS liveness probes run at once so a
+// large fleet doesn't open an unbounded number of sockets in a single sweep.
+const heartbeatProbeConcurrency = 16
+
+// heartbeatSweepBudget caps the wall-clock time all probes in one sweep may take, so
+// a batch of unreachable nodes (each hitting the per-probe timeout) can never stall
+// reconciliation indefinitely. Nodes not resolved within the budget are treated as
+// not-yet-alive this sweep; the grace window keeps them from flapping offline.
+const heartbeatSweepBudget = 30 * time.Second
+
+// probeNodesConcurrently mTLS-probes the given nodes with a bounded worker pool and a
+// per-sweep budget, returning the set of node ids that answered.
+func (s *nodeRegistry) probeNodesConcurrently(ctx context.Context, nodes []*entities.ManagedNode) map[string]bool {
+	alive := make(map[string]bool, len(nodes))
+	if len(nodes) == 0 {
+		return alive
+	}
+	sweepCtx, cancel := context.WithTimeout(ctx, heartbeatSweepBudget)
+	defer cancel()
+
+	workers := heartbeatProbeConcurrency
+	if len(nodes) < workers {
+		workers = len(nodes)
+	}
+	jobs := make(chan *entities.ManagedNode)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			for node := range jobs {
+				if s.probeOverMTLS(sweepCtx, node) {
+					mu.Lock()
+					alive[node.NodeId] = true
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+	for _, node := range nodes {
+		select {
+		case <-sweepCtx.Done():
+			// Budget exhausted — stop dispatching; unprobed nodes are handled by grace.
+			close(jobs)
+			wg.Wait()
+			return alive
+		case jobs <- node:
+		}
+	}
+	close(jobs)
+	wg.Wait()
+	return alive
 }
 
 // ParentServerTLS returns the mTLS server config for the parent control listener.

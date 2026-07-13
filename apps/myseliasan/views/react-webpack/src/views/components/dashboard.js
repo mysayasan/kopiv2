@@ -48,6 +48,7 @@ export function DashboardTab({ nodes }) {
   const t = useT();
   const [range, setRange] = useState('7d');
   const [stats, setStats] = useState(null);
+  const [fleet, setFleet] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
 
@@ -57,9 +58,13 @@ export function DashboardTab({ nodes }) {
     const { from, to, bucket } = resolveWindow(range);
     const tzOffset = -new Date().getTimezoneOffset();
     const params = new URLSearchParams({ from: String(from), to: String(to), bucket, tzOffset: String(tzOffset) });
-    const r = await api(`/api/notifications/stats?${params}`, { noRedirect: true }).catch(() => ({ ok: false }));
+    const [r, f] = await Promise.all([
+      api(`/api/notifications/stats?${params}`, { noRedirect: true }).catch(() => ({ ok: false })),
+      api('/api/nodes/fleet-status', { noRedirect: true }).catch(() => ({ ok: false })),
+    ]);
     setLoading(false);
     if (r.ok) setStats(r.body || null); else setError(true);
+    if (f.ok) setFleet(f.body || null);
   }, [range]);
   useEffect(() => { fetchStats(); }, [fetchStats]);
 
@@ -70,6 +75,9 @@ export function DashboardTab({ nodes }) {
     return m;
   }, [nodeList]);
   const onlineCount = useMemo(() => nodeList.filter((n) => (n.status || '').toLowerCase() === 'online').length, [nodeList]);
+  const certExpiring = fleet?.certsExpiring || 0;
+  const certExpired = fleet?.certsExpired || 0;
+  const certWarnDays = fleet?.certWarnDays || 7;
 
   const delta = useMemo(() => {
     if (!stats || typeof stats.prevTotal !== 'number' || stats.prevTotal <= 0) return null;
@@ -186,6 +194,15 @@ export function DashboardTab({ nodes }) {
               value={stats?.critical ?? 0}
               icon={<Ico n="warning" sz={16} />}
               tone={(stats?.critical || 0) > 0 ? 'danger' : 'default'}
+            />
+            <StatCard
+              label={t('dash.certsExpiring')}
+              value={certExpiring + certExpired}
+              icon={<Ico n="shield" sz={16} />}
+              tone={certExpired > 0 ? 'danger' : (certExpiring > 0 ? 'warning' : 'default')}
+              hint={certExpired > 0
+                ? t('dash.certsExpiredHint', { count: certExpired })
+                : (certExpiring > 0 ? t('dash.certsExpiringHint', { days: certWarnDays }) : t('dash.certsHealthy'))}
             />
           </div>
 
