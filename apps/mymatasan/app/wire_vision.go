@@ -5,9 +5,10 @@ import (
 	"os"
 	"path/filepath"
 
+	mmconfig "github.com/mysayasan/kopiv2/apps/mymatasan/config"
+
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
 	"github.com/mysayasan/kopiv2/infra/apphost"
-	"github.com/mysayasan/kopiv2/infra/config"
 	"github.com/mysayasan/kopiv2/infra/vision"
 )
 
@@ -57,8 +58,8 @@ type detectorModelPaths struct {
 // working directory: a dev run from the repo root, or the staged bin/ bundle (where the
 // script sits in <HomeDir>/ai and a repo-root-relative config path would otherwise double
 // up as <bin>/apps/mymatasan/ai/...).
-func resolveDetectorModelPaths(deps apphost.Dependencies) detectorModelPaths {
-	trainingDir := trainingDataDir(deps.Config)
+func resolveDetectorModelPaths(deps apphost.Dependencies, appCfg *mmconfig.Config) detectorModelPaths {
+	trainingDir := trainingDataDir(appCfg)
 	abs := func(name string) string {
 		p, _ := filepath.Abs(filepath.Join(trainingDir, name))
 		return p
@@ -69,7 +70,7 @@ func resolveDetectorModelPaths(deps apphost.Dependencies) detectorModelPaths {
 		StockModelFile:      abs("stock_model.txt"),
 		LPRModelFile:        abs("lpr_model.txt"),
 		AnomalyManifestFile: abs("anomaly_models.json"),
-		DetectorArgs:        resolveDetectorScriptArgs(deps.HomeDir, deps.Config.Vision.Detector.Args),
+		DetectorArgs:        resolveDetectorScriptArgs(deps.HomeDir, appCfg.Vision.Detector.Args),
 	}
 }
 
@@ -100,7 +101,7 @@ func (p detectorModelPaths) Env() []string {
 // detectorConfigWithArgs returns the configured detector with its script arguments
 // replaced by the resolved ones. It takes a copy — the shared config model must NOT be
 // mutated, because a later reader has no way to know whether the write has happened yet.
-func detectorConfigWithArgs(cfg config.VisionDetectorConfigModel, args []string) config.VisionDetectorConfigModel {
+func detectorConfigWithArgs(cfg mmconfig.VisionDetectorConfigModel, args []string) mmconfig.VisionDetectorConfigModel {
 	cfg.Args = args
 	return cfg
 }
@@ -108,8 +109,8 @@ func detectorConfigWithArgs(cfg config.VisionDetectorConfigModel, args []string)
 // buildObjectDetectorBackend builds the shared object-detection backend used by both the
 // live vision monitor and the training auto-labeler. A nil backend is not fatal: it
 // disables auto-label and custom models, and the caller says so in the log.
-func buildObjectDetectorBackend(deps apphost.Dependencies, paths detectorModelPaths) vision.ObjectDetector {
-	backend, err := buildTrainingObjectDetector(detectorConfigWithArgs(deps.Config.Vision.Detector, paths.DetectorArgs))
+func buildObjectDetectorBackend(deps apphost.Dependencies, appCfg *mmconfig.Config, paths detectorModelPaths) vision.ObjectDetector {
+	backend, err := buildTrainingObjectDetector(detectorConfigWithArgs(appCfg.Vision.Detector, paths.DetectorArgs))
 	if err != nil {
 		deps.Logger.Warnf("mymatasan.vision", "object detector backend unavailable (%v); auto-label and custom models are disabled", err)
 		return nil
@@ -119,11 +120,11 @@ func buildObjectDetectorBackend(deps apphost.Dependencies, paths detectorModelPa
 
 // teachDetectorConfig builds the Teach wizard's detector settings from the resolved paths,
 // so it cannot silently pick up unresolved script arguments.
-func teachDetectorConfig(deps apphost.Dependencies, paths detectorModelPaths) services.TeachDetectorConfig {
+func teachDetectorConfig(appCfg *mmconfig.Config, paths detectorModelPaths) services.TeachDetectorConfig {
 	return services.TeachDetectorConfig{
-		Command:         deps.Config.Vision.Detector.Command,
+		Command:         appCfg.Vision.Detector.Command,
 		Args:            paths.DetectorArgs,
-		TimeoutMs:       deps.Config.Vision.Detector.TimeoutMs,
+		TimeoutMs:       appCfg.Vision.Detector.TimeoutMs,
 		AnomalyManifest: paths.AnomalyManifestFile,
 	}
 }

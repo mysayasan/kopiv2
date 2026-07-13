@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	mmconfig "github.com/mysayasan/kopiv2/apps/mymatasan/config"
+
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/apis"
 	appentities "github.com/mysayasan/kopiv2/apps/mymatasan/entities"
@@ -31,10 +33,34 @@ import (
 )
 
 type module struct {
+	// cfg is mymatasan's OWN config — the camera, decoder, stream, vision, health and
+	// recording blocks, which used to sit in the shared config.AppConfigModel where they
+	// were dead weight for every other app. It is decoded from the same config.json
+	// document by DecodeAppConfig, before any route is registered. Never nil at that point:
+	// the host aborts startup if decoding fails.
+	cfg *mmconfig.Config
+
 	// Health monitors, captured during RegisterAppRoutes so ReadinessStatus can
 	// report their advisory state in the /ready payload.
 	cameraHealth  *services.CameraHealthMonitor
 	machineHealth *services.MachineHealthMonitor
+}
+
+// DecodeAppConfig implements apphost.AppConfigDecoder: mymatasan parses its own blocks out
+// of the raw config document and resolves its own data-relative paths (the recordings root,
+// the YOLO training dir) against the writable data dir.
+//
+// That path resolution used to live in infra/apphost, which meant the generic application
+// host carried hardcoded knowledge of a vision feature. It belongs to the app that owns the
+// setting.
+func (m *module) DecodeAppConfig(raw []byte, dataDir string) error {
+	cfg, err := mmconfig.Load(raw)
+	if err != nil {
+		return err
+	}
+	cfg.Normalize(dataDir)
+	m.cfg = cfg
+	return nil
 }
 
 func New() apphost.App {
@@ -177,6 +203,9 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	// Register metric help text so a /metrics scrape is readable by whoever is debugging
 	// a customer box, not just by whoever wrote the instrumentation.
+	// mymatasan's own config blocks, decoded by DecodeAppConfig before we got here.
+	appCfg := m.cfg
+
 	services.DescribeMetrics(deps.Metrics)
 	recording.DescribeMetrics(deps.Metrics)
 
@@ -197,20 +226,20 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	cameraService := services.NewCameraService(repo.Camera, repo.CameraOnvif, onvif.NewClient(), rtsp.NewClient())
 	visionService := services.NewVisionService(repo.DetectionRule, repo.AlertEvent)
 	detectionClassService := services.NewDetectionClassService(repo.DetectionClass)
-	if err := detectionClassService.EnsureBuiltins(context.Background(), deps.Config.Vision.Detector.ClassMap); err != nil {
+	if err := detectionClassService.EnsureBuiltins(context.Background(), appCfg.Vision.Detector.ClassMap); err != nil {
 		deps.Logger.Warnf("mymatasan.vision", "seed detection classes failed: %v", err)
 	}
 	// The detector's worker script and model-pointer paths, resolved once into a typed
 	// value. Consumers take it as a parameter, so the compiler enforces the ordering that
 	// used to be a comment: this previously MUTATED deps.Config in place, and three later
 	// constructors silently depended on that write having already happened.
-	detectorPaths := resolveDetectorModelPaths(deps)
+	detectorPaths := resolveDetectorModelPaths(deps, appCfg)
 	// The one place that publishes the model pointers into the process environment, where
 	// the Python workers read them. See detectorModelPaths for why this still exists.
 	detectorPaths.PublishToProcessEnv()
 
 	// Built once and shared between the live monitor and the training auto-labeler.
-	objectBackend := buildObjectDetectorBackend(deps, detectorPaths)
+	objectBackend := buildObjectDetectorBackend(deps, appCfg, detectorPaths)
 
 	trainingService := services.NewTrainingService(
 		repo.TrainingDataset,
@@ -223,15 +252,15 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		detectorPaths.StockModelFile,
 		detectorPaths.LPRModelFile,
 		objectBackend,
-		deps.Config.Vision.Detector.MinObjectConfidence,
-		trainingRunConfigFromAppConfig(deps.Config, deps.ConfigPath, detectorPaths.DetectorArgs),
+		appCfg.Vision.Detector.MinObjectConfidence,
+		trainingRunConfigFromAppConfig(appCfg, deps.ConfigPath, detectorPaths.DetectorArgs),
 		atrestCipher,
 	)
-	settingsService := services.NewRuntimeSettingsService(repo.RuntimeSetting, runtimeSettingsFromAppConfig(deps.Config))
+	settingsService := services.NewRuntimeSettingsService(repo.RuntimeSetting, runtimeSettingsFromAppConfig(appCfg))
 	setupStateService := services.NewSetupStateService(repo.RuntimeSetting)
 	pairingService := services.NewPairingService(repo.RuntimeSetting, atrestCipher, "", "")
 	localUserService := services.NewLocalUserService(repo.LocalUser)
-	shredPasses := resolveShredPasses(deps.Config)
+	shredPasses := resolveShredPasses(appCfg)
 	// The at-rest recording codec is NOT captured here any more: RecorderConfigBuilder
 	// reads it live on every build, so a Settings → Recording change applies the next time
 	// a recorder is configured instead of waiting for a restart. Only the NVENC semaphore
@@ -243,7 +272,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// intervals, reusing the detector's inference (no second decode). The recorder is
 	// the write side (fed candidates via the detector's observation sink); the
 	// observation service is the read/maintenance side (search + footage linkage + purge).
-	metadataRecorder := services.NewMetadataRecorder(repo.ObjectObservation, recordingService, deps.Config.Vision.Detector.MinObjectConfidence)
+	metadataRecorder := services.NewMetadataRecorder(repo.ObjectObservation, recordingService, appCfg.Vision.Detector.MinObjectConfidence)
 	observationService := services.NewObservationService(repo.ObjectObservation, recordingService)
 	notificationService := notification.NewService(repo.Notification, notificationOptionsFromAppConfig(deps.Config, deps.Logger, deps.Metrics))
 	// Incrementally aggregate the notifications feed into the hourly rollup table
@@ -266,7 +295,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	)
 	healthSettingsService := services.NewHealthSettingsService(
 		repo.RuntimeSetting,
-		healthSettingsDefaultsFromAppConfig(deps.Config),
+		healthSettingsDefaultsFromAppConfig(appCfg),
 	)
 	machineHealthSettingsService := services.NewMachineHealthSettingsService(
 		repo.RuntimeSetting,
@@ -371,7 +400,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		trainingService,
 		visionService,
 		services.NewDetectionSource(cameraService, recorderManager, settingsService, nil),
-		teachDetectorConfig(deps, detectorPaths),
+		teachDetectorConfig(appCfg, detectorPaths),
 		appVersion(m.Name()),
 		atrestCipher,
 	)
@@ -426,7 +455,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// working dir, the snapshot/recordings dir, the log dir, and each camera's
 	// recording storage path — plus any custom paths from settings.
 	machineAutoPaths := []string{"."}
-	if sd := strings.TrimSpace(deps.Config.Vision.SnapshotDir); sd != "" {
+	if sd := strings.TrimSpace(appCfg.Vision.SnapshotDir); sd != "" {
 		machineAutoPaths = append(machineAutoPaths, sd)
 	}
 	if lp := strings.TrimSpace(deps.Config.Logging.Path); lp != "" {
@@ -462,6 +491,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// instead of thirty free variables out of an 800-line scope.
 	w := &wiring{
 		deps:           deps,
+		appCfg:         appCfg,
 		atrestKeyStore: atrestKeyStore,
 		atrestCipher:   atrestCipher,
 		detectorPaths:  detectorPaths,
@@ -505,6 +535,11 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		pythonInstaller: services.NewPythonInstaller(deps.DataDir, deps.ConfigPath),
 	}
 
+	// Fail fast on a forgotten field rather than nil-dereferencing deep inside a phase.
+	if err := w.validate(); err != nil {
+		return nil, err
+	}
+
 	protected := registerRoutes(api, w)
 
 	// Factory reset ("Secure Wipe & Reset"): shred all media, drop + rebuild + reseed
@@ -514,7 +549,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// with future self-update.
 	resetMediaPaths := func(ctx context.Context) []string {
 		paths := []string{}
-		if sd := strings.TrimSpace(deps.Config.Vision.SnapshotDir); sd != "" {
+		if sd := strings.TrimSpace(appCfg.Vision.SnapshotDir); sd != "" {
 			paths = append(paths, sd)
 		}
 		if detectorPaths.TrainingDir != "" {
@@ -538,8 +573,8 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// Vision monitor settings: assembled here because they thread together the detector,
 	// the recorder, the notifier and the metadata sink, none of which the settings mapper
 	// can know about.
-	monitorSettings := visionMonitorSettingsFromAppConfig(deps.Config)
-	monitorSettings.Detector = wrapMonitorDetector(deps.Config, objectBackend)
+	monitorSettings := visionMonitorSettingsFromAppConfig(appCfg)
+	monitorSettings.Detector = wrapMonitorDetector(appCfg, objectBackend)
 	monitorSettings.Recorder = recorderManager
 	monitorSettings.Notifier = notificationService
 	monitorSettings.NotificationDestinations = notificationSettingsService
@@ -816,7 +851,7 @@ func isRegularFile(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
-func buildTrainingObjectDetector(detectorCfg config.VisionDetectorConfigModel) (vision.ObjectDetector, error) {
+func buildTrainingObjectDetector(detectorCfg mmconfig.VisionDetectorConfigModel) (vision.ObjectDetector, error) {
 	mode := strings.ToLower(strings.TrimSpace(detectorCfg.Mode))
 	timeout := time.Duration(detectorCfg.TimeoutMs) * time.Millisecond
 	switch mode {
@@ -841,7 +876,7 @@ func buildTrainingObjectDetector(detectorCfg config.VisionDetectorConfigModel) (
 // detector: rule mapping via ObjectRuleDetector, plus optional motion-intrusion
 // dispatch. A nil backend (motion mode, or backend build failure) falls back to
 // the native motion detector.
-func wrapMonitorDetector(cfg *config.AppConfigModel, backend vision.ObjectDetector) vision.Detector {
+func wrapMonitorDetector(cfg *mmconfig.Config, backend vision.ObjectDetector) vision.Detector {
 	detectorCfg := cfg.Vision.Detector
 	mode := strings.ToLower(strings.TrimSpace(detectorCfg.Mode))
 	if mode == "" {

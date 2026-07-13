@@ -185,6 +185,16 @@ func runApp(app App) error {
 	}
 	normalizePathConfig(dataDir, appConfig)
 
+	// Hand the app its own config blocks, decoded from the same raw document. An app that
+	// owns config (mymatasan's camera/vision blocks) parses and normalizes them itself, so
+	// the shared model and this host stay free of any one app's domain. Failing here aborts
+	// startup deliberately: a config the app cannot understand must not boot on defaults.
+	if decoder, ok := app.(AppConfigDecoder); ok {
+		if err := decoder.DecodeAppConfig(appConfig.Raw(), dataDir); err != nil {
+			return fmt.Errorf("%s config: %w", app.Name(), err)
+		}
+	}
+
 	runtimeLogger, err := buildRuntimeLogger(app.Name(), dataDir, appConfig)
 	if err != nil {
 		return err
@@ -682,17 +692,11 @@ func normalizePathConfig(dataDir string, appConfig *config.AppConfigModel) {
 	if normalizeDbEngine(appConfig.Db.Engine) == "sqlite" && appConfig.Db.DbName != ":memory:" {
 		appConfig.Db.DbName = ResolveWritablePath(dataDir, appConfig.Db.DbName)
 	}
-	// Recordings/snapshots root. Historically defaulted (in the app) to a
-	// CWD-relative "recordings"; resolve it here so it lands under the data dir on
-	// a packaged install while the legacy fallback keeps existing footage in place.
-	snapshotDir := strings.TrimSpace(appConfig.Vision.SnapshotDir)
-	if snapshotDir == "" {
-		snapshotDir = "recordings"
-	}
-	appConfig.Vision.SnapshotDir = ResolveWritablePath(dataDir, snapshotDir)
-	if td := strings.TrimSpace(appConfig.Vision.Training.DataDir); td != "" {
-		appConfig.Vision.Training.DataDir = ResolveWritablePath(dataDir, td)
-	}
+	// App-owned paths (mymatasan's recordings/snapshots root, its YOLO training dir) are
+	// NOT resolved here. The generic host used to do it, which meant it carried hardcoded
+	// knowledge of a vision feature and no fourth app could be added without dragging that
+	// config along. An app that owns config blocks now implements AppConfigDecoder and
+	// normalizes its own paths — see apps/mymatasan/config.
 }
 
 // ResolveWritablePath resolves a data-relative path against dataDir. Absolute

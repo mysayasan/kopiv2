@@ -1,7 +1,11 @@
 package app
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/mysayasan/kopiv2/apps/mymatasan/apis"
+	mmconfig "github.com/mysayasan/kopiv2/apps/mymatasan/config"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
 	"github.com/mysayasan/kopiv2/domain/notification"
 	"github.com/mysayasan/kopiv2/infra/apphost"
@@ -24,6 +28,9 @@ import (
 // the phases read it.
 type wiring struct {
 	deps apphost.Dependencies
+	// appCfg is mymatasan's own config (camera/vision/recording/...), decoded from the same
+	// config.json the host parsed. See apps/mymatasan/config.
+	appCfg *mmconfig.Config
 
 	// Resolved values.
 	atrestKeyStore *atrest.KeyStore
@@ -80,4 +87,57 @@ type wiring struct {
 	// and reads it through a closure, so this field is nil until late in wiring. See the
 	// comment at its construction site.
 	systemReset *services.SystemResetService
+}
+
+// validate fails fast if a field was forgotten when the struct was populated.
+//
+// This is the one real cost of gathering the wiring into a bag: a missing field is a nil
+// dereference deep inside a phase at runtime, not a compile error. That is not theoretical
+// — the config seam shipped with appCfg unset and panicked in registerRoutes. Startup is
+// the right place to find that, with the field's NAME, rather than a stack trace.
+//
+// systemReset is deliberately excluded: it is legitimately nil here and set later.
+func (w *wiring) validate() error {
+	missing := []string{}
+	check := func(name string, ok bool) {
+		if !ok {
+			missing = append(missing, name)
+		}
+	}
+
+	check("appCfg", w.appCfg != nil)
+	check("camera", w.camera != nil)
+	check("vision", w.vision != nil)
+	check("detectionClass", w.detectionClass != nil)
+	check("training", w.training != nil)
+	check("teach", w.teach != nil)
+	check("recording", w.recording != nil)
+	check("observation", w.observation != nil)
+	check("metadata", w.metadata != nil)
+	check("localUser", w.localUser != nil)
+	check("setupState", w.setupState != nil)
+	check("pairing", w.pairing != nil)
+	check("settings", w.settings != nil)
+	check("notificationSettings", w.notificationSettings != nil)
+	check("healthSettings", w.healthSettings != nil)
+	check("machineHealthSettings", w.machineHealthSettings != nil)
+	check("anomalySettings", w.anomalySettings != nil)
+	check("notification", w.notification != nil)
+	check("notificationRollup", w.notificationRollup != nil)
+	check("recorder", w.recorder != nil)
+	check("recorderConfig", w.recorderConfig != nil)
+	check("streamManager", w.streamManager != nil)
+	check("cameraHealth", w.cameraHealth != nil)
+	check("machineHealth", w.machineHealth != nil)
+	check("enrollment", w.enrollment != nil)
+	check("control", w.control != nil)
+	check("media", w.media != nil)
+	check("loginGuard", w.loginGuard != nil)
+	check("ffmpegInstaller", w.ffmpegInstaller != nil)
+	check("pythonInstaller", w.pythonInstaller != nil)
+
+	if len(missing) > 0 {
+		return fmt.Errorf("app wiring incomplete: %s", strings.Join(missing, ", "))
+	}
+	return nil
 }

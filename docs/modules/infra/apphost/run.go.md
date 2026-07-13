@@ -16,6 +16,12 @@ Implements the reusable runtime host for all app modules.
 
 - Resolve a home directory (`resolveHomeDir`: read-only app root — static assets, bundled scripts, default config) and a data directory (`resolveDataDir`: writable state root — mutable config, database, recordings, logs, keys), independently overridable via `<APP>_HOME`/`<APP>_DATA` or generic `KOPIV2_HOME`/`KOPIV2_DATA` env vars; a dev checkout has both equal to the app's `BaseDir()`, unchanged from before the split.
 - Load selected app config from the data directory (`loadConfig`), seeding it from the home directory's shipped default `config.json` on first run when the data dir has none yet (a packaged install's writable copy).
+- After the shared config is loaded and normalized (`normalizePathConfig`), hand the app its
+  own config blocks: if `app` implements `AppConfigDecoder` (`types.go.md`), call
+  `decoder.DecodeAppConfig(appConfig.Raw(), dataDir)`. `mymatasan` decodes and normalizes its
+  `camera`/`decoder`/`stream`/`vision`/`health`/`recording` blocks this way
+  (`apps/mymatasan/config`). A decode error aborts startup (wrapped with the app name) —
+  `run.go` no longer resolves those app-owned paths itself (see below).
 - Apply secret and DB environment overrides.
 - Apply cache environment overrides.
 - Apply SSO environment overrides.
@@ -23,7 +29,7 @@ Implements the reusable runtime host for all app modules.
 - Apply logging and API log cleanup environment overrides.
 - Apply telemetry environment overrides.
 - Apply server environment overrides for hostnames and explicit TLS/non-TLS ports.
-- Normalize data-directory-relative paths (TLS, SSO CA bundle, file storage, logging, SQLite database files, the vision snapshot/recordings root, and the AI training data dir) against the data directory via `ResolveWritablePath`, which falls back to the pre-packaging legacy (CWD-relative) location when the data-dir target doesn't exist yet but the legacy path does — an upgrade-safety no-op for a dev checkout or an installed service (`WorkingDirectory=dataDir`).
+- Normalize data-directory-relative paths (TLS, SSO CA bundle, file storage, logging, and SQLite database files) against the data directory via `ResolveWritablePath` (`normalizePathConfig`), which falls back to the pre-packaging legacy (CWD-relative) location when the data-dir target doesn't exist yet but the legacy path does — an upgrade-safety no-op for a dev checkout or an installed service (`WorkingDirectory=dataDir`). The vision snapshot/recordings root and the AI training data dir are **no longer resolved here** — they are `mymatasan`-owned paths, normalized by its own `AppConfigDecoder.DecodeAppConfig` (`apps/mymatasan/config`'s `Config.Normalize`) instead; see the `AppConfigDecoder` note above and `docs/MYMATASAN_TIER2_PLAN.md` (phase C).
 - Generate a self-signed TLS keypair (`ensureSelfSignedCert`, `selfcert.go`) before starting listeners when any listener is TLS and the configured cert/key files don't already exist, so a fresh packaged install serves HTTPS immediately.
 - Initialize the runtime logger before bootstrap and shared service wiring.
 - Initialize the shared scheduler and expose it through app dependencies.

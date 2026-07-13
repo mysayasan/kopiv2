@@ -38,10 +38,11 @@ phase D2).
   - `mymatasan.purge.notifications` (`notification.purgeIntervalHours`, default 6h): reads
     retention (days/onlyRead) live from `w.notificationSettings` each run, so UI changes
     take effect without a restart.
-  - `mymatasan.purge.alerts` (`vision.alertPurgeIntervalHours`, default 6h): purges
-    `alert_event` — diagnostic rows when `vision.diagnosticRetentionDays > 0`, real
-    detection alerts too when `vision.alertRetentionDays > 0`. Both unlink snapshot image
-    files for removed rows.
+  - `mymatasan.purge.alerts` (`vision.alertPurgeIntervalHours`, default 6h, read off
+    `w.appCfg.Vision` — mymatasan's own config since Tier 2 phase C, previously
+    `deps.Config.Vision`): purges `alert_event` — diagnostic rows when
+    `vision.diagnosticRetentionDays > 0`, real detection alerts too when
+    `vision.alertRetentionDays > 0`. Both unlink snapshot image files for removed rows.
 
 ## Notes
 

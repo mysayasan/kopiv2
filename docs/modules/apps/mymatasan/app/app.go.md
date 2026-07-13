@@ -15,6 +15,19 @@ sequencing, and the helpers that don't belong to any one subsystem.
 
 ## Responsibilities (module manifest)
 
+- `type module struct` holds `cfg *mmconfig.Config` — mymatasan's own config (`camera`,
+  `decoder`, `stream`, `vision`, `health`, `recording`), decoded from the same raw
+  `config.json` document the host parsed, plus the health/camera monitors captured for
+  `ReadinessStatus`.
+- `(*module) DecodeAppConfig(raw []byte, dataDir string) error` implements
+  `apphost.AppConfigDecoder` (`infra/apphost/types.go.md`): calls `mmconfig.Load(raw)`, then
+  `cfg.Normalize(dataDir)` (resolves the recordings root and YOLO training dir against the
+  writable data dir — code that used to live in `infra/apphost/run.go`), then stores the
+  result on `m.cfg`. `infra/apphost/run.go` calls this once, after the shared config is
+  loaded and normalized, before any route is registered; a returned error aborts startup.
+  `m.cfg` is never `nil` inside `RegisterAppRoutes` as a result. See
+  `docs/modules/apps/mymatasan/config/config.go.md` and `docs/MYMATASAN_TIER2_PLAN.md`
+  (phase C).
 - Provides app identity (`Name() = "mymatasan"`) and base directory.
 - `ReadinessStatus` contributes machine and camera health (captured on the `module` struct
   during `RegisterAppRoutes`) to the shared `/ready` payload — advisory only, never flips
@@ -41,24 +54,28 @@ sequencing, and the helpers that don't belong to any one subsystem.
    `RecoveryPending`, `RegisterAppRoutes` mounts nothing else and returns a no-op shutdown
    func immediately — the recovery gate API was already mounted inside `openAtRest`.
 4. `newRepos(deps.Db)` (see `wire_storage.go.md`) — builds all 16 repositories in one call.
+   `appCfg := m.cfg` is captured here too (mymatasan's own config, decoded earlier by
+   `DecodeAppConfig`) — every step below that used to read `deps.Config.{Vision,Decoder,
+   Stream,Health,Recording,Camera}` now reads the equivalent field off `appCfg`.
 5. Constructs `cameraService`, `visionService`, `detectionClassService` and seeds built-in
-   detection classes.
-6. `resolveDetectorModelPaths(deps)` then `detectorPaths.PublishToProcessEnv()`, then
-   `buildObjectDetectorBackend(deps, detectorPaths)` (see `wire_vision.go.md`) — resolves
-   the detector's worker-script path and model-pointer files into one typed value, publishes
-   the pointers to the process environment for the Python worker, and builds the shared
-   object-detection backend used by both the live monitor and the training auto-labeler.
+   detection classes (`appCfg.Vision.Detector.ClassMap`).
+6. `resolveDetectorModelPaths(deps, appCfg)` then `detectorPaths.PublishToProcessEnv()`, then
+   `buildObjectDetectorBackend(deps, appCfg, detectorPaths)` (see `wire_vision.go.md`) —
+   resolves the detector's worker-script path and model-pointer files into one typed value,
+   publishes the pointers to the process environment for the Python worker, and builds the
+   shared object-detection backend used by both the live monitor and the training
+   auto-labeler.
 7. Constructs `trainingService`, `settingsService`, `setupStateService`, `pairingService`,
-   `localUserService`; resolves `shredPasses` (`config_map.go`); sizes the NVENC semaphore
-   from the boot-time recording-storage settings; constructs `recordingService`,
-   `metadataRecorder`, `observationService`, `notificationService` (+ rollups/maintainer),
-   and the settings services (notification/health/machine-health/anomaly). Syncs persisted
-   notification delivery settings into the hub.
+   `localUserService`; resolves `shredPasses` (`config_map.go`, off `appCfg`); sizes the
+   NVENC semaphore from the boot-time recording-storage settings; constructs
+   `recordingService`, `metadataRecorder`, `observationService`, `notificationService` (+
+   rollups/maintainer), and the settings services (notification/health/machine-health/
+   anomaly). Syncs persisted notification delivery settings into the hub.
 8. Seeds the first local admin user (or runs the one-shot `RESET_ADMIN` marker flow — see
    below) via `localUserService`.
 9. Builds `streamManager`, `recorderManager`, wires the camera-delete cleanup cascade
    (`services.CameraDeletionCascade`, six ordered cleanups), builds `teachService`
-   (via `teachDetectorConfig(deps, detectorPaths)`, `wire_vision.go`) and
+   (via `teachDetectorConfig(appCfg, detectorPaths)`, `wire_vision.go`) and
    `recorderConfigBuilder`, then fans out `recorderManager.Configure` across every stored
    `RecordingConfig` in parallel goroutines (`sync.WaitGroup`). Warms the NVENC capability
    probe in the background when the boot-time codec re-encodes.
@@ -67,13 +84,17 @@ sequencing, and the helpers that don't belong to any one subsystem.
 11. `buildFleet(...)` (see `wire_fleet.go.md`) — builds the three node-dialed fleet
     channels (enrollment/control/media) and registers the notification control-event sink.
 12. Assembles the `wiring` struct `w` (see `wire_services.go.md`) — everything built so
-    far, gathered once so the remaining phases take one parameter instead of thirty.
+    far including `appCfg`, gathered once so the remaining phases take one parameter instead
+    of thirty. `w.validate()` is called immediately after and fails startup, naming the
+    missing field, if anything (including `appCfg`) was left unset — see
+    `wire_services.go.md`.
 13. `registerRoutes(api, w)` (see `wire_routes.go.md`) — mounts the public routes, the
     middleware chain, and every protected API group; returns the protected subrouter.
-14. Builds `resetMediaPaths` (a closure over `detectorPaths.TrainingDir` and friends),
-    assembles `monitorSettings` inline (it threads together the detector, recorder,
-    notifier and metadata sink — none of which the pure `config_map.go` mapper can know
-    about) and stores it on `w.visionMonitorSettings`.
+14. Builds `resetMediaPaths` (a closure over `detectorPaths.TrainingDir` and `appCfg.Vision.
+    SnapshotDir`), assembles `monitorSettings` inline via `visionMonitorSettingsFromAppConfig
+    (appCfg)` + `wrapMonitorDetector(appCfg, objectBackend)` (it threads together the
+    detector, recorder, notifier and metadata sink — none of which the pure `config_map.go`
+    mapper can know about) and stores it on `w.visionMonitorSettings`.
 15. `startBackgroundWorkers(monitorCtx, w)` (see `wire_monitors.go.md`) — starts every
     long-lived worker: the vision monitor + warmup, health monitors, rollup maintainer,
     analytics monitor, the discovery responder + fleet channels (all now supervised), and
@@ -99,7 +120,8 @@ sequencing, and the helpers that don't belong to any one subsystem.
 - Starting every background worker and the three retention purge loops →
   `wire_monitors.go.md`.
 - The `wiring` struct that threads everything between phases → `wire_services.go.md`.
-- The 11 pure `*FromAppConfig` mappers (`config.AppConfigModel` → service settings
+- The 11 pure `*FromAppConfig` mappers (mymatasan's own `mmconfig.Config` — or, for the four
+  mappers reading blocks that stayed shared, `config.AppConfigModel` — → service settings
   structs) → `config_map.go.md`.
 
 ## What's still here
@@ -118,12 +140,13 @@ sequencing, and the helpers that don't belong to any one subsystem.
   Called from `wire_vision.go`'s `resolveDetectorModelPaths`, but stays in `app.go`
   because it's a general path-resolution helper, not vision-specific wiring per se.
 - `buildTrainingObjectDetector` — builds the raw `vision.ObjectDetector` backend from
-  `config.VisionDetectorConfigModel` (external/hybrid/persistent modes). Called from
+  `mmconfig.VisionDetectorConfigModel` (external/hybrid/persistent modes; the type moved
+  from `infra/config` to `apps/mymatasan/config` in Tier 2 phase C). Called from
   `wire_vision.go`'s `buildObjectDetectorBackend`.
-- `wrapMonitorDetector` — wraps the shared object backend into the live monitor's detector
-  (rule mapping via `ObjectRuleDetector`, optional motion-intrusion dispatch); falls back
-  to the native motion detector on a nil backend or `motion` mode. Called inline in
-  `RegisterAppRoutes` when assembling `monitorSettings`.
+- `wrapMonitorDetector(cfg *mmconfig.Config, backend)` — wraps the shared object backend
+  into the live monitor's detector (rule mapping via `ObjectRuleDetector`, optional
+  motion-intrusion dispatch); falls back to the native motion detector on a nil backend or
+  `motion` mode. Called inline in `RegisterAppRoutes` when assembling `monitorSettings`.
 - `periodic(ctx, name, interval, fn)` — runs `fn` once immediately then on every interval
   tick under `safego.Supervise`, until `ctx` is done. Used by `wire_monitors.go`'s
   `startRetentionPurges` for the three purge loops.
@@ -164,6 +187,24 @@ sequencing, and the helpers that don't belong to any one subsystem.
    why: several Python spawn sites inherit the process environment rather than being
    handed the paths directly) — removing it entirely is Tier 2 phase D3
    (`docs/MYMATASAN_TIER2_PLAN.md`).
+
+## Tier 2 phase C: the per-app config seam
+
+`m.cfg` (`*mmconfig.Config`, decoded by `DecodeAppConfig`) replaced `deps.Config.{Camera,
+Decoder,Stream,Vision,Health,Recording}` throughout `RegisterAppRoutes` and every
+`wire_*.go`/`config_map.go` function that read one of those six blocks. See
+`docs/modules/apps/mymatasan/config/config.go.md` and `docs/MYMATASAN_TIER2_PLAN.md` (phase
+C) for why (those blocks were mymatasan-only dead weight in the shared model, and
+`infra/apphost` used to resolve their paths, giving the generic host hardcoded knowledge of
+a vision feature) and for the "where the seam line is" judgement call (what moved vs. what
+stayed shared).
+
+This surfaced a real bug during the change, not just in theory: `wiring.appCfg` was left
+unset on first cut, and the omission was a `nil`-pointer panic deep inside `registerRoutes`
+at boot — nothing about the `wiring` struct's field list catches a forgotten field at
+compile time. `wiring.validate()` (`wire_services.go.md`) is the fix: it fails startup
+naming the missing field instead. Every wiring field gained the same check, not just
+`appCfg`, since the same class of bug can recur for any of them.
 
 ## Latent bug fix: fleet goroutines now supervised
 
