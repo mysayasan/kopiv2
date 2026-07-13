@@ -391,10 +391,26 @@ label {
 }
 
 .login-screen {
+  position: relative;
   min-height: 100vh;
   display: flex;
   padding: 24px;
   box-sizing: border-box;
+}
+
+/* Language switcher pinned to the top corner of the login / forced-change backdrop so
+   users can pick their language from the very first screen. Uses logical inset so it
+   flips to the left edge under RTL (Arabic).
+
+   position:absolute is load-bearing twice over: it puts the switcher in the corner, AND
+   it takes it out of .login-screen's flex row. Left in normal flow it becomes a flex
+   item that both sits on the left and eats width, pushing the margin:auto panel off
+   centre — which is exactly what it did before this rule existed. */
+.login-lang-switch {
+  position: absolute;
+  top: 18px;
+  inset-inline-end: 20px;
+  z-index: 5;
 }
 
 /* margin:auto inside a flex container centers the panel when there's room and
