@@ -5,6 +5,7 @@ export { BrandLogo } from './BrandLogo';
 export { PasswordField } from './PasswordField';
 export { DataTable, printable } from './DataTable';
 export { Tabs } from './Tabs';
+export { CameraHero, statusTone } from './CameraHero';
 export { ToastStack } from './Toast';
 export { SideNav } from './SideNav';
 export { LangProvider, useT, LANGUAGES, normalizeLang } from './i18n';

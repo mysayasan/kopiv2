@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Ico } from './icons';
 import { Tabs } from '@shared/Tabs';
+import { CameraHero, statusTone } from '@shared/CameraHero';
 import { useT } from '@shared/i18n';
 import { FormBusyOverlay, InfoButton, Tracks, LayoutDropdown } from './ui';
 import { CameraAiPanel } from './vision';
@@ -1855,6 +1856,7 @@ export function CamerasTab({
   streamOptionsById,
   saveDrafts,
   onCameraNav,
+  onSelectCameraRoot,
   onManualAddress,
   onTimeout,
   onScan,
@@ -2008,6 +2010,34 @@ export function CamerasTab({
           <main className="saved-detail">
             {selectedSaved ? (
               <>
+                {/* Same shared hero myseliasan's Nodes → Camera page renders, so a camera
+                    looks the same whether you reach it on the node or through the control
+                    plane. The breadcrumb's root returns to camera discovery. */}
+                <CameraHero
+                  crumbs={[
+                    // Use the side-nav's own root handler so the rail's highlight follows
+                    // the breadcrumb; onCameraNav alone would leave the camera selected.
+                    { label: t('nav.cameras'), onClick: onSelectCameraRoot || (() => onCameraNav('probe')) },
+                    { label: cameraTitle(selectedSaved) },
+                  ]}
+                  name={cameraTitle(selectedSaved)}
+                  description={cameraDescription(selectedSaved)}
+                  tone={statusTone(selectedSaved.healthStatus)}
+                  chips={[
+                    {
+                      key: 'health',
+                      label: t(healthPillProps(selectedSaved.healthStatus).labelKey),
+                      tone: statusTone(selectedSaved.healthStatus),
+                    },
+                    {
+                      key: 'stream',
+                      label: selectedSaved.rtspStatus || t('cam.notReady'),
+                      tone: statusTone(selectedSaved.rtspStatus, 'resolved'),
+                      icon: 'video',
+                      capitalize: true,
+                    },
+                  ]}
+                />
                 <Tabs
                   ariaLabel={t('cam.detailTabsAria')}
                   active={cameraDetailTab}

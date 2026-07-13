@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Ico, Tabs, useT } from '@shared';
+import { CameraHero, Ico, Tabs, statusTone, useT } from '@shared';
 import { FormBusyOverlay } from './ui';
 import { NodeDashboard } from './node_dashboard';
 import { NodeEmbed } from './node_embed';
@@ -19,9 +19,17 @@ installProxyCsrf(csrfToken);
 // entirely in the nav tree (no tabs/back button here), so selecting the node shows its
 // dashboard and selecting a camera shows that camera's page — the same surfaces the
 // operator sees on the node itself, driven over the control tunnel.
-export function NodeManager({ node, onToast, focusCameraId, onClearFocus }) {
+export function NodeManager({ node, onToast, focusCameraId, onClearFocus, onBack }) {
   if (focusCameraId != null) {
-    return <NodeCameraPage node={node} cameraId={focusCameraId} onToast={onToast} />;
+    return (
+      <NodeCameraPage
+        node={node}
+        cameraId={focusCameraId}
+        onToast={onToast}
+        onBackToNodes={onBack}
+        onBackToNode={onClearFocus}
+      />
+    );
   }
   return <NodeDashboard node={node} onToast={onToast} />;
 }
@@ -40,7 +48,7 @@ const healthLabelKey = (status) => {
 // live stage (over myseliasan's media relay) plus the camera's details, health, and ONVIF
 // info — read from and written to the node over the control tunnel. Stage 1 of the port;
 // Detection/Settings/Recordings tabs follow.
-function NodeCameraPage({ node, cameraId, onToast }) {
+function NodeCameraPage({ node, cameraId, onToast, onBackToNodes, onBackToNode }) {
   const t = useT();
   const nodeId = node.nodeId;
   const [cam, setCam] = useState(null);
@@ -89,51 +97,57 @@ function NodeCameraPage({ node, cameraId, onToast }) {
   const title = cam ? (cam.name || cam.model || cam.host || t('nm.cameraN', { id: cam.id })) : t('nm.cameraN', { id: cameraId });
   const detailsChanged = cam && (draft.name !== (cam.name || '') || draft.description !== (cam.description || ''));
   const isOnvif = !!cam?.xAddr;
+  // Hero chrome tones. rtspStatus is one of online/offline/resolved ("URL resolved but the
+  // stream isn't verified yet") — the last gets the neutral accent rather than a red/green.
+  const healthTone = statusTone(cam?.healthStatus);
+  const streamTone = statusTone(cam?.rtspStatus, 'resolved');
 
   return (
     <section className="workspace">
       {loading ? <FormBusyOverlay busy /> : null}
-      <div className="settings-boxes">
-        <div className="device-title-row">
-          <div>
-            <h3>{title}</h3>
-            <p>{cam?.xAddr || cam?.host || ''}</p>
-          </div>
-          {cam ? (
-            <div className="device-pill-group">
-              <strong className={`status-pill ${(cam.healthStatus || 'unknown').toLowerCase()}`}>{t(healthLabelKey(cam.healthStatus))}</strong>
-              <strong className={`status-pill ${cam.rtspStatus || 'unknown'}`}>{cam.rtspStatus || t('cam.notReady')}</strong>
-            </div>
+      {/* No wrapper div: the hero, the status hint and the embedded tab block are direct
+          children of .workspace, so they inherit its standard 16px grid gap. */}
+      <CameraHero
+        crumbs={[
+          { label: t('nav.nodes'), onClick: onBackToNodes },
+          { label: node.name || nodeId, onClick: onBackToNode },
+          { label: title },
+        ]}
+        name={title}
+        description={cam?.description}
+        tone={healthTone}
+        chips={cam ? [
+          { key: 'health', label: t(healthLabelKey(cam.healthStatus)), tone: healthTone },
+          { key: 'stream', label: cam.rtspStatus || t('cam.notReady'), tone: streamTone, icon: 'video', capitalize: true },
+        ] : null}
+      />
+
+      {error ? <p className="settings-hint danger-text">{error}</p> : null}
+      {!cam && !loading && !error ? <p className="settings-hint">{t('nm.noCameras')}</p> : null}
+
+      {cam ? (
+        <NodeEmbed className="saved-detail">
+          <Tabs
+            ariaLabel={t('cam.detailTabsAria')}
+            active={camTab}
+            onChange={setCamTab}
+            tabs={[
+              { id: 'liveview', label: t('cam.detailLive'), icon: 'video' },
+              { id: 'detection', label: t('cam.detailDetection'), icon: 'cpu' },
+              { id: 'recordings', label: t('tab.recording'), icon: 'film' },
+              { id: 'settings', label: t('cam.detailSettings'), icon: 'sliders' },
+            ]}
+          />
+
+          {camTab === 'detection' ? <NodeDetectionTab node={node} camera={cam} onToast={onToast} /> : null}
+          {camTab === 'settings' ? <NodeSettingsTab node={node} camera={cam} onToast={onToast} /> : null}
+          {camTab === 'recordings' ? <NodeRecordingsTab node={node} camera={cam} onToast={onToast} /> : null}
+
+          {camTab === 'liveview' ? (
+            <NodeLiveView node={node} cam={cam} iceServers={iceServers} onToast={onToast} />
           ) : null}
-        </div>
-
-        {error ? <p className="settings-hint danger-text">{error}</p> : null}
-        {!cam && !loading && !error ? <p className="settings-hint">{t('nm.noCameras')}</p> : null}
-
-        {cam ? (
-          <NodeEmbed className="saved-detail">
-            <Tabs
-              ariaLabel={t('cam.detailTabsAria')}
-              active={camTab}
-              onChange={setCamTab}
-              tabs={[
-                { id: 'liveview', label: t('cam.detailLive'), icon: 'video' },
-                { id: 'detection', label: t('cam.detailDetection'), icon: 'cpu' },
-                { id: 'recordings', label: t('tab.recording'), icon: 'film' },
-                { id: 'settings', label: t('cam.detailSettings'), icon: 'sliders' },
-              ]}
-            />
-
-            {camTab === 'detection' ? <NodeDetectionTab node={node} camera={cam} onToast={onToast} /> : null}
-            {camTab === 'settings' ? <NodeSettingsTab node={node} camera={cam} onToast={onToast} /> : null}
-            {camTab === 'recordings' ? <NodeRecordingsTab node={node} camera={cam} onToast={onToast} /> : null}
-
-            {camTab === 'liveview' ? (
-              <NodeLiveView node={node} cam={cam} iceServers={iceServers} onToast={onToast} />
-            ) : null}
-          </NodeEmbed>
-        ) : null}
-      </div>
+        </NodeEmbed>
+      ) : null}
     </section>
   );
 }

@@ -260,7 +260,7 @@ function AccountCard({ roleLabel, onLogout, busy }) {
   );
 }
 
-export function SideNav({ activeTab, busy, onTab, onLogout, session, nodes, managingNodeId, managingCameraId, onSelectNode, notifUnread = 0 }) {
+export function SideNav({ activeTab, busy, onTab, onLogout, session, nodes, managingNodeId, managingCameraId, onSelectNode, notifUnread = 0, pinned = true, onTogglePinned }) {
   const t = useT();
   const navItem = (id, label, icon, tone) => ({ id, label, icon, tone, active: id === activeTab, onClick: () => onTab(id) });
   // The consolidated Notifications entry carries an unread badge (control-plane + every
@@ -313,6 +313,21 @@ export function SideNav({ activeTab, busy, onTab, onLogout, session, nodes, mana
 
   const brand = (
     <div className="side-brand">
+      {/* Pin / auto-hide toggle, standardized with mymatasan's rail: pinned keeps the
+          260px rail in the grid flow, unpinned collapses it to an icon strip that slides
+          out on hover. */}
+      {onTogglePinned ? (
+        <button
+          type="button"
+          className="nav-pin-toggle"
+          onClick={(e) => { onTogglePinned(); e.currentTarget.blur(); }}
+          aria-pressed={pinned}
+          title={pinned ? t('nav.autohide') : t('nav.pin')}
+          aria-label={pinned ? t('nav.autohide') : t('nav.pin')}
+        >
+          <Ico n={pinned ? 'pin' : 'pin-off'} sz={16} />
+        </button>
+      ) : null}
       <BrandLogo />
       <div className="side-brand-sub">{t('brand.controlPlane')}</div>
       <AccountCard

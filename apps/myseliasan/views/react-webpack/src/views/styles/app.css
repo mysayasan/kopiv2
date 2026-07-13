@@ -391,10 +391,21 @@ label {
 }
 
 .login-screen {
+  position: relative;
   min-height: 100vh;
   display: flex;
   padding: 24px;
   box-sizing: border-box;
+}
+
+/* Language switcher pinned to the top corner of the login / forced-change /
+   pending-clearance backdrop. It MUST be taken out of flow: as an in-flow flex
+   child of .login-screen it steals inline space and shoves the card off-centre. */
+.login-lang-switch {
+  position: absolute;
+  top: 18px;
+  inset-inline-end: 20px;
+  z-index: 5;
 }
 
 /* margin:auto inside a flex container centers the panel when there's room and

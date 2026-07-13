@@ -63,6 +63,77 @@
   grid-template-columns: 260px minmax(0, 1fr);
 }
 
+/* --- Auto-hide rail (pin toggle off) -----------------------------------------
+   Unpinned, the rail collapses to a 68px icon strip and slides OVER the workspace on
+   hover/focus instead of reflowing it. Pinned keeps the full 260px rail in the grid flow
+   (see .app-shell above) — it only "sticks" (takes layout space) when pinned. Standardized
+   with mymatasan; the one difference is the breakpoint, because this app stacks its rail
+   at <=1080px (mymatasan at <=860px) and auto-hide must not apply to the stacked layout. */
+@media (min-width: 1081px) {
+  .app-shell.nav-autohide {
+    grid-template-columns: 68px minmax(0, 1fr);
+  }
+
+  /* The rail is fixed (out of grid flow), so the workspace must be pinned to column 2
+     explicitly — otherwise it auto-places into the empty 68px column 1 and collapses. */
+  .app-shell.nav-autohide .main-workspace {
+    grid-column: 2;
+  }
+
+  .app-shell.nav-autohide .side-nav {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 68px;
+    padding-left: 12px;
+    padding-right: 12px;
+    overflow: hidden;
+    transition: width 0.18s ease, padding 0.18s ease, box-shadow 0.18s ease;
+  }
+
+  .app-shell.nav-autohide .side-nav:hover,
+  .app-shell.nav-autohide .side-nav:focus-within {
+    width: 260px;
+    padding-left: 16px;
+    padding-right: 16px;
+    box-shadow: 8px 0 30px rgba(0, 0, 0, 0.32);
+  }
+
+  /* Collapsed state (rail not hovered/focused): center each item's glyph and hide every
+     label, group heading, count/badge, the node tree's caret + child nodes, the brand
+     wordmark/subtitle + pin toggle, and the whole footer. All of it returns when the rail
+     expands on hover, so the collapsed rail shows only the main icons. */
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-item {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-label,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-group-label,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-tree-count,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-item-badge,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-tree-caret,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-tree-branch,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .brand-wordmark,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .side-brand-sub,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-pin-toggle,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .side-account-role,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .side-nav-foot {
+    display: none;
+  }
+
+  /* Collapsed rail: the account chip stacks the avatar over the logout icon, centered,
+     with no pill fill. */
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .side-account {
+    flex-direction: column;
+    padding: 4px 0;
+    gap: 8px;
+    background: transparent;
+  }
+}
+
 .side-nav {
   background: var(--nav-bg);
   color: var(--nav-text);
@@ -77,6 +148,45 @@
   /* Lift above the static workspace so a node's hover balloon isn't clipped/painted under it. */
   z-index: 20;
   transition: background 0.2s ease, color 0.2s ease;
+}
+
+/* The brand block is the pin toggle's positioning context. */
+.side-brand {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+}
+
+/* Pin / auto-hide toggle — tucked into the top-right corner of the brand block.
+   Standardized with mymatasan's rail. */
+.nav-pin-toggle {
+  position: absolute;
+  top: -6px;
+  right: -4px;
+  width: 28px;
+  height: 28px;
+  /* Reset the base button's min-height/padding so the square stays 28×28 and the
+     hover background sits centered on the icon instead of drifting right. */
+  min-height: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--nav-sub);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.nav-pin-toggle:hover {
+  background: var(--nav-hover);
+  color: var(--nav-text);
+}
+
+.nav-pin-toggle[aria-pressed="true"] {
+  color: var(--tone-accent, #2563eb);
 }
 
 /* The SVG brand mark + wordmark, centered at the top of the dark sidebar. */
@@ -1275,13 +1385,21 @@
 }
 
 @media (max-width: 1080px) {
-  .app-shell {
+  /* Below the desktop breakpoint the rail stacks above the workspace, so the auto-hide
+     mode is neutralized: a fixed 68px hover-strip makes no sense in a stacked layout. */
+  .app-shell,
+  .app-shell.nav-autohide {
     grid-template-columns: 1fr;
   }
 
-  .side-nav {
+  .side-nav,
+  .app-shell.nav-autohide .side-nav {
     position: static;
     height: auto;
+    width: auto;
+    padding: 22px 16px;
+    box-shadow: none;
+    overflow: visible;
   }
 
   .side-nav nav {

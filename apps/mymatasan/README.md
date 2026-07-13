@@ -259,6 +259,10 @@ The UI is fully localized into **English**, **Malay (Bahasa Melayu)**, **Chinese
 
 An `AppFooter` component (`@shared`) renders at the bottom of the app shell, showing the app name, app version, shared-core version, short commit hash, and build date (fetched from `/api/version`), plus the r450k product tagline. All version fields are optional; if `/api/version` is unreachable, only the app name and tagline are shown.
 
+### Camera page header
+
+The Cameras detail page (which previously dropped straight into the tab bar with no header at all) now renders `@shared/CameraHero` above the tabs: a breadcrumb trail (`Cameras > <camera name>`, the root crumb routing back through the side-nav's own camera-root selection so the rail highlight follows), a status-tinted camera tile with a reachability dot, the camera name + description, and health/stream status chips. This is the same shared header myseliasan's Nodes → Camera page renders, so a camera reads identically whether you open it in mymatasan directly or through the myseliasan control plane.
+
 ### Theming
 
 A **Theme** dropdown in the top bar lets you switch between **Light**, **Dark**, and **Slate** themes. The selection is persisted in `localStorage` and applied via a CSS custom-property theme class on `<html>`. Additional themes can be added by extending the `THEMES`, `THEME_LABELS`, and `THEME_ICONS` constants at the top of `App.js`.
