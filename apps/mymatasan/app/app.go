@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,17 +19,12 @@ import (
 	"github.com/mysayasan/kopiv2/domain/notification"
 	"github.com/mysayasan/kopiv2/infra/apidocs"
 	"github.com/mysayasan/kopiv2/infra/apphost"
-	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/config"
 	"github.com/mysayasan/kopiv2/infra/db/bootstrap"
-	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
-	applog "github.com/mysayasan/kopiv2/infra/logging"
 	"github.com/mysayasan/kopiv2/infra/onvif"
-	"github.com/mysayasan/kopiv2/infra/pairing"
 	"github.com/mysayasan/kopiv2/infra/recording"
 	"github.com/mysayasan/kopiv2/infra/rtsp"
 	"github.com/mysayasan/kopiv2/infra/safego"
-	"github.com/mysayasan/kopiv2/infra/telemetry"
 	"github.com/mysayasan/kopiv2/infra/stream"
 	"github.com/mysayasan/kopiv2/infra/versioning"
 	"github.com/mysayasan/kopiv2/infra/vision"
@@ -186,119 +180,57 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	services.DescribeMetrics(deps.Metrics)
 	recording.DescribeMetrics(deps.Metrics)
 
-	// Resolve the encryption-at-rest master key FIRST, before building any service. When
-	// encryption is on and the key is missing but a key existed here before, the app enters
-	// RECOVERY mode: it mounts only the public recovery gate and returns, so nothing else
-	// starts (no service writes plaintext, no replacement key is minted) until the operator
-	// restores the key. The key lives OUTSIDE the media roots so a factory reset destroys it
-	// explicitly (KeyStore.Destroy) — the instant, device-independent secure wipe.
-	var atrestKeyStore *atrest.KeyStore
-	var atrestCipher *atrest.Cipher
-	if boolValue(deps.Config.Security.EncryptAtRest, true) {
-		keyPath := strings.TrimSpace(deps.Config.Security.KeyPath)
-		if keyPath == "" {
-			// ResolveWritablePath keeps an existing legacy key (pre-packaging:
-			// CWD/secret/atrest.key) in place so upgrades don't orphan encrypted footage.
-			keyPath, _ = filepath.Abs(apphost.ResolveWritablePath(deps.DataDir, filepath.Join("secret", "atrest.key")))
-		}
-		// A disaster-recovery escrow placed here (or configured) is restored automatically
-		// on boot when no key exists yet. Defaults to recovery.atrestkey beside the key.
-		recoveryPath := strings.TrimSpace(deps.Config.Security.RecoveryPath)
-		if recoveryPath == "" {
-			recoveryPath = filepath.Join(filepath.Dir(keyPath), "recovery.atrestkey")
-		}
-		protectorCfg := atrest.ProtectorConfig{
-			Name:           deps.Config.Security.KeyProtector,
-			Passphrase:     deps.Config.Security.Passphrase,
-			PassphraseFile: deps.Config.Security.PassphraseFile,
-			PassphraseEnv:  deps.Config.Security.PassphraseEnv,
-		}
-		outcome, err := atrest.OpenForStartup(keyPath, recoveryPath, protectorCfg)
-		if err != nil {
-			return nil, fmt.Errorf("encryption-at-rest key: %w", err)
-		}
-		if outcome.Mode == atrest.ModeRecoveryPending {
-			apis.NewRecoveryGateApi(api, keyPath, protectorCfg, deps.Restarter, outcome.KeyId)
-			log.Printf("encryption-at-rest: master key missing but a key existed here before (id %s) — starting in RECOVERY mode; open the app to restore it", outcome.KeyId)
-			return func(context.Context) error { return nil }, nil
-		}
-		atrestKeyStore = outcome.KeyStore
-		atrestCipher = atrestKeyStore.Cipher()
-		protector := strings.TrimSpace(deps.Config.Security.KeyProtector)
-		if protector == "" {
-			protector = "file"
-		}
-		if outcome.Mode == atrest.ModeRestored {
-			log.Printf("encryption-at-rest: restored master key from recovery file %s", recoveryPath)
-		}
-		log.Printf("encryption-at-rest enabled (key %s, protector %s, id %s)", keyPath, protector, outcome.KeyId)
+	// Encryption-at-rest FIRST, before any service is built: a missing key must not race a
+	// service into writing plaintext. RECOVERY mode mounts only the public recovery gate
+	// and starts nothing else until the operator restores the key.
+	atrestBoot, err := openAtRest(api, deps)
+	if err != nil {
+		return nil, err
 	}
+	if atrestBoot.RecoveryPending {
+		return func(context.Context) error { return nil }, nil
+	}
+	atrestKeyStore, atrestCipher := atrestBoot.KeyStore, atrestBoot.Cipher
 
-	cameraRepo := dbsql.NewGenericRepo[appentities.Camera](deps.Db)
-	cameraOnvifRepo := dbsql.NewGenericRepo[appentities.CameraOnvif](deps.Db)
-	detectionRuleRepo := dbsql.NewGenericRepo[appentities.DetectionRule](deps.Db)
-	alertEventRepo := dbsql.NewGenericRepo[appentities.AlertEvent](deps.Db)
-	detectionClassRepo := dbsql.NewGenericRepo[appentities.DetectionClass](deps.Db)
-	trainingDatasetRepo := dbsql.NewGenericRepo[appentities.TrainingDataset](deps.Db)
-	trainingImageRepo := dbsql.NewGenericRepo[appentities.TrainingImage](deps.Db)
-	runtimeSettingsRepo := dbsql.NewGenericRepo[appentities.RuntimeSetting](deps.Db)
-	localUserRepo := dbsql.NewGenericRepo[appentities.LocalUser](deps.Db)
-	recordingSegmentRepo := dbsql.NewGenericRepo[appentities.RecordingSegment](deps.Db)
-	recordingConfigRepo := dbsql.NewGenericRepo[appentities.RecordingConfig](deps.Db)
+	repo := newRepos(deps.Db)
 
-	cameraService := services.NewCameraService(cameraRepo, cameraOnvifRepo, onvif.NewClient(), rtsp.NewClient())
-	visionService := services.NewVisionService(detectionRuleRepo, alertEventRepo)
-	detectionClassService := services.NewDetectionClassService(detectionClassRepo)
+	cameraService := services.NewCameraService(repo.Camera, repo.CameraOnvif, onvif.NewClient(), rtsp.NewClient())
+	visionService := services.NewVisionService(repo.DetectionRule, repo.AlertEvent)
+	detectionClassService := services.NewDetectionClassService(repo.DetectionClass)
 	if err := detectionClassService.EnsureBuiltins(context.Background(), deps.Config.Vision.Detector.ClassMap); err != nil {
 		deps.Logger.Warnf("mymatasan.vision", "seed detection classes failed: %v", err)
 	}
-	// Resolve the detector's Python worker script to an absolute path against the app
-	// HomeDir so it is found regardless of the process working directory: a dev run from
-	// the repo root, or the staged bin/ bundle (where the script sits in <HomeDir>/ai and
-	// a repo-root-relative config path would otherwise double up as
-	// <bin>/apps/mymatasan/ai/...). Downstream consumers (live detector, auto-labeler,
-	// and the training script/base-model paths derived from the worker dir) all read the
-	// resolved args. Also drives MYMATASAN_YOLO worker discovery for training.
-	deps.Config.Vision.Detector.Args = resolveDetectorScriptArgs(deps.HomeDir, deps.Config.Vision.Detector.Args)
-	// Build the object-detection backend once and share it between the live
-	// monitor and the training auto-labeler. The YOLO worker reads the active-model
-	// pointer file (set via env) so a trained/imported model can be hot-swapped.
-	trainingDir := trainingDataDir(deps.Config)
-	activeModelFile, _ := filepath.Abs(filepath.Join(trainingDir, "active_model.txt"))
-	_ = os.Setenv("MYMATASAN_ACTIVE_MODEL_FILE", activeModelFile)
-	stockModelFile, _ := filepath.Abs(filepath.Join(trainingDir, "stock_model.txt"))
-	_ = os.Setenv("MYMATASAN_STOCK_MODEL_FILE", stockModelFile)
-	lprModelFile, _ := filepath.Abs(filepath.Join(trainingDir, "lpr_model.txt"))
-	_ = os.Setenv("MYMATASAN_LPR_MODEL_FILE", lprModelFile)
-	// Activated Teach anomaly skills register here; the worker scores listed
-	// cameras against their normal-memory banks on every frame.
-	anomalyManifestFile, _ := filepath.Abs(filepath.Join(trainingDir, "anomaly_models.json"))
-	_ = os.Setenv("MYMATASAN_ANOMALY_FILE", anomalyManifestFile)
-	objectBackend, backendErr := buildTrainingObjectDetector(deps.Config.Vision.Detector)
-	if backendErr != nil {
-		deps.Logger.Warnf("mymatasan.vision", "object detector backend unavailable (%v); auto-label and custom models are disabled", backendErr)
-		objectBackend = nil
-	}
-	trainingModelRepo := dbsql.NewGenericRepo[appentities.TrainingModel](deps.Db)
+	// The detector's worker script and model-pointer paths, resolved once into a typed
+	// value. Consumers take it as a parameter, so the compiler enforces the ordering that
+	// used to be a comment: this previously MUTATED deps.Config in place, and three later
+	// constructors silently depended on that write having already happened.
+	detectorPaths := resolveDetectorModelPaths(deps)
+	// The one place that publishes the model pointers into the process environment, where
+	// the Python workers read them. See detectorModelPaths for why this still exists.
+	detectorPaths.PublishToProcessEnv()
+
+	// Built once and shared between the live monitor and the training auto-labeler.
+	objectBackend := buildObjectDetectorBackend(deps, detectorPaths)
+
 	trainingService := services.NewTrainingService(
-		trainingDatasetRepo,
-		trainingImageRepo,
-		trainingModelRepo,
+		repo.TrainingDataset,
+		repo.TrainingImage,
+		repo.TrainingModel,
 		visionService,
 		detectionClassService,
-		trainingDir,
-		activeModelFile,
-		stockModelFile,
-		lprModelFile,
+		detectorPaths.TrainingDir,
+		detectorPaths.ActiveModelFile,
+		detectorPaths.StockModelFile,
+		detectorPaths.LPRModelFile,
 		objectBackend,
 		deps.Config.Vision.Detector.MinObjectConfidence,
-		trainingRunConfigFromAppConfig(deps.Config, deps.ConfigPath),
+		trainingRunConfigFromAppConfig(deps.Config, deps.ConfigPath, detectorPaths.DetectorArgs),
 		atrestCipher,
 	)
-	settingsService := services.NewRuntimeSettingsService(runtimeSettingsRepo, runtimeSettingsFromAppConfig(deps.Config))
-	setupStateService := services.NewSetupStateService(runtimeSettingsRepo)
-	pairingService := services.NewPairingService(runtimeSettingsRepo, atrestCipher, "", "")
-	localUserService := services.NewLocalUserService(localUserRepo)
+	settingsService := services.NewRuntimeSettingsService(repo.RuntimeSetting, runtimeSettingsFromAppConfig(deps.Config))
+	setupStateService := services.NewSetupStateService(repo.RuntimeSetting)
+	pairingService := services.NewPairingService(repo.RuntimeSetting, atrestCipher, "", "")
+	localUserService := services.NewLocalUserService(repo.LocalUser)
 	shredPasses := resolveShredPasses(deps.Config)
 	// The at-rest recording codec is NOT captured here any more: RecorderConfigBuilder
 	// reads it live on every build, so a Settings → Recording change applies the next time
@@ -306,45 +238,42 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// is sized from the boot-time value, because it must be set before any recorder starts.
 	recSettings, _ := settingsService.Recording(context.Background())
 	recording.SetNVENCConcurrency(recSettings.Storage.MaxConcurrentEncodes)
-	recordingService := services.NewRecordingService(recordingSegmentRepo, recordingConfigRepo, shredPasses)
+	recordingService := services.NewRecordingService(repo.RecordingSegment, repo.RecordingConfig, shredPasses)
 	// Metadata recorder: logs "what objects each camera saw" as searchable presence
 	// intervals, reusing the detector's inference (no second decode). The recorder is
 	// the write side (fed candidates via the detector's observation sink); the
 	// observation service is the read/maintenance side (search + footage linkage + purge).
-	objectObservationRepo := dbsql.NewGenericRepo[appentities.ObjectObservation](deps.Db)
-	metadataRecorder := services.NewMetadataRecorder(objectObservationRepo, recordingService, deps.Config.Vision.Detector.MinObjectConfidence)
-	observationService := services.NewObservationService(objectObservationRepo, recordingService)
-	notificationRepo := dbsql.NewGenericRepo[sharedentities.Notification](deps.Db)
-	notificationService := notification.NewService(notificationRepo, notificationOptionsFromAppConfig(deps.Config, deps.Logger, deps.Metrics))
+	metadataRecorder := services.NewMetadataRecorder(repo.ObjectObservation, recordingService, deps.Config.Vision.Detector.MinObjectConfidence)
+	observationService := services.NewObservationService(repo.ObjectObservation, recordingService)
+	notificationService := notification.NewService(repo.Notification, notificationOptionsFromAppConfig(deps.Config, deps.Logger, deps.Metrics))
 	// Incrementally aggregate the notifications feed into the hourly rollup table
 	// that powers the dashboard's baseline/anomaly analytics (Phase 0). The cursor
 	// persists the last-folded notification id so sweeps are exactly-once and the
 	// first sweep on an existing database backfills all history.
-	notificationRollupRepo := dbsql.NewGenericRepo[sharedentities.NotificationRollup](deps.Db)
 	// Enable the dashboard analytics reads (heatmap + future baselines) off the rollup.
-	notificationService.WithRollups(notificationRollupRepo)
+	notificationService.WithRollups(repo.NotificationRollup)
 	notificationRollupMaintainer := notification.NewRollupMaintainer(
-		notificationRepo,
-		notificationRollupRepo,
-		services.NewRollupCursor(runtimeSettingsRepo),
+		repo.Notification,
+		repo.NotificationRollup,
+		services.NewRollupCursor(repo.RuntimeSetting),
 		0,
 		0,
 	)
 	notificationSettingsService := services.NewNotificationSettingsService(
-		runtimeSettingsRepo,
+		repo.RuntimeSetting,
 		notificationService,
 		notificationSettingsDefaultsFromAppConfig(deps.Config),
 	)
 	healthSettingsService := services.NewHealthSettingsService(
-		runtimeSettingsRepo,
+		repo.RuntimeSetting,
 		healthSettingsDefaultsFromAppConfig(deps.Config),
 	)
 	machineHealthSettingsService := services.NewMachineHealthSettingsService(
-		runtimeSettingsRepo,
+		repo.RuntimeSetting,
 		services.DefaultMachineHealthSettings(),
 	)
 	anomalySettingsService := services.NewAnomalySettingsService(
-		runtimeSettingsRepo,
+		repo.RuntimeSetting,
 		services.DefaultAnomalySettings(),
 	)
 	// Load persisted notification delivery settings and apply them to the hub.
@@ -436,19 +365,13 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// Teach wizard: skill registry + session capture engine. Constructed here
 	// (not with the other services) because its frame source needs the recorder
 	// manager for the siphon path.
-	teachSkillRepo := dbsql.NewGenericRepo[appentities.TeachSkill](deps.Db)
 	teachService := services.NewTeachService(
-		teachSkillRepo,
+		repo.TeachSkill,
 		detectionClassService,
 		trainingService,
 		visionService,
 		services.NewDetectionSource(cameraService, recorderManager, settingsService, nil),
-		services.TeachDetectorConfig{
-			Command:         deps.Config.Vision.Detector.Command,
-			Args:            deps.Config.Vision.Detector.Args,
-			TimeoutMs:       deps.Config.Vision.Detector.TimeoutMs,
-			AnomalyManifest: anomalyManifestFile,
-		},
+		teachDetectorConfig(deps, detectorPaths),
 		appVersion(m.Name()),
 		atrestCipher,
 	)
@@ -525,105 +448,64 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		loginLockoutNotifier = notificationService
 	}
 
-	// HTTPS port advertised to the control plane in discovery announces and used as
-	// the adoption-call origin.
-	httpsPort := 0
-	if len(deps.Config.Server.TLSPorts) > 0 {
-		httpsPort = deps.Config.Server.TLSPorts[0]
-	}
+	// The node side of the fleet: enrollment, control and media channels. All three are
+	// dialed BY the node, so it can sit behind NAT with no inbound ports open.
+	fleetChannels := buildFleet(api, deps, appVersion(m.Name()), pairingService, cameraService, streamManager, notificationService)
 
-	// Node mTLS enrollment manager: after adoption it enrolls with the control-plane
-	// fleet CA, serves the mutual-TLS management listener (heartbeat/release), and
-	// renews its certificate before expiry. Kicked on adopt; runs in the monitor
-	// lifecycle below.
-	pairingRenewBefore := time.Duration(deps.Config.Pairing.RenewBeforeHours) * time.Hour
-	enrollmentManager := services.NewEnrollmentManager(
-		pairingService,
-		deps.Config.Pairing.MTLSPort,
-		pairingRenewBefore,
-		func(format string, args ...any) { deps.Logger.Infof("mymatasan.pairing", format, args...) },
-	)
-
-	// Control channel: once paired + enrolled, the node dials the control plane's
-	// control listener over mTLS and maintains a persistent bi-directional channel
-	// (commander commands down, events up). Reads state live from the pairing
-	// service; shares the monitor lifecycle alongside the enrollment manager.
-	// The dispatcher re-injects tunneled commands into this app's own /api router
-	// (built below) so the commander reaches the node's exact API surface, gated by
-	// the node's normal authorization via the synthetic principal it carries.
-	controlChannel := services.NewControlChannelManager(
-		pairingService,
-		deps.Config.Pairing.ControlPort,
-		appVersion(m.Name()),
-		apis.NewControlDispatcher(api),
-		func(format string, args ...any) { deps.Logger.Infof("mymatasan.control", format, args...) },
-	)
-	// Forward this node's notifications up the control channel so the control plane's
-	// unified feed receives them live (in addition to local delivery).
-	notificationService.Register(services.NewControlEventSink(controlChannel))
-
-	// Media channel: a second node-dialed mTLS connection (separate port) that streams
-	// a camera's RTP up to the control plane on request, so myseliasan can re-broadcast
-	// full-frame-rate live view over WebRTC. Resolves each camera's RTSP via the same
-	// snapshot-source path used for browser live view, and shares the stream manager's
-	// RTSP sessions. Shares the monitor lifecycle alongside the control channel.
-	mediaResolve := func(ctx context.Context, camID uint64) (stream.Source, error) {
-		src, err := cameraService.SnapshotSource(ctx, camID)
-		if err != nil {
-			return stream.Source{}, err
-		}
-		return stream.Source{ID: fmt.Sprintf("camera-%d", camID), URI: src.RTSPURI}, nil
-	}
-	mediaChannel := services.NewMediaChannelManager(
-		pairingService,
-		deps.Config.Pairing.MediaPort,
-		appVersion(m.Name()),
-		streamManager,
-		mediaResolve,
-		func(format string, args ...any) { deps.Logger.Infof("mymatasan.media", format, args...) },
-	)
-
-	// Pairing adopt/release are called by the control plane (no local session) and
-	// authenticate cryptographically, so they mount on the public /api router — and
-	// must be registered before the session catch-all so requests match here first.
-	apis.NewPairingPublicApi(api, pairingService, enrollmentManager.Kick)
-
-	// systemResetService is built further down (after the monitors/recorder exist), but
-	// the reset gate below needs to consult it, so declare it here and read it via a
-	// closure at request time.
-	var systemResetService *services.SystemResetService
-
-	protected := api.PathPrefix("").Subrouter()
-	// Shed load with a clean 503 while a factory reset is running: the reset closes the DB
-	// pool and keeps serving through the slow free-space scrub, so DB-backed requests would
-	// otherwise 500 (including the login probe) until the restart. Runs FIRST — before auth —
-	// so a request never hits the closed database.
-	protected.Use(apis.NewResetGate(func() bool { return systemResetService != nil && systemResetService.InProgress() }))
-	protected.Use(apis.NewLocalBasicAuth(localUserService, loginGuard, loginLockoutNotifier))
-	// Non-admins are read-only (plus a small viewer allow-list); admins get full
-	// access. Registered after auth so the authenticated user is in context.
-	protected.Use(apis.NewRequireAdminForWrites())
-	apis.NewLocalAuthApi(protected, localUserService)
-	apis.NewOnvifApi(protected, cameraService, settingsService, streamManager)
-	apis.NewCameraApi(protected, cameraService, settingsService, streamManager, cameraHealthMonitor)
-	apis.NewVisionApi(protected, visionService, detectionClassService, recorderManager, notificationService, cameraService, settingsService, notificationSettingsService, atrestCipher)
-	apis.NewTrainingApi(protected, trainingService)
-	apis.NewTeachApi(protected, teachService)
-	// ffmpeg installs under the writable data dir (not the CWD): a packaged
-	// Windows service runs with CWD=C:\Windows\System32, so a CWD-relative "bin"
-	// would land ffmpeg there instead of MYMATASAN_DATA. Mirrors the Python
-	// runtime, which lives under dataDir/pyruntime.
+	// ffmpeg installs under the writable data dir (not the CWD): a packaged Windows service
+	// runs with CWD=C:\Windows\System32, so a CWD-relative "bin" would land ffmpeg there
+	// instead of MYMATASAN_DATA. Mirrors the Python runtime, which lives under
+	// dataDir/pyruntime.
 	ffmpegBinDir, _ := filepath.Abs(filepath.Join(deps.DataDir, "bin"))
-	ffmpegInstaller := services.NewFFmpegInstaller(ffmpegBinDir, settingsService)
-	pythonInstaller := services.NewPythonInstaller(deps.DataDir, deps.ConfigPath)
-	apis.NewSettingsApi(protected, settingsService, cameraService, localUserService, notificationSettingsService, healthSettingsService, machineHealthSettingsService, machineHealthMonitor, visionToolSettingsFromAppConfig(deps.Config), ffmpegInstaller, pythonInstaller, deps.Config.Decoder.BrowseRoots)
-	apis.NewRecordingApi(protected, recordingService, recorderManager, cameraService, settingsService, atrestCipher, visionService, recorderConfigBuilder)
-	apis.NewObservationApi(protected, observationService)
-	apis.NewNotificationApi(protected, notificationService)
-	apis.NewAnomalyApi(protected, anomalySettingsService, notificationService, cameraService)
-	apis.NewCapacityApi(protected, cameraService, settingsService, machineHealthMonitor, recordingService, objectBackend)
-	apis.NewSetupApi(protected, setupStateService)
-	apis.NewPairingApi(protected, pairingService)
+
+	// Everything is built. Gather it once, and let the remaining phases take ONE parameter
+	// instead of thirty free variables out of an 800-line scope.
+	w := &wiring{
+		deps:           deps,
+		atrestKeyStore: atrestKeyStore,
+		atrestCipher:   atrestCipher,
+		detectorPaths:  detectorPaths,
+		objectBackend:  objectBackend,
+		httpsPort:      fleetChannels.httpsPort,
+
+		camera:         cameraService,
+		vision:         visionService,
+		detectionClass: detectionClassService,
+		training:       trainingService,
+		teach:          teachService,
+		recording:      recordingService,
+		observation:    observationService,
+		metadata:       metadataRecorder,
+		localUser:      localUserService,
+		setupState:     setupStateService,
+		pairing:        pairingService,
+
+		settings:              settingsService,
+		notificationSettings:  notificationSettingsService,
+		healthSettings:        healthSettingsService,
+		machineHealthSettings: machineHealthSettingsService,
+		anomalySettings:       anomalySettingsService,
+
+		notification:       notificationService,
+		notificationRollup: notificationRollupMaintainer,
+		recorder:           recorderManager,
+		recorderConfig:     recorderConfigBuilder,
+		streamManager:      streamManager,
+		cameraHealth:       cameraHealthMonitor,
+		machineHealth:      machineHealthMonitor,
+
+		enrollment: fleetChannels.enrollment,
+		control:    fleetChannels.control,
+		media:      fleetChannels.media,
+
+		loginGuard:           loginGuard,
+		loginLockoutNotifier: loginLockoutNotifier,
+
+		ffmpegInstaller: services.NewFFmpegInstaller(ffmpegBinDir, settingsService),
+		pythonInstaller: services.NewPythonInstaller(deps.DataDir, deps.ConfigPath),
+	}
+
+	protected := registerRoutes(api, w)
 
 	// Factory reset ("Secure Wipe & Reset"): shred all media, drop + rebuild + reseed
 	// the database (honouring the configured engine), then restart into first-run
@@ -635,8 +517,8 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		if sd := strings.TrimSpace(deps.Config.Vision.SnapshotDir); sd != "" {
 			paths = append(paths, sd)
 		}
-		if trainingDir != "" {
-			paths = append(paths, trainingDir)
+		if detectorPaths.TrainingDir != "" {
+			paths = append(paths, detectorPaths.TrainingDir)
 		}
 		if fp := strings.TrimSpace(deps.Config.FileStorage.Path); fp != "" {
 			paths = append(paths, fp)
@@ -652,6 +534,10 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	}
 
 	monitorCtx, stopMonitor := context.WithCancel(context.Background())
+
+	// Vision monitor settings: assembled here because they thread together the detector,
+	// the recorder, the notifier and the metadata sink, none of which the settings mapper
+	// can know about.
 	monitorSettings := visionMonitorSettingsFromAppConfig(deps.Config)
 	monitorSettings.Detector = wrapMonitorDetector(deps.Config, objectBackend)
 	monitorSettings.Recorder = recorderManager
@@ -659,102 +545,26 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	monitorSettings.NotificationDestinations = notificationSettingsService
 	monitorSettings.Resolver = detectionClassService
 	monitorSettings.SnapshotCipher = atrestCipher
-	// Metadata recorder: wire it as the detector's observation sink (so rule cameras
-	// record metadata for free off their existing inference) and hand it to the monitor
-	// (so metadata-enabled cameras are sampled even without alert rules).
+	monitorSettings.Metadata = metadataRecorder
+	monitorSettings.Metrics = deps.Metrics
+	// The detection-only frame stream the monitor runs when a camera has AI rules but NVR
+	// recording is off. Same builder as the real recorder, so the AI sees the same stream
+	// it would have recorded.
+	monitorSettings.DetectStreamConfig = recorderConfigBuilder.ForDetectOnly
+	// Wire the metadata recorder as the detector's observation sink, so rule-bearing
+	// cameras record metadata for free off their existing inference.
 	if oc, ok := monitorSettings.Detector.(vision.ObservationCapable); ok {
 		oc.SetObservationSink(metadataRecorder)
 	}
-	monitorSettings.Metadata = metadataRecorder
-	monitorSettings.Metrics = deps.Metrics
-	// Resolver for the detection-only frame stream the monitor runs when a camera
-	// has AI rules but NVR recording is off (siphon/auto). It reuses the same stream
-	// selection + credential injection + siphon params as the real recorder so the
-	// AI sees the same stream it would record. Prefers the detection/recording stream,
-	// then the configured live-view stream, then the camera's discovered RTSP URI.
-	monitorSettings.DetectStreamConfig = recorderConfigBuilder.ForDetectOnly
-	if monitorSettings.Enabled {
-		// Warm the detector model once at startup, uncapped, so the first live-detection
-		// inference doesn't hit the per-frame timeout on a cold GPU/CUDA model load —
-		// which would kill and restart the worker in a loop and never warm. Runs in the
-		// background so boot isn't blocked by the (potentially 10–15s) model load.
-		if objectBackend != nil {
-			// One-shot: guarded but never restarted — if warmup panics, live detection
-			// simply warms on the first real inference instead.
-			safego.Go("mymatasan.vision.warmup", func() {
-				warmCtx, cancel := context.WithTimeout(monitorCtx, 120*time.Second)
-				defer cancel()
-				if err := services.WarmupInference(warmCtx, objectBackend); err != nil {
-					log.Printf("vision: detector warmup failed (live detection will warm on first inference): %v", err)
-				} else {
-					log.Printf("vision: detector model warmed up")
-				}
-			})
-		}
-		// The metadata recorder shares the monitor's lifecycle: it aggregates the
-		// observations the monitor feeds it and flushes open intervals on shutdown.
-		metadataRecorder.Start(monitorCtx)
-		services.NewVisionMonitor(cameraService, visionService, settingsService, monitorSettings).Start(monitorCtx)
-	}
+	w.visionMonitorSettings = monitorSettings
 
-	// Camera health monitor: probes camera reachability and raises offline/recovery
-	// notifications. Independent of the vision monitor; shares the same lifecycle.
-	// It reads its settings live from healthSettingsService each sweep, so enabling
-	// or retuning it from the Settings UI takes effect without a restart — there is
-	// no startup Enabled gate.
-	cameraHealthMonitor.Start(monitorCtx)
-
-	// Host health monitor: samples CPU/memory/disk live, raises threshold
-	// notifications, and runs disk mitigation (early purge + pause/resume
-	// recording). Reads its settings live, so it can be retuned without a restart.
-	machineHealthMonitor.Start(monitorCtx)
-
-	// Notification rollup maintainer: incrementally aggregates the notifications
-	// feed into the hourly rollup table for dashboard analytics. Shares the monitor
-	// lifecycle; the first sweep backfills existing history.
-	notificationRollupMaintainer.Start(monitorCtx)
-
-	// Statistical anomaly monitor: scores each closed hour against per-camera
-	// baselines (built from the rollup) and raises spike / "unusual silence" alerts.
-	// Reads its settings live and is opt-in (disabled until enabled in Settings).
-	services.NewAnalyticsMonitor(notificationService, notificationService, anomalySettingsService, cameraService).Start(monitorCtx)
-
-	// Discovery responder: answers authenticated pairing probes while the node is
-	// unpaired and a fleet key is set, then goes silent once adopted. The fleet key
-	// and discoverability are read live per probe, so setting a key or adopting the
-	// node takes effect without a restart. Shares the monitor lifecycle.
-	if boolValue(deps.Config.Pairing.Enabled, true) {
-		pairingResponder := pairing.NewResponder(pairing.ResponderConfig{
-			FleetKey:      func() []byte { k, _ := pairingService.FleetKey(monitorCtx); return k },
-			Discoverable:  func() bool { return pairingService.Discoverable(monitorCtx) },
-			AnnounceInfo:  func() pairing.AnnounceInfo { return pairingService.AnnounceInfo(monitorCtx, httpsPort) },
-			MulticastAddr: deps.Config.Pairing.MulticastAddr,
-			ReplayWindow:  time.Duration(deps.Config.Pairing.ReplayWindowSeconds) * time.Second,
-			Logf:          func(format string, args ...any) { deps.Logger.Infof("mymatasan.pairing", format, args...) },
-		})
-		// Supervised: if the discovery responder dies the node stops answering pairing
-		// probes and simply becomes un-adoptable, with nothing to say why.
-		safego.Supervise(monitorCtx, "mymatasan.pairing.responder", func(ctx context.Context) {
-			if err := pairingResponder.Run(ctx); err != nil && ctx.Err() == nil {
-				deps.Logger.Warnf("mymatasan.pairing", "discovery responder stopped: %v", err)
-			}
-		})
-		// Enrollment manager (mTLS): enroll after adoption, serve the management
-		// listener, and renew certs. Shares the monitor lifecycle.
-		go enrollmentManager.Run(monitorCtx)
-		// Control channel: dial the parent and maintain the persistent bi-directional
-		// channel once paired + enrolled. Shares the monitor lifecycle.
-		go controlChannel.Run(monitorCtx)
-		// Media channel: dial the parent's media listener and stream camera RTP on
-		// request (full-frame-rate live view relayed to myseliasan). Shares lifecycle.
-		go mediaChannel.Run(monitorCtx)
-	}
+	startBackgroundWorkers(monitorCtx, w)
 
 	// Factory reset (Secure Wipe & Reset). Built here — after the monitors and
 	// recorder exist — so its StopServices hook can quiesce them before wiping: the
 	// recorder's ffmpeg holds the live .ts segment open (and keeps writing), which
 	// otherwise leaves files behind and stalls the shred on a near-full disk.
-	systemResetService = services.NewSystemResetService(services.SystemResetConfig{
+	systemResetService := services.NewSystemResetService(services.SystemResetConfig{
 		CollectMediaPaths: resetMediaPaths,
 		ShredPasses:       shredPasses,
 		BootstrapOpts: bootstrap.Options{
@@ -791,6 +601,10 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 			return nil
 		},
 	})
+	// The reset gate middleware, registered before this existed, reads it through a closure
+	// at request time — so publishing it here is what arms the gate.
+	w.systemReset = systemResetService
+
 	// Self-update: check GitHub Releases (scheduled + on demand) and, on portable/
 	// installer installs, download+verify+swap the binary/assets and restart.
 	currentVersion := ""
@@ -821,71 +635,15 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// cameras, AI detection, notifications, and app settings so a fresh install can
 	// be recovered without reconfiguring. Reuses the repos wired above.
 	backupService := services.NewBackupService(
-		cameraRepo,
-		cameraOnvifRepo,
-		recordingConfigRepo,
-		detectionClassRepo,
-		detectionRuleRepo,
-		runtimeSettingsRepo,
+		repo.Camera,
+		repo.CameraOnvif,
+		repo.RecordingConfig,
+		repo.DetectionClass,
+		repo.DetectionRule,
+		repo.RuntimeSetting,
 		currentVersion,
 	)
 	apis.NewBackupApi(protected, backupService)
-
-	// The retention purges. Each runs once at startup and then on its own interval, and
-	// each is supervised: a panic in a purge used to kill the process, and simply
-	// recovering would be no better — nothing else notices a dead purge loop, so the
-	// disk quietly fills until writes (including the database's) start failing.
-	purgeInterval := func(hours int) time.Duration {
-		if d := time.Duration(hours) * time.Hour; d > 0 {
-			return d
-		}
-		return 6 * time.Hour
-	}
-
-	// Expired segments + metadata observations. Observation retention aligns with each
-	// camera's recording retention.
-	periodic(monitorCtx, "mymatasan.purge.segments", 6*time.Hour, func(ctx context.Context) {
-		if _, err := recordingService.PurgeOldSegments(ctx); err != nil {
-			deps.Logger.Warnf("mymatasan.recording", "segment retention purge failed: %v", err)
-		}
-		if _, err := observationService.PurgeOldObservations(ctx); err != nil {
-			deps.Logger.Warnf("mymatasan.recording", "observation retention purge failed: %v", err)
-		}
-	})
-
-	// Expired notifications. Retention (days / onlyRead) is read live from the
-	// notification settings each run, so UI changes take effect without a restart.
-	periodic(monitorCtx, "mymatasan.purge.notifications", purgeInterval(deps.Config.Notification.PurgeIntervalHours), func(ctx context.Context) {
-		days, onlyRead := notificationSettingsService.Retention(ctx)
-		if days <= 0 {
-			return
-		}
-		if deleted, err := notificationService.PurgeOlderThanDays(ctx, days, onlyRead); err != nil {
-			deps.Logger.Warnf("mymatasan.notification", "notification purge failed: %v", err)
-		} else if deleted > 0 {
-			deps.Logger.Infof("mymatasan.notification", "purged %d expired notifications", deleted)
-		}
-	})
-
-	// Expired AI detection alerts. DiagnosticRetentionDays trims the noisy vision-monitor
-	// diagnostics; AlertRetentionDays (0 = keep forever) trims real detections too. Both
-	// also unlink the snapshot image files of the rows they remove.
-	periodic(monitorCtx, "mymatasan.purge.alerts", purgeInterval(deps.Config.Vision.AlertPurgeIntervalHours), func(ctx context.Context) {
-		if days := deps.Config.Vision.DiagnosticRetentionDays; days > 0 {
-			if deleted, err := visionService.PurgeAlertsOlderThanDays(ctx, days, true); err != nil {
-				deps.Logger.Warnf("mymatasan.vision", "diagnostic alert purge failed: %v", err)
-			} else if deleted > 0 {
-				deps.Logger.Infof("mymatasan.vision", "purged %d diagnostic alerts older than %d day(s)", deleted, days)
-			}
-		}
-		if days := deps.Config.Vision.AlertRetentionDays; days > 0 {
-			if deleted, err := visionService.PurgeAlertsOlderThanDays(ctx, days, false); err != nil {
-				deps.Logger.Warnf("mymatasan.vision", "alert purge failed: %v", err)
-			} else if deleted > 0 {
-				deps.Logger.Infof("mymatasan.vision", "purged %d alerts older than %d day(s)", deleted, days)
-			}
-		}
-	})
 
 	return func(ctx context.Context) error {
 		stopMonitor()
@@ -899,21 +657,6 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		}
 		return streamManager.Close()
 	}, nil
-}
-
-// loginGuardConfigFromAppConfig maps the config.json loginSecurity block into the
-// failed-login guard config. Numeric tunables left at zero are filled with safe
-// defaults inside the guard.
-func loginGuardConfigFromAppConfig(cfg *config.AppConfigModel) apis.LoginGuardConfig {
-	ls := cfg.LoginSecurity
-	return apis.LoginGuardConfig{
-		Enabled:     ls.Enabled,
-		MaxAttempts: ls.MaxAttempts,
-		Window:      time.Duration(ls.WindowSeconds) * time.Second,
-		BaseLockout: time.Duration(ls.LockoutSeconds) * time.Second,
-		MaxLockout:  time.Duration(ls.LockoutMaxSeconds) * time.Second,
-		FailedDelay: time.Duration(ls.FailedDelayMs) * time.Millisecond,
-	}
 }
 
 // firstRunCredentialFile is the recovery file (in the data dir) that holds the
@@ -1008,133 +751,6 @@ func writeFirstRunCredentialFile(path, url string, seed services.AdminSeedResult
 	return os.WriteFile(path, []byte(body), 0o600)
 }
 
-// notificationOptionsFromAppConfig builds always-on notification options. The
-// outbound delivery channels (webhook, telegram) are applied separately from the
-// persisted, runtime-editable notification settings.
-func notificationOptionsFromAppConfig(cfg *config.AppConfigModel, logger applog.Logger, metrics telemetry.Metrics) notification.Options {
-	return notification.Options{
-		Logger:          logger,
-		SSEClientBuffer: cfg.Notification.SSEClientBuffer,
-		Metrics:         metrics,
-	}
-}
-
-// notificationSettingsDefaultsFromAppConfig maps the config.json notification
-// block into the default runtime-editable notification settings. These seed the
-// persisted settings on first run; thereafter the UI-edited copy wins.
-func notificationSettingsDefaultsFromAppConfig(cfg *config.AppConfigModel) services.NotificationSettings {
-	n := cfg.Notification
-	retentionInterval := n.PurgeIntervalHours
-	if retentionInterval <= 0 {
-		retentionInterval = 6
-	}
-	return services.NotificationSettings{
-		Webhook: services.NotificationWebhookSettings{
-			Enabled:     boolValue(n.Webhook.Enabled, false),
-			URL:         strings.TrimSpace(n.Webhook.URL),
-			MinSeverity: n.Webhook.MinSeverity,
-		},
-		Telegram: services.NotificationTelegramSettings{
-			Enabled:     boolValue(n.Telegram.Enabled, false),
-			BotToken:    strings.TrimSpace(n.Telegram.BotToken),
-			ChatId:      strings.TrimSpace(n.Telegram.ChatId),
-			MinSeverity: n.Telegram.MinSeverity,
-		},
-		Retention: services.NotificationRetentionSettings{
-			Days:          n.RetentionDays,
-			OnlyRead:      n.PurgeReadOnly,
-			IntervalHours: retentionInterval,
-		},
-	}
-}
-
-func runtimeSettingsFromAppConfig(cfg *config.AppConfigModel) services.RuntimeSettings {
-	ffmpegPath := cfg.Decoder.MJPEG.FFmpegPath
-	if ffmpegPath == "" {
-		ffmpegPath = cfg.Camera.FFmpegPath
-	}
-	result := services.RuntimeSettings{
-		Decoder: services.DecoderSettings{
-			MJPEG: services.MJPEGDecoderSettings{
-				FFmpegPath: ffmpegPath,
-				Quality:    cfg.Decoder.MJPEG.Quality,
-				Threads:    cfg.Decoder.MJPEG.Threads,
-			},
-			FFmpeg: services.FFmpegDecoderSettings{
-				RTSPTransport:   cfg.Decoder.FFmpeg.RTSPTransport,
-				HWAccel:         cfg.Decoder.FFmpeg.HWAccel,
-				HWAccelDevice:   cfg.Decoder.FFmpeg.HWAccelDevice,
-				InitHWDevice:    cfg.Decoder.FFmpeg.InitHWDevice,
-				VideoDecoder:    cfg.Decoder.FFmpeg.VideoDecoder,
-				ProbeSize:       cfg.Decoder.FFmpeg.ProbeSize,
-				AnalyzeDuration: cfg.Decoder.FFmpeg.AnalyzeDuration,
-				LowDelay:        cfg.Decoder.FFmpeg.LowDelay,
-				NoBuffer:        cfg.Decoder.FFmpeg.NoBuffer,
-			},
-		},
-		Stream: services.StreamSettings{
-			WebRTC: services.WebRTCSettings{
-				Enabled:    boolValue(cfg.Stream.WebRTC.Enabled, false),
-				ICEServers: []stream.ICEServer{},
-			},
-			MJPEGFallback: services.MJPEGFallbackSettings{
-				Enabled: boolValue(cfg.Stream.MJPEGFallback.Enabled, true),
-			},
-		},
-		Recording: services.RecordingSettings{
-			Storage: services.RecordingStorageSettings{
-				Codec:                cfg.Recording.Storage.Codec,
-				Quality:              cfg.Recording.Storage.Quality,
-				MaxConcurrentEncodes: cfg.Recording.Storage.MaxConcurrentEncodes,
-				FallbackToCopy:       cfg.Recording.Storage.FallbackToCopy,
-			},
-		},
-	}
-	for _, server := range cfg.Stream.WebRTC.ICEServers {
-		if len(server.URLs) == 0 {
-			continue
-		}
-		result.Stream.WebRTC.ICEServers = append(result.Stream.WebRTC.ICEServers, stream.ICEServer{
-			URLs:       server.URLs,
-			Username:   server.Username,
-			Credential: server.Credential,
-		})
-	}
-	return result
-}
-
-// visionMonitorSettingsFromAppConfig builds the monitor settings WITHOUT the
-// detector; the caller assigns Detector from the shared object backend via
-// wrapMonitorDetector so the same backend serves live detection and auto-label.
-func visionMonitorSettingsFromAppConfig(cfg *config.AppConfigModel) services.VisionMonitorSettings {
-	snapshotDir := cfg.Vision.SnapshotDir
-	if snapshotDir == "" {
-		snapshotDir = "recordings"
-	}
-	return services.VisionMonitorSettings{
-		Enabled:                   boolValue(cfg.Vision.Enabled, true),
-		Interval:                  int64(cfg.Vision.IntervalMs),
-		CaptureTimeout:            int64(cfg.Vision.CaptureTimeoutMs),
-		DiagnosticCooldownSeconds: int64(cfg.Vision.DiagnosticCooldownSeconds),
-		PersistSampledDiagnostics: cfg.Vision.PersistSampledDiagnostics,
-		SnapshotDir:               snapshotDir,
-	}
-}
-
-// healthSettingsDefaultsFromAppConfig maps the config.json health block into the
-// default runtime-editable health settings. These seed the persisted settings on
-// first run; thereafter the UI-edited copy wins.
-func healthSettingsDefaultsFromAppConfig(cfg *config.AppConfigModel) services.HealthSettings {
-	h := cfg.Health
-	return services.HealthSettings{
-		Enabled:           boolValue(h.Enabled, true),
-		IntervalMs:        h.IntervalMs,
-		TimeoutMs:         h.TimeoutMs,
-		FailureThreshold:  h.FailureThreshold,
-		RecoveryThreshold: h.RecoveryThreshold,
-	}
-}
-
 // resolveShredPasses decides how many secure-overwrite passes to apply when
 // deleting recorded footage. Shredding is on by default (DefaultShredPasses);
 // recording.shred.enabled=false disables it (plain delete), and a positive
@@ -1159,63 +775,6 @@ func periodic(ctx context.Context, name string, interval time.Duration, fn func(
 			}
 		}
 	})
-}
-
-func resolveShredPasses(cfg *config.AppConfigModel) int {
-	s := cfg.Recording.Shred
-	if s.Enabled != nil && !*s.Enabled {
-		return 0
-	}
-	if s.Passes > 0 {
-		return s.Passes
-	}
-	return recording.DefaultShredPasses
-}
-
-// trainingDataDir resolves the on-disk root for training datasets and models.
-// It defaults to a "training" sibling of the snapshot dir so all AI artifacts
-// live together under the same volume the machine health monitor watches.
-func trainingDataDir(cfg *config.AppConfigModel) string {
-	if dir := strings.TrimSpace(cfg.Vision.Training.DataDir); dir != "" {
-		return dir
-	}
-	base := strings.TrimSpace(cfg.Vision.SnapshotDir)
-	if base == "" {
-		base = "recordings"
-	}
-	return filepath.Join(base, "training")
-}
-
-// trainingRunConfigFromAppConfig derives the in-app trainer config: the Python
-// command (shared with the detector) and the train_worker.py / base weights that
-// sit next to the configured YOLO worker script.
-func trainingRunConfigFromAppConfig(cfg *config.AppConfigModel, configPath string) services.TrainingRunConfig {
-	detectorCfg := cfg.Vision.Detector
-	workerScript := ""
-	for _, arg := range detectorCfg.Args {
-		if strings.HasSuffix(strings.ToLower(strings.TrimSpace(arg)), ".py") {
-			workerScript = strings.TrimSpace(arg)
-			break
-		}
-	}
-	cfgOut := services.TrainingRunConfig{PythonCmd: detectorCfg.Command, ConfigFile: configPath}
-	if workerScript != "" {
-		dir := filepath.Dir(workerScript)
-		cfgOut.TrainScript = filepath.Join(dir, "train_worker.py")
-		cfgOut.BaseModel = filepath.Join(dir, "yolo11n.pt")
-	}
-	return cfgOut
-}
-
-func visionToolSettingsFromAppConfig(cfg *config.AppConfigModel) services.VisionToolSettings {
-	detectorCfg := cfg.Vision.Detector
-	return services.VisionToolSettings{
-		Mode:              detectorCfg.Mode,
-		Command:           detectorCfg.Command,
-		Args:              detectorCfg.Args,
-		TimeoutMs:         detectorCfg.TimeoutMs,
-		UseMotionFallback: boolValue(detectorCfg.UseMotionFallback, true),
-	}
 }
 
 // buildTrainingObjectDetector builds the raw object-detection backend used to
@@ -1318,13 +877,6 @@ func wrapMonitorDetector(cfg *config.AppConfigModel, backend vision.ObjectDetect
 		Motion:      motionDetector,
 		MotionTypes: motionTypes,
 	})
-}
-
-func boolValue(value *bool, fallback bool) bool {
-	if value == nil {
-		return fallback
-	}
-	return *value
 }
 
 // appVersion resolves this app's version from the version manifest for the control
