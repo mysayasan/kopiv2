@@ -115,7 +115,7 @@ func (d *MotionDetector) Detect(ctx context.Context, frame Frame, rules []Detect
 		if state.hitsByRule[rule.Id] < minFrames {
 			continue
 		}
-		if last := state.lastTriggered[rule.Id]; last > 0 && now-last < int64(cooldown) {
+		if cooldownActive(state.lastTriggered, rule, now, cooldown) {
 			continue
 		}
 		state.lastTriggered[rule.Id] = now
@@ -195,7 +195,7 @@ func (d *MotionDetector) detectMotionLineCrossing(rule DetectionRule, state *mot
 			if !crossedLine(previous, center, line, cfg.Direction) {
 				continue
 			}
-			if last := state.lastTriggered[rule.Id]; last > 0 && now-last < int64(cooldown) {
+			if cooldownActive(state.lastTriggered, rule, now, cooldown) {
 				return nil, nil
 			}
 			state.lastTriggered[rule.Id] = now
@@ -222,7 +222,7 @@ func (d *MotionDetector) detectMotionLineCrossing(rule DetectionRule, state *mot
 		}
 		ruleState.nextLineIndex = 0
 		ruleState.sequenceStartedAt = 0
-		if last := state.lastTriggered[rule.Id]; last > 0 && now-last < int64(cooldown) {
+		if cooldownActive(state.lastTriggered, rule, now, cooldown) {
 			return nil, nil
 		}
 		state.lastTriggered[rule.Id] = now

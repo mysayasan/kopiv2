@@ -13,7 +13,8 @@ Runs the MyMataSan background vision monitor that samples saved cameras and pers
 - Capture JPEG frames from the saved RTSP URI when available, otherwise from the ONVIF snapshot URI.
 - Forward every captured JPEG frame to the `recording.Manager` via `WriteFrame` so the ring buffer stays populated for pre-roll capture.
 - Run the configured reusable `infra/vision` detector against each captured frame and active camera rule set.
-- Persist detector results as alert events.
+- Persist detector results as alert events; a failed `CreateAlert` is now logged (`log.Printf`) instead of silently discarded — a dropped alert is a detection the operator never sees.
+- Collect the latest trigger time per rule within each sample (`triggeredAt`, using `detection.FrameCapturedAt`, falling back to `time.Now().UTC()` when zero) and, after the sample's detections are processed, call `IVisionService.MarkRuleTriggered(ctx, ruleId, at)` once per fired rule so its cooldown survives a process restart (see `infra/vision/cooldown.go.md` for the read side).
 - Publish each actionable alert as a notification via `NotifyVisionAlert`, resolving the triggering rule name (`ruleNameByID`), attaching the captured JPEG frame as the snapshot image, and applying the runtime `vision.alertNotification` field-inclusion config read from settings per sample.
 - On a successful alert creation, call `recording.Manager.TriggerEvent(cameraId, alertId, detection.FrameCapturedAt)` to start post-roll clip collection anchored to when the frame was captured, not when the detector finished processing it. This eliminates the YOLO latency shift that previously caused recordings to capture empty frames after the subject had already left.
 - Emit throttled diagnostic alert events for capture failures, detector failures, and successful samples with no threshold-crossing detection.
@@ -29,6 +30,10 @@ Each `reconcileSamplers` pass reads `settings.Vision.Capture.IntervalMs` and con
 ## Sampled-diagnostic suppression
 
 The `"sampled"` heartbeat diagnostic (frame captured; nothing detected) is now only written when `persistSampledDiagnostics` is `true` (off by default). Capture and detect failures are still written regardless. This prevents the noisy heartbeat from bloating the `alert_event` table; the setting is exposed in `VisionMonitorSettings.PersistSampledDiagnostics` and in the config as `vision.persistSampledDiagnostics`.
+
+## Supervision
+
+`Start` runs `m.run` under `infra/safego.Supervise` (name `mymatasan.vision.monitor`) rather than a bare `go`, and each per-camera sampler goroutine started by `reconcileSamplers` (`cameraSampler.loop`) is likewise supervised (name `mymatasan.vision.sampler.cam<N>`). This must restart, not merely recover: `reconcileSamplers` only starts a sampler when its `samplers` map has no entry for that camera, so a dead-but-recovered sampler goroutine would leave a live map entry behind and that camera would silently stop being watched until the process restarted. The sampler runs detector payloads from the Python worker through the alert path, so a single malformed detection (a nil box, a bad label) is exactly the kind of panic this guards against.
 
 ## Notes
 

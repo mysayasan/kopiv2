@@ -45,6 +45,7 @@ Declares service contracts for app-specific domain.
   - `GetRules(ctx, limit, offset)` and `SaveRule(ctx, req, userId)` for detection rule management
   - `DeleteRule(ctx, id)` for removing stale rules
   - `DeleteRulesForCamera(ctx, cameraId)` — removes every rule belonging to one camera, in batches of 500. Part of the camera-delete cascade: an orphaned rule keeps the vision monitor sampling a camera that no longer exists.
+  - `MarkRuleTriggered(ctx, ruleId, at)` — persists the moment a rule fired (`DetectionRule.LastTriggeredAt`) so its cooldown survives a process restart; never moves the stored time backwards, since out-of-order samples must not shorten a cooldown. Called by `VisionMonitor` once per fired rule per sample.
   - `GetAlerts(ctx, limit, offset, cameraId, status, filters, sorters)` — paginated alert list. `cameraId` and `status` remain mandatory base constraints; `filters`/`sorters` (`[]sqldataenums.Filter`/`[]sqldataenums.Sorter`) come straight from the client `DataTable` (server mode) so the grid's column filters and sort run as true DB-side `WHERE`/`ORDER BY` clauses instead of a client-side slice. Defaults to `CreatedAt DESC` when no sort is supplied.
   - `CreateAlert(ctx, req, userId)` for alert event persistence
   - `AcknowledgeAlert(ctx, id, userId)` for operator acknowledgement

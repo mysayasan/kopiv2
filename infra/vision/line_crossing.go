@@ -308,7 +308,7 @@ func (d *ObjectRuleDetector) lineCrossingDetection(rule DetectionRule, cfg lineC
 			if crossings[index] == 0 || !lineDirectionAllows(cfg.Direction, crossings[index]) {
 				continue
 			}
-			if !ruleCooldownElapsed(state, rule.Id, now, cooldown) {
+			if !ruleCooldownElapsed(state, rule, now, cooldown) {
 				lineLog("cam=%d rule=%d CROSSED but suppressed by cooldown (%ds)", rule.CameraId, rule.Id, cooldown)
 				return Detection{}, false
 			}
@@ -337,7 +337,7 @@ func (d *ObjectRuleDetector) lineCrossingDetection(rule DetectionRule, cfg lineC
 		}
 		track.nextLineIndex = 0
 		track.sequenceStartedAt = 0
-		if !ruleCooldownElapsed(state, rule.Id, now, cooldown) {
+		if !ruleCooldownElapsed(state, rule, now, cooldown) {
 			return Detection{}, false
 		}
 		state.lastTriggered[rule.Id] = now
@@ -624,11 +624,11 @@ func boxCenter(box Box) point2D {
 	}
 }
 
-func ruleCooldownElapsed(state *objectRuleState, ruleID int64, now int64, cooldown int) bool {
-	if last := state.lastTriggered[ruleID]; last > 0 && now-last < int64(cooldown) {
-		return false
-	}
-	return true
+// ruleCooldownElapsed reports whether rule is clear of its cooldown window. It takes the
+// whole rule (not just its id) so the persisted LastTriggeredAt can seed the in-process
+// cooldown on first sight — see cooldown.go.
+func ruleCooldownElapsed(state *objectRuleState, rule DetectionRule, now int64, cooldown int) bool {
+	return !cooldownActive(state.lastTriggered, rule, now, cooldown)
 }
 
 func isLineCrossingType(value string) bool {

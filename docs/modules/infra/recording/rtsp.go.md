@@ -20,6 +20,7 @@ Implements the RTSP-mode per-camera recorder that runs a dedicated ffmpeg segmen
   - `Queue input is backward in time`
   - `[segment @...]` address-only lines
 - Restart ffmpeg automatically on unexpected process exit.
+- `Start` runs `runFFmpeg`, `watchSegments`, and `purgeOldFiles` each under `infra/safego.Supervise` (names `recording.cam<N>.ffmpeg`/`.segments`/`.purge`) rather than a bare `go`. A panic in any of them used to take the whole process down; merely recovering would be no better, since nothing else would notice a dead segment watcher (the camera would keep writing `.ts` files that are never finalized) or a dead purge loop (the disk would fill) — so all three restart with backoff instead of just logging and exiting.
 - After two consecutive quick failures (runtime < 10 s), toggle between `RTSPURI` (primary) and `FallbackRTSPURI` (fallback) to handle cameras that reject a second RTSP connection on the main stream. Fallback switching is transparent; the active stream URL is exposed via `CameraStatus`.
 - Read ffmpeg stderr line-by-line with `bufio.Scanner` to avoid partial-line artefacts from raw `Read()` calls; the noisy-warning check runs before logging so filtered lines are never written to the log.
 - List live `.ts` segment files and parse filenames as **local time** (`time.Local`) because ffmpeg `strftime` writes in the local timezone.

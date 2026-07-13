@@ -11,7 +11,7 @@ Provides the dependency-free reusable detector implementation: motion detection 
 - Parse the rule's `ZonePolygon` field into one or more zones (`parseZones`) and fall back to a single full-frame zone when the value is missing or invalid.
 - Compare consecutive frames using a configurable pixel delta and stride.
 - Compute the changed-pixel ratio inside the rule's zone(s), unioned via `pointInAnyZone`.
-- Apply rule threshold, minimum frame count, and cooldown before returning detections.
+- Apply rule threshold, minimum frame count, and cooldown before returning detections; all three cooldown checks (zone motion, motion line-crossing per-line, and end-of-sequence) route through `cooldownActive` (`cooldown.go`), which seeds the in-process cooldown from the rule's persisted `LastTriggeredAt` on first sight — so cooldown survives a process restart.
 - Emit detector metadata that includes the motion source and changed-frame ratio.
 - Compute a normalized bounding box around the changed region via `motionBounds` (defined in `teach_gate.go`, shared with the Teach capture gate) and store it as `Detection.BoundingBox` (JSON-encoded `Box`), so motion/intrusion alert notification snapshots outline what moved the same way object-detection alerts do. Left empty when no change box can be derived. Motion line-crossing detections (`buildMotionLineCrossingDetection`) do not set a bounding box; they carry the crossing line/center in `Metadata` instead.
 

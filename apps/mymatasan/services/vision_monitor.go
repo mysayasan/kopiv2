@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
 	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/recording"
+	"github.com/mysayasan/kopiv2/infra/safego"
 	"github.com/mysayasan/kopiv2/infra/vision"
 )
 
@@ -94,7 +96,8 @@ func NewVisionMonitor(camera ICameraService, visionService IVisionService, setti
 }
 
 func (m *VisionMonitor) Start(ctx context.Context) {
-	go m.run(ctx)
+	// Supervised: if the reconcile loop dies, every camera silently stops being watched.
+	safego.Supervise(ctx, "mymatasan.vision.monitor", m.run)
 }
 
 func (m *VisionMonitor) run(ctx context.Context) {
@@ -172,7 +175,13 @@ func (m *VisionMonitor) reconcileSamplers(ctx context.Context, samplers map[int6
 		s := &cameraSampler{monitor: m, cameraID: cameraID, cancel: cancel}
 		s.setState(cameraRules, inference, sampleInterval)
 		samplers[cameraID] = s
-		go s.loop(sctx)
+		// Supervised, not merely recovered. This goroutine runs detector payloads from
+		// the Python worker through the alert path, so a malformed detection (a nil box,
+		// a bad label) can panic it — and it used to take the whole process with it. It
+		// must also RESTART: the reconcile above only starts a sampler when the map has
+		// no entry for the camera, so a dead sampler would leave a live map entry behind
+		// and that camera would silently stop being watched until the next process start.
+		safego.Supervise(sctx, fmt.Sprintf("mymatasan.vision.sampler.cam%d", cameraID), s.loop)
 	}
 	for cameraID, s := range samplers {
 		if !sampleIDs[cameraID] {
@@ -360,8 +369,11 @@ func (m *VisionMonitor) sampleCamera(ctx context.Context, cameraID int64, camera
 			notifyDestinations = m.notifDests.Destinations(ctx)
 		}
 	}
+	// triggeredAt collects, per rule, the latest moment it fired this sample, so the
+	// cooldown can be persisted once per rule rather than once per detection.
+	triggeredAt := map[int64]int64{}
 	for _, detection := range detections {
-		alert, _ := m.vision.CreateAlert(ctx, AlertEventRequest{
+		alert, err := m.vision.CreateAlert(ctx, AlertEventRequest{
 			RuleId:        detection.RuleId,
 			CameraId:      detection.CameraId,
 			DetectionType: detection.DetectionType,
@@ -372,6 +384,20 @@ func (m *VisionMonitor) sampleCamera(ctx context.Context, cameraID int64, camera
 			SnapshotPath:  snapPath,
 			Metadata:      detection.Metadata,
 		}, 0)
+		if err != nil {
+			// A dropped alert is a detection the operator never sees. It was silently
+			// discarded before; at minimum it must be visible in the log.
+			log.Printf("vision: cam%d rule%d: persist alert failed: %v", detection.CameraId, detection.RuleId, err)
+		}
+
+		at := detection.FrameCapturedAt
+		if at <= 0 {
+			at = time.Now().UTC().Unix()
+		}
+		if at > triggeredAt[detection.RuleId] {
+			triggeredAt[detection.RuleId] = at
+		}
+
 		if m.recorder != nil && alert != nil {
 			m.recorder.TriggerEvent(detection.CameraId, alert.Id, detection.FrameCapturedAt)
 		}
@@ -381,6 +407,14 @@ func (m *VisionMonitor) sampleCamera(ctx context.Context, cameraID int64, camera
 			Destinations:     notifyDestinations,
 			RuleDestinations: ruleDestinationsByID(cameraRules, detection.RuleId),
 		})
+	}
+
+	// Persist each fired rule's trigger time so its cooldown survives a restart. In-memory
+	// cooldown still governs this process; this is only what a fresh process reads back.
+	for ruleID, at := range triggeredAt {
+		if err := m.vision.MarkRuleTriggered(ctx, ruleID, at); err != nil {
+			log.Printf("vision: rule%d: persist cooldown failed: %v", ruleID, err)
+		}
 	}
 }
 

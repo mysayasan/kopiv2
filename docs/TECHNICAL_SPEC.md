@@ -39,6 +39,7 @@ The runtime now uses a reusable multi-app launcher pattern:
   - Idle timeout: `60s`
 - Graceful shutdown on `SIGINT` and `SIGTERM`.
 - Version manifest: embedded from `infra/versioning/version.json` at build time.
+- **Background-goroutine panic resilience** (`infra/safego`): apps that run unattended background workers (samplers, monitors, ticker-driven purges) start them via `safego.Go` (one-shot; panic recovered and logged, not restarted) or `safego.Supervise` (long-lived loops; panic recovered, logged, and the loop restarted with backoff — 1s initial, doubling, 30s cap, resetting after 2 minutes of healthy runtime). A clean return from a supervised task is treated as a deliberate stop and is not restarted. `mymatasan` wires `safego.SetLogger` to its app logger at the top of `RegisterAppRoutes` and supervises its vision monitor, per-camera samplers, camera/machine health monitors, metadata recorder, RTSP recorder goroutines, and retention purge loops — see `apps/mymatasan/app/app.go.md`.
 
 ## Security Model
 

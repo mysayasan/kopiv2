@@ -197,7 +197,7 @@ func (d *ObjectRuleDetector) Detect(ctx context.Context, frame Frame, rules []De
 		if state.hitsByRule[rule.Id] < minFrames {
 			continue
 		}
-		if last := state.lastTriggered[rule.Id]; last > 0 && now-last < int64(cooldown) {
+		if cooldownActive(state.lastTriggered, rule, now, cooldown) {
 			continue
 		}
 		state.lastTriggered[rule.Id] = now
