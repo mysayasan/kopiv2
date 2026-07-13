@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -74,12 +75,64 @@ func Ensure(ctx context.Context, opts Options) (*Status, error) {
 		status.DriftDetected = true
 	}
 
+	// The schema pipeline, in the only order that works:
+	//
+	//   1. migrations   structural changes the auto-migrator cannot express — a rename has
+	//                   to happen while the column still HAS its old name. If auto-migrate
+	//                   went first it would see the entity's new field, add it as an empty
+	//                   column, and the rename would then fail against a target that
+	//                   already exists — with the data still stranded in the old column.
+	//   2. auto-migrate additive: create missing tables, ADD COLUMN for new fields, indexes.
+	//   3. drift check  report what neither of the above can fix (changed types, columns the
+	//                   entities no longer declare), loudly, so somebody writes a migration.
+	//   4. seeders      idempotent data backfills.
+	//
+	// A FRESH database baselines the migrations instead of running them: the schema is
+	// about to be created at the current shape, so replaying a rename against a column that
+	// never had the old name would simply fail.
+	if err := validateMigrations(opts.Migrations); err != nil {
+		return nil, err
+	}
+	if err := ensureMigrationTable(ctx, db, engine); err != nil {
+		return nil, err
+	}
+	migrations := sortMigrations(opts.Migrations)
+	freshDatabase := previousHash == ""
+	now := time.Now().UTC().Unix()
+
+	if freshDatabase {
+		if err := baselineMigrations(ctx, db, engine, opts.AppName, migrations, now); err != nil {
+			return nil, err
+		}
+	} else if len(migrations) > 0 {
+		appliedIDs, err := runMigrations(ctx, db, engine, opts.AppName, migrations, now)
+		if err != nil {
+			return nil, err
+		}
+		status.MigrationsApplied = appliedIDs
+	}
+
 	tablesCreated, schemaUpdated, err := ensureSchema(ctx, db, engine, manifest, bootstrapConfig.AutoCreateSchema, bootstrapConfig.AutoMigrate)
 	if err != nil {
 		return nil, err
 	}
 	status.SchemaCreated = tablesCreated
 	status.SchemaUpdated = schemaUpdated
+
+	// Report what the additive migrator cannot repair. Never auto-fixed: rewriting a
+	// column's type in place is destructive and engine-specific. This used to be invisible
+	// — a type change was not detected AT ALL, and the row scanner failed at runtime on a
+	// customer's box with no clue why.
+	if !freshDatabase {
+		drift, err := detectSchemaDrift(ctx, db, engine, manifest)
+		if err != nil {
+			return nil, err
+		}
+		status.SchemaDrift = drift
+		for _, d := range drift {
+			log.Printf("bootstrap %s: SCHEMA DRIFT: %s", opts.AppName, d)
+		}
+	}
 
 	if bootstrapConfig.AutoSeed && len(opts.Seeders) > 0 {
 		seeded, err := runSeeders(ctx, db, opts.Seeders)
@@ -98,7 +151,31 @@ func Ensure(ctx context.Context, opts Options) (*Status, error) {
 	if status.DriftDetected {
 		status.Message = "schema drift reconciled with additive updates"
 	}
+	if len(status.SchemaDrift) > 0 {
+		status.Message = fmt.Sprintf("%d schema difference(s) the auto-migrator cannot fix — a migration is needed", len(status.SchemaDrift))
+	}
 	return status, nil
+}
+
+// detectSchemaDrift collects, across every table, the differences the additive migrator
+// cannot repair.
+func detectSchemaDrift(ctx context.Context, db *sql.DB, engine string, manifest Manifest) ([]SchemaDrift, error) {
+	var all []SchemaDrift
+	for _, table := range manifest.Tables {
+		exists, err := tableExists(ctx, db, engine, table.Name)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			continue
+		}
+		drift, err := detectDrift(ctx, db, engine, table)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, drift...)
+	}
+	return all, nil
 }
 
 func normalizeBootstrapConfig(cfg BootstrapConfig) BootstrapConfig {

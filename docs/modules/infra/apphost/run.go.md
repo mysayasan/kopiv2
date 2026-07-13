@@ -38,7 +38,12 @@ Implements the reusable runtime host for all app modules.
 - Start expired file cleanup when `fileStorage.cleanup.enabled` is true.
 - Start scheduled runtime log cleanup when configured.
 - Start scheduled API log cleanup when configured.
-- Run shared bootstrap engine using app-provided entities and seeders.
+- Run shared bootstrap engine using app-provided entities, versioned migrations
+  (`appMigrations(app)`, via the optional `Migrator` interface — `types.go.md`), and seeders.
+  Logs applied migration IDs and any reported `SchemaDrift` loudly after `Ensure` returns
+  (`docs/modules/infra/db/bootstrap/migration.go.md`, `drift.go.md`) — drift is never
+  auto-repaired, so it has to be visible in the boot log or it goes unnoticed until a row
+  scan fails on a customer's box.
 - Register the security-headers middleware (`middlewares.NewSecurityHeaders`, via the `securityHeadersConfig` helper) first in the router chain — ahead of CORS and request logging — so every response is hardened, unless `securityHeaders.disabled` is set. Replaces the old greet middleware, which only set `Server: r450k`.
 - Wire global middleware and shared API modules.
 - Honor app-provided shared API module selection when an app implements `SharedAPIConfigurator`.

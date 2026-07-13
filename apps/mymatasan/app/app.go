@@ -94,6 +94,28 @@ func (m *module) SharedAPIs() apphost.SharedAPIConfig {
 	}
 }
 
+// Migrations implements apphost.Migrator: the ordered, once-only schema changes the
+// additive auto-migrator cannot express.
+//
+// It is empty, and that is the normal state. An ADDITIVE change — a new field on an entity
+// — needs no migration at all; the auto-migrator adds the column. Write one here only for
+// what additive cannot do: a rename (which otherwise adds an empty column and strands the
+// data in the old one), a drop, a type change, or a data transform.
+//
+// Rules, because getting them wrong is silent:
+//   - IDs are date-prefixed and sortable ("20260714-01-..."). Migrations run in ID order.
+//   - NEVER change the ID or the SQL of a released migration. The bootstrapper checksums
+//     them and refuses to start if one was edited after being applied — two databases that
+//     both claim to have run "20260714-01" must have had the same thing done to them.
+//   - The engines genuinely differ (SQLite could not DROP COLUMN before 3.35; none of them
+//     agree on changing a column's type), so a structural migration usually needs to say
+//     what it means per engine rather than pretend they are the same database.
+//
+// See infra/db/bootstrap/migration.go.
+func (m *module) Migrations() []bootstrap.Migration {
+	return nil
+}
+
 func (m *module) Entities() []any {
 	return []any{
 		sharedentities.ApiEndpoint{},
@@ -616,7 +638,13 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 				SeedStatements:     deps.Config.Bootstrap.SeedStatements,
 			},
 			Entities: m.Entities(),
-			Seeders:  m.Seeders(deps.Config.Bootstrap.SeedStatements),
+			// The reset drops and rebuilds the database, so the rebuilt one is FRESH and
+			// baselines these rather than running them. Omitting them here would be a trap:
+			// the rebuild would save a manifest (so the next boot reads as "not fresh") with
+			// an empty migration table, and every migration would then be replayed against a
+			// brand-new schema — and fail.
+			Migrations: m.Migrations(),
+			Seeders:    m.Seeders(deps.Config.Bootstrap.SeedStatements),
 		},
 		Restarter: deps.Restarter,
 		KeyStore:  atrestKeyStore,

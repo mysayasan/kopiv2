@@ -1,6 +1,6 @@
 # MyMataSan — Tier 2 (architecture) Plan
 
-Status: **IN PROGRESS** (started 2026-07-13). D1/D2 and now C are done; M and R remain.
+Status: **IN PROGRESS** (started 2026-07-13). D1/D2, C, and now M are done; R remains.
 
 Tier 0 (data-loss correctness, PR #75) and Tier 1 (resilience + metrics, PRs #76/#77) are
 done. Tier 2 is the architectural debt — the tier that decides whether [MyIotSan](./MYIOTSAN_PLAN.md)
@@ -132,25 +132,50 @@ for the full breakdown.
 
 ---
 
-## Phase M — Migrations
+## Phase M — Migrations — **DONE**
 
-The entire migration engine is `ALTER TABLE ADD COLUMN`
-(`infra/db/bootstrap/bootstrap.go`). Consequences today:
+The entire migration engine was `ALTER TABLE ADD COLUMN`
+(`infra/db/bootstrap/bootstrap.go`). Consequences before this phase:
 
 - **Rename** → the new column is added; the old one keeps the data forever. Silent.
 - **Drop** → the column stays forever. A legacy `NOT NULL` column with no default will
   eventually break inserts.
 - **Type change** → **not detected at all.** Only column *names* are compared.
 
-There is no escape hatch. The only lever is `bootstrap.NewSQLSeeder`, and four of the five
-existing seeders are already NULL-backfills compensating for `ADD COLUMN`. Seeders are not
+There was no escape hatch. The only lever was `bootstrap.NewSQLSeeder`, and four of the five
+existing seeders are NULL-backfills compensating for `ADD COLUMN`. Seeders are not
 versioned — they re-run on every boot, so each must be hand-written idempotent.
 
-This works while the schema only grows. It has no answer the first time it doesn't, on an
+This worked while the schema only grew. It had no answer the first time it didn't, on an
 appliance in a customer's building. The cost only rises with the install base.
 
-**Deliverable:** a versioned migration table + ordered up-migrations, running alongside
-(not replacing) the additive auto-migrate, which stays the default path.
+**Shipped:** a versioned migration table (`schema_migration`) + ordered, checksummed
+up-migrations (`infra/db/bootstrap/migration.go`), running **before** (not replacing) the
+additive auto-migrate, which stays the default path for additive changes. A fresh database
+baselines migrations instead of replaying them; an already-applied migration that is later
+edited fails startup loudly (checksum tamper check); MariaDB's lack of transactional DDL is
+documented as a "write it idempotently" constraint rather than papered over. A companion
+drift detector (`infra/db/bootstrap/drift.go`) reports — never auto-repairs — what auto-migrate
+still cannot fix: changed column types and columns the entity no longer declares, comparing
+against the type each engine *actually* stores (not the manifest's engine-neutral type) so it
+doesn't cry wolf on SQLite/MariaDB's differing boolean storage.
+
+`apphost.Migrator` (`infra/apphost/types.go`) is the optional app interface;
+`apps/mymatasan/app/app.go`'s `(*module) Migrations()` implements it and currently returns
+`nil` — mymatasan has no pending structural changes, only additive ones, which need no
+migration. The factory-reset call site also wires `Migrations: m.Migrations()`, so a reset
+correctly baselines the rebuilt database instead of leaving it unable to start on the next
+boot.
+
+15 new tests (`migration_test.go`, `drift_test.go`) against a real SQLite database. Live-boot
+verified twice against mymatasan: `schema_migration` created, fresh boot baselines (zero
+declared migrations), second boot's drift check ran against all 18 real entities with zero
+false positives.
+
+**Follow-up (not done in this phase):** four of mymatasan's five seeders are NULL-backfills
+compensating for `ADD COLUMN` and re-run on every boot; they are now candidates to become
+run-once migrations instead. See `docs/DB_BOOTSTRAP_SPEC.md` for the full mechanism writeup
+and the "how to write a migration" section.
 
 ---
 

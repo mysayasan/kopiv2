@@ -115,7 +115,7 @@ The runtime now uses a reusable multi-app launcher pattern:
 - Readiness check performs DB ping through `IDbCrud.Ping(ctx)`.
 - Repository layer wraps DB errors with `%w` context for diagnostics.
 - Startup bootstrap uses entity reflection to create missing database objects and store a schema manifest hash.
-- Safe schema updates are additive only by default.
+- Safe schema updates are additive only by default. An app can additionally register versioned, checksummed, once-only migrations (`infra/db/bootstrap/migration.go`, `docs/DB_BOOTSTRAP_SPEC.md`) for renames/drops/type-changes the additive path cannot express; they run before auto-migrate, and a fresh database baselines them instead of replaying them. A companion drift detector (`infra/db/bootstrap/drift.go`) reports, but never auto-repairs, schema differences neither path can fix (changed column types, columns the entity no longer declares).
 - Optional initial data can be supplied through config-driven SQL seed statements when bootstrap seeding is enabled.
 - `myidsan` seeds a minimal core identity dataset (`system` group and first-run `superadmin` login account with bcrypt password storage) during bootstrap. The shared accessrbac core (`EnsureBuiltins`) seeds the `superadmin` and `viewer` roles on startup for any app that enables `AccessRbac` in its `SharedAPIConfig`.
 - The app seeds wildcard-host endpoint rows with access tiers for protected API modules so rate-limit classification and endpoint catalog metadata are ready on a fresh install. Protected shared management APIs seed as `DevOnly`. Per-endpoint RBAC seed rows are no longer inserted; the bootstrap `superadmin` bypasses the accessrbac matrix entirely.
@@ -406,4 +406,7 @@ At least one explicit TLS or non-TLS port must be configured. The same port cann
 
 - Not a monolithic framework generator.
 - Not optimized for distributed stream processing across nodes.
-- Not a schema migration framework.
+- Not a general-purpose schema migration framework (e.g. no down-migrations, no CLI
+  generator) — `infra/db/bootstrap/migration.go` covers the narrower, appliance-specific
+  need: versioned up-only migrations for what additive auto-migrate cannot express, run
+  automatically at startup.

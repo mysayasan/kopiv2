@@ -206,7 +206,7 @@ Bootstrap behavior is controlled by `bootstrap` in config:
 - `enabled`: turn startup provisioning on or off
 - `autoCreateDatabase`: create the database if missing
 - `autoCreateSchema`: create missing tables and columns
-- `autoMigrate`: apply safe additive migrations
+- `autoMigrate`: apply safe additive migrations (`ADD COLUMN`, new tables/indexes). Versioned structural migrations (renames/drops/type-changes an app registers via `apphost.Migrator`, `infra/db/bootstrap/migration.go`) run whenever `bootstrap.enabled` is true, independent of this flag — there is currently no separate on/off switch for them
 - `autoSeed`: run seed providers if registered
 - `allowReset`: enables destructive reset (default false). In `mymatasan` it gates the **Secure Wipe & Reset** factory reset (`bootstrap.Reset` + `POST /api/system/reset`), which crypto-erases the at-rest key, erases all media, drops/rebuilds the database, and TRIM/scrubs the freed space (see `security.encryptAtRest` and `infra/atrest`)
 - `setupPath`: reserved for bootstrap/setup UI routing
