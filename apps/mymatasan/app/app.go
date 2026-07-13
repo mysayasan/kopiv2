@@ -300,16 +300,12 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	pairingService := services.NewPairingService(runtimeSettingsRepo, atrestCipher, "", "")
 	localUserService := services.NewLocalUserService(localUserRepo)
 	shredPasses := resolveShredPasses(deps.Config)
-	// At-rest recording codec is runtime-editable (Settings → Recording); read the
-	// effective value (seeded from config) so a UI change survives restart.
+	// The at-rest recording codec is NOT captured here any more: RecorderConfigBuilder
+	// reads it live on every build, so a Settings → Recording change applies the next time
+	// a recorder is configured instead of waiting for a restart. Only the NVENC semaphore
+	// is sized from the boot-time value, because it must be set before any recorder starts.
 	recSettings, _ := settingsService.Recording(context.Background())
-	recStorage := recSettings.Storage
-	recordCodec, recordQuality := recStorage.Codec, recStorage.Quality
-	// Auto-fallback to stream-copy when the GPU re-encode can't run; defaults on.
-	recordFallbackCopy := recStorage.FallbackToCopy == nil || *recStorage.FallbackToCopy
-	// Size the shared NVENC semaphore before any recorder starts so remux-time
-	// re-encoding (and playback transcode) never oversubscribes the GPU.
-	recording.SetNVENCConcurrency(recStorage.MaxConcurrentEncodes)
+	recording.SetNVENCConcurrency(recSettings.Storage.MaxConcurrentEncodes)
 	recordingService := services.NewRecordingService(recordingSegmentRepo, recordingConfigRepo, shredPasses)
 	// Metadata recorder: logs "what objects each camera saw" as searchable presence
 	// intervals, reusing the detector's inference (no second decode). The recorder is
@@ -382,12 +378,12 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 			}
 		}
 	}
-	// Resolve ffmpeg path and RTSP transport from persisted settings.
+	// Resolve the ffmpeg path from persisted settings, for the live-view bridge and the
+	// NVENC probe. Recorders no longer read it from here — RecorderConfigBuilder resolves
+	// it (and the RTSP transport) live on every build.
 	ffmpegPath := ""
-	rtspTransport := ""
 	if dec, err := settingsService.Decoder(context.Background()); err == nil {
 		ffmpegPath = dec.MJPEG.FFmpegPath
-		rtspTransport = dec.FFmpeg.RTSPTransport
 	}
 
 	// ffmpegPath lets the live-view bridge transcode non-G.711 camera audio (AAC,
@@ -456,60 +452,45 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		appVersion(m.Name()),
 		atrestCipher,
 	)
-	siphonFPS, siphonWidth := services.SiphonTeeParams(settingsService)
-	siphonHWAccel, siphonHWDevice, siphonInitHWDevice, siphonVideoDecoder := services.SiphonDecoderParams(settingsService)
-	if cfgs, err := recordingService.ListConfigs(context.Background()); err == nil {
+	// One builder, used by every site that needs to turn a stored recording config into a
+	// runnable recorder: this startup fan-out, the settings-save handler, and the
+	// detect-only stream resolver. They used to each construct a RecorderConfig by hand,
+	// which is how ShredPasses got silently dropped and how the at-rest codec ended up
+	// captured at boot.
+	recorderConfigBuilder := services.NewRecorderConfigBuilder(
+		cameraService, recordingService, settingsService, atrestCipher, shredPasses, deps.Metrics,
+	)
+
+	if cfgs, err := recordingService.ListConfigs(context.Background()); err != nil {
+		// Previously swallowed: on error the whole fan-out was skipped and recording
+		// silently never started.
+		deps.Logger.Warnf("mymatasan.recording", "could not list recording configs at startup — no recorder started: %v", err)
+	} else {
 		var wg sync.WaitGroup
 		for _, cfg := range cfgs {
 			wg.Add(1)
 			go func(cfg *appentities.RecordingConfig) {
 				defer wg.Done()
-				// Prefer the explicit StreamURL override; fall back to the ONVIF-discovered URI.
-				// Always fetch device credentials so they can be injected into bare URLs.
-				rtspURI := strings.TrimSpace(cfg.StreamURL)
-				fallbackURI := strings.TrimSpace(cfg.FallbackStreamUrl)
-				if src, err := cameraService.SnapshotSource(context.Background(), uint64(cfg.CameraId)); err == nil {
-					if rtspURI == "" {
-						rtspURI = src.RTSPURI
-					} else {
-						rtspURI = services.RTSPURIWithCredentials(rtspURI, src.Username, src.Password)
-					}
-					fallbackURI = services.RTSPURIWithCredentials(fallbackURI, src.Username, src.Password)
+				recCfg, warning := recorderConfigBuilder.ForRecording(context.Background(), cfg)
+				if warning != "" {
+					deps.Logger.Warnf("mymatasan.recording", "cam%d: %s", cfg.CameraId, warning)
 				}
-				_ = recorderManager.Configure(recording.RecorderConfig{
-					CameraId:           cfg.CameraId,
-					Enabled:            cfg.Enabled,
-					PreRollSec:         cfg.PreRollSec,
-					PostRollSec:        cfg.PostRollSec,
-					StoragePath:        cfg.StoragePath,
-					FFmpegPath:         ffmpegPath,
-					RTSPTransport:      rtspTransport,
-					RTSPURI:            rtspURI,
-					FallbackRTSPURI:    fallbackURI,
-					SegmentMinutes:     cfg.SegmentMinutes,
-					RetentionDays:      cfg.RetentionDays,
-					SiphonFPS:          siphonFPS,
-					SiphonWidth:        siphonWidth,
-					HWAccel:            siphonHWAccel,
-					HWAccelDevice:      siphonHWDevice,
-					InitHWDevice:       siphonInitHWDevice,
-					VideoDecoder:       siphonVideoDecoder,
-					ShredPasses:        shredPasses,
-					RecordCodec:        recordCodec,
-					RecordQuality:      recordQuality,
-					RecordFallbackCopy: recordFallbackCopy,
-					Cipher:             atrestCipher,
-					Metrics:            deps.Metrics,
-				})
+				if err := recorderManager.Configure(recCfg); err != nil {
+					deps.Logger.Warnf("mymatasan.recording", "cam%d: configure recorder: %v", cfg.CameraId, err)
+				}
 			}(cfg)
 		}
 		wg.Wait()
 	}
 	// Warm the NVENC capability probe in the background when the storage codec
 	// re-encodes, so the recording-storage status endpoint (and its incompatibility
-	// warning) answers instantly instead of running ffmpeg on the first request.
-	if recording.ReEncodes(recordCodec) {
-		go recording.StorageCodecUsable(ffmpegPath, recordCodec)
+	// warning) answers instantly instead of running ffmpeg on the first request. This is
+	// a cache warm-up, so the boot-time codec is the right value to use even though the
+	// recorders themselves now read it live.
+	if bootCodec := recSettings.Storage.Codec; recording.ReEncodes(bootCodec) {
+		safego.Go("mymatasan.recording.nvenc-probe", func() {
+			recording.StorageCodecUsable(ffmpegPath, bootCodec)
+		})
 	}
 
 	// Built before route registration so the camera API can expose an on-demand
@@ -636,7 +617,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	ffmpegInstaller := services.NewFFmpegInstaller(ffmpegBinDir, settingsService)
 	pythonInstaller := services.NewPythonInstaller(deps.DataDir, deps.ConfigPath)
 	apis.NewSettingsApi(protected, settingsService, cameraService, localUserService, notificationSettingsService, healthSettingsService, machineHealthSettingsService, machineHealthMonitor, visionToolSettingsFromAppConfig(deps.Config), ffmpegInstaller, pythonInstaller, deps.Config.Decoder.BrowseRoots)
-	apis.NewRecordingApi(protected, recordingService, recorderManager, cameraService, settingsService, atrestCipher, visionService, shredPasses, deps.Metrics)
+	apis.NewRecordingApi(protected, recordingService, recorderManager, cameraService, settingsService, atrestCipher, visionService, recorderConfigBuilder)
 	apis.NewObservationApi(protected, observationService)
 	apis.NewNotificationApi(protected, notificationService)
 	apis.NewAnomalyApi(protected, anomalySettingsService, notificationService, cameraService)
@@ -691,51 +672,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// selection + credential injection + siphon params as the real recorder so the
 	// AI sees the same stream it would record. Prefers the detection/recording stream,
 	// then the configured live-view stream, then the camera's discovered RTSP URI.
-	monitorSettings.DetectStreamConfig = func(ctx context.Context, cameraID int64) (recording.RecorderConfig, bool) {
-		var streamURL, fallbackURL, liveURL string
-		if rcfg, err := recordingService.GetConfig(ctx, cameraID); err == nil && rcfg != nil {
-			streamURL = strings.TrimSpace(rcfg.StreamURL)
-			fallbackURL = strings.TrimSpace(rcfg.FallbackStreamUrl)
-			liveURL = strings.TrimSpace(rcfg.LiveStreamUrl)
-		}
-		var username, password, discovered string
-		if src, err := cameraService.SnapshotSource(ctx, uint64(cameraID)); err == nil {
-			username, password, discovered = src.Username, src.Password, src.RTSPURI
-		}
-		pick := streamURL
-		if pick == "" {
-			pick = liveURL
-		}
-		rtspURI := discovered
-		if pick != "" {
-			rtspURI = services.RTSPURIWithCredentials(pick, username, password)
-		}
-		if strings.TrimSpace(rtspURI) == "" {
-			return recording.RecorderConfig{}, false
-		}
-		fallbackURI := ""
-		if fallbackURL != "" {
-			fallbackURI = services.RTSPURIWithCredentials(fallbackURL, username, password)
-		}
-		siphonFPS, siphonWidth := services.SiphonTeeParams(settingsService)
-		hwaccel, hwDevice, initHWDevice, videoDecoder := services.SiphonDecoderParams(settingsService)
-		return recording.RecorderConfig{
-			CameraId:        cameraID,
-			Enabled:         true,
-			DetectOnly:      true,
-			FFmpegPath:      ffmpegPath,
-			RTSPTransport:   rtspTransport,
-			RTSPURI:         rtspURI,
-			FallbackRTSPURI: fallbackURI,
-			SiphonFPS:       siphonFPS,
-			SiphonWidth:     siphonWidth,
-			HWAccel:         hwaccel,
-			HWAccelDevice:   hwDevice,
-			InitHWDevice:    initHWDevice,
-			VideoDecoder:    videoDecoder,
-			Metrics:         deps.Metrics,
-		}, true
-	}
+	monitorSettings.DetectStreamConfig = recorderConfigBuilder.ForDetectOnly
 	if monitorSettings.Enabled {
 		// Warm the detector model once at startup, uncapped, so the first live-detection
 		// inference doesn't hit the per-frame timeout on a cold GPU/CUDA model load —
