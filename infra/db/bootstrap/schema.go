@@ -125,8 +125,19 @@ func buildTableSpec(item any) (TableSpec, error) {
 		// form one composite index, ordered by field declaration (so put the higher-
 		// selectivity / equality column first). Used to keep range+sort queries off
 		// full-table scans as tables grow.
-		if group := field.Tag.Get("idx"); group != "" {
-			indexGroups[group] = append(indexGroups[group], columnName)
+		//
+		// A field may join several indexes by listing them comma-separated —
+		// idx:"cam_time,time" puts the column in both. A timestamp column typically
+		// needs this: it is the trailing column of a scoped composite index AND the
+		// sole column of the index a retention purge scans.
+		if groups := field.Tag.Get("idx"); groups != "" {
+			for _, group := range strings.Split(groups, ",") {
+				group = strings.TrimSpace(group)
+				if group == "" {
+					continue
+				}
+				indexGroups[group] = append(indexGroups[group], columnName)
+			}
 		}
 		columns = append(columns, column)
 	}

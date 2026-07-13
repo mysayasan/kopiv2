@@ -104,7 +104,7 @@ Recommended tags:
 - foreign key hint
 - seed hint when needed
 
-Two of these are implemented as concrete struct tags read by `infra/db/bootstrap/schema.go`: `ukey:"group"` groups fields into a **unique** index, `idx:"group"` groups fields into a **non-unique** secondary index (composite when more than one field shares the group name, column order = field declaration order). Both are reconciled the same way on every bootstrap run (`ensureIndexes` in `infra/db/bootstrap/bootstrap.go`, `CREATE [UNIQUE] INDEX IF NOT EXISTS`), so adding an `idx` tag to an existing entity is a safe additive migration — no hand-written seeder needed for a plain composite index.
+Two of these are implemented as concrete struct tags read by `infra/db/bootstrap/schema.go`: `ukey:"group"` groups fields into a **unique** index, `idx:"group"` groups fields into a **non-unique** secondary index (composite when more than one field shares the group name, column order = field declaration order). A field may join multiple `idx` groups by listing them comma-separated (`idx:"cam_time, time"`) — useful for a trailing timestamp column that is both the last column of a scoped composite index and the sole column of the plain index a retention purge scans. Both are reconciled the same way on every bootstrap run (`ensureIndexes` in `infra/db/bootstrap/bootstrap.go`, `CREATE [UNIQUE] INDEX IF NOT EXISTS`), so adding an `idx` tag to an existing entity is a safe additive migration — no hand-written seeder needed for a plain composite index.
 
 Example intent:
 

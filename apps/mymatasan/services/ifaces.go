@@ -544,6 +544,10 @@ type IRecordingService interface {
 	// PurgeAllForCamera deletes every recorded segment for one camera regardless of
 	// expiry (files + rows). Powers the per-camera "Purge now" action.
 	PurgeAllForCamera(ctx context.Context, cameraId int64) (int, error)
+	// DeleteConfigForCamera removes a camera's recording config. Part of the
+	// camera-delete cascade; call it only after that camera's segments are purged,
+	// since retention is driven off this row.
+	DeleteConfigForCamera(ctx context.Context, cameraId int64) error
 	// PurgeOldestSegments deletes the oldest recorded segments regardless of
 	// per-camera retention, oldest first, until roughly wantBytes have been freed.
 	// Segments that started at or after keepAfter are never touched (safety
@@ -557,6 +561,10 @@ type IVisionService interface {
 	GetRules(ctx context.Context, limit uint64, offset uint64) ([]*entities.DetectionRule, uint64, error)
 	SaveRule(ctx context.Context, req DetectionRuleRequest, userId int64) (*entities.DetectionRule, error)
 	DeleteRule(ctx context.Context, id uint64) (uint64, error)
+	// DeleteRulesForCamera removes every rule belonging to one camera. Part of the
+	// camera-delete cascade: an orphaned rule keeps the vision monitor sampling a
+	// camera that no longer exists.
+	DeleteRulesForCamera(ctx context.Context, cameraId int64) (int, error)
 	GetAlerts(ctx context.Context, limit uint64, offset uint64, cameraId int64, status string, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.AlertEvent, uint64, error)
 	GetAlertById(ctx context.Context, id uint64) (*entities.AlertEvent, error)
 	CreateAlert(ctx context.Context, req AlertEventRequest, userId int64) (*entities.AlertEvent, error)

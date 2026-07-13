@@ -44,6 +44,7 @@ Declares service contracts for app-specific domain.
 - `IVisionService`
   - `GetRules(ctx, limit, offset)` and `SaveRule(ctx, req, userId)` for detection rule management
   - `DeleteRule(ctx, id)` for removing stale rules
+  - `DeleteRulesForCamera(ctx, cameraId)` — removes every rule belonging to one camera, in batches of 500. Part of the camera-delete cascade: an orphaned rule keeps the vision monitor sampling a camera that no longer exists.
   - `GetAlerts(ctx, limit, offset, cameraId, status, filters, sorters)` — paginated alert list. `cameraId` and `status` remain mandatory base constraints; `filters`/`sorters` (`[]sqldataenums.Filter`/`[]sqldataenums.Sorter`) come straight from the client `DataTable` (server mode) so the grid's column filters and sort run as true DB-side `WHERE`/`ORDER BY` clauses instead of a client-side slice. Defaults to `CreatedAt DESC` when no sort is supplied.
   - `CreateAlert(ctx, req, userId)` for alert event persistence
   - `AcknowledgeAlert(ctx, id, userId)` for operator acknowledgement
@@ -81,6 +82,7 @@ Declares service contracts for app-specific domain.
   - `SaveConfig(ctx, req SaveRecordingConfigRequest)` — upsert by camera ID
   - `PurgeOldSegments(ctx)` — removes clips older than `RetentionDays` for each enabled config
   - `PurgeAllForCamera(ctx, cameraId)` — deletes EVERY recorded segment for one camera regardless of expiry (files + rows), oldest-first in batches of 500. Returns the count deleted. Powers the per-camera "Purge now" action (`POST /api/recording/purge-camera`).
+  - `DeleteConfigForCamera(ctx, cameraId)` — removes a camera's recording config row. Part of the camera-delete cascade (`app.go`); call only after that camera's segments are purged, since retention is driven off this row.
   - `PurgeOldestSegments(ctx, keepAfter, wantBytes)` — deletes the oldest recorded segments across all cameras regardless of per-camera retention, oldest `StartedAt` first, stopping once roughly `wantBytes` have been freed; segments starting at or after `keepAfter` (unix seconds) are never touched. Returns `(deletedCount, bytesFreed, error)`. Backs the machine-health monitor's disk-mitigation "overwrite oldest" mode.
 
 ## Key Request Types
@@ -100,6 +102,11 @@ Declares service contracts for app-specific domain.
 - `VisionAlertOptions` — extra per-alert notification context (`RuleName`, `Snapshot []byte`, `Fields *AlertNotificationSettings`) passed to `NotifyVisionAlert`.
 - `LPRCapabilityResult` — `{supported, onvif, width, height, rtspUrl, detail}` describing whether a camera can supply plate-legible frames and (for ONVIF cameras) the highest-resolution profile's RTSP URL for auto-pick capture.
 - `CaptureLPRSettings` — `{frameWidth int}` tuning the standalone high-res frame grabbed for LPR cameras (default 1920 px).
+
+## Camera-delete cascade seam
+
+- `CameraCleanupFunc(ctx, cameraId) error` — one subsystem's teardown for a camera being deleted, defined in `services/camera.go`.
+- `CameraDeletionCascade` — `AddCameraCleanup(fn CameraCleanupFunc)`, a wiring-time-only interface (deliberately not part of `ICameraService`) that owning subsystems use to register their cleanup in `app.go`. `cameraService.Delete` runs every registered cleanup before deleting the camera row; any cleanup error aborts the delete.
 
 ## Why It Matters
 

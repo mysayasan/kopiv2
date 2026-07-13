@@ -14,6 +14,7 @@ Implements `ObservationService`, the read/maintenance side of the object metadat
 - `pickCovering(candidates, at)` — from newest-first candidates, returns the segment spanning `at`, preferring a continuous segment (`AlertId == 0`, full footage/accurate seeking) over an event clip that also happens to span it.
 - `Labels(ctx, cameraId)` — distinct object labels observed for a camera (or all cameras), scanning a bounded window of recent rows (2000) rather than a `DISTINCT` query, keeping it engine-agnostic. Backs the search UI's label filter list.
 - `PurgeOldObservations(ctx)` — deletes presence intervals past retention: each camera's own `RecordingConfig.RetentionDays` wins when set, else `defaultObservationRetentionDays` (30). Batches deletes 500 rows at a time by ascending `EndedAt`. Returns the count deleted.
+- `PurgeAllForCamera(ctx, cameraId)` — deletes EVERY observation belonging to one camera regardless of age, batched 500 rows at a time. Part of the camera-delete cascade (`app.go`): once the camera's recording config is gone, retention (which is driven off that config) would never purge these rows again.
 
 ## Notes
 

@@ -385,6 +385,44 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// ffmpeg process launches happen in parallel across all cameras.
 	recorderManager := recording.NewManager(recordingService)
 
+	// Camera-delete cascade. Deleting a camera row alone left its recorder running
+	// (ffmpeg still connected, still writing segments) and its detection rules alive
+	// (the vision monitor kept sampling a camera that no longer existed, logging a
+	// capture-failed diagnostic every interval) — both until the next restart. It also
+	// stranded the camera's footage: retention is driven off the recording config, so
+	// with the camera gone nothing would ever purge it.
+	//
+	// Cleanups run in order and any failure aborts the delete, so a camera is never
+	// half-removed. Registered here rather than inside the camera service because the
+	// camera service owns none of these subsystems.
+	if cascade, ok := cameraService.(services.CameraDeletionCascade); ok {
+		// Stop the writers first, so nothing is producing new segments while we purge.
+		cascade.AddCameraCleanup(func(_ context.Context, cameraId int64) error {
+			recorderManager.StopDetectionStream(cameraId)
+			return recorderManager.Configure(recording.RecorderConfig{CameraId: cameraId, Enabled: false})
+		})
+		cascade.AddCameraCleanup(func(ctx context.Context, cameraId int64) error {
+			_, err := recordingService.PurgeAllForCamera(ctx, cameraId)
+			return err
+		})
+		cascade.AddCameraCleanup(func(ctx context.Context, cameraId int64) error {
+			_, err := observationService.PurgeAllForCamera(ctx, cameraId)
+			return err
+		})
+		cascade.AddCameraCleanup(func(ctx context.Context, cameraId int64) error {
+			_, err := visionService.DeleteRulesForCamera(ctx, cameraId)
+			return err
+		})
+		cascade.AddCameraCleanup(func(ctx context.Context, cameraId int64) error {
+			_, err := visionService.PurgeAlertsForCamera(ctx, cameraId)
+			return err
+		})
+		// Last: the config row that the purges above are driven from.
+		cascade.AddCameraCleanup(func(ctx context.Context, cameraId int64) error {
+			return recordingService.DeleteConfigForCamera(ctx, cameraId)
+		})
+	}
+
 	// Teach wizard: skill registry + session capture engine. Constructed here
 	// (not with the other services) because its frame source needs the recorder
 	// manager for the siphon path.
@@ -583,7 +621,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	ffmpegInstaller := services.NewFFmpegInstaller(ffmpegBinDir, settingsService)
 	pythonInstaller := services.NewPythonInstaller(deps.DataDir, deps.ConfigPath)
 	apis.NewSettingsApi(protected, settingsService, cameraService, localUserService, notificationSettingsService, healthSettingsService, machineHealthSettingsService, machineHealthMonitor, visionToolSettingsFromAppConfig(deps.Config), ffmpegInstaller, pythonInstaller, deps.Config.Decoder.BrowseRoots)
-	apis.NewRecordingApi(protected, recordingService, recorderManager, cameraService, settingsService, atrestCipher, visionService)
+	apis.NewRecordingApi(protected, recordingService, recorderManager, cameraService, settingsService, atrestCipher, visionService, shredPasses)
 	apis.NewObservationApi(protected, observationService)
 	apis.NewNotificationApi(protected, notificationService)
 	apis.NewAnomalyApi(protected, anomalySettingsService, notificationService, cameraService)

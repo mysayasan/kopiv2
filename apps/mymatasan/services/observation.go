@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -285,6 +286,38 @@ func (s *ObservationService) Labels(ctx context.Context, cameraId int64) ([]stri
 		labels = append(labels, l)
 	}
 	return labels, nil
+}
+
+// PurgeAllForCamera deletes every observation belonging to one camera, regardless of
+// age. Used by the camera-delete cascade — retention is driven off the camera's
+// recording config, so once that is gone these rows would never be purged again.
+func (s *ObservationService) PurgeAllForCamera(ctx context.Context, cameraId int64) (int, error) {
+	if cameraId <= 0 {
+		return 0, fmt.Errorf("cameraId is required")
+	}
+	filters := []sqldataenums.Filter{
+		{FieldName: "CameraId", Compare: sqldataenums.Equal, Value: cameraId},
+	}
+	deleted := 0
+	for {
+		batch, _, err := s.repo.Get(ctx, "", 500, 0, filters, nil)
+		if err != nil {
+			return deleted, err
+		}
+		if len(batch) == 0 {
+			return deleted, nil
+		}
+		progressed := false
+		for _, row := range batch {
+			if _, err := s.repo.DeleteById(ctx, "", uint64(row.Id)); err == nil {
+				deleted++
+				progressed = true
+			}
+		}
+		if !progressed {
+			return deleted, nil
+		}
+	}
 }
 
 // PurgeOldObservations deletes presence intervals past retention. Per-camera recording

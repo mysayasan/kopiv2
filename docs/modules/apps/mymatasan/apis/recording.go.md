@@ -117,6 +117,7 @@ Body: `{"rtspUrl": "rtsp://..."}`. Updates the camera's configured live-view RTS
 
 ## Notes
 
+- `NewRecordingApi` takes a `shredPasses int` argument (the boot-time `recording.shred` config value) and carries it on `recordingApi.shredPasses`, threading it into every `recording.RecorderConfig` the handler rebuilds on `PUT /api/recording/config`. Previously this was omitted, so saving *any* recording setting in the UI silently rebuilt the recorder with `ShredPasses=0`, degrading secure shred to a plain unlink for that camera's retention purge until the next restart.
 - All routes are mounted under the protected subrouter and require local Basic Auth.
 - The download endpoint opens the file by path stored in the segment row; if the file has been deleted manually it returns a `400` error.
 - `Content-Length` is set from the stored `FileSize` only on the plaintext pass-through path (not when decrypting or transcoding, which stream without a known length). Range responses instead get `Content-Length`/`Content-Range` from `http.ServeContent` against the (possibly materialized) seekable source.

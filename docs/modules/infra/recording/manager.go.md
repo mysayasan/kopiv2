@@ -9,6 +9,7 @@ Provides the app-level entry point for the recording module, holding all per-cam
 - Create and manage a map of per-camera recorders keyed by camera ID.
 - Add or replace a camera recorder via `Configure`; start RTSP recorders immediately and remove the existing recorder cleanly before replacing it.
 - Remove a camera recorder when `cfg.Enabled` is false.
+- `Pause` and `Close` shut down every held recorder concurrently via the package-level `closeAll` helper (one goroutine per recorder, `sync.WaitGroup`) rather than serially — `rtspRecorder.Close` now blocks (bounded by `remuxDrainTimeout`) until that camera's in-flight segment finalization unwinds, so closing a large fleet one at a time would otherwise add each camera's drain wait together.
 - Dispatch `WriteFrame` calls to the matching camera recorder under a read lock.
 - Dispatch `TriggerEvent(cameraId, alertId, frameCapturedAt)` calls to the matching camera recorder under a read lock. `frameCapturedAt` is the Unix second timestamp of the frame that produced the alert; pass `0` to fall back to the current wall clock (used by the manual alert API).
 - Return a `[]CameraStatus` snapshot via `Statuses()` for all configured cameras; used by the `/api/recording/status` endpoint to power the live recorder status panel.
