@@ -37,6 +37,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-13 — mymatasan 1.97.2, core 1.56.2 (d57968d)
+
+### Fixed
+
+- **mymatasan,core**: Tier 1 resilience hardening: a new shared infra/safego package gives background goroutines panic recovery (safego.Go, one-shot) and recover-and-restart-with-backoff supervision (safego.Supervise, long-lived loops). Before this, the repo had exactly one recover() anywhere, so a single malformed AI detection in the per-camera vision sampler could panic and kill the entire NVR process (recording, API, everything); the vision monitor, camera/machine health monitors, object-metadata recorder, RTSP recorder's ffmpeg/segment-watch/purge goroutines, the discovery responder, and detector warmup are now wired through safego, and mymatasan's app logger is set as safego's panic sink at startup. In apps/mymatasan/app/app.go, the three near-identical copy-pasted retention purge goroutines (segments+observations, notifications, alerts) were collapsed into one supervised periodic() helper, and previously-swallowed purge errors are now logged. Separately, AI rule cooldown now survives a restart: cooldown state was purely in-process and started empty on every boot, so a busy scene re-fired the instant minFrames was met after any restart, and a crash-restart loop could turn a rule's cooldown into an alert storm, a notification storm, and an ffmpeg clip-extraction storm. A rule's already-persisted LastTriggeredAt (loaded from the DB but never previously read back into the cooldown check, and never written to) now seeds the in-process cooldown map on first sight of the rule (infra/vision/cooldown.go), and the vision monitor now writes the trigger time back via a new IVisionService.MarkRuleTriggered after each sample. A dropped CreateAlert call is now logged instead of silently discarded.
 ## 2026-07-13 — mymatasan 1.97.1, core 1.56.1 (405d5af)
 
 ### Fixed
