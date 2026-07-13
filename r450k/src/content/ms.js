@@ -42,7 +42,7 @@ const U = [
 
 const A = [
   { s: 'Perdana · dalam pembangunan aktif', b: 'Nod kamera & risikan video edge berdiri sendiri: ONVIF, pengesanan AI, NVR, paparan langsung WebRTC, penyulitan, dan pemadanan LAN.' },
-  { s: 'Satah kawalan', b: 'Satah kawalan armada yang menemui, mengguna, dan mengurus nod edge, serta menyampaikan strim kamera langsung mereka kepada operator.' },
+  { s: 'Satah kawalan · tersedia sekarang', b: 'Satah kawalan armada yang menemui, mengguna, dan mengurus nod edge, serta menyampaikan strim kamera langsung mereka kepada operator.' },
   { s: 'Identiti', b: 'Identiti dan akses dikongsi: pengesahan JWT, SSO, dan kawalan akses berasaskan peranan merentas platform.' },
 ];
 
@@ -128,9 +128,21 @@ export default {
   },
   downloads: {
     ...en.downloads,
-    kicker: 'Dapatkan MyMataSan',
+    kicker: 'Dapatkan aplikasi',
     title: 'Muat turun & host sendiri.',
-    subtitle: 'Nod edge mymatasan ialah satu pemasangan. Pilih platform anda — UI web, skrip pekerja AI, dan konfigurasi lalai disertakan.',
+    subtitle: 'Jalankan satu nod di satu lokasi, atau seluruh armada dari satu control plane. Kedua-duanya satu pemasangan sahaja, lengkap dengan UI web dan konfigurasi lalai.',
+    products: {
+      mymatasan: {
+        name: 'MyMataSan',
+        tagline: 'Nod edge — satu pemasangan bagi setiap lokasi. Kamera ONVIF, pengesanan AI atas peranti, rakaman NVR dan paparan langsung WebRTC. Disertakan UI web, skrip pekerja AI dan konfigurasi lalai.',
+        dockerHint: 'Jalankan imej berbilang-seni bina (ffmpeg disertakan):',
+      },
+      myseliasan: {
+        name: 'MySeliaSan',
+        tagline: 'Control plane armada — temui, ambil alih dan urus banyak nod MyMataSan dari satu tempat, serta lihat kamera mereka tanpa sekali pun mendedahkan nod. Satu binari Go tulen: tiada ffmpeg, tiada Python.',
+        dockerHint: 'Jalankan imej berbilang-seni bina:',
+      },
+    },
     license: 'Percuma untuk kegunaan peribadi dan bukan komersial — individu, badan bukan untung, pendidikan, dan penyelidikan. Kegunaan komersial atau dalam perniagaan, dan sebarang penjualan semula, memerlukan lesen komersial.',
     latest: 'Keluaran terkini',
     dockerHint: 'Jalankan imej berbilang-seni bina (ffmpeg disertakan):',

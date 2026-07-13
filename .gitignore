@@ -8,10 +8,12 @@ logs
 # generated Windows resource objects (icon + version info; produced in CI/local
 # builds by goversioninfo, arch-suffixed so Go links them per-target)
 cmd/mymatasan/*.syso
+cmd/myseliasan/*.syso
 
 # goreleaser build output
 /dist/
 /packaging/staging/
+/packaging/staging-myseliasan/
 
 # make build output (per-app)
 apps/*/bin/

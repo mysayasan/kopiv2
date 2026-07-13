@@ -1,0 +1,182 @@
+# GoReleaser config for MySeliaSan — the fleet control plane (github.com/mysayasan/kopiv2,
+# app=myseliasan). The mymatasan node has its own config at .goreleaser.yaml.
+#
+# Produces, from one `goreleaser release`:
+#   - cross-compiled binaries: linux/windows/darwin x amd64/arm64 (pure Go, CGO off)
+#   - .tar.gz (linux/macOS) / .zip (windows) archives bundling the web UI, a default
+#     config, and the service unit files
+#   - .deb / .rpm packages that install to /opt/myseliasan with a systemd unit
+#   - multi-arch Docker images (see the `dockers` / `docker_manifests` blocks)
+#
+# ── Two things here differ from mymatasan's config, both deliberate ────────────────
+#
+# 1. `release: disable: true`. myseliasan is released under its OWN tag namespace,
+#    `myseliasan-v<ver>`, so its releases never collide with mymatasan's `v<ver>` tags
+#    and never become the repo's "latest" release (which mymatasan's in-app updater
+#    reads). GoReleaser OSS cannot derive a clean semver from a prefixed tag — the
+#    monorepo/tag_prefix feature is Pro-only — so the workflow instead exports
+#    GORELEASER_CURRENT_TAG=v<ver> to give GoReleaser a plain version, and publishes the
+#    GitHub Release itself with `gh release create myseliasan-v<ver> --latest=false`.
+#    That is also why CI passes --skip=validate: the checked-out git tag intentionally
+#    does not match GORELEASER_CURRENT_TAG.
+#
+# 2. No ffmpeg/Python/model payload. myseliasan is pure Go — media is relayed in-process
+#    via pion/webrtc — so there is no `ai/` dir and no nfpm `dependencies:`.
+#
+# Local dry run (no publish):
+#   GORELEASER_CURRENT_TAG=v1.9.0 goreleaser release -f .goreleaser.myseliasan.yaml \
+#     --clean --skip=validate,publish,docker
+#
+# The web bundle (apps/myseliasan/static) must be built first (`make web APP=myseliasan`)
+# and committed; CI does not rebuild it (that would dirty the tree).
+version: 2
+
+project_name: myseliasan
+
+before:
+  hooks:
+    - go mod download
+    # Embed the brand icon + version metadata into the Windows exe. Emits
+    # cmd/myseliasan/*_windows_<arch>.syso (gitignored, so the tree stays clean); Go
+    # links the matching one per Windows target.
+    - bash packaging/gen-winres.sh {{ .Version }} myseliasan
+    # Assemble the archive payload (web UI, default config, service files) under
+    # packaging/staging-myseliasan/ with the exact home-dir layout.
+    - bash packaging/stage-archive-myseliasan.sh
+
+builds:
+  - id: myseliasan
+    main: ./cmd/myseliasan
+    binary: myseliasan
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: myseliasan
+    ids:
+      - myseliasan
+    # The `myseliasan_` prefix is load-bearing, not cosmetic: mymatasan's in-app updater
+    # matches release assets by name, so the product prefix is what keeps the two
+    # products' archives distinguishable.
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    # Payload assembled by packaging/stage-archive-myseliasan.sh (before-hook). Each
+    # concrete dir src is copied recursively under its dst, landing at the archive root
+    # as static/, deploy/, config.json (alongside the binary).
+    files:
+      - src: packaging/staging-myseliasan/static
+        dst: static
+      - src: packaging/staging-myseliasan/deploy
+        dst: deploy
+      - src: packaging/staging-myseliasan/config.json
+        dst: config.json
+
+nfpms:
+  - id: myseliasan
+    package_name: myseliasan
+    ids:
+      - myseliasan
+    vendor: mysayasan
+    homepage: https://github.com/mysayasan/kopiv2
+    maintainer: mysayasan <mysayasan@gmail.com>
+    description: MySeliaSan — fleet control plane for MyMataSan camera nodes.
+    license: PolyForm-Noncommercial-1.0.0
+    formats:
+      - deb
+      - rpm
+    # Everything installs under /opt/myseliasan (flat home == data layout matching the
+    # shipped systemd unit). The binary goes to /opt/myseliasan/myseliasan.
+    bindir: /opt/myseliasan
+    contents:
+      - src: apps/myseliasan/static
+        dst: /opt/myseliasan/static
+      - src: deploy/dist/myseliasan-config.json
+        dst: /opt/myseliasan/config.json
+        type: "config|noreplace"
+      - src: deploy/nfpm/myseliasan.service
+        dst: /etc/systemd/system/myseliasan.service
+    scripts:
+      postinstall: deploy/nfpm/myseliasan-postinstall.sh
+      preremove: deploy/nfpm/myseliasan-preremove.sh
+      postremove: deploy/nfpm/myseliasan-postremove.sh
+    # No `dependencies:` — pure Go, nothing to pull in.
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
+
+# The GitHub Release is created by the workflow (gh release create) under the
+# myseliasan-v<ver> tag with --latest=false, NOT by GoReleaser. See the header.
+release:
+  disable: true
+
+dockers:
+  - id: myseliasan-amd64
+    goos: linux
+    goarch: amd64
+    dockerfile: deploy/Dockerfile.myseliasan.release
+    use: buildx
+    image_templates:
+      - "ghcr.io/mysayasan/myseliasan:{{ .Version }}-amd64"
+      - "ghcr.io/mysayasan/myseliasan:latest-amd64"
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      # Buildx attaches provenance/SBOM attestations by default, which turns each
+      # single-arch push into an OCI image index (image + unknown/unknown attestation).
+      # `docker manifest create` for the combined :latest tag then can't verify those
+      # child digests ("manifest verification failed"). Push plain image manifests so the
+      # manifest list combines cleanly.
+      - "--provenance=false"
+      - "--sbom=false"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.source=https://github.com/mysayasan/kopiv2"
+    extra_files:
+      - apps/myseliasan/static
+      - deploy/dist/myseliasan-config.json
+  - id: myseliasan-arm64
+    goos: linux
+    goarch: arm64
+    dockerfile: deploy/Dockerfile.myseliasan.release
+    use: buildx
+    image_templates:
+      - "ghcr.io/mysayasan/myseliasan:{{ .Version }}-arm64"
+      - "ghcr.io/mysayasan/myseliasan:latest-arm64"
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      # See the amd64 block: disable attestations so the pushed image is a plain manifest
+      # the :latest manifest list can combine.
+      - "--provenance=false"
+      - "--sbom=false"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.source=https://github.com/mysayasan/kopiv2"
+    extra_files:
+      - apps/myseliasan/static
+      - deploy/dist/myseliasan-config.json
+
+docker_manifests:
+  - name_template: "ghcr.io/mysayasan/myseliasan:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/mysayasan/myseliasan:{{ .Version }}-amd64"
+      - "ghcr.io/mysayasan/myseliasan:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/mysayasan/myseliasan:latest"
+    image_templates:
+      - "ghcr.io/mysayasan/myseliasan:latest-amd64"
+      - "ghcr.io/mysayasan/myseliasan:latest-arm64"

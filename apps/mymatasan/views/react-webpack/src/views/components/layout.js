@@ -4,64 +4,19 @@ import { SideNav as SharedSideNav } from '@shared/SideNav';
 import { useT } from '@shared/i18n';
 import { ThemeDropdown, FormBusyOverlay, Message } from './ui';
 import { LanguageDropdown } from '@shared/LanguageDropdown';
+import { BrandLogo as SharedBrandLogo } from '@shared/BrandLogo';
+import { PasswordField } from '@shared/PasswordField';
 import {cameraTitle,cameraDescription,orderedSavedCameras } from '../lib/helpers';
 
-// BrandLogo is the MyMataSan mark: a line-art shield holding a watchful eye and a
-// checkmark, with the rounded lowercase wordmark underneath. Self-contained inline
-// SVG so it scales without a binary asset.
-export function BrandLogo({ size = 40, className = '' }) {
-  return (
-    <div className={`brand-logo${className ? ` ${className}` : ''}`} aria-label="mymatasan">
-      <svg className="brand-mark" viewBox="0 0 64 64" width={size} height={size} role="img" aria-hidden="true">
-        <g fill="none" stroke="#4e9d6e" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-          {/* shield */}
-          <path d="M19 13.5 H45 Q50 13.5 50 18 V33 Q50 45 32 54 Q14 45 14 33 V18 Q14 13.5 19 13.5 Z" />
-          {/* eye almond */}
-          <path d="M20 30 Q31 21 42 30 Q31 39 20 30 Z" />
-          {/* iris */}
-          <circle cx="31" cy="30" r="6" />
-          {/* checkmark */}
-          <path d="M24 41 L31 48 L46 30" strokeWidth="3.4" />
-        </g>
-        {/* pupil + highlight */}
-        <circle cx="31" cy="30" r="3" fill="#4e9d6e" />
-        <circle cx="29.5" cy="28.6" r="1" fill="#eaf6ef" />
-      </svg>
-      <span className="brand-wordmark">mymatasan</span>
-    </div>
-  );
-}
+// The mark itself (shield + eye + checkmark) and the password control are shared
+// across the suite; this app only supplies its wordmark and its --brand-mark hue
+// (app.css). Both are re-exported so the existing call sites keep importing them
+// from './layout' unchanged — and PasswordField is imported above, not just
+// re-exported, because the login screens below render it directly.
+export { PasswordField };
 
-// PasswordField is a password input with an in-field reveal (eye) toggle. The
-// app standard for any password entry — used on the login, forced-change, and
-// settings screens — so the control looks and behaves identically everywhere.
-export function PasswordField({ value, onChange, autoComplete = 'off', autoFocus = false, placeholder, disabled = false, error = false }) {
-  const t = useT();
-  const [show, setShow] = useState(false);
-  return (
-    <div className={`password-field${error ? ' input-error' : ''}`}>
-      <input
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        type={show ? 'text' : 'password'}
-        autoComplete={autoComplete}
-        autoFocus={autoFocus}
-        placeholder={placeholder}
-        disabled={disabled}
-      />
-      <button
-        type="button"
-        className="password-reveal"
-        onClick={() => setShow((s) => !s)}
-        aria-label={show ? t('login.hidePassword') : t('login.showPassword')}
-        aria-pressed={show}
-        tabIndex={-1}
-        disabled={disabled}
-      >
-        <Ico n={show ? 'eye-off' : 'eye'} sz={16} />
-      </button>
-    </div>
-  );
+export function BrandLogo(props) {
+  return <SharedBrandLogo wordmark="mymatasan" {...props} />;
 }
 
 // useCountdown returns the whole seconds remaining until `untilMs`, ticking every

@@ -25,6 +25,8 @@ jobs:
     outputs:
       released: ${{ steps.bump.outputs.released }}
       tag: ${{ steps.bump.outputs.tag }}
+      sel_released: ${{ steps.bump.outputs.sel_released }}
+      sel_tag: ${{ steps.bump.outputs.sel_tag }}
 
     steps:
       - name: Checkout
@@ -43,9 +45,13 @@ jobs:
       - name: Commit version manifest, tag & release
         id: bump
         run: |
+          set -euo pipefail
+
+          # `released` / `sel_released` are only ever emitted as "true". The downstream
+          # jobs guard on `== 'true'`, so an unset output is already falsy — no need to
+          # write a default (and no reliance on last-key-wins for duplicate outputs).
           if git diff --quiet -- infra/versioning/version.json changes CHANGELOG.md; then
             echo "No version changes to commit"
-            echo "released=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git config user.name "github-actions[bot]"
@@ -54,20 +60,49 @@ jobs:
           git commit -m "chore: update version manifest [skip version]"
           git push
 
-          # Tag the mymatasan product release as v<mymatasan version>. If that tag
-          # already exists (a bump that changed core / another app but not
-          # mymatasan), there's nothing to release.
-          VERSION="$(jq -r '.apps.mymatasan.version' infra/versioning/version.json)"
-          TAG="v${VERSION}"
-          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
-            echo "tag ${TAG} already exists (mymatasan not bumped this run); skipping release"
-            echo "released=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          # Each product is tagged in its OWN namespace and released independently, so a
+          # bump to one never forces or blocks a release of the other:
+          #
+          #   mymatasan  -> v<ver>              (stays the repo's "latest" release; its
+          #                                      in-app updater reads releases/latest)
+          #   myseliasan -> myseliasan-v<ver>   (published with --latest=false)
+          #
+          # "Did this product change?" is answered by tag idempotence: if the tag for the
+          # current version already exists on the remote, that version was already
+          # released, so there is nothing to do. A core-only bump therefore tags neither.
+          #
+          # NB: evaluate BOTH — do not early-exit out of the first one, or a myseliasan-only
+          # bump would be silently swallowed by mymatasan's "already tagged" path.
+          tag_if_new() {
+            app="$1"; prefix="$2"; out="$3"
+            version="$(jq -r ".apps.${app}.version" infra/versioning/version.json)"
+            tag="${prefix}${version}"
+            if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+              echo "tag ${tag} already exists (${app} not bumped this run); skipping its release"
+              return 0
+            fi
+            git tag "${tag}"
+            git push origin "${tag}"
+            echo "tagged ${tag} — will release ${app}"
+            echo "${out}_released=true" >> "$GITHUB_OUTPUT"
+            echo "${out}_tag=${tag}" >> "$GITHUB_OUTPUT"
+          }
+
+          # mymatasan uses the bare `released`/`tag` outputs (kept for compatibility with
+          # the existing release job), so emit those two names directly.
+          MM_VERSION="$(jq -r '.apps.mymatasan.version' infra/versioning/version.json)"
+          MM_TAG="v${MM_VERSION}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${MM_TAG}" >/dev/null 2>&1; then
+            echo "tag ${MM_TAG} already exists (mymatasan not bumped this run); skipping its release"
+          else
+            git tag "${MM_TAG}"
+            git push origin "${MM_TAG}"
+            echo "tagged ${MM_TAG} — will release mymatasan"
+            echo "released=true" >> "$GITHUB_OUTPUT"
+            echo "tag=${MM_TAG}" >> "$GITHUB_OUTPUT"
           fi
-          git tag "${TAG}"
-          git push origin "${TAG}"
-          echo "released=true" >> "$GITHUB_OUTPUT"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+          tag_if_new myseliasan "myseliasan-v" "sel"
 
   # Build + publish the release when the version job cut a new mymatasan tag.
   # Runs in the same workflow run (workflow_call), so no PAT is needed — a tag
@@ -78,6 +113,20 @@ jobs:
     uses: ./.github/workflows/release.yml
     with:
       tag: ${{ needs.version.outputs.tag }}
+    permissions:
+      contents: write
+      packages: write
+    secrets: inherit
+
+  # Same, for the myseliasan control plane. Independent of the mymatasan release above:
+  # either, both, or neither can fire from a single push, depending on which app versions
+  # the pending changes actually bumped.
+  release-myseliasan:
+    needs: version
+    if: ${{ needs.version.outputs.sel_released == 'true' }}
+    uses: ./.github/workflows/release-myseliasan.yml
+    with:
+      tag: ${{ needs.version.outputs.sel_tag }}
     permissions:
       contents: write
       packages: write

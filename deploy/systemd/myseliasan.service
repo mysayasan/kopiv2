@@ -1,0 +1,31 @@
+# systemd unit for MySeliaSan (Linux) — the fleet control plane for MyMataSan nodes.
+#
+# Install:
+#   sudo cp deploy/systemd/myseliasan.service /etc/systemd/system/
+#   # edit WorkingDirectory/ExecStart/User below to match your install
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now myseliasan
+#   journalctl -u myseliasan -f      # view logs (the first-run admin password lands here)
+#
+# Restart=always + KOPIV2_SUPERVISED=1 means an in-app restart exits cleanly and
+# systemd relaunches it.
+
+[Unit]
+Description=MySeliaSan fleet control plane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Where config.json, the database, logs, certs and the secret/ key live:
+WorkingDirectory=/opt/myseliasan
+ExecStart=/opt/myseliasan/myseliasan
+Environment=KOPIV2_SUPERVISED=1
+Restart=always
+RestartSec=2
+# Recommended: run as a dedicated unprivileged user that owns WorkingDirectory.
+# User=myseliasan
+# Group=myseliasan
+
+[Install]
+WantedBy=multi-user.target

@@ -7,8 +7,8 @@ import (
 
 	"github.com/mysayasan/kopiv2/apps/myseliasan/entities"
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
-	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
+	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -214,7 +214,7 @@ func TestAuthenticateLocalAndChangePassword(t *testing.T) {
 	roles, users := newTestRBAC()
 	ctx := context.Background()
 	_ = roles.EnsureBuiltins(ctx)
-	if err := users.EnsureStockSuperadmin(ctx, "admin", "initpass1"); err != nil {
+	if _, err := users.EnsureStockSuperadmin(ctx, "admin", "initpass1"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -244,7 +244,7 @@ func TestRetireStock(t *testing.T) {
 	roles, users := newTestRBAC()
 	ctx := context.Background()
 	_ = roles.EnsureBuiltins(ctx)
-	_ = users.EnsureStockSuperadmin(ctx, "admin", "initpass1")
+	_, _ = users.EnsureStockSuperadmin(ctx, "admin", "initpass1")
 	_, _ = users.UpsertFederated(ctx, 1, "real@x.io", "Real")
 
 	n, err := users.RetireStock(ctx)
@@ -260,16 +260,79 @@ func TestRetireStock(t *testing.T) {
 	}
 }
 
+// The shipped package config carries an EMPTY localAuth.password on purpose, so that a
+// fresh install mints a per-install credential. It must never fall back to a guessable
+// shared default — this box is the control plane for the whole camera fleet.
+func TestEnsureStockSuperadminGeneratesPasswordWhenUnset(t *testing.T) {
+	t.Setenv("LOCAL_ADMIN_PASSWORD", "")
+	roles, users := newTestRBAC()
+	ctx := context.Background()
+	_ = roles.EnsureBuiltins(ctx)
+
+	seed, err := users.EnsureStockSuperadmin(ctx, "admin", "")
+	if err != nil {
+		t.Fatalf("EnsureStockSuperadmin: %v", err)
+	}
+	if !seed.Seeded || !seed.Generated {
+		t.Fatalf("expected a freshly generated seed, got %+v", seed)
+	}
+	if len(seed.Password) < 12 {
+		t.Fatalf("generated password too short: %q", seed.Password)
+	}
+	stock, err := users.getByUsername(ctx, "admin")
+	if err != nil || stock == nil {
+		t.Fatalf("stock not seeded: %v / %v", err, stock)
+	}
+	for _, weak := range []string{"admin", "", "admin123", "password"} {
+		if bcrypt.CompareHashAndPassword([]byte(stock.PasswordHash), []byte(weak)) == nil {
+			t.Fatalf("stock superadmin accepts the weak default %q", weak)
+		}
+	}
+	if bcrypt.CompareHashAndPassword([]byte(stock.PasswordHash), []byte(seed.Password)) != nil {
+		t.Fatal("generated password does not verify against the stored hash")
+	}
+
+	// A restart must NOT rotate the generated credential out from under the operator
+	// who just read it out of INITIAL_ADMIN_LOGIN.txt.
+	if _, err := users.EnsureStockSuperadmin(ctx, "admin", ""); err != nil {
+		t.Fatalf("second boot: %v", err)
+	}
+	after, _ := users.getByUsername(ctx, "admin")
+	if bcrypt.CompareHashAndPassword([]byte(after.PasswordHash), []byte(seed.Password)) != nil {
+		t.Fatal("restart rotated the generated bootstrap password")
+	}
+}
+
+// LOCAL_ADMIN_PASSWORD is the ops override and must beat the config value.
+func TestEnsureStockSuperadminEnvOverride(t *testing.T) {
+	t.Setenv("LOCAL_ADMIN_PASSWORD", "from-env-9")
+	roles, users := newTestRBAC()
+	ctx := context.Background()
+	_ = roles.EnsureBuiltins(ctx)
+
+	seed, err := users.EnsureStockSuperadmin(ctx, "admin", "from-config")
+	if err != nil {
+		t.Fatalf("EnsureStockSuperadmin: %v", err)
+	}
+	if seed.Generated {
+		t.Fatal("env-supplied password must not be reported as generated")
+	}
+	stock, _ := users.getByUsername(ctx, "admin")
+	if bcrypt.CompareHashAndPassword([]byte(stock.PasswordHash), []byte("from-env-9")) != nil {
+		t.Fatal("LOCAL_ADMIN_PASSWORD did not win over the config value")
+	}
+}
+
 func TestEnsureStockSuperadminSeedsLocalMustChange(t *testing.T) {
 	roles, users := newTestRBAC()
 	ctx := context.Background()
 	_ = roles.EnsureBuiltins(ctx)
 	sa, _ := roles.GetByName(ctx, sharedservices.RoleSuperadmin)
 
-	if err := users.EnsureStockSuperadmin(ctx, "root", "s3cret"); err != nil {
+	if _, err := users.EnsureStockSuperadmin(ctx, "root", "s3cret"); err != nil {
 		t.Fatalf("EnsureStockSuperadmin: %v", err)
 	}
-	if err := users.EnsureStockSuperadmin(ctx, "root", "s3cret"); err != nil {
+	if _, err := users.EnsureStockSuperadmin(ctx, "root", "s3cret"); err != nil {
 		t.Fatalf("EnsureStockSuperadmin 2: %v", err)
 	}
 	stock, err := users.getByUsername(ctx, "root")

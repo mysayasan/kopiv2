@@ -1,3 +1,11 @@
+/* Brand hue for the shared mark (@shared/styles/brand.css). Deliberately outside the
+   theme blocks: the brand keeps its identity in light, dark and slate. mymatasan is
+   the green of the family; myseliasan is steel, myidsan violet. */
+:root {
+  --brand-mark: #4e9d6e;
+  --brand-tint: #eaf6ef;
+}
+
 :root, .theme-light {
   --bg-body: #f4f6f8;
   --bg-surface: #ffffff;
@@ -403,47 +411,9 @@ label {
   font-weight: 760;
 }
 
-/* Brand logo: line-art shield/eye/check mark with the rounded wordmark under it.
-   justify-self:start keeps the whole mark hugging the left of its topbar cell. */
-.brand-logo {
-  justify-self: start;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  line-height: 1;
-  user-select: none;
-}
-
-.brand-mark {
-  display: block;
-}
-
-.brand-wordmark {
-  font-family: 'Quicksand', 'Fredoka', system-ui, sans-serif;
-  font-weight: 600;
-  font-size: 18px;
-  letter-spacing: 0.3px;
-  color: #4e9d6e;
-}
-
-/* On the login page the mark replaces the old MyMataSan heading, so it is
-   centered and the wordmark scales up to match the larger glyph. */
-.login-brand {
-  display: grid;
-  justify-items: center;
-  text-align: center;
-}
-
-.brand-logo--login {
-  justify-self: center;
-  gap: 6px;
-}
-
-.brand-logo--login .brand-wordmark {
-  font-size: 34px;
-  letter-spacing: 0.5px;
-}
+/* The brand mark + wordmark (.brand-logo / .brand-mark / .brand-wordmark /
+   .login-brand / .brand-logo--login) now live in @shared/styles/brand.css, tinted
+   by the --brand-mark / --brand-tint tokens set in the :root block above. */
 
 .login-panel p,
 .topbar p {
@@ -841,40 +811,7 @@ label {
   gap: 12px;
 }
 
-/* Password input with an in-field reveal toggle: the button sits over the right
-   edge of the input and the input reserves room for it. */
-.password-field {
-  position: relative;
-  display: block;
-}
-
-.password-field input {
-  width: 100%;
-  padding-right: 40px;
-}
-
-.password-reveal {
-  position: absolute;
-  top: 50%;
-  right: 6px;
-  transform: translateY(-50%);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--text-faint);
-  cursor: pointer;
-  border-radius: 6px;
-}
-
-.password-reveal:hover {
-  color: var(--text-primary);
-  background: var(--bg-elevated, rgba(127, 127, 127, 0.12));
-}
+/* .password-field / .password-reveal now live in @shared/styles/password.css. */
 
 .app-shell {
   width: min(1360px, calc(100vw - 32px));

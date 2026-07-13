@@ -1,17 +1,29 @@
 # Installing a packaged release
 
+This page covers **MyMataSan**. For **MySeliaSan** (the fleet control plane), see
+[`deploy/README-myseliasan.md`](README-myseliasan.md) — same packaging shapes
+(archives, `.deb`/`.rpm`, Windows installer, Docker), built from its own
+`.goreleaser.myseliasan.yaml` and released independently under the
+`myseliasan-v<version>` tag namespace (see "Versioning Model" in
+`docs/TECHNICAL_SPEC.md`) so a MyMataSan release always stays the repository's
+"latest" release.
+
 GoReleaser (`.goreleaser.yaml`, `packaging/stage-archive.sh`) builds every release
 from `apps/mymatasan` in one run, published to GitHub Releases (and mirrored on the
 [Download page](https://r450k.com) — `r450k/worker/index.js` `GET /api/downloads`
-reads the same GitHub Releases API and edge-caches it, so the marketing site never
-needs a redeploy to reflect a new release. The r450k site itself is deployed by
-`.github/workflows/deploy-r450k.yml` (Cloudflare `wrangler deploy` on any push to
-`main` under `r450k/**`; needs a `CLOUDFLARE_API_TOKEN` repo secret). Because this
-repo is **private**, downloads are proxied: `/api/downloads` hands out
-`/api/download/<assetId>` links and `r450k/worker/index.js` authenticates to GitHub
-(Worker secret `GITHUB_TOKEN`, set once via `npx wrangler secret put GITHUB_TOKEN` —
-a PAT with `Contents: read`) and redirects to GitHub's short-lived signed CDN URL, so
-anonymous visitors can download a private repo's assets):
+resolves the newest release **per product** from the GitHub Releases API (mymatasan's
+bare `v<ver>` tag and myseliasan's `myseliasan-v<ver>` tag — it can no longer use
+`/releases/latest`, which only ever returns mymatasan's) and edge-caches the result, so
+the marketing site never needs a redeploy to reflect a new release of either product;
+`r450k/src/sections/Downloads.jsx` renders one download block per product. The r450k
+site itself is deployed by `.github/workflows/deploy-r450k.yml` (Cloudflare
+`wrangler deploy` on any push to `main` under `r450k/**`; needs a
+`CLOUDFLARE_API_TOKEN` repo secret). Because this repo is **private**, downloads are
+proxied: `/api/downloads` hands out `/api/download/<assetId>` links and
+`r450k/worker/index.js` authenticates to GitHub (Worker secret `GITHUB_TOKEN`, set once
+via `npx wrangler secret put GITHUB_TOKEN` — a PAT with `Contents: read`) and redirects
+to GitHub's short-lived signed CDN URL, so anonymous visitors can download a private
+repo's assets):
 
 - **Archives** (`.tar.gz` linux/macOS / `.zip` windows, amd64+arm64): the `mymatasan`
   binary plus `static/` (web UI), `ai/` (Python worker scripts and the stock
@@ -210,7 +222,11 @@ The Settings → Version & Health → Updates panel checks GitHub Releases on a 
 **Update to vX.Y.Z** that downloads the matching release archive, verifies its
 SHA-256 against `checksums.txt`, swaps the binary and `static/`/`ai/` assets, and
 restarts (`GET /api/system/update`, `POST /api/system/update/check`,
-`POST /api/system/update/apply`). This applies to portable archive and Windows
+`POST /api/system/update/apply`). Asset selection requires the `mymatasan_` product
+prefix (not just the `_<os>_<arch>` suffix) — the repo also releases MySeliaSan, whose
+archives share the identical suffix and extension, so the prefix is what keeps this
+updater from ever installing the wrong product over itself; see
+`apps/mymatasan/services/update.go.md`. This applies to portable archive and Windows
 installer installs. It is disabled — with in-UI guidance instead — for `.deb`/`.rpm`
 installs (`MYMATASAN_MANAGED=package`: upgrade via `apt`/`dnf`) and Docker
 (`MYMATASAN_MANAGED=docker`: pull the new image and recreate the container).

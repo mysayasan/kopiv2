@@ -67,18 +67,55 @@ async function handleContact(request, env) {
   }
 }
 
-// --- Downloads: read the latest MyMataSan release from the GitHub Releases API,
-// categorize the assets by platform, and cache the result at the edge so the
-// marketing site's Download section always shows the current build without a
+// --- Downloads: read the latest release of EACH product from the GitHub Releases
+// API, categorize the assets by platform, and cache the result at the edge so the
+// marketing site's Download section always shows the current builds without a
 // redeploy (and without hammering GitHub's rate limit). ------------------------
+//
+// Both products ship out of the same repo but under separate tag namespaces:
+//
+//   mymatasan   v<ver>              (the repo's "latest" release)
+//   myseliasan  myseliasan-v<ver>   (published with --latest=false)
+//
+// So we cannot use /releases/latest — that only ever returns mymatasan's. We list
+// releases once and pick the newest one per tag prefix. (GitHub returns them newest
+// first, so the first match per product wins.)
 
 const RELEASES_REPO = 'mysayasan/kopiv2';
+const RELEASES_PER_PAGE = 100; // GitHub's maximum
+const MAX_RELEASE_PAGES = 3;
 
-// categorizeAsset maps a release asset filename to a platform card, or null for
-// assets that aren't user downloads (checksums, etc.). Filenames come from
-// GoReleaser + the Windows installer job (see .goreleaser.yaml / release.yml).
-function categorizeAsset(name) {
+const PRODUCTS = [
+  {
+    id: 'mymatasan',
+    name: 'MyMataSan',
+    // Bare vX.Y.Z, and NOT any other product's prefixed tag.
+    matchTag: (tag) => /^v\d/.test(tag),
+    version: (tag) => tag.replace(/^v/, ''),
+    image: 'ghcr.io/mysayasan/mymatasan',
+  },
+  {
+    id: 'myseliasan',
+    name: 'MySeliaSan',
+    matchTag: (tag) => /^myseliasan-v\d/.test(tag),
+    version: (tag) => tag.replace(/^myseliasan-v/, ''),
+    image: 'ghcr.io/mysayasan/myseliasan',
+  },
+];
+
+// categorizeAsset maps a release asset filename to a platform card, or null for assets
+// that aren't user downloads (checksums, etc.). Filenames come from GoReleaser + the
+// Windows installer jobs (see .goreleaser*.yaml / release*.yml).
+//
+// It also verifies the asset belongs to `productId`. Extension alone is NOT enough:
+// both products emit `_<os>_<arch>.tar.gz` / `.zip` / `.deb` / `.rpm` with identical
+// suffixes, so only the product prefix tells them apart. Today each product has its own
+// release, which already separates them — this is the belt-and-braces check that keeps
+// a mymatasan card from ever listing a myseliasan build.
+function categorizeAsset(name, productId) {
   const n = name.toLowerCase();
+  // GoReleaser archives/packages are "<product>_...", the installer is "<product>-setup-...".
+  if (!n.startsWith(`${productId}_`) && !n.startsWith(`${productId}-setup-`)) return null;
   const arch = n.includes('arm64') ? 'arm64' : 'x64';
   if (n.endsWith('.exe')) return { os: 'windows', kind: 'installer', arch, label: `Windows Installer (${arch})` };
   if (n.includes('windows') && n.endsWith('.zip')) return { os: 'windows', kind: 'portable', arch, label: `Windows Portable (${arch})` };
@@ -86,6 +123,31 @@ function categorizeAsset(name) {
   if (n.endsWith('.rpm')) return { os: 'linux', kind: 'rpm', arch, label: `Fedora / RHEL (${arch})` };
   if (n.endsWith('.tar.gz')) return { os: 'linux', kind: 'tarball', arch, label: `Linux tarball (${arch})` };
   return null;
+}
+
+// buildProduct turns one GitHub release into the payload the Downloads section renders.
+function buildProduct(product, rel) {
+  const tag = String(rel.tag_name || '');
+  const version = product.version(tag);
+  const assets = (rel.assets || [])
+    .map((a) => {
+      const cat = categorizeAsset(a.name, product.id);
+      // Download through the Worker (/api/download/<id>) rather than the raw GitHub
+      // URL: for a PRIVATE repo the browser_download_url 404s for anonymous visitors,
+      // so the Worker authenticates and streams the bytes. Works for public repos too.
+      return cat ? { ...cat, name: a.name, url: `/api/download/${a.id}`, size: a.size } : null;
+    })
+    .filter(Boolean);
+  return {
+    id: product.id,
+    name: product.name,
+    version,
+    tag,
+    publishedAt: rel.published_at || '',
+    htmlUrl: rel.html_url || `https://github.com/${RELEASES_REPO}/releases`,
+    assets,
+    docker: version ? { image: `${product.image}:${version}` } : null,
+  };
 }
 
 async function handleDownloads(request, env) {
@@ -100,35 +162,45 @@ async function handleDownloads(request, env) {
   let payload;
   let status = 200;
   try {
-    const gh = await fetch(`https://api.github.com/repos/${RELEASES_REPO}/releases/latest`, { headers });
-    if (gh.ok) {
-      const rel = await gh.json();
-      const version = String(rel.tag_name || '').replace(/^v/, '');
-      const assets = (rel.assets || [])
-        .map((a) => {
-          const cat = categorizeAsset(a.name);
-          // Download through the Worker (/api/download/<id>) rather than the raw
-          // GitHub URL: for a PRIVATE repo the browser_download_url 404s for
-          // anonymous visitors, so the Worker authenticates and redirects to the
-          // short-lived signed CDN URL. Works for public repos too.
-          return cat ? { ...cat, name: a.name, url: `/api/download/${a.id}`, size: a.size } : null;
-        })
-        .filter(Boolean);
-      payload = {
-        ok: true,
-        version: rel.tag_name || '',
-        publishedAt: rel.published_at || '',
-        htmlUrl: rel.html_url || `https://github.com/${RELEASES_REPO}/releases`,
-        assets,
-        docker: version ? { image: `ghcr.io/mysayasan/mymatasan:${version}` } : null,
-      };
-    } else {
-      status = 502;
-      payload = { ok: false, error: `GitHub API ${gh.status}`, htmlUrl: `https://github.com/${RELEASES_REPO}/releases` };
+    // Page back until every product has been found, rather than gambling that one page is
+    // deep enough. The products release independently, so a long run of releases for one
+    // can push the other's newest release off the first page — and it would then silently
+    // vanish from the download site. Bounded (3 x 100) so a bad response can't loop.
+    const found = new Map();
+    let missing = PRODUCTS.filter((p) => !found.has(p.id));
+
+    for (let page = 1; page <= MAX_RELEASE_PAGES && missing.length > 0; page++) {
+      const gh = await fetch(
+        `https://api.github.com/repos/${RELEASES_REPO}/releases?per_page=${RELEASES_PER_PAGE}&page=${page}`,
+        { headers },
+      );
+      if (!gh.ok) {
+        if (page === 1) throw new Error(`GitHub API ${gh.status}`);
+        break; // keep whatever earlier pages resolved
+      }
+      const body = await gh.json();
+      const list = Array.isArray(body) ? body : [];
+      for (const p of missing) {
+        const rel = list.find((r) => !r.draft && p.matchTag(String(r.tag_name || '')));
+        if (rel) found.set(p.id, buildProduct(p, rel));
+      }
+      missing = PRODUCTS.filter((p) => !found.has(p.id));
+      if (list.length < RELEASES_PER_PAGE) break; // last page
     }
-  } catch {
+
+    // Keep PRODUCTS order (node first, then control plane) rather than release order.
+    payload = {
+      ok: true,
+      htmlUrl: `https://github.com/${RELEASES_REPO}/releases`,
+      products: PRODUCTS.map((p) => found.get(p.id)).filter(Boolean),
+    };
+  } catch (err) {
     status = 502;
-    payload = { ok: false, error: 'Failed to reach GitHub.', htmlUrl: `https://github.com/${RELEASES_REPO}/releases` };
+    payload = {
+      ok: false,
+      error: String((err && err.message) || 'Failed to reach GitHub.'),
+      htmlUrl: `https://github.com/${RELEASES_REPO}/releases`,
+    };
   }
 
   const resp = new Response(JSON.stringify(payload), {

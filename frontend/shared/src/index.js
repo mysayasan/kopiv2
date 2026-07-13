@@ -1,6 +1,8 @@
 // Barrel for the shared RBAC UI module. Consumers: `import { DataTable, ToastStack,
 // Ico } from '@shared'` (each app aliases @shared -> frontend/shared/src via webpack).
 export { Ico, icoSvg } from './icons';
+export { BrandLogo } from './BrandLogo';
+export { PasswordField } from './PasswordField';
 export { DataTable, printable } from './DataTable';
 export { Tabs } from './Tabs';
 export { ToastStack } from './Toast';

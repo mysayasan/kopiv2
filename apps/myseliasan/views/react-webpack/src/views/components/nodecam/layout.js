@@ -4,7 +4,15 @@ import { SideNav as SharedSideNav } from '@shared/SideNav';
 import { useT } from '@shared/i18n';
 import { ThemeDropdown, FormBusyOverlay, Message } from './ui';
 import { LanguageDropdown } from '@shared/LanguageDropdown';
+import { PasswordField } from '@shared/PasswordField';
 import {cameraTitle,cameraDescription,orderedSavedCameras } from './lib/helpers';
+
+// The password control is the suite's shared one. The local copy this replaced asked for
+// t('login.showPassword') / t('login.hidePassword') — keys myseliasan's dictionary never
+// defined — so its aria-labels rendered the raw key strings; the shared field uses
+// common.showPassword / common.hidePassword, which exist in all four locales. Its CSS
+// reaches the Shadow DOM via mymatasan_css.js, which concatenates @shared/styles/*.
+export { PasswordField };
 
 // BrandLogo is the MyMataSan mark: a line-art shield holding a watchful eye and a
 // checkmark, with the rounded lowercase wordmark underneath. Self-contained inline
@@ -32,37 +40,6 @@ export function BrandLogo({ size = 40, className = '' }) {
   );
 }
 
-// PasswordField is a password input with an in-field reveal (eye) toggle. The
-// app standard for any password entry — used on the login, forced-change, and
-// settings screens — so the control looks and behaves identically everywhere.
-export function PasswordField({ value, onChange, autoComplete = 'off', autoFocus = false, placeholder, disabled = false, error = false }) {
-  const t = useT();
-  const [show, setShow] = useState(false);
-  return (
-    <div className={`password-field${error ? ' input-error' : ''}`}>
-      <input
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        type={show ? 'text' : 'password'}
-        autoComplete={autoComplete}
-        autoFocus={autoFocus}
-        placeholder={placeholder}
-        disabled={disabled}
-      />
-      <button
-        type="button"
-        className="password-reveal"
-        onClick={() => setShow((s) => !s)}
-        aria-label={show ? t('login.hidePassword') : t('login.showPassword')}
-        aria-pressed={show}
-        tabIndex={-1}
-        disabled={disabled}
-      >
-        <Ico n={show ? 'eye-off' : 'eye'} sz={16} />
-      </button>
-    </div>
-  );
-}
 
 // useCountdown returns the whole seconds remaining until `untilMs`, ticking every
 // second while active and settling to 0 when the deadline passes.

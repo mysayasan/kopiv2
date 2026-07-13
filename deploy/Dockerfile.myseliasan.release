@@ -1,0 +1,36 @@
+# Runtime image for MySeliaSan, consumed by GoReleaser's `dockers` builders.
+# The binary is cross-compiled by GoReleaser and placed at the build-context root;
+# extra_files supply the web UI and the default config.
+#
+# Unlike mymatasan, myseliasan is pure Go — no ffmpeg, no Python, no model weights
+# (media is relayed in-process via pion/webrtc). So this is a distroless-grade image:
+# ca-certificates is the only OS dependency, for outbound TLS to a myidsan SSO provider.
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# GoReleaser copies the matching-arch binary to the context root as "myseliasan".
+COPY myseliasan /app/myseliasan
+COPY apps/myseliasan/static /app/static
+COPY deploy/dist/myseliasan-config.json /app/config.json
+
+# Read-only app home vs writable data dir. Mount a volume at /data to persist the
+# database, logs, TLS certs, and secret/atrest.key — which encrypts the fleet CA key
+# and pairing PSK. Lose /data and every adopted node must be re-adopted.
+ENV MYSELIASAN_HOME=/app \
+    MYSELIASAN_DATA=/data \
+    KOPIV2_SUPERVISED=1 \
+    MYSELIASAN_MANAGED=docker
+VOLUME ["/data"]
+
+# 3002 = web UI / API. 39533 = node-dialed control channel, 39534 = node-dialed media
+# relay; both must be reachable BY the nodes, so publish them when adopting a fleet.
+# 49531/udp is the multicast discovery probe — it needs host networking to cross a
+# bridge, so LAN discovery generally wants `--network host`.
+EXPOSE 3002 39533 39534
+
+ENTRYPOINT ["/app/myseliasan"]

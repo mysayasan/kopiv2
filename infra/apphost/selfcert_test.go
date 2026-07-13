@@ -13,7 +13,7 @@ func TestEnsureSelfSignedCertGeneratesUsableKeypair(t *testing.T) {
 	certPath := filepath.Join(dir, "certs", "cert.pem")
 	keyPath := filepath.Join(dir, "certs", "key.pem")
 
-	if err := ensureSelfSignedCert(certPath, keyPath, []string{"nvr.local", "192.168.1.50", "*"}); err != nil {
+	if err := ensureSelfSignedCert(certPath, keyPath, "mymatasan", []string{"nvr.local", "192.168.1.50", "*"}); err != nil {
 		t.Fatalf("generate: %v", err)
 	}
 
@@ -50,7 +50,7 @@ func TestEnsureSelfSignedCertIsNoOpWhenBothExist(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ensureSelfSignedCert(certPath, keyPath, nil); err != nil {
+	if err := ensureSelfSignedCert(certPath, keyPath, "mymatasan", nil); err != nil {
 		t.Fatalf("no-op: %v", err)
 	}
 	// Operator-provided files must be left untouched.
@@ -60,7 +60,7 @@ func TestEnsureSelfSignedCertIsNoOpWhenBothExist(t *testing.T) {
 }
 
 func TestEnsureSelfSignedCertSkipsWhenPathsEmpty(t *testing.T) {
-	if err := ensureSelfSignedCert("", "", nil); err != nil {
+	if err := ensureSelfSignedCert("", "", "mymatasan", nil); err != nil {
 		t.Fatalf("empty paths should be a no-op: %v", err)
 	}
 }

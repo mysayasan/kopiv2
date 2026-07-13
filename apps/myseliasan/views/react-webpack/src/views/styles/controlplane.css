@@ -87,29 +87,21 @@
 
 .btn-link { display: inline-flex; align-items: center; text-decoration: none; }
 
-/* --- Login / change-password screens ---------------------------------------- */
-.login-shell {
-  min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px;
-}
-.login-card {
-  width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 14px; align-items: stretch;
-  padding: 28px; border-radius: 14px; border: 1px solid var(--border-soft, #2a3850);
-  background: var(--bg-panel, #fff);
-}
-.login-card .brand-logo { justify-content: center; }
-.login-sub { margin: 4px 0 8px; text-align: center; font-weight: 600; }
-.login-hint { margin: 0; text-align: center; font-size: 12px; color: var(--text-faint, #7a8ea4); }
-.login-sso { width: 100%; justify-content: center; }
+/* --- Login / change-password / pending-clearance screens ----------------------
+   The card chrome itself (.login-screen, .login-panel, .login-brand, .login-note,
+   .login-lang-switch) is the suite-wide login standard and lives in app.css, shared
+   verbatim with mymatasan. Only the two controls unique to the control plane's dual
+   sign-in belong here: the federated SSO button and the divider that separates it
+   from the local bootstrap form. The form re-uses the panel's 16px grid rhythm so
+   the two stacks read as one. */
+.login-sso { justify-content: center; }
 .login-divider {
-  display: flex; align-items: center; gap: 10px; color: var(--text-faint, #7a8ea4); font-size: 12px;
+  display: flex; align-items: center; gap: 10px; color: var(--text-faint); font-size: 12px;
 }
 .login-divider::before, .login-divider::after {
-  content: ''; flex: 1; height: 1px; background: var(--border-soft, #2a3850);
+  content: ''; flex: 1; height: 1px; background: var(--border-soft);
 }
-.login-form { display: flex; flex-direction: column; gap: 10px; }
-.login-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
-.login-form button[type="submit"] { justify-content: center; margin-top: 4px; }
-.login-err { margin: 0; font-size: 13px; color: #dc2626; }
+.login-form { display: grid; gap: 16px; }
 
 /* --- Permission matrix editor ----------------------------------------------- */
 .perm-editor { margin-top: 16px; border-top: 1px solid var(--border-soft, #2a3850); padding-top: 14px; }

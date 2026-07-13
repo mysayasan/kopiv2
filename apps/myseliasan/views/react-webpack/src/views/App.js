@@ -134,16 +134,18 @@ function AppInner({ lang, onLangChange }) {
   if (authState === 'loading') {
     return <main className="boot-screen"><FormBusyOverlay busy /></main>;
   }
+  // The pre-app screens take the language switcher too — it lives in the workspace
+  // header, which the user cannot reach until they are signed in and cleared.
   if (authState === 'anon') {
-    return <LoginScreen onLoggedIn={loadSession} />;
+    return <LoginScreen onLoggedIn={loadSession} lang={lang} onLangChange={onLangChange} />;
   }
   if (authState === 'mustchange') {
-    return <ChangePasswordScreen onDone={loadSession} onToast={pushToast} onLogout={logout} />;
+    return <ChangePasswordScreen onDone={loadSession} onToast={pushToast} onLogout={logout} lang={lang} onLangChange={onLangChange} />;
   }
   // Authenticated but no role assigned yet — gate the whole control plane behind a
   // clearance screen until a superadmin grants a role.
   if (session?.pending && !session?.isSuperadmin) {
-    return <PendingClearanceScreen email={session?.email} onRefresh={loadSession} onLogout={logout} />;
+    return <PendingClearanceScreen email={session?.email} onRefresh={loadSession} onLogout={logout} lang={lang} onLangChange={onLangChange} />;
   }
 
   // Demote to the dashboard if the active tab is no longer permitted (e.g. after a

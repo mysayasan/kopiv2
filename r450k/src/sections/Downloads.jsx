@@ -57,10 +57,15 @@ export default function Downloads() {
   }, []);
 
   const { status, data } = state;
-  const assets = (data && data.assets) || [];
-  const groups = ['windows', 'linux']
-    .map((os) => ({ os, items: assets.filter((a) => a.os === os) }))
-    .filter((g) => g.items.length > 0);
+  // The Worker returns one entry per product (mymatasan, myseliasan), each with its own
+  // version and asset list — they release independently, off separate tags.
+  const products = ((data && data.products) || []).filter((p) => p.assets && p.assets.length > 0);
+
+  function onDownloadClick() {
+    if (hasSeenTally()) return;
+    markTallySeen();
+    setTallyOpen(true);
+  }
 
   return (
     <section className="section" id="download">
@@ -74,74 +79,81 @@ export default function Downloads() {
               <Icon name="shield" size={15} /> {t.license}
             </p>
           ) : null}
-          {status === 'ready' && data.version ? (
-            <p className="downloads__version">
-              {t.latest}: <strong>{data.version}</strong>
-            </p>
-          ) : null}
         </Reveal>
 
         {status === 'loading' ? (
           <p className="downloads__note">{t.loading}</p>
-        ) : status === 'error' || groups.length === 0 ? (
+        ) : status === 'error' || products.length === 0 ? (
           <Reveal className="downloads__note">
             <p>{t.unavailable}</p>
           </Reveal>
         ) : (
-          <Reveal className="grid grid--downloads" stagger>
-            {groups.map((g, gi) => (
-              <SpotlightCard className="dlcard" key={g.os} style={{ '--i': gi }}>
-                <div className="dlcard__head">
-                  <span className="dlcard__icon">
-                    <Icon name={OS_META[g.os].icon} size={22} />
-                  </span>
-                  <h3 className="dlcard__name">{t[OS_META[g.os].key]}</h3>
-                </div>
-                <ul className="dlcard__list">
-                  {g.items.map((a) => (
-                    <li key={a.name}>
-                      {/* Same-origin endpoint that streams the bytes with
-                          Content-Disposition: attachment (the Worker proxies
-                          GitHub rather than redirecting), so a plain same-tab
-                          click downloads in place without leaving the page. No
-                          target="_blank" (blank tab that drops the download).
-                          The onClick only opens the Tally form as a side effect
-                          (and only once per visitor) — it never preventDefaults,
-                          so the download is untouched. */}
-                      <a
-                        className="dllink"
-                        href={a.url}
-                        onClick={() => {
-                          if (hasSeenTally()) return;
-                          markTallySeen();
-                          setTallyOpen(true);
-                        }}
-                      >
-                        <span className="dllink__label">
-                          <Icon name="download" size={16} />
-                          {a.label}
-                        </span>
-                        {a.size ? <span className="dllink__size">{formatSize(a.size)}</span> : null}
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-              </SpotlightCard>
-            ))}
+          products.map((p) => {
+            const copy = (t.products && t.products[p.id]) || {};
+            const groups = ['windows', 'linux']
+              .map((os) => ({ os, items: p.assets.filter((a) => a.os === os) }))
+              .filter((g) => g.items.length > 0);
+            return (
+              <div className="downloads__product" key={p.id}>
+                <Reveal className="downloads__producthead">
+                  <h3 className="downloads__productname">{copy.name || p.name}</h3>
+                  {copy.tagline ? <p className="downloads__producttag">{copy.tagline}</p> : null}
+                  {p.version ? (
+                    <p className="downloads__version">
+                      {t.latest}: <strong>{p.version}</strong>
+                    </p>
+                  ) : null}
+                </Reveal>
 
-            {data.docker ? (
-              <SpotlightCard className="dlcard" style={{ '--i': groups.length }}>
-                <div className="dlcard__head">
-                  <span className="dlcard__icon">
-                    <Icon name="docker" size={22} />
-                  </span>
-                  <h3 className="dlcard__name">{t.docker}</h3>
-                </div>
-                <p className="dlcard__hint">{t.dockerHint}</p>
-                <code className="dlcard__code">docker pull {data.docker.image}</code>
-              </SpotlightCard>
-            ) : null}
-          </Reveal>
+                <Reveal className="grid grid--downloads" stagger>
+                  {groups.map((g, gi) => (
+                    <SpotlightCard className="dlcard" key={g.os} style={{ '--i': gi }}>
+                      <div className="dlcard__head">
+                        <span className="dlcard__icon">
+                          <Icon name={OS_META[g.os].icon} size={22} />
+                        </span>
+                        <h3 className="dlcard__name">{t[OS_META[g.os].key]}</h3>
+                      </div>
+                      <ul className="dlcard__list">
+                        {g.items.map((a) => (
+                          <li key={a.name}>
+                            {/* Same-origin endpoint that streams the bytes with
+                                Content-Disposition: attachment (the Worker proxies
+                                GitHub rather than redirecting), so a plain same-tab
+                                click downloads in place without leaving the page. No
+                                target="_blank" (blank tab that drops the download).
+                                The onClick only opens the Tally form as a side effect
+                                (and only once per visitor) — it never preventDefaults,
+                                so the download is untouched. */}
+                            <a className="dllink" href={a.url} onClick={onDownloadClick}>
+                              <span className="dllink__label">
+                                <Icon name="download" size={16} />
+                                {a.label}
+                              </span>
+                              {a.size ? <span className="dllink__size">{formatSize(a.size)}</span> : null}
+                            </a>
+                          </li>
+                        ))}
+                      </ul>
+                    </SpotlightCard>
+                  ))}
+
+                  {p.docker ? (
+                    <SpotlightCard className="dlcard" style={{ '--i': groups.length }}>
+                      <div className="dlcard__head">
+                        <span className="dlcard__icon">
+                          <Icon name="docker" size={22} />
+                        </span>
+                        <h3 className="dlcard__name">{t.docker}</h3>
+                      </div>
+                      <p className="dlcard__hint">{copy.dockerHint || t.dockerHint}</p>
+                      <code className="dlcard__code">docker pull {p.docker.image}</code>
+                    </SpotlightCard>
+                  ) : null}
+                </Reveal>
+              </div>
+            );
+          })
         )}
       </div>
 

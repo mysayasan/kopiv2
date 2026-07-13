@@ -146,8 +146,22 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// tunnel, which is axis-2).
 	roleService := deps.AccessRoles
 	userService := services.NewControlUserService(deps.Db, roleService)
-	if err := userService.EnsureStockSuperadmin(context.Background(), deps.Config.LocalAuth.Username, deps.Config.LocalAuth.Password); err != nil {
-		return nil, fmt.Errorf("seed stock superadmin: %w", err)
+	// A RESET_ADMIN marker in the data dir (dropped by the Windows installer's "reset
+	// the admin login" option, or by hand) is the lock-out recovery path. Consume it
+	// BEFORE seeding, and delete it first so a later restart never re-runs the reset.
+	seed, err := consumeAdminResetMarker(deps, userService)
+	if err != nil {
+		return nil, fmt.Errorf("reset stock superadmin: %w", err)
+	}
+	if seed == nil {
+		established, serr := userService.EnsureStockSuperadmin(context.Background(), deps.Config.LocalAuth.Username, deps.Config.LocalAuth.Password)
+		if serr != nil {
+			return nil, fmt.Errorf("seed stock superadmin: %w", serr)
+		}
+		seed = &established
+	}
+	if seed.Seeded {
+		announceFirstRunAdmin(deps, *seed)
 	}
 	controlSession := deps.Access
 	controlSession.SetResolver(userService)
@@ -541,7 +555,12 @@ func (m *module) RegisterWebRoutes(router *mux.Router, deps apphost.Dependencies
 	// Always serve the SPA; the app renders its own login screen (SSO button + local
 	// stock-superadmin form) when /api/session/me reports no session. This replaces
 	// the old straight-to-SSO redirect so the local bootstrap login is reachable.
-	staticIndex := filepath.Join(m.BaseDir(), "static", "index.html")
+	//
+	// Resolve against deps.HomeDir, NOT BaseDir(): BaseDir() is the CWD-relative dev
+	// path "apps/myseliasan", so a packaged install (where the binary and static/ sit
+	// side by side and the service's working directory is elsewhere) would 404 on "/"
+	// and "/index.html". apphost's SPA catch-all already uses HomeDir; this must match.
+	staticIndex := filepath.Join(deps.HomeDir, "static", "index.html")
 	serveIndex := func(w http.ResponseWriter, r *http.Request) {
 		// index.html references content-hashed chunk files, so it MUST NOT be cached:
 		// a stale index.html keeps the browser on an old bundle even after a rebuild

@@ -2,6 +2,12 @@
   "jwt": {
     "secret": ""
   },
+  "localAuth": {
+    "_comment": "Dev only. A stable password keeps local iteration quick; the SHIPPED config (deploy/dist/myseliasan-config.json) leaves this EMPTY on purpose, so a real install generates a per-install credential instead of everyone sharing a known default.",
+    "enabled": true,
+    "username": "admin",
+    "password": "admin123"
+  },
   "sso": {
     "issuer": "myidsan",
     "audience": "myseliasan",
@@ -18,7 +24,9 @@
     "enabled": true,
     "multicastAddr": "239.255.90.21:49531",
     "replayWindowSeconds": 30,
-    "mtlsPort": 49532,
+    "mtlsPort": 39532,
+    "controlPort": 39533,
+    "mediaPort": 39534,
     "certTtlHours": 168,
     "renewBeforeHours": 48,
     "heartbeatIntervalSeconds": 60
@@ -55,7 +63,7 @@
     },
     "authOnly": {
       "enabled": true,
-      "requests": 120,
+      "requests": 1200,
       "windowSeconds": 60
     },
     "public": {

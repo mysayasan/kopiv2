@@ -2,8 +2,10 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -28,8 +30,14 @@ const minPasswordLen = 8
 // app-specific identity layer and adapts a user to an sharedservices.AccessPrincipal.
 type IControlUserService interface {
 	// EnsureStockSuperadmin seeds (or refreshes, while untouched) the bootstrap
-	// local superadmin (must-change-pw).
-	EnsureStockSuperadmin(ctx context.Context, username, password string) error
+	// local superadmin (must-change-pw). Returns what it established, so a fresh
+	// install can show the operator a credential they do not otherwise know.
+	EnsureStockSuperadmin(ctx context.Context, username, password string) (StockSeedResult, error)
+	// ResetStockSuperadmin force-resets the bootstrap superadmin's password (and
+	// re-enables it) regardless of whether it was already taken over. This is the
+	// lock-out recovery path and requires local admin rights on the host to trigger,
+	// so it is deliberately not reachable over the network.
+	ResetStockSuperadmin(ctx context.Context, username, password string) (StockSeedResult, error)
 	// UpsertFederated provisions/refreshes a myidsan user, assigning the viewer role
 	// on first sight. Returns ErrUserDisabled for a disabled account.
 	UpsertFederated(ctx context.Context, ssoUserId int64, email, name string) (*entities.ControlUser, error)
@@ -76,44 +84,98 @@ func (s *controlUserService) ResolveAccessUser(ctx context.Context, userId int64
 	}, nil
 }
 
-func (s *controlUserService) EnsureStockSuperadmin(ctx context.Context, username, password string) error {
+// StockSeedResult describes the bootstrap superadmin credential this run established.
+// Seeded is true only when the account was actually created, and Generated is true
+// when the password came from neither config nor env — meaning the operator does not
+// know it yet and must be shown it.
+type StockSeedResult struct {
+	Username  string
+	Password  string
+	Generated bool
+	Seeded    bool
+}
+
+// resolveBootstrapPassword picks the password to seed with, and reports whether it had
+// to invent one. Precedence: the LOCAL_ADMIN_PASSWORD env override, then the config
+// value, else a strong generated one. The packaged config.json ships an empty
+// localAuth.password precisely so a fresh install generates a per-install credential
+// rather than everyone sharing a well-known default.
+func resolveBootstrapPassword(password string) (string, bool, error) {
+	if envPass := strings.TrimSpace(os.Getenv("LOCAL_ADMIN_PASSWORD")); envPass != "" {
+		return envPass, false, nil
+	}
+	if p := strings.TrimSpace(password); p != "" {
+		return p, false, nil
+	}
+	generated, err := generateBootstrapPassword()
+	if err != nil {
+		return "", false, err
+	}
+	return generated, true, nil
+}
+
+// generateBootstrapPassword returns a 16-char random password from an unambiguous
+// charset (no O/0/I/l/1), sourced from crypto/rand. It only ever seeds the first-run
+// superadmin, which is must-change on first login. Mirrors mymatasan's generator so
+// every platform hands out a per-install credential.
+func generateBootstrapPassword() (string, error) {
+	const charset = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	for i, b := range buf {
+		buf[i] = charset[int(b)%len(charset)]
+	}
+	return string(buf), nil
+}
+
+func (s *controlUserService) EnsureStockSuperadmin(ctx context.Context, username, password string) (StockSeedResult, error) {
 	username = strings.TrimSpace(username)
 	if username == "" {
 		username = "admin"
 	}
-	if strings.TrimSpace(password) == "" {
-		password = "admin"
+	resolved, generated, err := resolveBootstrapPassword(password)
+	if err != nil {
+		return StockSeedResult{}, err
 	}
+	out := StockSeedResult{Username: username, Password: resolved, Generated: generated}
+
 	existing, err := s.getByUsername(ctx, username)
 	if err != nil {
-		return err
+		return StockSeedResult{}, err
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(resolved), bcrypt.DefaultCost)
 	if err != nil {
-		return err
+		return StockSeedResult{}, err
 	}
 	if existing != nil {
 		// Refresh the bootstrap password from config ONLY while the account is still
 		// the untouched stock account (must-change + active). Once the admin has set
 		// their own password or the account was retired at handoff, config no longer
 		// overrides it.
-		if existing.IsStock && existing.MustChangePassword && !existing.Disabled {
+		//
+		// A *generated* password is never refreshed in: we mint a new random one on
+		// every boot, so rewriting the hash each start would silently invalidate the
+		// credential the operator just read out of INITIAL_ADMIN_LOGIN.txt.
+		if !generated && existing.IsStock && existing.MustChangePassword && !existing.Disabled {
 			existing.PasswordHash = string(hash)
 			existing.UpdatedAt = time.Now().Unix()
-			_, uerr := s.repo.UpdateById(ctx, "", *existing)
-			return uerr
+			if _, uerr := s.repo.UpdateById(ctx, "", *existing); uerr != nil {
+				return StockSeedResult{}, uerr
+			}
 		}
-		return nil
+		return out, nil
 	}
 	role, err := s.roles.GetByName(ctx, sharedservices.RoleSuperadmin)
 	if err != nil {
-		return err
+		return StockSeedResult{}, err
 	}
 	if role == nil {
-		return errors.New("superadmin role not seeded")
+		return StockSeedResult{}, errors.New("superadmin role not seeded")
 	}
 	now := time.Now().Unix()
-	_, err = s.repo.Create(ctx, "", entities.ControlUser{
+	if _, err = s.repo.Create(ctx, "", entities.ControlUser{
 		Kind:               "local",
 		Username:           username,
 		Name:               "Stock Superadmin",
@@ -123,8 +185,59 @@ func (s *controlUserService) EnsureStockSuperadmin(ctx context.Context, username
 		IsStock:            true,
 		CreatedAt:          now,
 		UpdatedAt:          now,
-	})
-	return err
+	}); err != nil {
+		return StockSeedResult{}, err
+	}
+	out.Seeded = true
+	return out, nil
+}
+
+// ResetStockSuperadmin is the lock-out recovery path: it force-sets the stock
+// superadmin's password even when the account has already been taken over or was
+// disabled at handoff, and re-flags it must-change. Unlike EnsureStockSuperadmin it
+// does not care about the account's current state — that is the whole point.
+//
+// It is only ever reached by the app consuming a marker file dropped in the data dir
+// (by the Windows installer's "reset the admin login" option, or by hand), so it needs
+// local admin rights on the host and is not exposed over the network. If the account is
+// gone entirely, it is re-created.
+func (s *controlUserService) ResetStockSuperadmin(ctx context.Context, username, password string) (StockSeedResult, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		username = "admin"
+	}
+	resolved, generated, err := resolveBootstrapPassword(password)
+	if err != nil {
+		return StockSeedResult{}, err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(resolved), bcrypt.DefaultCost)
+	if err != nil {
+		return StockSeedResult{}, err
+	}
+	existing, err := s.getByUsername(ctx, username)
+	if err != nil {
+		return StockSeedResult{}, err
+	}
+	if existing == nil {
+		// Nothing to reset — seed it fresh instead.
+		return s.EnsureStockSuperadmin(ctx, username, resolved)
+	}
+	role, err := s.roles.GetByName(ctx, sharedservices.RoleSuperadmin)
+	if err != nil {
+		return StockSeedResult{}, err
+	}
+	if role == nil {
+		return StockSeedResult{}, errors.New("superadmin role not seeded")
+	}
+	existing.PasswordHash = string(hash)
+	existing.MustChangePassword = true
+	existing.Disabled = false
+	existing.RoleId = role.Id
+	existing.UpdatedAt = time.Now().Unix()
+	if _, err := s.repo.UpdateById(ctx, "", *existing); err != nil {
+		return StockSeedResult{}, err
+	}
+	return StockSeedResult{Username: username, Password: resolved, Generated: generated, Seeded: true}, nil
 }
 
 func (s *controlUserService) UpsertFederated(ctx context.Context, ssoUserId int64, email, name string) (*entities.ControlUser, error) {

@@ -42,7 +42,7 @@ const U = [
 
 const A = [
   { s: '旗舰 · 积极开发中', b: '独立的边缘摄像头与视频智能节点：ONVIF、AI 检测、NVR、WebRTC 实时画面、加密以及局域网配对。' },
-  { s: '控制平面', b: '机群控制平面，负责发现、接管和管理边缘节点，并将其实时摄像头串流转发给操作员。' },
+  { s: '控制平面 · 现已可用', b: '机群控制平面，负责发现、接管和管理边缘节点，并将其实时摄像头串流转发给操作员。' },
   { s: '身份', b: '共享身份与访问：JWT 认证、SSO 以及贯穿平台的基于角色的访问控制。' },
 ];
 
@@ -128,9 +128,21 @@ export default {
   },
   downloads: {
     ...en.downloads,
-    kicker: '获取 MyMataSan',
+    kicker: '获取应用',
     title: '下载并自托管。',
-    subtitle: 'mymatasan 边缘节点只需一次安装。选择你的平台——Web 界面、AI 工作脚本和默认配置均已打包。',
+    subtitle: '可以在单个站点运行一个节点，也可以用一个控制平面管理整个集群。两者都只需一次安装，均已打包 Web 界面和默认配置。',
+    products: {
+      mymatasan: {
+        name: 'MyMataSan',
+        tagline: '边缘节点——每个站点安装一次。支持 ONVIF 摄像头、端侧 AI 检测、NVR 录像和 WebRTC 实时预览。已打包 Web 界面、AI 工作脚本和默认配置。',
+        dockerHint: '运行多架构镜像（已含 ffmpeg）：',
+      },
+      myseliasan: {
+        name: 'MySeliaSan',
+        tagline: '集群控制平面——从一处发现、接管并管理多个 MyMataSan 节点，并在不暴露任何节点的情况下查看其摄像头。纯 Go 单一二进制：无需 ffmpeg，无需 Python。',
+        dockerHint: '运行多架构镜像：',
+      },
+    },
     license: '个人和非商业用途免费——个人、非营利组织、教育和研究。商业或企业内使用，以及任何转售，均需商业许可。',
     latest: '最新版本',
     dockerHint: '运行多架构镜像（已含 ffmpeg）：',

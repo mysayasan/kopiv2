@@ -25,9 +25,14 @@ import (
 // appliance serves HTTPS on first boot without manual cert wrangling. Browsers
 // will show a one-time "not trusted" warning for a self-signed cert on a LAN —
 // that is expected; supply a real cert or a reverse proxy for a trusted chain.
-func ensureSelfSignedCert(certPath, keyPath string, hostnames []string) error {
+// `appName` names the app in the certificate subject, so a myseliasan appliance does
+// not present a cert claiming to be mymatasan.
+func ensureSelfSignedCert(certPath, keyPath, appName string, hostnames []string) error {
 	if certPath == "" || keyPath == "" {
 		return nil // handled (errored) by runServer as before
+	}
+	if appName == "" {
+		appName = "kopiv2"
 	}
 	if fileExists(certPath) && fileExists(keyPath) {
 		return nil
@@ -45,7 +50,7 @@ func ensureSelfSignedCert(certPath, keyPath string, hostnames []string) error {
 	dnsNames, ipAddrs := certSANs(hostnames)
 	tmpl := &x509.Certificate{
 		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: "mymatasan", Organization: []string{"MyMataSan"}},
+		Subject:               pkix.Name{CommonName: appName, Organization: []string{appName}},
 		NotBefore:             time.Now().Add(-time.Minute),
 		NotAfter:              time.Now().AddDate(10, 0, 0),
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
