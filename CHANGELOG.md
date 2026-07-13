@@ -42,6 +42,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-13 — mymatasan 1.102.0, core 1.59.0 (a5c0678)
+
+### Added
+
+- **core,mymatasan**: Added a versioned, once-only schema migration mechanism (infra/db/bootstrap/migration.go) alongside the existing additive auto-migrator, plus a companion schema-drift detector (infra/db/bootstrap/drift.go) that reports what the additive path still cannot fix. The additive migrator could previously only ADD COLUMN: a rename silently stranded data in the old column, a drop left the column forever, and a type change was never even detected, so the row scanner could fail at runtime on a deployed appliance with no diagnostic trail. Migrations now run before auto-migrate in the boot pipeline (migrations -> auto-migrate -> drift check -> seeders), are checksummed so an already-applied migration cannot be silently edited, and a fresh database baselines them instead of replaying them (including through a factory reset, which now correctly threads its migration set through so a rebuilt database doesn't try to replay history against itself and fail to start). Apps opt in via the new apphost.Migrator interface; mymatasan implements it and currently registers zero migrations, since it has no pending structural changes today.
 ## 2026-07-13 — mymatasan 1.101.0, core 1.58.0 (15e2fe7)
 
 ### Changed
