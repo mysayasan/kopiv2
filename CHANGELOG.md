@@ -34,6 +34,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-13 — myseliasan 1.26.0 (2353e2b)
+
+### Added
+
+- **myseliasan**: MySeliaSan can now discover and add cameras to an adopted node, from the control plane. A new 'Cameras' tab in the node Manage dialog (Adopted Nodes -> Manage) hosts mymatasan's real Discover page: a network scan (ONVIF WS-Discovery, SSDP/UPnP, mDNS, SADP, or a subnet port scan), a manual add-by-address probe, the discovered-device list split into new vs already-added, and the credential dialog that verifies the camera login before saving. The scan runs ON the node and the subnet box is prefilled from the node's own interfaces - not the operator's - because camera discovery is multicast and does not route off the LAN, so a scan issued from the control plane's own network would find nothing. No backend work was needed: the node command tunnel is a generic pass-through, so POST /api/nodes/{id}/proxy/api/onvif/{discover,scan,probe} and /api/cameras/discovered already reached the node, are already admin-only (the node rejects a non-GET from a viewer), and are already recorded in the audit log as node.command. A scan against an offline node now reports that the node did not respond, instead of silently reading as 'no cameras found'.
 ## 2026-07-13 — myidsan 1.12.1, mymatasan 1.96.1, myseliasan 1.25.1, core 1.55.0 (e029430)
 
 ### Added
