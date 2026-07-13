@@ -40,6 +40,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-13 — mymatasan 1.100.0 (c168567)
+
+### Changed
+
+- **mymatasan**: Decomposed mymatasan's app-composition root (Tier 2, phase D2): RegisterAppRoutes shrank from 792 to ~490 lines by moving per-subsystem wiring into seven new files (wire_security.go for the at-rest key/recovery-mode gate, wire_storage.go for the 16 repositories, wire_vision.go for the detector worker-script/model-pointer resolution, wire_fleet.go for the three node-dialed fleet channels, wire_routes.go for the middleware chain and API groups, wire_monitors.go for starting background workers and retention purges, wire_services.go for the wiring struct threaded between phases) plus config_map.go for the pure config-to-settings mappers. Pure refactor with no intended behavior change, but it converted two previously comment-enforced ordering hazards into compiler-enforced ones: the detector's resolved worker-script args are now a typed value (detectorModelPaths) passed explicitly instead of a silent deps.Config mutation, and the four MYMATASAN_*_FILE environment variables published to the Python YOLO worker now have one publication point (PublishToProcessEnv) instead of four bare os.Setenv calls. While decomposing, also found and fixed two latent bugs: the three fleet loops (enrollment/control/media channel managers) were unsupervised bare `go` calls, so a panic in any of them silently killed the whole process with no log line explaining why the node stopped enrolling, answering the parent, or relaying live video — all three are now safego.Supervise'd like the rest of the background workers.
 ## 2026-07-13 — mymatasan 1.99.0 (22d5b05)
 
 ### Changed
