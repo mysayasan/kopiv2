@@ -36,6 +36,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-13 — mymatasan 1.97.1, core 1.56.1 (405d5af)
+
+### Fixed
+
+- **mymatasan,core**: Tier 0 correctness hardening for mymatasan: RTSP segment finalization is now crash-safe (remux writes to a .mp4.part and is only renamed into place after encryption succeeds, so a bare .mp4 on disk is always complete and encrypted, and a .ts sibling always means the segment was never finalized) with a bounded-retry quarantine directory for segments that repeatedly fail to remux; deleting a camera now cascades through a registered cleanup chain (stop recorder/detect-only stream, purge footage, purge object-metadata observations, delete detection rules, purge alert events, delete recording config) and aborts if any step fails, instead of leaving an orphaned recorder and rules running forever; footage retention purge no longer freezes a camera's existing recordings when recording is toggled off, and now drains in batches so a backlog can actually catch up instead of capping at one page per sweep; the recording config API now correctly threads the shredPasses setting into every recorder rebuild it triggers; and the highest-write alert_event table gained (camera_id, created_at) and (created_at) indexes, enabled by a schema-tag change letting one column join multiple index groups.
 ## 2026-07-13 — mymatasan 1.97.0, myseliasan 1.27.0, core 1.56.0 (a485631)
 
 ### Changed
