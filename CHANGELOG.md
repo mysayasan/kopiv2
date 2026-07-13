@@ -38,6 +38,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-13 — mymatasan 1.98.0, core 1.57.0 (d13d497)
+
+### Added
+
+- **mymatasan,core**: Completes mymatasan Tier 1 (runtime metrics). Prometheus was already shipped and wired to /metrics, but nothing outside the shared API/coordination middleware ever recorded anything, so questions that matter on a customer box you cannot log into (is the detector keeping up, is ffmpeg thrashing, are segments failing to finalize, are notifications being dropped, why did recording stop overnight) had no answer at all. Adds a generic app-defined metrics registry to shared infra/telemetry (Labels + a Metrics interface: Describe/Inc/Add/Set/Observe, counters/gauges/millisecond histograms with arbitrary label sets, backed by the existing Prometheus recorder and exposed to every app as apphost.Dependencies.Metrics, never nil) with a hard cardinality cap (500 series per metric name) whose truncation is surfaced as a <name>_series_truncated gauge rather than silently dropping series. mymatasan now emits mymatasan_inference_duration_ms, mymatasan_frames_total, mymatasan_alerts_total, mymatasan_camera_online, mymatasan_cameras_offline, mymatasan_disk_used_percent, mymatasan_recording_paused, and mymatasan_disk_mitigation_total from the vision monitor and the camera/machine health monitors; shared infra/recording emits kopiv2_recording_ffmpeg_restarts_total and kopiv2_recording_segment_finalize_total (by outcome, including a separately-counted quarantined outcome); shared infra/notification emits kopiv2_notification_delivery_total (by channel and outcome) so an at-most-once delivery drop is no longer only a log line. Also wraps the camera-health monitor's per-camera probe goroutines in safego.Go, since as bare `go` calls they were child goroutines a panic in them would not have been caught by the safego.Supervise wrapping the monitor's run loop.
 ## 2026-07-13 — mymatasan 1.97.2, core 1.56.2 (d57968d)
 
 ### Fixed
