@@ -8,6 +8,8 @@ This folder is the technical documentation set for the mini framework inside thi
 - `REQUEST_FLOW.md`: request lifecycle and runtime flow.
 - `HOWTO.md`: runbooks and operational procedures (includes MyMataSan live audio, PTZ, and recording stream selection).
 - `DB_BOOTSTRAP_SPEC.md`: shared code-first database bootstrap design.
+- `MYIOTSAN_PLAN.md`: implementation plan for MyIotSan, the planned fourth app (IoT sensor hub).
+- `MYMATASAN_TIER2_PLAN.md`: MyMataSan Tier 2 architectural-debt plan (composition-root decomposition, config seam, migrations, RBAC).
 - `modules/`: module documentation separated by source filename.
 
 Integration coverage note:

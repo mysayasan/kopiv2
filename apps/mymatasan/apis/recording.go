@@ -19,7 +19,6 @@ import (
 	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/onvif"
 	"github.com/mysayasan/kopiv2/infra/recording"
-	"github.com/mysayasan/kopiv2/infra/telemetry"
 	"github.com/mysayasan/kopiv2/infra/vision"
 )
 
@@ -28,25 +27,20 @@ type recordingApi struct {
 	recorder *recording.Manager
 	camera   services.ICameraService
 	settings services.IRuntimeSettingsService
-	cipher   *atrest.Cipher
-	vision   services.IVisionService
-	// shredPasses and metrics must be carried into every RecorderConfig this handler
-	// builds. They are boot-time settings, so omitting one silently rebuilds the recorder
-	// without it — which is exactly what happened to shredPasses: secure shred degraded
-	// to a plain unlink the moment an operator saved any recording setting, until the
-	// next restart.
-	//
-	// NOTE: this handler reconstructs a RecorderConfig field-by-field, duplicating the
-	// one in app.go. Every new RecorderConfig field has to be remembered in BOTH places
-	// or it is silently dropped here. A shared builder would remove the trap; until then,
-	// treat adding a field to RecorderConfig as a two-site change.
-	shredPasses int
-	metrics     telemetry.Metrics
+	// cipher decrypts segments on the playback path. The recorder's own cipher now comes
+	// from recorderCfg.
+	cipher *atrest.Cipher
+	vision services.IVisionService
+	// recorderCfg is the one builder that turns a stored recording config into a runnable
+	// RecorderConfig. This handler used to hand-roll that struct, duplicating app wiring —
+	// which is how ShredPasses got silently dropped and secure shred degraded to a plain
+	// unlink for anyone who saved a recording setting.
+	recorderCfg *services.RecorderConfigBuilder
 }
 
 // NewRecordingApi registers recording routes under /recording.
-func NewRecordingApi(router *mux.Router, serv services.IRecordingService, recorder *recording.Manager, camera services.ICameraService, settings services.IRuntimeSettingsService, cipher *atrest.Cipher, vision services.IVisionService, shredPasses int, metrics telemetry.Metrics) {
-	h := &recordingApi{serv: serv, recorder: recorder, camera: camera, settings: settings, cipher: cipher, vision: vision, shredPasses: shredPasses, metrics: metrics}
+func NewRecordingApi(router *mux.Router, serv services.IRecordingService, recorder *recording.Manager, camera services.ICameraService, settings services.IRuntimeSettingsService, cipher *atrest.Cipher, vision services.IVisionService, recorderCfg *services.RecorderConfigBuilder) {
+	h := &recordingApi{serv: serv, recorder: recorder, camera: camera, settings: settings, cipher: cipher, vision: vision, recorderCfg: recorderCfg}
 	g := router.PathPrefix("/recording").Subrouter()
 
 	g.HandleFunc("/segments", h.listSegments).Methods("GET")
@@ -442,67 +436,17 @@ func (a *recordingApi) saveConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Hot-reload the recorder so the new config takes effect immediately without restart.
+	// The RecorderConfig is built by the one builder every site shares — hand-rolling it
+	// here is how ShredPasses was silently dropped once already.
 	recorderWarning := ""
-	if a.recorder != nil && cfg != nil {
-		ffmpegPath := ""
-		rtspTransport := ""
-		if a.settings != nil {
-			if dec, err := a.settings.Decoder(r.Context()); err == nil {
-				ffmpegPath = dec.MJPEG.FFmpegPath
-				rtspTransport = dec.FFmpeg.RTSPTransport
-			}
-		}
-		// Prefer the explicit StreamURL override; fall back to the ONVIF-discovered URI.
-		// Always look up device credentials so they can be injected into bare URLs.
-		rtspURI := strings.TrimSpace(cfg.StreamURL)
-		fallbackURI := strings.TrimSpace(cfg.FallbackStreamUrl)
-		if a.camera != nil {
-			if src, err := a.camera.SnapshotSource(r.Context(), uint64(cfg.CameraId)); err == nil {
-				if rtspURI == "" {
-					rtspURI = src.RTSPURI
-				} else {
-					rtspURI = services.RTSPURIWithCredentials(rtspURI, src.Username, src.Password)
-				}
-				fallbackURI = services.RTSPURIWithCredentials(fallbackURI, src.Username, src.Password)
-			}
-		}
-		if rtspURI == "" && cfg.Enabled {
-			recorderWarning = "camera has no RTSP URI — recording will not start until an RTSP URI is configured on the camera or a Stream URL override is set"
-			log.Printf("recording: cam%d enabled but has no RTSP URI", cfg.CameraId)
-		} else {
-			siphonFPS, siphonWidth := services.SiphonTeeParams(a.settings)
-			siphonHWAccel, siphonHWDevice, siphonInitHWDevice, siphonVideoDecoder := services.SiphonDecoderParams(a.settings)
-			// Read the at-rest codec live so a Settings → Recording change takes effect
-			// the next time any camera's recording config is saved.
-			recStorage, _ := a.settings.Recording(r.Context())
-			if cerr := a.recorder.Configure(recording.RecorderConfig{
-				CameraId:           cfg.CameraId,
-				Enabled:            cfg.Enabled,
-				PreRollSec:         cfg.PreRollSec,
-				PostRollSec:        cfg.PostRollSec,
-				StoragePath:        cfg.StoragePath,
-				FFmpegPath:         ffmpegPath,
-				RTSPTransport:      rtspTransport,
-				RTSPURI:            rtspURI,
-				FallbackRTSPURI:    fallbackURI,
-				SegmentMinutes:     cfg.SegmentMinutes,
-				RetentionDays:      cfg.RetentionDays,
-				SiphonFPS:          siphonFPS,
-				SiphonWidth:        siphonWidth,
-				HWAccel:            siphonHWAccel,
-				HWAccelDevice:      siphonHWDevice,
-				InitHWDevice:       siphonInitHWDevice,
-				VideoDecoder:       siphonVideoDecoder,
-				RecordCodec:        recStorage.Storage.Codec,
-				RecordQuality:      recStorage.Storage.Quality,
-				RecordFallbackCopy: recStorage.Storage.FallbackToCopy == nil || *recStorage.Storage.FallbackToCopy,
-				ShredPasses:        a.shredPasses,
-				Cipher:             a.cipher,
-				Metrics:            a.metrics,
-			}); cerr != nil {
-				recorderWarning = cerr.Error()
-				log.Printf("recording: configure cam%d: %v", cfg.CameraId, cerr)
-			}
+	if a.recorder != nil && cfg != nil && a.recorderCfg != nil {
+		recCfg, warning := a.recorderCfg.ForRecording(r.Context(), cfg)
+		if warning != "" {
+			recorderWarning = warning
+			log.Printf("recording: cam%d: %s", cfg.CameraId, warning)
+		} else if cerr := a.recorder.Configure(recCfg); cerr != nil {
+			recorderWarning = cerr.Error()
+			log.Printf("recording: configure cam%d: %v", cfg.CameraId, cerr)
 		}
 	}
 
