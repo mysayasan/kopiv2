@@ -10,7 +10,7 @@ It communicates with `mymatasan` nodes directly over the LAN using the pairing p
 
 `myseliasan` owns its own user store (`control_user` table). Two kinds of users coexist:
 
-- **Local (stock superadmin)**: seeded from `localAuth.username` / `localAuth.password` in `config.json` (defaults `admin` / `admin`); must change password on first login; intended to be retired after a real operator account is elevated.
+- **Local (stock superadmin)**: seeded from `localAuth.username` / `localAuth.password` in `config.json`; must change password on first login; intended to be retired after a real operator account is elevated. The password is resolved with precedence `LOCAL_ADMIN_PASSWORD` env → `config.localAuth.password` → a generated 16-character per-install password (`crypto/rand`, unambiguous charset) — an **empty config password no longer falls back to the literal `admin`**. When a password is generated, `app/firstrun.go` prints a one-time console banner (URL/username/password) and writes it to `INITIAL_ADMIN_LOGIN.txt` in the data dir; a generated password is never silently rotated on a later restart (only a config/env-supplied one still refreshes on each boot, and only while the account is untouched). If you're locked out, drop a `RESET_ADMIN` marker file in the data dir (the Windows installer's "reset the admin login" option does this for you) — the next start force-resets the password, re-enables the account, and re-announces it the same way.
 - **Federated**: a `myidsan`-authenticated user auto-provisioned on first login with **no role** (pending clearance). They can authenticate but have zero access until a superadmin assigns a role on the RBAC page; the SPA shows an "access pending — contact your administrator" screen until a role is assigned.
 
 Roles and the per-endpoint permission matrix are managed via the shared accessrbac surface at `/api/access-rbac` (superadmin-only). User management and the bootstrap handoff are at `/api/rbac/users/*` (also superadmin-only). The SPA's **Roles** admin page merges what used to be two separate pages (a role list and a raw RBAC permission matrix) into one: creating a role auto-seeds a **viewer default** (read-only on the fleet + notifications, plus read-only access on every currently-adopted node — a one-time snapshot; nodes adopted later still need a manual grant), a **Copy** action duplicates a role's full permission matrix and node grants onto a new role, and access is granted per role through curated feature toggles (**View fleet**, **Manage fleet**, **Notifications**) instead of raw paths — the raw path+verb matrix is still there under a collapsed **Advanced** section for edge cases. The **bootstrap handoff** (`POST /api/rbac/users/{id}/elevate`) promotes a chosen real federated user to superadmin. The stock account is intentionally left active; a persistent non-dismissible banner appears in the SPA when `session/me` reports `superadminHandoffPending: true` (stock active + real active), prompting the operator to disable it from the Users list. Disabling the stock account is guarded — the API rejects the request if no real superadmin is active yet (`SuperadminStatus` check).
@@ -94,6 +94,8 @@ The shell uses the standardized dark icon side-nav (`SideNav` from `components/l
 
 `index.html` is served with `Cache-Control: no-cache, no-store, must-revalidate` (`app.go`'s `serveIndex`): it references content-hashed bundle filenames, so a cached stale copy can keep a browser on an old bundle after a rebuild — the hashed `.js`/`.css` chunks themselves can still be cached immutably.
 
+**Login screen.** The login, forced-password-change, and "access pending" screens (`views/components/auth_screens.js`) now share mymatasan's `.login-screen`/`.login-panel` card chrome, and the brand mark comes from `@shared/BrandLogo` (steel `--brand-mark` tint) instead of a hand-copied SVG. This also fixed a real bug: the card's background was `var(--bg-panel, #fff)`, and `--bg-panel` was never defined, so the card stayed white in dark/high-contrast themes. The login screen calls `GET /api/auth/config` on load and hides the "Continue with myidsan" button when it reports `ssoEnabled: false` (i.e. `sso.providerBaseUrl` is empty) — a standalone install with no federated provider configured does not offer a button that cannot work. `apps/myseliasan/static/favicon.ico` is now a real generated icon (the previous file was an unrelated image); a matching `favicon.svg` is also served.
+
 **Hardened response headers.** Like mymatasan, every response gets the shared `securityHeaders` hardening (`X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: strict-origin-when-cross-origin`, `Strict-Transport-Security` over TLS, no `Server` header) — see `docs/modules/domain/utils/middlewares/security_headers.go.md`. `myseliasan`'s `config.json`/`config.dev.json` now also ship the same tested opt-in `Content-Security-Policy` mymatasan uses (`securityHeaders.contentSecurityPolicy`). To keep the CSP free of cross-origin allowances, the front-end self-hosts its Quicksand font (`assets/fonts.css`, copied from mymatasan) instead of loading it from Google Fonts.
 
 **Shared footer**: an `AppFooter` component (`@shared`) renders at the bottom of the workspace, showing the app name, version, shared-core version, short commit hash, and build date (from `/api/version`) and the r450k product tagline. Version fields degrade gracefully when the endpoint is unreachable.
@@ -133,6 +135,26 @@ The control plane no longer just tracks liveness passively — every heartbeat s
 - The API rate limiter exempts the node command-tunnel proxy (`/api/nodes/{id}/proxy/...`), node camera WebRTC signaling, and range-streamed recording playback (`/api/nodes/{id}/recording-stream/...`) from its generic per-path bucket, since a single node session fans many requests through those few paths — without the exemption a normal session could trip `429` and the node would appear "online but can't load data." `authOnly.requests` in `config.json` was also raised from 120 to 1200 per window as a further margin. These surfaces stay authenticated and per-node-access-gated at their own handlers; node CRUD/adopt/release/wipe/access endpoints are unaffected and remain rate-limited normally.
 - `myseliasan`'s own `GET /api/ready` (the control plane's, not a node's — see "Node management" above for the per-node mirror) now reports fleet-listener health as **advisory** fields alongside the usual `ok`/`db`/`cache`: `controlChannel` (up/down — is the parent↔node control-channel listener's serve loop active), `connectedNodes` (how many nodes currently hold a live control connection), and `mediaRelay` (up/down — is the node-camera media relay listener active). These never flip the readiness verdict itself, which stays gated on db + cache only, so a crashed fleet listener alone won't make an orchestrator stop routing traffic — it's a signal for an operator/monitor that the control plane can no longer talk to any node, not a liveness gate. Gating readiness on the fleet listeners would be a separate core-scoped change to the shared `apphost.ReadinessReporter` contract and was deliberately not made here.
 
+## Packaged Releases
+
+Besides `go run . -app myseliasan` from a source checkout, `myseliasan` ships to full
+packaging parity with `mymatasan`: GoReleaser (`.goreleaser.myseliasan.yaml`) builds
+linux/windows/darwin × amd64/arm64 archives, `.deb`/`.rpm` packages (install to
+`/opt/myseliasan` with a bundled systemd unit and a dedicated `myseliasan` service
+user), a Windows Inno Setup installer (`packaging/windows/myseliasan.iss`, registers a
+native Windows service and shows a one-time generated admin password on first
+install), and multi-arch Docker images (`ghcr.io/mysayasan/myseliasan`). It is pure Go
+— no ffmpeg, no Python, no model weights — so the archive is just the binary, `static/`,
+and a default `config.json`.
+
+`myseliasan` releases under its **own tag namespace** (`myseliasan-v<version>`, via
+`.github/workflows/release-myseliasan.yml`) and is published with `--latest=false`, so
+it is versioned and released independently of `mymatasan` and never becomes this
+repository's GitHub "latest" release — that stays `mymatasan`'s, since its in-app
+self-updater reads `releases/latest`. See `docs/TECHNICAL_SPEC.md` → "Versioning
+Model" for the full tagging mechanics and `deploy/README-myseliasan.md` for
+install/first-run/upgrade details.
+
 ## Development defaults
 
 - App URL: `https://localhost:3002`
@@ -146,7 +168,7 @@ The control plane no longer just tracks liveness passively — every heartbeat s
 - The default dev value points to `../myidsan/certs/cert.pem`, which trusts the bundled localhost MyIDSan certificate. If you later replace MyIDSan with a privately signed certificate, point `sso.caCertPath` or `SSO_CA_CERT_PATH` at that CA bundle.
 - `sso.caCertPath` only adds trusted roots for the backend HTTPS token exchange. It does not skip hostname, expiry, or chain validation.
 - DB engine: SQLite at `apps/myseliasan/data/myseliasan.db`
-- `localAuth.username` / `localAuth.password`: stock superadmin credentials (default `admin`/`admin123`; must change on first login)
+- `localAuth.username` / `localAuth.password`: stock superadmin credentials (default `admin`/`admin123`; must change on first login). The dev config omits `localAuth` entirely, so a fresh local `data/myseliasan.db` generates a random per-install password each first run instead — check the console banner or `INITIAL_ADMIN_LOGIN.txt` (see "Self-RBAC and user management" above), or set `LOCAL_ADMIN_PASSWORD` before `go run` for a stable dev credential.
 
 Run MyIDSan first, then run:
 

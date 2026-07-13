@@ -295,13 +295,19 @@ func (u *UpdateService) selectAssets(ctx context.Context, tag string) (assetURL,
 	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
 		return "", "", "", err
 	}
+	// The repo ships more than one product (myseliasan releases from the same repo, and
+	// its archives carry the identical _<os>_<arch> suffix and extension). Matching on
+	// the suffix alone would let this updater download myseliasan and overwrite mymatasan
+	// with it — the checksum would even verify, since both land in one checksums.txt.
+	// Require the product prefix so an asset can only ever be OUR archive.
+	prefix := "mymatasan_"
 	suffix := "_" + runtime.GOOS + "_" + runtime.GOARCH
 	ext := ".tar.gz"
 	if runtime.GOOS == "windows" {
 		ext = ".zip"
 	}
 	for _, a := range rel.Assets {
-		if strings.Contains(a.Name, suffix) && strings.HasSuffix(a.Name, ext) {
+		if strings.HasPrefix(a.Name, prefix) && strings.Contains(a.Name, suffix) && strings.HasSuffix(a.Name, ext) {
 			assetURL, assetName = a.URL, a.Name
 		}
 		if strings.EqualFold(a.Name, "checksums.txt") {

@@ -1,0 +1,59 @@
+/* Brand mark + wordmark shared by every app (see @shared/BrandLogo).
+ *
+ * Tokens each app must define once in its :root (they are NOT --ui-* because the
+ * brand hue is deliberately per-app, not per-theme — it stays constant across
+ * light/dark so the mark never changes identity):
+ *   --brand-mark   the mark's hue (shield stroke, iris, pupil, wordmark)
+ *   --brand-tint   the eye catchlight (a near-white tinted toward --brand-mark)
+ *
+ * The three apps share one geometry and one saturation/lightness; only the hue
+ * moves, so they read as one family but stay tellable apart in a tab strip:
+ *   mymatasan  #4e9d6e (green)   myseliasan #4d759d (steel)   myidsan #6f4d9d (violet)
+ */
+
+.brand-logo {
+  justify-self: start;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  line-height: 1;
+  user-select: none;
+}
+
+/* currentColor drives every stroke/fill in the SVG, so the whole mark re-tints
+   from this one declaration. */
+.brand-mark {
+  display: block;
+  color: var(--brand-mark, #4e9d6e);
+}
+
+.brand-mark-glint {
+  fill: var(--brand-tint, #eaf6ef);
+}
+
+.brand-wordmark {
+  font-family: 'Quicksand', 'Fredoka', system-ui, sans-serif;
+  font-weight: 600;
+  font-size: 18px;
+  letter-spacing: 0.3px;
+  color: var(--brand-mark, #4e9d6e);
+}
+
+/* On the login screens the mark replaces the page heading, so it is centered and
+   the wordmark scales up to match the larger glyph. */
+.login-brand {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+}
+
+.brand-logo--login {
+  justify-self: center;
+  gap: 6px;
+}
+
+.brand-logo--login .brand-wordmark {
+  font-size: 34px;
+  letter-spacing: 0.5px;
+}

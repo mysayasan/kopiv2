@@ -434,7 +434,7 @@ func runApp(app App) error {
 	// self-signed one on first boot so a fresh install serves HTTPS out of the box.
 	for _, listener := range listeners {
 		if listener.UseTLS {
-			if err := ensureSelfSignedCert(appConfig.Tls.CertPath, appConfig.Tls.KeyPath, appConfig.Server.Hostnames); err != nil {
+			if err := ensureSelfSignedCert(appConfig.Tls.CertPath, appConfig.Tls.KeyPath, app.Name(), appConfig.Server.Hostnames); err != nil {
 				return err
 			}
 			break

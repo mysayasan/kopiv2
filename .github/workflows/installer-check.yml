@@ -4,11 +4,13 @@
 # on PRs), so a syntax slip (Randomize, a local const, SetFocus, ...) isn't found
 # until it fails a release and ships a version with no installer .exe.
 #
-# Compile-only: a placeholder mymatasan.exe satisfies the [Files] section's
-# `{#BinDir}\mymatasan.exe` reference; every other [Files] source (static/, ai/,
-# config.json, deploy/README) is committed in the repo, so ISCC compiles the real
-# script exactly as the release job does. We validate the .iss, not a shippable
-# build, so no Go compile is needed.
+# Compile-only: a placeholder .exe satisfies the [Files] section's `{#BinDir}\<app>.exe`
+# reference; every other [Files] source (static/, ai/, config.json, deploy/README) is
+# committed in the repo, so ISCC compiles the real script exactly as the release job does.
+# We validate the .iss, not a shippable build, so no Go compile is needed.
+#
+# Both products' installers are checked — they share the same Pascal Script scaffolding, so
+# a slip in one is usually a slip in both.
 name: Installer check
 
 on:
@@ -23,6 +25,14 @@ permissions:
 jobs:
   compile-iss:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: mymatasan
+            bindir: dist\windows-installer
+          - app: myseliasan
+            bindir: dist\windows-installer-myseliasan
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,17 +40,17 @@ jobs:
       - name: Stage a placeholder binary for the [Files] section
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist\windows-installer | Out-Null
-          Set-Content -Path dist\windows-installer\mymatasan.exe -Value 'placeholder'
+          New-Item -ItemType Directory -Force -Path ${{ matrix.bindir }} | Out-Null
+          Set-Content -Path ${{ matrix.bindir }}\${{ matrix.app }}.exe -Value 'placeholder'
 
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup -y --no-progress
 
-      - name: Compile installer script (mirrors release.yml's ISCC invocation)
+      - name: Compile installer script (mirrors the release job's ISCC invocation)
         shell: pwsh
         run: |
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
             /DAppVersion=0.0.0 `
-            /DBinDir=${{ github.workspace }}\dist\windows-installer `
-            packaging\windows\mymatasan.iss
+            /DBinDir=${{ github.workspace }}\${{ matrix.bindir }} `
+            packaging\windows\${{ matrix.app }}.iss

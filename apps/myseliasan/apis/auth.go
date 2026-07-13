@@ -83,6 +83,17 @@ func NewAuthApi(router *mux.Router, cfg *config.AppConfigModel, auth *middleware
 	// flagged must-change (the control-session middleware is not mounted on /auth).
 	group.HandleFunc("/local-login", handler.localLogin).Methods("POST")
 	group.HandleFunc("/change-password", handler.changePassword).Methods("POST")
+	// Public: lets the login screen know whether federated sign-in is even available,
+	// so a standalone install (no myidsan) does not offer a button that cannot work.
+	group.HandleFunc("/config", handler.authConfig).Methods("GET")
+}
+
+// authConfig reports which sign-in paths this deployment actually offers. The shipped
+// package leaves sso.providerBaseUrl empty (local accounts only), and the SPA hides the
+// "Continue with myidsan" button when ssoEnabled is false.
+func (m *authApi) authConfig(w http.ResponseWriter, r *http.Request) {
+	ssoEnabled := strings.TrimSpace(m.cfg.SSO.ProviderBaseURL) != ""
+	_ = controllers.SendResult(w, map[string]bool{"ssoEnabled": ssoEnabled})
 }
 
 func (m *authApi) localLogin(w http.ResponseWriter, r *http.Request) {

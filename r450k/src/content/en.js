@@ -159,20 +159,34 @@ const en = {
     platform: 'Platform',
     items: [
       { name: 'mymatasan', status: 'Flagship · in active development', available: true, body: 'The standalone edge camera & video-intelligence node: ONVIF, AI detection, NVR, WebRTC live view, encryption, and LAN pairing.' },
-      { name: 'myseliasan', status: 'Control plane', available: false, body: 'The fleet control plane that discovers, adopts, and manages edge nodes, and relays their live camera streams to operators.' },
+      { name: 'myseliasan', status: 'Control plane · available now', available: true, body: 'The fleet control plane that discovers, adopts, and manages edge nodes, and relays their live camera streams to operators.' },
       { name: 'myidsan', status: 'Identity', available: false, body: 'Shared identity and access: JWT auth, SSO, and role-based access control across the platform.' },
     ],
   },
   downloads: {
-    kicker: 'Get MyMataSan',
+    kicker: 'Get the apps',
     title: 'Download & self-host.',
-    subtitle: 'The mymatasan edge node is a single install. Pick your platform — the web UI, AI worker scripts, and a default config come bundled.',
+    subtitle: 'Run one node at a single site, or a whole fleet from one control plane. Both are a single install with the web UI and a default config bundled.',
     license: 'Free for personal and non-commercial use — individuals, non-profits, education, and research. Commercial or in-business use, and any reselling, needs a commercial license.',
     latest: 'Latest release',
     windows: 'Windows',
     linux: 'Linux',
     docker: 'Docker',
-    dockerHint: 'Run the multi-arch image (ffmpeg included):',
+    dockerHint: 'Run the multi-arch image:',
+    // One block per product. Each releases on its own cadence, so each shows its own
+    // version — the Worker resolves them from separate tags.
+    products: {
+      mymatasan: {
+        name: 'MyMataSan',
+        tagline: 'The edge node — one install per site. ONVIF cameras, on-device AI detection, NVR recording and WebRTC live view. Ships with the web UI, AI worker scripts and a default config.',
+        dockerHint: 'Run the multi-arch image (ffmpeg included):',
+      },
+      myseliasan: {
+        name: 'MySeliaSan',
+        tagline: 'The fleet control plane — discover, adopt and manage many MyMataSan nodes from one place, and watch their cameras without ever exposing a node. A single pure-Go binary: no ffmpeg, no Python.',
+        dockerHint: 'Run the multi-arch image:',
+      },
+    },
     loading: 'Loading the latest release…',
     unavailable: 'Downloads are being prepared — check back shortly.',
     formTitle: 'Your download has started 🎉',

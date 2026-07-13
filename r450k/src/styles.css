@@ -999,6 +999,26 @@ a { color: inherit; text-decoration: none; }
 .downloads__license svg { color: var(--signal); flex: none; }
 .downloads__version { color: var(--muted); font-size: 0.9rem; margin-top: 14px; }
 .downloads__version strong { color: var(--signal); }
+
+/* One block per product (mymatasan node / myseliasan control plane). They release
+   independently, so each block carries its own name, blurb and version above its own
+   grid of platform cards. */
+.downloads__product + .downloads__product { margin-top: 64px; }
+.downloads__producthead { text-align: center; margin-bottom: 28px; }
+.downloads__productname {
+  font-size: clamp(1.35rem, 2.4vw, 1.75rem);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.downloads__producttag {
+  max-width: 640px;
+  margin: 10px auto 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+.downloads__producthead .downloads__version { margin-top: 10px; }
 .downloads__note {
   text-align: center; color: var(--muted);
   display: flex; flex-direction: column; align-items: center; gap: 14px;

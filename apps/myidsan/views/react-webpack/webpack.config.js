@@ -1,5 +1,6 @@
 const path = require('path')
 const HtmlWebPackPlugin = require('html-webpack-plugin')
+const CopyPlugin = require('copy-webpack-plugin')
 const fs = require('fs')
 
 const htmlPlugin = new HtmlWebPackPlugin({
@@ -7,7 +8,8 @@ const htmlPlugin = new HtmlWebPackPlugin({
   // which also covers runtime-loaded split chunks, so a content change always yields
   // a new URL and browsers never serve a stale chunk.
   title: 'MyIDSan',
-  template: path.resolve(__dirname, 'src', 'index.html')
+  template: path.resolve(__dirname, 'src', 'index.html'),
+  favicon: path.resolve(__dirname, 'src', 'assets', 'favicon.ico')
 })
 
 const certPath = path.resolve(__dirname, '../../certs/cert.pem')
@@ -30,7 +32,15 @@ module.exports = {
     // node_modules so there's a single React copy.
     modules: [path.resolve(__dirname, 'node_modules'), 'node_modules']
   },
-  plugins: [htmlPlugin],
+  plugins: [
+    htmlPlugin,
+    // Brand favicon + self-hosted Quicksand, served at /assets/*. The server-rendered
+    // federated login page (apis/federated_auth.go) links these directly, so they must
+    // exist in static/ even though the SPA imports nothing from here.
+    new CopyPlugin({
+      patterns: [{ from: path.resolve(__dirname, 'src', 'assets'), to: 'assets' }]
+    })
+  ],
   module: {
     rules: [
       {

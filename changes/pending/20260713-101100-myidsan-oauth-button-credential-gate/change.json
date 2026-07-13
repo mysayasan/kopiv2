@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "myidsan",
+  "summary": "The federated sign-in page no longer offers Google/GitHub buttons for providers that have no credentials configured. socialButtonsHTML gated the buttons on the provider config block being non-nil, but the stock config.json ships google and github objects with empty client_id/client_secret - a present-but-blank provider is still non-nil, so both buttons rendered and sent the browser to accounts.google.com with an empty client_id. That is an OAuth error on the public internet, and a dead end on an air-gapped intranet, which is where MySeliaSan (whose SSO hop lands on this page) is deployed. A provider is now considered configured only when both client_id and client_secret are non-empty. Covered by tests that assert the buttons disappear for blank credentials and that the page references no external host at all.",
+  "compatibility": "Backward compatible for any deployment that actually has OAuth configured - fully-credentialed providers still render their buttons. Deployments that were showing broken Google/GitHub buttons off the stock config will now show only the username/password form, which is the correct behaviour."
+}

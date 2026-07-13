@@ -1,0 +1,6 @@
+{
+  "type": "security",
+  "scope": "mymatasan",
+  "summary": "The in-app self-updater can no longer install a different product over MyMataSan. selectAssets matched a release asset on the '_<os>_<arch>' suffix and file extension alone, with no product prefix. Now that MySeliaSan releases out of the same repository, its archives carry an identical suffix and extension (myseliasan_1.9.0_windows_amd64.zip), so had a myseliasan release ever been the repository's 'latest', every deployed node would have matched that asset, downloaded it, verified it against the shared checksums.txt, and overwritten itself with the control plane. Asset selection now requires the 'mymatasan_' product prefix, so an asset can only ever be this product's archive. myseliasan releases are additionally published under their own tag namespace with --latest=false, so they never become 'latest' in the first place - this prefix check is the second, independent guard.",
+  "compatibility": "Backward compatible. Existing releases already name their assets mymatasan_<version>_<os>_<arch>.<ext>, so the updater continues to find them exactly as before. No config or schema change."
+}

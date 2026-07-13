@@ -1,0 +1,38 @@
+<!-- WinSW service wrapper for MySeliaSan (Windows).
+
+  The Windows installer (myseliasan-setup-*.exe) already registers a service for you —
+  this file is only for the portable .zip.
+
+  A Go console app isn't a native Windows service, so wrap it with WinSW (or NSSM).
+
+  WinSW (recommended):
+    1. Download WinSW (https://github.com/winsw/winsw), put WinSW.exe next to the app
+       and rename it myseliasan-service.exe.
+    2. Put this file next to it as myseliasan-service.xml (same base name).
+    3. Edit the <executable> / <workingdirectory> paths below.
+    4. Run (elevated):  myseliasan-service.exe install   then   myseliasan-service.exe start
+       Logs land next to the exe; manage via services.msc.
+
+  NSSM alternative:
+    nssm install MySeliaSan "C:\myseliasan\myseliasan.exe"
+    nssm set MySeliaSan AppDirectory "C:\myseliasan"
+    nssm set MySeliaSan AppEnvironmentExtra KOPIV2_SUPERVISED=1
+    nssm set MySeliaSan AppExit Default Restart
+    nssm start MySeliaSan
+
+  onfailure restart + KOPIV2_SUPERVISED=1 means an in-app restart exits cleanly and the
+  service control manager relaunches it.
+-->
+<service>
+  <id>myseliasan</id>
+  <name>MySeliaSan fleet control plane</name>
+  <description>MySeliaSan — fleet control plane for MyMataSan camera nodes.</description>
+  <executable>C:\myseliasan\myseliasan.exe</executable>
+  <workingdirectory>C:\myseliasan</workingdirectory>
+  <env name="KOPIV2_SUPERVISED" value="1"/>
+  <onfailure action="restart" delay="2 sec"/>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+</service>

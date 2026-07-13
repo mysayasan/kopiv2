@@ -1,0 +1,30 @@
+# systemd unit installed by the MySeliaSan .deb/.rpm package.
+#
+# Flat install: binary, web UI, config, database, logs, certs and the fleet-secret
+# encryption key all live under /opt/myseliasan (home == data). Runs as the dedicated
+# unprivileged `myseliasan` user created by the package postinstall.
+#
+# KOPIV2_SUPERVISED=1 + Restart=always: an in-app restart exits cleanly and systemd
+# relaunches it.
+[Unit]
+Description=MySeliaSan fleet control plane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=myseliasan
+Group=myseliasan
+WorkingDirectory=/opt/myseliasan
+ExecStart=/opt/myseliasan/myseliasan
+Environment=KOPIV2_SUPERVISED=1
+Environment=MYSELIASAN_HOME=/opt/myseliasan
+Environment=MYSELIASAN_DATA=/opt/myseliasan
+# Package-managed: upgrade via apt/dnf.
+Environment=MYSELIASAN_MANAGED=package
+Restart=always
+RestartSec=2
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

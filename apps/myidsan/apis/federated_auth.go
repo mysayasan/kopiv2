@@ -27,6 +27,7 @@ import (
 	"github.com/mysayasan/kopiv2/infra/cache"
 	"github.com/mysayasan/kopiv2/infra/config"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	"github.com/mysayasan/kopiv2/infra/login"
 )
 
 const (
@@ -188,64 +189,120 @@ func (m *federatedAuthApi) authorize(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *federatedAuthApi) loginPage(w http.ResponseWriter, r *http.Request) {
-	continueTo := cleanContinuePath(r.URL.Query().Get("continue"))
+	m.renderLoginPage(w, http.StatusOK, cleanContinuePath(r.URL.Query().Get("continue")), "", "")
+}
+
+// renderLoginPage draws the federated sign-in page. It is the suite's standard login
+// card — the same centered panel, brand mark, fields and buttons as mymatasan's and
+// myseliasan's React login screens — but rendered server-side, because this page sits
+// in the middle of the OAuth redirect chain and has to exist before any SPA loads.
+// The colours are the light-theme literals of the apps' --* tokens; there is no
+// stylesheet to import them from here. Assets (favicon, self-hosted Quicksand) come
+// from static/assets, copied in by the webpack build.
+//
+// `errMsg` is empty on the initial GET and set when a POST failed, so a bad password
+// re-renders the branded card instead of dumping raw text; `username` is echoed back
+// so the user only has to retype the password.
+func (m *federatedAuthApi) renderLoginPage(w http.ResponseWriter, status int, continueTo, username, errMsg string) {
 	social := m.socialButtonsHTML(continueTo)
+	errHTML := ""
+	if errMsg != "" {
+		errHTML = fmt.Sprintf(`<p class="status-line" role="alert">%s</p>`, html.EscapeString(errMsg))
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(status)
 	fmt.Fprintf(w, `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
+  <link rel="alternate icon" href="/favicon.ico">
+  <meta name="theme-color" content="#0f1a14">
+  <link rel="stylesheet" href="/assets/fonts.css">
   <title>MyIDSan Auth</title>
   <style>
-    body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f6f8fb; color: #1f2937; }
-    .page { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
-    .panel { width: min(420px, 100%%); background: #fff; border: 1px solid #d8dee8; border-radius: 8px; box-shadow: 0 16px 50px rgba(31, 41, 55, .10); padding: 28px; }
-    .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
-    .mark { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 6px; background: #102a43; color: #fff; font-weight: 700; }
-    h1 { font-size: 22px; margin: 0; }
-    p { margin: 6px 0 0; color: #64748b; }
-    label { display: grid; gap: 7px; font-size: 13px; font-weight: 650; margin-top: 16px; }
-    input { border: 1px solid #cbd5e1; border-radius: 6px; padding: 11px 12px; font: inherit; }
-    button { width: 100%%; margin-top: 22px; border: 0; border-radius: 6px; padding: 12px; background: #1d4ed8; color: white; font-weight: 700; cursor: pointer; }
-    .error { margin-top: 14px; color: #b91c1c; font-size: 13px; }
-    .divider { display: flex; align-items: center; gap: 10px; margin: 22px 0 6px; color: #94a3b8; font-size: 12px; }
-    .divider::before, .divider::after { content: ""; height: 1px; background: #e2e8f0; flex: 1; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Inter, "Segoe UI", Arial, sans-serif; background: #f4f6f8; color: #18212f; }
+    .login-screen { min-height: 100vh; display: flex; padding: 24px; }
+    .login-panel { margin: auto; width: min(100%%, 380px); display: grid; gap: 16px; padding: 24px;
+      border: 1px solid #d6dee7; border-radius: 8px; background: #fff; box-shadow: 0 12px 30px rgba(32, 42, 54, .08); }
+    .login-brand { display: grid; justify-items: center; text-align: center; }
+    .brand-logo { display: flex; flex-direction: column; align-items: center; gap: 6px; line-height: 1; user-select: none; }
+    .brand-mark { display: block; color: #6f4d9d; }
+    .brand-wordmark { font-family: Quicksand, Fredoka, system-ui, sans-serif; font-weight: 600; font-size: 34px; letter-spacing: .5px; color: #6f4d9d; }
+    .login-brand p { margin: 6px 0 0; color: #6a7888; }
+    form { display: grid; gap: 16px; }
+    label { display: grid; gap: 6px; color: #59687a; font-size: 13px; font-weight: 650; }
+    input { width: 100%%; min-height: 38px; padding: 8px 10px; font: inherit;
+      border: 1px solid #c7d1dc; border-radius: 6px; background: #fff; color: #18212f; }
+    button { width: 100%%; min-height: 38px; padding: 0 14px; font: inherit; font-weight: 650; cursor: pointer;
+      border: 1px solid #2d6cdf; border-radius: 6px; background: #2d6cdf; color: #fff; }
+    .status-line { margin: 0; padding: 10px 12px; font-size: 13px;
+      border-left: 4px solid #d28d1f; background: #fff8e9; color: #64450d; }
+    .login-divider { display: flex; align-items: center; gap: 10px; color: #6a7888; font-size: 12px; }
+    .login-divider::before, .login-divider::after { content: ""; flex: 1; height: 1px; background: #c7d1dc; }
     .oauth-row { display: flex; gap: 10px; }
-    .oauth-btn { flex: 1; text-align: center; text-decoration: none; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; color: #1f2937; font-weight: 650; font-size: 14px; background: #fff; }
-    .oauth-btn:hover { background: #f1f5f9; }
+    .oauth-btn { flex: 1; text-align: center; text-decoration: none; border: 1px solid #c7d1dc; border-radius: 6px;
+      padding: 10px; color: #233044; background: #fff; font-weight: 650; font-size: 14px; }
+    .oauth-btn:hover { background: #f7f9fb; }
   </style>
 </head>
 <body>
-  <main class="page">
-    <section class="panel">
-      <div class="brand"><div class="mark"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 5 6v5c0 4.4 3 7.6 7 9 4-1.4 7-4.6 7-9V6z"/><circle cx="12" cy="10" r="1.7"/><path d="M12 11.7V15"/></svg></div><div><h1>MyIDSan</h1><p>Sign in to continue</p></div></div>
+  <main class="login-screen">
+    <section class="login-panel">
+      <div class="login-brand">
+        <div class="brand-logo" aria-label="myidsan">
+          <svg class="brand-mark" viewBox="0 0 64 64" width="104" height="104" role="img" aria-hidden="true">
+            <g fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M19 13.5 H45 Q50 13.5 50 18 V33 Q50 45 32 54 Q14 45 14 33 V18 Q14 13.5 19 13.5 Z"/>
+              <path d="M20 30 Q31 21 42 30 Q31 39 20 30 Z"/>
+              <circle cx="31" cy="30" r="6"/>
+              <path d="M24 41 L31 48 L46 30" stroke-width="3.4"/>
+            </g>
+            <circle cx="31" cy="30" r="3" fill="currentColor"/>
+            <circle cx="29.5" cy="28.6" r="1" fill="#f0eaf6"/>
+          </svg>
+          <span class="brand-wordmark">myidsan</span>
+        </div>
+        <p>Sign in to continue</p>
+      </div>
+      %s
       <form method="post" action="/api/auth/login">
         <input type="hidden" name="continue" value="%s">
-        <label>Username or email<input name="username" autocomplete="username" required></label>
+        <label>Username or email<input name="username" value="%s" autocomplete="username" autofocus required></label>
         <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
         <button type="submit">Log in</button>
       </form>%s
     </section>
   </main>
 </body>
-</html>`, html.EscapeString(continueTo), social)
+</html>`, errHTML, html.EscapeString(continueTo), html.EscapeString(username), social)
 }
 
 // socialButtonsHTML renders the Google/GitHub sign-in links for the federated login
 // page, but only for providers that are actually configured. Each link carries the
 // pending `continue` target (the /api/auth/authorize URL) through the social-login
 // round-trip so the user lands back at the authorization step afterwards.
+//
+// "Configured" means credentials are actually present, not merely that the config
+// block exists: the stock config.json ships empty `google`/`github` objects, and a
+// non-nil-but-blank provider used to render a button that sends the browser off to
+// accounts.google.com with an empty client_id — an OAuth error on the internet, and
+// a dead end on an air-gapped intranet, which is where myseliasan runs.
 func (m *federatedAuthApi) socialButtonsHTML(continueTo string) string {
-	hasGoogle := m.cfg != nil && m.cfg.Login != nil && m.cfg.Login.Google != nil
-	hasGitHub := m.cfg != nil && m.cfg.Login != nil && m.cfg.Login.GitHub != nil
+	configured := func(p *login.OAuth2ConfigModel) bool {
+		return p != nil && strings.TrimSpace(p.ClientId) != "" && strings.TrimSpace(p.ClientSecret) != ""
+	}
+	hasProviders := m.cfg != nil && m.cfg.Login != nil
+	hasGoogle := hasProviders && configured(m.cfg.Login.Google)
+	hasGitHub := hasProviders && configured(m.cfg.Login.GitHub)
 	if !hasGoogle && !hasGitHub {
 		return ""
 	}
 	cont := url.QueryEscape(continueTo)
 	var b strings.Builder
-	b.WriteString(`<div class="divider"><span>or continue with</span></div><div class="oauth-row">`)
+	b.WriteString(`<div class="login-divider"><span>or continue with</span></div><div class="oauth-row">`)
 	if hasGoogle {
 		fmt.Fprintf(&b, `<a class="oauth-btn" href="/api/login/google?continue=%s">Google</a>`, cont)
 	}
@@ -263,11 +320,12 @@ func (m *federatedAuthApi) loginPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	continueTo := cleanContinuePath(r.Form.Get("continue"))
-	user, err := m.userService.AuthenticateDefault(r.Context(), r.Form.Get("username"), r.Form.Get("password"))
+	username := r.Form.Get("username")
+	user, err := m.userService.AuthenticateDefault(r.Context(), username, r.Form.Get("password"))
 	if err != nil {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusUnauthorized)
-		fmt.Fprintf(w, `<p>Login failed: %s</p><p><a href="/api/auth/login?continue=%s">Try again</a></p>`, html.EscapeString(err.Error()), url.QueryEscape(continueTo))
+		// Re-render the branded card with the failure inline, rather than the bare
+		// "Login failed" text this used to dump.
+		m.renderLoginPage(w, http.StatusUnauthorized, continueTo, username, "Login failed: "+err.Error())
 		return
 	}
 	if err := m.issueProviderSession(w, r, user); err != nil {

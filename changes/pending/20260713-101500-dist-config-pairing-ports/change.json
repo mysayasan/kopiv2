@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "mymatasan,myseliasan",
+  "summary": "The 4953x -> 3953x fleet pairing port move never reached the config that actually ships. deploy/dist/config.json is the default config bundled into MyMataSan's archives, .deb/.rpm, Docker image and Windows installer, and it was left on mtlsPort 49532 with controlPort/mediaPort unset (so they fell back to the Go constants 49533/49534). The dev configs under apps/ were moved to 39532/39533/39534, but a packaged install - the only kind an end user gets - kept the very Windows port conflict the move was made to avoid. deploy/dist/config.json now states mtlsPort 39532, controlPort 39533 and mediaPort 39534 explicitly, and MySeliaSan's new shipped config matches, so a packaged parent and its packaged nodes agree out of the box.",
+  "compatibility": "Fresh installs from a package now listen on and dial 39532-39534, matching the dev configs and the documented firewall rules. Existing installs are unaffected: the packaged config is marked config|noreplace, so an upgrade never overwrites an operator's config.json, and any install with explicit pairing ports keeps them. A parent and its adopted nodes must agree on these ports - if you upgrade one side onto a fresh config while the other keeps 4953x, the control and media channels will not reconnect until both match."
+}
