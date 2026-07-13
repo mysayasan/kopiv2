@@ -82,6 +82,8 @@ async function handleContact(request, env) {
 // first, so the first match per product wins.)
 
 const RELEASES_REPO = 'mysayasan/kopiv2';
+const RELEASES_PER_PAGE = 100; // GitHub's maximum
+const MAX_RELEASE_PAGES = 3;
 
 const PRODUCTS = [
   {
@@ -160,29 +162,45 @@ async function handleDownloads(request, env) {
   let payload;
   let status = 200;
   try {
-    // 30 is comfortably more than the number of releases we'd need to scan back through
-    // to find one of each product, even after a run of releases for the other.
-    const gh = await fetch(`https://api.github.com/repos/${RELEASES_REPO}/releases?per_page=30`, { headers });
-    if (gh.ok) {
-      const releases = await gh.json();
-      const list = Array.isArray(releases) ? releases : [];
-      const products = PRODUCTS.map((p) => {
-        const rel = list.find((r) => !r.draft && p.matchTag(String(r.tag_name || '')));
-        return rel ? buildProduct(p, rel) : null;
-      }).filter(Boolean);
+    // Page back until every product has been found, rather than gambling that one page is
+    // deep enough. The products release independently, so a long run of releases for one
+    // can push the other's newest release off the first page — and it would then silently
+    // vanish from the download site. Bounded (3 x 100) so a bad response can't loop.
+    const found = new Map();
+    let missing = PRODUCTS.filter((p) => !found.has(p.id));
 
-      payload = {
-        ok: true,
-        htmlUrl: `https://github.com/${RELEASES_REPO}/releases`,
-        products,
-      };
-    } else {
-      status = 502;
-      payload = { ok: false, error: `GitHub API ${gh.status}`, htmlUrl: `https://github.com/${RELEASES_REPO}/releases` };
+    for (let page = 1; page <= MAX_RELEASE_PAGES && missing.length > 0; page++) {
+      const gh = await fetch(
+        `https://api.github.com/repos/${RELEASES_REPO}/releases?per_page=${RELEASES_PER_PAGE}&page=${page}`,
+        { headers },
+      );
+      if (!gh.ok) {
+        if (page === 1) throw new Error(`GitHub API ${gh.status}`);
+        break; // keep whatever earlier pages resolved
+      }
+      const body = await gh.json();
+      const list = Array.isArray(body) ? body : [];
+      for (const p of missing) {
+        const rel = list.find((r) => !r.draft && p.matchTag(String(r.tag_name || '')));
+        if (rel) found.set(p.id, buildProduct(p, rel));
+      }
+      missing = PRODUCTS.filter((p) => !found.has(p.id));
+      if (list.length < RELEASES_PER_PAGE) break; // last page
     }
-  } catch {
+
+    // Keep PRODUCTS order (node first, then control plane) rather than release order.
+    payload = {
+      ok: true,
+      htmlUrl: `https://github.com/${RELEASES_REPO}/releases`,
+      products: PRODUCTS.map((p) => found.get(p.id)).filter(Boolean),
+    };
+  } catch (err) {
     status = 502;
-    payload = { ok: false, error: 'Failed to reach GitHub.', htmlUrl: `https://github.com/${RELEASES_REPO}/releases` };
+    payload = {
+      ok: false,
+      error: String((err && err.message) || 'Failed to reach GitHub.'),
+      htmlUrl: `https://github.com/${RELEASES_REPO}/releases`,
+    };
   }
 
   const resp = new Response(JSON.stringify(payload), {

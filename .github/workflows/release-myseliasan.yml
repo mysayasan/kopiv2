@@ -127,21 +127,34 @@ jobs:
           GORELEASER_CURRENT_TAG: v${{ steps.ver.outputs.version }}
 
       # Publish the release under the REAL tag, explicitly not "latest".
+      #
+      # Idempotent: a re-run (workflow_dispatch on the same tag, e.g. after a transient
+      # GHCR push failure) must be able to finish rather than dying on "release already
+      # exists". If the release is there, re-upload the artifacts over it instead.
       - name: Create GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NOTES: ${{ runner.temp }}/release-notes.md
+          TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          gh release create "${{ inputs.tag }}" \
-            --title "MySeliaSan ${{ steps.ver.outputs.version }}" \
-            --notes-file "$NOTES" \
-            --latest=false \
-            dist/myseliasan_*.tar.gz \
-            dist/myseliasan_*.zip \
-            dist/myseliasan_*.deb \
-            dist/myseliasan_*.rpm \
+          ARTIFACTS=(
+            dist/myseliasan_*.tar.gz
+            dist/myseliasan_*.zip
+            dist/myseliasan_*.deb
+            dist/myseliasan_*.rpm
             dist/checksums.txt
+          )
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG already exists — re-uploading artifacts"
+            gh release upload "$TAG" "${ARTIFACTS[@]}" --clobber
+          else
+            gh release create "$TAG" \
+              --title "MySeliaSan ${{ steps.ver.outputs.version }}" \
+              --notes-file "$NOTES" \
+              --latest=false \
+              "${ARTIFACTS[@]}"
+          fi
 
   # Windows x64 service installer (Inno Setup). Runs after the GitHub Release exists and
   # uploads the .exe to it. Windows arm64 users take the portable .zip.
