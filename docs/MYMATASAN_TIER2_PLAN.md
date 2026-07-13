@@ -43,31 +43,50 @@ turn a stored per-camera recording config into a runnable recorder (resolve stre
 inject credentials, read live decoder/storage settings, attach cipher/shred/metrics).
 All three sites call it. Fixes the boot-captured-codec bug as a side effect.
 
-### D2 — Split `RegisterAppRoutes` into per-subsystem wiring
+### D2 — Split `RegisterAppRoutes` into per-subsystem wiring ← **DONE**
 
 ```
-app/app.go            module manifest + RegisterAppRoutes (~100 lines: sequence the builders)
-app/wire_security.go  at-rest key + recovery-mode early return + login guard
+app/app.go            module manifest + RegisterAppRoutes (sequences the builders below)
+app/wire_security.go  at-rest key + recovery-mode early return
 app/wire_storage.go   repositories
-app/wire_vision.go    detector backend + model paths + monitor
-app/wire_recording.go recorder manager + the startup fan-out (uses D1's builder)
-app/wire_fleet.go     pairing, enrollment, control + media channels
-app/wire_monitors.go  the monitors and the periodic purges
+app/wire_vision.go    detector backend + model paths (detectorModelPaths)
+app/wire_fleet.go     enrollment, control + media channels
+app/wire_monitors.go  starting the monitors + the periodic purges
 app/wire_routes.go    middleware chain + the API groups
-app/config_map.go     the *FromAppConfig mappers (already pure and tested — just move)
+app/wire_services.go  the wiring struct threaded between phases
+app/config_map.go     the *FromAppConfig mappers (already pure and tested — just moved)
 ```
 
-Two hazards this must convert from convention into type:
+`RegisterAppRoutes` went from 792 lines to ~490. No behavior change; two ordering hazards
+were converted from convention into type as part of the move:
 
-1. **`deps.Config` is mutated in place at L248** (`Vision.Detector.Args` resolved), and
-   three later calls depend on that write having happened. Move one line and training
-   silently resolves the wrong worker script — no compile error, no failing test.
+1. **`deps.Config` was mutated in place** (`Vision.Detector.Args` resolved), and three
+   later calls depended on that write having happened. Move one line and training silently
+   resolved the wrong worker script — no compile error, no failing test. Fixed: the
+   resolved args are now a value (`detectorModelPaths.DetectorArgs`, `wire_vision.go`)
+   every consumer takes as an explicit parameter. `deps.Config` is no longer mutated
+   anywhere in `app.go`.
 2. **Four `os.Setenv` calls** (`MYMATASAN_ACTIVE_MODEL_FILE`, `_STOCK_`, `_LPR_`,
    `_ANOMALY_FILE`) are how Go tells the Python worker where the model is. Process-global,
-   invisible to the type system, and impossible to run two instances in one process.
+   invisible to the type system, and impossible to run two instances in one process. Fixed
+   to the extent a mechanical decomposition should: the four calls collapsed into one type
+   (`detectorModelPaths`) with one publication point (`PublishToProcessEnv()`), called once
+   from the composition root. `os.Setenv` no longer appears in `app.go`.
 
-Splitting forces both into explicit parameters, because `wire_vision` must *return* the
-resolved paths for the others to consume.
+**Follow-up — phase D3 (not started):** the env-var channel to the Python worker still
+exists, because several spawn sites (`vision_tool`, `teach_anomaly`, `training_runner`)
+inherit the process environment rather than being handed `detectorModelPaths` (or its
+`Env()` output) directly. Removing `os.Setenv` entirely means threading the typed value
+into each of those spawn sites — real work, not something to fold into D2's mechanical
+move. See the `detectorModelPaths` type comment in `wire_vision.go`.
+
+**Also fixed while decomposing** (latent bugs, not behavior changes for a correctly
+configured install): the three fleet loops (`enrollmentManager.Run`, `controlChannel.Run`,
+`mediaChannel.Run`) were bare `go` calls — a panic in any of them silently killed the whole
+process, with nothing in the logs to say the node had stopped enrolling / answering the
+parent / relaying video. All three are now `safego.Supervise`d.
+
+See `docs/modules/apps/mymatasan/app/*.go.md` for the full per-file breakdown.
 
 ---
 

@@ -2,114 +2,181 @@
 
 ## Purpose
 
-Implements the `mymatasan` app module for the shared runtime host.
+Implements the `mymatasan` app module for the shared runtime host. `RegisterAppRoutes` is
+now the **composition-root sequencer**: it calls one builder function per subsystem, each
+living in its own `wire_*.go` file (Tier 2 phase D2), and threads their outputs together.
+Before this split the function was 792 lines with 14 responsibilities and several
+comment-enforced ordering contracts; it is now ~490 lines that mostly just call, in order:
+`openAtRest` → `newRepos` → `resolveDetectorModelPaths`/`buildObjectDetectorBackend` →
+(inline service construction) → `buildFleet` → `registerRoutes` → (inline monitor-settings
+assembly) → `startBackgroundWorkers`. See the sibling `wire_*.go.md` docs for what each
+phase does; this doc covers what's left in `app.go` itself: the module manifest, the
+sequencing, and the helpers that don't belong to any one subsystem.
 
-## Responsibilities
+## Responsibilities (module manifest)
 
-- At the very top of `RegisterAppRoutes`, calls `infra/safego.SetLogger` to route recovered background-goroutine panics into the app logger (`deps.Logger.Warnf`), before any service is built — so a panic is never lost to stdout on a service install (until this runs, `safego` falls back to the standard logger, so nothing is ever silent either way).
-- Calls `services.DescribeMetrics(deps.Metrics)` and `recording.DescribeMetrics(deps.Metrics)` early in `RegisterAppRoutes` (right after the safego logger wire-up) so `/metrics` help text is registered before anything can observe those metrics. `deps.Metrics` is passed once into `services.NewRecorderConfigBuilder(...)`, which threads it (`Metrics: b.metrics`) into every `recording.RecorderConfig` it builds — the startup fan-out, the settings-save handler (`apis.NewRecordingApi`'s hot-reload path), and the detect-only stream config — plus separately into `VisionMonitorSettings.Metrics`, `NewCameraHealthMonitor`, `NewMachineHealthMonitor`, and `notificationOptionsFromAppConfig` (→ `notification.Options.Metrics` → `hub.SetMetrics`).
-- Provides app identity and base directory.
-- Registers app entities for bootstrap schema generation.
-- Registers built-in and config-driven seeders.
-- Wires app-specific APIs (`onvif`, `settings`, `vision`, `recording`).
-- Mounts app-specific APIs behind standalone DB-backed local Basic Auth.
-- Seeds the first local admin user when no local users exist, via `localUserService.EnsureDefaultAdmin(ctx, deps.Config.LocalAuth.Username, deps.Config.LocalAuth.Password)` (generates a per-install password when config/env supply none; always flags the seeded account must-change). When the result reports `Seeded`, `announceFirstRunAdmin` reveals the bootstrap login: it **always** writes an `INITIAL_ADMIN_LOGIN.txt` recovery file (0600) to the data dir via `writeFirstRunCredentialFile` (the reliable place on Windows too, where a service console is invisible), and prints a console sign-in banner (URL via `firstRunConsoleURL` — https on a TLS port else http, first configured port, default 3000; username; saved-file path). The password is echoed in the banner only when it was generated (`Generated=true`); a config/env-supplied one is pointed at, not logged.
-- One-shot admin reset: when the user table already exists (no seed), `app.go` checks for a `RESET_ADMIN` marker (`adminResetMarkerFile`) in the data dir — dropped by the Windows installer's "reset admin login" option alongside an injected `LOCAL_ADMIN_PASSWORD`. If present, it **deletes the marker first** (so a normal restart never re-runs the reset), then calls `localUserService.ResetAdmin(...)` and `announceFirstRunAdmin` with the result. `fileExists` guards the check.
-- Owns the app-local stream manager used by WebRTC live view and closes it during graceful shutdown.
-- Wires SQLite-backed runtime settings seeded from `decoder` and `stream` config defaults.
-- Builds the app-local vision detector from `vision.detector` config and starts the monitor worker when `vision.enabled` allows it.
-- When an object detector backend is present, warms it up in the background via `infra/safego.Go` (name `mymatasan.vision.warmup`, bounded by a 120s timeout) rather than a bare `go`: this is one-shot, so a panic during warmup is recovered and logged but not retried — live detection simply warms on its first real inference instead.
-- Resolves the detector's Python worker script (`vision.detector.args`) to an absolute path against `deps.HomeDir` via `resolveDetectorScriptArgs`/`resolveDetectorScript`, so the worker is found regardless of the process working directory: a dev run from the repo root (`HomeDir=apps/mymatasan`) or the staged `bin/` bundle (`HomeDir=<exe dir>`, with `ai/` staged alongside). The default config uses the HomeDir-relative `ai/yolo_worker.py`; legacy repo-root-relative values (`./apps/mymatasan/ai/yolo_worker.py`) are recovered by basename in `<HomeDir>/ai` (they otherwise doubled to `<bin>/apps/mymatasan/ai/...` and the worker failed to open, killing detection/calibration). The training script + base-model paths are derived from the resolved worker directory, so they follow automatically.
-- Initialises the `recording.Manager` and applies all enabled `RecordingConfig` rows at startup via `Manager.Configure`.
-- Builds one `services.RecorderConfigBuilder` (`NewRecorderConfigBuilder(cameraService, recordingService, settingsService, atrestCipher, shredPasses, deps.Metrics)`) and passes it to every site that needs to turn a stored `RecordingConfig` into a runnable `recording.RecorderConfig`: this file's own startup fan-out, `apis.NewRecordingApi` (the settings-save hot-reload path), and `monitorSettings.DetectStreamConfig = recorderConfigBuilder.ForDetectOnly`. See `docs/modules/apps/mymatasan/services/recorder_config.go.md`. This replaced three hand-rolled copies of the same struct literal, which is how `ShredPasses` was previously silently dropped from the settings-save site and how the at-rest storage codec ended up captured once at boot instead of read live (see below).
-- Registers the camera-delete cleanup cascade: if `cameraService` implements `services.CameraDeletionCascade`, `app.go` calls `AddCameraCleanup` six times, in order — (1) stop the recorder and detect-only stream (`recorderManager.StopDetectionStream` + `Configure(..., Enabled: false)`), (2) `recordingService.PurgeAllForCamera`, (3) `observationService.PurgeAllForCamera`, (4) `visionService.DeleteRulesForCamera`, (5) `visionService.PurgeAlertsForCamera`, (6) `recordingService.DeleteConfigForCamera` (last, since the purges above are driven off that config row). `cameraService.Delete` runs these before deleting the camera row and aborts on the first failure, so a camera is never half-removed. Previously deleting a camera left its recorder running (ffmpeg still connected, still writing segments) and its detection rules alive (the vision monitor kept sampling a camera that no longer existed, logging a capture-failed diagnostic every interval) until the next restart — and left its footage/config permanently stranded since retention is driven off a recording config that used to survive the camera row.
-- Reads the runtime `recording.storage` settings at startup only to size the shared NVENC semaphore via `recording.SetNVENCConcurrency(maxConcurrentEncodes)` before any recorder starts — this must happen once, before any recorder starts, and is the one field the builder can't read per-call. `RecordCodec`/`RecordQuality`/`RecordFallbackCopy` are **not** captured here any more; `RecorderConfigBuilder` reads them live from `IRuntimeSettingsService.Recording()` on every build, so a Settings → Recording codec change applies the next time a camera's recording config is saved, not only after a restart (previously the boot-captured value was stale until restart despite the code claiming otherwise).
-- After configuring all recorders, if the boot-time storage codec re-encodes (`recording.ReEncodes(recSettings.Storage.Codec)`), warms the NVENC capability probe in the background via `infra/safego.Go` (name `mymatasan.recording.nvenc-probe`) rather than a bare `go`, so `GET /api/recording/storage/status` answers instantly on first request instead of running a throwaway ffmpeg encode inline. This is a one-time cache warm-up keyed off the boot-time codec value, which is fine even though recorders themselves now read the codec live.
-- RTSP URI resolution order at startup: `cfg.StreamURL` override → ONVIF `SnapshotSource` fallback (resolved by the builder). `cfg.FallbackStreamUrl` is passed as `FallbackRTSPURI`. If `recordingService.ListConfigs` itself fails at startup, this is now logged (`deps.Logger.Warnf`) instead of silently skipping the whole fan-out (previously a `ListConfigs` error meant no recorder ever started, with nothing in the logs to say why).
-- Passes the `recording.Manager` pointer to `VisionMonitorSettings.Recorder` so alert events automatically trigger clip extraction.
-- Registers `recorderManager.Close()` in the graceful shutdown func.
-- Builds a `services.PythonInstaller` (from `deps.DataDir`/`deps.ConfigPath`) and passes it into `NewSettingsApi` so Settings can install a self-contained AI Python runtime (Python + torch + ultralytics) in-app.
-- Builds the `services.FFmpegInstaller` with `binDir = filepath.Abs(deps.DataDir/bin)` — a writable, absolute path — rather than a CWD-relative `bin`, mirroring the Python runtime under `dataDir/pyruntime`. A packaged Windows service runs with CWD `C:\Windows\System32`, so the old CWD-relative path misplaced the downloaded ffmpeg binary there instead of under the app's data directory.
-- Builds a `services.UpdateService` (current version resolved from the embedded manifest via `versioning.LoadDefault()`/`InfoForApp`, `deps.HomeDir`, `deps.Restarter`), calls `CleanupStaleFiles()` at startup to remove any leftovers from a previous update, registers its periodic release check on `deps.Scheduler.StartPeriodic` when a scheduler is available, and passes it into `NewSystemApi` for the self-update check/apply endpoints.
-- Builds a `services.NewBackupService` over the camera/camera-onvif/recording-config/detection-class/detection-rule/runtime-setting repositories plus `currentVersion`, and registers `apis.NewBackupApi` (after `NewSystemApi`) for the Settings → Backup & Recovery configuration backup/restore endpoints (`/settings/backup/*`).
-- Provides API docs metadata and endpoint descriptions for shared Swagger/OpenAPI output.
-- Uses the embedded app version as the OpenAPI info version when available.
-- Registers `appentities.ObjectObservation{}` and `sharedentities.NotificationRollup{}` for bootstrap schema generation (the object-metadata recorder and the dashboard-analytics rollup table), plus two additional seeders: `mymatasan-recording-metadata-backfill` (backfills `recording_config.metadata_enabled`/`metadata_gap_seconds` to disabled defaults on existing rows, since a bare `ALTER TABLE` leaves them `NULL`) and `mymatasan-object-observation-indexes` (`CREATE INDEX IF NOT EXISTS` on `(camera_id, started_at)` and `(label, started_at)` — engine-portable secondary indexes the ORM's unique-index struct tags don't cover, needed for the observation search).
-- Wires `apis.NewObservationApi` (object metadata search, `/api/observations`) and `apis.NewAnomalyApi` (statistical anomaly settings + on-demand scan, `/api/anomaly`) alongside the existing `NewNotificationApi`.
+- Provides app identity (`Name() = "mymatasan"`) and base directory.
+- `ReadinessStatus` contributes machine and camera health (captured on the `module` struct
+  during `RegisterAppRoutes`) to the shared `/ready` payload — advisory only, never flips
+  the ready/not-ready verdict.
+- Registers app entities for bootstrap schema generation, including
+  `appentities.ObjectObservation{}` and `sharedentities.NotificationRollup{}` (object
+  metadata recorder + dashboard-analytics rollup table).
+- Registers built-in and config-driven seeders: RBAC endpoint metadata, the
+  `is_diagnostic`/camera-health/`recording_config` metadata NULL-backfills for columns
+  added via `ALTER TABLE`, and `CREATE INDEX IF NOT EXISTS` secondary indexes for the
+  object-observation search.
+- `APIDocs()` provides API docs metadata and endpoint descriptions for shared
+  Swagger/OpenAPI output, using the embedded app version as the OpenAPI info version when
+  available.
 
-## Dashboard Intelligence & metadata recorder wiring
+## `RegisterAppRoutes` — the sequence
 
-`RegisterAppRoutes` builds and wires the Dashboard Intelligence analytics suite (P0–P3) and the object metadata recorder, both sharing the monitor goroutine lifecycle (`monitorCtx`):
+1. `safego.SetLogger(...)` — routes recovered background-goroutine panics into the app
+   logger before anything starts, so a panic is never lost to stdout on a service install.
+2. `services.DescribeMetrics` / `recording.DescribeMetrics` — registers `/metrics` help
+   text before anything can observe those metrics.
+3. `openAtRest(api, deps)` (see `wire_security.go.md`) — resolves the encryption-at-rest
+   master key **first, before any other service is built**. If it returns
+   `RecoveryPending`, `RegisterAppRoutes` mounts nothing else and returns a no-op shutdown
+   func immediately — the recovery gate API was already mounted inside `openAtRest`.
+4. `newRepos(deps.Db)` (see `wire_storage.go.md`) — builds all 16 repositories in one call.
+5. Constructs `cameraService`, `visionService`, `detectionClassService` and seeds built-in
+   detection classes.
+6. `resolveDetectorModelPaths(deps)` then `detectorPaths.PublishToProcessEnv()`, then
+   `buildObjectDetectorBackend(deps, detectorPaths)` (see `wire_vision.go.md`) — resolves
+   the detector's worker-script path and model-pointer files into one typed value, publishes
+   the pointers to the process environment for the Python worker, and builds the shared
+   object-detection backend used by both the live monitor and the training auto-labeler.
+7. Constructs `trainingService`, `settingsService`, `setupStateService`, `pairingService`,
+   `localUserService`; resolves `shredPasses` (`config_map.go`); sizes the NVENC semaphore
+   from the boot-time recording-storage settings; constructs `recordingService`,
+   `metadataRecorder`, `observationService`, `notificationService` (+ rollups/maintainer),
+   and the settings services (notification/health/machine-health/anomaly). Syncs persisted
+   notification delivery settings into the hub.
+8. Seeds the first local admin user (or runs the one-shot `RESET_ADMIN` marker flow — see
+   below) via `localUserService`.
+9. Builds `streamManager`, `recorderManager`, wires the camera-delete cleanup cascade
+   (`services.CameraDeletionCascade`, six ordered cleanups), builds `teachService`
+   (via `teachDetectorConfig(deps, detectorPaths)`, `wire_vision.go`) and
+   `recorderConfigBuilder`, then fans out `recorderManager.Configure` across every stored
+   `RecordingConfig` in parallel goroutines (`sync.WaitGroup`). Warms the NVENC capability
+   probe in the background when the boot-time codec re-encodes.
+10. Builds `cameraHealthMonitor` / `machineHealthMonitor` (captured on `m` for
+    `ReadinessStatus`) and `loginGuard`.
+11. `buildFleet(...)` (see `wire_fleet.go.md`) — builds the three node-dialed fleet
+    channels (enrollment/control/media) and registers the notification control-event sink.
+12. Assembles the `wiring` struct `w` (see `wire_services.go.md`) — everything built so
+    far, gathered once so the remaining phases take one parameter instead of thirty.
+13. `registerRoutes(api, w)` (see `wire_routes.go.md`) — mounts the public routes, the
+    middleware chain, and every protected API group; returns the protected subrouter.
+14. Builds `resetMediaPaths` (a closure over `detectorPaths.TrainingDir` and friends),
+    assembles `monitorSettings` inline (it threads together the detector, recorder,
+    notifier and metadata sink — none of which the pure `config_map.go` mapper can know
+    about) and stores it on `w.visionMonitorSettings`.
+15. `startBackgroundWorkers(monitorCtx, w)` (see `wire_monitors.go.md`) — starts every
+    long-lived worker: the vision monitor + warmup, health monitors, rollup maintainer,
+    analytics monitor, the discovery responder + fleet channels (all now supervised), and
+    the retention purge loops.
+16. Builds `systemResetService` (needs the monitors/recorder to exist so its
+    `StopServices` hook can quiesce them before a wipe) and publishes it onto
+    `w.systemReset` — this is what arms the `ResetGate` middleware that was registered
+    back in step 13, which reads it through a closure at request time.
+17. Builds `updateService` (self-update check/apply) and `backupService`
+    (`apis.NewBackupApi`, reusing the repos from `newRepos`).
+18. Returns the graceful-shutdown func: stops monitors, closes the recorder manager,
+    closes the notification service, closes the detector/training service if they
+    implement `io.Closer`, closes the stream manager.
 
-- **Metadata recorder (P0 dependency, ships with this batch):** `objectObservationRepo := dbsql.NewGenericRepo[appentities.ObjectObservation]`; `metadataRecorder := services.NewMetadataRecorder(objectObservationRepo, recordingService, deps.Config.Vision.Detector.MinObjectConfidence)` is the write side (fed object candidates via `vision.ObservationSink`, reusing the detector's inference — no second decode); `observationService := services.NewObservationService(objectObservationRepo, recordingService)` is the read/maintenance side (search + footage-segment linkage + purge). The detector is wired as the sink when it implements `vision.ObservationCapable` (`monitorSettings.Detector.(vision.ObservationCapable).SetObservationSink(metadataRecorder)`); `monitorSettings.Metadata = metadataRecorder` lets `VisionMonitor` sample metadata-enabled cameras even without alert rules. `metadataRecorder.Start(monitorCtx)` runs alongside `VisionMonitor.Start`, and `observationService.PurgeOldObservations` is added to the `mymatasan.purge.segments` periodic job (see "Retention purge jobs" below) alongside `recordingService.PurgeOldSegments` (retention aligned to each camera's recording retention, falling back to a 30-day default).
-- **P0 — hourly rollup:** `notificationRollupRepo := dbsql.NewGenericRepo[sharedentities.NotificationRollup]`; `notificationService.WithRollups(notificationRollupRepo)` enables the analytics reads (Heatmap/Baseline/AnomalyScan); `notificationRollupMaintainer := notification.NewRollupMaintainer(notificationRepo, notificationRollupRepo, services.NewRollupCursor(runtimeSettingsRepo), 0, 0)` (default 60s interval / 5000-row page) incrementally folds the notifications table into `notification_rollup`, its watermark persisted via the `notification.rollup.cursor` runtime-setting key so a restart resumes instead of re-scanning history. `notificationRollupMaintainer.Start(monitorCtx)` — the first sweep (a few seconds after start) backfills all existing history on an upgrade.
-- **P1/P2 — heatmap/baseline:** pure reads off the rollup, exposed via `GET /api/notifications/heatmap` and `GET /api/notifications/baseline` (no additional startup wiring beyond `WithRollups`).
-- **P3 — statistical anomaly monitor:** `anomalySettingsService := services.NewAnomalySettingsService(runtimeSettingsRepo, services.DefaultAnomalySettings())` (persisted under the `anomalyDetection` runtime-setting key, opt-in/disabled by default); `services.NewAnalyticsMonitor(notificationService, notificationService, anomalySettingsService, cameraService).Start(monitorCtx)` scores the most recently closed hour against each camera's learned baseline on an interval and publishes `analytics.anomaly` category notifications for spikes/"unusual silence" (per-camera-per-direction debounce + cooldown). `apis.NewAnomalyApi(protected, anomalySettingsService, notificationService, cameraService)` exposes `GET/PUT /api/anomaly/settings` and `GET /api/anomaly/scan` (an on-demand preview scan for the Settings UI).
-- **Reset gate:** `systemResetService` is declared as a `var` before `protected := api.PathPrefix("").Subrouter()` so `protected.Use(apis.NewResetGate(func() bool { return systemResetService != nil && systemResetService.InProgress() }))` can be registered — **before** the auth middleware — even though the real `SystemResetService` is constructed later in the function; the closure reads it live per request. This sheds load with a clean 503 instead of raw 500s while a reset has closed the DB pool and is still running the free-space scrub.
-- **`CloseDatabase`:** `SystemResetConfig.CloseDatabase` is wired to `deps.Db.(io.Closer).Close()` when the configured `dbsql.IDbCrud` implementation exposes a `Close()` method (sqlite/mariadb/postgres all do now) — required on sqlite/Windows so the reset's database drop can actually delete the locked file.
+## What moved out (see the sibling docs)
 
-## Retention purge jobs
+- Encryption-at-rest key resolution + recovery mode → `wire_security.go.md`.
+- The 16 repository constructions → `wire_storage.go.md`.
+- Detector worker-script/model-pointer resolution, the `os.Setenv` publication, and the
+  shared object-detection backend build → `wire_vision.go.md`.
+- The three node-dialed fleet channels → `wire_fleet.go.md`.
+- The middleware chain and every protected API-group registration → `wire_routes.go.md`.
+- Starting every background worker and the three retention purge loops →
+  `wire_monitors.go.md`.
+- The `wiring` struct that threads everything between phases → `wire_services.go.md`.
+- The 11 pure `*FromAppConfig` mappers (`config.AppConfigModel` → service settings
+  structs) → `config_map.go.md`.
 
-A package-level `periodic(ctx, name, interval, fn)` helper runs `fn` once immediately, then on every `interval` tick, until `ctx` is done — wrapped in `infra/safego.Supervise`. The three purge loops that used to be near-identical copy-pasted `go func(){ ... ticker ... }()` blocks are now three `periodic(...)` calls sharing this one implementation:
+## What's still here
 
-- **`mymatasan.purge.segments`** (fixed 6h): `recordingService.PurgeOldSegments` and `observationService.PurgeOldObservations`. Their errors — previously discarded — are now logged via `deps.Logger.Warnf`.
-- **`mymatasan.purge.notifications`** (`notification.purgeIntervalHours`, default 6h via `purgeInterval`): reads retention (days / onlyRead) live from notification settings each run, so UI changes take effect without a restart; calls `notificationService.PurgeOlderThanDays`.
-- **`mymatasan.purge.alerts`** (`vision.alertPurgeIntervalHours`, default 6h via `purgeInterval`): purges the `alert_event` table. When `vision.diagnosticRetentionDays > 0`, calls `PurgeAlertsOlderThanDays(days, onlyDiagnostics=true)` to trim vision-monitor diagnostic rows without touching real detections; when `vision.alertRetentionDays > 0`, calls `PurgeAlertsOlderThanDays(days, onlyDiagnostics=false)` to also trim real detection alerts. Both paths unlink snapshot image files for removed rows.
-
-Being supervised matters here specifically: a panic inside a purge used to kill the process, and simply recovering it would be no better, since nothing else notices a dead purge loop — the disk quietly fills (database writes included) until the next restart happens to bring it back.
-
-## LPR model pointer
-
-At startup, `lpr_model.txt` (alongside `active_model.txt` and `stock_model.txt` in the training dir) is resolved and its absolute path is written to `MYMATASAN_LPR_MODEL_FILE`. The YOLO worker reads this env var to know where to load the plate-detector weights. When the file is absent or empty, the LPR OCR stage never runs.
-
-## Discovery responder
-
-After the vision and health monitors are started, `app.go` conditionally starts the `infra/pairing` discovery responder (gated by `pairing.enabled`, default `true`). The responder:
-
-- Runs under `infra/safego.Supervise` (name `mymatasan.pairing.responder`) rather than a bare `go`, so a panic restarts it with backoff instead of leaving the node silently un-adoptable (no further discovery probes would ever be answered) with nothing to say why.
-- Reads the fleet key and discoverability live on every probe (`pairingService.FleetKey` / `pairingService.Discoverable`) so a key set or an adopt call takes effect without a restart.
-- Goes silent automatically once the node is paired (because `Discoverable()` returns false).
-- Advertises the first configured TLS port as `httpsPort` in announces so the control plane can build the adoption URL.
-- Shares the `monitorCtx` lifecycle — it shuts down with the rest of the monitors on graceful shutdown.
-- Logs diagnostics via the app logger under the `"mymatasan.pairing"` topic.
-
-## Enrollment manager (mTLS)
-
-Also within the monitor lifecycle, `app.go` builds and runs an `EnrollmentManager` (from `services/node_enrollment.go`):
-
-- Built from `pairingService`, `pairing.mtlsPort` (default 49532), and `pairing.renewBeforeHours` (default 48h).
-- `enrollmentManager.Kick` is passed as the `onAdopted` callback to `NewPairingPublicApi`, so enrollment begins immediately after the adopt call returns.
-- `enrollmentManager.Run(monitorCtx)` is started as a goroutine; it reconciles on start, on `Kick`, and every 5 minutes.
-- After adoption, it generates a key+CSR locally, POSTs to `<parentBaseURL>/api/nodes/enroll` for a signed certificate, and then serves a mutual-TLS management listener on `pairing.mtlsPort` (GET `/heartbeat`, POST `/release`).
-- On unpair, the listener is torn down and the cert bundle is cleared.
-
-## Media channel
-
-Within the monitor lifecycle, `app.go` also builds and runs a `MediaChannelManager` (`services/media_channel.go`):
-
-- Resolves each camera's RTSP source via `cameraService.SnapshotSource` (the same path used for browser live view); shares the `stream.Manager` RTSP session pool via the `MediaSubscriber` interface.
-- Dials the parent's media listener (`pairing.mediaPort`, default 49534) over fleet mTLS.
-- On a `FrameStart` from the parent, subscribes the requested camera and pumps live RTP (video + audio) up the channel.
-- Reconnects with backoff (1 s → 30 s cap) when the channel drops; the parent re-sends `FrameStart` on reconnect.
-- `mediaChannel.Run(monitorCtx)` is started as a goroutine alongside `controlChannel.Run`, sharing the monitor lifecycle.
+- First-run admin credential flow: seeds the default admin via
+  `localUserService.EnsureDefaultAdmin`; when `Seeded`, `announceFirstRunAdmin` writes
+  `INITIAL_ADMIN_LOGIN.txt` (0600) to the data dir via `writeFirstRunCredentialFile` and
+  prints a console sign-in banner (URL via `firstRunConsoleURL`). The password is echoed
+  only when generated; a config/env-supplied one is pointed at, not logged.
+- One-shot admin reset: checks for the `RESET_ADMIN` marker (`adminResetMarkerFile`,
+  `fileExists`) dropped by the Windows installer's "reset admin login" option, deletes the
+  marker before acting (so a restart never re-runs it), then calls
+  `localUserService.ResetAdmin` and `announceFirstRunAdmin`.
+- `resolveDetectorScriptArgs`/`resolveDetectorScript`/`isRegularFile` — resolves the
+  detector's Python worker-script argument to an absolute path against `deps.HomeDir`.
+  Called from `wire_vision.go`'s `resolveDetectorModelPaths`, but stays in `app.go`
+  because it's a general path-resolution helper, not vision-specific wiring per se.
+- `buildTrainingObjectDetector` — builds the raw `vision.ObjectDetector` backend from
+  `config.VisionDetectorConfigModel` (external/hybrid/persistent modes). Called from
+  `wire_vision.go`'s `buildObjectDetectorBackend`.
+- `wrapMonitorDetector` — wraps the shared object backend into the live monitor's detector
+  (rule mapping via `ObjectRuleDetector`, optional motion-intrusion dispatch); falls back
+  to the native motion detector on a nil backend or `motion` mode. Called inline in
+  `RegisterAppRoutes` when assembling `monitorSettings`.
+- `periodic(ctx, name, interval, fn)` — runs `fn` once immediately then on every interval
+  tick under `safego.Supervise`, until `ctx` is done. Used by `wire_monitors.go`'s
+  `startRetentionPurges` for the three purge loops.
+- `appVersion(appName)` — resolves this app's version from the embedded version manifest
+  (best-effort, empty on failure). Used for the control-channel Hello and `APIDocs()`.
 
 ## Notes
 
 - Only the public shared version API is mounted for this standalone app.
-- Shared login, user/group/role, app-registry, endpoint, endpoint-RBAC, file-storage, log, runtime-log, and cache-service route groups are disabled.
-- App entity registration includes `OnvifDevice`, `RuntimeSetting`, `LocalUser`, `DetectionRule`, `AlertEvent`, `RecordingSegment`, `RecordingConfig`, `ObjectObservation`, `NotificationRollup`, and the pairing state rows stored in `RuntimeSetting` (no new table).
-- The `/api/pairing` endpoint group is seeded with `Public` access tier because `adopt` and `release` carry their own cryptographic authentication.
-- OpenAPI endpoint discovery is automatic; this module enriches summaries/descriptions via `APIDocs()`.
-- Vision detector modes are `motion`, `external`, `hybrid`, and `persistent`; `persistent` keeps one detector worker process alive and closes it during app shutdown.
-- At startup, per-camera recording configs with a missing RTSP URI are skipped with a warning log; recording starts only for cameras where an RTSP URI can be resolved.
-- `PersistSampledDiagnostics` from `vision.persistSampledDiagnostics` is forwarded to `VisionMonitorSettings`; when false (default), the noisy per-frame heartbeat diagnostic is suppressed and only capture/detect failures are written.
-- The default at-rest encryption key path (when `security.keyPath` is unset) resolves as `secret/atrest.key` against `deps.DataDir` via `apphost.ResolveWritablePath`, rather than a hardcoded CWD-relative path — upgrade-safe, since `ResolveWritablePath` keeps an existing legacy key (pre-packaging: CWD `secret/atrest.key`) in place so already-encrypted footage stays readable across an upgrade.
+- Shared login, user/group/role, app-registry, endpoint, endpoint-RBAC, file-storage, log,
+  runtime-log, and cache-service route groups are disabled.
+- The `/api/pairing` endpoint group is seeded with `Public` access tier because `adopt` and
+  `release` carry their own cryptographic authentication.
+- OpenAPI endpoint discovery is automatic; this module enriches summaries/descriptions via
+  `APIDocs()`.
+- **No behavior change from this split**: every call, ordering, and setting is the same as
+  before — this is a pure decomposition. The two things that *did* change are the two
+  ordering hazards below, and they were bug fixes, not behavior changes for a correctly
+  configured install.
+
+## The two ordering hazards, now type-enforced
+
+1. **`deps.Config` is no longer mutated.** Previously `deps.Config.Vision.Detector.Args`
+   was overwritten in place with the resolved script path, and three later constructors
+   (`trainingRunConfigFromAppConfig`, `visionToolSettingsFromAppConfig`,
+   `services.TeachDetectorConfig`) silently depended on that write having already
+   happened — move one line and training would resolve the wrong worker script, with no
+   compile error and no failing test. The resolved args are now a value
+   (`detectorModelPaths.DetectorArgs`, see `wire_vision.go.md`) that every consumer takes
+   as an explicit parameter: `trainingRunConfigFromAppConfig(cfg, configPath,
+   detectorArgs)` and `visionToolSettingsFromAppConfig(cfg, detectorArgs)` both gained a
+   third/second argument (`config_map.go.md`).
+2. **`os.Setenv` no longer appears in `app.go`.** The four bare `os.Setenv` calls
+   (`MYMATASAN_ACTIVE_MODEL_FILE`/`_STOCK_`/`_LPR_`/`_ANOMALY_FILE`) — the inter-component
+   channel to the Python YOLO worker — are now one typed value
+   (`detectorModelPaths`) with one publication point (`PublishToProcessEnv()`, called once
+   from `RegisterAppRoutes`). The env channel still exists (`wire_vision.go.md` explains
+   why: several Python spawn sites inherit the process environment rather than being
+   handed the paths directly) — removing it entirely is Tier 2 phase D3
+   (`docs/MYMATASAN_TIER2_PLAN.md`).
+
+## Latent bug fix: fleet goroutines now supervised
+
+The three fleet loops (`enrollmentManager.Run`, `controlChannel.Run`,
+`mediaChannel.Run`) were bare `go` calls. A panic in any of them took the whole process
+down, and their death was otherwise silent — the node would simply stop enrolling, stop
+answering the parent, or stop relaying live video, with nothing in the logs to say why. All
+three are now started via `safego.Supervise` in `wire_monitors.go`'s
+`startBackgroundWorkers`, alongside the pairing discovery responder (which was already
+supervised). See `docs/TECHNICAL_SPEC.md`'s background-goroutine-resilience section.
 
 ## Encryption-at-rest key resolution & recovery mode
 
-`RegisterAppRoutes` resolves the master key **first, before building any other service** (moved from its former position mid-function):
-
-- When `security.encryptAtRest` is on, it derives `keyPath` (as above) and `recoveryPath` (`security.recoveryPath`, default `recovery.atrestkey` beside the key) and builds `atrest.ProtectorConfig` from `security.keyProtector`/`passphrase`/`passphraseFile`/`passphraseEnv`, then calls `atrest.OpenForStartup(keyPath, recoveryPath, protectorCfg)`.
-- On `ModeLoaded`/`ModeCreated`/`ModeRestored`, `atrestKeyStore`/`atrestCipher` are set as before and threaded into the recorder, vision monitor, and training image store; a `ModeRestored` outcome (key rebuilt from a config-driven recovery escrow) is logged distinctly.
-- On `ModeRecoveryPending` (a key existed here before via the init marker but is now missing), `app.go` calls `apis.NewRecoveryGateApi(api, keyPath, protectorCfg, deps.Restarter, outcome.KeyId)` and **returns immediately** with a no-op shutdown func — no camera/vision/recording/API services are built, no DB writes happen, and nothing can mint a replacement key. The browser can reach nothing but the public recovery gate until the operator restores the key (see `apis/recovery_gate.go.md`) and the process restarts.
-- `NewSystemApi` now takes a fifth `keystore` argument (the escrow-export/verify seam, `apis/system.go.md`); `app.go` passes `atrestKeyStore` as a narrow local interface value, or a typed-nil-free `nil` when encryption-at-rest is disabled, so the recovery endpoints cleanly report "not enabled" rather than panicking.
+Delegated to `openAtRest` in `wire_security.go` (see `wire_security.go.md` for the full
+behavior); `RegisterAppRoutes` still calls it first, before building any other service, and
+still returns immediately with a no-op shutdown func on `RecoveryPending`.
