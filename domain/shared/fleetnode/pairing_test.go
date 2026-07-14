@@ -1,4 +1,4 @@
-package services
+package fleetnode
 
 import (
 	"context"
@@ -29,7 +29,7 @@ func adoptReq(t *testing.T, key, claimCode string) AdoptRequest {
 }
 
 func newPairingSvc() (IPairingService, context.Context) {
-	return NewPairingService(&fakeRuntimeSettingRepo{}, nil, "Test Node", "1.0.0"), context.Background()
+	return NewPairingService(&fakeRuntimeSettingRepo{}, nil, "testapp", "Test Node", "1.0.0", KindCamera), context.Background()
 }
 
 func TestPairingFreshNodeNotDiscoverableWithoutKey(t *testing.T) {

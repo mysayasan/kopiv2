@@ -1,4 +1,4 @@
-package services
+package fleetnode
 
 import (
 	"context"
