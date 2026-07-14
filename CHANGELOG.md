@@ -45,6 +45,16 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-14 — myiotsan 0.2.0, mymatasan 1.104.1, core 1.61.0 (acad78a)
+
+### Added
+
+- **myiotsan,core**: Added myiotsan, the suite's fourth app and on-prem IoT device hub ("the NVR, but for sensors"), as P0 scaffolding: a dedicated cmd/myiotsan entrypoint, config + dev TLS certs on port 3003, an app composition root that boots, authenticates (DB-backed local users via the shared appliance auth stack, with a new session-cookie login endpoint as its primary sign-in path instead of replaying HTTP Basic on every request), and serves an SPA shell. Its own three-role authorization catalog additionally makes device actuation admin-only, ahead of the actuation feature landing. The IoT domain itself (device inventory, telemetry ingest, rules, alerts) is deliberately not implemented yet and arrives in later phases (see docs/MYIOTSAN_PLAN.md).
+
+### Changed
+
+- **mymatasan**: Extracted mymatasan's local-auth stack (DB-backed users, Basic + session-cookie middleware, the failed-login lockout, and the three-role authorization matrix) into domain/shared so a second appliance app (myiotsan) runs the same security-critical code instead of a ~1,300-line fork. mymatasan's own types and routes are now thin aliases/bindings over the shared implementation; its authorization catalog (Policy()) stays app-owned. Also fixes a real bug affecting every app: an unmatched /api/* path previously returned 200 text/html to an unauthenticated caller instead of 404, because the app's auth middleware never saw a path that didn't match any of its routes.
 ## 2026-07-14 — mymatasan 1.104.0, myseliasan 1.28.0 (44268e8)
 
 ### Changed
