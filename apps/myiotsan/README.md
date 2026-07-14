@@ -309,6 +309,35 @@ Run locally:
 go run . -app myiotsan
 ```
 
+## Runtime Metrics
+
+Prometheus is enabled by default (see root `README.md` → Telemetry) and scraped from `/metrics`.
+Before this, myiotsan exposed 0 app-specific series — a live scrape confirmed it. The ingest
+pipeline is deliberately arranged so a publish never touches the database, so its failures never
+raise an error a human sees; these metrics instrument exactly those silent failure modes.
+
+| Metric | Type | Labels | What it tells you |
+|---|---|---|---|
+| `myiotsan_ingest_received_total` | gauge (sampled counter) | — | Payloads accepted from devices — the denominator for everything else below. |
+| `myiotsan_ingest_stored_total` | gauge (sampled counter) | — | Readings actually written to the database (passed the deadband). |
+| `myiotsan_ingest_suppressed_total` | gauge (sampled counter) | — | Readings the deadband dropped as unchanged. This ratio *should* sit high (90%+ on real building sensors) — that's the storage design working. Falling toward zero means a deadband has been mistuned. |
+| `myiotsan_ingest_dropped_total` | gauge (sampled counter) | — | **The headline metric.** Readings shed because the write queue was full — ingest has outrun the disk. Silent data loss: the broker keeps accepting and the UI keeps rendering, so without this, nothing else shows it. Verified live at `86` against a torrent that outran the disk. Alert on any increase. |
+| `myiotsan_ingest_queue_depth` | gauge | — | Current write-queue depth — the leading indicator of drops, before readings are actually lost. |
+| `myiotsan_ingest_series` | gauge | — | Distinct `(device, key)` series the deadband gate is tracking. |
+| `myiotsan_devices_online` / `myiotsan_devices_offline` | gauge | — | Fleet health at a glance. Offline is the one to alert on — a sensor gone silent is a monitoring blind spot, and a smoke detector gone silent is worse. |
+| `myiotsan_commands_total` | counter | `outcome` (`confirmed`/`failed`/`refused`) | Actuation command outcomes. A rising `failed` is devices not acting; a rising `refused` is somebody repeatedly trying something they aren't allowed to. |
+| `myiotsan_task_panics_total` | counter | `task` | Recovered panics in `infra/safego`-supervised background tasks. A supervised task is restarted automatically on panic, but that alone leaves no other trace than one log line. |
+
+The ingest gauges are **sampled** off ingest's own atomic counters every 10 seconds, not
+instrumented on the publish path directly — that path arrives thousands of times a second and
+must stay off any shared lock. `myiotsan_commands_total` is counted directly (commands are rare).
+
+What's worth alerting on:
+- Any increase in `myiotsan_ingest_dropped_total` — telemetry is being lost right now.
+- `myiotsan_ingest_queue_depth` climbing toward its configured cap — act before drops start.
+- `myiotsan_devices_offline > 0` sustained for a device that should be reporting.
+- A rising `myiotsan_task_panics_total` for any `task`.
+
 ## Install & release
 
 `myiotsan` ships as an installable product, not just a `go run` target: portable archives,

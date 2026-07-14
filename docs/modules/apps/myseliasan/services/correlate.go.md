@@ -46,6 +46,17 @@ this to a closure over `registry.List` — i.e. **the ADOPTED NODE'S RECORD**, n
 carried in the event itself. Trusting a kind in the event body would let a door sensor claim to
 be a camera and satisfy a camera-scoped clause.
 
+### `SetMetrics`
+
+```go
+func (c *Correlator) SetMetrics(m telemetry.Metrics)
+```
+
+A setter, not a constructor argument — the ten existing tests in `correlate_test.go` all call
+`NewCorrelator` directly and would otherwise every one grow a `nil` metrics arg. Optional: a
+correlator with none wired still works, `fire` nil-guards it. `app.go` calls it once, right after
+construction, before `Reload`.
+
 ### `NodeEvent`
 
 The flattened shape a rule matches on: `NodeId`, `Kind`, `Category`, `Title`, `Body`, `At`.
@@ -74,7 +85,9 @@ a rule.)
 ## `fire` / `explain`
 
 On fire: persists `LastTriggeredAt` (survives restart, so the cooldown holds across one),
-updates the in-memory cache to match, and publishes a `notification.Notification`
+increments `MetricFleetRuleFiredTotal` (`myseliasan_fleet_rule_fired_total`, labeled `severity`;
+`services/metrics.go.md`) when a metrics recorder is wired, updates the in-memory cache to match,
+and publishes a `notification.Notification`
 (`CategorySystem`, `Source: "fleet-rule"`, `Data["fleetRuleId"]`) whose body is built by
 `explain` — the sentence an operator reads at 03:00. It names what DID happen and what did
 NOT, because "correlation rule 4 fired" tells nobody anything and the absence is half the

@@ -22,6 +22,16 @@ payloads from the Python worker through the alert path — a single malformed de
 - `SetLogger(fn LogFunc)` — routes recovered panics into the application logger. Until
   called (or after `nil` is passed), panics go to the standard `log` package, so a panic
   is never silently lost even before the app wires its own logger.
+- `PanicObserver func(component string)` / `SetPanicObserver(fn PanicObserver)` — routes every
+  recovered panic to a metrics recorder as well as the logger. `runGuarded` (backing `Supervise`)
+  and `recoverPanic` (backing `Go`) both call `notifyPanic(name)` right after `logf`, so a panic
+  is counted whether the task is restarted or one-shot. This closes the gap "why restart, not
+  just recover" below leaves open at the *observability* layer: a task can be caught and
+  restarted and still leave nothing else a human would notice — the process stays up, the API
+  answers, and the subsystem it drove has silently stopped. `infra/apphost/run.go` wires this
+  once per app to a `<app>_task_panics_total{task}` counter (`run.go.md`). `nil` is the default
+  (and what `SetPanicObserver(nil)` restores) — a panic is still logged with no observer wired,
+  only not counted. Guarded by the same `RWMutex` as `logger`.
 
 ## Backoff
 
@@ -52,4 +62,7 @@ and that camera would silently stop being watched until the next process restart
   (`TestGo_RecoversPanic`); a panicking supervised task restarts
   (`TestSupervise_RestartsAfterPanic`); a clean return is not restarted
   (`TestSupervise_DoesNotRestartOnCleanReturn`); cancelling `ctx` stops a supervisor even
-  while it is backing off (`TestSupervise_StopsOnContextCancel`).
+  while it is backing off (`TestSupervise_StopsOnContextCancel`). `observer_test.go` —
+  every recovered panic in a crash-looping supervised task is counted, once per panic, with the
+  task name (`TestPanicObserver_CountsEveryRecoveredPanic`); a one-shot `Go` panic is counted too,
+  even though it is never restarted (`TestPanicObserver_CountsAOneShotPanic`).

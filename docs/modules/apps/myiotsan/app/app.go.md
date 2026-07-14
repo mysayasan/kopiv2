@@ -85,6 +85,11 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
      log** — skipping this re-arms every still-true rule on every restart, the alert storm
      mymatasan shipped), `services.NewIngest`, then `iotmqtt.New` (the embedded broker, refuses
      to build with no authenticator) run via `safego.Go`.
+  9a. **Wires runtime metrics** immediately after the ingest spine: `services.DescribeMetrics(deps.Metrics)`
+      then `services.RunMetricsSampler(bgCtx, deps.Metrics, ingest, deviceService, 10*time.Second)`.
+      Nine series total (was zero — a live scrape confirmed it), all instrumenting failure modes
+      the ingest pipeline otherwise raises no error for: a dropped reading, a mistuned deadband, a
+      device gone quiet, a failed/refused command. See `services/metrics.go.md`.
   9b. **Wires onboarding (P3)** immediately after the ingest spine: `services.NewEnrollment(deps.Db,
       profileService, logf)`, where `logf` both logs and publishes a `notification.CategorySystem`
       warning through `notificationService.Publish` — opening a window is a security event, and it
@@ -97,7 +102,7 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
       `offlineSweepInterval` — the only way an "absence of readings" rule can ever fire, since a
       silent device never calls `Handle` again.
   10b. **Wires actuation (P4)**: `services.NewCommandService(deps.Db, deviceService,
-      broker.Publish, audit, logf)` — `audit` publishes every attempt, INCLUDING every refusal,
+      broker.Publish, audit, deps.Metrics, logf)` — `audit` publishes every attempt, INCLUDING every refusal,
       as a `notification.CategorySystem`/`Warning` notification ("somebody tried to unlock the
       front door at 03:00 and was refused" must not be thrown away just because it failed).
       `ingest.SetTwin(commandService)` wires the twin's reported half into the ingest hot path
@@ -156,6 +161,13 @@ adopted myiotsan node) were booted together for a live end-to-end check. See
 
 ## Notes
 
+- **Runtime metrics (was 0 series on `/metrics` → 9):** a live scrape before this change showed
+  myiotsan exposing nothing app-specific. The ingest pipeline is deliberately arranged so a
+  publish never touches the database and so never raises an error a human sees — a dropped
+  reading, a mistuned deadband, a device gone quiet are all silent without a scrape. See
+  `services/metrics.go.md` for the full catalog; the headline is `myiotsan_ingest_dropped_total`
+  (readings shed because the write queue was full), verified live at `dropped_total 86` against a
+  torrent that outran the disk.
 - Uses `sharedapis.NewLocalLoginApi` (session-cookie login, new with this app — see
   `domain/shared/apis/local_login_api.go.md`) as its primary sign-in path rather than
   Basic-only; Basic still works for API clients since `NewLocalBasicAuth` accepts both.

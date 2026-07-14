@@ -408,6 +408,33 @@ At least one explicit TLS or non-TLS port must be configured. The same port cann
 - Prometheus telemetry includes transaction lock event, wait-duration, and stuck-lock metrics using low-cardinality labels.
 - App modules can provide richer endpoint summaries/descriptions by implementing the shared API docs provider contract.
 
+## Application Metrics Principle
+
+App-specific metrics registered via `deps.Metrics` (`telemetry.Metrics`) follow one rule:
+**instrument what FAILS SILENTLY.** A metric that duplicates a log line an operator would already
+read is noise; a metric for a failure mode with no other symptom — nothing else logs it, nothing
+else changes in the UI — is the whole point, and its help text (`Describe`) says what a rising or
+falling value means for the operator to act on.
+
+- `infra/safego` (shared, every app): a supervised goroutine that panics is caught and restarted
+  — the app stays up — but the only other trace was one log line, and a crash-looping subsystem
+  looks identical from outside to a healthy one. `infra/apphost/run.go` wires
+  `<app>_task_panics_total{task}` to `safego.SetPanicObserver` for every app at startup. See
+  `docs/modules/infra/safego/safego.go.md`, `docs/modules/infra/apphost/run.go.md`.
+- `myiotsan` (a live scrape showed 0 app series before this): the ingest pipeline is deliberately
+  arranged so a publish never touches the database and so never raises an error a human sees.
+  `myiotsan_ingest_dropped_total` is the headline — a reading shed because the write queue was
+  full is silent data loss (the broker keeps accepting, the UI keeps rendering, nothing is
+  logged). See `docs/modules/apps/myiotsan/services/metrics.go.md`.
+- `myseliasan` (a live scrape showed 0 series before this): a control plane is a relay with no
+  sensors of its own, so its failures are fleet failures and they are the quietest kind — a node
+  dropping off the control channel looks in the UI identical to one an operator released; a
+  certificate creeping toward expiry has no symptom until the day it expires. See
+  `docs/modules/apps/myseliasan/services/metrics.go.md`.
+- `mymatasan` was already instrumented before this round (vision frames/inference/alerts, camera
+  health, disk, and recording's segment-finalize outcomes / ffmpeg restarts —
+  `docs/modules/infra/recording/types.go.md`); it is not a gap this round closed.
+
 ## Non-Goals
 
 - Not a monolithic framework generator.

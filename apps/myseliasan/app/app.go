@@ -18,6 +18,7 @@ import (
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
 	apiaccessenums "github.com/mysayasan/kopiv2/domain/enums/apiaccess"
 	"github.com/mysayasan/kopiv2/domain/notification"
+	"github.com/mysayasan/kopiv2/infra/telemetry"
 	"github.com/mysayasan/kopiv2/infra/apidocs"
 	"github.com/mysayasan/kopiv2/infra/apphost"
 	"github.com/mysayasan/kopiv2/infra/atrest"
@@ -281,6 +282,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 			return ""
 		},
 		func(f string, a ...any) { deps.Logger.Infof("myseliasan.correlate", f, a...) })
+	correlator.SetMetrics(deps.Metrics)
 	if err := correlator.Reload(context.Background()); err != nil {
 		stopBackground()
 		return nil, fmt.Errorf("load fleet rules: %w", err)
@@ -322,10 +324,28 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// to "lost", recovering, or a certificate nearing expiry and hands each transition
 	// to this sink, which surfaces it in the unified notification feed (so a
 	// crashed/partitioned node no longer fails silently). Set before the heartbeat loop.
+	services.DescribeMyseliasanMetrics(deps.Metrics)
 	registry.SetFleetEventSink(func(e services.FleetEvent) {
 		publishFleetEvent(notificationService, e)
+		// Count the transition. A node dropping off looks, in the UI, identical to one an
+		// operator released on purpose; a certificate creeping toward expiry has no UI symptom at
+		// all. The counter is the only place a burst of either becomes visible.
+		if deps.Metrics != nil {
+			deps.Metrics.Inc(services.MetricFleetEventsTotal, telemetry.Labels{"kind": fleetEventKind(e.Kind)})
+		}
 	})
 	go controlServer.Run(bgCtx)
+
+	// Fleet-health gauges: how much of the adopted fleet is actually reachable right now, and
+	// whether the control channel is even serving. Sampled off the control server so the accept
+	// path stays free of a metrics lock.
+	services.RunFleetMetricsSampler(bgCtx, deps.Metrics, controlServer, func(ctx context.Context) int {
+		nodes, err := registry.List(ctx)
+		if err != nil {
+			return 0
+		}
+		return len(nodes)
+	}, 10*time.Second)
 
 	// Heartbeat reconciliation: every interval, reconcile each adopted node's liveness —
 	// control-channel presence first, then the mTLS poll as a fallback — converging the
@@ -672,5 +692,19 @@ func (m *module) APIDocs() apidocs.SpecConfig {
 				Tags:        []string{"session"},
 			},
 		},
+	}
+}
+
+// fleetEventKind maps a fleet-event kind to a stable, low-cardinality metric label.
+func fleetEventKind(k services.FleetEventKind) string {
+	switch k {
+	case services.FleetEventNodeLost:
+		return "node_lost"
+	case services.FleetEventNodeRecovered:
+		return "node_recovered"
+	case services.FleetEventCertExpiring:
+		return "cert_expiring"
+	default:
+		return "other"
 	}
 }

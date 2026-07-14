@@ -169,6 +169,34 @@ The control plane no longer just tracks liveness passively — every heartbeat s
 
 `GET /api/nodes/fleet-status` returns a rollup (`{total, online, lost, selfDropped, unknown, certsExpiring, certsExpired, certWarnDays}`) that backs the Dashboard's **Certs expiring** KPI card.
 
+## Runtime Metrics
+
+Prometheus is enabled by default (see root `README.md` → Telemetry) and scraped from `/metrics`.
+Before this, myseliasan exposed 0 app-specific series — a live scrape confirmed it. A control
+plane is a relay with no sensors of its own, so its failures are fleet failures with no other
+symptom: a node dropping off the control channel looks in the UI identical to one an operator
+released on purpose, and a certificate creeping toward expiry has no symptom until it expires.
+
+| Metric | Type | Labels | What it tells you |
+|---|---|---|---|
+| `myseliasan_nodes_connected` | gauge | — | Nodes currently holding a live control channel — the fleet actually reachable right now. |
+| `myseliasan_nodes_adopted` | gauge | — | Nodes adopted in total. The gap to `connected` is the fleet that's supposed to be here and isn't. |
+| `myseliasan_control_channel_up` | gauge | — | `1` while the control-channel listener is serving. `0` means no node can reach the control plane — check this first when the whole fleet appears to vanish at once. |
+| `myseliasan_fleet_events_total` | counter | `kind` (`node_lost`/`node_recovered`/`cert_expiring`) | Fleet-health transitions (see "Fleet-health alerting" above). A burst of `node_lost` is a network partition or the control channel dying; a steady trickle of `cert_expiring` is enrollment quietly failing across the fleet. |
+| `myseliasan_fleet_rule_fired_total` | counter | `severity` | Cross-domain correlation rules firing (see "Fleet rules" above). Low-volume by nature; a spike is either a real incident or a rule mistuned into crying wolf. |
+| `myseliasan_task_panics_total` | counter | `task` | Recovered panics in `infra/safego`-supervised background tasks (the heartbeat reconciler, the metrics sampler, etc). A supervised task is restarted automatically on panic, but that alone leaves no other trace than one log line. |
+
+`myseliasan_nodes_connected`/`_adopted`/`control_channel_up` are sampled off the control server
+every 10 seconds, keeping the control-channel accept path free of a metrics lock.
+`myseliasan_fleet_events_total` and `myseliasan_fleet_rule_fired_total` are counted directly at
+their respective sites — both are rare, discrete events, not a hot path.
+
+What's worth alerting on:
+- `myseliasan_control_channel_up == 0` — the entire fleet is unreachable.
+- `myseliasan_nodes_adopted - myseliasan_nodes_connected` growing — more of the fleet is missing than expected.
+- Any increase in `myseliasan_fleet_events_total{kind="cert_expiring"}` — a node's re-enrollment is at risk.
+- A rising `myseliasan_task_panics_total` for any `task`.
+
 ## Networking / operations
 
 - Discovery is UDP multicast (group `239.255.90.21:49531` by default) sent and received on **all** multicast-capable interfaces, so multi-homed hosts and same-host dev work. The host firewall must allow inbound UDP on the discovery port (49531) and TCP on the mTLS management port (39532), the control channel port (39533), and the media channel port (39534) — the shipped `config.json` defaults; the code falls back to 49532/49533/49534 respectively if any of those fields are unset.

@@ -11,6 +11,7 @@ import (
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	"github.com/mysayasan/kopiv2/domain/notification"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	"github.com/mysayasan/kopiv2/infra/telemetry"
 )
 
 // The cross-domain correlator. This is the reason the fourth app exists.
@@ -54,6 +55,7 @@ type Correlator struct {
 	clauses dbsql.IGenericRepo[entities.FleetRuleClause]
 	notify  *notification.Service
 	nodes   func(ctx context.Context, nodeId string) string // node id -> kind
+	metrics telemetry.Metrics
 	logf    func(format string, args ...any)
 
 	mu     sync.Mutex
@@ -95,6 +97,11 @@ func NewCorrelator(
 		armed:   map[int64]time.Time{},
 	}
 }
+
+// SetMetrics wires a recorder in. Optional — a correlator with none still works and the tests
+// construct one directly. A separate setter rather than a constructor arg so the ten tests that
+// call NewCorrelator do not all have to grow a nil.
+func (c *Correlator) SetMetrics(m telemetry.Metrics) { c.metrics = m }
 
 // Reload refreshes the rule cache.
 func (c *Correlator) Reload(ctx context.Context) error {
@@ -267,6 +274,9 @@ func (c *Correlator) fire(ctx context.Context, rw *ruleWithClauses, armedAt time
 	body := c.explain(rw, armedAt)
 	c.logf("FLEET RULE FIRED: %s", rule.Name)
 
+	if c.metrics != nil {
+		c.metrics.Inc(MetricFleetRuleFiredTotal, telemetry.Labels{"severity": defaultStr(rule.Severity, "critical")})
+	}
 	if c.notify != nil {
 		c.notify.Publish(ctx, notification.Notification{
 			Category: notification.CategorySystem,
