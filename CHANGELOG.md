@@ -44,6 +44,13 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-14 — mymatasan 1.104.0, myseliasan 1.28.0 (44268e8)
+
+### Changed
+
+- **myseliasan**: Gave myseliasan's per-node access grant (NodeAccessGrant) a third rung, CanOperate, so the control plane can map a fleet user onto a node's operator role instead of being forced into the node's admin or viewer role -- completing the fleet half of Tier 2 phase R (the mymatasan-side role model shipped in a prior change). The three flags are now an explicit escalation ladder (CanWrite implies CanOperate implies CanRead), enforced on save by services/node_access.go's normalizeAccess so a grant can never express an incoherent state like write-without-read, and re-normalised on read so a stale or hand-edited row cannot either. NodeAccess.Role() resolves the ladder to the role NAME sent over the tunnel (viewer/operator/admin), which the node evaluates against its own permission matrix -- the control plane never asserts a permission set, only an identity claim. The node_access_api.go audit trail now records the resolved (post-normalization) grant rather than the raw request body, since the two can differ. myseliasan's central RBAC Node Access matrix (RolesAccessPage) and its per-node access dropdown now expose all three levels.
+- **mymatasan**: Replaced the Settings -> Users 'administrator' checkbox with a role picker, giving an admin a real UI for the three-role model (viewer/operator/admin) that previously required calling POST /api/settings/users directly with a roleId to assign anything other than admin or the isAdmin-derived default -- completing the frontend half of Tier 2 phase R. A new useRoles() hook fetches GET /api/settings/roles and a RoleSelect component renders the assignable roles on both the create-user form and each existing user's edit card; the user list badge now shows the assigned role's name instead of a binary Admin/non-admin badge. The update-user request now sends roleId alongside the legacy isAdmin bool. Live-verified against a running instance: creating a user with a roleId persists it, a viewer gets 200 on GET /api/cameras but 403 on /api/recording/segments and /api/settings/users, and an operator gets 200 on GET /api/recording/segments but 403 on DELETE and /api/system/reset.
 ## 2026-07-14 — mymatasan 1.103.0, core 1.60.0 (1a2fa14)
 
 ### Changed
