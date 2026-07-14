@@ -46,6 +46,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-14 — myiotsan 0.3.0, core 1.62.0 (9131666)
+
+### Added
+
+- **myiotsan,core**: Shipped myiotsan's P1 (ingest spine) and P2 (rules & alerts) as one change set — P0-P2 is the shippable MVP. The app now ingests telemetry from real devices over a new embedded MQTT broker (infra/iot/mqtt, port 1883) whose authenticator is the device inventory itself, decodes payloads against a seven-profile built-in device-type catalog (door/window contact, PIR motion, temperature/humidity, smoke/heat, water leak, power meter, access reader), and persists readings through a per-key deadband gate that stores a row only when a value actually moves or a heartbeat elapses. Measured on a live appliance: 20 devices publishing ~30,000 samples in under a second produced 540 written rows, 98.2% suppressed by the deadband, zero dropped, settling the SQLite-write-throughput risk flagged in docs/MYIOTSAN_PLAN.md as the one thing that could invalidate the storage design; no time-series database was added. A ported rule engine (threshold/delta/rate/stuck/offline conditions, debounce, hysteresis, and a restart-surviving cooldown re-seeded from the alert log) evaluates every decoded sample, including ones the deadband suppressed, since the deadband is a storage decision and not a detection one; rule state is keyed by (rule, device) after a live-boot found a tag-scoped rule silently suppressing alerts on all but one of the devices it watched. Alerts publish into the unified notification feed under a new device.alert category, distinct from mymatasan's vision.alert so a subscriber can choose either or both. The device/profile/rule/alert/notification API surface is live (GET/POST /api/devices, /api/profiles, /api/rules, /api/alerts, /api/notifications); the SPA still only renders login/shell, with no device/rule UI yet. Also fixed a first-boot panic in the profile seeder (the generic repo's Delete returns an error, not a no-op, when it matches zero rows) and made the MQTT device authenticator distinguish a database-unreachable lookup failure from a genuinely wrong credential.
 ## 2026-07-14 — myiotsan 0.2.0, mymatasan 1.104.1, core 1.61.0 (acad78a)
 
 ### Added
