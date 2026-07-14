@@ -122,6 +122,40 @@ capped to 8 MiB) → control channel (`control.Request`, fleet mTLS) → mymatas
 (`downloadSegment`, decrypt/transcode/materialize as needed) → control channel
 (`control.Response`, all headers) → myseliasan (`206 Partial Content`) → browser.
 
+## Cross-Domain Fleet Rule Correlation Flow (myseliasan)
+
+This flow is why the suite has a fourth app. A `mymatasan` camera node and a `myiotsan` sensor
+node cannot see each other's events; `myseliasan`, which already receives both over the fleet
+control channel, can correlate across them.
+
+1. A node (camera or sensor) raises a notification locally and forwards it up its control
+   channel (`fleetnode.NewControlEventSink` → `ControlChannelManager.ForwardEvent`, see
+   `docs/modules/domain/shared/fleetnode/doc.go.md`).
+2. `myseliasan`'s `ControlServer` receives the event frame and invokes `onNodeEvent` (`app.go`),
+   which does two things with it: `ingestNodeEvent` publishes it into the unified notification
+   feed (unchanged from before P6), and `observeForCorrelation`
+   (`apps/myseliasan/app/correlate_bridge.go`) flattens it into a `services.NodeEvent` and hands
+   it to the correlator — fed the **node's own event**, never the notification the first step
+   just republished, so a fleet rule's own alert can never satisfy another fleet rule's clause.
+3. `Correlator.Observe` resolves the event's node kind from the **adopted node's own record**
+   (`ManagedNode.Kind`, via a `registry.List` closure), matches it against every enabled
+   `FleetRule`'s clauses, and records which `"required"` clauses it satisfies.
+4. If every `"required"` clause for a rule has now been seen within `WindowSeconds`, the rule
+   **arms** — it does not fire yet.
+5. A 1-second ticker (`app.go`) calls `Correlator.Sweep` on every armed rule. Once a rule's
+   `GraceSeconds` has elapsed, `Sweep` checks whether any `"absent"` clause matched an event
+   during the window — if one did (e.g. a badge swipe arrived, even a few seconds late), the
+   rule is silently disarmed and no alert is ever raised.
+6. If the grace period elapses with the absent clauses still unmatched, the rule **fires**:
+   `LastTriggeredAt` is persisted (so `CooldownSeconds` survives a restart), and a
+   `notification.Notification` is published into the same unified feed step 2 writes to — the
+   correlator's conclusion lands in the same place the raw node events did, distinguishable by
+   `Source: "fleet-rule"`.
+
+**Data path summary:** node event → control channel → `myseliasan` `onNodeEvent` → (a)
+notification feed, (b) `Correlator.Observe` → arm → `Sweep` (grace elapsed, absent clauses
+still unmatched) → fire → notification feed.
+
 ## Two-Way Audio (Talk-Back) Flow (browser mic → mymatasan → camera)
 
 This flow lets an operator speak through a camera's own speaker from the live-view tile. Direction is the reverse of live view — audio flows browser → server → camera. Two transports are resolved server-side, in order: the standard ONVIF RTSP audio backchannel, then the TP-Link Tapo/VIGI proprietary port-8800 protocol for consumer cameras with no RTSP backchannel.

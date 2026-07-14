@@ -2,15 +2,17 @@
 
 ## Purpose
 
-Defines the persisted runtime settings entity for `mymatasan`.
+`RuntimeSetting` is now a type alias (`= sharedentities.RuntimeSetting`) of the shared
+`domain/entities.RuntimeSetting` — the persisted key-value row moved there as part of the fleet
+extraction (see `docs/MYIOTSAN_PLAN.md` §6/P6) so `myiotsan` can use the identical bootstrap
+entity for its own runtime settings and pairing state. `mymatasan`'s own call sites (repos,
+services) are unchanged, since a Go type alias is the same type under a different name.
 
 ## Responsibilities
 
-- Store one keyed JSON settings payload.
-- Allow bootstrap to create and migrate the `runtime_setting` table.
-- Provide a unique `key` index so the app can keep a single `runtime` settings row.
+- Alias `RuntimeSetting` to `domain/entities.RuntimeSetting` so `dbsql.IGenericRepo[entities.RuntimeSetting]` still compiles everywhere it already did in `mymatasan`.
 
 ## Notes
 
-- The current payload contains Decoder and Live Stream settings.
-- Config JSON is used as a startup/default seed, while this table is the runtime source of truth.
+- **Load-bearing constraint, same as `LocalUser`**: the struct this aliases MUST stay named `RuntimeSetting`, because the code-first bootstrap derives the table name by reflecting the struct's name. Renaming the underlying type (or aliasing to a differently-named one) would rename `runtime_setting` out from under every deployed appliance — taking the fleet key, the pairing enrollment, and every persisted setting with it.
+- See `docs/modules/domain/entities/runtime_setting.go.md` for the field-level definition (unchanged from what previously lived directly in this file: `Id`, `Key` (unique), `Value`, audit columns).

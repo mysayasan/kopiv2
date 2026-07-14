@@ -384,6 +384,34 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewRulesApi(protected, ruleService)
 	apis.NewNotificationsApi(protected, notificationService)
 
+	// --- the fleet -------------------------------------------------------------------
+	//
+	// myiotsan is adopted by myseliasan exactly as mymatasan is, on the same shared node stack.
+	// It reports KindIot, so the control plane knows a sensor hub is not a camera node.
+	//
+	// The event sink registered inside buildFleet is the line that makes the fourth app worth
+	// building: every alert this node raises also lands in the control plane's unified feed, and
+	// once myseliasan holds events from BOTH camera nodes and sensor nodes it can correlate
+	// across them — motion on a camera AND a door opening AND no badge swipe. Neither node can
+	// see that alone.
+	if boolValue(deps.Config.Pairing.Enabled, true) {
+		fleetCipher, cerr := openFleetSecretCipher(deps)
+		if cerr != nil {
+			stopBackground()
+			return nil, cerr
+		}
+		f := buildFleet(api, deps, appVersion(m), fleetCipher, notificationService)
+
+		// The PUBLIC pairing routes (adopt / release / self-drop) authenticate with the FLEET KEY,
+		// not a user session — a control plane adopting a node has no user behind it. They must be
+		// registered on the unauthenticated router, before the protected subrouter, or the auth
+		// middleware swallows the adopt call and the node can never be adopted at all.
+		sharedapis.NewPairingPublicApi(api, f.pairing, f.enrollment.Kick)
+		sharedapis.NewPairingApi(protected, f.pairing)
+
+		f.start(bgCtx, deps)
+	}
+
 	return func(context.Context) error {
 		stopBackground()
 		// Let the batcher flush what it has already accepted. A clean shutdown should not throw

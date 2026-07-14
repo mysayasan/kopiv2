@@ -1,8 +1,13 @@
-# Module: apps/mymatasan/services/node_enrollment.go
+# Module: domain/shared/fleetnode/enrollment.go
 
 ## Purpose
 
 Manages the node side of the mTLS hardening lifecycle: after adoption it enrolls with the control-plane fleet CA (generating a key + CSR locally, sending only the CSR), stores the issued certificate bundle, runs the mutual-TLS management listener, and renews the certificate before it expires. It reconciles on a timer and on demand via `Kick`.
+
+Moved here from `apps/mymatasan/services/node_enrollment.go` (Tier: fleet extraction), unchanged
+in behavior. `mymatasan` keeps compiling unchanged via a same-named alias in
+`apps/mymatasan/services/fleetnode.go`; `myiotsan` constructs it directly
+(`apps/myiotsan/app/wire_fleet.go`).
 
 ## Type: `EnrollmentManager`
 
@@ -46,6 +51,6 @@ Routes served:
 ## Notes
 
 - The listener binds on all interfaces at the configured `mtlsPort` (default 49532) so the control plane can reach it regardless of which network interface the probe arrives on.
-- `EnrollmentManager` is started as a goroutine in `app.go` inside the monitor lifecycle context (gated by `pairing.enabled`).
-- `app.go` passes `enrollmentManager.Kick` as the `onAdopted` callback to `NewPairingPublicApi` so enrollment begins immediately after the adopt call returns.
+- `EnrollmentManager` is started as a goroutine inside the monitor lifecycle context (gated by `pairing.enabled`) — in `mymatasan`'s `apps/mymatasan/app/wire_fleet.go`, and identically in `myiotsan`'s `apps/myiotsan/app/wire_fleet.go` (see `docs/modules/apps/myiotsan/app/wire_fleet.go.md`).
+- The adopt handler passes `enrollmentManager.Kick` as the `onAdopted` callback to `NewPairingPublicApi` so enrollment begins immediately after the adopt call returns.
 - The enrollment HTTP client intentionally uses `InsecureSkipVerify` only for the bootstrap `/api/nodes/enroll` call; the management listener it starts is full mTLS.

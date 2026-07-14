@@ -8,14 +8,16 @@ air-gapped, adopted into the myseliasan fleet), reusing mymatasan's spine
 (`device -> signal -> detector -> rule -> alert -> notify -> historize -> dashboard`); cameras
 are one signal type, sensors are another. See `docs/MYIOTSAN_PLAN.md`.
 
-**P0-P2 (the MVP) + P3 (discovery & onboarding) + P4 (actuation & device twin), shipped
-2026-07-14:** the app boots, authenticates, ingests telemetry from real devices over an embedded
-MQTT broker, evaluates rules against it, raises alerts, onboards unknown devices through a
-time-boxed enrollment window rather than requiring every device to be provisioned by hand, and
-now — for the one profile that declares it (`smart-relay`) — can command a device: switch a
+**P0-P2 (the MVP) + P3 (discovery & onboarding) + P4 (actuation & device twin) + P6 (fleet),
+shipped 2026-07-14:** the app boots, authenticates, ingests telemetry from real devices over an
+embedded MQTT broker, evaluates rules against it, raises alerts, onboards unknown devices through
+a time-boxed enrollment window rather than requiring every device to be provisioned by hand, and
+— for the one profile that declares it (`smart-relay`) — can command a device: switch a
 relay or set a setpoint, gated read-only-by-default/admin-only/declared-commands-only/
 server-side-bounds/rate-limited/audited, and never auto-retried (see
-`services/commands.go.md`). What remains is industrial protocols (P5) and fleet adoption (P6).
+`services/commands.go.md`). **It is also now an adoptable `myseliasan` fleet node** — see
+"Fleet (P6)" below and `apps/myiotsan/app/wire_fleet.go.md`. What remains is industrial
+protocols (P5) and release plumbing (P7).
 
 ## Key Type: module
 
@@ -107,8 +109,39 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
       and why a command is never auto-retried.
   11. Registers `apis.NewDevicesApi`, `apis.NewDiscoveryApi` (P3), `apis.NewCommandsApi` (P4),
       `apis.NewProfilesApi`, `apis.NewRulesApi`, `apis.NewNotificationsApi` on `protected`.
+  11b. **Wires the fleet (P6)**, gated on `deps.Config.Pairing.Enabled`: resolves
+      `openFleetSecretCipher(deps)` (fails closed — see "Fleet (P6)" below), builds the fleet
+      via `buildFleet(api, deps, appVersion(m), fleetCipher, notificationService)`
+      (`wire_fleet.go.md`), registers the PUBLIC pairing routes
+      (`sharedapis.NewPairingPublicApi`) on the **unauthenticated** router — before the
+      protected subrouter, or the auth middleware would swallow the adopt call and the node
+      could never be adopted — and the protected pairing routes
+      (`sharedapis.NewPairingApi`) on `protected`, then calls `f.start(bgCtx, deps)`.
   12. The returned shutdown func cancels `bgCtx` then calls `writer.Wait(5*time.Second)` so a
       clean shutdown does not throw away readings the batcher already accepted.
+
+## Fleet (P6)
+
+`myiotsan` is adopted by `myseliasan` exactly the way `mymatasan` is, on the shared node stack
+(`domain/shared/fleetnode`). It reports `fleetnode.KindIot`, so the control plane's fleet UI
+and its correlator both know a sensor hub is not a camera node — see
+`docs/modules/apps/myseliasan/services/node_registry.go.md` and
+`docs/modules/apps/myseliasan/services/correlate.go.md`.
+
+The event sink `buildFleet` registers is the line that makes the fourth app worth building:
+every notification this node raises also lands in the control plane's unified feed via the
+node-dialed control channel, and once `myseliasan` holds events from BOTH camera nodes and
+sensor nodes it can correlate across them — motion on a camera AND a door opening AND no
+badge swipe. Neither node can see that alone. See `apps/myseliasan/services/correlate.go.md`
+for the correlator itself.
+
+**A silent wiring miss, caught by live-booting, not by tests.** The 11b block above was
+initially never inserted into `RegisterAppRoutes` — a string-replace edit missed it. The build
+was green and every unit test passed, because nothing in the test suite exercised the actual
+route table; the node simply had no pairing routes at all. It was caught only by a `404` on
+`/api/pairing/fleet-key` when three real apps (myseliasan + an adopted mymatasan node + an
+adopted myiotsan node) were booted together for a live end-to-end check. See
+`docs/MYIOTSAN_PLAN.md` §8e for the full verification.
 - `loginGuardConfig(deps)` maps `deps.Config.LoginSecurity` onto `sharedapis.LoginGuardConfig`
   — identical shape to mymatasan's own mapping.
 - `RegisterWebRoutes` serves `index.html` from `deps.HomeDir` (not `BaseDir()` — see the

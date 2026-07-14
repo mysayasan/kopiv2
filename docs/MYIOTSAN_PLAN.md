@@ -4,7 +4,10 @@ Status: **P0 SHIPPED** (2026-07-14). **P1 (ingest spine) + P2 (rules & alerts) S
 (2026-07-14) — P0-P2 is the shippable MVP.** **P3 (discovery & onboarding) SHIPPED (2026-07-14)
 — see §8c for what shipped and what was deliberately deferred.** **P4 (actuation & device twin)
 SHIPPED (2026-07-14) — see §8d, including a deviation from §3.4's audit-log design and a real
-unassignable-roles gap found and closed.** P5-P7 not yet started.
+unassignable-roles gap found and closed.** **P6 (fleet adoption + cross-domain rules) SHIPPED
+(2026-07-14) — see §8e. `myiotsan` is now an adoptable `myseliasan` fleet node, and the control
+plane can correlate its events against a `mymatasan` camera's — THE reason this fourth app
+exists, and the payoff §1's differentiator promised.** P5 and P7 not yet started.
 
 `myiotsan` is the fourth app in the suite, alongside `mymatasan` (camera NVR), `myseliasan`
 (fleet control plane) and `myidsan` (identity/SSO). It is built on the same platform as
@@ -35,14 +38,17 @@ the same customer.
 
 ### The differentiator
 
-`myseliasan` already adopts nodes. Once it adopts **both** camera nodes and IoT nodes, the
-suite can express **cross-domain rules** that no competitor can:
+**SHIPPED (P6, 2026-07-14) — see §8e.** `myseliasan` already adopted `mymatasan` camera nodes;
+it now also adopts `myiotsan` sensor nodes, and it can express **cross-domain rules** that no
+competitor can:
 
 > *Motion on Camera 3* **and** *door contact opened* **and** *no badge swipe* → alert.
 
 ThingsBoard cannot see your cameras. `mymatasan` cannot see your door sensors. This
-correlation is the reason the fourth app exists. It lands in Phase 6, but every earlier
-decision should keep the path to it open.
+correlation is the reason the fourth app exists, and every earlier phase's decisions kept the
+path to it open on purpose. Verified live end-to-end against real events from an adopted
+camera node and an adopted sensor node — see §8e, including the late-badge-swipe case that
+proves the grace-period design actually stays silent on a legitimate entry.
 
 ---
 
@@ -227,7 +233,7 @@ No new fleet port block is required: `myiotsan` dials the same `myseliasan` endp
 | **P3** | **Discovery & onboarding — SHIPPED 2026-07-14, see §8c.** Time-boxed enrollment window + quarantined candidate capture + admin adoption, profile-match suggestion, profile import/export, first-run wizard. mDNS/SSDP/portscan and a Modbus TCP scan deliberately deferred to P5 (see §8c). | ~1wk |
 | **P4** | **Actuation & twin — SHIPPED 2026-07-14, see §8d.** Commands, desired/reported, RBAC + audit + confirm (§3.4). | ~1wk |
 | **P5** | **Industrial protocols.** Modbus poller, OPC-UA. | ~1.5wk |
-| **P6** | **Fleet.** Adoption by myseliasan; `kind` column on `managed_node`; `nodeiot/` embed mirroring the `nodecam/` trick; then cross-domain rules. | ~2wk |
+| **P6** | **Fleet — SHIPPED 2026-07-14, see §8e.** Adoption by myseliasan; `Kind` column on `managed_node`; cross-domain correlation rules. A dedicated `nodeiot/` embed mirroring `nodecam/` (full remote device-management pages inside myseliasan, the way camera pages are embedded today) was **not** built — deliberately deferred; see §8e "What was deliberately NOT built". | ~2wk |
 | **P7** | **Release.** GoReleaser / Inno / nfpm / Docker / workflows, k6, ZAP — copy-and-adapt from myseliasan. | ~1wk |
 
 MVP (P0–P2) is realistically **3–4 focused weeks** given the reuse. Full P0–P7 is around
@@ -350,10 +356,10 @@ steady overheat is never alerted on.
 
 ### What is still not here
 
-Modbus/OPC-UA (P5), fleet adoption (P6), and release packaging (P7, still deferred exactly as
-scoped in §8) are all unstarted. `mqtt.Connect` mode (pointing at an external broker instead of
-the embedded one) is not implemented — only the embedded broker. (Actuation/twin, P4, shipped —
-see §8d.)
+Modbus/OPC-UA (P5) and release packaging (P7, still deferred exactly as scoped in §8) are
+unstarted. `mqtt.Connect` mode (pointing at an external broker instead of the embedded one) is
+not implemented — only the embedded broker. (Actuation/twin, P4, and fleet adoption +
+cross-domain rules, P6, have since shipped — see §8d and §8e.)
 
 ---
 
@@ -497,14 +503,19 @@ closing.
 ### Deviation from §3.4: the audit trail is NOT `myseliasan`'s `audit_log`
 
 §3.4 originally said "every command written to `myseliasan`'s existing `audit_log`." That is
-**not** what shipped, and deliberately: myiotsan is a standalone appliance and may never be
-adopted into a `myseliasan` fleet at all (fleet adoption is P6, unstarted), so the command audit
-trail cannot depend on a table that might not exist. What shipped instead is myiotsan's own
-`device_command` table (§4) plus the unified notification feed
-(`infra/notification.CategorySystem`) — the same pattern the rest of the app already uses for
-its own security events (an enrollment window opening, a login lockout). When P6 fleet adoption
-lands, myseliasan can read these rows the same way it already reads a node's other state, rather
-than myiotsan depending on myseliasan's schema.
+**not** what shipped, and deliberately: at the time P4 shipped, `myiotsan` was a standalone
+appliance that might never be adopted into a `myseliasan` fleet at all (fleet adoption was still
+P6, unstarted), so the command audit trail could not depend on a table that might not exist.
+What shipped instead is myiotsan's own `device_command` table (§4) plus the unified
+notification feed (`infra/notification.CategorySystem`) — the same pattern the rest of the app
+already uses for its own security events (an enrollment window opening, a login lockout).
+
+**This held even after P6 shipped (§8e).** A `myiotsan` node's own `device_command` table
+remains its authoritative command audit trail regardless of fleet membership — adoption only
+additionally surfaces its notifications (including command refusals) in the control plane's
+unified feed via the fleet event sink, exactly the mechanism this section anticipated; it does
+not migrate or duplicate the audit record itself, and `myseliasan` never depends on
+`myiotsan`'s schema.
 
 ### A real gap found and closed: unassignable roles
 
@@ -543,6 +554,150 @@ telemetry key reporting back.
   entities, `NewSettingsApi`.
 
 See `docs/modules/apps/myiotsan/**/*.go.md` for per-file detail.
+
+---
+
+## 8e. P6 — Fleet adoption + cross-domain rules, shipped
+
+**SHIPPED 2026-07-14.** This is the phase the whole plan pointed at from §1: `myiotsan` becomes
+adoptable, and once `myseliasan` holds events from both a camera node and a sensor node, it can
+correlate across them.
+
+### The node-side stack was extracted first, not copied
+
+`myiotsan` needed exactly what `mymatasan` already had: LAN discovery, adoption by claim code,
+mTLS enrollment, the node-dialed control channel, and the event sink — about 1,400 lines. Two
+copies of that would be two copies of a SECURITY PROTOCOL, drifting the first time one was
+fixed. It moved to `domain/shared/fleetnode` (+ `domain/shared/apis/{pairing,control_dispatch}`,
++ `domain/entities.RuntimeSetting` joining `LocalUser` as a shared appliance entity, same
+load-bearing struct-name constraint). `mymatasan`'s call sites are unchanged behind same-named
+aliases (`apps/mymatasan/{services/fleetnode.go,apis/fleet.go,entities/runtime_setting.go,
+services/backoff.go}`); its tests pass untouched. See
+`docs/modules/domain/shared/fleetnode/doc.go.md`.
+
+### A node now has a `Kind`, and it travels two different ways on purpose
+
+The control plane manages two sorts of appliance and they are not interchangeable — a camera
+node has recordings and live views; a sensor node has telemetry and relays.
+
+- The discovery announce carries `Kind` as an **advisory, unsigned** hint
+  (`infra/pairing.Announce.Kind`) — deliberately excluded from the HMAC. Signing it would break
+  every already-deployed `mymatasan` node the instant a control plane upgraded: the node signs
+  without the field, the parent verifies with it, and the whole fleet would silently stop being
+  discoverable.
+- The adopt reply carries it **authoritatively** (`fleetnode.AdoptResult.Kind`), over a call
+  that is fleet-key-signed and claim-code-gated — and that is the value `myseliasan` stores
+  (`ManagedNode.Kind`).
+- So a hostile host on the LAN can make a fake node show the wrong icon in a scan list. It
+  cannot make the control plane adopt anything, and it cannot change what an adopted node is.
+- **Empty means camera** — every node adopted before this field existed is a `mymatasan` node
+  and keeps behaving exactly as it always did.
+
+### `myiotsan` joins the fleet — two channels, not three
+
+`apps/myiotsan/app/wire_fleet.go` mirrors `mymatasan`'s own `wire_fleet.go` with one deliberate
+structural difference: `mymatasan` dials a third channel (media, for camera RTP);
+`myiotsan` has no video, so it does not open that port at all. An unused listener is an unused
+attack surface. Everything is node-dialed — the control plane never needs a route back, which is
+what lets a node sit behind NAT with no inbound firewall rule.
+
+`openFleetSecretCipher` in `apps/myiotsan/app/app.go` mirrors `myseliasan`'s own boot sequence:
+the fleet key/token/mTLS key are encrypted at rest, and on `atrest.ModeRecoveryPending` it
+**fails closed** — refuses to boot rather than mint a replacement key and silently un-adopt the
+node.
+
+### The correlator — why the fourth app exists
+
+    motion on Camera 3 (a mymatasan node)
+    AND a door contact opening (a myiotsan node)
+    AND no badge swipe (a myiotsan node)
+    -> intrusion
+
+No node can see that. `mymatasan` cannot see your door sensors; `myiotsan` cannot see your
+cameras; a cloud IoT platform can see neither. Only `myseliasan` — which already receives every
+node's events in one feed — is in a position to notice the conjunction. And the conjunction is
+where the signal is: a camera's motion alert at 03:00 is a moth; a door contact at 03:00 is a
+cleaner; the two together with no badge swipe is an intrusion. Correlation is how a fleet of
+noisy sensors becomes one trustworthy signal.
+
+`apps/myseliasan/entities/fleet_rule.go` (`FleetRule` + `FleetRuleClause`, each clause
+`"required"` or `"absent"`) and `apps/myseliasan/services/correlate.go` (`Correlator`) implement
+it — see `docs/modules/apps/myseliasan/services/correlate.go.md` for the full mechanics.
+
+**The grace delay is the hard part.** A badge reader reports over a network, through a
+controller, into a hub — it is routinely a second or two BEHIND the door contact it just
+authorised. Fire the moment the door opens and the rule cries intrusion on EVERY legitimate
+badge entry, all day, until somebody turns it off — and then the one real intrusion is not
+alerted on either. So the correlator NEVER fires on an event: when the required clauses are
+satisfied it **arms**, waits out the grace period, and only then asks whether the absence really
+held. A badge swipe arriving inside the grace period **disarms** it. An absence you have not
+waited for is not an absence — it is a race with the badge reader. Ten tests in
+`correlate_test.go` pin this; the late-swipe one is the one that matters.
+
+Other invariants:
+
+- The correlator is fed the NODE's events, never the control plane's own re-published copy
+  (`apps/myseliasan/app/correlate_bridge.go`). Correlating on our own output would let one
+  fleet rule's alert satisfy another's clause, and two rules could trigger each other forever.
+  Events come from nodes; conclusions come from here.
+- A node's kind is resolved from the ADOPTED NODE'S RECORD (`ManagedNode.Kind`), never from
+  anything in the event body — otherwise a door sensor could claim to be a camera and satisfy a
+  camera-scoped clause.
+- A rule made only of "absent" clauses is REFUSED (at save time and again defensively at
+  evaluation time): it would fire on nothing at all, forever, and a rule that fires on nothing
+  is worse than no rule because somebody will trust it.
+- Writing a fleet rule (`POST`/`DELETE /api/fleet-rules`) is a SUPERADMIN power — a correlation
+  rule is an estate-wide security control, and whoever can write one can write one that never
+  fires. Reading (`GET /api/fleet-rules`) is open to any authenticated session.
+
+### Live verification
+
+Three apps run together: `myseliasan` + an adopted `mymatasan` node + an adopted `myiotsan`
+node. Both adopted; both showed the correct kind in the fleet UI. Real events from both nodes (a
+sign-in lockout on the camera node; a door alert from a real MQTT reading on the sensor node) →
+**the cross-domain rule fired**. Replayed with the badge swipe arriving 3 seconds late → **it
+disarmed and stayed silent**.
+
+Also found only by live-booting, not by tests: the fleet block had never been inserted into
+`myiotsan`'s `app.go` — a silent string-replace miss. The build was green and every unit test
+passed, because nothing exercised the actual route table; the node simply had no pairing
+routes. Caught by a `404` on `/api/pairing/fleet-key`. See
+`docs/modules/apps/myiotsan/app/app.go.md` "Fleet (P6)".
+
+### What was deliberately NOT built
+
+A dedicated `nodeiot/` embed mirroring `myseliasan`'s `nodecam/` trick — full remote
+device-management pages for an adopted `myiotsan` node rendered inside `myseliasan`, the way a
+camera node's Live View/Detection/Recordings/Settings tabs are today — was scoped in the
+original §7 phase table but not built in this pass. What shipped instead is the piece that
+actually delivers the differentiator: fleet adoption plus the correlator. A `myiotsan` node's
+own UI remains the way to manage it directly; `myseliasan` sees its kind, its liveness, and its
+events (feeding the correlator), but not yet an embedded device/telemetry management surface.
+
+### New/changed surface
+
+- `domain/shared/fleetnode/{doc,pairing,enrollment,control_channel,event_sink}.go` (+ tests) —
+  moved from `apps/mymatasan/services/{pairing,node_enrollment,control_channel,
+  control_event_sink}.go`.
+- `domain/shared/apis/{pairing,control_dispatch}.go` — moved from `apps/mymatasan/apis/`.
+- `domain/entities/runtime_setting.go` — shared appliance entity, joins `LocalUser`.
+- `apps/mymatasan/{services/fleetnode.go,services/backoff.go,apis/fleet.go,
+  entities/runtime_setting.go}` — thin aliases keeping mymatasan's call sites unchanged.
+- `infra/pairing/{packet.go,prober.go}` — `Announce.Kind` / `AnnounceInfo.Kind` /
+  `ProbeResult.Kind` (advisory, unsigned).
+- `apps/myiotsan/app/wire_fleet.go` — the node's two-channel fleet wiring; `apps/myiotsan/app/app.go`
+  — the block that registers it.
+- `apps/myseliasan/entities/managed_node.go` — `Kind` field; `apps/myseliasan/services/node_registry.go`
+  — stores the authoritative kind, `DiscoveredNode.Kind` carries the advisory hint.
+- `apps/myseliasan/entities/fleet_rule.go`, `apps/myseliasan/services/{correlate.go,
+  correlate_crud.go,correlate_test.go}`, `apps/myseliasan/apis/fleet_rules_api.go`,
+  `apps/myseliasan/app/correlate_bridge.go` — the correlator and its HTTP surface.
+- `apps/myseliasan/app/app.go` — correlator wiring, the 1s sweep ticker, `onNodeEvent` now also
+  calls `observeForCorrelation`.
+
+See `docs/modules/domain/shared/fleetnode/**/*.go.md`,
+`docs/modules/apps/myiotsan/app/wire_fleet.go.md`, and
+`docs/modules/apps/myseliasan/{entities,services,apis,app}/**/*.go.md` for per-file detail.
 
 ---
 

@@ -6,7 +6,7 @@ Implements the control-plane side of LAN discovery: broadcasts a signed probe to
 
 ## Responsibilities
 
-- `ProbeResult` — a discovered, signature-verified node: NodeID, Name, Version, IP, HTTPSPort.
+- `ProbeResult` — a discovered, signature-verified node: NodeID, Name, Version, IP, HTTPSPort, and the advisory `Kind` hint copied straight through from the announce (see `docs/modules/infra/pairing/packet.go.md` "`Announce.Kind`" — safe to render, unsafe to trust for anything else).
 - `Discover(ctx, fleetKey, multicastAddr, timeout)` — opens a unicast UDP socket (ephemeral port) for replies, then sends the signed probe out **every** multicast-capable interface via `golang.org/x/net/ipv4` (`SetMulticastInterface` + `WriteTo`) with `SetMulticastLoopback(true)` so a node on the same host hears it; falls back to a single default-route send if no interface send succeeds. Reads announces until the deadline or `ctx` cancellation. Only announces that echo the probe's nonce and carry a valid HMAC for `fleetKey` are accepted. Results are deduplicated by NodeID and sorted for deterministic output.
 
 ## Notes

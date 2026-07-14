@@ -24,7 +24,7 @@ The **Mymatasan** view in the UI exposes:
 - **Fleet key**: generate or set the shared PSK (`POST /api/nodes/fleet-key`). Both the control plane and every node must have the same key for discovery to work.
 - **LAN scan**: discover unpaired nodes on the local subnet (`POST /api/nodes/scan`); each result shows whether the node is already adopted.
 - **Adopt**: opens a pop-up **Adopt** dialog — pre-filled with the address/hostname when opened from a discovered node, or blank via an **Adopt manually** button (for a node on another subnet, not reachable by multicast). Provide the HTTPS port and the claim code generated on the node UI to bind it (`POST /api/nodes/adopt`); name/description/icon are optional and can be edited later. After adoption, the node automatically contacts `POST /api/nodes/enroll` with a CSR; the control plane signs it and returns a short-lived certificate (default 7 days).
-- **Adopted nodes**: table showing all adopted nodes with their status (`online`, `lost`, `self-dropped`), cert expiry, a **Manage** button (opens the node Settings dialog, below), a **Wipe** button, and a **Release** button. Release revokes the node's certificate and removes the registry row.
+- **Adopted nodes**: table showing all adopted nodes with their status (`online`, `lost`, `self-dropped`), cert expiry, a **Manage** button (opens the node Settings dialog, below), a **Wipe** button, and a **Release** button. Release revokes the node's certificate and removes the registry row. A **node kind** column shows **"Camera node"** (a `mymatasan` NVR) or **"Sensor hub"** (a `myiotsan` device hub) — the AUTHORITATIVE value the node itself returned over the fleet-key-signed, claim-code-gated adopt call, never the unsigned display hint carried in a LAN scan result. A node adopted before this field existed shows as a camera node, since every one of those is.
 - **Wipe**: remotely factory-resets an adopted node over the control tunnel — the same secure wipe mymatasan can run on itself (see `Secure Wipe & Reset`), erasing its recordings/config and restarting it. Clicking Wipe first checks the node's `bootstrap.allowReset` gate (`GET .../proxy/api/system/reset/state`); if allowed, an auto-proceeding countdown modal (cancellable) confirms before `POST .../proxy/api/system/reset` is sent. The node returns immediately (reset runs asynchronously) then drops offline while it wipes and restarts.
 - **Node Settings dialog**: **Manage** opens a tabbed modal — Details, Camera Health, Users, Backup & Recovery, and Version & Health — styled like mymatasan's own Settings page (via the same embedded-node styling described under "Frontend"). Every tab except Details tunnels its reads/writes over the node proxy (`/api/nodes/{id}/proxy/...`):
   - **Details** edits the control-plane record itself — name, description, icon — via `PUT /api/nodes/{id}` (not tunneled; this is myseliasan's own record of the node, distinct from anything on the node). Also shows the node ID and a clickable link to the node's own address.
@@ -44,6 +44,49 @@ The **Mymatasan** view in the UI exposes:
 - **Adoption metadata**: when adopting a node, the operator can now set a custom **Name** (overrides the node's reported hostname), a **Description** (shown as a tooltip in the nav tree), and an **Icon** (glyph displayed in the side-nav node tree).
 
 Both app and node must be on the same LAN segment for UDP multicast discovery to reach the node. Manual adoption by IP+port works across subnets if the node is reachable by HTTPS. The mTLS management port (code fallback 49532; shipped `config.json` sets 39532) must also be reachable from the control plane.
+
+## Fleet rules — cross-domain correlation
+
+**This is the reason the suite has a fourth app (`myiotsan`).** Once `myseliasan` has adopted
+both camera nodes and IoT sensor nodes, it can express rules that no single node can evaluate
+on its own:
+
+> *motion on Camera 3 (mymatasan) AND a door contact opening (myiotsan) AND no badge swipe
+> (myiotsan) → intrusion*
+
+Neither `mymatasan` nor `myiotsan` can see the other's events. Only the control plane, which
+already receives every adopted node's events in one feed, is in a position to notice the
+conjunction — and the conjunction is where the signal is: a camera's motion alert at 03:00 is a
+moth; a door contact at 03:00 is a cleaner; the two together with no badge swipe is an
+intrusion.
+
+A **Fleet rules** page (its own nav item) lets a superadmin build these rules: a plain-English
+rule list, a clause builder (**required** conditions that must happen, styled apart from
+**absent** conditions that must not), each clause optionally scoped to one node, a node kind
+(camera/sensor hub), a notification category, and/or a text match against the alert's title —
+plus a **window** (how close in time the required clauses must occur to count as one incident)
+and a **grace period**.
+
+**The grace period is the part that makes this usable rather than a nuisance.** A badge reader
+typically reports a second or two behind the door contact it just authorised. The correlator
+never fires the instant a required condition is met — it *arms*, waits out the grace period,
+and only then checks whether the absent condition still holds. A badge swipe that arrives
+inside the grace window disarms the rule silently: that was an authorised entry, and no alert
+is ever raised. Firing on the door alone (no grace) would cry intrusion on every legitimate
+badge entry, all day, until someone disabled the rule — and the one real intrusion would then
+go unnoticed too.
+
+Writing or deleting a fleet rule (`POST`/`DELETE /api/fleet-rules`) is **superadmin-only** — a
+rule that spans the whole estate is itself a security control, and whoever can write one can
+write one that never fires. Reading the rule list (`GET /api/fleet-rules`) is open to any
+authenticated session, since seeing what a rule does is not the same power as authoring one. A
+rule made only of "absent" clauses is refused outright: it would fire on nothing at all,
+forever, which is worse than no rule because somebody would trust it.
+
+See `docs/modules/apps/myseliasan/services/correlate.go.md` for the evaluation engine and
+`docs/MYIOTSAN_PLAN.md` §8e for how this was verified against real events from a live camera
+node and a live sensor node, including a deliberately late badge swipe that correctly
+disarmed the rule.
 
 ## Notifications
 

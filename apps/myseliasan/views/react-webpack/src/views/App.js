@@ -8,11 +8,13 @@ import './styles/objects.css';
 import './styles/teach.css';
 import './styles/notifications.css';
 import './styles/node-settings.css';
+import './styles/fleet-rules.css';
 import { SideNav } from './components/layout';
 import { ToastStack, LangProvider, normalizeLang, useT, LanguageDropdown, AppFooter } from '@shared';
 import { FormBusyOverlay, ThemeDropdown } from './components/ui';
 import { DashboardTab } from './components/dashboard';
 import { NodesTab } from './components/nodes';
+import { FleetRulesPage } from './components/fleet_rules';
 import { LiveViewsPage } from './components/live_views';
 import { ObjectsPage } from './components/objects';
 import { TeachPage } from './components/teach';
@@ -165,9 +167,13 @@ function AppInner({ lang, onLangChange }) {
   // Demote to the dashboard if the active tab is no longer permitted (e.g. after a
   // handoff that retired the current stock account, or a role that lost node access).
   const canNodes = sessionCanGet(session, '/api/nodes');
+  // Reading correlation rules follows the permission matrix (the API is behind it); WRITING
+  // them is superadmin-only and enforced server-side.
+  const canFleetRules = sessionCanGet(session, '/api/fleet-rules');
   const adminTabs = ['users', 'roles', 'audit'];
   if (adminTabs.includes(activeTab) && !session?.isSuperadmin) setActiveTab('dashboard');
   if ((activeTab === 'nodes' || activeTab === 'liveviews' || activeTab === 'objects' || activeTab === 'teach') && !canNodes) setActiveTab('dashboard');
+  if (activeTab === 'fleetrules' && !canFleetRules) setActiveTab('dashboard');
 
   return (
     <div className={`app-shell${navPinned ? '' : ' nav-autohide'}`}>
@@ -202,6 +208,7 @@ function AppInner({ lang, onLangChange }) {
         {activeTab === 'liveviews' && canNodes ? <LiveViewsPage nodes={nodes} /> : null}
         {activeTab === 'objects' && canNodes ? <ObjectsPage nodes={nodes} onToast={pushToast} /> : null}
         {activeTab === 'teach' && canNodes ? <TeachPage nodes={nodes} onToast={pushToast} /> : null}
+        {activeTab === 'fleetrules' && canFleetRules ? <FleetRulesPage nodes={nodes} session={session} onToast={pushToast} /> : null}
         {activeTab === 'notifications' ? <NotificationsPage nodes={nodes} refreshSignal={notifVersion} onChanged={loadNotifUnread} /> : null}
         {activeTab === 'nodes' && canNodes ? (
           <NodesTab

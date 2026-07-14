@@ -1,8 +1,14 @@
-# Module: apps/mymatasan/apis/control_dispatch.go
+# Module: domain/shared/apis/control_dispatch.go
 
 ## Purpose
 
 Builds the node-side handler for tunneled parent→node commands. Re-injects incoming `control.Request` frames into the node's own `/api` subrouter as synthetic HTTP requests, so the node's existing authorization stack (`NewLocalBasicAuth` + `NewRequireRolePermission`) decides them exactly like a locally-authenticated request.
+
+Moved here from `apps/mymatasan/apis/control_dispatch.go` (Tier: fleet extraction), unchanged in
+behavior — `myiotsan` needs the identical dispatch semantics, and the security property below
+matters just as much for a sensor hub as it does for a camera node. `mymatasan` keeps compiling
+unchanged via a thin binding in `apps/mymatasan/apis/fleet.go`; `myiotsan` calls
+`sharedapis.NewControlDispatcher` directly (`apps/myiotsan/app/wire_fleet.go`).
 
 **The parent asserts a ROLE NAME; the node resolves it against its OWN roles and evaluates
 its OWN permission matrix.** This direction is deliberate and is the security point of this
@@ -10,27 +16,29 @@ file: it does NOT carry a permission set over the wire. If the parent asserted p
 directly, the node would be trusting the control plane to say who may delete its footage —
 and a compromised or buggy parent could assert anything. The node owns the data; the node's
 policy governs. All the parent gets to say is "this request is on behalf of an operator",
-and the node decides what an operator may do here.
+and the node decides what an operator may do here. For a `myiotsan` sensor hub this matters
+even more concretely: a tunnelled command that reached an unguarded path could switch a
+relay, and it is the node — not the parent — that must decide who may do that.
 
 ## Key Function: NewControlDispatcher
 
 ```go
-func NewControlDispatcher(router http.Handler, roles sharedservices.IAccessRoleService) services.ControlDispatcher
+func NewControlDispatcher(router http.Handler, roles sharedservices.IAccessRoleService) fleetnode.ControlDispatcher
 ```
 
 Returns a `ControlDispatcher` (a function `func(ctx, control.Request) control.Response`) that:
 
 1. Constructs a synthetic `*http.Request` from the frame's `Method`, `Path`, `Headers`, and `Body`.
 2. Resolves the asserted role: `normalizeControlRole(req.Role)` maps the wire vocabulary onto
-   the node's own role names — `"admin"` is accepted as a wire alias for `services.RoleAdmin`
+   the node's own role names — `"admin"` is accepted as a wire alias for `sharedservices.RoleAdmin`
    (the shared `superadmin` role), so an already-deployed control plane (which only ever sent
    `{admin, viewer}`) keeps working across a mixed-version fleet. The resolved name is looked
    up via `roles.GetByName`; a lookup error returns `503 authorization is unavailable`. An
    **unknown role name resolves to no role**, and a principal with no role is denied
    everything by the matrix (fail closed).
-3. Injects an `AuthenticatedUser` principal into the request context via `withLocalUser` (a
-   thin wrapper over `sharedapis.WithLocalUser` — the context key itself is unexported to
-   `domain/shared/apis`, so no network client can forge a principal):
+3. Injects an `AuthenticatedUser` principal into the request context via `WithLocalUser`
+   (exported from this package so a network client can never forge a principal — the context
+   key itself stays unexported):
    - `Username` = `"cp:" + req.Actor` (labeled for audit attribution).
    - `RoleId` / `IsAdmin` = the resolved role's id / `IsSuperadmin` flag (zero value when the
      role could not be resolved).
