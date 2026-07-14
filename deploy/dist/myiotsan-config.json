@@ -1,0 +1,179 @@
+{
+  "_comment": "MyIotSan distribution defaults — the on-prem IoT device hub ('the NVR, but for sensors'). Safe to edit. On first run a strong jwt.secret is generated and saved here, a self-signed TLS certificate is generated into ./certs (so the app serves HTTPS on :3003 immediately — browsers show a one-time trust warning on a LAN), and a one-time superadmin password is generated and written to INITIAL_ADMIN_LOGIN.txt in the data dir. This file lives in the app's data dir; runtime changes made in the UI are persisted back to it. NOTE: this app opens an MQTT broker on 1883 (mqtt.addr below) — no other product in this suite listens on that port, so it must be allowed through the host firewall for devices to connect.",
+  "jwt": {
+    "secret": ""
+  },
+  "loginSecurity": {
+    "enabled": true,
+    "maxAttempts": 5,
+    "windowSeconds": 300,
+    "lockoutSeconds": 60,
+    "lockoutMaxSeconds": 900,
+    "failedDelayMs": 500,
+    "notifyOnLockout": true
+  },
+  "localAuth": {
+    "_comment": "An empty password makes the first run generate a strong per-install one (printed to the log and saved to INITIAL_ADMIN_LOGIN.txt). Set LOCAL_ADMIN_PASSWORD to override. NEVER ship a shared default here — this appliance can actuate relays, so a known default password is a fleet-wide backdoor.",
+    "enabled": true,
+    "username": "admin",
+    "password": ""
+  },
+  "pairing": {
+    "_comment": "Fleet pairing with a MySeliaSan control plane. These ports MUST match the control plane's — the 3953x range below is the shipped default across the suite; a node and a parent that disagree never reconnect. mtlsPort is THIS node's management listener (the parent dials it for heartbeat/release); controlPort/mediaPort are the PARENT's ports that this node dials out to.",
+    "enabled": true,
+    "multicastAddr": "239.255.90.21:49531",
+    "replayWindowSeconds": 30,
+    "mtlsPort": 39532,
+    "controlPort": 39533,
+    "mediaPort": 39534,
+    "certTtlHours": 168,
+    "renewBeforeHours": 48,
+    "heartbeatIntervalSeconds": 60
+  },
+  "mqtt": {
+    "_comment": "The embedded MQTT broker devices publish telemetry to. A device that is not in the inventory (or presenting a valid enrollment-window key) cannot connect at all — the device table IS the credential store. 0.0.0.0 listens on every interface; narrow it to a specific LAN address if the host is multi-homed.",
+    "enabled": true,
+    "addr": "0.0.0.0:1883"
+  },
+  "telemetry_store": {
+    "_comment": "The batched writer between the broker and SQLite. batchSize/flushMs trade write amplification against latency; queueSize is the backpressure bound. rawRetentionDays purges per-reading rows; rollupRetentionDays keeps the aggregates far longer (they are tiny).",
+    "batchSize": 200,
+    "flushMs": 250,
+    "queueSize": 8192,
+    "rawRetentionDays": 30,
+    "rollupRetentionDays": 400
+  },
+  "notification": {
+    "webhook": {
+      "enabled": false,
+      "url": "",
+      "minSeverity": "warning"
+    },
+    "telegram": {
+      "enabled": false,
+      "botToken": "",
+      "chatId": "",
+      "minSeverity": "warning"
+    },
+    "sseClientBuffer": 16,
+    "retentionDays": 30,
+    "purgeIntervalHours": 6,
+    "purgeReadOnly": false
+  },
+  "fileStorage": {
+    "path": "./uploads",
+    "cleanup": {
+      "enabled": false,
+      "frequencySeconds": 60,
+      "batchSize": 100
+    }
+  },
+  "cache": {
+    "provider": "default",
+    "ttlSeconds": 30,
+    "keyPrefix": "kopiv2",
+    "redis": {
+      "address": "localhost:6379",
+      "password": "",
+      "db": 0,
+      "useTls": false,
+      "connectTimeoutMs": 2000,
+      "operationTimeoutMs": 2000
+    }
+  },
+  "rateLimit": {
+    "enabled": true,
+    "endpointCacheTtlSeconds": 30,
+    "defaultWindowSeconds": 60,
+    "devOnly": {
+      "enabled": false,
+      "requests": 300,
+      "windowSeconds": 60
+    },
+    "authOnly": {
+      "enabled": true,
+      "requests": 1200,
+      "windowSeconds": 60
+    },
+    "public": {
+      "enabled": true,
+      "requests": 30,
+      "windowSeconds": 60
+    }
+  },
+  "transaction": {
+    "lockProvider": "memory",
+    "lockWaitTimeoutMs": 30000,
+    "lockLeaseMs": 10000,
+    "operationTimeoutMs": 30000,
+    "stuckTimeoutMs": 30000,
+    "jobWorkerEnabled": false,
+    "jobWorkerFrequencySeconds": 5,
+    "maxAttempts": 3
+  },
+  "logging": {
+    "enabled": true,
+    "path": "./logs/myiotsan.log",
+    "maxLineBytes": 8192,
+    "cleanup": {
+      "enabled": true,
+      "maxRetentionDays": 90,
+      "frequencyMinutes": 60
+    }
+  },
+  "apiLog": {
+    "cleanup": {
+      "enabled": true,
+      "maxRetentionDays": 90,
+      "frequencyMinutes": 60
+    }
+  },
+  "telemetry": {
+    "enabled": true,
+    "prometheus": {
+      "enabled": true,
+      "metricsPath": "/metrics",
+      "apiDurationThresholdMs": 1000
+    }
+  },
+  "tls": {
+    "certPath": "./certs/cert.pem",
+    "keyPath": "./certs/key.pem"
+  },
+  "server": {
+    "hostnames": [
+      "*"
+    ],
+    "tlsPorts": [
+      3003
+    ],
+    "nonTlsPorts": [],
+    "readHeaderTimeoutSeconds": 5,
+    "readTimeoutSeconds": 0,
+    "writeTimeoutSeconds": 0,
+    "idleTimeoutSeconds": 120
+  },
+  "allowOrigins": "",
+  "securityHeaders": {
+    "contentSecurityPolicy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self'; worker-src 'self' blob:; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+  },
+  "bootstrap": {
+    "enabled": true,
+    "autoCreateDatabase": true,
+    "autoCreateSchema": true,
+    "autoMigrate": true,
+    "autoSeed": true,
+    "allowReset": false,
+    "setupPath": "/setup",
+    "seedStatements": []
+  },
+  "db": {
+    "engine": "sqlite",
+    "host": "",
+    "port": 0,
+    "user": "",
+    "password": "",
+    "db_name": "./data/myiotsan.db",
+    "ssl_mode": ""
+  }
+}

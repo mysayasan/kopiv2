@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Ico, useT } from '@shared';
 import { ensureScopedMymatasanCss, NODECAM_SCOPE_CLASS } from './nodecam/scoped_css';
+import { ensureScopedMyiotsanCss, NODEIOT_SCOPE_CLASS } from './nodeiot/scoped_css';
 
 // NodeFeatureBanner is the per-section "unavailable on this node" notice. When a panel's
 // endpoint 404s (the node is an older version that predates the feature) we show this
@@ -41,6 +42,28 @@ export function NodeEmbed({ children, className }) {
 
   return (
     <div className={`${NODECAM_SCOPE_CLASS} ${theme}${className ? ` ${className}` : ''}`}>
+      {children}
+    </div>
+  );
+}
+
+// NodeIotEmbed is the same contract for a SENSOR HUB: myiotsan's own stylesheet, scoped to
+// `.nodeiot-embed`, so an embedded hub page looks exactly like the hub's own app while it is
+// living inside myseliasan's shell. Two node apps, two stylesheets, two scopes — neither can
+// reach the other, and neither can reach the shell.
+export function NodeIotEmbed({ children, className }) {
+  const [theme, setTheme] = useState(currentTheme);
+
+  useEffect(() => { ensureScopedMyiotsanCss(); }, []);
+
+  useEffect(() => {
+    const obs = new MutationObserver(() => setTheme(currentTheme()));
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => obs.disconnect();
+  }, []);
+
+  return (
+    <div className={`${NODEIOT_SCOPE_CLASS} ${theme}${className ? ` ${className}` : ''}`}>
       {children}
     </div>
   );

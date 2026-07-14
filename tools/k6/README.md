@@ -1,13 +1,13 @@
-# k6 — load testing for mymatasan + myseliasan (with live Grafana dashboards)
+# k6 — load testing for mymatasan + myseliasan + myiotsan (with live Grafana dashboards)
 
 Developer/performance tooling that drives [k6](https://k6.io/) (the
 `grafana/k6` Docker image, already pulled on this machine) at a running
-**mymatasan** or **myseliasan** instance and streams the results live into a
-local **Grafana + InfluxDB** stack.
+**mymatasan**, **myseliasan**, or **myiotsan** instance and streams the results
+live into a local **Grafana + InfluxDB** stack.
 
 Pick the app with `-App` (PowerShell) / `--app` (bash); it defaults to
-`mymatasan`. The two apps authenticate differently (see **Auth** below), so each
-has its own scripts and its own `config/<app>.target.env`.
+`mymatasan`. mymatasan authenticates differently from the other two (see **Auth**
+below), so each app has its own scripts and its own `config/<app>.target.env`.
 
 Like `tools/zaproxy` and `tools/tgbridge`, this is **developer tooling only** —
 not part of any shipped app, no runtime dependency on the apps/domain/infra, and
@@ -59,9 +59,22 @@ first (log in through the UI or `POST /api/auth/change-password`) and put the
 every authed endpoint except `/api/session/me` returns
 `401 password_change_required` and the read scripts have nothing to hit.
 
+**myiotsan** also does a **JSON login + cookie session**, but at its own path
+(`POST /api/auth/login`, not myseliasan's `/api/auth/local-login`) into
+`config/myiotsan.target.env` — bcrypt runs once per VU here too, not the ceiling.
+Same stock-password table and must-change gate as myseliasan (dev `admin123`,
+packaged installs generate one into `INITIAL_ADMIN_LOGIN.txt`, no `admin`/`admin`
+fallback). **These scripts drive the HTTP console only.** myiotsan's real
+throughput risk is devices publishing telemetry over the embedded MQTT broker into
+SQLite (deadband-gated, batched) — k6 is an HTTP client and cannot exercise that
+path at all. A green k6 run says the console stays responsive; it says nothing
+about whether the box keeps up with its device estate — watch
+`GET /api/devices/stats` (`suppressed`/`dropped`) for that instead.
+
 ## Scripts
 
-Each app has a matching trio; myseliasan's are prefixed `myseliasan-`.
+Each app has a matching trio; myseliasan's and myiotsan's are prefixed
+`myseliasan-`/`myiotsan-`.
 
 | Script | Shape | Use for |
 |--------|-------|---------|
@@ -71,21 +84,24 @@ Each app has a matching trio; myseliasan's are prefixed `myseliasan-`.
 
 `load`/`stress` only issue **GET**s against read endpoints — mymatasan:
 notifications feed, dashboard stats, heatmap, cameras; myseliasan: nodes list,
-notifications, session/RBAC — no writes, no purge, no reset — so they're safe to
+notifications, session/RBAC; myiotsan: devices, device stats, rules, alerts,
+notifications — no writes, no purge, no reset, no actuation — so they're safe to
 point at a live instance. (Load *volume* is still real; don't stress-test
 something someone is actively using.)
 
 ## Setup
 
-1. Start the app (mymatasan dev listens on TLS `:3000`, myseliasan on `:3002`).
+1. Start the app (mymatasan dev listens on TLS `:3000`, myseliasan on `:3002`,
+   myiotsan on `:3003`).
 2. Copy the matching config template and fill it in:
    ```
    cp config/target.env.example config/target.env                       # mymatasan
    cp config/myseliasan.target.env.example config/myseliasan.target.env # myseliasan
+   cp config/myiotsan.target.env.example config/myiotsan.target.env     # myiotsan
    ```
    - `BASE_URL` — how the **k6 container** reaches the app. On Docker Desktop use
-     `https://host.docker.internal:3000` (mymatasan) / `:3002` (myseliasan);
-     self-signed cert, k6 skips verify.
+     `https://host.docker.internal:3000` (mymatasan) / `:3002` (myseliasan) /
+     `:3003` (myiotsan); self-signed cert, k6 skips verify.
    - `AUTH_USER` / `AUTH_PASS` — an app user (blank = anonymous, only public
      endpoints pass).
    - `config/*.target.env` and everything in `results/` are git-ignored.
@@ -102,6 +118,8 @@ cd tools/k6
 ./run.ps1 -App myseliasan                        # myseliasan smoke
 ./run.ps1 -App myseliasan -Script load           # myseliasan ramping load
 ./run.ps1 -App myseliasan -Script stress -MaxVus 500
+./run.ps1 -App myiotsan                          # myiotsan smoke (HTTP console only)
+./run.ps1 -App myiotsan -Script load             # myiotsan ramping load
 ./run.ps1 -Script load -NoBackend                # backend already up — skip the up step
 ```
 
@@ -112,6 +130,7 @@ cd tools/k6
 ./run.sh load                   # mymatasan ramping load
 ./run.sh --app myseliasan       # myseliasan smoke
 ./run.sh --app myseliasan stress
+./run.sh --app myiotsan         # myiotsan smoke (HTTP console only)
 # env overrides: BASE_URL=… AUTH_USER=… TARGET_VUS=100 HOLD=2m ./run.sh load
 ```
 
@@ -149,10 +168,15 @@ docker compose down -v     # also wipe it
   the login burst as VUs ramp — same fix.)
 - **`host.docker.internal`** is provided via `extra_hosts` in the compose file,
   so this works on Linux Docker too (not just Docker Desktop).
-- **Grafana is on `3300`** — `3000` is mymatasan's port, `3002` is myseliasan's.
-- **myseliasan: login is once per VU, not per request.** A `login_duration`
-  trend is tracked separately and is excluded from the load thresholds, so the
-  one-time bcrypt cost per VU doesn't fail an otherwise-healthy read run.
+- **Grafana is on `3300`** — `3000` is mymatasan's port, `3002` is myseliasan's,
+  `3003` is myiotsan's.
+- **myseliasan/myiotsan: login is once per VU, not per request.** A
+  `login_duration` trend is tracked separately and is excluded from the load
+  thresholds, so the one-time bcrypt cost per VU doesn't fail an otherwise-healthy
+  read run.
+- **myiotsan k6 runs do not test the real risk.** A green `load`/`stress` run
+  only proves the HTTP console holds up; it says nothing about MQTT→SQLite ingest
+  throughput, which is where this app's throughput actually lives.
 - **Empty DB understates aggregation cost.** A throwaway with no data makes
   `/api/notifications/stats` trivial. To load-test the aggregation path
   honestly, point at an instance whose DB actually has notification history.
@@ -166,10 +190,12 @@ run.ps1 / run.sh                     entrypoints (Windows / POSIX), -App / --app
 docker-compose.yml                   InfluxDB + Grafana + on-demand k6 service
 config/target.env.example            copy to config/target.env            (mymatasan)
 config/myseliasan.target.env.example copy to config/myseliasan.target.env (myseliasan)
+config/myiotsan.target.env.example   copy to config/myiotsan.target.env   (myiotsan)
 scripts/smoke.js|load.js|stress.js   mymatasan scripts (Basic auth)
 scripts/myseliasan-*.js              myseliasan scripts (JSON login + cookie)
+scripts/myiotsan-*.js                myiotsan scripts (JSON login + cookie; HTTP console only)
 scripts/lib/common.js                mymatasan Basic-auth + per-endpoint metrics
-scripts/lib/session.js               myseliasan JSON-login/cookie + per-endpoint metrics
+scripts/lib/session.js               myseliasan + myiotsan JSON-login/cookie + per-endpoint metrics
 grafana/                             auto-provisioned datasource + dashboard
 results/                             generated JSON summaries (git-ignored)
 ```

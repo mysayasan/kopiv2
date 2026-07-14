@@ -116,15 +116,16 @@ func (s *CommandService) CommandsFor(ctx context.Context, profileId int64) ([]*e
 // It returns the recorded command whatever happens — a REFUSED command is still an audit row.
 // "Somebody tried to unlock the front door at 03:00 and was refused" is exactly the kind of
 // thing that must not be thrown away just because it did not succeed.
-func (s *CommandService) Issue(ctx context.Context, deviceId int64, req IssueRequest, actor int64) (*entities.DeviceCommand, error) {
+func (s *CommandService) Issue(ctx context.Context, deviceId int64, req IssueRequest, actor int64, actorName string) (*entities.DeviceCommand, error) {
 	now := time.Now()
 	cmd := entities.DeviceCommand{
-		DeviceId:    deviceId,
-		Name:        strings.TrimSpace(req.Name),
-		Value:       req.Value,
-		Status:      "failed",
-		RequestedBy: actor,
-		RequestedAt: now.Unix(),
+		DeviceId:        deviceId,
+		Name:            strings.TrimSpace(req.Name),
+		Value:           req.Value,
+		Status:          "failed",
+		RequestedBy:     actor,
+		RequestedByName: actorName,
+		RequestedAt:     now.Unix(),
 	}
 
 	refuse := func(reason string) (*entities.DeviceCommand, error) {

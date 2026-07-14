@@ -101,7 +101,7 @@ func (a *rulesApi) ack(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := a.rules.AckAlert(r.Context(), id, actorId(r)); err != nil {
+	if err := a.rules.AckAlert(r.Context(), id, actorId(r), actorName(r)); err != nil {
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
 	}

@@ -111,3 +111,15 @@
   padding: 8px 12px; font-size: 13px; font-weight: 600;
   color: var(--text-soft, #e2e8f0); border-top: 1px solid var(--border-soft, #2a3850);
 }
+
+/* --- Embedded sensor-hub pages (nodeiot) --------------------------------------
+   A hub page is myiotsan's real page, and it opens with its own `.workspace` — so inside the
+   manage surface there are two: the control plane's (holding the node header and the tab bar)
+   and the hub page's own.
+
+   myseliasan already de-duplicates that case with `.workspace .workspace { padding-top: 0 }`,
+   but that rule cannot win here. The hub's stylesheet is scoped and INJECTED AT RUNTIME, so
+   its `.nodeiot-embed .workspace` rule carries the same specificity and lands later in the
+   cascade, re-applying the 18px. Hence the doubled class: it outranks the scoped rule on
+   specificity instead of relying on which stylesheet happens to be appended last. */
+.nodeiot-embed.nodeiot-manage .workspace { padding-top: 0; }

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Run an OWASP ZAP security scan against a running mymatasan/myseliasan instance.
-# POSIX/bash counterpart of scan.ps1 (for Linux/Mac/WSL/Git-Bash).
+# Run an OWASP ZAP security scan against a running mymatasan/myseliasan/myiotsan
+# instance. POSIX/bash counterpart of scan.ps1 (for Linux/Mac/WSL/Git-Bash).
 #
 #   ./scan.sh [baseline|api|full] [--yes]              # mymatasan (default)
 #   ./scan.sh --app myseliasan [baseline|api|full] [--yes]
+#   ./scan.sh --app myiotsan [baseline|api|full] [--yes]
 #
 # Config is read from config/<app>.env (copy from the matching .example).
 # Env overrides: APP, TARGET, ZAP_AUTH_USER, ZAP_AUTH_PASS, ZAP_IMAGE
@@ -25,7 +26,7 @@ case "$(uname -s 2>/dev/null)" in
 esac
 
 # Positional args in any order: mode (baseline|api|full), --yes, and
-# --app <mymatasan|myseliasan> (or APP env var).
+# --app <mymatasan|myseliasan|myiotsan> (or APP env var).
 app="${APP:-mymatasan}"
 mode=""
 yes=""
@@ -39,7 +40,7 @@ while [ $# -gt 0 ]; do
 done
 mode="${mode:-baseline}"
 
-case "$app" in mymatasan|myseliasan) ;; *) echo "App must be mymatasan|myseliasan"; exit 1;; esac
+case "$app" in mymatasan|myseliasan|myiotsan) ;; *) echo "App must be mymatasan|myseliasan|myiotsan"; exit 1;; esac
 case "$mode" in baseline|api|full) ;; *) echo "Mode must be baseline|api|full"; exit 1;; esac
 
 # Per-app wiring: config file, plan file, default port, report prefix.
@@ -48,6 +49,11 @@ if [ "$app" = "myseliasan" ]; then
   plan_file="myseliasan-$mode.yaml"
   default_target="https://host.docker.internal:3002"
   report_prefix="myseliasan-$mode"
+elif [ "$app" = "myiotsan" ]; then
+  envname="myiotsan.target.env"
+  plan_file="myiotsan-$mode.yaml"
+  default_target="https://host.docker.internal:3003"
+  report_prefix="myiotsan-$mode"
 else
   envname="target.env"
   plan_file="$mode.yaml"
@@ -69,14 +75,15 @@ ZAP_AUTH_PASS="${ZAP_AUTH_PASS:-}"
 ZAP_IMAGE="${ZAP_IMAGE:-ghcr.io/zaproxy/zaproxy:stable}"
 
 # mymatasan uses a Basic-auth header (injected by the plan's replacer). myseliasan
-# does its own JSON login inside the plan, so it needs no header — just the creds.
+# and myiotsan do their own JSON login inside the plan, so they need no header —
+# just the creds.
 auth_header=""
 if [ -n "$ZAP_AUTH_USER" ]; then
-  if [ "$app" = "myseliasan" ]; then
-    echo "Auth: JSON login as '$ZAP_AUTH_USER' (cookie session)"
-  else
+  if [ "$app" = "mymatasan" ]; then
     auth_header="Basic $(printf '%s:%s' "$ZAP_AUTH_USER" "$ZAP_AUTH_PASS" | base64 | tr -d '\n')"
     echo "Auth: HTTP Basic as '$ZAP_AUTH_USER'"
+  else
+    echo "Auth: JSON login as '$ZAP_AUTH_USER' (cookie session)"
   fi
 else
   echo "Auth: none (anonymous surface only)"

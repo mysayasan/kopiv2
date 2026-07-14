@@ -1,20 +1,22 @@
-# zaproxy — OWASP ZAP security scanner for mymatasan / myseliasan
+# zaproxy — OWASP ZAP security scanner for mymatasan / myseliasan / myiotsan
 
 Developer/security tooling that points [OWASP ZAP](https://www.zaproxy.org/)
-(the `ghcr.io/zaproxy/zaproxy:stable` Docker image) at a running **mymatasan**
-or **myseliasan** instance and produces HTML + JSON vulnerability reports.
+(the `ghcr.io/zaproxy/zaproxy:stable` Docker image) at a running **mymatasan**,
+**myseliasan**, or **myiotsan** instance and produces HTML + JSON vulnerability
+reports.
 
 Like `tools/tgbridge`, this is **developer tooling only** — not part of any
 shipped app, no runtime dependency on the apps/domain/infra, and not covered by
 `docs/modules/` or the version changelog.
 
-Pick the app with `-App` (ps1) / `--app` (sh); default is `mymatasan`. The two
-apps authenticate differently, so each has its own plans + config file:
+Pick the app with `-App` (ps1) / `--app` (sh); default is `mymatasan`. Each app
+authenticates differently, so each has its own plans + config file:
 
 | App | Port | Auth model | Plans | Config |
 |-----|------|------------|-------|--------|
 | `mymatasan` (default) | 3000 | HTTP Basic (replayed every request) | `plans/<mode>.yaml` | `config/target.env` |
 | `myseliasan` | 3002 | JSON login → session cookie + double-submit CSRF | `plans/myseliasan-<mode>.yaml` | `config/myseliasan.target.env` |
+| `myiotsan` | 3003 | JSON login (appliance auth stack, own login path) → session cookie, no CSRF token | `plans/myiotsan-<mode>.yaml` | `config/myiotsan.target.env` |
 
 ## What it checks
 
@@ -185,6 +187,59 @@ scanners).
 > throwaway with `RATE_LIMIT_ENABLED=false` (env override) for a thorough active
 > scan. The passive `baseline` doesn't need this.
 
+## myiotsan (IoT device hub)
+
+myiotsan is on the same appliance local-auth stack as mymatasan (see
+`domain/shared`), but rides a **session cookie** rather than replaying HTTP
+Basic: `POST /api/auth/login {username,password}` (its own path — not
+myseliasan's `/api/auth/local-login`) sets an `HttpOnly`, `SameSite=Lax` cookie.
+That `SameSite=Lax` is the CSRF defence, so unlike myseliasan there is **no
+CSRF token and no `csrf-doublesubmit.js` script** in the myiotsan plans.
+
+**myiotsan is not a read-only dashboard — it actuates physical hardware**
+(relays, locks, valves), and the plans are scoped around that on purpose:
+
+- **`plans/myiotsan-{api,full}.yaml` deliberately exclude**
+  `/api/devices/{id}/commands` (issuing an actuation command),
+  `/api/devices/{id}/password` (rotating a device's broker credential — this
+  revokes the device), `/api/pairing/*` (adopt/release/fleet-key), the
+  discovery/enrollment endpoints (opening a window admits unknown devices), and
+  `/api/settings/users/*` (could disable the admin mid-scan) — on top of the
+  same destructive-route exclusions the other apps' plans carry
+  (`/api/system/*`, `*/purge`, DELETE routes).
+- **This is deliberate, not a coverage gap.** An active scanner fuzzing an
+  actuation endpoint is a **physical-hardware risk**, not a data one — a
+  "throwaway" bench instance may still be wired to a real relay or lock. Do
+  **not** "fix" this by adding those routes back to the plan without a
+  deliberate decision to do so against real, disconnected hardware only.
+
+Setup:
+
+1. Start myiotsan (dev instance listens on TLS `:3003`).
+2. Copy `config/myiotsan.target.env.example` to `config/myiotsan.target.env` and
+   fill in `TARGET` + `ZAP_AUTH_USER`/`ZAP_AUTH_PASS`. There is deliberately **no
+   shipped default password** (dev config uses `admin123`; a packaged install
+   generates one into `INITIAL_ADMIN_LOGIN.txt`). The account is
+   must-change-password on first login — clear that first and put the
+   *resulting* password here, or authenticated coverage is limited.
+
+Run:
+
+```powershell
+./scan.ps1 -App myiotsan                 # safe passive baseline (:3003)
+./scan.ps1 -App myiotsan -Mode api       # active /api scan (prompts; excludes actuation)
+```
+
+```bash
+./scan.sh --app myiotsan                 # baseline
+./scan.sh --app myiotsan api             # active /api scan (prompts; excludes actuation)
+```
+
+Reports land in `reports/myiotsan-<mode>-<timestamp>.{html,json}`. Same
+rate-limiting caveat as myseliasan: start the throwaway with
+`RATE_LIMIT_ENABLED=false` before an active run, or `429`s from ZAP's repeated
+re-login will collapse the session and abort the scan.
+
 ## Known / accepted findings
 
 - **`CSP: style-src unsafe-inline` (Medium)** — kept intentionally. The React
@@ -219,12 +274,16 @@ scanners).
 scan.ps1 / scan.sh                   entrypoints (Windows / POSIX); -App/--app selects the app
 config/target.env.example            mymatasan — copy to config/target.env
 config/myseliasan.target.env.example myseliasan — copy to config/myseliasan.target.env
+config/myiotsan.target.env.example   myiotsan — copy to config/myiotsan.target.env
 plans/baseline.yaml                  mymatasan passive plan (safe)
 plans/api.yaml                       mymatasan active plan, /api only (destructive routes excluded)
 plans/full.yaml                      mymatasan active plan, whole app (destructive routes excluded)
 plans/myseliasan-baseline.yaml       myseliasan passive plan (JSON auth + cookie session)
 plans/myseliasan-api.yaml            myseliasan active plan, /api only (+ CSRF script)
 plans/myseliasan-full.yaml           myseliasan active plan, whole app (+ CSRF script + AJAX spider)
-scripts/csrf-doublesubmit.js         HttpSender script: mirrors CSRF cookie into X-CSRF-Token
+plans/myiotsan-baseline.yaml         myiotsan passive plan (JSON auth + cookie session)
+plans/myiotsan-api.yaml              myiotsan active plan, /api only (actuation/pairing/enrollment excluded)
+plans/myiotsan-full.yaml             myiotsan active plan, whole app (actuation/pairing/enrollment excluded)
+scripts/csrf-doublesubmit.js         HttpSender script: mirrors CSRF cookie into X-CSRF-Token (myseliasan only)
 reports/                             generated HTML+JSON (git-ignored)
 ```

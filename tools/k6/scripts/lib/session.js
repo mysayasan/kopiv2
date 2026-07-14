@@ -1,17 +1,25 @@
-// Shared helpers for the myseliasan k6 scripts.
+// Shared helpers for the COOKIE-SESSION k6 scripts: myseliasan and myiotsan.
 //
-// Unlike mymatasan (HTTP Basic replayed on every request — see common.js),
-// myseliasan authenticates ONCE via a JSON login and then rides a cookie
-// session: POST /api/auth/local-login sets the JWT session cookie, and every
-// subsequent request is authorized by validating that cookie (cheap) rather
-// than re-running bcrypt. k6 keeps a per-VU cookie jar, so once a VU has logged
-// in, its http.get calls are authenticated automatically for the rest of the
-// run. The self-signed dev cert is ignored via `insecureSkipTLSVerify` in each
-// script's options.
+// Unlike mymatasan (HTTP Basic replayed on every request — see common.js), both
+// of these authenticate ONCE via a JSON login and then ride a cookie session:
+// the login sets a session cookie, and every subsequent request is authorized by
+// validating that cookie (cheap) rather than re-running bcrypt. So bcrypt costs
+// one hash per VU, not one per request, and the ceiling these scripts find is
+// TLS + JSON + the DB read path — not the KDF. k6 keeps a per-VU cookie jar, so
+// once a VU has logged in its http.get calls are authenticated for the rest of
+// the run. The self-signed dev cert is ignored via `insecureSkipTLSVerify` in
+// each script's options.
+//
+// The two apps differ only in their login path, so ensureLogin() takes it as an
+// argument and defaults to myseliasan's:
+//   myseliasan  POST /api/auth/local-login   (federated JWT stack)
+//   myiotsan    POST /api/auth/login         (appliance local-auth stack)
+// Both take {username,password} and both set an HttpOnly session cookie.
 //
 // CSRF: myseliasan only requires the X-CSRF-Token header on state-changing
-// verbs (POST/PUT/PATCH/DELETE). These load scripts are read-only (GET), so no
-// CSRF handling is needed. Login itself is CSRF-exempt.
+// verbs (POST/PUT/PATCH/DELETE); myiotsan's appliance cookie is SameSite=Lax and
+// carries no CSRF token at all. These load scripts are read-only (GET), so
+// neither needs CSRF handling. Login itself is CSRF-exempt.
 //
 // Cookie handling: k6 RESETS the per-VU cookie jar between iterations, so the
 // session cookie set by login (iteration 1) would be gone by iteration 2 and
@@ -44,12 +52,15 @@ export const loginTrend = new Trend('login_duration', true);
 // stays empty on an anonymous run — only public endpoints will 2xx).
 let cookieHeader = '';
 
+// Default login path (myseliasan). myiotsan's scripts pass '/api/auth/login'.
+const DEFAULT_LOGIN_PATH = '/api/auth/local-login';
+
 // Log in this VU exactly once and capture its session cookies. Anonymous run
 // (no creds) is a no-op.
-export function ensureLogin() {
+export function ensureLogin(loginPath) {
   if (cookieHeader !== '' || AUTH_USER === '') return;
   const res = http.post(
-    `${BASE_URL}/api/auth/local-login`,
+    `${BASE_URL}${loginPath || DEFAULT_LOGIN_PATH}`,
     JSON.stringify({ username: AUTH_USER, password: AUTH_PASS }),
     { headers: { 'Content-Type': 'application/json' }, tags: { endpoint: 'login' } }
   );

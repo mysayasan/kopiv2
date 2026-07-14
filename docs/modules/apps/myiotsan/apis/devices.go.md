@@ -23,7 +23,11 @@ Registers the device inventory and its telemetry under `/api/devices`.
   ever**.
 - Shared helpers used across this package: `readPaging` (limit/offset query parsing),
   `readID` (mux var → validated int64), `decode` (1MB-capped, `DisallowUnknownFields` JSON
-  body decode), `actorId` (resolves the signed-in local user for created_by/updated_by).
+  body decode), `actorId` (resolves the signed-in local user for created_by/updated_by),
+  `actorName` (the same caller, by name — not redundant with `actorId`: a caller can arrive over
+  the fleet tunnel from a control-plane operator with no local account, so `actorId` is `0` but
+  the tunnel's synthetic principal still carries `cp:<who>`; used by `commands.Issue` and
+  `rules.AckAlert` so the audit trail names a person instead of "System").
 
 ## Notes
 

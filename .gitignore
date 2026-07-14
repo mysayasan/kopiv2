@@ -9,11 +9,13 @@ logs
 # builds by goversioninfo, arch-suffixed so Go links them per-target)
 cmd/mymatasan/*.syso
 cmd/myseliasan/*.syso
+cmd/myiotsan/*.syso
 
 # goreleaser build output
 /dist/
 /packaging/staging/
 /packaging/staging-myseliasan/
+/packaging/staging-myiotsan/
 
 # make build output (per-app)
 apps/*/bin/

@@ -1,0 +1,42 @@
+<!-- WinSW service wrapper for MyIotSan (Windows).
+
+  The Windows installer (myiotsan-setup-*.exe) already registers a service for you —
+  this file is only for the portable .zip.
+
+  A Go console app isn't a native Windows service, so wrap it with WinSW (or NSSM).
+
+  WinSW (recommended):
+    1. Download WinSW (https://github.com/winsw/winsw), put WinSW.exe next to the app
+       and rename it myiotsan-service.exe.
+    2. Put this file next to it as myiotsan-service.xml (same base name).
+    3. Edit the <executable> / <workingdirectory> paths below.
+    4. Run (elevated):  myiotsan-service.exe install   then   myiotsan-service.exe start
+       Logs land next to the exe; manage via services.msc.
+
+  NSSM alternative:
+    nssm install MyIotSan "C:\myiotsan\myiotsan.exe"
+    nssm set MyIotSan AppDirectory "C:\myiotsan"
+    nssm set MyIotSan AppEnvironmentExtra KOPIV2_SUPERVISED=1
+    nssm set MyIotSan AppExit Default Restart
+    nssm start MyIotSan
+
+  The app opens an MQTT broker on TCP 1883 for devices — add a Windows Firewall inbound
+  rule for it, or no device will connect:
+    netsh advfirewall firewall add rule name="MyIotSan MQTT" dir=in action=allow protocol=TCP localport=1883
+
+  onfailure restart + KOPIV2_SUPERVISED=1 means an in-app restart exits cleanly and the
+  service control manager relaunches it.
+-->
+<service>
+  <id>myiotsan</id>
+  <name>MyIotSan IoT device hub</name>
+  <description>MyIotSan — on-prem IoT device hub with an embedded MQTT broker.</description>
+  <executable>C:\myiotsan\myiotsan.exe</executable>
+  <workingdirectory>C:\myiotsan</workingdirectory>
+  <env name="KOPIV2_SUPERVISED" value="1"/>
+  <onfailure action="restart" delay="2 sec"/>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+</service>

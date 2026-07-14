@@ -9,8 +9,8 @@
 # committed in the repo, so ISCC compiles the real script exactly as the release job does.
 # We validate the .iss, not a shippable build, so no Go compile is needed.
 #
-# Both products' installers are checked — they share the same Pascal Script scaffolding, so
-# a slip in one is usually a slip in both.
+# Every product's installer is checked — they share the same Pascal Script scaffolding, so
+# a slip in one is usually a slip in all of them.
 name: Installer check
 
 on:
@@ -33,6 +33,8 @@ jobs:
             bindir: dist\windows-installer
           - app: myseliasan
             bindir: dist\windows-installer-myseliasan
+          - app: myiotsan
+            bindir: dist\windows-installer-myiotsan
     steps:
       - name: Checkout
         uses: actions/checkout@v4

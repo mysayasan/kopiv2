@@ -94,7 +94,7 @@ Relevant top-level layout:
 .
 |- apps/mymatasan/         # Camera, WebRTC stream, and video intelligence app
 |- apps/myidsan/           # Identity, user management, and RBAC administration app
-|- apps/myiotsan/          # On-prem IoT device hub appliance (P0-P4 shipped)
+|- apps/myiotsan/          # On-prem IoT device hub appliance (P0-P4, P6, P7 shipped; installable product)
 |- domain/                 # Domain entities, enums, shared APIs/services
 |- infra/                  # Config, DB, auth login providers, camera adapters
 |- deploy/linux/           # systemd templates
@@ -412,7 +412,7 @@ go run . -app myidsan
 The dev config file defaults `db.port` to `5433`. The example above overrides it to `5432`; keep whichever port matches your local PostgreSQL.
 `apps/myidsan/config.dev.json` also defaults PostgreSQL to port `5433`, database `myidsandb`, and HTTPS port `3001`. Both MyIDSan configs expect `apps/myidsan/certs/cert.pem` and `apps/myidsan/certs/key.pem`.
 
-Run the IoT hub app (P0-P4 shipped — boots, authenticates, ingests device telemetry over an embedded MQTT broker, evaluates alert rules, onboards devices via a time-boxed enrollment window, and can command an actuation-enabled device within its declared profile bounds; see `apps/myiotsan/README.md`):
+Run the IoT hub app (P0-P4, P6, P7 shipped — boots, authenticates, ingests device telemetry over an embedded MQTT broker, evaluates alert rules, onboards devices via a time-boxed enrollment window, can command an actuation-enabled device within its declared profile bounds, is adoptable into a `myseliasan` fleet (and remotely manageable from it), and ships as an installable product with its own release pipeline; see `apps/myiotsan/README.md`):
 
 ```bash
 go run . -app myiotsan
@@ -458,7 +458,7 @@ docker run --rm -p 3000:3000 \
   kopiv2:latest
 ```
 
-For a prebuilt multi-arch release image with no local Go toolchain (`ghcr.io/mysayasan/mymatasan`) or `.deb`/`.rpm`/archive installers, see [`deploy/README.md`](deploy/README.md) — these are built by GoReleaser (`.goreleaser.yaml`) from `apps/mymatasan` and split a read-only app home directory from a writable data directory (`MYMATASAN_HOME`/`MYMATASAN_DATA`).
+For a prebuilt multi-arch release image with no local Go toolchain (`ghcr.io/mysayasan/mymatasan`) or `.deb`/`.rpm`/archive installers, see [`deploy/README.md`](deploy/README.md) — these are built by GoReleaser (`.goreleaser.yaml`) from `apps/mymatasan` and split a read-only app home directory from a writable data directory (`MYMATASAN_HOME`/`MYMATASAN_DATA`). `myiotsan` has its own equivalent release pipeline (`.goreleaser.myiotsan.yaml`, `ghcr.io/mysayasan/myiotsan`, `.deb`/`.rpm`/archives/Windows installer) — see [`deploy/README-myiotsan.md`](deploy/README-myiotsan.md). Its releases publish under their own `myiotsan-v<ver>` tag namespace with `--latest=false` so they never become GitHub's "latest" release and starve mymatasan's in-app updater, which reads `releases/latest`.
 
 ## Run with Docker Compose
 

@@ -1,0 +1,188 @@
+# GoReleaser config for MyIotSan — the on-prem IoT device hub ("the NVR, but for sensors";
+# github.com/mysayasan/kopiv2, app=myiotsan). mymatasan has .goreleaser.yaml; myseliasan has
+# .goreleaser.myseliasan.yaml.
+#
+# Produces, from one `goreleaser release`:
+#   - cross-compiled binaries: linux/windows/darwin x amd64/arm64 (pure Go, CGO off)
+#   - .tar.gz (linux/macOS) / .zip (windows) archives bundling the web UI, a default
+#     config, and the service unit files
+#   - .deb / .rpm packages that install to /opt/myiotsan with a systemd unit
+#   - multi-arch Docker images (see the `dockers` / `docker_manifests` blocks)
+#
+# ── Two things here differ from mymatasan's config, both deliberate ────────────────
+#
+# 1. `release: disable: true`. myiotsan is released under its OWN tag namespace,
+#    `myiotsan-v<ver>`, so its releases never collide with mymatasan's `v<ver>` tags and
+#    never become the repo's "latest" release. That last part is load-bearing, not
+#    cosmetic: mymatasan's IN-APP UPDATER (apps/mymatasan/services/update.go) reads
+#    `releases/latest` and picks its asset by name — if a myiotsan release ever became
+#    "latest", every deployed camera node would find no `mymatasan_`-prefixed asset there
+#    and silently stop receiving updates. GoReleaser OSS cannot derive a clean semver from
+#    a prefixed tag (monorepo/tag_prefix is Pro-only), so the workflow instead exports
+#    GORELEASER_CURRENT_TAG=v<ver> to give GoReleaser a plain version, and publishes the
+#    GitHub Release itself with `gh release create myiotsan-v<ver> --latest=false`. That is
+#    also why CI passes --skip=validate: the checked-out git tag intentionally does not
+#    match GORELEASER_CURRENT_TAG.
+#
+# 2. No ffmpeg/Python/model payload. myiotsan is pure Go — the MQTT broker is embedded
+#    (mochi-mqtt) and telemetry lands in SQLite — so there is no `ai/` dir and no nfpm
+#    `dependencies:`. Same shape as myseliasan.
+#
+# Local dry run (no publish):
+#   GORELEASER_CURRENT_TAG=v0.6.0 goreleaser release -f .goreleaser.myiotsan.yaml \
+#     --clean --skip=validate,publish,docker
+#
+# The web bundle (apps/myiotsan/static) must be built first (`make web APP=myiotsan`)
+# and committed; CI does not rebuild it (that would dirty the tree).
+version: 2
+
+project_name: myiotsan
+
+before:
+  hooks:
+    - go mod download
+    # Embed the brand icon + version metadata into the Windows exe. Emits
+    # cmd/myiotsan/*_windows_<arch>.syso (gitignored, so the tree stays clean); Go links
+    # the matching one per Windows target.
+    - bash packaging/gen-winres.sh {{ .Version }} myiotsan
+    # Assemble the archive payload (web UI, default config, service files) under
+    # packaging/staging-myiotsan/ with the exact home-dir layout.
+    - bash packaging/stage-archive-myiotsan.sh
+
+builds:
+  - id: myiotsan
+    main: ./cmd/myiotsan
+    binary: myiotsan
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: myiotsan
+    ids:
+      - myiotsan
+    # The `myiotsan_` prefix is load-bearing, not cosmetic: mymatasan's in-app updater
+    # matches release assets by name, so the product prefix is what keeps the products'
+    # archives distinguishable.
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    # Payload assembled by packaging/stage-archive-myiotsan.sh (before-hook). Each concrete
+    # dir src is copied recursively under its dst, landing at the archive root as static/,
+    # deploy/, config.json (alongside the binary).
+    files:
+      - src: packaging/staging-myiotsan/static
+        dst: static
+      - src: packaging/staging-myiotsan/deploy
+        dst: deploy
+      - src: packaging/staging-myiotsan/config.json
+        dst: config.json
+
+nfpms:
+  - id: myiotsan
+    package_name: myiotsan
+    ids:
+      - myiotsan
+    vendor: mysayasan
+    homepage: https://github.com/mysayasan/kopiv2
+    maintainer: mysayasan <mysayasan@gmail.com>
+    description: MyIotSan — on-prem IoT device hub with an embedded MQTT broker.
+    license: PolyForm-Noncommercial-1.0.0
+    formats:
+      - deb
+      - rpm
+    # Everything installs under /opt/myiotsan (flat home == data layout matching the
+    # shipped systemd unit). The binary goes to /opt/myiotsan/myiotsan.
+    bindir: /opt/myiotsan
+    contents:
+      - src: apps/myiotsan/static
+        dst: /opt/myiotsan/static
+      - src: deploy/dist/myiotsan-config.json
+        dst: /opt/myiotsan/config.json
+        type: "config|noreplace"
+      - src: deploy/nfpm/myiotsan.service
+        dst: /etc/systemd/system/myiotsan.service
+    scripts:
+      postinstall: deploy/nfpm/myiotsan-postinstall.sh
+      preremove: deploy/nfpm/myiotsan-preremove.sh
+      postremove: deploy/nfpm/myiotsan-postremove.sh
+    # No `dependencies:` — pure Go, nothing to pull in. The MQTT broker is in-process, so
+    # there is no mosquitto/paho to depend on either.
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
+
+# The GitHub Release is created by the workflow (gh release create) under the
+# myiotsan-v<ver> tag with --latest=false, NOT by GoReleaser. See the header.
+release:
+  disable: true
+
+dockers:
+  - id: myiotsan-amd64
+    goos: linux
+    goarch: amd64
+    dockerfile: deploy/Dockerfile.myiotsan.release
+    use: buildx
+    image_templates:
+      - "ghcr.io/mysayasan/myiotsan:{{ .Version }}-amd64"
+      - "ghcr.io/mysayasan/myiotsan:latest-amd64"
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      # Buildx attaches provenance/SBOM attestations by default, which turns each
+      # single-arch push into an OCI image index (image + unknown/unknown attestation).
+      # `docker manifest create` for the combined :latest tag then can't verify those
+      # child digests ("manifest verification failed"). Push plain image manifests so the
+      # manifest list combines cleanly.
+      - "--provenance=false"
+      - "--sbom=false"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.source=https://github.com/mysayasan/kopiv2"
+    extra_files:
+      - apps/myiotsan/static
+      - deploy/dist/myiotsan-config.json
+  - id: myiotsan-arm64
+    goos: linux
+    goarch: arm64
+    dockerfile: deploy/Dockerfile.myiotsan.release
+    use: buildx
+    image_templates:
+      - "ghcr.io/mysayasan/myiotsan:{{ .Version }}-arm64"
+      - "ghcr.io/mysayasan/myiotsan:latest-arm64"
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      # See the amd64 block: disable attestations so the pushed image is a plain manifest
+      # the :latest manifest list can combine.
+      - "--provenance=false"
+      - "--sbom=false"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.source=https://github.com/mysayasan/kopiv2"
+    extra_files:
+      - apps/myiotsan/static
+      - deploy/dist/myiotsan-config.json
+
+docker_manifests:
+  - name_template: "ghcr.io/mysayasan/myiotsan:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/mysayasan/myiotsan:{{ .Version }}-amd64"
+      - "ghcr.io/mysayasan/myiotsan:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/mysayasan/myiotsan:latest"
+    image_templates:
+      - "ghcr.io/mysayasan/myiotsan:latest-amd64"
+      - "ghcr.io/mysayasan/myiotsan:latest-arm64"

@@ -17,3 +17,6 @@ Registers the rules and the alert log they produce, under `/api/rules` and `/api
 
 - Thin HTTP layer over `services.RuleService`; validation (`validConditions`, required
   `Key`/`WindowSeconds` per condition) lives in the service, not here.
+- `POST /alerts/{id}/ack` passes both `actorId(r)` and `actorName(r)` (`apis/devices.go.md`)
+  through to `AckAlert` so an ack arriving over the fleet tunnel is attributed to the
+  control-plane operator by name, not recorded as "System".

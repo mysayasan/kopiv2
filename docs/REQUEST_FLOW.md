@@ -122,6 +122,33 @@ capped to 8 MiB) → control channel (`control.Request`, fleet mTLS) → mymatas
 (`downloadSegment`, decrypt/transcode/materialize as needed) → control channel
 (`control.Response`, all headers) → myseliasan (`206 Partial Content`) → browser.
 
+## Embedded IoT Node Management Flow (myseliasan → myiotsan)
+
+Mirrors the recording-playback flow above, but for the general case of managing an adopted
+`myiotsan` "Sensor hub" node's devices/rules/alerts/commands from inside myseliasan's UI
+(`components/nodeiot/`, routed by `node_manager.js` on `kind === 'iot'`) rather than one
+specialized range-proxied endpoint.
+
+1. The embedded page's `apiBase()` is overridden (the same shim `nodecam/` uses) to point every
+   call at `GET/POST/PUT/DELETE /api/nodes/{id}/proxy/<node-path>` instead of a same-origin URL.
+2. `apps/myseliasan/apis/node_proxy.go` authorizes the caller against the per-node access grant
+   (viewer/operator/admin), builds a tunneled `control.Request` for `<node-path>`, and sends it
+   over the node's control channel.
+3. On the node, `apps/myiotsan/apis/control_dispatch.go` (shared dispatcher, `domain/shared/apis`)
+   routes the request into the node's own `/api` subrouter exactly as if it had arrived locally,
+   and its response is tunneled back unchanged.
+4. **Issuing a command or acknowledging an alert this way is attributed by name, not just id.**
+   The control-plane caller has no local account on the node, so the node-side `actorId(r)`
+   resolves to `0`; the synthetic principal the tunnel presents instead carries the caller's name
+   as `cp:<who>`, read by `apis.actorName(r)` and stamped onto
+   `DeviceCommand.RequestedByName` / `AlertEvent.AckedByName` (`apps/myiotsan/apis/devices.go`,
+   `services/{commands,rules}.go`). Without this, the node's own audit trail — the first place an
+   investigator looks — would say a relay was switched or an alert acknowledged by "System".
+
+The browser never opens a connection to the node itself at any step — everything above travels
+browser → myseliasan → control channel → node, the same as every other embedded-node flow in this
+document, which is what lets an adopted node sit behind NAT with no inbound firewall rule.
+
 ## Cross-Domain Fleet Rule Correlation Flow (myseliasan)
 
 This flow is why the suite has a fourth app. A `mymatasan` camera node and a `myiotsan` sensor

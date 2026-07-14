@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Ico, useT } from '@shared';
 import { NodeCameraTile } from './node_manager';
 import { NodeEmbed } from './node_embed';
+import { isSensorNode } from './layout';
 import { LayoutDropdown } from './nodecam/ui';
 import { PTZRing } from './nodecam/ptz';
 import { layoutCapacity, layoutColumns, layoutRows } from './nodecam/lib/helpers';
@@ -218,7 +219,12 @@ function TilePTZ({ nodeId, cameraId }) {
 // AddCameraMenu is the wall's consolidation control: pick a node, then a camera on it, to
 // add that camera to the wall. Cameras are fetched lazily per node over the control tunnel
 // (the browser never talks to a node directly). Cameras already on the wall are hidden.
-function AddCameraMenu({ nodes, viewTiles, t }) {
+//
+// SENSOR HUBS ARE NOT LISTED. A myiotsan node has no cameras — expanding it would fire
+// /api/cameras at a hub that does not serve it and report the node as broken, when the truth
+// is that a door contact simply has nothing to put on a video wall.
+function AddCameraMenu({ nodes: allNodes, viewTiles, t }) {
+  const nodes = (allNodes || []).filter((n) => !isSensorNode(n));
   const [open, setOpen] = useState(false);
   const [openNode, setOpenNode] = useState(null);
   // Per-node camera fetch state: { status: 'loading'|'ready'|'error', cameras: [] }.

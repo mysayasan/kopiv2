@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-  Run a k6 load test against a running mymatasan instance, streaming live
-  metrics into a local Grafana + InfluxDB stack.
+  Run a k6 load test against a running mymatasan, myseliasan or myiotsan instance,
+  streaming live metrics into a local Grafana + InfluxDB stack.
 
 .DESCRIPTION
   Brings up the metrics backend (Grafana on http://localhost:3300, InfluxDB) if
@@ -23,14 +23,21 @@
 .EXAMPLE
   ./run.ps1 -Script stress -BaseUrl https://host.docker.internal:3000 -User admin -Pass 'secret'
 
+.EXAMPLE
+  ./run.ps1 -App myiotsan -Script load
+
 .NOTES
   Leaves Grafana/InfluxDB running so you can inspect results. Stop with:
       docker compose down            (keep data)
       docker compose down -v         (also wipe InfluxDB)
+
+  myiotsan caveat: its scripts load the HTTP CONSOLE only. The appliance's real
+  throughput risk is MQTT telemetry into SQLite, which k6 does not speak — a green
+  run here says the UI stays responsive, not that the box keeps up with the estate.
 #>
 [CmdletBinding()]
 param(
-  [ValidateSet('mymatasan', 'myseliasan')]
+  [ValidateSet('mymatasan', 'myseliasan', 'myiotsan')]
   [string]$App = 'mymatasan',
   [ValidateSet('smoke', 'load', 'stress')]
   [string]$Script = 'smoke',
@@ -51,13 +58,19 @@ Set-Location $here
 
 # --- Per-app wiring ----------------------------------------------------------
 # mymatasan authenticates with HTTP Basic replayed on every request (common.js);
-# its scripts are scripts/<name>.js and it listens on :3000. myseliasan does a
-# JSON login + cookie session (session.js); its scripts are prefixed
-# myseliasan-<name>.js and it listens on :3002. Each app has its own target.env.
+# its scripts are scripts/<name>.js and it listens on :3000. myseliasan (:3002)
+# and myiotsan (:3003) do a JSON login + cookie session (session.js) — bcrypt once
+# per VU, not per request — and their scripts are prefixed <app>-<name>.js. Each
+# app has its own target.env.
 if ($App -eq 'myseliasan') {
   $envFileName = 'myseliasan.target.env'
   $scriptFile = "myseliasan-$Script"
   $defaultBaseUrl = 'https://host.docker.internal:3002'
+}
+elseif ($App -eq 'myiotsan') {
+  $envFileName = 'myiotsan.target.env'
+  $scriptFile = "myiotsan-$Script"
+  $defaultBaseUrl = 'https://host.docker.internal:3003'
 }
 else {
   $envFileName = 'target.env'
@@ -93,8 +106,8 @@ $env:AUTH_USER = $User
 $env:AUTH_PASS = $Pass
 
 if ($User) {
-  if ($App -eq 'myseliasan') { Write-Host "Auth   : JSON login as '$User' (cookie session, once per VU)" -ForegroundColor Cyan }
-  else { Write-Host "Auth   : HTTP Basic as '$User'" -ForegroundColor Cyan }
+  if ($App -eq 'mymatasan') { Write-Host "Auth   : HTTP Basic as '$User'" -ForegroundColor Cyan }
+  else { Write-Host "Auth   : JSON login as '$User' (cookie session, once per VU)" -ForegroundColor Cyan }
 }
 else { Write-Host 'Auth   : none (anonymous surface only)' -ForegroundColor Yellow }
 Write-Host "App    : $App"

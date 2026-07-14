@@ -33,5 +33,7 @@ while the shorter `/api/devices/*/commands` prefix stays admin-only.
 ## Notes
 
 - Thin layer over `services.CommandService`/`services.DeviceService`; no gates live here.
-- Shares `readID`/`decode`/`readPaging`/`actorId` helpers with the rest of the `apis` package
-  (`apis/devices.go.md`).
+- Shares `readID`/`decode`/`readPaging`/`actorId`/`actorName` helpers with the rest of the `apis`
+  package (`apis/devices.go.md`). `POST /commands` passes both `actorId(r)` and `actorName(r)`
+  through to `Issue` so a command issued over the fleet tunnel is attributed to the control-plane
+  operator by name, not recorded as "System".

@@ -1,6 +1,7 @@
 <#
 .SYNOPSIS
-  Run an OWASP ZAP security scan against a running mymatasan instance.
+  Run an OWASP ZAP security scan against a running mymatasan, myseliasan or
+  myiotsan instance.
 
 .DESCRIPTION
   Wraps the official ZAP Docker image (ghcr.io/zaproxy/zaproxy:stable) and its
@@ -21,10 +22,13 @@
 
 .EXAMPLE
   ./scan.ps1 -Mode api -Target https://host.docker.internal:3000 -User admin -Pass 'secret'
+
+.EXAMPLE
+  ./scan.ps1 -App myiotsan -Mode baseline
 #>
 [CmdletBinding()]
 param(
-  [ValidateSet('mymatasan', 'myseliasan')]
+  [ValidateSet('mymatasan', 'myseliasan', 'myiotsan')]
   [string]$App = 'mymatasan',
   [ValidateSet('baseline', 'api', 'full')]
   [string]$Mode = 'baseline',
@@ -43,11 +47,20 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 # myseliasan authenticates with a JSON login + cookie session (the plan's own
 # `authentication` block consumes ZAP_AUTH_USER/ZAP_AUTH_PASS), and its active
 # plans mirror the CSRF cookie into a header via scripts/csrf-doublesubmit.js.
+# myiotsan is also JSON login + cookie session, but on the APPLIANCE auth stack:
+# a different login path (/api/auth/login) and no CSRF token at all — its cookie
+# is SameSite=Lax, which is the defence — so its plans load no CSRF script.
 if ($App -eq 'myseliasan') {
   $envFileName = 'myseliasan.target.env'
   $planFile = "myseliasan-$Mode.yaml"
   $defaultTarget = 'https://host.docker.internal:3002'
   $reportPrefix = "myseliasan-$Mode"
+}
+elseif ($App -eq 'myiotsan') {
+  $envFileName = 'myiotsan.target.env'
+  $planFile = "myiotsan-$Mode.yaml"
+  $defaultTarget = 'https://host.docker.internal:3003'
+  $reportPrefix = "myiotsan-$Mode"
 }
 else {
   $envFileName = 'target.env'
@@ -80,16 +93,17 @@ if (-not $PSBoundParameters.ContainsKey('Pass')) { $Pass = $cfg['ZAP_AUTH_PASS']
 $Target = $Target.TrimEnd('/')
 
 # --- Build the Basic auth header value (mymatasan only; empty => anonymous) ---
-# myseliasan does its own JSON login inside the plan, so it needs no header here.
+# myseliasan and myiotsan do their own JSON login inside the plan, so they need no
+# header here.
 $authHeader = ''
 if ($User) {
-  if ($App -eq 'myseliasan') {
-    Write-Host "Auth: JSON login as '$User' (cookie session)" -ForegroundColor Cyan
-  }
-  else {
+  if ($App -eq 'mymatasan') {
     $bytes = [Text.Encoding]::UTF8.GetBytes("${User}:${Pass}")
     $authHeader = 'Basic ' + [Convert]::ToBase64String($bytes)
     Write-Host "Auth: HTTP Basic as '$User'" -ForegroundColor Cyan
+  }
+  else {
+    Write-Host "Auth: JSON login as '$User' (cookie session)" -ForegroundColor Cyan
   }
 }
 else {
@@ -122,9 +136,9 @@ Write-Host ""
 
 # --- Run ZAP ------------------------------------------------------------------
 # --add-host maps host.docker.internal on engines that don't provide it by default.
-# ZAP_AUTH_HEADER feeds mymatasan's Basic replacer; ZAP_AUTH_USER/PASS feed
-# myseliasan's JSON authentication block. Both are passed regardless of app;
-# each plan consumes only what it references.
+# ZAP_AUTH_HEADER feeds mymatasan's Basic replacer; ZAP_AUTH_USER/PASS feed the
+# JSON authentication block used by myseliasan and myiotsan. All are passed
+# regardless of app; each plan consumes only what it references.
 docker run --rm `
   --add-host=host.docker.internal:host-gateway `
   -v "${mount}:/zap/wrk:rw" `
