@@ -6,13 +6,50 @@ plane), and `myidsan` (identity/SSO). It is built as an appliance on the same ru
 `mymatasan`: a single binary, on-prem, air-gapped-capable, and adoptable into the `myseliasan`
 fleet over the existing pairing/control channel.
 
-**P0-P2 are shipped — this is the MVP.** The app boots, authenticates, ingests telemetry from
-real devices over an embedded MQTT broker, evaluates alert rules against it, and raises alerts
-into a unified notification feed. What remains is discovery/onboarding (P3), actuation (P4),
+**P0-P3 are shipped.** The app boots, authenticates, ingests telemetry from real devices over an
+embedded MQTT broker, evaluates alert rules against it, raises alerts into a unified
+notification feed, and (P3) onboards unknown devices through a time-boxed enrollment window
+instead of requiring every device to be typed in by hand. What remains is actuation (P4),
 industrial protocols (P5) and fleet adoption (P6) — see `docs/MYIOTSAN_PLAN.md` for the full
-roadmap and, in §8b, exactly what shipped and what was found by live-booting it.
+roadmap and, in §8b/§8c, exactly what shipped and what was found by live-booting it.
 
-## Connecting a device
+## Onboarding a device
+
+The broker's security model is that **a device not in the inventory cannot connect at all** —
+that is what makes the device table the credential store, and what makes deleting a device
+actually revoke it. But a building's two hundred door contacts cannot be onboarded by typing two
+hundred device keys by hand, and a device that does not exist yet cannot announce itself. The
+resolution is a deliberate, time-boxed enrollment window, and this is the primary onboarding
+path — manual provisioning (below) is for the cases where you already know exactly what you are
+adding.
+
+1. **Open a window** — `POST /api/discovery/window` (admin-only), `{"minutes": N}` (clamped to
+   at most 60, default 10 if omitted). The response carries a one-time enrollment key —
+   **returned exactly once, never readable again** — and closes on its own; there is no way to
+   leave it open by forgetting about it.
+2. **Point unprovisioned devices at the broker** using the enrollment key as their MQTT
+   password and their own identifier as client id, same wire settings as below. An unknown
+   client presenting a valid window key is admitted, but **quarantined**: its payloads are
+   recorded as a candidate and go NOWHERE else — no telemetry row is stored, no rule is
+   evaluated. Somebody who slips into the window can leave junk candidates for an admin to
+   decline; they cannot forge a sensor reading, move a chart, or trigger or suppress an alert.
+3. **Review candidates** — `GET /api/discovery/candidates`, chattiest first. Each one carries
+   what it actually sent (topic + a sample payload) and, when the observed fields match a
+   profile well enough (a 0.6 floor — below it the app says nothing rather than guess wrong),
+   a suggested device type.
+4. **Adopt or reject** — `POST /api/discovery/candidates/{id}/adopt` (optionally overriding the
+   suggested `profileId`, plus name/tag/location) mints the device its own real, permanently
+   generated credential, shown exactly once. **The enrollment key stops working for that device
+   the moment it is adopted** — it is now a known device with its own password, so a leaked
+   window key cannot later impersonate anything it let in.
+5. **Close the window early** if needed — `DELETE /api/discovery/window`.
+
+A device profile is portable: `GET /api/profiles/{id}/export` / `POST /api/profiles/import` let
+an integrator who tuned a deadband for a sensor at one site carry that tuning to the next,
+without retyping it. An imported profile is never marked builtin, and a slug collision is
+reported rather than silently overwriting the existing profile's decoding rules.
+
+## Connecting a device manually
 
 1. **Provision it** — `POST /api/devices` with a `deviceKey` (the device's MQTT client id — for
    Zigbee2MQTT/Tasmota/Shelly conventions this is usually the device's own identifier), a
@@ -118,7 +155,10 @@ The authorization catalog now covers the shipped device/telemetry/rules/notifica
 a viewer sees devices and their current readings and that an alert fired; only an operator can
 review `/api/devices/*/readings` (the history) or acknowledge an alert — the same evidentiary
 line mymatasan draws for its own alert log; creating/deleting devices, editing profiles, and
-writing rules stay admin-only (`apps/myiotsan/services/rbac.go`).
+writing rules stay admin-only (`apps/myiotsan/services/rbac.go`). **`/api/discovery` (opening an
+enrollment window, and adopting or rejecting a candidate) is admin-only too** — it is the one
+act in the whole app that lets an unknown thing talk to the broker at all, so an operator does
+not get to do it either.
 
 ## Configuration
 
@@ -146,9 +186,11 @@ The SPA (`apps/myiotsan/views/react-webpack/`) is built off the shared `@shared`
 module the same way myseliasan's is — no per-app copy of `DataTable`/`SideNav`/icons/i18n.
 
 Screens: **Dashboard** (estate health, recent alerts, and the ingest panel), **Devices**
-(inventory, live values, telemetry charts, provisioning), **Rules**, **Alerts**,
-**Notifications**, and **Device types** (the profile catalog and its deadbands). All four
-locales — en, ms, zh, ar.
+(inventory, live values, telemetry charts, provisioning), **Discovery** (the enrollment window,
+its candidates, and adoption — see "Onboarding a device" above), **Rules**, **Alerts**,
+**Notifications**, and **Device types** (the profile catalog, its deadbands, and import/export).
+A first-run onboarding wizard leads a new install straight to opening its first enrollment
+window. All four locales — en, ms, zh, ar.
 
 Two things on the Dashboard deserve an operator's attention:
 

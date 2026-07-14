@@ -34,17 +34,31 @@ CRUD plus the authenticator surface, on `dbsql.IGenericRepo[entities.IotDevice]`
 
 ### The broker's authenticator
 
-- `AuthenticateDevice(ctx, clientId, password) (int64, bool)` — satisfies `mqtt.Authenticator`.
-  Resolves by `DeviceKey`, refuses a disabled device (the `Enabled` toggle has to mean something
-  at the wire, or "disabled" is just a table label), then `bcrypt.CompareHashAndPassword`.
-  **Distinguishes "could not check" from "wrong password"**: a database-unreachable error is
-  logged distinctly and refused (fail closed) rather than reported as a bad credential — telling
-  an operator "bad password" when the truth is "I could not look it up" sends them to debug the
-  wrong machine.
-- `AuthorizeTopic(ctx, deviceId, clientId, topic, write) bool` — satisfies `mqtt.Authenticator`.
-  The rule: the device's own key must appear in the topic. Without this, one compromised sensor
-  could publish readings on behalf of every other sensor in the building — forging a "no smoke
-  detected" for a device that is, in fact, on fire.
+- `SetEnrollment(e *Enrollment)` — wires the enrollment window in (`app.go`, after construction:
+  `Enrollment` itself needs `ProfileService`, which needs the db). `nil` until set, which is
+  fine: no window means `AuthenticateDevice` never has anywhere to fall through to.
+- `AuthenticateDevice(ctx, clientId, password) (iotmqtt.Principal, bool)` — satisfies
+  `mqtt.Authenticator`. **Three outcomes, in this order:**
+  1. A known, enabled device with the right password → admitted as itself
+     (`Principal{DeviceId: dev.Id}`).
+  2. An **unknown** client whose password verifies against an open enrollment window's key →
+     admitted **quarantined** (`Principal{Enrolling: true}`) — see
+     `services/enrollment.go.md`.
+  3. Anything else → refused.
+
+  Resolves by `DeviceKey` first; refuses a **disabled** device outright — the `Enabled` toggle
+  has to mean something at the wire, or "disabled" is just a table label, and critically **a
+  disabled device does NOT fall through to enrollment**: an admin who switched a device off must
+  not have it walk back in through the side door. **Distinguishes "could not check" from "wrong
+  password"**: a database-unreachable error is logged distinctly and refused (fail closed)
+  rather than reported as a bad credential — telling an operator "bad password" when the truth is
+  "I could not look it up" sends them to debug the wrong machine.
+- `AuthorizeTopic(ctx, p iotmqtt.Principal, clientId, topic, write) bool` — satisfies
+  `mqtt.Authenticator`. The rule: the client's own key must appear in the topic. Without this,
+  one compromised sensor could publish readings on behalf of every other sensor in the building —
+  forging a "no smoke detected" for a device that is, in fact, on fire. Applies to an
+  **enrolling** client exactly as it does to an adopted one, so a device announcing itself cannot
+  pollute another device's stream even as a candidate.
 - `TouchSeen(ctx, deviceId, nowSec)` — called on EVERY publish (hot path), so the database write
   is **throttled** to at most once per `lastSeenWriteInterval` (30s) per device — the offline
   detector needs minutes of resolution, not milliseconds. Deliberately NOT deadbanded: a device

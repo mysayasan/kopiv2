@@ -18,13 +18,26 @@ thing allowed to be slow is an alert, because an alert is rare and matters.
 
 ```go
 func NewIngest(devices *DeviceService, profile *ProfileService, gate *DeadbandGate, writer *ReadingWriter, rules *RuleService, logf func(string, ...any)) *Ingest
-func (i *Ingest) Handle(ctx context.Context, deviceId int64, clientId, topic string, payload []byte)
+func (i *Ingest) SetEnrollment(e *Enrollment)
+func (i *Ingest) Handle(ctx context.Context, p iotmqtt.Principal, clientId, topic string, payload []byte)
 func (i *Ingest) InvalidateProfile(profileId int64)
 func (i *Ingest) Stats() IngestStats
 ```
 
+`SetEnrollment` wires the enrollment window in (`app.go`, after construction) so a quarantined
+client's payloads become candidates instead of telemetry.
+
 `Handle` satisfies `mqtt.MessageHandler` and is also the entry point future HTTP ingest would
-call, so a device that cannot speak MQTT gets the same pipeline behind it. Per message:
+call, so a device that cannot speak MQTT gets the same pipeline behind it.
+
+**THE QUARANTINE is the very first thing `Handle` checks**, before anything else: if
+`p.Enrolling`, the payload is handed to `enroll.Observe` (recorded as a `DiscoveredDevice`
+candidate) and `Handle` returns — no decode, no deadband, no rule evaluation, no write. This
+early return IS the security boundary the whole enrollment design leans on: everything below it
+in `Handle` treats the payload as trusted sensor data, and a stranger admitted through an open
+window must never reach any of it. See `services/enrollment.go.md`.
+
+For an adopted device (`p.DeviceId`), per message:
 
 1. **`TouchSeen` first, unconditionally.** A device faithfully reporting an unchanged value is
    alive; if this sat behind the deadband, a perfectly healthy stable sensor would look dead to

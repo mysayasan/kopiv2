@@ -289,3 +289,201 @@
 .iot-cond-explain svg { flex: 0 0 auto; margin-top: 2px; color: var(--accent); }
 
 .section-subtitle { margin: 0; font-size: 14px; font-weight: 700; }
+
+/* --- Discovery: the enrollment window, and what walked through it -------------------
+   The page has to make an admin FEEL the shape of the thing: a door that is shut, a door
+   that is open with a clock ticking on it, and a holding pen for whatever came in. So the
+   window card changes colour with its state, and every candidate wears the word
+   "quarantined" — the security property is not a footnote, it is the label. */
+.iot-disc-model {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--accent-bg);
+}
+.iot-disc-model h3 { margin: 0; font-size: 14px; font-weight: 700; color: var(--text-primary); }
+.iot-disc-model p { margin: 0; font-size: 13px; color: var(--text-secondary); }
+/* Scoped through the parent so it beats `.iot-disc-model p` on specificity — the
+   quarantine note has to read as a warning, not as body copy. */
+.iot-disc-model p.iot-disc-model-quarantine {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+}
+.iot-disc-model-quarantine svg { flex: 0 0 auto; margin-top: 2px; }
+
+.iot-disc-window {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg);
+}
+.iot-disc-window.is-open { border-color: var(--warn-text); background: var(--warn-bg); }
+.iot-disc-window-state { display: grid; gap: 6px; min-width: 240px; }
+.iot-disc-window-state p { margin: 0; font-size: 13px; color: var(--text-secondary); }
+.iot-disc-window-state .status-pill { justify-self: start; }
+.iot-disc-window-open { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+.iot-disc-window-open .field-label { max-width: 320px; }
+.iot-disc-countdown { display: grid; gap: 2px; }
+.iot-disc-countdown-label { font-size: 12px; color: var(--text-muted); }
+.iot-disc-countdown strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.iot-disc-countdown-at { font-size: 12px; color: var(--text-faint); }
+
+/* --- Candidates: quarantined, and dressed as such ---------------------------------- */
+.iot-disc-waiting { display: grid; gap: 8px; }
+.iot-disc-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; }
+.iot-disc-card {
+  position: relative;
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg);
+}
+.iot-disc-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.iot-disc-card-id { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.iot-disc-card-id code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.iot-disc-quarantine {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.iot-disc-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.iot-disc-card-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.iot-disc-card-facts > div { display: grid; gap: 4px; align-content: start; }
+.iot-disc-card-facts span { font-size: 12px; color: var(--text-muted); }
+.iot-disc-card-facts > div > code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+.iot-disc-card-facts p { margin: 0; }
+.iot-disc-keys { display: flex; flex-wrap: wrap; gap: 6px; }
+.iot-disc-key {
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--accent-bg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.iot-disc-payload-toggle { justify-self: start; padding-inline: 0; }
+.iot-disc-payload {
+  margin: 0;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--accent-bg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 220px;
+}
+
+.iot-disc-suggest {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--accent-bg);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.iot-disc-suggest svg { flex: 0 0 auto; margin-top: 2px; color: var(--accent); }
+.iot-disc-suggest strong { color: var(--text-primary); }
+/* No confident match is not a failure state, but it IS a decision the admin has to make —
+   so it is warned, not greyed out. */
+.iot-disc-suggest.is-none { background: var(--warn-bg); color: var(--warn-text); }
+.iot-disc-suggest.is-none svg,
+.iot-disc-suggest.is-none strong { color: var(--warn-text); }
+
+.iot-disc-adopt { display: grid; gap: 12px; }
+
+/* --- First-run wizard --------------------------------------------------------------- */
+.iot-wiz-step {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.iot-wiz-body { display: grid; gap: 10px; min-height: 190px; align-content: start; }
+.iot-wiz-body h3 { margin: 0; font-size: 15px; font-weight: 700; color: var(--text-primary); }
+.iot-wiz-body p { margin: 0; font-size: 13px; color: var(--text-secondary); }
+.iot-wiz-body p.iot-wiz-quarantine {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+}
+.iot-wiz-quarantine svg { flex: 0 0 auto; margin-top: 2px; }
+.iot-wiz-steps {
+  margin: 0;
+  padding-inline-start: 20px;
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.iot-wiz-actions { justify-content: flex-end; }

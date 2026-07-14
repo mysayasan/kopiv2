@@ -7,3 +7,4 @@ export { RulesPage } from './rules';
 export { AlertsPage } from './alerts';
 export { NotificationsPage } from './notifications';
 export { ProfilesPage } from './profiles';
+export { DiscoveryPage } from './discovery';

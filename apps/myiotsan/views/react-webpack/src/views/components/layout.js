@@ -40,6 +40,15 @@ export function SideNav({ activeTab, busy, onTab, onLogout, session, pinned = tr
   // watches them (rules → alerts → the unified feed), and how a device TYPE is declared
   // (profiles). Profiles sit under System because they are configuration, not inventory:
   // one profile is inherited by every device of that type.
+  //
+  // Discovery sits beside them and ONLY for an admin: opening an enrollment window is the
+  // one act in the app that lets an unknown thing talk to the broker at all, and an operator
+  // does not get to do it. Hiding the entry is courtesy — every /api/discovery route is
+  // admin-only server-side, which is where it is actually enforced.
+  const systemItems = [];
+  if (session?.isAdmin) systemItems.push(navItem('discovery', t('nav.discovery'), 'search', 'blue'));
+  systemItems.push(navItem('profiles', t('nav.profiles'), 'box', 'indigo'));
+
   const groups = [
     { label: t('group.workspace'), items: [navItem('dashboard', t('nav.dashboard'), 'monitor', 'steel')] },
     { label: t('group.devices'), items: [navItem('devices', t('nav.devices'), 'cpu', 'teal')] },
@@ -51,7 +60,7 @@ export function SideNav({ activeTab, busy, onTab, onLogout, session, pinned = tr
         navItem('notifications', t('nav.notifications'), 'send', 'steel'),
       ],
     },
-    { label: t('group.system'), items: [navItem('profiles', t('nav.profiles'), 'box', 'indigo')] },
+    { label: t('group.system'), items: systemItems },
   ];
 
   const brand = (

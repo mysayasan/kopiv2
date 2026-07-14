@@ -92,6 +92,10 @@ func Policy() []PolicyRule {
 		// sensor effectively stops recording), writing rules, and — when P4 lands it — ACTUATION.
 		// A bad relay write is physically dangerous in a way a bad PTZ move is not.
 		{Path: "/api/devices/*/password", Description: "Rotate a device's broker credential", Viewer: none, Operator: none},
+		// Opening an enrollment window is the ONE act in the whole app that lets an unknown thing
+		// talk to the broker at all. It is time-boxed, key-gated and quarantined — and it is still
+		// not something an operator gets to do.
+		{Path: "/api/discovery", Description: "Open enrollment and adopt new devices", Viewer: none, Operator: none},
 		{Path: "/api/settings/users", Description: "Manage users and their roles", Viewer: none, Operator: none},
 		{Path: "/api/settings/roles", Description: "See the roles that can be assigned", Viewer: none, Operator: none},
 	}

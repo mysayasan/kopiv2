@@ -1,6 +1,7 @@
 package apis
 
 import (
+	"io"
 	"net/http"
 	"strconv"
 
@@ -20,7 +21,10 @@ func NewProfilesApi(router *mux.Router, profiles *services.ProfileService, inges
 	g := router.PathPrefix("/profiles").Subrouter()
 	g.HandleFunc("", h.list).Methods("GET")
 	g.HandleFunc("", h.create).Methods("POST")
+	// Registered before /{id} so the literal path wins.
+	g.HandleFunc("/import", h.importProfile).Methods("POST")
 	g.HandleFunc("/{id}", h.detail).Methods("GET")
+	g.HandleFunc("/{id}/export", h.export).Methods("GET")
 	g.HandleFunc("/{id}", h.update).Methods("PUT")
 	g.HandleFunc("/{id}", h.remove).Methods("DELETE")
 }
@@ -90,6 +94,41 @@ func (a *profilesApi) remove(w http.ResponseWriter, r *http.Request) {
 	}
 	a.ingest.InvalidateProfile(id)
 	controllers.SendResult(w, map[string]any{"deleted": id}, "succeed")
+}
+
+// export renders a profile as a portable document. Tuning a deadband for a particular sensor in
+// a particular building is real work; an integrator who does it once should be able to carry it
+// to the next site.
+func (a *profilesApi) export(w http.ResponseWriter, r *http.Request) {
+	id, ok := readID(w, r)
+	if !ok {
+		return
+	}
+	doc, err := a.profiles.Export(r.Context(), id)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrNotFound, err.Error())
+		return
+	}
+	controllers.SendResult(w, doc, "succeed")
+}
+
+// importProfile creates a profile from a document. An imported profile is never builtin, and a
+// slug collision is REPORTED rather than silently overwritten — quietly replacing a profile
+// would re-point every device using it at different decoding rules, which is data corruption
+// wearing the costume of a successful import.
+func (a *profilesApi) importProfile(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	detail, err := a.profiles.Import(r.Context(), raw, actorId(r))
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, detail, "succeed")
 }
 
 func parseInt(v string) (int64, error) {
