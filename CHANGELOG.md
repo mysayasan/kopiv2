@@ -51,6 +51,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-14 — myiotsan 0.9.0, mymatasan 1.106.0, myseliasan 1.31.0 (0d0b789)
+
+### Added
+
+- **mymatasan,myseliasan,myiotsan**: The suite's /metrics endpoint exposed almost nothing app-specific -- a live scrape of mymatasan showed 3 series, and myiotsan and myseliasan showed 0. This adds the missing instrumentation across all four apps under one rule: instrument what FAILS SILENTLY, not what a log line an operator would already read covers. Shared infra/safego now routes every recovered panic in a supervised or one-shot background task to a new PanicObserver, and infra/apphost wires it for every app as <app>_task_panics_total{task} -- a supervised goroutine that panics is caught and restarted (the process stays up, the API answers) but until now left no other trace than a single log line, so a subsystem crash-looping for an hour was an incident-time discovery rather than something alertable. myiotsan gains 9 metrics (services/metrics.go): sampled ingest gauges (received/stored/suppressed/dropped/queue_depth/series) read off ingest's own atomic counters every 10s rather than instrumented on the hot publish path, device online/offline gauges, and a commands_total counter by outcome. The headline is myiotsan_ingest_dropped_total -- a reading shed because the write queue was full is silent data loss (the broker keeps accepting, the UI keeps rendering, nothing is logged); verified live at dropped_total 86 against a torrent that outran the disk. myseliasan gains 5 metrics (services/metrics.go): nodes_connected/nodes_adopted/control_channel_up sampled off the control server every 10s, plus fleet_events_total{kind} and fleet_rule_fired_total{severity} counted directly at their sink/fire sites -- because a control plane is a relay with no sensors of its own, a node dropping off the control channel looks in the UI identical to one an operator released on purpose, and a cert creeping toward expiry has no symptom until the day it expires.
 ## 2026-07-14 — myiotsan 0.8.0, myseliasan 1.30.0 (2cea4c9)
 
 ### Added
