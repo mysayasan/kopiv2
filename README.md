@@ -35,6 +35,7 @@ This repository contains modular backend applications:
 - `apps/mymatasan`: standalone camera, ONVIF discovery, WebRTC live stream, and video intelligence app for small devices.
 - `apps/myidsan`: identity, user management, and RBAC administration app.
 - `apps/myseliasan`: relying control-plane app for `mymatasan`, authenticated through `myidsan`.
+- `apps/myiotsan`: on-prem IoT device hub appliance ("the NVR, but for sensors"). **P0 scaffolding** — boots, authenticates, serves its SPA shell; the device/telemetry/rules domain lands in later phases, see `docs/MYIOTSAN_PLAN.md`.
 
 Primary goals:
 
@@ -93,6 +94,7 @@ Relevant top-level layout:
 .
 |- apps/mymatasan/         # Camera, WebRTC stream, and video intelligence app
 |- apps/myidsan/           # Identity, user management, and RBAC administration app
+|- apps/myiotsan/          # On-prem IoT device hub appliance (P0 scaffolding)
 |- domain/                 # Domain entities, enums, shared APIs/services
 |- infra/                  # Config, DB, auth login providers, camera adapters
 |- deploy/linux/           # systemd templates
@@ -120,6 +122,8 @@ Base config files:
 - `apps/mymatasan/config.dev.json`
 - `apps/myidsan/config.json`
 - `apps/myidsan/config.dev.json`
+- `apps/myiotsan/config.json`
+- `apps/myiotsan/config.dev.json`
 
 Environment selection:
 
@@ -408,6 +412,14 @@ go run . -app myidsan
 The dev config file defaults `db.port` to `5433`. The example above overrides it to `5432`; keep whichever port matches your local PostgreSQL.
 `apps/myidsan/config.dev.json` also defaults PostgreSQL to port `5433`, database `myidsandb`, and HTTPS port `3001`. Both MyIDSan configs expect `apps/myidsan/certs/cert.pem` and `apps/myidsan/certs/key.pem`.
 
+Run the IoT hub app (P0 scaffolding — boots, authenticates, serves its SPA shell; no device/telemetry domain yet):
+
+```bash
+go run . -app myiotsan
+```
+
+`apps/myiotsan/config.dev.json` defaults to SQLite at `./data/myiotsan.db` and HTTPS port `3003`.
+
 For a small single-process local run, switch any app to SQLite with:
 
 ```bash
@@ -506,6 +518,9 @@ Runtime versioning uses standard SemVer with separate core and app versions:
 - `core.version` tracks shared framework/runtime code (`infra`, `domain`, shared APIs/services).
 - `apps.<name>.version` tracks one app module, such as `mymatasan`.
 - `myidsan` is included as its own app version entry.
+- `myiotsan` is included as its own app version entry (`0.1.0` as of its P0 scaffolding); a
+  pending changelog entry scoped `"myiotsan"` fails validation until its manifest entry
+  exists.
 
 The public endpoint only returns the running app version and the shared core version:
 

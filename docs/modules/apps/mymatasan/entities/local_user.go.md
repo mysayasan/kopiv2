@@ -2,24 +2,18 @@
 
 ## Purpose
 
-Defines the standalone local login user persisted by `mymatasan`.
+`LocalUser` is now a **type alias** of the shared appliance user
+(`domain/entities.LocalUser`) so mymatasan's existing call sites (`ILocalUserService`,
+repositories, handlers) keep compiling unchanged after the local-auth stack was extracted to
+`domain/shared` (myiotsan needed the same DB-backed users, and forking ~1,300 lines of
+security-critical code into a second app was rejected). The real field-by-field definition
+and its documentation now live at `domain/entities/local_user.go.md`.
 
 ## Notes
 
-- `Username` is unique and used for HTTP Basic Auth login.
-- `PasswordHash` is omitted from JSON responses.
-- `RoleId int64` is the **authority** on what this user may do — it points at a shared
-  `AccessRole` row, and that role's permission matrix (`domain/shared/services/access_rbac.go`)
-  decides every request via `apis.NewRequireRolePermission`. It replaces `IsAdmin` as a
-  single bool that could only express "admin or not"; the three built-in roles
-  (`superadmin`/`operator`/`viewer`) are described in `apps/mymatasan/services/rbac.go`.
-- `IsAdmin` is now a **legacy mirror**, not the authority: it is written from the resolved
-  role (`isSuperadmin`) on every create/update, and it is what
-  `ILocalUserService.BackfillRoles` reads to assign a role to a pre-roles row on first boot
-  (`true` → superadmin, otherwise operator). It is never read to make an authorization
-  decision — `AuthenticatedUser.IsAdmin` is derived from `RoleId` instead
-  (`services.identity()`). Kept only so the Users screen's admin badge and API clients that
-  predate roles keep working; can be dropped in a migration once every install has been
-  backfilled.
-- `IsActive` disables login without deleting the row.
-- `LastLoginAt`, `CreatedAt`, and `UpdatedAt` support simple local audit metadata.
+- `type LocalUser = sharedentities.LocalUser` — this **must** stay an alias of a type still
+  named `LocalUser`: the code-first bootstrap derives the table name by reflecting the struct
+  name (`strcase.ToSnake(typeOf.Name())`), so aliasing a type named anything else would rename
+  the `local_user` table out from under every deployed appliance.
+- No behavior changed for mymatasan by this move — verified by booting on a fresh DB: the
+  table is still `local_user`, existing rows read back unchanged.

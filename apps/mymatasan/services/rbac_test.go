@@ -65,7 +65,7 @@ func buildMatrix(t *testing.T) (perms sharedservices.IAccessPermissionService, v
 	viewer, operator = int64(2), int64(3)
 
 	for roleId, roleName := range map[int64]string{viewer: RoleViewer, operator: RoleOperator} {
-		for _, row := range rolePermissions(roleId, roleName) {
+		for _, row := range sharedservices.RolePermissions(roleId, roleName, Policy()) {
 			if _, err := perms.Set(ctx, row); err != nil {
 				t.Fatalf("seed %s %s: %v", roleName, row.Path, err)
 			}

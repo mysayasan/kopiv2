@@ -445,6 +445,29 @@ func runApp(app App) error {
 	}
 	apidocs.Register(router, app.Name(), docProvider)
 
+	// An unmatched /api/* path must 404 as JSON — it must NEVER fall through to the SPA.
+	//
+	// Without this it does, because the SPA catch-all below is registered on the ROOT router
+	// and gorilla/mux tries it when nothing under /api matched. Three things go wrong:
+	//
+	//   - The response is 200 text/html. A client asking for a missing endpoint is told the
+	//     call succeeded, and has to sniff the body to discover otherwise.
+	//   - It answers UNAUTHENTICATED. The app's auth middleware is mounted on the app's own
+	//     subrouter, and that subrouter never matched, so the middleware never ran. To a
+	//     scanner, every nonexistent /api path reads as an open, working endpoint.
+	//   - A typo'd route in a new app looks like it works.
+	//
+	// Registered after the app's routes and the shared /health + /ready, so every real
+	// endpoint matches first (mux tries routes in registration order).
+	api.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":  "failed",
+			"message": "no such endpoint",
+		})
+	})
+
 	router.PathPrefix("/").Handler(spaHandler{staticPath: filepath.Join(homeDir, "static"), indexPath: "index.html"})
 
 	listeners, err := buildListenerSpecs(appConfig)

@@ -894,7 +894,7 @@ function downloadText(filename, text) {
 
 // Built-in relying apps that the platform seeds and federation depends on; their
 // code/audience must stay canonical, so the UI locks them from rename/delete.
-const SYSTEM_APP_CODES = ['myidsan', 'mymatasan', 'myseliasan']
+const SYSTEM_APP_CODES = ['myidsan', 'mymatasan', 'myseliasan', 'myiotsan']
 
 // randomSecret returns a URL-safe, high-entropy client secret generated in the
 // browser (so the plaintext only ever exists client-side; the server stores a hash).

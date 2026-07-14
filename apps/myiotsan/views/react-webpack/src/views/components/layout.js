@@ -1,0 +1,74 @@
+import { Ico, SideNav as SharedSideNav, useT, BrandLogo as SharedBrandLogo } from '@shared';
+
+// The mark (shield + eye + check) is the suite's, shared verbatim with mymatasan,
+// myseliasan and myidsan; the sensor hub only supplies its wordmark and its
+// --brand-mark hue (app.css) so the family is one geometry with four tints.
+export function BrandLogo(props) {
+  return <SharedBrandLogo wordmark="myiotsan" {...props} />;
+}
+
+// AccountCard is the slim sign-out pill under the brand at the top of the rail: a
+// role chip (avatar + role) and a ghost logout icon button. The username/identity is
+// deliberately NOT shown (avoids exposing the signed-in account in the UI).
+// Standardized with the mymatasan / myseliasan rails.
+function AccountCard({ roleLabel, onLogout, busy }) {
+  const t = useT();
+  return (
+    <div className="side-account">
+      <span className="side-account-avatar" aria-hidden="true"><Ico n="user" sz={15} /></span>
+      <span className="side-account-role">{roleLabel}</span>
+      <button
+        type="button"
+        className="side-account-logout"
+        onClick={onLogout}
+        disabled={busy}
+        title={t('auth.logout')}
+        aria-label={t('auth.logout')}
+      >
+        <Ico n="logout" sz={16} />
+      </button>
+    </div>
+  );
+}
+
+// SideNav is the standardized RBAC-app navigation rail (the shared dark side-nav with
+// grouped menu entries and tone accents), carrying the sensor hub's own sections.
+export function SideNav({ activeTab, busy, onTab, onLogout, session, pinned = true, onTogglePinned }) {
+  const t = useT();
+  const navItem = (id, label, icon, tone) => ({ id, label, icon, tone, active: id === activeTab, onClick: () => onTab(id) });
+  const groups = [
+    { label: t('group.workspace'), items: [navItem('dashboard', t('nav.dashboard'), 'monitor', 'steel')] },
+    { label: t('group.devices'), items: [navItem('devices', t('nav.devices'), 'cpu', 'teal')] },
+    { label: t('group.monitoring'), items: [navItem('alerts', t('nav.alerts'), 'bell', 'green')] },
+    { label: t('group.system'), items: [navItem('settings', t('nav.settings'), 'sliders', 'indigo')] },
+  ];
+
+  const brand = (
+    <div className="side-brand">
+      {/* Pin / auto-hide toggle, standardized with the other rails: pinned keeps the
+          260px rail in the grid flow, unpinned collapses it to an icon strip that slides
+          out on hover. */}
+      {onTogglePinned ? (
+        <button
+          type="button"
+          className="nav-pin-toggle"
+          onClick={(e) => { onTogglePinned(); e.currentTarget.blur(); }}
+          aria-pressed={pinned}
+          title={pinned ? t('nav.autohide') : t('nav.pin')}
+          aria-label={pinned ? t('nav.autohide') : t('nav.pin')}
+        >
+          <Ico n={pinned ? 'pin' : 'pin-off'} sz={16} />
+        </button>
+      ) : null}
+      <BrandLogo />
+      <div className="side-brand-sub">{t('brand.sensorHub')}</div>
+      <AccountCard
+        roleLabel={session?.isAdmin ? t('role.admin') : (session?.roleName || t('role.member'))}
+        onLogout={onLogout}
+        busy={busy}
+      />
+    </div>
+  );
+
+  return <SharedSideNav brand={brand} groups={groups} footer={null} />;
+}

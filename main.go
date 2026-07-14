@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	myidsanapp "github.com/mysayasan/kopiv2/apps/myidsan/app"
+	myiotsanapp "github.com/mysayasan/kopiv2/apps/myiotsan/app"
 	mymatasanapp "github.com/mysayasan/kopiv2/apps/mymatasan/app"
 	myseliasanapp "github.com/mysayasan/kopiv2/apps/myseliasan/app"
 	"github.com/mysayasan/kopiv2/infra/apphost"
@@ -19,6 +20,7 @@ func main() {
 
 	apps := map[string]apphost.App{
 		"myidsan":    myidsanapp.New(),
+		"myiotsan":   myiotsanapp.New(),
 		"mymatasan":  mymatasanapp.New(),
 		"myseliasan": myseliasanapp.New(),
 	}

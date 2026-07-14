@@ -58,7 +58,7 @@ func NewControlDispatcher(router http.Handler, roles sharedservices.IAccessRoleS
 			method = http.MethodGet
 		}
 		hr, err := http.NewRequestWithContext(
-			context.WithValue(ctx, localAuthContextKey{}, principal),
+			withLocalUser(ctx, principal),
 			method, req.Path, bytes.NewReader(req.Body))
 		if err != nil {
 			return control.Response{Status: http.StatusBadRequest, Body: []byte(err.Error())}

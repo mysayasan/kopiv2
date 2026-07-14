@@ -16,7 +16,7 @@
    - unsafe JWT-authenticated methods (`POST`, `PUT`, `PATCH`, `DELETE`) must send `X-CSRF-Token` matching the readable CSRF cookie.
    - auth middleware validates signed JWT, configured issuer/audience, and cache-backed SSO session when a `sid` claim is present.
    - accessrbac middleware (`AccessSessionMidware`) enforces the app's own permission matrix (per-role endpoint-prefix table, longest match) when the route uses the shared accessrbac layer. Superadmin roles bypass the matrix; disabled or must-change-password users are rejected with 403.
-   - standalone `mymatasan` ONVIF and vision routes use app-local Basic Auth instead of MyIDSan JWT/accessrbac, then its own `NewRequireRolePermission` middleware authorizes every request against the signed-in user's role, built on the shared accessrbac role/permission data model (not the shared session middleware, which requires JWT claims mymatasan does not have) — see `apps/mymatasan/apis/authorization.go.md`.
+   - standalone appliance apps (`mymatasan`, `myiotsan`) use app-local Basic Auth (or, for `myiotsan`, a session cookie issued by an explicit login endpoint) instead of MyIDSan JWT/accessrbac, then a shared `NewRequireRolePermission` middleware authorizes every request against the signed-in user's role, built on the shared accessrbac role/permission data model (not the shared session middleware, which requires JWT claims these apps do not have) — see `domain/shared/apis/local_auth.go.md` and `domain/shared/apis/authorization.go.md`.
 5. Handler decodes payload, calls service, and writes response.
 
 Shared JSON response helpers include `durationMs`, measured from request middleware start time to response serialization.

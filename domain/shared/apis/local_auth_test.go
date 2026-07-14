@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
-	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
+	"github.com/mysayasan/kopiv2/domain/entities"
+	"github.com/mysayasan/kopiv2/domain/shared/services"
 )
 
 type fakeLocalUserService struct {
@@ -70,9 +70,13 @@ func (f *fakeLocalUserService) Delete(context.Context, uint64) (uint64, error) {
 	return 0, nil
 }
 
+// testAuthConfig binds the middleware to a test app name, which is what names the session
+// cookie and the Basic realm.
+var testAuthConfig = LocalAuthConfig{AppName: "testapp"}
+
 func TestLocalBasicAuth(t *testing.T) {
 	userService := &fakeLocalUserService{}
-	middleware := NewLocalBasicAuth(userService, NewLoginGuard(LoginGuardConfig{}), nil)
+	middleware := NewLocalBasicAuth(testAuthConfig, userService, NewLoginGuard(LoginGuardConfig{}))
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, ok := LocalUserFromContext(r.Context())
 		if !ok || user.Username != "admin" || !user.IsAdmin {
@@ -89,7 +93,7 @@ func TestLocalBasicAuth(t *testing.T) {
 		t.Fatalf("authorized status = %d", rr.Code)
 	}
 	cookies := rr.Result().Cookies()
-	if len(cookies) == 0 || cookies[0].Name != localAuthCookieName {
+	if len(cookies) == 0 || cookies[0].Name != testAuthConfig.cookieName() {
 		t.Fatalf("expected local auth cookie, got %#v", cookies)
 	}
 
@@ -112,7 +116,7 @@ func TestLocalBasicAuth(t *testing.T) {
 
 func TestLocalBasicAuthWrongBasicDoesNotRideCookie(t *testing.T) {
 	userService := &fakeLocalUserService{}
-	middleware := NewLocalBasicAuth(userService, NewLoginGuard(LoginGuardConfig{}), nil)
+	middleware := NewLocalBasicAuth(testAuthConfig, userService, NewLoginGuard(LoginGuardConfig{}))
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -163,7 +167,7 @@ func TestLocalBasicAuthLockoutOnlyCountsLoginAttempts(t *testing.T) {
 		BaseLockout: time.Minute,
 		FailedDelay: 0,
 	})
-	middleware := NewLocalBasicAuth(userService, guard, nil)
+	middleware := NewLocalBasicAuth(testAuthConfig, userService, guard)
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -199,7 +203,7 @@ func TestLocalBasicAuthLockoutOnlyCountsLoginAttempts(t *testing.T) {
 
 func TestLocalBasicAuthForcesPasswordChange(t *testing.T) {
 	userService := &fakeLocalUserService{mustChange: true}
-	middleware := NewLocalBasicAuth(userService, NewLoginGuard(LoginGuardConfig{}), nil)
+	middleware := NewLocalBasicAuth(testAuthConfig, userService, NewLoginGuard(LoginGuardConfig{}))
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
