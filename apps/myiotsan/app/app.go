@@ -109,6 +109,7 @@ func (m *module) Entities() []any {
 		appentities.ReadingRollup{},
 		appentities.IotRule{},
 		appentities.AlertEvent{},
+		appentities.DiscoveredDevice{},
 	}
 }
 
@@ -130,6 +131,7 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Rules", Description: "alert rules over telemetry", Path: "/api/rules", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Alerts", Description: "the alert log", Path: "/api/alerts", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Notifications", Description: "unified event feed", Path: "/api/notifications", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Discovery", Description: "enrollment window and device adoption", Path: "/api/discovery", AccessTier: apiaccessenums.AuthOnly},
 	}
 
 	statements := make([]string, 0, len(endpoints)*2)
@@ -260,6 +262,25 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	ingest := services.NewIngest(deviceService, profileService, gate, writer, ruleService,
 		func(f string, a ...any) { deps.Logger.Warnf("myiotsan.ingest", f, a...) })
 
+	// Onboarding. A device that does not exist yet cannot connect — that is the whole point of
+	// the broker's security model — so an admin opens a time-boxed, key-gated enrollment window
+	// and unknown devices are admitted QUARANTINED: what they say becomes a candidate and never
+	// telemetry. See services.Enrollment for why that quarantine is the property that makes the
+	// hole safe to open at all.
+	enrollment := services.NewEnrollment(deps.Db, profileService, func(f string, a ...any) {
+		deps.Logger.Infof("myiotsan.enrollment", f, a...)
+		// Opening the window is a security event: it must not be possible to do it quietly.
+		notificationService.Publish(context.Background(), notification.Notification{
+			Category: notification.CategorySystem,
+			Severity: notification.Warning,
+			Title:    "Device enrollment",
+			Body:     fmt.Sprintf(f, a...),
+			Source:   "enrollment",
+		})
+	})
+	deviceService.SetEnrollment(enrollment)
+	ingest.SetEnrollment(enrollment)
+
 	// The embedded MQTT broker. Embedded, not depended upon: requiring the operator to run
 	// Mosquitto alongside would break the single-binary, air-gapped promise that is the product.
 	// Its authenticator is the DEVICE TABLE, so a device that is not in the inventory cannot
@@ -304,6 +325,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	})
 
 	apis.NewDevicesApi(protected, deviceService, telemetry, profileService, ingest)
+	apis.NewDiscoveryApi(protected, enrollment, deviceService)
 	apis.NewProfilesApi(protected, profileService, ingest)
 	apis.NewRulesApi(protected, ruleService)
 	apis.NewNotificationsApi(protected, notificationService)

@@ -13,6 +13,7 @@ import (
 	"github.com/mysayasan/kopiv2/apps/myiotsan/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	iotmqtt "github.com/mysayasan/kopiv2/infra/iot/mqtt"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -23,6 +24,10 @@ import (
 type DeviceService struct {
 	repo dbsql.IGenericRepo[entities.IotDevice]
 	logf func(format string, args ...any)
+	// enroll, when set, is consulted for an UNKNOWN client id: if an enrollment window is open
+	// and the client presents its key, the client is admitted as quarantined. Set after
+	// construction because the enrollment service needs the profile service, which needs the db.
+	enroll *Enrollment
 
 	// lastSeen throttles the LastSeenAt write. Every publish proves the device is alive, but
 	// writing that to the database on every publish would put a row UPDATE on the hot ingest
@@ -258,37 +263,58 @@ func (s *DeviceService) Delete(ctx context.Context, id int64) error {
 
 // --- the broker's authenticator -------------------------------------------------------
 
+// SetEnrollment wires the enrollment window in.
+func (s *DeviceService) SetEnrollment(e *Enrollment) { s.enroll = e }
+
 // AuthenticateDevice verifies a connecting client. It satisfies mqtt.Authenticator.
 //
-// A disabled device is refused: the toggle has to actually mean something at the wire, or
-// "disabled" is just a label in a table.
-func (s *DeviceService) AuthenticateDevice(ctx context.Context, clientId, password string) (int64, bool) {
+// Three outcomes:
+//
+//	a known, enabled device with the right password -> admitted as itself
+//	an UNKNOWN client with an open window's key      -> admitted QUARANTINED (enrolling)
+//	anything else                                    -> refused
+//
+// A disabled device is refused: the toggle has to mean something at the wire, or "disabled" is
+// just a label in a table. And a disabled device does NOT fall through to enrollment — an
+// admin who switched a device off must not have it walk back in through the side door.
+func (s *DeviceService) AuthenticateDevice(ctx context.Context, clientId, password string) (iotmqtt.Principal, bool) {
 	dev, err := s.GetByKey(ctx, clientId)
 	if err != nil && !errors.Is(err, ErrDeviceNotFound) {
 		// The credential could not be CHECKED — the database was unreachable. Refuse (fail
 		// closed), but say so distinctly: telling an operator "bad password" when the truth is
 		// "I could not look it up" sends them to debug the device instead of the appliance.
 		s.logf("device auth: could not look up %q: %v", clientId, err)
-		return 0, false
+		return iotmqtt.Principal{}, false
 	}
+
 	if dev == nil {
-		return 0, false
+		// Unknown. The only way in is an open enrollment window, and what it buys is quarantine,
+		// not trust: see Enrollment.
+		if s.enroll != nil && s.enroll.VerifyKey(password) {
+			return iotmqtt.Principal{Enrolling: true}, true
+		}
+		return iotmqtt.Principal{}, false
 	}
+
 	if !dev.Enabled {
-		return 0, false
+		return iotmqtt.Principal{}, false
 	}
 	if bcrypt.CompareHashAndPassword([]byte(dev.PasswordHash), []byte(password)) != nil {
-		return 0, false
+		return iotmqtt.Principal{}, false
 	}
-	return dev.Id, true
+	return iotmqtt.Principal{DeviceId: dev.Id}, true
 }
 
-// AuthorizeTopic confines a device to its own topics. It satisfies mqtt.Authenticator.
+// AuthorizeTopic confines a client to its own topics. It satisfies mqtt.Authenticator.
 //
-// The rule is simply that the device's own key must appear in the topic. Without this, one
-// compromised sensor could publish readings on behalf of every other sensor in the building —
-// forging a "no smoke detected" for a device that is, in fact, on fire.
-func (s *DeviceService) AuthorizeTopic(ctx context.Context, deviceId int64, clientId, topic string, write bool) bool {
+// The rule is that the client's own key must appear in the topic. Without it, one compromised
+// sensor could publish readings on behalf of every other sensor in the building — forging a
+// "no smoke detected" for a device that is, in fact, on fire.
+//
+// It applies to an ENROLLING client exactly as it does to an adopted one. A device announcing
+// itself may only speak on its own topic, so it cannot pollute another device's stream even as
+// a candidate.
+func (s *DeviceService) AuthorizeTopic(ctx context.Context, p iotmqtt.Principal, clientId, topic string, write bool) bool {
 	key := strings.TrimSpace(clientId)
 	if key == "" {
 		return false

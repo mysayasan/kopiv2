@@ -7,6 +7,7 @@ import (
 
 	"github.com/mysayasan/kopiv2/apps/myiotsan/entities"
 	"github.com/mysayasan/kopiv2/infra/iot/codec"
+	iotmqtt "github.com/mysayasan/kopiv2/infra/iot/mqtt"
 )
 
 // Ingest is the hot path: a payload arrives, and this decides what it means, whether it is
@@ -26,6 +27,7 @@ type Ingest struct {
 	gate    *DeadbandGate
 	writer  *ReadingWriter
 	rules   *RuleService
+	enroll  *Enrollment
 	logf    func(format string, args ...any)
 
 	// bindings caches each profile's decoded key list. Reading the telemetry keys from the
@@ -72,10 +74,26 @@ func (i *Ingest) InvalidateProfile(profileId int64) {
 	delete(i.bindings, profileId)
 }
 
-// Handle processes one payload from a device. It satisfies mqtt.MessageHandler and is also the
-// entry point for the HTTP ingest route, so a device that cannot speak MQTT has the same
-// pipeline behind it.
-func (i *Ingest) Handle(ctx context.Context, deviceId int64, clientId, topic string, payload []byte) {
+// SetEnrollment wires the enrollment window in, so a quarantined client's payloads become
+// candidates instead of telemetry.
+func (i *Ingest) SetEnrollment(e *Enrollment) { i.enroll = e }
+
+// Handle processes one payload. It satisfies mqtt.MessageHandler and is also the entry point
+// for the HTTP ingest route, so a device that cannot speak MQTT has the same pipeline behind it.
+func (i *Ingest) Handle(ctx context.Context, p iotmqtt.Principal, clientId, topic string, payload []byte) {
+	// THE QUARANTINE. An enrolling client is a stranger that presented an open window's key. What
+	// it says is recorded as a CANDIDATE and goes no further: no telemetry row, no rule
+	// evaluation, no effect on any chart or alert. This early return IS the security boundary —
+	// everything below it treats the payload as trusted sensor data, and a stranger must never
+	// reach it.
+	if p.Enrolling {
+		if i.enroll != nil {
+			i.enroll.Observe(ctx, clientId, topic, payload)
+		}
+		return
+	}
+
+	deviceId := p.DeviceId
 	now := time.Now()
 	nowMs := now.UnixMilli()
 	nowSec := now.Unix()

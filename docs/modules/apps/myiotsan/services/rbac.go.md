@@ -47,11 +47,13 @@ alongside the ingest spine:
   `/api/notifications/*/read` (mark a notification read).
 - Admin only (listed with no grants, so the catalog stays a complete description of the API
   surface even where nothing below admin is granted): `/api/devices/*/password` (rotate a
-  device's broker credential), `/api/settings/users`, `/api/settings/roles`. Also NOT granted to
-  anyone below admin, and therefore correctly absent from any `read`/`write` row: creating and
-  deleting devices, editing profiles (which could widen a deadband until a sensor effectively
-  stops recording), writing rules, and — when P4 lands it — actuation. A bad relay write is
-  physically dangerous in a way a bad PTZ move is not.
+  device's broker credential), `/api/discovery` (P3 — open an enrollment window and adopt new
+  devices; the ONE act in the whole app that lets an unknown thing talk to the broker at all, so
+  an operator does not get to do it either), `/api/settings/users`, `/api/settings/roles`. Also
+  NOT granted to anyone below admin, and therefore correctly absent from any `read`/`write` row:
+  creating and deleting devices, editing profiles (which could widen a deadband until a sensor
+  effectively stops recording), writing rules, and — when P4 lands it — actuation. A bad relay
+  write is physically dangerous in a way a bad PTZ move is not.
 
 Every phase that adds an API area MUST add it here, INCLUDING the admin-only areas — a route
 missing from this catalog is a route nobody can see they are not granting.

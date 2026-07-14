@@ -168,7 +168,11 @@ export function DevicesPage({ onToast }) {
 // CredentialModal is the one-time credential. The password in it exists in exactly one
 // place in the world — this dialog — because the server stored only its bcrypt hash. So
 // the dialog says so, in plain words, and makes copying it the obvious next act.
-function CredentialModal({ credential, onClose }) {
+//
+// Exported because adoption (discovery.js) mints exactly the same thing under exactly the
+// same contract: a device adopted from a candidate gets a real, permanent credential shown
+// once and never again. It must look and behave identically wherever it is minted.
+export function CredentialModal({ credential, onClose }) {
   const t = useT();
   const [copied, setCopied] = useState(false);
   return (

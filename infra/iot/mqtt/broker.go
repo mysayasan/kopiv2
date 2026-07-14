@@ -17,24 +17,40 @@ import (
 	"github.com/mochi-mqtt/server/v2/packets"
 )
 
-// Authenticator decides whether a connecting client is a device this app knows.
+// Principal is who a connected client turned out to be.
+type Principal struct {
+	// DeviceId is the adopted device, or 0 for an enrolling client.
+	DeviceId int64
+	// Enrolling marks a QUARANTINED session: an unknown client admitted during an enrollment
+	// window because it presented the window's key.
+	//
+	// A quarantined session may publish, and what it publishes is recorded as a CANDIDATE and
+	// nowhere else — no telemetry is stored for it and no rule is evaluated against it. That is
+	// the property that makes the enrollment hole safe to open: somebody who gets into the
+	// window can create junk candidates for an admin to decline, but cannot forge a reading,
+	// move a chart, or trigger or suppress an alert.
+	Enrolling bool
+}
+
+// Authenticator decides whether a connecting client may talk to the broker.
 //
-// This is the seam that makes a device's INVENTORY RECORD its credential record. A device
-// that is not in iot_device cannot connect at all — there is no separate credential store to
-// drift out of sync with the device list, and deleting a device really does revoke it.
+// This is the seam that makes a device's INVENTORY RECORD its credential record. A device that
+// is not in iot_device cannot connect — there is no separate credential store to drift out of
+// sync with the device list, and deleting a device really does revoke it. The one exception is
+// an enrollment window, which is deliberate, time-boxed, and quarantined (see Principal).
 type Authenticator interface {
-	// AuthenticateDevice verifies a client id and password. It returns the device's id, or
-	// false to refuse the connection.
-	AuthenticateDevice(ctx context.Context, clientId, password string) (int64, bool)
-	// AuthorizeTopic reports whether an authenticated device may publish to (or subscribe to)
-	// a topic. A device may only ever touch its OWN topics: one compromised sensor must not be
-	// able to publish readings on behalf of every other sensor in the building, which is
-	// exactly what a broker with no ACL would allow.
-	AuthorizeTopic(ctx context.Context, deviceId int64, clientId, topic string, write bool) bool
+	// AuthenticateDevice verifies a client id and password, returning who the client is.
+	// ok=false refuses the connection.
+	AuthenticateDevice(ctx context.Context, clientId, password string) (Principal, bool)
+	// AuthorizeTopic reports whether an authenticated client may publish to (or subscribe to) a
+	// topic. A device may only ever touch its OWN topics: one compromised sensor must not be
+	// able to publish readings on behalf of every other sensor in the building, which is exactly
+	// what a broker with no ACL would allow.
+	AuthorizeTopic(ctx context.Context, p Principal, clientId, topic string, write bool) bool
 }
 
 // MessageHandler receives every accepted publish.
-type MessageHandler func(ctx context.Context, deviceId int64, clientId, topic string, payload []byte)
+type MessageHandler func(ctx context.Context, p Principal, clientId, topic string, payload []byte)
 
 // Options configures the broker.
 type Options struct {
@@ -55,7 +71,7 @@ type Broker struct {
 	opts   Options
 
 	mu      sync.RWMutex
-	devices map[string]int64 // client id -> device id, for authenticated sessions
+	clients map[string]Principal // mqtt client id -> who it authenticated as
 }
 
 // New builds the broker. It does not listen until Run.
@@ -69,7 +85,7 @@ func New(opts Options) (*Broker, error) {
 	b := &Broker{
 		server:  mochi.New(&mochi.Options{InlineClient: true}),
 		opts:    opts,
-		devices: map[string]int64{},
+		clients: map[string]Principal{},
 	}
 	if err := b.server.AddHook(&hook{broker: b}, nil); err != nil {
 		return nil, fmt.Errorf("mqtt: install auth hook: %w", err)
@@ -102,24 +118,24 @@ func (b *Broker) Publish(topic string, payload []byte, retain bool, qos byte) er
 	return b.server.Publish(topic, payload, retain, qos)
 }
 
-// deviceFor resolves an authenticated session's device id.
-func (b *Broker) deviceFor(clientId string) (int64, bool) {
+// principalFor resolves an authenticated session.
+func (b *Broker) principalFor(clientId string) (Principal, bool) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	id, ok := b.devices[clientId]
-	return id, ok
+	p, ok := b.clients[clientId]
+	return p, ok
 }
 
-func (b *Broker) bind(clientId string, deviceId int64) {
+func (b *Broker) bind(clientId string, p Principal) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.devices[clientId] = deviceId
+	b.clients[clientId] = p
 }
 
 func (b *Broker) unbind(clientId string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	delete(b.devices, clientId)
+	delete(b.clients, clientId)
 }
 
 // hook wires the broker's lifecycle into the app's authenticator and ingest path.
@@ -145,18 +161,21 @@ func (h *hook) OnConnectAuthenticate(cl *mochi.Client, pk packets.Packet) bool {
 	if clientId == "" {
 		clientId = cl.ID
 	}
-	deviceId, ok := h.broker.opts.Auth.AuthenticateDevice(context.Background(), clientId, string(pk.Connect.Password))
+	p, ok := h.broker.opts.Auth.AuthenticateDevice(context.Background(), clientId, string(pk.Connect.Password))
 	if !ok {
 		h.broker.opts.Logf("mqtt: refused connection from %q", clientId)
 		return false
 	}
-	h.broker.bind(cl.ID, deviceId)
+	if p.Enrolling {
+		h.broker.opts.Logf("mqtt: %q admitted for ENROLLMENT (quarantined: no telemetry stored, no rules evaluated)", clientId)
+	}
+	h.broker.bind(cl.ID, p)
 	return true
 }
 
 // OnACLCheck confines a device to its own topics.
 func (h *hook) OnACLCheck(cl *mochi.Client, topic string, write bool) bool {
-	deviceId, ok := h.broker.deviceFor(cl.ID)
+	p, ok := h.broker.principalFor(cl.ID)
 	if !ok {
 		return false
 	}
@@ -164,7 +183,7 @@ func (h *hook) OnACLCheck(cl *mochi.Client, topic string, write bool) bool {
 	if clientId == "" {
 		clientId = cl.ID
 	}
-	return h.broker.opts.Auth.AuthorizeTopic(context.Background(), deviceId, clientId, topic, write)
+	return h.broker.opts.Auth.AuthorizeTopic(context.Background(), p, clientId, topic, write)
 }
 
 // OnPublished hands an accepted payload to the ingest pipeline.
@@ -172,7 +191,7 @@ func (h *hook) OnPublished(cl *mochi.Client, pk packets.Packet) {
 	if h.broker.opts.OnMessage == nil {
 		return
 	}
-	deviceId, ok := h.broker.deviceFor(cl.ID)
+	p, ok := h.broker.principalFor(cl.ID)
 	if !ok {
 		return
 	}
@@ -180,7 +199,7 @@ func (h *hook) OnPublished(cl *mochi.Client, pk packets.Packet) {
 	if clientId == "" {
 		clientId = cl.ID
 	}
-	h.broker.opts.OnMessage(context.Background(), deviceId, clientId, pk.TopicName, pk.Payload)
+	h.broker.opts.OnMessage(context.Background(), p, clientId, pk.TopicName, pk.Payload)
 }
 
 func (h *hook) OnDisconnect(cl *mochi.Client, err error, expire bool) {

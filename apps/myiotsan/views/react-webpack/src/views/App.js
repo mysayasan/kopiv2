@@ -5,13 +5,18 @@ import './styles/iot.css';
 import { SideNav } from './components/layout';
 import { ToastStack, LangProvider, normalizeLang, LanguageDropdown, AppFooter } from '@shared';
 import { FormBusyOverlay, ThemeDropdown } from './components/ui';
-import { DashboardPage, DevicesPage, RulesPage, AlertsPage, NotificationsPage, ProfilesPage } from './components/pages';
+import { DashboardPage, DevicesPage, RulesPage, AlertsPage, NotificationsPage, ProfilesPage, DiscoveryPage } from './components/pages';
+import { FirstRunWizard } from './components/onboarding';
 import { LoginScreen, ChangePasswordScreen } from './components/auth_screens';
 import { api, apiBase } from './lib/helpers';
 import { messages as appMessages } from './i18n';
 
 const THEME_KEY = 'myiotsan_theme';
 const NAV_PIN_KEY = 'myiotsan_nav_pinned';
+// WIZARD_KEY remembers that the first-run path has been finished or skipped. The wizard is
+// gated on the estate being genuinely empty as well, so this only stops it reappearing for
+// an admin who chose to onboard their first device some other way.
+const WIZARD_KEY = 'myiotsan_wizard_done';
 
 function AppInner({ lang, onLangChange }) {
   const [theme, setTheme] = useState(() => {
@@ -70,6 +75,35 @@ function AppInner({ lang, onLangChange }) {
     setAuthState('anon');
   }
 
+  // The first-run wizard, and the two honest conditions it turns on:
+  //
+  //   - the estate is EMPTY. Not "the user is new" — a hub with devices in it does not need
+  //     to be told what a device is, whoever is looking at it.
+  //   - the viewer is an ADMIN. The path it points at (open an enrollment window) is
+  //     admin-only, so offering it to an operator would be walking them to a locked door.
+  //
+  // It asks the server how many devices exist rather than assuming; an empty answer is the
+  // only thing that opens it.
+  const [wizardDismissed, setWizardDismissed] = useState(() => {
+    try { return localStorage.getItem(WIZARD_KEY) === '1'; } catch (_) { return false; }
+  });
+  const [estateEmpty, setEstateEmpty] = useState(false);
+  useEffect(() => {
+    if (authState !== 'ready' || !session?.isAdmin || wizardDismissed) return;
+    let cancelled = false;
+    (async () => {
+      const r = await api('/api/devices?limit=1');
+      if (!cancelled && r.ok) setEstateEmpty((r.body?.total || 0) === 0);
+    })();
+    return () => { cancelled = true; };
+  }, [authState, session, wizardDismissed]);
+
+  function dismissWizard() {
+    setWizardDismissed(true);
+    try { localStorage.setItem(WIZARD_KEY, '1'); } catch (_) {}
+  }
+  const showWizard = authState === 'ready' && !!session?.isAdmin && estateEmpty && !wizardDismissed;
+
   if (authState === 'loading') {
     return <main className="boot-screen"><FormBusyOverlay busy /></main>;
   }
@@ -106,7 +140,17 @@ function AppInner({ lang, onLangChange }) {
         {activeTab === 'alerts' ? <AlertsPage onToast={pushToast} /> : null}
         {activeTab === 'notifications' ? <NotificationsPage onToast={pushToast} /> : null}
         {activeTab === 'profiles' ? <ProfilesPage onToast={pushToast} /> : null}
+        {/* Discovery is admin-only. The check here (like the hidden nav entry) is UX: the
+            server 403s every /api/discovery route for anyone else, which is the enforcement. */}
+        {activeTab === 'discovery' && session?.isAdmin ? <DiscoveryPage onToast={pushToast} /> : null}
         <AppFooter appName="MyIotSan" apiBase={apiBase()} />
+
+        {showWizard ? (
+          <FirstRunWizard
+            onDismiss={dismissWizard}
+            onGoDiscovery={() => { dismissWizard(); setActiveTab('discovery'); }}
+          />
+        ) : null}
       </main>
     </div>
   );

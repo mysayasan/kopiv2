@@ -1,7 +1,8 @@
 # MyIotSan — Implementation Plan
 
 Status: **P0 SHIPPED** (2026-07-14). **P1 (ingest spine) + P2 (rules & alerts) SHIPPED
-(2026-07-14) — P0-P2 is the shippable MVP.** P3-P7 not yet started.
+(2026-07-14) — P0-P2 is the shippable MVP.** **P3 (discovery & onboarding) SHIPPED (2026-07-14)
+— see §8c for what shipped and what was deliberately deferred.** P4-P7 not yet started.
 
 `myiotsan` is the fourth app in the suite, alongside `mymatasan` (camera NVR), `myseliasan`
 (fleet control plane) and `myidsan` (identity/SSO). It is built on the same platform as
@@ -214,7 +215,7 @@ No new fleet port block is required: `myiotsan` dials the same `myseliasan` endp
 | **P0** | **Scaffolding.** `apps/myiotsan/`, `cmd/myiotsan/`, root `main.go` app map, `version.json` entry, config + dev certs, webpack FE off `@shared`, SPA shell that boots. Purely mechanical (§8). | ~3d |
 | **P1** | **Ingest spine.** `iot_device` CRUD, `device_profile` catalog, embedded MQTT broker, HTTP ingest, telemetry store + deadband + rollup + retention, live device page with `@shared/charts` TimeSeriesChart. | ~1.5wk |
 | **P2** | **Rules & alerts.** Port `detection_rule` → `iot_rule`, evaluators, `alert_event`, wire existing notification destinations. **P0–P2 is the shippable MVP.** | ~1.5wk |
-| **P3** | **Discovery & onboarding.** MQTT autodiscovery (sniff the Home-Assistant topic convention → propose devices), reuse mDNS/SSDP/portscan, Modbus TCP scan, first-run wizard, profile import. | ~1wk |
+| **P3** | **Discovery & onboarding — SHIPPED 2026-07-14, see §8c.** Time-boxed enrollment window + quarantined candidate capture + admin adoption, profile-match suggestion, profile import/export, first-run wizard. mDNS/SSDP/portscan and a Modbus TCP scan deliberately deferred to P5 (see §8c). | ~1wk |
 | **P4** | **Actuation & twin.** Commands, desired/reported, RBAC + audit + confirm (§3.4). | ~1wk |
 | **P5** | **Industrial protocols.** Modbus poller, OPC-UA. | ~1.5wk |
 | **P6** | **Fleet.** Adoption by myseliasan; `kind` column on `managed_node`; `nodeiot/` embed mirroring the `nodecam/` trick; then cross-domain rules. | ~2wk |
@@ -340,10 +341,96 @@ steady overheat is never alerted on.
 
 ### What is still not here
 
-Discovery/onboarding (P3), actuation/twin (P4), Modbus/OPC-UA (P5), fleet adoption (P6), and
-release packaging (P7, still deferred exactly as scoped in §8) are all unstarted. `mqtt.Connect`
-mode (pointing at an external broker instead of the embedded one) is not implemented — only the
-embedded broker.
+Actuation/twin (P4), Modbus/OPC-UA (P5), fleet adoption (P6), and release packaging (P7, still
+deferred exactly as scoped in §8) are all unstarted. `mqtt.Connect` mode (pointing at an external
+broker instead of the embedded one) is not implemented — only the embedded broker.
+
+---
+
+## 8c. P3 — Discovery & onboarding, shipped
+
+**SHIPPED 2026-07-14.** The design problem P3 exists to solve: the broker's security model is
+that a device not in `iot_device` cannot connect at all, which is what makes the device table
+the credential store and makes deleting a device actually revoke it. But a building's two
+hundred door contacts cannot be onboarded by typing two hundred device keys by hand, and a
+device that does not exist yet cannot announce itself. Those two facts are in direct tension.
+
+The resolution is a deliberate, time-boxed hole with four load-bearing properties, all shipped:
+
+1. **TIME-BOXED.** An admin opens an enrollment window (`POST /api/discovery/window`); it
+   expires on its own — TTL clamped to 1 hour server-side, default 10 minutes. There is no way
+   to leave it open by forgetting about it, which is how every "temporary" provisioning mode
+   ends up permanent.
+2. **SECRET-GATED.** The window mints a one-time key with real entropy (24 bytes of
+   `crypto/rand`), returned exactly once, bcrypt-hashed at rest, never readable back.
+   Re-opening replaces it, so two keys can never be valid at once.
+3. **QUARANTINED — the property that makes the hole safe to open.** An unknown client
+   presenting the key is admitted (`infra/iot/mqtt.Principal.Enrolling`), but its payloads are
+   recorded as a `DiscoveredDevice` candidate and NOWHERE else: no telemetry row is stored and no
+   rule is evaluated. Somebody who slips into the window can leave junk candidates for an admin
+   to decline; they cannot forge a sensor reading, move a chart, or trigger or suppress an alert.
+   **Verified live:** an unknown device published 5 messages through an open window and the
+   appliance stored 0 telemetry rows, 0 devices, 0 alerts.
+4. **CAPPED + AUDITED.** A 500-candidate cap so a flood cannot fill the disk; opening a window
+   publishes a security event to the notification feed so it cannot be done quietly.
+
+Adoption is the deliberate act: the admin sees what the thing actually sends, is told what it
+probably is (the profile suggester — see below), and mints it a real credential via
+`POST /api/discovery/candidates/{id}/adopt`. **The enrollment key then stops working for that
+device** — it is now a known device requiring its own permanent, generated password, so a leaked
+window key cannot impersonate anything it let in.
+
+### The profile suggester
+
+Adoption suggests a device type by matching the observed payload's field names against each
+profile's telemetry keys. Score = the fraction of the **profile's** keys the device actually
+sent (so a profile that merely shares "battery" with everything does not win), plus a small
+bonus if the topic prefix matches. **Below a 0.6 floor it suggests nothing** — a wrong
+suggestion an installer accepts without thinking silently mis-decodes every reading that device
+will ever send, which is worse than no suggestion. **Verified live:**
+`{battery, humidity, linkquality, temperature}` correctly suggested "Temperature / humidity
+sensor".
+
+### Profile import/export
+
+A device type is a small declarative document, so it is portable. The point is not backup:
+tuning a deadband for a particular sensor in a particular building is real work, and an
+integrator who does it once should carry it to the next site — the same reasoning as
+mymatasan's `.mmskill`. Shipped guarantees: an imported profile is **never** builtin whatever
+the document claims; a slug collision is **reported, not silently overwritten** (quietly
+replacing a profile would re-point every device using it at different decoding rules — data
+corruption wearing the costume of a successful import); an unknown format version is refused
+rather than guessed at. `GET /api/profiles/{id}/export`, `POST /api/profiles/import`
+(`apps/myiotsan/services/profile_transfer.go.md`).
+
+### What was deliberately NOT built
+
+The original P3 line in §7 also listed mDNS/SSDP/portscan and a Modbus TCP scan. Both were
+**deliberately deferred, not forgotten:**
+
+- **mDNS/SSDP/network portscan.** MQTT sensors announce over MQTT, not mDNS — a network scan
+  would find gateways and hubs rather than the sensors themselves, which is a half-useful
+  feature at best. The enrollment window covers the real onboarding path for MQTT devices.
+- **Modbus TCP scan.** Belongs with the Modbus poller in P5, where it can be tested against an
+  actual device rather than built speculatively against a protocol this app does not speak yet.
+
+### New surface
+
+- `apps/myiotsan/entities/discovered_device.go` — the candidate table.
+- `apps/myiotsan/services/enrollment.go` (+ `enrollment_test.go`) — the window, quarantine,
+  profile suggester, adopt/reject.
+- `apps/myiotsan/services/profile_transfer.go` — profile import/export.
+- `apps/myiotsan/apis/discovery.go` — `/api/discovery/*`, ADMIN-ONLY end to end
+  (`services/rbac.go`) since opening the window is the one act that lets an unknown thing talk to
+  the broker at all.
+- `infra/iot/mqtt/broker.go` — the `Authenticator` seam now returns a `Principal{DeviceId,
+  Enrolling}` instead of a bare device id, and `MessageHandler` receives it; `Enrolling` marks
+  the quarantined session all the way through the broker hook, `DeviceService`, and `Ingest`.
+- Frontend: a Discovery page and a first-run onboarding wizard
+  (`views/react-webpack/src/views/components/discovery.js`, `.../onboarding.js`).
+
+See `docs/modules/apps/myiotsan/**/*.go.md` and `docs/modules/infra/iot/mqtt/broker.go.md` for
+per-file detail.
 
 ---
 
