@@ -170,12 +170,12 @@ type SetCameraDateTimeRequest struct {
 // CameraCapabilities surfaces a camera's firmware/device info + which ONVIF services it
 // advertises, so the UI can hide operations the camera doesn't support.
 type CameraCapabilities struct {
-	Onvif           bool   `json:"onvif"`
-	PTZ             bool   `json:"ptz"`
-	Media           bool   `json:"media"`
-	Imaging         bool   `json:"imaging"`
-	Analytics       bool   `json:"analytics"`
-	Events          bool   `json:"events"`
+	Onvif     bool `json:"onvif"`
+	PTZ       bool `json:"ptz"`
+	Media     bool `json:"media"`
+	Imaging   bool `json:"imaging"`
+	Analytics bool `json:"analytics"`
+	Events    bool `json:"events"`
 	// Per-operation support, established by actually probing the read call (so the UI can
 	// hide a management box the camera's firmware doesn't implement).
 	UserMgmt        bool   `json:"userMgmt"`
@@ -438,21 +438,31 @@ type MJPEGFallbackSettings struct {
 
 // AuthenticatedUser is the local user identity attached to authenticated requests.
 type AuthenticatedUser struct {
-	Id                 int64  `json:"id"`
-	Username           string `json:"username"`
-	DisplayName        string `json:"displayName"`
+	Id          int64  `json:"id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"displayName"`
+	// RoleId is the authority: every request is decided against this role's permission
+	// matrix.
+	RoleId int64 `json:"roleId"`
+	// IsAdmin is DERIVED from the role's IsSuperadmin flag — it is not read from the legacy
+	// LocalUser.IsAdmin column. It exists so the handlers that ask "is this an admin?"
+	// (the settings self-gates, the control dispatcher) get an answer that cannot disagree
+	// with the matrix.
 	IsAdmin            bool   `json:"isAdmin"`
 	MustChangePassword bool   `json:"mustChangePassword"`
 	SessionHash        string `json:"-"`
 }
 
 type CreateLocalUserRequest struct {
-	Username           string `json:"username"`
-	Password           string `json:"password"`
-	DisplayName        string `json:"displayName"`
-	IsAdmin            bool   `json:"isAdmin"`
-	IsActive           bool   `json:"isActive"`
-	MustChangePassword bool   `json:"mustChangePassword"`
+	Username    string `json:"username"`
+	Password    string `json:"password"`
+	DisplayName string `json:"displayName"`
+	// RoleId is the authority. When it is 0 the legacy IsAdmin bool is used instead
+	// (admin -> superadmin, otherwise viewer), so a client that predates roles keeps working.
+	RoleId             int64 `json:"roleId"`
+	IsAdmin            bool  `json:"isAdmin"`
+	IsActive           bool  `json:"isActive"`
+	MustChangePassword bool  `json:"mustChangePassword"`
 }
 
 // ChangeLocalUserPasswordRequest is the self-service password change body.
@@ -464,8 +474,11 @@ type ChangeLocalUserPasswordRequest struct {
 type UpdateLocalUserRequest struct {
 	Username    string `json:"username"`
 	DisplayName string `json:"displayName"`
-	IsAdmin     bool   `json:"isAdmin"`
-	IsActive    bool   `json:"isActive"`
+	// RoleId is the authority; 0 falls back to the legacy IsAdmin bool. See
+	// CreateLocalUserRequest.
+	RoleId      int64 `json:"roleId"`
+	IsAdmin     bool  `json:"isAdmin"`
+	IsActive    bool  `json:"isActive"`
 }
 
 type ResetLocalUserPasswordRequest struct {
@@ -514,6 +527,9 @@ type ILocalUserService interface {
 	ResetPassword(ctx context.Context, id uint64, password string) (*entities.LocalUser, error)
 	ChangePassword(ctx context.Context, userId int64, currentPassword string, newPassword string) (*AuthenticatedUser, error)
 	Delete(ctx context.Context, id uint64) (uint64, error)
+	// BackfillRoles gives a role to every user that has none yet, derived from the legacy
+	// IsAdmin bool. Runs at startup, after the roles are seeded; only touches RoleId == 0.
+	BackfillRoles(ctx context.Context, adminRoleId, defaultRoleId int64) (int, error)
 }
 
 // SaveRecordingConfigRequest is the request body for creating or updating a per-camera NVR recording config.

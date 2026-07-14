@@ -24,21 +24,21 @@ import (
 )
 
 type VisionMonitor struct {
-	camera      ICameraService
-	vision      IVisionService
-	settings    IRuntimeSettingsService
-	detector    vision.Detector
-	resolver    ClassResolver
-	recorder    *recording.Manager
-	notifier    INotificationPublisher
-	notifDests  INotificationDestinationsProvider
-	client      *http.Client
-	source      *DetectionSource
-	detectCfg   func(ctx context.Context, cameraID int64) (recording.RecorderConfig, bool)
-	metadata    *MetadataRecorder
-	snapCipher  *atrest.Cipher
-	interval    time.Duration
-	refresh     time.Duration
+	camera         ICameraService
+	vision         IVisionService
+	settings       IRuntimeSettingsService
+	detector       vision.Detector
+	resolver       ClassResolver
+	recorder       *recording.Manager
+	notifier       INotificationPublisher
+	notifDests     INotificationDestinationsProvider
+	client         *http.Client
+	source         *DetectionSource
+	detectCfg      func(ctx context.Context, cameraID int64) (recording.RecorderConfig, bool)
+	metadata       *MetadataRecorder
+	snapCipher     *atrest.Cipher
+	interval       time.Duration
+	refresh        time.Duration
 	timeout        time.Duration
 	diagCD         time.Duration
 	persistSampled bool
@@ -105,19 +105,19 @@ func NewVisionMonitor(camera ICameraService, visionService IVisionService, setti
 	}
 	client := &http.Client{Timeout: 8 * time.Second}
 	return &VisionMonitor{
-		camera:      camera,
-		vision:      visionService,
-		settings:    settings,
-		detector:    detector,
-		resolver:    monitor.Resolver,
-		recorder:    monitor.Recorder,
-		notifier:    monitor.Notifier,
-		notifDests:  monitor.NotificationDestinations,
-		client:      client,
-		source:      NewDetectionSource(camera, monitor.Recorder, settings, client),
-		detectCfg:   monitor.DetectStreamConfig,
-		metadata:    monitor.Metadata,
-		snapCipher:  monitor.SnapshotCipher,
+		camera:         camera,
+		vision:         visionService,
+		settings:       settings,
+		detector:       detector,
+		resolver:       monitor.Resolver,
+		recorder:       monitor.Recorder,
+		notifier:       monitor.Notifier,
+		notifDests:     monitor.NotificationDestinations,
+		client:         client,
+		source:         NewDetectionSource(camera, monitor.Recorder, settings, client),
+		detectCfg:      monitor.DetectStreamConfig,
+		metadata:       monitor.Metadata,
+		snapCipher:     monitor.SnapshotCipher,
 		interval:       interval,
 		refresh:        refresh,
 		timeout:        timeout,

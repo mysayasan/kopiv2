@@ -15,5 +15,5 @@ HTTP surface for the Settings → Backup & Recovery "Configuration backup" panel
 ## Notes
 
 - Uses the same base64-in-JSON envelope convention as the recovery-escrow endpoints (`apis/system.go`) rather than multipart uploads.
-- Export/preview/restore are POSTs, so the router's `NewRequireAdminForWrites` middleware gates them to admins; the file carries plaintext secrets and never leaves without a passphrase.
+- Export/preview/restore are POSTs; the catalog in `apps/mymatasan/services/rbac.go` grants no viewer/operator permission under `/api/settings/backup`, so the router's `NewRequireRolePermission` middleware (deny-by-default) leaves them reachable by admins only — the file carries plaintext secrets and never leaves without a passphrase.
 - Wired in `app.go` after `NewSystemApi`, reusing the repositories declared there and the resolved `currentVersion`.

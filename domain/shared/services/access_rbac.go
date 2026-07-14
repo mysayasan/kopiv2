@@ -206,6 +206,15 @@ func (s *accessPermissionService) EnsureViewerDefaults(ctx context.Context, view
 	return nil
 }
 
+// Authorize decides one request against a role's permission matrix.
+//
+// The most SPECIFIC matching row decides — it does not union with broader rows. That is
+// what lets a role be granted a whole area and then denied one dangerous corner of it
+// ("/api/recording" readable, "/api/recording/segments/purge" not), which is the shape
+// most real policies take. It also means a more specific row can SHADOW a broader grant,
+// so a matrix has to be read specificity-first, not top-to-bottom.
+//
+// No matching row = deny.
 func (s *accessPermissionService) Authorize(ctx context.Context, roleId int64, path, method string) (bool, error) {
 	rows, err := s.ListForRole(ctx, roleId)
 	if err != nil {
@@ -213,7 +222,10 @@ func (s *accessPermissionService) Authorize(ctx context.Context, roleId int64, p
 	}
 	var best *entities.AccessRolePermission
 	for _, r := range rows {
-		if accessPathMatches(r.Path, path) && (best == nil || len(r.Path) > len(best.Path)) {
+		if !accessPathMatches(r.Path, path) {
+			continue
+		}
+		if best == nil || accessMoreSpecific(r.Path, best.Path) {
 			best = r
 		}
 	}
@@ -251,6 +263,17 @@ func (s *accessPermissionService) ListForRole(ctx context.Context, roleId int64)
 
 func (s *accessPermissionService) Set(ctx context.Context, perm entities.AccessRolePermission) (*entities.AccessRolePermission, error) {
 	perm.Path = accessNormalizePath(perm.Path)
+
+	// "/" is the root prefix: one row that silently grants the entire API, on every verb
+	// ticked. Nothing prevented an admin from creating it through the management API, and
+	// nothing in the matrix UI would have made it look different from any other row.
+	//
+	// A role that should have everything is a SUPERADMIN — an explicit, visible flag that
+	// bypasses the matrix. It is not a role with a magic row in it.
+	if len(accessSegments(perm.Path)) == 0 {
+		return nil, fmt.Errorf("permission path %q would grant the entire API: use a superadmin role instead of a root-path rule", perm.Path)
+	}
+
 	rows, err := s.ListForRole(ctx, perm.RoleId)
 	if err != nil {
 		return nil, err
@@ -287,13 +310,75 @@ func accessNoResult(err error) bool {
 	return err != nil && strings.Contains(strings.ToLower(err.Error()), "no result found")
 }
 
+// accessPathMatches reports whether a stored permission path governs a request path.
+//
+// The stored path is a PREFIX, matched SEGMENT-WISE, and a "*" segment matches exactly one
+// path segment.
+//
+// The wildcard is what makes an action permission expressible at all. REST routes put the
+// action AFTER the id — "/api/cameras/7/ptz/move" — so a pure string prefix cannot see past
+// "/api/cameras", and there is no way to let a role move a camera without also letting it
+// CREATE one. "/api/cameras/*/ptz" says exactly what is meant.
+//
+// Segment-wise matching also closes a smaller hole: as a raw string prefix, "/api/node"
+// matched "/api/nodes-secret". It no longer does.
 func accessPathMatches(allowed, requestPath string) bool {
-	allowed = strings.TrimRight(strings.TrimSpace(allowed), "/")
-	requestPath = strings.TrimRight(strings.TrimSpace(requestPath), "/")
-	if allowed == "" {
+	allowedSegs := accessSegments(allowed)
+	requestSegs := accessSegments(requestPath)
+
+	// The root prefix governs everything. This is a real grant-all, so it is rejected at
+	// write time (see Set) — a role that should have everything is a superadmin, not a role
+	// with a magic row.
+	if len(allowedSegs) == 0 {
 		return true
 	}
-	return requestPath == allowed || strings.HasPrefix(requestPath, allowed+"/")
+	if len(requestSegs) < len(allowedSegs) {
+		return false
+	}
+	for i, seg := range allowedSegs {
+		if seg == "*" {
+			continue
+		}
+		if requestSegs[i] != seg {
+			return false
+		}
+	}
+	return true
+}
+
+func accessSegments(path string) []string {
+	trimmed := strings.Trim(strings.TrimSpace(path), "/")
+	if trimmed == "" {
+		return nil
+	}
+	return strings.Split(trimmed, "/")
+}
+
+// accessMoreSpecific reports whether path a targets a request more precisely than path b.
+//
+// More segments wins: "/api/recording/segments/purge" beats "/api/recording". On a tie, more
+// LITERAL segments wins, so "/api/cameras/*/ptz" beats "/api/cameras/*/*" — a rule that names
+// the action is more specific than one that wildcards it.
+//
+// This replaces a raw string-length comparison, which ranked "/api/cameras-archive" (20
+// chars) above "/api/vision/alerts/x/ack" purely because it was longer.
+func accessMoreSpecific(a, b string) bool {
+	aSegs, aLiterals := accessPathWeight(a)
+	bSegs, bLiterals := accessPathWeight(b)
+	if aSegs != bSegs {
+		return aSegs > bSegs
+	}
+	return aLiterals > bLiterals
+}
+
+func accessPathWeight(path string) (segments int, literals int) {
+	segs := accessSegments(path)
+	for _, seg := range segs {
+		if seg != "*" {
+			literals++
+		}
+	}
+	return len(segs), literals
 }
 
 func accessNormalizePath(p string) string {

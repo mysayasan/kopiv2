@@ -15,6 +15,7 @@ import (
 
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
+	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -53,15 +54,20 @@ type authCacheEntry struct {
 
 type localUserService struct {
 	repo dbsql.IGenericRepo[entities.LocalUser]
+	// roles resolves a user's RoleId into the role that decides what they may do. It is what
+	// makes AuthenticatedUser.IsAdmin a DERIVED value (the role's IsSuperadmin flag) rather
+	// than a second, independent source of truth alongside RoleId.
+	roles sharedservices.IAccessRoleService
 
 	authMu    sync.RWMutex
 	authCache map[string]authCacheEntry
 }
 
 // NewLocalUserService creates a standalone local user service for mymatasan.
-func NewLocalUserService(repo dbsql.IGenericRepo[entities.LocalUser]) ILocalUserService {
+func NewLocalUserService(repo dbsql.IGenericRepo[entities.LocalUser], roles sharedservices.IAccessRoleService) ILocalUserService {
 	return &localUserService{
 		repo:      repo,
+		roles:     roles,
 		authCache: make(map[string]authCacheEntry),
 	}
 }
@@ -300,7 +306,10 @@ func (s *localUserService) Authenticate(ctx context.Context, username string, pa
 	user.LastLoginAt = time.Now().UTC().Unix()
 	user.UpdatedAt = user.LastLoginAt
 	_, _ = s.repo.UpdateById(ctx, "", *user)
-	identity := localUserIdentity(user)
+	identity, err := s.identity(ctx, user)
+	if err != nil {
+		return nil, err
+	}
 	s.authCachePut(key, identity)
 	return identity, nil
 }
@@ -328,7 +337,7 @@ func (s *localUserService) AuthenticateSession(ctx context.Context, username str
 	if len(sessionHash) != len(expected) || subtle.ConstantTimeCompare([]byte(sessionHash), []byte(expected)) != 1 {
 		return nil, ErrLocalUserInvalidCredential
 	}
-	return localUserIdentity(user), nil
+	return s.identity(ctx, user)
 }
 
 func (s *localUserService) Get(ctx context.Context, limit uint64, offset uint64) ([]*entities.LocalUser, uint64, error) {
@@ -364,12 +373,21 @@ func (s *localUserService) Create(ctx context.Context, req CreateLocalUserReques
 	if err != nil {
 		return nil, err
 	}
+	roleId, isSuperadmin, err := s.resolveRole(ctx, req.RoleId, req.IsAdmin)
+	if err != nil {
+		return nil, err
+	}
+
 	now := time.Now().UTC().Unix()
 	model := entities.LocalUser{
-		Username:           username,
-		PasswordHash:       hashed,
-		DisplayName:        strings.TrimSpace(req.DisplayName),
-		IsAdmin:            req.IsAdmin,
+		Username:     username,
+		PasswordHash: hashed,
+		DisplayName:  strings.TrimSpace(req.DisplayName),
+		RoleId:       roleId,
+		// IsAdmin is a MIRROR of the role, not an independent flag — it is written from the
+		// role and never read for authorization (see identity()). It is kept so the shipped
+		// Users screen, which renders an admin badge, still shows the right thing.
+		IsAdmin:            isSuperadmin,
 		IsActive:           req.IsActive,
 		MustChangePassword: req.MustChangePassword,
 		CreatedAt:          now,
@@ -402,12 +420,17 @@ func (s *localUserService) Update(ctx context.Context, id uint64, req UpdateLoca
 			return nil, err
 		}
 	}
-	if err := s.ensureNotRemovingLastAdmin(ctx, user, req.IsAdmin, req.IsActive); err != nil {
+	roleId, isSuperadmin, err := s.resolveRole(ctx, req.RoleId, req.IsAdmin)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.ensureNotRemovingLastAdmin(ctx, user, isSuperadmin, req.IsActive); err != nil {
 		return nil, err
 	}
 	user.Username = username
 	user.DisplayName = strings.TrimSpace(req.DisplayName)
-	user.IsAdmin = req.IsAdmin
+	user.RoleId = roleId
+	user.IsAdmin = isSuperadmin // mirror; see Create
 	user.IsActive = req.IsActive
 	user.UpdatedAt = time.Now().UTC().Unix()
 	if _, err := s.repo.UpdateById(ctx, "", *user); err != nil {
@@ -489,7 +512,7 @@ func (s *localUserService) ChangePassword(ctx context.Context, userId int64, cur
 	}
 	// Old password must stop working immediately.
 	s.authCacheFlush()
-	return localUserIdentity(user), nil
+	return s.identity(ctx, user)
 }
 
 func (s *localUserService) Delete(ctx context.Context, id uint64) (uint64, error) {
@@ -508,12 +531,24 @@ func (s *localUserService) Delete(ctx context.Context, id uint64) (uint64, error
 	return deleted, err
 }
 
+// ensureNotRemovingLastAdmin refuses to demote, disable or delete the only remaining
+// administrator — the change that would lock the operator out of their own appliance with no
+// way back in.
+//
+// It now counts by ROLE rather than by the legacy IsAdmin bool. Counting the bool would have
+// been a real hazard once roles are the authority: an admin whose ROLE was changed while the
+// mirror lagged would not be counted, and the guard would let the last one go.
 func (s *localUserService) ensureNotRemovingLastAdmin(ctx context.Context, user *entities.LocalUser, nextIsAdmin bool, nextIsActive bool) error {
-	if user == nil || !user.IsAdmin || !user.IsActive || (nextIsAdmin && nextIsActive) {
+	adminRole, err := s.adminRoleId(ctx)
+	if err != nil {
+		return err
+	}
+	isCurrentlyAdmin := user != nil && user.RoleId == adminRole
+	if user == nil || !isCurrentlyAdmin || !user.IsActive || (nextIsAdmin && nextIsActive) {
 		return nil
 	}
 	filters := []sqldataenums.Filter{
-		{FieldName: "IsAdmin", Compare: sqldataenums.Equal, Value: true},
+		{FieldName: "RoleId", Compare: sqldataenums.Equal, Value: adminRole},
 		{FieldName: "IsActive", Compare: sqldataenums.Equal, Value: true},
 	}
 	_, total, err := s.repo.Get(ctx, "", 2, 0, filters, nil)
@@ -526,19 +561,133 @@ func (s *localUserService) ensureNotRemovingLastAdmin(ctx context.Context, user 
 	return nil
 }
 
+// BackfillRoles gives a role to every user who does not have one yet, derived from the
+// legacy IsAdmin bool: an admin becomes a superadmin, everyone else becomes a viewer.
+//
+// This is what carries an existing install across. It runs once — it only touches users
+// with RoleId == 0 — and it is deliberately NOT a bootstrap migration: migrations run
+// BEFORE the schema is auto-migrated (so role_id does not exist yet) and before the roles
+// themselves are seeded (so there is no id to point at). It has to happen here, after both.
+//
+// A non-admin becomes an OPERATOR, not a viewer. That is what makes the upgrade a
+// non-regression: today's non-admin can already review recorded footage and acknowledge
+// alerts, and VIEWER — the stricter role the old model could not express — cannot. Demoting
+// them would silently take away access they use every day.
+//
+// They do gain two things they did not have: PTZ and talk-back. That is a deliberate,
+// documented widening — neither destroys evidence, both are camera controls — and an admin
+// can move any account down to viewer.
+func (s *localUserService) BackfillRoles(ctx context.Context, adminRoleId, defaultRoleId int64) (int, error) {
+	if adminRoleId <= 0 || defaultRoleId <= 0 {
+		return 0, fmt.Errorf("backfill roles: admin=%d default=%d, both are required", adminRoleId, defaultRoleId)
+	}
+
+	users, _, err := s.repo.Get(ctx, "", 1000, 0, []sqldataenums.Filter{
+		{FieldName: "RoleId", Compare: sqldataenums.Equal, Value: 0},
+	}, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	updated := 0
+	for _, user := range users {
+		if user == nil || user.RoleId > 0 {
+			continue
+		}
+		user.RoleId = defaultRoleId
+		if user.IsAdmin {
+			user.RoleId = adminRoleId
+		}
+		user.UpdatedAt = time.Now().UTC().Unix()
+		if _, err := s.repo.UpdateById(ctx, "", *user); err != nil {
+			return updated, fmt.Errorf("backfill role for %q: %w", user.Username, err)
+		}
+		updated++
+	}
+	if updated > 0 {
+		s.authCacheFlush()
+	}
+	return updated, nil
+}
+
+// resolveRole turns a create/update request into the role the user will carry.
+//
+// RoleId is the authority. A zero RoleId falls back to the legacy IsAdmin bool (admin ->
+// superadmin, otherwise viewer), so a client that predates roles — including the shipped
+// Settings > Users screen — keeps working unchanged.
+func (s *localUserService) resolveRole(ctx context.Context, roleId int64, legacyIsAdmin bool) (int64, bool, error) {
+	if s.roles == nil {
+		return 0, false, fmt.Errorf("roles are not configured")
+	}
+	if roleId > 0 {
+		role, err := s.roles.GetById(ctx, roleId)
+		if err != nil {
+			return 0, false, fmt.Errorf("resolve role %d: %w", roleId, err)
+		}
+		if role == nil {
+			return 0, false, fmt.Errorf("role %d does not exist", roleId)
+		}
+		return role.Id, role.IsSuperadmin, nil
+	}
+
+	name := sharedservices.RoleViewer
+	if legacyIsAdmin {
+		name = sharedservices.RoleSuperadmin
+	}
+	role, err := s.roles.GetByName(ctx, name)
+	if err != nil || role == nil {
+		return 0, false, fmt.Errorf("resolve %s role: %w", name, err)
+	}
+	return role.Id, role.IsSuperadmin, nil
+}
+
+// adminRoleId is the id of the superadmin role — what "an admin" means now that it is a
+// role rather than a bool.
+func (s *localUserService) adminRoleId(ctx context.Context) (int64, error) {
+	if s.roles == nil {
+		return 0, fmt.Errorf("roles are not configured")
+	}
+	role, err := s.roles.GetByName(ctx, sharedservices.RoleSuperadmin)
+	if err != nil || role == nil {
+		return 0, fmt.Errorf("resolve superadmin role: %w", err)
+	}
+	return role.Id, nil
+}
+
 func normalizeUsername(username string) string {
 	return strings.ToLower(strings.TrimSpace(username))
 }
 
-func localUserIdentity(user *entities.LocalUser) *AuthenticatedUser {
+// identity builds the request-scoped principal.
+//
+// IsAdmin is DERIVED from the user's role (its IsSuperadmin flag), never read from the
+// legacy LocalUser.IsAdmin column. That is what keeps one source of truth: RoleId decides
+// everything, and the handlers that still ask "is this an admin?" get an answer consistent
+// with the matrix rather than a bool that could disagree with it.
+//
+// A role that cannot be resolved is an ERROR, not a quiet downgrade to non-admin. Silently
+// demoting the only administrator because a lookup failed would lock the operator out of
+// their own appliance, and they would have no way to tell why.
+func (s *localUserService) identity(ctx context.Context, user *entities.LocalUser) (*AuthenticatedUser, error) {
+	isAdmin := false
+	if user.RoleId > 0 && s.roles != nil {
+		role, err := s.roles.GetById(ctx, user.RoleId)
+		if err != nil {
+			return nil, fmt.Errorf("resolve role %d for %q: %w", user.RoleId, user.Username, err)
+		}
+		if role != nil {
+			isAdmin = role.IsSuperadmin
+		}
+	}
 	return &AuthenticatedUser{
 		Id:                 user.Id,
 		Username:           user.Username,
 		DisplayName:        user.DisplayName,
-		IsAdmin:            user.IsAdmin,
+		RoleId:             user.RoleId,
+		IsAdmin:            isAdmin,
 		MustChangePassword: user.MustChangePassword,
 		SessionHash:        localSessionHash(user),
-	}
+	}, nil
 }
 
 func localSessionHash(user *entities.LocalUser) string {

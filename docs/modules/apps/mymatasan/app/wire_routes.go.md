@@ -24,14 +24,17 @@ previously just inline statements in the middle of an 800-line function.
        `RegisterAppRoutes`.
      - `apis.NewLocalBasicAuth(w.localUser, w.loginGuard, w.loginLockoutNotifier)` —
        authenticates and puts the principal in context.
-     - `apis.NewRequireAdminForWrites()` — read-only for non-admins (plus a small
-       viewer allow-list). Must come after auth, or it has no principal to check and fails
-       closed on everything.
+     - `apis.NewRequireRolePermission(w.accessRoles, w.accessPerms)` — decides every
+       request against the signed-in user's role permission matrix (deny-by-default; a
+       superadmin bypasses it). Must come after auth, or it has no principal to check and
+       fails closed on everything. Replaced `NewRequireAdminForWrites`, which let every GET
+       through to any signed-in user and gated writes with a suffix-matched allow-list — see
+       `apis/authorization.go.md`.
   3. Registers every protected API group in order: `NewLocalAuthApi`, `NewOnvifApi`,
      `NewCameraApi`, `NewVisionApi`, `NewTrainingApi`, `NewTeachApi`, `NewSettingsApi`
-     (passing `visionToolSettingsFromAppConfig(w.appCfg, w.detectorPaths.DetectorArgs)` and
+     (passing `visionToolSettingsFromAppConfig(w.appCfg, w.detectorPaths.DetectorArgs)`,
      `w.appCfg.Decoder.BrowseRoots` — both off mymatasan's own config since Tier 2 phase C,
-     previously `deps.Config`),
+     previously `deps.Config` — and `w.accessRoles`, which backs `GET /api/settings/roles`),
      `NewRecordingApi`, `NewObservationApi`, `NewNotificationApi`, `NewAnomalyApi`,
      `NewCapacityApi`, `NewSetupApi`, `NewPairingApi`.
   4. Returns `protected` — a few API groups (system reset, self-update, backup) are built

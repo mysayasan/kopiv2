@@ -25,7 +25,12 @@ thirty free variables pulled out of an 800-line scope.
     `recorderConfig`, `streamManager`, `cameraHealth`, `machineHealth`,
     `visionMonitorSettings`.
   - Fleet: `enrollment`, `control`, `media` (see `wire_fleet.go.md`).
-  - Auth: `loginGuard`, `loginLockoutNotifier`.
+  - Auth + authorization: `loginGuard`, `loginLockoutNotifier`, `accessRoles`
+    (`sharedservices.IAccessRoleService`), `accessPerms`
+    (`sharedservices.IAccessPermissionService`) — the shared accessrbac role/permission
+    services (same DB), passed straight from `deps.AccessRoles`/`deps.AccessPerms`. Read by
+    `registerRoutes` for `apis.NewRequireRolePermission` and `NewSettingsApi`'s role-listing
+    route, and by `wire_fleet.go`'s `buildFleet` for `apis.NewControlDispatcher`.
   - Installers: `ffmpegInstaller`, `pythonInstaller`.
   - `systemReset *services.SystemResetService` — built LAST in `RegisterAppRoutes` (it
     needs the monitors and recorder to exist so it can quiesce them before wiping). The
@@ -34,9 +39,9 @@ thirty free variables pulled out of an 800-line scope.
 - `(*wiring) validate() error` — fails fast, naming every missing field, if a pointer/struct
   field on `wiring` was left unset (nil) when the composition root finished populating it.
   Checks every field except `systemReset` (legitimately nil at the point `validate` runs;
-  set later) and `deps`/`httpsPort` (not pointers). Called from `app.go`'s
-  `RegisterAppRoutes` immediately after the `wiring` struct literal is built, before
-  `registerRoutes(api, w)`.
+  set later) and `deps`/`httpsPort` (not pointers) — `accessRoles`/`accessPerms` are
+  included. Called from `app.go`'s `RegisterAppRoutes` immediately after the `wiring` struct
+  literal is built, before `registerRoutes(api, w)`.
 
 ## Notes
 

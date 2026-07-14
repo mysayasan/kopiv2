@@ -179,21 +179,142 @@ and the "how to write a migration" section.
 
 ---
 
-## Phase R — RBAC
+## Phase R — RBAC  *(agreed 2026-07-14; part (a) — the role model + enforcement in mymatasan — SHIPPED 2026-07-14)*
 
-Authorization is one bool. `apis/authorization.go` gives admin everything, and non-admin
+### Status
+
+**Part (a), the mymatasan half, is done:** the role model (`viewer`/`operator`/`admin`),
+the catalog (`apps/mymatasan/services/rbac.go`'s `Policy()`), `local_user.RoleId` +
+`BackfillRoles` (a startup backfill of existing users, not a bootstrap migration — see the
+note on `BackfillRoles` for why: it needs both the auto-migrated `role_id` column AND the
+seeded role rows to exist first, and phase M migrations run before either), the
+`NewRequireRolePermission` middleware replacing `NewRequireAdminForWrites`, and all four
+defects below (R5) are shipped. `control_dispatch.go` now resolves the parent's asserted
+role NAME against the node's own roles (R4's node-side half) and the wire vocabulary widened
+to `{admin, operator, viewer}`. Live-verified (R6) against a running instance with real
+viewer/operator accounts — every boundary in the table below confirmed by hand, not just by
+the unit tests.
+
+**Still open — the fleet half (part (b)):**
+
+1. **myseliasan's `NodeAccessGrant` still has only `CanRead`/`CanWrite` bools** and needs the
+   third level so a control-plane operator maps onto a node's new `operator` role instead of
+   being forced into the node's `admin` or `viewer`. Until this ships, a myseliasan-side
+   grant can only assert `admin` or `viewer` toward a node — mymatasan's node-side matrix
+   already understands `operator` (fail-closed on anything it doesn't recognize), so this is
+   additive, not a breaking gap.
+2. **The frontend has no role picker.** Settings → Users still sends the legacy `isAdmin`
+   bool, which keeps working via `resolveRole`'s fallback (`isAdmin` → superadmin/viewer).
+   Assigning `operator` today requires the new `POST /api/settings/users` `roleId` field
+   directly (no UI); adding the dropdown is frontend work with its own i18n-sync gate.
+
+### The problem (as it stood before this phase)
+
+Authorization was one bool. `apis/authorization.go` gave admin everything, and non-admin
 all GETs plus a hardcoded six-entry suffix allow-list. **"Can view cameras but not delete
-recordings" is not expressible.**
+recordings" was not expressible** — which is the property that makes an NVR evidentiary
+rather than just a camera viewer.
 
-And it collapses at the fleet boundary: myseliasan has a real path/method permission
-matrix plus per-node grants, and all of it is projected down to
-`IsAdmin: role == "admin"` at `apis/control_dispatch.go:26` when a command crosses into a
-node. **A fleet operator's fine-grained role is silently degraded to admin/not-admin at
-every node.** That is the real ceiling on the fleet product.
+And it collapsed at the fleet boundary: myseliasan has a real permission matrix plus
+per-node grants, and all of it was projected down to `IsAdmin: role == "admin"` at
+`apis/control_dispatch.go:26` when a command crossed into a node. Part (a) below fixed both
+the mymatasan side of this and the node's half of the projection; the fleet side (myseliasan's
+grant) is the "still open" item above.
 
-**Deliverable:** adopt the shared `accessrbac` stack in mymatasan (myseliasan already uses
-it), and widen the control-channel request's `Role` string into a permission set so the
-parent's matrix survives the tunnel.
+### The role model
 
-This one is a product decision as much as a refactor — the role model needs agreeing
-before the code.
+Three roles. The line is drawn at **"can this person destroy evidence?"**
+
+| Role | Can | Cannot |
+|---|---|---|
+| **viewer** | live view, see alerts fire | **playback of recorded footage** (that line is the whole point — see below), and anything else except changing their own password |
+| **operator** | + playback/download recorded footage, acknowledge alerts, PTZ, talk-back | **delete or purge anything**, edit AI rules, change settings, add/remove cameras |
+| **admin** | everything | — |
+
+(Shipped shape, `apps/mymatasan/services/rbac.go`'s `Policy()` — this table was tightened
+from the original plan draft, which had given viewer playback too; giving playback to
+viewer would have erased the exact line this phase exists to draw.)
+
+Three, not more: every extra role is a support burden and a matrix the customer will
+misconfigure. They ship **defined in Go as reviewable data**, not as an empty grid the
+installer fills in by clicking. The matrix stays editable for the customer who needs a
+fourth.
+
+### Per-camera scoping is deliberately OUT
+
+Nothing in the codebase scopes below the node level. The shared permission row's only key
+is a path prefix, so per-camera means either one row per camera per role (with no way to
+express "all cameras except") or a new grant table plus enforcement inside every
+camera/recording/vision handler rather than in middleware. Build it when a customer with a
+shared building asks. Building it speculatively is how you end up maintaining two RBAC
+systems forever.
+
+### The tunnel carries a ROLE NAME, not a permission set
+
+An earlier draft of this plan said to widen the control-channel `Role` string into a
+permission set so the parent's matrix survives the tunnel. **That is the wrong design.**
+
+If the parent asserts a permission set, the node is trusting the control plane to say who
+may delete its footage — a compromised or buggy parent could assert anything. The node owns
+the data; the node's policy must govern.
+
+So the wire keeps carrying a role NAME, and the node evaluates its OWN matrix for it. The
+shared vocabulary just widens from `{admin, viewer}` to `{admin, operator, viewer}`. The
+frames are plain JSON with no strict decoding, so this is backward compatible: an old node
+ignores what it does not know. myseliasan's `NodeAccessGrant` then needs a third level — it
+carries only `CanRead`/`CanWrite` bools today, which is exactly the binary that produced
+the problem.
+
+### Four defects to fix regardless of the role model
+
+1. **The viewer allow-list matches by `strings.HasSuffix`** (`apis/authorization.go:57`).
+   Any future route ending in `/read` or `/ack` becomes silently viewer-writable.
+2. **`Path: "/"` is an undefended grant-everything wildcard** in the shared matrix, and the
+   management API lets an admin create one.
+3. **Longest-prefix-wins means permissions SHADOW, they do not union**
+   (`domain/shared/services/access_rbac.go:209`). A more specific row with `canPost=false`
+   silently overrides a broader row that granted it — not what anyone building a matrix in
+   a UI expects.
+4. **The permission path catalog is hand-maintained in JavaScript.** Adding a route in Go
+   does not make it appear in the matrix, so a new endpoint is ungoverned until someone
+   remembers to add a string to a JS array. Derive it from the registered routes.
+
+### The real cost driver
+
+Not the role model — **mymatasan has no JWT at all** (Basic auth + a session cookie), while
+the shared RBAC middleware hard-requires JWT claims. A small shim injecting synthetic claims
+after the existing local-auth middleware preserves the standalone (no-myidsan) property.
+
+### Steps
+
+- **R1 DONE** — `apps/mymatasan/services/rbac.go`'s `Policy()`: the three built-in roles as
+  Go data (catalog, not routes-derived — see "deviations" below).
+- **R2 DONE, but not via a migration** — `local_user.RoleId` shipped as an additive column
+  (auto-migrated by the normal schema sync, no `bootstrap.Migration` needed for an add-only
+  field per phase M's own rule) plus `ILocalUserService.BackfillRoles`, a startup step
+  (`app.go`, after `EnsureRoles`, before the admin seed) rather than a bootstrap migration —
+  a migration runs before both the auto-migrated column and the seeded role rows exist, so it
+  could not have done this assignment anyway.
+- **R3 DONE, but not via a shim** — no synthetic-JWT-claims shim was built. mymatasan reuses
+  the shared accessrbac **tables + services** directly against its own
+  `AuthenticatedUser`/`RoleId`, with its OWN middleware (`NewRequireRolePermission`) calling
+  `perms.Authorize` — injecting synthetic JWT claims into a security middleware built to
+  require them was judged the kind of shortcut that becomes a CVE, not a shim worth building.
+  `RequireAdminForWrites` is replaced; the `settings.requireAdmin` self-gates on
+  user/role-management routes are intentionally KEPT (belt-and-suspenders on the one area
+  that governs the authorization model itself), and are additionally covered by the outer
+  matrix now too (`/api/settings/users`, `/api/settings/roles` are listed no-grant in the
+  catalog for viewer/operator).
+- **R4 PARTIAL** — the tunnel now carries a role NAME and the node evaluates its own matrix
+  (`control_dispatch.go`); the wire vocabulary widened to `{admin, operator, viewer}` with
+  `"admin"` kept as an alias for `superadmin`. **myseliasan's grant has NOT yet gained the
+  third level** — see "Still open" above.
+- **R5 DONE** — all four defects fixed: segment-wise `*`-wildcard path matching (closes the
+  suffix-match/prefix-match holes), `Set` refuses a root-path (`/`) permission row,
+  `accessMoreSpecific` replaces the raw string-length comparison for which row wins, and the
+  Go catalog (R1) is itself the fix for defect 4 (no more hand-maintained JS list) —
+  `rolePermissions` renders it into DB rows on boot instead.
+- **R6 DONE** — live-verified against a running instance with real viewer/operator accounts:
+  every DELETE/purge on recordings, camera delete/mutation, rules/settings/users/roles/
+  training/onvif returns 403 for viewer and operator; viewer is 403 on recorded footage and
+  ack/PTZ while operator is allowed; admin reaches every handler; unauthenticated is 401.

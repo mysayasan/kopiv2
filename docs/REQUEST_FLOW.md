@@ -16,7 +16,7 @@
    - unsafe JWT-authenticated methods (`POST`, `PUT`, `PATCH`, `DELETE`) must send `X-CSRF-Token` matching the readable CSRF cookie.
    - auth middleware validates signed JWT, configured issuer/audience, and cache-backed SSO session when a `sid` claim is present.
    - accessrbac middleware (`AccessSessionMidware`) enforces the app's own permission matrix (per-role endpoint-prefix table, longest match) when the route uses the shared accessrbac layer. Superadmin roles bypass the matrix; disabled or must-change-password users are rejected with 403.
-   - standalone `mymatasan` ONVIF and vision routes use app-local Basic Auth instead of MyIDSan JWT/accessrbac.
+   - standalone `mymatasan` ONVIF and vision routes use app-local Basic Auth instead of MyIDSan JWT/accessrbac, then its own `NewRequireRolePermission` middleware authorizes every request against the signed-in user's role, built on the shared accessrbac role/permission data model (not the shared session middleware, which requires JWT claims mymatasan does not have) — see `apps/mymatasan/apis/authorization.go.md`.
 5. Handler decodes payload, calls service, and writes response.
 
 Shared JSON response helpers include `durationMs`, measured from request middleware start time to response serialization.
@@ -53,7 +53,7 @@ Shared JSON response helpers include `durationMs`, measured from request middlew
 Bootstrap seeding ensures the default `system` group and `superadmin` login exist. The shared accessrbac core (`EnsureBuiltins`) seeds `superadmin` and `viewer` roles on startup for apps that enable `AccessRbac`. The `superadmin` login's `UserRoleId` is repointed to the accessrbac superadmin role at startup so the bootstrap account bypasses the permission matrix.
 Endpoint rows with `accessTier` metadata are seeded for rate-limit classification. Per-endpoint RBAC rows are no longer seeded; authorization is the accessrbac matrix managed via `/api/access-rbac`.
 
-`myidsan` uses this same bootstrap flow to seed the identity-provider management surface, app registry, SSO fallback endpoints, and selected relying-app policies. It is the cross-app sign-on authority; authorization decisions now stay local to each app's accessrbac middleware. `mymatasan` is standalone: it seeds only local endpoint metadata for rate-limit classification and app bootstrap, mounts public version plus app-local ONVIF and vision routes, and protects those app-local routes with Basic Auth from local users. `myseliasan` registers the shared accessrbac entities and seeds its own stock superadmin user on startup via `EnsureStockSuperadmin`.
+`myidsan` uses this same bootstrap flow to seed the identity-provider management surface, app registry, SSO fallback endpoints, and selected relying-app policies. It is the cross-app sign-on authority; authorization decisions now stay local to each app's accessrbac middleware. `mymatasan` is standalone: it seeds only local endpoint metadata for rate-limit classification and app bootstrap, mounts public version plus app-local ONVIF and vision routes, and protects those app-local routes with Basic Auth from local users, authorized by its own role permission matrix (`admin`/`operator`/`viewer`, seeded from `apps/mymatasan/services/rbac.go`'s `Policy()` — see `docs/MYMATASAN_TIER2_PLAN.md` Phase R). `myseliasan` registers the shared accessrbac entities and seeds its own stock superadmin user on startup via `EnsureStockSuperadmin`.
 
 ## Browser SSO Callback Flow
 

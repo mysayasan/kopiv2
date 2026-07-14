@@ -18,6 +18,7 @@ Registers runtime settings routes for standalone `mymatasan`.
 - `POST /api/settings/vision/ai-runtime/install`: start the background download + pip install of the AI runtime (a self-contained Python plus a GPU or CPU PyTorch build and ultralytics), persisting the resolved interpreter into `vision.detector.command` on success. Admin-only (a write).
 - `GET /api/settings/vision/ai-runtime/install/status`: poll the AI-runtime install job (`running`, `status`, `log`, `python`, `supported`).
 - `GET /api/settings/fs/browse`: server-side directory picker used to choose the ffmpeg binary. Returns one directory level (`path`, `parent`, `separator`, `entries[]` of `{name, path, dir}`) for the `path` query param. Admin-only and read-only — names only, never file contents. Browsing is confined to a whitelist of roots (see `services/filesystem_browse.go`); an empty/out-of-whitelist `path` lists the allowed roots.
+- `GET /api/settings/roles`: list the roles (`superadmin`/`admin`, `operator`, `viewer`) an admin can assign to a user. Admin-only — the role list describes the authorization model itself, and a viewer has no business enumerating it. Assignment goes through the normal user create/update endpoints below (`roleId` field), not this route.
 - `GET /api/settings/notification`: return current notification settings (destinations, retention, and legacy singleton fields).
 - `PUT /api/settings/notification`: save the full notification settings blob.
 - `PUT /api/settings/notification/destination`: upsert a single delivery destination (create when the body has no `id`, otherwise replace the destination with that `id`) without touching other destinations or the retention section. Returns `{destination, settings}`.
@@ -25,8 +26,8 @@ Registers runtime settings routes for standalone `mymatasan`.
 - `PUT /api/settings/notification/retention`: save only the retention section, leaving destinations and legacy singleton fields untouched.
 - `POST /api/settings/notification/test`: send a test notification through configured destinations.
 - `GET /api/settings/users`: list standalone local users.
-- `POST /api/settings/users`: create a standalone local user.
-- `PUT /api/settings/users/{id}`: update user profile, admin flag, and active flag.
+- `POST /api/settings/users`: create a standalone local user. Body takes a `roleId` (see `GET /api/settings/roles`); when `roleId` is `0`/omitted the legacy `isAdmin` bool is used instead (`true` → superadmin, otherwise viewer), so a client that predates roles keeps working unchanged.
+- `PUT /api/settings/users/{id}`: update user profile, role, and active flag. Same `roleId`/legacy-`isAdmin` fallback as create.
 - `POST /api/settings/users/{id}/password`: reset a local user's password.
 - `DELETE /api/settings/users/{id}`: delete a local user.
 
@@ -39,4 +40,5 @@ Registers runtime settings routes for standalone `mymatasan`.
 - `GET /api/settings/runtime/gpu-devices` returns DXGI-ordered adapter indices on Windows (matching Task Manager numbering), VAAPI render node paths and CUDA indices on Linux, and VideoToolbox display names on macOS.
 - The ffmpeg installer routes share the background `services.FFmpegInstaller` with the first-run setup wizard; on success the installer persists the resolved path into runtime settings. The Settings UI offers a "Restart now" button afterwards so the new path takes effect everywhere. `app.go` constructs it with `binDir = deps.DataDir/bin` (an absolute, writable path), not a CWD-relative `bin/`, so it installs correctly under a packaged Windows service (CWD `C:\Windows\System32`).
 - The AI-runtime installer routes are backed by `services.PythonInstaller` (constructed in `app.go` from `deps.DataDir`/`deps.ConfigPath`) and are `nil`-guarded (`ErrInternalServerError`) the same way the ffmpeg installer is if unavailable. It is a separate, self-contained runtime from the Train-in-app "Install GPU support" flow (`services/training_runner.go`), which instead upgrades the Python the detector already uses.
-- `GET /api/settings/fs/browse` whitelisted roots are: the app working directory and its `bin/`, the user home, OS-specific common install locations, plus any extra paths from the `decoder.browseRoots` config array (passed to `NewSettingsApi`). User management and the filesystem-browse route require an authenticated admin local user.
+- `GET /api/settings/fs/browse` whitelisted roots are: the app working directory and its `bin/`, the user home, OS-specific common install locations, plus any extra paths from the `decoder.browseRoots` config array (passed to `NewSettingsApi`). User management, role listing, and the filesystem-browse route require an authenticated admin local user (self-gated in-handler via `requireAdmin`, independent of the outer `NewRequireRolePermission` matrix — which also denies non-admins on `/api/settings/users` and `/api/settings/roles` per the catalog in `apps/mymatasan/services/rbac.go`).
+- `NewSettingsApi` takes an extra `roles sharedservices.IAccessRoleService` parameter (wired from `w.accessRoles` in `wire_routes.go`), which backs `GET /api/settings/roles`.

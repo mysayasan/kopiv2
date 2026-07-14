@@ -38,10 +38,29 @@ Returning `(nil, nil)` means "no such user" (treated as signed-out).
 ## Permission Service (IAccessPermissionService)
 
 - `EnsureViewerDefaults(ctx, viewerRoleId)` — enforces least privilege for the viewer role. Early builds seeded viewer with a read-everything `GET /api` wildcard that exposed every administrative surface to any viewer. This method now **strips** that legacy row on startup (matching only the exact seed shape: GET-only on `/api`). Viewer starts with no permissions; an admin grants specific read paths via the RBAC matrix. Intentional narrower grants are left untouched.
-- `Authorize(ctx, roleId, path, method)` — longest-prefix match over the role's permission rows; no match = `false`. Methods `GET/HEAD/OPTIONS` check `CanGet`; `POST` checks `CanPost`; `PUT/PATCH` check `CanPut`; `DELETE` checks `CanDelete`.
+- `Authorize(ctx, roleId, path, method)` — matches the role's permission rows against `path` via `accessPathMatches` (segment-wise, see below), and the **most specific** matching row decides (`accessMoreSpecific`, not a union) — no match = `false`. Methods `GET/HEAD/OPTIONS` check `CanGet`; `POST` checks `CanPost`; `PUT/PATCH` check `CanPut`; `DELETE` checks `CanDelete`. A more specific row can **shadow** a broader grant — e.g. `/api/settings` readable, `/api/settings/users` (deeper, more specific) not — so a matrix must be read specificity-first, not top-to-bottom; this is the mechanism carve-outs rely on.
 - `ListForRole(ctx, roleId)` — returns all permission rows for a role (up to 1000), **sorted by `Path` ASC** for stable ordering. A stable order prevents the just-edited row from reshuffling in the RBAC matrix UI when its checkbox is toggled.
-- `Set(ctx, perm)` — upsert by `(roleId, path)`: updates verb flags if the path already exists, inserts otherwise. Normalizes the path (leading slash, no trailing slash, `/` for root).
+- `Set(ctx, perm)` — upsert by `(roleId, path)`: updates verb flags if the path already exists, inserts otherwise. Normalizes the path (leading slash, no trailing slash, `/` for root). **Refuses a root path (`"/"`)**: `len(accessSegments(perm.Path)) == 0` returns an error instead of writing the row. A root-path row was a real, undefended grant-everything wildcard that an admin could create through the management API and that looked like any other row in the matrix UI — a role that should have everything is a superadmin (an explicit, visible bypass flag), not a role with a magic row in it.
 - `Delete(ctx, id)` — deletes a permission row by ID.
+
+## Path Matching
+
+`accessPathMatches(allowed, requestPath)` matches **segment-wise**, and a `"*"` segment in
+`allowed` matches exactly one path segment. This is what makes an action permission
+expressible at all: REST routes put the action after the id
+(`/api/cameras/7/ptz/move`), so a pure string prefix can't see past `/api/cameras` — there
+was no way to let a role move a camera without also letting it create one.
+`"/api/cameras/*/ptz"` says exactly what is meant. Segment-wise matching also closed a
+smaller hole: as a raw string prefix, `/api/node` matched `/api/nodes-secret`; it no longer
+does. The empty-segment case (`allowed == "/"`) still matches everything, which is why `Set`
+refuses to store it.
+
+`accessMoreSpecific(a, b)` replaces a former raw string-length comparison for picking the
+winning row when more than one matches. **More segments wins** (a deeper rule beats a
+shallower one regardless of character count — the old length comparison could rank a
+longer-but-shallower path above a genuinely deeper one). **On a tie, more literal (non-`*`)
+segments wins**, so `/api/cameras/*/ptz` beats `/api/cameras/*/*` — a rule that names the
+action is more specific than one that wildcards it.
 
 ## Constants
 

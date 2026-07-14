@@ -62,6 +62,10 @@ func (f *fakeLocalUserService) ChangePassword(context.Context, int64, string, st
 	return nil, nil
 }
 
+func (f *fakeLocalUserService) BackfillRoles(context.Context, int64, int64) (int, error) {
+	return 0, nil
+}
+
 func (f *fakeLocalUserService) Delete(context.Context, uint64) (uint64, error) {
 	return 0, nil
 }

@@ -50,10 +50,10 @@ const (
 // persisted — the database is dropped mid-flight, so the UI polls this from process
 // memory until the server restarts.
 type ResetProgress struct {
-	Running   bool       `json:"running"`
-	Stage     ResetStage `json:"stage"`
-	Percent   int        `json:"percent"`
-	Message   string     `json:"message"`
+	Running bool       `json:"running"`
+	Stage   ResetStage `json:"stage"`
+	Percent int        `json:"percent"`
+	Message string     `json:"message"`
 	// Warning accumulates non-fatal problems (e.g. a file that couldn't be shredded,
 	// or a database-wipe error). The reset pushes on regardless — it's a security
 	// wipe that must always reach "restarted" — so these are advisory, not failures.

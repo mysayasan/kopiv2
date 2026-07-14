@@ -42,7 +42,12 @@ sequencing, and the helpers that don't belong to any one subsystem.
   the ready/not-ready verdict.
 - Registers app entities for bootstrap schema generation, including
   `appentities.ObjectObservation{}` and `sharedentities.NotificationRollup{}` (object
-  metadata recorder + dashboard-analytics rollup table).
+  metadata recorder + dashboard-analytics rollup table), plus `sharedentities.AccessRole{}`
+  and `sharedentities.AccessRolePermission{}` — mymatasan uses the shared accessrbac role +
+  permission **data model** (so the suite has one authorization schema and myiotsan
+  inherits it) but not the shared `AccessSessionMidware` middleware, which hard-requires JWT
+  claims mymatasan does not have. See `apis/authorization.go.md` and
+  `services/rbac.go.md`.
 - Registers built-in and config-driven seeders: RBAC endpoint metadata, the
   `is_diagnostic`/camera-health/`recording_config` metadata NULL-backfills for columns
   added via `ALTER TABLE`, and `CREATE INDEX IF NOT EXISTS` secondary indexes for the
@@ -74,11 +79,25 @@ sequencing, and the helpers that don't belong to any one subsystem.
    shared object-detection backend used by both the live monitor and the training
    auto-labeler.
 7. Constructs `trainingService`, `settingsService`, `setupStateService`, `pairingService`,
-   `localUserService`; resolves `shredPasses` (`config_map.go`, off `appCfg`); sizes the
-   NVENC semaphore from the boot-time recording-storage settings; constructs
-   `recordingService`, `metadataRecorder`, `observationService`, `notificationService` (+
-   rollups/maintainer), and the settings services (notification/health/machine-health/
-   anomaly). Syncs persisted notification delivery settings into the hub.
+   `localUserService` (now takes `deps.AccessRoles` as a second argument); resolves
+   `shredPasses` (`config_map.go`, off `appCfg`); sizes the NVENC semaphore from the
+   boot-time recording-storage settings; constructs `recordingService`, `metadataRecorder`,
+   `observationService`, `notificationService` (+ rollups/maintainer), and the settings
+   services (notification/health/machine-health/anomaly). Syncs persisted notification
+   delivery settings into the hub.
+7a. `services.EnsureRoles(ctx, deps.AccessRoles, deps.AccessPerms)` seeds the built-in roles
+    (`superadmin`, `viewer`, `operator`) and their permission matrices from
+    `services.Policy()` (see `services/rbac.go.md`) — runs BEFORE the admin is seeded and
+    before the role backfill below, since both need the roles to already exist. Resolves the
+    `admin`/`operator` role ids, then calls `localUserService.BackfillRoles(ctx, adminRole.Id,
+    operatorRole.Id)`: every existing user with no `RoleId` yet is assigned one, derived from
+    their legacy `IsAdmin` bool. **Non-admins are backfilled to OPERATOR, not viewer** — a
+    deliberate, documented decision: today's non-admin can already review footage and
+    acknowledge alerts, and viewer (the stricter role the old model could not express) cannot
+    do either, so demoting them would silently take away access they use daily. They do gain
+    PTZ + talk-back, a small documented widening; an admin can move any account down to
+    viewer afterwards. A migrated-count > 0 is logged at info level
+    (`mymatasan.rbac`). Any resolution/backfill error aborts startup.
 8. Seeds the first local admin user (or runs the one-shot `RESET_ADMIN` marker flow — see
    below) via `localUserService`.
 9. Builds `streamManager`, `recorderManager`, wires the camera-delete cleanup cascade
