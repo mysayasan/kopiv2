@@ -45,10 +45,39 @@ func defaultLogger(component string, format string, args ...any) {
 	log.Printf("safego "+component+": "+format, args...)
 }
 
+// PanicObserver is told about every recovered panic, so a supervised task dying can be
+// COUNTED and not merely logged.
+//
+// This is the gap Tier 1 left open. A supervised loop that panics is caught and restarted —
+// which is the whole point — but the only trace is one log line, and nobody reads log lines
+// from a healthy-looking appliance. A camera sampler that panics every ninety seconds and is
+// dutifully restarted looks perfectly fine from the outside: the process is up, the API answers,
+// and the frames quietly do not arrive. A counter makes that visible; an alert on the counter
+// makes it findable.
+type PanicObserver func(component string)
+
 var (
-	logMu  sync.RWMutex
-	logger LogFunc = defaultLogger
+	logMu   sync.RWMutex
+	logger  LogFunc = defaultLogger
+	observe PanicObserver
 )
+
+// SetPanicObserver routes recovered panics to a metrics recorder. Wire it once at startup,
+// alongside SetLogger. Passing nil removes it.
+func SetPanicObserver(fn PanicObserver) {
+	logMu.Lock()
+	observe = fn
+	logMu.Unlock()
+}
+
+func notifyPanic(component string) {
+	logMu.RLock()
+	fn := observe
+	logMu.RUnlock()
+	if fn != nil {
+		fn(component)
+	}
+}
 
 // SetLogger routes recovered panics to the application logger. Wire it once at startup;
 // until then panics go to the standard logger, so nothing is ever lost silently.
@@ -124,6 +153,9 @@ func runGuarded(ctx context.Context, name string, fn func(context.Context)) (pan
 		if r := recover(); r != nil {
 			panicked = true
 			logf(name, "PANIC RECOVERED: %v\n%s", r, debug.Stack())
+			// COUNT it. A supervised task that panics and restarts is otherwise invisible: the
+			// process stays up and the subsystem it drove silently stops.
+			notifyPanic(name)
 		}
 	}()
 	fn(ctx)
@@ -134,5 +166,6 @@ func runGuarded(ctx context.Context, name string, fn func(context.Context)) (pan
 func recoverPanic(name string) {
 	if r := recover(); r != nil {
 		logf(name, "PANIC RECOVERED: %v\n%s", r, debug.Stack())
+		notifyPanic(name)
 	}
 }

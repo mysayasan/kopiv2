@@ -39,6 +39,7 @@ import (
 	"github.com/mysayasan/kopiv2/infra/db/sql/sqlite"
 	applog "github.com/mysayasan/kopiv2/infra/logging"
 	"github.com/mysayasan/kopiv2/infra/scheduler"
+	infraSafego "github.com/mysayasan/kopiv2/infra/safego"
 	infraTelemetry "github.com/mysayasan/kopiv2/infra/telemetry"
 	promTelemetry "github.com/mysayasan/kopiv2/infra/telemetry/prometheus"
 	"github.com/mysayasan/kopiv2/infra/versioning"
@@ -276,6 +277,19 @@ func runApp(app App) error {
 	log.Printf("cache provider=%s addr=%s", cacheProvider, appConfig.Cache.Redis.Address)
 
 	telemetryRecorder := buildTelemetryRecorder(router, app.Name(), appConfig, runtimeLogger)
+
+	// Count every recovered panic in a supervised goroutine. This is wired here, for every app,
+	// because it closes the exact gap Tier 1 left: a supervised loop that panics is restarted
+	// (good) but leaves no symptom anybody sees (bad) — the process is up, the API answers, and
+	// the work silently stops. `<app>_task_panics_total{task=...}` turns "a monitor has been
+	// crash-looping for an hour" from something you discover during an incident into something you
+	// alert on. The task name is already low-cardinality (it is a fixed string per call site).
+	telemetryRecorder.Describe(app.Name()+"_task_panics_total",
+		"Recovered panics in supervised background tasks, by task. A rising value means a subsystem is crash-looping while the process stays up.")
+	infraSafego.SetPanicObserver(func(task string) {
+		telemetryRecorder.Inc(app.Name()+"_task_panics_total", infraTelemetry.Labels{"task": task})
+	})
+
 	txLocker, txLockProvider, err := buildTransactionLocker(app.Name(), appConfig, telemetryRecorder)
 	if err != nil {
 		return err

@@ -360,8 +360,16 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 				Data:     data,
 			})
 		},
+		deps.Metrics,
 		func(f string, a ...any) { deps.Logger.Infof("myiotsan.actuation", f, a...) })
 	ingest.SetTwin(commandService)
+
+	// Runtime metrics. Everything here instruments a SILENT failure — a dropped reading, a
+	// mistuned deadband, a device gone quiet, a command that failed — none of which raises an
+	// error a human sees. The ingest gauges are SAMPLED off ingest's own atomic counters rather
+	// than instrumented on the publish path, which must stay off any shared lock.
+	services.DescribeMetrics(deps.Metrics)
+	services.RunMetricsSampler(bgCtx, deps.Metrics, ingest, deviceService, 10*time.Second)
 
 	// Commands the device never confirmed are ENDED, not resent.
 	safego.Supervise(bgCtx, "myiotsan.command-sweep", func(ctx context.Context) {

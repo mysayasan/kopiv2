@@ -304,6 +304,38 @@ kopiv2_tx_lock_wait_ms
 kopiv2_tx_lock_stuck_total
 ```
 
+App-specific metrics follow one rule: instrument what fails silently, not what a log line already
+covers (`docs/TECHNICAL_SPEC.md`'s "Application Metrics Principle"). Every app (via shared
+`infra/safego`) exposes recovered-panic counts for its supervised background tasks:
+
+```text
+<app>_task_panics_total{task}     # e.g. mymatasan_task_panics_total, myiotsan_task_panics_total
+```
+
+`myiotsan`:
+
+```text
+myiotsan_ingest_received_total
+myiotsan_ingest_stored_total
+myiotsan_ingest_suppressed_total
+myiotsan_ingest_dropped_total     # silent data loss — alert on any increase
+myiotsan_ingest_queue_depth
+myiotsan_ingest_series
+myiotsan_devices_online
+myiotsan_devices_offline
+myiotsan_commands_total{outcome}  # confirmed | failed | refused
+```
+
+`myseliasan`:
+
+```text
+myseliasan_nodes_connected
+myseliasan_nodes_adopted
+myseliasan_control_channel_up
+myseliasan_fleet_events_total{kind}      # node_lost | node_recovered | cert_expiring
+myseliasan_fleet_rule_fired_total{severity}
+```
+
 Use Redis transaction locking for multi-instance deployments:
 
 ```json

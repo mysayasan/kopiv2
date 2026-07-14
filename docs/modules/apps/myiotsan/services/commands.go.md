@@ -74,6 +74,7 @@ this layer can distinguish that from the first one never arriving. So:
 func NewCommandService(db dbsql.IDbCrud, devices *DeviceService,
     publish func(topic string, payload []byte, retain bool, qos byte) error,
     audit func(ctx context.Context, msg string, data map[string]any),
+    metrics telemetry.Metrics,
     logf func(string, ...any)) *CommandService
 
 func (s *CommandService) CommandsFor(ctx, profileId) ([]*entities.ProfileCommand, error)
@@ -86,7 +87,12 @@ func (s *CommandService) Twin(ctx, deviceId) ([]*entities.DeviceAttribute, error
 
 `publish` is `broker.Publish` (`infra/iot/mqtt`, wired in `app.go`) — the same embedded broker
 devices connect to; a command is just another MQTT publish from the app's perspective. `audit` is
-wired to `notificationService.Publish`, `logf` to `deps.Logger.Infof`.
+wired to `notificationService.Publish`, `logf` to `deps.Logger.Infof`. `metrics` is `deps.Metrics`
+(nil-safe) — `countCommand(outcome)` increments `MetricCommandsTotal` (`myiotsan_commands_total`,
+`services/metrics.go.md`) at each of the three terminal sites: `refused` in `Issue`, `confirmed`
+in `confirmPending`, `failed` in `SweepUnconfirmed`. Counted directly rather than sampled, unlike
+the ingest gauges — commands are rare (rate-limited, human-triggered), so a labelled counter per
+call site costs nothing.
 
 ## Notes
 

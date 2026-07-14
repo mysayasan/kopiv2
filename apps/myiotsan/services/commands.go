@@ -11,6 +11,7 @@ import (
 	"github.com/mysayasan/kopiv2/apps/myiotsan/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	"github.com/mysayasan/kopiv2/infra/telemetry"
 )
 
 // Actuation: the point where a bug stops being a wrong number on a chart and becomes a relay
@@ -49,6 +50,7 @@ type CommandService struct {
 	devices    *DeviceService
 	publish    func(topic string, payload []byte, retain bool, qos byte) error
 	audit      func(ctx context.Context, msg string, data map[string]any)
+	metrics    telemetry.Metrics
 	logf       func(format string, args ...any)
 
 	// rate limits the physical duty cycle, per device.
@@ -73,6 +75,7 @@ func NewCommandService(
 	devices *DeviceService,
 	publish func(topic string, payload []byte, retain bool, qos byte) error,
 	audit func(ctx context.Context, msg string, data map[string]any),
+	metrics telemetry.Metrics,
 	logf func(string, ...any),
 ) *CommandService {
 	if logf == nil {
@@ -88,6 +91,7 @@ func NewCommandService(
 		devices:    devices,
 		publish:    publish,
 		audit:      audit,
+		metrics:    metrics,
 		logf:       logf,
 		lastSent:   map[int64]time.Time{},
 	}
@@ -135,6 +139,7 @@ func (s *CommandService) Issue(ctx context.Context, deviceId int64, req IssueReq
 		}
 		s.audit(ctx, fmt.Sprintf("REFUSED: %s on %q — %s", cmd.Name, cmd.DeviceName, reason),
 			map[string]any{"deviceId": deviceId, "command": cmd.Name, "value": req.Value, "actor": actor})
+		s.countCommand("refused")
 		return &cmd, fmt.Errorf("%s", reason)
 	}
 
@@ -329,6 +334,7 @@ func (s *CommandService) confirmPending(ctx context.Context, deviceId int64, key
 		c.Status = "confirmed"
 		c.ConfirmedAt = nowSec
 		_, _ = s.commands.UpdateById(ctx, "", *c)
+		s.countCommand("confirmed")
 		s.logf("command %d confirmed by the device", c.Id)
 	}
 }
@@ -353,10 +359,20 @@ func (s *CommandService) SweepUnconfirmed(ctx context.Context) {
 		c.Status = "failed"
 		c.Error = "the device never reported the new state — it may or may not have acted. Not retried automatically: re-sending could act twice."
 		_, _ = s.commands.UpdateById(ctx, "", *c)
+		s.countCommand("failed")
 		s.audit(ctx, fmt.Sprintf("UNCONFIRMED: %s on %q was not confirmed by the device", c.Name, c.DeviceName),
 			map[string]any{"deviceId": c.DeviceId, "command": c.Name, "commandId": c.Id})
 		s.logf("command %d unconfirmed after %s — failed, NOT retried", c.Id, confirmTimeout)
 	}
+}
+
+// countCommand records one command outcome. Kept off the publish path (commands are rare) so it
+// can afford a labelled counter directly rather than being sampled.
+func (s *CommandService) countCommand(outcome string) {
+	if s.metrics == nil {
+		return
+	}
+	s.metrics.Inc(MetricCommandsTotal, telemetry.Labels{"outcome": outcome})
 }
 
 // History lists a device's commands — the audit trail, newest first.

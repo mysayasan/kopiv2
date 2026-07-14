@@ -58,6 +58,7 @@ Implements the reusable runtime host for all app modules.
 - Load the embedded version manifest and register the shared public version endpoint under `/api/version`.
 - Initialize Prometheus telemetry when configured and mount the metrics endpoint.
 - Populate `Dependencies.Metrics` from the telemetry recorder (the same recorder backing `/metrics`), so app modules can record their own counters/gauges/histograms via `telemetry.Metrics` without wiring Prometheus themselves. Falls back to the shared no-op recorder when telemetry is disabled — `deps.Metrics` is never nil.
+- Describe and wire `<app>_task_panics_total{task}` and hand it to `infra/safego.SetPanicObserver`, for every app, right after the recorder is built. This closes the one gap Tier 1's `safego.Supervise` left: a supervised goroutine that panics is caught and restarted, but the only other trace is a single log line, and a crash-looping subsystem otherwise looks identical from the outside to a healthy one — the process is up and the API answers while the work it drove silently stops. `task` is the fixed string each call site passes to `Supervise`/`Go`, so it stays low-cardinality. See `infra/safego/safego.go.md`.
 - Mount shared operational route groups; identity apps such as `myidsan` register login/user routes from their own app package.
 - Build and validate cache provider (`default`, `redis`, `inmemory`, or `memory`) from runtime config.
 - Build and validate transaction lock provider (`redis`, `memory`, or `inmemory`) from runtime config.
@@ -123,3 +124,4 @@ Implements the reusable runtime host for all app modules.
 - `GET /api/version` is mounted without auth so clients can read app/core versions before login.
 - The shared accessrbac core (`AccessSessionMidware`) is wired regardless of `SharedAPIConfig.AccessRbac`; its user resolver starts nil and the app binds it during `RegisterAppRoutes` via `deps.Access.SetResolver(...)`. If the resolver is unbound when a protected route is hit, the middleware fails closed with 403.
 - `GET /metrics` is mounted when telemetry and Prometheus are enabled.
+- `<app>_task_panics_total` is described and its observer wired unconditionally (not gated on telemetry being enabled) — `telemetryRecorder` is the shared no-op recorder when telemetry is off, so `Describe`/`Inc` calls are cheap no-ops rather than skipped, and turning telemetry on later does not require touching this wiring.
