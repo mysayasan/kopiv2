@@ -36,11 +36,22 @@ function AccountCard({ roleLabel, onLogout, busy }) {
 export function SideNav({ activeTab, busy, onTab, onLogout, session, pinned = true, onTogglePinned }) {
   const t = useT();
   const navItem = (id, label, icon, tone) => ({ id, label, icon, tone, active: id === activeTab, onClick: () => onTab(id) });
+  // The rail is the app's shape: the estate (dashboard), the things in it (devices), what
+  // watches them (rules → alerts → the unified feed), and how a device TYPE is declared
+  // (profiles). Profiles sit under System because they are configuration, not inventory:
+  // one profile is inherited by every device of that type.
   const groups = [
     { label: t('group.workspace'), items: [navItem('dashboard', t('nav.dashboard'), 'monitor', 'steel')] },
     { label: t('group.devices'), items: [navItem('devices', t('nav.devices'), 'cpu', 'teal')] },
-    { label: t('group.monitoring'), items: [navItem('alerts', t('nav.alerts'), 'bell', 'green')] },
-    { label: t('group.system'), items: [navItem('settings', t('nav.settings'), 'sliders', 'indigo')] },
+    {
+      label: t('group.monitoring'),
+      items: [
+        navItem('rules', t('nav.rules'), 'wand', 'violet'),
+        navItem('alerts', t('nav.alerts'), 'bell', 'green'),
+        navItem('notifications', t('nav.notifications'), 'send', 'steel'),
+      ],
+    },
+    { label: t('group.system'), items: [navItem('profiles', t('nav.profiles'), 'box', 'indigo')] },
   ];
 
   const brand = (

@@ -256,6 +256,21 @@ func writeLoginLockout(w http.ResponseWriter, cfg LocalAuthConfig, retry time.Du
 	})
 }
 
+// setLocalAuthCookie writes the appliance session cookie.
+//
+// CSRF: this cookie carries NO companion CSRF token, and that is deliberate rather than an
+// oversight — SameSite=Lax IS the defence. A browser will not attach a Lax cookie to a
+// cross-site POST/PUT/DELETE, which is the entire classic CSRF vector (a form on evil.com
+// submitting to the appliance). Every state-changing route here is a POST, PUT or DELETE; the
+// only requests Lax still carries are top-level GET navigations, which change nothing.
+//
+// The JWT stack (domain/utils/middlewares) does issue a double-submit token, because it serves
+// a federated SSO app where a session may legitimately arrive mid-redirect. An appliance on a
+// LAN has no such flow. If a token is ever added here anyway, it must be added to mymatasan at
+// the same time — both apps run this same middleware, and a defence that protects one of them
+// is a false sense of security about the other.
+//
+// HttpOnly keeps it away from any script; Path=/api keeps it off the static assets.
 func setLocalAuthCookie(w http.ResponseWriter, cfg LocalAuthConfig, user *services.AuthenticatedUser) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     cfg.cookieName(),

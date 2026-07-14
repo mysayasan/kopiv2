@@ -31,14 +31,27 @@ the command path, this is the rule that must NOT be loosened without a deliberat
 func Policy() []PolicyRule
 ```
 
-Returns the **P0 catalog**, deliberately small: P0 has no device, telemetry, or notification
-API yet, so none is listed — a catalog that names routes the app does not serve would be a lie
-an operator could rely on. Currently covers:
+Returns the catalog, now including the P1/P2 device/telemetry/rules/notification surface added
+alongside the ingest spine:
 
 - Everyone signed in: `/api/auth/change-password`.
+- **Watching the estate** (viewer and operator both `read`): `/api/devices` (devices + their
+  CURRENT readings), `/api/profiles`, `/api/rules`, `/api/alerts`, `/api/notifications`. This is
+  the live picture, and it is all a viewer gets.
+- **Reviewing the record** (operator and up only): `/api/devices/*/readings` (Viewer: `none`,
+  Operator: `read`) — THIS is the viewer/operator line, and it is mymatasan's line exactly: a
+  viewer sees what is happening now, only an operator can go back through the telemetry
+  history. A sensor hub is an evidentiary device too — "the door contact opened at 02:14" is a
+  fact somebody may want to erase.
+- **Operating** (operator only, `write`): `/api/alerts/*/ack` (acknowledge an alert),
+  `/api/notifications/*/read` (mark a notification read).
 - Admin only (listed with no grants, so the catalog stays a complete description of the API
-  surface even where nothing below admin is granted): `/api/settings/users`,
-  `/api/settings/roles`.
+  surface even where nothing below admin is granted): `/api/devices/*/password` (rotate a
+  device's broker credential), `/api/settings/users`, `/api/settings/roles`. Also NOT granted to
+  anyone below admin, and therefore correctly absent from any `read`/`write` row: creating and
+  deleting devices, editing profiles (which could widen a deadband until a sensor effectively
+  stops recording), writing rules, and — when P4 lands it — actuation. A bad relay write is
+  physically dangerous in a way a bad PTZ move is not.
 
 Every phase that adds an API area MUST add it here, INCLUDING the admin-only areas — a route
 missing from this catalog is a route nobody can see they are not granting.

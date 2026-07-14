@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/mysayasan/kopiv2/apps/myiotsan/apis"
+	iotconfig "github.com/mysayasan/kopiv2/apps/myiotsan/config"
+	appentities "github.com/mysayasan/kopiv2/apps/myiotsan/entities"
 	"github.com/mysayasan/kopiv2/apps/myiotsan/services"
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
 	apiaccessenums "github.com/mysayasan/kopiv2/domain/enums/apiaccess"
@@ -18,6 +21,8 @@ import (
 	"github.com/mysayasan/kopiv2/infra/apphost"
 	"github.com/mysayasan/kopiv2/infra/db/bootstrap"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	iotmqtt "github.com/mysayasan/kopiv2/infra/iot/mqtt"
+	"github.com/mysayasan/kopiv2/infra/safego"
 	"github.com/mysayasan/kopiv2/infra/versioning"
 )
 
@@ -29,13 +34,38 @@ import (
 //
 // Cameras are one signal type; sensors are another. See docs/MYIOTSAN_PLAN.md.
 //
-// THIS IS P0: the scaffolding. The app boots, authenticates, and serves its SPA shell. The
-// domain — devices, profiles, telemetry ingest, rules — lands in P1/P2 and is deliberately
-// absent rather than stubbed, so nothing here is a placeholder pretending to work.
-type module struct{}
+// P0-P2 (the MVP): the app boots, authenticates, ingests telemetry from real devices over an
+// embedded MQTT broker, evaluates rules against it, and raises alerts. What remains is
+// discovery (P3), actuation (P4), industrial protocols (P5) and fleet adoption (P6).
+type module struct {
+	// cfg is myiotsan's own slice of config.json, decoded through the apphost.AppConfigDecoder
+	// seam. See apps/myiotsan/config.
+	cfg *iotconfig.Config
+}
 
 func New() apphost.App {
 	return &module{}
+}
+
+// DecodeAppConfig gives myiotsan its own config blocks (the MQTT broker, the telemetry store)
+// without adding them to the shared AppConfigModel that every other app would then carry.
+func (m *module) DecodeAppConfig(raw []byte, dataDir string) error {
+	cfg, err := iotconfig.Load(raw)
+	if err != nil {
+		return err
+	}
+	m.cfg = cfg
+	return nil
+}
+
+// appConfig returns the decoded config, defaulted if the host never called the decoder (which
+// only happens in a test that constructs the module directly).
+func (m *module) appConfig() *iotconfig.Config {
+	if m.cfg == nil {
+		cfg, _ := iotconfig.Load(nil)
+		m.cfg = cfg
+	}
+	return m.cfg
 }
 
 func (m *module) Name() string {
@@ -58,11 +88,7 @@ func (m *module) SharedAPIs() apphost.SharedAPIConfig {
 	return cfg
 }
 
-// Entities is the P0 schema: everything needed to sign a user in and record what happened.
-// The IoT domain tables (iot_device, device_profile, telemetry_key, device_reading,
-// reading_rollup, iot_rule, alert_event) arrive with the code that uses them.
-//
-// LocalUser is the SHARED appliance user (domain/entities), the same type mymatasan uses —
+// Entities is the schema. LocalUser is the SHARED appliance user (domain/entities), the same type mymatasan uses —
 // so both apps run one implementation of bcrypt, sessions and the last-admin guard rather
 // than two that drift.
 func (m *module) Entities() []any {
@@ -74,6 +100,15 @@ func (m *module) Entities() []any {
 		sharedentities.LocalUser{},
 		sharedentities.AccessRole{},
 		sharedentities.AccessRolePermission{},
+
+		// The IoT domain.
+		appentities.DeviceProfile{},
+		appentities.TelemetryKey{},
+		appentities.IotDevice{},
+		appentities.DeviceReading{},
+		appentities.ReadingRollup{},
+		appentities.IotRule{},
+		appentities.AlertEvent{},
 	}
 }
 
@@ -90,6 +125,11 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Runtime Version", Description: "runtime version access", Path: "/api/version", AccessTier: apiaccessenums.Public},
 		{Title: "Login", Description: "exchange a credential for a session cookie", Path: "/api/auth/login", AccessTier: apiaccessenums.Public},
 		{Title: "Auth", Description: "session probe and self-service password change", Path: "/api/auth", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Devices", Description: "device inventory and telemetry", Path: "/api/devices", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Profiles", Description: "device-type catalog", Path: "/api/profiles", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Rules", Description: "alert rules over telemetry", Path: "/api/rules", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Alerts", Description: "the alert log", Path: "/api/alerts", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Notifications", Description: "unified event feed", Path: "/api/notifications", AccessTier: apiaccessenums.AuthOnly},
 	}
 
 	statements := make([]string, 0, len(endpoints)*2)
@@ -137,9 +177,8 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		announceFirstRunAdmin(deps, adminSeed)
 	}
 
-	// The notification store exists in P0 so security events (a sign-in lockout) are RECORDED
-	// from the first boot. There is no read API for them yet — that arrives with the feed in
-	// P1 — but an event that was never written cannot be shown later.
+	// The unified feed: rule alerts, device health, and the app's own security events (a
+	// sign-in lockout) all land here, so an operator has one place to look.
 	notificationRepo := dbsql.NewGenericRepo[sharedentities.Notification](deps.Db)
 	notificationService := notification.NewService(notificationRepo, notification.Options{Logger: deps.Logger})
 
@@ -172,8 +211,115 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	sharedapis.NewLocalAuthApi(protected, authCfg, localUser)
 
-	return func(context.Context) error { return nil }, nil
+	// --- the ingest spine -------------------------------------------------------------
+	//
+	//	broker -> ingest (decode -> deadband -> batched write)
+	//	                       \
+	//	                        -> rules -> alert -> notification
+	//
+	// Built bottom-up because each stage owns the one before it.
+	bgCtx, stopBackground := context.WithCancel(context.Background())
+
+	deviceService := services.NewDeviceService(deps.Db, func(f string, a ...any) {
+		deps.Logger.Warnf("myiotsan.devices", f, a...)
+	})
+	profileService := services.NewProfileService(deps.Db)
+	// Seed the shipped device catalog. Existing profiles are left alone, so a site that has
+	// tuned a builtin's deadbands does not have that overwritten on the next boot.
+	if err := profileService.EnsureBuiltins(ctx); err != nil {
+		stopBackground()
+		return nil, fmt.Errorf("seed device profiles: %w", err)
+	}
+
+	telemetry := services.NewTelemetryService(deps.Db, func(f string, a ...any) {
+		deps.Logger.Infof("myiotsan.telemetry", f, a...)
+	})
+
+	gate := services.NewDeadbandGate()
+	appCfg := m.appConfig()
+	writer := services.NewReadingWriter(
+		dbsql.NewGenericRepo[appentities.DeviceReading](deps.Db),
+		services.ReadingWriterOptions{
+			BatchSize:     appCfg.Telemetry.BatchSize,
+			FlushInterval: time.Duration(appCfg.Telemetry.FlushMs) * time.Millisecond,
+			QueueSize:     appCfg.Telemetry.QueueSize,
+			Logf:          func(f string, a ...any) { deps.Logger.Warnf("myiotsan.telemetry", f, a...) },
+		})
+	writer.Run(bgCtx)
+
+	engine := services.NewRuleEngine()
+	ruleService := services.NewRuleService(deps.Db, engine, telemetry, notificationService, deviceService,
+		func(f string, a ...any) { deps.Logger.Warnf("myiotsan.rules", f, a...) })
+	// Loading the rules also RE-SEEDS EACH COOLDOWN from the database. Skip it and every
+	// restart re-arms every rule that is still true — the alert storm mymatasan shipped.
+	if err := ruleService.Reload(ctx); err != nil {
+		stopBackground()
+		return nil, fmt.Errorf("load rules: %w", err)
+	}
+
+	ingest := services.NewIngest(deviceService, profileService, gate, writer, ruleService,
+		func(f string, a ...any) { deps.Logger.Warnf("myiotsan.ingest", f, a...) })
+
+	// The embedded MQTT broker. Embedded, not depended upon: requiring the operator to run
+	// Mosquitto alongside would break the single-binary, air-gapped promise that is the product.
+	// Its authenticator is the DEVICE TABLE, so a device that is not in the inventory cannot
+	// connect at all.
+	broker, err := iotmqtt.New(iotmqtt.Options{
+		Addr:      appCfg.MQTT.Addr,
+		Auth:      deviceService,
+		OnMessage: ingest.Handle,
+		Logf:      func(f string, a ...any) { deps.Logger.Infof("myiotsan.mqtt", f, a...) },
+	})
+	if err != nil {
+		stopBackground()
+		return nil, fmt.Errorf("mqtt broker: %w", err)
+	}
+	safego.Go("myiotsan.mqtt", func() {
+		if err := broker.Run(bgCtx); err != nil {
+			deps.Logger.Warnf("myiotsan.mqtt", "broker stopped: %v", err)
+		}
+	})
+
+	// Rollup + retention. Rollups are built BEFORE the raw rows they summarize are purged.
+	telemetry.RunRollup(bgCtx, services.RetentionConfig{
+		RawDays:    appCfg.Telemetry.RawRetentionDays,
+		RollupDays: appCfg.Telemetry.RollupRetentionDays,
+	})
+
+	// The offline sweep. An "offline" rule cannot be driven by a reading — its whole subject is
+	// the ABSENCE of readings, and a device that has gone silent will never call OnReading
+	// again. This ticker is what makes silence audible; without it a dead sensor is a monitoring
+	// system quietly lying to you.
+	safego.Supervise(bgCtx, "myiotsan.offline-sweep", func(ctx context.Context) {
+		ticker := time.NewTicker(offlineSweepInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				ruleService.SweepOffline(ctx)
+			}
+		}
+	})
+
+	apis.NewDevicesApi(protected, deviceService, telemetry, profileService, ingest)
+	apis.NewProfilesApi(protected, profileService, ingest)
+	apis.NewRulesApi(protected, ruleService)
+	apis.NewNotificationsApi(protected, notificationService)
+
+	return func(context.Context) error {
+		stopBackground()
+		// Let the batcher flush what it has already accepted. A clean shutdown should not throw
+		// away readings it took responsibility for.
+		writer.Wait(5 * time.Second)
+		return nil
+	}, nil
 }
+
+// offlineSweepInterval is how often silence is checked for. A minute is well under any sane
+// offline window and costs one query.
+const offlineSweepInterval = time.Minute
 
 // loginGuardConfig maps the shared login-security config onto the failed-login lockout.
 func loginGuardConfig(deps apphost.Dependencies) sharedapis.LoginGuardConfig {

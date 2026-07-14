@@ -69,3 +69,12 @@ func NewLocalBasicAuth(cfg LocalAuthConfig, userService services.ILocalUserServi
 - `myiotsan` additionally mounts `NewLocalLoginApi` (`local_login_api.go.md`) as an explicit
   session-cookie login endpoint, so its SPA does not need to replay Basic on every request the
   way mymatasan's does — see that doc for why.
+- **CSRF posture, now documented at `setLocalAuthCookie`**: the appliance session cookie carries
+  NO companion CSRF token, deliberately — `SameSite=Lax` IS the defence. A browser will not
+  attach a `Lax` cookie to a cross-site `POST`/`PUT`/`DELETE` (the classic CSRF vector, a form
+  on `evil.com` submitting to the appliance); the only cross-site requests `Lax` still carries
+  are top-level GET navigations, which change nothing here. This is distinct from the JWT stack
+  (`domain/utils/middlewares`), which DOES issue a double-submit CSRF token because it serves a
+  federated SSO app where a session may legitimately arrive mid-redirect — an appliance on a LAN
+  has no such flow. If a token is ever added to this cookie, it must be added to mymatasan and
+  myiotsan at the same time, since both run this same middleware.

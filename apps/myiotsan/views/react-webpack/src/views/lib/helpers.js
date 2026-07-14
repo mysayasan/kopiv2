@@ -72,3 +72,39 @@ export function formatTimestamp(value) {
   const ms = value < 1e12 ? value * 1000 : value;
   try { return new Date(ms).toLocaleString(); } catch (_) { return ''; }
 }
+
+// formatClock renders a chart tick: the time of day, plus the date once the span is
+// wide enough that a bare clock would be ambiguous.
+export function formatClock(ms, withDate = false) {
+  try {
+    const d = new Date(ms);
+    const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (!withDate) return time;
+    return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`;
+  } catch (_) { return ''; }
+}
+
+// formatAgo turns a unix-seconds instant into "4m ago" / "2h ago". `t` is the caller's
+// translate fn so the phrasing stays localized (and the unit words come from i18n.js).
+export function formatAgo(unixSec, t) {
+  if (!unixSec) return t('time.never');
+  const secs = Math.max(0, Math.floor(Date.now() / 1000 - unixSec));
+  if (secs < 60) return t('time.agoSeconds', { n: secs });
+  if (secs < 3600) return t('time.agoMinutes', { n: Math.floor(secs / 60) });
+  if (secs < 86400) return t('time.agoHours', { n: Math.floor(secs / 3600) });
+  return t('time.agoDays', { n: Math.floor(secs / 86400) });
+}
+
+// formatNumber trims float noise without forcing decimals onto whole numbers.
+export function formatNumber(v) {
+  if (typeof v !== 'number' || !isFinite(v)) return '—';
+  const abs = Math.abs(v);
+  const digits = abs >= 100 ? 1 : abs >= 1 ? 2 : 3;
+  return String(Number(v.toFixed(digits)));
+}
+
+// formatCount groups thousands so a 5-million-sample ingest counter stays readable.
+export function formatCount(v) {
+  const n = Number(v || 0);
+  try { return n.toLocaleString(); } catch (_) { return String(n); }
+}

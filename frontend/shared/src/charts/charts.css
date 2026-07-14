@@ -261,6 +261,51 @@
   color: var(--ui-muted, #64748b);
 }
 
+/* ---- LineChart (measured value over time) ------------------------------ */
+.ln-wrap { position: relative; width: 100%; }
+.ln-svg {
+  width: 100%;
+  height: 200px;
+  display: block;
+}
+.ln-grid { stroke: var(--ui-border, #eef2f7); stroke-width: 1; }
+.ln-ytick, .ln-xtick {
+  font-size: 10px;
+  fill: var(--ui-muted, #64748b);
+}
+.ln-path {
+  fill: none;
+  stroke-width: 1.8;
+  vector-effect: non-scaling-stroke;
+}
+.ln-area { opacity: 0.1; stroke: none; }
+.ln-dot { stroke: none; }
+.ln-dot-hover { stroke: var(--ui-surface, #fff); stroke-width: 1.5; }
+/* A suspect reading (outside the sensor's declared range) is shown, never hidden. */
+.ln-suspect { fill: var(--ui-danger, #ef4444); }
+.ln-cursor {
+  stroke: var(--ui-border-strong, #c7d1dc);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.ln-tooltip {
+  position: absolute;
+  top: 4px;
+  transform: translateX(-50%);
+  background: var(--ui-surface, #fff);
+  border: 1px solid var(--ui-border-strong, #c7d1dc);
+  box-shadow: 0 8px 20px var(--ui-shadow, rgba(0, 0, 0, 0.15));
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  pointer-events: none;
+  z-index: 3;
+  white-space: nowrap;
+}
+.ln-tt-title { color: var(--ui-muted, #64748b); }
+.ln-tt-val { font-weight: 700; color: var(--ui-text, #1f2937); }
+.ln-tt-suspect { color: var(--ui-danger, #ef4444); font-weight: 600; }
+
 /* ---- Heatmap ---------------------------------------------------------- */
 .hm-wrap { width: 100%; overflow-x: auto; }
 .hm-grid {

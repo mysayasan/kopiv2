@@ -12,8 +12,9 @@
    the form's own rhythm belongs here, so the fields read as one stack with the card. */
 .login-form { display: grid; gap: 16px; }
 
-/* --- Not-yet-built section body ----------------------------------------------
-   The honest empty state each P0 placeholder page shows in place of its feature. */
+/* --- Honest empty state -------------------------------------------------------
+   Shown wherever there is genuinely nothing to show. The app never fills a panel with
+   sample data: an estate with no devices has to LOOK like an estate with no devices. */
 .phase-empty {
   display: flex;
   align-items: center;
@@ -26,3 +27,265 @@
 }
 
 .phase-empty p { margin: 0; }
+
+/* --- Layout helpers ----------------------------------------------------------- */
+.iot-cols-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 16px;
+}
+
+.iot-modal-wide { max-width: min(760px, 100%); }
+
+/* A table cell that opens a detail view: reads as a link, behaves as a button. */
+.iot-link-cell {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-link);
+  font-weight: 600;
+  text-align: start;
+}
+.iot-link-cell:hover { text-decoration: underline; }
+
+.iot-actions-end { justify-content: flex-end; }
+
+.iot-inline-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.iot-inline-filter select { min-width: 180px; }
+
+.iot-check-row { display: grid; gap: 4px; }
+.iot-check-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+.iot-check-row input { width: auto; }
+.iot-check-row p { margin: 0; }
+
+.iot-fieldset {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin: 0;
+}
+.iot-fieldset legend {
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.iot-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+.iot-meta div { display: grid; gap: 2px; }
+.iot-meta span { font-size: 12px; color: var(--text-muted); }
+.iot-meta strong { font-size: 14px; color: var(--text-primary); font-weight: 600; }
+
+/* --- Severity ------------------------------------------------------------------
+   The same three levels the rules use, so an alert's urgency reads identically in the
+   list, the feed and the dashboard. */
+.iot-sev {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.iot-sev--info { background: var(--accent-badge); color: var(--accent); }
+.iot-sev--warning { background: var(--warn-bg); color: var(--warn-text); }
+.iot-sev--critical { background: var(--danger-bg); color: var(--danger-text); }
+
+/* --- One-time device credential ------------------------------------------------
+   The broker password exists in exactly one place: this dialog. The server keeps only a
+   bcrypt hash of it, so "copy it now" is a statement of fact, not a nag. */
+.iot-cred-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid rgba(220, 38, 38, 0.5);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-weight: 600;
+}
+.iot-cred-warning p { margin: 0; }
+
+.iot-cred-value {
+  margin-top: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-panel);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  overflow-wrap: anywhere;
+}
+.iot-cred-value code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text-primary);
+}
+.iot-cred-gate { margin: 8px 0 0; text-align: end; }
+
+/* --- Device readings ------------------------------------------------------------ */
+.iot-readings { display: grid; gap: 16px; }
+
+.iot-latest-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+}
+.iot-latest-card {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--border-panel);
+  border-radius: 10px;
+  background: var(--bg-surface);
+  padding: 12px 14px;
+}
+.iot-latest-card.is-suspect { border-color: var(--danger); }
+.iot-latest-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+.iot-latest-value {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.1;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.iot-latest-unit { font-size: 13px; font-weight: 600; color: var(--text-muted); }
+.iot-latest-time { font-size: 12px; color: var(--text-faint); }
+.iot-latest-suspect {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--danger-text);
+}
+
+/* --- Dashboard: recent alert feed ----------------------------------------------- */
+.iot-alert-feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.iot-alert-feed li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.iot-alert-feed li:last-child { border-bottom: 0; padding-bottom: 0; }
+.iot-alert-feed li.is-acked { opacity: 0.6; }
+.iot-alert-feed-body { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.iot-alert-feed-body strong { font-size: 13px; color: var(--text-primary); }
+.iot-alert-feed-body span {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+.iot-alert-feed-meta {
+  display: grid;
+  gap: 2px;
+  text-align: end;
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex: 0 0 auto;
+}
+.iot-alert-feed-meta em { font-style: normal; color: var(--text-faint); }
+
+/* --- Ingest panel ---------------------------------------------------------------
+   `dropped` is the one counter an operator must never ignore, so it gets an alarm of its
+   own rather than a slot in a row of numbers. */
+.iot-ingest-alarm {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(220, 38, 38, 0.5);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-weight: 600;
+}
+.iot-ingest-alarm p { margin: 0; }
+
+.iot-ingest-ok {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--ok-text);
+}
+
+.iot-suppression { display: grid; gap: 8px; }
+.iot-suppression-bar {
+  height: 12px;
+  border-radius: 6px;
+  background: var(--status-neutral-bg);
+  overflow: hidden;
+}
+.iot-suppression-fill {
+  display: block;
+  height: 100%;
+  border-radius: 6px;
+  background: var(--ok-text);
+}
+.iot-suppression-text {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* --- Notifications feed cell ----------------------------------------------------- */
+.iot-notif-cell { display: grid; gap: 2px; }
+.iot-notif-cell strong { color: var(--text-primary); font-weight: 600; }
+.iot-notif-cell strong.is-unread { font-weight: 800; }
+.iot-notif-cell span { font-size: 12px; color: var(--text-muted); overflow-wrap: anywhere; }
+
+/* --- Rule editor ------------------------------------------------------------------
+   The condition explains itself where it is chosen: "stuck" catching a frozen sensor is
+   not obvious from the word, and a rule nobody understands is a rule nobody trusts. */
+.iot-cond-explain {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--accent-bg);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.iot-cond-explain svg { flex: 0 0 auto; margin-top: 2px; color: var(--accent); }
+
+.section-subtitle { margin: 0; font-size: 14px; font-weight: 700; }

@@ -1,0 +1,331 @@
+import { useCallback, useEffect, useState } from 'react';
+import { DataTable, Ico, useT } from '@shared';
+import { api, errorMessage } from '../lib/helpers';
+import { ConfirmModal, EmptyState, Field, FormBusyOverlay, Panel } from './ui';
+
+const DATA_TYPES = ['number', 'bool', 'string'];
+const PAYLOAD_FORMATS = ['json', 'raw'];
+
+const EMPTY_KEY = {
+  key: '', label: '', unit: '', dataType: 'number', jsonPath: '',
+  deadband: 0, heartbeatSeconds: 900, min: 0, max: 0,
+};
+
+const EMPTY_PROFILE = {
+  slug: '', name: '', vendor: '', description: '',
+  topicTemplate: 'zigbee2mqtt/{deviceKey}', payloadFormat: 'json',
+};
+
+// ProfilesPage is the device-type catalog: what a class of device reports, where it
+// publishes, and how each of its datapoints is decoded and — the field that matters most —
+// DEADBANDED. A profile is written once and every device of that type inherits it, which is
+// the difference between onboarding a hundred door sensors and onboarding one, a hundred times.
+export function ProfilesPage({ onToast }) {
+  const t = useT();
+  const [profiles, setProfiles] = useState([]);
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState('');
+  const [openId, setOpenId] = useState(0);
+  const [creating, setCreating] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const load = useCallback(async () => {
+    setBusy(true);
+    const r = await api('/api/profiles');
+    if (r.ok) {
+      setProfiles(r.body?.items || []);
+      setError('');
+    } else {
+      setError(errorMessage(r, t('profiles.loadFailed')));
+    }
+    setBusy(false);
+  }, [t]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function remove(profile) {
+    setDeleting(true);
+    const r = await api(`/api/profiles/${profile.id}`, { method: 'DELETE' });
+    setDeleting(false);
+    setConfirmDelete(null);
+    if (!r.ok) {
+      // A builtin refuses to be deleted (400). That message is the explanation — a site
+      // cannot break its own onboarding by tidying up the shipped catalog.
+      onToast(errorMessage(r, t('profiles.deleteFailed')), 'error');
+      return;
+    }
+    onToast(t('profiles.deleted', { name: profile.name }), 'success');
+    if (openId === profile.id) setOpenId(0);
+    load();
+  }
+
+  if (openId || creating) {
+    return (
+      <ProfileEditor
+        profileId={creating ? 0 : openId}
+        onBack={() => { setOpenId(0); setCreating(false); }}
+        onSaved={() => { load(); }}
+        onToast={onToast}
+      />
+    );
+  }
+
+  const columns = [
+    { key: 'name', label: t('profiles.name'), render: (v, row) => (
+      <button type="button" className="quiet iot-link-cell" onClick={() => setOpenId(row.id)}>{v}</button>
+    ) },
+    { key: 'slug', label: t('profiles.slug') },
+    { key: 'vendor', label: t('profiles.vendor') },
+    { key: 'topicTemplate', label: t('profiles.topic') },
+    { key: 'payloadFormat', label: t('profiles.payload') },
+    { key: 'builtin', label: t('profiles.builtin'), filterType: 'boolean', render: (v) => (
+      v ? <span className="status-pill resolved">{t('profiles.shipped')}</span> : <span className="status-pill">{t('profiles.custom')}</span>
+    ) },
+    { key: 'actions', label: '', filterable: false, render: (_v, row) => (
+      <div className="table-actions">
+        <button type="button" className="quiet" onClick={() => setOpenId(row.id)}>{t('profiles.open')}</button>
+        <button type="button" className="quiet danger-text" onClick={() => setConfirmDelete(row)}>{t('common.delete')}</button>
+      </div>
+    ) },
+  ];
+
+  return (
+    <section className="workspace">
+      <Panel
+        icon="box"
+        title={t('page.profiles')}
+        hint={t('page.profilesHint')}
+        actions={(
+          <>
+            <button type="button" className="quiet" onClick={load} disabled={busy}>
+              <span className="btn-icon"><Ico n="refresh" sz={14} /> {t('common.refresh')}</span>
+            </button>
+            <button type="button" onClick={() => setCreating(true)}>
+              <span className="btn-icon"><Ico n="plus" sz={14} /> {t('profiles.add')}</span>
+            </button>
+          </>
+        )}
+      >
+        {error ? <div className="status-line">{error}</div> : null}
+        <DataTable
+          rows={profiles}
+          columns={columns}
+          busy={busy}
+          pageSize={10}
+          pageSizeOptions={[10, 25, 50]}
+          emptyText={t('profiles.empty')}
+        />
+      </Panel>
+
+      {confirmDelete ? (
+        <ConfirmModal
+          title={t('profiles.deleteTitle')}
+          body={t('profiles.deleteBody', { name: confirmDelete.name })}
+          confirmLabel={t('common.delete')}
+          busy={deleting}
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={() => remove(confirmDelete)}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function ProfileEditor({ profileId, onBack, onSaved, onToast }) {
+  const t = useT();
+  const [profile, setProfile] = useState(EMPTY_PROFILE);
+  const [keys, setKeys] = useState([]);
+  const [builtin, setBuiltin] = useState(false);
+  const [busy, setBusy] = useState(!!profileId);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!profileId) {
+      setProfile(EMPTY_PROFILE);
+      setKeys([{ ...EMPTY_KEY }]);
+      return;
+    }
+    let live = true;
+    setBusy(true);
+    api(`/api/profiles/${profileId}`).then((r) => {
+      if (!live) return;
+      if (r.ok) {
+        setProfile(r.body?.profile || EMPTY_PROFILE);
+        setBuiltin(!!r.body?.profile?.builtin);
+        setKeys((r.body?.keys || []).map((k) => ({ ...k })));
+      } else {
+        setError(errorMessage(r, t('profiles.loadFailed')));
+      }
+      setBusy(false);
+    });
+    return () => { live = false; };
+  }, [profileId, t]);
+
+  const setP = (patch) => setProfile((p) => ({ ...p, ...patch }));
+  const setKey = (i, patch) => setKeys((list) => list.map((k, idx) => (idx === i ? { ...k, ...patch } : k)));
+  const addKey = () => setKeys((list) => [...list, { ...EMPTY_KEY }]);
+  const removeKey = (i) => setKeys((list) => list.filter((_, idx) => idx !== i));
+
+  async function save(e) {
+    e.preventDefault();
+    setBusy(true);
+    setError('');
+    const payload = {
+      slug: profile.slug,
+      name: profile.name,
+      vendor: profile.vendor || '',
+      description: profile.description || '',
+      topicTemplate: profile.topicTemplate || '',
+      payloadFormat: profile.payloadFormat || 'json',
+      keys: keys.map((k) => ({
+        key: k.key,
+        label: k.label || '',
+        unit: k.unit || '',
+        dataType: k.dataType || 'number',
+        jsonPath: k.jsonPath || '',
+        deadband: Number(k.deadband) || 0,
+        heartbeatSeconds: Number(k.heartbeatSeconds) || 0,
+        min: Number(k.min) || 0,
+        max: Number(k.max) || 0,
+      })),
+    };
+    const r = profileId
+      ? await api(`/api/profiles/${profileId}`, { method: 'PUT', body: JSON.stringify(payload) })
+      : await api('/api/profiles', { method: 'POST', body: JSON.stringify(payload) });
+    setBusy(false);
+    if (!r.ok) {
+      setError(errorMessage(r, t('profiles.saveFailed')));
+      return;
+    }
+    onToast(profileId ? t('profiles.updated') : t('profiles.created'), 'success');
+    onSaved();
+    onBack();
+  }
+
+  return (
+    <section className="workspace">
+      <Panel
+        icon="box"
+        title={profileId ? (profile.name || t('profiles.edit')) : t('profiles.addTitle')}
+        hint={t('profiles.editHint')}
+        actions={(
+          <button type="button" className="quiet" onClick={onBack}>
+            <span className="btn-icon"><Ico n="arr-left" sz={14} /> {t('profiles.backToList')}</span>
+          </button>
+        )}
+      >
+        <form className="device-edit-form" onSubmit={save}>
+          <FormBusyOverlay busy={busy} />
+          {error ? <div className="status-line">{error}</div> : null}
+          {builtin ? <p className="settings-hint">{t('profiles.builtinNote')}</p> : null}
+
+          <div className="settings-field-grid">
+            <Field label={t('profiles.name')} required>
+              <input value={profile.name} onChange={(e) => setP({ name: e.target.value })} />
+            </Field>
+            <Field label={t('profiles.slug')} hint={t('profiles.slugHint')} required>
+              <input value={profile.slug} onChange={(e) => setP({ slug: e.target.value })} />
+            </Field>
+            <Field label={t('profiles.vendor')}>
+              <input value={profile.vendor || ''} onChange={(e) => setP({ vendor: e.target.value })} />
+            </Field>
+            <Field label={t('profiles.payload')} hint={t('profiles.payloadHint')}>
+              <select value={profile.payloadFormat || 'json'} onChange={(e) => setP({ payloadFormat: e.target.value })}>
+                {PAYLOAD_FORMATS.map((f) => <option key={f} value={f}>{t(`payload.${f}`)}</option>)}
+              </select>
+            </Field>
+            <Field label={t('profiles.topic')} hint={t('profiles.topicHint')} span>
+              <input value={profile.topicTemplate || ''} onChange={(e) => setP({ topicTemplate: e.target.value })} />
+            </Field>
+            <Field label={t('common.description')} span>
+              <input value={profile.description || ''} onChange={(e) => setP({ description: e.target.value })} />
+            </Field>
+          </div>
+
+          <div className="toolbar">
+            <div>
+              <h3 className="section-subtitle">{t('profiles.keysTitle')}</h3>
+              <p className="settings-hint">{t('profiles.keysHint')}</p>
+            </div>
+            <button type="button" className="quiet" onClick={addKey}>
+              <span className="btn-icon"><Ico n="plus" sz={14} /> {t('profiles.addKey')}</span>
+            </button>
+          </div>
+
+          {keys.length === 0 ? (
+            <EmptyState text={t('profiles.noKeys')} />
+          ) : keys.map((k, i) => (
+            <fieldset className="iot-fieldset" key={k.id || `new-${i}`}>
+              <legend>{k.label || k.key || t('profiles.newKey')}</legend>
+              <div className="settings-field-grid">
+                <Field label={t('profiles.key')} hint={t('profiles.keyHint')} required>
+                  <input value={k.key} onChange={(e) => setKey(i, { key: e.target.value })} />
+                </Field>
+                <Field label={t('profiles.label')}>
+                  <input value={k.label || ''} onChange={(e) => setKey(i, { label: e.target.value })} />
+                </Field>
+                <Field label={t('profiles.unit')}>
+                  <input value={k.unit || ''} onChange={(e) => setKey(i, { unit: e.target.value })} />
+                </Field>
+                <Field label={t('profiles.dataType')} hint={t('profiles.dataTypeHint')}>
+                  <select value={k.dataType || 'number'} onChange={(e) => setKey(i, { dataType: e.target.value })}>
+                    {DATA_TYPES.map((d) => <option key={d} value={d}>{t(`dataType.${d}`)}</option>)}
+                  </select>
+                </Field>
+                <Field label={t('profiles.jsonPath')} hint={t('profiles.jsonPathHint')}>
+                  <input value={k.jsonPath || ''} onChange={(e) => setKey(i, { jsonPath: e.target.value })} />
+                </Field>
+
+                {/* The deadband is the whole storage design, so it is explained where it is
+                    set — not in a manual nobody will read. */}
+                <Field label={t('profiles.deadband')} hint={t('profiles.deadbandHint')}>
+                  <input
+                    type="number"
+                    step="any"
+                    min="0"
+                    value={k.deadband ?? 0}
+                    onChange={(e) => setKey(i, { deadband: e.target.value })}
+                  />
+                </Field>
+                <Field label={t('profiles.heartbeat')} hint={t('profiles.heartbeatHint')}>
+                  <input
+                    type="number"
+                    min="0"
+                    value={k.heartbeatSeconds ?? 0}
+                    onChange={(e) => setKey(i, { heartbeatSeconds: e.target.value })}
+                  />
+                </Field>
+                <Field label={t('profiles.min')} hint={t('profiles.rangeHint')}>
+                  <input type="number" step="any" value={k.min ?? 0} onChange={(e) => setKey(i, { min: e.target.value })} />
+                </Field>
+                <Field label={t('profiles.max')}>
+                  <input type="number" step="any" value={k.max ?? 0} onChange={(e) => setKey(i, { max: e.target.value })} />
+                </Field>
+              </div>
+              <div className="action-row iot-actions-end">
+                <button type="button" className="quiet danger-text" onClick={() => removeKey(i)}>
+                  <span className="btn-icon"><Ico n="trash" sz={14} /> {t('profiles.removeKey')}</span>
+                </button>
+              </div>
+            </fieldset>
+          ))}
+
+          {k0Warning(keys) ? <p className="field-hint">{t('profiles.zeroDeadbandNote')}</p> : null}
+
+          <div className="action-row iot-actions-end">
+            <button type="button" className="quiet" onClick={onBack} disabled={busy}>{t('common.cancel')}</button>
+            <button type="submit" disabled={busy}>{busy ? t('common.saving') : t('common.save')}</button>
+          </div>
+        </form>
+      </Panel>
+    </section>
+  );
+}
+
+// k0Warning is true when a numeric key stores every single sample. That is correct for a
+// door contact (every transition matters) and expensive for a temperature probe, so the
+// editor says so rather than letting a site discover it as a full disk.
+function k0Warning(keys) {
+  return keys.some((k) => (k.dataType || 'number') === 'number' && Number(k.deadband || 0) === 0);
+}
