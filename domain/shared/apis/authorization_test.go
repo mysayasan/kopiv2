@@ -6,9 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
+	"github.com/mysayasan/kopiv2/domain/shared/services"
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
-	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 )
 
 func withUser(r *http.Request, user *services.AuthenticatedUser) *http.Request {
@@ -19,11 +18,11 @@ func withUser(r *http.Request, user *services.AuthenticatedUser) *http.Request {
 // built-in role may actually do — is tested against the real matcher in
 // services.TestPolicy_*, which is where the evidentiary line is asserted.
 type stubRoles struct {
-	sharedservices.IAccessRoleService
+	services.IAccessRoleService
 }
 
 type stubPerms struct {
-	sharedservices.IAccessPermissionService
+	services.IAccessPermissionService
 	allow bool
 	err   error
 }
@@ -32,7 +31,7 @@ func (s stubPerms) Authorize(context.Context, int64, string, string) (bool, erro
 	return s.allow, s.err
 }
 
-func middleware(perms sharedservices.IAccessPermissionService) http.Handler {
+func middleware(perms services.IAccessPermissionService) http.Handler {
 	return NewRequireRolePermission(stubRoles{}, perms)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -42,7 +41,7 @@ func TestRequireRolePermission(t *testing.T) {
 	cases := []struct {
 		name  string
 		user  *services.AuthenticatedUser
-		perms sharedservices.IAccessPermissionService
+		perms services.IAccessPermissionService
 		want  int
 	}{
 		{

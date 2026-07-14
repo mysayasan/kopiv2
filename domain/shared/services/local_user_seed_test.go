@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
+	"github.com/mysayasan/kopiv2/domain/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"golang.org/x/crypto/bcrypt"
