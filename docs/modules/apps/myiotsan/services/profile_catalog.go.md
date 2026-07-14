@@ -17,7 +17,7 @@ a manageable write rate.
 func builtinProfiles() []builtinProfile
 ```
 
-Returns seven profiles, each a deliberate deadband/heartbeat choice:
+Returns eight profiles, each a deliberate deadband/heartbeat choice:
 
 - **`door-contact`** — `contact` has NO deadband (every transition is the event; a handful a
   day), `battery`/`linkquality` deadbanded and heartbeated every 6h.
@@ -36,11 +36,20 @@ Returns seven profiles, each a deliberate deadband/heartbeat choice:
 - **`access-reader`** — `badge` is a **string** key (compared by equality, never averaged: the
   credential presented), `granted`/`tamper` bools with no deadband. The "no badge swipe" half of
   the cross-domain intrusion rule described in `docs/MYIOTSAN_PLAN.md` §1.
+- **`smart-relay`** (Shelly/Tasmota conventions, P4) — **the one profile in this catalog that can
+  act on the world; every other profile only reports.** Declares one `ProfileCommand`
+  (`"output"`, `Kind: "switch"`, publishing a Shelly-style `Switch.Set` RPC to `{deviceKey}/rpc`)
+  whose `ConfirmKey` is the device's own `output` telemetry key — a command is confirmed only
+  when the relay itself reports back that it changed, never merely when the app manages to
+  publish. See `services/commands.go.md` for the gates that guard every device carrying this
+  profile.
 
 ## Notes
 
 - Consumed exclusively by `services.ProfileService.EnsureBuiltins`
   (`apps/myiotsan/services/profile.go.md`).
-- `builtinProfile`/its `Keys []SaveTelemetryKey` reuse the same DTOs the profile CRUD API takes,
-  so a builtin is inserted through the identical `replaceKeys` path a user-authored profile
-  would use.
+- `builtinProfile`/its `Keys []SaveTelemetryKey` and (P4) `Commands []SaveProfileCommand` reuse
+  the same DTOs the profile CRUD API takes, so a builtin is inserted through the identical
+  `replaceKeys`/`replaceCommands` path a user-authored profile would use. Most builtins declare
+  no commands at all, and that is the correct default: a sensor that cannot be commanded cannot
+  be commanded wrongly.

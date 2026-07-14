@@ -28,6 +28,7 @@ type Ingest struct {
 	writer  *ReadingWriter
 	rules   *RuleService
 	enroll  *Enrollment
+	twin    *CommandService
 	logf    func(format string, args ...any)
 
 	// bindings caches each profile's decoded key list. Reading the telemetry keys from the
@@ -77,6 +78,11 @@ func (i *Ingest) InvalidateProfile(profileId int64) {
 // SetEnrollment wires the enrollment window in, so a quarantined client's payloads become
 // candidates instead of telemetry.
 func (i *Ingest) SetEnrollment(e *Enrollment) { i.enroll = e }
+
+// SetTwin wires actuation in. Every reading updates the twin's REPORTED half, which is what
+// confirms a command: "we published a message" is not "the relay closed" — only the device
+// saying so is.
+func (i *Ingest) SetTwin(c *CommandService) { i.twin = c }
 
 // Handle processes one payload. It satisfies mqtt.MessageHandler and is also the entry point
 // for the HTTP ingest route, so a device that cannot speak MQTT has the same pipeline behind it.
@@ -173,6 +179,10 @@ func (i *Ingest) Handle(ctx context.Context, p iotmqtt.Principal, clientId, topi
 
 		if i.rules != nil {
 			i.rules.OnReading(ctx, dev, s.Key, s.Num, nowSec)
+		}
+		// The twin's reported half. This is what closes the loop on a command.
+		if i.twin != nil {
+			i.twin.OnReported(ctx, deviceId, s.Key, s.Num, nowSec)
 		}
 	}
 }

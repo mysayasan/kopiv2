@@ -78,6 +78,11 @@ func Policy() []PolicyRule {
 		// is an evidentiary device too — "the door contact opened at 02:14" is a fact somebody
 		// may want to erase, and the history is where it lives.
 		{Path: "/api/devices/*/readings", Description: "Review a device's telemetry history", Viewer: none, Operator: read},
+		// Seeing WHAT WAS DONE to a device, and whether the door is actually locked, is not the
+		// same power as doing it. An audit trail visible only to the people who could have
+		// written to it is not an audit trail.
+		{Path: "/api/devices/*/commands/history", Description: "See what commands were sent to a device, by whom", Viewer: read, Operator: read},
+		{Path: "/api/devices/*/twin", Description: "See a device's desired vs reported state", Viewer: read, Operator: read},
 
 		// --- Operating (operator only) ----------------------------------------------------
 		{Path: "/api/alerts/*/ack", Description: "Acknowledge an alert", Viewer: none, Operator: write},
@@ -92,6 +97,11 @@ func Policy() []PolicyRule {
 		// sensor effectively stops recording), writing rules, and — when P4 lands it — ACTUATION.
 		// A bad relay write is physically dangerous in a way a bad PTZ move is not.
 		{Path: "/api/devices/*/password", Description: "Rotate a device's broker credential", Viewer: none, Operator: none},
+		// ACTUATION. Admin only, and it always was — this rule was written in P0, before the
+		// command path that would exercise it existed. A camera is read-mostly; an IoT device
+		// gets WRITTEN to, and a bad relay write is physically dangerous in a way a bad PTZ move
+		// is not. Do not loosen this without deciding, out loud, that an operator may open doors.
+		{Path: "/api/devices/*/commands", Description: "Command a device (switch a relay, set a setpoint)", Viewer: none, Operator: none},
 		// Opening an enrollment window is the ONE act in the whole app that lets an unknown thing
 		// talk to the broker at all. It is time-boxed, key-gated and quarantined — and it is still
 		// not something an operator gets to do.

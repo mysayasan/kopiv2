@@ -29,6 +29,10 @@ type builtinProfile struct {
 	Description   string
 	TopicTemplate string
 	Keys          []SaveTelemetryKey
+	// Commands is what a device of this type can be TOLD to do. Most of the catalog declares
+	// none, and that is the correct default: a sensor that cannot be commanded cannot be
+	// commanded WRONGLY, and the majority of a building's devices only ever need to be read.
+	Commands []SaveProfileCommand
 }
 
 func builtinProfiles() []builtinProfile {
@@ -113,6 +117,31 @@ func builtinProfiles() []builtinProfile {
 				{Key: "current", Label: "Current", Unit: "A", DataType: "number", Deadband: 0.2, HeartbeatSeconds: 900, Min: 0, Max: 100},
 				// Cumulative and monotonic: a coarse deadband still captures the curve.
 				{Key: "energy", Label: "Energy", Unit: "Wh", DataType: "number", JsonPath: "aenergy.total", Deadband: 10, HeartbeatSeconds: 3600},
+			},
+		},
+		{
+			Slug:          "smart-relay",
+			Name:          "Smart relay / switch",
+			Vendor:        "Shelly / Tasmota",
+			Description:   "A controllable relay. THE ONE PROFILE IN THIS CATALOG THAT CAN ACT ON THE WORLD — everything else only reports.",
+			TopicTemplate: "{deviceKey}/status/switch:0",
+			Keys: []SaveTelemetryKey{
+				// The device reports its own state here, and this is what CONFIRMS a command.
+				// Without it, "we published a message" is the best that could ever be said, and
+				// that is not the same as "the relay closed".
+				{Key: "output", Label: "Output", DataType: "bool", Deadband: 0, HeartbeatSeconds: 300},
+				{Key: "power", Label: "Power", Unit: "W", DataType: "number", JsonPath: "apower", Deadband: 10, HeartbeatSeconds: 300, Min: 0, Max: 30000},
+				{Key: "temperature", Label: "Temperature", Unit: "C", DataType: "number", Deadband: 1, HeartbeatSeconds: 900, Min: -20, Max: 120},
+			},
+			Commands: []SaveProfileCommand{
+				{
+					Name: "output", Label: "Relay", Kind: "switch",
+					TopicTemplate:   "{deviceKey}/rpc",
+					PayloadTemplate: `{"method":"Switch.Set","params":{"id":0,"on":{value}}}`,
+					// The device reports back on "output", so a command is CONFIRMED only when
+					// the relay itself says it changed — not when we manage to publish.
+					ConfirmKey: "output",
+				},
 			},
 		},
 		{
