@@ -2,7 +2,7 @@
 
 ## Purpose
 
-HTTP endpoints for managing per-role node **device** access grants — distinct from the `/api/nodes/*` path matrix, which gates myseliasan's own endpoints. A grant's level is one of two, mirroring mymatasan's own local levels: `viewer` (`canRead`, read-only) or `admin` (`canRead`+`canWrite`, drives the node as its admin). The node's owning role and RBAC superadmins may view or change grants; a `?roleId=` lens lets superadmins query a role's grants across all nodes for the central RBAC node-access matrix.
+HTTP endpoints for managing per-role node **device** access grants — distinct from the `/api/nodes/*` path matrix, which gates myseliasan's own endpoints. A grant's level is one of three, mirroring mymatasan's own local roles: `viewer` (`canRead`, watch live), `operator` (`canOperate`, + review footage/acknowledge alerts/PTZ/talk-back), or `admin` (`canWrite`, everything including deleting footage). The rungs escalate (`admin` implies `operator` implies `viewer`) and are normalised on save. The node's owning role and RBAC superadmins may view or change grants; a `?roleId=` lens lets superadmins query a role's grants across all nodes for the central RBAC node-access matrix.
 
 ## Endpoints
 
@@ -12,7 +12,7 @@ All routes require a myseliasan session (`auth.Middleware`).
 |---|---|---|
 | `GET` | `/api/nodes/access?nodeId=ID` | List all `NodeAccessGrant` rows for the given node. Caller must be a superadmin or the node's owner. |
 | `GET` | `/api/nodes/access?roleId=ID` | List all grants a role holds across every node. **Superadmin only.** Powers the central RBAC node-access matrix. |
-| `POST` | `/api/nodes/access` | Upsert a grant `{roleId, nodeId, canRead, canWrite}`. Caller must be a superadmin or the node's owner. |
+| `POST` | `/api/nodes/access` | Upsert a grant `{roleId, nodeId, canRead, canOperate, canWrite}`. Caller must be a superadmin or the node's owner. |
 | `DELETE` | `/api/nodes/access/{id}` | Remove a grant. Caller must be a superadmin or the owner of the grant's node. |
 
 ## Authorization
@@ -28,7 +28,7 @@ All routes require a myseliasan session (`auth.Middleware`).
 ## Notes
 
 - Registered on its own `/nodes/access` subrouter; mux matches these specific paths before the proxy catch-all.
-- `CanWrite=true` forces `CanRead=true` at the service layer.
+- The request body's flags are normalised into the escalation ladder at the service layer (`node_access.go`'s `normalizeAccess`): `CanWrite=true` forces `CanOperate=true` and `CanRead=true`; `CanOperate=true` forces `CanRead=true`.
 
 ## Audit trail
 
@@ -36,5 +36,5 @@ All routes require a myseliasan session (`auth.Middleware`).
 
 | Action | Handler | Detail / Metadata |
 |---|---|---|
-| `node_access.set` | `upsert` | Detail notes the granted role/node and read/write flags; `Metadata: {roleId, canRead, canWrite}`. |
+| `node_access.set` | `upsert` | Records the **resolved** grant (post-normalization), not the raw request body — what was asked for and what was stored can differ. Detail notes the granted role/node and read/operate/write flags; `Metadata: {roleId, canRead, canOperate, canWrite}`. |
 | `node_access.revoke` | `delete` | Detail notes the revoked role/node; `Metadata: {roleId, grantId}`. |

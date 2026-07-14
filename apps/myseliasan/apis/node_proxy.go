@@ -58,9 +58,14 @@ func (a *nodeProxyApi) proxy(w http.ResponseWriter, r *http.Request) {
 		nodePath += "?" + r.URL.RawQuery
 	}
 
-	// Authorize: the operator's role must have access to this node. read+write → the
-	// node is driven as admin; read-only → viewer; no read → forbidden. The node's
-	// owning role (it adopted the node) has full access without an explicit grant.
+	// Authorize: the user's role must have access to this node. The grant is an escalation
+	// ladder and each rung names the role the tunnel ASSERTS at the node — viewer, operator,
+	// or admin. No read at all is forbidden here. The node's owning role (it adopted the
+	// node) has full access without an explicit grant.
+	//
+	// What is sent is a role NAME, not a permission set. The node resolves that name against
+	// its OWN roles and evaluates its OWN matrix, so a compromised control plane cannot
+	// assert capabilities the node never granted. See mymatasan's control dispatcher.
 	roleId, actor := operatorIdentity(r)
 	// Use the LIVE role from the user store (not the token's baked roleId) so a
 	// just-demoted operator immediately loses node access without a re-login.

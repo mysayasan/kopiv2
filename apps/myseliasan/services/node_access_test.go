@@ -203,3 +203,94 @@ func TestNodeAccessDeleteById(t *testing.T) {
 		t.Fatalf("expected denied after delete, got role %q", acc.Role())
 	}
 }
+
+
+// The rung that was missing. Without it a control-plane user was either a viewer or an admin
+// at the node, so the node's three-role model collapsed to a binary the moment a command
+// crossed the tunnel — and a fleet operator who should have been able to review footage but
+// not delete it had to be given the power to delete it.
+func TestNodeAccess_OperatorRung(t *testing.T) {
+	svc, nodes, grants := newTestAccess()
+	ctx := context.Background()
+
+	nodes.rows = append(nodes.rows, &entities.ManagedNode{Id: 1, NodeId: "n1", OwnerRoleId: 10})
+	grants.rows = append(grants.rows,
+		&entities.NodeAccessGrant{Id: 1, RoleId: 20, NodeId: "n1", CanRead: true},
+		&entities.NodeAccessGrant{Id: 2, RoleId: 25, NodeId: "n1", CanRead: true, CanOperate: true},
+		&entities.NodeAccessGrant{Id: 3, RoleId: 30, NodeId: "n1", CanRead: true, CanWrite: true},
+	)
+
+	cases := []struct {
+		name     string
+		roleId   int64
+		wantRole string
+	}{
+		{"read only -> viewer", 20, "viewer"},
+		{"operate -> operator", 25, "operator"},
+		{"write -> admin", 30, "admin"},
+		{"owner -> admin", 10, "admin"},
+		{"no grant -> denied", 40, ""},
+	}
+	for _, c := range cases {
+		acc, err := svc.Resolve(ctx, c.roleId, "n1")
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if got := acc.Role(); got != c.wantRole {
+			t.Errorf("%s: role = %q, want %q", c.name, got, c.wantRole)
+		}
+	}
+}
+
+// The rungs escalate: admin implies operator implies viewer. A grant that says "may delete
+// footage but may not watch it" is not a policy anybody means, and a hand-edited or stale row
+// must not be able to express one.
+func TestNodeAccess_LadderIsEnforced(t *testing.T) {
+	svc, _, _ := newTestAccess()
+	ctx := context.Background()
+
+	// Ask for write only. Read and operate must be implied.
+	g, err := svc.Set(ctx, entities.NodeAccessGrant{RoleId: 5, NodeId: "n2", CanWrite: true})
+	if err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if !g.CanRead || !g.CanOperate || !g.CanWrite {
+		t.Fatalf("write must imply operate and read: %+v", g)
+	}
+
+	// Ask for operate only. Read must be implied; write must NOT be.
+	g, err = svc.Set(ctx, entities.NodeAccessGrant{RoleId: 6, NodeId: "n2", CanOperate: true})
+	if err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if !g.CanRead || !g.CanOperate {
+		t.Fatalf("operate must imply read: %+v", g)
+	}
+	if g.CanWrite {
+		t.Fatal("operate must NOT imply write — that is the whole point of the rung")
+	}
+	if acc, _ := svc.Resolve(ctx, 6, "n2"); acc.Role() != "operator" {
+		t.Fatalf("resolved role = %q, want operator", acc.Role())
+	}
+}
+
+// An existing grant predates the rung and carries canOperate=false. It must keep resolving to
+// exactly what it did before — nothing silently gains a capability on upgrade.
+func TestNodeAccess_ExistingGrantsAreUnchangedOnUpgrade(t *testing.T) {
+	svc, nodes, grants := newTestAccess()
+	ctx := context.Background()
+
+	nodes.rows = append(nodes.rows, &entities.ManagedNode{Id: 1, NodeId: "n1", OwnerRoleId: 99})
+	// Rows exactly as an older build left them: no canOperate column value.
+	grants.rows = append(grants.rows,
+		&entities.NodeAccessGrant{Id: 1, RoleId: 20, NodeId: "n1", CanRead: true},
+		&entities.NodeAccessGrant{Id: 2, RoleId: 30, NodeId: "n1", CanRead: true, CanWrite: true},
+	)
+
+	if acc, _ := svc.Resolve(ctx, 20, "n1"); acc.Role() != "viewer" {
+		t.Fatalf("legacy read-only grant resolved to %q, want viewer", acc.Role())
+	}
+	if acc, _ := svc.Resolve(ctx, 30, "n1"); acc.Role() != "admin" {
+		t.Fatalf("legacy read+write grant resolved to %q, want admin", acc.Role())
+	}
+}

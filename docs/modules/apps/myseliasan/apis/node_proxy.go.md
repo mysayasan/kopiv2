@@ -20,10 +20,12 @@ Registered on its own `/nodes` subrouter, matched after `NewNodesApi`'s specific
 
 1. Extract `nodeID` from the path and strip the `/api/nodes/{id}/proxy` prefix to derive `nodePath` (e.g. `/api/settings/users`). Query string is preserved.
 2. Resolve the caller's live `roleId` via `AccessSessionMidware.CurrentPrincipal` (falls back to the token's baked `roleId` if the session middleware is not wired).
-3. Check `INodeAccessService.Resolve(callerRoleId, nodeID)`:
-   - No access → 403.
-   - Write access → node request runs as admin on the node.
-   - Read-only → node request runs as viewer on the node.
+3. Check `INodeAccessService.Resolve(callerRoleId, nodeID)`, which returns a `NodeAccess` escalation ladder resolved via `Role()`:
+   - No access at all → 403.
+   - `CanWrite` → node request runs as `"admin"` on the node.
+   - `CanOperate` (without `CanWrite`) → node request runs as `"operator"` on the node.
+   - `CanRead` only → node request runs as `"viewer"` on the node.
+   - What crosses the tunnel is the role NAME, not a permission set — the node resolves that name against its own roles and evaluates its own matrix, so a compromised control plane cannot assert capabilities the node never granted.
 3. Read request body (capped at 8 MiB).
 4. Build `control.Request{Method, Path, Role, Actor, Headers, Body}` and send via `ControlSender.SendRequest`.
 5. Return the node's response status + body verbatim. `ErrNodeOffline` (never connected) or `ErrNodeDisconnected` (control channel dropped mid-command — see `control_server.go.md`) → 404 `"node is not connected"`. A disconnect mid-command fails fast instead of hanging to `controlRequestTimeout`; the caller cannot tell from the 404 alone whether a non-idempotent write had already applied on the node before the drop.

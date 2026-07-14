@@ -10,18 +10,32 @@ import (
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
 
-// NodeAccess is the resolved per-(role, node) capability. CanWrite implies CanRead.
+// NodeAccess is the resolved per-(role, node) capability — an escalation ladder, where each
+// rung implies the ones below it.
 type NodeAccess struct {
-	CanRead  bool
-	CanWrite bool
+	CanRead    bool
+	CanOperate bool
+	CanWrite   bool
 }
 
-// Role maps the capability to the tunnel's asserted role: admin when writable,
-// viewer when read-only, "" when no access.
+// Role names the role the tunnel asserts at the node.
+//
+// The node does NOT take this as permission — it takes it as an identity claim, resolves the
+// name against its OWN roles, and evaluates its OWN matrix. That is the whole security
+// posture of the fleet: the control plane says "on behalf of an operator", and the node
+// decides what an operator may do to its data. A compromised control plane cannot assert
+// capabilities the node never granted.
+//
+// "admin" is the wire word for the node's superadmin, kept for the fleet already in the
+// field. "operator" is the rung that was missing: without it a control-plane user was either
+// a viewer or an admin, and the node's role model collapsed to a binary the moment a command
+// crossed the tunnel.
 func (a NodeAccess) Role() string {
 	switch {
 	case a.CanWrite:
 		return "admin"
+	case a.CanOperate:
+		return "operator"
 	case a.CanRead:
 		return "viewer"
 	default:
@@ -74,18 +88,29 @@ func newNodeAccessService(
 	return &nodeAccessService{grants: grants, nodes: nodes, roles: roles}
 }
 
+// normalizeAccess enforces the escalation ladder: each rung implies the ones below it.
+func normalizeAccess(a NodeAccess) NodeAccess {
+	if a.CanWrite {
+		a.CanOperate = true
+	}
+	if a.CanOperate {
+		a.CanRead = true
+	}
+	return a
+}
+
 func (s *nodeAccessService) Resolve(ctx context.Context, roleId int64, nodeId string) (NodeAccess, error) {
 	// A superadmin role has full access to every node (mirrors mymatasan's superadmin),
 	// without needing ownership or an explicit grant.
 	if s.isSuperadminRole(ctx, roleId) {
-		return NodeAccess{CanRead: true, CanWrite: true}, nil
+		return normalizeAccess(NodeAccess{CanWrite: true}), nil
 	}
 	owns, err := s.OwnsNode(ctx, roleId, nodeId)
 	if err != nil {
 		return NodeAccess{}, err
 	}
 	if owns {
-		return NodeAccess{CanRead: true, CanWrite: true}, nil
+		return normalizeAccess(NodeAccess{CanWrite: true}), nil
 	}
 	grant, err := s.getGrant(ctx, roleId, nodeId)
 	if err != nil {
@@ -94,8 +119,13 @@ func (s *nodeAccessService) Resolve(ctx context.Context, roleId int64, nodeId st
 	if grant == nil {
 		return NodeAccess{}, nil
 	}
-	// write implies read, even if a stale row says otherwise.
-	return NodeAccess{CanRead: grant.CanRead || grant.CanWrite, CanWrite: grant.CanWrite}, nil
+	// Normalise the ladder on read too, so a stale or hand-edited row cannot express
+	// something incoherent (write without read).
+	return normalizeAccess(NodeAccess{
+		CanRead:    grant.CanRead,
+		CanOperate: grant.CanOperate,
+		CanWrite:   grant.CanWrite,
+	}), nil
 }
 
 // isSuperadminRole reports whether roleId is a superadmin role (nil-safe — returns
@@ -147,10 +177,11 @@ func (s *nodeAccessService) ListForRole(ctx context.Context, roleId int64) ([]*e
 }
 
 func (s *nodeAccessService) Set(ctx context.Context, grant entities.NodeAccessGrant) (*entities.NodeAccessGrant, error) {
-	// write implies read — a writable grant is always readable.
-	if grant.CanWrite {
-		grant.CanRead = true
-	}
+	// Enforce the escalation ladder: admin implies operator implies viewer. A grant that
+	// says "may delete footage but may not watch it" is not a policy anybody means.
+	ladder := normalizeAccess(NodeAccess{CanRead: grant.CanRead, CanOperate: grant.CanOperate, CanWrite: grant.CanWrite})
+	grant.CanRead, grant.CanOperate, grant.CanWrite = ladder.CanRead, ladder.CanOperate, ladder.CanWrite
+
 	now := time.Now().Unix()
 	existing, err := s.getGrant(ctx, grant.RoleId, grant.NodeId)
 	if err != nil {
@@ -158,6 +189,7 @@ func (s *nodeAccessService) Set(ctx context.Context, grant entities.NodeAccessGr
 	}
 	if existing != nil {
 		existing.CanRead = grant.CanRead
+		existing.CanOperate = grant.CanOperate
 		existing.CanWrite = grant.CanWrite
 		existing.UpdatedBy = grant.UpdatedBy
 		existing.UpdatedAt = now
