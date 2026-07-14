@@ -8,14 +8,18 @@ air-gapped, adopted into the myseliasan fleet), reusing mymatasan's spine
 (`device -> signal -> detector -> rule -> alert -> notify -> historize -> dashboard`); cameras
 are one signal type, sensors are another. See `docs/MYIOTSAN_PLAN.md`.
 
-**This file is P0: the scaffolding.** The app boots, authenticates, and serves its SPA shell.
-The IoT domain — devices, profiles, telemetry ingest, rules — lands in P1/P2 and is
-deliberately absent rather than stubbed, so nothing here is a placeholder pretending to work.
+**P0-P2 (the MVP, shipped 2026-07-14):** the app boots, authenticates, ingests telemetry from
+real devices over an embedded MQTT broker, evaluates rules against it, and raises alerts. What
+remains is discovery (P3), actuation (P4), industrial protocols (P5) and fleet adoption (P6).
 
 ## Key Type: module
 
-An empty `struct{}` — myiotsan holds no cross-request state in P0 (unlike, say, myseliasan's
-`module`, which caches listener handles for `ReadinessStatus`).
+`module` now carries `cfg *iotconfig.Config` — myiotsan's own slice of `config.json` (the
+`mqtt` and `telemetry_store` blocks), decoded through the phase-C `apphost.AppConfigDecoder`
+seam rather than added to the shared `AppConfigModel` every other app would then carry.
+`DecodeAppConfig` is the host's call-in; `appConfig()` defaults it (via `iotconfig.Load(nil)`)
+for the rare case — a test constructing the module directly — where the host never called the
+decoder. This is a change from P0, where `module` was an empty `struct{}`.
 
 ## Responsibilities
 
@@ -24,15 +28,14 @@ An empty `struct{}` — myiotsan holds no cross-request state in P0 (unlike, say
   `AppRegistry`, `ApiEndpoint`, `FileStorage`, `CacheService` — myiotsan is a single-tenant
   device on someone's LAN, not a platform with a registry or file-storage service to
   administer. Mirrors mymatasan's own trimmed surface.
-- `Entities()` is the P0 schema: everything needed to sign a user in and record what
-  happened — `ApiEndpoint`, `ApiLog`, `UserSession`, `Notification`, and the **shared**
-  appliance user/role entities (`LocalUser`, `AccessRole`, `AccessRolePermission` from
-  `domain/entities`, the same types mymatasan uses). The IoT domain tables (`iot_device`,
-  `device_profile`, `telemetry_key`, `device_reading`, `reading_rollup`, `iot_rule`,
-  `alert_event`) arrive with the code that uses them in P1/P2.
-- `Seeders(...)` seeds the P0 endpoint catalog for rate limiting/runtime metadata: `/api/health`,
-  `/api/version` (public), `/api/auth/login` (public), `/api/auth` (auth-only — the session
-  probe + change-password group).
+- `Entities()` — the shared appliance schema (`ApiEndpoint`, `ApiLog`, `UserSession`,
+  `Notification`, `LocalUser`, `AccessRole`, `AccessRolePermission`) plus the IoT domain now
+  registered here: `DeviceProfile`, `TelemetryKey`, `IotDevice`, `DeviceReading`,
+  `ReadingRollup`, `IotRule`, `AlertEvent` (`apps/myiotsan/entities`).
+- `Seeders(...)` seeds the endpoint catalog for rate limiting/runtime metadata, now including
+  `/api/devices`, `/api/profiles`, `/api/rules`, `/api/alerts`, `/api/notifications`
+  (auth-only), alongside the original `/api/health`, `/api/version` (public), `/api/auth/login`
+  (public), `/api/auth` (auth-only).
 - `RegisterAppRoutes(api, deps)`:
   1. Builds `sharedservices.NewLocalUserService` on a `LocalUser` repo bound to `deps.Db`.
   2. Seeds roles **before** the admin is seeded (`services.EnsureRoles` — myiotsan's own
@@ -42,9 +45,9 @@ An empty `struct{}` — myiotsan holds no cross-request state in P0 (unlike, say
      bootstrap admin; on `Seeded`, calls `announceFirstRunAdmin` (`firstrun.go.md`) — the
      console banner + recovery file is the only place a CLI/Docker/systemd operator learns the
      credential.
-  4. Builds the notification store (`notification.NewService`) **in P0** so security events
-     (a sign-in lockout) are recorded from the first boot, even though there is no read API
-     for them yet — an event never written cannot be shown later once P1 adds the feed.
+  4. Builds the notification store (`notification.NewService`). It is now the **unified feed**:
+     rule alerts (`CategoryDeviceAlert`), device health, and the app's own security events (a
+     sign-in lockout) all land here, giving an operator one place to look.
   5. Builds `sharedapis.LocalAuthConfig{AppName: "myiotsan", OnLockout: ...}`, wiring
      `OnLockout` directly to `notificationService.Publish` (myiotsan has no separate
      `NotifyAuthLockout` helper the way mymatasan does — it publishes the
@@ -56,6 +59,25 @@ An empty `struct{}` — myiotsan holds no cross-request state in P0 (unlike, say
      load-bearing: auth puts the principal in context, and the matrix needs a principal to
      decide against.
   8. Registers `sharedapis.NewLocalAuthApi` (session probe + change-password) on `protected`.
+  9. **Wires the ingest spine** in dependency order (each stage owns the one before it):
+     `broker -> ingest (decode -> deadband -> batched write) -> rules -> alert -> notification`.
+     `services.NewDeviceService` (also the broker's `Authenticator`), `services.NewProfileService`
+     + `EnsureBuiltins` (seeds the shipped device catalog; existing profiles are left alone so a
+     site's tuned deadbands survive a restart), `services.NewTelemetryService`,
+     `services.NewDeadbandGate`, `services.NewReadingWriter` (batch/flush/queue sized from
+     `appCfg.Telemetry`) then `.Run(bgCtx)`, `services.NewRuleEngine` +
+     `services.NewRuleService` then `.Reload(ctx)` (**re-seeds every cooldown from the alert
+     log** — skipping this re-arms every still-true rule on every restart, the alert storm
+     mymatasan shipped), `services.NewIngest`, then `iotmqtt.New` (the embedded broker, refuses
+     to build with no authenticator) run via `safego.Go`.
+  10. Starts `telemetry.RunRollup(bgCtx, ...)` (rollup before purge — see `telemetry.go.md`) and
+      a `safego.Supervise`d offline sweep (`ruleService.SweepOffline`) on a 1-minute
+      `offlineSweepInterval` — the only way an "absence of readings" rule can ever fire, since a
+      silent device never calls `Handle` again.
+  11. Registers `apis.NewDevicesApi`, `apis.NewProfilesApi`, `apis.NewRulesApi`,
+      `apis.NewNotificationsApi` on `protected`.
+  12. The returned shutdown func cancels `bgCtx` then calls `writer.Wait(5*time.Second)` so a
+      clean shutdown does not throw away readings the batcher already accepted.
 - `loginGuardConfig(deps)` maps `deps.Config.LoginSecurity` onto `sharedapis.LoginGuardConfig`
   — identical shape to mymatasan's own mapping.
 - `RegisterWebRoutes` serves `index.html` from `deps.HomeDir` (not `BaseDir()` — see the
@@ -77,3 +99,12 @@ An empty `struct{}` — myiotsan holds no cross-request state in P0 (unlike, say
   what makes this file short: bcrypt handling, session comparison, the auth-verification
   cache, and the role/permission mechanics are all reused from mymatasan's extraction, not
   reimplemented here.
+- **SQLite write throughput — the risk `docs/MYIOTSAN_PLAN.md` §9 called the one thing that
+  could invalidate the storage design — is measured and settled.** On a live appliance, 20
+  devices publishing 10,000 MQTT payloads (~30,000 samples) in under a second produced 540
+  written rows, 98.2% suppressed by the deadband, zero dropped. Do not add a TSDB; it would
+  break the single-binary deployment model and is not needed. `GET /api/devices/stats`
+  (`services.IngestStats`) exposes stored/suppressed/dropped so this stays observable in
+  production — a non-zero, growing `dropped` means the disk has stopped keeping up.
+- Rules are evaluated on **every** decoded sample, including ones the deadband suppressed — see
+  `services/rules.go.md`. The deadband is a storage decision, not a detection one.

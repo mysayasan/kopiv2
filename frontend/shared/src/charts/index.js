@@ -6,6 +6,7 @@ export { StatCard } from './StatCard';
 export { DonutChart } from './DonutChart';
 export { BarChart } from './BarChart';
 export { TimeSeriesChart } from './TimeSeriesChart';
+export { LineChart } from './LineChart';
 export { Heatmap } from './Heatmap';
 export { ChartCard } from './ChartCard';
-export { colorFor, CATEGORICAL, SEVERITY_COLORS, CATEGORY_COLORS } from './palette';
+export { colorFor, CATEGORICAL, SEVERITY_COLORS, CATEGORY_COLORS, HEALTH_COLORS } from './palette';

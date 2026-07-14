@@ -1,6 +1,7 @@
 # MyIotSan — Implementation Plan
 
-Status: **P0 SHIPPED** (2026-07-14). P1+ not yet started.
+Status: **P0 SHIPPED** (2026-07-14). **P1 (ingest spine) + P2 (rules & alerts) SHIPPED
+(2026-07-14) — P0-P2 is the shippable MVP.** P3-P7 not yet started.
 
 `myiotsan` is the fourth app in the suite, alongside `mymatasan` (camera NVR), `myseliasan`
 (fleet control plane) and `myidsan` (identity/SSO). It is built on the same platform as
@@ -282,12 +283,76 @@ ways to run it today.
 
 ---
 
+## 8b. P1 + P2 — the MVP, shipped
+
+**SHIPPED 2026-07-14.** P1 (ingest spine) and P2 (rules & alerts) landed together as one
+change set. `apps/myiotsan/app/app.go`'s `RegisterAppRoutes` now wires the whole spine:
+
+    broker (infra/iot/mqtt) -> ingest (infra/iot/codec -> deadband -> batched write)
+                                                              \
+                                                               -> rule engine -> alert -> notification
+
+New packages: `infra/iot/codec`, `infra/iot/mqtt`; `apps/myiotsan/{entities,services,apis,config}`
+(devices, profiles, telemetry, deadband, rule engine, rules, ingest). See
+`docs/modules/apps/myiotsan/**/*.go.md` and `docs/modules/infra/iot/**/*.go.md` for the
+per-file detail.
+
+### §9's risk, resolved
+
+The SQLite write-throughput risk (§9's original table, "the one thing that can invalidate the
+storage design") is now **measured and settled**, not merely mitigated on paper. On a live
+appliance: 20 devices publishing 10,000 MQTT payloads (~30,000 samples) in under a second
+produced **540 written rows, 98.2% suppressed by the deadband, ZERO dropped**. The deadband
+(`apps/myiotsan/services/deadband.go`) is why — almost everything a building sensor says is
+"still 21.4 degrees", and that is not worth a row. **Do not add a TSDB** — it would break the
+single-binary, air-gapped deployment model and it is not needed. `GET /api/devices/stats`
+exposes stored/suppressed/dropped in production so this stays observable; `dropped > 0` means
+the disk has stopped keeping up.
+
+Second load-bearing invariant, also shipped and tested: **rules are evaluated on every decoded
+sample, including the ones the deadband suppressed** (`services.RuleService.OnReading`, called
+from `services.Ingest.Handle` regardless of the gate's admit decision). The deadband is a
+STORAGE decision, not a detection one — a value sitting steadily over a threshold is not worth
+another row but is absolutely worth an alert; gating rules behind the deadband would mean a
+steady overheat is never alerted on.
+
+### Bugs found by live-booting
+
+1. **The profile seeder panicked the app on first boot.** The generic repo's `Delete` returns
+   an ERROR when it matches zero rows ("total affected: 0" — the same pre-existing quirk that
+   makes mymatasan log a scary notification-purge warning on fresh installs). A
+   delete-then-insert on an empty table is exactly what seeding the builtin device catalog
+   does. Fixed by `isNoResultErr` in `apps/myiotsan/services/device.go` treating that message as
+   a non-error, shared across the package.
+2. **A missed-alert bug in the rule engine.** State was keyed by rule id alone, so a
+   TAG-scoped rule watching 20 devices shared one `firing` flag: the first device to trip it
+   silently suppressed all the others (one fridge alerts, nine defrost in silence). A missed
+   alert is the one failure a monitoring product may never have. Fixed: engine state is now
+   keyed by `(rule, device)`, and the per-device cooldown is seeded FROM THE ALERT LOG on every
+   `RuleService.Reload` (an alert row already records exactly when a rule last fired on a
+   device, so no second table can drift out of step). Pinned by
+   `TestRule_TagScopedRuleFiresPerDeviceNotOnce` and `TestRule_CooldownIsPerDevice` in
+   `apps/myiotsan/services/rule_engine_test.go`.
+3. **The device authenticator distinguishes "could not CHECK the credential" from "the
+   credential is wrong."** A database-unreachable error during MQTT auth is logged distinctly
+   and refused (fail closed) rather than reported as a bad password — telling an operator "bad
+   password" when the database was unreachable sends them to debug the wrong machine.
+
+### What is still not here
+
+Discovery/onboarding (P3), actuation/twin (P4), Modbus/OPC-UA (P5), fleet adoption (P6), and
+release packaging (P7, still deferred exactly as scoped in §8) are all unstarted. `mqtt.Connect`
+mode (pointing at an external broker instead of the embedded one) is not implemented — only the
+embedded broker.
+
+---
+
 ## 9. Known risks
 
 | Risk | Mitigation |
 |---|---|
-| **SQLite write throughput** under telemetry load. | Deadband + batching + rollup (§3.2). Measure early with k6; this is the one thing that can invalidate the storage design. |
-| **`frontend/shared/CameraHero.js`** is camera-specific but lives in the *shared* module. | Generalize to a `DeviceHero`, or accept a parallel component. Decide in P1, not later. |
+| **SQLite write throughput** under telemetry load. | **RESOLVED (2026-07-14), measured, see §8b.** Deadband + batching + rollup (§3.2) shipped in P1. 20 devices / ~30,000 samples in under a second → 540 rows written, 98.2% suppressed, 0 dropped. `GET /api/devices/stats` keeps it observable going forward. Do not add a TSDB. |
+| **`frontend/shared/CameraHero.js`** is camera-specific but lives in the *shared* module. | Still open — P1/P2 shipped as a backend MVP with no device-page hero component yet built against it; decide before the device detail UI lands. |
 | **Scope creep** into a Home Assistant clone. | Hold the line stated in §1. |
 | **BACnet** demand from building-automation customers. | Out of scope; Go libs are not production-grade. External gateway if forced. |
 | **Actuation safety.** | Read-only default, RBAC, confirm, audit, rate limit (§3.4). |

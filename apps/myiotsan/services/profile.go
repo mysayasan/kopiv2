@@ -1,0 +1,242 @@
+package services
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/mysayasan/kopiv2/apps/myiotsan/entities"
+	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
+	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+)
+
+// ProfileService owns device types and the datapoints they report.
+//
+// This is the abstraction mymatasan does not have, and it is the difference between a product
+// and a demo: without it, onboarding a hundred identical door sensors means configuring a
+// hundred devices by hand. With it, the hundredth device is a name and a profile.
+type ProfileService struct {
+	profiles dbsql.IGenericRepo[entities.DeviceProfile]
+	keys     dbsql.IGenericRepo[entities.TelemetryKey]
+}
+
+func NewProfileService(db dbsql.IDbCrud) *ProfileService {
+	return &ProfileService{
+		profiles: dbsql.NewGenericRepo[entities.DeviceProfile](db),
+		keys:     dbsql.NewGenericRepo[entities.TelemetryKey](db),
+	}
+}
+
+// ErrProfileBuiltin is returned when a shipped profile is deleted. Builtins can be used and
+// copied but not removed, so a site cannot break its own onboarding by tidying up.
+var ErrProfileBuiltin = errors.New("a built-in profile cannot be deleted; copy it and edit the copy")
+
+// ProfileDetail is a profile with the datapoints it declares.
+type ProfileDetail struct {
+	Profile *entities.DeviceProfile  `json:"profile"`
+	Keys    []*entities.TelemetryKey `json:"keys"`
+}
+
+func (s *ProfileService) List(ctx context.Context) ([]*entities.DeviceProfile, error) {
+	rows, _, err := s.profiles.Get(ctx, "", 500, 0, nil,
+		[]sqldataenums.Sorter{{FieldName: "Name", Sort: sqldataenums.ASC}})
+	return rows, err
+}
+
+func (s *ProfileService) Detail(ctx context.Context, id int64) (*ProfileDetail, error) {
+	profile, err := s.profiles.GetById(ctx, "", uint64(id))
+	if err != nil || profile == nil {
+		return nil, fmt.Errorf("profile not found")
+	}
+	keys, err := s.KeysFor(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return &ProfileDetail{Profile: profile, Keys: keys}, nil
+}
+
+// KeysFor returns a profile's telemetry keys. This is on the ingest path (every payload needs
+// its bindings) and is therefore cached by the ingest pipeline rather than read per message.
+func (s *ProfileService) KeysFor(ctx context.Context, profileId int64) ([]*entities.TelemetryKey, error) {
+	rows, _, err := s.keys.Get(ctx, "", 200, 0,
+		[]sqldataenums.Filter{{FieldName: "ProfileId", Compare: sqldataenums.Equal, Value: profileId}},
+		[]sqldataenums.Sorter{{FieldName: "Key", Sort: sqldataenums.ASC}})
+	if err != nil && isNoResultErr(err) {
+		return nil, nil
+	}
+	return rows, err
+}
+
+// SaveProfileRequest creates or replaces a profile and its keys in one call. Keys are replaced
+// wholesale rather than diffed: a profile is a small declarative document, and an edit that
+// half-applies is worse than one that replaces.
+type SaveProfileRequest struct {
+	Slug          string             `json:"slug"`
+	Name          string             `json:"name"`
+	Vendor        string             `json:"vendor"`
+	Description   string             `json:"description"`
+	TopicTemplate string             `json:"topicTemplate"`
+	PayloadFormat string             `json:"payloadFormat"`
+	Keys          []SaveTelemetryKey `json:"keys"`
+}
+
+// SaveTelemetryKey declares one datapoint.
+type SaveTelemetryKey struct {
+	Key              string  `json:"key"`
+	Label            string  `json:"label"`
+	Unit             string  `json:"unit"`
+	DataType         string  `json:"dataType"`
+	JsonPath         string  `json:"jsonPath"`
+	Deadband         float64 `json:"deadband"`
+	HeartbeatSeconds int     `json:"heartbeatSeconds"`
+	Min              float64 `json:"min"`
+	Max              float64 `json:"max"`
+}
+
+func (s *ProfileService) Create(ctx context.Context, req SaveProfileRequest, actor int64) (*ProfileDetail, error) {
+	slug := strings.TrimSpace(req.Slug)
+	if slug == "" {
+		return nil, fmt.Errorf("a profile slug is required")
+	}
+	now := time.Now().Unix()
+	p := entities.DeviceProfile{
+		Slug:          slug,
+		Name:          strings.TrimSpace(req.Name),
+		Vendor:        strings.TrimSpace(req.Vendor),
+		Description:   strings.TrimSpace(req.Description),
+		TopicTemplate: strings.TrimSpace(req.TopicTemplate),
+		PayloadFormat: defaultString(req.PayloadFormat, "json"),
+		Builtin:       false,
+		CreatedBy:     actor,
+		CreatedAt:     now,
+		UpdatedBy:     actor,
+		UpdatedAt:     now,
+	}
+	if p.Name == "" {
+		p.Name = slug
+	}
+	id, err := s.profiles.Create(ctx, "", p)
+	if err != nil {
+		return nil, err
+	}
+	p.Id = int64(id)
+	if err := s.replaceKeys(ctx, p.Id, req.Keys, actor); err != nil {
+		return nil, err
+	}
+	return s.Detail(ctx, p.Id)
+}
+
+func (s *ProfileService) Update(ctx context.Context, id int64, req SaveProfileRequest, actor int64) (*ProfileDetail, error) {
+	existing, err := s.profiles.GetById(ctx, "", uint64(id))
+	if err != nil || existing == nil {
+		return nil, fmt.Errorf("profile not found")
+	}
+	existing.Name = strings.TrimSpace(req.Name)
+	existing.Vendor = strings.TrimSpace(req.Vendor)
+	existing.Description = strings.TrimSpace(req.Description)
+	existing.TopicTemplate = strings.TrimSpace(req.TopicTemplate)
+	existing.PayloadFormat = defaultString(req.PayloadFormat, "json")
+	existing.UpdatedBy = actor
+	existing.UpdatedAt = time.Now().Unix()
+	if _, err := s.profiles.UpdateById(ctx, "", *existing); err != nil {
+		return nil, err
+	}
+	if err := s.replaceKeys(ctx, id, req.Keys, actor); err != nil {
+		return nil, err
+	}
+	return s.Detail(ctx, id)
+}
+
+func (s *ProfileService) Delete(ctx context.Context, id int64) error {
+	existing, err := s.profiles.GetById(ctx, "", uint64(id))
+	if err != nil || existing == nil {
+		return fmt.Errorf("profile not found")
+	}
+	if existing.Builtin {
+		return ErrProfileBuiltin
+	}
+	if _, err := s.keys.Delete(ctx, "",
+		[]sqldataenums.Filter{{FieldName: "ProfileId", Compare: sqldataenums.Equal, Value: id}}); err != nil && !isNoResultErr(err) {
+		return err
+	}
+	_, err = s.profiles.DeleteById(ctx, "", uint64(id))
+	return err
+}
+
+func (s *ProfileService) replaceKeys(ctx context.Context, profileId int64, keys []SaveTelemetryKey, actor int64) error {
+	if _, err := s.keys.Delete(ctx, "",
+		[]sqldataenums.Filter{{FieldName: "ProfileId", Compare: sqldataenums.Equal, Value: profileId}}); err != nil && !isNoResultErr(err) {
+		return err
+	}
+	now := time.Now().Unix()
+	for _, k := range keys {
+		name := strings.TrimSpace(k.Key)
+		if name == "" {
+			continue
+		}
+		row := entities.TelemetryKey{
+			ProfileId:        profileId,
+			Key:              name,
+			Label:            defaultString(k.Label, name),
+			Unit:             strings.TrimSpace(k.Unit),
+			DataType:         defaultString(k.DataType, "number"),
+			JsonPath:         strings.TrimSpace(k.JsonPath),
+			Deadband:         k.Deadband,
+			HeartbeatSeconds: k.HeartbeatSeconds,
+			Min:              k.Min,
+			Max:              k.Max,
+			CreatedBy:        actor,
+			CreatedAt:        now,
+			UpdatedBy:        actor,
+			UpdatedAt:        now,
+		}
+		if _, err := s.keys.Create(ctx, "", row); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// EnsureBuiltins seeds the shipped catalog. Existing profiles are left ALONE — a site that has
+// tuned a builtin's deadbands must not have that overwritten on the next boot, which is the
+// same rule the RBAC seeder follows.
+func (s *ProfileService) EnsureBuiltins(ctx context.Context) error {
+	for _, b := range builtinProfiles() {
+		existing, err := s.profiles.GetByUnique(ctx, "", "slug", b.Slug)
+		if err != nil && !isNoResultErr(err) {
+			return err
+		}
+		if existing != nil {
+			continue
+		}
+		now := time.Now().Unix()
+		p := entities.DeviceProfile{
+			Slug:          b.Slug,
+			Name:          b.Name,
+			Vendor:        b.Vendor,
+			Description:   b.Description,
+			TopicTemplate: b.TopicTemplate,
+			PayloadFormat: "json",
+			Builtin:       true,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		}
+		id, err := s.profiles.Create(ctx, "", p)
+		if err != nil {
+			return fmt.Errorf("seed profile %s: %w", b.Slug, err)
+		}
+		if err := s.replaceKeys(ctx, int64(id), b.Keys, 0); err != nil {
+			return fmt.Errorf("seed profile keys for %s: %w", b.Slug, err)
+		}
+	}
+	return nil
+}
+
+func defaultString(v, fallback string) string {
+	if s := strings.TrimSpace(v); s != "" {
+		return s
+	}
+	return fallback
+}

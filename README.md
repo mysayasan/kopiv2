@@ -35,7 +35,7 @@ This repository contains modular backend applications:
 - `apps/mymatasan`: standalone camera, ONVIF discovery, WebRTC live stream, and video intelligence app for small devices.
 - `apps/myidsan`: identity, user management, and RBAC administration app.
 - `apps/myseliasan`: relying control-plane app for `mymatasan`, authenticated through `myidsan`.
-- `apps/myiotsan`: on-prem IoT device hub appliance ("the NVR, but for sensors"). **P0 scaffolding** — boots, authenticates, serves its SPA shell; the device/telemetry/rules domain lands in later phases, see `docs/MYIOTSAN_PLAN.md`.
+- `apps/myiotsan`: on-prem IoT device hub appliance ("the NVR, but for sensors"). **P0-P2 shipped (backend MVP)** — boots, authenticates, ingests telemetry from real devices over an embedded MQTT broker (port 1883), evaluates alert rules, and raises alerts into a unified notification feed; the SPA still only renders login/shell. Discovery, actuation, industrial protocols and fleet adoption land in later phases, see `docs/MYIOTSAN_PLAN.md`.
 
 Primary goals:
 
@@ -94,7 +94,7 @@ Relevant top-level layout:
 .
 |- apps/mymatasan/         # Camera, WebRTC stream, and video intelligence app
 |- apps/myidsan/           # Identity, user management, and RBAC administration app
-|- apps/myiotsan/          # On-prem IoT device hub appliance (P0 scaffolding)
+|- apps/myiotsan/          # On-prem IoT device hub appliance (P0-P2 shipped; backend MVP)
 |- domain/                 # Domain entities, enums, shared APIs/services
 |- infra/                  # Config, DB, auth login providers, camera adapters
 |- deploy/linux/           # systemd templates
@@ -412,13 +412,13 @@ go run . -app myidsan
 The dev config file defaults `db.port` to `5433`. The example above overrides it to `5432`; keep whichever port matches your local PostgreSQL.
 `apps/myidsan/config.dev.json` also defaults PostgreSQL to port `5433`, database `myidsandb`, and HTTPS port `3001`. Both MyIDSan configs expect `apps/myidsan/certs/cert.pem` and `apps/myidsan/certs/key.pem`.
 
-Run the IoT hub app (P0 scaffolding — boots, authenticates, serves its SPA shell; no device/telemetry domain yet):
+Run the IoT hub app (P0-P2 shipped — boots, authenticates, ingests device telemetry over an embedded MQTT broker, evaluates alert rules; see `apps/myiotsan/README.md`):
 
 ```bash
 go run . -app myiotsan
 ```
 
-`apps/myiotsan/config.dev.json` defaults to SQLite at `./data/myiotsan.db` and HTTPS port `3003`.
+`apps/myiotsan/config.dev.json` defaults to SQLite at `./data/myiotsan.db`, HTTPS port `3003`, and an embedded MQTT broker on port `1883`.
 
 For a small single-process local run, switch any app to SQLite with:
 

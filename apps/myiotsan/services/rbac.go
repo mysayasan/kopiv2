@@ -42,6 +42,7 @@ const (
 type PolicyRule = sharedservices.PolicyRule
 
 var (
+	read  = sharedservices.VerbsRead
 	write = sharedservices.VerbsWrite
 	none  = sharedservices.VerbsNone
 )
@@ -55,10 +56,6 @@ const operatorDescription = "Day-to-day operator: monitor devices, review teleme
 // it needs no rules. Anything NOT listed here is denied to viewer and operator — the matrix
 // is deny-by-default.
 //
-// This is the P0 surface, and it is deliberately small: P0 has no device, telemetry or
-// notification API yet, so none is listed. A catalog that names routes the app does not
-// serve is a lie an operator would rely on.
-//
 // Every phase that adds an API area MUST add it here, INCLUDING the admin-only areas: a
 // route missing from this catalog is a route nobody can see they are not granting.
 func Policy() []PolicyRule {
@@ -66,9 +63,35 @@ func Policy() []PolicyRule {
 		// --- Everyone signed in ---------------------------------------------------------
 		{Path: "/api/auth/change-password", Description: "Change your own password", Viewer: write, Operator: write},
 
+		// --- Watching the estate ----------------------------------------------------------
+		// A viewer sees the devices, their CURRENT readings, and that an alert fired. That is
+		// the live picture, and it is all a viewer gets.
+		{Path: "/api/devices", Description: "See devices and their current readings", Viewer: read, Operator: read},
+		{Path: "/api/profiles", Description: "See device types and their datapoints", Viewer: read, Operator: read},
+		{Path: "/api/rules", Description: "See the alert rules", Viewer: read, Operator: read},
+		{Path: "/api/alerts", Description: "See the alert log", Viewer: read, Operator: read},
+		{Path: "/api/notifications", Description: "See the notification feed", Viewer: read, Operator: read},
+
+		// --- Reviewing the record (operator and up) ---------------------------------------
+		// THIS is the viewer/operator line, and it is mymatasan's line exactly: a viewer sees
+		// what is happening NOW; only an operator can go back through the history. A sensor hub
+		// is an evidentiary device too — "the door contact opened at 02:14" is a fact somebody
+		// may want to erase, and the history is where it lives.
+		{Path: "/api/devices/*/readings", Description: "Review a device's telemetry history", Viewer: none, Operator: read},
+
+		// --- Operating (operator only) ----------------------------------------------------
+		{Path: "/api/alerts/*/ack", Description: "Acknowledge an alert", Viewer: none, Operator: write},
+		{Path: "/api/notifications/*/read", Description: "Mark a notification read", Viewer: none, Operator: write},
+
 		// --- Admin only -------------------------------------------------------------------
-		// Listed with no grants so the catalog stays a COMPLETE description of the API
-		// surface even where nothing below admin is granted.
+		// Listed with no grants so the catalog stays a COMPLETE description of the API surface
+		// even where nothing below admin is granted.
+		//
+		// Note what is NOT here and therefore denied to everyone below admin: creating and
+		// deleting devices, editing profiles (which would let somebody widen a deadband until a
+		// sensor effectively stops recording), writing rules, and — when P4 lands it — ACTUATION.
+		// A bad relay write is physically dangerous in a way a bad PTZ move is not.
+		{Path: "/api/devices/*/password", Description: "Rotate a device's broker credential", Viewer: none, Operator: none},
 		{Path: "/api/settings/users", Description: "Manage users and their roles", Viewer: none, Operator: none},
 		{Path: "/api/settings/roles", Description: "See the roles that can be assigned", Viewer: none, Operator: none},
 	}

@@ -35,10 +35,20 @@ export const CATEGORY_COLORS = {
   other: '#94a3b8',
 };
 
+// HEALTH_COLORS maps a device's reachability to the colour an operator already reads it
+// as. It matters that these are not taken from the categorical ramp: a chart that paints
+// "offline" green because it happened to be the second series is worse than no chart.
+export const HEALTH_COLORS = {
+  online: '#10b981',
+  offline: '#ef4444',
+  unknown: '#94a3b8',
+};
+
 // colorFor returns a stable color for a series key: a semantic color when known,
 // otherwise a categorical ramp color chosen by the key's position in the list.
 export function colorFor(key, index = 0, kind = 'category') {
   if (kind === 'severity' && SEVERITY_COLORS[key]) return SEVERITY_COLORS[key];
+  if (kind === 'health' && HEALTH_COLORS[key]) return HEALTH_COLORS[key];
   if (kind === 'category' && CATEGORY_COLORS[key]) return CATEGORY_COLORS[key];
   return CATEGORICAL[index % CATEGORICAL.length];
 }

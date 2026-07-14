@@ -159,5 +159,16 @@
     "password": "",
     "db_name": "./data/myiotsan.db",
     "ssl_mode": ""
+  },
+  "mqtt": {
+    "enabled": true,
+    "addr": "0.0.0.0:1883"
+  },
+  "telemetry_store": {
+    "batchSize": 200,
+    "flushMs": 250,
+    "queueSize": 8192,
+    "rawRetentionDays": 30,
+    "rollupRetentionDays": 400
   }
 }

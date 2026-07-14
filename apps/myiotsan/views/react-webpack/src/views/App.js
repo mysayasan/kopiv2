@@ -5,7 +5,7 @@ import './styles/iot.css';
 import { SideNav } from './components/layout';
 import { ToastStack, LangProvider, normalizeLang, LanguageDropdown, AppFooter } from '@shared';
 import { FormBusyOverlay, ThemeDropdown } from './components/ui';
-import { DashboardPage, DevicesPage, AlertsPage, SettingsPage } from './components/pages';
+import { DashboardPage, DevicesPage, RulesPage, AlertsPage, NotificationsPage, ProfilesPage } from './components/pages';
 import { LoginScreen, ChangePasswordScreen } from './components/auth_screens';
 import { api, apiBase } from './lib/helpers';
 import { messages as appMessages } from './i18n';
@@ -100,10 +100,12 @@ function AppInner({ lang, onLangChange }) {
         </div>
         <ToastStack toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((x) => x.id !== id))} />
 
-        {activeTab === 'dashboard' ? <DashboardPage /> : null}
-        {activeTab === 'devices' ? <DevicesPage /> : null}
-        {activeTab === 'alerts' ? <AlertsPage /> : null}
-        {activeTab === 'settings' ? <SettingsPage /> : null}
+        {activeTab === 'dashboard' ? <DashboardPage onNavigate={setActiveTab} /> : null}
+        {activeTab === 'devices' ? <DevicesPage onToast={pushToast} /> : null}
+        {activeTab === 'rules' ? <RulesPage onToast={pushToast} /> : null}
+        {activeTab === 'alerts' ? <AlertsPage onToast={pushToast} /> : null}
+        {activeTab === 'notifications' ? <NotificationsPage onToast={pushToast} /> : null}
+        {activeTab === 'profiles' ? <ProfilesPage onToast={pushToast} /> : null}
         <AppFooter appName="MyIotSan" apiBase={apiBase()} />
       </main>
     </div>

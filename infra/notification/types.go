@@ -47,6 +47,13 @@ func (s Severity) Normalize() Severity {
 const (
 	// CategoryVisionAlert is raised when an AI detection rule triggers.
 	CategoryVisionAlert = "vision.alert"
+	// CategoryDeviceAlert is raised when an IoT rule triggers on a sensor reading. It is
+	// distinct from CategoryVisionAlert because it is a different KIND of event, not a
+	// different app's spelling of the same one: a subscriber that wants "somebody is in the
+	// building" wants both, and a subscriber that wants "the cold store is failing" wants only
+	// this. Filing sensor alerts under a camera category would make that distinction
+	// unexpressible for anyone routing notifications.
+	CategoryDeviceAlert = "device.alert"
 	// CategoryHealthCheck is raised by health/diagnostic checks.
 	CategoryHealthCheck = "health.check"
 	// CategorySystem is raised for general system events.

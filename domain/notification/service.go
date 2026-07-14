@@ -33,6 +33,7 @@ const (
 
 const (
 	CategoryVisionAlert = infranotif.CategoryVisionAlert
+	CategoryDeviceAlert = infranotif.CategoryDeviceAlert
 	CategoryHealthCheck = infranotif.CategoryHealthCheck
 	CategorySystem      = infranotif.CategorySystem
 )

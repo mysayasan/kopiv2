@@ -1,0 +1,248 @@
+package services
+
+import (
+	"context"
+	"sync"
+	"time"
+
+	"github.com/mysayasan/kopiv2/apps/myiotsan/entities"
+	"github.com/mysayasan/kopiv2/infra/iot/codec"
+)
+
+// Ingest is the hot path: a payload arrives, and this decides what it means, whether it is
+// worth storing, and whether it should wake somebody up.
+//
+//	broker -> decode (profile bindings) -> deadband -> batched write
+//	                                            \
+//	                                             -> rule evaluation -> alert
+//
+// Everything here is built to keep the database OFF this path. A publish must not become a
+// query: profile bindings are cached, liveness writes are throttled, readings are batched, and
+// the deadband drops most samples before they ever reach the queue. The one thing that is
+// allowed to be slow is an alert, because an alert is rare and matters.
+type Ingest struct {
+	devices *DeviceService
+	profile *ProfileService
+	gate    *DeadbandGate
+	writer  *ReadingWriter
+	rules   *RuleService
+	logf    func(format string, args ...any)
+
+	// bindings caches each profile's decoded key list. Reading the telemetry keys from the
+	// database on every message would put a query on the hot path — the whole thing this
+	// pipeline is arranged to avoid. Invalidated when a profile is edited.
+	mu       sync.RWMutex
+	bindings map[int64]*profileBindings
+
+	// stats
+	statsMu    sync.Mutex
+	received   int64
+	decoded    int64
+	stored     int64
+	suppressed int64
+}
+
+type profileBindings struct {
+	binds []codec.Binding
+	rules map[string]GateRule
+	keys  map[string]*entities.TelemetryKey
+	raw   bool
+}
+
+func NewIngest(devices *DeviceService, profile *ProfileService, gate *DeadbandGate, writer *ReadingWriter, rules *RuleService, logf func(string, ...any)) *Ingest {
+	if logf == nil {
+		logf = func(string, ...any) {}
+	}
+	return &Ingest{
+		devices:  devices,
+		profile:  profile,
+		gate:     gate,
+		writer:   writer,
+		rules:    rules,
+		logf:     logf,
+		bindings: map[int64]*profileBindings{},
+	}
+}
+
+// InvalidateProfile drops a cached profile, so an edited deadband takes effect on the next
+// message rather than on the next restart.
+func (i *Ingest) InvalidateProfile(profileId int64) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	delete(i.bindings, profileId)
+}
+
+// Handle processes one payload from a device. It satisfies mqtt.MessageHandler and is also the
+// entry point for the HTTP ingest route, so a device that cannot speak MQTT has the same
+// pipeline behind it.
+func (i *Ingest) Handle(ctx context.Context, deviceId int64, clientId, topic string, payload []byte) {
+	now := time.Now()
+	nowMs := now.UnixMilli()
+	nowSec := now.Unix()
+
+	i.bump(&i.received)
+
+	// Liveness FIRST, and unconditionally. A device faithfully reporting an unchanged value is
+	// alive, and if this sat behind the deadband a perfectly healthy stable sensor would look
+	// dead to the offline rule. The database write behind it is throttled.
+	i.devices.TouchSeen(ctx, deviceId, nowSec)
+
+	dev, err := i.devices.GetById(ctx, deviceId)
+	if err != nil || dev == nil {
+		return
+	}
+	if dev.ProfileId <= 0 {
+		// A device with no profile can connect and is provably alive, but nothing it says can
+		// be decoded. That is a configuration gap, not an error to spam about per message.
+		return
+	}
+
+	binds, err := i.bindingsFor(ctx, dev.ProfileId)
+	if err != nil || binds == nil || len(binds.binds) == 0 {
+		return
+	}
+
+	var samples []codec.Sample
+	if binds.raw {
+		if len(binds.binds) == 1 {
+			if s, ok := codec.DecodeRaw(payload, binds.binds[0]); ok {
+				samples = []codec.Sample{s}
+			}
+		}
+	} else {
+		samples, err = codec.DecodeJSON(payload, binds.binds)
+		if err != nil {
+			// A malformed payload is a device problem worth seeing, but at a bounded rate.
+			i.logf("device %q sent an undecodable payload on %q: %v", dev.DeviceKey, topic, err)
+			return
+		}
+	}
+	if len(samples) == 0 {
+		return
+	}
+	i.bump(&i.decoded)
+
+	for _, s := range samples {
+		key := binds.keys[s.Key]
+		if key == nil {
+			continue
+		}
+		// A key declared numeric whose payload was not a number (Zigbee2MQTT really does send
+		// "unavailable") yields no sample at all rather than a fabricated 0 — see codec.coerce.
+		if isNumericType(key.DataType) && !s.IsNum {
+			continue
+		}
+
+		rule := binds.rules[s.Key]
+		if !i.gate.Admit(deviceId, s.Key, rule, s.Num, s.Str, nowMs) {
+			i.bump(&i.suppressed)
+			// NOTE: a suppressed sample is still evaluated by the rules below. A deadband is a
+			// STORAGE decision, not a detection one — a value that sat 3 degrees over the limit
+			// without moving must still fire, and gating rules behind the deadband would mean a
+			// perfectly steady overheat is never alerted on. That would be the worst possible
+			// bug in this app, so the rule call is deliberately outside the admit branch.
+		} else {
+			i.writer.Enqueue(entities.DeviceReading{
+				DeviceId: deviceId,
+				Key:      s.Key,
+				Ts:       nowMs,
+				Num:      s.Num,
+				Str:      s.Str,
+				Suspect:  isSuspect(key, s),
+			})
+			i.bump(&i.stored)
+		}
+
+		if i.rules != nil {
+			i.rules.OnReading(ctx, dev, s.Key, s.Num, nowSec)
+		}
+	}
+}
+
+// bindingsFor returns a profile's decode plan, caching it.
+func (i *Ingest) bindingsFor(ctx context.Context, profileId int64) (*profileBindings, error) {
+	i.mu.RLock()
+	cached, ok := i.bindings[profileId]
+	i.mu.RUnlock()
+	if ok {
+		return cached, nil
+	}
+
+	keys, err := i.profile.KeysFor(ctx, profileId)
+	if err != nil {
+		return nil, err
+	}
+	detail, err := i.profile.Detail(ctx, profileId)
+	if err != nil {
+		return nil, err
+	}
+
+	b := &profileBindings{
+		binds: make([]codec.Binding, 0, len(keys)),
+		rules: make(map[string]GateRule, len(keys)),
+		keys:  make(map[string]*entities.TelemetryKey, len(keys)),
+		raw:   detail.Profile != nil && detail.Profile.PayloadFormat == "raw",
+	}
+	for _, k := range keys {
+		numeric := isNumericType(k.DataType)
+		b.binds = append(b.binds, codec.Binding{Key: k.Key, Path: k.JsonPath, Numeric: numeric})
+		b.rules[k.Key] = GateRule{
+			Deadband:         k.Deadband,
+			HeartbeatSeconds: k.HeartbeatSeconds,
+			Numeric:          numeric,
+		}
+		b.keys[k.Key] = k
+	}
+
+	i.mu.Lock()
+	i.bindings[profileId] = b
+	i.mu.Unlock()
+	return b, nil
+}
+
+// isSuspect flags a reading outside its key's declared range. It is stored anyway: a sensor
+// reporting -3000 degrees is broken, and dropping the evidence would hide the failure.
+func isSuspect(key *entities.TelemetryKey, s codec.Sample) bool {
+	if !s.IsNum || key.Min == 0 && key.Max == 0 {
+		return false
+	}
+	return s.Num < key.Min || s.Num > key.Max
+}
+
+func isNumericType(t string) bool {
+	return t == "" || t == "number" || t == "bool"
+}
+
+func (i *Ingest) bump(counter *int64) {
+	i.statsMu.Lock()
+	*counter++
+	i.statsMu.Unlock()
+}
+
+// IngestStats is what the ingest path has done since boot. `Suppressed` is the deadband
+// earning its keep: the ratio of suppressed to stored IS the storage design, and if it ever
+// falls near zero the deadbands are mistuned and the database is about to be in trouble.
+type IngestStats struct {
+	Received   int64 `json:"received"`
+	Decoded    int64 `json:"decoded"`
+	Stored     int64 `json:"stored"`
+	Suppressed int64 `json:"suppressed"`
+	Written    int64 `json:"written"`
+	Dropped    int64 `json:"dropped"`
+	Queued     int   `json:"queued"`
+	Series     int   `json:"series"`
+}
+
+func (i *Ingest) Stats() IngestStats {
+	i.statsMu.Lock()
+	s := IngestStats{
+		Received:   i.received,
+		Decoded:    i.decoded,
+		Stored:     i.stored,
+		Suppressed: i.suppressed,
+	}
+	i.statsMu.Unlock()
+	s.Written, s.Dropped, s.Queued = i.writer.Stats()
+	s.Series = i.gate.Size()
+	return s
+}
