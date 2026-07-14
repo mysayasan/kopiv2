@@ -39,8 +39,10 @@ Declares service contracts for app-specific domain.
 - `ILocalUserService`
   - `EnsureDefaultAdmin(ctx, username, password) (AdminSeedResult, error)` seeds the first standalone admin account from `localAuth` config values (env `LOCAL_ADMIN_PASSWORD` overrides the password; when none is supplied a strong per-install password is generated). Returns `AdminSeedResult{Seeded, Username, Password, Generated}` so the caller can reveal the bootstrap login (first-run console banner + recovery file).
   - `ResetAdmin(ctx, username, password) (AdminSeedResult, error)` force-resets the admin password to a bootstrap credential (locked-out recovery; e.g. the installer's "reset admin login" reinstall). Must-change; returns the credential to reveal, same `AdminSeedResult` contract as seeding.
-  - `Authenticate(ctx, username, password)` validates Basic Auth credentials
-  - CRUD and password reset operations for Settings user management
+  - `Authenticate(ctx, username, password)` validates Basic Auth credentials; the returned `*AuthenticatedUser` has `RoleId`/`IsAdmin` derived from the user's resolved role (`identity()`), not read off the legacy `LocalUser.IsAdmin` column — an unresolvable role is an error, not a quiet demotion.
+  - `BackfillRoles(ctx, adminRoleId, defaultRoleId int64) (int, error)` — gives a role to every user with `RoleId == 0`, derived from their legacy `IsAdmin` bool (`true` → `adminRoleId`, otherwise `defaultRoleId`). Called once at startup from `app.go`, after `services.EnsureRoles` and before the default admin is seeded, with `defaultRoleId` = the **operator** role id (see `app.go.md` for why operator, not viewer). Returns the count migrated; a count > 0 flushes the auth cache.
+  - CRUD and password reset operations for Settings user management. `Create`/`Update` resolve a role via `resolveRole(roleId, legacyIsAdmin)`: a positive `RoleId` in the request is the authority; `0` falls back to the legacy `IsAdmin` bool (`true` → superadmin, otherwise viewer), so a pre-roles client keeps working.
+  - The "don't remove the last admin" guard (`ensureNotRemovingLastAdmin`) now counts by **role** (`RoleId == adminRoleId`), not the legacy `IsAdmin` bool — counting the bool would let the last admin go if the mirror lagged behind a role change.
 - `IVisionService`
   - `GetRules(ctx, limit, offset)` and `SaveRule(ctx, req, userId)` for detection rule management
   - `DeleteRule(ctx, id)` for removing stale rules
@@ -108,6 +110,18 @@ Declares service contracts for app-specific domain.
 
 - `CameraCleanupFunc(ctx, cameraId) error` — one subsystem's teardown for a camera being deleted, defined in `services/camera.go`.
 - `CameraDeletionCascade` — `AddCameraCleanup(fn CameraCleanupFunc)`, a wiring-time-only interface (deliberately not part of `ICameraService`) that owning subsystems use to register their cleanup in `app.go`. `cameraService.Delete` runs every registered cleanup before deleting the camera row; any cleanup error aborts the delete.
+
+## Key Types (roles / authorization)
+
+- `AuthenticatedUser` — gained `RoleId int64`, the authority every request is decided
+  against. `IsAdmin` is **derived** from the resolved role's `IsSuperadmin` flag
+  (`services.identity()`), never read from `LocalUser.IsAdmin` directly — this is what keeps
+  a single source of truth between the matrix and the handlers that still ask "is this an
+  admin?" (settings self-gates, the control dispatcher).
+- `CreateLocalUserRequest` / `UpdateLocalUserRequest` — both gained `RoleId int64`. `RoleId >
+  0` is the authority; `RoleId == 0` falls back to the legacy `IsAdmin` bool (`true` →
+  superadmin, otherwise viewer), so the shipped Settings → Users screen (which still only
+  sends `isAdmin`) keeps working unchanged until the frontend gets a role picker.
 
 ## Why It Matters
 

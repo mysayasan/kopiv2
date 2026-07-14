@@ -41,10 +41,10 @@ type TeachDetectorConfig struct {
 // candidate model's detections drawn on, plus the raw detections for the
 // "Seeing: X (82%)" line. Ready=false while the worker is still warming up.
 type TeachDriveFrame struct {
-	Ready      bool                  `json:"ready"`
-	Image      string                `json:"image,omitempty"` // base64 JPEG, annotated
-	Detections []vision.MetaBox      `json:"detections"`
-	Error      string                `json:"error,omitempty"`
+	Ready      bool             `json:"ready"`
+	Image      string           `json:"image,omitempty"` // base64 JPEG, annotated
+	Detections []vision.MetaBox `json:"detections"`
+	Error      string           `json:"error,omitempty"`
 }
 
 // teachDriveRuntime is the single active test-drive worker.

@@ -8,6 +8,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
+	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 )
 
@@ -23,12 +24,15 @@ type settingsApi struct {
 	ffmpeg         *services.FFmpegInstaller
 	pyRuntime      *services.PythonInstaller
 	browseRoots    []string
+	// roles lets an admin see which roles exist so they can assign one. Assignment itself
+	// goes through the normal user create/update, which takes a roleId.
+	roles sharedservices.IAccessRoleService
 }
 
 // NewSettingsApi registers runtime settings routes. browseRoots are extra
 // site-specific directories the file picker may browse (config decoder.browseRoots).
-func NewSettingsApi(router *mux.Router, serv services.IRuntimeSettingsService, camera services.ICameraService, userServ services.ILocalUserService, notifServ services.INotificationSettingsService, healthServ services.IHealthSettingsService, machineHealth services.IMachineHealthSettingsService, machineMetrics services.IMachineMetricsProvider, visionTool services.VisionToolSettings, ffmpeg *services.FFmpegInstaller, pyRuntime *services.PythonInstaller, browseRoots []string) {
-	handler := &settingsApi{serv: serv, camera: camera, userServ: userServ, notifServ: notifServ, healthServ: healthServ, machineHealth: machineHealth, machineMetrics: machineMetrics, visionTool: visionTool, ffmpeg: ffmpeg, pyRuntime: pyRuntime, browseRoots: browseRoots}
+func NewSettingsApi(router *mux.Router, serv services.IRuntimeSettingsService, camera services.ICameraService, userServ services.ILocalUserService, notifServ services.INotificationSettingsService, healthServ services.IHealthSettingsService, machineHealth services.IMachineHealthSettingsService, machineMetrics services.IMachineMetricsProvider, visionTool services.VisionToolSettings, ffmpeg *services.FFmpegInstaller, pyRuntime *services.PythonInstaller, browseRoots []string, roles sharedservices.IAccessRoleService) {
+	handler := &settingsApi{serv: serv, camera: camera, userServ: userServ, notifServ: notifServ, healthServ: healthServ, machineHealth: machineHealth, machineMetrics: machineMetrics, visionTool: visionTool, ffmpeg: ffmpeg, pyRuntime: pyRuntime, browseRoots: browseRoots, roles: roles}
 	group := router.PathPrefix("/settings").Subrouter()
 
 	group.HandleFunc("/runtime", handler.getRuntime).Methods("GET")
@@ -57,6 +61,7 @@ func NewSettingsApi(router *mux.Router, serv services.IRuntimeSettingsService, c
 	group.HandleFunc("/vision/ai-runtime/status", handler.aiRuntimeStatus).Methods("GET")
 	group.HandleFunc("/vision/ai-runtime/install", handler.aiRuntimeInstall).Methods("POST")
 	group.HandleFunc("/vision/ai-runtime/install/status", handler.aiRuntimeInstallStatus).Methods("GET")
+	group.HandleFunc("/roles", handler.listRoles).Methods("GET")
 	group.HandleFunc("/users", handler.listUsers).Methods("GET")
 	group.HandleFunc("/users", handler.createUser).Methods("POST")
 	group.HandleFunc("/users/{id}", handler.updateUser).Methods("PUT")
@@ -532,4 +537,18 @@ func readID(w http.ResponseWriter, r *http.Request) (uint64, bool) {
 		return 0, false
 	}
 	return id, true
+}
+
+// listRoles returns the roles an admin can assign. Admin-only: the role list describes the
+// authorization model, and a viewer has no business enumerating it.
+func (a *settingsApi) listRoles(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	roles, err := a.roles.List(r.Context())
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, roles, "succeed")
 }

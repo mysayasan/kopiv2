@@ -24,8 +24,8 @@ const (
 	// scenes (plain conveyor, flat wall) most of the frame hashes identically and
 	// distinct objects can sit within a few bits of each other — verified with
 	// synthetic flat-background frames, where ≤10 swallowed most keeps.
-	teachDedupHamming = 4
-	teachDedupWindow     = 12   // recent keeps compared for dedup
+	teachDedupHamming    = 4
+	teachDedupWindow     = 12 // recent keeps compared for dedup
 	teachSessionMaxKeeps = 250
 	teachSessionMaxTime  = 15 * time.Minute
 

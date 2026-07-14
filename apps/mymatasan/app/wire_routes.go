@@ -16,8 +16,8 @@ import (
 //     through the slow free-space scrub; a DB-backed request (including the login probe)
 //     would otherwise 500 until the restart.
 //  2. LocalBasicAuth — authenticates and puts the principal in context.
-//  3. RequireAdminForWrites — read-only for non-admins. It MUST come after auth, or it has
-//     no principal to check and fails closed on everything.
+//  3. RequireRolePermission — the role permission matrix. It MUST come after auth, or it
+//     has no principal to check and fails closed on everything.
 //
 // It returns the protected subrouter, because a few API groups (system reset, self-update,
 // backup) are built LAST — they need the monitors and recorder to exist so they can quiesce
@@ -35,7 +35,10 @@ func registerRoutes(api *mux.Router, w *wiring) *mux.Router {
 	// through a closure at REQUEST time, by which point it is set.
 	protected.Use(apis.NewResetGate(func() bool { return w.systemReset != nil && w.systemReset.InProgress() }))
 	protected.Use(apis.NewLocalBasicAuth(w.localUser, w.loginGuard, w.loginLockoutNotifier))
-	protected.Use(apis.NewRequireAdminForWrites())
+	// Every request is decided against the signed-in user's role. Deny-by-default; a
+	// superadmin bypasses the matrix. This replaced a single bool plus a suffix-matched
+	// allow-list, under which every GET was allowed to everybody.
+	protected.Use(apis.NewRequireRolePermission(w.accessRoles, w.accessPerms))
 
 	apis.NewLocalAuthApi(protected, w.localUser)
 	apis.NewOnvifApi(protected, w.camera, w.settings, w.streamManager)
@@ -44,7 +47,7 @@ func registerRoutes(api *mux.Router, w *wiring) *mux.Router {
 	apis.NewTrainingApi(protected, w.training)
 	apis.NewTeachApi(protected, w.teach)
 	apis.NewSettingsApi(protected, w.settings, w.camera, w.localUser, w.notificationSettings, w.healthSettings, w.machineHealthSettings, w.machineHealth,
-		visionToolSettingsFromAppConfig(w.appCfg, w.detectorPaths.DetectorArgs), w.ffmpegInstaller, w.pythonInstaller, w.appCfg.Decoder.BrowseRoots)
+		visionToolSettingsFromAppConfig(w.appCfg, w.detectorPaths.DetectorArgs), w.ffmpegInstaller, w.pythonInstaller, w.appCfg.Decoder.BrowseRoots, w.accessRoles)
 	apis.NewRecordingApi(protected, w.recording, w.recorder, w.camera, w.settings, w.atrestCipher, w.vision, w.recorderConfig)
 	apis.NewObservationApi(protected, w.observation)
 	apis.NewNotificationApi(protected, w.notification)

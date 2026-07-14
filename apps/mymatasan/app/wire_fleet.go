@@ -64,7 +64,7 @@ func buildFleet(
 		pairingService,
 		deps.Config.Pairing.ControlPort,
 		appVersion,
-		apis.NewControlDispatcher(api),
+		apis.NewControlDispatcher(api, deps.AccessRoles),
 		func(format string, args ...any) { deps.Logger.Infof("mymatasan.control", format, args...) },
 	)
 	// Forward this node's notifications up the channel, so the control plane's unified feed

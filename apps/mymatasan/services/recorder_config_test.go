@@ -27,7 +27,7 @@ type fakeSettings struct {
 	recording RecordingSettings
 }
 
-func (f *fakeSettings) Get(context.Context) (RuntimeSettings, error)  { return RuntimeSettings{}, nil }
+func (f *fakeSettings) Get(context.Context) (RuntimeSettings, error) { return RuntimeSettings{}, nil }
 func (f *fakeSettings) Save(context.Context, RuntimeSettings) (RuntimeSettings, error) {
 	return RuntimeSettings{}, nil
 }

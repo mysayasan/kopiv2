@@ -20,10 +20,13 @@ out of `app.go` (Tier 2 phase D2).
   - Builds `control` (`services.NewControlChannelManager`) — once paired and enrolled,
     dials the control plane's control listener over mTLS and maintains a persistent
     bi-directional channel (commander commands down, events up). The dispatcher
-    (`apis.NewControlDispatcher(api)`) re-injects tunnelled commands into this app's OWN
-    `/api` router, so the commander reaches the node's exact API surface, gated by the
-    node's normal authorization via the synthetic principal the command carries — there is
-    no second, weaker path into the node.
+    (`apis.NewControlDispatcher(api, deps.AccessRoles)`) re-injects tunnelled commands into
+    this app's OWN `/api` router, so the commander reaches the node's exact API surface,
+    gated by the node's normal authorization (`NewRequireRolePermission`) via a synthetic
+    principal whose `RoleId` is resolved from the parent's asserted role name against this
+    node's OWN roles — there is no second, weaker path into the node, and the node's own
+    matrix (not the parent's) decides what the command may do. See
+    `apis/control_dispatch.go.md`.
   - Registers `notificationService.Register(services.NewControlEventSink(control))` so this
     node's notifications are forwarded up the control channel to the control plane's
     unified feed, in addition to local delivery.

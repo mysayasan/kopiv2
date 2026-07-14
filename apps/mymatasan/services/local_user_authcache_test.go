@@ -9,7 +9,7 @@ import (
 // and returns the service (backed by the counting fake) plus the user id.
 func seedActiveAdmin(t *testing.T, repo *fakeLocalUserRepo, password string) (ILocalUserService, int64) {
 	t.Helper()
-	svc := NewLocalUserService(repo)
+	svc := NewLocalUserService(repo, newFakeRoles())
 	user, err := svc.Create(context.Background(), CreateLocalUserRequest{
 		Username: "admin", Password: password, DisplayName: "Admin",
 		IsAdmin: true, IsActive: true, MustChangePassword: false,

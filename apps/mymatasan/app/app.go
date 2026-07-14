@@ -131,6 +131,12 @@ func (m *module) Entities() []any {
 		appentities.TeachSkill{},
 		appentities.RuntimeSetting{},
 		appentities.LocalUser{},
+		// The shared accessrbac tables. mymatasan uses the shared role + permission MODEL
+		// (so the suite has one authorization data model, and myiotsan inherits it) but not
+		// the shared middleware, which hard-requires a JWT mymatasan does not have — see
+		// apis.NewRequireRolePermission.
+		sharedentities.AccessRole{},
+		sharedentities.AccessRolePermission{},
 		appentities.RecordingSegment{},
 		appentities.RecordingConfig{},
 		appentities.ObjectObservation{},
@@ -281,7 +287,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	settingsService := services.NewRuntimeSettingsService(repo.RuntimeSetting, runtimeSettingsFromAppConfig(appCfg))
 	setupStateService := services.NewSetupStateService(repo.RuntimeSetting)
 	pairingService := services.NewPairingService(repo.RuntimeSetting, atrestCipher, "", "")
-	localUserService := services.NewLocalUserService(repo.LocalUser)
+	localUserService := services.NewLocalUserService(repo.LocalUser, deps.AccessRoles)
 	shredPasses := resolveShredPasses(appCfg)
 	// The at-rest recording codec is NOT captured here any more: RecorderConfigBuilder
 	// reads it live on every build, so a Settings → Recording change applies the next time
@@ -331,6 +337,30 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	if err := notificationSettingsService.Sync(context.Background()); err != nil {
 		deps.Logger.Warnf("mymatasan.notification", "load notification settings failed: %v", err)
 	}
+	// Roles BEFORE the admin is seeded: the bootstrap admin has to be given the superadmin
+	// role, and an existing install's users have to be carried across from the legacy
+	// IsAdmin bool. Both need the roles to exist first.
+	if err := services.EnsureRoles(context.Background(), deps.AccessRoles, deps.AccessPerms); err != nil {
+		return nil, fmt.Errorf("seed authorization roles: %w", err)
+	}
+	adminRole, err := deps.AccessRoles.GetByName(context.Background(), services.RoleAdmin)
+	if err != nil || adminRole == nil {
+		return nil, fmt.Errorf("resolve %s role: %w", services.RoleAdmin, err)
+	}
+	operatorRole, err := deps.AccessRoles.GetByName(context.Background(), services.RoleOperator)
+	if err != nil || operatorRole == nil {
+		return nil, fmt.Errorf("resolve %s role: %w", services.RoleOperator, err)
+	}
+	// Carry an existing install across: every user without a role gets one, derived from the
+	// legacy IsAdmin bool. Non-admins become OPERATORS — today's non-admin can already review
+	// footage and acknowledge alerts, and demoting them to viewer would silently take that
+	// away. See ILocalUserService.BackfillRoles.
+	if migrated, err := localUserService.BackfillRoles(context.Background(), adminRole.Id, operatorRole.Id); err != nil {
+		return nil, fmt.Errorf("assign roles to existing users: %w", err)
+	} else if migrated > 0 {
+		deps.Logger.Infof("mymatasan.rbac", "assigned a role to %d existing user(s) from the legacy admin flag", migrated)
+	}
+
 	adminSeed, err := localUserService.EnsureDefaultAdmin(context.Background(), deps.Config.LocalAuth.Username, deps.Config.LocalAuth.Password)
 	if err != nil {
 		return nil, fmt.Errorf("seed local admin user failed: %w", err)
@@ -552,6 +582,8 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 		loginGuard:           loginGuard,
 		loginLockoutNotifier: loginLockoutNotifier,
+		accessRoles:          deps.AccessRoles,
+		accessPerms:          deps.AccessPerms,
 
 		ffmpegInstaller: services.NewFFmpegInstaller(ffmpegBinDir, settingsService),
 		pythonInstaller: services.NewPythonInstaller(deps.DataDir, deps.ConfigPath),

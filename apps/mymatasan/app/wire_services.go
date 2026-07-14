@@ -8,6 +8,7 @@ import (
 	mmconfig "github.com/mysayasan/kopiv2/apps/mymatasan/config"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
 	"github.com/mysayasan/kopiv2/domain/notification"
+	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/infra/apphost"
 	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/recording"
@@ -74,9 +75,13 @@ type wiring struct {
 	control    *services.ControlChannelManager
 	media      *services.MediaChannelManager
 
-	// Auth.
+	// Auth + authorization. accessRoles/accessPerms are the shared RBAC services: mymatasan
+	// uses the shared role + permission MODEL, with its own middleware over its own
+	// Basic-auth principal (the shared middleware hard-requires a JWT it does not have).
 	loginGuard           *apis.LoginGuard
 	loginLockoutNotifier services.INotificationPublisher
+	accessRoles          sharedservices.IAccessRoleService
+	accessPerms          sharedservices.IAccessPermissionService
 
 	// Installers.
 	ffmpegInstaller *services.FFmpegInstaller
@@ -133,6 +138,8 @@ func (w *wiring) validate() error {
 	check("control", w.control != nil)
 	check("media", w.media != nil)
 	check("loginGuard", w.loginGuard != nil)
+	check("accessRoles", w.accessRoles != nil)
+	check("accessPerms", w.accessPerms != nil)
 	check("ffmpegInstaller", w.ffmpegInstaller != nil)
 	check("pythonInstaller", w.pythonInstaller != nil)
 

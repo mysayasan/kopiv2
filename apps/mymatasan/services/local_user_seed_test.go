@@ -73,7 +73,7 @@ func (f *fakeLocalUserRepo) UpdateById(_ context.Context, _ string, model entiti
 func TestEnsureDefaultAdminGeneratesWhenNoPassword(t *testing.T) {
 	t.Setenv("LOCAL_ADMIN_PASSWORD", "")
 	repo := &fakeLocalUserRepo{}
-	svc := NewLocalUserService(repo)
+	svc := NewLocalUserService(repo, newFakeRoles())
 
 	res, err := svc.EnsureDefaultAdmin(context.Background(), "admin", "")
 	if err != nil {
@@ -107,7 +107,7 @@ func TestEnsureDefaultAdminGeneratesWhenNoPassword(t *testing.T) {
 func TestEnsureDefaultAdminUsesConfigPassword(t *testing.T) {
 	t.Setenv("LOCAL_ADMIN_PASSWORD", "")
 	repo := &fakeLocalUserRepo{}
-	svc := NewLocalUserService(repo)
+	svc := NewLocalUserService(repo, newFakeRoles())
 
 	res, err := svc.EnsureDefaultAdmin(context.Background(), "admin", "configured-secret")
 	if err != nil {
@@ -125,7 +125,7 @@ func TestEnsureDefaultAdminUsesConfigPassword(t *testing.T) {
 // re-seeded and reports nothing to reveal.
 func TestEnsureDefaultAdminSkipsWhenUsersExist(t *testing.T) {
 	repo := &fakeLocalUserRepo{rows: []*entities.LocalUser{{Id: 1, Username: "admin", PasswordHash: "x", MustChangePassword: true}}}
-	svc := NewLocalUserService(repo)
+	svc := NewLocalUserService(repo, newFakeRoles())
 
 	res, err := svc.EnsureDefaultAdmin(context.Background(), "admin", "")
 	if err != nil {
@@ -149,7 +149,7 @@ func TestResetAdminUsesEnvOverride(t *testing.T) {
 		nextID: 1,
 		rows:   []*entities.LocalUser{{Id: 1, Username: "admin", PasswordHash: oldHash, IsAdmin: true, IsActive: true, MustChangePassword: false}},
 	}
-	svc := NewLocalUserService(repo)
+	svc := NewLocalUserService(repo, newFakeRoles())
 
 	res, err := svc.ResetAdmin(context.Background(), "admin", "")
 	if err != nil {
@@ -185,7 +185,7 @@ func TestResetAdminGeneratesWhenNoPassword(t *testing.T) {
 		nextID: 1,
 		rows:   []*entities.LocalUser{{Id: 1, Username: "admin", PasswordHash: oldHash, IsAdmin: true, IsActive: true}},
 	}
-	svc := NewLocalUserService(repo)
+	svc := NewLocalUserService(repo, newFakeRoles())
 
 	res, err := svc.ResetAdmin(context.Background(), "admin", "")
 	if err != nil {
@@ -204,7 +204,7 @@ func TestResetAdminGeneratesWhenNoPassword(t *testing.T) {
 func TestResetAdminSeedsWhenNoUsers(t *testing.T) {
 	t.Setenv("LOCAL_ADMIN_PASSWORD", "")
 	repo := &fakeLocalUserRepo{}
-	svc := NewLocalUserService(repo)
+	svc := NewLocalUserService(repo, newFakeRoles())
 
 	res, err := svc.ResetAdmin(context.Background(), "admin", "")
 	if err != nil {
