@@ -36,13 +36,16 @@ Declares service contracts for app-specific domain.
   - `TalkCapability(ctx, id)` — returns `TalkCapabilityResult` reporting whether the camera supports two-way audio (talk-back), over which transport (ONVIF backchannel or TP-Link Tapo/VIGI port-8800), and whether a speaker password is needed/already stored; cached (10 min TTL, `HasPassword` always read live), safe for cheap UI polling.
   - `SaveTalkPassword(ctx, id, password)` — stores the speaker/cloud password used by the TP-Link talk transport and invalidates the cached capability so `HasPassword` refreshes immediately.
   - `OpenTalkSession(ctx, id) (talk.Session, error)` — opens a live talk-back audio session to the camera speaker over its resolved transport (ONVIF backchannel or TP-Link Tapo/VIGI); caller must `Close` it.
-- `ILocalUserService`
-  - `EnsureDefaultAdmin(ctx, username, password) (AdminSeedResult, error)` seeds the first standalone admin account from `localAuth` config values (env `LOCAL_ADMIN_PASSWORD` overrides the password; when none is supplied a strong per-install password is generated). Returns `AdminSeedResult{Seeded, Username, Password, Generated}` so the caller can reveal the bootstrap login (first-run console banner + recovery file).
-  - `ResetAdmin(ctx, username, password) (AdminSeedResult, error)` force-resets the admin password to a bootstrap credential (locked-out recovery; e.g. the installer's "reset admin login" reinstall). Must-change; returns the credential to reveal, same `AdminSeedResult` contract as seeding.
-  - `Authenticate(ctx, username, password)` validates Basic Auth credentials; the returned `*AuthenticatedUser` has `RoleId`/`IsAdmin` derived from the user's resolved role (`identity()`), not read off the legacy `LocalUser.IsAdmin` column — an unresolvable role is an error, not a quiet demotion.
-  - `BackfillRoles(ctx, adminRoleId, defaultRoleId int64) (int, error)` — gives a role to every user with `RoleId == 0`, derived from their legacy `IsAdmin` bool (`true` → `adminRoleId`, otherwise `defaultRoleId`). Called once at startup from `app.go`, after `services.EnsureRoles` and before the default admin is seeded, with `defaultRoleId` = the **operator** role id (see `app.go.md` for why operator, not viewer). Returns the count migrated; a count > 0 flushes the auth cache.
-  - CRUD and password reset operations for Settings user management. `Create`/`Update` resolve a role via `resolveRole(roleId, legacyIsAdmin)`: a positive `RoleId` in the request is the authority; `0` falls back to the legacy `IsAdmin` bool (`true` → superadmin, otherwise viewer), so a pre-roles client keeps working.
-  - The "don't remove the last admin" guard (`ensureNotRemovingLastAdmin`) now counts by **role** (`RoleId == adminRoleId`), not the legacy `IsAdmin` bool — counting the bool would let the last admin go if the mirror lagged behind a role change.
+- `ILocalUserService` — **no longer declared in this file.** The interface and its DTOs
+  (`AuthenticatedUser`, `CreateLocalUserRequest`, `UpdateLocalUserRequest`,
+  `ChangeLocalUserPasswordRequest`, `AdminSeedResult`) moved to
+  `domain/shared/services/local_user_types.go` (myiotsan needed the same appliance user
+  contract; see `domain/shared/services/local_user_types.go.md`).
+  `apps/mymatasan/services/local_user.go` re-exports every one of them as a same-named alias,
+  so `services.ILocalUserService`, `services.AuthenticatedUser`, etc. still resolve unchanged
+  from mymatasan's own package for every existing caller. Behavior summary (bootstrap/reset
+  seeding, bcrypt auth, role resolution, the last-admin guard, `BackfillRoles`) is documented
+  at `domain/shared/services/local_user.go.md`.
 - `IVisionService`
   - `GetRules(ctx, limit, offset)` and `SaveRule(ctx, req, userId)` for detection rule management
   - `DeleteRule(ctx, id)` for removing stale rules
@@ -113,12 +116,15 @@ Declares service contracts for app-specific domain.
 
 ## Key Types (roles / authorization)
 
-- `AuthenticatedUser` — gained `RoleId int64`, the authority every request is decided
+Moved to `domain/shared/services/local_user_types.go` alongside `ILocalUserService` (see
+above); re-exported here as aliases. Summary, unchanged since the move:
+
+- `AuthenticatedUser` — carries `RoleId int64`, the authority every request is decided
   against. `IsAdmin` is **derived** from the resolved role's `IsSuperadmin` flag
   (`services.identity()`), never read from `LocalUser.IsAdmin` directly — this is what keeps
   a single source of truth between the matrix and the handlers that still ask "is this an
   admin?" (settings self-gates, the control dispatcher).
-- `CreateLocalUserRequest` / `UpdateLocalUserRequest` — both gained `RoleId int64`. `RoleId >
+- `CreateLocalUserRequest` / `UpdateLocalUserRequest` — both carry `RoleId int64`. `RoleId >
   0` is the authority; `RoleId == 0` falls back to the legacy `IsAdmin` bool (`true` →
   superadmin, otherwise viewer), so the shipped Settings → Users screen (which still only
   sends `isAdmin`) keeps working unchanged until the frontend gets a role picker.

@@ -1,0 +1,6 @@
+{
+  "type": "refactor",
+  "scope": "mymatasan",
+  "summary": "Extracted mymatasan's local-auth stack (DB-backed users, Basic + session-cookie middleware, the failed-login lockout, and the three-role authorization matrix) into domain/shared so a second appliance app (myiotsan) runs the same security-critical code instead of a ~1,300-line fork. mymatasan's own types and routes are now thin aliases/bindings over the shared implementation; its authorization catalog (Policy()) stays app-owned. Also fixes a real bug affecting every app: an unmatched /api/* path previously returned 200 text/html to an unauthenticated caller instead of 404, because the app's auth middleware never saw a path that didn't match any of its routes.",
+  "compatibility": "Behavior-preserving for existing mymatasan installs: verified end-to-end on a fresh DB after the move — the session cookie is still named mymatasan_local_auth, the forced-password-change gate, cookie-only auth, bad-credential 401 handling, and the viewer/operator/admin permission ladder are all unchanged. No config or schema change and no operator action required. The /api/* 404 fix only changes the response for paths that were never valid endpoints; every real route is registered before the new catch-all and is unaffected."
+}

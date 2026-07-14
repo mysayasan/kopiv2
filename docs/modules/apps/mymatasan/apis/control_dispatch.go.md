@@ -28,7 +28,9 @@ Returns a `ControlDispatcher` (a function `func(ctx, control.Request) control.Re
    up via `roles.GetByName`; a lookup error returns `503 authorization is unavailable`. An
    **unknown role name resolves to no role**, and a principal with no role is denied
    everything by the matrix (fail closed).
-3. Injects an `AuthenticatedUser` principal into the request context (keyed by `localAuthContextKey{}`):
+3. Injects an `AuthenticatedUser` principal into the request context via `withLocalUser` (a
+   thin wrapper over `sharedapis.WithLocalUser` — the context key itself is unexported to
+   `domain/shared/apis`, so no network client can forge a principal):
    - `Username` = `"cp:" + req.Actor` (labeled for audit attribution).
    - `RoleId` / `IsAdmin` = the resolved role's id / `IsSuperadmin` flag (zero value when the
      role could not be resolved).

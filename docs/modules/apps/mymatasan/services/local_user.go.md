@@ -2,22 +2,42 @@
 
 ## Purpose
 
-Implements standalone DB-backed user management for `mymatasan`.
+No longer the implementation. The appliance user/login model now lives in
+`domain/shared/services` (`local_user.go` + `local_user_types.go`) so mymatasan and myiotsan
+run the SAME security-critical code — bcrypt handling, session comparison, the bcrypt
+verification cache, the last-admin guard — rather than two copies that drift. This file is
+now **re-export aliases only**, keeping mymatasan's existing call sites (handlers, other
+services, tests) unchanged.
 
-## Responsibilities
+## Contents
 
-- `EnsureDefaultAdmin(ctx, username, password) (AdminSeedResult, error)` seeds the admin account on first startup (no local users exist) using the caller-supplied `localAuth.username`/`localAuth.password` from config; an explicit `LOCAL_ADMIN_PASSWORD` env var overrides the password argument. When no password is supplied (empty config value and no env override — the packaged `deploy/dist/config.json` ships `localAuth.password` empty for exactly this), it **generates a strong random 16-char per-install password** via `generateBootstrapPassword` (crypto/rand, unambiguous charset) rather than seed a shared default. The seeded account is always created with `MustChangePassword=true`. It returns an `AdminSeedResult` (`Seeded`, `Username`, `Password`, `Generated`) so the caller (`app.go`) can reveal the bootstrap login — console banner + `INITIAL_ADMIN_LOGIN.txt` recovery file — on the install paths with no GUI installer finish page. The caller always writes the recovery file; it echoes the password in the console banner only when `Generated` (a config/env value the operator already knows is not logged).
-- `ResetAdmin(ctx, username, password) (AdminSeedResult, error)` is the locked-out recovery path (e.g. the Windows installer's "reset admin login" reinstall over an existing data dir). It force-resets the admin account's password to a bootstrap credential (same resolution as seeding via `resolveBootstrapPassword`: `LOCAL_ADMIN_PASSWORD` env → config value → generated), flags it must-change, and returns the credential to reveal. It targets the configured username, else the first admin (`findAdminToReset`); on an empty user table it seeds instead. `app.go` invokes it only after consuming a one-shot installer marker, so it never runs on an ordinary restart.
-- On later startups (users already exist), `flagDefaultAdminPassword` force-flags any admin account still on the legacy shipped default (`admin` / `Admin123`) as must-change, so older installs are protected too.
-- Hashes local passwords with bcrypt.
-- Authenticates Basic Auth credentials and DB-backed auth cookies.
-- Lists, creates, updates, resets passwords, and deletes local users.
-- Prevents deleting, disabling, or demoting the last active admin user.
-- `Authenticate` caches a **successful** Basic Auth verification for `authCacheTTL` (30s), keyed by `username + sha256(password)`, so the SPA replaying the same Basic credential on every request skips both the bcrypt compare and the `LastLoginAt` DB write on a cache hit — the two per-request costs that otherwise cap throughput under load. Only successes are cached (a wrong password always pays bcrypt, so the cache can't cheapen credential guessing), and the cache is bounded by the real user count. The cache is flushed on any user mutation (`Update`, `ResetPassword`, `ChangePassword`, `Delete`, `ResetAdmin`) so a rotated, deactivated, or deleted credential can never keep authenticating from a stale entry.
+```go
+type (
+    AuthenticatedUser              = sharedservices.AuthenticatedUser
+    ILocalUserService               = sharedservices.ILocalUserService
+    AdminSeedResult                 = sharedservices.AdminSeedResult
+    CreateLocalUserRequest          = sharedservices.CreateLocalUserRequest
+    UpdateLocalUserRequest          = sharedservices.UpdateLocalUserRequest
+    ChangeLocalUserPasswordRequest  = sharedservices.ChangeLocalUserPasswordRequest
+    ResetLocalUserPasswordRequest   = sharedservices.ResetLocalUserPasswordRequest
+)
+
+var NewLocalUserService = sharedservices.NewLocalUserService
+
+var (
+    ErrLocalUserInvalidCredential = sharedservices.ErrLocalUserInvalidCredential
+    ErrLocalUserInactive          = sharedservices.ErrLocalUserInactive
+)
+```
 
 ## Notes
 
+- See `domain/shared/services/local_user.go.md` and
+  `domain/shared/services/local_user_types.go.md` for the real behavior documentation
+  (`EnsureDefaultAdmin`/`ResetAdmin` bootstrap/recovery, the auth cache, the last-admin guard,
+  `BackfillRoles`, etc.) — everything below this file's line count now lives there.
+- This move is behavior-preserving for mymatasan: verified by booting on a fresh DB — the
+  forced-change gate still returns `password_change_required`, the login probe still issues a
+  cookie still named `mymatasan_local_auth`, cookie-only auth still works, a bad credential is
+  still `401`, and the role ladder still holds.
 - This service is intentionally separate from MyIDSan identity and RBAC services.
-- `EnsureDefaultAdmin`'s signature takes `username, password` and now returns `(AdminSeedResult, error)`; `app.go` passes `deps.Config.LocalAuth.Username` / `deps.Config.LocalAuth.Password` and, when `Seeded`, calls `announceFirstRunAdmin`.
-- The Windows installer generates its own per-install password and injects it via `LOCAL_ADMIN_PASSWORD`, so on Windows the password is env-supplied (`Generated=false`) and the installer's finish page owns the reveal; the app's banner/file path is for CLI/Docker/systemd/portable.
-- The auth cache (`authCache`/`authMu` on `localUserService`) is in-process and unbounded by TTL cleanup other than lazy expiry-on-read; it holds at most one entry per currently-valid username+password pair actually presented, so its size tracks real traffic, not the user table.

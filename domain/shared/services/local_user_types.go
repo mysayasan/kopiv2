@@ -62,9 +62,9 @@ type UpdateLocalUserRequest struct {
 	DisplayName string `json:"displayName"`
 	// RoleId is the authority; 0 falls back to the legacy IsAdmin bool. See
 	// CreateLocalUserRequest.
-	RoleId      int64 `json:"roleId"`
-	IsAdmin     bool  `json:"isAdmin"`
-	IsActive    bool  `json:"isActive"`
+	RoleId   int64 `json:"roleId"`
+	IsAdmin  bool  `json:"isAdmin"`
+	IsActive bool  `json:"isActive"`
 }
 
 // ChangeLocalUserPasswordRequest is the self-service password change body.

@@ -6,6 +6,9 @@
     "myidsan": {
       "version": "1.12.1"
     },
+    "myiotsan": {
+      "version": "0.1.0"
+    },
     "mymatasan": {
       "version": "1.104.0"
     },

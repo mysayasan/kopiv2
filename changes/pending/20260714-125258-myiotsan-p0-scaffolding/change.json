@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "myiotsan,core",
+  "summary": "Added myiotsan, the suite's fourth app and on-prem IoT device hub (\"the NVR, but for sensors\"), as P0 scaffolding: a dedicated cmd/myiotsan entrypoint, config + dev TLS certs on port 3003, an app composition root that boots, authenticates (DB-backed local users via the shared appliance auth stack, with a new session-cookie login endpoint as its primary sign-in path instead of replaying HTTP Basic on every request), and serves an SPA shell. Its own three-role authorization catalog additionally makes device actuation admin-only, ahead of the actuation feature landing. The IoT domain itself (device inventory, telemetry ingest, rules, alerts) is deliberately not implemented yet and arrives in later phases (see docs/MYIOTSAN_PLAN.md).",
+  "compatibility": "New app; no impact on mymatasan, myidsan, or myseliasan installs beyond myidsan's SSO audience list gaining 'myiotsan' (additive, does not affect existing relying apps) and the shared version manifest gaining a myiotsan app-version entry. myiotsan has no release packaging yet (deferred to a later phase) — it is runnable today only via `go run . -app myiotsan` or `go build ./cmd/myiotsan`."
+}

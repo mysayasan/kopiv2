@@ -1,0 +1,28 @@
+/* myiotsan additions, layered on top of the shared app.css so that large stylesheet
+   stays a verbatim copy of the suite's. */
+
+/* The nav is a grid that takes all the space under the brand (rbac-standard.css). With
+   only a handful of entries its rows stretch to fill that height, spreading the menu
+   down the rail; pin the groups to the top instead. */
+.side-nav nav { align-content: start; }
+
+/* --- Login / change-password screens -----------------------------------------
+   The card chrome itself (.login-screen, .login-panel, .login-brand, .login-note,
+   .login-lang-switch) is the suite-wide login standard and lives in app.css. Only
+   the form's own rhythm belongs here, so the fields read as one stack with the card. */
+.login-form { display: grid; gap: 16px; }
+
+/* --- Not-yet-built section body ----------------------------------------------
+   The honest empty state each P0 placeholder page shows in place of its feature. */
+.phase-empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px;
+  border: 1px dashed var(--border-panel);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+}
+
+.phase-empty p { margin: 0; }

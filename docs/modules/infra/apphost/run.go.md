@@ -63,6 +63,9 @@ Implements the reusable runtime host for all app modules.
 - Build and validate transaction lock provider (`redis`, `memory`, or `inmemory`) from runtime config.
 - Register shared Swagger/OpenAPI routes for runtime API documentation.
 - Invoke app-specific route registration.
+- Register a catch-all `/api/*` 404 JSON handler on the `api` subrouter, after every app
+  route and the shared `/health`/`/ready` mounts, so an unmatched API path answers
+  `404 application/json` instead of falling through to the SPA catch-all below it.
 - Invoke optional app-specific non-API web route registration before static asset fallback.
 - Serve static SPA files from selected app directory.
 - Build listener matrix from server hostnames and TLS/non-TLS port lists.
@@ -73,6 +76,16 @@ Implements the reusable runtime host for all app modules.
 
 ## Notes
 
+- **`/api/*` 404 fix (found live-booting myiotsan):** before this, an unmatched path under
+  `/api` fell through to the root router's SPA catch-all (`spaHandler`) and got a `200
+  text/html` response — because the auth middleware is mounted on the *app's own* `/api`
+  subrouter, and that subrouter never matched a path it doesn't register, the middleware
+  never ran either. So every nonexistent `/api` path read as an **open, working, unauthenticated
+  endpoint** to a client or scanner probing it, and a typo'd route in a new app looked like it
+  worked. The fix registers a `PathPrefix("/").HandlerFunc` on the `api` subrouter itself,
+  after all real routes, that always answers `404 application/json`. This affects every app —
+  gorilla/mux tries routes in registration order, so it only catches what nothing else
+  matched.
 - Shared modules are mounted once in the host; app modules only provide app-specific routes/workers.
 - Apps can disable selected shared modules to keep resource-app API surfaces small; `mymatasan` disables all shared APIs except the version endpoint. Identity routes live only in `myidsan`. The shared accessrbac management surface (`/api/access-rbac`) is mounted by apphost for any app with `SharedAPIConfig.AccessRbac = true` (the default); the app must include `AccessRole`/`AccessRolePermission` entities and bind a user resolver.
 - App modules can register app-specific periodic jobs through `deps.Scheduler`.

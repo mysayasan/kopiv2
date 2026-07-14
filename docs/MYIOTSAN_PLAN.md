@@ -1,6 +1,6 @@
 # MyIotSan — Implementation Plan
 
-Status: **PLANNED** (2026-07-13). Not yet started.
+Status: **P0 SHIPPED** (2026-07-14). P1+ not yet started.
 
 `myiotsan` is the fourth app in the suite, alongside `mymatasan` (camera NVR), `myseliasan`
 (fleet control plane) and `myidsan` (identity/SSO). It is built on the same platform as
@@ -226,7 +226,37 @@ MVP (P0–P2) is realistically **3–4 focused weeks** given the reuse. Full P0�
 
 ## 8. P0 checklist
 
-Derived from how `myseliasan` was actually created (commits `805769a` → `db5df80` → `c5eea80`).
+**SHIPPED 2026-07-14.** Derived from how `myseliasan` was actually created (commits
+`805769a` → `db5df80` → `c5eea80`). Notes on what actually happened vs. the checklist below:
+
+- Item 1 was reworked mid-flight: rather than hand-copy mymatasan's ~1,300 lines of
+  local-auth/RBAC code into `apps/myiotsan`, that stack was **extracted to `domain/shared`**
+  (`domain/shared/apis`, `domain/shared/services`) first, as its own preceding commit, so
+  mymatasan and myiotsan run one implementation instead of two forks. `apps/myiotsan/app/app.go`
+  is consequently smaller than a hand-copy would have been — see
+  `docs/modules/apps/myiotsan/app/app.go.md`.
+- A shared **session-cookie login endpoint** (`domain/shared/apis/local_login_api.go`,
+  `POST /api/auth/login`) was added as part of this, ahead of plan — mymatasan's
+  Basic-replayed-every-request design costs a bcrypt verification per request (the load-test
+  ceiling that forced its bcrypt cache); myiotsan uses the cookie exchange as its primary
+  sign-in path instead. Basic still works for API clients.
+- A real bug was found and fixed along the way, applying to **every** app, not just myiotsan:
+  an unmatched `/api/*` path returned `200 text/html` to an unauthenticated caller instead of
+  404 (`infra/apphost/run.go`) — found by live-booting myiotsan. See
+  `docs/modules/infra/apphost/run.go.md`.
+- Item 9's changelog entries are scoped `mymatasan` (the auth extraction + the `/api` 404 fix)
+  and `myiotsan,core` (the new app), not a single `myiotsan,core` entry — the extraction is a
+  real, behavior-preserving code move affecting mymatasan's own release, so it needed its own
+  app-scoped entry to cut a mymatasan release.
+- **Item 8 (docs) and item 9 (changelog) followed the checklist as written**, including one
+  doc per source file for every new/moved module.
+
+Everything else below matched the checklist as originally written.
+
+**§8 release plumbing (the "Deferred to P7" list below) is still deferred to P7** — P0 shipped
+with no GoReleaser target, no release workflow, no installer packaging, and no Docker release
+image for myiotsan. `go run . -app myiotsan` / `go build ./cmd/myiotsan` are the only supported
+ways to run it today.
 
 **Go / app**
 1. `apps/myiotsan/app/app.go` — implement `apphost.App` (`Name`/`BaseDir`/`Entities`/`Seeders`/`RegisterAppRoutes`) + `SharedAPIs()` + `RegisterWebRoutes` + `APIDocs()`. Model on `apps/myseliasan/app/app.go`.

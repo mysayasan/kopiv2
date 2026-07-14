@@ -1,0 +1,1426 @@
+/* Standardized RBAC-app shell: the myidsan side-nav + permission-matrix design,
+   adopted verbatim as the shared look for every RBAC-enabled web app. The sidebar
+   keeps myidsan's constant dark palette (theme-independent), while the main
+   workspace and the permission matrix bind to myseliasan's theme variables so the
+   light/dark toggle keeps working. Imported last so it overrides app.css. */
+
+/* Side-nav palette — theme-responsive: a soft light rail in light mode, the classic
+   dark rail in dark mode, pure black in high contrast. (Declared light→dark→contrast so
+   later blocks win at equal specificity.) */
+:root, .theme-light {
+  --nav-bg: linear-gradient(180deg, #f2f5fa 0%, #e9edf4 100%);
+  --nav-text: #1c2533;
+  --nav-label: #5b6675;
+  --nav-sub: #66718a;
+  --nav-hover: rgba(45, 108, 223, 0.10);
+  --nav-line: #d5dbe5;
+  --nav-fill: rgba(20, 30, 50, 0.05);
+  --nav-code: #3a4660;
+  --nav-scroll: rgba(30, 45, 70, 0.26);
+  --nav-scroll-hover: rgba(30, 45, 70, 0.48);
+}
+.theme-dark {
+  --nav-bg: linear-gradient(180deg, #161d2b 0%, #0f1622 100%);
+  --nav-text: #ffffff;
+  --nav-label: #8ea0b8;
+  --nav-sub: #a7b3c4;
+  --nav-hover: rgba(255, 255, 255, 0.12);
+  --nav-line: rgba(255, 255, 255, 0.14);
+  --nav-fill: rgba(255, 255, 255, 0.08);
+  --nav-code: #d7e2f2;
+  --nav-scroll: rgba(255, 255, 255, 0.20);
+  --nav-scroll-hover: rgba(255, 255, 255, 0.40);
+}
+.theme-contrast {
+  --nav-bg: #000000;
+  --nav-text: #ffffff;
+  --nav-label: #ffffff;
+  --nav-sub: #e8eaee;
+  --nav-hover: rgba(255, 255, 255, 0.24);
+  --nav-line: rgba(255, 255, 255, 0.55);
+  --nav-fill: rgba(255, 255, 255, 0.14);
+  --nav-code: #ffffff;
+  --nav-scroll: rgba(255, 255, 255, 0.22);
+  --nav-scroll-hover: rgba(255, 255, 255, 0.42);
+}
+
+.boot-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: var(--text-muted);
+}
+
+/* Override app.css's centered-column .app-shell with the two-pane sidebar grid. */
+.app-shell {
+  width: auto;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+}
+
+/* --- Auto-hide rail (pin toggle off) -----------------------------------------
+   Unpinned, the rail collapses to a 68px icon strip and slides OVER the workspace on
+   hover/focus instead of reflowing it. Pinned keeps the full 260px rail in the grid flow
+   (see .app-shell above) — it only "sticks" (takes layout space) when pinned. Standardized
+   with mymatasan; the one difference is the breakpoint, because this app stacks its rail
+   at <=1080px (mymatasan at <=860px) and auto-hide must not apply to the stacked layout. */
+@media (min-width: 1081px) {
+  .app-shell.nav-autohide {
+    grid-template-columns: 68px minmax(0, 1fr);
+  }
+
+  /* The rail is fixed (out of grid flow), so the workspace must be pinned to column 2
+     explicitly — otherwise it auto-places into the empty 68px column 1 and collapses. */
+  .app-shell.nav-autohide .main-workspace {
+    grid-column: 2;
+  }
+
+  .app-shell.nav-autohide .side-nav {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 68px;
+    padding-left: 12px;
+    padding-right: 12px;
+    overflow: hidden;
+    transition: width 0.18s ease, padding 0.18s ease, box-shadow 0.18s ease;
+  }
+
+  .app-shell.nav-autohide .side-nav:hover,
+  .app-shell.nav-autohide .side-nav:focus-within {
+    width: 260px;
+    padding-left: 16px;
+    padding-right: 16px;
+    box-shadow: 8px 0 30px rgba(0, 0, 0, 0.32);
+  }
+
+  /* Collapsed state (rail not hovered/focused): center each item's glyph and hide every
+     label, group heading, count/badge, the node tree's caret + child nodes, the brand
+     wordmark/subtitle + pin toggle, and the whole footer. All of it returns when the rail
+     expands on hover, so the collapsed rail shows only the main icons. */
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-item {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-label,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-group-label,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-tree-count,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-item-badge,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-tree-caret,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-tree-branch,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .brand-wordmark,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .side-brand-sub,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-pin-toggle,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .side-account-role,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .side-nav-foot {
+    display: none;
+  }
+
+  /* Collapsed rail: the account chip stacks the avatar over the logout icon, centered,
+     with no pill fill. */
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .side-account {
+    flex-direction: column;
+    padding: 4px 0;
+    gap: 8px;
+    background: transparent;
+  }
+}
+
+.side-nav {
+  background: var(--nav-bg);
+  color: var(--nav-text);
+  border-right: 1px solid var(--nav-line);
+  padding: 22px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  /* Lift above the static workspace so a node's hover balloon isn't clipped/painted under it. */
+  z-index: 20;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+/* The brand block is the pin toggle's positioning context. */
+.side-brand {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+}
+
+/* Pin / auto-hide toggle — tucked into the top-right corner of the brand block.
+   Standardized with mymatasan's rail. */
+.nav-pin-toggle {
+  position: absolute;
+  top: -6px;
+  right: -4px;
+  width: 28px;
+  height: 28px;
+  /* Reset the base button's min-height/padding so the square stays 28×28 and the
+     hover background sits centered on the icon instead of drifting right. */
+  min-height: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--nav-sub);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.nav-pin-toggle:hover {
+  background: var(--nav-hover);
+  color: var(--nav-text);
+}
+
+.nav-pin-toggle[aria-pressed="true"] {
+  color: var(--tone-accent, #2563eb);
+}
+
+/* The SVG brand mark + wordmark, centered at the top of the dark sidebar. */
+.side-nav .brand-logo {
+  justify-self: center;
+  align-self: center;
+}
+
+.side-nav .brand-wordmark {
+  color: var(--nav-text);
+}
+
+.side-brand-sub {
+  text-align: center;
+  color: var(--nav-sub);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+/* Account chip: a slim pill under the brand showing just the role (no email, for
+   privacy) + a ghost logout icon button. Deliberately minimal — not a bulky card.
+   Standardized with mymatasan's rail. */
+.side-account {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 4px 4px 4px 6px;
+  border-radius: 999px;
+  background: var(--nav-fill);
+}
+
+.side-account-avatar {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--tone-accent, #2563eb) 24%, transparent);
+  color: var(--tone-accent, #6ea8fe);
+}
+
+.side-account-role {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--nav-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.side-account-logout {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  min-height: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--nav-sub);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.side-account-logout:hover:not(:disabled) {
+  background: rgba(229, 72, 77, 0.16);
+  color: #ff7075;
+}
+
+.side-account-logout:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* The theme picker sits just after the language switcher in the top-right bar,
+   sized to match it: plain text (no button chrome), 13px, with a pipe separator. */
+.shared-lang-bar .theme-drop-wrap {
+  border-left: 1px solid var(--border-strong, var(--border-soft, #c7d1dc));
+  padding-left: 8px;
+}
+
+.shared-lang-bar .theme-toggle {
+  min-height: 0;
+  padding: 2px 4px;
+  font-size: 13px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+}
+
+.shared-lang-bar .theme-toggle:hover,
+.shared-lang-bar .theme-toggle.active {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+}
+
+.side-nav nav {
+  display: grid;
+  gap: 18px;
+  /* Take the space left under the brand block and scroll internally when the menu is
+     taller than the viewport, so items never spill out of the nav panel. min-height:0
+     is required for a flex child to be allowed to shrink and scroll. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Slim, overlay-style scrollbar that stays invisible until you interact with the
+     rail, so it never crowds the menu. Theme-aware via the nav palette. Firefox uses
+     the standard properties; WebKit uses the pseudo-elements below. */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.25s ease;
+}
+.side-nav nav:hover,
+.side-nav nav:focus-within {
+  scrollbar-color: var(--nav-scroll) transparent;
+}
+.side-nav nav::-webkit-scrollbar {
+  width: 8px;
+}
+.side-nav nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+.side-nav nav::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+  /* Inset the pill with a transparent border so it reads as a thin floating bar with
+     breathing room on both sides rather than a chunky edge-to-edge block. */
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background-color 0.25s ease;
+}
+.side-nav nav:hover::-webkit-scrollbar-thumb,
+.side-nav nav:focus-within::-webkit-scrollbar-thumb {
+  background-color: var(--nav-scroll);
+}
+.side-nav nav::-webkit-scrollbar-thumb:hover,
+.side-nav nav::-webkit-scrollbar-thumb:active {
+  background-color: var(--nav-scroll-hover);
+}
+
+.nav-group {
+  display: grid;
+  gap: 6px;
+}
+
+.nav-group-label {
+  padding: 0 10px 3px;
+  color: var(--nav-label);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.nav-item {
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  color: var(--nav-text);
+  text-align: left;
+  padding: 11px 12px;
+  background: transparent;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  position: relative;
+  min-height: 0;
+  cursor: pointer;
+}
+
+.nav-item:hover,
+.nav-item.active {
+  background: var(--nav-hover);
+}
+
+.nav-item.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--tone, #9aa7b8);
+}
+
+.nav-code {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--nav-line);
+  border-radius: 8px;
+  background: var(--nav-fill);
+  color: var(--nav-code);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+/* Icon-based nav entry: an SVG glyph in the leading cell, tinted with the section
+   tone (mirrors myidsan), replacing the code tile. */
+.nav-ico {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  color: var(--tone, #cdd8e8);
+}
+
+.nav-ico svg {
+  display: block;
+}
+
+.nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 760;
+}
+
+/* Expandable Nodes tree: a caret toggle + root row, then an indented branch of the
+   adopted nodes. The caret collapses the branch without navigating; the root row and
+   each child are ordinary nav-items so they inherit hover/active styling. */
+.nav-tree-rootrow {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.nav-tree-caret {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--nav-label);
+  cursor: pointer;
+}
+
+.nav-tree-caret:hover {
+  background: var(--nav-hover);
+  color: var(--nav-text);
+}
+
+.nav-tree-caret svg {
+  transition: transform 0.12s ease;
+}
+
+.nav-tree-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.nav-tree-children {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-left: 22px;
+  padding-left: 8px;
+  border-left: 1px solid var(--nav-line);
+}
+
+.nav-tree-child {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  position: relative;
+}
+
+/* Hover balloon describing a node — only rendered when the node has a description.
+   Sits to the right of the rail and floats above the workspace (see .side-nav z-index). */
+.nav-tip {
+  position: absolute;
+  left: calc(100% + 14px);
+  top: 50%;
+  transform: translateY(-50%) translateX(-4px);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: max-content;
+  max-width: 240px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: #0f1722;
+  border: 1px solid var(--nav-line);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+  text-align: left;
+  white-space: normal;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.nav-tip::before {
+  content: "";
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 6px solid transparent;
+  border-right-color: #0f1722;
+}
+
+.nav-tree-child:hover .nav-tip,
+.nav-tree-child:focus-visible .nav-tip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(-50%) translateX(0);
+}
+
+.nav-tip-title {
+  color: #fff;
+  font-weight: 800;
+  font-size: 12px;
+}
+
+.nav-tip-body {
+  color: #c4d0e0;
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.nav-tree-child .nav-label {
+  font-weight: 680;
+  font-size: 13px;
+}
+
+/* The node's chosen glyph in the leading cell, with a small status dot tucked into
+   the corner so identity (icon) and liveness (dot colour) read at a glance. */
+.nav-tree-ico {
+  width: 30px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  position: relative;
+  color: var(--tone, #cdd8e8);
+}
+
+.nav-tree-ico::after {
+  content: "";
+  position: absolute;
+  right: 2px;
+  bottom: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #6b7686;
+  box-shadow: 0 0 0 2px var(--nav-bg);
+}
+
+.nav-tree-ico[data-status="online"]::after {
+  background: #3fb27f;
+}
+
+.nav-tree-ico[data-status="offline"]::after {
+  background: #c2603f;
+}
+
+/* Node count badge on the Nodes root row. */
+.nav-tree-count {
+  margin-left: auto;
+  align-self: center;
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--nav-fill);
+  border: 1px solid var(--nav-line);
+  color: var(--nav-label);
+  font-size: 11px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.nav-tree-main {
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+}
+
+/* Filter box for large fleets — sits above the scrollable branch. */
+.nav-tree-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 6px 22px;
+  padding: 0 8px;
+  border-radius: 7px;
+  background: var(--nav-fill);
+  border: 1px solid var(--nav-line);
+  color: var(--nav-label);
+}
+
+.nav-tree-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--nav-text);
+  font-size: 12px;
+  padding: 6px 0;
+  outline: none;
+}
+
+.nav-tree-search input::placeholder {
+  color: var(--nav-label);
+}
+
+/* Cap the branch height and let it scroll once the fleet is large. */
+.nav-tree-children.scrolling {
+  max-height: 320px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+}
+
+.nav-tree-children.scrolling::-webkit-scrollbar {
+  width: 8px;
+}
+
+.nav-tree-children.scrolling::-webkit-scrollbar-thumb {
+  background: var(--nav-line);
+  border-radius: 999px;
+}
+
+.nav-tree-empty {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--nav-label);
+}
+
+/* Second tree level: each node is itself expandable into its cameras. The node row
+   reuses the caret+main rootrow layout; a narrower caret keeps the deeper indent tidy.
+   Camera leaves (grandchildren) are lighter than node rows and carry no status dot. */
+.nav-subtree {
+  display: flex;
+  flex-direction: column;
+}
+
+.nav-subtree-caret {
+  width: 18px;
+}
+
+.nav-cam-children {
+  margin-left: 18px;
+}
+
+.nav-tree-grandchild {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.nav-tree-grandchild .nav-label {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.nav-cam-ico {
+  width: 26px;
+  color: var(--nav-label);
+}
+/* Cameras show their own liveness dot (green online / red offline), driven by
+   data-status via the shared .nav-tree-ico[data-status] rules above — matching mymatasan. */
+
+/* Clickable "couldn't load — retry" row shown when the node can't be reached. */
+.nav-cam-retry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--nav-label);
+  text-align: left;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.nav-cam-retry:hover {
+  background: var(--nav-hover);
+  color: var(--nav-text);
+}
+
+/* Bottom-of-sidebar actions: theme toggle + log out, styled to sit on the dark bg. */
+.side-nav-foot {
+  margin-top: auto;
+  display: grid;
+  gap: 10px;
+}
+
+.logout-button {
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  color: var(--nav-text);
+  text-align: left;
+  padding: 11px 12px;
+  background: var(--nav-fill);
+  min-height: 0;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.logout-button:hover {
+  background: var(--nav-hover);
+}
+
+/* Theme dropdown adapted to the dark sidebar: full width, opens upward so the menu
+   is never clipped below the viewport at the foot of the rail. */
+.side-nav .theme-drop-wrap {
+  width: 100%;
+}
+
+.side-nav .theme-toggle {
+  width: 100%;
+  min-height: 44px;
+  justify-content: space-between;
+  border: 0;
+  border-radius: 8px;
+  background: var(--nav-fill);
+  color: var(--nav-text);
+}
+
+.side-nav .theme-toggle:hover,
+.side-nav .theme-toggle.active {
+  background: var(--nav-hover);
+  color: var(--nav-text);
+}
+
+.side-nav .theme-menu {
+  top: auto;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+}
+
+.main-workspace {
+  min-width: 0;
+  padding: 28px;
+  background: var(--bg-body);
+  display: flex;
+  flex-direction: column;
+}
+
+/* The embedded workspace already supplies its own top gap. */
+.main-workspace > .workspace {
+  padding-top: 0;
+}
+
+/* Let the active page grow to fill the column so the footer anchors to the bottom
+   (instead of floating right under short content), with a clear gap above it. */
+.main-workspace > .workspace,
+.main-workspace > .page-placeholder {
+  flex: 1 0 auto;
+}
+.main-workspace .shared-footer {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-divider, rgba(128, 128, 128, 0.2));
+}
+
+/* Section tones (sidebar accent + matches myidsan). */
+.tone-blue { --tone: #2563eb; }
+.tone-teal { --tone: #0f766e; }
+.tone-violet { --tone: #7c3aed; }
+.tone-indigo { --tone: #4f46e5; }
+.tone-steel { --tone: #64748b; }
+.tone-green { --tone: #138a5b; }
+
+/* --- Permission matrix (RBAC) — standardized to myidsan's layout, themed. ----- */
+.permission-controls {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  margin-bottom: 12px;
+}
+
+.permission-role-select {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.permission-role-select select {
+  min-height: 38px;
+  border-radius: 8px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-surface);
+  padding: 6px 10px;
+  font-weight: 600;
+}
+
+.permission-add {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.permission-add input {
+  flex: 1;
+  min-height: 38px;
+  border-radius: 8px;
+  border: 1px solid var(--border-soft);
+  padding: 6px 10px;
+}
+
+.permission-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.permission-table th,
+.permission-table td {
+  border-bottom: 1px solid var(--border-divider);
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.permission-table th:not(:first-child),
+.permission-cell {
+  text-align: center;
+  width: 64px;
+}
+
+.permission-table code {
+  font-size: 12px;
+}
+
+.permission-table input[type="checkbox"] {
+  width: auto;
+  min-height: 0;
+}
+
+/* --- Data table (filtering + sorting + pager) — ported from myidsan. -----------
+   Element selectors are scoped under .table-surface so they never touch the
+   dashboard/nodes tables; colours bind to myseliasan's theme variables. */
+.table-surface {
+  width: 100%;
+  border: 1px solid var(--border-divider);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+
+.table-wrap {
+  position: relative;
+  width: 100%;
+  overflow-x: auto;
+}
+
+.table-loading table {
+  pointer-events: none;
+}
+
+.table-surface table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 640px;
+  background: var(--bg-surface);
+}
+
+.table-surface th,
+.table-surface td {
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--border-divider);
+  text-align: left;
+  vertical-align: middle;
+  font-size: 14px;
+}
+
+.table-surface th {
+  color: var(--text-secondary);
+  background: var(--bg-subtle2);
+  font-weight: 700;
+}
+
+.table-surface tr:last-child td {
+  border-bottom: 0;
+}
+
+.column-head {
+  display: grid;
+  gap: 7px;
+  min-width: 120px;
+}
+
+.column-title-row,
+.column-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.column-title-row {
+  justify-content: space-between;
+}
+
+.column-title-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.column-actions {
+  flex: 0 0 auto;
+}
+
+.filter-button {
+  position: relative;
+  width: 30px;
+  min-height: 26px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  cursor: pointer;
+  padding: 0;
+}
+
+.filter-button::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 6px;
+  width: 14px;
+  height: 7px;
+  background: var(--text-secondary);
+  clip-path: polygon(0 0, 100% 0, 62% 100%, 38% 100%);
+}
+
+.filter-button::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  top: 13px;
+  width: 5px;
+  height: 6px;
+  background: var(--text-secondary);
+  border-radius: 1px 1px 2px 2px;
+}
+
+.filter-button:hover,
+.filter-button:focus-visible {
+  border-color: var(--accent);
+  outline: 0;
+}
+
+.filter-button.active {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.filter-button.active::before,
+.filter-button.active::after {
+  background: #fff;
+}
+
+.filter-count {
+  position: absolute;
+  right: -5px;
+  top: -6px;
+  z-index: 1;
+  min-width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.sort-button {
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  min-height: 26px;
+  padding: 3px 6px;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.sort-button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.sort-button span {
+  display: inline-grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+}
+
+.filter-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 49;
+  border: 0;
+  background: transparent;
+}
+
+.filter-popover {
+  position: fixed;
+  z-index: 50;
+  width: 280px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  box-shadow: 0 18px 42px var(--shadow-panel);
+  padding: 12px;
+}
+
+.filter-popover-head,
+.filter-popover-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.filter-popover-head {
+  margin: -2px 0 10px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.filter-popover-body {
+  display: grid;
+  gap: 10px;
+}
+
+.filter-condition {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border-divider);
+  border-radius: 8px;
+  background: var(--bg-subtle2);
+}
+
+.filter-condition-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.filter-popover-actions {
+  justify-content: flex-end;
+}
+
+.mini-button {
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  min-height: 28px;
+  padding: 2px 0;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.mini-button:hover {
+  color: var(--accent);
+}
+
+.empty-cell {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 28px;
+}
+
+/* Primary/secondary buttons used by the filter popover (myidsan parity). */
+.primary-button {
+  min-height: 34px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  padding: 6px 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.secondary-button {
+  min-height: 34px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  padding: 6px 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border-divider);
+  background: var(--bg-subtle2);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.pager-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pager-icon {
+  position: relative;
+  width: 34px;
+  min-height: 34px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  cursor: pointer;
+  padding: 0;
+}
+
+.pager-icon:hover:not(:disabled),
+.pager-icon:focus-visible:not(:disabled) {
+  border-color: var(--accent);
+  outline: 0;
+}
+
+.pager-icon:disabled {
+  opacity: 0.44;
+  cursor: not-allowed;
+}
+
+.pager-icon::before,
+.pager-icon::after {
+  content: "";
+  position: absolute;
+}
+
+.pager-icon.previous::before,
+.pager-icon.next::before,
+.pager-icon.first::before,
+.pager-icon.last::before {
+  top: 10px;
+  width: 10px;
+  height: 10px;
+  border-top: 2px solid var(--text-secondary);
+  border-right: 2px solid var(--text-secondary);
+}
+
+.pager-icon.previous::before {
+  left: 13px;
+  transform: rotate(-135deg);
+}
+
+.pager-icon.next::before {
+  right: 13px;
+  transform: rotate(45deg);
+}
+
+.pager-icon.first::before {
+  left: 15px;
+  transform: rotate(-135deg);
+}
+
+.pager-icon.last::before {
+  right: 15px;
+  transform: rotate(45deg);
+}
+
+.pager-icon.first::after,
+.pager-icon.last::after {
+  top: 9px;
+  width: 2px;
+  height: 14px;
+  background: var(--text-secondary);
+  border-radius: 1px;
+}
+
+.pager-icon.first::after {
+  left: 9px;
+}
+
+.pager-icon.last::after {
+  right: 9px;
+}
+
+.pager-icon.go::before {
+  left: 10px;
+  top: 9px;
+  width: 10px;
+  height: 16px;
+  border-right: 3px solid var(--text-secondary);
+  border-bottom: 3px solid var(--text-secondary);
+  transform: rotate(40deg);
+}
+
+.pager-jump {
+  width: 58px;
+}
+
+.pager-jump input {
+  min-height: 34px;
+  border-radius: 8px;
+  padding: 5px 7px;
+  text-align: center;
+}
+
+/* Admin toolbar (Roles add-bar etc.) above a data table. */
+.table-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+/* Persistent superadmin-handoff banner: warns that the stock superadmin is still
+   active. Non-dismissible — it clears only when the stock account is disabled. */
+.handoff-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  padding: 11px 14px;
+  border: 1px solid var(--warn-border);
+  border-left: 4px solid var(--warn-border);
+  border-radius: 8px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.handoff-banner-text {
+  flex: 1 1 260px;
+}
+
+.handoff-banner-action {
+  flex: 0 0 auto;
+  min-height: 32px;
+  border: 1px solid var(--warn-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--warn-text);
+  padding: 0 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.handoff-banner-action:hover {
+  background: color-mix(in srgb, var(--warn-border) 16%, transparent);
+}
+
+/* Menu access: per-role section toggles (write GET on the section path). */
+.menu-access {
+  margin-bottom: 14px;
+  padding: 14px;
+  border: 1px solid var(--border-divider);
+  border-radius: 8px;
+  background: var(--bg-subtle2);
+}
+
+.menu-access h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.menu-access-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* Central RBAC node-access matrix: per-node access level for the selected role. */
+.node-access-matrix {
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid var(--border-divider);
+  border-radius: 8px;
+  background: var(--bg-subtle2);
+}
+
+.node-access-matrix h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.node-access-matrix select {
+  min-width: 220px;
+}
+
+.menu-access-item {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  border: 1px solid var(--border-divider);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.menu-access-item input {
+  width: 18px;
+  min-height: 18px;
+}
+
+/* Friendly, curated access toggles (grant a role by feature, not by raw path). */
+.access-feature-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.access-feature {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-divider);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  cursor: pointer;
+}
+
+.access-feature input {
+  width: 18px;
+  min-height: 18px;
+  margin-top: 1px;
+  flex: 0 0 auto;
+}
+
+.access-feature-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.access-feature-label {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.access-feature-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Advanced (raw path matrix) disclosure. */
+.rbac-advanced {
+  margin-top: 14px;
+}
+
+.rbac-advanced-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+@media (max-width: 1080px) {
+  /* Below the desktop breakpoint the rail stacks above the workspace, so the auto-hide
+     mode is neutralized: a fixed 68px hover-strip makes no sense in a stacked layout. */
+  .app-shell,
+  .app-shell.nav-autohide {
+    grid-template-columns: 1fr;
+  }
+
+  .side-nav,
+  .app-shell.nav-autohide .side-nav {
+    position: static;
+    height: auto;
+    width: auto;
+    padding: 22px 16px;
+    box-shadow: none;
+    overflow: visible;
+  }
+
+  .side-nav nav {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .nav-group {
+    align-content: start;
+  }
+
+  .side-nav-foot {
+    margin-top: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .main-workspace {
+    padding: 18px;
+  }
+
+  .side-nav nav {
+    grid-template-columns: 1fr 1fr;
+  }
+}
