@@ -80,9 +80,12 @@ matching `offline` rule, and on fire also calls `DeviceService.MarkHealth(dev.Id
 
 ### Alerts
 
-`ListAlerts(ctx, deviceId, limit, offset)`, `AckAlert(ctx, id, actor)`. **There is deliberately
-no `DeleteAlert`** — acknowledging is an operator power, deleting is not; the same evidentiary
-line mymatasan draws for its own alert log.
+`ListAlerts(ctx, deviceId, limit, offset)`, `AckAlert(ctx, id, actor, actorName)`. **There is
+deliberately no `DeleteAlert`** — acknowledging is an operator power, deleting is not; the same
+evidentiary line mymatasan draws for its own alert log. `actorName` (from `apis.actorName(r)`) is
+stamped onto `AlertEvent.AckedByName` — an ack can arrive over the fleet tunnel from a
+control-plane operator with no local account (`actor == 0`), and without the name the alert log
+would record "System" as having acknowledged it.
 
 ## Key Type: SaveRuleRequest / validConditions
 

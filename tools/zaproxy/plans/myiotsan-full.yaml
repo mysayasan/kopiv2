@@ -1,0 +1,130 @@
+# OWASP ZAP Automation Framework plan — myiotsan FULL ACTIVE scan (whole app).
+#
+# DANGER: authenticates, spiders the whole app (UI + API, incl. an AJAX spider that drives
+# a real browser through the SPA), then runs ACTIVE attack rules against everything in
+# scope except the destructive routes excluded below. Active scanning SENDS ATTACK PAYLOADS
+# and WILL create/modify/delete data and stress the box. NEVER run against production — use
+# a THROWAWAY instance (see ../README.md).
+#
+# And read the exclusion list before you widen it. myiotsan ACTUATES: /api/devices/{id}/
+# commands drives physical hardware — a relay, a lock, a valve. Fuzzing it is not a
+# data-integrity risk, it is a physical one. A "throwaway" instance on a bench may still be
+# wired to real hardware.
+#
+# No CSRF script (unlike the myseliasan plans): myiotsan's appliance session cookie carries
+# no CSRF token — SameSite=Lax is the defence — so nothing needs mirroring into a header.
+env:
+  contexts:
+    - name: myiotsan
+      urls:
+        - ${TARGET}
+      includePaths:
+        - "${TARGET}.*"
+      excludePaths:
+        - ".*/api/auth/logout.*"
+        - ".*/api/auth/change-password.*"
+        # --- physical-world side effects: NEVER attack these -------------------------
+        - ".*/api/devices/[0-9]+/commands.*"   # ACTUATION (relay/lock/valve)
+        - ".*/api/devices/[0-9]+/password.*"
+        - ".*/api/devices/[0-9]+$"
+        # --- fleet trust --------------------------------------------------------------
+        - ".*/api/pairing/.*"
+        # --- onboarding ---------------------------------------------------------------
+        - ".*/api/discovery/window.*"
+        - ".*/api/discovery/candidates/.*"
+        # --- config the scan itself depends on ----------------------------------------
+        - ".*/api/settings/users/.*"
+        - ".*/api/settings/roles.*"
+        - ".*/api/rules/[0-9]+.*"
+        - ".*/api/profiles/[0-9]+.*"
+        - ".*/api/profiles/import.*"
+        - ".*/purge.*"
+        - ".*/reset.*"
+        # --- long-lived responses that stall an active scanner -------------------------
+        - ".*/notifications/stream.*"
+      authentication:
+        method: "json"
+        parameters:
+          loginPageUrl: "${TARGET}/"
+          loginRequestUrl: "${TARGET}/api/auth/login"
+          loginRequestBody: '{"username":"{%username%}","password":"{%password%}"}'
+        verification:
+          method: "poll"
+          pollUrl: "${TARGET}/api/auth/session"
+          pollFrequency: 60
+          pollUnits: "requests"
+          loggedInRegex: '.*(\"username\"|\"roleId\"|\"isAdmin\").*'
+          loggedOutRegex: '.*(not authenticated|401|403).*'
+      sessionManagement:
+        method: "cookie"
+      users:
+        - name: "admin"
+          credentials:
+            username: "${ZAP_AUTH_USER}"
+            password: "${ZAP_AUTH_PASS}"
+  parameters:
+    # false: the OpenAPI import logs a non-fatal warning for Gorilla-mux path params
+    # (`{id:[0-9]+}` isn't valid OpenAPI); it still imports the other endpoints.
+    # failOnError:true would abort before activeScan.
+    failOnError: false
+    progressToStdout: true
+
+jobs:
+  # Import the OpenAPI spec so activeScan attacks the real /api endpoint surface (the SPA
+  # calls /api/* via JS the spiders can't see). This — not the AJAX spider — is where the
+  # authenticated active coverage comes from here.
+  - type: openapi
+    parameters:
+      apiUrl: ${TARGET}/swagger/openapi.json
+      targetUrl: ${TARGET}
+      context: myiotsan
+      user: admin
+
+  - type: spider
+    parameters:
+      context: myiotsan
+      user: admin
+      url: ${TARGET}
+      maxDuration: 8
+
+  # The traditional spider can't execute JS, so it never sees the /api calls a SPA makes at
+  # runtime. The AJAX spider drives a real (headless) browser — proxied through ZAP, logged
+  # in via the session cookie — clicks through the authenticated UI, and captures the
+  # /api/* requests the app fires. Those requests are what activeScan then attacks.
+  - type: spiderAjax
+    parameters:
+      context: myiotsan
+      user: admin
+      url: ${TARGET}
+      maxDuration: 8
+      browserId: firefox-headless
+      # One browser: two headless Firefox instances alongside ZAP's ~8 GB JVM heap OOM-kill
+      # the container inside Docker Desktop. The real API coverage comes from the openapi
+      # import above, so the AJAX spider is only a bonus.
+      numberOfBrowsers: 1
+
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 15
+
+  - type: activeScan
+    parameters:
+      context: myiotsan
+      user: admin
+      maxRuleDurationInMins: 3
+      maxScanDurationInMins: 60
+    policyDefinition:
+      defaultStrength: medium
+      defaultThreshold: medium
+
+  - type: report
+    parameters:
+      template: traditional-html
+      reportDir: /zap/wrk/reports
+      reportFile: myiotsan-full-${STAMP}
+      reportTitle: myiotsan ZAP full active scan
+  - type: report
+    parameters:
+      template: traditional-json
+      reportDir: /zap/wrk/reports
+      reportFile: myiotsan-full-${STAMP}

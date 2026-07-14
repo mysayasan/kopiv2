@@ -6,7 +6,12 @@ This page covers **MyMataSan**. For **MySeliaSan** (the fleet control plane), se
 `.goreleaser.myseliasan.yaml` and released independently under the
 `myseliasan-v<version>` tag namespace (see "Versioning Model" in
 `docs/TECHNICAL_SPEC.md`) so a MyMataSan release always stays the repository's
-"latest" release.
+"latest" release. For **MyIotSan** (the IoT device hub), see
+[`deploy/README-myiotsan.md`](README-myiotsan.md) — same packaging shapes again,
+built from `.goreleaser.myiotsan.yaml` and released under its own
+`myiotsan-v<version>` tag namespace, also with `--latest=false` for the same reason.
+MyIotSan additionally opens a new listening port, `1883/tcp` (its embedded MQTT
+broker), which its Windows installer opens a firewall rule for.
 
 GoReleaser (`.goreleaser.yaml`, `packaging/stage-archive.sh`) builds every release
 from `apps/mymatasan` in one run, published to GitHub Releases (and mirrored on the

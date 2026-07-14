@@ -1,0 +1,99 @@
+# OWASP ZAP Automation Framework plan — myiotsan BASELINE (passive, safe).
+#
+# What it does: authenticates (JSON login), spiders the authenticated SPA, then runs
+# ZAP's PASSIVE scan rules only (security headers, cookie flags, info disclosure,
+# mixed content, etc.). It NEVER sends attack payloads and NEVER submits forms, so it
+# is safe to run against a live myiotsan instance.
+#
+# Auth: myiotsan has NO HTTP Basic. It issues a session cookie from
+# POST /api/auth/login {username,password} — note the path differs from myseliasan's
+# /api/auth/local-login: myiotsan is on the APPLIANCE local-auth stack, not the
+# federated JWT one. That stack issues NO CSRF token (its cookie is SameSite=Lax,
+# which is the defence), so unlike the myseliasan plans there is no CSRF script here
+# or in the active plans.
+#
+# Driven by scan.ps1 / scan.sh, which substitute the ${...} tokens from env.
+env:
+  contexts:
+    - name: myiotsan
+      urls:
+        - ${TARGET}
+      includePaths:
+        - "${TARGET}.*"
+      excludePaths:
+        # Never touch destructive / trust-breaking routes, even passively — the spider
+        # can follow a GET link and some of these have side effects.
+        - ".*/api/auth/logout.*"
+        - ".*/api/auth/change-password.*"
+        # ACTUATION. This appliance can switch relays. A scanner must never be able to
+        # reach the command surface — the worst outcome here is not a data leak, it is a
+        # door unlocking.
+        - ".*/api/devices/[0-9]+/commands.*"
+        - ".*/api/devices/[0-9]+/password.*"   # rotating a device's password revokes it
+        - ".*/api/pairing/.*"                  # adopt/release/unpair/fleet-key
+        - ".*/api/discovery/window.*"          # opening an enrollment window is a security event
+        - ".*/purge.*"
+        - ".*/reset.*"
+      authentication:
+        method: "json"
+        parameters:
+          loginPageUrl: "${TARGET}/"
+          loginRequestUrl: "${TARGET}/api/auth/login"
+          loginRequestBody: '{"username":"{%username%}","password":"{%password%}"}'
+        verification:
+          method: "poll"
+          pollUrl: "${TARGET}/api/auth/session"
+          pollFrequency: 60
+          pollUnits: "requests"
+          loggedInRegex: '.*(\"username\"|\"roleId\"|\"isAdmin\").*'
+          loggedOutRegex: '.*(not authenticated|401|403).*'
+      sessionManagement:
+        method: "cookie"
+      users:
+        - name: "admin"
+          credentials:
+            username: "${ZAP_AUTH_USER}"
+            password: "${ZAP_AUTH_PASS}"
+  parameters:
+    failOnError: true
+    failOnWarning: false
+    progressToStdout: true
+  vars:
+    TARGET: ${TARGET}
+
+jobs:
+  - type: spider
+    parameters:
+      context: myiotsan
+      user: admin
+      url: ${TARGET}
+      maxDuration: 5
+      maxDepth: 10
+      maxChildren: 0
+    tests:
+      - name: at-least-one-url
+        type: stats
+        statistic: automation.spider.urls.added
+        operator: ">="
+        value: 1
+        onFail: warn
+
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 10
+
+  - type: passiveScan-config
+    parameters:
+      scanOnlyInScope: true
+
+  - type: report
+    parameters:
+      template: traditional-html
+      reportDir: /zap/wrk/reports
+      reportFile: myiotsan-baseline-${STAMP}
+      reportTitle: myiotsan ZAP Baseline (passive)
+  - type: report
+    parameters:
+      template: traditional-json
+      reportDir: /zap/wrk/reports
+      reportFile: myiotsan-baseline-${STAMP}

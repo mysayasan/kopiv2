@@ -27,8 +27,14 @@ produce this row and `docs/MYIOTSAN_PLAN.md` §3.4.
 - `Error` — explains a refusal or an unconfirmed timeout in words an operator can act on (e.g.
   "outside the safe range 5..30", "the device never reported the new state — it may or may not
   have acted. Not retried automatically: re-sending could act twice.").
-- `RequestedBy`/`RequestedAt` — the actor and when; `SentAt`; `ConfirmedAt` (zero means never
-  confirmed — an unconfirmed command must never be displayed as if it succeeded).
+- `RequestedBy`/`RequestedAt` — the local user id and when; `SentAt`; `ConfirmedAt` (zero means
+  never confirmed — an unconfirmed command must never be displayed as if it succeeded).
+- `RequestedByName` — who `RequestedBy` WAS, by name, and not redundant with the id. A command can
+  arrive over the **fleet tunnel** from an operator on the myseliasan control plane; that operator
+  has no account on this node, so `RequestedBy` is `0`. The tunnel carries their name on the
+  synthetic principal (`cp:<who>`), and `apis.actorName(r)` records it here — otherwise this
+  node's own audit trail, the first place an investigator looks, would say a relay was switched by
+  "System" when it was switched by a person. Verified live through the tunnel.
 
 ## Notes
 

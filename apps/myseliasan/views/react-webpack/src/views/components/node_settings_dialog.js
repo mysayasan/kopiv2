@@ -4,6 +4,7 @@ import { NodeEmbed } from './node_embed';
 import { NodeDiscoverPanel } from './node_discover';
 import { IconDropdown } from './ui';
 import { NODE_ICONS, DEFAULT_NODE_ICON } from './nodes';
+import { isSensorNode } from './layout';
 import { api } from '../lib/helpers';
 
 // NodeSettingsDialog is the node-level "Settings" surface, opened from the Manage button in
@@ -20,10 +21,26 @@ const TABS = [
   { id: 'system', labelKey: 'nset.tabSystem', icon: 'monitor' },
 ];
 
+// A SENSOR HUB IS NOT AN NVR, and this dialog is the NVR's settings page. Every tab on it but
+// Details reads a mymatasan endpoint — camera discovery, CAMERA health, its user store, its
+// backup archive, its recorder build. A myiotsan hub serves none of them, so offering the tabs
+// would be the exact failure the node `kind` exists to prevent: a fleet UI cheerfully proposing
+// to check the camera health of a door contact, and then showing six "unavailable on this node"
+// panels when it is taken up on it.
+//
+// So a hub gets the one tab that is REALLY about the node as myseliasan knows it (its name, its
+// icon, its address). Its devices, rules, alerts and provisioning are not missing — they live on
+// its own manage surface, the nodeiot embed, which is the sensor equivalent of everything else
+// here. Wipe and Release are on the Adopted Nodes row itself and are unaffected.
+function tabsFor(node) {
+  return isSensorNode(node) ? TABS.filter((tb) => tb.id === 'details') : TABS;
+}
+
 export function NodeSettingsDialog({ node, onClose, onToast, onWipe, onNodeUpdated }) {
   const t = useT();
   const [tab, setTab] = useState('details');
   const nodeId = node.nodeId;
+  const tabs = tabsFor(node);
 
   const px = useCallback(
     (path, opts = {}) => api(`/api/nodes/${encodeURIComponent(nodeId)}/proxy${path}`, { noRedirect: true, ...opts }).catch(() => ({ ok: false })),
@@ -50,7 +67,7 @@ export function NodeSettingsDialog({ node, onClose, onToast, onWipe, onNodeUpdat
             className="node-settings-tabs"
             active={tab}
             onChange={setTab}
-            tabs={TABS.map((tb) => ({ id: tb.id, label: t(tb.labelKey), icon: tb.icon }))}
+            tabs={tabs.map((tb) => ({ id: tb.id, label: t(tb.labelKey), icon: tb.icon }))}
           />
           <div className="node-settings-body">
             {tab === 'details' ? <NodeDetailsPanel node={node} t={t} onToast={onToast} onNodeUpdated={onNodeUpdated} /> : null}

@@ -1,6 +1,7 @@
 # Local secrets — real target + credentials
 config/target.env
 config/myseliasan.target.env
+config/myiotsan.target.env
 
 # Scan output
 reports/*

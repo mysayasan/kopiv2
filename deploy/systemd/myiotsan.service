@@ -1,0 +1,35 @@
+# systemd unit for MyIotSan (Linux) — the on-prem IoT device hub.
+#
+# Install:
+#   sudo cp deploy/systemd/myiotsan.service /etc/systemd/system/
+#   # edit WorkingDirectory/ExecStart/User below to match your install
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now myiotsan
+#   journalctl -u myiotsan -f      # view logs (the first-run admin password lands here)
+#
+# Restart=always + KOPIV2_SUPERVISED=1 means an in-app restart exits cleanly and systemd
+# relaunches it.
+#
+# NOTE: this app also opens an MQTT broker on :1883 for devices to publish to. If you run
+# it as an unprivileged user that is fine (1883 is above 1024), but the port must be open
+# in the host firewall or no device can connect.
+
+[Unit]
+Description=MyIotSan IoT device hub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Where config.json, the database, logs, certs and the secret/ key live:
+WorkingDirectory=/opt/myiotsan
+ExecStart=/opt/myiotsan/myiotsan
+Environment=KOPIV2_SUPERVISED=1
+Restart=always
+RestartSec=2
+# Recommended: run as a dedicated unprivileged user that owns WorkingDirectory.
+# User=myiotsan
+# Group=myiotsan
+
+[Install]
+WantedBy=multi-user.target

@@ -427,13 +427,14 @@ func (s *RuleService) ListAlerts(ctx context.Context, deviceId int64, limit, off
 
 // AckAlert marks an alert as seen. Acknowledging is an OPERATOR power; deleting is not — the
 // same evidentiary line mymatasan draws, and the reason there is no DeleteAlert here.
-func (s *RuleService) AckAlert(ctx context.Context, id int64, actor int64) error {
+func (s *RuleService) AckAlert(ctx context.Context, id int64, actor int64, actorName string) error {
 	alert, err := s.alerts.GetById(ctx, "", uint64(id))
 	if err != nil || alert == nil {
 		return fmt.Errorf("alert not found")
 	}
 	alert.AckedAt = time.Now().Unix()
 	alert.AckedBy = actor
+	alert.AckedByName = actorName
 	_, err = s.alerts.UpdateById(ctx, "", *alert)
 	return err
 }

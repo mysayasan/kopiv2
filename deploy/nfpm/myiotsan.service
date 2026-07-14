@@ -1,0 +1,35 @@
+# systemd unit installed by the MyIotSan .deb/.rpm package.
+#
+# Flat install: binary, web UI, config, database (telemetry included), logs, certs and the
+# at-rest encryption key all live under /opt/myiotsan (home == data). Runs as the dedicated
+# unprivileged `myiotsan` user created by the package postinstall.
+#
+# The embedded MQTT broker listens on :1883, which is above 1024 — so no privileged-port
+# capability is needed for an unprivileged service user.
+#
+# KOPIV2_SUPERVISED=1 + Restart=always: an in-app restart exits cleanly and systemd
+# relaunches it.
+[Unit]
+Description=MyIotSan IoT device hub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=myiotsan
+Group=myiotsan
+WorkingDirectory=/opt/myiotsan
+ExecStart=/opt/myiotsan/myiotsan
+Environment=KOPIV2_SUPERVISED=1
+Environment=MYIOTSAN_HOME=/opt/myiotsan
+Environment=MYIOTSAN_DATA=/opt/myiotsan
+# Package-managed: upgrade via apt/dnf. myiotsan has NO in-app self-updater.
+Environment=MYIOTSAN_MANAGED=package
+Restart=always
+RestartSec=2
+# Telemetry ingest holds one connection per device plus the broker's own sockets; the
+# default 1024 is easy to exhaust on a building with a few hundred sensors.
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

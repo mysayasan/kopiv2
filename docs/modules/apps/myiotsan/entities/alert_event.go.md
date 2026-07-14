@@ -17,6 +17,10 @@ weeks later gets the actual number, not a rule name and a shrug.
 - `AckedAt`/`AckedBy` — records the operator acknowledging the alert. Acknowledging is an
   operator power; **deleting is not** — no `DeleteAlert` exists anywhere in the service layer.
   That is the same evidentiary line mymatasan draws.
+- `AckedByName` — who `AckedBy` WAS, by name, for the same reason `DeviceCommand.RequestedByName`
+  exists: an ack can arrive over the fleet tunnel from a control-plane operator with no account on
+  this node (`AckedBy == 0`), and without the name the node's own alert log would say the alert
+  was acknowledged by "System". `apis.actorName(r)` supplies it (`cp:<who>` for tunnel callers).
 - `CreatedAt`.
 
 ## Indexes

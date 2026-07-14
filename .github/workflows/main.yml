@@ -27,6 +27,8 @@ jobs:
       tag: ${{ steps.bump.outputs.tag }}
       sel_released: ${{ steps.bump.outputs.sel_released }}
       sel_tag: ${{ steps.bump.outputs.sel_tag }}
+      iot_released: ${{ steps.bump.outputs.iot_released }}
+      iot_tag: ${{ steps.bump.outputs.iot_tag }}
 
     steps:
       - name: Checkout
@@ -47,9 +49,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          # `released` / `sel_released` are only ever emitted as "true". The downstream
-          # jobs guard on `== 'true'`, so an unset output is already falsy — no need to
-          # write a default (and no reliance on last-key-wins for duplicate outputs).
+          # `released` / `sel_released` / `iot_released` are only ever emitted as "true".
+          # The downstream jobs guard on `== 'true'`, so an unset output is already falsy —
+          # no need to write a default (and no reliance on last-key-wins for duplicate
+          # outputs).
           if git diff --quiet -- infra/versioning/version.json changes CHANGELOG.md; then
             echo "No version changes to commit"
             exit 0
@@ -66,13 +69,20 @@ jobs:
           #   mymatasan  -> v<ver>              (stays the repo's "latest" release; its
           #                                      in-app updater reads releases/latest)
           #   myseliasan -> myseliasan-v<ver>   (published with --latest=false)
+          #   myiotsan   -> myiotsan-v<ver>     (published with --latest=false)
+          #
+          # Only mymatasan may ever be "latest": its in-app updater reads releases/latest
+          # and matches assets by the `mymatasan_` name prefix. Let another product's tag
+          # become latest and that updater finds no asset it recognises — every deployed
+          # camera node then silently stops receiving updates.
           #
           # "Did this product change?" is answered by tag idempotence: if the tag for the
           # current version already exists on the remote, that version was already
-          # released, so there is nothing to do. A core-only bump therefore tags neither.
+          # released, so there is nothing to do. A core-only bump therefore tags none.
           #
-          # NB: evaluate BOTH — do not early-exit out of the first one, or a myseliasan-only
-          # bump would be silently swallowed by mymatasan's "already tagged" path.
+          # NB: evaluate ALL of them — do not early-exit out of any one product's branch, or
+          # a bump to a later product would be silently swallowed by an earlier product's
+          # "already tagged" path.
           tag_if_new() {
             app="$1"; prefix="$2"; out="$3"
             version="$(jq -r ".apps.${app}.version" infra/versioning/version.json)"
@@ -103,6 +113,7 @@ jobs:
           fi
 
           tag_if_new myseliasan "myseliasan-v" "sel"
+          tag_if_new myiotsan "myiotsan-v" "iot"
 
   # Build + publish the release when the version job cut a new mymatasan tag.
   # Runs in the same workflow run (workflow_call), so no PAT is needed — a tag
@@ -119,7 +130,7 @@ jobs:
     secrets: inherit
 
   # Same, for the myseliasan control plane. Independent of the mymatasan release above:
-  # either, both, or neither can fire from a single push, depending on which app versions
+  # any, all, or none of these can fire from a single push, depending on which app versions
   # the pending changes actually bumped.
   release-myseliasan:
     needs: version
@@ -127,6 +138,19 @@ jobs:
     uses: ./.github/workflows/release-myseliasan.yml
     with:
       tag: ${{ needs.version.outputs.sel_tag }}
+    permissions:
+      contents: write
+      packages: write
+    secrets: inherit
+
+  # Same, for the myiotsan IoT device hub. Also published with --latest=false — see the
+  # tagging comment in the version job.
+  release-myiotsan:
+    needs: version
+    if: ${{ needs.version.outputs.iot_released == 'true' }}
+    uses: ./.github/workflows/release-myiotsan.yml
+    with:
+      tag: ${{ needs.version.outputs.iot_tag }}
     permissions:
       contents: write
       packages: write

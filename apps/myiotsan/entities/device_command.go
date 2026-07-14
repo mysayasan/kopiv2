@@ -39,10 +39,17 @@ type DeviceCommand struct {
 	Status string `json:"status" form:"status" query:"status" idx:"status"`
 	// Error explains a refusal or a timeout in words an operator can act on.
 	Error string `json:"error" form:"error" query:"error"`
-	// RequestedBy is the user who issued it. The whole point of the record.
-	RequestedBy int64 `json:"requestedBy" form:"requestedBy" query:"requestedBy"`
-	RequestedAt int64 `json:"requestedAt" form:"requestedAt" query:"requestedAt" idx:"dev_time,time"`
-	SentAt      int64 `json:"sentAt" form:"sentAt" query:"sentAt"`
+	// RequestedBy is the local user id who issued it, and RequestedByName is who they WERE.
+	//
+	// The name is not redundant. A command can arrive over the FLEET TUNNEL from an operator on
+	// the control plane, and that operator has no account on this node — their id here is 0. If
+	// only the id were recorded, the node's own command log (the first place an investigator
+	// looks) would say a relay was switched by "System". It was not: it was switched by a person,
+	// and the tunnel already carries their name as "cp:<who>". Record it.
+	RequestedBy     int64  `json:"requestedBy" form:"requestedBy" query:"requestedBy"`
+	RequestedByName string `json:"requestedByName" form:"requestedByName" query:"requestedByName"`
+	RequestedAt     int64  `json:"requestedAt" form:"requestedAt" query:"requestedAt" idx:"dev_time,time"`
+	SentAt          int64  `json:"sentAt" form:"sentAt" query:"sentAt"`
 	// ConfirmedAt is when the device reported the state back. Zero means it never did — and an
 	// unconfirmed command must never be displayed as if it succeeded.
 	ConfirmedAt int64 `json:"confirmedAt" form:"confirmedAt" query:"confirmedAt"`

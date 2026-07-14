@@ -198,3 +198,16 @@ func actorId(r *http.Request) int64 {
 	}
 	return 0
 }
+
+// actorName is WHO the caller is, by name.
+//
+// It matters because a caller can arrive over the fleet tunnel from the control plane, and that
+// operator has no account on this node — their id is 0. The tunnel carries their name ("cp:alice")
+// on the synthetic principal, and recording only the id would leave the node's own audit trail
+// saying a relay was switched by "System". It was switched by a person.
+func actorName(r *http.Request) string {
+	if user, ok := sharedapis.LocalUserFromContext(r.Context()); ok {
+		return user.Username
+	}
+	return ""
+}

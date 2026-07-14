@@ -1,0 +1,122 @@
+# OWASP ZAP Automation Framework plan — myiotsan API ACTIVE scan (/api only).
+#
+# What it does: authenticates (JSON login), imports the OpenAPI spec, spiders /api, then
+# runs ACTIVE attack rules (injection, XSS, path traversal, etc.) against the /api surface
+# ONLY, with every destructive / trust-breaking route excluded. Active scanning SENDS
+# ATTACK PAYLOADS and can create/modify/delete data. Run against a THROWAWAY instance,
+# never production. (See ../README.md.)
+#
+# ── Why the exclusions below matter more here than on the other apps ──────────────────
+#
+# myiotsan is not a read-only dashboard. It ACTUATES: /api/devices/{id}/commands issues a
+# command to a physical device, which on a building network may be a relay, a lock or a
+# valve. An active scanner fuzzing that endpoint is not a data-integrity problem, it is a
+# physical one. It is excluded, and it must stay excluded — even on a throwaway instance,
+# whose "throwaway" database may still be wired to real hardware on the bench.
+#
+# No CSRF script here (unlike the myseliasan plans): myiotsan's appliance session cookie
+# carries no CSRF token — SameSite=Lax is the defence — so writes are not double-submit
+# gated and nothing needs mirroring into a header.
+env:
+  contexts:
+    - name: myiotsan
+      urls:
+        - ${TARGET}/api
+      includePaths:
+        - "${TARGET}/api.*"
+      excludePaths:
+        - ".*/api/auth/logout.*"
+        - ".*/api/auth/change-password.*"
+        # --- physical-world side effects: NEVER attack these -------------------------
+        - ".*/api/devices/[0-9]+/commands.*"   # ACTUATION (relay/lock/valve)
+        - ".*/api/devices/[0-9]+/password.*"   # rotating a device password revokes the device
+        - ".*/api/devices/[0-9]+$"             # DELETE device (revokes it; drops its history)
+        # --- fleet trust: breaking these orphans the node from its control plane ------
+        - ".*/api/pairing/.*"                  # adopt / release / unpair / fleet-key
+        # --- onboarding: opening an enrollment window admits unknown devices ----------
+        - ".*/api/discovery/window.*"
+        - ".*/api/discovery/candidates/.*"     # adopt / reject a candidate
+        # --- config the scan itself depends on ---------------------------------------
+        - ".*/api/settings/users/.*"           # delete / password-reset a user — could disable admin mid-scan
+        - ".*/api/settings/roles.*"
+        - ".*/api/rules/[0-9]+.*"              # PUT/DELETE rule (silences or storms alerting)
+        - ".*/api/profiles/[0-9]+.*"           # PUT/DELETE profile (retypes every device of that type)
+        - ".*/api/profiles/import.*"
+        - ".*/purge.*"
+        - ".*/reset.*"
+        # --- long-lived responses that stall an active scanner ------------------------
+        - ".*/notifications/stream.*"          # SSE
+      authentication:
+        method: "json"
+        parameters:
+          loginPageUrl: "${TARGET}/"
+          loginRequestUrl: "${TARGET}/api/auth/login"
+          loginRequestBody: '{"username":"{%username%}","password":"{%password%}"}'
+        verification:
+          method: "poll"
+          pollUrl: "${TARGET}/api/auth/session"
+          pollFrequency: 60
+          pollUnits: "requests"
+          loggedInRegex: '.*(\"username\"|\"roleId\"|\"isAdmin\").*'
+          loggedOutRegex: '.*(not authenticated|401|403).*'
+      sessionManagement:
+        method: "cookie"
+      users:
+        - name: "admin"
+          credentials:
+            username: "${ZAP_AUTH_USER}"
+            password: "${ZAP_AUTH_PASS}"
+  parameters:
+    # false, for the same reason as the myseliasan plans: the OpenAPI import logs a
+    # non-fatal warning for specs whose swagger generator emits the Gorilla-mux path param
+    # form (`{id:[0-9]+}`), which isn't valid OpenAPI. It still imports the other
+    # endpoints. With failOnError:true that warning aborts the plan before activeScan.
+    failOnError: false
+    progressToStdout: true
+
+jobs:
+  # myiotsan is an API-first appliance whose SPA calls /api/* via JS that ZAP's spiders
+  # can't see. Import the OpenAPI spec so activeScan attacks the REAL endpoint surface,
+  # authenticated via the JSON login above. This is where the active coverage actually
+  # comes from.
+  - type: openapi
+    parameters:
+      apiUrl: ${TARGET}/swagger/openapi.json
+      targetUrl: ${TARGET}
+      context: myiotsan
+      user: admin
+
+  - type: spider
+    parameters:
+      context: myiotsan
+      user: admin
+      url: ${TARGET}/api
+      maxDuration: 5
+
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 10
+
+  - type: activeScan
+    parameters:
+      context: myiotsan
+      user: admin
+      url: ${TARGET}/api
+      maxRuleDurationInMins: 2
+      maxScanDurationInMins: 30
+    policyDefinition:
+      defaultStrength: medium
+      defaultThreshold: medium
+      rules: []
+
+  - type: report
+    parameters:
+      template: traditional-html
+      reportDir: /zap/wrk/reports
+      reportFile: myiotsan-api-${STAMP}
+      reportTitle: myiotsan ZAP API active scan
+  - type: report
+    parameters:
+      template: traditional-json
+      reportDir: /zap/wrk/reports
+      reportFile: myiotsan-api-${STAMP}

@@ -31,6 +31,10 @@ the plan did not name.
    front door at 03:00 and was refused" must not be thrown away just because it did not succeed.
    A command is recorded **before** it is published, too — a command that was sent but never
    written down would be a physical action with no audit trail, the worst possible ordering.
+   The row also carries `RequestedByName`, supplied by the caller (`apis.actorName(r)`) — a
+   command can arrive over the fleet tunnel from a control-plane operator with no local account
+   (`actor == 0`), and without the name the audit trail would say "System" switched the relay
+   instead of the person it actually was. See `entities/device_command.go.md`.
 
 ## The hazard the plan did not name: never auto-retry
 
@@ -73,7 +77,7 @@ func NewCommandService(db dbsql.IDbCrud, devices *DeviceService,
     logf func(string, ...any)) *CommandService
 
 func (s *CommandService) CommandsFor(ctx, profileId) ([]*entities.ProfileCommand, error)
-func (s *CommandService) Issue(ctx, deviceId, req IssueRequest, actor) (*entities.DeviceCommand, error)
+func (s *CommandService) Issue(ctx, deviceId, req IssueRequest, actor, actorName) (*entities.DeviceCommand, error)
 func (s *CommandService) OnReported(ctx, deviceId, key, value, nowSec)
 func (s *CommandService) SweepUnconfirmed(ctx)
 func (s *CommandService) History(ctx, deviceId, limit, offset) ([]*entities.DeviceCommand, uint64, error)

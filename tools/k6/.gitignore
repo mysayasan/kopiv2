@@ -1,6 +1,7 @@
 # Local target config (may hold credentials)
 config/target.env
 config/myseliasan.target.env
+config/myiotsan.target.env
 
 # Generated run artifacts
 results/*

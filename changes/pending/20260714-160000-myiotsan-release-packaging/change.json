@@ -1,0 +1,6 @@
+{
+  "type": "minor",
+  "scope": "myiotsan",
+  "summary": "Package myiotsan as an installable product: portable archives, .deb/.rpm, Windows Inno installer, multi-arch Docker images, and CI that tags and releases it under its own myiotsan-v<ver> namespace",
+  "compatibility": "myiotsan releases publish under the myiotsan-v<ver> tag with --latest=false, so GitHub's 'latest' release stays mymatasan's (its in-app updater reads it). The shipped deploy/dist/myiotsan-config.json ships an EMPTY localAuth.password — the app generates a per-install password and writes it to INITIAL_ADMIN_LOGIN.txt. New listening port: the embedded MQTT broker on 1883/tcp, which must be allowed through the host firewall or no device can connect. myiotsan has no self-updater; updates are manual."
+}

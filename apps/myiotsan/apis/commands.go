@@ -63,7 +63,7 @@ func (a *commandsApi) issue(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	cmd, err := a.commands.Issue(r.Context(), id, body, actorId(r))
+	cmd, err := a.commands.Issue(r.Context(), id, body, actorId(r), actorName(r))
 	if err != nil {
 		// A refusal is still recorded — cmd carries the audit row. Return the reason verbatim:
 		// "outside the safe range 5..30" tells an operator what to do; "bad request" does not.

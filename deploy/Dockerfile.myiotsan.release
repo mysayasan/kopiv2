@@ -1,0 +1,42 @@
+# Runtime image for MyIotSan, consumed by GoReleaser's `dockers` builders.
+# The binary is cross-compiled by GoReleaser and placed at the build-context root;
+# extra_files supply the web UI and the default config.
+#
+# Like myseliasan (and unlike mymatasan), myiotsan is pure Go — no ffmpeg, no Python, no
+# model weights. The MQTT broker is EMBEDDED in the binary, so there is no mosquitto to
+# install either. ca-certificates is the only OS dependency, for outbound TLS (webhook /
+# Telegram notifications, and dialing the fleet control plane).
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# GoReleaser copies the matching-arch binary to the context root as "myiotsan".
+COPY myiotsan /app/myiotsan
+COPY apps/myiotsan/static /app/static
+COPY deploy/dist/myiotsan-config.json /app/config.json
+
+# Read-only app home vs writable data dir. Mount a volume at /data to persist the
+# database (which holds ALL telemetry history), logs, TLS certs, and secret/atrest.key —
+# which encrypts the fleet key and device credentials. Lose /data and every device must be
+# re-provisioned.
+ENV MYIOTSAN_HOME=/app \
+    MYIOTSAN_DATA=/data \
+    KOPIV2_SUPERVISED=1 \
+    MYIOTSAN_MANAGED=docker
+VOLUME ["/data"]
+
+# 3003 = web UI / API.
+# 1883 = the EMBEDDED MQTT BROKER devices publish telemetry to. This is a listening port
+#        no other product in this repo opens — publish it or no device can connect.
+# 39532 = mTLS management listener, dialled BY a myseliasan control plane that has adopted
+#        this node (enroll / heartbeat / release). Only needed if you adopt it into a fleet.
+# The node dials OUT to the parent's 39533 (control channel); nothing to publish for that.
+# 49531/udp is the multicast discovery announce — it needs host networking to cross a
+# bridge, so LAN discovery generally wants `--network host`.
+EXPOSE 3003 1883 39532
+
+ENTRYPOINT ["/app/myiotsan"]

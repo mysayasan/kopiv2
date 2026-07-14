@@ -7,7 +7,12 @@ SHIPPED (2026-07-14) — see §8d, including a deviation from §3.4's audit-log 
 unassignable-roles gap found and closed.** **P6 (fleet adoption + cross-domain rules) SHIPPED
 (2026-07-14) — see §8e. `myiotsan` is now an adoptable `myseliasan` fleet node, and the control
 plane can correlate its events against a `mymatasan` camera's — THE reason this fourth app
-exists, and the payoff §1's differentiator promised.** P5 and P7 not yet started.
+exists, and the payoff §1's differentiator promised.** **P7 (release) SHIPPED (2026-07-15) — see
+§8f: `myiotsan` is now an installable product (portable archives, .deb/.rpm, Windows Inno, Docker,
+release CI, k6, ZAP), and the `nodeiot/` embed deferred out of P6 also shipped in the same pass
+(§8f) — `myseliasan` can now manage an adopted `myiotsan` node's devices/rules/alerts/commands
+directly, the way it already does for a `mymatasan` camera node.** Only **P5** (Modbus/OPC-UA)
+remains.
 
 `myiotsan` is the fourth app in the suite, alongside `mymatasan` (camera NVR), `myseliasan`
 (fleet control plane) and `myidsan` (identity/SSO). It is built on the same platform as
@@ -233,8 +238,8 @@ No new fleet port block is required: `myiotsan` dials the same `myseliasan` endp
 | **P3** | **Discovery & onboarding — SHIPPED 2026-07-14, see §8c.** Time-boxed enrollment window + quarantined candidate capture + admin adoption, profile-match suggestion, profile import/export, first-run wizard. mDNS/SSDP/portscan and a Modbus TCP scan deliberately deferred to P5 (see §8c). | ~1wk |
 | **P4** | **Actuation & twin — SHIPPED 2026-07-14, see §8d.** Commands, desired/reported, RBAC + audit + confirm (§3.4). | ~1wk |
 | **P5** | **Industrial protocols.** Modbus poller, OPC-UA. | ~1.5wk |
-| **P6** | **Fleet — SHIPPED 2026-07-14, see §8e.** Adoption by myseliasan; `Kind` column on `managed_node`; cross-domain correlation rules. A dedicated `nodeiot/` embed mirroring `nodecam/` (full remote device-management pages inside myseliasan, the way camera pages are embedded today) was **not** built — deliberately deferred; see §8e "What was deliberately NOT built". | ~2wk |
-| **P7** | **Release.** GoReleaser / Inno / nfpm / Docker / workflows, k6, ZAP — copy-and-adapt from myseliasan. | ~1wk |
+| **P6** | **Fleet — SHIPPED 2026-07-14, see §8e.** Adoption by myseliasan; `Kind` column on `managed_node`; cross-domain correlation rules. A dedicated `nodeiot/` embed mirroring `nodecam/` (full remote device-management pages inside myseliasan, the way camera pages are embedded today) was **not** built in this pass — deliberately deferred to P7; see §8e "What was deliberately NOT built" and §8f. | ~2wk |
+| **P7** | **Release — SHIPPED 2026-07-15, see §8f.** GoReleaser / Inno / nfpm / Docker / workflows, k6, ZAP — copy-and-adapt from myseliasan. The deferred `nodeiot/` embed also shipped in this pass. | ~1wk |
 
 MVP (P0–P2) is realistically **3–4 focused weeks** given the reuse. Full P0–P7 is around
 **3 months**.
@@ -664,7 +669,7 @@ passed, because nothing exercised the actual route table; the node simply had no
 routes. Caught by a `404` on `/api/pairing/fleet-key`. See
 `docs/modules/apps/myiotsan/app/app.go.md` "Fleet (P6)".
 
-### What was deliberately NOT built
+### What was deliberately NOT built (in this phase — it shipped in P7, see §8f)
 
 A dedicated `nodeiot/` embed mirroring `myseliasan`'s `nodecam/` trick — full remote
 device-management pages for an adopted `myiotsan` node rendered inside `myseliasan`, the way a
@@ -698,6 +703,83 @@ events (feeding the correlator), but not yet an embedded device/telemetry manage
 See `docs/modules/domain/shared/fleetnode/**/*.go.md`,
 `docs/modules/apps/myiotsan/app/wire_fleet.go.md`, and
 `docs/modules/apps/myseliasan/{entities,services,apis,app}/**/*.go.md` for per-file detail.
+
+---
+
+## 8f. P7 — Release plumbing + the deferred `nodeiot/` embed, shipped
+
+**SHIPPED 2026-07-15.** Two pieces landed together: `myiotsan` becomes an installable product,
+and the `nodeiot/` embed deferred out of P6 (§8e) shipped in the same pass.
+
+### Release plumbing — copy-and-adapt from myseliasan, with one hazard myseliasan didn't have
+
+`.goreleaser.myiotsan.yaml`, `.github/workflows/release-myiotsan.yml`,
+`packaging/stage-archive-myiotsan.sh`, `packaging/windows/myiotsan.{iss,ico,-icon.svg}`,
+`cmd/myiotsan/versioninfo.json`, `deploy/Dockerfile.myiotsan.release`, `deploy/README-myiotsan.md`,
+`deploy/dist/myiotsan-config.json`, `deploy/systemd/myiotsan.service`,
+`deploy/nfpm/myiotsan*.{service,sh}`, `deploy/launchd/com.mysayasan.myiotsan.plist`,
+`deploy/windows/myiotsan.winsw.xml`, `tools/k6/{config,scripts}/myiotsan*`,
+`tools/zaproxy/{config,plans}/myiotsan*` — plus changes to `.github/workflows/{main.yml,
+installer-check.yml}`, `.gitignore`, `tools/k6/{run.sh,run.ps1,scripts/lib/session.js}`,
+`tools/zaproxy/{scan.sh,scan.ps1}` to add `-App myiotsan` support.
+
+The decisions worth a future maintainer NOT undoing:
+
+1. **A `myiotsan` release must never be GitHub's "latest".** It publishes under its own
+   `myiotsan-v<ver>` tag namespace with `gh release create --latest=false`. `mymatasan`'s in-app
+   updater reads `releases/latest` and matches assets by a `mymatasan_` prefix; that prefix guard
+   stops a node **overwriting itself** with the wrong product, but it does nothing to stop
+   **starvation** — if a `myiotsan-v…` tag ever became "latest", the updater would find no
+   matching asset and every deployed camera node would silently stop receiving updates. Own
+   namespace + `--latest=false` is what prevents that.
+2. **GoReleaser OSS cannot derive a semver from a prefixed tag** (splitting the product prefix
+   off a tag to get a version is a GoReleaser Pro feature; this repo is monorepo/OSS). Worked
+   around with `GORELEASER_CURRENT_TAG` (the actual version, tag prefix stripped) feeding
+   GoReleaser, `release: disable: true` in the yaml so GoReleaser never touches GitHub releases
+   itself, `--skip=validate` (validation assumes an unprefixed tag), and a separate
+   self-publish step that runs `gh release create myiotsan-v<ver> --latest=false` directly.
+3. **The shipped config carries NO default admin password.** `deploy/dist/myiotsan-config.json`
+   ships `localAuth.password` empty; the app generates one per install and writes
+   `INITIAL_ADMIN_LOGIN.txt`. A shipped default credential on an appliance that can switch relays
+   is a fleet-wide backdoor, not just a weak-password finding. Pairing ports (39532/33/34) are
+   pinned explicitly in the shipped config — a previous release cycle shipped stale ports in
+   `deploy/dist` and parent+node silently never reconnected.
+4. **MQTT `1883/tcp` is a new listening port** — no other product in this repo opens one. The
+   Windows Inno installer (`packaging/windows/myiotsan.iss`) adds a firewall rule for it; without
+   one, the UI comes up clean and no device ever connects, which presents to an operator as
+   "broken devices", not "blocked port".
+5. **The ZAP plans deliberately exclude `/api/devices/*/commands`**, device-password rotation,
+   pairing, and enrollment (`tools/zaproxy/plans/myiotsan-{api,baseline,full}.yaml`). `myiotsan`
+   actuates PHYSICAL hardware — an active scanner fuzzing an actuation endpoint is a physical
+   risk (it can fire a relay), not a data one, and a "throwaway" bench instance may still be
+   wired to a real device. This is a deliberate exclusion, not a coverage gap to "fix" later.
+6. **`myiotsan` has no self-updater.** Updates are manual / package-manager-driven
+   (`deploy/README-myiotsan.md` says so explicitly) — unlike `mymatasan`, there is no in-app
+   updater checking GitHub releases.
+7. **The k6 scripts (`tools/k6/scripts/myiotsan-{smoke,load,stress}.js`) drive the HTTP console
+   only.** `myiotsan`'s real throughput risk is MQTT→SQLite ingest (§3.2, §9), which k6 cannot
+   drive — it isn't an HTTP client. A green k6 run says the console holds up under viewer/operator
+   load; it says nothing about whether the box keeps up with its device estate. Use
+   `GET /api/devices/stats` (deadband suppression / dropped counters) for that.
+
+### The deferred `nodeiot/` embed
+
+`apps/myseliasan/views/react-webpack/src/views/components/nodeiot/**` +
+`node_iot_manager.js`; `node_manager.js` now routes `kind === 'iot'` to it (alongside the existing
+`kind === 'camera'` route to `nodecam/`). It is the same trick as the `nodecam/` embed (§8e's
+"what was deliberately NOT built", now closed): the `myiotsan` node app's own device/rules/alerts/
+commands UI components are copied into `myseliasan`'s frontend, `apiBase()` is overridden inside
+the embed so every call routes through the commander proxy (`/api/nodes/{id}/proxy/...`) instead
+of a direct URL, and the node's CSS is scoped to the embed's container — concatenating the
+`@shared` stylesheets in too, because a scoped/shadow rendering context does not inherit the host
+document's stylesheets, so anything styled via `@shared` would otherwise render unstyled.
+
+**The browser never talks to the node directly** — every call goes browser → `myseliasan` →
+fleet control channel → node. That is what lets an adopted `myiotsan` node sit behind NAT with no
+inbound firewall rule, same as an adopted `mymatasan` camera node.
+
+With this, `myseliasan` can manage an adopted `myiotsan` node's devices, rules, alerts, and
+commands directly from the control plane, closing the gap §8e left open.
 
 ---
 

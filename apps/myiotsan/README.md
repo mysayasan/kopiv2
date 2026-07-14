@@ -6,16 +6,18 @@ plane), and `myidsan` (identity/SSO). It is built as an appliance on the same ru
 `mymatasan`: a single binary, on-prem, air-gapped-capable, and adoptable into the `myseliasan`
 fleet over the existing pairing/control channel.
 
-**P0-P4 and P6 are shipped.** The app boots, authenticates, ingests telemetry from real devices
+**P0-P4, P6 and P7 are shipped.** The app boots, authenticates, ingests telemetry from real devices
 over an embedded MQTT broker, evaluates alert rules against it, raises alerts into a unified
 notification feed, (P3) onboards unknown devices through a time-boxed enrollment window instead
 of requiring every device to be typed in by hand, (P4) can command an actuation-enabled
 device — read-only by default, admin-only, only what the device's own profile declares,
-server-side bounds, rate-limited, fully audited, and never auto-retried — and (P6) is now an
+server-side bounds, rate-limited, fully audited, and never auto-retried — (P6) is now an
 adoptable node in the `myseliasan` fleet, which is what lets its alerts be correlated against a
-`mymatasan` camera's (see "Fleet" below). What remains is industrial protocols (P5) and release
-plumbing (P7) — see `docs/MYIOTSAN_PLAN.md` for the full roadmap and, in §8b/§8c/§8d/§8e, exactly
-what shipped and what was found by live-booting it.
+`mymatasan` camera's (see "Fleet" below), and (P7) ships as an installable product with its own
+release pipeline, and can now be managed remotely from `myseliasan`'s fleet UI the way an adopted
+camera node already is (see "Install & release" and "Fleet" below). What remains is industrial
+protocols (P5) — see `docs/MYIOTSAN_PLAN.md` for the full roadmap and, in §8b/§8c/§8d/§8e/§8f,
+exactly what shipped and what was found by live-booting it.
 
 ## Onboarding a device
 
@@ -139,7 +141,10 @@ a breaker, sets a thermostat to 200°C.
 5. **Rate-limited** (2 seconds between commands to the same device — a relay has a duty cycle)
    **and audited** — every attempt, including every refusal, is a `device_command` row naming
    who tried, plus a notification. "Somebody tried to unlock the front door at 03:00 and was
-   refused" is not thrown away just because it failed.
+   refused" is not thrown away just because it failed. A command (or an alert acknowledgement)
+   issued from `myseliasan`'s fleet UI (see "Fleet" below) arrives over the control channel from
+   an operator who has no account on this node — the row still names them by name (e.g.
+   `cp:admin`), not just a local user id that would otherwise read as `0`/"System".
 
 ### Declaring a command on a device profile
 
@@ -277,6 +282,13 @@ the unsigned discovery announce, so a hostile host on the LAN can at most make a
 the wrong icon in a scan list; it cannot make the control plane adopt anything or change what an
 already-adopted node is.
 
+**An adopted node is now fully manageable from `myseliasan` (P7), not just visible.** The fleet UI
+embeds this app's own devices/rules/alerts/commands pages directly (mirroring how it already
+embeds a `mymatasan` node's camera pages) — the browser never talks to this node directly, every
+call is proxied browser → `myseliasan` → control channel → node, which is what lets a node sit
+behind NAT with no inbound firewall rule. See `myseliasan`'s README ("Managing an adopted device
+node") for the operator-facing side of this.
+
 ## Configuration
 
 - `apps/myiotsan/config.json` / `config.dev.json` — HTTPS port `3003` (myidsan `3001`,
@@ -296,6 +308,35 @@ Run locally:
 ```bash
 go run . -app myiotsan
 ```
+
+## Install & release
+
+`myiotsan` ships as an installable product, not just a `go run` target: portable archives,
+`.deb`/`.rpm` packages (nfpm), a Windows Inno Setup installer, multi-arch Docker images, and a
+release workflow (`.github/workflows/release-myiotsan.yml` + `.goreleaser.myiotsan.yaml`). See
+`deploy/README-myiotsan.md` for full install/upgrade/uninstall instructions per platform.
+
+- **Its own release, never GitHub's "latest".** Releases publish under a `myiotsan-v<ver>` tag
+  namespace, not `v<ver>`, and `--latest=false`. `mymatasan`'s in-app updater reads
+  `releases/latest` — if a `myiotsan` release ever became "latest" it would find no
+  `mymatasan_`-prefixed asset there and every deployed camera node would silently stop updating.
+- **No shipped default credential.** The packaged config's `localAuth.password` is empty; on
+  first boot the app generates a random admin password and writes it once to
+  `INITIAL_ADMIN_LOGIN.txt` in the data directory (see "Authentication" above). A relay-capable
+  appliance with a documented default password is a fleet-wide backdoor.
+- **MQTT `1883/tcp` needs a firewall rule.** It is a new listening port no other product in this
+  suite opens. The Windows installer adds the Windows Firewall rule for it automatically; on
+  Linux/Docker, allow it explicitly or devices will never connect (this looks like "broken
+  devices", not "blocked port", so it is easy to misdiagnose).
+- **No self-updater.** Unlike `mymatasan`, `myiotsan` does not check GitHub releases from inside
+  the running app. Updates are manual, or via your package manager (`apt`/`rpm`) or container
+  registry — see `deploy/README-myiotsan.md`.
+- **Load/security testing:** `tools/k6 -App myiotsan` drives the HTTP console only — the real
+  throughput risk is MQTT→SQLite ingest, which a k6 run cannot exercise; watch
+  `GET /api/devices/stats` (`suppressed`/`dropped`) for that instead. `tools/zaproxy -App myiotsan`
+  scans the HTTP API but **deliberately excludes** `/api/devices/*/commands`, device-password
+  rotation, pairing, and enrollment — an active scanner firing an actuation endpoint is a
+  physical-hardware risk, not a data one.
 
 ## Frontend
 

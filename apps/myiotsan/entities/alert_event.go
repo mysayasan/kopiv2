@@ -21,9 +21,14 @@ type AlertEvent struct {
 	// Message is the human sentence ("Cold store temperature 8.4C is above 5C").
 	Message  string `json:"message" form:"message" query:"message"`
 	Severity string `json:"severity" form:"severity" query:"severity"`
-	// AckedAt / AckedBy record the operator acknowledging the alert. Acknowledging is an
-	// operator power; DELETING is not — that line is the same evidentiary one mymatasan draws.
-	AckedAt   int64 `json:"ackedAt" form:"ackedAt" query:"ackedAt"`
-	AckedBy   int64 `json:"ackedBy" form:"ackedBy" query:"ackedBy"`
-	CreatedAt int64 `json:"createdAt" form:"createdAt" query:"createdAt" idx:"dev_time,time"`
+	// AckedAt / AckedBy / AckedByName record the operator acknowledging the alert. Acknowledging
+	// is an operator power; DELETING is not — that line is the same evidentiary one mymatasan draws.
+	//
+	// AckedByName exists for the same reason DeviceCommand.RequestedByName does: an ack can arrive
+	// over the fleet tunnel from an operator who has no account on this node, so their id is 0.
+	// Without the name, the node's own record would say the alert was acknowledged by "System".
+	AckedAt     int64  `json:"ackedAt" form:"ackedAt" query:"ackedAt"`
+	AckedBy     int64  `json:"ackedBy" form:"ackedBy" query:"ackedBy"`
+	AckedByName string `json:"ackedByName" form:"ackedByName" query:"ackedByName"`
+	CreatedAt   int64  `json:"createdAt" form:"createdAt" query:"createdAt" idx:"dev_time,time"`
 }
