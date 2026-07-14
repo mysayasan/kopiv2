@@ -43,6 +43,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-14 — mymatasan 1.103.0, core 1.60.0 (1a2fa14)
+
+### Changed
+
+- **mymatasan,core**: Replaced mymatasan's single admin/non-admin bool authorization with a three-role permission matrix (viewer, operator, admin), fixing two real security gaps: previously there was no read authorization at all (any signed-in user could read every camera, recording, and alert snapshot), and 'may watch cameras but may not delete recordings' was not expressible, the property that makes an NVR evidentiary rather than a camera viewer. mymatasan now reuses the shared accessrbac role/permission data model (domain/shared/services/access_rbac.go, whose path matcher was upgraded to segment-wise matching with a single-segment '*' wildcard, specificity-based row selection instead of raw string length, and a refusal to store a root-path '/' grant-everything row) with its own middleware (apis.NewRequireRolePermission), since mymatasan has no JWT to satisfy the shared session middleware. The authorization catalog is Go data (apps/mymatasan/services/rbac.go's Policy()): viewer watches live and sees that an alert fired with no footage access; operator adds reviewing/downloading recorded footage, acknowledging alerts, PTZ, and talk-back but can never delete or purge anything or reconfigure the system; admin (the shared superadmin builtin) bypasses the matrix. The parent-to-node control tunnel (apis/control_dispatch.go) now carries a role NAME rather than an admin/viewer bool, and the node resolves it against its own roles and evaluates its own matrix rather than trusting the parent's assertion, closing a projection gap where a fine-grained fleet role used to collapse into a raw admin/not-admin flag at every node.
 ## 2026-07-13 — mymatasan 1.102.0, core 1.59.0 (a5c0678)
 
 ### Added
