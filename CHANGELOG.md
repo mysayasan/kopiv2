@@ -49,6 +49,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-14 — myiotsan 0.6.0, mymatasan 1.105.0, myseliasan 1.29.0 (7167a23)
+
+### Added
+
+- **mymatasan,myseliasan,myiotsan**: myiotsan is now adoptable into a myseliasan fleet on the same node-side stack mymatasan uses (LAN discovery, claim-code adoption, mTLS enrollment, the node-dialed control channel, and the event sink), which moved to a shared domain/shared/fleetnode package rather than being copied a second time. An adopted node now carries an authoritative Kind (camera or sensor hub), set from the fleet-key-signed adopt reply, not from the unsigned LAN discovery hint. With events flowing in from both camera and IoT nodes, myseliasan can now evaluate cross-domain fleet rules (a new Fleet rules page, superadmin-authored) that correlate across nodes no single node can see together, e.g. motion on a camera AND a door contact opening AND no badge swipe -> intrusion. A rule never fires on an event: it arms once its required clauses are satisfied, waits out a configurable grace period, and only then checks whether an absent condition (like a badge swipe) still holds, so a slightly-late but legitimate badge swipe correctly disarms it instead of raising a false alarm. Verified live end-to-end with a real adopted camera node and a real adopted sensor node, including a deliberately late badge swipe that correctly stayed silent.
 ## 2026-07-14 — myiotsan 0.5.0 (291f2da)
 
 ### Added
