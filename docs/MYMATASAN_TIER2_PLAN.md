@@ -179,7 +179,7 @@ and the "how to write a migration" section.
 
 ---
 
-## Phase R — RBAC  *(agreed 2026-07-14; part (a) — the role model + enforcement in mymatasan — SHIPPED 2026-07-14)*
+## Phase R — RBAC  *(agreed 2026-07-14; part (a), the role model + enforcement in mymatasan, SHIPPED 2026-07-14; part (b), the fleet + frontend half, SHIPPED 2026-07-14)*
 
 ### Status
 
@@ -195,18 +195,22 @@ to `{admin, operator, viewer}`. Live-verified (R6) against a running instance wi
 viewer/operator accounts — every boundary in the table below confirmed by hand, not just by
 the unit tests.
 
-**Still open — the fleet half (part (b)):**
+**Part (b), the fleet + frontend half, is now also done:**
 
-1. **myseliasan's `NodeAccessGrant` still has only `CanRead`/`CanWrite` bools** and needs the
-   third level so a control-plane operator maps onto a node's new `operator` role instead of
-   being forced into the node's `admin` or `viewer`. Until this ships, a myseliasan-side
-   grant can only assert `admin` or `viewer` toward a node — mymatasan's node-side matrix
-   already understands `operator` (fail-closed on anything it doesn't recognize), so this is
-   additive, not a breaking gap.
-2. **The frontend has no role picker.** Settings → Users still sends the legacy `isAdmin`
-   bool, which keeps working via `resolveRole`'s fallback (`isAdmin` → superadmin/viewer).
-   Assigning `operator` today requires the new `POST /api/settings/users` `roleId` field
-   directly (no UI); adding the dropdown is frontend work with its own i18n-sync gate.
+1. **myseliasan's `NodeAccessGrant` gained the third level.** `CanOperate` sits between
+   `CanRead` and `CanWrite` as an escalation ladder (`CanWrite` implies `CanOperate` implies
+   `CanRead`, enforced on save in `services/node_access.go`'s `normalizeAccess`), so a
+   control-plane operator now maps onto a node's `operator` role instead of being forced into
+   the node's `admin` or `viewer`. `NodeAccess.Role()` resolves the ladder to the role NAME
+   sent over the tunnel (`"viewer"` / `"operator"` / `"admin"`), and the central RBAC
+   node-access matrix (`RolesAccessPage` in myseliasan's frontend) exposes all three levels.
+   Existing grant rows have `canOperate=false` by construction, so an upgraded install grants
+   nothing new until an admin explicitly picks the operator level.
+2. **The frontend now has a role picker.** mymatasan's Settings → Users replaced the
+   `isAdmin` checkbox with a `RoleSelect` sourced from `GET /api/settings/roles`; the
+   create-user form and each user card send `roleId`. `isAdmin` still rides along in the
+   update payload as the server's legacy fallback for accounts that predate the backfill, but
+   the picker is now the primary way to assign `viewer`/`operator`/`admin`.
 
 ### The problem (as it stood before this phase)
 
@@ -261,9 +265,9 @@ the data; the node's policy must govern.
 So the wire keeps carrying a role NAME, and the node evaluates its OWN matrix for it. The
 shared vocabulary just widens from `{admin, viewer}` to `{admin, operator, viewer}`. The
 frames are plain JSON with no strict decoding, so this is backward compatible: an old node
-ignores what it does not know. myseliasan's `NodeAccessGrant` then needs a third level — it
-carries only `CanRead`/`CanWrite` bools today, which is exactly the binary that produced
-the problem.
+ignores what it does not know. myseliasan's `NodeAccessGrant` gained the matching third level
+(`CanOperate`) so a control-plane grant can express the same three rungs instead of only the
+binary that produced the problem — see "Status" above.
 
 ### Four defects to fix regardless of the role model
 
@@ -305,10 +309,10 @@ after the existing local-auth middleware preserves the standalone (no-myidsan) p
   that governs the authorization model itself), and are additionally covered by the outer
   matrix now too (`/api/settings/users`, `/api/settings/roles` are listed no-grant in the
   catalog for viewer/operator).
-- **R4 PARTIAL** — the tunnel now carries a role NAME and the node evaluates its own matrix
+- **R4 DONE** — the tunnel now carries a role NAME and the node evaluates its own matrix
   (`control_dispatch.go`); the wire vocabulary widened to `{admin, operator, viewer}` with
-  `"admin"` kept as an alias for `superadmin`. **myseliasan's grant has NOT yet gained the
-  third level** — see "Still open" above.
+  `"admin"` kept as an alias for `superadmin`. **myseliasan's `NodeAccessGrant` gained the
+  third level** (`CanOperate`, an escalation ladder normalised on save) — see "Status" above.
 - **R5 DONE** — all four defects fixed: segment-wise `*`-wildcard path matching (closes the
   suffix-match/prefix-match holes), `Set` refuses a root-path (`/`) permission row,
   `accessMoreSpecific` replaces the raw string-length comparison for which row wins, and the

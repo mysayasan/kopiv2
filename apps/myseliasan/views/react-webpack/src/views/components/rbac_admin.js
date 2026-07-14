@@ -301,19 +301,24 @@ export function RolesAccessPage({ onToast }) {
   const selectedRole = roles.find((x) => x.id === Number(roleId));
 
   // Resolve the role's current access level on the node DEVICE (over the tunnel): owner
-  // (implicit full), admin (read+write), viewer (read-only), or none. This is separate
-  // from the /api/nodes/* path matrix above — that gates myseliasan's own endpoints.
+  // (implicit full), admin, operator, viewer, or none. This is separate from the
+  // /api/nodes/* path matrix above — that gates myseliasan's OWN endpoints.
+  //
+  // The three levels are exactly mymatasan's three local roles, because that is what the
+  // tunnel asserts: the level names a ROLE, and the node evaluates its own matrix for it.
   function nodeLevel(node) {
     if (node.ownerRoleId && node.ownerRoleId === Number(roleId)) return 'owner';
     const g = nodeGrants.find((x) => x.nodeId === node.nodeId);
     if (!g) return 'none';
     if (g.canWrite) return 'admin';
+    if (g.canOperate) return 'operator';
     if (g.canRead) return 'viewer';
     return 'none';
   }
-  // Set the role's access level on a node. "none" removes any grant; viewer/admin upsert
-  // it. Admin = read+write (the tunnel drives the node as its admin); viewer = read-only —
-  // exactly mymatasan's two local levels (admin / viewer).
+  // Set the role's access level on a node. "none" removes any grant; the rest upsert one.
+  //
+  // The flags are an escalation ladder (admin implies operator implies viewer) and the
+  // server normalises them, so only the top rung of the chosen level has to be sent.
   async function setNodeLevel(node, level) {
     setBusy(true);
     let r;
@@ -323,7 +328,13 @@ export function RolesAccessPage({ onToast }) {
     } else {
       r = await api('/api/nodes/access', {
         method: 'POST', noRedirect: true,
-        body: JSON.stringify({ roleId: Number(roleId), nodeId: node.nodeId, canRead: true, canWrite: level === 'admin' }),
+        body: JSON.stringify({
+          roleId: Number(roleId),
+          nodeId: node.nodeId,
+          canRead: true,
+          canOperate: level === 'operator' || level === 'admin',
+          canWrite: level === 'admin',
+        }),
       });
     }
     setBusy(false);
@@ -470,6 +481,7 @@ export function RolesAccessPage({ onToast }) {
                               <select value={level} onChange={(e) => setNodeLevel(n, e.target.value)} disabled={busy} aria-label={`${t('rb.colAccess')} ${n.name || n.nodeId}`}>
                                 <option value="none">{t('rb.accessNone')}</option>
                                 <option value="viewer">{t('rb.accessViewer')}</option>
+                                <option value="operator">{t('rb.accessOperator')}</option>
                                 <option value="admin">{t('rb.accessAdmin')}</option>
                               </select>
                             )}

@@ -1783,6 +1783,9 @@ function AppInner({ lang, onLangChange }) {
         body: JSON.stringify({
           username: user.username,
           displayName: user.displayName,
+          // roleId decides what this user may do. isAdmin still rides along because the
+          // server falls back to it when roleId is 0 (a user who predates the backfill).
+          roleId: Number(user.roleId) || 0,
           isAdmin: Boolean(user.isAdmin),
           isActive: Boolean(user.isActive),
         }),

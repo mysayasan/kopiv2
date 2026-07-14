@@ -24,13 +24,21 @@ type nodeAccessApi struct {
 // NewNodeAccessApi registers per-node DEVICE access-grant management (distinct from the
 // /api/nodes/* path matrix, which gates myseliasan's own endpoints). Grants may be viewed
 // or changed by the node's owning role (the role that adopted it) OR by any superadmin —
-// the latter drives the central RBAC node-access matrix where a superadmin assigns each
-// role one of two levels on a node, mirroring mymatasan's local levels: viewer (canRead,
-// read-only) or admin (canRead+canWrite, drives the node as its admin):
+// the latter drives the central RBAC node-access matrix where a superadmin assigns each role
+// one of THREE levels on a node, mirroring mymatasan's own roles:
+//
+//	viewer    canRead     watch live, see that an alert fired
+//	operator  canOperate  + review footage, acknowledge alerts, PTZ, talk-back
+//	admin     canWrite    everything, including deleting footage
+//
+// The rungs escalate (admin implies operator implies viewer) and are normalised on save.
+// canOperate is new: without it a control-plane user was either a viewer or an admin at the
+// node, so a fleet operator who should have been able to review footage but not delete it
+// had to be given the power to delete it.
 //
 //	GET    /api/nodes/access?nodeId=ID  — list the grants on a node (owner or superadmin)
 //	GET    /api/nodes/access?roleId=ID  — list a role's grants across nodes (superadmin)
-//	POST   /api/nodes/access            — create/update a grant {roleId,nodeId,canRead,canWrite}
+//	POST   /api/nodes/access            — create/update a grant {roleId,nodeId,canRead,canOperate,canWrite}
 //	DELETE /api/nodes/access/{id}       — remove a grant
 //
 // Registered as its own /nodes subrouter; mux matches these before the proxy
@@ -85,10 +93,11 @@ func (a *nodeAccessApi) list(w http.ResponseWriter, r *http.Request) {
 
 func (a *nodeAccessApi) upsert(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		RoleId   int64  `json:"roleId"`
-		NodeId   string `json:"nodeId"`
-		CanRead  bool   `json:"canRead"`
-		CanWrite bool   `json:"canWrite"`
+		RoleId     int64  `json:"roleId"`
+		NodeId     string `json:"nodeId"`
+		CanRead    bool   `json:"canRead"`
+		CanOperate bool   `json:"canOperate"`
+		CanWrite   bool   `json:"canWrite"`
 	}
 	if err := decodeJSON(w, r, &body); err != nil {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
@@ -104,20 +113,23 @@ func (a *nodeAccessApi) upsert(w http.ResponseWriter, r *http.Request) {
 	}
 	actorUserId := operatorUserId(r)
 	grant, err := a.access.Set(r.Context(), entities.NodeAccessGrant{
-		RoleId:    body.RoleId,
-		NodeId:    body.NodeId,
-		CanRead:   body.CanRead,
-		CanWrite:  body.CanWrite,
-		CreatedBy: actorUserId,
-		UpdatedBy: actorUserId,
+		RoleId:     body.RoleId,
+		NodeId:     body.NodeId,
+		CanRead:    body.CanRead,
+		CanOperate: body.CanOperate,
+		CanWrite:   body.CanWrite,
+		CreatedBy:  actorUserId,
+		UpdatedBy:  actorUserId,
 	})
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
+	// The audit trail records the RESOLVED grant, not the raw request: the ladder is
+	// normalised on save, so what was asked for and what was stored can differ.
 	a.recordGrantAction(r, "node_access.set", body.NodeId, "success",
-		fmt.Sprintf("set role %d access on node %s (read=%v write=%v)", body.RoleId, body.NodeId, body.CanRead, body.CanWrite),
-		map[string]any{"roleId": body.RoleId, "canRead": body.CanRead, "canWrite": body.CanWrite})
+		fmt.Sprintf("set role %d access on node %s (read=%v operate=%v write=%v)", body.RoleId, body.NodeId, grant.CanRead, grant.CanOperate, grant.CanWrite),
+		map[string]any{"roleId": body.RoleId, "canRead": grant.CanRead, "canOperate": grant.CanOperate, "canWrite": grant.CanWrite})
 	controllers.SendResult(w, grant, "succeed")
 }
 

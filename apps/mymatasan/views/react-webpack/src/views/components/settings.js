@@ -33,6 +33,56 @@ const stockModelHints = {
 
 // StockModelPanel picks the always-on base detection model. Known variants are
 // downloaded from the net by ultralytics; a custom path can also be used.
+// useRoles loads the roles an admin may assign. Authorization is a ROLE now, not an
+// "administrator" checkbox: viewer (watch live), operator (+ review footage, acknowledge,
+// PTZ, talk) and admin (everything). The middle rung is the point — an operator who was
+// present at an incident cannot delete the footage of it.
+function useRoles(authHeader) {
+  const [roles, setRoles] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const headers = {};
+        if (authHeader) headers.Authorization = authHeader;
+        const resp = await fetch(`${apiBase()}/api/settings/roles`, { credentials: 'include', headers });
+        if (!resp.ok) return;
+        const payload = await resp.json();
+        const list = payload?.data?.result ?? payload?.result ?? [];
+        if (!cancelled && Array.isArray(list)) setRoles(list);
+      } catch (_) { /* the picker just falls back to empty; the API still accepts a role id */ }
+    })();
+    return () => { cancelled = true; };
+  }, [authHeader]);
+  return roles;
+}
+
+// roleLabel maps a role name to its translated label. The names are stable server-side
+// identifiers ("superadmin" / "operator" / "viewer"); only the label is localised.
+function roleLabel(t, name) {
+  switch (name) {
+    case 'superadmin': return t('st.roleAdmin');
+    case 'operator': return t('st.roleOperator');
+    case 'viewer': return t('st.roleViewer');
+    default: return name;
+  }
+}
+
+function RoleSelect({ roles, value, onChange, disabled, label }) {
+  const t = useT();
+  return (
+    <label>
+      {label || t('st.role')}
+      <select value={value || ''} onChange={(event) => onChange(Number(event.target.value))} disabled={disabled} aria-label={label || t('st.role')}>
+        <option value="">{t('st.roleUnassigned')}</option>
+        {roles.map((role) => (
+          <option key={role.id} value={role.id}>{roleLabel(t, role.name)}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function StockModelPanel({ authHeader, onMessage }) {
   const t = useT();
   const [info, setInfo] = useState({ current: 'yolo11n.pt', options: [] });
@@ -1367,6 +1417,9 @@ export function SettingsTab({
   onDeleteClass,
 }) {
   const t = useT();
+  // The roles an admin may assign. Authorization is a role now, not an "administrator"
+  // checkbox — see useRoles.
+  const assignableRoles = useRoles(authHeader);
   const iceServers = settings.stream.webrtc.iceServers || [];
   const capture = { ...defaultCaptureConfig, ...(settings.vision?.capture || {}),
     standalone: { ...defaultCaptureConfig.standalone, ...(settings.vision?.capture?.standalone || {}) },
@@ -2255,14 +2308,12 @@ export function SettingsTab({
                     autoComplete="new-password"
                   />
                 </label>
-                <label className="check-row">
-                  <input
-                    type="checkbox"
-                    checked={newUser.isAdmin}
-                    onChange={(event) => onNewUser({ ...newUser, isAdmin: event.target.checked })}
-                  />
-                  {t('st.administrator')}
-                </label>
+                <RoleSelect
+                  roles={assignableRoles}
+                  value={newUser.roleId}
+                  onChange={(roleId) => onNewUser({ ...newUser, roleId })}
+                  disabled={busy}
+                />
               </div>
               <div className="settings-actions">
                 <button type="submit" disabled={busy}>
@@ -2292,7 +2343,15 @@ export function SettingsTab({
                   <div className="user-card-head">
                     <Ico n="user" sz={16} />
                     <span className="user-card-name">{user.displayName || user.username}</span>
-                    {user.isAdmin ? <span className="user-badge user-badge--admin">{t('st.adminBadge')}</span> : null}
+                    {(() => {
+                      const role = assignableRoles.find((x) => x.id === user.roleId);
+                      if (!role) return null;
+                      return (
+                        <span className={`user-badge${role.isSuperadmin ? ' user-badge--admin' : ''}`}>
+                          {roleLabel(t, role.name)}
+                        </span>
+                      );
+                    })()}
                     <span className={`user-badge ${user.isActive ? 'user-badge--active' : 'user-badge--inactive'}`}>
                       {user.isActive ? t('common.active') : t('common.inactive')}
                     </span>
@@ -2324,15 +2383,13 @@ export function SettingsTab({
                         placeholder={t('st.leaveBlankKeep')}
                       />
                     </label>
+                    <RoleSelect
+                      roles={assignableRoles}
+                      value={user.roleId}
+                      onChange={(roleId) => onEditUser(user.id, { roleId })}
+                      disabled={busy}
+                    />
                     <div className="user-card-toggles">
-                      <label className="check-row">
-                        <input
-                          type="checkbox"
-                          checked={Boolean(user.isAdmin)}
-                          onChange={(event) => onEditUser(user.id, { isAdmin: event.target.checked })}
-                        />
-                        {t('st.administrator')}
-                      </label>
                       <label className="check-row">
                         <input
                           type="checkbox"

@@ -144,7 +144,9 @@ export const defaultRuntimeSettings = {
   vision: { yolo: defaultYoloConfig, capture: defaultCaptureConfig, alertNotification: defaultAlertNotificationConfig },
   recording: defaultRecordingConfig,
 };
-export const defaultNewUser = { username: '', displayName: '', password: '', isAdmin: false, isActive: true };
+// roleId is the authority; isAdmin is the legacy fallback the server still honours when
+// roleId is 0, so an older client keeps working. The picker sets roleId.
+export const defaultNewUser = { username: '', displayName: '', password: '', roleId: 0, isAdmin: false, isActive: true };
 export const defaultNotificationSettings = {
   webhook: { enabled: false, url: '', minSeverity: 'warning' },
   telegram: { enabled: false, botToken: '', chatId: '', minSeverity: 'warning' },
