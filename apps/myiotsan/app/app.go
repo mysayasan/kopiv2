@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -19,6 +20,7 @@ import (
 	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/infra/apidocs"
 	"github.com/mysayasan/kopiv2/infra/apphost"
+	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/db/bootstrap"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	iotmqtt "github.com/mysayasan/kopiv2/infra/iot/mqtt"
@@ -118,6 +120,9 @@ func (m *module) Entities() []any {
 		appentities.ProfileCommand{},
 		appentities.DeviceCommand{},
 		appentities.DeviceAttribute{},
+		// The fleet's node-side state (the fleet key, the pairing enrollment, the mTLS cert)
+		// lives in the shared runtime_setting table, encrypted at rest.
+		sharedentities.RuntimeSetting{},
 	}
 }
 
@@ -391,6 +396,57 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 // offlineSweepInterval is how often silence is checked for. A minute is well under any sane
 // offline window and costs one query.
 const offlineSweepInterval = time.Minute
+
+// appVersion resolves this build's version for the fleet handshake.
+func appVersion(m *module) string {
+	if manifest, err := versioning.LoadDefault(); err == nil {
+		if info, err := manifest.InfoForApp(m.Name()); err == nil {
+			return info.AppVersion
+		}
+	}
+	return "0.0.0"
+}
+
+// boolValue dereferences an optional bool config flag.
+func boolValue(v *bool, fallback bool) bool {
+	if v == nil {
+		return fallback
+	}
+	return *v
+}
+
+// openFleetSecretCipher resolves the at-rest key that protects the node's fleet secrets — the
+// fleet key, the pairing token, the mTLS private key. Without it they sit in the database in
+// plaintext, and anyone who can read the file can impersonate the node to its control plane.
+//
+// It FAILS CLOSED when a key that existed before is now missing: minting a new one would
+// silently orphan the encrypted enrollment and quietly un-adopt the node from its fleet.
+func openFleetSecretCipher(deps apphost.Dependencies) (*atrest.Cipher, error) {
+	if !boolValue(deps.Config.Security.EncryptAtRest, true) {
+		return nil, nil
+	}
+	keyPath := strings.TrimSpace(deps.Config.Security.KeyPath)
+	if keyPath == "" {
+		keyPath, _ = filepath.Abs(apphost.ResolveWritablePath(deps.DataDir, filepath.Join("secret", "atrest.key")))
+	}
+	recoveryPath := strings.TrimSpace(deps.Config.Security.RecoveryPath)
+	if recoveryPath == "" {
+		recoveryPath = filepath.Join(filepath.Dir(keyPath), "recovery.atrestkey")
+	}
+	outcome, err := atrest.OpenForStartup(keyPath, recoveryPath, atrest.ProtectorConfig{
+		Name:           deps.Config.Security.KeyProtector,
+		Passphrase:     deps.Config.Security.Passphrase,
+		PassphraseFile: deps.Config.Security.PassphraseFile,
+		PassphraseEnv:  deps.Config.Security.PassphraseEnv,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("fleet-secret encryption key: %w", err)
+	}
+	if outcome.Mode == atrest.ModeRecoveryPending {
+		return nil, fmt.Errorf("fleet-secret encryption key missing (id %s): restore %s or set security.recoveryPath, then restart — refusing to orphan this node's fleet enrollment", outcome.KeyId, keyPath)
+	}
+	return outcome.KeyStore.Cipher(), nil
+}
 
 // commandSweepInterval is how often unconfirmed commands are ended. Frequent, because an
 // operator staring at a "sent" command needs to be told promptly that it was never confirmed —

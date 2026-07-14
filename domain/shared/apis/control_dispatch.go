@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 
-	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
+	"github.com/mysayasan/kopiv2/domain/shared/fleetnode"
 	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/infra/control"
 )
@@ -32,9 +32,9 @@ import (
 //
 // router is the app's /api subrouter; the parent sends paths including the /api prefix
 // (e.g. /api/settings/users), which gorilla/mux matches against the full request path.
-func NewControlDispatcher(router http.Handler, roles sharedservices.IAccessRoleService) services.ControlDispatcher {
+func NewControlDispatcher(router http.Handler, roles sharedservices.IAccessRoleService) fleetnode.ControlDispatcher {
 	return func(ctx context.Context, req control.Request) control.Response {
-		principal := &services.AuthenticatedUser{
+		principal := &sharedservices.AuthenticatedUser{
 			Username: controlActorUsername(req.Actor),
 		}
 
@@ -58,7 +58,7 @@ func NewControlDispatcher(router http.Handler, roles sharedservices.IAccessRoleS
 			method = http.MethodGet
 		}
 		hr, err := http.NewRequestWithContext(
-			withLocalUser(ctx, principal),
+			WithLocalUser(ctx, principal),
 			method, req.Path, bytes.NewReader(req.Body))
 		if err != nil {
 			return control.Response{Status: http.StatusBadRequest, Body: []byte(err.Error())}
@@ -96,7 +96,7 @@ const controlRoleAdminAlias = "admin"
 func normalizeControlRole(role string) string {
 	name := strings.ToLower(strings.TrimSpace(role))
 	if name == controlRoleAdminAlias {
-		return services.RoleAdmin
+		return sharedservices.RoleAdmin
 	}
 	return name
 }

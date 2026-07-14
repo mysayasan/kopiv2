@@ -11,13 +11,13 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
+	"github.com/mysayasan/kopiv2/domain/shared/fleetnode"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/infra/pairing"
 )
 
 type pairingApi struct {
-	svc       services.IPairingService
+	svc       fleetnode.IPairingService
 	onAdopted func()
 }
 
@@ -32,7 +32,7 @@ type pairingApi struct {
 //
 // onAdopted (optional) is invoked after a successful adoption so the caller can
 // kick certificate enrollment for the mTLS channel.
-func NewPairingPublicApi(public *mux.Router, svc services.IPairingService, onAdopted func()) {
+func NewPairingPublicApi(public *mux.Router, svc fleetnode.IPairingService, onAdopted func()) {
 	h := &pairingApi{svc: svc, onAdopted: onAdopted}
 	pub := public.PathPrefix("/pairing").Subrouter()
 	pub.HandleFunc("/adopt", h.adopt).Methods("POST")
@@ -46,7 +46,7 @@ func NewPairingPublicApi(public *mux.Router, svc services.IPairingService, onAdo
 //	POST /pairing/claim-code  (admin)
 //	POST /pairing/unpair      (admin — self-drop)
 //	PUT  /pairing/fleet-key   (admin)
-func NewPairingApi(protected *mux.Router, svc services.IPairingService) {
+func NewPairingApi(protected *mux.Router, svc fleetnode.IPairingService) {
 	h := &pairingApi{svc: svc}
 	prot := protected.PathPrefix("/pairing").Subrouter()
 	prot.HandleFunc("/status", h.status).Methods("GET")
@@ -82,7 +82,7 @@ func (a *pairingApi) setFleetKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.svc.SetFleetKey(r.Context(), body.Key); err != nil {
-		if errors.Is(err, services.ErrPairingFleetKeyShort) {
+		if errors.Is(err, fleetnode.ErrPairingFleetKeyShort) {
 			controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 			return
 		}
@@ -114,7 +114,7 @@ func (a *pairingApi) unpair(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *pairingApi) adopt(w http.ResponseWriter, r *http.Request) {
-	var req services.AdoptRequest
+	var req fleetnode.AdoptRequest
 	if err := decodeJSON(w, r, &req); err != nil {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
 		return
@@ -122,12 +122,12 @@ func (a *pairingApi) adopt(w http.ResponseWriter, r *http.Request) {
 	res, err := a.svc.Adopt(r.Context(), req)
 	if err != nil {
 		switch {
-		case errors.Is(err, services.ErrPairingAlreadyPaired):
+		case errors.Is(err, fleetnode.ErrPairingAlreadyPaired):
 			controllers.SendError(w, controllers.ErrConflict, err.Error())
-		case errors.Is(err, services.ErrPairingBadAssertion),
-			errors.Is(err, services.ErrPairingFleetKeyUnset):
+		case errors.Is(err, fleetnode.ErrPairingBadAssertion),
+			errors.Is(err, fleetnode.ErrPairingFleetKeyUnset):
 			controllers.SendError(w, controllers.ErrPermission, err.Error())
-		case errors.Is(err, services.ErrPairingBadClaimCode):
+		case errors.Is(err, fleetnode.ErrPairingBadClaimCode):
 			controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		default:
 			controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
@@ -149,7 +149,7 @@ func (a *pairingApi) release(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.svc.Release(r.Context(), body.Token); err != nil {
-		if errors.Is(err, services.ErrPairingBadToken) {
+		if errors.Is(err, fleetnode.ErrPairingBadToken) {
 			controllers.SendError(w, controllers.ErrPermission, err.Error())
 			return
 		}
