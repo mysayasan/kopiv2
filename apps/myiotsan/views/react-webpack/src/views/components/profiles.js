@@ -11,6 +11,16 @@ const EMPTY_KEY = {
   deadband: 0, heartbeatSeconds: 900, min: 0, max: 0,
 };
 
+const COMMAND_KINDS = ['switch', 'setpoint'];
+
+// A command a device of this type can be TOLD to do. It starts as a switch with no bounds and no
+// confirmation key, and the editor warns about both — because both are how a command ends up
+// either refusing every value or never being confirmable.
+const EMPTY_COMMAND = {
+  name: '', label: '', kind: 'switch', topicTemplate: '', payloadTemplate: '',
+  min: 0, max: 0, confirmKey: '',
+};
+
 const EMPTY_PROFILE = {
   slug: '', name: '', vendor: '', description: '',
   topicTemplate: 'zigbee2mqtt/{deviceKey}', payloadFormat: 'json',
@@ -136,6 +146,7 @@ function ProfileEditor({ profileId, onBack, onSaved, onToast }) {
   const t = useT();
   const [profile, setProfile] = useState(EMPTY_PROFILE);
   const [keys, setKeys] = useState([]);
+  const [commands, setCommands] = useState([]);
   const [builtin, setBuiltin] = useState(false);
   const [busy, setBusy] = useState(!!profileId);
   const [error, setError] = useState('');
@@ -144,6 +155,9 @@ function ProfileEditor({ profileId, onBack, onSaved, onToast }) {
     if (!profileId) {
       setProfile(EMPTY_PROFILE);
       setKeys([{ ...EMPTY_KEY }]);
+      // A new device type declares NO commands. Read-only is the default here too: a type
+      // starts out unable to be told to do anything, and somebody has to decide otherwise.
+      setCommands([]);
       return;
     }
     let live = true;
@@ -154,6 +168,7 @@ function ProfileEditor({ profileId, onBack, onSaved, onToast }) {
         setProfile(r.body?.profile || EMPTY_PROFILE);
         setBuiltin(!!r.body?.profile?.builtin);
         setKeys((r.body?.keys || []).map((k) => ({ ...k })));
+        setCommands((r.body?.commands || []).map((c) => ({ ...c })));
       } else {
         setError(errorMessage(r, t('profiles.loadFailed')));
       }
@@ -166,6 +181,9 @@ function ProfileEditor({ profileId, onBack, onSaved, onToast }) {
   const setKey = (i, patch) => setKeys((list) => list.map((k, idx) => (idx === i ? { ...k, ...patch } : k)));
   const addKey = () => setKeys((list) => [...list, { ...EMPTY_KEY }]);
   const removeKey = (i) => setKeys((list) => list.filter((_, idx) => idx !== i));
+  const setCmd = (i, patch) => setCommands((list) => list.map((c, idx) => (idx === i ? { ...c, ...patch } : c)));
+  const addCmd = () => setCommands((list) => [...list, { ...EMPTY_COMMAND }]);
+  const removeCmd = (i) => setCommands((list) => list.filter((_, idx) => idx !== i));
 
   async function save(e) {
     e.preventDefault();
@@ -188,6 +206,18 @@ function ProfileEditor({ profileId, onBack, onSaved, onToast }) {
         heartbeatSeconds: Number(k.heartbeatSeconds) || 0,
         min: Number(k.min) || 0,
         max: Number(k.max) || 0,
+      })),
+      // The commands, replaced wholesale like the keys. min/max ride along for every kind; the
+      // server only enforces them on a setpoint.
+      commands: commands.map((c) => ({
+        name: c.name,
+        label: c.label || '',
+        kind: c.kind || 'switch',
+        topicTemplate: c.topicTemplate || '',
+        payloadTemplate: c.payloadTemplate || '',
+        min: Number(c.min) || 0,
+        max: Number(c.max) || 0,
+        confirmKey: c.confirmKey || '',
       })),
     };
     const r = profileId
@@ -312,6 +342,83 @@ function ProfileEditor({ profileId, onBack, onSaved, onToast }) {
           ))}
 
           {k0Warning(keys) ? <p className="field-hint">{t('profiles.zeroDeadbandNote')}</p> : null}
+
+          {/* --- Commands: what a device of this type can be TOLD to do ---------------------
+              This is the other half of a profile, and the dangerous half. A device can be sent
+              exactly what is declared here and nothing else — there is no generic "publish this
+              payload to that topic" escape hatch, which would be a remote shell for the
+              building's electrics. Everything declared here is a physical action somewhere. */}
+          <div className="toolbar">
+            <div>
+              <h3 className="section-subtitle">{t('profiles.commandsTitle')}</h3>
+              <p className="settings-hint">{t('profiles.commandsHint')}</p>
+            </div>
+            <button type="button" className="quiet" onClick={addCmd}>
+              <span className="btn-icon"><Ico n="plus" sz={14} /> {t('profiles.addCommand')}</span>
+            </button>
+          </div>
+
+          {commands.length === 0 ? (
+            <EmptyState text={t('profiles.noCommands')} />
+          ) : commands.map((c, i) => {
+            const kind = (c.kind || 'switch').toLowerCase();
+            // Both min and max at zero is not "unbounded" — the server treats it as an omission
+            // and refuses EVERY value. Say so here, where it can still be fixed, rather than
+            // letting an admin ship a command that mysteriously never works.
+            const noRange = kind === 'setpoint' && Number(c.min || 0) === 0 && Number(c.max || 0) === 0;
+            return (
+              <fieldset className="iot-fieldset" key={c.id || `new-cmd-${i}`}>
+                <legend>{c.label || c.name || t('profiles.newCommand')}</legend>
+                <div className="settings-field-grid">
+                  <Field label={t('profiles.cmdName')} hint={t('profiles.cmdNameHint')} required>
+                    <input value={c.name} onChange={(e) => setCmd(i, { name: e.target.value })} />
+                  </Field>
+                  <Field label={t('profiles.cmdLabel')}>
+                    <input value={c.label || ''} onChange={(e) => setCmd(i, { label: e.target.value })} />
+                  </Field>
+                  <Field label={t('profiles.cmdKind')} hint={t('profiles.cmdKindHint')}>
+                    <select value={kind} onChange={(e) => setCmd(i, { kind: e.target.value })}>
+                      {COMMAND_KINDS.map((k) => <option key={k} value={k}>{t(`cmdKind.${k}`)}</option>)}
+                    </select>
+                  </Field>
+                  <Field label={t('profiles.cmdConfirmKey')} hint={t('profiles.cmdConfirmKeyHint')}>
+                    <input value={c.confirmKey || ''} onChange={(e) => setCmd(i, { confirmKey: e.target.value })} />
+                  </Field>
+                  <Field label={t('profiles.cmdTopic')} hint={t('profiles.cmdTopicHint')} span>
+                    <input value={c.topicTemplate || ''} onChange={(e) => setCmd(i, { topicTemplate: e.target.value })} />
+                  </Field>
+                  <Field label={t('profiles.cmdPayload')} hint={t('profiles.cmdPayloadHint')} span>
+                    <input value={c.payloadTemplate || ''} onChange={(e) => setCmd(i, { payloadTemplate: e.target.value })} />
+                  </Field>
+                  {kind === 'setpoint' ? (
+                    <>
+                      <Field label={t('profiles.cmdMin')} hint={t('profiles.cmdRangeHint')}>
+                        <input type="number" step="any" value={c.min ?? 0} onChange={(e) => setCmd(i, { min: e.target.value })} />
+                      </Field>
+                      <Field label={t('profiles.cmdMax')}>
+                        <input type="number" step="any" value={c.max ?? 0} onChange={(e) => setCmd(i, { max: e.target.value })} />
+                      </Field>
+                    </>
+                  ) : null}
+                </div>
+
+                {noRange ? (
+                  <p className="iot-cmd-warn"><Ico n="warning" sz={13} /> {t('profiles.cmdNoRangeWarn')}</p>
+                ) : null}
+                {/* Without a confirmation key the device has no way to report the result, so the
+                    command can only ever be "sent" — and "sent" is not "it happened". */}
+                {!c.confirmKey ? (
+                  <p className="iot-cmd-warn"><Ico n="warning" sz={13} /> {t('profiles.cmdNoConfirmWarn')}</p>
+                ) : null}
+
+                <div className="action-row iot-actions-end">
+                  <button type="button" className="quiet danger-text" onClick={() => removeCmd(i)}>
+                    <span className="btn-icon"><Ico n="trash" sz={14} /> {t('profiles.removeCommand')}</span>
+                  </button>
+                </div>
+              </fieldset>
+            );
+          })}
 
           <div className="action-row iot-actions-end">
             <button type="button" className="quiet" onClick={onBack} disabled={busy}>{t('common.cancel')}</button>

@@ -487,3 +487,167 @@
   color: var(--text-secondary);
 }
 .iot-wiz-actions { justify-content: flex-end; }
+
+/* --- Actuation (the Control tab) -------------------------------------------------------
+   This is the part of the app that moves things in the physical world. The styling carries
+   ONE idea: "sent" is not "done". `sent` is amber — the colour of "we do not know yet" —
+   and only `confirmed`, which means the DEVICE said so, is ever green. */
+.iot-control { display: grid; gap: 18px; }
+
+/* Read-only by default. When a device cannot be commanded, the reason is stated (and where
+   to change it) rather than a button being greyed out with no explanation. */
+.iot-actuation-off {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+}
+.iot-actuation-off svg { flex: 0 0 auto; margin-top: 2px; }
+.iot-actuation-off strong { display: block; font-size: 14px; }
+.iot-actuation-off p { margin: 4px 0 0; font-size: 13px; line-height: 1.5; }
+
+.iot-cmd-viewer-note { margin: 0; }
+
+.iot-cmd-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+.iot-cmd-card {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+.iot-cmd-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.iot-cmd-label { font-size: 14px; font-weight: 700; color: var(--text-primary); }
+.iot-cmd-kind { font-size: 12px; color: var(--text-muted); }
+.iot-cmd-switch { display: flex; gap: 8px; }
+.iot-cmd-switch button { flex: 1; }
+.iot-cmd-setpoint { display: flex; align-items: flex-end; gap: 10px; }
+.iot-cmd-setpoint .field-label { flex: 1; }
+
+.iot-cmd-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--warn-text);
+}
+.iot-cmd-warn svg { flex: 0 0 auto; margin-top: 2px; }
+
+/* The confirm-to-execute dialog. The question names the device, the command and the value;
+   the consequence says what will physically happen. There is no "don't ask again". */
+.iot-cmd-question { margin: 0 0 12px; font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.iot-cmd-consequence {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+.iot-cmd-consequence svg { flex: 0 0 auto; margin-top: 2px; }
+.iot-cmd-consequence p { margin: 0; font-size: 13px; line-height: 1.5; }
+
+/* The outcome of the command just issued: four states, four visibly different things. */
+.iot-outcome {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+}
+.iot-outcome-icon { flex: 0 0 auto; display: inline-flex; margin-top: 2px; }
+.iot-outcome-icon.is-spinning svg { animation: iot-spin 1.1s linear infinite; }
+@keyframes iot-spin { to { transform: rotate(360deg); } }
+.iot-outcome-body { flex: 1; display: grid; gap: 4px; }
+.iot-outcome-body strong { font-size: 14px; }
+.iot-outcome-body p { margin: 0; font-size: 13px; line-height: 1.5; }
+.iot-outcome-meta { font-size: 12px; opacity: 0.85; }
+
+/* Amber: published, not confirmed. This is NOT a success state. */
+.iot-outcome.is-sent { background: var(--warn-bg); color: var(--warn-text); border-color: var(--warn-text); }
+/* Green: the device reported the new state back — the only outcome that means it happened. */
+.iot-outcome.is-confirmed { background: var(--ok-bg); color: var(--ok-text); border-color: var(--ok-text); }
+.iot-outcome.is-failed,
+.iot-outcome.is-refused { background: var(--danger-bg); color: var(--danger-text); border-color: var(--danger-text); }
+.iot-outcome.is-unconfirmed { background: var(--warn-bg); color: var(--warn-text); border-color: var(--warn-text); }
+
+/* --- The twin: asked for vs reported ---------------------------------------------------- */
+.iot-twin { display: grid; gap: 10px; }
+.iot-twin-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.iot-twin-table th {
+  text-align: start;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.iot-twin-table td {
+  padding: 10px;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+}
+.iot-twin-table code { font-size: 12px; color: var(--text-secondary); }
+.iot-twin-table em { font-style: normal; font-size: 12px; color: var(--text-muted); }
+.iot-twin-none { color: var(--text-muted); }
+.iot-twin-note { margin: 6px 0 0; font-size: 12px; line-height: 1.45; color: var(--text-secondary); max-width: 52ch; }
+
+.iot-twin-pill {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+}
+.iot-twin-pill.is-inSync { background: var(--ok-bg); color: var(--ok-text); }
+.iot-twin-pill.is-pending { background: var(--warn-bg); color: var(--warn-text); }
+/* Asked for, never reported, and the request has run out. The operator must SEE this — a door
+   that was told to unlock and never did is not a tidy row to sweep away. */
+.iot-twin-pill.is-expired { background: var(--danger-bg); color: var(--danger-text); }
+.iot-twin-pill.is-reportedOnly { background: var(--accent-badge); color: var(--accent); }
+
+/* --- Command history (the audit trail, readable by every role) --------------------------- */
+.iot-cmd-history { display: grid; gap: 10px; }
+.iot-cmd-pill {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+.iot-cmd-pill.is-pending { background: var(--bg-subtle); color: var(--text-secondary); }
+.iot-cmd-pill.is-sent { background: var(--warn-bg); color: var(--warn-text); }
+.iot-cmd-pill.is-confirmed { background: var(--ok-bg); color: var(--ok-text); }
+.iot-cmd-pill.is-failed { background: var(--danger-bg); color: var(--danger-text); }
+/* The failure reason is shown WHOLE — the timeout one ("it may or may not have acted…") is the
+   entire safety design, and a truncated version of it is a lie of omission. */
+.iot-cmd-error {
+  display: block;
+  max-width: 46ch;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--danger-text);
+  white-space: normal;
+}
+.iot-cmd-ok { font-size: 12px; color: var(--ok-text); }

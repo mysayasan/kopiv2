@@ -2,7 +2,9 @@
 
 Status: **P0 SHIPPED** (2026-07-14). **P1 (ingest spine) + P2 (rules & alerts) SHIPPED
 (2026-07-14) — P0-P2 is the shippable MVP.** **P3 (discovery & onboarding) SHIPPED (2026-07-14)
-— see §8c for what shipped and what was deliberately deferred.** P4-P7 not yet started.
+— see §8c for what shipped and what was deliberately deferred.** **P4 (actuation & device twin)
+SHIPPED (2026-07-14) — see §8d, including a deviation from §3.4's audit-log design and a real
+unassignable-roles gap found and closed.** P5-P7 not yet started.
 
 `myiotsan` is the fourth app in the suite, alongside `mymatasan` (camera NVR), `myseliasan`
 (fleet control plane) and `myidsan` (identity/SSO). It is built on the same platform as
@@ -139,6 +141,13 @@ is not:
 - Rate-limited.
 - Every command written to `myseliasan`'s existing `audit_log`.
 
+**Shipped 2026-07-14 (§8d) — this last point deviated.** myiotsan is a standalone appliance that
+may never be adopted into a `myseliasan` fleet at all, so it cannot depend on `myseliasan`'s
+`audit_log` existing; the audit trail is myiotsan's own `device_command` table (every attempt,
+including refusals) plus the notification feed instead. Everything else above shipped as
+specified, plus one property the plan did not name: an unconfirmed command is never auto-retried
+(a retry is a second physical action — see §8d).
+
 ---
 
 ## 4. Domain model
@@ -216,7 +225,7 @@ No new fleet port block is required: `myiotsan` dials the same `myseliasan` endp
 | **P1** | **Ingest spine.** `iot_device` CRUD, `device_profile` catalog, embedded MQTT broker, HTTP ingest, telemetry store + deadband + rollup + retention, live device page with `@shared/charts` TimeSeriesChart. | ~1.5wk |
 | **P2** | **Rules & alerts.** Port `detection_rule` → `iot_rule`, evaluators, `alert_event`, wire existing notification destinations. **P0–P2 is the shippable MVP.** | ~1.5wk |
 | **P3** | **Discovery & onboarding — SHIPPED 2026-07-14, see §8c.** Time-boxed enrollment window + quarantined candidate capture + admin adoption, profile-match suggestion, profile import/export, first-run wizard. mDNS/SSDP/portscan and a Modbus TCP scan deliberately deferred to P5 (see §8c). | ~1wk |
-| **P4** | **Actuation & twin.** Commands, desired/reported, RBAC + audit + confirm (§3.4). | ~1wk |
+| **P4** | **Actuation & twin — SHIPPED 2026-07-14, see §8d.** Commands, desired/reported, RBAC + audit + confirm (§3.4). | ~1wk |
 | **P5** | **Industrial protocols.** Modbus poller, OPC-UA. | ~1.5wk |
 | **P6** | **Fleet.** Adoption by myseliasan; `kind` column on `managed_node`; `nodeiot/` embed mirroring the `nodecam/` trick; then cross-domain rules. | ~2wk |
 | **P7** | **Release.** GoReleaser / Inno / nfpm / Docker / workflows, k6, ZAP — copy-and-adapt from myseliasan. | ~1wk |
@@ -341,9 +350,10 @@ steady overheat is never alerted on.
 
 ### What is still not here
 
-Actuation/twin (P4), Modbus/OPC-UA (P5), fleet adoption (P6), and release packaging (P7, still
-deferred exactly as scoped in §8) are all unstarted. `mqtt.Connect` mode (pointing at an external
-broker instead of the embedded one) is not implemented — only the embedded broker.
+Modbus/OPC-UA (P5), fleet adoption (P6), and release packaging (P7, still deferred exactly as
+scoped in §8) are all unstarted. `mqtt.Connect` mode (pointing at an external broker instead of
+the embedded one) is not implemented — only the embedded broker. (Actuation/twin, P4, shipped —
+see §8d.)
 
 ---
 
@@ -434,6 +444,108 @@ per-file detail.
 
 ---
 
+## 8d. P4 — Actuation & device twin, shipped
+
+**SHIPPED 2026-07-14.** The design problem P4 exists to solve: every prior phase only *reads*
+a device. Actuation is where a bug stops being a wrong number on a chart and becomes a relay
+that physically fires — a door unlocks, a breaker trips, a thermostat is set to 200°C. A camera
+is read-mostly; an IoT device gets *written to*. Every decision below follows from that.
+
+### The five gates from §3.4, all enforced SERVER-SIDE (`apps/myiotsan/services/commands.go`)
+
+1. **Read-only by default.** A device cannot be commanded unless `IotDevice.ActuationEnabled`
+   was explicitly turned on for it. Adoption never sets it.
+2. **Admin only.** Not an operator power. This rule was written into the policy catalog in P0,
+   *before* the command path itself existed.
+3. **Only declared commands.** A device can be told exactly what its profile declares
+   (`ProfileCommand`) and nothing else. There is deliberately no generic "publish this payload to
+   that topic" endpoint anywhere in the app — that would be a remote shell for the building's
+   electrics.
+4. **Bounds are server-side.** A setpoint outside the profile's `Min..Max` is refused in the
+   service, not merely blocked in the UI — "the frontend validates it" is not a safety property.
+   A setpoint declaring NO range (`Min == 0 && Max == 0`) refuses EVERY value: an unbounded
+   setpoint on a physical device is an omission, and the safe reading of an omission is no.
+5. **Rate-limited (2s floor per device) and audited.** A relay has a duty cycle; something that
+   can chatter it can destroy it. Every attempt — INCLUDING every refusal — is a `device_command`
+   row naming the actor, plus a notification. "Somebody tried to unlock the front door at 03:00
+   and was refused" is exactly what must not be thrown away just because it failed.
+
+### Two hazards the original plan did not name
+
+**A. A command is never auto-retried.** Re-sending a relay write is a SECOND PHYSICAL ACTION. If
+the first one landed but its confirmation was lost, a retry fires the relay again — the door
+opens twice — and nothing at this layer can distinguish that from the first one never arriving.
+So an unconfirmed command becomes `failed` after 30s (`SweepUnconfirmed`, swept every 10s), with
+an error that says plainly *"the device never reported the new state — it may or may not have
+acted. Not retried automatically: re-sending could act twice."*, and the decision is left to a
+human. **Verified live** with a relay simulator that obeys but never reports back: it physically
+switched, the command was recorded `failed`, and exactly ONE command was ever sent.
+
+**B. Desired state expires (5 minutes) and is never re-applied.** The obvious twin
+implementation re-applies desired state whenever a device reconnects — fine for a light bulb,
+dangerous here. A door controller offline for a month would come back and immediately apply a
+month-old "unlock" somebody issued for thirty seconds during a delivery, with nobody watching —
+the door opens. So an expired desire is NOT re-applied, though the disagreement is still SHOWN
+(`GET /api/devices/{id}/twin`) — an operator must see that what they asked for never took effect.
+
+**C. "Sent" is not "done".** `confirmed` is the only `DeviceCommand` status meaning the physical
+thing actually happened, and it is set only when the device reports the resulting state back on
+the profile's `ConfirmKey` (`services.CommandService.OnReported`, wired into `services.Ingest`'s
+hot path for every decoded sample). Publishing a message is a different fact from a relay
+closing.
+
+### Deviation from §3.4: the audit trail is NOT `myseliasan`'s `audit_log`
+
+§3.4 originally said "every command written to `myseliasan`'s existing `audit_log`." That is
+**not** what shipped, and deliberately: myiotsan is a standalone appliance and may never be
+adopted into a `myseliasan` fleet at all (fleet adoption is P6, unstarted), so the command audit
+trail cannot depend on a table that might not exist. What shipped instead is myiotsan's own
+`device_command` table (§4) plus the unified notification feed
+(`infra/notification.CategorySystem`) — the same pattern the rest of the app already uses for
+its own security events (an enrollment window opening, a login lockout). When P6 fleet adoption
+lands, myseliasan can read these rows the same way it already reads a node's other state, rather
+than myiotsan depending on myseliasan's schema.
+
+### A real gap found and closed: unassignable roles
+
+`/api/settings/roles` and `/api/settings/users` **404'd**. The policy catalog
+(`apps/myiotsan/services/rbac.go`) has named those routes since P0, and the `viewer`/`operator`
+roles have existed since then — but nothing served them, so the roles were unassignable and the
+appliance was effectively single-admin. That is exactly the lie the catalog exists to prevent
+("a catalog that names routes the app does not serve is a lie an operator would rely on").
+`apps/myiotsan/apis/settings.go` now serves them on the shared appliance user service
+(`domain/shared/services`) — the same code `mymatasan` uses, so bcrypt/sessions/the last-admin
+guard are one implementation, not two. **Verified live:** operator and viewer get `403` on
+actuation, `200` on the command history and twin.
+
+### The one profile that can act on the world
+
+Of the eight built-in device-type profiles, only `smart-relay` (Shelly/Tasmota conventions)
+declares a command — every other shipped profile remains read-only. Its `output` command
+publishes a Shelly-style `Switch.Set` RPC and is confirmed by the device's own `output`
+telemetry key reporting back.
+
+### New/changed surface
+
+- `apps/myiotsan/entities/{profile_command,device_command,device_attribute}.go` — the
+  declaration, the audit record, and the twin.
+- `apps/myiotsan/services/commands.go` (+ `commands_test.go`) — every gate, the twin, the
+  unconfirmed-command sweep.
+- `apps/myiotsan/apis/commands.go` — `/api/devices/{id}/commands`, `/commands/history`, `/twin`.
+- `apps/myiotsan/apis/settings.go` — `/api/settings/{users,roles}` (the gap above).
+- `apps/myiotsan/services/{profile,profile_catalog}.go` — profiles now declare commands; the
+  catalog gained `smart-relay`.
+- `apps/myiotsan/services/ingest.go` — every reading also updates the twin's reported half.
+- `apps/myiotsan/services/rbac.go` — `/api/devices/*/commands` admin-only;
+  `/api/devices/*/commands/history` and `/api/devices/*/twin` readable by viewer and operator
+  (seeing what was done is not the same power as doing it).
+- `apps/myiotsan/app/app.go` — command service, twin wiring, the 10s unconfirmed sweep, the new
+  entities, `NewSettingsApi`.
+
+See `docs/modules/apps/myiotsan/**/*.go.md` for per-file detail.
+
+---
+
 ## 9. Known risks
 
 | Risk | Mitigation |
@@ -442,7 +554,7 @@ per-file detail.
 | **`frontend/shared/CameraHero.js`** is camera-specific but lives in the *shared* module. | Still open — P1/P2 shipped as a backend MVP with no device-page hero component yet built against it; decide before the device detail UI lands. |
 | **Scope creep** into a Home Assistant clone. | Hold the line stated in §1. |
 | **BACnet** demand from building-automation customers. | Out of scope; Go libs are not production-grade. External gateway if forced. |
-| **Actuation safety.** | Read-only default, RBAC, confirm, audit, rate limit (§3.4). |
+| **Actuation safety.** | **RESOLVED (2026-07-14), see §8d.** Read-only default, admin-only RBAC, declared-commands-only, server-side bounds, 2s rate limit, full audit (incl. refusals) — all shipped, plus never-auto-retry and non-re-applied expiring desired state, which the original §3.4 did not name. |
 | **No scaffolding tooling exists** — every app so far was hand-copied. | Worth writing a small generator during P0, since this is the second fork. |
 | `SYSTEM_APP_CODES` and `sso.audience` are hardcoded lists. | Covered explicitly in the P0 checklist (item 7). |
 

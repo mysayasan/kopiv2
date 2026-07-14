@@ -20,7 +20,8 @@ sensor or actuator.
 - `ActuationEnabled` — the per-device capability toggle. Devices are read-only by default; a
   command is refused unless this is explicitly on, on top of the admin-only RBAC rule. A bad
   relay write is physically dangerous in a way a bad PTZ move is not, so it takes two
-  deliberate acts to enable one. (Command path itself lands in P4.)
+  deliberate acts to enable one. Adoption (`services/enrollment.go`) never sets it. The command
+  path itself is `services.CommandService` (`services/commands.go.md`, shipped P4).
 - Liveness: `LastSeenAt` (unix seconds, updated on every publish but NOT through the deadbanded
   reading path — a device faithfully reporting an unchanged value must still look alive to the
   offline detector), `Health` (`"online"`/`"offline"`/`"unknown"`).

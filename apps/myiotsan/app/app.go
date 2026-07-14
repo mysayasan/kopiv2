@@ -34,9 +34,14 @@ import (
 //
 // Cameras are one signal type; sensors are another. See docs/MYIOTSAN_PLAN.md.
 //
-// P0-P2 (the MVP): the app boots, authenticates, ingests telemetry from real devices over an
-// embedded MQTT broker, evaluates rules against it, and raises alerts. What remains is
-// discovery (P3), actuation (P4), industrial protocols (P5) and fleet adoption (P6).
+// Shipped through P4: the app boots and authenticates; devices are onboarded through a
+// time-boxed, quarantined enrollment window; telemetry arrives over an embedded MQTT broker and
+// is deadbanded, stored and rolled up; rules are evaluated and alerts raised; and devices can be
+// COMMANDED, behind gates (read-only by default, admin-only, only-what-the-profile-declares,
+// server-side bounds, rate-limited, audited, and never auto-retried — see services/commands.go).
+//
+// What remains: industrial protocols (P5 — Modbus, OPC-UA), fleet adoption by myseliasan and
+// the cross-domain rules that are the reason this app exists (P6), and release plumbing (P7).
 type module struct {
 	// cfg is myiotsan's own slice of config.json, decoded through the apphost.AppConfigDecoder
 	// seam. See apps/myiotsan/config.
@@ -110,6 +115,9 @@ func (m *module) Entities() []any {
 		appentities.IotRule{},
 		appentities.AlertEvent{},
 		appentities.DiscoveredDevice{},
+		appentities.ProfileCommand{},
+		appentities.DeviceCommand{},
+		appentities.DeviceAttribute{},
 	}
 }
 
@@ -132,6 +140,7 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Alerts", Description: "the alert log", Path: "/api/alerts", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Notifications", Description: "unified event feed", Path: "/api/notifications", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Discovery", Description: "enrollment window and device adoption", Path: "/api/discovery", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Settings", Description: "users and roles", Path: "/api/settings", AccessTier: apiaccessenums.AuthOnly},
 	}
 
 	statements := make([]string, 0, len(endpoints)*2)
@@ -212,6 +221,10 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	protected.Use(sharedapis.NewRequireRolePermission(deps.AccessRoles, deps.AccessPerms))
 
 	sharedapis.NewLocalAuthApi(protected, authCfg, localUser)
+	// User and role management. Without it the viewer and operator roles — which have existed
+	// since P0 and which the policy catalog names — were UNASSIGNABLE, and the appliance was
+	// effectively single-admin.
+	apis.NewSettingsApi(protected, localUser, deps.AccessRoles)
 
 	// --- the ingest spine -------------------------------------------------------------
 	//
@@ -324,8 +337,44 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		}
 	})
 
+	// Actuation. Every gate is enforced in the service (read-only by default, admin-only,
+	// only-what-the-profile-declares, server-side bounds, rate limit, audit) — and a command is
+	// NEVER retried automatically, because re-sending a relay write is a second physical action
+	// that could open a door twice. See services/commands.go.
+	commandService := services.NewCommandService(deps.Db, deviceService, broker.Publish,
+		func(ctx context.Context, msg string, data map[string]any) {
+			// Every command — including every REFUSED one — is a security event. "Somebody tried
+			// to unlock the front door at 03:00 and was refused" is exactly what must not be
+			// thrown away just because it did not succeed.
+			notificationService.Publish(ctx, notification.Notification{
+				Category: notification.CategorySystem,
+				Severity: notification.Warning,
+				Title:    "Device command",
+				Body:     msg,
+				Source:   "actuation",
+				Data:     data,
+			})
+		},
+		func(f string, a ...any) { deps.Logger.Infof("myiotsan.actuation", f, a...) })
+	ingest.SetTwin(commandService)
+
+	// Commands the device never confirmed are ENDED, not resent.
+	safego.Supervise(bgCtx, "myiotsan.command-sweep", func(ctx context.Context) {
+		ticker := time.NewTicker(commandSweepInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				commandService.SweepUnconfirmed(ctx)
+			}
+		}
+	})
+
 	apis.NewDevicesApi(protected, deviceService, telemetry, profileService, ingest)
 	apis.NewDiscoveryApi(protected, enrollment, deviceService)
+	apis.NewCommandsApi(protected, commandService, deviceService)
 	apis.NewProfilesApi(protected, profileService, ingest)
 	apis.NewRulesApi(protected, ruleService)
 	apis.NewNotificationsApi(protected, notificationService)
@@ -342,6 +391,11 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 // offlineSweepInterval is how often silence is checked for. A minute is well under any sane
 // offline window and costs one query.
 const offlineSweepInterval = time.Minute
+
+// commandSweepInterval is how often unconfirmed commands are ended. Frequent, because an
+// operator staring at a "sent" command needs to be told promptly that it was never confirmed —
+// a stale "in progress" is how somebody comes to believe a door is locked when it is not.
+const commandSweepInterval = 10 * time.Second
 
 // loginGuardConfig maps the shared login-security config onto the failed-login lockout.
 func loginGuardConfig(deps apphost.Dependencies) sharedapis.LoginGuardConfig {

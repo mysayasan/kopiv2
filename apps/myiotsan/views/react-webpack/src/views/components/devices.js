@@ -3,6 +3,7 @@ import { DataTable, Ico, Tabs, useT } from '@shared';
 import { ChartCard, LineChart } from '@shared/charts';
 import { api, errorMessage, formatAgo, formatClock, formatNumber, formatTimestamp } from '../lib/helpers';
 import { CheckRow, ConfirmModal, CopyButton, EmptyState, Field, FormBusyOverlay, HealthPill, Modal, Panel } from './ui';
+import { DeviceControl } from './commands';
 
 const PROTOCOLS = ['mqtt', 'http'];
 
@@ -18,7 +19,7 @@ const RANGES = [
 
 // DevicesPage is the inventory: the estate as a table, and one device at a time as a
 // detail view with its live values and its history.
-export function DevicesPage({ onToast }) {
+export function DevicesPage({ onToast, session }) {
   const t = useT();
   const [devices, setDevices] = useState([]);
   const [profiles, setProfiles] = useState([]);
@@ -75,6 +76,7 @@ export function DevicesPage({ onToast }) {
       <DeviceDetail
         device={openDevice}
         profiles={profiles}
+        session={session}
         onBack={() => setOpenId(0)}
         onToast={onToast}
         onChanged={load}
@@ -288,8 +290,13 @@ function CreateDeviceModal({ profiles, onClose, onCreated, onToast }) {
   );
 }
 
-// DeviceDetail is one device: what it is reporting right now, and what it has reported.
-function DeviceDetail({ device, profiles, onBack, onToast, onChanged, credential, onCredential, onCredentialClose }) {
+// DeviceDetail is one device: what it is reporting right now, what it can be TOLD to do, and
+// what has been done to it.
+//
+// Control is its own tab rather than a strip on the readings page, and deliberately: reading a
+// sensor and firing a relay are different acts, and the second one deserves a place you have to
+// mean to go to.
+function DeviceDetail({ device, profiles, session, onBack, onToast, onChanged, credential, onCredential, onCredentialClose }) {
   const t = useT();
   const [tab, setTab] = useState('readings');
   const profile = profiles.find((p) => p.id === device.profileId) || null;
@@ -312,24 +319,27 @@ function DeviceDetail({ device, profiles, onBack, onToast, onChanged, credential
         <Tabs
           tabs={[
             { id: 'readings', label: t('devices.tabReadings'), icon: 'monitor' },
+            // Control is shown to every role: the history and the twin on it are readable by
+            // everyone, and only the issuing controls inside it are admin-only.
+            { id: 'control', label: t('devices.tabControl'), icon: 'send' },
             { id: 'settings', label: t('devices.tabSettings'), icon: 'sliders' },
           ]}
           active={tab}
           onChange={setTab}
           ariaLabel={t('devices.tabsLabel')}
         />
-        {tab === 'readings'
-          ? <DeviceReadings device={device} />
-          : (
-            <DeviceSettings
-              device={device}
-              profiles={profiles}
-              onToast={onToast}
-              onChanged={onChanged}
-              onCredential={onCredential}
-              onBack={onBack}
-            />
-          )}
+        {tab === 'readings' ? <DeviceReadings device={device} /> : null}
+        {tab === 'control' ? <DeviceControl device={device} session={session} onToast={onToast} /> : null}
+        {tab === 'settings' ? (
+          <DeviceSettings
+            device={device}
+            profiles={profiles}
+            onToast={onToast}
+            onChanged={onChanged}
+            onCredential={onCredential}
+            onBack={onBack}
+          />
+        ) : null}
       </Panel>
       {credential ? <CredentialModal credential={credential} onClose={onCredentialClose} /> : null}
     </section>

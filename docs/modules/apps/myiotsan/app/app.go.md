@@ -8,11 +8,14 @@ air-gapped, adopted into the myseliasan fleet), reusing mymatasan's spine
 (`device -> signal -> detector -> rule -> alert -> notify -> historize -> dashboard`); cameras
 are one signal type, sensors are another. See `docs/MYIOTSAN_PLAN.md`.
 
-**P0-P2 (the MVP) + P3 (discovery & onboarding), shipped 2026-07-14:** the app boots,
-authenticates, ingests telemetry from real devices over an embedded MQTT broker, evaluates rules
-against it, raises alerts, and now onboards unknown devices through a time-boxed enrollment
-window rather than requiring every device to be provisioned by hand. What remains is actuation
-(P4), industrial protocols (P5) and fleet adoption (P6).
+**P0-P2 (the MVP) + P3 (discovery & onboarding) + P4 (actuation & device twin), shipped
+2026-07-14:** the app boots, authenticates, ingests telemetry from real devices over an embedded
+MQTT broker, evaluates rules against it, raises alerts, onboards unknown devices through a
+time-boxed enrollment window rather than requiring every device to be provisioned by hand, and
+now — for the one profile that declares it (`smart-relay`) — can command a device: switch a
+relay or set a setpoint, gated read-only-by-default/admin-only/declared-commands-only/
+server-side-bounds/rate-limited/audited, and never auto-retried (see
+`services/commands.go.md`). What remains is industrial protocols (P5) and fleet adoption (P6).
 
 ## Key Type: module
 
@@ -33,11 +36,13 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
 - `Entities()` — the shared appliance schema (`ApiEndpoint`, `ApiLog`, `UserSession`,
   `Notification`, `LocalUser`, `AccessRole`, `AccessRolePermission`) plus the IoT domain now
   registered here: `DeviceProfile`, `TelemetryKey`, `IotDevice`, `DeviceReading`,
-  `ReadingRollup`, `IotRule`, `AlertEvent`, and (P3) `DiscoveredDevice` — the enrollment window's
-  candidate table (`apps/myiotsan/entities`).
+  `ReadingRollup`, `IotRule`, `AlertEvent`, (P3) `DiscoveredDevice` — the enrollment window's
+  candidate table, and (P4) `ProfileCommand`, `DeviceCommand`, `DeviceAttribute` — the actuation
+  declaration, the command audit trail, and the device twin (`apps/myiotsan/entities`).
 - `Seeders(...)` seeds the endpoint catalog for rate limiting/runtime metadata, now including
-  `/api/devices`, `/api/profiles`, `/api/rules`, `/api/alerts`, `/api/notifications`, and (P3)
-  `/api/discovery` (auth-only), alongside the original `/api/health`, `/api/version` (public),
+  `/api/devices`, `/api/profiles`, `/api/rules`, `/api/alerts`, `/api/notifications`, (P3)
+  `/api/discovery` (auth-only), and (P4) `/api/settings` (auth-only — users and roles; see the
+  gap this closes below), alongside the original `/api/health`, `/api/version` (public),
   `/api/auth/login` (public), `/api/auth` (auth-only).
 - `RegisterAppRoutes(api, deps)`:
   1. Builds `sharedservices.NewLocalUserService` on a `LocalUser` repo bound to `deps.Db`.
@@ -61,7 +66,12 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
      `sharedapis.NewLocalBasicAuth` then `sharedapis.NewRequireRolePermission` — order is
      load-bearing: auth puts the principal in context, and the matrix needs a principal to
      decide against.
-  8. Registers `sharedapis.NewLocalAuthApi` (session probe + change-password) on `protected`.
+  8. Registers `sharedapis.NewLocalAuthApi` (session probe + change-password) on `protected`,
+     then (P4) `apis.NewSettingsApi(protected, localUser, deps.AccessRoles)` — user and role
+     management. **Closes a real gap**: the policy catalog has named `/api/settings/users`/
+     `/api/settings/roles` since P0, and the roles have existed since then, but nothing served
+     them — viewer and operator were UNASSIGNABLE, and the appliance was effectively
+     single-admin. See `apis/settings.go.md`.
   9. **Wires the ingest spine** in dependency order (each stage owns the one before it):
      `broker -> ingest (decode -> deadband -> batched write) -> rules -> alert -> notification`.
      `services.NewDeviceService` (also the broker's `Authenticator`), `services.NewProfileService`
@@ -84,8 +94,19 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
       a `safego.Supervise`d offline sweep (`ruleService.SweepOffline`) on a 1-minute
       `offlineSweepInterval` — the only way an "absence of readings" rule can ever fire, since a
       silent device never calls `Handle` again.
-  11. Registers `apis.NewDevicesApi`, `apis.NewDiscoveryApi` (P3), `apis.NewProfilesApi`,
-      `apis.NewRulesApi`, `apis.NewNotificationsApi` on `protected`.
+  10b. **Wires actuation (P4)**: `services.NewCommandService(deps.Db, deviceService,
+      broker.Publish, audit, logf)` — `audit` publishes every attempt, INCLUDING every refusal,
+      as a `notification.CategorySystem`/`Warning` notification ("somebody tried to unlock the
+      front door at 03:00 and was refused" must not be thrown away just because it failed).
+      `ingest.SetTwin(commandService)` wires the twin's reported half into the ingest hot path
+      (see `services/ingest.go.md`). A `safego.Supervise`d sweep on a 10-second
+      `commandSweepInterval` calls `commandService.SweepUnconfirmed(ctx)` — deliberately much
+      more frequent than the offline sweep, because an operator staring at a "sent" command needs
+      to be told promptly that it was never confirmed; a stale "in progress" is how somebody comes
+      to believe a door is locked when it is not. See `services/commands.go.md` for every gate
+      and why a command is never auto-retried.
+  11. Registers `apis.NewDevicesApi`, `apis.NewDiscoveryApi` (P3), `apis.NewCommandsApi` (P4),
+      `apis.NewProfilesApi`, `apis.NewRulesApi`, `apis.NewNotificationsApi` on `protected`.
   12. The returned shutdown func cancels `bgCtx` then calls `writer.Wait(5*time.Second)` so a
       clean shutdown does not throw away readings the batcher already accepted.
 - `loginGuardConfig(deps)` maps `deps.Config.LoginSecurity` onto `sharedapis.LoginGuardConfig`
@@ -130,3 +151,27 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
   gained a Discovery page and a first-run onboarding wizard
   (`views/react-webpack/src/views/components/discovery.js`, `.../onboarding.js`) that lead with
   enrollment as the primary onboarding path.
+- **P4 (actuation & device twin, shipped 2026-07-14):** a device can be commanded — switch a
+  relay, set a setpoint — but only for the one shipped profile that declares any command
+  (`smart-relay`; every other profile in the catalog remains read-only). Every gate `docs/MYIOTSAN_PLAN.md`
+  §3.4 asked for is enforced server-side in `services.CommandService`
+  (`services/commands.go.md`): read-only by default (`IotDevice.ActuationEnabled`), admin-only
+  (`services/rbac.go.md`, a rule written in P0 before the command path existed), only what the
+  profile declares (no generic publish-to-any-topic endpoint), server-side bounds, a 2s
+  per-device rate limit, and a `device_command` audit row for every attempt including refusals.
+  **A command is never auto-retried** — re-sending a relay write is a second physical action, so
+  an unconfirmed command becomes `failed` after 30s (`SweepUnconfirmed`, swept every 10s) rather
+  than being resent; verified live with a relay simulator that obeys but never reports back, the
+  relay physically switched, the command failed, and exactly one command was ever sent. The
+  device twin (`DeviceAttribute`, desired vs reported) does **not** re-apply an expired desire
+  (5-minute TTL) when a device reconnects — the obvious twin implementation would, and for a door
+  controller that is dangerous (a month-old "unlock" applying itself when the device finally comes
+  back online). §3.4 said every command would be written to `myseliasan`'s existing `audit_log`;
+  that did **not** ship, because myiotsan is a standalone appliance that may never be adopted into
+  a fleet — its audit trail is its own `device_command` table plus the notification feed instead;
+  see `docs/MYIOTSAN_PLAN.md` §8d for the deviation. P4 also closed a real gap unrelated to
+  actuation itself: `/api/settings/users`/`/api/settings/roles` had been named in the policy
+  catalog since P0 but were never served, making viewer/operator unassignable — `apis.NewSettingsApi`
+  (P4) now serves them on the shared appliance user service. See `apis/commands.go.md`,
+  `apis/settings.go.md`, `entities/device_command.go.md`, `entities/profile_command.go.md`,
+  `entities/device_attribute.go.md`.

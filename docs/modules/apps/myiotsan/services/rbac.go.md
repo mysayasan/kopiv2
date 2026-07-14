@@ -22,8 +22,17 @@ fact somebody may want to erase.
 **A second line myiotsan has that mymatasan does not: ACTUATION.** A camera is read-mostly,
 but an IoT device gets written to, and a bad relay write is physically dangerous in a way a
 bad PTZ move is not — so actuation is admin-only here, on top of the per-device capability
-toggle and confirm-to-execute the plan (`docs/MYIOTSAN_PLAN.md` §3.4) calls for. When P4 lands
-the command path, this is the rule that must NOT be loosened without a deliberate decision.
+toggle the plan (`docs/MYIOTSAN_PLAN.md` §3.4) calls for. This rule was written into the catalog
+in P0, *before* the command path that would exercise it existed (shipped P4,
+`services/commands.go.md`), and it must NOT be loosened without a deliberate decision that an
+operator may open doors.
+
+**Seeing what was done is not the same power as doing it.** Reading a device's command history
+and its desired-vs-reported twin is granted to viewer/operator even though issuing a command is
+admin-only — an audit trail visible only to the people who could have written to it is not an
+audit trail. This is expressible because the matrix is most-specific-path-wins: the narrower
+`/api/devices/*/commands/history` and `/api/devices/*/twin` rows grant `read` while the shorter
+`/api/devices/*/commands` prefix stays admin-only (no grants).
 
 ## Key Function: Policy
 
@@ -42,18 +51,22 @@ alongside the ingest spine:
   Operator: `read`) — THIS is the viewer/operator line, and it is mymatasan's line exactly: a
   viewer sees what is happening now, only an operator can go back through the telemetry
   history. A sensor hub is an evidentiary device too — "the door contact opened at 02:14" is a
-  fact somebody may want to erase.
+  fact somebody may want to erase. `/api/devices/*/commands/history` and `/api/devices/*/twin`
+  (both Viewer: `read`, Operator: `read`, added P4) sit in this tier too — seeing what was done
+  to a device is not the same power as doing it.
 - **Operating** (operator only, `write`): `/api/alerts/*/ack` (acknowledge an alert),
   `/api/notifications/*/read` (mark a notification read).
 - Admin only (listed with no grants, so the catalog stays a complete description of the API
   surface even where nothing below admin is granted): `/api/devices/*/password` (rotate a
   device's broker credential), `/api/discovery` (P3 — open an enrollment window and adopt new
   devices; the ONE act in the whole app that lets an unknown thing talk to the broker at all, so
-  an operator does not get to do it either), `/api/settings/users`, `/api/settings/roles`. Also
-  NOT granted to anyone below admin, and therefore correctly absent from any `read`/`write` row:
-  creating and deleting devices, editing profiles (which could widen a deadband until a sensor
-  effectively stops recording), writing rules, and — when P4 lands it — actuation. A bad relay
-  write is physically dangerous in a way a bad PTZ move is not.
+  an operator does not get to do it either), `/api/settings/users`, `/api/settings/roles` (now
+  actually served — see `apis/settings.go.md`), `/api/devices/*/commands` (P4 — issuing a command;
+  written into the catalog here in P0, before the command path itself existed). Also NOT granted
+  to anyone below admin, and therefore correctly absent from any `read`/`write` row: creating and
+  deleting devices, editing profiles (which could widen a deadband until a sensor effectively
+  stops recording), writing rules. A bad relay write is physically dangerous in a way a bad PTZ
+  move is not.
 
 Every phase that adds an API area MUST add it here, INCLUDING the admin-only areas — a route
 missing from this catalog is a route nobody can see they are not granting.

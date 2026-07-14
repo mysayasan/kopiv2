@@ -20,12 +20,14 @@ import (
 type ProfileService struct {
 	profiles dbsql.IGenericRepo[entities.DeviceProfile]
 	keys     dbsql.IGenericRepo[entities.TelemetryKey]
+	commands dbsql.IGenericRepo[entities.ProfileCommand]
 }
 
 func NewProfileService(db dbsql.IDbCrud) *ProfileService {
 	return &ProfileService{
 		profiles: dbsql.NewGenericRepo[entities.DeviceProfile](db),
 		keys:     dbsql.NewGenericRepo[entities.TelemetryKey](db),
+		commands: dbsql.NewGenericRepo[entities.ProfileCommand](db),
 	}
 }
 
@@ -33,10 +35,15 @@ func NewProfileService(db dbsql.IDbCrud) *ProfileService {
 // copied but not removed, so a site cannot break its own onboarding by tidying up.
 var ErrProfileBuiltin = errors.New("a built-in profile cannot be deleted; copy it and edit the copy")
 
-// ProfileDetail is a profile with the datapoints it declares.
+// ProfileDetail is a profile with the datapoints it declares — and the commands it accepts.
+//
+// A device can be told to do exactly what is in Commands and nothing else. There is no generic
+// "publish this payload to that topic" endpoint anywhere in this app, which would be a remote
+// shell for the building's electrics.
 type ProfileDetail struct {
-	Profile *entities.DeviceProfile  `json:"profile"`
-	Keys    []*entities.TelemetryKey `json:"keys"`
+	Profile  *entities.DeviceProfile    `json:"profile"`
+	Keys     []*entities.TelemetryKey   `json:"keys"`
+	Commands []*entities.ProfileCommand `json:"commands"`
 }
 
 func (s *ProfileService) List(ctx context.Context) ([]*entities.DeviceProfile, error) {
@@ -54,7 +61,13 @@ func (s *ProfileService) Detail(ctx context.Context, id int64) (*ProfileDetail, 
 	if err != nil {
 		return nil, err
 	}
-	return &ProfileDetail{Profile: profile, Keys: keys}, nil
+	cmds, _, err := s.commands.Get(ctx, "", 100, 0,
+		[]sqldataenums.Filter{{FieldName: "ProfileId", Compare: sqldataenums.Equal, Value: id}},
+		[]sqldataenums.Sorter{{FieldName: "Name", Sort: sqldataenums.ASC}})
+	if err != nil && !isNoResultErr(err) {
+		return nil, err
+	}
+	return &ProfileDetail{Profile: profile, Keys: keys, Commands: cmds}, nil
 }
 
 // KeysFor returns a profile's telemetry keys. This is on the ingest path (every payload needs
@@ -73,13 +86,30 @@ func (s *ProfileService) KeysFor(ctx context.Context, profileId int64) ([]*entit
 // wholesale rather than diffed: a profile is a small declarative document, and an edit that
 // half-applies is worse than one that replaces.
 type SaveProfileRequest struct {
-	Slug          string             `json:"slug"`
-	Name          string             `json:"name"`
-	Vendor        string             `json:"vendor"`
-	Description   string             `json:"description"`
-	TopicTemplate string             `json:"topicTemplate"`
-	PayloadFormat string             `json:"payloadFormat"`
-	Keys          []SaveTelemetryKey `json:"keys"`
+	Slug          string               `json:"slug"`
+	Name          string               `json:"name"`
+	Vendor        string               `json:"vendor"`
+	Description   string               `json:"description"`
+	TopicTemplate string               `json:"topicTemplate"`
+	PayloadFormat string               `json:"payloadFormat"`
+	Keys          []SaveTelemetryKey   `json:"keys"`
+	Commands      []SaveProfileCommand `json:"commands"`
+}
+
+// SaveProfileCommand declares something a device of this type can be TOLD to do — and the
+// bounds within which it may be told to do it. Min/Max on a setpoint are a safety property,
+// enforced server-side when a command is issued.
+type SaveProfileCommand struct {
+	Name            string  `json:"name"`
+	Label           string  `json:"label"`
+	Kind            string  `json:"kind"`
+	TopicTemplate   string  `json:"topicTemplate"`
+	PayloadTemplate string  `json:"payloadTemplate"`
+	Min             float64 `json:"min"`
+	Max             float64 `json:"max"`
+	// ConfirmKey is the telemetry key the device reports the resulting state on. Without it a
+	// command can only ever be "sent", never "confirmed" — and "sent" is not "it happened".
+	ConfirmKey string `json:"confirmKey"`
 }
 
 // SaveTelemetryKey declares one datapoint.
@@ -125,6 +155,9 @@ func (s *ProfileService) Create(ctx context.Context, req SaveProfileRequest, act
 	if err := s.replaceKeys(ctx, p.Id, req.Keys, actor); err != nil {
 		return nil, err
 	}
+	if err := s.replaceCommands(ctx, p.Id, req.Commands, actor); err != nil {
+		return nil, err
+	}
 	return s.Detail(ctx, p.Id)
 }
 
@@ -144,6 +177,9 @@ func (s *ProfileService) Update(ctx context.Context, id int64, req SaveProfileRe
 		return nil, err
 	}
 	if err := s.replaceKeys(ctx, id, req.Keys, actor); err != nil {
+		return nil, err
+	}
+	if err := s.replaceCommands(ctx, id, req.Commands, actor); err != nil {
 		return nil, err
 	}
 	return s.Detail(ctx, id)
@@ -199,6 +235,39 @@ func (s *ProfileService) replaceKeys(ctx context.Context, profileId int64, keys 
 	return nil
 }
 
+// replaceCommands rewrites a profile's declared commands.
+func (s *ProfileService) replaceCommands(ctx context.Context, profileId int64, cmds []SaveProfileCommand, actor int64) error {
+	if _, err := s.commands.Delete(ctx, "",
+		[]sqldataenums.Filter{{FieldName: "ProfileId", Compare: sqldataenums.Equal, Value: profileId}}); err != nil && !isNoResultErr(err) {
+		return err
+	}
+	now := time.Now().Unix()
+	for _, c := range cmds {
+		name := strings.TrimSpace(c.Name)
+		if name == "" {
+			continue
+		}
+		if _, err := s.commands.Create(ctx, "", entities.ProfileCommand{
+			ProfileId:       profileId,
+			Name:            name,
+			Label:           defaultString(c.Label, name),
+			Kind:            defaultString(c.Kind, "switch"),
+			TopicTemplate:   strings.TrimSpace(c.TopicTemplate),
+			PayloadTemplate: strings.TrimSpace(c.PayloadTemplate),
+			Min:             c.Min,
+			Max:             c.Max,
+			ConfirmKey:      strings.TrimSpace(c.ConfirmKey),
+			CreatedBy:       actor,
+			CreatedAt:       now,
+			UpdatedBy:       actor,
+			UpdatedAt:       now,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // EnsureBuiltins seeds the shipped catalog. Existing profiles are left ALONE — a site that has
 // tuned a builtin's deadbands must not have that overwritten on the next boot, which is the
 // same rule the RBAC seeder follows.
@@ -229,6 +298,9 @@ func (s *ProfileService) EnsureBuiltins(ctx context.Context) error {
 		}
 		if err := s.replaceKeys(ctx, int64(id), b.Keys, 0); err != nil {
 			return fmt.Errorf("seed profile keys for %s: %w", b.Slug, err)
+		}
+		if err := s.replaceCommands(ctx, int64(id), b.Commands, 0); err != nil {
+			return fmt.Errorf("seed profile commands for %s: %w", b.Slug, err)
 		}
 	}
 	return nil

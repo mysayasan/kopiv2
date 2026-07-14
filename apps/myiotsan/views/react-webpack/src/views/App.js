@@ -135,7 +135,10 @@ function AppInner({ lang, onLangChange }) {
         <ToastStack toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((x) => x.id !== id))} />
 
         {activeTab === 'dashboard' ? <DashboardPage onNavigate={setActiveTab} /> : null}
-        {activeTab === 'devices' ? <DevicesPage onToast={pushToast} /> : null}
+        {/* The devices page takes the session because its Control tab hides the command
+            controls from non-admins. That is UX only — the server 403s a non-admin POST to
+            /api/devices/{id}/commands, which is the actual enforcement. */}
+        {activeTab === 'devices' ? <DevicesPage onToast={pushToast} session={session} /> : null}
         {activeTab === 'rules' ? <RulesPage onToast={pushToast} /> : null}
         {activeTab === 'alerts' ? <AlertsPage onToast={pushToast} /> : null}
         {activeTab === 'notifications' ? <NotificationsPage onToast={pushToast} /> : null}

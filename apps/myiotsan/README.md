@@ -6,12 +6,14 @@ plane), and `myidsan` (identity/SSO). It is built as an appliance on the same ru
 `mymatasan`: a single binary, on-prem, air-gapped-capable, and adoptable into the `myseliasan`
 fleet over the existing pairing/control channel.
 
-**P0-P3 are shipped.** The app boots, authenticates, ingests telemetry from real devices over an
+**P0-P4 are shipped.** The app boots, authenticates, ingests telemetry from real devices over an
 embedded MQTT broker, evaluates alert rules against it, raises alerts into a unified
-notification feed, and (P3) onboards unknown devices through a time-boxed enrollment window
-instead of requiring every device to be typed in by hand. What remains is actuation (P4),
+notification feed, (P3) onboards unknown devices through a time-boxed enrollment window instead
+of requiring every device to be typed in by hand, and (P4) can command an actuation-enabled
+device — read-only by default, admin-only, only what the device's own profile declares,
+server-side bounds, rate-limited, fully audited, and never auto-retried. What remains is
 industrial protocols (P5) and fleet adoption (P6) — see `docs/MYIOTSAN_PLAN.md` for the full
-roadmap and, in §8b/§8c, exactly what shipped and what was found by live-booting it.
+roadmap and, in §8b/§8c/§8d, exactly what shipped and what was found by live-booting it.
 
 ## Onboarding a device
 
@@ -115,6 +117,77 @@ Alerts publish into the same unified notification feed (`GET /api/notifications`
 alerts do in `mymatasan`, tagged `device.alert` so a subscriber can tell "somebody is in the
 building" (both) from "the cold store is failing" (this only).
 
+## Actuation
+
+Every other section above is about reading a device. This one is about writing to one, and it is
+built to be hard to use by accident: a camera is read-mostly, but an IoT device gets **written
+to**, and a bad write is dangerous in a way a bad camera PTZ move is not — it opens a door, trips
+a breaker, sets a thermostat to 200°C.
+
+**The gates, all enforced server-side:**
+
+1. **Read-only by default.** A device cannot be commanded until `actuationEnabled` is explicitly
+   turned on for it (per device, in its Settings). Adoption never turns it on.
+2. **Admin only.** Not an operator power, and this rule predates the command path itself.
+3. **Only what the device's profile declares.** There is no "publish an arbitrary payload to any
+   topic" endpoint anywhere in the app.
+4. **Bounds are server-side.** A setpoint outside its declared `min..max` is refused in the
+   service, never merely blocked in the UI. A setpoint that declares no range at all (`min` and
+   `max` both `0`) refuses every value — an omission is read as "no", not "anything goes".
+5. **Rate-limited** (2 seconds between commands to the same device — a relay has a duty cycle)
+   **and audited** — every attempt, including every refusal, is a `device_command` row naming
+   who tried, plus a notification. "Somebody tried to unlock the front door at 03:00 and was
+   refused" is not thrown away just because it failed.
+
+### Declaring a command on a device profile
+
+A profile (see "The device-type catalog" above) declares zero or more commands alongside its
+telemetry keys, via `POST/PUT /api/profiles`:
+
+- `name` / `label` — the command's identifier and display text.
+- `kind` — `"switch"` (accepts only `0`/`1`) or `"setpoint"` (accepts a number within `min..max`).
+- `topicTemplate` — where the command is published, `{deviceKey}` substituted.
+- `payloadTemplate` — the message body, `{value}` substituted (e.g.
+  `{"method":"Switch.Set","params":{"id":0,"on":{value}}}`). Empty sends the bare value, for a
+  device whose topic itself is the instruction.
+- `min` / `max` — the safe range for a `setpoint`. **Required for a setpoint to be usable at
+  all** — leaving both at `0` means the command declares no safe range and every value will be
+  refused.
+- `confirmKey` — the telemetry key the device reports the resulting state back on. Without this,
+  a command can only ever reach `sent`, never `confirmed`.
+
+Of the eight built-in profiles, only `smart-relay` (Shelly/Tasmota conventions) ships with a
+command declared (`output`, a switch, confirmed by the device's own `output` telemetry key) —
+every other shipped profile stays read-only, which is the correct default: a sensor that cannot
+be commanded cannot be commanded wrongly.
+
+### Sent, confirmed, failed — what an operator should read into each
+
+- **`sent`** means the app successfully published the command to the broker. It does **not**
+  mean the physical thing happened — a relay could have missed it, or the device could be about
+  to act. Do not treat `sent` as "done".
+- **`confirmed`** is the only status that means the device physically acted: it is set the moment
+  the device reports the state back on the command's `confirmKey`. This is the status to wait
+  for before believing a door is locked or a breaker is open.
+- **`failed`** means either the command was refused (a gate rejected it — the reason is given
+  verbatim, e.g. "outside the safe range 5..30") or it was sent but never confirmed within 30
+  seconds. **A failed-by-timeout command is never automatically resent** — re-sending a relay
+  write is a second physical action, and if the first one actually landed but its confirmation
+  was lost in transit, a retry would fire the relay again (the door opens twice). If a command
+  times out, check the device and re-issue it yourself if it is still needed.
+
+The device twin (`GET /api/devices/{id}/twin`) shows desired vs. reported state per key. A
+desired value that was asked for more than 5 minutes ago and never got confirmed is shown as
+disagreeing with the reported value, but it is **not** re-applied automatically when the device
+reconnects — a door controller that was offline for a month must not spring back to life and
+apply a stale "unlock" nobody is around to see. Re-issue the command if the state still needs
+changing.
+
+`GET /api/devices/{id}/commands` lists what a device can be told to do (its profile's declared
+commands) and whether `actuationEnabled` is on — the response the "Actuate" panel in the device
+page is built from. `GET /api/devices/{id}/commands/history` is the full audit trail, readable
+by viewer and operator as well as admin (see "Role model" below).
+
 ## Authentication
 
 `myiotsan` reuses mymatasan's local-auth stack, extracted to `domain/shared` so both appliance
@@ -148,17 +221,31 @@ Three roles, drawing the same line mymatasan draws — **can this person destroy
 
 myiotsan draws a **second** line mymatasan does not need: actuation (writing to a device, e.g.
 a relay) is admin-only, because a bad write to a physical device is dangerous in a way a bad
-camera PTZ move is not. This lands with the command path in P4 and is not to be loosened
-without a deliberate decision.
+camera PTZ move is not. This rule was written into the catalog in P0, before the command path
+that would exercise it existed, and it is not to be loosened without a deliberate decision.
 
-The authorization catalog now covers the shipped device/telemetry/rules/notification surface:
-a viewer sees devices and their current readings and that an alert fired; only an operator can
-review `/api/devices/*/readings` (the history) or acknowledge an alert — the same evidentiary
-line mymatasan draws for its own alert log; creating/deleting devices, editing profiles, and
-writing rules stay admin-only (`apps/myiotsan/services/rbac.go`). **`/api/discovery` (opening an
-enrollment window, and adopting or rejecting a candidate) is admin-only too** — it is the one
-act in the whole app that lets an unknown thing talk to the broker at all, so an operator does
-not get to do it either.
+The authorization catalog now covers the shipped device/telemetry/rules/notification/actuation
+surface: a viewer sees devices and their current readings and that an alert fired; only an
+operator can review `/api/devices/*/readings` (the history) or acknowledge an alert — the same
+evidentiary line mymatasan draws for its own alert log; creating/deleting devices, editing
+profiles, and writing rules stay admin-only (`apps/myiotsan/services/rbac.go`).
+**`/api/discovery` (opening an enrollment window, and adopting or rejecting a candidate) is
+admin-only too** — it is the one act in the whole app that lets an unknown thing talk to the
+broker at all, so an operator does not get to do it either. **`POST /api/devices/{id}/commands`
+(issuing a command) is admin-only**, but `GET /api/devices/{id}/commands/history` and
+`GET /api/devices/{id}/twin` are readable by viewer and operator — seeing what was done to a
+device, and whether it actually happened, is not the same power as doing it; an audit trail
+visible only to the people who could have written to it is not an audit trail.
+
+## User and role management
+
+`POST/GET /api/settings/users` (+ `PUT`/`DELETE /api/settings/users/{id}`,
+`POST /api/settings/users/{id}/password`) and `GET /api/settings/roles` are now served
+(previously they were named in the authorization catalog but 404'd — see
+`docs/MYIOTSAN_PLAN.md` §8d — so `viewer`/`operator` were unassignable and the appliance was
+effectively single-admin). All admin-only. They run on the same shared local-user service
+`mymatasan` uses, so an edit that would remove the last administrator is refused the same way in
+both apps — an appliance nobody can administer is a bricked appliance.
 
 ## Configuration
 
@@ -186,8 +273,12 @@ The SPA (`apps/myiotsan/views/react-webpack/`) is built off the shared `@shared`
 module the same way myseliasan's is — no per-app copy of `DataTable`/`SideNav`/icons/i18n.
 
 Screens: **Dashboard** (estate health, recent alerts, and the ingest panel), **Devices**
-(inventory, live values, telemetry charts, provisioning), **Discovery** (the enrollment window,
-its candidates, and adoption — see "Onboarding a device" above), **Rules**, **Alerts**,
+(inventory, live values, telemetry charts, provisioning, and — on a per-device **Control** tab
+shown to every role, since its history/twin are readable by everyone and only issuing a command
+is admin-only — the Actuation panel: available commands, command history, and the desired/
+reported twin; a separate tab rather than a strip on the readings page, because reading a sensor
+and firing a relay are different acts), **Discovery** (the enrollment window, its candidates,
+and adoption — see "Onboarding a device" above), **Rules**, **Alerts**,
 **Notifications**, and **Device types** (the profile catalog, its deadbands, and import/export).
 A first-run onboarding wizard leads a new install straight to opening its first enrollment
 window. All four locales — en, ms, zh, ar.

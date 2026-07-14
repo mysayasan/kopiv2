@@ -19,6 +19,7 @@ thing allowed to be slow is an alert, because an alert is rare and matters.
 ```go
 func NewIngest(devices *DeviceService, profile *ProfileService, gate *DeadbandGate, writer *ReadingWriter, rules *RuleService, logf func(string, ...any)) *Ingest
 func (i *Ingest) SetEnrollment(e *Enrollment)
+func (i *Ingest) SetTwin(c *CommandService)
 func (i *Ingest) Handle(ctx context.Context, p iotmqtt.Principal, clientId, topic string, payload []byte)
 func (i *Ingest) InvalidateProfile(profileId int64)
 func (i *Ingest) Stats() IngestStats
@@ -26,6 +27,10 @@ func (i *Ingest) Stats() IngestStats
 
 `SetEnrollment` wires the enrollment window in (`app.go`, after construction) so a quarantined
 client's payloads become candidates instead of telemetry.
+
+`SetTwin` (P4) wires actuation's device twin in. Every reading updates the twin's REPORTED half
+— this is what CONFIRMS a command: "we published a message" is not "the relay closed"; only the
+device saying so is. See `services/commands.go.md`.
 
 `Handle` satisfies `mqtt.MessageHandler` and is also the entry point future HTTP ingest would
 call, so a device that cannot speak MQTT gets the same pipeline behind it.
@@ -58,6 +63,10 @@ For an adopted device (`p.DeviceId`), per message:
    would mean a perfectly steady overheat is never alerted on — deliberately called out as "the
    worst possible bug this app could contain" in the source comment.
 7. `rules.OnReading(ctx, dev, s.Key, s.Num, nowSec)` runs regardless of the admit decision.
+8. (P4) `twin.OnReported(ctx, deviceId, s.Key, s.Num, nowSec)` runs too, regardless of the admit
+   decision, unconditionally for every decoded sample — a reading is a fact about the world
+   whether or not any command is outstanding on that key. This is the twin's REPORTED half, and
+   it is the only thing that can confirm a `sent` `DeviceCommand`. See `services/commands.go.md`.
 
 ## Key Type: profileBindings
 
