@@ -50,6 +50,16 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-14 — myiotsan 0.8.0, myseliasan 1.30.0 (2cea4c9)
+
+### Added
+
+- **myseliasan,myiotsan**: myseliasan can now manage an adopted myiotsan sensor node directly from its own UI: a new nodeiot/ embed (mirroring the existing nodecam camera-node embed) renders that node's Devices/Rules/Alerts/Discovery/Commands pages inside myseliasan, tunneled entirely through the existing commander proxy (/api/nodes/{id}/proxy/...) so the browser never opens a connection to the node itself. Alongside this, myiotsan's device_command and alert_event audit rows now record the acting operator's name (RequestedByName / AckedByName), not just a local user id — a command or acknowledgement issued from the myseliasan control plane arrives with no account on the node (id 0), so without the name the node's own audit trail would say a relay was switched or an alert acknowledged by "System" instead of the person who actually did it.
+
+### Changed
+
+- **myiotsan**: Package myiotsan as an installable product: portable archives, .deb/.rpm, Windows Inno installer, multi-arch Docker images, and CI that tags and releases it under its own myiotsan-v<ver> namespace
 ## 2026-07-14 — myiotsan 0.6.0, mymatasan 1.105.0, myseliasan 1.29.0 (7167a23)
 
 ### Added
