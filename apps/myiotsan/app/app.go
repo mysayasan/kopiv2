@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -19,6 +20,7 @@ import (
 	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/infra/apidocs"
 	"github.com/mysayasan/kopiv2/infra/apphost"
+	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/db/bootstrap"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	iotmqtt "github.com/mysayasan/kopiv2/infra/iot/mqtt"
@@ -118,6 +120,9 @@ func (m *module) Entities() []any {
 		appentities.ProfileCommand{},
 		appentities.DeviceCommand{},
 		appentities.DeviceAttribute{},
+		// The fleet's node-side state (the fleet key, the pairing enrollment, the mTLS cert)
+		// lives in the shared runtime_setting table, encrypted at rest.
+		sharedentities.RuntimeSetting{},
 	}
 }
 
@@ -379,6 +384,34 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewRulesApi(protected, ruleService)
 	apis.NewNotificationsApi(protected, notificationService)
 
+	// --- the fleet -------------------------------------------------------------------
+	//
+	// myiotsan is adopted by myseliasan exactly as mymatasan is, on the same shared node stack.
+	// It reports KindIot, so the control plane knows a sensor hub is not a camera node.
+	//
+	// The event sink registered inside buildFleet is the line that makes the fourth app worth
+	// building: every alert this node raises also lands in the control plane's unified feed, and
+	// once myseliasan holds events from BOTH camera nodes and sensor nodes it can correlate
+	// across them — motion on a camera AND a door opening AND no badge swipe. Neither node can
+	// see that alone.
+	if boolValue(deps.Config.Pairing.Enabled, true) {
+		fleetCipher, cerr := openFleetSecretCipher(deps)
+		if cerr != nil {
+			stopBackground()
+			return nil, cerr
+		}
+		f := buildFleet(api, deps, appVersion(m), fleetCipher, notificationService)
+
+		// The PUBLIC pairing routes (adopt / release / self-drop) authenticate with the FLEET KEY,
+		// not a user session — a control plane adopting a node has no user behind it. They must be
+		// registered on the unauthenticated router, before the protected subrouter, or the auth
+		// middleware swallows the adopt call and the node can never be adopted at all.
+		sharedapis.NewPairingPublicApi(api, f.pairing, f.enrollment.Kick)
+		sharedapis.NewPairingApi(protected, f.pairing)
+
+		f.start(bgCtx, deps)
+	}
+
 	return func(context.Context) error {
 		stopBackground()
 		// Let the batcher flush what it has already accepted. A clean shutdown should not throw
@@ -391,6 +424,57 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 // offlineSweepInterval is how often silence is checked for. A minute is well under any sane
 // offline window and costs one query.
 const offlineSweepInterval = time.Minute
+
+// appVersion resolves this build's version for the fleet handshake.
+func appVersion(m *module) string {
+	if manifest, err := versioning.LoadDefault(); err == nil {
+		if info, err := manifest.InfoForApp(m.Name()); err == nil {
+			return info.AppVersion
+		}
+	}
+	return "0.0.0"
+}
+
+// boolValue dereferences an optional bool config flag.
+func boolValue(v *bool, fallback bool) bool {
+	if v == nil {
+		return fallback
+	}
+	return *v
+}
+
+// openFleetSecretCipher resolves the at-rest key that protects the node's fleet secrets — the
+// fleet key, the pairing token, the mTLS private key. Without it they sit in the database in
+// plaintext, and anyone who can read the file can impersonate the node to its control plane.
+//
+// It FAILS CLOSED when a key that existed before is now missing: minting a new one would
+// silently orphan the encrypted enrollment and quietly un-adopt the node from its fleet.
+func openFleetSecretCipher(deps apphost.Dependencies) (*atrest.Cipher, error) {
+	if !boolValue(deps.Config.Security.EncryptAtRest, true) {
+		return nil, nil
+	}
+	keyPath := strings.TrimSpace(deps.Config.Security.KeyPath)
+	if keyPath == "" {
+		keyPath, _ = filepath.Abs(apphost.ResolveWritablePath(deps.DataDir, filepath.Join("secret", "atrest.key")))
+	}
+	recoveryPath := strings.TrimSpace(deps.Config.Security.RecoveryPath)
+	if recoveryPath == "" {
+		recoveryPath = filepath.Join(filepath.Dir(keyPath), "recovery.atrestkey")
+	}
+	outcome, err := atrest.OpenForStartup(keyPath, recoveryPath, atrest.ProtectorConfig{
+		Name:           deps.Config.Security.KeyProtector,
+		Passphrase:     deps.Config.Security.Passphrase,
+		PassphraseFile: deps.Config.Security.PassphraseFile,
+		PassphraseEnv:  deps.Config.Security.PassphraseEnv,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("fleet-secret encryption key: %w", err)
+	}
+	if outcome.Mode == atrest.ModeRecoveryPending {
+		return nil, fmt.Errorf("fleet-secret encryption key missing (id %s): restore %s or set security.recoveryPath, then restart — refusing to orphan this node's fleet enrollment", outcome.KeyId, keyPath)
+	}
+	return outcome.KeyStore.Cipher(), nil
+}
 
 // commandSweepInterval is how often unconfirmed commands are ended. Frequent, because an
 // operator staring at a "sent" command needs to be told promptly that it was never confirmed —

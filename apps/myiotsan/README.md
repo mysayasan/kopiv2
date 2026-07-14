@@ -6,14 +6,16 @@ plane), and `myidsan` (identity/SSO). It is built as an appliance on the same ru
 `mymatasan`: a single binary, on-prem, air-gapped-capable, and adoptable into the `myseliasan`
 fleet over the existing pairing/control channel.
 
-**P0-P4 are shipped.** The app boots, authenticates, ingests telemetry from real devices over an
-embedded MQTT broker, evaluates alert rules against it, raises alerts into a unified
+**P0-P4 and P6 are shipped.** The app boots, authenticates, ingests telemetry from real devices
+over an embedded MQTT broker, evaluates alert rules against it, raises alerts into a unified
 notification feed, (P3) onboards unknown devices through a time-boxed enrollment window instead
-of requiring every device to be typed in by hand, and (P4) can command an actuation-enabled
+of requiring every device to be typed in by hand, (P4) can command an actuation-enabled
 device — read-only by default, admin-only, only what the device's own profile declares,
-server-side bounds, rate-limited, fully audited, and never auto-retried. What remains is
-industrial protocols (P5) and fleet adoption (P6) — see `docs/MYIOTSAN_PLAN.md` for the full
-roadmap and, in §8b/§8c/§8d, exactly what shipped and what was found by live-booting it.
+server-side bounds, rate-limited, fully audited, and never auto-retried — and (P6) is now an
+adoptable node in the `myseliasan` fleet, which is what lets its alerts be correlated against a
+`mymatasan` camera's (see "Fleet" below). What remains is industrial protocols (P5) and release
+plumbing (P7) — see `docs/MYIOTSAN_PLAN.md` for the full roadmap and, in §8b/§8c/§8d/§8e, exactly
+what shipped and what was found by live-booting it.
 
 ## Onboarding a device
 
@@ -247,6 +249,34 @@ effectively single-admin). All admin-only. They run on the same shared local-use
 `mymatasan` uses, so an edit that would remove the last administrator is refused the same way in
 both apps — an appliance nobody can administer is a bricked appliance.
 
+## Fleet
+
+`myiotsan` is adopted into a `myseliasan` fleet exactly the way a `mymatasan` node is, on the
+same shared node stack (`domain/shared/fleetnode`): LAN discovery (authenticated UDP
+multicast), single-parent adoption by a claim code an operator reads off this app's Settings
+page, and mTLS enrollment against `myseliasan`'s on-prem fleet CA. No new fleet ports are
+needed — it dials the same discovery/pairing/control ports mymatasan nodes already use (see
+"Configuration" below).
+
+**Two channels, not three.** Once adopted, `myiotsan` dials the mTLS **enrollment/heartbeat**
+listener and the **control channel** (tunnelled commands down, events up). It does *not* open
+`mymatasan`'s third, camera-only **media** channel — a sensor hub has no video to stream, and
+an unused listener is an unused attack surface.
+
+**Its alerts flow into the control plane's feed.** Everything this node raises — a rule alert, a
+device gone silent, a relay command, a sign-in lockout — is pushed up the control channel into
+`myseliasan`'s unified notification feed, the same way a `mymatasan` node's alerts already are.
+That is what makes cross-domain correlation possible: `myseliasan` can now express a rule like
+*motion on a camera AND a door contact opening AND no badge swipe → intrusion*, something
+neither this app nor `mymatasan` can see on its own. See `myseliasan`'s README ("Fleet rules")
+and `docs/MYIOTSAN_PLAN.md` §8e for how that correlation works and how it was verified live.
+
+`myseliasan`'s fleet UI shows this app's nodes as "Sensor hub" (as opposed to a `mymatasan`
+node's "Camera node") — the node reports its kind over the fleet-signed adopt call, not over
+the unsigned discovery announce, so a hostile host on the LAN can at most make a fake node show
+the wrong icon in a scan list; it cannot make the control plane adopt anything or change what an
+already-adopted node is.
+
 ## Configuration
 
 - `apps/myiotsan/config.json` / `config.dev.json` — HTTPS port `3003` (myidsan `3001`,
@@ -258,8 +288,8 @@ both apps — an appliance nobody can administer is a bricked appliance.
 - `telemetry_store` — `batchSize`/`flushMs`/`queueSize` tune the write-behind batcher;
   `rawRetentionDays` (default 30) / `rollupRetentionDays` (default 400) tune how long raw
   readings and their downsampled rollups survive.
-- No new fleet ports: when myiotsan is later adopted into a myseliasan fleet (P6), it will
-  dial the same discovery/pairing/control ports mymatasan nodes already use.
+- No new fleet ports: adoption into a `myseliasan` fleet (see "Fleet" above) dials the same
+  discovery/pairing/control ports mymatasan nodes already use.
 
 Run locally:
 

@@ -436,11 +436,6 @@ type MJPEGFallbackSettings struct {
 	Enabled bool `json:"enabled"`
 }
 
-
-
-
-
-
 // IRuntimeSettingsService manages runtime-editable settings.
 type IRuntimeSettingsService interface {
 	Get(ctx context.Context) (RuntimeSettings, error)
@@ -450,8 +445,6 @@ type IRuntimeSettingsService interface {
 	Decoder(ctx context.Context) (DecoderSettings, error)
 	Recording(ctx context.Context) (RecordingSettings, error)
 }
-
-
 
 // SaveRecordingConfigRequest is the request body for creating or updating a per-camera NVR recording config.
 type SaveRecordingConfigRequest struct {

@@ -1,4 +1,4 @@
-package services
+package fleetnode
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
+	"github.com/mysayasan/kopiv2/domain/entities"
 	"github.com/mysayasan/kopiv2/infra/atrest"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/pairing"
@@ -82,6 +82,11 @@ type AdoptResult struct {
 	NodeID string `json:"nodeId"`
 	Name   string `json:"name"`
 	Token  string `json:"token"`
+	// Kind is the AUTHORITATIVE answer to "what did I just adopt?". Unlike the discovery
+	// announce's hint, this one arrives from the node itself over the adopt call — which is
+	// signed with the fleet key and gated by a claim code the operator read off the node — and
+	// it is the value the control plane stores.
+	Kind string `json:"kind,omitempty"`
 }
 
 // Enrollment is the node's mTLS material: the pairing token (used to authenticate
@@ -136,6 +141,7 @@ type pairingService struct {
 	cipher  *atrest.Cipher
 	name    string
 	version string
+	kind    NodeKind
 
 	mu          sync.Mutex
 	nodeIDCache string
@@ -145,15 +151,33 @@ type pairingService struct {
 
 // NewPairingService builds the node pairing service. name defaults to the host
 // name when empty; cipher (may be nil) encrypts the fleet key at rest.
-func NewPairingService(repo dbsql.IGenericRepo[entities.RuntimeSetting], cipher *atrest.Cipher, name, version string) IPairingService {
+// NodeKind is what a node IS, which the control plane needs to know because it manages two
+// different sorts of appliance and they are not interchangeable — a camera node has recordings
+// and live views; a sensor node has telemetry and relays.
+type NodeKind = string
+
+const (
+	// KindCamera is a mymatasan node.
+	KindCamera NodeKind = "camera"
+	// KindIot is a myiotsan node.
+	KindIot NodeKind = "iot"
+)
+
+func NewPairingService(repo dbsql.IGenericRepo[entities.RuntimeSetting], cipher *atrest.Cipher, appName, name, version string, kind NodeKind) IPairingService {
 	if strings.TrimSpace(name) == "" {
 		if hn, err := os.Hostname(); err == nil {
 			name = hn
 		} else {
-			name = "mymatasan"
+			name = appName
 		}
 	}
-	return &pairingService{repo: repo, cipher: cipher, name: name, version: version}
+	if strings.TrimSpace(kind) == "" {
+		// An unspecified kind is a CAMERA, because every node that exists today is one. A node
+		// that predates this field says nothing, and the parent must keep treating it exactly as
+		// it always did — a defaulted-to-unknown node would appear broken in the fleet UI.
+		kind = KindCamera
+	}
+	return &pairingService{repo: repo, cipher: cipher, name: name, version: version, kind: kind}
 }
 
 func (s *pairingService) Status(ctx context.Context) (PairingStatus, error) {
@@ -234,6 +258,8 @@ func (s *pairingService) AnnounceInfo(ctx context.Context, httpsPort int) pairin
 		Name:      s.name,
 		Version:   s.version,
 		HTTPSPort: httpsPort,
+		// Advisory only — see pairing.Announce.Kind. The authoritative one rides the adopt reply.
+		Kind: s.kind,
 	}
 }
 
@@ -304,7 +330,7 @@ func (s *pairingService) Adopt(ctx context.Context, req AdoptRequest) (AdoptResu
 	s.claimCode = "" // single-use: consume the code on success
 
 	nodeID, _ := s.nodeIDLocked(ctx)
-	return AdoptResult{NodeID: nodeID, Name: s.name, Token: token}, nil
+	return AdoptResult{NodeID: nodeID, Name: s.name, Token: token, Kind: s.kind}, nil
 }
 
 func (s *pairingService) Release(ctx context.Context, token string) error {

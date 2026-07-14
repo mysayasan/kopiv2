@@ -1,0 +1,342 @@
+/* Cross-domain fleet rules — the control plane's correlation surface.
+
+   Two ideas carry the whole visual language here:
+     1. The PITCH panel, said once at the top, in prose rather than field labels.
+     2. The ABSENT clause is a different creature from a required one. It is the half of the
+        rule that expresses innocence — the thing that stops a rule crying intrusion on every
+        legitimate badge entry — so it never looks like just another row. Required = accent
+        (something happened); absent = amber + dashed (something had better not have). */
+
+/* ---- pitch ---- */
+.fr-pitch {
+  border-left: 3px solid var(--ui-accent, #2d6cdf);
+}
+.fr-pitch-lead {
+  margin: 0 0 12px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  max-width: 92ch;
+}
+.fr-pitch-example {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--ui-accent-soft, rgba(45, 108, 223, 0.09));
+  border: 1px solid var(--border-soft);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--text-primary);
+  max-width: 92ch;
+}
+.fr-pitch-example svg { flex: 0 0 auto; margin-top: 3px; }
+.fr-pitch-noise {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  max-width: 92ch;
+}
+
+/* ---- rule list ---- */
+.fr-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.fr-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-panel);
+  border-radius: 12px;
+  background: var(--bg-surface);
+}
+.fr-card--off { opacity: 0.6; }
+.fr-card-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.fr-card-name {
+  margin: 0;
+  flex: 1 1 auto;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+.fr-card-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+}
+.fr-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.fr-card-actions {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* Severity, in the notification feed's language (see notifications.css .notif-sev). */
+.fr-sev {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+}
+.fr-sev--info {
+  color: #2563eb;
+  background: rgba(37, 99, 235, 0.12);
+  border-color: rgba(37, 99, 235, 0.28);
+}
+.fr-sev--warning {
+  color: #b45309;
+  background: rgba(217, 119, 6, 0.14);
+  border-color: rgba(217, 119, 6, 0.3);
+}
+.fr-sev--critical {
+  color: #b91c1c;
+  background: rgba(220, 38, 38, 0.13);
+  border-color: rgba(220, 38, 38, 0.3);
+}
+
+/* ---- the one-sentence summary ---- */
+.fr-summary {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-primary);
+}
+.fr-summary--empty { color: var(--text-muted); font-style: italic; }
+.fr-phrase strong { font-weight: 650; }
+.fr-and {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+/* The absences read differently because they mean something different. */
+.fr-summary-absent {
+  color: #b45309;
+  font-weight: 500;
+}
+.fr-summary-window {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* ---- editor ---- */
+.fr-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #b91c1c;
+  background: rgba(220, 38, 38, 0.09);
+  border: 1px solid rgba(220, 38, 38, 0.3);
+}
+.fr-error svg { flex: 0 0 auto; margin-top: 2px; }
+
+.fr-field-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.55;
+  color: var(--text-muted);
+  white-space: normal;
+}
+
+.fr-enable-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: flex-start;
+}
+.fr-enable-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.fr-timing {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+.fr-timing-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-surface);
+}
+.fr-timing-field input {
+  max-width: 140px;
+}
+.fr-timing-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* The grace delay decides whether this feature is trusted or turned off. It is given the
+   room its explanation needs, and it spans the row so nobody skims past it. */
+.fr-timing-field--grace {
+  grid-column: 1 / -1;
+  border-color: rgba(217, 119, 6, 0.35);
+  background: rgba(217, 119, 6, 0.05);
+}
+.fr-grace-hint {
+  max-width: 92ch;
+  color: var(--text-primary);
+}
+
+/* ---- clause builder ---- */
+.fr-clause-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.fr-clause {
+  padding: 12px 14px;
+  border: 1px solid var(--border-panel);
+  border-left: 3px solid var(--ui-accent, #2d6cdf);
+  border-radius: 10px;
+  background: var(--bg-surface);
+}
+/* An "absent" clause is not another row of the same kind: it is the rule's statement of
+   innocence. Dashed + amber, so it is impossible to mistake for a thing that must happen. */
+.fr-clause--absent {
+  border-style: dashed;
+  border-color: rgba(217, 119, 6, 0.45);
+  border-left: 3px dashed #d97706;
+  background: rgba(217, 119, 6, 0.05);
+}
+.fr-clause-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.fr-clause-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ui-accent, #2d6cdf);
+  background: var(--ui-accent-soft, rgba(45, 108, 223, 0.1));
+  border: 1px solid var(--ui-accent, #2d6cdf);
+}
+.fr-clause-badge--absent {
+  color: #b45309;
+  background: rgba(217, 119, 6, 0.12);
+  border-color: rgba(217, 119, 6, 0.5);
+  border-style: dashed;
+}
+.fr-clause-n {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.fr-clause-remove { margin-left: auto; }
+.fr-clause-note {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #b45309;
+  max-width: 92ch;
+}
+.fr-add-absent { border-style: dashed; }
+.fr-editor-actions { margin-top: 16px; }
+
+/* ---- fleet chips (which nodes a clause can point at) ---- */
+.fr-node-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.fr-node-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-panel);
+}
+.fr-node-chip-kind {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding-left: 6px;
+  border-left: 1px solid var(--border-soft);
+}
+.fr-node-chip--camera { border-color: rgba(45, 108, 223, 0.45); }
+.fr-node-chip--iot { border-color: rgba(13, 148, 136, 0.5); }
+
+/* Node-kind pill, reused by the adopted-nodes table: a camera NVR and a sensor hub are not
+   interchangeable, and the control plane now manages both. */
+.node-kind-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid var(--border-panel);
+  color: var(--text-muted);
+  background: var(--bg-surface);
+}
+.node-kind-pill--camera {
+  color: #2563eb;
+  background: rgba(37, 99, 235, 0.1);
+  border-color: rgba(37, 99, 235, 0.3);
+}
+.node-kind-pill--iot {
+  color: #0f766e;
+  background: rgba(13, 148, 136, 0.11);
+  border-color: rgba(13, 148, 136, 0.32);
+}
+
+@media (max-width: 720px) {
+  .fr-timing { grid-template-columns: 1fr; }
+  .fr-card-actions { margin-left: 0; }
+}

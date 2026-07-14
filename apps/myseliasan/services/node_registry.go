@@ -46,6 +46,11 @@ type DiscoveredNode struct {
 	IP        string `json:"ip"`
 	HTTPSPort int    `json:"httpsPort"`
 	Adopted   bool   `json:"adopted"`
+	// Kind is what the node CLAIMS to be, from its discovery announce. It is an ADVISORY DISPLAY
+	// HINT — unsigned, so a hostile host on the LAN could lie about it and show the wrong icon in
+	// this list. It cannot make the control plane adopt anything, and the authoritative kind is
+	// taken from the adopt reply instead. Never make a trust decision on this field.
+	Kind string `json:"kind,omitempty"`
 }
 
 // AdoptInput binds a node. IP+HTTPSPort locate it; ClaimCode authorises the bind
@@ -353,9 +358,11 @@ func (s *nodeRegistry) Scan(ctx context.Context, timeout time.Duration) ([]Disco
 	out := make([]DiscoveredNode, 0, len(results))
 	for _, r := range results {
 		out = append(out, DiscoveredNode{
-			NodeID:    r.NodeID,
-			Name:      r.Name,
-			Version:   r.Version,
+			NodeID:  r.NodeID,
+			Name:    r.Name,
+			Version: r.Version,
+			// Advisory only — see DiscoveredNode.Kind.
+			Kind:      r.Kind,
 			IP:        r.IP,
 			HTTPSPort: r.HTTPSPort,
 			Adopted:   known[r.NodeID],
@@ -411,7 +418,11 @@ func (s *nodeRegistry) Adopt(ctx context.Context, in AdoptInput) (*entities.Mana
 
 	now := time.Now().Unix()
 	node := entities.ManagedNode{
-		NodeId:      nodeID,
+		NodeId: nodeID,
+		// The AUTHORITATIVE kind: the node told us over the adopt call, which is fleet-key-signed
+		// and claim-code-gated. An empty answer means a node that predates the field, and every
+		// one of those is a camera.
+		Kind: firstNonEmpty(res.Kind, "camera"),
 		// Operator's chosen label wins; fall back to the node's reported hostname.
 		Name:        firstNonEmpty(in.Name, res.Name),
 		Description: strings.TrimSpace(in.Description),
@@ -844,6 +855,10 @@ type adoptResponse struct {
 	NodeID string `json:"nodeId"`
 	Name   string `json:"name"`
 	Token  string `json:"token"`
+	// Kind is the node telling us what it is, over a call it authenticated with the fleet key and
+	// a claim code the operator read off its screen. This — not the multicast announce — is the
+	// value we store and trust.
+	Kind string `json:"kind,omitempty"`
 }
 
 func (s *nodeRegistry) postNode(ctx context.Context, url string, body []byte) (adoptResponse, error) {

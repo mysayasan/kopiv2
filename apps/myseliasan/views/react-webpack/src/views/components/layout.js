@@ -13,7 +13,14 @@ export function BrandLogo(props) {
 // scroll area, so the rail stays usable with dozens–hundreds of nodes.
 const NODE_FILTER_THRESHOLD = 8;
 const NODE_FALLBACK_ICON = 'monitor';
+// A sensor hub (myiotsan) is not a camera NVR, and the rail should not pretend otherwise.
+const SENSOR_FALLBACK_ICON = 'cpu';
 const CAMERA_ICON = 'video';
+
+// isSensorNode: the node's kind is "camera" or "iot"; an EMPTY kind is a camera node, because
+// every node adopted before the field existed is a mymatasan NVR.
+export const isSensorNode = (node) => String(node?.kind || '').toLowerCase() === 'iot';
+export const nodeFallbackIcon = (node) => (isSensorNode(node) ? SENSOR_FALLBACK_ICON : NODE_FALLBACK_ICON);
 
 // NodeTreeChild is one adopted node in the nav tree, now itself expandable into its
 // cameras. The node row navigates to that node's manage surface (all cameras); its
@@ -25,6 +32,9 @@ function NodeTreeChild({ node, onNodes, managingNodeId, managingCameraId, onSele
   const isManaged = onNodes && managingNodeId === node.nodeId;
   const nodeActive = isManaged && !managingCameraId;
   const status = node.status === 'online' ? 'online' : 'offline';
+  // A sensor hub has no cameras, so it gets no camera sub-branch (and no caret that would
+  // fetch /api/cameras from a node that does not serve it).
+  const sensor = isSensorNode(node);
   const [open, setOpen] = useState(false);
   const [cams, setCams] = useState(null); // null = never loaded; [] = loaded, empty
   const [loading, setLoading] = useState(false);
@@ -80,24 +90,28 @@ function NodeTreeChild({ node, onNodes, managingNodeId, managingCameraId, onSele
   return (
     <div className="nav-subtree">
       <div className="nav-tree-rootrow nav-subtree-row">
-        <button
-          type="button"
-          className="nav-tree-caret nav-subtree-caret"
-          onClick={toggle}
-          aria-label={open ? t('nodes.collapseCams') : t('nodes.expandCams')}
-          aria-expanded={open}
-        >
-          <Ico n="chev-down" sz={12} style={open ? undefined : { transform: 'rotate(-90deg)' }} />
-        </button>
+        {sensor ? (
+          <span className="nav-tree-caret nav-subtree-caret" aria-hidden="true" />
+        ) : (
+          <button
+            type="button"
+            className="nav-tree-caret nav-subtree-caret"
+            onClick={toggle}
+            aria-label={open ? t('nodes.collapseCams') : t('nodes.expandCams')}
+            aria-expanded={open}
+          >
+            <Ico n="chev-down" sz={12} style={open ? undefined : { transform: 'rotate(-90deg)' }} />
+          </button>
+        )}
         <button
           type="button"
           className={`nav-item tone-blue nav-tree-child nav-tree-main${nodeActive ? ' active' : ''}`}
-          onClick={selectAndExpand}
-          onDoubleClick={toggle}
-          title={node.description ? undefined : (node.name || node.nodeId)}
+          onClick={sensor ? () => onSelectNode(node.nodeId) : selectAndExpand}
+          onDoubleClick={sensor ? undefined : toggle}
+          title={node.description ? undefined : `${node.name || node.nodeId} — ${sensor ? t('node.kindIot') : t('node.kindCamera')}`}
         >
           <span className="nav-tree-ico" data-status={status}>
-            <Ico n={node.icon || NODE_FALLBACK_ICON} sz={16} />
+            <Ico n={node.icon || nodeFallbackIcon(node)} sz={16} />
           </span>
           <span className="nav-label">{node.name || node.nodeId}</span>
           {node.description ? (
@@ -108,7 +122,7 @@ function NodeTreeChild({ node, onNodes, managingNodeId, managingCameraId, onSele
           ) : null}
         </button>
       </div>
-      {open ? (
+      {open && !sensor ? (
         <div className="nav-tree-children nav-cam-children">
           {loading ? (
             <div className="nav-tree-empty">{t('nodes.loadingCams')}</div>
@@ -284,18 +298,25 @@ export function SideNav({ activeTab, busy, onTab, onLogout, session, nodes, mana
     { label: t('group.workspace'), items: [navItem('dashboard', t('nav.dashboard'), 'monitor', 'steel')] },
     {
       label: t('group.fleet'),
-      items: sessionCanGet(session, '/api/nodes')
-        // Live Views sits above the Nodes tree; the Nodes entry is a bespoke tree
-        // injected via the shell's render hook.
-        ? [
-            navItem('liveviews', t('nav.liveViews'), 'video', 'steel'),
-            navItem('objects', t('nav.objects'), 'eye', 'teal'),
-            navItem('teach', t('nav.teach'), 'wand', 'amber'),
-            { id: 'nodes', render: () => (
-              <NodesNavItem nodes={nodes} activeTab={activeTab} managingNodeId={managingNodeId} managingCameraId={managingCameraId} onSelectNode={onSelectNode} />
-            ) },
-          ]
-        : [],
+      // Live Views sits above the Nodes tree; the Nodes entry is a bespoke tree injected via
+      // the shell's render hook. Fleet rules sits below it, because it is the only entry that
+      // is about the fleet AS A WHOLE — a rule that spans a camera node and a sensor hub — and
+      // it has its own permission gate (reading rules is matrix-driven, writing is superadmin).
+      items: [
+        ...(sessionCanGet(session, '/api/nodes')
+          ? [
+              navItem('liveviews', t('nav.liveViews'), 'video', 'steel'),
+              navItem('objects', t('nav.objects'), 'eye', 'teal'),
+              navItem('teach', t('nav.teach'), 'wand', 'amber'),
+              { id: 'nodes', render: () => (
+                <NodesNavItem nodes={nodes} activeTab={activeTab} managingNodeId={managingNodeId} managingCameraId={managingCameraId} onSelectNode={onSelectNode} />
+              ) },
+            ]
+          : []),
+        ...(sessionCanGet(session, '/api/fleet-rules')
+          ? [navItem('fleetrules', t('nav.fleetRules'), 'grid4', 'violet')]
+          : []),
+      ],
     },
     {
       label: t('group.administration'),

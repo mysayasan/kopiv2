@@ -1,8 +1,29 @@
-# Module: apps/mymatasan/services/pairing.go
+# Module: domain/shared/fleetnode/pairing.go
 
 ## Purpose
 
 Implements `IPairingService`, the node-side single-parent lock state machine. It persists all pairing state in the existing `RuntimeSetting` KV store (no new DB table) and enforces first-adopter-wins semantics under a mutex so two simultaneous adopt calls cannot both win.
+
+Moved here from `apps/mymatasan/services/pairing.go` (Tier: fleet extraction) — it was never
+camera-specific, and `myiotsan` needs the identical state machine. `mymatasan` keeps compiling
+unchanged via a same-named alias in `apps/mymatasan/services/fleetnode.go`.
+
+## Node Kind
+
+`NewPairingService` now takes a `kind NodeKind` (`KindCamera` | `KindIot`) — what the node IS,
+because the control plane manages two different sorts of appliance and they are not
+interchangeable: a camera node has recordings and live views; a sensor node has telemetry and
+relays.
+
+- An empty `kind` defaults to `KindCamera` — every node that exists before this field shipped is
+  a mymatasan node, and it must keep behaving exactly as it always did rather than appearing as
+  some unknown thing a fleet UI cannot render.
+- `AnnounceInfo` stamps `kind` into the discovery announce (`pairing.AnnounceInfo.Kind`) as an
+  **advisory, unsigned** hint — deliberately not part of the HMAC (see
+  `docs/modules/infra/pairing/packet.go.md`).
+- `Adopt` returns `kind` in `AdoptResult.Kind` — the **authoritative** answer, since the adopt
+  call is fleet-key-signed and claim-code-gated. This is the value `myseliasan` stores on the
+  `ManagedNode` row (see `docs/modules/apps/myseliasan/services/node_registry.go.md`).
 
 ## Responsibilities
 
@@ -10,9 +31,9 @@ Implements `IPairingService`, the node-side single-parent lock state machine. It
 - `Status` — return the UI-facing `PairingStatus` (never exposes the fleet key or token; shows `fleetKeySet`, `discoverable`, `claimCodeActive`).
 - `FleetKey` / `SetFleetKey` — decrypt/encrypt the fleet key at rest; minimum 16 characters enforced on set.
 - `Discoverable` — `true` only when unpaired AND fleet key is set.
-- `AnnounceInfo` — supply live node identity (NodeID, Name, Version, HTTPSPort) for the discovery responder.
+- `AnnounceInfo` — supply live node identity (NodeID, Name, Version, HTTPSPort, **Kind**) for the discovery responder.
 - `GenerateClaimCode` — mint a short-lived (10-minute TTL) base32 uppercase claim code held in memory only; single-use (consumed on successful adopt).
-- `Adopt` — validate the fleet-key assertion (`pairing.VerifyAssertion`, 60s window) + claim code under the mutex, confirm not already paired, mint a 32-byte hex pairing token, persist the locked state (token stored as SHA-256 hash only), persist the plaintext token (encrypted) in a new `pairing.enrollment` row for later use by `EnrollmentManager`, and return the token once to the caller.
+- `Adopt` — validate the fleet-key assertion (`pairing.VerifyAssertion`, 60s window) + claim code under the mutex, confirm not already paired, mint a 32-byte hex pairing token, persist the locked state (token stored as SHA-256 hash only), persist the plaintext token (encrypted) in a new `pairing.enrollment` row for later use by `EnrollmentManager`, and return the token plus the node's **Kind** once to the caller.
 - `Release` — verify the pairing token in constant time (`crypto/subtle`), clear the pairing state, and clear the `pairing.enrollment` row; idempotent when already unpaired.
 - `Unpair` — admin self-drop: clear the pairing state and enrollment row; return the ex-parent's base URL so the caller can fire a courtesy notice.
 - `NodeID` — return the node's stable UUID identity (generated on first call and persisted in `pairing.nodeId`).
@@ -47,9 +68,13 @@ Implements `IPairingService`, the node-side single-parent lock state machine. It
 
 ## Notes
 
-- All state lives in `RuntimeSetting` rows; the service does not own a separate table.
+- All state lives in `RuntimeSetting` rows; the service does not own a separate table. `RuntimeSetting` is now `domain/entities.RuntimeSetting` (see `docs/modules/domain/entities/runtime_setting.go.md`) — a shared appliance entity, not a mymatasan-owned one.
 - The fleet key and the enrollment bundle are both encrypted at rest by the `atrest.Cipher` passed to `NewPairingService`; when `cipher` is `nil` they are stored plaintext (useful in tests or when encryption-at-rest is disabled).
 - The node's stable ID (`pairing.nodeId`) is a UUID generated and persisted on first call; it survives restarts but is cleared by a factory reset (which drops and rebuilds the DB).
 - Claim codes are held in memory only; they are not persisted and are lost on restart. An operator must generate a new code after restarting the node.
-- `name` defaults to `os.Hostname()` when the empty string is passed to `NewPairingService`.
+- `name` defaults to `os.Hostname()` when the empty string is passed to `NewPairingService`; `appName` (a new parameter) is the fallback when even the hostname lookup fails.
 - `Release` and `Unpair` both call `clearEnrollment` so the mTLS material is wiped when the node leaves a pairing.
+- A hostile host on the LAN can only ever affect the unsigned `AnnounceInfo.Kind` hint (a wrong
+  icon in a discovery list); it cannot make the control plane adopt anything, and it cannot
+  change what an adopted node's `Kind` actually is, since that value never leaves this service
+  except inside the fleet-key-signed, claim-code-gated `AdoptResult`.

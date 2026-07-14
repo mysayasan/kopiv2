@@ -111,11 +111,11 @@ func TestNodeAccessResolveMatrix(t *testing.T) {
 	)
 
 	cases := []struct {
-		name       string
-		roleId     int64
-		wantRole   string
-		wantRead   bool
-		wantWrite  bool
+		name      string
+		roleId    int64
+		wantRole  string
+		wantRead  bool
+		wantWrite bool
 	}{
 		{"owner role → admin", 10, "admin", true, true},
 		{"read-only grant → viewer", 20, "viewer", true, false},
@@ -203,7 +203,6 @@ func TestNodeAccessDeleteById(t *testing.T) {
 		t.Fatalf("expected denied after delete, got role %q", acc.Role())
 	}
 }
-
 
 // The rung that was missing. Without it a control-plane user was either a viewer or an admin
 // at the node, so the node's three-role model collapsed to a binary the moment a command

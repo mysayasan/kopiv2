@@ -95,6 +95,9 @@ func (m *module) Entities() []any {
 		appentities.AuditLog{},
 		sharedentities.AccessRole{},
 		sharedentities.AccessRolePermission{},
+		// Cross-domain correlation: the reason the suite has a fourth app.
+		appentities.FleetRule{},
+		appentities.FleetRuleClause{},
 	}
 }
 
@@ -245,8 +248,67 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// persistent, node-dialed bi-directional channel. Connection presence bumps a
 	// node online (stronger liveness than the heartbeat poll, which still runs as a
 	// fallback). It tunnels parent→node commands and ingests node→parent events.
+	// The cross-domain correlator. THIS is the reason the fourth app exists.
+	//
+	//	motion on Camera 3 (a mymatasan node)
+	//	AND a door contact opening (a myiotsan node)
+	//	AND no badge swipe (a myiotsan node)
+	//	-> intrusion
+	//
+	// No node can see that. mymatasan cannot see your door sensors; myiotsan cannot see your
+	// cameras. Only the control plane, which already receives every node's events in one feed, is
+	// in a position to notice the conjunction — and the conjunction is where the signal is. A
+	// camera's motion alert at 03:00 is a moth; a door contact at 03:00 is a cleaner; the two
+	// together with no badge swipe is an intrusion.
+	correlator := services.NewCorrelator(deps.Db, notificationService,
+		// The node's kind is resolved from the ADOPTED NODE'S RECORD — the authoritative answer to
+		// "is this a camera or a sensor hub?", set from the claim-code-gated adopt reply. Trusting
+		// a kind carried in the event body would let a node claim to be something it is not, and a
+		// rule scoped to "a camera" could then be satisfied by a door sensor.
+		func(ctx context.Context, nodeId string) string {
+			nodes, err := registry.List(ctx)
+			if err != nil {
+				return ""
+			}
+			for _, n := range nodes {
+				if n.NodeId == nodeId {
+					if n.Kind == "" {
+						return "camera" // every node adopted before the field existed is a camera
+					}
+					return n.Kind
+				}
+			}
+			return ""
+		},
+		func(f string, a ...any) { deps.Logger.Infof("myseliasan.correlate", f, a...) })
+	if err := correlator.Reload(context.Background()); err != nil {
+		stopBackground()
+		return nil, fmt.Errorf("load fleet rules: %w", err)
+	}
+	apis.NewFleetRulesApi(api, *deps.Auth, controlSession, correlator)
+
+	// The sweep is what makes an ABSENCE decidable: nothing arrives to tell you the badge was
+	// never swiped, so the passage of time has to.
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-bgCtx.Done():
+				return
+			case <-ticker.C:
+				correlator.Sweep(bgCtx)
+			}
+		}
+	}()
+
 	onNodeEvent := func(nodeID, kind string, body []byte) {
 		ingestNodeEvent(notificationService, nodeID, kind, body)
+		// Feed the same event to the correlator. It is deliberately fed the NODE event rather
+		// than the control plane's own re-published notification: correlating on our own output
+		// would let a fleet rule's alert satisfy another fleet rule's clause, and two rules could
+		// then trigger each other forever.
+		observeForCorrelation(context.Background(), correlator, nodeID, kind, body)
 	}
 	controlServer := services.NewControlServer(registry, p.ControlPort, onNodeEvent,
 		func(format string, args ...any) { deps.Logger.Infof("myseliasan.control", format, args...) })

@@ -3,7 +3,23 @@ import { Ico, useT } from '@shared';
 import { FormBusyOverlay, IconDropdown } from './ui';
 import { NodeManager } from './node_manager';
 import { NodeSettingsDialog } from './node_settings_dialog';
+import { isSensorNode, nodeFallbackIcon } from './layout';
 import { api, formatTimestamp } from '../lib/helpers';
+
+// NodeKindPill names what a node IS. The control plane now adopts two kinds — a mymatasan
+// camera NVR and a myiotsan sensor hub — and they are not interchangeable: a clause that says
+// "a door contact" belongs on the hub, and one that says "motion" belongs on the NVR. An empty
+// kind is a camera node (every node adopted before the field existed is one).
+function NodeKindPill({ node }) {
+  const t = useT();
+  const sensor = isSensorNode(node);
+  return (
+    <span className={`node-kind-pill node-kind-pill--${sensor ? 'iot' : 'camera'}`}>
+      <Ico n={sensor ? 'cpu' : 'video'} sz={12} />
+      {sensor ? t('node.kindIot') : t('node.kindCamera')}
+    </span>
+  );
+}
 
 // NodeWipeCountdown mirrors mymatasan's SecureWipeCountdown: a confirmation modal that
 // AUTO-PROCEEDS when the countdown hits zero unless cancelled. Cancel is focused so the
@@ -289,11 +305,12 @@ export function NodesTab({ onToast, nodes, reloadNodes, managingNodeId, managing
         {discovered && discovered.length === 0 ? <p className="settings-hint">{t('node.noUnpaired')}</p> : null}
         {discovered && discovered.length > 0 ? (
           <table className="event-table">
-            <thead><tr><th>{t('node.colName')}</th><th>{t('node.colNodeId')}</th><th>{t('node.colAddress')}</th><th>{t('node.colVersion')}</th><th></th></tr></thead>
+            <thead><tr><th>{t('node.colName')}</th><th>{t('node.colKind')}</th><th>{t('node.colNodeId')}</th><th>{t('node.colAddress')}</th><th>{t('node.colVersion')}</th><th></th></tr></thead>
             <tbody>
               {discovered.map((n) => (
                 <tr key={n.nodeId}>
                   <td>{n.name || '—'}</td>
+                  <td><NodeKindPill node={n} /></td>
                   <td>{(n.nodeId || '').slice(0, 8)}</td>
                   <td>{n.ip}:{n.httpsPort}</td>
                   <td>{n.version || '—'}</td>
@@ -326,11 +343,12 @@ export function NodesTab({ onToast, nodes, reloadNodes, managingNodeId, managing
           <p className="settings-hint">{t('node.noAdopted')}</p>
         ) : (
           <table className="event-table">
-            <thead><tr><th>{t('node.colName')}</th><th>{t('node.colAddress')}</th><th>{t('node.colStatus')}</th><th>{t('node.colCertExpires')}</th><th>{t('node.colAdopted')}</th><th></th></tr></thead>
+            <thead><tr><th>{t('node.colName')}</th><th>{t('node.colKind')}</th><th>{t('node.colAddress')}</th><th>{t('node.colStatus')}</th><th>{t('node.colCertExpires')}</th><th>{t('node.colAdopted')}</th><th></th></tr></thead>
             <tbody>
               {nodeList.map((n) => (
                 <tr key={n.nodeId}>
-                  <td><span className="node-name-cell"><Ico n={n.icon || DEFAULT_NODE_ICON} sz={15} /> {n.name || n.nodeId}</span></td>
+                  <td><span className="node-name-cell"><Ico n={n.icon || nodeFallbackIcon(n)} sz={15} /> {n.name || n.nodeId}</span></td>
+                  <td><NodeKindPill node={n} /></td>
                   <td>{n.baseUrl}</td>
                   <td><span className={`status-pill ${n.status === 'online' ? 'online' : 'offline'}`}>{n.status || 'online'}</span></td>
                   <td>{n.certExpiresAt ? formatTimestamp(n.certExpiresAt) : '—'}</td>

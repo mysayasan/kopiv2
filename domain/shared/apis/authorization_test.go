@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/mysayasan/kopiv2/domain/shared/services"
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
+	"github.com/mysayasan/kopiv2/domain/shared/services"
 )
 
 func withUser(r *http.Request, user *services.AuthenticatedUser) *http.Request {

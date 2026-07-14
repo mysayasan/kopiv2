@@ -121,11 +121,11 @@ func (a *systemApi) time(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	zone, offset := now.Zone()
 	controllers.SendResult(w, map[string]any{
-		"timezone":   now.Location().String(),
-		"abbrev":     zone,
-		"offsetSec":  offset,
-		"now":        now.Format("2006-01-02 15:04:05"),
-		"unix":       now.Unix(),
+		"timezone":  now.Location().String(),
+		"abbrev":    zone,
+		"offsetSec": offset,
+		"now":       now.Format("2006-01-02 15:04:05"),
+		"unix":      now.Unix(),
 	}, "succeed")
 }
 
@@ -212,7 +212,7 @@ func (a *systemApi) recoveryExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	controllers.SendResult(w, map[string]any{
-		"filename": fmt.Sprintf("mymatasan-recovery-%s.atrestkey", time.Now().Format("20060102")),
+		"filename":  fmt.Sprintf("mymatasan-recovery-%s.atrestkey", time.Now().Format("20060102")),
 		"keyBase64": base64.StdEncoding.EncodeToString(blob),
 	}, "succeed")
 }

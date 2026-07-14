@@ -63,6 +63,19 @@ type Announce struct {
 	Name      string `json:"name"`
 	Version   string `json:"version"`
 	HTTPSPort int    `json:"httpsPort"`
+	// Kind is what the node claims to be ("camera", "iot"). It is an ADVISORY DISPLAY HINT and
+	// is deliberately NOT part of the HMAC.
+	//
+	// Two reasons, and both matter. First, adding a field to the signature would break every
+	// mymatasan node already in the field the moment a control plane is upgraded: the node signs
+	// without it, the parent verifies with it, and the whole fleet silently stops being
+	// discoverable. Second, it does not need to be trusted here — this value only decides an
+	// icon in the adoption list. The AUTHORITATIVE kind comes back from the node itself over the
+	// adopt call, which is fleet-key-signed and claim-code-gated, and that is the one stored.
+	//
+	// So: a hostile actor on the LAN can make a fake node look like a sensor hub in a list. They
+	// cannot make the control plane adopt it, and they cannot change what an adopted node is.
+	Kind      string `json:"kind,omitempty"`
 	Timestamp int64  `json:"ts"`
 	HMAC      string `json:"hmac"`
 }
@@ -75,6 +88,8 @@ type AnnounceInfo struct {
 	Name      string
 	Version   string
 	HTTPSPort int
+	// Kind is the advisory display hint — see Announce.Kind. Not signed.
+	Kind string
 }
 
 // NewProbe builds a freshly-signed discovery probe.
@@ -97,6 +112,7 @@ func NewAnnounce(key []byte, probeNonce string, info AnnounceInfo) (Announce, er
 		Name:      info.Name,
 		Version:   info.Version,
 		HTTPSPort: info.HTTPSPort,
+		Kind:      info.Kind,
 		Timestamp: time.Now().UTC().Unix(),
 	}
 	a.HMAC = sign(key, a.signingParts()...)

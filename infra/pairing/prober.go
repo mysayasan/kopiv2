@@ -17,6 +17,10 @@ type ProbeResult struct {
 	Version   string `json:"version"`
 	IP        string `json:"ip"`
 	HTTPSPort int    `json:"httpsPort"`
+	// Kind is the node's ADVISORY, UNSIGNED claim about what it is — see Announce.Kind. It is
+	// safe to render and unsafe to trust: a hostile host on the LAN can put anything here. The
+	// authoritative kind comes from the adopt reply.
+	Kind string `json:"kind,omitempty"`
 }
 
 // Discover broadcasts a signed discovery probe to the fleet multicast group on
@@ -106,6 +110,7 @@ func Discover(ctx context.Context, fleetKey []byte, multicastAddr string, timeou
 			Version:   ann.Version,
 			IP:        src.IP.String(),
 			HTTPSPort: ann.HTTPSPort,
+			Kind:      ann.Kind,
 		}
 	}
 
