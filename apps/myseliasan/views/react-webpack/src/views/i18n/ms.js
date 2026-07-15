@@ -1,5 +1,4 @@
-// MS translations for this app. Split out of the old single i18n.js so each locale is its
-// own webpack chunk — English ships in the main bundle; the rest load on demand.
+// ms locale dictionary. Code-split: loaded on demand except en.
 export default {
   'teach.title': 'Ajar kamera anda kemahiran baharu',
   'teach.lead': 'Ajar kamera mengecam objek baharu atau membezakan produk elok daripada rosak — tanpa pengetahuan AI. Anda tunjukkan contoh, kamera belajar, anda semak ketepatannya, kemudian hidupkannya.',
@@ -261,6 +260,9 @@ export default {
   'node.adoptedNodes': 'Nod diterima pakai',
   'node.refresh': 'Muat semula',
   'node.noAdopted': 'Belum ada nod diterima pakai.',
+  'node.loadFailed': 'Tidak dapat memuatkan armada — ini belum tentu armada kosong. Sesi anda mungkin telah tamat tempoh.',
+  'node.retry': 'Cuba lagi',
+  'node.loading': 'Memuatkan armada…',
   'node.colStatus': 'Status',
   'node.colCertExpires': 'Sijil luput',
   'node.colAdopted': 'Diterima pakai',

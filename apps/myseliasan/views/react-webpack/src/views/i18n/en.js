@@ -1,10 +1,4 @@
-// myseliasan app-specific translations, layered over the shared base dictionary via
-// LangProvider's `messages` prop (app key wins, then shared, then English, then the
-// key). English is the source; ms/zh/ar are AI-translated. Keys are namespaced
-// (auth.*, nav.*, group.*, brand.*, nodes.*, handoff.*). Product terms like
-// "myidsan"/"superadmin" are kept verbatim where they are proper nouns.
-// EN translations for this app. Split out of the old single i18n.js so each locale is its
-// own webpack chunk — English ships in the main bundle; the rest load on demand.
+// en locale dictionary. Code-split: loaded on demand except en.
 export default {
   'teach.title': 'Teach your cameras new skills',
   'teach.lead': 'Teach a camera to recognize a new object or tell good product from bad — no AI knowledge needed. You show examples, the camera learns, you check its accuracy, then switch it on.',
@@ -270,6 +264,9 @@ export default {
   'node.adoptedNodes': 'Adopted nodes',
   'node.refresh': 'Refresh',
   'node.noAdopted': 'No adopted nodes yet.',
+  'node.loadFailed': 'Could not load the fleet — this is not necessarily an empty fleet. Your session may have expired.',
+  'node.retry': 'Try again',
+  'node.loading': 'Loading the fleet…',
   'node.colStatus': 'Status',
   'node.colCertExpires': 'Cert expires',
   'node.colAdopted': 'Adopted',

@@ -153,13 +153,14 @@ const en = {
   },
   apps: {
     kicker: 'The platform',
-    title: 'One platform, three apps.',
-    subtitle: 'r450k is a modular platform. mymatasan is the edge surveillance node; the control plane handles identity and fleet management.',
+    title: 'One platform, four apps.',
+    subtitle: 'r450k is a modular platform. mymatasan is the edge camera node and myiotsan is the edge sensor hub; the control plane adopts both and correlates across them, and shared identity ties it together.',
     available: 'Available',
     platform: 'Platform',
     items: [
       { name: 'mymatasan', status: 'Flagship · in active development', available: true, body: 'The standalone edge camera & video-intelligence node: ONVIF, AI detection, NVR, WebRTC live view, encryption, and LAN pairing.' },
-      { name: 'myseliasan', status: 'Control plane · available now', available: true, body: 'The fleet control plane that discovers, adopts, and manages edge nodes, and relays their live camera streams to operators.' },
+      { name: 'myiotsan', status: 'Sensor hub · available now', available: true, body: 'The NVR, but for sensors: door contacts, motion, temperature, smoke, leaks, power and access readers over an embedded MQTT broker — with rules, alerts, safe actuation, and telemetry history.' },
+      { name: 'myseliasan', status: 'Control plane · available now', available: true, body: 'The fleet control plane that discovers, adopts, and manages both camera and sensor nodes — and correlates events across them: motion on a camera AND a door opening AND no badge swipe.' },
       { name: 'myidsan', status: 'Identity', available: false, body: 'Shared identity and access: JWT auth, SSO, and role-based access control across the platform.' },
     ],
   },
@@ -183,8 +184,13 @@ const en = {
       },
       myseliasan: {
         name: 'MySeliaSan',
-        tagline: 'The fleet control plane — discover, adopt and manage many MyMataSan nodes from one place, and watch their cameras without ever exposing a node. A single pure-Go binary: no ffmpeg, no Python.',
+        tagline: 'The fleet control plane — discover, adopt and manage many MyMataSan and MyIotSan nodes from one place, watch their cameras and sensors without ever exposing a node, and correlate events across both. A single pure-Go binary: no ffmpeg, no Python.',
         dockerHint: 'Run the multi-arch image:',
+      },
+      myiotsan: {
+        name: 'MyIotSan',
+        tagline: 'The sensor hub — one install per site. Building & security sensors over an embedded MQTT broker, with a deadbanded telemetry store, threshold and correlation rules, alerts, and safe confirm-to-execute actuation. A single pure-Go binary: no ffmpeg, no Python. Opens an MQTT port (1883) for devices.',
+        dockerHint: 'Run the multi-arch image (opens the MQTT port 1883 for devices):',
       },
     },
     loading: 'Loading the latest release…',

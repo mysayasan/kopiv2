@@ -52,6 +52,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-15 — myseliasan 1.31.1 (9218dc2)
+
+### Fixed
+
+- **myseliasan**: The nodes page no longer renders a failed fleet load as an empty fleet. A network error or 5xx while loading /api/nodes now shows 'could not load the fleet — your session may have expired' with a retry link, instead of 'No adopted nodes yet' — which had told an operator whose control plane briefly restarted that their whole fleet had vanished. A failed refresh also no longer blanks a fleet that was already loaded.
 ## 2026-07-14 — myiotsan 0.9.0, mymatasan 1.106.0, myseliasan 1.31.0 (0d0b789)
 
 ### Added

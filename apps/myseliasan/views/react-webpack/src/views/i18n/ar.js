@@ -1,5 +1,4 @@
-// AR translations for this app. Split out of the old single i18n.js so each locale is its
-// own webpack chunk — English ships in the main bundle; the rest load on demand.
+// ar locale dictionary. Code-split: loaded on demand except en.
 export default {
   "teach.title": "علّم كاميراتك مهارات جديدة",
   "teach.lead": "علّم الكاميرا التعرف على جسم جديد أو التمييز بين المنتج السليم والمعيب — دون أي معرفة بالذكاء الاصطناعي. أنت تعرض الأمثلة، والكاميرا تتعلم، وتتحقق من دقتها، ثم تفعّلها.",
@@ -261,6 +260,9 @@ export default {
   "node.adoptedNodes": "العقد المعتمَدة",
   "node.refresh": "تحديث",
   "node.noAdopted": "لا توجد عقد معتمَدة بعد.",
+  "node.loadFailed": "تعذّر تحميل الأسطول — هذا لا يعني بالضرورة أن الأسطول فارغ؛ ربما انتهت صلاحية جلستك.",
+  "node.retry": "أعد المحاولة",
+  "node.loading": "جارٍ تحميل الأسطول…",
   "node.colStatus": "الحالة",
   "node.colCertExpires": "انتهاء الشهادة",
   "node.colAdopted": "معتمَدة",

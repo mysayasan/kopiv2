@@ -1,5 +1,4 @@
-// ZH translations for this app. Split out of the old single i18n.js so each locale is its
-// own webpack chunk — English ships in the main bundle; the rest load on demand.
+// zh locale dictionary. Code-split: loaded on demand except en.
 export default {
   'teach.title': '教您的摄像头新技能',
   'teach.lead': '教摄像头识别新物体，或分辨良品与次品——无需任何 AI 知识。您展示示例，摄像头学习，您检查其准确度，然后启用。',
@@ -261,6 +260,9 @@ export default {
   'node.adoptedNodes': '已采用的节点',
   'node.refresh': '刷新',
   'node.noAdopted': '尚无已采用的节点。',
+  'node.loadFailed': '无法加载节点集群——这未必表示集群为空，您的会话可能已过期。',
+  'node.retry': '重试',
+  'node.loading': '正在加载集群……',
   'node.colStatus': '状态',
   'node.colCertExpires': '证书到期',
   'node.colAdopted': '采用时间',
