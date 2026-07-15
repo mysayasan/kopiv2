@@ -363,8 +363,9 @@ steady overheat is never alerted on.
 
 Modbus/OPC-UA (P5) and release packaging (P7, still deferred exactly as scoped in §8) are
 unstarted. `mqtt.Connect` mode (pointing at an external broker instead of the embedded one) is
-not implemented — only the embedded broker. (Actuation/twin, P4, and fleet adoption +
-cross-domain rules, P6, have since shipped — see §8d and §8e.)
+not implemented — only the embedded broker. (Actuation/twin, P4, fleet adoption + cross-domain
+rules, P6, and release, P7, have since shipped — see §8d, §8e and §8f. P5's driver foundation and
+its app integration have since partially landed too — see §8g.)
 
 ---
 
@@ -783,13 +784,14 @@ commands directly from the control plane, closing the gap §8e left open.
 
 ---
 
-## 8g. P5 + P8 — Industrial protocols and the solar "system workspace" (design + driver foundation)
+## 8g. P5 + P8 — Industrial protocols and the solar "system workspace" (driver foundation + app integration landed; control writes, RTU/OPC-UA, and the workspace remain)
 
 Prompted by a request to make myiotsan **handle solar systems** without writing code per inverter
 model: use the protocols we have, and combine them into a **reusable template workspace** for a
 specific model (customisable, and re-usable for future protocol sets). The study below is the
-agreed direction; the **driver + simulator foundation is built and proven**, the **app integration
-and the workspace layer are the remaining work**.
+agreed direction; the **driver + simulator foundation is built and proven**, **app integration has
+now partially landed (2026-07-15) — see below** — and **guarded Modbus control, RTU/OPC-UA, and
+the workspace layer (P8) remain**.
 
 ### The shape of the problem, and why the current model doesn't fit
 
@@ -850,14 +852,43 @@ data, not code.
   three personas over real Modbus and confirmed a curtailment write by read-back. Hermetic unit
   tests (synthetic register banks) cover the decoding and scaling deterministically.
 
-#### Still to land for P5 (app integration — not yet built)
+#### App integration — items 1-3 LANDED (2026-07-15), items 4-5 still to land for P5
 
-1. `telemetry_key.go` gains the Modbus binding fields (register/kind/scale/wordOrder); `profile`
-   gains a protocol + `Base`/`Unit`/mode so a profile can describe a SunSpec or a vendor-map device.
-2. Extract `Ingest.handleSamples` and wire the `modbus.Poller` into a poller service in `app.go`
-   (per-device goroutine, offline detection reusing `SweepOffline`).
-3. Catalog: a builtin **generic SunSpec inverter/meter/battery** profile (auto-discovered) and one
-   or two vendor register-map profiles (Growatt/Deye-style) as worked examples.
+1. **LANDED.** `telemetry_key.go` gained the Modbus binding fields (`Register`, `RegKind`
+   (`u16`/`i16`/`u32`/`i32`), `ScaleFactor`, `WordSwap`); `device_profile.go` gained `Transport`
+   (`""`/`"mqtt"` default, or `"modbus"`), `ModbusMode` (`"sunspec"` or `"regmap"`), `ModbusBase`
+   (SunSpec base register, `0` = auto-discover), and `PollSeconds` (poll cadence, `0` = 5s
+   default) — so a profile can describe a SunSpec or a vendor-map device without a second entity.
+   `iot_device.go` gained `Endpoint`/`Unit` for the device the app now dials OUT to (an MQTT
+   device is still addressed by its `DeviceKey` instead). All plumbed through the profile/device
+   CRUD, import/export, and builtin-seeding paths (`services/profile.go`,
+   `services/profile_transfer.go`, `services/profile_catalog.go`, `services/device.go`).
+2. **LANDED.** `Ingest.Handle`'s back half was extracted into `handleSamples(dev, binds, samples,
+   nowMs, nowSec)` — deadband → storage → rules → twin, unchanged — and a new
+   `Ingest.HandlePolled(dev, samples)` feeds it from a POLL driver: `TouchSeen` first
+   unconditionally (same liveness rule as the MQTT path), no payload to parse and no enrollment
+   quarantine to apply (a polled device is one the operator configured, not a stranger that
+   dialled in). `apps/myiotsan/services/modbus_poller.go` (new) is the poller service: one
+   goroutine per Modbus device (`safego.Go`), reconciled against the device inventory on a 30s
+   ticker in `app.go` (`services.NewModbusPoller` + `safego.Supervise`) so a device
+   added/edited/disabled in the UI starts/restarts/stops its poller with no process restart. A
+   poll is idempotent and connectionless (dials fresh each tick), so a transient bus outage needs
+   no recovery logic — it just fails one tick and is retried on the next.
+3. **LANDED.** Catalog gained two builtin profiles: **`generic-sunspec-solar`** (self-describing,
+   `ModbusMode: "sunspec"`, `ModbusBase: 0` auto-discover — one profile reads any compliant
+   inverter/meter/battery with no per-model register map) and **`huawei-sun2000`** (the
+   vendor register-map worked example, `ModbusMode: "regmap"`, for the world's most-installed
+   inverter — its inverter block is SunSpec-ish but its LUNA battery and built-in meter are
+   vendor registers, so every key carries an explicit binding per Huawei's published Modbus
+   interface definitions). Bonus finding along the way: the Huawei layout's blocks (inverter
+   ~32000, battery ~37760, meter ~37113) sit far enough apart (~5,700 registers) that a
+   single-span read is impossible under the Modbus 125-register limit, so
+   `infra/iot/modbus.RegisterMap.Read` gained **clustered reads** (`clusters()`, one bounded
+   request per block) — a real-map-shaped bug the two earlier (tighter) simulator personas never
+   would have caught. `tools/sunspec-sim` gained a fourth persona (unit 4, Huawei) driven by its
+   own PV/battery/grid physics loop to exercise this end to end without hardware. Verified live:
+   the app booted against the simulator, seeded both profiles, polled unit 4 over Modbus TCP, and
+   stored correctly-scaled/signed readings (freq 49.99 Hz, batt_soc 13.2%, grid +600W import).
 4. Guarded Modbus control extends `ProfileCommand` to write a holding register with the driver's
    read-back confirm (admin-only, bounded, never-retried — the §8d gates apply unchanged).
 5. **RTU (serial)** is the same driver behind a serial transport (adds CRC + a serial port / RTU→TCP

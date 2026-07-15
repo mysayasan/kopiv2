@@ -2,9 +2,14 @@ package modbus
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/mysayasan/kopiv2/infra/iot/codec"
 )
+
+// maxReadRegisters is the Modbus limit on a single read (fn 3/4): 125 registers. A vendor map
+// whose points are scattered wider than that cannot be one round trip, so Read clusters them.
+const maxReadRegisters = 125
 
 // A RegisterMap is how a NON-SunSpec device is read: an explicit, site-authored list of which
 // register holds which value, in what integer type, at what scale. SunSpec devices are
@@ -66,27 +71,62 @@ func (p Point) width() int {
 	return 1
 }
 
-// Read fetches the register span and decodes every point into a sample.
-func (m RegisterMap) Read(r Reader) ([]codec.Sample, error) {
-	lo, count, ok := m.span()
-	if !ok {
-		return nil, fmt.Errorf("modbus: empty register map")
+// clusters groups the points into read windows each no wider than maxReadRegisters. A tightly
+// packed map (a cheap inverter's flat block) yields ONE cluster and one round trip, the common
+// case. A device that scatters its blocks across the address space — a Huawei SUN2000 keeps its
+// inverter block near register 32000 and its battery near 37000 — yields a cluster per block, so
+// it is read in a few bounded requests rather than one 5,000-register read the protocol forbids.
+func (m RegisterMap) clusters() [][]Point {
+	if len(m.Points) == 0 {
+		return nil
 	}
-	regs, err := r.ReadHolding(lo, count)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]codec.Sample, 0, len(m.Points))
-	for _, p := range m.Points {
-		i := p.Register - lo
-		if i < 0 || i+p.width() > len(regs) {
+	pts := append([]Point(nil), m.Points...)
+	sort.Slice(pts, func(i, j int) bool { return pts[i].Register < pts[j].Register })
+	var out [][]Point
+	cur := []Point{pts[0]}
+	lo := pts[0].Register
+	for _, p := range pts[1:] {
+		end := p.Register + p.width() - 1
+		if end-lo+1 > maxReadRegisters {
+			out = append(out, cur)
+			cur, lo = []Point{p}, p.Register
 			continue
 		}
-		scale := p.Scale
-		if scale == 0 {
-			scale = 1
+		cur = append(cur, p)
+	}
+	return append(out, cur)
+}
+
+// Read fetches each cluster and decodes every point into a sample. Points whose registers all fit
+// within one 125-register window cost a single round trip; a scattered map costs one per cluster.
+func (m RegisterMap) Read(r Reader) ([]codec.Sample, error) {
+	clusters := m.clusters()
+	if len(clusters) == 0 {
+		return nil, fmt.Errorf("modbus: empty register map")
+	}
+	out := make([]codec.Sample, 0, len(m.Points))
+	for _, cl := range clusters {
+		lo, hi := cl[0].Register, cl[0].Register
+		for _, p := range cl {
+			if end := p.Register + p.width() - 1; end > hi {
+				hi = end
+			}
 		}
-		out = append(out, codec.Sample{Key: p.Key, Num: decodeRaw(regs, i, p) * scale, IsNum: true})
+		regs, err := r.ReadHolding(lo, hi-lo+1)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range cl {
+			i := p.Register - lo
+			if i < 0 || i+p.width() > len(regs) {
+				continue
+			}
+			scale := p.Scale
+			if scale == 0 {
+				scale = 1
+			}
+			out = append(out, codec.Sample{Key: p.Key, Num: decodeRaw(regs, i, p) * scale, IsNum: true})
+		}
 	}
 	return out, nil
 }

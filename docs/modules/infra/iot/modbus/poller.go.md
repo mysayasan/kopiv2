@@ -2,12 +2,14 @@
 
 ## Purpose
 
-The two ways myiotsan will read a Modbus device — SunSpec auto-discovery or a manual register
-map — normalised to the identical `codec.Sample` stream `services.Ingest`'s MQTT path already
-produces, plus the guarded-write primitive a Modbus control action needs. This is the driver
-foundation for P5 (`docs/MYIOTSAN_PLAN.md` §8g); nothing in `apps/myiotsan/app` calls it yet —
-`DeviceConf` documents the runtime shape a future `device_profile`/`iot_device` Modbus binding will
-carry, not a wired config path.
+The two ways myiotsan reads a Modbus device — SunSpec auto-discovery or a manual register map —
+normalised to the identical `codec.Sample` stream `services.Ingest`'s MQTT path already produces,
+plus the guarded-write primitive a Modbus control action needs. This was the driver foundation for
+P5 (`docs/MYIOTSAN_PLAN.md` §8g); it is now **wired in**: `apps/myiotsan/services.ModbusPoller`
+(`modbus_poller.go.md`) resolves a `DeviceConf` from a device's `entities.IotDevice`
+(`Endpoint`/`Unit`) and `entities.DeviceProfile` (`Transport`/`ModbusMode`/`ModbusBase`/
+`PollSeconds`) and drives `Run` under `safego.Supervise` in `app.go`, feeding
+`Ingest.HandlePolled` — the same back half an MQTT publish takes.
 
 ## Key Type: Mode / DeviceConf
 
@@ -51,8 +53,8 @@ func Run(ctx context.Context, d DeviceConf, interval time.Duration,
 
 Polls on a ticker until `ctx` is cancelled. A failed poll is reported to `onErr` and retried on
 the next tick — a device that briefly drops off the bus must not kill the poller. This is the
-per-device goroutine shape a future poller service in `app.go` will run one of per Modbus device
-(§8g point 2).
+per-device goroutine shape `apps/myiotsan/services.ModbusPoller` runs one of per Modbus device
+(`modbus_poller.go.md`), reconciled against the device inventory rather than started once at boot.
 
 ## Key Function: WriteConfirm
 

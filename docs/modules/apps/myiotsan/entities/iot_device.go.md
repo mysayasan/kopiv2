@@ -13,6 +13,12 @@ sensor or actuator.
 - Wiring: `Protocol` (`"mqtt"` or `"http"`), `ProfileId` (points at the `DeviceProfile` that
   declares this device's telemetry keys — without one, a device can connect but nothing it
   publishes can be decoded, indexed via `idx:"profile"`).
+- **`Endpoint`/`Unit` (P5)** — address a POLLED device, one whose profile has `Transport ==
+  "modbus"`. A Modbus device does not dial into the broker; the app dials OUT to it, so unlike an
+  MQTT device its network location is its own per-instance property (two identical inverters
+  share a profile but not an IP). `Endpoint` is `"host:port"`; `Unit` is the Modbus unit/slave id.
+  Both are empty/zero for an MQTT device, which is addressed by its `DeviceKey` instead. Read by
+  `services.ModbusPoller` (`modbus_poller.go.md`) to build each device's `modbus.DeviceConf`.
 - Credential: `PasswordHash` (bcrypt, `json:"-"`, never returned).
 - Grouping/metadata: `Tag` (indexed; groups devices — "floor-2", "cold-store" — so a rule can
   scope to a set rather than naming each device, the replacement for mymatasan's per-camera

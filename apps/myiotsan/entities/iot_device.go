@@ -14,6 +14,13 @@ type IotDevice struct {
 	DeviceKey string `json:"deviceKey" form:"deviceKey" query:"deviceKey" ukey:"device_key" validate:"required"`
 	// Protocol is how readings arrive: "mqtt" (the device publishes) or "http" (it POSTs).
 	Protocol string `json:"protocol" form:"protocol" query:"protocol"`
+	// Endpoint and Unit address a POLLED device — one whose profile has Transport == "modbus".
+	// A Modbus device does not dial into the broker; the app dials OUT to it, so unlike an MQTT
+	// device its network location is its own per-instance property (two identical inverters share
+	// a profile but not an IP). Endpoint is "host:port"; Unit is the Modbus unit/slave id. Both
+	// are empty/zero for an MQTT device, which is addressed by its DeviceKey instead.
+	Endpoint string `json:"endpoint" form:"endpoint" query:"endpoint"`
+	Unit     int    `json:"unit" form:"unit" query:"unit"`
 	// ProfileId points at the DeviceProfile that declares this device's telemetry keys.
 	// Without a profile a device can connect but nothing it publishes can be decoded.
 	ProfileId int64 `json:"profileId" form:"profileId" query:"profileId" idx:"profile"`

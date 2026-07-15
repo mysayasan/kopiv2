@@ -27,6 +27,10 @@ CRUD plus the authenticator surface, on `dbsql.IGenericRepo[entities.IotDevice]`
 - `Update(ctx, id, UpdateDeviceRequest, actor)` — no `Password` field by design: rotating a
   credential is its own endpoint (`RotatePassword`), so an ordinary edit cannot silently change
   one.
+- **(P5)** `CreateDeviceRequest`/`UpdateDeviceRequest` carry `Endpoint`/`Unit`, plumbed straight
+  onto `entities.IotDevice` — address a POLLED (Modbus) device (`"host:port"` + unit/slave id);
+  empty/zero for an MQTT device, which is reached by `DeviceKey` over the broker instead. Read by
+  `services.ModbusPoller` (`modbus_poller.go.md`) to build each device's poll target.
 - `RotatePassword(ctx, id, actor)` — issues and returns a new credential once.
 - `Delete(ctx, id)` — removes the device row. **Its readings are left in place deliberately**:
   the history of what a sensor saw is evidence, and must not evaporate because hardware was

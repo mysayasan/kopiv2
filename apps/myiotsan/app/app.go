@@ -385,6 +385,17 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		}
 	})
 
+	// The Modbus poll loop (P5). SunSpec and vendor register-map devices are POLLED, not published:
+	// the app dials OUT to each on its profile's cadence and feeds the decoded samples through the
+	// SAME ingest back half a broker message takes. The service reconciles against the inventory on
+	// a ticker, so a Modbus device added, edited or disabled in the UI is picked up without a
+	// restart — the same live-config property the rest of the app has.
+	modbusPoller := services.NewModbusPoller(deviceService, profileService, ingest,
+		func(f string, a ...any) { deps.Logger.Infof("myiotsan.modbus", f, a...) })
+	safego.Supervise(bgCtx, "myiotsan.modbus-poller", func(ctx context.Context) {
+		modbusPoller.Run(ctx, modbusReconcileInterval)
+	})
+
 	apis.NewDevicesApi(protected, deviceService, telemetry, profileService, ingest)
 	apis.NewDiscoveryApi(protected, enrollment, deviceService)
 	apis.NewCommandsApi(protected, commandService, deviceService)
@@ -432,6 +443,11 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 // offlineSweepInterval is how often silence is checked for. A minute is well under any sane
 // offline window and costs one query.
 const offlineSweepInterval = time.Minute
+
+// modbusReconcileInterval is how often the poller re-reads the inventory to start/stop/restart
+// per-device poll goroutines. It governs how quickly a newly added Modbus device begins polling,
+// not the poll cadence itself (which is the profile's PollSeconds).
+const modbusReconcileInterval = 30 * time.Second
 
 // appVersion resolves this build's version for the fleet handshake.
 func appVersion(m *module) string {
