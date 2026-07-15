@@ -55,6 +55,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-15 — myiotsan 0.12.0 (6981699)
+
+### Added
+
+- **myiotsan**: Wired the Modbus/SunSpec driver foundation (previously a standalone, unwired library) into the running myiotsan app, and shipped its first two device profiles -- the P5 app-integration follow-up to the just-landed driver foundation. `entities.TelemetryKey` gained a Modbus binding (`register`/`regKind` u16|i16|u32|i32/`scaleFactor`/`wordSwap`); `entities.DeviceProfile` gained `transport` (mqtt default, or modbus), `modbusMode` (sunspec self-describing, or regmap explicit vendor map), `modbusBase`, and `pollSeconds`; `entities.IotDevice` gained `endpoint`/`unit` for a device the app dials OUT to. `services.Ingest.Handle`'s back half (deadband -> storage -> rules -> twin) was extracted into `handleSamples`, and a new `Ingest.HandlePolled` feeds it from a poll driver with no MQTT payload to parse and no enrollment quarantine to apply. A new `services.ModbusPoller` runs one goroutine per Modbus device, reconciled against the device inventory on a 30s ticker (so a device added/edited/disabled in the UI starts, restarts, or stops its poller with no process restart), dialing out and decoding via SunSpec auto-discovery or a register map built from the profile's declared telemetry keys, feeding `HandlePolled`. The catalog gained two builtin profiles: `generic-sunspec-solar` (self-describing, reads any compliant inverter/meter/battery with zero per-model work) and `huawei-sun2000` (an explicit register-map worked example for the world's most-installed inverter). Building the Huawei map surfaced a real gap: its inverter (~32000), battery (~37760), and meter (~37113) register blocks sit ~5,700 registers apart -- far past the Modbus 125-register single-read limit -- so `infra/iot/modbus.RegisterMap.Read` gained clustered reads (one bounded request per block) instead of the single wide span it previously assumed; `tools/sunspec-sim` gained a fourth simulator persona (unit 4, the Huawei layout) to exercise this without hardware. Verified live: the app booted against the simulator, seeded both new profiles, polled unit 4 over Modbus TCP, and stored correctly scaled and signed readings (grid frequency 49.99 Hz, battery SOC 13.2%, grid +600W import).
 ## 2026-07-15 — myiotsan 0.11.0 (4639167)
 
 ### Added
