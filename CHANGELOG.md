@@ -53,6 +53,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-15 — myidsan 1.13.0, myiotsan 0.10.0, mymatasan 1.107.0, myseliasan 1.32.0 (e49032f)
+
+### Changed
+
+- **mymatasan,myseliasan,myiotsan,myidsan**: Code-split each app's React i18n translation tables by locale instead of bundling all four dictionaries (en/ms/zh/ar) into the main JS chunk. Each app's views/i18n.js was rewritten from a static { en, ms, zh, ar } export to a tiny loader: it ships English eagerly (import en from './i18n/en'), since English is every key's fallback and must be present on first paint, and exposes loadLocaleDict(lang), which dynamically import()s ms/zh/ar from their own modules (views/i18n/{ms,zh,ar}.js) as separate Webpack chunks (i18n-ms/i18n-zh/i18n-ar) only when a user actually selects that language. Each app's App.js now holds an appMessages dictionary that starts at just the English bundle and accumulates locale chunks as they're loaded, plus a langReady gate that briefly withholds first paint for a returning non-English user until their saved locale's chunk has arrived (English users never wait), and an async changeLang that awaits the target locale's chunk before switching so the UI never flashes English mid-transition. Net effect on each app's initial download: ~308KB removed for mymatasan, ~340KB for myseliasan, ~112KB for myiotsan, ~40KB for myidsan -- translations for languages a user never selects are no longer fetched at all. No translation strings were added, removed, or reworded; this is a pure loading/bundling refactor. Verified live on mymatasan and myseliasan: an English-first load fetches zero locale chunks, switching to Chinese fetches only i18n-zh and renders with no English flash, and Arabic still sets dir=rtl correctly.
 ## 2026-07-15 — myseliasan 1.31.1 (9218dc2)
 
 ### Fixed
