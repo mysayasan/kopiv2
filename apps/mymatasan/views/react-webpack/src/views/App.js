@@ -4,7 +4,7 @@ import './styles/rbac-standard.css';
 import { ToastStack } from './components/ui';
 import { LangProvider, normalizeLang, useT } from '@shared/i18n';
 import { AppFooter } from '@shared/AppFooter';
-import { messages as appMessages } from './i18n';
+import { enBundle, loadLocaleDict } from './i18n';
 import { THEMES, emptyLogin, defaultStreamConfig, defaultRuntimeSettings, defaultNewUser, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings, defaultVisionThreshold, defaultVisionMinFrames } from './lib/constants';
 import {readLiveViewsCookie,saveLiveViewsCookie,bestLiveViewLayout,unwrap,errorMessage,apiBase,parseMetadata,cameraTitle,normalizeScanDevice,orderedSavedCameras,isActionableVisionAlert,latestAlertsByCamera,sameCamera,liveSource,normalizeRuntimeSettings,normalizeMachineHealthSettings,defaultZonePolygon,isLineDetectionType,defaultLineRuleConfig,lineRuleConfigText,defaultVisionRuleDraft,playAlertSound,hasH264VideoTrack,isVisionAlertNotification } from './lib/helpers';
 import { LoginPage, ChangePasswordPage, RecoveryGatePage, MagicWordEasterEgg, SideNav, WorkspaceHeader } from './components/layout';
@@ -2971,10 +2971,42 @@ export default function App() {
   const [lang, setLang] = useState(() => {
     try { return normalizeLang(localStorage.getItem(LANG_KEY) || navigator.language); } catch (_) { return 'en'; }
   });
-  const changeLang = useCallback((l) => {
-    setLang(l);
+  // English is always present (it is every key's fallback and must be there on first paint); other
+  // locales are fetched on demand — see ./i18n — and accumulated here so a switch back is instant.
+  const [appMessages, setAppMessages] = useState(enBundle);
+  // A returning non-English user must not flash English app strings, so gate the first paint until
+  // their locale chunk has loaded. English users never wait.
+  const [langReady, setLangReady] = useState(lang === 'en');
+
+  useEffect(() => {
+    let alive = true;
+    if (lang === 'en' || appMessages[lang]) { setLangReady(true); return undefined; }
+    loadLocaleDict(lang).then((dict) => {
+      if (!alive) return;
+      if (dict) setAppMessages((prev) => ({ ...prev, [lang]: dict }));
+      setLangReady(true);
+    });
+    return () => { alive = false; };
+    // appMessages intentionally omitted: including it would re-run the effect after the very
+    // setState it triggers. The `appMessages[lang]` guard above already handles a loaded locale.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lang]);
+
+  async function changeLang(l) {
     try { localStorage.setItem(LANG_KEY, l); } catch (_) {}
-  }, []);
+    // Load the locale's chunk BEFORE switching, so the UI never flashes English on the way to the
+    // new language. For English or an already-loaded locale this resolves immediately.
+    if (l !== 'en' && !appMessages[l]) {
+      const dict = await loadLocaleDict(l);
+      if (dict) setAppMessages((prev) => ({ ...prev, [l]: dict }));
+    }
+    setLang(l);
+  }
+
+  if (!langReady) {
+    // Brief, and only for a returning non-English user on cold load.
+    return <main className="boot-screen" />;
+  }
   return (
     <LangProvider lang={lang} messages={appMessages}>
       <AppInner lang={lang} onLangChange={changeLang} />
