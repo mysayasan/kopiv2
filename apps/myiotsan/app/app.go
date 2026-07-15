@@ -202,6 +202,30 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	notificationRepo := dbsql.NewGenericRepo[sharedentities.Notification](deps.Db)
 	notificationService := notification.NewService(notificationRepo, notification.Options{Logger: deps.Logger})
 
+	// Runtime-editable settings, persisted in the shared RuntimeSetting KV and edited from the
+	// Settings page. Two blobs: outbound notification delivery, and the storage/broker knobs.
+	appCfg := m.appConfig()
+	notificationSettings := services.NewNotificationSettingsService(deps.Db, notificationService)
+	// Apply any saved webhook/telegram delivery config to the live hub. Until this runs, myiotsan
+	// only writes alerts to its in-app feed — nothing reaches a webhook or telegram.
+	if err := notificationSettings.Sync(ctx); err != nil {
+		deps.Logger.Warnf("myiotsan.notification", "apply saved delivery config: %v", err)
+	}
+	telemetrySettings := services.NewTelemetrySettingsService(deps.Db, services.TelemetrySettings{
+		RawRetentionDays:    appCfg.Telemetry.RawRetentionDays,
+		RollupRetentionDays: appCfg.Telemetry.RollupRetentionDays,
+		BatchSize:           appCfg.Telemetry.BatchSize,
+		FlushMs:             appCfg.Telemetry.FlushMs,
+		QueueSize:           appCfg.Telemetry.QueueSize,
+		MqttAddr:            appCfg.MQTT.Addr,
+	})
+	// Read the effective storage/broker settings ONCE — they are consumed at construction below, so
+	// an edit takes effect on the next restart (the Settings > Telemetry tab says so).
+	effTelemetry, err := telemetrySettings.Get(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load telemetry settings: %w", err)
+	}
+
 	authCfg := sharedapis.LocalAuthConfig{
 		AppName: m.Name(),
 		OnLockout: func(ctx context.Context, info sharedapis.LockoutInfo) {
@@ -233,7 +257,10 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// User and role management. Without it the viewer and operator roles — which have existed
 	// since P0 and which the policy catalog names — were UNASSIGNABLE, and the appliance was
 	// effectively single-admin.
-	apis.NewSettingsApi(protected, localUser, deps.AccessRoles)
+	apis.NewSettingsApi(protected, localUser, deps.AccessRoles, notificationSettings, telemetrySettings)
+	// System controls for the Settings > System tab: a restart (needed to apply the storage/broker
+	// settings, which are read once at boot). Version/health are already served by the host runtime.
+	apis.NewSystemApi(protected, deps.Restarter)
 
 	// --- the ingest spine -------------------------------------------------------------
 	//
@@ -260,13 +287,12 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	})
 
 	gate := services.NewDeadbandGate()
-	appCfg := m.appConfig()
 	writer := services.NewReadingWriter(
 		dbsql.NewGenericRepo[appentities.DeviceReading](deps.Db),
 		services.ReadingWriterOptions{
-			BatchSize:     appCfg.Telemetry.BatchSize,
-			FlushInterval: time.Duration(appCfg.Telemetry.FlushMs) * time.Millisecond,
-			QueueSize:     appCfg.Telemetry.QueueSize,
+			BatchSize:     effTelemetry.BatchSize,
+			FlushInterval: time.Duration(effTelemetry.FlushMs) * time.Millisecond,
+			QueueSize:     effTelemetry.QueueSize,
 			Logf:          func(f string, a ...any) { deps.Logger.Warnf("myiotsan.telemetry", f, a...) },
 		})
 	writer.Run(bgCtx)
@@ -308,7 +334,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// Its authenticator is the DEVICE TABLE, so a device that is not in the inventory cannot
 	// connect at all.
 	broker, err := iotmqtt.New(iotmqtt.Options{
-		Addr:      appCfg.MQTT.Addr,
+		Addr:      effTelemetry.MqttAddr,
 		Auth:      deviceService,
 		OnMessage: ingest.Handle,
 		Logf:      func(f string, a ...any) { deps.Logger.Infof("myiotsan.mqtt", f, a...) },
@@ -325,8 +351,8 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	// Rollup + retention. Rollups are built BEFORE the raw rows they summarize are purged.
 	telemetry.RunRollup(bgCtx, services.RetentionConfig{
-		RawDays:    appCfg.Telemetry.RawRetentionDays,
-		RollupDays: appCfg.Telemetry.RollupRetentionDays,
+		RawDays:    effTelemetry.RawRetentionDays,
+		RollupDays: effTelemetry.RollupRetentionDays,
 	})
 
 	// The offline sweep. An "offline" rule cannot be driven by a reading — its whole subject is

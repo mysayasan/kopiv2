@@ -120,6 +120,17 @@ func Policy() []PolicyRule {
 		{Path: "/api/discovery", Description: "Open enrollment and adopt new devices", Viewer: none, Operator: none},
 		{Path: "/api/settings/users", Description: "Manage users and their roles", Viewer: none, Operator: none},
 		{Path: "/api/settings/roles", Description: "See the roles that can be assigned", Viewer: none, Operator: none},
+		// The rest of the Settings page. Outbound notification delivery is where alerts LEAVE the
+		// box (webhook/telegram credentials); the telemetry/broker knobs and a restart can take the
+		// appliance down; fleet pairing adopts the node into a control plane. All administrator-only,
+		// and the whole Settings nav is hidden from non-admins in the UI on top of this.
+		{Path: "/api/settings/notification", Description: "Configure webhook/telegram delivery", Viewer: none, Operator: none},
+		{Path: "/api/settings/telemetry", Description: "Storage retention and broker address", Viewer: none, Operator: none},
+		{Path: "/api/system", Description: "Restart the appliance", Viewer: none, Operator: none},
+		// Fleet pairing (adopt into a myseliasan control plane). This was missing from the catalog —
+		// the matrix denies it to viewer/operator by default, but a route the catalog does not name
+		// is a route nobody can see they are not granting, which the catalog exists to prevent.
+		{Path: "/api/pairing", Description: "Fleet pairing: fleet key, claim code, adoption status", Viewer: none, Operator: none},
 	}
 }
 

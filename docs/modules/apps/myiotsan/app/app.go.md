@@ -22,7 +22,10 @@ partially landed (2026-07-15): the Modbus/SunSpec driver foundation is WIRED IN*
 profile's cadence and feeds `Ingest.HandlePolled`, and the shipped catalog gained its first two
 POLLED profiles (`generic-sunspec-solar`, `huawei-sun2000`). What remains of P5 is RTU (serial)
 and OPC-UA transports and guarded Modbus control writes; the solar "system workspace" (P8) is
-still design-only. See `docs/MYIOTSAN_PLAN.md` §8g.
+still design-only. See `docs/MYIOTSAN_PLAN.md` §8g. **A tabbed Settings page shipped 2026-07-16**,
+consolidating users/roles, site location, outbound notification delivery (webhook/telegram — now
+actually wired to the shared notification hub for the first time), storage/broker settings, fleet
+pairing, and a restart control into one admin-only page — see the "Notes" section below.
 
 ## Key Type: module
 
@@ -75,18 +78,40 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
      load-bearing: auth puts the principal in context, and the matrix needs a principal to
      decide against.
   8. Registers `sharedapis.NewLocalAuthApi` (session probe + change-password) on `protected`,
-     then (P4) `apis.NewSettingsApi(protected, localUser, deps.AccessRoles)` — user and role
-     management. **Closes a real gap**: the policy catalog has named `/api/settings/users`/
-     `/api/settings/roles` since P0, and the roles have existed since then, but nothing served
-     them — viewer and operator were UNASSIGNABLE, and the appliance was effectively
-     single-admin. See `apis/settings.go.md`.
+     then `apis.NewSettingsApi(protected, localUser, deps.AccessRoles, notificationSettings,
+     telemetrySettings)` — user and role management (P4; **closes a real gap**: the policy
+     catalog has named `/api/settings/users`/`/api/settings/roles` since P0, and the roles have
+     existed since then, but nothing served them — viewer and operator were UNASSIGNABLE, and the
+     appliance was effectively single-admin), plus, new with the tabbed Settings page, outbound
+     notification delivery and telemetry/broker settings. See `apis/settings.go.md`. Immediately
+     after, `apis.NewSystemApi(protected, deps.Restarter)` registers `POST /api/system/restart` —
+     the Settings > System tab's restart, needed because the telemetry settings below are read
+     once at boot (see `apis/system.go.md`).
+  8a. **Wires the two new runtime-editable settings stores, before the ingest spine is built**
+     (so their effective values can feed it): `services.NewNotificationSettingsService(deps.Db,
+     notificationService)`, then immediately `notificationSettings.Sync(ctx)` — applies any
+     previously-saved webhook/telegram config to this run's fresh notification hub (a sync
+     failure only logs a warning; it must not abort boot). **This Sync call is the reason
+     myiotsan can deliver outside the app at all** — before this file existed, nothing ever called
+     `notificationService.Configure`, so every alert stayed in the in-app feed no matter what an
+     operator wanted. Then `services.NewTelemetrySettingsService(deps.Db, services.TelemetrySettings{...})`,
+     seeded from `appCfg.Telemetry`/`appCfg.MQTT.Addr` as defaults, followed by
+     `telemetrySettings.Get(ctx)` (`effTelemetry`) — **the effective, store-over-config values**
+     that now feed `NewReadingWriter`'s batch/flush/queue sizing, `telemetry.RunRollup`'s
+     retention, and `iotmqtt.New`'s listen address, replacing the direct `appCfg.Telemetry`/
+     `appCfg.MQTT.Addr` reads those three call sites used before. A failure to load telemetry
+     settings aborts startup (`fmt.Errorf("load telemetry settings: %w", err)`) rather than
+     silently falling back, since a wrong broker address here means every device fails to
+     connect. See `services/notification_settings.go.md` and `services/telemetry_settings.go.md`.
   9. **Wires the ingest spine** in dependency order (each stage owns the one before it):
      `broker -> ingest (decode -> deadband -> batched write) -> rules -> alert -> notification`.
      `services.NewDeviceService` (also the broker's `Authenticator`), `services.NewProfileService`
      + `EnsureBuiltins` (seeds the shipped device catalog; existing profiles are left alone so a
      site's tuned deadbands survive a restart), `services.NewTelemetryService`,
      `services.NewDeadbandGate`, `services.NewReadingWriter` (batch/flush/queue sized from
-     `appCfg.Telemetry`) then `.Run(bgCtx)`, `services.NewRuleEngine` +
+     `effTelemetry`, the store-over-config values resolved in 8a — not `appCfg.Telemetry`
+     directly, since a saved edit must win over the shipped config) then `.Run(bgCtx)`,
+     `services.NewRuleEngine` +
      `services.NewRuleService` then `.Reload(ctx)` (**re-seeds every cooldown from the alert
      log** — skipping this re-arms every still-true rule on every restart, the alert storm
      mymatasan shipped), `services.NewIngest`, then `iotmqtt.New` (the embedded broker, refuses
@@ -288,3 +313,24 @@ adopted myiotsan node) were booted together for a live end-to-end check. See
   something with no human in the loop can trigger it. Verified live end to end: seeded
   `smart-lamp`, issued a `dimmer` command, ran a scene (whose per-action report included a
   rate-limit refusal), set the site location, and created and test-fired a sunset schedule.
+- **Tabbed Settings page, shipped 2026-07-16:** collapses everything that configures the hub
+  itself (as opposed to the devices it watches) into one 6-tab page — users, location,
+  notifications, telemetry, connectivity (fleet pairing), system — behind a single admin-only
+  nav entry (`views/components/settings.js`). The two tabs new in this change are the ones with
+  real backend behavior: **notifications** wires `services.NotificationSettingsService`
+  (`services/notification_settings.go.md`) to `notification.Service.Configure` — before this,
+  myiotsan had no code path that ever called `Configure`, so every alert stayed in the in-app feed
+  no matter what an operator wanted; saving (or booting with a previously-saved config, via
+  `Sync`) is what makes an alert reach a webhook or telegram at all. **Telemetry** wires
+  `services.TelemetrySettingsService` (`services/telemetry_settings.go.md`), a store-over-config
+  blob for retention days/write-batcher sizing/broker address that `app.go` now reads once at
+  boot (`effTelemetry`) instead of reading `appCfg.Telemetry`/`appCfg.MQTT.Addr` directly — an
+  edit here takes effect only after a restart, which is why this change also added
+  `apis.NewSystemApi`'s `POST /api/system/restart` (`apis/system.go.md`). Along the way, the RBAC
+  catalog (`services/rbac.go.md`) gained explicit admin-only rows for
+  `/api/settings/notification`, `/api/settings/telemetry`, `/api/system`, and — a gap that
+  predated this change and was simply never caught — `/api/pairing`, which had never been listed
+  in the catalog at all. Verified live end to end: created a user and assigned it a role, set the
+  site location, saved and test-fired a webhook (confirming `Configure` reached the live hub),
+  saved telemetry retention (confirming defaults are preserved for unset fields), read pairing
+  status, and read version/health.

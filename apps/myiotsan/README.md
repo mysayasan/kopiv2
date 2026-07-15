@@ -314,15 +314,43 @@ drawn for the two home-automation surfaces: reading scenes and schedules (`GET /
 authoring either, and setting the site location are all admin-only** — running one commands real
 devices through the identical actuation path a manual command takes.
 
-## User and role management
+## Settings
 
-`POST/GET /api/settings/users` (+ `PUT`/`DELETE /api/settings/users/{id}`,
-`POST /api/settings/users/{id}/password`) and `GET /api/settings/roles` are now served
-(previously they were named in the authorization catalog but 404'd — see
-`docs/MYIOTSAN_PLAN.md` §8d — so `viewer`/`operator` were unassignable and the appliance was
-effectively single-admin). All admin-only. They run on the same shared local-user service
-`mymatasan` uses, so an edit that would remove the last administrator is refused the same way in
-both apps — an appliance nobody can administer is a bricked appliance.
+One tabbed, admin-only page for everything that configures the hub itself, as opposed to the
+devices it watches: **Users**, **Location**, **Notifications**, **Telemetry**, **Connectivity**,
+and **System**. The whole page is hidden from non-admins in the SPA nav, and every route below is
+gated admin-only server-side too (`services.Policy()`).
+
+- **Users** — `POST/GET /api/settings/users` (+ `PUT`/`DELETE /api/settings/users/{id}`,
+  `POST /api/settings/users/{id}/password`) and `GET /api/settings/roles` (previously named in
+  the authorization catalog but 404'd — see `docs/MYIOTSAN_PLAN.md` §8d — so `viewer`/`operator`
+  were unassignable and the appliance was effectively single-admin). They run on the same shared
+  local-user service `mymatasan` uses, so an edit that would remove the last administrator is
+  refused the same way in both apps — an appliance nobody can administer is a bricked appliance.
+- **Location** — `GET`/`PUT /api/settings/location`, the site latitude/longitude a sunrise/sunset
+  schedule needs (see "Home automation: scenes and schedules" above).
+- **Notifications** — `GET`/`PUT /api/settings/notification` + `POST /api/settings/notification/test`.
+  Configures where alerts are delivered off-box: a webhook (any `http(s)` URL) and/or Telegram
+  (bot token + chat id), each with its own minimum severity floor so info-level chatter doesn't
+  flood an external channel. **This is the first time myiotsan's alerts ever leave the box at
+  all** — before this page, every alert (a rule firing, a device going offline, a refused
+  command) landed only in the in-app notification feed; saving here (or simply booting with a
+  config saved in a previous run) is what actually wires the shared notification hub's outbound
+  webhook/telegram channels. The delivery engine itself is unchanged shared infra
+  (`domain/notification`, `infra/notification`) — nothing new was built there, only the myiotsan
+  side that finally calls into it. Use the test button to confirm a channel actually delivers;
+  "saved" is not "reaches my phone".
+- **Telemetry** — `GET`/`PUT /api/settings/telemetry`: raw/rollup retention days, the
+  write-behind batcher's batch size/flush interval/queue size, and the embedded MQTT broker's
+  listen address. **Unlike Notifications, saving here does not apply live** — every one of these
+  values is read once when the app constructs its ingest pipeline at boot, so an edit takes
+  effect only after a restart; the tab says so and links straight to the System tab's restart
+  button.
+- **Connectivity** — fleet pairing (see "Fleet" below): fleet key, claim code, adoption status,
+  unpair.
+- **System** — app/core version, health, and `POST /api/system/restart` (responds first, then
+  restarts ~500ms later so the browser can show a "restarting…" overlay). This is also the tab an
+  operator uses after editing Telemetry settings, since those need a restart to take effect.
 
 ## Fleet
 

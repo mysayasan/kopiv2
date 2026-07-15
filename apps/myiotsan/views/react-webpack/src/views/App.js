@@ -5,7 +5,7 @@ import './styles/iot.css';
 import { SideNav } from './components/layout';
 import { ToastStack, LangProvider, normalizeLang, LanguageDropdown, AppFooter } from '@shared';
 import { FormBusyOverlay, ThemeDropdown } from './components/ui';
-import { DashboardPage, DevicesPage, RulesPage, AlertsPage, NotificationsPage, ProfilesPage, DiscoveryPage, ScenesPage, SchedulesPage } from './components/pages';
+import { DashboardPage, DevicesPage, RulesPage, AlertsPage, NotificationsPage, ProfilesPage, DiscoveryPage, ScenesPage, SchedulesPage, SettingsPage } from './components/pages';
 import { FirstRunWizard } from './components/onboarding';
 import { LoginScreen, ChangePasswordScreen } from './components/auth_screens';
 import { api, apiBase } from './lib/helpers';
@@ -151,6 +151,9 @@ function AppInner({ lang, onLangChange }) {
         {/* Discovery is admin-only. The check here (like the hidden nav entry) is UX: the
             server 403s every /api/discovery route for anyone else, which is the enforcement. */}
         {activeTab === 'discovery' && session?.isAdmin ? <DiscoveryPage onToast={pushToast} /> : null}
+        {/* Settings is admin-only too — every /api/settings/*, /api/system and /api/pairing route
+            is administrator-gated server-side; hiding the tab is UX on top of that. */}
+        {activeTab === 'settings' && session?.isAdmin ? <SettingsPage onToast={pushToast} /> : null}
         <AppFooter appName="MyIotSan" apiBase={apiBase()} />
 
         {showWizard ? (

@@ -541,6 +541,16 @@
 }
 .iot-cmd-readout { min-width: 60px; font-variant-numeric: tabular-nums; font-weight: 600; }
 
+/* Settings page helpers. */
+.settings-content { display: flex; flex-direction: column; gap: 4px; }
+.iot-checkbox { display: inline-flex; align-items: center; gap: 8px; margin: 6px 0; }
+.iot-status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin: 10px 0 16px; }
+.iot-status-grid > div { display: flex; flex-direction: column; gap: 2px; }
+.iot-claim-code { display: flex; align-items: center; gap: 10px; }
+.iot-claim-code code { font-size: 20px; letter-spacing: 2px; font-weight: 700; }
+.link-btn { background: none; border: none; padding: 0; color: var(--brand-mark, #3b82f6); cursor: pointer; text-decoration: underline; font: inherit; }
+.user-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+
 .iot-cmd-warn {
   display: flex;
   align-items: flex-start;

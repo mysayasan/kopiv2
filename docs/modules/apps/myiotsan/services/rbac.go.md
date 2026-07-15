@@ -69,7 +69,15 @@ alongside the ingest spine:
   exact same actuation path as a single command, so it inherits the same admin-only rule),
   `/api/schedules/*/run` (test-firing a schedule) and `/api/settings/location` (the site
   latitude/longitude a sunrise/sunset schedule needs to compute its fire time — configuration
-  that decides WHEN an automation fires, gated the same as the automation itself). Also NOT granted
+  that decides WHEN an automation fires, gated the same as the automation itself). Also admin
+  only, added alongside the tabbed Settings page: `/api/settings/notification` (webhook/telegram
+  delivery credentials — where alerts LEAVE the box), `/api/settings/telemetry` (storage
+  retention and the embedded broker's listen address — wrong here and every device stops
+  connecting), and `/api/system` (a restart). **Also added, closing a catalog gap that predated
+  the Settings page**: `/api/pairing` (fleet key, claim code, adoption status) had never been
+  listed at all — the matrix already denied it to viewer/operator by default, but a route the
+  catalog does not name is a route nobody can see they are not granting, which is exactly what
+  this catalog exists to prevent. Also NOT granted
   to anyone below admin, and therefore correctly absent from any `read`/`write` row: creating and
   deleting devices, editing profiles (which could widen a deadband until a sensor effectively
   stops recording), writing rules, and (home-automation) authoring a scene or a schedule

@@ -10,3 +10,4 @@ export { ProfilesPage } from './profiles';
 export { DiscoveryPage } from './discovery';
 export { ScenesPage } from './scenes';
 export { SchedulesPage } from './schedules';
+export { SettingsPage } from './settings';
