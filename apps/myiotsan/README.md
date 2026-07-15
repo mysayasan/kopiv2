@@ -16,8 +16,11 @@ adoptable node in the `myseliasan` fleet, which is what lets its alerts be corre
 `mymatasan` camera's (see "Fleet" below), and (P7) ships as an installable product with its own
 release pipeline, and can now be managed remotely from `myseliasan`'s fleet UI the way an adopted
 camera node already is (see "Install & release" and "Fleet" below). What remains is industrial
-protocols (P5) — see `docs/MYIOTSAN_PLAN.md` for the full roadmap and, in §8b/§8c/§8d/§8e/§8f,
-exactly what shipped and what was found by live-booting it.
+protocols (P5) — a Modbus/SunSpec **driver foundation** now exists (`infra/iot/modbus`,
+`infra/iot/sunspec`, plus a standalone simulator at `tools/sunspec-sim`) but is not yet wired into
+this app (no poller in `app.go`, no Modbus binding on a device profile) — see
+`docs/MYIOTSAN_PLAN.md` for the full roadmap and, in §8b/§8c/§8d/§8e/§8f/§8g, exactly what shipped
+and what was found by live-booting it.
 
 ## Onboarding a device
 

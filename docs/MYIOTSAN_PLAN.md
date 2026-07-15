@@ -783,6 +783,116 @@ commands directly from the control plane, closing the gap §8e left open.
 
 ---
 
+## 8g. P5 + P8 — Industrial protocols and the solar "system workspace" (design + driver foundation)
+
+Prompted by a request to make myiotsan **handle solar systems** without writing code per inverter
+model: use the protocols we have, and combine them into a **reusable template workspace** for a
+specific model (customisable, and re-usable for future protocol sets). The study below is the
+agreed direction; the **driver + simulator foundation is built and proven**, the **app integration
+and the workspace layer are the remaining work**.
+
+### The shape of the problem, and why the current model doesn't fit
+
+A solar system is not one device. It is an **inverter + battery/BMS + charge controller + grid &
+PV meters**, and those speak **different wire protocols** (an inverter is usually Modbus/SunSpec, a
+meter might be a Shelly on MQTT, a bridge might push HTTP). The meaningful numbers —
+self-consumption, net grid power, battery autonomy, PV yield — are **derived across devices**, and
+the useful rules are **system-level**. Today's `device_profile` is one device / one protocol
+(MQTT-topic + JSON-path only; `iot_device.Protocol` is a `mqtt|http` string; the codec is
+JSON-only). So two things are missing, and the design is **two layers**:
+
+### Layer A — a protocol-driver seam (make protocols work *with each other*)
+
+Everything downstream of `decode → []codec.Sample` (deadband, storage, rollup, rules, twin,
+dashboards) is already protocol-blind. The seam is therefore: **normalise every protocol to a
+`codec.Sample` stream.** Concretely:
+
+- **A driver abstraction.** Push drivers (MQTT/HTTP, today) subscribe and emit; poll drivers
+  (Modbus/OPC-UA) run a poll loop and emit the *same* `codec.Sample`. Both feed a shared
+  `handleSamples(dev, samples)` — the back half of `Ingest.Handle` (`ingest.go:149-187`) extracted
+  into a reusable method. The deadband still governs storage; the poll interval governs bus load.
+- **A protocol-agnostic key binding.** `telemetry_key.go` today has only `JsonPath`. It needs a
+  per-protocol binding: for Modbus `{register, kind (u16/i16/u32/i32/acc32), scaleFactor,
+  wordOrder, bitIndex}`, for OPC-UA a `nodeId`. **Sign and scale live here** — the classic solar
+  footgun (import-positive vs export-positive, charge vs discharge).
+
+**SunSpec is the "don't code per model" unlock.** SunSpec is *not a protocol* — it is a standard
+**information model over Modbus**: a device publishes the marker `SunS` at a base register, then a
+self-describing chain of models (`[id][length][data]…[0xFFFF]`) standardised by id. Walk the chain
+and one driver decodes **any** compliant inverter/meter/battery with no per-model map. The
+non-compliant vendors (many cheap hybrids) get a **manual register map** in their profile — still
+data, not code.
+
+#### Built and proven (2026-07-15) — the foundation, in `tools/` and `infra/iot`
+
+- **`tools/sunspec-sim/`** — a SunSpec-over-Modbus-TCP simulator, stdlib-only (no Modbus dep; the
+  TCP framing is ~150 lines). It serves a **real** SunSpec chain (Common 1 / Inverter 103 /
+  Controls 123 / Storage 124 / Meter 203) driven by a live physics loop (PV bell curve, battery
+  charge/discharge, grid balance, curtailment) over a compressed day. It is the `-deaf`-relay
+  equivalent for the Modbus path. Control writes are honoured, so the read-back a guarded write
+  confirms against actually changes. It serves **three devices on three Modbus unit ids** to
+  exercise the *mixed-protocol* case: **unit 1** = SunSpec hybrid inverter, **unit 2** = a
+  standalone SunSpec meter (a different, shorter chain), **unit 3** = a **non-SunSpec vendor
+  inverter** exposing a flat vendor register block (no `SunS`). `models_test.go` pins every model's
+  block length to the spec (a shifted field silently corrupts every downstream value).
+- **`infra/iot/sunspec/`** — the SunSpec decoder: `Discover` (tries base 40000/50000/0), `Walk`
+  (follow the chain by length), a registry of the standard integer models (101/102/103,
+  201–204, 124, 123) with **scale-factor arithmetic**, and `DecodeDevice`, which **role-prefixes**
+  every key (`inv_ac_power`, `grid_ac_power`, `batt_soc`, `ctl_w_max_lim_pct`) so a hybrid
+  inverter's own inverter block and its built-in grid meter don't collide on `ac_power`.
+- **`infra/iot/modbus/`** — a stdlib Modbus TCP client (fn 3/4/6/16), a `RegisterMap` for the
+  non-SunSpec path (one round trip covers the whole span), a `Poller` that normalises **either**
+  path to `codec.Sample`, and **`WriteConfirm` — a guarded write with read-back that NEVER
+  re-issues the write** (a Modbus write to an inverter/battery is a physical action; a lost
+  confirmation must not become a second one — the same rule the MQTT actuation path already
+  enforces).
+- Verified live: `MODBUS_SIM_ADDR=127.0.0.1:1502 go test ./infra/iot/modbus/ -run Live` read all
+  three personas over real Modbus and confirmed a curtailment write by read-back. Hermetic unit
+  tests (synthetic register banks) cover the decoding and scaling deterministically.
+
+#### Still to land for P5 (app integration — not yet built)
+
+1. `telemetry_key.go` gains the Modbus binding fields (register/kind/scale/wordOrder); `profile`
+   gains a protocol + `Base`/`Unit`/mode so a profile can describe a SunSpec or a vendor-map device.
+2. Extract `Ingest.handleSamples` and wire the `modbus.Poller` into a poller service in `app.go`
+   (per-device goroutine, offline detection reusing `SweepOffline`).
+3. Catalog: a builtin **generic SunSpec inverter/meter/battery** profile (auto-discovered) and one
+   or two vendor register-map profiles (Growatt/Deye-style) as worked examples.
+4. Guarded Modbus control extends `ProfileCommand` to write a holding register with the driver's
+   read-back confirm (admin-only, bounded, never-retried — the §8d gates apply unchanged).
+5. **RTU (serial)** is the same driver behind a serial transport (adds CRC + a serial port / RTU→TCP
+   gateway); TCP is first because the simulator is TCP. **OPC-UA** is a later peer driver.
+
+### Layer B — the system workspace (the reusable "template", P8)
+
+The composite unit that makes "a solar system" one object instead of six devices:
+
+- **`system_template`** — the reusable workspace ("Solar system"): a category, **member slots**
+  (role = inverter / battery / pv-string / grid-meter / load-meter / charge-controller; which
+  device-profiles fit; required/optional; cardinality), **derived-metric definitions**, default
+  system rules, and a dashboard layout. Builtin catalog + import/export (`.iotsystem`, mirroring
+  the shipped `.iotprofile`).
+- **`system_instance`** — a deployed system created from a template, binding each slot to a concrete
+  `iot_device`. This is where a specific model set is customised.
+- **`derived_metric`** — computed telemetry (an expression over member keys) stored as a *synthetic
+  telemetry key*, so it rides the identical deadband → rollup → rules → charts machinery.
+  `net_grid = grid_import − grid_export`, `pv_total = Σ mppt.power`, `autonomy_h = batt_energy /
+  load_power`.
+- **System-scoped rules** — `iot_rule` already has device/tag scope; add a `system` scope so a rule
+  can reference derived metrics and member roles ("SoC < 20% AND pv_total ≈ 0 AND grid down → shed
+  non-critical load"). This is the cross-domain-rules differentiator applied to energy.
+
+The workspace changes **nothing** downstream (derived metrics are just synthetic keys) — it is a
+grouping + computed-value + layout descriptor, the same "declare once, instantiate many" pattern as
+`device_profile`, one level up.
+
+### Scope discipline (refuse)
+
+- No visual rule-chain editor (ThingsBoard-style); the template is a declarative descriptor.
+- No MPPT curve optimisation / forecasting / energy trading. Monitor + alert + **guarded** control.
+- **CAN-bus batteries stay out** (pure-Go CAN over the wire isn't viable in the single-binary model
+  — same verdict as BACnet); those need a Modbus-TCP gateway.
+
 ## 9. Known risks
 
 | Risk | Mitigation |
