@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "myseliasan",
+  "summary": "The nodes page no longer renders a failed fleet load as an empty fleet. A network error or 5xx while loading /api/nodes now shows 'could not load the fleet — your session may have expired' with a retry link, instead of 'No adopted nodes yet' — which had told an operator whose control plane briefly restarted that their whole fleet had vanished. A failed refresh also no longer blanks a fleet that was already loaded.",
+  "compatibility": "Frontend only; three new i18n keys (node.loadFailed/retry/loading) across en/ms/zh/ar."
+}
