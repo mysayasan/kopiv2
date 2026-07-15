@@ -42,7 +42,8 @@ const U = [
 
 const A = [
   { s: 'Perdana · dalam pembangunan aktif', b: 'Nod kamera & risikan video edge berdiri sendiri: ONVIF, pengesanan AI, NVR, paparan langsung WebRTC, penyulitan, dan pemadanan LAN.' },
-  { s: 'Satah kawalan · tersedia sekarang', b: 'Satah kawalan armada yang menemui, mengguna, dan mengurus nod edge, serta menyampaikan strim kamera langsung mereka kepada operator.' },
+  { s: 'Hab penderia · tersedia sekarang', b: 'NVR, tetapi untuk penderia: sesentuh pintu, gerakan, suhu, asap, kebocoran, kuasa dan pembaca akses melalui broker MQTT terbenam — dengan peraturan, amaran, penggerakan selamat, dan sejarah telemetri.' },
+  { s: 'Satah kawalan · tersedia sekarang', b: 'Satah kawalan armada yang menemui, mengambil alih, dan mengurus kedua-dua nod kamera dan penderia — dan mengaitkan peristiwa merentasinya: gerakan pada kamera DAN pintu terbuka DAN tiada leretan lencana.' },
   { s: 'Identiti', b: 'Identiti dan akses dikongsi: pengesahan JWT, SSO, dan kawalan akses berasaskan peranan merentas platform.' },
 ];
 
@@ -120,8 +121,8 @@ export default {
   apps: {
     ...en.apps,
     kicker: 'Platform',
-    title: 'Satu platform, tiga aplikasi.',
-    subtitle: 'r450k ialah platform bermodul. mymatasan ialah nod pengawasan edge; satah kawalan mengendalikan identiti dan pengurusan armada.',
+    title: 'Satu platform, empat aplikasi.',
+    subtitle: 'r450k ialah platform bermodul. mymatasan ialah nod kamera edge dan myiotsan ialah hab penderia edge; satah kawalan mengambil alih kedua-duanya dan mengaitkan peristiwa merentasinya, dan identiti dikongsi menyatukannya.',
     available: 'Tersedia',
     platform: 'Platform',
     items: en.apps.items.map((it, i) => ({ ...it, status: A[i].s, body: A[i].b })),
@@ -139,8 +140,13 @@ export default {
       },
       myseliasan: {
         name: 'MySeliaSan',
-        tagline: 'Control plane armada — temui, ambil alih dan urus banyak nod MyMataSan dari satu tempat, serta lihat kamera mereka tanpa sekali pun mendedahkan nod. Satu binari Go tulen: tiada ffmpeg, tiada Python.',
+        tagline: 'Control plane armada — temui, ambil alih dan urus banyak nod MyMataSan dan MyIotSan dari satu tempat, lihat kamera dan penderia mereka tanpa sekali pun mendedahkan nod, dan kaitkan peristiwa merentas kedua-duanya. Satu binari Go tulen: tiada ffmpeg, tiada Python.',
         dockerHint: 'Jalankan imej berbilang-seni bina:',
+      },
+      myiotsan: {
+        name: 'MyIotSan',
+        tagline: 'Hab penderia — satu pemasangan bagi setiap lokasi. Penderia bangunan & keselamatan melalui broker MQTT terbenam, dengan stor telemetri bertapis-hingar, peraturan ambang dan korelasi, amaran, dan penggerakan selamat sahkan-untuk-laksana. Satu binari Go tulen: tiada ffmpeg, tiada Python. Membuka port MQTT (1883) untuk peranti.',
+        dockerHint: 'Jalankan imej berbilang-seni bina (membuka port MQTT 1883 untuk peranti):',
       },
     },
     license: 'Percuma untuk kegunaan peribadi dan bukan komersial — individu, badan bukan untung, pendidikan, dan penyelidikan. Kegunaan komersial atau dalam perniagaan, dan sebarang penjualan semula, memerlukan lesen komersial.',
