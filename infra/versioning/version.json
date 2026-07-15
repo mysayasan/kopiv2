@@ -7,7 +7,7 @@
       "version": "1.13.0"
     },
     "myiotsan": {
-      "version": "0.10.0"
+      "version": "0.11.0"
     },
     "mymatasan": {
       "version": "1.107.0"
@@ -16,6 +16,6 @@
       "version": "1.32.0"
     }
   },
-  "commit": "e49032f53313e47e8f230a306e1e63b0d6a7ed61",
-  "updatedAt": "2026-07-15T04:12:18Z"
+  "commit": "463916791d33b79f8bd6b1efed6d7efb5a8b6543",
+  "updatedAt": "2026-07-15T11:49:07Z"
 }
