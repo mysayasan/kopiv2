@@ -45,8 +45,10 @@ alongside the ingest spine:
 
 - Everyone signed in: `/api/auth/change-password`.
 - **Watching the estate** (viewer and operator both `read`): `/api/devices` (devices + their
-  CURRENT readings), `/api/profiles`, `/api/rules`, `/api/alerts`, `/api/notifications`. This is
-  the live picture, and it is all a viewer gets.
+  CURRENT readings), `/api/profiles`, `/api/rules`, `/api/alerts`, `/api/notifications`, and
+  (home-automation) `/api/scenes` and `/api/schedules` — a viewer can see that a "Goodnight"
+  scene or a sunset schedule exists and what it does, the same way they can see an alert rule,
+  without being able to fire it. This is the live picture, and it is all a viewer gets.
 - **Reviewing the record** (operator and up only): `/api/devices/*/readings` (Viewer: `none`,
   Operator: `read`) — THIS is the viewer/operator line, and it is mymatasan's line exactly: a
   viewer sees what is happening now, only an operator can go back through the telemetry
@@ -62,11 +64,18 @@ alongside the ingest spine:
   devices; the ONE act in the whole app that lets an unknown thing talk to the broker at all, so
   an operator does not get to do it either), `/api/settings/users`, `/api/settings/roles` (now
   actually served — see `apis/settings.go.md`), `/api/devices/*/commands` (P4 — issuing a command;
-  written into the catalog here in P0, before the command path itself existed). Also NOT granted
+  written into the catalog here in P0, before the command path itself existed), and
+  (home-automation) `/api/scenes/*/run` (running a scene commands every device in it through the
+  exact same actuation path as a single command, so it inherits the same admin-only rule),
+  `/api/schedules/*/run` (test-firing a schedule) and `/api/settings/location` (the site
+  latitude/longitude a sunrise/sunset schedule needs to compute its fire time — configuration
+  that decides WHEN an automation fires, gated the same as the automation itself). Also NOT granted
   to anyone below admin, and therefore correctly absent from any `read`/`write` row: creating and
   deleting devices, editing profiles (which could widen a deadband until a sensor effectively
-  stops recording), writing rules. A bad relay write is physically dangerous in a way a bad PTZ
-  move is not.
+  stops recording), writing rules, and (home-automation) authoring a scene or a schedule
+  (`POST`/`PUT`/`DELETE /api/scenes`, `/api/schedules`) — only reading them is granted below
+  admin; the matrix's default-deny leaves authoring admin-only without a listed row. A bad relay
+  write is physically dangerous in a way a bad PTZ move is not.
 
 Every phase that adds an API area MUST add it here, INCLUDING the admin-only areas — a route
 missing from this catalog is a route nobody can see they are not granting.

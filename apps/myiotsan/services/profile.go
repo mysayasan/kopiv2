@@ -111,6 +111,8 @@ type SaveProfileCommand struct {
 	PayloadTemplate string  `json:"payloadTemplate"`
 	Min             float64 `json:"min"`
 	Max             float64 `json:"max"`
+	// Options enumerates a "mode" command's allowed values (JSON [{value,label}]); empty otherwise.
+	Options string `json:"options"`
 	// ConfirmKey is the telemetry key the device reports the resulting state on. Without it a
 	// command can only ever be "sent", never "confirmed" — and "sent" is not "it happened".
 	ConfirmKey string `json:"confirmKey"`
@@ -277,6 +279,7 @@ func (s *ProfileService) replaceCommands(ctx context.Context, profileId int64, c
 			PayloadTemplate: strings.TrimSpace(c.PayloadTemplate),
 			Min:             c.Min,
 			Max:             c.Max,
+			Options:         strings.TrimSpace(c.Options),
 			ConfirmKey:      strings.TrimSpace(c.ConfirmKey),
 			CreatedBy:       actor,
 			CreatedAt:       now,

@@ -16,10 +16,15 @@ the plan did not name.
    `ProfileCommand`s (`profile_command.go.md`) and refuses with a specific, configuration-shaped
    error if the device type declares no such command — there is no generic publish-to-any-topic
    path.
-3. **Bounds are server-side.** `validateValue` enforces `Kind` (`switch` = 0 or 1 only;
-   `setpoint` = within `Min..Max`) against the *declaration*, not anything the caller sent. A
-   setpoint declaring `Min == 0 && Max == 0` refuses every value — an unbounded setpoint on a
-   physical device is an omission, not permission.
+3. **Bounds are server-side.** `validateValue` enforces `Kind` against the *declaration*, not
+   anything the caller sent: `switch` = 0 or 1 only; `setpoint`/`cct` = within `Min..Max` (a
+   setpoint or cct declaring `Min == 0 && Max == 0` refuses every value — an unbounded setpoint on
+   a physical device is an omission, not permission); `dimmer`/`position` = a percentage fixed
+   `0..100`; `mode` = one of the integer values `Options` enumerates (`modeValues`, itself a
+   refusal on empty/malformed `Options`); `color` = a whole number `0..0xFFFFFF`. **The `switch`
+   is a `default` case that REFUSES an unrecognised `Kind`** — before the home-automation kinds
+   this had no default, so a misconfigured/unknown kind published unvalidated; that hole is
+   closed.
 4. **Rate-limited.** `lastSent[deviceId]` (mutex-guarded) enforces `minCommandInterval` (2s) —
    the floor a relay's duty cycle needs; something that can chatter it can destroy it.
 5. **Admin only.** Not enforced in this file — `services.Policy()` (`rbac.go.md`) denies
@@ -94,12 +99,36 @@ in `confirmPending`, `failed` in `SweepUnconfirmed`. Counted directly rather tha
 the ingest gauges — commands are rare (rate-limited, human-triggered), so a labelled counter per
 call site costs nothing.
 
+## Home-automation kinds (dimmer, position, cct, mode, color)
+
+Added alongside `scenes`/`schedules` to make lamps, blinds and thermostats commandable, not just
+relays/setpoints. None of it introduces a new authority — every kind still goes through `Issue`'s
+same six gates above:
+
+- `packRGB(r, g, b)`/`unpackRGB(v)` carry an RGB colour through the single-float command/audit
+  model: `0xRRGGBB` (max 16,777,215) is exactly representable in a `float64` mantissa, so the
+  `DeviceCommand.Value`/twin-equality machinery needs no change for this kind. A `color` command
+  typically declares no `ConfirmKey` — a bulb that reports colour back per-channel cannot be
+  equality-confirmed against one packed float, so "sent, never confirmed" is the honest status
+  rather than a fabricated confirmation.
+- `modeValues(options string) ([]float64, error)` parses a `mode` command's `Options`
+  (`[{"value":int,"label":string}]`) to its allowed values; empty or malformed `Options` is a
+  refusal, the same "an omission means no" rule the unbounded setpoint follows.
+- `renderPayload` now also substitutes `{r}`/`{g}`/`{b}` (from `unpackRGB`) when `decl.Kind` is
+  `color`, alongside the `{value}` substitution every kind gets.
+- See `entities/profile_command.go.md` for the full `Kind` list and `services/profile_catalog.go.md`
+  for `smart-lamp`, the shipped worked example.
+
 ## Notes
 
-- `renderPayload`/`trimNum` are pure helpers: `{value}` substitution and clean (no scientific
-  notation, no float noise) numeric rendering — a relay that receives `"1e+00"` instead of `"1"`
-  does nothing, silently. Covered by `commands_test.go.md`.
+- `renderPayload`/`trimNum` are pure helpers: `{value}` (and, for `color`, `{r}`/`{g}`/`{b}`)
+  substitution and clean (no scientific notation, no float noise) numeric rendering — a relay
+  that receives `"1e+00"` instead of `"1"` does nothing, silently. Covered by
+  `commands_test.go.md`.
 - Wired in `app.go`'s `RegisterAppRoutes`: constructed after `deviceService`/`broker`/
   `notificationService`, then `ingest.SetTwin(commandService)` and a `safego.Supervise`d sweep
   loop. See `app/app.go.md`.
-- Exposed over HTTP by `apis/commands.go.md`.
+- Exposed over HTTP by `apis/commands.go.md`. Also depended on as `commandIssuer` (the one-method
+  `Issue` interface) by `services/scenes.go.md` and, through `SceneService`, `services/schedules.go.md`
+  — a scene or a schedule fans out through this exact same gated entry point, never a shortcut
+  around it.

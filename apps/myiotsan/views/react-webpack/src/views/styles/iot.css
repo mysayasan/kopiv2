@@ -533,6 +533,14 @@
 .iot-cmd-setpoint { display: flex; align-items: flex-end; gap: 10px; }
 .iot-cmd-setpoint .field-label { flex: 1; }
 
+/* Slider control (dimmer / position / colour temperature) and the colour picker share a row. */
+.iot-cmd-slider { display: flex; align-items: center; gap: 10px; }
+.iot-cmd-slider input[type="range"] { flex: 1; }
+.iot-cmd-slider input[type="color"] {
+  width: 44px; height: 32px; padding: 0; border: none; background: none; cursor: pointer;
+}
+.iot-cmd-readout { min-width: 60px; font-variant-numeric: tabular-nums; font-weight: 600; }
+
 .iot-cmd-warn {
   display: flex;
   align-items: flex-start;

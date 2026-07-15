@@ -17,8 +17,8 @@ a manageable write rate.
 func builtinProfiles() []builtinProfile
 ```
 
-Returns ten profiles, each a deliberate deadband/heartbeat choice — eight PUSH (MQTT) profiles and,
-as of P5, two POLLED (Modbus) ones:
+Returns eleven profiles, each a deliberate deadband/heartbeat choice — nine PUSH (MQTT) profiles
+and, as of P5, two POLLED (Modbus) ones:
 
 - **`door-contact`** — `contact` has NO deadband (every transition is the event; a handful a
   day), `battery`/`linkquality` deadbanded and heartbeated every 6h.
@@ -44,6 +44,14 @@ as of P5, two POLLED (Modbus) ones:
   when the relay itself reports back that it changed, never merely when the app manages to
   publish. See `services/commands.go.md` for the gates that guard every device carrying this
   profile.
+- **`smart-lamp`** (Zigbee2MQTT conventions, home-automation) — the worked example for the
+  richer command kinds: `power` (`switch`), `brightness` (`dimmer`, 0..100), `color_temp`
+  (`cct`, bounded `2200..6500` K) and `color` (`color`, packed `0xRRGGBB`, substituting
+  `{r}`/`{g}`/`{b}` into its payload template). `power`/`brightness`/`color_temp` each declare a
+  `ConfirmKey` against the bulb's own reported telemetry; `color` declares none — a bulb that
+  reports colour back per-channel cannot be equality-confirmed against one packed float, so
+  "sent, never confirmed" is the honest status for it. See `services/commands.go.md` for the
+  kinds themselves.
 - **`generic-sunspec-solar` (P5, `Transport: "modbus"`, `ModbusMode: "sunspec"`)** — declares NO
   register bindings; the driver walks the SunSpec model chain and DISCOVERS the keys, so this ONE
   profile reads any compliant inverter/meter/battery (SolarEdge, SMA, Fronius, most Sungrow, the

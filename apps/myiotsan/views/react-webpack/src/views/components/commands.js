@@ -26,7 +26,48 @@ import { EmptyState, Field, Modal } from './ui';
 const POLL_MS = 2000;
 const POLL_WINDOW_MS = 50000;
 
-const KINDS = ['switch', 'setpoint'];
+const KINDS = ['switch', 'setpoint', 'dimmer', 'position', 'cct', 'mode', 'color'];
+
+// parseOptions reads a mode command's Options JSON ([{value,label}]) defensively — a malformed
+// declaration yields an empty list, which the UI renders as "unconfigured" rather than crashing.
+export function parseOptions(raw) {
+  if (!raw) return [];
+  try {
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.filter((o) => o && o.value != null) : [];
+  } catch {
+    return [];
+  }
+}
+
+// Colour crosses the wire as one packed integer 0xRRGGBB; the browser's colour input speaks hex.
+export function hexToInt(hex) {
+  const n = parseInt(String(hex).replace('#', ''), 16);
+  return Number.isFinite(n) ? n : 0;
+}
+export function intToHex(v) {
+  const n = Math.max(0, Math.min(0xffffff, Math.round(Number(v) || 0)));
+  return `#${n.toString(16).padStart(6, '0')}`;
+}
+
+// describeValue renders a value the way its command MEANS it — a switch was turned on, a dimmer set
+// to 40%, a colour to #FF8000 — so history, the confirm dialog and the twin all read in human terms.
+export function describeValue(value, decl, t) {
+  const kind = String(decl?.kind || '').toLowerCase();
+  const v = Number(value);
+  switch (kind) {
+    case 'switch': return v === 1 ? t('cmd.on') : t('cmd.off');
+    case 'dimmer':
+    case 'position': return `${formatNumber(v)}%`;
+    case 'cct': return `${formatNumber(v)} K`;
+    case 'color': return intToHex(v);
+    case 'mode': {
+      const o = parseOptions(decl?.options).find((x) => Number(x.value) === v);
+      return o ? o.label : formatNumber(v);
+    }
+    default: return formatNumber(v);
+  }
+}
 
 // DeviceControl is the whole Control tab: what the device can be told, what it was told, and
 // what it says is actually true.
@@ -277,13 +318,90 @@ function CommandControl({ decl, canIssue, onAsk }) {
   const kind = KINDS.includes(String(decl.kind).toLowerCase()) ? String(decl.kind).toLowerCase() : 'switch';
   const min = Number(decl.min) || 0;
   const max = Number(decl.max) || 0;
-  // A setpoint with no range declared is not "anything goes" — the server refuses EVERY value
-  // for it. Saying that here is the difference between a command that mysteriously never works
-  // and a device type that needs fixing.
-  const noRange = kind === 'setpoint' && min === 0 && max === 0;
-  const [value, setValue] = useState(() => (kind === 'setpoint' ? String(min) : '0'));
+  const options = useMemo(() => parseOptions(decl.options), [decl.options]);
+  // A setpoint/cct with no range, or a mode with no options, is not "anything goes" — the server
+  // refuses EVERY value. Saying so here is the difference between a command that mysteriously never
+  // works and a device type that needs fixing.
+  const noRange = (kind === 'setpoint' || kind === 'cct') && min === 0 && max === 0;
+  const noOptions = kind === 'mode' && options.length === 0;
+  const unconfigured = noRange || noOptions;
 
-  const blocked = !canIssue || noRange;
+  const [value, setValue] = useState(() => {
+    if (kind === 'setpoint' || kind === 'cct') return String(min);
+    if (kind === 'dimmer' || kind === 'position') return '50';
+    if (kind === 'mode') return options.length ? String(options[0].value) : '0';
+    if (kind === 'color') return '#ffffff';
+    return '0';
+  });
+
+  const blocked = !canIssue || unconfigured;
+  const submit = () => onAsk(kind === 'color' ? hexToInt(value) : Number(value));
+
+  let control;
+  if (kind === 'switch') {
+    control = (
+      <div className="iot-cmd-switch">
+        <button type="button" disabled={blocked} onClick={() => onAsk(1)}>
+          <span className="btn-icon"><Ico n="check-ok" sz={14} /> {t('cmd.switchOn')}</span>
+        </button>
+        <button type="button" className="quiet" disabled={blocked} onClick={() => onAsk(0)}>
+          <span className="btn-icon"><Ico n="stop" sz={14} /> {t('cmd.switchOff')}</span>
+        </button>
+      </div>
+    );
+  } else if (kind === 'dimmer' || kind === 'position' || kind === 'cct') {
+    // A slider: percent for dimmer/position, Kelvin for cct. min/max are a CONVENIENCE — the
+    // server refuses an out-of-range value however it was typed, pasted or scripted.
+    const lo = kind === 'cct' ? min : 0;
+    const hi = kind === 'cct' ? max : 100;
+    const unit = kind === 'cct' ? 'K' : '%';
+    control = (
+      <div className="iot-cmd-slider">
+        <input type="range" min={lo} max={hi} step="1" value={value} disabled={blocked}
+          onChange={(e) => setValue(e.target.value)} />
+        <span className="iot-cmd-readout">{formatNumber(Number(value))}{unit}</span>
+        <button type="button" disabled={blocked} onClick={submit}>
+          <span className="btn-icon"><Ico n="send" sz={14} /> {t('cmd.sendShort')}</span>
+        </button>
+      </div>
+    );
+  } else if (kind === 'mode') {
+    control = (
+      <div className="iot-cmd-setpoint">
+        <Field label={t('cmd.value')}>
+          <select value={value} disabled={blocked} onChange={(e) => setValue(e.target.value)}>
+            {options.map((o) => <option key={o.value} value={o.value}>{o.label || o.value}</option>)}
+          </select>
+        </Field>
+        <button type="button" disabled={blocked} onClick={submit}>
+          <span className="btn-icon"><Ico n="send" sz={14} /> {t('cmd.sendShort')}</span>
+        </button>
+      </div>
+    );
+  } else if (kind === 'color') {
+    control = (
+      <div className="iot-cmd-slider">
+        <input type="color" value={value} disabled={blocked} onChange={(e) => setValue(e.target.value)} />
+        <span className="iot-cmd-readout">{intToHex(hexToInt(value))}</span>
+        <button type="button" disabled={blocked} onClick={submit}>
+          <span className="btn-icon"><Ico n="send" sz={14} /> {t('cmd.sendShort')}</span>
+        </button>
+      </div>
+    );
+  } else {
+    // setpoint — a bare number inside a range.
+    control = (
+      <div className="iot-cmd-setpoint">
+        <Field label={t('cmd.value')} hint={noRange ? '' : t('cmd.range', { min: formatNumber(min), max: formatNumber(max) })}>
+          <input type="number" step="any" min={min} max={max} value={value} disabled={blocked}
+            onChange={(e) => setValue(e.target.value)} />
+        </Field>
+        <button type="button" disabled={blocked || value === ''} onClick={submit}>
+          <span className="btn-icon"><Ico n="send" sz={14} /> {t('cmd.sendShort')}</span>
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="iot-cmd-card">
@@ -292,38 +410,13 @@ function CommandControl({ decl, canIssue, onAsk }) {
         <span className="iot-cmd-kind">{t(`cmdKind.${kind}`)}</span>
       </div>
 
-      {kind === 'switch' ? (
-        <div className="iot-cmd-switch">
-          <button type="button" disabled={blocked} onClick={() => onAsk(1)}>
-            <span className="btn-icon"><Ico n="check-ok" sz={14} /> {t('cmd.switchOn')}</span>
-          </button>
-          <button type="button" className="quiet" disabled={blocked} onClick={() => onAsk(0)}>
-            <span className="btn-icon"><Ico n="stop" sz={14} /> {t('cmd.switchOff')}</span>
-          </button>
-        </div>
-      ) : (
-        <div className="iot-cmd-setpoint">
-          <Field label={t('cmd.value')} hint={noRange ? '' : t('cmd.range', { min: formatNumber(min), max: formatNumber(max) })}>
-            {/* min/max here are a CONVENIENCE, not the enforcement: the server refuses an
-                out-of-range value however it was typed, pasted or scripted. */}
-            <input
-              type="number"
-              step="any"
-              min={min}
-              max={max}
-              value={value}
-              disabled={blocked}
-              onChange={(e) => setValue(e.target.value)}
-            />
-          </Field>
-          <button type="button" disabled={blocked || value === ''} onClick={() => onAsk(Number(value))}>
-            <span className="btn-icon"><Ico n="send" sz={14} /> {t('cmd.sendShort')}</span>
-          </button>
-        </div>
-      )}
+      {control}
 
       {noRange ? (
         <p className="iot-cmd-warn"><Ico n="warning" sz={13} /> {t('cmd.noSafeRange')}</p>
+      ) : null}
+      {noOptions ? (
+        <p className="iot-cmd-warn"><Ico n="warning" sz={13} /> {t('cmd.noOptions')}</p>
       ) : null}
       {!decl.confirmKey ? (
         <p className="iot-cmd-warn"><Ico n="warning" sz={13} /> {t('cmd.noConfirmKey')}</p>
@@ -346,7 +439,7 @@ function ConfirmCommandModal({ device, decl, value, busy, onCancel, onConfirm })
       device: device.name,
       state: Number(value) === 1 ? t('cmd.on') : t('cmd.off'),
     })
-    : t('cmd.confirmSetpoint', { command: label, device: device.name, value: formatNumber(Number(value)) });
+    : t('cmd.confirmSetpoint', { command: label, device: device.name, value: describeValue(value, decl, t) });
 
   return (
     <Modal title={t('cmd.confirmTitle')} onClose={busy ? undefined : onCancel} danger>
@@ -585,11 +678,7 @@ export function CommandStatusPill({ status }) {
 // valueText renders what was asked for the way the command MEANS it: a switch was turned on, it
 // was not set to the number 1.
 function valueText(value, decl, t) {
-  const v = Number(value);
-  if (decl && String(decl.kind).toLowerCase() === 'switch') {
-    return v === 1 ? t('cmd.on') : t('cmd.off');
-  }
-  return formatNumber(v);
+  return describeValue(value, decl, t);
 }
 
 // actorText names the person. An audit row with no name attached to it is not an audit trail —

@@ -13,12 +13,25 @@ type ProfileCommand struct {
 	// Name is the command's identifier ("relay", "setpoint").
 	Name  string `json:"name" form:"name" query:"name" validate:"required"`
 	Label string `json:"label" form:"label" query:"label"`
-	// Kind is "switch" (0/1) or "setpoint" (a number within Min..Max).
+	// Kind decides how the value is validated and rendered:
+	//   "switch"   — 0/1
+	//   "setpoint" — a number within Min..Max
+	//   "dimmer" / "position" — a percentage 0..100 (brightness, blind position)
+	//   "cct"      — colour temperature in Kelvin, a setpoint bounded by Min..Max
+	//   "mode"     — one of the integer values enumerated in Options
+	//   "color"    — an RGB colour packed into one integer (0xRRGGBB)
+	// An unknown Kind is REFUSED, not silently passed — see services.validateValue.
 	Kind string `json:"kind" form:"kind" query:"kind"`
 	// TopicTemplate is where the command is published, with {deviceKey} substituted.
 	TopicTemplate string `json:"topicTemplate" form:"topicTemplate" query:"topicTemplate"`
-	// PayloadTemplate is the message body, with {value} substituted. JSON in practice.
+	// PayloadTemplate is the message body. {value} is substituted for every kind; for a "color"
+	// command {r}/{g}/{b} are also substituted with the unpacked 0..255 channels. JSON in practice.
 	PayloadTemplate string `json:"payloadTemplate" form:"payloadTemplate" query:"payloadTemplate"`
+	// Options enumerates the allowed values of a "mode" command as a JSON array of
+	// {"value":<int>,"label":<string>}. Empty for every other kind. It is what turns a mode
+	// command into a named dropdown rather than a raw number, and it BOUNDS a mode server-side the
+	// way Min/Max bound a setpoint: a value not in the list is refused.
+	Options string `json:"options" form:"options" query:"options"`
 	// Min and Max bound a setpoint. THEY ARE ENFORCED SERVER-SIDE, not merely rendered as
 	// input attributes in a form. A thermostat that accepts 200 degrees because a UI slider was
 	// bypassed is a fire, and "the frontend validates it" is not a safety property.

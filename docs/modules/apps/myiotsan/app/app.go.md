@@ -44,8 +44,9 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
   `Notification`, `LocalUser`, `AccessRole`, `AccessRolePermission`) plus the IoT domain now
   registered here: `DeviceProfile`, `TelemetryKey`, `IotDevice`, `DeviceReading`,
   `ReadingRollup`, `IotRule`, `AlertEvent`, (P3) `DiscoveredDevice` — the enrollment window's
-  candidate table, and (P4) `ProfileCommand`, `DeviceCommand`, `DeviceAttribute` — the actuation
-  declaration, the command audit trail, and the device twin (`apps/myiotsan/entities`).
+  candidate table, (P4) `ProfileCommand`, `DeviceCommand`, `DeviceAttribute` — the actuation
+  declaration, the command audit trail, and the device twin, and (home-automation) `Scene`,
+  `SceneAction`, `Schedule` (`apps/myiotsan/entities`).
 - `Seeders(...)` seeds the endpoint catalog for rate limiting/runtime metadata, now including
   `/api/devices`, `/api/profiles`, `/api/rules`, `/api/alerts`, `/api/notifications`, (P3)
   `/api/discovery` (auth-only), and (P4) `/api/settings` (auth-only — users and roles; see the
@@ -123,8 +124,22 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
       the broker's PUSH path — a Modbus device does not publish, so something has to dial out to
       it on a schedule, then feed the identical `Ingest.HandlePolled` back half a broker message
       takes. See `services/modbus_poller.go.md`.
+  10d. **Wires home automation (scenes + schedules)**, right after the Modbus poller:
+      `services.NewSceneService(deps.Db, commandService, logf)` — a scene fans its ordered actions
+      out through `commandService.Issue`, so running one commands nothing a single manual command
+      could not; it is convenience, not a new authority. Then `services.NewScheduleService(deps.Db,
+      sceneService, commandService, logf)` — fires a scene or a single command on the clock, or at
+      sunrise/sunset ± an offset, through the identical actuation path, with the firing actor a
+      synthetic `"schedule:<name>"` (id 0) so the audit trail attributes it rather than reading
+      "System". A `safego.Supervise`d `"myiotsan.scheduler"` task (const `schedulerInterval` = 1
+      minute) aligns its first tick to the next whole-minute boundary, then calls
+      `scheduleService.Tick(ctx, time.Now())` once a minute — minute granularity matches the
+      `LastFiredAt` double-fire guard (`services/schedules.go.md`) and the resolution a home
+      schedule ("07:30") is actually expressed at. See `services/scenes.go.md` and
+      `services/schedules.go.md`.
   11. Registers `apis.NewDevicesApi`, `apis.NewDiscoveryApi` (P3), `apis.NewCommandsApi` (P4),
-      `apis.NewProfilesApi`, `apis.NewRulesApi`, `apis.NewNotificationsApi` on `protected`.
+      `apis.NewProfilesApi`, `apis.NewRulesApi`, `apis.NewScenesApi`, `apis.NewSchedulesApi`
+      (home automation), `apis.NewNotificationsApi` on `protected`.
   11b. **Wires the fleet (P6)**, gated on `deps.Config.Pairing.Enabled`: resolves
       `openFleetSecretCipher(deps)` (fails closed — see "Fleet (P6)" below), builds the fleet
       via `buildFleet(api, deps, appVersion(m), fleetCipher, notificationService)`
@@ -251,3 +266,25 @@ adopted myiotsan node) were booted together for a live end-to-end check. See
   scaled/signed readings stored end to end (49.99 Hz, 13.2% SOC, +600 W grid import). Still
   outstanding: RTU (serial) and OPC-UA transports, guarded Modbus control writes, and the solar
   "system workspace" (P8) — see `docs/MYIOTSAN_PLAN.md` §8g.
+- **Home automation, Phases 1-3 (richer command kinds, scenes, schedules), shipped 2026-07-15:**
+  moves `myiotsan` from "read sensors, actuate a relay" toward driving lamps/blinds/thermostats
+  and grouping/scheduling those commands — see `docs/MYIOTSAN_PLAN.md` §8h for the full writeup.
+  Phase 1 adds five `ProfileCommand` kinds beyond `switch`/`setpoint` (`dimmer`/`position`/`cct`/
+  `mode`/`color`) and closes a real gap along the way: `validateValue`'s `switch` gained a
+  `default` case that REFUSES an unrecognised `Kind` — before this change an unknown/misconfigured
+  kind was published **unvalidated**. Phase 2 adds `Scene`/`SceneAction` (a named, ordered group of
+  device commands) and `services.SceneService.Run`, which fans out through
+  `commandService.Issue` per action — every gate still applies, partial failure is first-class
+  (a scene never rolls back and never stops early), and a scene is convenience, not a new
+  authority. Phase 3 adds `Schedule` (clock, or sunrise/sunset ± an offset via a pure NOAA
+  calculation in `services/sun.go`, no network) and the `"myiotsan.scheduler"` minute tick above;
+  a schedule fires through the identical actuation path with a synthetic `"schedule:<name>"`
+  actor. **Phase 4 (rule-driven actuation — an `iot_rule` triggering a scene/command
+  automatically) is explicitly OUT OF SCOPE here and deferred to a later, security-reviewed PR**:
+  a rule that can WRITE to a device on its own is a materially different risk than a rule that
+  only raises an alert (see `docs/MYIOTSAN_PLAN.md` §9's "scope creep into a Home Assistant clone"
+  risk), and every safety property this app has built — read-only-by-default, admin-only,
+  server-side bounds, rate limit, never-auto-retry — needs deliberate re-examination before
+  something with no human in the loop can trigger it. Verified live end to end: seeded
+  `smart-lamp`, issued a `dimmer` command, ran a scene (whose per-action report included a
+  rate-limit refusal), set the site location, and created and test-fired a sunset schedule.
