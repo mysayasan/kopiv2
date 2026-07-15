@@ -204,3 +204,143 @@ func (d *VendorInverter) status() string {
 	return fmt.Sprintf("%02d:%02d  Pac %5.0fW  SoC %4.1f%%  (etoday %.2fkWh)",
 		int(d.tod), int(math.Mod(d.tod*60, 60)), d.lastPac, d.lastSoc, d.etodayWh/1000)
 }
+
+// --- unit 4: Huawei SUN2000 (vendor register map — the world's most-installed inverter) ----------
+//
+// The SUN2000's inverter telemetry sits in a SunSpec-ish block around register 32000, but its LUNA
+// battery (SOC, charge/discharge power) and its built-in power meter live in Huawei's OWN registers
+// up around 37000 — far from the inverter block and from each other. That spread is the whole point
+// of this persona: it forces the driver's register map to read in CLUSTERS (one bounded request per
+// block) instead of one impossible 5,700-register span. Addresses and scales are Huawei's published
+// "Solar Inverter Modbus Interface Definitions"; the huawei-sun2000 builtin profile binds the SAME
+// addresses, so myiotsan reads this device end to end without hardware.
+//
+//	32016 PV1 voltage   i16 0.1 V     32080 active power    i32 1 W
+//	32017 PV1 current   i16 0.01 A    32085 grid frequency  u16 0.01 Hz
+//	32018 PV2 voltage   i16 0.1 V     32087 temperature     i16 0.1 C
+//	32019 PV2 current   i16 0.01 A    32089 device status   u16 enum
+//	32064 PV input pwr  i32 1 W       32106 lifetime yield  u32 0.01 kWh
+//	32069 phase A volts u16 0.1 V     37760 battery SOC     u16 0.1 %
+//	                                  37765 battery power   i32 1 W (+charge/-discharge)
+//	                                  37113 meter power     i32 1 W (+import/-export)
+type HuaweiInverter struct {
+	unitID   byte
+	b        *Bank
+	pvPeak   float64
+	loadBase float64
+	battWh   float64
+	tod      float64
+	soc      float64
+	yieldWh  float64
+	lastPac  float64
+	lastGrid float64
+	lastBatt float64
+}
+
+// Huawei register addresses (holding registers, absolute).
+const (
+	hPV1V   = 32016
+	hPV1I   = 32017
+	hPV2V   = 32018
+	hPV2I   = 32019
+	hPin    = 32064 // i32 PV input power
+	hPhVA   = 32069
+	hPac    = 32080 // i32 active power
+	hFac    = 32085
+	hTemp   = 32087
+	hStatus = 32089
+	hYield  = 32106 // u32 lifetime yield
+	hMeterP = 37113 // i32 grid meter power (+import/-export)
+	hSoc    = 37760
+	hBattP  = 37765 // i32 battery power (+charge/-discharge)
+	hTopReg = hBattP + 1
+)
+
+func buildHuawei(unit byte, pvPeak, loadBase, battWh, initSoC float64) *HuaweiInverter {
+	return &HuaweiInverter{
+		unitID: unit, b: newBank(hTopReg), pvPeak: pvPeak, loadBase: loadBase,
+		battWh: battWh, tod: 6.0, soc: initSoC,
+	}
+}
+
+func (d *HuaweiInverter) unit() byte  { return d.unitID }
+func (d *HuaweiInverter) bank() *Bank { return d.b }
+func (d *HuaweiInverter) label() string {
+	return fmt.Sprintf("unit %d  Huawei SUN2000 (vendor register map, spread inverter/battery/meter blocks)", d.unitID)
+}
+func (d *HuaweiInverter) describe(addr int) string { return "" } // read-only in this sim
+
+// setU16/setI16 write a scaled value into one register; setU32/setI32 write hi-word-first (Huawei's
+// order), the i32 form carrying the two's-complement negative that a battery discharge or a grid
+// export produces.
+func (d *HuaweiInverter) setU16(addr int, actual, scale float64) {
+	d.b.set(addr, uint16(clampU16(roundToI64(actual/scale))))
+}
+func (d *HuaweiInverter) setI16(addr int, actual, scale float64) {
+	d.b.set(addr, uint16(int16(clampI16(roundToI64(actual/scale)))))
+}
+func (d *HuaweiInverter) setU32(addr int, actual, scale float64) {
+	v := uint32(math.Max(0, actual/scale+0.5))
+	d.b.set(addr, uint16(v>>16))
+	d.b.set(addr+1, uint16(v&0xFFFF))
+}
+func (d *HuaweiInverter) setI32(addr int, actual, scale float64) {
+	v := uint32(int32(roundToI64(actual / scale)))
+	d.b.set(addr, uint16(v>>16))
+	d.b.set(addr+1, uint16(v&0xFFFF))
+}
+
+func (d *HuaweiInverter) update(dt float64) {
+	d.b.mu.Lock()
+	defer d.b.mu.Unlock()
+	d.tod = math.Mod(d.tod+dt, 24)
+
+	pv := d.pvPeak * math.Max(0, math.Sin(math.Pi*(d.tod-6)/12)) // bell curve, dark before 6 / after 18
+	pac := pv * 0.98
+	load := d.loadBase + 900*gauss(d.tod, 19.5, 2.0) // evening load peak
+
+	// Battery: charge on surplus, discharge to cover a deficit, within SOC bounds. + is charging.
+	surplus := pac - load
+	batt := 0.0
+	switch {
+	case surplus > 0 && d.soc < 100:
+		batt = math.Min(surplus, d.pvPeak*0.5)
+	case surplus < 0 && d.soc > 15:
+		batt = math.Max(surplus, -d.pvPeak*0.5)
+	}
+	d.soc = clampF(d.soc+batt*dt/d.battWh*100, 5, 100)
+	grid := load - pac + batt // + import, - export
+
+	d.yieldWh += pac * dt
+	d.lastPac, d.lastGrid, d.lastBatt = pac, grid, batt
+
+	status := uint16(512) // Huawei: on-grid
+	if pv < 5 {
+		status = 0 // standby (dark)
+	}
+	perStringI := pv / 720 // two ~360 V strings
+
+	d.setI16(hPV1V, 360+noise(6), 0.1)
+	d.setI16(hPV1I, perStringI, 0.01)
+	d.setI16(hPV2V, 360+noise(6), 0.1)
+	d.setI16(hPV2I, perStringI, 0.01)
+	d.setI32(hPin, pv, 1)
+	d.setU16(hPhVA, 230+noise(0.5), 0.1)
+	d.setI32(hPac, pac, 1)
+	d.setU16(hFac, 50+noise(0.02), 0.01)
+	d.setI16(hTemp, 30+pac/d.pvPeak*25+noise(0.5), 0.1)
+	d.b.set(hStatus, status)
+	d.setU32(hYield, d.yieldWh/1000, 0.01) // kWh at 0.01
+	d.setU16(hSoc, d.soc, 0.1)
+	d.setI32(hBattP, batt, 1)
+	d.setI32(hMeterP, grid, 1)
+}
+
+func (d *HuaweiInverter) status() string {
+	return fmt.Sprintf("%02d:%02d  Pac %5.0fW  SoC %4.1f%%  Grid %+6.0fW  Batt %+6.0fW",
+		int(d.tod), int(math.Mod(d.tod*60, 60)), d.lastPac, d.soc, d.lastGrid, d.lastBatt)
+}
+
+// roundToI64 rounds to nearest, away from zero, so a scaled negative (export/discharge) does not
+// truncate toward zero and lose a watt of magnitude.
+func roundToI64(f float64) int64 { return int64(math.Round(f)) }

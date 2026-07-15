@@ -28,6 +28,14 @@ It reads all three of the simulator's personas and confirms a guarded write:
 - **unit 3** — the non-SunSpec vendor inverter: reads it through a `RegisterMap` mirroring the
   vendor register contract documented in `tools/sunspec-sim/devices.go`, proving the manual-map
   path normalises to the same `codec.Sample` shape as the SunSpec path.
+- **unit 4** — the Huawei SUN2000 persona, read through the SAME register map the shipped
+  `huawei-sun2000` builtin profile binds (`apps/myiotsan/services/profile_catalog.go.md`). Its
+  inverter (~32000), battery (~37760) and meter (~37113) blocks are deliberately spread far enough
+  apart that a single-span read is impossible, so this also proves `RegisterMap.Read` clusters
+  correctly against a real (simulated) scattered device, not just the synthetic bank
+  `regmap_test.go`'s `TestRegisterMapClusters` uses. Asserts a key from each of the three blocks is
+  present and that the scaled SOC/frequency land in a plausible range (a scale-factor mistake
+  would produce an implausible one).
 - **Guarded control**: enables curtailment on unit 1 (`WMaxLim_Ena=1`) then calls `WriteConfirm` on
   `WMaxLimPct`, proving the read-back a guarded write depends on actually changes on a live device
   (the simulator honours control writes, unlike a purely passive read-only fake).

@@ -21,6 +21,7 @@ func NewIngest(devices *DeviceService, profile *ProfileService, gate *DeadbandGa
 func (i *Ingest) SetEnrollment(e *Enrollment)
 func (i *Ingest) SetTwin(c *CommandService)
 func (i *Ingest) Handle(ctx context.Context, p iotmqtt.Principal, clientId, topic string, payload []byte)
+func (i *Ingest) HandlePolled(ctx context.Context, dev *entities.IotDevice, samples []codec.Sample)
 func (i *Ingest) InvalidateProfile(profileId int64)
 func (i *Ingest) Stats() IngestStats
 ```
@@ -68,6 +69,32 @@ For an adopted device (`p.DeviceId`), per message:
    whether or not any command is outstanding on that key. This is the twin's REPORTED half, and
    it is the only thing that can confirm a `sent` `DeviceCommand`. See `services/commands.go.md`.
 
+## Key Function: handleSamples
+
+```go
+func (i *Ingest) handleSamples(ctx context.Context, dev *entities.IotDevice, binds *profileBindings, samples []codec.Sample, nowMs, nowSec int64)
+```
+
+**(P5)** The BACK HALF of `Handle` (deadband -> storage -> rules -> twin), extracted so a POLLED
+device rides it too. It is deliberately protocol- and codec-blind: an MQTT payload and a Modbus
+poll both arrive here as a `[]codec.Sample` and are treated identically — steps 5-8 of `Handle`'s
+per-message list above, unchanged.
+
+## Key Function: HandlePolled
+
+```go
+func (i *Ingest) HandlePolled(ctx context.Context, dev *entities.IotDevice, samples []codec.Sample)
+```
+
+**(P5)** The entry point a POLL driver (`services.ModbusPoller`, `modbus_poller.go.md`; later
+OPC-UA) calls with a batch it has already decoded — there is no payload to parse, so `Handle`'s
+JSON/raw decode step does not apply. **No quarantine either**: a polled device is one the operator
+configured and the app dialled OUT to, not a stranger that dialled in, so it skips straight past
+where `Handle`'s enrollment check would sit. It still does `TouchSeen` first and unconditionally
+(the same liveness rule as the MQTT path — a device polling an unchanged value must not look dead)
+and still drops a sample whose key the profile does not declare, exactly as an unbound MQTT field
+would be. Everything past that is `handleSamples`, identical to the MQTT path.
+
 ## Key Type: profileBindings
 
 The per-profile decode plan (`[]codec.Binding`, `map[string]GateRule`,
@@ -98,6 +125,10 @@ to be in trouble. `Written`/`Dropped`/`Queued` come from `ReadingWriter.Stats()`
 
 ## Notes
 
+- **(P5) Two entry points, one back half.** `Handle` (MQTT publish, decode-then-`handleSamples`)
+  and `HandlePolled` (Modbus/OPC-UA poll, already-decoded-then-`handleSamples`) converge on the
+  identical deadband/storage/rules/twin machinery — a polled inverter gets the same suppression,
+  history, alerting and command-confirmation a published door sensor does, for free.
 - Wired in `apps/myiotsan/app/app.go`'s ingest-spine assembly (see `app/app.go.md`).
 - The "measured 98.2% suppressed, zero dropped" result cited in `docs/MYIOTSAN_PLAN.md` §9 is
   this stats struct's own output from a live load test.

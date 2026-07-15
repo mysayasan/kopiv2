@@ -146,6 +146,16 @@ func (i *Ingest) Handle(ctx context.Context, p iotmqtt.Principal, clientId, topi
 	}
 	i.bump(&i.decoded)
 
+	i.handleSamples(ctx, dev, binds, samples, nowMs, nowSec)
+}
+
+// handleSamples runs a decoded batch through the deadband, storage, rules and twin. It is the BACK
+// HALF of the pipeline — everything past "we have samples" — and it is deliberately protocol- and
+// codec-blind: an MQTT payload and a Modbus poll both arrive here as a []codec.Sample and are
+// treated identically. That is what lets a polled inverter ride the exact same deadband, storage,
+// rule and command-confirmation machinery a published sensor does.
+func (i *Ingest) handleSamples(ctx context.Context, dev *entities.IotDevice, binds *profileBindings, samples []codec.Sample, nowMs, nowSec int64) {
+	deviceId := dev.Id
 	for _, s := range samples {
 		key := binds.keys[s.Key]
 		if key == nil {
@@ -185,6 +195,34 @@ func (i *Ingest) Handle(ctx context.Context, p iotmqtt.Principal, clientId, topi
 			i.twin.OnReported(ctx, deviceId, s.Key, s.Num, nowSec)
 		}
 	}
+}
+
+// HandlePolled feeds a batch of samples produced by a POLL driver (Modbus, and later OPC-UA) through
+// the same back half as an MQTT publish. The driver has already decoded to codec.Sample, so there is
+// no payload to parse — and no quarantine to apply: a polled device is one the operator configured
+// and the app dialled OUT to, not a stranger that dialled in. A sample whose key the profile does
+// not declare is dropped exactly as an unbound MQTT field would be.
+func (i *Ingest) HandlePolled(ctx context.Context, dev *entities.IotDevice, samples []codec.Sample) {
+	if dev == nil || dev.ProfileId <= 0 {
+		return
+	}
+	now := time.Now()
+	nowMs, nowSec := now.UnixMilli(), now.Unix()
+
+	i.bump(&i.received)
+	// Liveness first and unconditionally, the same rule as the MQTT path: a device polling an
+	// unchanged value is alive and must not look dead to the offline rule behind the deadband.
+	i.devices.TouchSeen(ctx, dev.Id, nowSec)
+
+	binds, err := i.bindingsFor(ctx, dev.ProfileId)
+	if err != nil || binds == nil || len(binds.keys) == 0 {
+		return
+	}
+	if len(samples) == 0 {
+		return
+	}
+	i.bump(&i.decoded)
+	i.handleSamples(ctx, dev, binds, samples, nowMs, nowSec)
 }
 
 // bindingsFor returns a profile's decode plan, caching it.

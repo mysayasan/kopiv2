@@ -62,11 +62,17 @@ func main() {
 	}
 
 	// A simulated site is several Modbus units. Unit 1 is the hybrid inverter (full SunSpec chain);
-	// unit 2 a standalone SunSpec meter; unit 3 a non-SunSpec vendor inverter (raw register map).
-	// That mix is what the myiotsan "workspace" has to bind into one system.
+	// unit 2 a standalone SunSpec meter; unit 3 a generic non-SunSpec vendor inverter (raw register
+	// map); unit 4 a Huawei SUN2000 — the world's most-installed inverter — whose battery and meter
+	// blocks sit far from its inverter block, exercising the driver's clustered register reads and
+	// backing the shipped huawei-sun2000 builtin profile. That mix is what the workspace binds into
+	// one system.
 	devices := []Device{buildPlant(1, *base, cfg)}
 	if !*single {
-		devices = append(devices, buildMeter(2, *base, "MTR-0002"), buildVendor(3, *pv*0.5))
+		devices = append(devices,
+			buildMeter(2, *base, "MTR-0002"),
+			buildVendor(3, *pv*0.5),
+			buildHuawei(4, *pv, *load, *batt, *soc))
 	}
 	byUnit := map[byte]Device{}
 	for _, d := range devices {

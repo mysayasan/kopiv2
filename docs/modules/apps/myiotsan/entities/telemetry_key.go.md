@@ -20,7 +20,19 @@ production: 20 devices publishing ~30,000 samples in under a second produced 540
 - `DataType` — `"number"`, `"bool"` or `"string"`. Decides which column (`Num`/`Str` on
   `DeviceReading`) a reading lands in and which rule conditions may be applied.
 - `JsonPath` — the dotted path into the payload (`"battery.level"`); empty means the key name
-  is itself a top-level field.
+  is itself a top-level field. This is the binding for a PUSH device (MQTT/HTTP).
+- **Modbus binding (P5, POLL devices only)** — `Register` (starting holding-register address;
+  `0` with an empty `RegKind` means the key is not Modbus-bound, so a mixed profile is harmless),
+  `RegKind` (`"u16"`/`"i16"`/`"u32"`/`"i32"`), `ScaleFactor` (multiplies the raw integer; `0` is
+  treated as `1`, so an unset scale is an identity, not a value annihilated to zero), `WordSwap`
+  (true when a 32-bit value is little-word-first — vendors disagree on this, and getting it wrong
+  turns a plausible number into a wild one). For a `"sunspec"`-mode profile these are ignored (the
+  device is self-describing, so its keys are discovered, not declared); for a `"regmap"`-mode
+  profile they are the whole point. **The sign and scale live here deliberately** — import- vs
+  export-positive on a meter, charge- vs discharge-positive on a battery, and a 0.1-unit device vs
+  a 1-unit one are all the same class of footgun, and they belong to the binding, not to any decode
+  code. Built into a `modbus.RegisterMap` by `apps/myiotsan/services.registerMapFromKeys`
+  (`modbus_poller.go.md`).
 - `Deadband` — the smallest absolute change worth persisting. `0` means store every sample —
   correct for a door contact, where every transition matters, and wrong for a temperature
   probe, where every flicker of sensor noise would become a row.

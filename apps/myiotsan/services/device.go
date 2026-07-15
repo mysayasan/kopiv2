@@ -75,6 +75,10 @@ type CreateDeviceRequest struct {
 	Model            string `json:"model"`
 	Enabled          bool   `json:"enabled"`
 	ActuationEnabled bool   `json:"actuationEnabled"`
+	// Endpoint and Unit address a POLLED (Modbus) device: "host:port" and the unit/slave id.
+	// Empty/zero for an MQTT device, which is reached by its DeviceKey over the broker instead.
+	Endpoint string `json:"endpoint"`
+	Unit     int    `json:"unit"`
 }
 
 // UpdateDeviceRequest is the body for editing a device. Password is absent by design: rotating
@@ -88,6 +92,8 @@ type UpdateDeviceRequest struct {
 	Model            string `json:"model"`
 	Enabled          bool   `json:"enabled"`
 	ActuationEnabled bool   `json:"actuationEnabled"`
+	Endpoint         string `json:"endpoint"`
+	Unit             int    `json:"unit"`
 }
 
 // ProvisionedDevice is a created device plus the credential to show the installer once.
@@ -177,6 +183,8 @@ func (s *DeviceService) Create(ctx context.Context, req CreateDeviceRequest, act
 		Model:            strings.TrimSpace(req.Model),
 		Enabled:          req.Enabled,
 		ActuationEnabled: req.ActuationEnabled,
+		Endpoint:         strings.TrimSpace(req.Endpoint),
+		Unit:             req.Unit,
 		Health:           "unknown",
 		CreatedBy:        actor,
 		CreatedAt:        now,
@@ -215,6 +223,8 @@ func (s *DeviceService) Update(ctx context.Context, id int64, req UpdateDeviceRe
 	dev.Model = strings.TrimSpace(req.Model)
 	dev.Enabled = req.Enabled
 	dev.ActuationEnabled = req.ActuationEnabled
+	dev.Endpoint = strings.TrimSpace(req.Endpoint)
+	dev.Unit = req.Unit
 	dev.UpdatedBy = actor
 	dev.UpdatedAt = time.Now().Unix()
 	if dev.Name == "" {

@@ -16,8 +16,13 @@ a time-boxed enrollment window rather than requiring every device to be provisio
 relay or set a setpoint, gated read-only-by-default/admin-only/declared-commands-only/
 server-side-bounds/rate-limited/audited, and never auto-retried (see
 `services/commands.go.md`). **It is also now an adoptable `myseliasan` fleet node** — see
-"Fleet (P6)" below and `apps/myiotsan/app/wire_fleet.go.md`. What remains is industrial
-protocols (P5) and release plumbing (P7).
+"Fleet (P6)" below and `apps/myiotsan/app/wire_fleet.go.md`. **P5 (industrial protocols) has now
+partially landed (2026-07-15): the Modbus/SunSpec driver foundation is WIRED IN** — a
+`services.ModbusPoller` (`services/modbus_poller.go.md`) dials out to Modbus devices on their
+profile's cadence and feeds `Ingest.HandlePolled`, and the shipped catalog gained its first two
+POLLED profiles (`generic-sunspec-solar`, `huawei-sun2000`). What remains of P5 is RTU (serial)
+and OPC-UA transports and guarded Modbus control writes; the solar "system workspace" (P8) is
+still design-only. See `docs/MYIOTSAN_PLAN.md` §8g.
 
 ## Key Type: module
 
@@ -112,6 +117,12 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
       to be told promptly that it was never confirmed; a stale "in progress" is how somebody comes
       to believe a door is locked when it is not. See `services/commands.go.md` for every gate
       and why a command is never auto-retried.
+  10c. **Wires the Modbus poller (P5)**, right after the command sweep and just before the API
+      registrations: `services.NewModbusPoller(deviceService, profileService, ingest, logf)` run
+      via `safego.Supervise` on `modbusReconcileInterval` (30s). This is the POLLED counterpart to
+      the broker's PUSH path — a Modbus device does not publish, so something has to dial out to
+      it on a schedule, then feed the identical `Ingest.HandlePolled` back half a broker message
+      takes. See `services/modbus_poller.go.md`.
   11. Registers `apis.NewDevicesApi`, `apis.NewDiscoveryApi` (P3), `apis.NewCommandsApi` (P4),
       `apis.NewProfilesApi`, `apis.NewRulesApi`, `apis.NewNotificationsApi` on `protected`.
   11b. **Wires the fleet (P6)**, gated on `deps.Config.Pairing.Enabled`: resolves
@@ -220,3 +231,23 @@ adopted myiotsan node) were booted together for a live end-to-end check. See
   (P4) now serves them on the shared appliance user service. See `apis/commands.go.md`,
   `apis/settings.go.md`, `entities/device_command.go.md`, `entities/profile_command.go.md`,
   `entities/device_attribute.go.md`.
+- **P5 (industrial protocols, app integration landed 2026-07-15)**: the Modbus/SunSpec driver
+  foundation (`infra/iot/modbus`, `infra/iot/sunspec`, `tools/sunspec-sim`) that shipped 2026-07-15
+  as a standalone, unwired foundation is now driven from this app. `entities.TelemetryKey` gained
+  a Modbus binding (`Register`/`RegKind`/`ScaleFactor`/`WordSwap`); `entities.DeviceProfile` gained
+  `Transport`/`ModbusMode`/`ModbusBase`/`PollSeconds`; `entities.IotDevice` gained `Endpoint`/`Unit`
+  for a device the app dials OUT to rather than one that dials in. `services.Ingest.Handle` was
+  split so its back half (`handleSamples`) is reusable, and a new `HandlePolled` entry point feeds
+  it from a POLL driver with no payload to parse and no enrollment quarantine to apply — a polled
+  device is one the operator configured, not a stranger that dialled in. `services.ModbusPoller`
+  (new, `services/modbus_poller.go.md`) is the per-device poll-goroutine service, reconciled
+  against the inventory on a ticker so a Modbus device added/edited/disabled in the UI is picked up
+  live. The catalog gained its first two POLLED profiles: `generic-sunspec-solar` (self-describing,
+  reads any compliant inverter/meter/battery with no per-model map) and `huawei-sun2000` (the
+  vendor-register worked example for the world's most-installed inverter, whose battery and meter
+  blocks sit far enough from its inverter block that `infra/iot/modbus.RegisterMap.Read` had to
+  gain **clustered reads** — bounded per-block requests instead of one span the Modbus 125-register
+  limit forbids). Verified live against `tools/sunspec-sim`'s new unit-4 Huawei persona: correctly
+  scaled/signed readings stored end to end (49.99 Hz, 13.2% SOC, +600 W grid import). Still
+  outstanding: RTU (serial) and OPC-UA transports, guarded Modbus control writes, and the solar
+  "system workspace" (P8) — see `docs/MYIOTSAN_PLAN.md` §8g.

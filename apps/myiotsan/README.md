@@ -15,12 +15,17 @@ server-side bounds, rate-limited, fully audited, and never auto-retried — (P6)
 adoptable node in the `myseliasan` fleet, which is what lets its alerts be correlated against a
 `mymatasan` camera's (see "Fleet" below), and (P7) ships as an installable product with its own
 release pipeline, and can now be managed remotely from `myseliasan`'s fleet UI the way an adopted
-camera node already is (see "Install & release" and "Fleet" below). What remains is industrial
-protocols (P5) — a Modbus/SunSpec **driver foundation** now exists (`infra/iot/modbus`,
-`infra/iot/sunspec`, plus a standalone simulator at `tools/sunspec-sim`) but is not yet wired into
-this app (no poller in `app.go`, no Modbus binding on a device profile) — see
-`docs/MYIOTSAN_PLAN.md` for the full roadmap and, in §8b/§8c/§8d/§8e/§8f/§8g, exactly what shipped
-and what was found by live-booting it.
+camera node already is (see "Install & release" and "Fleet" below). **Industrial protocols (P5)
+have now partially landed**: the Modbus/SunSpec **driver foundation** (`infra/iot/modbus`,
+`infra/iot/sunspec`, plus a standalone simulator at `tools/sunspec-sim`) is now **wired into this
+app** — a device profile can declare `Transport: "modbus"` (self-describing SunSpec discovery, or
+an explicit vendor register map), a `services.ModbusPoller` dials out to every such device on its
+own poll cadence, and two built-in profiles ship: `generic-sunspec-solar` (reads any compliant
+inverter/meter/battery, no per-model work) and `huawei-sun2000` (the register-map worked example
+for the world's most-installed inverter). What remains of P5 is RTU (serial) and OPC-UA
+transports and guarded Modbus control writes; the solar "system workspace" (P8) is still
+design-only — see `docs/MYIOTSAN_PLAN.md` for the full roadmap and, in §8b/§8c/§8d/§8e/§8f/§8g,
+exactly what shipped and what was found by live-booting it.
 
 ## Onboarding a device
 
@@ -77,13 +82,19 @@ reported rather than silently overwriting the existing profile's decoding rules.
 
 ## The device-type catalog (profiles)
 
-A `DeviceProfile` declares what a device TYPE publishes: topic template, payload format
-(JSON or raw), and its `TelemetryKey`s (name, unit, JSON path, deadband, heartbeat, plausible
-range). Without this abstraction, onboarding a hundred identical door sensors means configuring
-a hundred devices by hand; with it, the hundredth device is a name and a dropdown. Seven
-built-in profiles ship and are re-seeded (idempotently — existing ones are never overwritten)
-on every boot: door/window contact, PIR motion, temperature/humidity, smoke/heat detector,
-water leak, power/energy meter, access-control reader. A site can author its own profile (or
+A `DeviceProfile` declares what a device TYPE reports: for a PUSH (MQTT) device, its topic
+template and payload format (JSON or raw); for a POLLED (Modbus, P5) device, its `Transport:
+"modbus"` plus `ModbusMode` (`"sunspec"` self-describing, or `"regmap"` an explicit vendor
+register map) and poll cadence — and either way, its `TelemetryKey`s (name, unit, deadband,
+heartbeat, plausible range, plus a JSON path or a Modbus register binding depending on
+transport). Without this abstraction, onboarding a hundred identical door sensors means
+configuring a hundred devices by hand; with it, the hundredth device is a name and a dropdown.
+Ten built-in profiles ship and are re-seeded (idempotently — existing ones are never
+overwritten) on every boot: eight PUSH profiles (door/window contact, PIR motion,
+temperature/humidity, smoke/heat detector, water leak, power/energy meter, access-control
+reader, smart relay) and two POLLED profiles (`generic-sunspec-solar`, a self-describing
+SunSpec inverter/meter/battery that needs no per-model map, and `huawei-sun2000`, an explicit
+register map for the world's most-installed inverter). A site can author its own profile (or
 copy and edit a builtin — builtins themselves cannot be deleted, only used or copied) via
 `POST /api/profiles`.
 

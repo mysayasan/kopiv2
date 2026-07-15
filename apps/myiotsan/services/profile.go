@@ -92,6 +92,10 @@ type SaveProfileRequest struct {
 	Description   string               `json:"description"`
 	TopicTemplate string               `json:"topicTemplate"`
 	PayloadFormat string               `json:"payloadFormat"`
+	Transport     string               `json:"transport"`
+	ModbusMode    string               `json:"modbusMode"`
+	ModbusBase    int                  `json:"modbusBase"`
+	PollSeconds   int                  `json:"pollSeconds"`
 	Keys          []SaveTelemetryKey   `json:"keys"`
 	Commands      []SaveProfileCommand `json:"commands"`
 }
@@ -123,6 +127,11 @@ type SaveTelemetryKey struct {
 	HeartbeatSeconds int     `json:"heartbeatSeconds"`
 	Min              float64 `json:"min"`
 	Max              float64 `json:"max"`
+	// Modbus binding (register-map profiles only); see entities.TelemetryKey.
+	Register    int     `json:"register"`
+	RegKind     string  `json:"regKind"`
+	ScaleFactor float64 `json:"scaleFactor"`
+	WordSwap    bool    `json:"wordSwap"`
 }
 
 func (s *ProfileService) Create(ctx context.Context, req SaveProfileRequest, actor int64) (*ProfileDetail, error) {
@@ -138,6 +147,10 @@ func (s *ProfileService) Create(ctx context.Context, req SaveProfileRequest, act
 		Description:   strings.TrimSpace(req.Description),
 		TopicTemplate: strings.TrimSpace(req.TopicTemplate),
 		PayloadFormat: defaultString(req.PayloadFormat, "json"),
+		Transport:     strings.TrimSpace(req.Transport),
+		ModbusMode:    strings.TrimSpace(req.ModbusMode),
+		ModbusBase:    req.ModbusBase,
+		PollSeconds:   req.PollSeconds,
 		Builtin:       false,
 		CreatedBy:     actor,
 		CreatedAt:     now,
@@ -171,6 +184,10 @@ func (s *ProfileService) Update(ctx context.Context, id int64, req SaveProfileRe
 	existing.Description = strings.TrimSpace(req.Description)
 	existing.TopicTemplate = strings.TrimSpace(req.TopicTemplate)
 	existing.PayloadFormat = defaultString(req.PayloadFormat, "json")
+	existing.Transport = strings.TrimSpace(req.Transport)
+	existing.ModbusMode = strings.TrimSpace(req.ModbusMode)
+	existing.ModbusBase = req.ModbusBase
+	existing.PollSeconds = req.PollSeconds
 	existing.UpdatedBy = actor
 	existing.UpdatedAt = time.Now().Unix()
 	if _, err := s.profiles.UpdateById(ctx, "", *existing); err != nil {
@@ -223,6 +240,10 @@ func (s *ProfileService) replaceKeys(ctx context.Context, profileId int64, keys 
 			HeartbeatSeconds: k.HeartbeatSeconds,
 			Min:              k.Min,
 			Max:              k.Max,
+			Register:         k.Register,
+			RegKind:          strings.TrimSpace(k.RegKind),
+			ScaleFactor:      k.ScaleFactor,
+			WordSwap:         k.WordSwap,
 			CreatedBy:        actor,
 			CreatedAt:        now,
 			UpdatedBy:        actor,
@@ -288,6 +309,10 @@ func (s *ProfileService) EnsureBuiltins(ctx context.Context) error {
 			Description:   b.Description,
 			TopicTemplate: b.TopicTemplate,
 			PayloadFormat: "json",
+			Transport:     b.Transport,
+			ModbusMode:    b.ModbusMode,
+			ModbusBase:    b.ModbusBase,
+			PollSeconds:   b.PollSeconds,
 			Builtin:       true,
 			CreatedAt:     now,
 			UpdatedAt:     now,

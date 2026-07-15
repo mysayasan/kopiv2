@@ -29,7 +29,12 @@ func NewProfileService(db dbsql.IDbCrud) *ProfileService
 
 ## Key Types: SaveProfileRequest / SaveProfileCommand / SaveTelemetryKey / ProfileDetail
 
-Request/response DTOs for the profile CRUD API (`apis/profiles.go`). `SaveProfileCommand` (P4)
+Request/response DTOs for the profile CRUD API (`apis/profiles.go`). **(P5)**
+`SaveProfileRequest` carries `Transport`/`ModbusMode`/`ModbusBase`/`PollSeconds` (see
+`entities.DeviceProfile`) and `SaveTelemetryKey` carries `Register`/`RegKind`/`ScaleFactor`/
+`WordSwap` (see `entities.TelemetryKey`) — both plumbed through `Create`/`Update`/`replaceKeys`/
+`EnsureBuiltins` alongside the pre-existing MQTT-only fields, so a Modbus profile is saved,
+edited and seeded through the identical path an MQTT one always has been. `SaveProfileCommand` (P4)
 declares one command: `Name`/`Label`/`Kind` (`"switch"`/`"setpoint"`), `TopicTemplate`/
 `PayloadTemplate`, `Min`/`Max` (the safety bounds, enforced server-side when a command is
 actually issued — see `services/commands.go.md`), and `ConfirmKey` (the telemetry key the device

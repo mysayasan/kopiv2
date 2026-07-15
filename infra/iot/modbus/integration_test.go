@@ -74,6 +74,41 @@ func TestLiveSimulator(t *testing.T) {
 		t.Error("unit3 missing ac_power")
 	}
 
+	// unit 4 — Huawei SUN2000, read by the SAME register map the shipped huawei-sun2000 profile
+	// binds. Its inverter block (~32000), battery (~37760) and meter (~37113) are far apart, so this
+	// also proves the register map reads in CLUSTERS — one bounded request per block — rather than
+	// one span the 125-register Modbus limit forbids.
+	huawei := RegisterMap{Points: []Point{
+		{Key: "inv_active_power", Register: 32080, Type: PI32, Scale: 1, Unit: "W"},
+		{Key: "inv_input_power", Register: 32064, Type: PI32, Scale: 1, Unit: "W"},
+		{Key: "inv_pv1_voltage", Register: 32016, Type: PI16, Scale: 0.1, Unit: "V"},
+		{Key: "inv_grid_frequency", Register: 32085, Type: PU16, Scale: 0.01, Unit: "Hz"},
+		{Key: "inv_temperature", Register: 32087, Type: PI16, Scale: 0.1, Unit: "C"},
+		{Key: "inv_yield_total", Register: 32106, Type: PU32, Scale: 0.01, Unit: "kWh"},
+		{Key: "batt_soc", Register: 37760, Type: PU16, Scale: 0.1, Unit: "%"},
+		{Key: "batt_power", Register: 37765, Type: PI32, Scale: 1, Unit: "W"},
+		{Key: "grid_active_power", Register: 37113, Type: PI32, Scale: 1, Unit: "W"},
+	}}
+	s4, _, err := PollOnce(DeviceConf{Endpoint: addr, Unit: 4, Mode: ModeRegMap, Map: huawei})
+	if err != nil {
+		t.Fatalf("unit4 huawei poll: %v", err)
+	}
+	m4 := index(s4)
+	t.Logf("unit4 SUN2000: active=%.0fW pv=%.0fW soc=%.1f%% batt=%+.0fW grid=%+.0fW freq=%.2fHz",
+		m4["inv_active_power"], m4["inv_input_power"], m4["batt_soc"], m4["batt_power"], m4["grid_active_power"], m4["inv_grid_frequency"])
+	// One key from each of the three separate blocks proves the clusters were all read.
+	for _, k := range []string{"inv_active_power", "batt_soc", "grid_active_power"} {
+		if _, ok := m4[k]; !ok {
+			t.Errorf("unit4 missing %q (a cluster was not read)", k)
+		}
+	}
+	if soc := m4["batt_soc"]; soc < 0 || soc > 100 {
+		t.Errorf("unit4 batt_soc = %v, out of range 0..100 (scale wrong?)", soc)
+	}
+	if f := m4["inv_grid_frequency"]; f < 45 || f > 65 {
+		t.Errorf("unit4 grid_frequency = %v Hz, implausible (scale wrong?)", f)
+	}
+
 	// Guarded control: enable a 40% export cap on unit 1, then confirm by read-back. Model 123 on
 	// this base sits at 40122; WMaxLimPct at data offset 3 (40127), WMaxLim_Ena at offset 7 (40131).
 	const wMaxLimPct, wMaxLimEna = 40127, 40131

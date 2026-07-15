@@ -32,7 +32,15 @@ type ProfileExport struct {
 	Description   string             `json:"description"`
 	TopicTemplate string             `json:"topicTemplate"`
 	PayloadFormat string             `json:"payloadFormat"`
-	Keys          []SaveTelemetryKey `json:"keys"`
+	// Transport/ModbusMode/ModbusBase/PollSeconds carry a POLLED (Modbus) profile. They are
+	// omitted for an MQTT profile, and an older importer that predates them simply ignores them —
+	// which is why the format version does not need to bump: the fields are additive, and a
+	// missing field decodes as the zero value that means "the MQTT default".
+	Transport   string `json:"transport,omitempty"`
+	ModbusMode  string `json:"modbusMode,omitempty"`
+	ModbusBase  int    `json:"modbusBase,omitempty"`
+	PollSeconds int    `json:"pollSeconds,omitempty"`
+	Keys        []SaveTelemetryKey `json:"keys"`
 }
 
 // Export renders a profile as a portable document.
@@ -49,6 +57,10 @@ func (s *ProfileService) Export(ctx context.Context, id int64) (*ProfileExport, 
 		Description:   detail.Profile.Description,
 		TopicTemplate: detail.Profile.TopicTemplate,
 		PayloadFormat: detail.Profile.PayloadFormat,
+		Transport:     detail.Profile.Transport,
+		ModbusMode:    detail.Profile.ModbusMode,
+		ModbusBase:    detail.Profile.ModbusBase,
+		PollSeconds:   detail.Profile.PollSeconds,
 		Keys:          make([]SaveTelemetryKey, 0, len(detail.Keys)),
 	}
 	for _, k := range detail.Keys {
@@ -62,6 +74,10 @@ func (s *ProfileService) Export(ctx context.Context, id int64) (*ProfileExport, 
 			HeartbeatSeconds: k.HeartbeatSeconds,
 			Min:              k.Min,
 			Max:              k.Max,
+			Register:         k.Register,
+			RegKind:          k.RegKind,
+			ScaleFactor:      k.ScaleFactor,
+			WordSwap:         k.WordSwap,
 		})
 	}
 	return out, nil
@@ -106,6 +122,10 @@ func (s *ProfileService) Import(ctx context.Context, raw []byte, actor int64) (*
 		Description:   doc.Description,
 		TopicTemplate: doc.TopicTemplate,
 		PayloadFormat: doc.PayloadFormat,
+		Transport:     doc.Transport,
+		ModbusMode:    doc.ModbusMode,
+		ModbusBase:    doc.ModbusBase,
+		PollSeconds:   doc.PollSeconds,
 		Keys:          doc.Keys,
 	}, actor)
 }

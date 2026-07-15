@@ -17,7 +17,8 @@ a manageable write rate.
 func builtinProfiles() []builtinProfile
 ```
 
-Returns eight profiles, each a deliberate deadband/heartbeat choice:
+Returns ten profiles, each a deliberate deadband/heartbeat choice — eight PUSH (MQTT) profiles and,
+as of P5, two POLLED (Modbus) ones:
 
 - **`door-contact`** — `contact` has NO deadband (every transition is the event; a handful a
   day), `battery`/`linkquality` deadbanded and heartbeated every 6h.
@@ -43,6 +44,21 @@ Returns eight profiles, each a deliberate deadband/heartbeat choice:
   when the relay itself reports back that it changed, never merely when the app manages to
   publish. See `services/commands.go.md` for the gates that guard every device carrying this
   profile.
+- **`generic-sunspec-solar` (P5, `Transport: "modbus"`, `ModbusMode: "sunspec"`)** — declares NO
+  register bindings; the driver walks the SunSpec model chain and DISCOVERS the keys, so this ONE
+  profile reads any compliant inverter/meter/battery (SolarEdge, SMA, Fronius, most Sungrow, the
+  SunSpec-103 block a Huawei exposes) with no per-model work. Its role-prefixed keys
+  (`inv_`/`grid_`/`batt_`/`ctl_`) exist only to attach a deadband/heartbeat/range to the
+  datapoints worth storing; a device lacking a block (a meter with no battery) simply never sends
+  those keys.
+- **`huawei-sun2000` (P5, `Transport: "modbus"`, `ModbusMode: "regmap"`)** — the vendor-map path
+  for the world's most-installed inverter: NOT fully SunSpec, since its LUNA battery (SOC,
+  charge/discharge power) and built-in power meter live in Huawei's own registers, so every key
+  carries an explicit `Register`/`RegKind`/`ScaleFactor` binding per Huawei's published Modbus
+  interface definitions. It is the worked example a site copies to onboard any other non-SunSpec
+  hybrid: a new device is a new map, not new code. The battery/meter registers sit ~5,700 apart
+  from the inverter block, which is exactly the scattered-map shape `infra/iot/modbus.RegisterMap`
+  clusters into separate bounded reads (`regmap.go.md`).
 
 ## Notes
 
