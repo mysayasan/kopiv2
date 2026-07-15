@@ -64,6 +64,8 @@ function AppInner({ lang, onLangChange }) {
   // Fleet state is lifted here so the side-nav tree and the Nodes page stay in sync:
   // the tree lists adopted nodes and `managingNodeId` selects which one the page opens.
   const [nodes, setNodes] = useState([]);
+  // 'idle'|'loading'|'ok'|'error' — so the nodes page can tell an empty fleet from a failed load.
+  const [nodesLoad, setNodesLoad] = useState('idle');
   const [managingNodeId, setManagingNodeId] = useState(null);
   // A focused camera (chosen from the node's camera sub-tree) narrows the node's
   // Cameras view to that single live tile; null shows every camera on the node.
@@ -100,9 +102,19 @@ function AppInner({ lang, onLangChange }) {
   }, [authState]);
 
   async function loadNodes() {
-    if (!sessionCanGet(session, '/api/nodes')) { setNodes([]); return; }
+    if (!sessionCanGet(session, '/api/nodes')) { setNodes([]); setNodesLoad('ok'); return; }
+    setNodesLoad('loading');
     const r = await api('/api/nodes').catch(() => ({ ok: false }));
-    if (r.ok) setNodes(Array.isArray(r.body) ? r.body : []);
+    if (r.ok) {
+      setNodes(Array.isArray(r.body) ? r.body : []);
+      setNodesLoad('ok');
+    } else {
+      // The request FAILED — an expired session, a network blip, a control plane that just
+      // restarted. Do NOT blank the fleet: an empty list here is indistinguishable from "you
+      // have no nodes", and an operator whose session lapsed would think their whole fleet
+      // vanished. Keep whatever we last knew and flag the error so the page can say so.
+      setNodesLoad('error');
+    }
   }
   useEffect(() => {
     if (authState === 'ready') loadNodes();
@@ -215,6 +227,7 @@ function AppInner({ lang, onLangChange }) {
             onToast={pushToast}
             nodes={nodes}
             reloadNodes={loadNodes}
+            nodesLoad={nodesLoad}
             managingNodeId={managingNodeId}
             managingCameraId={managingCameraId}
             onManage={selectNode}
