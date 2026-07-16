@@ -563,6 +563,9 @@
 .settings-tab-head-text h2 { margin: 0; font-size: 18px; }
 .settings-tab-head-text p { margin: 3px 0 0; font-size: 13px; color: var(--text-muted, #6b7280); }
 .settings-content { display: flex; flex-direction: column; gap: 14px; min-width: 0; padding-top: 4px; }
+/* A tab whose body is a single <form> wrapping several panels (e.g. Telemetry) still needs the
+   inter-panel gap the flex column above gives direct children. */
+.settings-content > form { display: flex; flex-direction: column; gap: 14px; }
 
 .iot-status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin: 10px 0 16px; }
 .iot-status-grid > div { display: flex; flex-direction: column; gap: 2px; }
@@ -570,6 +573,33 @@
 .iot-claim-code code { font-size: 20px; letter-spacing: 2px; font-weight: 700; }
 .link-btn { background: none; border: none; padding: 0; color: var(--brand-mark, #3b82f6); cursor: pointer; text-decoration: underline; font: inherit; }
 .user-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+
+/* Users table: initials avatar + name/username, role badge, status pill. */
+.iot-user-cell { display: flex; align-items: center; gap: 10px; }
+.iot-avatar {
+  flex: 0 0 auto; width: 34px; height: 34px; border-radius: 50%;
+  display: grid; place-items: center; color: #fff; font-size: 12px; font-weight: 700; letter-spacing: .5px;
+}
+.iot-user-id { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.iot-user-id .iot-link-cell { padding: 0; font-weight: 600; text-align: left; }
+.iot-user-sub { font-size: 12px; color: var(--text-muted, #6b7280); }
+.iot-role-badge {
+  display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  border: 1px solid transparent; text-transform: capitalize;
+}
+.iot-role-badge.is-admin { background: rgba(139, 92, 246, .14); color: #7c3aed; border-color: rgba(139, 92, 246, .3); }
+.iot-role-badge.is-operator { background: rgba(59, 130, 246, .14); color: #2563eb; border-color: rgba(59, 130, 246, .3); }
+.iot-role-badge.is-viewer { background: rgba(107, 114, 128, .14); color: #4b5563; border-color: rgba(107, 114, 128, .28); }
+.iot-status-cell { display: inline-flex; align-items: center; gap: 6px; }
+.iot-user-pill {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 999px;
+  font-size: 12px; font-weight: 600;
+}
+.iot-user-pill.is-on { background: rgba(16, 185, 129, .15); color: #059669; }
+.iot-user-pill.is-off { background: rgba(107, 114, 128, .15); color: #6b7280; }
+.iot-user-pill.is-warn { background: rgba(245, 158, 11, .18); color: #b45309; }
+.iot-user-form { display: flex; flex-direction: column; gap: 12px; }
+.iot-modal-sep { border: none; border-top: 1px solid var(--border-soft, #e5e7eb); margin: 4px 0; }
 
 .iot-cmd-warn {
   display: flex;

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Ico, PasswordField, Tabs, useT } from '@shared';
+import { DataTable, Ico, PasswordField, Tabs, useT } from '@shared';
 import { api, defaultDestination, errorMessage, notificationCategories, notificationSeverityOptions } from '../lib/helpers';
-import { AccordionItem, AccordionList, ConfirmModal, CopyButton, Field, Panel } from './ui';
+import { AccordionItem, AccordionList, ConfirmModal, CopyButton, Field, Modal, Panel } from './ui';
 
 // The Settings page — one tabbed home for everything that configures the hub itself. Admin-only (the
 // nav entry is hidden from non-admins; every route below is administrator-gated server-side). It
@@ -46,16 +46,37 @@ export function SettingsPage({ onToast }) {
 }
 
 // --- Users & Roles --------------------------------------------------------------------------
+//
+// A scannable table of accounts (initials avatar + name + @username, a colour-coded role badge, a
+// status pill), with add/edit in a modal rather than a wall of inline inputs — the standard admin
+// user-management pattern (a table for at-a-glance comparison, focused editing behind a dialog).
 
-const EMPTY_USER = { username: '', displayName: '', password: '', roleId: 0 };
+const AVATAR_COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#ef4444', '#6366f1', '#0ea5e9', '#d946ef'];
+
+function userInitials(u) {
+  const src = (u.displayName || u.username || '?').trim();
+  const parts = src.split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return src.slice(0, 2).toUpperCase();
+}
+function avatarColor(seed) {
+  let h = 0;
+  for (const ch of String(seed || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+}
+function roleTone(role) {
+  if (!role) return '';
+  if (role.isSuperadmin) return 'is-admin';
+  return /operator/i.test(role.name) ? 'is-operator' : 'is-viewer';
+}
 
 function UsersPanel({ onToast }) {
   const t = useT();
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
   const [busy, setBusy] = useState(true);
-  const [newUser, setNewUser] = useState(EMPTY_USER);
-  const [pwDrafts, setPwDrafts] = useState({});
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
 
   const load = useCallback(async () => {
@@ -68,37 +89,6 @@ function UsersPanel({ onToast }) {
   useEffect(() => { load(); }, [load]);
 
   const roleOf = (id) => roles.find((x) => x.id === id);
-  const setEdit = (id, patch) => setUsers((list) => list.map((u) => (u.id === id ? { ...u, ...patch } : u)));
-
-  async function create(e) {
-    e.preventDefault();
-    if (!newUser.roleId) { onToast(t('st.pickRole'), 'error'); return; }
-    const body = {
-      username: newUser.username, password: newUser.password, displayName: newUser.displayName,
-      roleId: Number(newUser.roleId), isAdmin: !!roleOf(Number(newUser.roleId))?.isSuperadmin,
-      isActive: true, mustChangePassword: true,
-    };
-    const r = await api('/api/settings/users', { method: 'POST', body: JSON.stringify(body) });
-    if (!r.ok) { onToast(errorMessage(r, t('st.saveFailed')), 'error'); return; }
-    onToast(t('st.userCreated', { name: newUser.username }), 'success');
-    setNewUser(EMPTY_USER); load();
-  }
-
-  async function save(u) {
-    const body = { username: u.username, displayName: u.displayName || '', roleId: Number(u.roleId), isAdmin: !!roleOf(Number(u.roleId))?.isSuperadmin, isActive: !!u.isActive };
-    const r = await api(`/api/settings/users/${u.id}`, { method: 'PUT', body: JSON.stringify(body) });
-    if (!r.ok) { onToast(errorMessage(r, t('st.saveFailed')), 'error'); return; }
-    onToast(t('st.userSaved', { name: u.username }), 'success'); load();
-  }
-
-  async function resetPw(u) {
-    const password = (pwDrafts[u.id] || '').trim();
-    if (!password) return;
-    const r = await api(`/api/settings/users/${u.id}/password`, { method: 'POST', body: JSON.stringify({ password }) });
-    if (!r.ok) { onToast(errorMessage(r, t('st.saveFailed')), 'error'); return; }
-    setPwDrafts((d) => ({ ...d, [u.id]: '' }));
-    onToast(t('st.pwReset', { name: u.username }), 'success');
-  }
 
   async function remove(u) {
     setConfirmDel(null);
@@ -107,53 +97,143 @@ function UsersPanel({ onToast }) {
     onToast(t('st.userDeleted', { name: u.username }), 'success'); load();
   }
 
-  const RoleSelect = ({ value, onChange }) => (
-    <select value={value || ''} onChange={(e) => onChange(Number(e.target.value))}>
-      <option value="">{t('st.pickRole')}</option>
-      {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-    </select>
-  );
+  const columns = [
+    {
+      key: 'displayName', label: t('st.user'),
+      render: (_v, u) => (
+        <div className="iot-user-cell">
+          <span className="iot-avatar" style={{ background: avatarColor(u.username || u.id) }}>{userInitials(u)}</span>
+          <div className="iot-user-id">
+            <button type="button" className="quiet iot-link-cell" onClick={() => setEditing(u)}>{u.displayName || u.username}</button>
+            <span className="iot-user-sub">@{u.username}</span>
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'roleId', label: t('st.role'),
+      render: (_v, u) => { const role = roleOf(u.roleId); return role ? <span className={`iot-role-badge ${roleTone(role)}`}>{role.name}</span> : <span className="iot-user-sub">—</span>; },
+    },
+    {
+      key: 'isActive', label: t('st.status'), filterType: 'boolean',
+      render: (_v, u) => (
+        <span className="iot-status-cell">
+          <span className={`iot-user-pill ${u.isActive ? 'is-on' : 'is-off'}`}>{u.isActive ? t('st.active') : t('st.inactive')}</span>
+          {u.mustChangePassword ? <span className="iot-user-pill is-warn" title={t('st.pwChangePending')}><Ico n="key" sz={11} /></span> : null}
+        </span>
+      ),
+    },
+    {
+      key: 'actions', label: '', filterable: false,
+      render: (_v, u) => (
+        <div className="table-actions">
+          <button type="button" className="quiet" onClick={() => setEditing(u)}><span className="btn-icon"><Ico n="edit" sz={14} /> {t('common.edit')}</span></button>
+          <button type="button" className="quiet danger-text" onClick={() => setConfirmDel(u)}><Ico n="trash" sz={14} /></button>
+        </div>
+      ),
+    },
+  ];
 
   return (
-    <>
-      <Panel icon="user-plus" title={t('st.addUser')} hint={t('st.addUserHint')}>
-        <form onSubmit={create}>
-          <div className="settings-field-grid">
-            <Field label={t('st.username')} required><input value={newUser.username} required autoComplete="off" onChange={(e) => setNewUser({ ...newUser, username: e.target.value })} /></Field>
-            <Field label={t('st.displayName')}><input value={newUser.displayName} autoComplete="off" onChange={(e) => setNewUser({ ...newUser, displayName: e.target.value })} /></Field>
-            <Field label={t('st.password')} required><PasswordField value={newUser.password} onChange={(p) => setNewUser({ ...newUser, password: p })} autoComplete="new-password" /></Field>
-            <Field label={t('st.role')} required><RoleSelect value={newUser.roleId} onChange={(roleId) => setNewUser({ ...newUser, roleId })} /></Field>
-          </div>
-          <div className="settings-actions">
-            <button type="submit" disabled={busy}><span className="btn-icon"><Ico n="plus" sz={14} /> {t('st.addUser')}</span></button>
-          </div>
-        </form>
-      </Panel>
+    <Panel icon="user" title={t('st.users')} hint={t('st.usersHint')}
+      actions={(
+        <>
+          <button type="button" className="quiet" onClick={load} disabled={busy}><span className="btn-icon"><Ico n="refresh" sz={14} /> {t('common.reload')}</span></button>
+          <button type="button" onClick={() => setAdding(true)}><span className="btn-icon"><Ico n="plus" sz={14} /> {t('st.addUser')}</span></button>
+        </>
+      )}>
+      <DataTable rows={users} columns={columns} busy={busy} pageSize={10} pageSizeOptions={[10, 25, 50]} emptyText={t('st.noUsers')} />
 
-      <Panel icon="user" title={t('st.users')} actions={<button type="button" className="quiet" onClick={load} disabled={busy}><span className="btn-icon"><Ico n="refresh" sz={14} /> {t('common.reload')}</span></button>}>
-        {users.length === 0 ? <p className="settings-hint">{t('st.noUsers')}</p> : null}
-        {users.map((u) => (
-          <fieldset className="iot-action-row" key={u.id}>
-            <Field label={t('st.username')}><input value={u.username || ''} onChange={(e) => setEdit(u.id, { username: e.target.value })} /></Field>
-            <Field label={t('st.displayName')}><input value={u.displayName || ''} onChange={(e) => setEdit(u.id, { displayName: e.target.value })} /></Field>
-            <Field label={t('st.role')}><RoleSelect value={u.roleId} onChange={(roleId) => setEdit(u.id, { roleId })} /></Field>
-            <Field label={t('st.newPassword')}><PasswordField value={pwDrafts[u.id] || ''} onChange={(p) => setPwDrafts((d) => ({ ...d, [u.id]: p }))} autoComplete="new-password" placeholder={t('st.leaveBlankKeep')} /></Field>
-            <label className="check-row"><input type="checkbox" checked={!!u.isActive} onChange={(e) => setEdit(u.id, { isActive: e.target.checked })} /> {t('st.active')}</label>
-            {u.mustChangePassword ? <span className="accordion-tag">{t('st.pwChangePending')}</span> : null}
-            <div className="user-actions">
-              <button type="button" onClick={() => save(u)} disabled={busy}><span className="btn-icon"><Ico n="save" sz={14} /> {t('common.save')}</span></button>
-              <button type="button" className="quiet" onClick={() => resetPw(u)} disabled={!(pwDrafts[u.id] || '').trim()}><span className="btn-icon"><Ico n="key" sz={14} /> {t('st.resetPassword')}</span></button>
-              <button type="button" className="quiet danger-text" onClick={() => setConfirmDel(u)}><span className="btn-icon"><Ico n="trash" sz={14} /> {t('common.delete')}</span></button>
-            </div>
-          </fieldset>
-        ))}
-      </Panel>
-
+      {adding ? <UserModal roles={roles} onClose={() => setAdding(false)} onSaved={() => { setAdding(false); load(); }} onToast={onToast} /> : null}
+      {editing ? <UserModal user={editing} roles={roles} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} onToast={onToast} /> : null}
       {confirmDel ? (
         <ConfirmModal title={t('st.deleteUserTitle')} body={t('st.deleteUserBody', { name: confirmDel.username })}
           confirmLabel={t('common.delete')} onCancel={() => setConfirmDel(null)} onConfirm={() => remove(confirmDel)} />
       ) : null}
-    </>
+    </Panel>
+  );
+}
+
+// UserModal creates a new account or edits an existing one — the focused editing surface the table
+// links into. On an existing user it also carries the reset-password action.
+function UserModal({ user, roles, onClose, onSaved, onToast }) {
+  const t = useT();
+  const isNew = !user;
+  const [form, setForm] = useState(() => ({
+    username: user?.username || '',
+    displayName: user?.displayName || '',
+    roleId: user?.roleId || 0,
+    isActive: isNew ? true : !!user?.isActive,
+    password: '',
+    newPassword: '',
+  }));
+  const [busy, setBusy] = useState(false);
+  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  const role = roles.find((r) => r.id === Number(form.roleId));
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!form.roleId) { onToast(t('st.pickRole'), 'error'); return; }
+    setBusy(true);
+    if (isNew) {
+      const body = { username: form.username, password: form.password, displayName: form.displayName, roleId: Number(form.roleId), isAdmin: !!role?.isSuperadmin, isActive: form.isActive, mustChangePassword: true };
+      const r = await api('/api/settings/users', { method: 'POST', body: JSON.stringify(body) });
+      setBusy(false);
+      if (!r.ok) { onToast(errorMessage(r, t('st.saveFailed')), 'error'); return; }
+      onToast(t('st.userCreated', { name: form.username }), 'success'); onSaved();
+      return;
+    }
+    const body = { username: form.username, displayName: form.displayName, roleId: Number(form.roleId), isAdmin: !!role?.isSuperadmin, isActive: form.isActive };
+    const r = await api(`/api/settings/users/${user.id}`, { method: 'PUT', body: JSON.stringify(body) });
+    setBusy(false);
+    if (!r.ok) { onToast(errorMessage(r, t('st.saveFailed')), 'error'); return; }
+    onToast(t('st.userSaved', { name: form.username }), 'success'); onSaved();
+  }
+
+  async function resetPw() {
+    const password = form.newPassword.trim();
+    if (!password) return;
+    setBusy(true);
+    const r = await api(`/api/settings/users/${user.id}/password`, { method: 'POST', body: JSON.stringify({ password }) });
+    setBusy(false);
+    if (!r.ok) { onToast(errorMessage(r, t('st.saveFailed')), 'error'); return; }
+    set({ newPassword: '' });
+    onToast(t('st.pwReset', { name: user.username }), 'success');
+  }
+
+  return (
+    <Modal title={isNew ? t('st.addUser') : t('st.editUser', { name: user.displayName || user.username })} onClose={busy ? undefined : onClose}>
+      <form onSubmit={submit} className="iot-user-form">
+        <div className="settings-field-grid">
+          <Field label={t('st.username')} required><input value={form.username} required autoComplete="off" onChange={(e) => set({ username: e.target.value })} /></Field>
+          <Field label={t('st.displayName')}><input value={form.displayName} autoComplete="off" onChange={(e) => set({ displayName: e.target.value })} /></Field>
+          {isNew ? <Field label={t('st.password')} required><PasswordField value={form.password} onChange={(p) => set({ password: p })} autoComplete="new-password" /></Field> : null}
+          <Field label={t('st.role')} required>
+            <select value={form.roleId || ''} onChange={(e) => set({ roleId: Number(e.target.value) })}>
+              <option value="">{t('st.pickRole')}</option>
+              {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+          </Field>
+        </div>
+        <label className="check-row"><input type="checkbox" checked={form.isActive} onChange={(e) => set({ isActive: e.target.checked })} /> {t('st.activeAccount')}</label>
+
+        {!isNew ? (
+          <>
+            <hr className="iot-modal-sep" />
+            <p className="settings-hint">{t('st.resetPwHint')}</p>
+            <div className="iot-cmd-slider">
+              <PasswordField value={form.newPassword} onChange={(p) => set({ newPassword: p })} autoComplete="new-password" placeholder={t('st.newPassword')} />
+              <button type="button" className="quiet" onClick={resetPw} disabled={busy || !form.newPassword.trim()}><span className="btn-icon"><Ico n="key" sz={14} /> {t('st.resetPassword')}</span></button>
+            </div>
+          </>
+        ) : null}
+
+        <div className="modal-actions">
+          <button type="button" className="quiet" onClick={onClose} disabled={busy}>{t('common.cancel')}</button>
+          <button type="submit" disabled={busy}>{busy ? t('common.saving') : t('common.save')}</button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
