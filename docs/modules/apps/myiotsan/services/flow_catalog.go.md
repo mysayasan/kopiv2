@@ -34,15 +34,40 @@ message. `$inverter` (a SLOT, not a concrete device) makes this a reusable templ
 it (`FlowService.Instantiate`) binds the slot to a real adopted inverter and stamps out a concrete
 flow.
 
+## Key Functions: five more solar templates (all on `$inverter`)
+
+Added alongside the three new register-map Modbus profiles (`profile_catalog.go.md`):
+
+- **`selfConsumptionFlow` (`solar-self-consumption`)** — the same `grid_ac_power`/`inv_ac_power`
+  two-stream join as `solarSystemFlow`, but persists the result as a `self_consumption`
+  `derived_metric` series instead of only debugging it, so it rides the same rollups/charts as any
+  real reading.
+- **`selfSufficiencyFlow` (`solar-self-sufficiency`)** — derives self-sufficiency % (solar's share
+  of total energy) from the lifetime counters `inv_ac_energy` (PV yield) and
+  `grid_energy_imported`, persisted as `self_sufficiency`.
+- **`batteryGuardFlow` (`solar-battery-guard`)** — alerts when `batt_soc` drops below 15%, and
+  **force-charges** below 8% via a `command` output node (`batt_force = 170`, Sungrow's "Charge"
+  value) — the command routes through `CommandService.Issue` like every other actuation path, so it
+  inherits every gate and stays inert until the device's actuation is enabled.
+- **`exportLimitFlow` (`solar-export-limit`)** — THE control showcase: when export (derived from
+  `grid_ac_power`) exceeds ~4.5kW, a `command` node writes the inverter's `export_limit` to 4kW.
+  Inert the same way, until actuation is enabled and the register is bench-verified for the model.
+- **`inverterHealthFlow` (`solar-inverter-health`)** — alerts on the two silent string-inverter
+  failure modes: `inv_temperature` above 60°C, and `inv_operating_state` in an abnormal range
+  (`>= 5`, tunable per vendor's state table via the KB).
+
+Every one of these is `mustGraph`-built (see below) and covered by `TestBuiltinFlowsParse`
+(`modbus_poller_test.go.md`), which now also asserts at least 6 builtin flows exist.
+
 ## Key Function: EnsureBuiltins
 
 ```go
 func (s *FlowService) EnsureBuiltins(ctx context.Context) error
 ```
 
-Seeds `builtinFlows()` (currently just `solarSystemFlow()`). Present-by-slug is skipped, so a
-site's edits to a copied flow are never clobbered. Called from `app.go` at boot, before the flow
-runtime starts.
+Seeds `builtinFlows()` — the original `solarSystemFlow()` plus the five above (six total).
+Present-by-slug is skipped, so a site's edits to a copied flow are never clobbered. Called from
+`app.go` at boot, before the flow runtime starts.
 
 ## Notes
 

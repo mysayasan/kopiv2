@@ -140,6 +140,7 @@ type SaveTelemetryKey struct {
 	RegKind     string  `json:"regKind"`
 	ScaleFactor float64 `json:"scaleFactor"`
 	WordSwap    bool    `json:"wordSwap"`
+	RegInput    bool    `json:"regInput"`
 }
 
 func (s *ProfileService) Create(ctx context.Context, req SaveProfileRequest, actor int64) (*ProfileDetail, error) {
@@ -252,6 +253,7 @@ func (s *ProfileService) replaceKeys(ctx context.Context, profileId int64, keys 
 			RegKind:          strings.TrimSpace(k.RegKind),
 			ScaleFactor:      k.ScaleFactor,
 			WordSwap:         k.WordSwap,
+			RegInput:         k.RegInput,
 			CreatedBy:        actor,
 			CreatedAt:        now,
 			UpdatedBy:        actor,

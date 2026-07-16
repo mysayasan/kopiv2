@@ -49,6 +49,9 @@ alongside the ingest spine:
   (home-automation) `/api/scenes` and `/api/schedules` — a viewer can see that a "Goodnight"
   scene or a sunset schedule exists and what it does, the same way they can see an alert rule,
   without being able to fire it. This is the live picture, and it is all a viewer gets.
+  `/api/kb` (the in-app knowledge base, `apps/myiotsan/kb`) is granted here too — it is read-only
+  reference content compiled into the binary, so there is no reason to gate it any tighter than the
+  device/profile catalog it documents.
 - **Reviewing the record** (operator and up only): `/api/devices/*/readings` (Viewer: `none`,
   Operator: `read`) — THIS is the viewer/operator line, and it is mymatasan's line exactly: a
   viewer sees what is happening now, only an operator can go back through the telemetry

@@ -67,7 +67,12 @@ See `services/commands.go.md` and `docs/MYIOTSAN_PLAN.md` §3.4.
   declarative document, and an edit that half-applies is worse than one that replaces.
 - Most of the shipped catalog (`profile_catalog.go.md`) declares no commands at all, and that is
   the correct default: a sensor that cannot be commanded cannot be commanded wrongly. `smart-relay`
-  and, since the home-automation kinds, `smart-lamp` (`switch`/`dimmer`/`cct`/`color`) are
-  currently the only MQTT profiles that declare any; no built-in Modbus profile declares a command
-  yet (both `generic-sunspec-solar` and `huawei-sun2000` are read-only).
+  and, since the home-automation kinds, `smart-lamp` (`switch`/`dimmer`/`cct`/`color`) are the MQTT
+  profiles that declare any. `generic-sunspec-solar`, `huawei-sun2000`, and
+  `eastron-sdm630-meter` remain read-only (a meter has nothing to actuate, and the SunSpec/Huawei
+  profiles simply never declared a command). `sungrow-sh-hybrid` and `deye-hybrid` are the first
+  built-in Modbus profiles to declare commands (`Transport: "modbus"`) — seven and four
+  respectively, all `Kind: "mode"`/`"setpoint"`, and all INERT until an admin enables the device's
+  `ActuationEnabled` and bench-verifies the register (sign/scale/units differ by firmware — see
+  `apps/myiotsan/kb/solar/`).
 - Bootstrap creates this table from the registered entity (`app/app.go`'s `Entities()`).

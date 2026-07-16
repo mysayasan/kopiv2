@@ -57,6 +57,8 @@ export function SideNav({ activeTab, busy, onTab, onLogout, session, pinned = tr
   const systemItems = [];
   if (session?.isAdmin) systemItems.push(navItem('discovery', t('nav.discovery'), 'search', 'blue'));
   systemItems.push(navItem('profiles', t('nav.profiles'), 'box', 'indigo'));
+  // Help (the shipped setup guides) is reference content — visible to everyone signed in.
+  systemItems.push(navItem('help', t('nav.help'), 'info', 'green'));
   // Settings configures the hub itself (users, delivery, storage, fleet, restart) — admin-only, so
   // the entry is hidden from viewers and operators. Every route behind it is admin-gated server-side.
   if (session?.isAdmin) systemItems.push(navItem('settings', t('nav.settings'), 'sliders', 'steel'));

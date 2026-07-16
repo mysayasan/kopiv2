@@ -20,14 +20,22 @@ have now partially landed**: the Modbus/SunSpec **driver foundation** (`infra/io
 `infra/iot/sunspec`, plus a standalone simulator at `tools/sunspec-sim`) is now **wired into this
 app** — a device profile can declare `Transport: "modbus"` (self-describing SunSpec discovery, or
 an explicit vendor register map), a `services.ModbusPoller` dials out to every such device on its
-own poll cadence, and two built-in profiles ship: `generic-sunspec-solar` (reads any compliant
-inverter/meter/battery, no per-model work) and `huawei-sun2000` (the register-map worked example
-for the world's most-installed inverter). **Guarded Modbus control writes have also landed**: a
+own poll cadence, and five built-in profiles ship: `generic-sunspec-solar` (reads any compliant
+inverter/meter/battery, no per-model work), `huawei-sun2000` (the register-map worked example for
+the world's most-installed inverter), and, for the budget/high-volume hardware most installers
+outside that world actually buy, `sungrow-sh-hybrid`, `deye-hybrid` (covering Deye/Sunsynk/Sol-Ark
+rebadges), and the read-only `eastron-sdm630-meter` — the last needing two driver additions
+(reading Modbus INPUT registers, fn 4, and decoding IEEE-754 float32 values) alongside the
+original holding-register/integer path. **Guarded Modbus control writes have also landed**: a
 device profile can declare a command as a Modbus holding-register write instead of an MQTT
 publish, and it is commanded through the identical actuation gates — read-only-by-default,
-admin-only, server-side bounds, rate-limited, audited, never auto-retried — see "Actuation" below.
-What remains of P5 is RTU (serial) and OPC-UA transports; the solar "system workspace" (P8) is
-still design-only. **Home automation (richer command kinds, scenes, schedules) has also shipped**: a
+admin-only, server-side bounds, rate-limited, audited, never auto-retried — see "Actuation" below;
+`sungrow-sh-hybrid`/`deye-hybrid` are the first built-in profiles to actually declare Modbus
+commands, every one inert until bench-verified (see the Help page below). Five more built-in
+**Flow Engine** solar templates and an **in-app knowledge base** (a Help page with setup guides
+for every solar profile, compiled into the binary so it works fully air-gapped) shipped alongside
+these. What remains of P5 is RTU (serial) and OPC-UA transports; the solar "system workspace" (P8)
+is still design-only. **Home automation (richer command kinds, scenes, schedules) has also shipped**: a
 device can now be dimmed, positioned, colour-tuned, or set to one of a named list of modes, not
 just switched or given a plain setpoint; commands can be grouped into a named **scene** and run
 together; and a scene or a single command can be fired on the clock or at sunrise/sunset via a
@@ -110,14 +118,19 @@ register map) and poll cadence — and either way, its `TelemetryKey`s (name, un
 heartbeat, plausible range, plus a JSON path or a Modbus register binding depending on
 transport). Without this abstraction, onboarding a hundred identical door sensors means
 configuring a hundred devices by hand; with it, the hundredth device is a name and a dropdown.
-Ten built-in profiles ship and are re-seeded (idempotently — existing ones are never
-overwritten) on every boot: eight PUSH profiles (door/window contact, PIR motion,
+Fourteen built-in profiles ship and are re-seeded (idempotently — existing ones are never
+overwritten) on every boot: nine PUSH profiles (door/window contact, PIR motion,
 temperature/humidity, smoke/heat detector, water leak, power/energy meter, access-control
-reader, smart relay) and two POLLED profiles (`generic-sunspec-solar`, a self-describing
-SunSpec inverter/meter/battery that needs no per-model map, and `huawei-sun2000`, an explicit
-register map for the world's most-installed inverter). A site can author its own profile (or
-copy and edit a builtin — builtins themselves cannot be deleted, only used or copied) via
-`POST /api/profiles`.
+reader, smart relay, smart lamp) and five POLLED (Modbus) profiles — `generic-sunspec-solar`
+(a self-describing SunSpec inverter/meter/battery that needs no per-model map), `huawei-sun2000`
+(an explicit register map for the world's most-installed inverter), and three more for the
+budget/high-volume hardware an installer outside that world actually buys:
+`sungrow-sh-hybrid` (Sungrow SH residential hybrids — input registers, word-swapped 32-bit
+values, and its own set of pre-declared Modbus commands), `deye-hybrid` (the same map answers
+for Deye, Sunsynk, and Sol-Ark rebadges), and `eastron-sdm630-meter` (a read-only 3-phase meter,
+IEEE-754 float32 values). A site can author its own profile (or copy and edit a builtin —
+builtins themselves cannot be deleted, only used or copied) via `POST /api/profiles`. See the
+in-app **Help** page (below) for a setup guide per profile.
 
 ## The deadband — why the database stays small
 
@@ -233,9 +246,17 @@ telemetry keys, via `POST/PUT /api/profiles`:
 
 Of the built-in profiles, `smart-relay` (Shelly/Tasmota conventions — `output`, a switch,
 confirmed by the device's own `output` telemetry key) and `smart-lamp` (Zigbee2MQTT conventions —
-`power`/`brightness`/`color_temp`/`color`, the worked example for the newer kinds) ship with
-commands declared; every other shipped profile stays read-only, which is the correct default: a
-sensor that cannot be commanded cannot be commanded wrongly.
+`power`/`brightness`/`color_temp`/`color`, the worked example for the newer kinds) ship MQTT
+commands declared. `sungrow-sh-hybrid` and `deye-hybrid` are the Modbus counterparts — Sungrow
+pre-declares seven (`ems_mode`, `batt_force`, `batt_force_power`, `export_limit`,
+`export_limit_enable`, `batt_min_soc`, `batt_max_soc`) and Deye four (`work_mode`, `solar_sell`,
+`grid_charge`, `max_sell_power`). **Every one of these ships INERT**: a command declared on a
+profile is not the same as a command you can send — it only becomes usable once you turn on
+`actuationEnabled` for the specific device AND have verified, on the bench, that the register's
+sign/scale match your model's firmware (see the in-app Help page, "Verify control before you
+actuate"). Every other shipped profile (including the read-only `eastron-sdm630-meter`) stays
+read-only, which is the correct default: a sensor that cannot be commanded cannot be commanded
+wrongly.
 
 ### Sent, confirmed, failed — what an operator should read into each
 
@@ -577,8 +598,12 @@ run a named, ordered group of commands — the Run action hidden for anyone but 
 the sun triggers need), and **Flows** (an admin-only entry — the whole tab is hidden from every
 other role — showing the flow list and the SVG canvas editor: a node palette, drag-and-drop wiring,
 a per-node config panel, and a "run" action that test-fires the flow and lights up the canvas with
-the resulting per-node debug values). A first-run onboarding wizard leads a new install straight to
-opening its first enrollment window. All four locales — en, ms, zh, ar.
+the resulting per-node debug values). **Help** is a new nav entry: a read-only, dependency-free
+Markdown-rendered setup guide (`GET /api/kb`), covering every solar/Modbus profile, gateway/
+transport choices, and how to verify a control register before enabling actuation — visible to
+every role, since it is reference content with nothing to misuse. A first-run onboarding wizard
+leads a new install straight to opening its first enrollment window. All four locales — en, ms,
+zh, ar.
 
 Two things on the Dashboard deserve an operator's attention:
 

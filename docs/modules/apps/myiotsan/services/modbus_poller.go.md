@@ -69,9 +69,10 @@ func ptypeOf(kind string) (modbus.PType, error)
 `registerMapFromKeys` builds a `modbus.RegisterMap` (`regmap.go.md`) from a `"regmap"` profile's
 telemetry keys, skipping any key with no `RegKind` (a profile may mix Modbus and non-Modbus keys
 harmlessly) and refusing outright if NONE carry one — a register-map device with nothing mapped
-can never yield a reading, so that is a config error, not an empty result. `ptypeOf` maps the
-profile's string `RegKind` (`"u16"`/`"i16"`/`"u32"`/`"i32"`) to the driver's `modbus.PType`,
-refusing anything else.
+can never yield a reading, so that is a config error, not an empty result. It now also threads
+`k.RegInput` onto each `modbus.Point`'s `Input` field, so a key marked "input register" is read via
+fn 4 instead of fn 3. `ptypeOf` maps the profile's string `RegKind`
+(`"u16"`/`"i16"`/`"u32"`/`"i32"`/`"f32"`) to the driver's `modbus.PType`, refusing anything else.
 
 ## Notes
 
@@ -82,9 +83,13 @@ refusing anything else.
 - Feeds `Ingest.HandlePolled`, not `Ingest.Handle` — there is no MQTT payload to decode and no
   enrollment quarantine to apply; a polled device is one the operator explicitly configured and
   the app dialled out to. See `ingest.go.md`.
-- The two shipped Modbus profiles this service can drive — `generic-sunspec-solar` (SunSpec
-  auto-discovery) and `huawei-sun2000` (register map) — are seeded by
+- The five shipped Modbus profiles this service can drive — `generic-sunspec-solar` (SunSpec
+  auto-discovery), `huawei-sun2000`, `sungrow-sh-hybrid`, `deye-hybrid` (register map), and
+  `eastron-sdm630-meter` (register map, input/float32) — are seeded by
   `services.ProfileService.EnsureBuiltins` from `profile_catalog.go.md`.
-- Covered by `modbus_poller_test.go` (`modbus_poller_test.go.md`): `ptypeOf`, that a SunSpec
-  profile yields no register bindings, and an end-to-end decode of the `huawei-sun2000` register
-  map against a fake register bank.
+- Covered by `modbus_poller_test.go` (`modbus_poller_test.go.md`): `ptypeOf` (now including
+  `"f32"`), that a SunSpec profile yields no register bindings, an end-to-end decode of the
+  `huawei-sun2000` register map against a fake register bank, and
+  `TestBuiltinRegmapProfilesBuildValidMaps` — every builtin register-map profile (including the
+  three new ones) must build a non-empty, valid `RegisterMap` via `registerMapFromKeys`, catching a
+  typo'd `RegKind` or an unmapped key at test time rather than only when a real device is polled.

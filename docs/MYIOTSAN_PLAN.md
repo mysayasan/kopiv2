@@ -789,7 +789,7 @@ commands directly from the control plane, closing the gap §8e left open.
 
 ---
 
-## 8g. P5 + P8 — Industrial protocols and the solar "system workspace" (driver foundation + app integration + guarded Modbus control landed; RTU/OPC-UA and the workspace remain)
+## 8g. P5 + P8 — Industrial protocols and the solar "system workspace" (driver foundation + app integration + guarded Modbus control + 3 more register-map profiles landed; RTU/OPC-UA and the workspace remain)
 
 Prompted by a request to make myiotsan **handle solar systems** without writing code per inverter
 model: use the protocols we have, and combine them into a **reusable template workspace** for a
@@ -910,10 +910,63 @@ data, not code.
    (`views/react-webpack/.../profiles.js`) and device editor (`devices.js`) became transport-aware:
    a profile picks MQTT or Modbus TCP; a Modbus profile's keys/commands bind to registers instead
    of JSON paths/topics, and a Modbus device's create/edit form asks for `Endpoint`
-   (`host:port`)/`Unit` instead of a broker password. No built-in profile declares a Modbus command
-   yet — this is the mechanism, not a worked example.
+   (`host:port`)/`Unit` instead of a broker password. No built-in profile declared a Modbus command
+   at this point — this landed the mechanism, not a worked example; item 6 below is the worked
+   example.
 5. **RTU (serial)** is the same driver behind a serial transport (adds CRC + a serial port / RTU→TCP
-   gateway); TCP is first because the simulator is TCP. **OPC-UA** is a later peer driver.
+   gateway); TCP is first because the simulator is TCP. **OPC-UA** is a later peer driver. Both
+   remain outstanding.
+6. **LANDED 2026-07-16 (branch `feat/myiotsan-solar-samples`).** Three more register-map profiles —
+   the budget/high-volume hardware an installer outside the SolarEdge/SMA/Fronius/Huawei world
+   actually buys — plus the driver work they needed and an in-app knowledge base:
+   - **`sungrow-sh-hybrid`** — Sungrow is #2 in global inverter shipments; its SH residential
+     hybrids read from **INPUT registers (fn 4)** with **word-swapped** 32-bit values, neither of
+     which the Huawei map needed. It is the first built-in profile to pre-declare Modbus commands
+     — `ems_mode`, `batt_force`, `batt_force_power`, `export_limit`, `export_limit_enable`,
+     `batt_min_soc`, `batt_max_soc` — the item-4 worked example. Every one stays INERT until an
+     admin turns on the device's `ActuationEnabled` AND bench-verifies the register: sign/scale
+     genuinely differ by firmware, and nothing here writes to hardware on its own.
+   - **`deye-hybrid`** — the OEM behind Deye/Sunsynk/Sol-Ark rebadges; all-holding (no `Input`
+     points), with `work_mode`/`solar_sell`/`grid_charge`/`max_sell_power` commands.
+   - **`eastron-sdm630-meter`** — the cheap 3-phase meter a site adds when the inverter cannot see
+     the grid; read-only (a meter has nothing to actuate), IEEE-754 **float32** over input
+     registers — the first profile needing float decoding.
+   - **Driver additions in `infra/iot/modbus/regmap.go`**: an optional `inputReader` interface
+     (`ReadInput(addr, qty)`) a `Reader` may also implement, and a new `Point.Input bool`. A
+     holding read (fn 3) and an input read (fn 4) are different function codes over the same
+     address space, so `clusters()` now partitions by bank FIRST, then windows each partition by
+     the 125-register limit — a point in each bank can never share a round trip even at the same
+     address. `Read` dispatches to `ReadInput` or `ReadHolding` per cluster and fails loudly
+     (rather than silently reading the wrong bank) if a map binds an input point but its `Reader`
+     doesn't implement `inputReader`. A new `PF32` `PType` decodes IEEE-754 float32
+     (`math.Float32frombits`) the same two-register way `PU32`/`PI32` already do. Both additions
+     are backward-compatible: `Input` defaults `false`, so every existing FC03/holding-only map and
+     reader (SunSpec included) is unchanged. `entities.TelemetryKey` gained `RegInput bool` and
+     `"f32"` became a valid `RegKind`, threaded through `registerMapFromKeys`/`ptypeOf`
+     (`modbus_poller.go`) and the profile CRUD/import-export/builtin-seed paths (`profile.go`,
+     `profile_transfer.go`, `profile_catalog.go`) alongside the pre-existing binding fields.
+   - **Five new built-in Flow Engine templates** (`services/flow_catalog.go`), all on the
+     `$inverter` slot: `solar-self-consumption`/`solar-self-sufficiency` (derived series, the same
+     two-stream-join pattern the original "Solar system" sample uses), `solar-battery-guard`
+     (low-SoC alert + a force-charge command below a critical floor), `solar-export-limit` (caps
+     grid export via a guarded command — the control showcase), and `solar-inverter-health`
+     (overheat + abnormal-running-state alerts). Every command node in these templates is inert for
+     the same reason the profile commands above are: actuation-enabled + bench-verified, or it goes
+     nowhere.
+   - **A new in-app knowledge base** (`apps/myiotsan/kb`, `go:embed`, served at `GET /api/kb` and
+     `GET /api/kb/{slug}` by the new `apps/myiotsan/apis/kb.go`, readable by viewer/operator too —
+     `services/rbac.go`) ships eight compiled-in Markdown articles under `kb/solar/`: an index, one
+     per new profile (`sungrow-sh.md`, `deye-hybrid.md`, `eastron-sdm630.md`), SunSpec inverters,
+     Modbus TCP vs RTU, an RS485-TCP gateway how-to, and how to verify a control register before
+     flipping `ActuationEnabled`. It works fully air-gapped since the content is compiled into the
+     binary, not fetched. Frontend gained a Help page (`components/kb.js`, a dependency-free
+     Markdown renderer) and nav entry.
+   - Verified: `regmap_test.go` (float32 decode, input-vs-holding dispatch on mixed maps, the
+     no-`inputReader` failure), `modbus_poller_test.go` (`ptypeOf("f32")`, every builtin
+     register-map profile builds a valid `RegisterMap`), `kb/kb_test.go` (the embed loads and
+     frontmatter parses), and `flows_test.go`-style coverage that every builtin flow graph parses.
+     Live-boot verified: the KB is served, all profiles and flows seed, and the FC04/f32/word-swap
+     read path decodes correctly against a Modbus mock.
 
 ### Layer B — the system workspace (the reusable "template", P8)
 

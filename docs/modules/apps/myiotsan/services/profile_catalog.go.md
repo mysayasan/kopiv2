@@ -17,8 +17,8 @@ a manageable write rate.
 func builtinProfiles() []builtinProfile
 ```
 
-Returns eleven profiles, each a deliberate deadband/heartbeat choice — nine PUSH (MQTT) profiles
-and, as of P5, two POLLED (Modbus) ones:
+Returns fourteen profiles, each a deliberate deadband/heartbeat choice — nine PUSH (MQTT) profiles
+and, as of P5, five POLLED (Modbus) ones:
 
 - **`door-contact`** — `contact` has NO deadband (every transition is the event; a handful a
   day), `battery`/`linkquality` deadbanded and heartbeated every 6h.
@@ -67,6 +67,26 @@ and, as of P5, two POLLED (Modbus) ones:
   hybrid: a new device is a new map, not new code. The battery/meter registers sit ~5,700 apart
   from the inverter block, which is exactly the scattered-map shape `infra/iot/modbus.RegisterMap`
   clusters into separate bounded reads (`regmap.go.md`).
+- **`sungrow-sh-hybrid` (`Transport: "modbus"`, `ModbusMode: "regmap"`)** — Sungrow is #2 in global
+  inverter shipments; its SH residential hybrids are common enough to be worth a dedicated map. Its
+  telemetry lives in **INPUT registers** (`RegInput: true` on every key, fn 4) and its 32-bit
+  values are **word-swapped** (`WordSwap: true`, low word first) — neither of which the Huawei map
+  needed, and the reason both fields exist on the binding. It is also the first built-in profile to
+  pre-declare Modbus **commands** (`ems_mode`, `batt_force`, `batt_force_power`, `export_limit`,
+  `export_limit_enable`, `batt_min_soc`, `batt_max_soc`) — every one stays INERT until an admin
+  turns the device's `ActuationEnabled` on AND bench-verifies the register: sign/scale/units
+  genuinely differ by SH model and firmware (`batt_force_power`'s unit alone is watts on some
+  models and percent on others). See `apps/myiotsan/kb/solar/sungrow-sh.md`.
+- **`deye-hybrid` (`Transport: "modbus"`, `ModbusMode: "regmap"`)** — the OEM behind a large slice
+  of the budget hybrid market; the SAME map answers for Deye, Sunsynk, and Sol-Ark rebadges.
+  All-holding (no `RegInput`), signed 16-bit values, no word-swapping needed. Commands
+  (`work_mode`, `solar_sell`, `grid_charge`, `max_sell_power`) carry the same bench-verify caveat —
+  the register convention (A vs B) differs by model. See `apps/myiotsan/kb/solar/deye-hybrid.md`.
+- **`eastron-sdm630-meter` (`Transport: "modbus"`, `ModbusMode: "regmap"`)** — the cheap 3-phase
+  meter a site adds when the inverter itself cannot see the grid. **Read-only** (a meter has
+  nothing to actuate) and the first profile needing **`RegKind: "f32"`** — its values are IEEE-754
+  float32 over input registers, big-endian, no word swap. See
+  `apps/myiotsan/kb/solar/eastron-sdm630.md`.
 
 ## Notes
 

@@ -20,9 +20,13 @@ server-side-bounds/rate-limited/audited, and never auto-retried (see
 partially landed (2026-07-15): the Modbus/SunSpec driver foundation is WIRED IN** — a
 `services.ModbusPoller` (`services/modbus_poller.go.md`) dials out to Modbus devices on their
 profile's cadence and feeds `Ingest.HandlePolled`, and the shipped catalog gained its first two
-POLLED profiles (`generic-sunspec-solar`, `huawei-sun2000`). What remains of P5 is RTU (serial)
-and OPC-UA transports and guarded Modbus control writes; the solar "system workspace" (P8) is
-still design-only. See `docs/MYIOTSAN_PLAN.md` §8g. **A tabbed Settings page shipped 2026-07-16**,
+POLLED profiles (`generic-sunspec-solar`, `huawei-sun2000`). **Guarded Modbus control writes
+shipped 2026-07-16**, and the catalog then gained three more register-map profiles
+(`sungrow-sh-hybrid`, `deye-hybrid`, `eastron-sdm630-meter`), a driver enhancement (fn 4 input
+registers + float32 decoding, `infra/iot/modbus/regmap.go.md`), five more built-in solar Flow
+Engine templates, and a new in-app knowledge base (`/api/kb`) — see the "P5" note below. What
+remains of P5 is RTU (serial) and OPC-UA transports; the solar "system workspace" (P8) is still
+design-only. See `docs/MYIOTSAN_PLAN.md` §8g. **A tabbed Settings page shipped 2026-07-16**,
 consolidating users/roles, site location, outbound notification delivery (webhook/telegram — now
 actually wired to the shared notification hub for the first time), storage/broker settings, fleet
 pairing, and a restart control into one admin-only page — see the "Notes" section below. **A visual
@@ -57,9 +61,10 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
   authored on the visual canvas (`apps/myiotsan/entities`).
 - `Seeders(...)` seeds the endpoint catalog for rate limiting/runtime metadata, now including
   `/api/devices`, `/api/profiles`, `/api/rules`, `/api/alerts`, `/api/notifications`, (P3)
-  `/api/discovery` (auth-only), and (P4) `/api/settings` (auth-only — users and roles; see the
-  gap this closes below), alongside the original `/api/health`, `/api/version` (public),
-  `/api/auth/login` (public), `/api/auth` (auth-only).
+  `/api/discovery` (auth-only), (P4) `/api/settings` (auth-only — users and roles; see the
+  gap this closes below), and `/api/kb` (auth-only — the shipped setup guides, see below),
+  alongside the original `/api/health`, `/api/version` (public), `/api/auth/login` (public),
+  `/api/auth` (auth-only).
 - `RegisterAppRoutes(api, deps)`:
   1. Builds `sharedservices.NewLocalUserService` on a `LocalUser` repo bound to `deps.Db`.
   2. Seeds roles **before** the admin is seeded (`services.EnsureRoles` — myiotsan's own
@@ -184,8 +189,10 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
       `services/flow_runtime.go.md` and `docs/MYIOTSAN_PLAN.md` §8i.
   11. Registers `apis.NewDevicesApi`, `apis.NewDiscoveryApi` (P3), `apis.NewCommandsApi` (P4),
       `apis.NewProfilesApi`, `apis.NewRulesApi`, `apis.NewScenesApi`, `apis.NewSchedulesApi`
-      (home automation), `apis.NewFlowsApi` (Flow Engine, admin-only), `apis.NewNotificationsApi`
-      on `protected`.
+      (home automation), `apis.NewFlowsApi` (Flow Engine, admin-only), `apis.NewKbApi` (the in-app
+      knowledge base — reference content compiled into the binary via `go:embed`, granted to
+      viewer/operator too since it is read-only; see `apps/myiotsan/kb/kb.go.md`),
+      `apis.NewNotificationsApi` on `protected`.
   11b. **Wires the fleet (P6)**, gated on `deps.Config.Pairing.Enabled`: resolves
       `openFleetSecretCipher(deps)` (fails closed — see "Fleet (P6)" below), builds the fleet
       via `buildFleet(api, deps, appVersion(m), fleetCipher, notificationService)`
@@ -309,9 +316,34 @@ adopted myiotsan node) were booted together for a live end-to-end check. See
   blocks sit far enough from its inverter block that `infra/iot/modbus.RegisterMap.Read` had to
   gain **clustered reads** — bounded per-block requests instead of one span the Modbus 125-register
   limit forbids). Verified live against `tools/sunspec-sim`'s new unit-4 Huawei persona: correctly
-  scaled/signed readings stored end to end (49.99 Hz, 13.2% SOC, +600 W grid import). Still
-  outstanding: RTU (serial) and OPC-UA transports, guarded Modbus control writes, and the solar
-  "system workspace" (P8) — see `docs/MYIOTSAN_PLAN.md` §8g.
+  scaled/signed readings stored end to end (49.99 Hz, 13.2% SOC, +600 W grid import).
+  **Guarded Modbus control writes shipped 2026-07-16** (`entities.ProfileCommand` gained
+  `Transport`/`Register`/`RegKind`/`ScaleFactor`; `CommandService.sendModbus` writes and
+  read-back-confirms, single-register `u16`/`i16` only, never retried — `services/commands.go.md`).
+  **Three more register-map profiles, a driver enhancement, five solar flow templates, and an
+  in-app knowledge base shipped 2026-07-16** (branch `feat/myiotsan-solar-samples`):
+  `sungrow-sh-hybrid` (INPUT registers + word-swapped 32-bit values, and the first built-in profile
+  to pre-declare Modbus commands — `ems_mode`/`batt_force`/`batt_force_power`/`export_limit`/
+  `export_limit_enable`/`batt_min_soc`/`batt_max_soc`, every one inert until an admin enables the
+  device's actuation and bench-verifies the register), `deye-hybrid` (Deye/Sunsynk/Sol-Ark,
+  all-holding, `work_mode`/`solar_sell`/`grid_charge`/`max_sell_power` commands), and
+  `eastron-sdm630-meter` (read-only, float32 over input registers — the first profile needing float
+  decoding). `infra/iot/modbus/regmap.go` gained an optional `inputReader` interface + `Point.Input`
+  (`clusters()` now partitions by bank first, since fn 3/fn 4 can never share a round trip) and a
+  `PF32` `PType` (`math.Float32frombits`) — both additive and backward-compatible (`Input` defaults
+  `false`, so every existing holding-only map/reader is unchanged). `entities.TelemetryKey` gained
+  `RegInput` and `"f32"` became a valid `RegKind`, threaded through `registerMapFromKeys`/`ptypeOf`
+  and the profile CRUD/import-export/seed paths. Five new built-in Flow Engine templates
+  (`services/flow_catalog.go.md`) ride the `$inverter` slot: derived self-consumption/
+  self-sufficiency series, a low-SoC alert + force-charge guard, a grid export-limit control (the
+  control showcase), and an overheat/fault alert — every command node among them stays inert for the
+  same reason. A new in-app knowledge base (`apps/myiotsan/kb`, `go:embed`, `GET /api/kb`/
+  `/api/kb/{slug}`, `apps/myiotsan/apis/kb.go`, readable by viewer/operator — `services/rbac.go.md`)
+  ships eight compiled-in Markdown setup articles under `kb/solar/`; the frontend gained a Help page
+  (`components/kb.js`). Verified live: the KB served, all profiles/flows seeded, and the
+  FC04/f32/word-swap read path decoded correctly against a Modbus mock. Still outstanding: RTU
+  (serial) and OPC-UA transports, and the solar "system workspace" (P8) — see
+  `docs/MYIOTSAN_PLAN.md` §8g.
 - **Home automation, Phases 1-3 (richer command kinds, scenes, schedules), shipped 2026-07-15:**
   moves `myiotsan` from "read sensors, actuate a relay" toward driving lamps/blinds/thermostats
   and grouping/scheduling those commands — see `docs/MYIOTSAN_PLAN.md` §8h for the full writeup.
