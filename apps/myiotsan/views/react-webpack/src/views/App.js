@@ -5,7 +5,7 @@ import './styles/iot.css';
 import { SideNav } from './components/layout';
 import { ToastStack, LangProvider, normalizeLang, LanguageDropdown, AppFooter } from '@shared';
 import { FormBusyOverlay, ThemeDropdown } from './components/ui';
-import { DashboardPage, DevicesPage, RulesPage, AlertsPage, NotificationsPage, ProfilesPage, DiscoveryPage, ScenesPage, SchedulesPage, SettingsPage } from './components/pages';
+import { DashboardPage, DevicesPage, RulesPage, AlertsPage, NotificationsPage, ProfilesPage, DiscoveryPage, ScenesPage, SchedulesPage, FlowsPage, SettingsPage } from './components/pages';
 import { FirstRunWizard } from './components/onboarding';
 import { LoginScreen, ChangePasswordScreen } from './components/auth_screens';
 import { api, apiBase } from './lib/helpers';
@@ -148,6 +148,9 @@ function AppInner({ lang, onLangChange }) {
         {activeTab === 'scenes' ? <ScenesPage onToast={pushToast} session={session} /> : null}
         {/* Schedules readable by anyone; authoring/test-firing/location are admin-only server-side. */}
         {activeTab === 'schedules' ? <SchedulesPage onToast={pushToast} session={session} /> : null}
+        {/* Flows are admin-only in full (a flow can run JS and actuate): every /api/flows route is
+            administrator-gated server-side; hiding the tab from non-admins is UX on top of that. */}
+        {activeTab === 'flows' && session?.isAdmin ? <FlowsPage onToast={pushToast} session={session} /> : null}
         {/* Discovery is admin-only. The check here (like the hidden nav entry) is UX: the
             server 403s every /api/discovery route for anyone else, which is the enforcement. */}
         {activeTab === 'discovery' && session?.isAdmin ? <DiscoveryPage onToast={pushToast} /> : null}

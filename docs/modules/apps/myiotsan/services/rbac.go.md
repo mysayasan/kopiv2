@@ -77,7 +77,11 @@ alongside the ingest spine:
   the Settings page**: `/api/pairing` (fleet key, claim code, adoption status) had never been
   listed at all — the matrix already denied it to viewer/operator by default, but a route the
   catalog does not name is a route nobody can see they are not granting, which is exactly what
-  this catalog exists to prevent. Also NOT granted
+  this catalog exists to prevent. **Also admin only (Flow Engine)**: `/api/flows` (the WHOLE area
+  — a flow can run arbitrary sandboxed JavaScript and, through an output node, actuate a device via
+  the same guarded command path everything else uses, so unlike scenes/schedules even READING a
+  flow's graph is admin-only) and `/api/flows/*/run` (test-firing a flow, which may actuate for
+  real). Also NOT granted
   to anyone below admin, and therefore correctly absent from any `read`/`write` row: creating and
   deleting devices, editing profiles (which could widen a deadband until a sensor effectively
   stops recording), writing rules, and (home-automation) authoring a scene or a schedule

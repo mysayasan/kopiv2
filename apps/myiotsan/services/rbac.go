@@ -113,6 +113,12 @@ func Policy() []PolicyRule {
 		// that an operator may fire grouped commands.
 		{Path: "/api/scenes/*/run", Description: "Run a scene (command every device in it)", Viewer: none, Operator: none},
 		{Path: "/api/schedules/*/run", Description: "Test-fire a schedule now", Viewer: none, Operator: none},
+		// Flows are executable data-flow graphs authored on the canvas. A flow can run arbitrary
+		// (sandboxed) JavaScript and, through an output node, actuate a device via the SAME guarded
+		// command path everything else uses — so authoring, running and even reading a flow is
+		// admin-only, the same bar as a scene. Test-firing a flow (/run) actuates for real.
+		{Path: "/api/flows", Description: "Author and run executable flow graphs (the visual canvas)", Viewer: none, Operator: none},
+		{Path: "/api/flows/*/run", Description: "Test-fire a flow now (may actuate devices)", Viewer: none, Operator: none},
 		{Path: "/api/settings/location", Description: "Set the site latitude/longitude for sun schedules", Viewer: none, Operator: none},
 		// Opening an enrollment window is the ONE act in the whole app that lets an unknown thing
 		// talk to the broker at all. It is time-boxed, key-gated and quarantined — and it is still

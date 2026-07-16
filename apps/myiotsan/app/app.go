@@ -124,6 +124,8 @@ func (m *module) Entities() []any {
 		appentities.Scene{},
 		appentities.SceneAction{},
 		appentities.Schedule{},
+		// Flow engine: saved executable data-flow graphs (the visual canvas).
+		appentities.IotFlow{},
 		// The fleet's node-side state (the fleet key, the pairing enrollment, the mTLS cert)
 		// lives in the shared runtime_setting table, encrypted at rest.
 		sharedentities.RuntimeSetting{},
@@ -460,6 +462,24 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		}
 	})
 
+	// The flow engine: saved, executable data-flow graphs authored on the visual canvas. The
+	// runtime taps the SAME decoded-sample stream the rules do (ingest.SetFlows), runs each flow's
+	// graph on its own worker, and reconciles compiled flows against the database on a ticker + on
+	// a change signal. Every actuation a flow performs goes through commandService.Issue, so a flow
+	// — even one with an arbitrary-JavaScript node — can command nothing a person could not.
+	flowService := services.NewFlowService(deps.Db,
+		func(f string, a ...any) { deps.Logger.Infof("myiotsan.flows", f, a...) })
+	if err := flowService.EnsureBuiltins(ctx); err != nil {
+		deps.Logger.Errorf("myiotsan.flows", "seed builtin flows: %v", err)
+	}
+	flowRuntime := services.NewFlowRuntime(flowService, commandService, notificationService, deviceService, writer,
+		func(f string, a ...any) { deps.Logger.Infof("myiotsan.flows", f, a...) })
+	flowService.SetOnChange(flowRuntime.SignalReload)
+	ingest.SetFlows(flowRuntime)
+	safego.Supervise(bgCtx, "myiotsan.flows", func(ctx context.Context) {
+		flowRuntime.Run(ctx, flowReconcileInterval)
+	})
+
 	apis.NewDevicesApi(protected, deviceService, telemetry, profileService, ingest)
 	apis.NewDiscoveryApi(protected, enrollment, deviceService)
 	apis.NewCommandsApi(protected, commandService, deviceService)
@@ -467,6 +487,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewRulesApi(protected, ruleService)
 	apis.NewScenesApi(protected, sceneService)
 	apis.NewSchedulesApi(protected, scheduleService)
+	apis.NewFlowsApi(protected, flowService, flowRuntime)
 	apis.NewNotificationsApi(protected, notificationService)
 
 	// --- the fleet -------------------------------------------------------------------
@@ -514,6 +535,11 @@ const offlineSweepInterval = time.Minute
 // per-device poll goroutines. It governs how quickly a newly added Modbus device begins polling,
 // not the poll cadence itself (which is the profile's PollSeconds).
 const modbusReconcileInterval = 30 * time.Second
+
+// flowReconcileInterval is how often the flow runtime re-reads the enabled flows to
+// compile/recompile/drop them. Like the Modbus poller, a change signal on save makes an edit take
+// effect immediately; this ticker is the backstop that also catches a direct database change.
+const flowReconcileInterval = 30 * time.Second
 
 // schedulerInterval is the automation scheduler's tick. A minute is the resolution a home schedule
 // is expressed at ("07:30"), and matches the LastFiredAt double-fire guard's minute granularity.

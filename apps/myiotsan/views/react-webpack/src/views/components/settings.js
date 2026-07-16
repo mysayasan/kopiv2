@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { DataTable, Ico, PasswordField, Tabs, useT } from '@shared';
-import { api, defaultDestination, errorMessage, notificationCategories, notificationSeverityOptions } from '../lib/helpers';
+import { api, defaultDestination, errorMessage, notificationCategories, notificationSeverityOptions, roleLabel } from '../lib/helpers';
 import { AccordionItem, AccordionList, ConfirmModal, CopyButton, Field, Modal, Panel } from './ui';
 
 // The Settings page — one tabbed home for everything that configures the hub itself. Admin-only (the
@@ -112,7 +112,7 @@ function UsersPanel({ onToast }) {
     },
     {
       key: 'roleId', label: t('st.role'),
-      render: (_v, u) => { const role = roleOf(u.roleId); return role ? <span className={`iot-role-badge ${roleTone(role)}`}>{role.name}</span> : <span className="iot-user-sub">—</span>; },
+      render: (_v, u) => { const role = roleOf(u.roleId); return role ? <span className={`iot-role-badge ${roleTone(role)}`}>{roleLabel(t, role.name)}</span> : <span className="iot-user-sub">—</span>; },
     },
     {
       key: 'isActive', label: t('st.status'), filterType: 'boolean',
@@ -211,7 +211,7 @@ function UserModal({ user, roles, onClose, onSaved, onToast }) {
           <Field label={t('st.role')} required>
             <select value={form.roleId || ''} onChange={(e) => set({ roleId: Number(e.target.value) })}>
               <option value="">{t('st.pickRole')}</option>
-              {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              {roles.map((r) => <option key={r.id} value={r.id}>{roleLabel(t, r.name)}</option>)}
             </select>
           </Field>
         </div>

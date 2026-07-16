@@ -11,8 +11,13 @@ exists, and the payoff §1's differentiator promised.** **P7 (release) SHIPPED (
 §8f: `myiotsan` is now an installable product (portable archives, .deb/.rpm, Windows Inno, Docker,
 release CI, k6, ZAP), and the `nodeiot/` embed deferred out of P6 also shipped in the same pass
 (§8f) — `myseliasan` can now manage an adopted `myiotsan` node's devices/rules/alerts/commands
-directly, the way it already does for a `mymatasan` camera node.** Only **P5** (Modbus/OPC-UA)
-remains.
+directly, the way it already does for a `mymatasan` camera node.** **A Flow Engine — a
+Node-RED-style visual, executable data-flow canvas (P1-P3) — SHIPPED (2026-07-16), see §8i.** This
+was an explicit, later decision that DELIBERATELY REVERSES §8g's original "no visual node-graph
+editor" scope line; it is kept safe by routing every flow's actuation through the same guarded
+`CommandService.Issue` chokepoint every other command path in this app uses. Only **P5**
+(Modbus/OPC-UA control writes + RTU/OPC-UA transports) and **P8** (the solar system workspace)
+remain.
 
 `myiotsan` is the fourth app in the suite, alongside `mymatasan` (camera NVR), `myseliasan`
 (fleet control plane) and `myidsan` (identity/SSO). It is built on the same platform as
@@ -919,7 +924,19 @@ grouping + computed-value + layout descriptor, the same "declare once, instantia
 
 ### Scope discipline (refuse)
 
-- No visual rule-chain editor (ThingsBoard-style); the template is a declarative descriptor.
+- ~~No visual rule-chain editor (ThingsBoard-style); the template is a declarative descriptor.~~
+  **REVERSED 2026-07-16 — see §8i.** A visual, executable data-flow canvas (the Flow Engine) was
+  deliberately built, by explicit decision: it turned out the composite, cross-device computation
+  this layer needs (self-consumption, net grid, battery autonomy — precisely the derived metrics
+  this section names) is more naturally authored as a small graph than as fields on a declarative
+  descriptor, and Node-RED's own popularity for exactly this kind of "combine two streams" wiring
+  made a bespoke declarative language a worse fit, not a safer one. The line that stays intact is
+  the SAFETY one, not the "no graphical UI" one: a flow's arbitrary-JavaScript nodes can transform
+  a value but never act — only a dedicated output node can, and that node routes through the
+  identical guarded `CommandService.Issue` chokepoint (actuation-enabled, admin, declared bounds,
+  rate limit, audit, never auto-retried) every other actuation path in this app already uses. The
+  system workspace below (Layer B / P8) still remains a declarative template — the reversal is
+  scoped to the flow layer, not to how a solar system's slots/roles are described.
 - No MPPT curve optimisation / forecasting / energy trading. Monitor + alert + **guarded** control.
 - **CAN-bus batteries stay out** (pure-Go CAN over the wire isn't viable in the single-binary model
   — same verdict as BACnet); those need a Modbus-TCP gateway.
@@ -1029,13 +1046,103 @@ exactly the "scope creep into a Home Assistant clone" risk §9 already names: sc
 are a deliberate, bounded step toward useful home automation, not an invitation to build a general
 automation-rule engine without first deciding, out loud, who is allowed to author a rule that acts.
 
+## 8i. Flow Engine — a Node-RED-style visual, executable data-flow canvas (P1-P3, shipped)
+
+**Shipped 2026-07-16.** An explicit, later decision to build a visual, executable node-graph
+editor — the thing §8g's original "Scope discipline" refused outright (see the reversal noted
+there). The trigger was the same problem §8g's Layer B names: the useful numbers in a composite
+system (self-consumption, net grid, battery autonomy) are computed ACROSS devices, and authoring
+that as fields on a declarative descriptor does not scale past one or two hand-picked formulas —
+a small, wired graph (Node-RED's own model) is a better fit for "combine these streams, however the
+site needs", and is also a better fit for the general case the plan never anticipated: an
+integrator's one-off automation that does not deserve its own first-class entity.
+
+### The safety design — why "arbitrary JavaScript" did not become "a new authority"
+
+A flow is a graph of NODES (inputs, transforms, logic, outputs) joined by WIRES, stored as one JSON
+document (`entities.IotFlow.Graph`, `apps/myiotsan/entities/iot_flow.go.md`) and compiled/executed
+by `apps/myiotsan/services/flow_runtime.go.md`. Two of its transform node types
+(`function`/`expression`/`switch`) run **arbitrary JavaScript** in an embedded, sandboxed
+interpreter (`github.com/dop251/goja`, a new pure-Go dependency — `apps/myiotsan/services/
+flow_eval.go.md`). This is the one design point that needed real care:
+
+- The sandbox has **no host bindings at all** — no `require`, filesystem, network, or `os`; only
+  the ECMAScript standard library. A script's whole world is the message it is handed and the value
+  it returns. Pinned by a test that tries `require('fs')`, `process.pid`, and `readFileSync` and
+  confirms all three fail.
+- Every script call is fenced by a watchdog (`Interrupt()` after 100ms) so a `while(true){}` cannot
+  wedge the flow worker; pinned live (a real infinite-loop node is driven and confirmed interrupted
+  within a bounded test window).
+- **CRUX: nothing in a flow can actuate except a dedicated `command` output node, and that node
+  routes through the SAME `CommandService.Issue` chokepoint every other actuation path in this app
+  uses** (§3.4/§8d's five gates: actuation-enabled, admin, declared-commands-only, server-side
+  bounds, rate limit, full audit, never auto-retried). A flow's arbitrary JavaScript can shape a
+  *value*; it cannot choose to skip a gate, retry a refused write, or reach a device the command
+  layer would otherwise refuse. Pinned by a test that drives a threshold→command flow and confirms
+  exactly one guarded call reaches the fake issuer, with the device resolved by natural key.
+- Execution is single-threaded per flow (one goja runtime per compiled flow, never touched off its
+  own worker goroutine) — goja runtimes are not goroutine-safe, so this is a correctness
+  requirement, not just a convenience.
+- A flow is a convenience layer over telemetry, **never the system of record**: under backpressure
+  the ingest tap drops the newest event rather than block ingest, and a `derived_metric` output
+  writes straight to the reading store without re-entering the ingest pipeline (a derived write
+  feeding back through the flow tap could loop).
+
+### P1 — the engine
+
+The node palette (`device_telemetry` input; `function`/`expression`/`scale` transforms;
+`threshold`/`switch`/`deadband` logic; `debug`/`notify`/`command` outputs), graph validation
+(`parseGraph` — closed node-type set, no dangling wires, no cycles, a 200-node sanity ceiling), the
+worker/reconcile loop (mirrors the Modbus poller's pattern: a ticker + an explicit change signal so
+enabling/editing/disabling a flow takes effect with no restart), and the debug inspector (a live
+per-node snapshot of the last message seen, for `GET /api/flows/{id}/debug`).
+
+### P2 — the canvas
+
+The frontend page (`apps/myiotsan/views/react-webpack/src/views/components/flows.js`): a flow list
+plus an SVG-based drag-and-drop canvas editor (palette → canvas → per-node config panel), a
+toolbar (name/category/enabled), zoom controls, and a "run" action that test-fires the flow and
+lights up the canvas with the resulting debug snapshot — `POST /api/flows/{id}/run` seeds a
+synthetic value at every input node and returns a per-node result; an output node still acts for
+REAL during a test-fire (a notify really publishes, a command really routes through the guarded
+path), which is the point of testing it. New nav entry under "Automation", admin-only in full — the
+whole `/api/flows` area is denied to viewer/operator server-side (`services/rbac.go.md`), because
+even reading a flow's graph reveals what it could do, and test-firing it can actuate for real.
+
+### P3 — templates and the derived metric
+
+- **Slot-based templates.** A flow becomes reusable simply by naming a device by a SLOT (a
+  placeholder like `"$inverter"`) instead of a concrete key — no separate entity, no schema change:
+  a template is a flow whose graph still has slots, an instance is one whose slots are filled.
+  `GET /api/flows/{id}/slots` reports what a flow declares; `POST /api/flows/{id}/instantiate`
+  binds every slot to a real device and stamps out a concrete, disabled-by-default flow for an
+  admin to review and enable. The shipped "Solar system" sample (`services/flow_catalog.go.md`) is
+  the worked example: it derives on-site self-consumption from grid + PV power (the two-stream-join
+  the data-flow model exists to do) behind the `$inverter` slot, plus a high-grid-import alert.
+- **`derived_metric` output node.** Persists a computed value as a telemetry reading under a target
+  device's namespace, so it rides the identical deadband → rollup → rules → charts machinery any
+  other reading does — this is the flow-layer down payment on Layer B's `derived_metric` concept
+  (§8g), reachable today without waiting on the full system-workspace entity.
+- Flow import/export (`.iotflow`, mirroring `.iotprofile`) travels a flow between sites; an import
+  is never builtin and always arrives disabled, the same caution an imported profile observes.
+
+### Relationship to §8g's Layer B (the system workspace, still not built)
+
+The Flow Engine is NOT the system workspace — there is still no `system_template`/`system_instance`
+entity, no member-slot cardinality/required-optional model, and no system-scoped rule tier. What
+shipped is the piece that makes hand-authoring a derived metric or a cross-device alert possible
+TODAY, for one flow at a time; the workspace (P8) would still add the higher-level "declare a
+solar system once, deploy many" grouping on top. The two are complementary, not overlapping: a
+future workspace instance could reasonably generate/instantiate a flow from its template rather
+than replace the engine underneath it.
+
 ## 9. Known risks
 
 | Risk | Mitigation |
 |---|---|
 | **SQLite write throughput** under telemetry load. | **RESOLVED (2026-07-14), measured, see §8b.** Deadband + batching + rollup (§3.2) shipped in P1. 20 devices / ~30,000 samples in under a second → 540 rows written, 98.2% suppressed, 0 dropped. `GET /api/devices/stats` keeps it observable going forward. Do not add a TSDB. |
 | **`frontend/shared/CameraHero.js`** is camera-specific but lives in the *shared* module. | Still open — P1/P2 shipped as a backend MVP with no device-page hero component yet built against it; decide before the device detail UI lands. |
-| **Scope creep** into a Home Assistant clone. | Hold the line stated in §1. **Revisited 2026-07-15 (§8h):** scenes and schedules shipped as a deliberate, bounded step (grouping/scheduling *human-initiated* commands) — Phase 4 (an `iot_rule` triggering actuation with no human in the loop, which is the step that would actually start looking like a general automation-rule engine) is explicitly deferred to a later, security-reviewed PR. |
+| **Scope creep** into a Home Assistant clone. | Hold the line stated in §1. **Revisited 2026-07-15 (§8h):** scenes and schedules shipped as a deliberate, bounded step (grouping/scheduling *human-initiated* commands) — Phase 4 (an `iot_rule` triggering actuation with no human in the loop, which is the step that would actually start looking like a general automation-rule engine) is explicitly deferred to a later, security-reviewed PR. **Revisited again 2026-07-16 (§8i):** the Flow Engine deliberately reverses §8g's "no visual node-graph editor" line — the risk this row is meant to hold is an automation surface with *no human in the loop and no guard rails*, and a flow's actuation still requires an explicit output node wired by an admin and still routes through the identical guarded `CommandService.Issue` chokepoint; it is a richer AUTHORING surface for the same bounded set of human-initiated actions, not a new actuation authority. |
 | **BACnet** demand from building-automation customers. | Out of scope; Go libs are not production-grade. External gateway if forced. |
 | **Actuation safety.** | **RESOLVED (2026-07-14), see §8d.** Read-only default, admin-only RBAC, declared-commands-only, server-side bounds, 2s rate limit, full audit (incl. refusals) — all shipped, plus never-auto-retry and non-re-applied expiring desired state, which the original §3.4 did not name. **Extended 2026-07-15 (§8h):** `validateValue` gained a `default` case that refuses an unrecognised `Kind` — closes a latent hole where an unknown/misconfigured kind would have been published unvalidated; the five new home-automation kinds all route through the same server-side bounds discipline. |
 | **No scaffolding tooling exists** — every app so far was hand-copied. | Worth writing a small generator during P0, since this is the second fork. |
@@ -1052,3 +1159,5 @@ automation-rule engine without first deciding, out loud, who is allowed to autho
 - [`goburrow/modbus`](https://github.com/goburrow/modbus) — Modbus TCP/RTU.
 - [`gopcua/opcua`](https://github.com/gopcua/opcua) — OPC-UA.
 - [`alexbeltran/gobacnet`](https://github.com/alexbeltran/gobacnet) — BACnet; explicitly experimental, hence deferred.
+- [`dop251/goja`](https://github.com/dop251/goja) — pure-Go embedded ECMAScript interpreter; the Flow Engine's sandboxed JavaScript substrate (§8i). No host bindings added; fenced by a hard-timeout watchdog per call.
+- [Node-RED](https://nodered.org/) — the reference visual data-flow tool the Flow Engine's node/wire/message model borrows from (§8i); wrong deployment model to adopt wholesale (Node.js, npm-package nodes), right mental model for the graph.

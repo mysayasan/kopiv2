@@ -31,8 +31,12 @@ together; and a scene or a single command can be fired on the clock or at sunris
 **schedule**. Every one of these still fires through the exact same actuation gates a manual
 command does — see "Home automation" below. **Rule-driven actuation (a rule triggering a scene or
 command automatically, with no human in the loop) is deliberately NOT built** — see
-`docs/MYIOTSAN_PLAN.md` §8h for why. See `docs/MYIOTSAN_PLAN.md` for the full roadmap and, in
-§8b/§8c/§8d/§8e/§8f/§8g/§8h, exactly what shipped and what was found by live-booting it.
+`docs/MYIOTSAN_PLAN.md` §8h for why. **A Flow Engine — a Node-RED-style visual, executable
+data-flow canvas — has also shipped**: an admin can wire telemetry inputs through transforms
+(including sandboxed JavaScript), logic and outputs on a drag-and-drop canvas; every flow's
+actuation still goes through the identical guarded command path — see "Flow Engine" below. See
+`docs/MYIOTSAN_PLAN.md` for the full roadmap and, in §8b/§8c/§8d/§8e/§8f/§8g/§8h/§8i, exactly what
+shipped and what was found by live-booting it.
 
 ## Onboarding a device
 
@@ -261,6 +265,47 @@ gap, not an oversight: a rule that can write to a device with no human in the lo
 different risk than one that raises an alert, and it is deferred to a later, security-reviewed
 change. See `docs/MYIOTSAN_PLAN.md` §8h.
 
+## Flow Engine
+
+A visual, executable data-flow canvas — the myiotsan equivalent of a Node-RED flow — for the
+composite computations scenes/schedules cannot express: combining two telemetry streams into a
+derived value (self-consumption, net grid), or wiring a bespoke transform-then-alert chain without
+it deserving its own first-class entity. `GET/POST/PUT/DELETE /api/flows`, plus
+`POST /api/flows/import`, `GET /api/flows/{id}/export`, `GET /api/flows/{id}/slots`,
+`POST /api/flows/{id}/instantiate`, `POST /api/flows/{id}/run` (test-fire), and
+`GET /api/flows/{id}/debug` (the live per-node inspector). **The whole area is admin-only, unlike
+scenes/schedules where reading is open to every role** — even seeing a flow's graph reveals what it
+could do, and test-firing one can actuate a real device.
+
+A flow is a graph of NODES (an input that emits on a new reading; transforms — including a
+`function`/`expression` node running arbitrary JavaScript, and a `switch` node gating on a JS
+predicate — plus a plain `scale`/`threshold`/`deadband`; and outputs: `debug` for the inspector,
+`notify` to raise an alert, `command` to actuate, `derived_metric` to persist a computed value as a
+new telemetry series) joined by wires, drawn and saved as one document.
+
+**The safety design is the point.** A `function`/`expression`/`switch` node runs in an embedded,
+sandboxed JavaScript interpreter with **no host bindings at all** — no filesystem, no network, no
+`require`, no `os` — fenced by a hard 100ms watchdog per call, so neither an escape attempt nor an
+infinite loop can reach outside the flow or wedge it. But the real guarantee is this: **nothing in
+a flow can actuate except the dedicated `command` output node, and that node routes through the
+exact same guarded `CommandService.Issue` chokepoint every manual command, scene, and schedule
+already uses** — actuation-enabled, admin-only, declared-commands-only, server-side bounds, rate
+limit, full audit, never auto-retried. An arbitrary-JavaScript node can shape a *value*; it cannot
+skip a gate, retry a refused write, or reach a device the command layer would otherwise refuse. A
+flow is convenience and computation layered on the existing actuation path, never a new authority.
+
+**Templates via device-role slots.** A flow becomes reusable simply by naming a device with a
+placeholder (`"$inverter"`) instead of a concrete key — `GET /api/flows/{id}/slots` reports what a
+flow declares, `POST /api/flows/{id}/instantiate` binds every slot to a real device and stamps out
+a concrete, disabled-by-default copy for review. The shipped "Solar system" sample flow is exactly
+this: it derives on-site self-consumption from grid + PV power behind an `$inverter` slot, plus a
+high-grid-import alert — instantiate it against your adopted inverter to get a ready-to-enable
+flow. A flow document is portable (`.iotflow`, export/import), mirroring `.iotprofile`; an import
+is never builtin and always arrives disabled.
+
+See `docs/MYIOTSAN_PLAN.md` §8i for the full design rationale, including why this deliberately
+reverses an earlier "no visual node-graph editor" scope line.
+
 ## Authentication
 
 `myiotsan` reuses mymatasan's local-auth stack, extracted to `domain/shared` so both appliance
@@ -312,7 +357,11 @@ visible only to the people who could have written to it is not an audit trail. T
 drawn for the two home-automation surfaces: reading scenes and schedules (`GET /api/scenes`,
 `GET /api/schedules`) is open to viewer/operator, but **running a scene, test-firing a schedule,
 authoring either, and setting the site location are all admin-only** — running one commands real
-devices through the identical actuation path a manual command takes.
+devices through the identical actuation path a manual command takes. **The Flow Engine draws the
+line differently again: the WHOLE `/api/flows` area is admin-only**, including merely reading a
+flow's graph — unlike a scene or a schedule, a flow's graph itself can reveal an actuation path
+(and reading a flow's slots is meaningful only to someone who can also instantiate/enable it), so
+there is no viewer/operator-readable tier here at all.
 
 ## Settings
 
@@ -486,11 +535,14 @@ tab rather than a strip on the readings page, because reading a sensor and firin
 different acts), **Discovery** (the enrollment window, its candidates, and adoption — see
 "Onboarding a device" above), **Rules**, **Alerts**, **Notifications**, **Device types** (the
 profile catalog, its deadbands, its declared commands — including authoring a `mode` command's
-`options` — and import/export), and, under a new **Automation** nav group, **Scenes** (author and
-run a named, ordered group of commands — the Run action hidden for anyone but an admin) and
+`options` — and import/export), and, under the **Automation** nav group, **Scenes** (author and
+run a named, ordered group of commands — the Run action hidden for anyone but an admin),
 **Schedules** (author a clock or sunrise/sunset trigger, test-fire it, and set the site location
-the sun triggers need). A first-run onboarding wizard leads a new install straight to opening its
-first enrollment window. All four locales — en, ms, zh, ar.
+the sun triggers need), and **Flows** (an admin-only entry — the whole tab is hidden from every
+other role — showing the flow list and the SVG canvas editor: a node palette, drag-and-drop wiring,
+a per-node config panel, and a "run" action that test-fires the flow and lights up the canvas with
+the resulting per-node debug values). A first-run onboarding wizard leads a new install straight to
+opening its first enrollment window. All four locales — en, ms, zh, ar.
 
 Two things on the Dashboard deserve an operator's attention:
 

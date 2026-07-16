@@ -109,6 +109,19 @@ export function formatCount(v) {
   try { return n.toLocaleString(); } catch (_) { return String(n); }
 }
 
+// roleLabel maps a stored role name to its translated label. The names are stable
+// server-side identifiers ("superadmin" / "operator" / "viewer") shared across the suite;
+// only the label is localised. The admin role is stored as "superadmin" but shown as
+// "Administrator" everywhere, matching mymatasan — a custom role falls back to its own name.
+export function roleLabel(t, name) {
+  switch (name) {
+    case 'superadmin': return t('role.admin');
+    case 'operator': return t('role.operator');
+    case 'viewer': return t('role.viewer');
+    default: return name;
+  }
+}
+
 // Notification-destination helpers (mirrors mymatasan's constants, scaled to the IoT hub). A
 // destination is one delivery target; empty `categories` = subscribed to everything.
 export const notificationCategories = [
