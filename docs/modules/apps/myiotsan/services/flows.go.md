@@ -40,10 +40,12 @@ nodeScale           = "scale"            // transform: payload*factor + offset
 nodeThreshold       = "threshold"        // logic: pass only if payload <op> value
 nodeSwitch          = "switch"           // logic: pass only if a JS predicate is truthy
 nodeDeadband        = "deadband"         // logic: pass only if payload moved >= delta since last pass
+nodeThrottle        = "throttle"         // logic: pass at most once per N seconds (rate limit), P4
 nodeDebug           = "debug"            // output: record the message for the inspector (a sink)
 nodeNotify          = "notify"           // output: publish a notification (a sink)
 nodeCommand         = "command"          // output: actuate a device via the GUARDED path (a sink)
 nodeDerivedMetric   = "derived_metric"   // output: persist a computed value as a telemetry series (a sink), P3
+nodeMqttOut         = "mqtt_out"         // output: publish the payload to an MQTT topic (a sink), P4
 ```
 
 `codeBearing(t)` reports whether a node type runs a script in the goja sandbox
@@ -106,6 +108,9 @@ A flow with no slots cannot be instantiated ("copy it instead").
 
 - `SaveFlowRequest{Name, Slug, Description, Category, Enabled, Graph}` is the create/update body;
   `Slug` is optional on create (derived from `Name` via `slugify`).
-- `cfgString`/`cfgFloat` are the free-form `map[string]any` config accessors every node type reads
-  its own config through.
+- `cfgString`/`cfgFloat`/`cfgBool` are the free-form `map[string]any` config accessors every node
+  type reads its own config through. `cfgFloat` (P4) also parses a string-encoded value — a
+  `<select>` field (e.g. the `mqtt_out` QoS picker) stores its option value as text — falling back
+  to `strconv.ParseFloat` when the raw value isn't already numeric; payload coercion (`coerceFloat`)
+  deliberately stays strict, only config reading is this lenient.
 - See `flows_test.go.md` for the pure unit coverage (propagation, sandbox containment, slots).

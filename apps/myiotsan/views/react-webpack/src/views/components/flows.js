@@ -68,6 +68,11 @@ const NODE_DEFS = {
     fields: [{ key: 'delta', kind: 'number', labelKey: 'flows.f.delta' }],
     summary: (c) => `Δ ≥ ${c.delta ?? 0}`,
   },
+  throttle: {
+    group: 'logic', icon: 'pause', labelKey: 'flows.node.throttle', in: true, out: true,
+    fields: [{ key: 'seconds', kind: 'number', labelKey: 'flows.f.seconds' }],
+    summary: (c) => `≤ 1 / ${c.seconds ?? 0}s`,
+  },
   debug: {
     group: 'output', icon: 'search', labelKey: 'flows.node.debug', in: true, out: false,
     fields: [{ key: 'label', kind: 'text', labelKey: 'flows.f.label' }],
@@ -100,13 +105,22 @@ const NODE_DEFS = {
     ],
     summary: (c) => `${c.deviceKey || '?'} · ${c.key || '?'}`,
   },
+  mqtt_out: {
+    group: 'output', icon: 'send', labelKey: 'flows.node.mqttOut', in: true, out: false,
+    fields: [
+      { key: 'topic', kind: 'text', labelKey: 'flows.f.topic' },
+      { key: 'qos', kind: 'select', labelKey: 'flows.f.qos', options: ['0', '1', '2'] },
+      { key: 'retain', kind: 'bool', labelKey: 'flows.f.retain' },
+    ],
+    summary: (c) => c.topic || 'mqtt',
+  },
 };
 
 const PALETTE_GROUPS = [
   { group: 'input', types: ['device_telemetry'] },
   { group: 'transform', types: ['scale', 'expression', 'function'] },
-  { group: 'logic', types: ['threshold', 'switch', 'deadband'] },
-  { group: 'output', types: ['debug', 'notify', 'command', 'derived_metric'] },
+  { group: 'logic', types: ['threshold', 'switch', 'deadband', 'throttle'] },
+  { group: 'output', types: ['debug', 'notify', 'command', 'derived_metric', 'mqtt_out'] },
 ];
 
 // A device reference of the form "$name" is a SLOT — a placeholder that makes the flow a reusable
@@ -125,6 +139,30 @@ function graphSlots(graphStr) {
 
 let nodeSeq = 0;
 function newNodeId(type) { nodeSeq += 1; return `${type}_${Date.now().toString(36)}${nodeSeq}`; }
+
+// nodeWarnings returns a map of nodeId -> human warning for anything an author is likely to have
+// left half-done: a node with no wire where it needs one, an input/output missing its target, an
+// empty code node. These are non-blocking hints shown on the canvas; the server still hard-validates
+// on save (unknown types, cycles).
+function nodeWarnings(graph, t) {
+  const warn = {};
+  const hasIn = {}, hasOut = {};
+  for (const w of graph.wires || []) { hasOut[w.from.node] = true; hasIn[w.to.node] = true; }
+  for (const n of graph.nodes || []) {
+    const def = NODE_DEFS[n.type] || {};
+    const c = n.config || {};
+    const msgs = [];
+    if (def.in && !hasIn[n.id]) msgs.push(t('flows.warn.noInput'));
+    if (def.out && !hasOut[n.id]) msgs.push(t('flows.warn.noOutput'));
+    if (n.type === 'device_telemetry' && (!c.deviceKey || !c.key)) msgs.push(t('flows.warn.setDeviceKey'));
+    if ((n.type === 'function' || n.type === 'expression' || n.type === 'switch') && !String(c.code || c.expr || c.predicate || '').trim()) msgs.push(t('flows.warn.emptyCode'));
+    if (n.type === 'command' && (!c.deviceKey || !c.command)) msgs.push(t('flows.warn.setDeviceCommand'));
+    if (n.type === 'derived_metric' && (!c.deviceKey || !c.key)) msgs.push(t('flows.warn.setDeviceKey'));
+    if (n.type === 'mqtt_out' && !c.topic) msgs.push(t('flows.warn.setTopic'));
+    if (msgs.length) warn[n.id] = msgs.join(', ');
+  }
+  return warn;
+}
 
 function emptyGraph() { return { nodes: [], wires: [] }; }
 function parseGraph(raw) {
@@ -439,6 +477,22 @@ export function FlowEditor({ flowId, onBack, onSaved, onToast }) {
     }
     setSelected(null);
   }
+  // Delete / Backspace removes the selected node or wire (unless a text field is focused). A ref
+  // keeps the always-current deleteSelected without re-subscribing the listener every render.
+  const deleteRef = useRef();
+  deleteRef.current = deleteSelected;
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      const el = e.target;
+      const tag = (el.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || el.isContentEditable) return;
+      e.preventDefault();
+      deleteRef.current && deleteRef.current();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   function addWire(fromNode, toNode) {
     if (fromNode === toNode) return;
     setGraph((g) => {
@@ -528,6 +582,8 @@ export function FlowEditor({ flowId, onBack, onSaved, onToast }) {
   }
 
   const selectedNode = selected?.kind === 'node' ? graph.nodes.find((n) => n.id === selected.id) : null;
+  const warnings = nodeWarnings(graph, t);
+  const warnCount = Object.keys(warnings).length;
 
   if (busy) return <section className="workspace"><Panel icon="git-branch" title={t('flows.editTitle')}><p className="settings-hint">{t('common.loading')}</p></Panel></section>;
 
@@ -539,6 +595,7 @@ export function FlowEditor({ flowId, onBack, onSaved, onToast }) {
         <input className="flow-cat-input" value={meta.category || ''} placeholder={t('flows.category')} onChange={(e) => setMeta((m) => ({ ...m, category: e.target.value }))} />
         <label className="check-row flow-enable"><input type="checkbox" checked={!!meta.enabled} onChange={(e) => setMeta((m) => ({ ...m, enabled: e.target.checked }))} /> {t('flows.enable')}</label>
         <div className="flow-toolbar-spacer" />
+        {warnCount ? <span className="flow-warn-count" title={t('flows.warnHint')}><Ico n="warning" sz={13} /> {warnCount}</span> : null}
         <button type="button" className="quiet" onClick={undo} title={t('flows.undo')}><Ico n="undo" sz={15} /></button>
         <button type="button" className="quiet" onClick={redo} title={t('flows.redo')}><Ico n="redo" sz={15} /></button>
         <button type="button" className="quiet" onClick={testFire} disabled={!flowId}><span className="btn-icon"><Ico n="play" sz={14} /> {t('flows.test')}</span></button>
@@ -586,10 +643,13 @@ export function FlowEditor({ flowId, onBack, onSaved, onToast }) {
                 const def = NODE_DEFS[node.type] || {};
                 const isSel = selected?.kind === 'node' && selected.id === node.id;
                 const dbg = debug[node.id];
+                const warn = warnings[node.id];
                 return (
-                  <g key={node.id} transform={`translate(${node.x},${node.y})`} className={`flow-node is-${def.group}${isSel ? ' is-selected' : ''}`}>
+                  <g key={node.id} transform={`translate(${node.x},${node.y})`} className={`flow-node is-${def.group}${isSel ? ' is-selected' : ''}${warn ? ' has-warn' : ''}`}>
                     <rect className="flow-node-box" width={NODE_W} height={NODE_H} rx="9"
-                      onPointerDown={(e) => onPointerDownNode(e, node)} />
+                      onPointerDown={(e) => onPointerDownNode(e, node)}>
+                      {warn ? <title>{warn}</title> : null}
+                    </rect>
                     <g className="flow-node-content" pointerEvents="none">
                       <text className="flow-node-title" x="34" y="22">{t(def.labelKey || 'flows.node.unknown')}</text>
                       <text className="flow-node-sub" x="34" y="40">{clip(def.summary ? def.summary(node.config || {}) : '', 22)}</text>
@@ -598,7 +658,8 @@ export function FlowEditor({ flowId, onBack, onSaved, onToast }) {
                       onPointerUp={(e) => onPointerUpInPort(e, node)} onPointerDown={(e) => e.stopPropagation()} /> : null}
                     {def.out ? <circle className="flow-port flow-port-out" cx={NODE_W} cy={NODE_H / 2} r="6"
                       onPointerDown={(e) => onPointerDownOutPort(e, node)} /> : null}
-                    {dbg !== undefined ? <text className="flow-node-dbg" x={NODE_W - 8} y="22">{fmtDbg(dbg.payload)}</text> : null}
+                    {warn ? <circle className="flow-node-warn" cx={NODE_W - 12} cy="12" r="4" /> : null}
+                    {dbg !== undefined ? <text className="flow-node-dbg" x={NODE_W - 22} y="22">{fmtDbg(dbg.payload)}</text> : null}
                   </g>
                 );
               })}
@@ -610,12 +671,13 @@ export function FlowEditor({ flowId, onBack, onSaved, onToast }) {
             <button type="button" className="quiet" onClick={() => setView((v) => ({ ...v, zoom: Math.min(2.2, v.zoom * 1.1) }))}>+</button>
             <span>{Math.round(view.zoom * 100)}%</span>
             <button type="button" className="quiet" onClick={() => setView((v) => ({ ...v, zoom: Math.max(0.4, v.zoom / 1.1) }))}>−</button>
+            <button type="button" className="quiet" title={t('flows.resetView')} onClick={() => setView({ x: 40, y: 20, zoom: 1 })}><Ico n="maximize" sz={13} /></button>
           </div>
         </div>
 
         <div className="flow-config">
           {selectedNode ? (
-            <NodeConfig node={selectedNode} devices={devices} onChange={(patch) => updateNodeConfig(selectedNode.id, patch)} onDelete={deleteSelected} />
+            <NodeConfig node={selectedNode} devices={devices} warning={warnings[selectedNode.id]} onChange={(patch) => updateNodeConfig(selectedNode.id, patch)} onDelete={deleteSelected} />
           ) : selected?.kind === 'wire' ? (
             <div className="flow-config-empty">
               <p>{t('flows.wireSelected')}</p>
@@ -631,7 +693,7 @@ export function FlowEditor({ flowId, onBack, onSaved, onToast }) {
 }
 
 // NodeConfig renders the fields for the selected node, driven by its type's field spec.
-function NodeConfig({ node, devices, onChange, onDelete }) {
+function NodeConfig({ node, devices, warning, onChange, onDelete }) {
   const t = useT();
   const def = NODE_DEFS[node.type] || { fields: [] };
   const cfg = node.config || {};
@@ -641,7 +703,10 @@ function NodeConfig({ node, devices, onChange, onDelete }) {
         <span className="btn-icon"><Ico n={def.icon} sz={15} /> {t(def.labelKey)}</span>
         <button type="button" className="quiet danger-text" onClick={onDelete} title={t('flows.deleteNode')}><Ico n="trash" sz={14} /></button>
       </div>
-      {def.fields.map((f) => (
+      {warning ? <p className="flow-config-warn"><Ico n="warning" sz={13} /> {warning}</p> : null}
+      {def.fields.map((f) => (f.kind === 'bool' ? (
+        <label key={f.key} className="check-row"><input type="checkbox" checked={!!cfg[f.key]} onChange={(e) => onChange({ [f.key]: e.target.checked })} /> {t(f.labelKey)}</label>
+      ) : (
         <Field key={f.key} label={t(f.labelKey)} span hint={f.kind === 'device' ? t('flows.slotHint') : undefined}>
           {f.kind === 'code' ? (
             <textarea className="flow-code" rows={8} value={cfg[f.key] || ''} spellCheck={false}
@@ -658,7 +723,7 @@ function NodeConfig({ node, devices, onChange, onDelete }) {
             <input value={cfg[f.key] || ''} onChange={(e) => onChange({ [f.key]: e.target.value })} />
           )}
         </Field>
-      ))}
+      )))}
       <datalist id={`flow-dev-${node.id}`}>
         {devices.map((d) => <option key={d.id} value={d.deviceKey}>{d.name}</option>)}
       </datalist>

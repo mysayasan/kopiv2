@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,10 +57,12 @@ const (
 	nodeThreshold       = "threshold"        // logic: pass only if payload <op> value
 	nodeSwitch          = "switch"           // logic: pass only if a JS predicate is truthy
 	nodeDeadband        = "deadband"         // logic: pass only if payload moved >= delta since last pass
+	nodeThrottle        = "throttle"         // logic: pass at most once per N seconds (rate limit)
 	nodeDebug           = "debug"            // output: record the message for the inspector (a sink)
 	nodeNotify          = "notify"           // output: publish a notification (a sink)
 	nodeCommand         = "command"          // output: actuate a device via the GUARDED path (a sink)
 	nodeDerivedMetric   = "derived_metric"   // output: persist a computed value as a telemetry series (a sink)
+	nodeMqttOut         = "mqtt_out"         // output: publish the payload to an MQTT topic (a sink)
 )
 
 // codeBearing reports whether a node type runs a script in the sandbox.
@@ -70,7 +73,8 @@ func codeBearing(t string) bool {
 func knownNodeType(t string) bool {
 	switch t {
 	case nodeDeviceTelemetry, nodeFunction, nodeExpression, nodeScale,
-		nodeThreshold, nodeSwitch, nodeDeadband, nodeDebug, nodeNotify, nodeCommand, nodeDerivedMetric:
+		nodeThreshold, nodeSwitch, nodeDeadband, nodeThrottle, nodeDebug, nodeNotify,
+		nodeCommand, nodeDerivedMetric, nodeMqttOut:
 		return true
 	}
 	return false
@@ -177,7 +181,25 @@ func cfgFloat(cfg map[string]any, key string) (float64, bool) {
 	if cfg == nil {
 		return 0, false
 	}
-	return coerceFloat(cfg[key])
+	if f, ok := coerceFloat(cfg[key]); ok {
+		return f, true
+	}
+	// A config value may arrive as a string (a <select> stores its option value as text) — parse it.
+	// Payload coercion (coerceFloat) stays strict; only config is this lenient.
+	if s, ok := cfg[key].(string); ok {
+		if f, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil {
+			return f, true
+		}
+	}
+	return 0, false
+}
+
+func cfgBool(cfg map[string]any, key string) bool {
+	if cfg == nil {
+		return false
+	}
+	b, _ := cfg[key].(bool)
+	return b
 }
 
 // --- FlowService (CRUD) ---------------------------------------------------------------------

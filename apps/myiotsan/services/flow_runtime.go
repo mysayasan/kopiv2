@@ -2,8 +2,10 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -50,12 +52,16 @@ type readingSink interface {
 	Enqueue(r entities.DeviceReading)
 }
 
+// mqttPublish is the broker publish seam an mqtt_out node uses (Broker.Publish satisfies it).
+type mqttPublish func(topic string, payload []byte, retain bool, qos byte) error
+
 // flowDeps are what a node's OUTPUTS reach for. A transform node touches none of it.
 type flowDeps struct {
 	issuer       commandIssuer // the ONE guarded actuation entry point (CommandService)
 	flowNotifier flowNotifier
 	devices      deviceResolver
 	writer       readingSink
+	publish      mqttPublish
 	logf         func(format string, args ...any)
 }
 
@@ -74,7 +80,8 @@ type compiledFlow struct {
 	nodes    map[string]*flowNode
 	outWires map[string][]string // nodeId -> downstream nodeIds
 	inputs   []flowInputBinding
-	deadband map[string]float64 // nodeId -> last emitted value
+	deadband map[string]float64 // nodeId -> last emitted value (deadband state)
+	lastPass map[string]int64   // nodeId -> last pass unix-milli (throttle state)
 	debug    *debugRing
 	deps     *flowDeps
 }
@@ -99,6 +106,7 @@ func compileFlow(id int64, name, rawGraph string, deps *flowDeps) (*compiledFlow
 		nodes:    make(map[string]*flowNode, len(g.Nodes)),
 		outWires: map[string][]string{},
 		deadband: map[string]float64{},
+		lastPass: map[string]int64{},
 		debug:    newDebugRing(),
 		deps:     deps,
 	}
@@ -204,6 +212,18 @@ func (cf *compiledFlow) exec(ctx context.Context, node *flowNode, in *flowMessag
 		cf.deadband[node.Id] = n
 		return in, true
 
+	case nodeThrottle:
+		// Rate-limit a branch: pass at most once per `seconds`, dropping anything that arrives
+		// inside the window. Stateful but timer-free — it never DEFERS a message, it only drops,
+		// so it cannot fire after the fact and cannot loop.
+		secs, _ := cfgFloat(node.Config, "seconds")
+		now := time.Now().UnixMilli()
+		if last, seen := cf.lastPass[node.Id]; seen && float64(now-last) < secs*1000 {
+			return nil, false
+		}
+		cf.lastPass[node.Id] = now
+		return in, true
+
 	case nodeFunction, nodeExpression, nodeSwitch:
 		out, err := cf.sandbox.run(node.Id, in, flowScriptTimeout)
 		if err != nil {
@@ -228,6 +248,10 @@ func (cf *compiledFlow) exec(ctx context.Context, node *flowNode, in *flowMessag
 
 	case nodeDerivedMetric:
 		cf.doDerived(ctx, node, in)
+		return nil, false
+
+	case nodeMqttOut:
+		cf.doMqttOut(node, in)
 		return nil, false
 
 	default:
@@ -329,6 +353,44 @@ func (cf *compiledFlow) doDerived(ctx context.Context, node *flowNode, in *flowM
 	cf.deps.writer.Enqueue(entities.DeviceReading{DeviceId: dev.Id, Key: key, Ts: time.Now().UnixMilli(), Num: value})
 }
 
+// doMqttOut publishes the message payload to an MQTT topic — the bridge OUT of the hub (feed a
+// processed value to another system, or drive a home-automation subscriber). It publishes data, not
+// a device command, so it does not go through the actuation gate; a command output is the guarded
+// path for actuating a myiotsan device.
+func (cf *compiledFlow) doMqttOut(node *flowNode, in *flowMessage) {
+	if cf.deps.publish == nil {
+		return
+	}
+	topic := cfgString(node.Config, "topic")
+	if topic == "" {
+		cf.deps.logf("flow %q mqtt node %q missing topic", cf.name, node.Id)
+		return
+	}
+	qos := byte(0)
+	if q, ok := cfgFloat(node.Config, "qos"); ok {
+		qos = byte(q)
+	}
+	if err := cf.deps.publish(topic, payloadBytes(in.Payload), cfgBool(node.Config, "retain"), qos); err != nil {
+		cf.deps.logf("flow %q mqtt publish to %q failed: %v", cf.name, topic, err)
+	}
+}
+
+// payloadBytes renders a message payload for the wire: a number as its shortest decimal, a string
+// as-is, anything else as JSON.
+func payloadBytes(v any) []byte {
+	switch p := v.(type) {
+	case string:
+		return []byte(p)
+	case float64:
+		return []byte(strconv.FormatFloat(p, 'f', -1, 64))
+	default:
+		if b, err := json.Marshal(v); err == nil {
+			return b
+		}
+		return []byte(fmt.Sprintf("%v", v))
+	}
+}
+
 func compareOp(a float64, op string, b float64) bool {
 	switch strings.TrimSpace(op) {
 	case ">":
@@ -410,13 +472,13 @@ type FlowRuntime struct {
 	dropped int64 // events shed under backpressure (for logging)
 }
 
-func NewFlowRuntime(svc *FlowService, issuer commandIssuer, notif flowNotifier, devices deviceResolver, writer readingSink, logf func(string, ...any)) *FlowRuntime {
+func NewFlowRuntime(svc *FlowService, issuer commandIssuer, notif flowNotifier, devices deviceResolver, writer readingSink, publish mqttPublish, logf func(string, ...any)) *FlowRuntime {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
 	return &FlowRuntime{
 		svc:      svc,
-		deps:     &flowDeps{issuer: issuer, flowNotifier: notif, devices: devices, writer: writer, logf: logf},
+		deps:     &flowDeps{issuer: issuer, flowNotifier: notif, devices: devices, writer: writer, publish: publish, logf: logf},
 		events:   make(chan flowEvent, flowEventQueue),
 		reloadCh: make(chan struct{}, 1),
 		compiled: map[int64]*compiledFlow{},

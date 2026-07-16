@@ -28,6 +28,10 @@ only ever leaves through the guarded issuer.
 - **Validation at the door**: `TestFlow_ParseGraphRejectsBadGraphs` — unknown type, dangling wire,
   cycle, duplicate id all refused; a well-formed and an empty graph both parse.
 - **Derived metric output (P3)**: `TestFlow_DerivedMetricWritesReading`.
+- **Throttle + mqtt_out (P4)**: `TestFlow_ThrottleDropsWithinWindow` (a second message inside the
+  window is dropped, the first still reaches the debug sink); `TestFlow_MqttOutPublishesPayload`
+  (a `fakePublisher` test double confirms topic/payload/retain/QoS all reach the publish seam
+  unchanged for a single retained QoS-1 publish).
 - **Templates (P3)**: `TestFlow_SlotDetectionAndSubstitution`, `TestFlow_InstantiateBindsAllSlots`,
   `TestFlow_BuiltinSolarIsATemplate`.
 - **Transfer**: `TestFlow_ExportImportDocVersionGuard` — a document from a future format version is

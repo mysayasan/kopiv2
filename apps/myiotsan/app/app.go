@@ -472,7 +472,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	if err := flowService.EnsureBuiltins(ctx); err != nil {
 		deps.Logger.Errorf("myiotsan.flows", "seed builtin flows: %v", err)
 	}
-	flowRuntime := services.NewFlowRuntime(flowService, commandService, notificationService, deviceService, writer,
+	flowRuntime := services.NewFlowRuntime(flowService, commandService, notificationService, deviceService, writer, broker.Publish,
 		func(f string, a ...any) { deps.Logger.Infof("myiotsan.flows", f, a...) })
 	flowService.SetOnChange(flowRuntime.SignalReload)
 	ingest.SetFlows(flowRuntime)

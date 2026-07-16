@@ -279,9 +279,12 @@ could do, and test-firing one can actuate a real device.
 
 A flow is a graph of NODES (an input that emits on a new reading; transforms — including a
 `function`/`expression` node running arbitrary JavaScript, and a `switch` node gating on a JS
-predicate — plus a plain `scale`/`threshold`/`deadband`; and outputs: `debug` for the inspector,
-`notify` to raise an alert, `command` to actuate, `derived_metric` to persist a computed value as a
-new telemetry series) joined by wires, drawn and saved as one document.
+predicate — plus a plain `scale`/`threshold`/`deadband`/`throttle` (rate-limit: at most once per N
+seconds); and outputs: `debug` for the inspector, `notify` to raise an alert, `command` to actuate,
+`derived_metric` to persist a computed value as a new telemetry series, `mqtt_out` to publish the
+payload to an MQTT topic on the embedded broker) joined by wires, drawn and saved as one document.
+`mqtt_out` publishes data outward, never a device command, so it does not go through the actuation
+gate below.
 
 **The safety design is the point.** A `function`/`expression`/`switch` node runs in an embedded,
 sandboxed JavaScript interpreter with **no host bindings at all** — no filesystem, no network, no

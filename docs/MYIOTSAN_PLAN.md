@@ -12,7 +12,7 @@ exists, and the payoff §1's differentiator promised.** **P7 (release) SHIPPED (
 release CI, k6, ZAP), and the `nodeiot/` embed deferred out of P6 also shipped in the same pass
 (§8f) — `myseliasan` can now manage an adopted `myiotsan` node's devices/rules/alerts/commands
 directly, the way it already does for a `mymatasan` camera node.** **A Flow Engine — a
-Node-RED-style visual, executable data-flow canvas (P1-P3) — SHIPPED (2026-07-16), see §8i.** This
+Node-RED-style visual, executable data-flow canvas (P1-P4) — SHIPPED (2026-07-16), see §8i.** This
 was an explicit, later decision that DELIBERATELY REVERSES §8g's original "no visual node-graph
 editor" scope line; it is kept safe by routing every flow's actuation through the same guarded
 `CommandService.Issue` chokepoint every other command path in this app uses. Only **P5**
@@ -1046,7 +1046,7 @@ exactly the "scope creep into a Home Assistant clone" risk §9 already names: sc
 are a deliberate, bounded step toward useful home automation, not an invitation to build a general
 automation-rule engine without first deciding, out loud, who is allowed to author a rule that acts.
 
-## 8i. Flow Engine — a Node-RED-style visual, executable data-flow canvas (P1-P3, shipped)
+## 8i. Flow Engine — a Node-RED-style visual, executable data-flow canvas (P1-P4, shipped)
 
 **Shipped 2026-07-16.** An explicit, later decision to build a visual, executable node-graph
 editor — the thing §8g's original "Scope discipline" refused outright (see the reversal noted
@@ -1125,6 +1125,32 @@ even reading a flow's graph reveals what it could do, and test-firing it can act
   (§8g), reachable today without waiting on the full system-workspace entity.
 - Flow import/export (`.iotflow`, mirroring `.iotprofile`) travels a flow between sites; an import
   is never builtin and always arrives disabled, the same caution an imported profile observes.
+
+### P4 — polish: rate limiting, an MQTT bridge-out, and editor ergonomics
+
+- **`throttle` logic node.** Passes at most once per N seconds, dropping anything that arrives
+  inside the window — the missing "don't alert on every sample" lever a `deadband` (moved enough)
+  doesn't cover (a noisy-but-moving value can still trip a threshold repeatedly). Stateful
+  (`compiledFlow.lastPass`, same shape as `deadband`'s state map) but deliberately timer-free: it
+  only ever drops, never defers or replays a message later, so unlike a real rate-limiter it cannot
+  itself become a source of a delayed loop.
+- **`mqtt_out` output node.** Publishes the message payload to an MQTT topic via the embedded
+  broker (`broker.Publish`, now passed into `NewFlowRuntime` as a new `mqttPublish` dep). It
+  publishes DATA outward — feed a processed value to another system, or drive a home-automation
+  subscriber — never a device command, so it does **not** go through the actuation gate; `command`
+  remains the sole guarded actuation path. Publishing is one-way out of the hub, so it cannot loop
+  back into ingest.
+- **`cfgFloat` leniency.** Now also parses a string-encoded config value — a `<select>` field (the
+  `mqtt_out` QoS picker) stores its option value as text — falling back to `strconv.ParseFloat`.
+  Payload coercion stays strict; only config reading is this lenient.
+- **Editor ergonomics** (`components/flows.js`): Delete/Backspace removes the selected node or wire
+  (guarded against firing while a text field has focus); non-blocking validation warnings surface
+  directly on the canvas — an amber dashed border + dot on any node with an unwired port or missing
+  required config (empty code, no device+key, no topic), a toolbar count badge, and the same message
+  in the config panel — so an author sees a half-wired flow before saving rather than discovering it
+  only at test-fire or, worse, silently at runtime; a reset-view toolbar button restores the default
+  pan/zoom. The server's hard validation (`parseGraph` — unknown types, cycles, dangling wires) is
+  unchanged and still the last word at save.
 
 ### Relationship to §8g's Layer B (the system workspace, still not built)
 

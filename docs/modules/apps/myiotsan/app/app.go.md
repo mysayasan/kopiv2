@@ -170,15 +170,17 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
   10e. **Wires the Flow Engine**, right after home automation: `services.NewFlowService(deps.Db,
       logf)`, then `flowService.EnsureBuiltins(ctx)` seeds the shipped "Solar system" sample
       (`services/flow_catalog.go.md`). `services.NewFlowRuntime(flowService, commandService,
-      notificationService, deviceService, writer, logf)` builds the runtime; `flowService.
-      SetOnChange(flowRuntime.SignalReload)` wires save/enable/delete to trigger an immediate
-      recompile; `ingest.SetFlows(flowRuntime)` taps the SAME decoded-sample stream the rules do
-      (see `services/ingest.go.md`); a `safego.Supervise`d `"myiotsan.flows"` task runs
-      `flowRuntime.Run(ctx, flowReconcileInterval)` (const, 30s — the same reconcile cadence the
-      Modbus poller uses). A flow's nodes can run ARBITRARY sandboxed JavaScript
-      (`services/flow_eval.go.md`), but only a dedicated output node can act, and the command
-      output routes through `commandService.Issue` — the identical guarded chokepoint every other
-      actuation path in this app uses, so a flow can command nothing a person could not. See
+      notificationService, deviceService, writer, broker.Publish, logf)` builds the runtime — the
+      `broker.Publish` param (P4) is the seam an `mqtt_out` output node uses to publish outward to
+      the embedded broker; `flowService.SetOnChange(flowRuntime.SignalReload)` wires save/enable/
+      delete to trigger an immediate recompile; `ingest.SetFlows(flowRuntime)` taps the SAME
+      decoded-sample stream the rules do (see `services/ingest.go.md`); a `safego.Supervise`d
+      `"myiotsan.flows"` task runs `flowRuntime.Run(ctx, flowReconcileInterval)` (const, 30s — the
+      same reconcile cadence the Modbus poller uses). A flow's nodes can run ARBITRARY sandboxed
+      JavaScript (`services/flow_eval.go.md`), but only a dedicated `command` output node can
+      actuate, and it routes through `commandService.Issue` — the identical guarded chokepoint every
+      other actuation path in this app uses, so a flow can command nothing a person could not; an
+      `mqtt_out` output publishes data, not a command, so it does not go through that gate. See
       `services/flow_runtime.go.md` and `docs/MYIOTSAN_PLAN.md` §8i.
   11. Registers `apis.NewDevicesApi`, `apis.NewDiscoveryApi` (P3), `apis.NewCommandsApi` (P4),
       `apis.NewProfilesApi`, `apis.NewRulesApi`, `apis.NewScenesApi`, `apis.NewSchedulesApi`
