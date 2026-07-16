@@ -13,8 +13,13 @@ import (
 	"github.com/mysayasan/kopiv2/apps/myiotsan/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	"github.com/mysayasan/kopiv2/infra/iot/modbus"
 	"github.com/mysayasan/kopiv2/infra/telemetry"
 )
+
+// modbusWriteFunc is the guarded-write seam (modbus.WriteConfirm in production, a fake in tests):
+// write value to a holding register and confirm it by reading it back, NEVER re-issuing.
+type modbusWriteFunc func(endpoint string, unit byte, reg int, value uint16, timeout time.Duration) error
 
 // Actuation: the point where a bug stops being a wrong number on a chart and becomes a relay
 // that physically fires.
@@ -46,14 +51,15 @@ import (
 
 // CommandService issues and tracks device commands.
 type CommandService struct {
-	commands   dbsql.IGenericRepo[entities.DeviceCommand]
-	profileCmd dbsql.IGenericRepo[entities.ProfileCommand]
-	attrs      dbsql.IGenericRepo[entities.DeviceAttribute]
-	devices    *DeviceService
-	publish    func(topic string, payload []byte, retain bool, qos byte) error
-	audit      func(ctx context.Context, msg string, data map[string]any)
-	metrics    telemetry.Metrics
-	logf       func(format string, args ...any)
+	commands    dbsql.IGenericRepo[entities.DeviceCommand]
+	profileCmd  dbsql.IGenericRepo[entities.ProfileCommand]
+	attrs       dbsql.IGenericRepo[entities.DeviceAttribute]
+	devices     *DeviceService
+	publish     func(topic string, payload []byte, retain bool, qos byte) error
+	modbusWrite modbusWriteFunc
+	audit       func(ctx context.Context, msg string, data map[string]any)
+	metrics     telemetry.Metrics
+	logf        func(format string, args ...any)
 
 	// rate limits the physical duty cycle, per device.
 	mu       sync.Mutex
@@ -67,6 +73,11 @@ const (
 	// confirmTimeout is how long a device has to report the state back before the command is
 	// declared unconfirmed. It is NOT a retry timer.
 	confirmTimeout = 30 * time.Second
+	// modbusWriteTimeout bounds the INLINE guarded Modbus write+read-back. It is short on purpose:
+	// the write is synchronous (a flow's command node waits on it), a healthy device confirms a
+	// setpoint in well under a second, and — like every actuation here — it is NEVER retried, so a
+	// slow confirmation fails and a human decides rather than the register being written twice.
+	modbusWriteTimeout = 5 * time.Second
 	// desiredTTL is how long a desired state stays actionable. A month-old "unlock" must not be
 	// applied to a door controller that finally reconnects — see entities.DeviceAttribute.
 	desiredTTL = 5 * time.Minute
@@ -92,10 +103,14 @@ func NewCommandService(
 		attrs:      dbsql.NewGenericRepo[entities.DeviceAttribute](db),
 		devices:    devices,
 		publish:    publish,
-		audit:      audit,
-		metrics:    metrics,
-		logf:       logf,
-		lastSent:   map[int64]time.Time{},
+		// The production guarded-write: dial the device, write the register, confirm by read-back.
+		modbusWrite: func(endpoint string, unit byte, reg int, value uint16, timeout time.Duration) error {
+			return modbus.WriteConfirm(modbus.DeviceConf{Endpoint: endpoint, Unit: unit}, reg, value, timeout)
+		},
+		audit:    audit,
+		metrics:  metrics,
+		logf:     logf,
+		lastSent: map[int64]time.Time{},
 	}
 }
 
@@ -192,6 +207,14 @@ func (s *CommandService) Issue(ctx context.Context, deviceId int64, req IssueReq
 	}
 	cmd.Id = int64(id)
 
+	// SEND. Both transports arrive here having passed the identical gates above — that is the whole
+	// point: a Modbus device is commanded through the same read-only-by-default, admin-only,
+	// declared-bounds, rate-limited, audited, never-retried path an MQTT relay is. A Modbus command
+	// WRITES a holding register and confirms by reading it back; an MQTT command PUBLISHES.
+	if strings.EqualFold(strings.TrimSpace(decl.Transport), "modbus") {
+		return s.sendModbus(ctx, cmd, dev, decl, req.Value, actor, now)
+	}
+
 	topic := strings.ReplaceAll(decl.TopicTemplate, "{deviceKey}", dev.DeviceKey)
 	payload := renderPayload(decl, req.Value)
 
@@ -217,6 +240,74 @@ func (s *CommandService) Issue(ctx context.Context, deviceId int64, req IssueReq
 		map[string]any{"deviceId": deviceId, "command": cmd.Name, "value": req.Value, "actor": actor})
 	s.logf("command %d: %s=%v sent to %q on %q", cmd.Id, cmd.Name, req.Value, dev.DeviceKey, topic)
 	return &cmd, nil
+}
+
+// sendModbus writes the command's holding register on the polled device and confirms it by
+// read-back (modbus.WriteConfirm). It runs AFTER every gate in Issue, so it is the write half of the
+// same guarded path the MQTT relay takes — nothing here re-checks a gate, and nothing here retries.
+// A confirmed write is the strongest status the system has: the device reported the value back.
+func (s *CommandService) sendModbus(ctx context.Context, cmd entities.DeviceCommand, dev *entities.IotDevice, decl *entities.ProfileCommand, value float64, actor int64, now time.Time) (*entities.DeviceCommand, error) {
+	fail := func(reason string) (*entities.DeviceCommand, error) {
+		cmd.Status = "failed"
+		cmd.Error = reason
+		_, _ = s.commands.UpdateById(ctx, "", cmd)
+		s.audit(ctx, fmt.Sprintf("FAILED modbus %s on %q — %s", cmd.Name, dev.Name, reason),
+			map[string]any{"deviceId": dev.Id, "command": cmd.Name, "value": value, "actor": actor})
+		s.countCommand("failed")
+		return &cmd, fmt.Errorf("%s", reason)
+	}
+
+	if strings.TrimSpace(dev.Endpoint) == "" {
+		return fail("this device has no Modbus endpoint (host:port) to write to")
+	}
+	raw, err := encodeRegister(decl.RegKind, decl.ScaleFactor, value)
+	if err != nil {
+		return fail(err.Error())
+	}
+
+	cmd.SentAt = now.Unix()
+	if err := s.modbusWrite(dev.Endpoint, byte(dev.Unit), decl.Register, raw, modbusWriteTimeout); err != nil {
+		// A lost or unconfirmed write ENDS the command — it is never re-sent (a second register
+		// write is a second physical action). The operator sees plainly that it was not confirmed.
+		return fail("modbus write not confirmed: " + err.Error())
+	}
+
+	// WriteConfirm read the register back and saw the value — the device reported the state, which
+	// is exactly what "confirmed" means. A Modbus command therefore confirms inline, where an MQTT
+	// command has to wait for the twin's reported half.
+	cmd.Status = "confirmed"
+	cmd.ConfirmedAt = time.Now().Unix()
+	_, _ = s.commands.UpdateById(ctx, "", cmd)
+	s.countCommand("confirmed")
+	s.audit(ctx, fmt.Sprintf("CONFIRMED modbus %s=%s to reg %d on %q", cmd.Name, trimNum(value), decl.Register, dev.Name),
+		map[string]any{"deviceId": dev.Id, "command": cmd.Name, "value": value, "register": decl.Register, "actor": actor})
+	s.logf("command %d: modbus %s=%v confirmed at reg %d on %q", cmd.Id, cmd.Name, value, decl.Register, dev.DeviceKey)
+	return &cmd, nil
+}
+
+// encodeRegister turns a human value into the raw register word to write, applying the read scale in
+// reverse (raw = round(value / scaleFactor)) and the register kind's range check. Only single-register
+// kinds (u16/i16) are written for now — multi-register (u32/i32) writes are refused rather than
+// half-written. Getting encoding wrong writes a wrong number to real hardware, so it fails closed.
+func encodeRegister(kind string, scale float64, value float64) (uint16, error) {
+	if scale == 0 {
+		scale = 1
+	}
+	raw := math.Round(value / scale)
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "", "u16":
+		if raw < 0 || raw > 65535 {
+			return 0, fmt.Errorf("value %s is outside the u16 register range", trimNum(value))
+		}
+		return uint16(raw), nil
+	case "i16":
+		if raw < -32768 || raw > 32767 {
+			return 0, fmt.Errorf("value %s is outside the i16 register range", trimNum(value))
+		}
+		return uint16(int16(raw)), nil
+	default:
+		return 0, fmt.Errorf("a Modbus command can only write a u16 or i16 register, not %q", kind)
+	}
 }
 
 // declaration finds the command a profile declares, or explains that it does not.

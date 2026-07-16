@@ -41,6 +41,36 @@ the plan did not name.
    (`actor == 0`), and without the name the audit trail would say "System" switched the relay
    instead of the person it actually was. See `entities/device_command.go.md`.
 
+## Modbus actuation: the write half of the poller
+
+`Issue` supports two transports, decided by the command's own declaration
+(`entities.ProfileCommand.Transport`), and **both arrive at the SEND step having passed every gate
+above unchanged** — the gates are transport-blind by design:
+
+- `""`/`"mqtt"` (the default, everything above): publishes `renderPayload(decl, value)` to
+  `TopicTemplate`, same as before this landed.
+- `"modbus"`: `Issue` branches to `sendModbus`, which WRITES a holding register on the device
+  addressed by `dev.Endpoint`/`dev.Unit` (`iot_device.go.md`) via a guarded-write seam
+  (`modbusWrite`, production = `infra/iot/modbus.WriteConfirm`, a fake in tests) instead of
+  publishing:
+  - `encodeRegister(decl.RegKind, decl.ScaleFactor, value)` turns the human value into the raw
+    register word: `raw = round(value / ScaleFactor)` (the read-side scale applied in reverse),
+    then range-checks it against the declared `RegKind` (`u16`: `0..65535`; `i16`:
+    `-32768..32767`, encoded as its two's-complement `uint16` bit pattern). **Only single-register
+    kinds are written** — `u32`/`i32` are refused rather than half-written, since a torn multi-
+    register write on real hardware is worse than refusing the command outright.
+  - `modbusWriteTimeout` (5s) bounds the write — it is synchronous (a flow's `command` node waits
+    on it) and, like every actuation path in this file, **never retried**: `WriteConfirm` writes
+    once and only re-*reads* to confirm, so a lost confirmation cannot become a second physical
+    write. A failed/unconfirmed write ends the command (`Status: "failed"`), audited, exactly like
+    an MQTT refusal.
+  - A **successful** guarded write sets `Status: "confirmed"` directly (`ConfirmedAt = now`) —
+    stronger than MQTT's `"sent"`, because `WriteConfirm` already read the register back and saw
+    the value land; there is no separate wait for a reported reading the way an MQTT command's
+    `ConfirmKey` requires. A Modbus command therefore never passes through `"sent"` at all.
+  - A device with no `Endpoint` configured refuses before attempting anything ("this device has no
+    Modbus endpoint (host:port) to write to").
+
 ## The hazard the plan did not name: never auto-retry
 
 Re-sending a relay write is a **second physical action**. If the first one landed but its
@@ -60,7 +90,10 @@ this layer can distinguish that from the first one never arriving. So:
 - `setDesired` writes the desired half of a `DeviceAttribute` (`device_attribute.go.md`) after a
   successful `Issue`, stamping `DesiredExpiresAt = now + desiredTTL` (5 minutes). Only commands
   whose declaration has a `ConfirmKey` get a desired-state row — a command with nothing to
-  confirm against has no twin to update.
+  confirm against has no twin to update. **A Modbus command never reaches this call** —
+  `sendModbus` returns directly from `Issue`, so a Modbus-transport command has no desired-state
+  twin row regardless of `ConfirmKey`; it confirms (or fails) inline instead, which is the
+  stronger guarantee `WriteConfirm`'s read-back already gives.
 - `OnReported(ctx, deviceId, key, value, nowSec)` is called from `services.Ingest.Handle` for
   **every** decoded sample (see `ingest.go.md`), unconditionally — a reading is a fact regardless
   of whether a command is outstanding. It updates the reported half and, when the reported value
@@ -91,13 +124,18 @@ func (s *CommandService) Twin(ctx, deviceId) ([]*entities.DeviceAttribute, error
 ```
 
 `publish` is `broker.Publish` (`infra/iot/mqtt`, wired in `app.go`) — the same embedded broker
-devices connect to; a command is just another MQTT publish from the app's perspective. `audit` is
-wired to `notificationService.Publish`, `logf` to `deps.Logger.Infof`. `metrics` is `deps.Metrics`
-(nil-safe) — `countCommand(outcome)` increments `MetricCommandsTotal` (`myiotsan_commands_total`,
-`services/metrics.go.md`) at each of the three terminal sites: `refused` in `Issue`, `confirmed`
-in `confirmPending`, `failed` in `SweepUnconfirmed`. Counted directly rather than sampled, unlike
-the ingest gauges — commands are rare (rate-limited, human-triggered), so a labelled counter per
-call site costs nothing.
+devices connect to; a command is just another MQTT publish from the app's perspective. `modbusWrite`
+(unexported field, `modbusWriteFunc`) is the guarded-write seam for the Modbus transport —
+`NewCommandService` wires it to `modbus.WriteConfirm` (`infra/iot/modbus`); tests substitute a fake,
+same pattern as `publish`. `audit` is wired to `notificationService.Publish`, `logf` to
+`deps.Logger.Infof`. `metrics` is `deps.Metrics` (nil-safe) — `countCommand(outcome)` increments
+`MetricCommandsTotal` (`myiotsan_commands_total`, `services/metrics.go.md`) at each of the three
+terminal sites: `refused` in `Issue`, `confirmed` in `confirmPending`, `failed` in
+`SweepUnconfirmed`. Counted directly rather than sampled, unlike the ingest gauges — commands are
+rare (rate-limited, human-triggered), so a labelled counter per call site costs nothing. The
+inline Modbus path counts too: `sendModbus` calls `countCommand("confirmed")` on a confirmed
+write-with-read-back and `countCommand("failed")` on its `fail` path, so `myiotsan_commands_total`
+covers Modbus outcomes at parity with MQTT.
 
 ## Home-automation kinds (dimmer, position, cct, mode, color)
 

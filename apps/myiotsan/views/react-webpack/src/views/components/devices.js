@@ -201,6 +201,7 @@ export function CredentialModal({ credential, onClose }) {
 const EMPTY_DEVICE = {
   name: '', deviceKey: '', protocol: 'mqtt', profileId: 0, password: '',
   tag: '', location: '', vendor: '', model: '', enabled: true, actuationEnabled: false,
+  endpoint: '', unit: 1,
 };
 
 function CreateDeviceModal({ profiles, onClose, onCreated, onToast }) {
@@ -209,6 +210,8 @@ function CreateDeviceModal({ profiles, onClose, onCreated, onToast }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  // A Modbus profile is POLLED — the device needs a host:port + unit id, not a broker credential.
+  const isModbus = (profiles.find((p) => p.id === Number(form.profileId)) || {}).transport === 'modbus';
 
   async function submit(e) {
     e.preventDefault();
@@ -252,15 +255,26 @@ function CreateDeviceModal({ profiles, onClose, onCreated, onToast }) {
               {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </Field>
-          <Field label={t('devices.password')} hint={t('devices.passwordHint')} span>
-            <input
-              type="text"
-              value={form.password}
-              onChange={(e) => set({ password: e.target.value })}
-              placeholder={t('devices.passwordPlaceholder')}
-              autoComplete="off"
-            />
-          </Field>
+          {isModbus ? (
+            <>
+              <Field label={t('devices.endpoint')} hint={t('devices.endpointHint')} required>
+                <input value={form.endpoint || ''} onChange={(e) => set({ endpoint: e.target.value })} placeholder="192.168.1.50:502" />
+              </Field>
+              <Field label={t('devices.unit')} hint={t('devices.unitHint')}>
+                <input type="number" min="1" max="255" value={form.unit ?? 1} onChange={(e) => set({ unit: Number(e.target.value) })} />
+              </Field>
+            </>
+          ) : (
+            <Field label={t('devices.password')} hint={t('devices.passwordHint')} span>
+              <input
+                type="text"
+                value={form.password}
+                onChange={(e) => set({ password: e.target.value })}
+                placeholder={t('devices.passwordPlaceholder')}
+                autoComplete="off"
+              />
+            </Field>
+          )}
           <Field label={t('devices.tag')} hint={t('devices.tagHint')}>
             <input value={form.tag} onChange={(e) => set({ tag: e.target.value })} />
           </Field>
@@ -513,12 +527,15 @@ function DeviceSettings({ device, profiles, onToast, onChanged, onCredential, on
     model: device.model || '',
     enabled: !!device.enabled,
     actuationEnabled: !!device.actuationEnabled,
+    endpoint: device.endpoint || '',
+    unit: device.unit ?? 1,
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [confirmRotate, setConfirmRotate] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  const isModbus = (profiles.find((p) => p.id === Number(form.profileId)) || {}).transport === 'modbus';
 
   async function save(e) {
     e.preventDefault();
@@ -595,6 +612,16 @@ function DeviceSettings({ device, profiles, onToast, onChanged, onCredential, on
         <Field label={t('devices.protocol')}>
           <input value={t(`protocol.${device.protocol}`)} readOnly disabled />
         </Field>
+        {isModbus ? (
+          <>
+            <Field label={t('devices.endpoint')} hint={t('devices.endpointHint')}>
+              <input value={form.endpoint || ''} onChange={(e) => set({ endpoint: e.target.value })} placeholder="192.168.1.50:502" />
+            </Field>
+            <Field label={t('devices.unit')} hint={t('devices.unitHint')}>
+              <input type="number" min="1" max="255" value={form.unit ?? 1} onChange={(e) => set({ unit: Number(e.target.value) })} />
+            </Field>
+          </>
+        ) : null}
       </div>
       <CheckRow checked={form.enabled} onChange={(v) => set({ enabled: v })} label={t('devices.enabled')} />
       <CheckRow
