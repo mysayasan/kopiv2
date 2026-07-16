@@ -4,10 +4,18 @@
 
 Pins the pure, unit-testable half of actuation's safety gates — bounds validation and payload
 rendering — down to the byte. The database-dependent half (rate limiting, audit rows, the twin,
-`SweepUnconfirmed`) is exercised live instead; see `commands.go.md`'s "verified live" note.
+`SweepUnconfirmed`) is exercised live instead; see `commands.go.md`'s "verified live" note. The
+Modbus write path's own risky pure function, `encodeRegister`, is pinned the same way; the full
+`Issue`→write→read-back path is exercised live against the SunSpec simulator instead (which
+honours writes).
 
 ## Responsibilities
 
+- `TestCommand_EncodeRegisterScalesAndRangeChecks` — `encodeRegister` applies the read-side scale
+  in reverse (`raw = round(value / scale)`, including a `0` scale treated as `1` and a `""` kind
+  defaulting to `u16`), encodes `i16` as its two's-complement `uint16` bit pattern (`-5` →
+  `65531`, `-32768` → `32768`), range-checks `u16`/`i16` (rejects `70000`/`-1`/`40000`), and
+  refuses a multi-register kind (`u32`) outright rather than writing half of it.
 - `TestCommand_SwitchTakesOnlyZeroOrOne` — a `switch` command accepts exactly `0`/`1`; `2`/`-1`
   are refused.
 - `TestCommand_SetpointIsBoundedServerSide` — a `setpoint` inside `Min..Max` (inclusive of the

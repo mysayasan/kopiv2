@@ -15,9 +15,9 @@ directly, the way it already does for a `mymatasan` camera node.** **A Flow Engi
 Node-RED-style visual, executable data-flow canvas (P1-P4) — SHIPPED (2026-07-16), see §8i.** This
 was an explicit, later decision that DELIBERATELY REVERSES §8g's original "no visual node-graph
 editor" scope line; it is kept safe by routing every flow's actuation through the same guarded
-`CommandService.Issue` chokepoint every other command path in this app uses. Only **P5**
-(Modbus/OPC-UA control writes + RTU/OPC-UA transports) and **P8** (the solar system workspace)
-remain.
+`CommandService.Issue` chokepoint every other command path in this app uses. **Guarded Modbus TCP
+control writes SHIPPED (2026-07-16) — see §8g "App integration" item 4.** Only the remainder of
+**P5** (RTU serial + OPC-UA transports) and **P8** (the solar system workspace) remain.
 
 `myiotsan` is the fourth app in the suite, alongside `mymatasan` (camera NVR), `myseliasan`
 (fleet control plane) and `myidsan` (identity/SSO). It is built on the same platform as
@@ -789,14 +789,14 @@ commands directly from the control plane, closing the gap §8e left open.
 
 ---
 
-## 8g. P5 + P8 — Industrial protocols and the solar "system workspace" (driver foundation + app integration landed; control writes, RTU/OPC-UA, and the workspace remain)
+## 8g. P5 + P8 — Industrial protocols and the solar "system workspace" (driver foundation + app integration + guarded Modbus control landed; RTU/OPC-UA and the workspace remain)
 
 Prompted by a request to make myiotsan **handle solar systems** without writing code per inverter
 model: use the protocols we have, and combine them into a **reusable template workspace** for a
 specific model (customisable, and re-usable for future protocol sets). The study below is the
-agreed direction; the **driver + simulator foundation is built and proven**, **app integration has
-now partially landed (2026-07-15) — see below** — and **guarded Modbus control, RTU/OPC-UA, and
-the workspace layer (P8) remain**.
+agreed direction; the **driver + simulator foundation is built and proven**, **app integration and
+guarded Modbus control have now landed (2026-07-15, then 2026-07-16 for control) — see below** —
+and **RTU/OPC-UA transports and the workspace layer (P8) remain**.
 
 ### The shape of the problem, and why the current model doesn't fit
 
@@ -857,7 +857,7 @@ data, not code.
   three personas over real Modbus and confirmed a curtailment write by read-back. Hermetic unit
   tests (synthetic register banks) cover the decoding and scaling deterministically.
 
-#### App integration — items 1-3 LANDED (2026-07-15), items 4-5 still to land for P5
+#### App integration — items 1-4 LANDED (1-3 on 2026-07-15, 4 on 2026-07-16), item 5 still to land for P5
 
 1. **LANDED.** `telemetry_key.go` gained the Modbus binding fields (`Register`, `RegKind`
    (`u16`/`i16`/`u32`/`i32`), `ScaleFactor`, `WordSwap`); `device_profile.go` gained `Transport`
@@ -894,8 +894,24 @@ data, not code.
    own PV/battery/grid physics loop to exercise this end to end without hardware. Verified live:
    the app booted against the simulator, seeded both profiles, polled unit 4 over Modbus TCP, and
    stored correctly-scaled/signed readings (freq 49.99 Hz, batt_soc 13.2%, grid +600W import).
-4. Guarded Modbus control extends `ProfileCommand` to write a holding register with the driver's
-   read-back confirm (admin-only, bounded, never-retried — the §8d gates apply unchanged).
+4. **LANDED 2026-07-16.** Guarded Modbus control: `entities.ProfileCommand` gained
+   `Transport`/`Register`/`RegKind`/`ScaleFactor`, so a command declares itself either an MQTT
+   publish (unchanged) or a Modbus holding-register write. `CommandService.Issue` branches to a new
+   `sendModbus` **after** every existing gate (read-only-by-default, admin-only, declared bounds,
+   rate limit, audit, never-retried, §8d) — Modbus actuation is not a parallel authority, it is the
+   write half of the same chokepoint. `sendModbus` calls the driver's `WriteConfirm` (a
+   `modbusWrite` seam, faked in tests) with a 5s timeout and, like every actuation path here, NEVER
+   retries: a lost confirmation ends the command `failed` rather than risking a second physical
+   write. `encodeRegister` applies the read-side `ScaleFactor` in reverse (`raw = round(value /
+   scale)`) and range-checks the result against `RegKind` — only single-register `u16`/`i16` are
+   written; `u32`/`i32` are refused rather than half-written. A confirmed write sets `Status:
+   "confirmed"` directly (stronger than MQTT's `"sent"`, and skipping the desired-state twin write
+   entirely — `WriteConfirm`'s read-back already is the confirmation). The frontend profile editor
+   (`views/react-webpack/.../profiles.js`) and device editor (`devices.js`) became transport-aware:
+   a profile picks MQTT or Modbus TCP; a Modbus profile's keys/commands bind to registers instead
+   of JSON paths/topics, and a Modbus device's create/edit form asks for `Endpoint`
+   (`host:port`)/`Unit` instead of a broker password. No built-in profile declares a Modbus command
+   yet — this is the mechanism, not a worked example.
 5. **RTU (serial)** is the same driver behind a serial transport (adds CRC + a serial port / RTU→TCP
    gateway); TCP is first because the simulator is TCP. **OPC-UA** is a later peer driver.
 

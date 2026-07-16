@@ -22,9 +22,12 @@ app** — a device profile can declare `Transport: "modbus"` (self-describing Su
 an explicit vendor register map), a `services.ModbusPoller` dials out to every such device on its
 own poll cadence, and two built-in profiles ship: `generic-sunspec-solar` (reads any compliant
 inverter/meter/battery, no per-model work) and `huawei-sun2000` (the register-map worked example
-for the world's most-installed inverter). What remains of P5 is RTU (serial) and OPC-UA
-transports and guarded Modbus control writes; the solar "system workspace" (P8) is still
-design-only. **Home automation (richer command kinds, scenes, schedules) has also shipped**: a
+for the world's most-installed inverter). **Guarded Modbus control writes have also landed**: a
+device profile can declare a command as a Modbus holding-register write instead of an MQTT
+publish, and it is commanded through the identical actuation gates — read-only-by-default,
+admin-only, server-side bounds, rate-limited, audited, never auto-retried — see "Actuation" below.
+What remains of P5 is RTU (serial) and OPC-UA transports; the solar "system workspace" (P8) is
+still design-only. **Home automation (richer command kinds, scenes, schedules) has also shipped**: a
 device can now be dimmed, positioned, colour-tuned, or set to one of a named list of modes, not
 just switched or given a plain setpoint; commands can be grouped into a named **scene** and run
 together; and a scene or a single command can be fired on the clock or at sunrise/sunset via a
@@ -90,6 +93,13 @@ reported rather than silently overwriting the existing profile's decoding rules.
 3. **Publish on the profile's topic** — a profile (see below) declares the topic template
    (`{deviceKey}` substituted) and payload shape the device is expected to speak. The shipped
    catalog covers the common Zigbee2MQTT/Tasmota/Shelly conventions out of the box.
+
+**A POLLED (Modbus) device is provisioned the same way, with `endpoint`/`unit` instead of a
+password.** When the chosen profile's `transport` is `modbus`, `POST /api/devices` (and the
+device's Settings form) asks for `endpoint` (the device's `host:port`, Modbus TCP is usually port
+502) and `unit` (the Modbus unit/slave id, often `1` — a gateway can host several units behind one
+endpoint) instead of a broker password. The app dials OUT to the device on the profile's poll
+cadence; there is nothing to point at the app the way an MQTT device points at the broker.
 
 ## The device-type catalog (profiles)
 
@@ -171,6 +181,18 @@ a breaker, sets a thermostat to 200°C.
    an operator who has no account on this node — the row still names them by name (e.g.
    `cp:admin`), not just a local user id that would otherwise read as `0`/"System".
 
+**Two transports, one set of gates.** A device profile's command declares a `transport`: `mqtt`
+(default) publishes the payload template below to the broker, same as always; `modbus` WRITES a
+holding register on the polled device instead, using a guarded write-then-read-back
+(`infra/iot/modbus.WriteConfirm`) so the write is confirmed by the device itself, not assumed. Both
+transports pass through every gate above unchanged — Modbus actuation is not a separate, looser
+path, it is the write half of the same poller a Modbus profile already reads with. A Modbus command
+never auto-retries either: `WriteConfirm` has a 5-second timeout and only ever re-*reads* to
+confirm, never re-writes, so a lost confirmation cannot become a second physical write. A Modbus
+command's value is encoded to the register's `regKind` (`u16`/`i16` — single-register writes only;
+a multi-register kind is refused rather than half-written) after applying the register's
+`scaleFactor` in reverse (`raw = round(value / scaleFactor)`, the same scale the read side uses).
+
 ### Declaring a command on a device profile
 
 A profile (see "The device-type catalog" above) declares zero or more commands alongside its
@@ -187,21 +209,27 @@ telemetry keys, via `POST/PUT /api/profiles`:
   - `"color"` — an RGB colour packed into one integer (`0xRRGGBB`).
   - **An unrecognised `kind` is refused, not silently passed** — a command declaring a typo'd or
     unknown kind cannot be issued at all.
-- `topicTemplate` — where the command is published, `{deviceKey}` substituted.
-- `payloadTemplate` — the message body. `{value}` is substituted for every kind (e.g.
+- `transport` — `mqtt` (default) or `modbus`. Decides which of the two field groups below applies.
+- **MQTT fields** — `topicTemplate`: where the command is published, `{deviceKey}` substituted.
+  `payloadTemplate`: the message body. `{value}` is substituted for every kind (e.g.
   `{"method":"Switch.Set","params":{"id":0,"on":{value}}}`); a `"color"` command additionally
   substitutes `{r}`/`{g}`/`{b}` with the unpacked 0..255 channels. An empty template sends the
   bare value, for a device whose topic itself is the instruction.
+- **Modbus fields** — `register`: the holding register this command writes. `regKind`: `u16` or
+  `i16` (single-register writes only; a `u32`/`i32` command is refused rather than half-written).
+  `scaleFactor`: the same multiplier the read-side telemetry binding uses, applied in reverse
+  (`raw = round(value / scaleFactor)`). A Modbus command needs no `confirmKey` — the write is
+  confirmed inline by reading the register back.
 - `min` / `max` — the safe range for a `setpoint` or `cct`. **Required for either to be usable at
   all** — leaving both at `0` means the command declares no safe range and every value will be
   refused.
 - `options` — for a `mode` command, a JSON list of `{"value":<int>,"label":<string>}` naming its
   allowed values; a value not in the list is refused, and an empty/malformed `options` refuses
   every value.
-- `confirmKey` — the telemetry key the device reports the resulting state back on. Without this,
-  a command can only ever reach `sent`, never `confirmed`. A `color` command typically declares
-  none: a bulb that reports colour back per-channel cannot be equality-confirmed against one
-  packed float, so "sent, never confirmed" is the honest status for it.
+- `confirmKey` (MQTT only) — the telemetry key the device reports the resulting state back on.
+  Without this, an MQTT command can only ever reach `sent`, never `confirmed`. A `color` command
+  typically declares none: a bulb that reports colour back per-channel cannot be equality-confirmed
+  against one packed float, so "sent, never confirmed" is the honest status for it.
 
 Of the built-in profiles, `smart-relay` (Shelly/Tasmota conventions — `output`, a switch,
 confirmed by the device's own `output` telemetry key) and `smart-lamp` (Zigbee2MQTT conventions —
@@ -211,18 +239,23 @@ sensor that cannot be commanded cannot be commanded wrongly.
 
 ### Sent, confirmed, failed — what an operator should read into each
 
-- **`sent`** means the app successfully published the command to the broker. It does **not**
-  mean the physical thing happened — a relay could have missed it, or the device could be about
-  to act. Do not treat `sent` as "done".
-- **`confirmed`** is the only status that means the device physically acted: it is set the moment
-  the device reports the state back on the command's `confirmKey`. This is the status to wait
-  for before believing a door is locked or a breaker is open.
+- **`sent`** means the app successfully published the command to the broker (MQTT transport only).
+  It does **not** mean the physical thing happened — a relay could have missed it, or the device
+  could be about to act. Do not treat `sent` as "done". A Modbus command never passes through
+  `sent` at all — it goes straight to `confirmed` or `failed`, since the write is confirmed inline.
+- **`confirmed`** is the only status that means the device physically acted: for an MQTT command
+  it is set the moment the device reports the state back on the command's `confirmKey`; for a
+  Modbus command it is set the moment the guarded write reads the register back and sees the
+  value land — no separate reported reading is needed. This is the status to wait for before
+  believing a door is locked or a breaker is open.
 - **`failed`** means either the command was refused (a gate rejected it — the reason is given
-  verbatim, e.g. "outside the safe range 5..30") or it was sent but never confirmed within 30
-  seconds. **A failed-by-timeout command is never automatically resent** — re-sending a relay
-  write is a second physical action, and if the first one actually landed but its confirmation
-  was lost in transit, a retry would fire the relay again (the door opens twice). If a command
-  times out, check the device and re-issue it yourself if it is still needed.
+  verbatim, e.g. "outside the safe range 5..30") or, for MQTT, it was sent but never confirmed
+  within 30 seconds, or, for Modbus, the guarded write itself was not confirmed within 5 seconds.
+  **A failed-by-timeout command is never automatically resent, on either transport** — re-sending
+  a relay write or a register write is a second physical action, and if the first one actually
+  landed but its confirmation was lost in transit, a retry would fire the relay (or write the
+  register) again (the door opens twice). If a command times out, check the device and re-issue it
+  yourself if it is still needed.
 
 The device twin (`GET /api/devices/{id}/twin`) shows desired vs. reported state per key. A
 desired value that was asked for more than 5 minutes ago and never got confirmed is shown as
