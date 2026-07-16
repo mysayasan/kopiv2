@@ -79,6 +79,12 @@ type CreateDeviceRequest struct {
 	// Empty/zero for an MQTT device, which is reached by its DeviceKey over the broker instead.
 	Endpoint string `json:"endpoint"`
 	Unit     int    `json:"unit"`
+	// Transport + serial line settings for a Modbus device (see entities.IotDevice).
+	Transport string `json:"transport"`
+	Baud      int    `json:"baud"`
+	Parity    string `json:"parity"`
+	DataBits  int    `json:"dataBits"`
+	StopBits  int    `json:"stopBits"`
 }
 
 // UpdateDeviceRequest is the body for editing a device. Password is absent by design: rotating
@@ -94,6 +100,11 @@ type UpdateDeviceRequest struct {
 	ActuationEnabled bool   `json:"actuationEnabled"`
 	Endpoint         string `json:"endpoint"`
 	Unit             int    `json:"unit"`
+	Transport        string `json:"transport"`
+	Baud             int    `json:"baud"`
+	Parity           string `json:"parity"`
+	DataBits         int    `json:"dataBits"`
+	StopBits         int    `json:"stopBits"`
 }
 
 // ProvisionedDevice is a created device plus the credential to show the installer once.
@@ -185,6 +196,11 @@ func (s *DeviceService) Create(ctx context.Context, req CreateDeviceRequest, act
 		ActuationEnabled: req.ActuationEnabled,
 		Endpoint:         strings.TrimSpace(req.Endpoint),
 		Unit:             req.Unit,
+		Transport:        strings.TrimSpace(req.Transport),
+		Baud:             req.Baud,
+		Parity:           strings.TrimSpace(req.Parity),
+		DataBits:         req.DataBits,
+		StopBits:         req.StopBits,
 		Health:           "unknown",
 		CreatedBy:        actor,
 		CreatedAt:        now,
@@ -225,6 +241,11 @@ func (s *DeviceService) Update(ctx context.Context, id int64, req UpdateDeviceRe
 	dev.ActuationEnabled = req.ActuationEnabled
 	dev.Endpoint = strings.TrimSpace(req.Endpoint)
 	dev.Unit = req.Unit
+	dev.Transport = strings.TrimSpace(req.Transport)
+	dev.Baud = req.Baud
+	dev.Parity = strings.TrimSpace(req.Parity)
+	dev.DataBits = req.DataBits
+	dev.StopBits = req.StopBits
 	dev.UpdatedBy = actor
 	dev.UpdatedAt = time.Now().Unix()
 	if dev.Name == "" {

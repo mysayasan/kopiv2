@@ -16,8 +16,9 @@ Node-RED-style visual, executable data-flow canvas (P1-P4) — SHIPPED (2026-07-
 was an explicit, later decision that DELIBERATELY REVERSES §8g's original "no visual node-graph
 editor" scope line; it is kept safe by routing every flow's actuation through the same guarded
 `CommandService.Issue` chokepoint every other command path in this app uses. **Guarded Modbus TCP
-control writes SHIPPED (2026-07-16) — see §8g "App integration" item 4.** Only the remainder of
-**P5** (RTU serial + OPC-UA transports) and **P8** (the solar system workspace) remain.
+control writes SHIPPED (2026-07-16) — see §8g "App integration" item 4.** **RTU serial + RTU-over-TCP
+transports SHIPPED (2026-07-17) — see §8g "App integration" item 5.** Only **OPC-UA** (the rest of
+**P5**) and **P8** (the solar system workspace) remain.
 
 `myiotsan` is the fourth app in the suite, alongside `mymatasan` (camera NVR), `myseliasan`
 (fleet control plane) and `myidsan` (identity/SSO). It is built on the same platform as
@@ -789,14 +790,15 @@ commands directly from the control plane, closing the gap §8e left open.
 
 ---
 
-## 8g. P5 + P8 — Industrial protocols and the solar "system workspace" (driver foundation + app integration + guarded Modbus control + 3 more register-map profiles landed; RTU/OPC-UA and the workspace remain)
+## 8g. P5 + P8 — Industrial protocols and the solar "system workspace" (driver foundation + app integration + guarded Modbus control + 3 more register-map profiles + RTU/RTU-over-TCP transports landed; OPC-UA and the workspace remain)
 
 Prompted by a request to make myiotsan **handle solar systems** without writing code per inverter
 model: use the protocols we have, and combine them into a **reusable template workspace** for a
 specific model (customisable, and re-usable for future protocol sets). The study below is the
-agreed direction; the **driver + simulator foundation is built and proven**, **app integration and
-guarded Modbus control have now landed (2026-07-15, then 2026-07-16 for control) — see below** —
-and **RTU/OPC-UA transports and the workspace layer (P8) remain**.
+agreed direction; the **driver + simulator foundation is built and proven**, **app integration,
+guarded Modbus control, and RTU/RTU-over-TCP transports have now landed (2026-07-15, 2026-07-16
+for control, 2026-07-17 for RTU) — see below** — and **OPC-UA and the workspace layer (P8)
+remain**.
 
 ### The shape of the problem, and why the current model doesn't fit
 
@@ -857,7 +859,7 @@ data, not code.
   three personas over real Modbus and confirmed a curtailment write by read-back. Hermetic unit
   tests (synthetic register banks) cover the decoding and scaling deterministically.
 
-#### App integration — items 1-4 LANDED (1-3 on 2026-07-15, 4 on 2026-07-16), item 5 still to land for P5
+#### App integration — items 1-4, 6-7 LANDED (1-3 on 2026-07-15, 4 on 2026-07-16, 6 on 2026-07-16, 7 on 2026-07-17); item 5's OPC-UA half still to land for P5
 
 1. **LANDED.** `telemetry_key.go` gained the Modbus binding fields (`Register`, `RegKind`
    (`u16`/`i16`/`u32`/`i32`), `ScaleFactor`, `WordSwap`); `device_profile.go` gained `Transport`
@@ -913,9 +915,8 @@ data, not code.
    (`host:port`)/`Unit` instead of a broker password. No built-in profile declared a Modbus command
    at this point — this landed the mechanism, not a worked example; item 6 below is the worked
    example.
-5. **RTU (serial)** is the same driver behind a serial transport (adds CRC + a serial port / RTU→TCP
-   gateway); TCP is first because the simulator is TCP. **OPC-UA** is a later peer driver. Both
-   remain outstanding.
+5. **RTU (serial) LANDED — see item 7 below.** **OPC-UA** is a later peer driver and remains
+   outstanding.
 6. **LANDED 2026-07-16 (branch `feat/myiotsan-solar-samples`).** Three more register-map profiles —
    the budget/high-volume hardware an installer outside the SolarEdge/SMA/Fronius/Huawei world
    actually buys — plus the driver work they needed and an in-app knowledge base:
@@ -967,6 +968,43 @@ data, not code.
      frontmatter parses), and `flows_test.go`-style coverage that every builtin flow graph parses.
      Live-boot verified: the KB is served, all profiles and flows seed, and the FC04/f32/word-swap
      read path decodes correctly against a Modbus mock.
+7. **LANDED 2026-07-17 (branch `feat/myiotsan-modbus-serial`).** RTU (serial) and RTU-over-TCP
+   transports — item 5's serial half — so a Modbus device no longer has to be Modbus TCP/MBAP:
+   - **`infra/iot/modbus` gained a `transport` interface** (`transport.go`) that hides the framing
+     difference between MBAP-over-TCP (`mbapTransport` — the original framing, moved out of
+     `client.go` unchanged) and **RTU** (`rtuTransport` — a bare unit id + PDU + CRC-16, no length
+     header; response size is inferred from the request's function code) shared by a serial line
+     and a raw TCP socket alike. A new `crc.go` implements the Modbus RTU CRC-16 (`crc16`,
+     `appendCRC`, `crcOK`; the reflected 0xA001 polynomial, init 0xFFFF).
+   - **`Client` now holds a `transport`, not a raw `net.Conn`.** `Dial` (Modbus TCP/MBAP) is
+     unchanged; a new `DialRTUTCP` opens RTU framing over a plain TCP socket for a "transparent"
+     RS485→TCP gateway (many cheap gateways speak only this, not real Modbus TCP).
+   - **A new `serial.go`** adds `SerialParams` (Baud/DataBits/Parity/StopBits, defaulting to the
+     near-universal 9600 8N1), a `DialSerial` opening RTU framing over a real serial port, and — a
+     serial port is exclusive but an RS485 bus is multi-drop — a **per-port mutex registry** so
+     several unit ids sharing one physical port are polled one at a time rather than colliding. The
+     one new external dependency, `go.bug.st/serial` v1.8.0, is pure Go (no cgo), fitting the
+     single-binary/air-gapped posture the rest of the driver already keeps.
+   - **`DeviceConf` gained `Transport` (`TransportTCP`/`TransportRTUTCP`/`TransportSerial`) and
+     `Serial SerialParams`**, plus a `DeviceConf.dial()` that picks the right transport. `PollOnce`
+     and `WriteConfirm` both dial through it, so SunSpec auto-discovery, register-map reads, AND
+     guarded control writes (item 4 above) all work unchanged over any of the three transports.
+   - **App wiring:** `entities.IotDevice` gained `Transport`/`Baud`/`Parity`/`DataBits`/`StopBits`
+     (for `"serial"`, `Endpoint` holds the port name — `COM3`, `/dev/ttyUSB0` — instead of
+     `host:port`), plumbed through `services.DeviceService`'s create/update requests and a new
+     `services.modbusTransportOf` helper that `modbus_poller.go`'s `planFor` uses to build the
+     poller's `DeviceConf`. `services.CommandService`'s guarded-write seam (`modbusWriteFunc`)
+     changed shape from `(endpoint, unit, reg, value, timeout)` to `(modbus.DeviceConf, reg, value,
+     timeout)` so a control write inherits the device's transport too, and now wires directly to
+     `modbus.WriteConfirm` (the seam's signature is exactly that function's). The frontend device
+     editor gained a shared `ModbusFields` component (`components/devices.js`): a Transport select
+     (Modbus TCP / RTU over TCP / Serial) plus, for serial, port name and baud/parity/data-bits/
+     stop-bits fields.
+   - Verified: `infra/iot/modbus/rtu_test.go` (the CRC-16 canonical check value `0x4B37`, a full
+     RTU read/write round trip, exception surfacing) plus `go vet`. Live-boot verified beyond unit
+     tests: the binary boots with the new serial dependency, and a `transport=rtutcp` device read a
+     correct value (`grid_ac_power=1234.5`) off a raw RTU-over-TCP mock — proving the same RTU
+     framing a real serial line uses.
 
 ### Layer B — the system workspace (the reusable "template", P8)
 

@@ -21,6 +21,15 @@ type IotDevice struct {
 	// are empty/zero for an MQTT device, which is addressed by its DeviceKey instead.
 	Endpoint string `json:"endpoint" form:"endpoint" query:"endpoint"`
 	Unit     int    `json:"unit" form:"unit" query:"unit"`
+	// Transport is how the app reaches a Modbus device: "" / "tcp" (Modbus TCP / MBAP, the default),
+	// "rtutcp" (RTU frames over TCP — a transparent RS485→TCP gateway), or "serial" (RTU over a
+	// serial line). For "serial", Endpoint holds the port name (COM3, /dev/ttyUSB0) instead of host:port,
+	// and the Baud/Parity/DataBits/StopBits below set the line. Ignored for non-Modbus devices.
+	Transport string `json:"transport" form:"transport" query:"transport"`
+	Baud      int    `json:"baud" form:"baud" query:"baud"`
+	Parity    string `json:"parity" form:"parity" query:"parity"`
+	DataBits  int    `json:"dataBits" form:"dataBits" query:"dataBits"`
+	StopBits  int    `json:"stopBits" form:"stopBits" query:"stopBits"`
 	// ProfileId points at the DeviceProfile that declares this device's telemetry keys.
 	// Without a profile a device can connect but nothing it publishes can be decoded.
 	ProfileId int64 `json:"profileId" form:"profileId" query:"profileId" idx:"profile"`

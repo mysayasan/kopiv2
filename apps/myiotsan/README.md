@@ -34,8 +34,14 @@ admin-only, server-side bounds, rate-limited, audited, never auto-retried — se
 commands, every one inert until bench-verified (see the Help page below). Five more built-in
 **Flow Engine** solar templates and an **in-app knowledge base** (a Help page with setup guides
 for every solar profile, compiled into the binary so it works fully air-gapped) shipped alongside
-these. What remains of P5 is RTU (serial) and OPC-UA transports; the solar "system workspace" (P8)
-is still design-only. **Home automation (richer command kinds, scenes, schedules) has also shipped**: a
+these. **RTU (serial) and RTU-over-TCP transports have since shipped**: a Modbus device is no
+longer necessarily Modbus TCP — its profile-independent `transport` can instead be `rtutcp` (RTU
+framing over a plain TCP socket, for a transparent RS485→TCP gateway) or `serial` (RTU over a real
+serial port, e.g. `COM3`/`/dev/ttyUSB0`, with baud/parity/data-bits/stop-bits fields, defaulting to
+9600 8N1), sharing a per-port lock so several unit ids multi-dropped on one RS485 bus are polled
+one at a time. SunSpec discovery, register-map reads, and guarded control writes all work
+unchanged over any of the three transports. What remains of P5 is OPC-UA; the solar "system
+workspace" (P8) is still design-only. **Home automation (richer command kinds, scenes, schedules) has also shipped**: a
 device can now be dimmed, positioned, colour-tuned, or set to one of a named list of modes, not
 just switched or given a plain setpoint; commands can be grouped into a named **scene** and run
 together; and a scene or a single command can be fired on the clock or at sunrise/sunset via a
@@ -107,7 +113,13 @@ password.** When the chosen profile's `transport` is `modbus`, `POST /api/device
 device's Settings form) asks for `endpoint` (the device's `host:port`, Modbus TCP is usually port
 502) and `unit` (the Modbus unit/slave id, often `1` — a gateway can host several units behind one
 endpoint) instead of a broker password. The app dials OUT to the device on the profile's poll
-cadence; there is nothing to point at the app the way an MQTT device points at the broker.
+cadence; there is nothing to point at the app the way an MQTT device points at the broker. The
+device's own `transport` field then picks HOW the app reaches it, independent of the profile:
+`tcp` (Modbus TCP/MBAP, the default), `rtutcp` (RTU frames over a plain TCP socket — a transparent
+RS485→TCP gateway), or `serial` (RTU over a real serial port). For `serial`, `endpoint` instead
+holds the port name (`COM3`, `/dev/ttyUSB0`), and the form asks for baud/parity/data-bits/stop-bits
+too (defaulting to 9600 8N1) — the same fields `ModbusFields` in the device editor shows only when
+`serial` is selected.
 
 ## The device-type catalog (profiles)
 

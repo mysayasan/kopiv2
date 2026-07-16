@@ -11,7 +11,7 @@ P5 (`docs/MYIOTSAN_PLAN.md` §8g); it is now **wired in**: `apps/myiotsan/servic
 `PollSeconds`) and drives `Run` under `safego.Supervise` in `app.go`, feeding
 `Ingest.HandlePolled` — the same back half an MQTT publish takes.
 
-## Key Type: Mode / DeviceConf
+## Key Type: Mode / Transport / DeviceConf
 
 ```go
 type Mode int
@@ -20,19 +20,41 @@ const (
     ModeRegMap              // non-SunSpec: use the site-authored register map
 )
 
+type Transport int
+const (
+    TransportTCP    Transport = iota // MBAP over TCP (the default)
+    TransportRTUTCP                  // RTU frames over TCP (a transparent RS485->TCP gateway)
+    TransportSerial                  // RTU frames over a serial line (RS485/RS232)
+)
+
 type DeviceConf struct {
-    Key      string
-    Endpoint string
-    Unit     byte
-    Mode     Mode
-    Base     int           // SunSpec base register; 0 = auto-discover (40000/50000/0)
-    Map      RegisterMap   // used when Mode == ModeRegMap
-    Timeout  time.Duration
+    Key       string
+    Endpoint  string // host:port for TCP/RTU-over-TCP; the port name (COM3, /dev/ttyUSB0) for serial
+    Unit      byte
+    Mode      Mode
+    Base      int           // SunSpec base register; 0 = auto-discover (40000/50000/0)
+    Map       RegisterMap   // used when Mode == ModeRegMap
+    Transport Transport     // TCP / RTU-over-TCP / Serial
+    Serial    SerialParams  // line settings when Transport == TransportSerial
+    Timeout   time.Duration
 }
 ```
 
 `Base == 0` means auto-discover via `sunspec.Discover`; a nonzero value skips discovery and walks
-that base directly (a device known in advance not to need the probe).
+that base directly (a device known in advance not to need the probe). `Transport` defaults to
+`TransportTCP` (the zero value), so every `DeviceConf` built before transports existed keeps
+behaving exactly as it did.
+
+## Key Function: DeviceConf.dial
+
+```go
+func (d DeviceConf) dial() (*Client, error)
+```
+
+Picks the right `Client` constructor for `d.Transport` — `Dial` (TCP/MBAP, the default),
+`DialRTUTCP`, or `DialSerial` with `d.Serial` — so `PollOnce` and `WriteConfirm` below don't need
+to know which transport a device uses. SunSpec walk and register-map read work identically over
+any of them, since `Client` hides the framing (`client.go.md`).
 
 ## Key Function: PollOnce
 
@@ -40,9 +62,9 @@ that base directly (a device known in advance not to need the probe).
 func PollOnce(d DeviceConf) ([]codec.Sample, *sunspec.Common, error)
 ```
 
-Dials the device, reads it once, and returns decoded samples (plus the SunSpec nameplate, `nil`
-for a register-map device since it isn't self-describing). Dials and closes per call — see
-`client.go.md`'s Notes for why a persistent connection isn't used.
+Dials the device (via `d.dial()`), reads it once, and returns decoded samples (plus the SunSpec
+nameplate, `nil` for a register-map device since it isn't self-describing). Dials and closes per
+call — see `client.go.md`'s Notes for why a persistent connection isn't used.
 
 ## Key Function: Run
 
@@ -62,8 +84,9 @@ per-device goroutine shape `apps/myiotsan/services.ModbusPoller` runs one of per
 func WriteConfirm(d DeviceConf, reg int, value uint16, timeout time.Duration) error
 ```
 
-A **guarded** write: writes `value` to `reg`, then re-reads that register until it reports
-`value` or `timeout` elapses. It **never re-issues the write** — a Modbus write to an
+A **guarded** write: dials via `d.dial()` (so a control write inherits the device's transport just
+like a poll does), writes `value` to `reg`, then re-reads that register until it reports `value`
+or `timeout` elapses. It **never re-issues the write** — a Modbus write to an
 inverter/battery is a physical action, and resending it because a confirmation was slow would be
 a *second* physical action; nothing at this layer can distinguish "the write was lost" from "the
 confirmation was lost", so on doubt it fails and a human decides. This mirrors the rule the MQTT

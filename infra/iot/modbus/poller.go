@@ -17,16 +17,27 @@ const (
 	ModeRegMap              // non-SunSpec: use the site-authored register map
 )
 
-// DeviceConf describes one pollable Modbus device. This is the runtime shape of what a
-// device_profile + iot_device will carry once the app integration lands (see MYIOTSAN_PLAN P8).
+// Transport selects the wire framing / medium for a Modbus device.
+type Transport int
+
+const (
+	TransportTCP    Transport = iota // MBAP over TCP (the default)
+	TransportRTUTCP                  // RTU frames over TCP (a transparent RS485→TCP gateway)
+	TransportSerial                  // RTU frames over a serial line (RS485/RS232)
+)
+
+// DeviceConf describes one pollable Modbus device.
 type DeviceConf struct {
-	Key      string        // device key, used when emitting samples
-	Endpoint string        // host:port
-	Unit     byte          // Modbus unit id
-	Mode     Mode          // SunSpec or manual map
-	Base     int           // SunSpec base register; 0 = auto-discover (40000/50000/0)
-	Map      RegisterMap   // used when Mode == ModeRegMap
-	Timeout  time.Duration // per-operation timeout (default 3s)
+	Key      string    // device key, used when emitting samples
+	Endpoint string    // host:port for TCP/RTU-over-TCP; the port name (COM3, /dev/ttyUSB0) for serial
+	Unit     byte      // Modbus unit id
+	Mode     Mode      // SunSpec or manual map
+	Base     int       // SunSpec base register; 0 = auto-discover (40000/50000/0)
+	Map      RegisterMap // used when Mode == ModeRegMap
+	// Transport chooses the framing/medium; Serial carries the line settings when Transport is serial.
+	Transport Transport
+	Serial    SerialParams
+	Timeout   time.Duration // per-operation timeout (default 3s)
 }
 
 func (d DeviceConf) to() time.Duration {
@@ -36,12 +47,25 @@ func (d DeviceConf) to() time.Duration {
 	return d.Timeout
 }
 
+// dial opens the right transport for this device. SunSpec walk and register-map read work over any
+// of them, since Client hides the framing.
+func (d DeviceConf) dial() (*Client, error) {
+	switch d.Transport {
+	case TransportRTUTCP:
+		return DialRTUTCP(d.Endpoint, d.Unit, d.to())
+	case TransportSerial:
+		return DialSerial(d.Endpoint, d.Unit, d.to(), d.Serial)
+	default:
+		return Dial(d.Endpoint, d.Unit, d.to())
+	}
+}
+
 // PollOnce dials the device, reads it once, and returns the decoded samples. For a SunSpec device
 // it also returns the nameplate (nil for a register-map device, which is not self-describing).
 // The connection is opened and closed per poll: at a poll cadence of seconds this is negligible and
 // avoids the stale-socket handling a long-lived connection would need.
 func PollOnce(d DeviceConf) ([]codec.Sample, *sunspec.Common, error) {
-	c, err := Dial(d.Endpoint, d.Unit, d.to())
+	c, err := d.dial()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -107,7 +131,7 @@ func Run(ctx context.Context, d DeviceConf, interval time.Duration, emit func(ke
 // human decides — the same rule the actuation path already enforces for MQTT relays. Confirmation
 // is by RE-READING, which is safe to repeat.
 func WriteConfirm(d DeviceConf, reg int, value uint16, timeout time.Duration) error {
-	c, err := Dial(d.Endpoint, d.Unit, d.to())
+	c, err := d.dial()
 	if err != nil {
 		return err
 	}
