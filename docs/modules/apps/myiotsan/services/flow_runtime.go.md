@@ -34,6 +34,7 @@ type compiledFlow struct {
     outWires map[string][]string
     inputs   []flowInputBinding
     deadband map[string]float64 // nodeId -> last emitted value
+    lastPass map[string]int64   // nodeId -> last pass unix-milli (throttle state, P4)
     debug    *debugRing
     deps     *flowDeps
 }
@@ -52,8 +53,12 @@ recording each node's received message into `debug` (the live inspector's data) 
 `flowMaxSteps`.
 
 `exec` runs one node and returns `(msg, emit)`; a returned `(nil, false)` drops the branch — a
-threshold not met, a deadband within tolerance, a script that returned `null`, or any sink
-(`debug`/`notify`/`command`/`derived_metric`).
+threshold not met, a deadband within tolerance, a `throttle` node inside its window (P4), a script
+that returned `null`, or any sink (`debug`/`notify`/`command`/`derived_metric`/`mqtt_out`).
+
+`throttle` (P4) is stateful (`compiledFlow.lastPass`, keyed like `deadband`) but timer-free: it only
+ever DROPS a message that arrives inside its window, never defers or replays one after the fact, so
+unlike a real rate-limiter it cannot itself become a source of a delayed loop.
 
 ## Key Type: flowDeps / flowNotifier / deviceResolver / readingSink
 
@@ -63,8 +68,11 @@ type flowDeps struct {
     flowNotifier flowNotifier
     devices      deviceResolver
     writer       readingSink
+    publish      mqttPublish    // broker.Publish seam an mqtt_out node uses (P4)
     logf         func(string, ...any)
 }
+
+type mqttPublish func(topic string, payload []byte, retain bool, qos byte) error
 ```
 
 The three collaborators (`flowNotifier`, `deviceResolver`, `readingSink`) are interfaces so the
@@ -86,6 +94,12 @@ runtime is unit-testable with fakes (`flows_test.go.md`); the production types a
   value is stored, rolled up and charted like any other reading. It deliberately does NOT re-enter
   the ingest pipeline — a derived write that fed back through the flow tap could loop — and a flow
   that wants to alert on its derived value has a threshold->notify branch for exactly that.
+- **`doMqttOut`** (P4) publishes the message payload to an MQTT topic via the `publish` seam
+  (`broker.Publish` in production). It publishes DATA outward — a processed value fed to another
+  system or a home-automation subscriber — never a device command, so it does NOT go through the
+  actuation gate; `command` remains the only guarded actuation path. `payloadBytes` renders a number
+  as its shortest decimal, a string as-is, and anything else as JSON. Publishing is one-way OUT of
+  the hub, so it cannot itself loop back into ingest.
 
 ## Key Type: debugRing (inspector)
 
@@ -102,7 +116,7 @@ lock.
 ## Key Type: FlowRuntime
 
 ```go
-func NewFlowRuntime(svc *FlowService, issuer commandIssuer, notif flowNotifier, devices deviceResolver, writer readingSink, logf func(string, ...any)) *FlowRuntime
+func NewFlowRuntime(svc *FlowService, issuer commandIssuer, notif flowNotifier, devices deviceResolver, writer readingSink, publish mqttPublish, logf func(string, ...any)) *FlowRuntime
 func (r *FlowRuntime) OnReading(ctx context.Context, dev *entities.IotDevice, key string, value float64, nowSec int64)
 func (r *FlowRuntime) SignalReload()
 func (r *FlowRuntime) Run(ctx context.Context, reconcileEvery time.Duration)
@@ -138,3 +152,5 @@ really routes through the guarded path), which is the point of a test-fire.
   by, so a dispatched reading reaches every flow's input node bound to that (device, key) pair.
 - Wired in `apps/myiotsan/app/app.go` alongside the ingest spine: `ingest.SetFlows(flowRuntime)`
   taps the same decoded-sample stream `RuleService.OnReading` does (see `services/ingest.go.md`).
+  `app.go` passes `broker.Publish` as the `mqttPublish` dep (P4), so an `mqtt_out` node reaches the
+  same embedded broker every device publishes into.

@@ -814,6 +814,20 @@
 .flow-node-title { fill: var(--text-primary); font-size: 13px; font-weight: 600; }
 .flow-node-sub { fill: var(--text-muted); font-size: 11px; }
 .flow-node-dbg { fill: var(--accent); font-size: 11px; font-weight: 700; text-anchor: end; }
+.flow-node.has-warn .flow-node-box { stroke: var(--warn-border); stroke-dasharray: 4 3; }
+.flow-node-warn { fill: var(--warn-border); }
+
+/* validation surfacing */
+.flow-warn-count {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600;
+  color: var(--warn-text); background: var(--warn-bg); border: 1px solid var(--warn-border);
+  border-radius: 999px; padding: 2px 9px;
+}
+.flow-config-warn {
+  display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12px;
+  color: var(--warn-text); background: var(--warn-bg); border: 1px solid var(--warn-border);
+  border-radius: 7px; padding: 6px 9px;
+}
 
 .flow-port { fill: var(--bg-surface); stroke: var(--text-muted); stroke-width: 1.5; cursor: crosshair; }
 .flow-port:hover { fill: var(--accent); stroke: var(--accent); }

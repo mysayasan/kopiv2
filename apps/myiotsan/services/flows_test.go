@@ -362,6 +362,63 @@ func TestFlow_DerivedMetricWritesReading(t *testing.T) {
 	}
 }
 
+// --- throttle + mqtt_out (P4) ------------------------------------------------------------------
+
+func TestFlow_ThrottleDropsWithinWindow(t *testing.T) {
+	g := flowGraph{
+		Nodes: []flowNode{
+			{Id: "in", Type: nodeDeviceTelemetry, Config: map[string]any{"deviceKey": "d1", "key": "x"}},
+			{Id: "th", Type: nodeThrottle, Config: map[string]any{"seconds": 10.0}},
+			{Id: "dbg", Type: nodeDebug},
+		},
+		Wires: []flowWire{
+			{From: flowPort{Node: "in"}, To: flowPort{Node: "th"}},
+			{From: flowPort{Node: "th"}, To: flowPort{Node: "dbg"}},
+		},
+	}
+	cf := compileForTest(t, g, testDeps(nil, nil, nil))
+	seed(cf, "in", "x", 1)
+	if cf.debug.snapshot()["dbg"].Payload.(float64) != 1 {
+		t.Fatal("first message should pass the throttle")
+	}
+	seed(cf, "in", "x", 2) // within 10s -> dropped, debug stays at 1
+	if cf.debug.snapshot()["dbg"].Payload.(float64) != 1 {
+		t.Fatal("a message inside the throttle window should be dropped")
+	}
+}
+
+type fakePublisher struct {
+	topic   string
+	payload string
+	retain  bool
+	qos     byte
+	calls   int
+}
+
+func (f *fakePublisher) publish(topic string, payload []byte, retain bool, qos byte) error {
+	f.calls++
+	f.topic, f.payload, f.retain, f.qos = topic, string(payload), retain, qos
+	return nil
+}
+
+func TestFlow_MqttOutPublishesPayload(t *testing.T) {
+	pub := &fakePublisher{}
+	deps := testDeps(nil, nil, nil)
+	deps.publish = pub.publish
+	g := flowGraph{
+		Nodes: []flowNode{
+			{Id: "in", Type: nodeDeviceTelemetry, Config: map[string]any{"deviceKey": "d1", "key": "x"}},
+			{Id: "mq", Type: nodeMqttOut, Config: map[string]any{"topic": "hub/out/x", "qos": 1.0, "retain": true}},
+		},
+		Wires: []flowWire{{From: flowPort{Node: "in"}, To: flowPort{Node: "mq"}}},
+	}
+	cf := compileForTest(t, g, deps)
+	seed(cf, "in", "x", 42)
+	if pub.calls != 1 || pub.topic != "hub/out/x" || pub.payload != "42" || !pub.retain || pub.qos != 1 {
+		t.Fatalf("expected one retained qos1 publish of 42 to hub/out/x, got %+v", pub)
+	}
+}
+
 // --- templates: slots + instantiation ----------------------------------------------------------
 
 func TestFlow_SlotDetectionAndSubstitution(t *testing.T) {
