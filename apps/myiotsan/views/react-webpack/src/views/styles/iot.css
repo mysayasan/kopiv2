@@ -541,9 +541,29 @@
 }
 .iot-cmd-readout { min-width: 60px; font-variant-numeric: tabular-nums; font-weight: 600; }
 
-/* Settings page helpers. */
-.settings-content { display: flex; flex-direction: column; gap: 4px; }
-.iot-checkbox { display: inline-flex; align-items: center; gap: 8px; margin: 6px 0; }
+/* Settings page: the topic band under the tab bar (icon chip + title + description), then the
+   subtopic cards. Matches mymatasan's settings-tab-head / settings-content convention. */
+.settings-tabbed { gap: 0; align-items: start; }
+.settings-tab-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 2px 6px; /* the shared Tabs bar owns the 16px gap above */
+}
+.settings-tab-head-icon {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 13px;
+  background: var(--accent-bg, rgba(59, 130, 246, 0.12));
+  color: var(--accent, #3b82f6);
+}
+.settings-tab-head-text h2 { margin: 0; font-size: 18px; }
+.settings-tab-head-text p { margin: 3px 0 0; font-size: 13px; color: var(--text-muted, #6b7280); }
+.settings-content { display: flex; flex-direction: column; gap: 14px; min-width: 0; padding-top: 4px; }
+
 .iot-status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin: 10px 0 16px; }
 .iot-status-grid > div { display: flex; flex-direction: column; gap: 2px; }
 .iot-claim-code { display: flex; align-items: center; gap: 10px; }

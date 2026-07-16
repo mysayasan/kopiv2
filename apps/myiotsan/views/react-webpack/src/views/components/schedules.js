@@ -207,7 +207,7 @@ function ScheduleEditor({ schedule, scenes, onBack, onSaved, onToast }) {
               <input value={form.name || ''} required onChange={(e) => set({ name: e.target.value })} />
             </Field>
             <Field label={t('sched.enabled')}>
-              <label className="iot-checkbox">
+              <label className="check-row">
                 <input type="checkbox" checked={!!form.enabled} onChange={(e) => set({ enabled: e.target.checked })} />
                 <span>{t('sched.enabledHint')}</span>
               </label>

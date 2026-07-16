@@ -124,7 +124,7 @@ func Policy() []PolicyRule {
 		// box (webhook/telegram credentials); the telemetry/broker knobs and a restart can take the
 		// appliance down; fleet pairing adopts the node into a control plane. All administrator-only,
 		// and the whole Settings nav is hidden from non-admins in the UI on top of this.
-		{Path: "/api/settings/notification", Description: "Configure webhook/telegram delivery", Viewer: none, Operator: none},
+		{Path: "/api/settings/notification", Description: "Configure alert delivery destinations (webhook/telegram/mqtt)", Viewer: none, Operator: none},
 		{Path: "/api/settings/telemetry", Description: "Storage retention and broker address", Viewer: none, Operator: none},
 		{Path: "/api/system", Description: "Restart the appliance", Viewer: none, Operator: none},
 		// Fleet pairing (adopt into a myseliasan control plane). This was missing from the catalog —

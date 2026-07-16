@@ -217,3 +217,32 @@ export function CopyButton({ value, label, onCopied }) {
     </button>
   );
 }
+
+// AccordionList / AccordionItem — the standardized inline accordion (matches mymatasan's ui.js). A
+// list of collapsible rows: each has a summary (always visible), optional actions on the right, and
+// a body shown only when open. The caller owns the open state. The chevron is added automatically.
+// CSS: .accordion-* in styles/app.css.
+export function AccordionList({ children, className }) {
+  return <ul className={`accordion-list${className ? ` ${className}` : ''}`}>{children}</ul>;
+}
+
+export function AccordionItem({ open, onToggle, summary, actions, children, disabled }) {
+  return (
+    <li className={`accordion-item${open ? ' open' : ''}`}>
+      <div className="accordion-summary">
+        <button
+          type="button"
+          className="accordion-summary-main"
+          onClick={onToggle}
+          aria-expanded={open}
+          disabled={disabled}
+        >
+          <span className="accordion-chevron"><Ico n={open ? 'chev-down' : 'arr-right'} /></span>
+          {summary}
+        </button>
+        {actions ? <div className="accordion-actions">{actions}</div> : null}
+      </div>
+      {open ? <div className="accordion-body">{children}</div> : null}
+    </li>
+  );
+}

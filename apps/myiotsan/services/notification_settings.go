@@ -43,11 +43,13 @@ func NewNotificationSettingsService(db dbsql.IDbCrud, notif notifier) *Notificat
 	}
 }
 
-// NotificationSettings is the persisted shape: a webhook and a telegram channel, each with its own
-// severity floor so noisy info events don't flood an external channel.
+// NotificationSettings is the persisted shape. Delivery is per-DESTINATION (webhook/telegram/mqtt,
+// each with its own severity floor and category filter). The Webhook/Telegram singletons are kept
+// only so an older, pre-destinations config migrates forward once; live delivery reads Destinations.
 type NotificationSettings struct {
-	Webhook  WebhookSettings  `json:"webhook"`
-	Telegram TelegramSettings `json:"telegram"`
+	Webhook      WebhookSettings           `json:"webhook"`
+	Telegram     TelegramSettings          `json:"telegram"`
+	Destinations []NotificationDestination `json:"destinations"`
 }
 
 type WebhookSettings struct {
@@ -81,8 +83,62 @@ func (s *NotificationSettingsService) Get(ctx context.Context) (NotificationSett
 	return normalizeNotifSettings(out), nil
 }
 
+// SaveDestination upserts ONE destination against the persisted settings (not a client-supplied
+// full blob), so saving one destination never clobbers another's stored config. Empty id = append a
+// new one; otherwise replace by id (append if it no longer exists).
+func (s *NotificationSettingsService) SaveDestination(ctx context.Context, dest NotificationDestination) (NotificationDestination, NotificationSettings, error) {
+	current, err := s.Get(ctx)
+	if err != nil {
+		return NotificationDestination{}, NotificationSettings{}, err
+	}
+	dest.Id = strings.TrimSpace(dest.Id)
+	if dest.Id == "" {
+		dest.Id = newDestinationID()
+		current.Destinations = append(current.Destinations, dest)
+	} else {
+		replaced := false
+		for i := range current.Destinations {
+			if current.Destinations[i].Id == dest.Id {
+				current.Destinations[i] = dest
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			current.Destinations = append(current.Destinations, dest)
+		}
+	}
+	saved, err := s.Save(ctx, current)
+	if err != nil {
+		return NotificationDestination{}, NotificationSettings{}, err
+	}
+	for _, d := range saved.Destinations {
+		if d.Id == dest.Id {
+			return d, saved, nil
+		}
+	}
+	return dest, saved, nil
+}
+
+// DeleteDestination removes one destination by id, leaving the rest untouched.
+func (s *NotificationSettingsService) DeleteDestination(ctx context.Context, id string) (NotificationSettings, error) {
+	id = strings.TrimSpace(id)
+	current, err := s.Get(ctx)
+	if err != nil {
+		return NotificationSettings{}, err
+	}
+	kept := current.Destinations[:0:0]
+	for _, d := range current.Destinations {
+		if d.Id != id {
+			kept = append(kept, d)
+		}
+	}
+	current.Destinations = kept
+	return s.Save(ctx, current)
+}
+
 // Save validates, persists, and applies the settings to the live hub. The Configure call is the one
-// line that turns "in-app feed only" into "also delivers to webhook/telegram".
+// line that turns "in-app feed only" into "also delivers to every enabled destination".
 func (s *NotificationSettingsService) Save(ctx context.Context, settings NotificationSettings) (NotificationSettings, error) {
 	settings = normalizeNotifSettings(settings)
 	if err := validateNotifSettings(settings); err != nil {
@@ -143,23 +199,45 @@ func (s *NotificationSettingsService) Test(ctx context.Context, severity string)
 	return nil
 }
 
-// channelConfig maps the persisted settings onto the shared ChannelConfig. It uses the Webhook /
-// Telegram singletons (the service converts them to destinations internally when Destinations is
-// empty) — myiotsan does not need the full per-destination model mymatasan carries.
+// channelConfig maps the persisted destinations onto the shared ChannelConfig — one filtered
+// outbound channel per enabled destination (its own severity floor + category subscription). The
+// delivery engine itself is shared infra (domain/notification + infra/notification).
 func channelConfig(s NotificationSettings) notification.ChannelConfig {
-	return notification.ChannelConfig{
-		Webhook: notification.WebhookConfig{
-			Enabled:     s.Webhook.Enabled,
-			URL:         s.Webhook.URL,
-			MinSeverity: parseSeverity(s.Webhook.MinSeverity),
-		},
-		Telegram: notification.TelegramConfig{
-			Enabled:     s.Telegram.Enabled,
-			BotToken:    s.Telegram.BotToken,
-			ChatID:      s.Telegram.ChatId,
-			MinSeverity: parseSeverity(s.Telegram.MinSeverity),
-		},
+	cfg := notification.ChannelConfig{}
+	for _, d := range s.Destinations {
+		if !d.Enabled {
+			continue
+		}
+		dc := notification.DestinationConfig{
+			Id:          d.Id,
+			Type:        d.Type,
+			MinSeverity: parseSeverity(d.MinSeverity),
+			Categories:  d.Categories,
+		}
+		switch d.Type {
+		case DestinationTypeWebhook:
+			dc.URL = d.URL
+		case DestinationTypeTelegram:
+			dc.BotToken = d.BotToken
+			dc.ChatID = d.ChatId
+		case DestinationTypeMqtt:
+			dc.Mqtt = notification.MqttDestinationConfig{
+				BrokerURL:          d.Mqtt.BrokerURL,
+				Topic:              d.Mqtt.Topic,
+				ClientID:           d.Mqtt.ClientId,
+				QoS:                byte(d.Mqtt.Qos),
+				Retain:             d.Mqtt.Retain,
+				Username:           d.Mqtt.Username,
+				Password:           d.Mqtt.Password,
+				CACert:             d.Mqtt.CaCert,
+				ClientCert:         d.Mqtt.ClientCert,
+				ClientKey:          d.Mqtt.ClientKey,
+				InsecureSkipVerify: d.Mqtt.InsecureSkipVerify,
+			}
+		}
+		cfg.Destinations = append(cfg.Destinations, dc)
 	}
+	return cfg
 }
 
 func normalizeNotifSettings(s NotificationSettings) NotificationSettings {
@@ -168,10 +246,18 @@ func normalizeNotifSettings(s NotificationSettings) NotificationSettings {
 	s.Telegram.BotToken = strings.TrimSpace(s.Telegram.BotToken)
 	s.Telegram.ChatId = strings.TrimSpace(s.Telegram.ChatId)
 	s.Telegram.MinSeverity = normalizeSeverity(s.Telegram.MinSeverity)
+	// Seed the destination list from the legacy singletons the first time (before any destination is
+	// stored), then normalize. After that, Destinations is authoritative.
+	if len(s.Destinations) == 0 {
+		s.Destinations = migrateLegacyDestinations(s)
+	}
+	s.Destinations = normalizeDestinations(s.Destinations)
 	return s
 }
 
 func validateNotifSettings(s NotificationSettings) error {
+	// The legacy singletons are still validated (in case an old client PUTs the whole blob), but the
+	// destinations are what deliver.
 	if s.Webhook.Enabled {
 		if s.Webhook.URL == "" {
 			return fmt.Errorf("a webhook URL is required when the webhook channel is enabled")
@@ -184,7 +270,7 @@ func validateNotifSettings(s NotificationSettings) error {
 	if s.Telegram.Enabled && (s.Telegram.BotToken == "" || s.Telegram.ChatId == "") {
 		return fmt.Errorf("a telegram bot token and chat id are required when the telegram channel is enabled")
 	}
-	return nil
+	return validateDestinations(s.Destinations)
 }
 
 // normalizeSeverity defaults to "warning" — an unconfigured floor should not flood a channel with

@@ -108,3 +108,31 @@ export function formatCount(v) {
   const n = Number(v || 0);
   try { return n.toLocaleString(); } catch (_) { return String(n); }
 }
+
+// Notification-destination helpers (mirrors mymatasan's constants, scaled to the IoT hub). A
+// destination is one delivery target; empty `categories` = subscribed to everything.
+export const notificationCategories = [
+  ['device.alert', 'Device alerts', 'When an IoT rule fires on a sensor reading (including a device going offline).'],
+  ['system', 'System events', 'Enrollment, actuation, sign-in security, and the Test button.'],
+];
+
+export const notificationSeverityOptions = [
+  ['info', 'Info and above'],
+  ['warning', 'Warning and above'],
+  ['critical', 'Critical only'],
+];
+
+export function defaultDestination(type = 'webhook') {
+  return {
+    id: '',
+    name: type === 'telegram' ? 'Telegram' : type === 'mqtt' ? 'MQTT' : 'Webhook',
+    type,
+    enabled: true,
+    minSeverity: 'warning',
+    url: '',
+    botToken: '',
+    chatId: '',
+    categories: [], // empty = all
+    mqtt: { brokerUrl: '', topic: '', clientId: '', qos: 1, retain: false, username: '', password: '', caCert: '', clientCert: '', clientKey: '', insecureSkipVerify: false },
+  };
+}

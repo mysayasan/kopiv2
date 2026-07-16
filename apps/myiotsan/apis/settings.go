@@ -42,9 +42,11 @@ func NewSettingsApi(
 	g.HandleFunc("/users/{id}", h.updateUser).Methods("PUT")
 	g.HandleFunc("/users/{id}", h.deleteUser).Methods("DELETE")
 	g.HandleFunc("/users/{id}/password", h.resetPassword).Methods("POST")
-	// Outbound notification delivery (webhook/telegram) and the storage/broker knobs.
+	// Outbound notification delivery (per-destination) and the storage/broker knobs.
 	g.HandleFunc("/notification", h.getNotification).Methods("GET")
 	g.HandleFunc("/notification", h.saveNotification).Methods("PUT")
+	g.HandleFunc("/notification/destination", h.saveDestination).Methods("PUT")
+	g.HandleFunc("/notification/destination/{id}", h.deleteDestination).Methods("DELETE")
 	g.HandleFunc("/notification/test", h.testNotification).Methods("POST")
 	g.HandleFunc("/telemetry", h.getTelemetry).Methods("GET")
 	g.HandleFunc("/telemetry", h.saveTelemetry).Methods("PUT")
@@ -186,6 +188,41 @@ func (a *settingsApi) saveNotification(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	settings, err := a.notif.Save(r.Context(), body)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, settings, "succeed")
+}
+
+// saveDestination upserts one destination against the persisted settings, so saving one never
+// clobbers another. Returns the persisted destination plus the full settings.
+func (a *settingsApi) saveDestination(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	var body services.NotificationDestination
+	if !decode(w, r, &body) {
+		return
+	}
+	dest, settings, err := a.notif.SaveDestination(r.Context(), body)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, map[string]any{"destination": dest, "settings": settings}, "succeed")
+}
+
+func (a *settingsApi) deleteDestination(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	id := mux.Vars(r)["id"]
+	if id == "" {
+		controllers.SendError(w, controllers.ErrBadRequest, "a destination id is required")
+		return
+	}
+	settings, err := a.notif.DeleteDestination(r.Context(), id)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return

@@ -29,10 +29,18 @@ not two. The notification/telemetry surface is thin HTTP over the two new siblin
     is a bricked appliance.
   - `DELETE /users/{id}` — remove.
   - `POST /users/{id}/password` — reset a user's password.
-  - `GET`/`PUT /notification` — read/save the outbound webhook/telegram delivery config
-    (`services.NotificationSettings`). `PUT` both persists and immediately applies the config to
-    the live notification hub via `notif.Save` (see the service doc for why this is the
-    load-bearing call).
+  - `GET`/`PUT /notification` — read/save the outbound delivery config
+    (`services.NotificationSettings`), now a list of per-destination channels
+    (webhook/telegram/mqtt, `services/notification_destination.go.md`) rather than a fixed
+    webhook+telegram pair. `PUT` both persists and immediately applies the config to the live
+    notification hub via `notif.Save` (see the service doc for why this is the load-bearing call).
+  - `PUT /notification/destination` — upserts **one** destination
+    (`services.NotificationDestination`) against the persisted settings, so saving one never
+    clobbers another's stored config. Empty `id` in the body appends a new destination; a
+    non-empty `id` replaces the matching one. Returns `{"destination": ..., "settings": ...}` —
+    the destination as actually stored (with its final id) plus the full settings.
+  - `DELETE /notification/destination/{id}` — removes one destination by id, leaves the rest
+    untouched, returns the full settings.
   - `POST /notification/test` — publishes a test notification at an optional `?severity=` query
     param, so an operator can confirm a channel actually delivers rather than trusting "saved".
   - `GET`/`PUT /telemetry` — read/save the storage retention and broker knobs
@@ -53,4 +61,9 @@ not two. The notification/telemetry surface is thin HTTP over the two new siblin
   `/api/settings/telemetry` explicitly (`services/rbac.go.md`).
 - Before this change, myiotsan's outbound delivery (`notification.Service.Configure`) was never
   called from anywhere in the app — every alert landed only in the in-app feed. `saveNotification`
-  is the first code path that ever wires a webhook or telegram destination for myiotsan.
+  is the first code path that ever wired a destination for myiotsan; `saveDestination`/
+  `deleteDestination` are the per-destination routes added alongside the destinations model
+  (`services/notification_destination.go.md`).
+- No new rbac catalog rows were needed for `/notification/destination`: the existing
+  `/api/settings/notification` prefix row in `services/rbac.go.md` already covers it under the
+  matrix's longest-prefix match.

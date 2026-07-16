@@ -30,20 +30,65 @@ func TestNotifSettings_ValidationRequiresChannelFields(t *testing.T) {
 	}
 }
 
-func TestNotifSettings_ChannelConfigMapsSeverityAndFields(t *testing.T) {
-	cfg := channelConfig(NotificationSettings{
-		Webhook:  WebhookSettings{Enabled: true, URL: "https://h/x", MinSeverity: "critical"},
-		Telegram: TelegramSettings{Enabled: true, BotToken: "tok", ChatId: "42", MinSeverity: "info"},
-	})
-	if !cfg.Webhook.Enabled || cfg.Webhook.URL != "https://h/x" || cfg.Webhook.MinSeverity != notification.Critical {
-		t.Errorf("webhook mapping wrong: %+v", cfg.Webhook)
+// channelConfig maps enabled destinations (only) to the shared config, carrying severity + category.
+func TestNotifSettings_ChannelConfigMapsDestinations(t *testing.T) {
+	cfg := channelConfig(NotificationSettings{Destinations: []NotificationDestination{
+		{Id: "a", Type: "webhook", Enabled: true, URL: "https://h/x", MinSeverity: "critical", Categories: []string{"device.alert"}},
+		{Id: "b", Type: "telegram", Enabled: true, BotToken: "tok", ChatId: "42", MinSeverity: "info"},
+		{Id: "c", Type: "webhook", Enabled: false, URL: "https://nope/x"}, // disabled → skipped
+	}})
+	if len(cfg.Destinations) != 2 {
+		t.Fatalf("only enabled destinations map through: got %d", len(cfg.Destinations))
 	}
-	if cfg.Telegram.BotToken != "tok" || cfg.Telegram.ChatID != "42" || cfg.Telegram.MinSeverity != notification.Info {
-		t.Errorf("telegram mapping wrong: %+v", cfg.Telegram)
+	w := cfg.Destinations[0]
+	if w.URL != "https://h/x" || w.MinSeverity != notification.Critical || len(w.Categories) != 1 || w.Categories[0] != "device.alert" {
+		t.Errorf("webhook destination mapping wrong: %+v", w)
 	}
-	// An unset severity floors at warning, not info.
+	tg := cfg.Destinations[1]
+	if tg.BotToken != "tok" || tg.ChatID != "42" || tg.MinSeverity != notification.Info {
+		t.Errorf("telegram destination mapping wrong: %+v", tg)
+	}
 	if parseSeverity("") != notification.Warning {
 		t.Error("empty severity must default to warning")
+	}
+}
+
+// A destination with no categories receives everything; one with categories filters.
+func TestNotifDestination_AllowsCategory(t *testing.T) {
+	all := NotificationDestination{}
+	if !all.AllowsCategory("device.alert") || !all.AllowsCategory("system") {
+		t.Error("an empty category list must allow every category")
+	}
+	only := NotificationDestination{Categories: []string{"device.alert"}}
+	if !only.AllowsCategory("device.alert") || only.AllowsCategory("system") {
+		t.Error("a category list must filter to exactly its members")
+	}
+}
+
+// normalize assigns ids, defaults names, and drops unknown categories; validate refuses an enabled
+// destination that can't deliver.
+func TestNotifDestination_NormalizeAndValidate(t *testing.T) {
+	got := normalizeDestinations([]NotificationDestination{
+		{Type: "webhook", Enabled: true, URL: "https://h/x", Categories: []string{"device.alert", "bogus.cat", "system"}},
+		{Type: "", Name: ""}, // becomes webhook / "Webhook"
+	})
+	if got[0].Id == "" || got[1].Id == "" || got[0].Id == got[1].Id {
+		t.Error("every destination must get a unique id")
+	}
+	if len(got[0].Categories) != 2 { // bogus.cat dropped
+		t.Errorf("unknown categories must be dropped, got %v", got[0].Categories)
+	}
+	if got[1].Name != "Webhook" || got[1].Type != "webhook" {
+		t.Errorf("a typeless destination defaults to webhook/Webhook: %+v", got[1])
+	}
+	if err := validateDestinations([]NotificationDestination{{Type: "webhook", Enabled: true}}); err == nil {
+		t.Error("an enabled webhook with no URL must be refused")
+	}
+	if err := validateDestinations([]NotificationDestination{{Type: "mqtt", Enabled: true, Mqtt: NotificationMqttSettings{BrokerURL: "tcp://b:1883"}}}); err == nil {
+		t.Error("an enabled MQTT destination with no topic must be refused")
+	}
+	if err := validateDestinations([]NotificationDestination{{Type: "webhook", Enabled: false}}); err != nil {
+		t.Error("a DISABLED half-filled destination is allowed (a draft)")
 	}
 }
 

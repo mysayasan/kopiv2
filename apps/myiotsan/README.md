@@ -329,17 +329,23 @@ gated admin-only server-side too (`services.Policy()`).
   refused the same way in both apps — an appliance nobody can administer is a bricked appliance.
 - **Location** — `GET`/`PUT /api/settings/location`, the site latitude/longitude a sunrise/sunset
   schedule needs (see "Home automation: scenes and schedules" above).
-- **Notifications** — `GET`/`PUT /api/settings/notification` + `POST /api/settings/notification/test`.
-  Configures where alerts are delivered off-box: a webhook (any `http(s)` URL) and/or Telegram
-  (bot token + chat id), each with its own minimum severity floor so info-level chatter doesn't
-  flood an external channel. **This is the first time myiotsan's alerts ever leave the box at
-  all** — before this page, every alert (a rule firing, a device going offline, a refused
-  command) landed only in the in-app notification feed; saving here (or simply booting with a
-  config saved in a previous run) is what actually wires the shared notification hub's outbound
-  webhook/telegram channels. The delivery engine itself is unchanged shared infra
-  (`domain/notification`, `infra/notification`) — nothing new was built there, only the myiotsan
-  side that finally calls into it. Use the test button to confirm a channel actually delivers;
-  "saved" is not "reaches my phone".
+- **Notifications** — `GET`/`PUT /api/settings/notification` + `POST /api/settings/notification/test`,
+  now a list of **delivery destinations** (`PUT /api/settings/notification/destination`,
+  `DELETE /api/settings/notification/destination/{id}`) rather than a single webhook+telegram
+  pair, mirroring mymatasan's per-destination model. A destination is a webhook (any `http(s)`
+  URL), a Telegram chat (bot token + chat id), or an MQTT publish target (broker URL, topic,
+  QoS/retain, optional username/password or TLS client cert) — each with its own minimum severity
+  floor and a category filter (`device.alert` / `system`; ticking none means every category).
+  Saving one destination never clobbers another's stored config, and the UI presents them as an
+  accordion, one row per destination. **This is the first time myiotsan's alerts ever leave the
+  box at all** — before this page, every alert (a rule firing, a device going offline, a refused
+  command) landed only in the in-app notification feed; saving a destination (or simply booting
+  with destinations saved in a previous run) is what actually wires the shared notification hub's
+  outbound channels. The delivery engine itself is unchanged shared infra (`domain/notification`,
+  `infra/notification`) — nothing new was built there, only the myiotsan side that finally calls
+  into it. Use the test button to confirm a channel actually delivers; "saved" is not "reaches my
+  phone". An older config saved under the original single webhook/telegram fields migrates
+  forward automatically into the destination list the first time it is read.
 - **Telemetry** — `GET`/`PUT /api/settings/telemetry`: raw/rollup retention days, the
   write-behind batcher's batch size/flush interval/queue size, and the embedded MQTT broker's
   listen address. **Unlike Notifications, saving here does not apply live** — every one of these

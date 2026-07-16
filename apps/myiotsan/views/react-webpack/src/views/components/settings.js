@@ -1,19 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Ico, PasswordField, Tabs, useT } from '@shared';
-import { api, errorMessage } from '../lib/helpers';
-import { ConfirmModal, CopyButton, Field, Panel } from './ui';
+import { api, defaultDestination, errorMessage, notificationCategories, notificationSeverityOptions } from '../lib/helpers';
+import { AccordionItem, AccordionList, ConfirmModal, CopyButton, Field, Panel } from './ui';
 
-// The Settings page — one tabbed home for everything that configures the hub itself, rather than the
-// devices it watches. The whole page is admin-only (the nav entry is hidden from non-admins, and
-// every route below is administrator-gated server-side). Tabs, left to right:
-//   users        — local accounts and their roles
-//   location     — the site latitude/longitude sunrise/sunset schedules need
-//   notifications — where alerts are delivered off-box (webhook / telegram)
-//   telemetry    — storage retention and the embedded broker (restart-to-apply)
-//   connectivity — fleet pairing (adoption into a myseliasan control plane)
-//   system       — version, health, and a restart
-
-const SEVERITIES = ['info', 'warning', 'critical'];
+// The Settings page — one tabbed home for everything that configures the hub itself. Admin-only (the
+// nav entry is hidden from non-admins; every route below is administrator-gated server-side). It
+// follows mymatasan's structure: a shared Tabs bar, a topic band under it (icon + title +
+// description), then subtopic cards (settings-panel).
 
 const SETTINGS_TABS = [
   { id: 'users', icon: 'user' },
@@ -27,19 +20,27 @@ const SETTINGS_TABS = [
 export function SettingsPage({ onToast }) {
   const t = useT();
   const [nav, setNav] = useState('users');
+  const active = SETTINGS_TABS.find((tb) => tb.id === nav) || SETTINGS_TABS[0];
   const tabs = SETTINGS_TABS.map((tb) => ({ id: tb.id, label: t(`st.nav.${tb.id}`), icon: tb.icon }));
 
   return (
-    <section className="workspace">
-      <Panel icon="sliders" title={t('page.settings')} hint={t(`st.tabHint.${nav}`)}>
-        <Tabs tabs={tabs} active={nav} onChange={setNav} ariaLabel={t('page.settings')} />
+    <section className="workspace settings-tabbed">
+      <Tabs tabs={tabs} active={nav} onChange={setNav} ariaLabel={t('page.settings')} />
+      <header className="settings-tab-head">
+        <span className="settings-tab-head-icon"><Ico n={active.icon} sz={22} /></span>
+        <div className="settings-tab-head-text">
+          <h2>{t(`st.nav.${active.id}`)}</h2>
+          <p>{t(`st.tabHint.${active.id}`)}</p>
+        </div>
+      </header>
+      <div className="settings-content">
         {nav === 'users' ? <UsersPanel onToast={onToast} /> : null}
         {nav === 'location' ? <LocationPanel onToast={onToast} /> : null}
         {nav === 'notifications' ? <NotificationsPanel onToast={onToast} /> : null}
         {nav === 'telemetry' ? <TelemetryPanel onToast={onToast} onGoSystem={() => setNav('system')} /> : null}
         {nav === 'connectivity' ? <ConnectivityPanel onToast={onToast} /> : null}
         {nav === 'system' ? <SystemPanel onToast={onToast} /> : null}
-      </Panel>
+      </div>
     </section>
   );
 }
@@ -114,50 +115,51 @@ function UsersPanel({ onToast }) {
   );
 
   return (
-    <div className="settings-content">
-      <form onSubmit={create} className="iot-form">
-        <h3 className="iot-subhead">{t('st.addUser')}</h3>
-        <div className="form-grid">
-          <Field label={t('st.username')}><input value={newUser.username} required autoComplete="off" onChange={(e) => setNewUser({ ...newUser, username: e.target.value })} /></Field>
-          <Field label={t('st.displayName')}><input value={newUser.displayName} autoComplete="off" onChange={(e) => setNewUser({ ...newUser, displayName: e.target.value })} /></Field>
-          <Field label={t('st.password')}><PasswordField value={newUser.password} onChange={(p) => setNewUser({ ...newUser, password: p })} autoComplete="new-password" /></Field>
-          <Field label={t('st.role')}><RoleSelect value={newUser.roleId} onChange={(roleId) => setNewUser({ ...newUser, roleId })} /></Field>
-        </div>
-        <div className="modal-actions">
-          <button type="submit" disabled={busy}><span className="btn-icon"><Ico n="plus" sz={14} /> {t('st.addUser')}</span></button>
-        </div>
-      </form>
-
-      <h3 className="iot-subhead">{t('st.users')}</h3>
-      {users.length === 0 ? <p className="field-hint">{t('st.noUsers')}</p> : null}
-      {users.map((u) => (
-        <fieldset className="iot-action-row" key={u.id}>
-          <Field label={t('st.username')}><input value={u.username || ''} onChange={(e) => setEdit(u.id, { username: e.target.value })} /></Field>
-          <Field label={t('st.displayName')}><input value={u.displayName || ''} onChange={(e) => setEdit(u.id, { displayName: e.target.value })} /></Field>
-          <Field label={t('st.role')}><RoleSelect value={u.roleId} onChange={(roleId) => setEdit(u.id, { roleId })} /></Field>
-          <Field label={t('st.newPassword')}><PasswordField value={pwDrafts[u.id] || ''} onChange={(p) => setPwDrafts((d) => ({ ...d, [u.id]: p }))} autoComplete="new-password" placeholder={t('st.leaveBlankKeep')} /></Field>
-          <Field label={t('st.active')}>
-            <label className="iot-checkbox"><input type="checkbox" checked={!!u.isActive} onChange={(e) => setEdit(u.id, { isActive: e.target.checked })} /><span>{u.mustChangePassword ? t('st.pwChangePending') : ''}</span></label>
-          </Field>
-          <div className="user-actions">
-            <button type="button" onClick={() => save(u)} disabled={busy}><span className="btn-icon"><Ico n="save" sz={14} /> {t('common.save')}</span></button>
-            <button type="button" className="quiet" onClick={() => resetPw(u)} disabled={!(pwDrafts[u.id] || '').trim()}><span className="btn-icon"><Ico n="key" sz={14} /> {t('st.resetPassword')}</span></button>
-            <button type="button" className="quiet danger-text" onClick={() => setConfirmDel(u)}><span className="btn-icon"><Ico n="trash" sz={14} /> {t('common.delete')}</span></button>
+    <>
+      <Panel icon="user-plus" title={t('st.addUser')} hint={t('st.addUserHint')}>
+        <form onSubmit={create}>
+          <div className="settings-field-grid">
+            <Field label={t('st.username')} required><input value={newUser.username} required autoComplete="off" onChange={(e) => setNewUser({ ...newUser, username: e.target.value })} /></Field>
+            <Field label={t('st.displayName')}><input value={newUser.displayName} autoComplete="off" onChange={(e) => setNewUser({ ...newUser, displayName: e.target.value })} /></Field>
+            <Field label={t('st.password')} required><PasswordField value={newUser.password} onChange={(p) => setNewUser({ ...newUser, password: p })} autoComplete="new-password" /></Field>
+            <Field label={t('st.role')} required><RoleSelect value={newUser.roleId} onChange={(roleId) => setNewUser({ ...newUser, roleId })} /></Field>
           </div>
-        </fieldset>
-      ))}
+          <div className="settings-actions">
+            <button type="submit" disabled={busy}><span className="btn-icon"><Ico n="plus" sz={14} /> {t('st.addUser')}</span></button>
+          </div>
+        </form>
+      </Panel>
+
+      <Panel icon="user" title={t('st.users')} actions={<button type="button" className="quiet" onClick={load} disabled={busy}><span className="btn-icon"><Ico n="refresh" sz={14} /> {t('common.reload')}</span></button>}>
+        {users.length === 0 ? <p className="settings-hint">{t('st.noUsers')}</p> : null}
+        {users.map((u) => (
+          <fieldset className="iot-action-row" key={u.id}>
+            <Field label={t('st.username')}><input value={u.username || ''} onChange={(e) => setEdit(u.id, { username: e.target.value })} /></Field>
+            <Field label={t('st.displayName')}><input value={u.displayName || ''} onChange={(e) => setEdit(u.id, { displayName: e.target.value })} /></Field>
+            <Field label={t('st.role')}><RoleSelect value={u.roleId} onChange={(roleId) => setEdit(u.id, { roleId })} /></Field>
+            <Field label={t('st.newPassword')}><PasswordField value={pwDrafts[u.id] || ''} onChange={(p) => setPwDrafts((d) => ({ ...d, [u.id]: p }))} autoComplete="new-password" placeholder={t('st.leaveBlankKeep')} /></Field>
+            <label className="check-row"><input type="checkbox" checked={!!u.isActive} onChange={(e) => setEdit(u.id, { isActive: e.target.checked })} /> {t('st.active')}</label>
+            {u.mustChangePassword ? <span className="accordion-tag">{t('st.pwChangePending')}</span> : null}
+            <div className="user-actions">
+              <button type="button" onClick={() => save(u)} disabled={busy}><span className="btn-icon"><Ico n="save" sz={14} /> {t('common.save')}</span></button>
+              <button type="button" className="quiet" onClick={() => resetPw(u)} disabled={!(pwDrafts[u.id] || '').trim()}><span className="btn-icon"><Ico n="key" sz={14} /> {t('st.resetPassword')}</span></button>
+              <button type="button" className="quiet danger-text" onClick={() => setConfirmDel(u)}><span className="btn-icon"><Ico n="trash" sz={14} /> {t('common.delete')}</span></button>
+            </div>
+          </fieldset>
+        ))}
+      </Panel>
 
       {confirmDel ? (
         <ConfirmModal title={t('st.deleteUserTitle')} body={t('st.deleteUserBody', { name: confirmDel.username })}
           confirmLabel={t('common.delete')} onCancel={() => setConfirmDel(null)} onConfirm={() => remove(confirmDel)} />
       ) : null}
-    </div>
+    </>
   );
 }
 
-// --- Location (site lat/lon) ----------------------------------------------------------------
+// --- Location -------------------------------------------------------------------------------
 
-export function LocationPanel({ onToast }) {
+function LocationPanel({ onToast }) {
   const t = useT();
   const [lat, setLat] = useState('');
   const [lon, setLon] = useState('');
@@ -180,41 +182,64 @@ export function LocationPanel({ onToast }) {
   }
 
   return (
-    <div className="settings-content">
-      <form onSubmit={save} className="iot-form">
-        <p className="field-hint">{t('st.locationHint')}</p>
-        <div className="form-grid">
-          <Field label={t('st.latitude')}><input type="number" step="any" min="-90" max="90" value={lat} required onChange={(e) => setLat(e.target.value)} /></Field>
-          <Field label={t('st.longitude')}><input type="number" step="any" min="-180" max="180" value={lon} required onChange={(e) => setLon(e.target.value)} /></Field>
+    <Panel icon="map-pin" title={t('st.nav.location')} hint={t('st.locationHint')}>
+      <form onSubmit={save}>
+        <div className="settings-field-grid">
+          <Field label={t('st.latitude')} required><input type="number" step="any" min="-90" max="90" value={lat} required onChange={(e) => setLat(e.target.value)} /></Field>
+          <Field label={t('st.longitude')} required><input type="number" step="any" min="-180" max="180" value={lon} required onChange={(e) => setLon(e.target.value)} /></Field>
         </div>
-        <div className="modal-actions">
+        <div className="settings-actions">
           <button type="submit" disabled={busy}>{busy ? t('common.saving') : (isSet ? t('st.updateLocation') : t('st.setLocation'))}</button>
         </div>
       </form>
-    </div>
+    </Panel>
   );
 }
 
-// --- Notifications (webhook / telegram) -----------------------------------------------------
+// --- Notifications: an accordion of delivery destinations -----------------------------------
 
 function NotificationsPanel({ onToast }) {
   const t = useT();
-  const [s, setS] = useState({ webhook: { enabled: false, url: '', minSeverity: 'warning' }, telegram: { enabled: false, botToken: '', chatId: '', minSeverity: 'warning' } });
+  const [destinations, setDestinations] = useState([]);
+  const [saved, setSaved] = useState([]); // server snapshot, to detect unsaved edits + discard
+  const [openIndex, setOpenIndex] = useState(null);
   const [busy, setBusy] = useState(true);
-  const setW = (patch) => setS((v) => ({ ...v, webhook: { ...v.webhook, ...patch } }));
-  const setTg = (patch) => setS((v) => ({ ...v, telegram: { ...v.telegram, ...patch } }));
 
-  useEffect(() => {
-    api('/api/settings/notification').then((r) => { if (r.ok && r.body) setS(r.body); setBusy(false); });
-  }, []);
-
-  async function save(e) {
-    e.preventDefault();
+  const load = useCallback(async () => {
     setBusy(true);
-    const r = await api('/api/settings/notification', { method: 'PUT', body: JSON.stringify(s) });
+    const r = await api('/api/settings/notification');
+    if (r.ok) { const d = r.body?.destinations || []; setDestinations(d); setSaved(d); }
     setBusy(false);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const update = (i, values) => setDestinations((list) => list.map((d, idx) => (idx === i ? { ...d, ...values } : d)));
+  const changed = (i) => JSON.stringify(destinations[i]) !== JSON.stringify(saved.find((s) => s.id === destinations[i].id) || {});
+
+  function add(type) {
+    setDestinations((list) => { const next = [...list, defaultDestination(type)]; setOpenIndex(next.length - 1); return next; });
+  }
+
+  async function saveOne(i) {
+    const r = await api('/api/settings/notification/destination', { method: 'PUT', body: JSON.stringify(destinations[i]) });
     if (!r.ok) { onToast(errorMessage(r, t('st.saveFailed')), 'error'); return; }
+    const d = r.body?.settings?.destinations || [];
+    setDestinations(d); setSaved(d);
     onToast(t('st.notifSaved'), 'success');
+  }
+
+  async function removeOne(i) {
+    const dest = destinations[i];
+    if (!dest.id) { setDestinations((list) => list.filter((_, idx) => idx !== i)); return; } // unsaved draft
+    const r = await api(`/api/settings/notification/destination/${dest.id}`, { method: 'DELETE' });
+    if (!r.ok) { onToast(errorMessage(r, t('st.deleteFailed')), 'error'); return; }
+    const d = r.body?.destinations || [];
+    setDestinations(d); setSaved(d);
+  }
+
+  function discardOne(i) {
+    const snap = saved.find((s) => s.id === destinations[i].id);
+    if (snap) update(i, snap); else setDestinations((list) => list.filter((_, idx) => idx !== i));
   }
 
   async function test() {
@@ -222,37 +247,116 @@ function NotificationsPanel({ onToast }) {
     onToast(r.ok ? t('st.testSent') : errorMessage(r, t('st.testFailed')), r.ok ? 'success' : 'error');
   }
 
-  const SevSelect = ({ value, onChange }) => (
-    <select value={value} onChange={(e) => onChange(e.target.value)}>
-      {SEVERITIES.map((sv) => <option key={sv} value={sv}>{t(`severity.${sv}`)}</option>)}
-    </select>
+  return (
+    <Panel icon="bell" title={t('st.destinations')} hint={t('st.notifHint')}
+      actions={<button type="button" className="quiet" onClick={test} disabled={busy}><span className="btn-icon"><Ico n="send" sz={14} /> {t('st.sendTest')}</span></button>}>
+      {destinations.length === 0 ? <p className="settings-hint">{t('st.noDestinations')}</p> : null}
+      <AccordionList>
+        {destinations.map((dest, i) => (
+          <DestinationItem key={dest.id || `new-${i}`} dest={dest} busy={busy} changed={changed(i)}
+            open={openIndex === i} onToggleOpen={() => setOpenIndex(openIndex === i ? null : i)}
+            onChange={(values) => update(i, values)} onSave={() => saveOne(i)} onDiscard={() => discardOne(i)} onRemove={() => removeOne(i)} />
+        ))}
+      </AccordionList>
+      <div className="settings-actions" style={{ justifyContent: 'flex-start' }}>
+        <button type="button" className="quiet" onClick={() => add('webhook')}><span className="btn-icon"><Ico n="plus" sz={14} /> {t('st.addWebhook')}</span></button>
+        <button type="button" className="quiet" onClick={() => add('telegram')}><span className="btn-icon"><Ico n="plus" sz={14} /> {t('st.addTelegram')}</span></button>
+        <button type="button" className="quiet" onClick={() => add('mqtt')}><span className="btn-icon"><Ico n="plus" sz={14} /> {t('st.addMqtt')}</span></button>
+      </div>
+    </Panel>
   );
+}
+
+function destinationTarget(dest) {
+  if (dest.type === 'mqtt') return `${dest.mqtt?.brokerUrl || ''}${dest.mqtt?.topic ? ' → ' + dest.mqtt.topic : ''}`;
+  if (dest.type === 'telegram') return dest.chatId ? `Chat ${dest.chatId}` : '';
+  return dest.url || '';
+}
+
+function DestinationItem({ dest, busy, changed, open, onToggleOpen, onChange, onSave, onDiscard, onRemove }) {
+  const t = useT();
+  const enabled = dest.enabled !== false;
+  const summary = (
+    <>
+      <span className="accordion-title">{dest.name || dest.type}</span>
+      <span className={`class-source-badge ${dest.type}`}>{dest.type}</span>
+      <span className="accordion-muted">{destinationTarget(dest)}</span>
+      {!enabled ? <span className="accordion-tag">{t('common.disabled')}</span> : null}
+    </>
+  );
+  const actions = (
+    <>
+      <label className="check-row compact"><input type="checkbox" checked={enabled} onChange={(e) => onChange({ enabled: e.target.checked })} disabled={busy} /> {t('common.enabled')}</label>
+      <button type="button" className="quiet danger-text" onClick={onRemove} disabled={busy}>{t('common.remove')}</button>
+    </>
+  );
+  return (
+    <AccordionItem open={open} onToggle={onToggleOpen} summary={summary} actions={actions}>
+      <DestinationCard dest={dest} busy={busy} onChange={onChange} />
+      <div className="settings-actions destination-actions">
+        <button type="button" onClick={onSave} disabled={busy || !changed}><span className="btn-icon"><Ico n="save" sz={14} /> {t('st.saveDestination')}</span></button>
+        <button type="button" className="quiet" onClick={onDiscard} disabled={busy || !changed}><span className="btn-icon"><Ico n="undo" sz={14} /> {t('common.discard')}</span></button>
+      </div>
+    </AccordionItem>
+  );
+}
+
+function DestinationCard({ dest, busy, onChange }) {
+  const t = useT();
+  const categories = dest.categories || [];
+  const setMqtt = (values) => onChange({ mqtt: { ...dest.mqtt, ...values } });
+  const toggleCategory = (value, on) => {
+    const set = new Set(categories);
+    on ? set.add(value) : set.delete(value);
+    onChange({ categories: [...set] });
+  };
 
   return (
-    <div className="settings-content">
-      <form onSubmit={save} className="iot-form">
-        <p className="field-hint">{t('st.notifHint')}</p>
+    <div className="settings-field-grid">
+      <Field label={t('st.destName')} span><input value={dest.name || ''} disabled={busy} onChange={(e) => onChange({ name: e.target.value })} /></Field>
 
-        <h3 className="iot-subhead">{t('st.webhook')}</h3>
-        <label className="iot-checkbox"><input type="checkbox" checked={s.webhook.enabled} onChange={(e) => setW({ enabled: e.target.checked })} /><span>{t('st.enableWebhook')}</span></label>
-        <div className="form-grid">
-          <Field label={t('st.webhookUrl')} span><input type="url" value={s.webhook.url} placeholder="https://" disabled={!s.webhook.enabled} onChange={(e) => setW({ url: e.target.value })} /></Field>
-          <Field label={t('st.minSeverity')}><SevSelect value={s.webhook.minSeverity} onChange={(v) => setW({ minSeverity: v })} /></Field>
-        </div>
+      {dest.type === 'webhook' ? (
+        <Field label={t('st.webhookUrl')} span><input type="url" value={dest.url || ''} placeholder="https://" disabled={busy} onChange={(e) => onChange({ url: e.target.value })} /></Field>
+      ) : null}
 
-        <h3 className="iot-subhead">{t('st.telegram')}</h3>
-        <label className="iot-checkbox"><input type="checkbox" checked={s.telegram.enabled} onChange={(e) => setTg({ enabled: e.target.checked })} /><span>{t('st.enableTelegram')}</span></label>
-        <div className="form-grid">
-          <Field label={t('st.botToken')}><PasswordField value={s.telegram.botToken} onChange={(v) => setTg({ botToken: v })} autoComplete="off" /></Field>
-          <Field label={t('st.chatId')}><input value={s.telegram.chatId} disabled={!s.telegram.enabled} onChange={(e) => setTg({ chatId: e.target.value })} /></Field>
-          <Field label={t('st.minSeverity')}><SevSelect value={s.telegram.minSeverity} onChange={(v) => setTg({ minSeverity: v })} /></Field>
-        </div>
+      {dest.type === 'telegram' ? (
+        <>
+          <Field label={t('st.botToken')}><PasswordField value={dest.botToken || ''} onChange={(v) => onChange({ botToken: v })} autoComplete="off" /></Field>
+          <Field label={t('st.chatId')}><input value={dest.chatId || ''} disabled={busy} onChange={(e) => onChange({ chatId: e.target.value })} /></Field>
+        </>
+      ) : null}
 
-        <div className="modal-actions">
-          <button type="button" className="quiet" onClick={test} disabled={busy}><span className="btn-icon"><Ico n="send" sz={14} /> {t('st.sendTest')}</span></button>
-          <button type="submit" disabled={busy}>{busy ? t('common.saving') : t('common.save')}</button>
-        </div>
-      </form>
+      {dest.type === 'mqtt' ? (
+        <>
+          <Field label={t('st.brokerUrl')}><input value={dest.mqtt?.brokerUrl || ''} placeholder="tcp://host:1883" disabled={busy} onChange={(e) => setMqtt({ brokerUrl: e.target.value })} /></Field>
+          <Field label={t('st.topic')}><input value={dest.mqtt?.topic || ''} disabled={busy} onChange={(e) => setMqtt({ topic: e.target.value })} /></Field>
+          <Field label={t('st.qos')}>
+            <select value={dest.mqtt?.qos ?? 1} disabled={busy} onChange={(e) => setMqtt({ qos: Number(e.target.value) })}>
+              <option value={0}>0</option><option value={1}>1</option><option value={2}>2</option>
+            </select>
+          </Field>
+          <label className="check-row"><input type="checkbox" checked={!!dest.mqtt?.retain} disabled={busy} onChange={(e) => setMqtt({ retain: e.target.checked })} /> {t('st.retain')}</label>
+          <Field label={t('st.mqttUser')}><input value={dest.mqtt?.username || ''} disabled={busy} onChange={(e) => setMqtt({ username: e.target.value })} /></Field>
+          <Field label={t('st.mqttPass')}><PasswordField value={dest.mqtt?.password || ''} onChange={(v) => setMqtt({ password: v })} autoComplete="off" /></Field>
+        </>
+      ) : null}
+
+      <Field label={t('st.minSeverity')}>
+        <select value={dest.minSeverity || 'warning'} disabled={busy} onChange={(e) => onChange({ minSeverity: e.target.value })}>
+          {notificationSeverityOptions.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+        </select>
+      </Field>
+
+      <fieldset className="dest-group field-span-two">
+        <legend>{t('st.receives')}</legend>
+        {notificationCategories.map(([value, label, help]) => (
+          <label className="check-row" key={value} title={help}>
+            <input type="checkbox" checked={categories.length === 0 || categories.includes(value)} disabled={busy} onChange={(e) => toggleCategory(value, e.target.checked)} />
+            {label}
+          </label>
+        ))}
+        <span className="field-hint">{t('st.noneAllTypes')}</span>
+      </fieldset>
     </div>
   );
 }
@@ -276,37 +380,37 @@ function TelemetryPanel({ onToast, onGoSystem }) {
     onToast(t('st.telemetrySaved'), 'success');
   }
 
-  if (!s) return <p className="field-hint">{t('common.loading')}</p>;
+  if (!s) return <Panel icon="sliders" title={t('st.nav.telemetry')}><p className="settings-hint">{t('common.loading')}</p></Panel>;
   const num = (k) => (e) => set({ [k]: Number(e.target.value) });
 
   return (
-    <div className="settings-content">
-      <form onSubmit={save} className="iot-form">
-        <p className="iot-cmd-warn"><Ico n="warning" sz={13} /> {t('st.restartNote')} <button type="button" className="link-btn" onClick={onGoSystem}>{t('st.goRestart')}</button></p>
+    <form onSubmit={save}>
+      <p className="iot-cmd-warn"><Ico n="warning" sz={13} /> {t('st.restartNote')} <button type="button" className="link-btn" onClick={onGoSystem}>{t('st.goRestart')}</button></p>
 
-        <h3 className="iot-subhead">{t('st.retention')}</h3>
-        <div className="form-grid">
+      <Panel icon="sliders" title={t('st.retention')}>
+        <div className="settings-field-grid">
           <Field label={t('st.rawDays')} hint={t('st.rawDaysHint')}><input type="number" min="1" value={s.rawRetentionDays} onChange={num('rawRetentionDays')} /></Field>
           <Field label={t('st.rollupDays')} hint={t('st.rollupDaysHint')}><input type="number" min="1" value={s.rollupRetentionDays} onChange={num('rollupRetentionDays')} /></Field>
         </div>
+      </Panel>
 
-        <h3 className="iot-subhead">{t('st.writeBatcher')}</h3>
-        <div className="form-grid">
+      <Panel icon="sliders" title={t('st.writeBatcher')}>
+        <div className="settings-field-grid">
           <Field label={t('st.batchSize')}><input type="number" min="1" value={s.batchSize} onChange={num('batchSize')} /></Field>
           <Field label={t('st.flushMs')}><input type="number" min="1" value={s.flushMs} onChange={num('flushMs')} /></Field>
           <Field label={t('st.queueSize')}><input type="number" min="1" value={s.queueSize} onChange={num('queueSize')} /></Field>
         </div>
+      </Panel>
 
-        <h3 className="iot-subhead">{t('st.broker')}</h3>
-        <div className="form-grid">
+      <Panel icon="cpu" title={t('st.broker')}>
+        <div className="settings-field-grid">
           <Field label={t('st.mqttAddr')} hint={t('st.mqttAddrHint')} span><input value={s.mqttAddr} onChange={(e) => set({ mqttAddr: e.target.value })} /></Field>
         </div>
-
-        <div className="modal-actions">
+        <div className="settings-actions">
           <button type="submit" disabled={busy}>{busy ? t('common.saving') : t('common.save')}</button>
         </div>
-      </form>
-    </div>
+      </Panel>
+    </form>
   );
 }
 
@@ -340,45 +444,49 @@ function ConnectivityPanel({ onToast }) {
     onToast(t('st.unpaired'), 'success'); setClaim(null); load();
   }
 
-  if (!status) return <p className="field-hint">{t('common.loading')}</p>;
+  if (!status) return <Panel icon="shield" title={t('st.nav.connectivity')}><p className="settings-hint">{t('common.loading')}</p></Panel>;
 
   return (
-    <div className="settings-content">
-      <div className="iot-status-grid">
-        <div><span className="field-label">{t('st.pairedState')}</span><strong>{status.paired ? t('st.paired') : t('st.notPaired')}</strong></div>
-        {status.paired ? <div><span className="field-label">{t('st.parent')}</span><strong>{status.parentName || status.parentId}</strong></div> : null}
-        <div><span className="field-label">{t('st.fleetKey')}</span><strong>{status.fleetKeySet ? t('st.set') : t('st.notSet')}</strong></div>
-        <div><span className="field-label">{t('st.claimCode')}</span><strong>{status.claimCodeActive ? t('st.active') : t('st.inactive')}</strong></div>
-      </div>
+    <>
+      <Panel icon="shield" title={t('st.fleetStatus')}>
+        <div className="iot-status-grid">
+          <div><span className="field-label">{t('st.pairedState')}</span><strong>{status.paired ? t('st.paired') : t('st.notPaired')}</strong></div>
+          {status.paired ? <div><span className="field-label">{t('st.parent')}</span><strong>{status.parentName || status.parentId}</strong></div> : null}
+          <div><span className="field-label">{t('st.fleetKey')}</span><strong>{status.fleetKeySet ? t('st.set') : t('st.notSet')}</strong></div>
+          <div><span className="field-label">{t('st.claimCode')}</span><strong>{status.claimCodeActive ? t('st.active') : t('st.inactive')}</strong></div>
+        </div>
+      </Panel>
 
       {!status.paired ? (
         <>
-          <form onSubmit={saveKey} className="iot-form">
-            <h3 className="iot-subhead">{t('st.fleetKey')}</h3>
-            <p className="field-hint">{t('st.fleetKeyHint')}</p>
-            <div className="form-grid">
-              <Field label={t('st.fleetKey')} span><PasswordField value={fleetKey} onChange={setFleetKey} autoComplete="off" /></Field>
-            </div>
-            <div className="modal-actions"><button type="submit" disabled={!fleetKey.trim()}>{t('st.saveFleetKey')}</button></div>
-          </form>
+          <Panel icon="key" title={t('st.fleetKey')} hint={t('st.fleetKeyHint')}>
+            <form onSubmit={saveKey}>
+              <div className="settings-field-grid">
+                <Field label={t('st.fleetKey')} span><PasswordField value={fleetKey} onChange={setFleetKey} autoComplete="off" /></Field>
+              </div>
+              <div className="settings-actions"><button type="submit" disabled={!fleetKey.trim()}>{t('st.saveFleetKey')}</button></div>
+            </form>
+          </Panel>
 
-          <h3 className="iot-subhead">{t('st.claimCode')}</h3>
-          <p className="field-hint">{t('st.claimHint')}</p>
-          {claim?.code ? (
-            <p className="iot-claim-code"><code>{claim.code}</code> <CopyButton value={claim.code} /></p>
-          ) : null}
-          <div className="modal-actions"><button type="button" className="quiet" onClick={genClaim}><span className="btn-icon"><Ico n="refresh" sz={14} /> {t('st.genClaim')}</span></button></div>
+          <Panel icon="search" title={t('st.claimCode')} hint={t('st.claimHint')}>
+            {claim?.code ? <p className="iot-claim-code"><code>{claim.code}</code> <CopyButton value={claim.code} /></p> : null}
+            <div className="settings-actions" style={{ justifyContent: 'flex-start' }}>
+              <button type="button" className="quiet" onClick={genClaim}><span className="btn-icon"><Ico n="refresh" sz={14} /> {t('st.genClaim')}</span></button>
+            </div>
+          </Panel>
         </>
       ) : (
-        <div className="modal-actions">
-          <button type="button" className="quiet danger-text" onClick={() => setConfirmUnpair(true)}><span className="btn-icon"><Ico n="stop" sz={14} /> {t('st.unpair')}</span></button>
-        </div>
+        <Panel icon="stop" title={t('st.leaveFleet')}>
+          <div className="settings-actions" style={{ justifyContent: 'flex-start' }}>
+            <button type="button" className="quiet danger-text" onClick={() => setConfirmUnpair(true)}><span className="btn-icon"><Ico n="stop" sz={14} /> {t('st.unpair')}</span></button>
+          </div>
+        </Panel>
       )}
 
       {confirmUnpair ? (
         <ConfirmModal title={t('st.unpairTitle')} body={t('st.unpairBody')} confirmLabel={t('st.unpair')} onCancel={() => setConfirmUnpair(false)} onConfirm={unpair} />
       ) : null}
-    </div>
+    </>
   );
 }
 
@@ -405,26 +513,27 @@ function SystemPanel({ onToast }) {
   }
 
   return (
-    <div className="settings-content">
-      <h3 className="iot-subhead">{t('st.version')}</h3>
-      <div className="iot-status-grid">
-        <div><span className="field-label">{t('st.appVersion')}</span><strong>{version?.appVersion || '—'}</strong></div>
-        <div><span className="field-label">{t('st.coreVersion')}</span><strong>{version?.coreVersion || '—'}</strong></div>
-        <div><span className="field-label">{t('st.commit')}</span><strong>{version?.commit || '—'}</strong></div>
-        <div><span className="field-label">{t('st.health')}</span><strong>{health?.ok ? t('st.healthy') : t('st.unhealthy')}</strong></div>
-      </div>
+    <>
+      <Panel icon="monitor" title={t('st.version')}>
+        <div className="iot-status-grid">
+          <div><span className="field-label">{t('st.appVersion')}</span><strong>{version?.appVersion || '—'}</strong></div>
+          <div><span className="field-label">{t('st.coreVersion')}</span><strong>{version?.coreVersion || '—'}</strong></div>
+          <div><span className="field-label">{t('st.commit')}</span><strong>{version?.commit || '—'}</strong></div>
+          <div><span className="field-label">{t('st.health')}</span><strong>{health?.ok ? t('st.healthy') : t('st.unhealthy')}</strong></div>
+        </div>
+      </Panel>
 
-      <h3 className="iot-subhead">{t('st.maintenance')}</h3>
-      <p className="field-hint">{t('st.restartHint')}</p>
-      <div className="modal-actions">
-        <button type="button" className="danger-solid" disabled={restarting} onClick={() => setConfirmRestart(true)}>
-          <span className="btn-icon"><Ico n="refresh" sz={14} /> {restarting ? t('st.restarting') : t('st.restart')}</span>
-        </button>
-      </div>
+      <Panel icon="refresh" title={t('st.maintenance')} hint={t('st.restartHint')}>
+        <div className="settings-actions" style={{ justifyContent: 'flex-start' }}>
+          <button type="button" className="danger-solid" disabled={restarting} onClick={() => setConfirmRestart(true)}>
+            <span className="btn-icon"><Ico n="refresh" sz={14} /> {restarting ? t('st.restarting') : t('st.restart')}</span>
+          </button>
+        </div>
+      </Panel>
 
       {confirmRestart ? (
         <ConfirmModal title={t('st.restartTitle')} body={t('st.restartBody')} confirmLabel={t('st.restart')} onCancel={() => setConfirmRestart(false)} onConfirm={restart} />
       ) : null}
-    </div>
+    </>
   );
 }

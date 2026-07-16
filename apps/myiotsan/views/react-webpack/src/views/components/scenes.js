@@ -199,7 +199,7 @@ function SceneEditor({ sceneId, onBack, onSaved, onToast }) {
               <input value={scene.name || ''} required onChange={(e) => setScene((s) => ({ ...s, name: e.target.value }))} />
             </Field>
             <Field label={t('scenes.enabled')}>
-              <label className="iot-checkbox">
+              <label className="check-row">
                 <input type="checkbox" checked={!!scene.enabled} onChange={(e) => setScene((s) => ({ ...s, enabled: e.target.checked }))} />
                 <span>{t('scenes.enabledHint')}</span>
               </label>
