@@ -208,9 +208,12 @@ the unit tests.
    nothing new until an admin explicitly picks the operator level.
 2. **The frontend now has a role picker.** mymatasan's Settings → Users replaced the
    `isAdmin` checkbox with a `RoleSelect` sourced from `GET /api/settings/roles`; the
-   create-user form and each user card send `roleId`. `isAdmin` still rides along in the
+   add/edit-user modal sends `roleId`. `isAdmin` still rides along in the
    update payload as the server's legacy fallback for accounts that predate the backfill, but
-   the picker is now the primary way to assign `viewer`/`operator`/`admin`.
+   the picker is now the primary way to assign `viewer`/`operator`/`admin`. (The Users tab
+   itself was later redesigned from a create-form-plus-user-cards layout into a `DataTable`
+   with add/edit behind a modal — see the mymatasan changelog — but the `roleId` wiring
+   described here is unchanged.)
 
 ### The problem (as it stood before this phase)
 

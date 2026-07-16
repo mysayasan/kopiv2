@@ -10,4 +10,5 @@ export { ProfilesPage } from './profiles';
 export { DiscoveryPage } from './discovery';
 export { ScenesPage } from './scenes';
 export { SchedulesPage } from './schedules';
+export { FlowsPage } from './flows';
 export { SettingsPage } from './settings';

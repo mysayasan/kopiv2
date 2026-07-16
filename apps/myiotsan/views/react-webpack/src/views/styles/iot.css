@@ -567,6 +567,10 @@
    inter-panel gap the flex column above gives direct children. */
 .settings-content > form { display: flex; flex-direction: column; gap: 14px; }
 
+/* Space a panel's actions row (Save, etc.) away from the field grid it follows — e.g.
+   Connectivity's "Save fleet key" button sitting flush under the fleet-key field. */
+.settings-field-grid + .settings-actions { margin-top: 14px; }
+
 .iot-status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin: 10px 0 16px; }
 .iot-status-grid > div { display: flex; flex-direction: column; gap: 2px; }
 .iot-claim-code { display: flex; align-items: center; gap: 10px; }
@@ -719,3 +723,126 @@
   white-space: normal;
 }
 .iot-cmd-ok { font-size: 12px; color: var(--ok-text); }
+
+/* ============================================================================
+   Flow engine — the visual data-flow canvas (page: Flows). Node-RED-style
+   editor: a palette, an SVG canvas of draggable nodes joined by bezier wires,
+   and a per-node config panel. Everything themes through the --* tokens.
+   ============================================================================ */
+
+.flow-builtin-tag {
+  margin-left: 8px; font-size: 10px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .04em; padding: 1px 6px; border-radius: 999px;
+  background: var(--accent-badge); color: var(--text-muted);
+}
+.flow-builtin-tag.is-template { background: rgba(139, 92, 246, .16); color: #7c3aed; }
+
+.flow-editor { display: flex; flex-direction: column; height: calc(100vh - 92px); min-height: 540px; }
+
+/* toolbar */
+.flow-toolbar {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  background: var(--bg-surface); border: 1px solid var(--border-panel);
+  border-radius: 10px 10px 0 0; border-bottom: none; flex-wrap: wrap;
+}
+.flow-toolbar-spacer { flex: 1; }
+.flow-name-input { font-size: 15px; font-weight: 600; min-width: 180px; flex: 0 1 260px; }
+.flow-cat-input { min-width: 110px; flex: 0 1 150px; }
+.flow-enable { white-space: nowrap; }
+
+/* body layout: palette | canvas | config */
+.flow-body {
+  flex: 1; display: grid; grid-template-columns: 172px minmax(0, 1fr) 268px;
+  min-height: 0; border: 1px solid var(--border-panel); border-radius: 0 0 10px 10px;
+  overflow: hidden;
+}
+
+/* palette */
+.flow-palette {
+  background: var(--bg-subtle); border-right: 1px solid var(--border-subtle);
+  padding: 12px 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px;
+}
+.flow-palette-group { display: flex; flex-direction: column; gap: 6px; }
+.flow-palette-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--text-faint); font-weight: 700; padding-left: 2px;
+}
+.flow-palette-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  padding: 7px 9px; font-size: 12.5px; font-weight: 500; cursor: pointer;
+  background: var(--bg-surface); color: var(--text-secondary);
+  border: 1px solid var(--border-subtle); border-left: 3px solid var(--flow-group, var(--accent));
+  border-radius: 7px;
+}
+.flow-palette-item:hover { border-color: var(--accent); background: var(--accent-bg); }
+.flow-palette-item.is-input { --flow-group: #14b8a6; }
+.flow-palette-item.is-transform { --flow-group: #8b5cf6; }
+.flow-palette-item.is-logic { --flow-group: #f59e0b; }
+.flow-palette-item.is-output { --flow-group: #2d6cdf; }
+
+/* canvas */
+.flow-canvas-wrap { position: relative; overflow: hidden; background: var(--bg-body); }
+.flow-canvas {
+  width: 100%; height: 100%; display: block; touch-action: none; cursor: grab;
+  background-image:
+    linear-gradient(var(--border-subtle) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+.flow-canvas:active { cursor: grabbing; }
+.flow-canvas-empty {
+  position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none;
+  color: var(--text-faint); font-size: 13px;
+}
+.flow-zoom {
+  position: absolute; right: 12px; bottom: 12px; display: flex; align-items: center; gap: 6px;
+  background: var(--bg-surface); border: 1px solid var(--border-panel); border-radius: 8px;
+  padding: 3px 6px; font-size: 12px; color: var(--text-muted);
+}
+.flow-zoom button { padding: 0 8px; line-height: 1.6; }
+
+/* nodes */
+.flow-node-box {
+  fill: var(--bg-surface); stroke: var(--border-panel); stroke-width: 1.5;
+  cursor: grab; filter: drop-shadow(0 1px 2px var(--shadow-panel));
+}
+.flow-node.is-input .flow-node-box { stroke: #14b8a6; }
+.flow-node.is-transform .flow-node-box { stroke: #8b5cf6; }
+.flow-node.is-logic .flow-node-box { stroke: #f59e0b; }
+.flow-node.is-output .flow-node-box { stroke: #2d6cdf; }
+.flow-node.is-selected .flow-node-box { stroke: var(--accent); stroke-width: 2.5; }
+.flow-node-title { fill: var(--text-primary); font-size: 13px; font-weight: 600; }
+.flow-node-sub { fill: var(--text-muted); font-size: 11px; }
+.flow-node-dbg { fill: var(--accent); font-size: 11px; font-weight: 700; text-anchor: end; }
+
+.flow-port { fill: var(--bg-surface); stroke: var(--text-muted); stroke-width: 1.5; cursor: crosshair; }
+.flow-port:hover { fill: var(--accent); stroke: var(--accent); }
+
+/* wires */
+.flow-wire { fill: none; stroke: var(--text-faint); stroke-width: 2.5; cursor: pointer; }
+.flow-wire:hover { stroke: var(--accent); }
+.flow-wire.is-selected { stroke: var(--accent); stroke-width: 3; }
+.flow-wire.is-pending { stroke: var(--accent); stroke-dasharray: 5 4; pointer-events: none; }
+
+/* config panel */
+.flow-config {
+  background: var(--bg-subtle); border-left: 1px solid var(--border-subtle);
+  overflow-y: auto; padding: 12px;
+}
+.flow-config-empty { color: var(--text-faint); font-size: 12.5px; line-height: 1.5; padding: 6px 2px; }
+.flow-config-body { display: flex; flex-direction: column; gap: 10px; }
+.flow-config-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-weight: 600; color: var(--text-primary); padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.flow-code {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12px;
+  line-height: 1.5; width: 100%; resize: vertical; tab-size: 2;
+}
+
+@media (max-width: 900px) {
+  .flow-body { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; }
+  .flow-palette { flex-direction: row; flex-wrap: wrap; }
+  .flow-editor { height: auto; min-height: 80vh; }
+}

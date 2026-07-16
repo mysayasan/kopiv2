@@ -5,7 +5,7 @@ import { ToastStack } from './components/ui';
 import { LangProvider, normalizeLang, useT } from '@shared/i18n';
 import { AppFooter } from '@shared/AppFooter';
 import { enBundle, loadLocaleDict } from './i18n';
-import { THEMES, emptyLogin, defaultStreamConfig, defaultRuntimeSettings, defaultNewUser, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings, defaultVisionThreshold, defaultVisionMinFrames } from './lib/constants';
+import { THEMES, emptyLogin, defaultStreamConfig, defaultRuntimeSettings, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings, defaultVisionThreshold, defaultVisionMinFrames } from './lib/constants';
 import {readLiveViewsCookie,saveLiveViewsCookie,bestLiveViewLayout,unwrap,errorMessage,apiBase,parseMetadata,cameraTitle,normalizeScanDevice,orderedSavedCameras,isActionableVisionAlert,latestAlertsByCamera,sameCamera,liveSource,normalizeRuntimeSettings,normalizeMachineHealthSettings,defaultZonePolygon,isLineDetectionType,defaultLineRuleConfig,lineRuleConfigText,defaultVisionRuleDraft,playAlertSound,hasH264VideoTrack,isVisionAlertNotification } from './lib/helpers';
 import { LoginPage, ChangePasswordPage, RecoveryGatePage, MagicWordEasterEgg, SideNav, WorkspaceHeader } from './components/layout';
 import { DashboardTab } from './components/dashboard';
@@ -135,8 +135,6 @@ function AppInner({ lang, onLangChange }) {
   const [decoderGpuDevices, setDecoderGpuDevices] = useState(null);
   const [visionToolStatus, setVisionToolStatus] = useState(null);
   const [visionInstallResult, setVisionInstallResult] = useState(null);
-  const [users, setUsers] = useState([]);
-  const [newUser, setNewUser] = useState(defaultNewUser);
   const [notificationSettings, setNotificationSettings] = useState(defaultNotificationSettings);
   const [savedNotificationSettings, setSavedNotificationSettings] = useState(defaultNotificationSettings);
   const [healthSettings, setHealthSettings] = useState(defaultHealthSettings);
@@ -153,7 +151,6 @@ function AppInner({ lang, onLangChange }) {
   const [recoveryPending, setRecoveryPending] = useState(null);
   const [recoveryKeyId, setRecoveryKeyId] = useState('');
   const [recoveryRestarting, setRecoveryRestarting] = useState(false);
-  const [passwordDrafts, setPasswordDrafts] = useState({});
   const [visionRules, setVisionRules] = useState([]);
   const [visionAlerts, setVisionAlerts] = useState([]);
   const [visionClasses, setVisionClasses] = useState([]);
@@ -568,9 +565,6 @@ function AppInner({ lang, onLangChange }) {
     setStreamConfig(defaultStreamConfig);
     setRuntimeSettings(defaultRuntimeSettings);
     setDecoderGpuDevices(null);
-    setUsers([]);
-    setNewUser(defaultNewUser);
-    setPasswordDrafts({});
     setVisionRules([]);
     setVisionAlerts([]);
     setVisionRuleDraft(defaultVisionRuleDraft());
@@ -603,29 +597,6 @@ function AppInner({ lang, onLangChange }) {
         setMessage(err.message, 'error');
       }
       return null;
-    }
-  }
-
-  async function loadUsers({ quiet = false } = {}) {
-    if (!quiet) {
-      setBusy(true);
-      setMessage('');
-    }
-    try {
-      const result = await request('/api/settings/users?limit=100&offset=0');
-      const items = Array.isArray(result) ? result : result?.items || [];
-      setUsers(items);
-      if (!quiet) {
-        setMessage(t('app.usersLoaded'));
-      }
-      return items;
-    } catch (err) {
-      setMessage(err.message, 'error');
-      throw err;
-    } finally {
-      if (!quiet) {
-        setBusy(false);
-      }
     }
   }
 
@@ -1745,96 +1716,6 @@ function AppInner({ lang, onLangChange }) {
     }
   }
 
-  async function createUser(event) {
-    event.preventDefault();
-    // Validate client-side so the user gets a clear message in every environment
-    // (the server hides its own validation detail behind "bad request" in prod).
-    if ((newUser.password || '').length < 8) {
-      setMessage(t('app.passwordMin'), 'error');
-      return;
-    }
-    setBusy(true);
-    setMessage('');
-    try {
-      await request('/api/settings/users', {
-        method: 'POST',
-        body: JSON.stringify(newUser),
-      });
-      setNewUser(defaultNewUser);
-      await loadUsers({ quiet: true });
-      setMessage(t('app.userCreated'));
-    } catch (err) {
-      setMessage(err.message, 'error');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function editUser(id, patch) {
-    setUsers((current) => current.map((user) => (user.id === id ? { ...user, ...patch } : user)));
-  }
-
-  async function updateUser(user) {
-    setBusy(true);
-    setMessage('');
-    try {
-      await request(`/api/settings/users/${user.id}`, {
-        method: 'PUT',
-        body: JSON.stringify({
-          username: user.username,
-          displayName: user.displayName,
-          // roleId decides what this user may do. isAdmin still rides along because the
-          // server falls back to it when roleId is 0 (a user who predates the backfill).
-          roleId: Number(user.roleId) || 0,
-          isAdmin: Boolean(user.isAdmin),
-          isActive: Boolean(user.isActive),
-        }),
-      });
-      await loadUsers({ quiet: true });
-      setMessage(t('app.userSaved'));
-    } catch (err) {
-      setMessage(err.message, 'error');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function resetUserPassword(user) {
-    // Same client-side guard as createUser so short passwords get a clear message.
-    if ((passwordDrafts[user.id] || '').length < 8) {
-      setMessage(t('app.passwordMin'), 'error');
-      return;
-    }
-    setBusy(true);
-    setMessage('');
-    try {
-      await request(`/api/settings/users/${user.id}/password`, {
-        method: 'POST',
-        body: JSON.stringify({ password: passwordDrafts[user.id] || '' }),
-      });
-      setPasswordDrafts((current) => ({ ...current, [user.id]: '' }));
-      setMessage(t('app.passwordReset'));
-    } catch (err) {
-      setMessage(err.message, 'error');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function deleteUser(user) {
-    setBusy(true);
-    setMessage('');
-    try {
-      await request(`/api/settings/users/${user.id}`, { method: 'DELETE' });
-      await loadUsers({ quiet: true });
-      setMessage(t('app.userDeleted'));
-    } catch (err) {
-      setMessage(err.message, 'error');
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function saveVisionRule(event) {
     event.preventDefault();
     setBusy(true);
@@ -2102,9 +1983,7 @@ function AppInner({ lang, onLangChange }) {
 
   function openSettingsSection(section) {
     setSettingsNav(section);
-    if (section === 'users') {
-      loadUsers().catch(() => {});
-    } else if (section === 'notifications') {
+    if (section === 'notifications') {
       loadNotificationSettings({ quiet: true }).catch(() => {});
     } else if (section === 'health') {
       loadHealthSettings({ quiet: true }).catch(() => {});
@@ -2525,9 +2404,6 @@ function AppInner({ lang, onLangChange }) {
   function selectTab(tab) {
     if (tab !== 'cameras') setManagingCameraId(null);
     setActiveTab(tab);
-    if (tab === 'settings' && settingsNav === 'users') {
-      loadUsers().catch(() => {});
-    }
     // Cameras hosts the per-camera Settings (Recording/Stream config), AI rules, and
     // Recordings browser tabs, so refresh recording configs + vision state on entry.
     if (tab === 'cameras') {
@@ -2876,9 +2752,6 @@ function AppInner({ lang, onLangChange }) {
           settings={runtimeSettings}
           authHeader={authHeader}
           onMessage={setMessage}
-          users={users}
-          newUser={newUser}
-          passwordDrafts={passwordDrafts}
           busy={busy}
           hasChanges={JSON.stringify(runtimeSettings) !== JSON.stringify(savedRuntimeSettings)}
           onChange={setRuntimeSettings}
@@ -2895,15 +2768,7 @@ function AppInner({ lang, onLangChange }) {
           visionToolStatus={visionToolStatus}
           onInstallPackages={installVisionPackages}
           visionInstallResult={visionInstallResult}
-          onLoadUsers={() => loadUsers()}
           focusUsername={focusUsername}
-          onNewUser={setNewUser}
-          onCreateUser={createUser}
-          onEditUser={editUser}
-          onUpdateUser={updateUser}
-          onPasswordDraft={(id, value) => setPasswordDrafts((current) => ({ ...current, [id]: value }))}
-          onResetPassword={resetUserPassword}
-          onDeleteUser={deleteUser}
           notificationSettings={notificationSettings}
           savedNotificationSettings={savedNotificationSettings}
           notificationHasChanges={JSON.stringify(notificationSettings) !== JSON.stringify(savedNotificationSettings)}

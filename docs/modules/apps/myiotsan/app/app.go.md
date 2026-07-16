@@ -25,7 +25,11 @@ and OPC-UA transports and guarded Modbus control writes; the solar "system works
 still design-only. See `docs/MYIOTSAN_PLAN.md` §8g. **A tabbed Settings page shipped 2026-07-16**,
 consolidating users/roles, site location, outbound notification delivery (webhook/telegram — now
 actually wired to the shared notification hub for the first time), storage/broker settings, fleet
-pairing, and a restart control into one admin-only page — see the "Notes" section below.
+pairing, and a restart control into one admin-only page — see the "Notes" section below. **A visual
+executable Flow Engine (Node-RED-style canvas) shipped 2026-07-16, P1-P3** — see step 10e below,
+`services/flow_runtime.go.md`, and `docs/MYIOTSAN_PLAN.md` §8i; this deliberately REVERSES §8g's
+original "no visual node-graph editor" scope line, kept safe because every flow's actuation still
+routes through the one guarded `CommandService.Issue` chokepoint.
 
 ## Key Type: module
 
@@ -48,8 +52,9 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
   registered here: `DeviceProfile`, `TelemetryKey`, `IotDevice`, `DeviceReading`,
   `ReadingRollup`, `IotRule`, `AlertEvent`, (P3) `DiscoveredDevice` — the enrollment window's
   candidate table, (P4) `ProfileCommand`, `DeviceCommand`, `DeviceAttribute` — the actuation
-  declaration, the command audit trail, and the device twin, and (home-automation) `Scene`,
-  `SceneAction`, `Schedule` (`apps/myiotsan/entities`).
+  declaration, the command audit trail, and the device twin, (home-automation) `Scene`,
+  `SceneAction`, `Schedule`, and (Flow Engine) `IotFlow` — the saved, executable data-flow graph
+  authored on the visual canvas (`apps/myiotsan/entities`).
 - `Seeders(...)` seeds the endpoint catalog for rate limiting/runtime metadata, now including
   `/api/devices`, `/api/profiles`, `/api/rules`, `/api/alerts`, `/api/notifications`, (P3)
   `/api/discovery` (auth-only), and (P4) `/api/settings` (auth-only — users and roles; see the
@@ -162,9 +167,23 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
       `LastFiredAt` double-fire guard (`services/schedules.go.md`) and the resolution a home
       schedule ("07:30") is actually expressed at. See `services/scenes.go.md` and
       `services/schedules.go.md`.
+  10e. **Wires the Flow Engine**, right after home automation: `services.NewFlowService(deps.Db,
+      logf)`, then `flowService.EnsureBuiltins(ctx)` seeds the shipped "Solar system" sample
+      (`services/flow_catalog.go.md`). `services.NewFlowRuntime(flowService, commandService,
+      notificationService, deviceService, writer, logf)` builds the runtime; `flowService.
+      SetOnChange(flowRuntime.SignalReload)` wires save/enable/delete to trigger an immediate
+      recompile; `ingest.SetFlows(flowRuntime)` taps the SAME decoded-sample stream the rules do
+      (see `services/ingest.go.md`); a `safego.Supervise`d `"myiotsan.flows"` task runs
+      `flowRuntime.Run(ctx, flowReconcileInterval)` (const, 30s — the same reconcile cadence the
+      Modbus poller uses). A flow's nodes can run ARBITRARY sandboxed JavaScript
+      (`services/flow_eval.go.md`), but only a dedicated output node can act, and the command
+      output routes through `commandService.Issue` — the identical guarded chokepoint every other
+      actuation path in this app uses, so a flow can command nothing a person could not. See
+      `services/flow_runtime.go.md` and `docs/MYIOTSAN_PLAN.md` §8i.
   11. Registers `apis.NewDevicesApi`, `apis.NewDiscoveryApi` (P3), `apis.NewCommandsApi` (P4),
       `apis.NewProfilesApi`, `apis.NewRulesApi`, `apis.NewScenesApi`, `apis.NewSchedulesApi`
-      (home automation), `apis.NewNotificationsApi` on `protected`.
+      (home automation), `apis.NewFlowsApi` (Flow Engine, admin-only), `apis.NewNotificationsApi`
+      on `protected`.
   11b. **Wires the fleet (P6)**, gated on `deps.Config.Pairing.Enabled`: resolves
       `openFleetSecretCipher(deps)` (fails closed — see "Fleet (P6)" below), builds the fleet
       via `buildFleet(api, deps, appVersion(m), fleetCipher, notificationService)`

@@ -29,6 +29,7 @@ type Ingest struct {
 	rules   *RuleService
 	enroll  *Enrollment
 	twin    *CommandService
+	flows   *FlowRuntime
 	logf    func(format string, args ...any)
 
 	// bindings caches each profile's decoded key list. Reading the telemetry keys from the
@@ -83,6 +84,11 @@ func (i *Ingest) SetEnrollment(e *Enrollment) { i.enroll = e }
 // confirms a command: "we published a message" is not "the relay closed" — only the device
 // saying so is.
 func (i *Ingest) SetTwin(c *CommandService) { i.twin = c }
+
+// SetFlows attaches the flow runtime. Like SetTwin, it is wired after construction (the runtime is
+// built later in app.go) and before the broker starts, so no reading is missed. A nil runtime means
+// the flow engine is simply not consulted.
+func (i *Ingest) SetFlows(f *FlowRuntime) { i.flows = f }
 
 // Handle processes one payload. It satisfies mqtt.MessageHandler and is also the entry point
 // for the HTTP ingest route, so a device that cannot speak MQTT has the same pipeline behind it.
@@ -189,6 +195,11 @@ func (i *Ingest) handleSamples(ctx context.Context, dev *entities.IotDevice, bin
 
 		if i.rules != nil {
 			i.rules.OnReading(ctx, dev, s.Key, s.Num, nowSec)
+		}
+		// The flow engine, alongside the rules — same reading, a parallel consumer. It only
+		// ENQUEUES here (execution is on its own worker), so a flow can never slow ingest.
+		if i.flows != nil {
+			i.flows.OnReading(ctx, dev, s.Key, s.Num, nowSec)
 		}
 		// The twin's reported half. This is what closes the loop on a command.
 		if i.twin != nil {
