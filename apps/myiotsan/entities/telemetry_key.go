@@ -36,8 +36,13 @@ type TelemetryKey struct {
 	// Register is the starting holding-register address. 0 with an empty RegKind means this key
 	// is not a Modbus key (it is a JSON key), so a mixed profile is harmless.
 	Register int `json:"register" form:"register" query:"register"`
-	// RegKind is how to decode the register(s): "u16", "i16", "u32", "i32". Empty = not Modbus.
+	// RegKind is how to decode the register(s): "u16", "i16", "u32", "i32", "f32" (IEEE-754
+	// float, the encoding cheap meters like the Eastron SDM630 use). Empty = not Modbus.
 	RegKind string `json:"regKind" form:"regKind" query:"regKind"`
+	// RegInput reads the point from INPUT registers (Modbus fn 4) instead of holding registers
+	// (fn 3). Vendors split their maps: Huawei is all-holding, but an Eastron meter and a Sungrow
+	// SH keep their measurements in the input bank. False (the default) preserves the fn-3 path.
+	RegInput bool `json:"regInput" form:"regInput" query:"regInput"`
 	// ScaleFactor multiplies the raw integer to reach the real value (0.1 for a 0.1-unit device).
 	// 0 is treated as 1, so an unset scale is an identity, not a value annihilated to zero.
 	ScaleFactor float64 `json:"scaleFactor" form:"scaleFactor" query:"scaleFactor"`

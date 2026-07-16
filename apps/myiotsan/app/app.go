@@ -152,6 +152,7 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Notifications", Description: "unified event feed", Path: "/api/notifications", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Discovery", Description: "enrollment window and device adoption", Path: "/api/discovery", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Settings", Description: "users and roles", Path: "/api/settings", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Knowledge base", Description: "shipped setup guides", Path: "/api/kb", AccessTier: apiaccessenums.AuthOnly},
 	}
 
 	statements := make([]string, 0, len(endpoints)*2)
@@ -488,6 +489,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewScenesApi(protected, sceneService)
 	apis.NewSchedulesApi(protected, scheduleService)
 	apis.NewFlowsApi(protected, flowService, flowRuntime)
+	apis.NewKbApi(protected)
 	apis.NewNotificationsApi(protected, notificationService)
 
 	// --- the fleet -------------------------------------------------------------------

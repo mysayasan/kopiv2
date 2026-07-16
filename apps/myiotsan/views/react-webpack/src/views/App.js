@@ -5,7 +5,7 @@ import './styles/iot.css';
 import { SideNav } from './components/layout';
 import { ToastStack, LangProvider, normalizeLang, LanguageDropdown, AppFooter } from '@shared';
 import { FormBusyOverlay, ThemeDropdown } from './components/ui';
-import { DashboardPage, DevicesPage, RulesPage, AlertsPage, NotificationsPage, ProfilesPage, DiscoveryPage, ScenesPage, SchedulesPage, FlowsPage, SettingsPage } from './components/pages';
+import { DashboardPage, DevicesPage, RulesPage, AlertsPage, NotificationsPage, ProfilesPage, DiscoveryPage, ScenesPage, SchedulesPage, FlowsPage, KbPage, SettingsPage } from './components/pages';
 import { FirstRunWizard } from './components/onboarding';
 import { LoginScreen, ChangePasswordScreen } from './components/auth_screens';
 import { api, apiBase } from './lib/helpers';
@@ -143,6 +143,8 @@ function AppInner({ lang, onLangChange }) {
         {activeTab === 'alerts' ? <AlertsPage onToast={pushToast} /> : null}
         {activeTab === 'notifications' ? <NotificationsPage onToast={pushToast} /> : null}
         {activeTab === 'profiles' ? <ProfilesPage onToast={pushToast} /> : null}
+        {/* The knowledge base is read-only reference content, readable by anyone signed in. */}
+        {activeTab === 'help' ? <KbPage onToast={pushToast} /> : null}
         {/* Scenes are readable by anyone; RUNNING one is admin-only (the server 403s a non-admin
             POST to /run, and ScenesPage hides the Run button off session.isAdmin). */}
         {activeTab === 'scenes' ? <ScenesPage onToast={pushToast} session={session} /> : null}

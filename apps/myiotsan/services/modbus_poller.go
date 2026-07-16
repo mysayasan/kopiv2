@@ -221,6 +221,7 @@ func registerMapFromKeys(keys []*entities.TelemetryKey) (modbus.RegisterMap, err
 			Type:     t,
 			Scale:    k.ScaleFactor,
 			WordSwap: k.WordSwap,
+			Input:    k.RegInput,
 			Unit:     k.Unit,
 		})
 	}
@@ -241,7 +242,9 @@ func ptypeOf(kind string) (modbus.PType, error) {
 		return modbus.PU32, nil
 	case "i32":
 		return modbus.PI32, nil
+	case "f32":
+		return modbus.PF32, nil
 	default:
-		return 0, fmt.Errorf("unknown register kind %q (want u16|i16|u32|i32)", kind)
+		return 0, fmt.Errorf("unknown register kind %q (want u16|i16|u32|i32|f32)", kind)
 	}
 }

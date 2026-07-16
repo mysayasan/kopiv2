@@ -68,6 +68,7 @@ func Policy() []PolicyRule {
 		// the live picture, and it is all a viewer gets.
 		{Path: "/api/devices", Description: "See devices and their current readings", Viewer: read, Operator: read},
 		{Path: "/api/profiles", Description: "See device types and their datapoints", Viewer: read, Operator: read},
+		{Path: "/api/kb", Description: "Read the shipped setup guides", Viewer: read, Operator: read},
 		{Path: "/api/rules", Description: "See the alert rules", Viewer: read, Operator: read},
 		{Path: "/api/alerts", Description: "See the alert log", Viewer: read, Operator: read},
 		{Path: "/api/notifications", Description: "See the notification feed", Viewer: read, Operator: read},

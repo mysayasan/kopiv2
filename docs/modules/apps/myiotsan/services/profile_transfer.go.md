@@ -35,7 +35,9 @@ POLLED (Modbus) profile and are `omitempty`'d for an MQTT one — additive field
 format version did NOT need to bump: an older importer that predates them simply ignores them,
 and a document missing them decodes as the zero value that means "the MQTT default". `Keys`
 (`SaveTelemetryKey`) likewise now carries each key's Modbus binding (`Register`/`RegKind`/
-`ScaleFactor`/`WordSwap`) for a register-map profile.
+`ScaleFactor`/`WordSwap`/`RegInput`) for a register-map profile — `RegInput` is the newest field; a
+document from before it existed simply decodes it `false`, which is exactly the fn-3-holding
+default every profile had before input-register support existed.
 
 ## Key Function: (*ProfileService) Export
 

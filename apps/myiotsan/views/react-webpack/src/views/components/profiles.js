@@ -11,12 +11,12 @@ const TRANSPORTS = ['mqtt', 'modbus'];
 // SunSpec is self-describing (the driver discovers the keys); a register map is a custom vendor
 // device where every key names its register explicitly.
 const MODBUS_MODES = ['sunspec', 'regmap'];
-const REG_KINDS = ['u16', 'i16', 'u32', 'i32'];
+const REG_KINDS = ['u16', 'i16', 'u32', 'i32', 'f32'];
 
 const EMPTY_KEY = {
   key: '', label: '', unit: '', dataType: 'number', jsonPath: '',
   deadband: 0, heartbeatSeconds: 900, min: 0, max: 0,
-  register: 0, regKind: 'u16', scaleFactor: 1, wordSwap: false,
+  register: 0, regKind: 'u16', scaleFactor: 1, wordSwap: false, regInput: false,
 };
 
 const COMMAND_KINDS = ['switch', 'setpoint', 'dimmer', 'position', 'cct', 'mode', 'color'];
@@ -225,6 +225,7 @@ function ProfileEditor({ profileId, onBack, onSaved, onToast }) {
         regKind: k.regKind || '',
         scaleFactor: Number(k.scaleFactor) || 0,
         wordSwap: !!k.wordSwap,
+        regInput: !!k.regInput,
       })),
       // The commands, replaced wholesale like the keys. min/max ride along for every kind; the
       // server only enforces them on a setpoint. A Modbus profile's commands are register WRITES —
@@ -378,6 +379,9 @@ function ProfileEditor({ profileId, onBack, onSaved, onToast }) {
                     </Field>
                     <Field label={t('profiles.wordSwap')} hint={t('profiles.wordSwapHint')}>
                       <label className="check-row"><input type="checkbox" checked={!!k.wordSwap} onChange={(e) => setKey(i, { wordSwap: e.target.checked })} /> {t('profiles.wordSwapLabel')}</label>
+                    </Field>
+                    <Field label={t('profiles.regInput')} hint={t('profiles.regInputHint')}>
+                      <label className="check-row"><input type="checkbox" checked={!!k.regInput} onChange={(e) => setKey(i, { regInput: e.target.checked })} /> {t('profiles.regInputLabel')}</label>
                     </Field>
                   </>
                 ) : null}

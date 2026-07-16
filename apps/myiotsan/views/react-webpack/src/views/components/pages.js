@@ -11,4 +11,5 @@ export { DiscoveryPage } from './discovery';
 export { ScenesPage } from './scenes';
 export { SchedulesPage } from './schedules';
 export { FlowsPage } from './flows';
+export { KbPage } from './kb';
 export { SettingsPage } from './settings';

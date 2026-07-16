@@ -32,9 +32,11 @@ func NewProfileService(db dbsql.IDbCrud) *ProfileService
 Request/response DTOs for the profile CRUD API (`apis/profiles.go`). **(P5)**
 `SaveProfileRequest` carries `Transport`/`ModbusMode`/`ModbusBase`/`PollSeconds` (see
 `entities.DeviceProfile`) and `SaveTelemetryKey` carries `Register`/`RegKind`/`ScaleFactor`/
-`WordSwap` (see `entities.TelemetryKey`) — both plumbed through `Create`/`Update`/`replaceKeys`/
-`EnsureBuiltins` alongside the pre-existing MQTT-only fields, so a Modbus profile is saved,
-edited and seeded through the identical path an MQTT one always has been. `SaveProfileCommand` (P4)
+`WordSwap`/`RegInput` (see `entities.TelemetryKey`) — all plumbed through `Create`/`Update`/
+`replaceKeys`/`EnsureBuiltins` alongside the pre-existing MQTT-only fields, so a Modbus profile is
+saved, edited and seeded through the identical path an MQTT one always has been. `RegInput` is the
+newest addition, needed by the input-register profiles (`sungrow-sh-hybrid`,
+`eastron-sdm630-meter`). `SaveProfileCommand` (P4)
 declares one command: `Name`/`Label`/`Kind` (`"switch"`/`"setpoint"`, and, since the
 home-automation kinds, `"dimmer"`/`"position"`/`"cct"`/`"mode"`/`"color"` — see
 `entities/profile_command.go.md`), `TopicTemplate`/`PayloadTemplate` (MQTT transport),

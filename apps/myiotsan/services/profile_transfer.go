@@ -78,6 +78,7 @@ func (s *ProfileService) Export(ctx context.Context, id int64) (*ProfileExport, 
 			RegKind:          k.RegKind,
 			ScaleFactor:      k.ScaleFactor,
 			WordSwap:         k.WordSwap,
+			RegInput:         k.RegInput,
 		})
 	}
 	return out, nil

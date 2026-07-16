@@ -2,9 +2,10 @@
 
 ## Purpose
 
-Pins the three properties that make `RegisterMap` correct and efficient: mixed-type/scale
-decoding, the single-round-trip span computation for a packed map, and clustered reads for a
-scattered one.
+Pins the properties that make `RegisterMap` correct and efficient: mixed-type/scale decoding, the
+single-round-trip span computation for a packed map, clustered reads for a scattered one, and — new
+— float32 decoding plus dispatch to the correct function code (fn 3 holding vs fn 4 input) for a
+mixed-bank map.
 
 ## Responsibilities
 
@@ -19,6 +20,15 @@ scattered one.
   is read as **two** bounded requests, one per block, via `countingReader`, and every point across
   both clusters still decodes to the right scaled/signed value (including a negative `i32` battery
   discharge).
+- `TestRegisterMapFloatAndInput` — a `bankReader` answers holding and input registers from two
+  separate banks. Proves a `PF32` point (an Eastron-shaped 230.0V float32, big-endian) and a
+  word-swapped `PU32` input point (a Sungrow-shaped 5000W, low-word-first) both decode correctly
+  AND are fetched via the correct function code (`ReadInput` for the two `Input: true` points,
+  `ReadHolding` for a plain holding point in the same map) — the two banks must never be merged
+  into one read even when addresses could coincide.
+- `TestRegisterMapInputWithoutReader` — a map binding an `Input: true` point handed a holding-only
+  `fakeReader` (one that doesn't implement `inputReader`) errors from `Read` rather than silently
+  reading the wrong bank.
 
 ## Notes
 
@@ -29,4 +39,7 @@ scattered one.
 - The live-hardware-shaped equivalent is `integration_test.go`'s `TestLiveSimulator`, which reads
   `tools/sunspec-sim`'s non-SunSpec vendor inverter (unit 3) and Huawei SUN2000 persona (unit 4)
   through a real `RegisterMap` over real Modbus TCP, the latter proving the same clustering
-  against an actual (simulated) scattered device rather than a synthetic bank.
+  against an actual (simulated) scattered device rather than a synthetic bank. The real-world
+  exercise of `Input`/`PF32` is `modbus_poller_test.go`'s `TestBuiltinRegmapProfilesBuildValidMaps`
+  against the shipped `sungrow-sh-hybrid`/`eastron-sdm630-meter` profiles, not the live simulator
+  (which has no input-register/word-swap/float32 persona).
