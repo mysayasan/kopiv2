@@ -46,13 +46,32 @@ just-stopped-for-reconfiguration.
 `planFor` is where a device + its profile become "how to poll it, or don't":
 
 - `d.ProfileId <= 0`, or the profile's `Transport` is not `"modbus"` → `(_, false, nil)` — not this
-  service's business; the broker path (or nothing) owns it.
+  service's business; the broker path (or nothing) owns it. (This `Transport` is the
+  `DeviceProfile`'s PUSH-vs-POLL selector — `"mqtt"` vs `"modbus"` — a different field from the
+  device-level wire transport described next.)
 - An empty `d.Endpoint` on an otherwise-Modbus device is a **config error**, not silently skipped
   — `planFor` returns it and `reconcile` logs-and-skips rather than crashing, the same posture an
   unprofiled MQTT device gets.
 - `ModbusMode == "" | "sunspec"` → `modbus.ModeSunSpec`. `"regmap"` → `modbus.ModeRegMap` plus
   `registerMapFromKeys(detail.Keys)`. Anything else is refused as an unknown mode.
 - `PollSeconds <= 0` defaults to 5s.
+- The built `modbus.DeviceConf` also carries `Transport: modbusTransportOf(d.Transport)` and
+  `Serial: modbus.SerialParams{Baud: d.Baud, DataBits: d.DataBits, Parity: ..., StopBits:
+  d.StopBits}` — the device's own wire transport (TCP/RTU-over-TCP/serial), so a poll dials the
+  device the same way a guarded write does (`services/commands.go.md`'s `sendModbus`).
+
+## Key Function: modbusTransportOf
+
+```go
+func modbusTransportOf(s string) modbus.Transport
+```
+
+Maps `entities.IotDevice.Transport`'s string (`""`/`"tcp"` → TCP; `"rtutcp"`/`"rtu-tcp"`/
+`"rtuovertcp"` → RTU-over-TCP; `"serial"`/`"rtu"` → serial) to the driver's `modbus.Transport`,
+case/whitespace-insensitively. Empty or anything unrecognised falls back to `modbus.TransportTCP`
+— the historical default, so every device stored before this field existed keeps polling exactly
+as it did. Shared with `services/commands.go.md`'s `sendModbus`, so a device's poller and its
+guarded command writes never disagree on how to reach it.
 
 **`sig`** is the reconcile signature: `endpoint|unit|mode|base|pollSeconds|profileUpdatedAt|
 deviceUpdatedAt`. It deliberately folds in `prof.UpdatedAt` — a register-map profile's keys are

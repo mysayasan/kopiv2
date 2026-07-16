@@ -67,6 +67,7 @@ require (
 	github.com/pion/webrtc/v4 v4.2.15
 	github.com/redis/go-redis/v9 v9.20.0
 	github.com/shirou/gopsutil/v3 v3.24.5
+	go.bug.st/serial v1.8.0
 	golang.org/x/crypto v0.52.0
 	golang.org/x/image v0.42.0
 	golang.org/x/net v0.55.0

@@ -19,7 +19,7 @@ import (
 
 // modbusWriteFunc is the guarded-write seam (modbus.WriteConfirm in production, a fake in tests):
 // write value to a holding register and confirm it by reading it back, NEVER re-issuing.
-type modbusWriteFunc func(endpoint string, unit byte, reg int, value uint16, timeout time.Duration) error
+type modbusWriteFunc func(conf modbus.DeviceConf, reg int, value uint16, timeout time.Duration) error
 
 // Actuation: the point where a bug stops being a wrong number on a chart and becomes a relay
 // that physically fires.
@@ -103,10 +103,9 @@ func NewCommandService(
 		attrs:      dbsql.NewGenericRepo[entities.DeviceAttribute](db),
 		devices:    devices,
 		publish:    publish,
-		// The production guarded-write: dial the device, write the register, confirm by read-back.
-		modbusWrite: func(endpoint string, unit byte, reg int, value uint16, timeout time.Duration) error {
-			return modbus.WriteConfirm(modbus.DeviceConf{Endpoint: endpoint, Unit: unit}, reg, value, timeout)
-		},
+		// The production guarded-write: dial the device (over its transport), write the register,
+		// confirm by read-back. WriteConfirm's signature is exactly modbusWriteFunc.
+		modbusWrite: modbus.WriteConfirm,
 		audit:    audit,
 		metrics:  metrics,
 		logf:     logf,
@@ -266,7 +265,15 @@ func (s *CommandService) sendModbus(ctx context.Context, cmd entities.DeviceComm
 	}
 
 	cmd.SentAt = now.Unix()
-	if err := s.modbusWrite(dev.Endpoint, byte(dev.Unit), decl.Register, raw, modbusWriteTimeout); err != nil {
+	// The write inherits the device's transport (TCP / RTU-over-TCP / serial), so a serial inverter
+	// is actuated over the same guarded read-back path as a TCP one.
+	conf := modbus.DeviceConf{
+		Endpoint:  dev.Endpoint,
+		Unit:      byte(dev.Unit),
+		Transport: modbusTransportOf(dev.Transport),
+		Serial:    modbus.SerialParams{Baud: dev.Baud, DataBits: dev.DataBits, Parity: strings.TrimSpace(dev.Parity), StopBits: dev.StopBits},
+	}
+	if err := s.modbusWrite(conf, decl.Register, raw, modbusWriteTimeout); err != nil {
 		// A lost or unconfirmed write ENDS the command — it is never re-sent (a second register
 		// write is a second physical action). The operator sees plainly that it was not confirmed.
 		return fail("modbus write not confirmed: " + err.Error())

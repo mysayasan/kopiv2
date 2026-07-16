@@ -201,8 +201,64 @@ export function CredentialModal({ credential, onClose }) {
 const EMPTY_DEVICE = {
   name: '', deviceKey: '', protocol: 'mqtt', profileId: 0, password: '',
   tag: '', location: '', vendor: '', model: '', enabled: true, actuationEnabled: false,
-  endpoint: '', unit: 1,
+  endpoint: '', unit: 1, transport: 'tcp', baud: 9600, parity: 'N', dataBits: 8, stopBits: 1,
 };
+
+// The Modbus transports a device can use to reach its hardware: standard Modbus TCP, RTU frames over
+// a transparent TCP gateway, or RTU over a physical serial line.
+const MODBUS_TRANSPORTS = ['tcp', 'rtutcp', 'serial'];
+const PARITIES = ['N', 'E', 'O'];
+
+// ModbusFields renders the per-device Modbus addressing — shared by the create modal and the settings
+// form. Endpoint means host:port for TCP/RTU-over-TCP and a serial port name for serial; the serial
+// line settings (baud/parity/bits) only appear for the serial transport.
+function ModbusFields({ form, set, t }) {
+  const transport = form.transport || 'tcp';
+  const isSerial = transport === 'serial';
+  return (
+    <>
+      <Field label={t('devices.transport')} hint={t('devices.transportHint')}>
+        <select value={transport} onChange={(e) => set({ transport: e.target.value })}>
+          {MODBUS_TRANSPORTS.map((tr) => <option key={tr} value={tr}>{t(`transport.${tr}`)}</option>)}
+        </select>
+      </Field>
+      <Field
+        label={isSerial ? t('devices.serialPort') : t('devices.endpoint')}
+        hint={isSerial ? t('devices.serialPortHint') : t('devices.endpointHint')}
+        required
+      >
+        <input value={form.endpoint || ''} onChange={(e) => set({ endpoint: e.target.value })} placeholder={isSerial ? 'COM3' : '192.168.1.50:502'} />
+      </Field>
+      <Field label={t('devices.unit')} hint={t('devices.unitHint')}>
+        <input type="number" min="1" max="255" value={form.unit ?? 1} onChange={(e) => set({ unit: Number(e.target.value) })} />
+      </Field>
+      {isSerial ? (
+        <>
+          <Field label={t('devices.baud')} hint={t('devices.baudHint')}>
+            <input type="number" value={form.baud || 9600} onChange={(e) => set({ baud: Number(e.target.value) })} placeholder="9600" />
+          </Field>
+          <Field label={t('devices.parity')}>
+            <select value={form.parity || 'N'} onChange={(e) => set({ parity: e.target.value })}>
+              {PARITIES.map((p) => <option key={p} value={p}>{t(`parity.${p}`)}</option>)}
+            </select>
+          </Field>
+          <Field label={t('devices.dataBits')}>
+            <select value={form.dataBits || 8} onChange={(e) => set({ dataBits: Number(e.target.value) })}>
+              <option value={8}>8</option>
+              <option value={7}>7</option>
+            </select>
+          </Field>
+          <Field label={t('devices.stopBits')}>
+            <select value={form.stopBits || 1} onChange={(e) => set({ stopBits: Number(e.target.value) })}>
+              <option value={1}>1</option>
+              <option value={2}>2</option>
+            </select>
+          </Field>
+        </>
+      ) : null}
+    </>
+  );
+}
 
 function CreateDeviceModal({ profiles, onClose, onCreated, onToast }) {
   const t = useT();
@@ -256,14 +312,7 @@ function CreateDeviceModal({ profiles, onClose, onCreated, onToast }) {
             </select>
           </Field>
           {isModbus ? (
-            <>
-              <Field label={t('devices.endpoint')} hint={t('devices.endpointHint')} required>
-                <input value={form.endpoint || ''} onChange={(e) => set({ endpoint: e.target.value })} placeholder="192.168.1.50:502" />
-              </Field>
-              <Field label={t('devices.unit')} hint={t('devices.unitHint')}>
-                <input type="number" min="1" max="255" value={form.unit ?? 1} onChange={(e) => set({ unit: Number(e.target.value) })} />
-              </Field>
-            </>
+            <ModbusFields form={form} set={set} t={t} />
           ) : (
             <Field label={t('devices.password')} hint={t('devices.passwordHint')} span>
               <input
@@ -529,6 +578,11 @@ function DeviceSettings({ device, profiles, onToast, onChanged, onCredential, on
     actuationEnabled: !!device.actuationEnabled,
     endpoint: device.endpoint || '',
     unit: device.unit ?? 1,
+    transport: device.transport || 'tcp',
+    baud: device.baud || 9600,
+    parity: device.parity || 'N',
+    dataBits: device.dataBits || 8,
+    stopBits: device.stopBits || 1,
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -612,16 +666,7 @@ function DeviceSettings({ device, profiles, onToast, onChanged, onCredential, on
         <Field label={t('devices.protocol')}>
           <input value={t(`protocol.${device.protocol}`)} readOnly disabled />
         </Field>
-        {isModbus ? (
-          <>
-            <Field label={t('devices.endpoint')} hint={t('devices.endpointHint')}>
-              <input value={form.endpoint || ''} onChange={(e) => set({ endpoint: e.target.value })} placeholder="192.168.1.50:502" />
-            </Field>
-            <Field label={t('devices.unit')} hint={t('devices.unitHint')}>
-              <input type="number" min="1" max="255" value={form.unit ?? 1} onChange={(e) => set({ unit: Number(e.target.value) })} />
-            </Field>
-          </>
-        ) : null}
+        {isModbus ? <ModbusFields form={form} set={set} t={t} /> : null}
       </div>
       <CheckRow checked={form.enabled} onChange={(v) => set({ enabled: v })} label={t('devices.enabled')} />
       <CheckRow

@@ -1,17 +1,17 @@
-// Package modbus is a minimal Modbus TCP client plus the two ways myiotsan reads a device: SunSpec
+// Package modbus is a minimal Modbus client plus the two ways myiotsan reads a device: SunSpec
 // auto-discovery (infra/iot/sunspec) for compliant hardware, and a manual register map for the
 // vendors that are not. Both normalise to codec.Sample, so everything downstream — deadband,
 // storage, rules, dashboards — is identical regardless of how the bytes were fetched.
 //
-// The client is stdlib-only: Modbus TCP framing is a 7-byte MBAP header plus a short PDU, and we
-// use exactly the function codes a SunSpec/solar device needs (read holding/input, write single/
-// multiple registers). No external Modbus dependency is pulled into the appliance.
+// Three transports share the same function-code layer (read holding/input, write single/multiple):
+// MBAP over TCP (the default), RTU over a "transparent" TCP gateway, and RTU over a serial line. The
+// framing lives in transport.go; the serial line is the one external dependency (go.bug.st/serial,
+// pure Go). Everything else is stdlib.
 package modbus
 
 import (
 	"encoding/binary"
 	"fmt"
-	"io"
 	"net"
 	"time"
 )
@@ -21,15 +21,15 @@ type Reader interface {
 	ReadHolding(addr, qty int) ([]uint16, error)
 }
 
-// Client is a Modbus TCP connection to one unit id.
+// Client is a Modbus connection to one unit id over a chosen transport.
 type Client struct {
-	conn    net.Conn
+	tr      transport
 	unit    byte
-	txn     uint16
 	timeout time.Duration
 }
 
-// Dial opens a Modbus TCP connection to addr for the given unit id.
+// Dial opens a Modbus TCP (MBAP) connection to addr for the given unit id. Kept as the historical
+// name/behaviour so existing callers are unchanged; DialRTUTCP and DialSerial are the alternatives.
 func Dial(addr string, unit byte, timeout time.Duration) (*Client, error) {
 	if timeout <= 0 {
 		timeout = 3 * time.Second
@@ -38,44 +38,27 @@ func Dial(addr string, unit byte, timeout time.Duration) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Client{conn: conn, unit: unit, timeout: timeout}, nil
+	return &Client{tr: &mbapTransport{conn: conn}, unit: unit, timeout: timeout}, nil
 }
 
-func (c *Client) Close() error { return c.conn.Close() }
+// DialRTUTCP opens a Modbus RTU-over-TCP connection (raw RTU frames + CRC over a socket, no MBAP) to
+// a "transparent" serial gateway. Many cheap RS485→TCP gateways speak only this, not real Modbus TCP.
+func DialRTUTCP(addr string, unit byte, timeout time.Duration) (*Client, error) {
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+	conn, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
+		return nil, err
+	}
+	return &Client{tr: &rtuTransport{rw: conn, setDeadline: conn.SetDeadline}, unit: unit, timeout: timeout}, nil
+}
+
+func (c *Client) Close() error { return c.tr.Close() }
 
 // request sends one PDU and returns the response PDU, surfacing a Modbus exception as an error.
 func (c *Client) request(pdu []byte) ([]byte, error) {
-	c.txn++
-	frame := make([]byte, 7+len(pdu))
-	binary.BigEndian.PutUint16(frame[0:], c.txn)
-	binary.BigEndian.PutUint16(frame[2:], 0) // protocol id
-	binary.BigEndian.PutUint16(frame[4:], uint16(1+len(pdu)))
-	frame[6] = c.unit
-	copy(frame[7:], pdu)
-
-	if err := c.conn.SetDeadline(time.Now().Add(c.timeout)); err != nil {
-		return nil, err
-	}
-	if _, err := c.conn.Write(frame); err != nil {
-		return nil, err
-	}
-	head := make([]byte, 6)
-	if _, err := io.ReadFull(c.conn, head); err != nil {
-		return nil, err
-	}
-	length := int(binary.BigEndian.Uint16(head[4:6]))
-	if length < 2 || length > 260 {
-		return nil, fmt.Errorf("modbus: bad frame length %d", length)
-	}
-	rest := make([]byte, length) // unit id + PDU
-	if _, err := io.ReadFull(c.conn, rest); err != nil {
-		return nil, err
-	}
-	resp := rest[1:] // drop the echoed unit id
-	if len(resp) >= 2 && resp[0]&0x80 != 0 {
-		return nil, fmt.Errorf("modbus: exception fn=%#x code=%d", resp[0]&0x7f, resp[1])
-	}
-	return resp, nil
+	return c.tr.txn(c.unit, pdu, c.timeout)
 }
 
 func (c *Client) readRegs(fn byte, addr, qty int) ([]uint16, error) {

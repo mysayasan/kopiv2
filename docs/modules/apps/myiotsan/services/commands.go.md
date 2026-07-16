@@ -50,9 +50,13 @@ above unchanged** — the gates are transport-blind by design:
 - `""`/`"mqtt"` (the default, everything above): publishes `renderPayload(decl, value)` to
   `TopicTemplate`, same as before this landed.
 - `"modbus"`: `Issue` branches to `sendModbus`, which WRITES a holding register on the device
-  addressed by `dev.Endpoint`/`dev.Unit` (`iot_device.go.md`) via a guarded-write seam
-  (`modbusWrite`, production = `infra/iot/modbus.WriteConfirm`, a fake in tests) instead of
-  publishing:
+  addressed by `dev.Endpoint`/`dev.Unit`, over the device's own wire transport
+  (`dev.Transport`/`Baud`/`Parity`/`DataBits`/`StopBits`, `iot_device.go.md`), via a guarded-write
+  seam (`modbusWrite`, production = `infra/iot/modbus.WriteConfirm` directly, a fake in tests)
+  instead of publishing. `sendModbus` builds a `modbus.DeviceConf{Endpoint, Unit, Transport:
+  modbusTransportOf(dev.Transport), Serial: ...}` (`modbus_poller.go.md`'s `modbusTransportOf`)
+  before writing, so a serial or RTU-over-TCP device is actuated over the identical transport its
+  poller reads it on — a control write is not TCP-only any more:
   - `encodeRegister(decl.RegKind, decl.ScaleFactor, value)` turns the human value into the raw
     register word: `raw = round(value / ScaleFactor)` (the read-side scale applied in reverse),
     then range-checks it against the declared `RegKind` (`u16`: `0..65535`; `i16`:
@@ -126,8 +130,12 @@ func (s *CommandService) Twin(ctx, deviceId) ([]*entities.DeviceAttribute, error
 `publish` is `broker.Publish` (`infra/iot/mqtt`, wired in `app.go`) — the same embedded broker
 devices connect to; a command is just another MQTT publish from the app's perspective. `modbusWrite`
 (unexported field, `modbusWriteFunc`) is the guarded-write seam for the Modbus transport —
-`NewCommandService` wires it to `modbus.WriteConfirm` (`infra/iot/modbus`); tests substitute a fake,
-same pattern as `publish`. `audit` is wired to `notificationService.Publish`, `logf` to
+`type modbusWriteFunc func(conf modbus.DeviceConf, reg int, value uint16, timeout time.Duration)
+error`, taking a whole `DeviceConf` (not a bare endpoint/unit pair) so a guarded write inherits the
+device's transport (TCP/RTU-over-TCP/serial) exactly as a poll does. `NewCommandService` wires it
+directly to `modbus.WriteConfirm` (`infra/iot/modbus`) — the seam's signature is now exactly that
+function's, so no wrapper closure is needed in production; tests substitute a fake, same pattern
+as `publish`. `audit` is wired to `notificationService.Publish`, `logf` to
 `deps.Logger.Infof`. `metrics` is `deps.Metrics` (nil-safe) — `countCommand(outcome)` increments
 `MetricCommandsTotal` (`myiotsan_commands_total`, `services/metrics.go.md`) at each of the three
 terminal sites: `refused` in `Issue`, `confirmed` in `confirmPending`, `failed` in

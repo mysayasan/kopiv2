@@ -16,9 +16,20 @@ sensor or actuator.
 - **`Endpoint`/`Unit` (P5)** — address a POLLED device, one whose profile has `Transport ==
   "modbus"`. A Modbus device does not dial into the broker; the app dials OUT to it, so unlike an
   MQTT device its network location is its own per-instance property (two identical inverters
-  share a profile but not an IP). `Endpoint` is `"host:port"`; `Unit` is the Modbus unit/slave id.
-  Both are empty/zero for an MQTT device, which is addressed by its `DeviceKey` instead. Read by
-  `services.ModbusPoller` (`modbus_poller.go.md`) to build each device's `modbus.DeviceConf`.
+  share a profile but not an IP). `Endpoint` is `"host:port"` for Modbus TCP/RTU-over-TCP, or a
+  serial port name (`COM3`, `/dev/ttyUSB0`) for a serial device; `Unit` is the Modbus unit/slave
+  id. Both are empty/zero for an MQTT device, which is addressed by its `DeviceKey` instead. Read
+  by `services.ModbusPoller` (`modbus_poller.go.md`) to build each device's `modbus.DeviceConf`.
+- **`Transport`/`Baud`/`Parity`/`DataBits`/`StopBits`** — HOW the app reaches a Modbus device,
+  independent of the profile: `""`/`"tcp"` (Modbus TCP/MBAP, the default), `"rtutcp"` (RTU frames
+  over a plain TCP socket — a transparent RS485→TCP gateway), or `"serial"` (RTU over a serial
+  line). Only meaningful for a Modbus device; ignored otherwise. For `"serial"`, `Endpoint` holds
+  the port name instead of `host:port`, and `Baud`/`Parity`/`DataBits`/`StopBits` set the line
+  (all zero-valued defaults to 9600 8N1 — see `infra/iot/modbus.SerialParams`). Mapped to the
+  driver's `modbus.Transport` by `services.modbusTransportOf` (`modbus_poller.go.md`), used by
+  both `services.ModbusPoller` (polling) and `services.CommandService.sendModbus` (a guarded
+  write, `commands.go.md`), so a poll and a control write on the same device always agree on how
+  to reach it.
 - Credential: `PasswordHash` (bcrypt, `json:"-"`, never returned).
 - Grouping/metadata: `Tag` (indexed; groups devices — "floor-2", "cold-store" — so a rule can
   scope to a set rather than naming each device, the replacement for mymatasan's per-camera
