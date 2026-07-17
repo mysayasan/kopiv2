@@ -42,10 +42,9 @@ export function SideNav({ activeTab, busy, onTab, onLogout, session, pinned = tr
   // (profiles). Profiles sit under System because they are configuration, not inventory:
   // one profile is inherited by every device of that type.
   //
-  // Discovery sits beside them and ONLY for an admin: opening an enrollment window is the
-  // one act in the app that lets an unknown thing talk to the broker at all, and an operator
-  // does not get to do it. Hiding the entry is courtesy — every /api/discovery route is
-  // admin-only server-side, which is where it is actually enforced.
+  // (Onboarding — enrollment window + network scan + adopt — is NOT a System entry any more; it
+  // moved under the Devices tab as an admin-only "Discover" sub-tab, since "add a device" is where
+  // an operator looks for it. Every /api/discovery route stays admin-only server-side regardless.)
   // Flows (the visual data-flow canvas) is admin-only IN FULL — a flow can run JavaScript and
   // actuate a device — so, unlike scenes/schedules, the whole entry is hidden from non-admins.
   const automationItems = [
@@ -54,8 +53,9 @@ export function SideNav({ activeTab, busy, onTab, onLogout, session, pinned = tr
   ];
   if (session?.isAdmin) automationItems.push(navItem('flows', t('nav.flows'), 'git-branch', 'violet'));
 
+  // Onboarding (scan + enrollment + adopt) moved under the Devices tab as a "Discover" sub-tab —
+  // "add a device" is where an operator looks for it, not a separate System entry.
   const systemItems = [];
-  if (session?.isAdmin) systemItems.push(navItem('discovery', t('nav.discovery'), 'search', 'blue'));
   systemItems.push(navItem('profiles', t('nav.profiles'), 'box', 'indigo'));
   // Help (the shipped setup guides) is reference content — visible to everyone signed in.
   systemItems.push(navItem('help', t('nav.help'), 'info', 'green'));

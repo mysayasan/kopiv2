@@ -24,7 +24,9 @@ audited to the notification feed. Nothing here broadcasts a write or a control c
 | P3 | **EtherNet/IP** (`ethernetip.go`) | UDP 44818 ListIdentity broadcast | Identity-reply parser unit-tested (vendor id + product name) |
 | P3 | **BACnet** (`bacnet.go`) | UDP 47808 Who-Is broadcast | I-Am parser unit-tested (device instance + vendor id) |
 
-Frontend: a **Scan** panel on the Discovery page (per-protocol toggles + CIDR for the Modbus sweep);
+Frontend: onboarding lives under the **Devices** tab as an admin-only **Discover** sub-tab (beside
+**Inventory** = the device list + manual add) — a **Scan** panel (per-protocol toggles + CIDR for
+the Modbus sweep) alongside the enrollment window and the candidate list;
 scan-sourced candidates show how they were found + their address, and adopting a Modbus one carries
 its connection through so it polls immediately.
 

@@ -476,8 +476,11 @@ a Matter controller, native TV/AV control) and the "New surface" list below for 
   carries the last three into the created device on adoption.
 - `apis/discovery.go`: `POST /api/discovery/scan`, admin-only, same subrouter as the rest of
   `/discovery`.
-- Frontend: a Scan panel on the Discovery page (per-protocol toggles + CIDR/transport/units for
-  the Modbus sweep) and a scan-aware candidate card (shows how a candidate was found + its
+- Frontend: onboarding (the enrollment window + scan + candidates/adopt) moved from a standalone
+  Discovery nav entry to an admin-only **Discover** sub-tab under **Devices** (beside **Inventory**),
+  via `components/deviceshome.js` — "add a device" is where an operator looks for it. A Scan panel
+  (per-protocol toggles + CIDR/transport/units for the Modbus sweep) and a scan-aware candidate card
+  (shows how a candidate was found + its
   address instead of a topic + observed keys).
 
 See `docs/modules/apps/myiotsan/**/*.go.md`, `docs/modules/infra/iot/discover/*.go.md`, and

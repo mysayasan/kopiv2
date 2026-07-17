@@ -625,15 +625,17 @@ release workflow (`.github/workflows/release-myiotsan.yml` + `.goreleaser.myiots
 The SPA (`apps/myiotsan/views/react-webpack/`) is built off the shared `@shared` frontend
 module the same way myseliasan's is — no per-app copy of `DataTable`/`SideNav`/icons/i18n.
 
-Screens: **Dashboard** (estate health, recent alerts, and the ingest panel), **Devices**
-(inventory, live values, telemetry charts, provisioning, and — on a per-device **Control** tab
-shown to every role, since its history/twin are readable by everyone and only issuing a command
-is admin-only — the Actuation panel: available commands rendered as the appropriate widget per
-`kind` — a switch toggle, a bounded number, a slider for `dimmer`/`position`/`cct`, a dropdown for
-`mode`, a colour picker for `color` — command history, and the desired/reported twin; a separate
-tab rather than a strip on the readings page, because reading a sensor and firing a relay are
-different acts), **Discovery** (the enrollment window, its candidates, and adoption — see
-"Onboarding a device" above), **Rules**, **Alerts**, **Notifications**, **Device types** (the
+Screens: **Dashboard** (estate health, recent alerts, and the ingest panel), **Devices** — two
+sub-tabs: **Inventory** (the device list, live values, telemetry charts, manual provisioning, and
+— on a per-device **Control** tab shown to every role, since its history/twin are readable by
+everyone and only issuing a command is admin-only — the Actuation panel: available commands
+rendered as the appropriate widget per `kind` — a switch toggle, a bounded number, a slider for
+`dimmer`/`position`/`cct`, a dropdown for `mode`, a colour picker for `color` — command history,
+and the desired/reported twin; a separate tab rather than a strip on the readings page, because
+reading a sensor and firing a relay are different acts) and, admin-only, **Discover** (the
+enrollment window, the network scan, its candidates, and adoption — see "Onboarding a device"
+above); onboarding lives here rather than as its own nav entry because "add a device" is where an
+operator looks for it — **Rules**, **Alerts**, **Notifications**, **Device types** (the
 profile catalog, its deadbands, its declared commands — including authoring a `mode` command's
 `options` — and import/export), and, under the **Automation** nav group, **Scenes** (author and
 run a named, ordered group of commands — the Run action hidden for anyone but an admin),

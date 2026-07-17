@@ -5,7 +5,7 @@ import './styles/iot.css';
 import { SideNav } from './components/layout';
 import { ToastStack, LangProvider, normalizeLang, LanguageDropdown, AppFooter } from '@shared';
 import { FormBusyOverlay, ThemeDropdown } from './components/ui';
-import { DashboardPage, DevicesPage, RulesPage, AlertsPage, NotificationsPage, ProfilesPage, DiscoveryPage, ScenesPage, SchedulesPage, FlowsPage, KbPage, SettingsPage } from './components/pages';
+import { DashboardPage, DevicesHome, RulesPage, AlertsPage, NotificationsPage, ProfilesPage, ScenesPage, SchedulesPage, FlowsPage, KbPage, SettingsPage } from './components/pages';
 import { FirstRunWizard } from './components/onboarding';
 import { LoginScreen, ChangePasswordScreen } from './components/auth_screens';
 import { api, apiBase } from './lib/helpers';
@@ -49,6 +49,9 @@ function AppInner({ lang, onLangChange }) {
   const [authState, setAuthState] = useState('loading');
   const [session, setSession] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
+  // Which sub-tab the Devices page shows: 'inventory' (list + manual add) or 'discover' (scan +
+  // enrollment + adopt). Lifted here so the first-run wizard can send the user straight to Discover.
+  const [devicesSub, setDevicesSub] = useState('inventory');
   const [toasts, setToasts] = useState([]);
 
   function pushToast(text, kind = 'info') {
@@ -138,7 +141,7 @@ function AppInner({ lang, onLangChange }) {
         {/* The devices page takes the session because its Control tab hides the command
             controls from non-admins. That is UX only — the server 403s a non-admin POST to
             /api/devices/{id}/commands, which is the actual enforcement. */}
-        {activeTab === 'devices' ? <DevicesPage onToast={pushToast} session={session} /> : null}
+        {activeTab === 'devices' ? <DevicesHome onToast={pushToast} session={session} sub={devicesSub} onSub={setDevicesSub} /> : null}
         {activeTab === 'rules' ? <RulesPage onToast={pushToast} /> : null}
         {activeTab === 'alerts' ? <AlertsPage onToast={pushToast} /> : null}
         {activeTab === 'notifications' ? <NotificationsPage onToast={pushToast} /> : null}
@@ -153,9 +156,6 @@ function AppInner({ lang, onLangChange }) {
         {/* Flows are admin-only in full (a flow can run JS and actuate): every /api/flows route is
             administrator-gated server-side; hiding the tab from non-admins is UX on top of that. */}
         {activeTab === 'flows' && session?.isAdmin ? <FlowsPage onToast={pushToast} session={session} /> : null}
-        {/* Discovery is admin-only. The check here (like the hidden nav entry) is UX: the
-            server 403s every /api/discovery route for anyone else, which is the enforcement. */}
-        {activeTab === 'discovery' && session?.isAdmin ? <DiscoveryPage onToast={pushToast} /> : null}
         {/* Settings is admin-only too — every /api/settings/*, /api/system and /api/pairing route
             is administrator-gated server-side; hiding the tab is UX on top of that. */}
         {activeTab === 'settings' && session?.isAdmin ? <SettingsPage onToast={pushToast} /> : null}
@@ -164,7 +164,7 @@ function AppInner({ lang, onLangChange }) {
         {showWizard ? (
           <FirstRunWizard
             onDismiss={dismissWizard}
-            onGoDiscovery={() => { dismissWizard(); setActiveTab('discovery'); }}
+            onGoDiscovery={() => { dismissWizard(); setDevicesSub('discover'); setActiveTab('devices'); }}
           />
         ) : null}
       </main>
