@@ -9,11 +9,14 @@ require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/bluenviron/mediacommon/v2 v2.9.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/dlclark/regexp2/v2 v2.2.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
+	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
+	github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/mochi-mqtt/server/v2 v2.7.9 // indirect
+	github.com/miekg/dns v1.1.72 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/pion/datachannel v1.6.0 // indirect
 	github.com/pion/dtls/v3 v3.1.4 // indirect
@@ -38,8 +41,11 @@ require (
 	github.com/wlynxg/anet v0.0.5 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
+	golang.org/x/mod v0.36.0 // indirect
+	golang.org/x/sync v0.21.0 // indirect
+	golang.org/x/text v0.38.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
+	golang.org/x/tools v0.45.0 // indirect
 	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
@@ -47,21 +53,25 @@ require (
 
 require (
 	github.com/bluenviron/gortsplib/v5 v5.5.4
+	github.com/dop251/goja v0.0.0-20260701091749-b07b74453ea9
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
 	github.com/gorilla/websocket v1.5.3
+	github.com/hashicorp/mdns v1.0.7
 	github.com/iancoleman/strcase v0.3.0
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.12.3
 	github.com/mitchellh/mapstructure v1.5.0
+	github.com/mochi-mqtt/server/v2 v2.7.9
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pion/rtp v1.10.2
 	github.com/pion/webrtc/v4 v4.2.15
 	github.com/redis/go-redis/v9 v9.20.0
 	github.com/shirou/gopsutil/v3 v3.24.5
+	go.bug.st/serial v1.8.0
 	golang.org/x/crypto v0.52.0
 	golang.org/x/image v0.42.0
 	golang.org/x/net v0.55.0

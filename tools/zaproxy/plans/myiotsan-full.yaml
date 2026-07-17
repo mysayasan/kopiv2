@@ -31,6 +31,7 @@ env:
         - ".*/api/pairing/.*"
         # --- onboarding ---------------------------------------------------------------
         - ".*/api/discovery/window.*"
+        - ".*/api/discovery/scan.*"            # a scan sweeps the LAN — fuzzing it is repeated live network traffic
         - ".*/api/discovery/candidates/.*"
         # --- config the scan itself depends on ----------------------------------------
         - ".*/api/settings/users/.*"

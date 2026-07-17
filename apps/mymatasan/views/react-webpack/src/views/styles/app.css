@@ -4473,81 +4473,140 @@ dd {
   padding-top: 12px;
 }
 
-.user-list {
-  display: grid;
-  gap: 12px;
-}
+/* --- Users tab: a scannable table + edit-in-modal (shared with myiotsan) --- */
 
-/* User cards follow the entity-card standard (cf. .dest-card): a labelled head
-   with status badges, a standard field grid, then an actions row. */
-.user-card {
-  display: grid;
-  gap: 14px;
-  border: 1px solid var(--border-panel);
-  border-radius: 8px;
-  background: var(--bg-subtle);
-  padding: 14px;
-}
-
-/* Highlight the account a login-security notification deep-links to. */
-.user-card--focused {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent);
-}
-
-.user-card-head {
+/* User cell: initials avatar + name-over-@username. */
+.user-cell {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.user-avatar {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.user-idcol {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+  min-width: 0;
+}
+
+.user-link {
+  padding: 0;
+  font-weight: 600;
+  text-align: left;
   color: var(--text-primary);
 }
 
-.user-card-name {
-  font-weight: 600;
-  font-size: 15px;
-  margin-right: 4px;
+.user-link:hover {
+  text-decoration: underline;
 }
 
-.user-badge {
+.user-sub {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* Role badge — colour-coded by tier. */
+.role-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  text-transform: capitalize;
+}
+
+.role-badge.is-admin {
+  background: rgba(139, 92, 246, 0.14);
+  color: #7c3aed;
+  border-color: rgba(139, 92, 246, 0.3);
+}
+
+.role-badge.is-operator {
+  background: rgba(59, 130, 246, 0.14);
+  color: #2563eb;
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+.role-badge.is-viewer {
+  background: rgba(107, 114, 128, 0.14);
+  color: #4b5563;
+  border-color: rgba(107, 114, 128, 0.28);
+}
+
+/* Status pill (active / inactive) + a small must-change-password marker. */
+.user-status-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.user-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 2px 9px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.02em;
 }
 
-.user-badge--admin {
-  color: var(--accent, #2d7ff9);
-  background: rgba(45, 127, 249, 0.14);
+.user-pill.is-on {
+  background: rgba(16, 185, 129, 0.15);
+  color: #059669;
 }
 
-.user-badge--active {
-  color: #2f9e64;
-  background: rgba(47, 158, 100, 0.15);
+.user-pill.is-off {
+  background: rgba(107, 114, 128, 0.15);
+  color: #6b7280;
 }
 
-.user-badge--inactive {
-  color: var(--text-faint);
-  background: rgba(127, 127, 127, 0.16);
+.user-pill.is-warn {
+  background: rgba(245, 158, 11, 0.18);
+  color: #b45309;
 }
 
-.user-badge--warn {
-  color: #c77b22;
-  background: rgba(199, 123, 34, 0.16);
+/* User modal (create / edit). The shared .modal-card h2 is styled red for the
+   danger wipe modal — reset it here to the normal heading colour. */
+.user-modal-card h2.user-modal-title {
+  color: var(--text-primary);
 }
 
-.user-card-toggles {
+.user-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.user-modal-sep {
+  border: none;
+  border-top: 1px solid var(--border-panel);
+  margin: 4px 0;
+}
+
+.user-pw-row {
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
-.user-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+.user-pw-row > *:first-child {
+  flex: 1;
+  min-width: 180px;
 }
 
 .settings-actions {

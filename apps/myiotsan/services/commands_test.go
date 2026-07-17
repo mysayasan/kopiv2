@@ -7,6 +7,45 @@ import (
 	"github.com/mysayasan/kopiv2/apps/myiotsan/entities"
 )
 
+// encodeRegister is the risky part of the Modbus write path — it turns a human value into the raw
+// register word, applying the read scale in reverse. Getting it wrong writes a wrong number to real
+// hardware, so it is pinned here; the full Issue→write→read-back path is exercised live against the
+// simulator (which honours writes).
+func TestCommand_EncodeRegisterScalesAndRangeChecks(t *testing.T) {
+	cases := []struct {
+		kind    string
+		scale   float64
+		value   float64
+		want    uint16
+		wantErr bool
+	}{
+		{"u16", 1, 50, 50, false},
+		{"u16", 0.1, 60, 600, false}, // raw = 60 / 0.1
+		{"", 1, 50, 50, false},       // empty kind defaults to u16
+		{"u16", 0, 42, 42, false},    // scale 0 treated as 1
+		{"i16", 1, -5, 65531, false}, // two's-complement bit pattern of int16(-5)
+		{"i16", 1, -32768, 32768, false},
+		{"u16", 1, 70000, 0, true}, // out of u16 range
+		{"u16", 1, -1, 0, true},    // negative into u16
+		{"i16", 1, 40000, 0, true}, // out of i16 range
+		{"u32", 1, 5, 0, true},     // multi-register kinds refused, not half-written
+	}
+	for _, c := range cases {
+		got, err := encodeRegister(c.kind, c.scale, c.value)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("encodeRegister(%q,%v,%v) expected an error", c.kind, c.scale, c.value)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("encodeRegister(%q,%v,%v) unexpected error: %v", c.kind, c.scale, c.value, err)
+		} else if got != c.want {
+			t.Errorf("encodeRegister(%q,%v,%v) = %d, want %d", c.kind, c.scale, c.value, got, c.want)
+		}
+	}
+}
+
 func TestCommand_SwitchTakesOnlyZeroOrOne(t *testing.T) {
 	decl := &entities.ProfileCommand{Name: "output", Kind: "switch"}
 	if err := validateValue(decl, 1); err != nil {

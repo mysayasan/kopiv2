@@ -159,10 +159,12 @@ func (p *ModbusPoller) planFor(ctx context.Context, d *entities.IotDevice) (modb
 	}
 
 	conf := modbus.DeviceConf{
-		Key:      d.DeviceKey,
-		Endpoint: strings.TrimSpace(d.Endpoint),
-		Unit:     byte(d.Unit),
-		Base:     prof.ModbusBase,
+		Key:       d.DeviceKey,
+		Endpoint:  strings.TrimSpace(d.Endpoint),
+		Unit:      byte(d.Unit),
+		Base:      prof.ModbusBase,
+		Transport: modbusTransportOf(d.Transport),
+		Serial:    modbus.SerialParams{Baud: d.Baud, DataBits: d.DataBits, Parity: strings.TrimSpace(d.Parity), StopBits: d.StopBits},
 	}
 	mode := strings.ToLower(strings.TrimSpace(prof.ModbusMode))
 	switch mode {
@@ -221,6 +223,7 @@ func registerMapFromKeys(keys []*entities.TelemetryKey) (modbus.RegisterMap, err
 			Type:     t,
 			Scale:    k.ScaleFactor,
 			WordSwap: k.WordSwap,
+			Input:    k.RegInput,
 			Unit:     k.Unit,
 		})
 	}
@@ -228,6 +231,19 @@ func registerMapFromKeys(keys []*entities.TelemetryKey) (modbus.RegisterMap, err
 		return modbus.RegisterMap{}, fmt.Errorf("register-map profile declares no Modbus-bound keys")
 	}
 	return modbus.RegisterMap{Points: pts}, nil
+}
+
+// modbusTransportOf maps a device's transport string to the driver's transport. Empty/unknown is
+// Modbus TCP (MBAP), the historical default.
+func modbusTransportOf(s string) modbus.Transport {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "rtutcp", "rtu-tcp", "rtuovertcp":
+		return modbus.TransportRTUTCP
+	case "serial", "rtu":
+		return modbus.TransportSerial
+	default:
+		return modbus.TransportTCP
+	}
 }
 
 // ptypeOf maps the profile's register-kind string to the driver's PType.
@@ -241,7 +257,9 @@ func ptypeOf(kind string) (modbus.PType, error) {
 		return modbus.PU32, nil
 	case "i32":
 		return modbus.PI32, nil
+	case "f32":
+		return modbus.PF32, nil
 	default:
-		return 0, fmt.Errorf("unknown register kind %q (want u16|i16|u32|i32)", kind)
+		return 0, fmt.Errorf("unknown register kind %q (want u16|i16|u32|i32|f32)", kind)
 	}
 }

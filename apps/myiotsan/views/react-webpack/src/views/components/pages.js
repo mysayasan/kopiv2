@@ -3,6 +3,7 @@
 // without scrolling past the other four.
 export { DashboardPage } from './dashboard';
 export { DevicesPage } from './devices';
+export { DevicesHome } from './deviceshome';
 export { RulesPage } from './rules';
 export { AlertsPage } from './alerts';
 export { NotificationsPage } from './notifications';
@@ -10,3 +11,6 @@ export { ProfilesPage } from './profiles';
 export { DiscoveryPage } from './discovery';
 export { ScenesPage } from './scenes';
 export { SchedulesPage } from './schedules';
+export { FlowsPage } from './flows';
+export { KbPage } from './kb';
+export { SettingsPage } from './settings';

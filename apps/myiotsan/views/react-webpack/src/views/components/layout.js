@@ -1,4 +1,5 @@
 import { Ico, SideNav as SharedSideNav, useT, BrandLogo as SharedBrandLogo } from '@shared';
+import { roleLabel } from '../lib/helpers';
 
 // The mark (shield + eye + check) is the suite's, shared verbatim with mymatasan,
 // myseliasan and myidsan; the sensor hub only supplies its wordmark and its
@@ -41,13 +42,26 @@ export function SideNav({ activeTab, busy, onTab, onLogout, session, pinned = tr
   // (profiles). Profiles sit under System because they are configuration, not inventory:
   // one profile is inherited by every device of that type.
   //
-  // Discovery sits beside them and ONLY for an admin: opening an enrollment window is the
-  // one act in the app that lets an unknown thing talk to the broker at all, and an operator
-  // does not get to do it. Hiding the entry is courtesy — every /api/discovery route is
-  // admin-only server-side, which is where it is actually enforced.
+  // (Onboarding — enrollment window + network scan + adopt — is NOT a System entry any more; it
+  // moved under the Devices tab as an admin-only "Discover" sub-tab, since "add a device" is where
+  // an operator looks for it. Every /api/discovery route stays admin-only server-side regardless.)
+  // Flows (the visual data-flow canvas) is admin-only IN FULL — a flow can run JavaScript and
+  // actuate a device — so, unlike scenes/schedules, the whole entry is hidden from non-admins.
+  const automationItems = [
+    navItem('scenes', t('nav.scenes'), 'play', 'amber'),
+    navItem('schedules', t('nav.schedules'), 'clock', 'teal'),
+  ];
+  if (session?.isAdmin) automationItems.push(navItem('flows', t('nav.flows'), 'git-branch', 'violet'));
+
+  // Onboarding (scan + enrollment + adopt) moved under the Devices tab as a "Discover" sub-tab —
+  // "add a device" is where an operator looks for it, not a separate System entry.
   const systemItems = [];
-  if (session?.isAdmin) systemItems.push(navItem('discovery', t('nav.discovery'), 'search', 'blue'));
   systemItems.push(navItem('profiles', t('nav.profiles'), 'box', 'indigo'));
+  // Help (the shipped setup guides) is reference content — visible to everyone signed in.
+  systemItems.push(navItem('help', t('nav.help'), 'info', 'green'));
+  // Settings configures the hub itself (users, delivery, storage, fleet, restart) — admin-only, so
+  // the entry is hidden from viewers and operators. Every route behind it is admin-gated server-side.
+  if (session?.isAdmin) systemItems.push(navItem('settings', t('nav.settings'), 'sliders', 'steel'));
 
   const groups = [
     { label: t('group.workspace'), items: [navItem('dashboard', t('nav.dashboard'), 'monitor', 'steel')] },
@@ -60,13 +74,7 @@ export function SideNav({ activeTab, busy, onTab, onLogout, session, pinned = tr
         navItem('notifications', t('nav.notifications'), 'send', 'steel'),
       ],
     },
-    {
-      label: t('group.automation'),
-      items: [
-        navItem('scenes', t('nav.scenes'), 'play', 'amber'),
-        navItem('schedules', t('nav.schedules'), 'clock', 'teal'),
-      ],
-    },
+    { label: t('group.automation'), items: automationItems },
     { label: t('group.system'), items: systemItems },
   ];
 
@@ -90,7 +98,7 @@ export function SideNav({ activeTab, busy, onTab, onLogout, session, pinned = tr
       <BrandLogo />
       <div className="side-brand-sub">{t('brand.sensorHub')}</div>
       <AccountCard
-        roleLabel={session?.isAdmin ? t('role.admin') : (session?.roleName || t('role.member'))}
+        roleLabel={session?.isAdmin ? t('role.admin') : (session?.roleName ? roleLabel(t, session.roleName) : t('role.member'))}
         onLogout={onLogout}
         busy={busy}
       />

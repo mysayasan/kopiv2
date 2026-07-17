@@ -116,6 +116,12 @@ type SaveProfileCommand struct {
 	// ConfirmKey is the telemetry key the device reports the resulting state on. Without it a
 	// command can only ever be "sent", never "confirmed" — and "sent" is not "it happened".
 	ConfirmKey string `json:"confirmKey"`
+	// Transport/Register/RegKind/ScaleFactor describe a MODBUS command (a holding-register write)
+	// instead of an MQTT publish. See entities.ProfileCommand.
+	Transport   string  `json:"transport"`
+	Register    int     `json:"register"`
+	RegKind     string  `json:"regKind"`
+	ScaleFactor float64 `json:"scaleFactor"`
 }
 
 // SaveTelemetryKey declares one datapoint.
@@ -134,6 +140,7 @@ type SaveTelemetryKey struct {
 	RegKind     string  `json:"regKind"`
 	ScaleFactor float64 `json:"scaleFactor"`
 	WordSwap    bool    `json:"wordSwap"`
+	RegInput    bool    `json:"regInput"`
 }
 
 func (s *ProfileService) Create(ctx context.Context, req SaveProfileRequest, actor int64) (*ProfileDetail, error) {
@@ -246,6 +253,7 @@ func (s *ProfileService) replaceKeys(ctx context.Context, profileId int64, keys 
 			RegKind:          strings.TrimSpace(k.RegKind),
 			ScaleFactor:      k.ScaleFactor,
 			WordSwap:         k.WordSwap,
+			RegInput:         k.RegInput,
 			CreatedBy:        actor,
 			CreatedAt:        now,
 			UpdatedBy:        actor,
@@ -281,6 +289,10 @@ func (s *ProfileService) replaceCommands(ctx context.Context, profileId int64, c
 			Max:             c.Max,
 			Options:         strings.TrimSpace(c.Options),
 			ConfirmKey:      strings.TrimSpace(c.ConfirmKey),
+			Transport:       strings.TrimSpace(c.Transport),
+			Register:        c.Register,
+			RegKind:         strings.TrimSpace(c.RegKind),
+			ScaleFactor:     c.ScaleFactor,
 			CreatedBy:       actor,
 			CreatedAt:       now,
 			UpdatedBy:       actor,

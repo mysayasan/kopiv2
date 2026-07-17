@@ -264,5 +264,159 @@ func builtinProfiles() []builtinProfile {
 				{Key: "grid_active_power", Label: "Grid power (+import/-export)", Unit: "W", DataType: "number", Register: 37113, RegKind: "i32", ScaleFactor: 1, Deadband: 50, HeartbeatSeconds: 300, Min: -100000, Max: 100000},
 			},
 		},
+
+		// --- Worldwide budget hybrids + a standalone meter -------------------------------------
+		//
+		// Three more register-map (non-SunSpec) profiles for the gear an installer outside the
+		// SolarEdge/SMA/Fronius world actually buys. Two are the vendor-map path (like huawei-sun2000):
+		//
+		//   - sungrow-sh-hybrid   — Sungrow is #2 in global inverter shipments; its SH residential
+		//     hybrids are everywhere. Telemetry lives in INPUT registers (fn 4) and its 32-bit values
+		//     are WORD-SWAPPED — two things a Huawei map does not need, and the reason RegInput and
+		//     WordSwap exist on the binding. Control is holding-register writes with heavy per-model
+		//     caveats (see the command comments + docs/kb/solar/sungrow-sh.md).
+		//   - deye-hybrid         — Deye is the OEM behind a large slice of the budget market; the
+		//     SAME map answers for Deye, Sunsynk and Sol-Ark (rebadges). All-holding, signed ints.
+		//   - eastron-sdm630-meter — the cheap 3-phase meter sites add when the inverter cannot see
+		//     the grid. Read-only, float32 over input registers (fn 4) — the first f32 profile.
+		//
+		// WHY THESE SHIP WITH CONTROL PRE-DECLARED: the paired flow templates (flow_catalog.go) need
+		// a command to call. But a command declared here is INERT until an admin turns on a device's
+		// ActuationEnabled AND the value/sign/scale is bench-verified — the KB for each says so in as
+		// many words. Sign and scale conventions genuinely differ by firmware; nothing here writes to
+		// hardware on its own.
+		{
+			Slug:        "sungrow-sh-hybrid",
+			Name:        "Sungrow SH (residential hybrid)",
+			Vendor:      "Sungrow",
+			Description: "Sungrow SH-series hybrid inverter (SH5.0RT/RS, SH10RT, …) over Modbus TCP via a WiNet-S/LAN dongle. Telemetry is read from INPUT registers and 32-bit values are word-swapped. Control writes are guarded but MUST be bench-verified per model — see docs/kb/solar/sungrow-sh.md. Register map per the mkaiser Sungrow-SHx community map.",
+			Transport:   "modbus",
+			ModbusMode:  "regmap",
+			PollSeconds: 10,
+			// Every read key is an INPUT register (RegInput) and every 32-bit key is WORD-SWAPPED.
+			// Scale is a multiplier (physical = raw * scale). 16-bit values are never swapped.
+			Keys: []SaveTelemetryKey{
+				{Key: "inv_operating_state", Label: "Running state", DataType: "number", Register: 12999, RegKind: "u16", RegInput: true, ScaleFactor: 1, Deadband: 0, HeartbeatSeconds: 600},
+				{Key: "inv_dc_power", Label: "Total PV (DC) power", Unit: "W", DataType: "number", Register: 5016, RegKind: "u32", RegInput: true, WordSwap: true, ScaleFactor: 1, Deadband: 50, HeartbeatSeconds: 300, Min: 0, Max: 100000},
+				{Key: "inv_ac_power", Label: "Total AC active power", Unit: "W", DataType: "number", Register: 13033, RegKind: "i32", RegInput: true, WordSwap: true, ScaleFactor: 1, Deadband: 50, HeartbeatSeconds: 300, Min: -100000, Max: 100000},
+				{Key: "inv_pv1_voltage", Label: "MPPT1 voltage", Unit: "V", DataType: "number", Register: 5010, RegKind: "u16", RegInput: true, ScaleFactor: 0.1, Deadband: 2, HeartbeatSeconds: 900, Min: 0, Max: 1500},
+				{Key: "inv_pv1_current", Label: "MPPT1 current", Unit: "A", DataType: "number", Register: 5011, RegKind: "u16", RegInput: true, ScaleFactor: 0.1, Deadband: 0.2, HeartbeatSeconds: 900, Min: 0, Max: 100},
+				{Key: "inv_pv2_voltage", Label: "MPPT2 voltage", Unit: "V", DataType: "number", Register: 5012, RegKind: "u16", RegInput: true, ScaleFactor: 0.1, Deadband: 2, HeartbeatSeconds: 900, Min: 0, Max: 1500},
+				{Key: "inv_pv2_current", Label: "MPPT2 current", Unit: "A", DataType: "number", Register: 5013, RegKind: "u16", RegInput: true, ScaleFactor: 0.1, Deadband: 0.2, HeartbeatSeconds: 900, Min: 0, Max: 100},
+				{Key: "inv_frequency", Label: "Grid frequency", Unit: "Hz", DataType: "number", Register: 5241, RegKind: "u16", RegInput: true, ScaleFactor: 0.01, Deadband: 0.05, HeartbeatSeconds: 900, Min: 45, Max: 65},
+				{Key: "inv_phase_a_voltage", Label: "Phase A voltage", Unit: "V", DataType: "number", Register: 5018, RegKind: "u16", RegInput: true, ScaleFactor: 0.1, Deadband: 2, HeartbeatSeconds: 900, Min: 0, Max: 500},
+				{Key: "inv_temperature", Label: "Internal temperature", Unit: "C", DataType: "number", Register: 5007, RegKind: "i16", RegInput: true, ScaleFactor: 0.1, Deadband: 1, HeartbeatSeconds: 900, Min: -40, Max: 120},
+				{Key: "energy_today", Label: "PV yield today", Unit: "kWh", DataType: "number", Register: 13001, RegKind: "u16", RegInput: true, ScaleFactor: 0.1, Deadband: 0.1, HeartbeatSeconds: 3600, Min: 0, Max: 1000},
+				{Key: "inv_ac_energy", Label: "PV yield total", Unit: "kWh", DataType: "number", Register: 13002, RegKind: "u32", RegInput: true, WordSwap: true, ScaleFactor: 0.1, Deadband: 1, HeartbeatSeconds: 3600},
+				{Key: "grid_energy_imported", Label: "Grid energy imported", Unit: "kWh", DataType: "number", Register: 13036, RegKind: "u32", RegInput: true, WordSwap: true, ScaleFactor: 0.1, Deadband: 1, HeartbeatSeconds: 3600},
+				{Key: "grid_energy_exported", Label: "Grid energy exported", Unit: "kWh", DataType: "number", Register: 13045, RegKind: "u32", RegInput: true, WordSwap: true, ScaleFactor: 0.1, Deadband: 1, HeartbeatSeconds: 3600},
+				{Key: "batt_battery_voltage", Label: "Battery voltage", Unit: "V", DataType: "number", Register: 13019, RegKind: "u16", RegInput: true, ScaleFactor: 0.1, Deadband: 2, HeartbeatSeconds: 900, Min: 0, Max: 1000},
+				{Key: "batt_soc", Label: "Battery state of charge", Unit: "%", DataType: "number", Register: 13022, RegKind: "u16", RegInput: true, ScaleFactor: 0.1, Deadband: 1, HeartbeatSeconds: 600, Min: 0, Max: 100},
+				{Key: "batt_temperature", Label: "Battery temperature", Unit: "C", DataType: "number", Register: 13024, RegKind: "i16", RegInput: true, ScaleFactor: 0.1, Deadband: 1, HeartbeatSeconds: 900, Min: -40, Max: 100},
+				// Battery power: NEGATIVE = charging, POSITIVE = discharging (opposite of Huawei's).
+				{Key: "batt_power", Label: "Battery power (+discharge/-charge)", Unit: "W", DataType: "number", Register: 5213, RegKind: "i32", RegInput: true, WordSwap: true, ScaleFactor: 1, Deadband: 50, HeartbeatSeconds: 300, Min: -50000, Max: 50000},
+				// Grid meter: + import / - export (register 5601 doc, import-positive sense).
+				{Key: "grid_ac_power", Label: "Grid power (+import/-export)", Unit: "W", DataType: "number", Register: 5600, RegKind: "i32", RegInput: true, WordSwap: true, ScaleFactor: 1, Deadband: 50, HeartbeatSeconds: 300, Min: -100000, Max: 100000},
+				{Key: "load_power", Label: "Load (house) power", Unit: "W", DataType: "number", Register: 13007, RegKind: "i32", RegInput: true, WordSwap: true, ScaleFactor: 1, Deadband: 50, HeartbeatSeconds: 300, Min: 0, Max: 100000},
+			},
+			// CONTROL (holding-register writes, fn 6). BENCH-VERIFY every one before enabling actuation.
+			Commands: []SaveProfileCommand{
+				// EMS mode: 0=Self-consumption, 2=Forced, 3=External EMS, 4=VPP. Forced (2) must be set
+				// before the battery force command below has any effect.
+				{Name: "ems_mode", Label: "EMS mode", Kind: "mode",
+					Options:     `[{"value":0,"label":"Self-consumption"},{"value":2,"label":"Forced"},{"value":3,"label":"External EMS"},{"value":4,"label":"VPP"}]`,
+					Transport:   "modbus", Register: 13049, RegKind: "u16", ScaleFactor: 1},
+				// Forced charge/discharge command: 0xAA=170 charge, 0xBB=187 discharge, 0xCC=204 stop.
+				// Requires ems_mode=Forced. VERIFY the byte↔action mapping — a swap discharges when you
+				// meant to charge.
+				{Name: "batt_force", Label: "Battery force", Kind: "mode",
+					Options:     `[{"value":170,"label":"Charge"},{"value":187,"label":"Discharge"},{"value":204,"label":"Stop"}]`,
+					Transport:   "modbus", Register: 13050, RegKind: "u16", ScaleFactor: 1},
+				// Forced power setpoint. UNIT IS MODEL-DEPENDENT: watts on SH*K, PERCENT on SH*.0RT.
+				// Bounds are the raw 0..5000 range; the KB tells the installer which it means for them.
+				{Name: "batt_force_power", Label: "Battery force power", Kind: "setpoint", Min: 0, Max: 5000,
+					Transport: "modbus", Register: 13051, RegKind: "u16", ScaleFactor: 1},
+				// Export/feed-in power limit VALUE (W). Inert until export_limit_enable=Enable.
+				{Name: "export_limit", Label: "Export power limit", Kind: "setpoint", Min: 0, Max: 30000,
+					Transport: "modbus", Register: 13073, RegKind: "u16", ScaleFactor: 1},
+				// Export limit ENABLE: 0xAA=170 enable, 0x55=85 disable.
+				{Name: "export_limit_enable", Label: "Export limit enable", Kind: "mode",
+					Options:     `[{"value":170,"label":"Enable"},{"value":85,"label":"Disable"}]`,
+					Transport:   "modbus", Register: 13086, RegKind: "u16", ScaleFactor: 1},
+				// Reserve floor/ceiling (%). Register scale is 0.1, so the value written is the percent.
+				{Name: "batt_min_soc", Label: "Battery min SoC", Kind: "setpoint", Min: 0, Max: 50,
+					Transport: "modbus", Register: 13058, RegKind: "u16", ScaleFactor: 0.1},
+				{Name: "batt_max_soc", Label: "Battery max SoC", Kind: "setpoint", Min: 50, Max: 100,
+					Transport: "modbus", Register: 13057, RegKind: "u16", ScaleFactor: 0.1},
+			},
+		},
+		{
+			Slug:        "deye-hybrid",
+			Name:        "Deye / Sunsynk / Sol-Ark (hybrid)",
+			Vendor:      "Deye (also Sunsynk, Sol-Ark)",
+			Description: "Deye single-phase/split-phase hybrid inverter over Modbus TCP (RS485→TCP gateway on the BATTERY port, or a Solarman-mode logger). The same map answers for Sunsynk and Sol-Ark rebadges. All-holding registers. Battery & grid power SIGN and the register convention (A vs B) MUST be verified — see docs/kb/solar/deye-hybrid.md. Map per githubDante/deye-controller + kbialek.",
+			Transport:   "modbus",
+			ModbusMode:  "regmap",
+			PollSeconds: 10,
+			// Deye reads and writes the SAME holding-register bank (fn 3 read / fn 6 write) — no input
+			// registers, so no RegInput here. This is the single-phase ("Convention A") map; 3-phase
+			// SG04LP3 uses a different, higher block (see the KB).
+			Keys: []SaveTelemetryKey{
+				{Key: "inv_ac_power", Label: "Inverter output power", Unit: "W", DataType: "number", Register: 175, RegKind: "i16", ScaleFactor: 1, Deadband: 50, HeartbeatSeconds: 300, Min: -30000, Max: 30000},
+				{Key: "grid_ac_power", Label: "Grid power (+import/-export)", Unit: "W", DataType: "number", Register: 169, RegKind: "i16", ScaleFactor: 1, Deadband: 50, HeartbeatSeconds: 300, Min: -30000, Max: 30000},
+				{Key: "load_power", Label: "Load (house) power", Unit: "W", DataType: "number", Register: 178, RegKind: "i16", ScaleFactor: 1, Deadband: 50, HeartbeatSeconds: 300, Min: -30000, Max: 30000},
+				{Key: "inv_pv1_power", Label: "PV1 power", Unit: "W", DataType: "number", Register: 186, RegKind: "u16", ScaleFactor: 1, Deadband: 50, HeartbeatSeconds: 300, Min: 0, Max: 30000},
+				{Key: "inv_pv2_power", Label: "PV2 power", Unit: "W", DataType: "number", Register: 187, RegKind: "u16", ScaleFactor: 1, Deadband: 50, HeartbeatSeconds: 300, Min: 0, Max: 30000},
+				{Key: "inv_frequency", Label: "Grid frequency", Unit: "Hz", DataType: "number", Register: 79, RegKind: "u16", ScaleFactor: 0.01, Deadband: 0.05, HeartbeatSeconds: 900, Min: 45, Max: 65},
+				{Key: "batt_soc", Label: "Battery state of charge", Unit: "%", DataType: "number", Register: 184, RegKind: "u16", ScaleFactor: 1, Deadband: 1, HeartbeatSeconds: 600, Min: 0, Max: 100},
+				{Key: "batt_battery_voltage", Label: "Battery voltage", Unit: "V", DataType: "number", Register: 183, RegKind: "u16", ScaleFactor: 0.01, Deadband: 2, HeartbeatSeconds: 900, Min: 0, Max: 1000},
+				// Battery power: POSITIVE = discharging, NEGATIVE = charging (githubDante convention).
+				{Key: "batt_power", Label: "Battery power (+discharge/-charge)", Unit: "W", DataType: "number", Register: 190, RegKind: "i16", ScaleFactor: 1, Deadband: 50, HeartbeatSeconds: 300, Min: -30000, Max: 30000},
+				{Key: "inv_ac_energy", Label: "PV yield total", Unit: "kWh", DataType: "number", Register: 96, RegKind: "u32", ScaleFactor: 0.1, Deadband: 1, HeartbeatSeconds: 3600},
+				{Key: "energy_today", Label: "PV yield today", Unit: "kWh", DataType: "number", Register: 108, RegKind: "u16", ScaleFactor: 0.1, Deadband: 0.1, HeartbeatSeconds: 3600, Min: 0, Max: 1000},
+				{Key: "grid_energy_imported", Label: "Grid import today", Unit: "kWh", DataType: "number", Register: 76, RegKind: "u16", ScaleFactor: 0.1, Deadband: 0.1, HeartbeatSeconds: 3600, Min: 0, Max: 1000},
+				{Key: "grid_energy_exported", Label: "Grid export today", Unit: "kWh", DataType: "number", Register: 77, RegKind: "u16", ScaleFactor: 0.1, Deadband: 0.1, HeartbeatSeconds: 3600, Min: 0, Max: 1000},
+			},
+			// CONTROL (holding writes, fn 6). VERIFY the A-vs-B register convention on your unit first.
+			Commands: []SaveProfileCommand{
+				// Work mode: 0=Selling First, 1=Zero Export To Load, 2=Zero Export To CT.
+				{Name: "work_mode", Label: "Work mode", Kind: "mode",
+					Options:     `[{"value":0,"label":"Selling First"},{"value":1,"label":"Zero Export To Load"},{"value":2,"label":"Zero Export To CT"}]`,
+					Transport:   "modbus", Register: 142, RegKind: "u16", ScaleFactor: 1},
+				// Solar-sell enable (must be on before the export limit matters).
+				{Name: "solar_sell", Label: "Solar sell", Kind: "switch",
+					Transport: "modbus", Register: 145, RegKind: "u16", ScaleFactor: 1},
+				// Grid-charge enable.
+				{Name: "grid_charge", Label: "Grid charge", Kind: "switch",
+					Transport: "modbus", Register: 130, RegKind: "u16", ScaleFactor: 1},
+				// Max sell / grid export limit (W). Semantics of 143 vary by firmware — verify.
+				{Name: "max_sell_power", Label: "Max sell power", Kind: "setpoint", Min: 0, Max: 15000,
+					Transport: "modbus", Register: 143, RegKind: "u16", ScaleFactor: 1},
+			},
+		},
+		{
+			Slug:        "eastron-sdm630-meter",
+			Name:        "Eastron SDM630 (3-phase meter)",
+			Vendor:      "Eastron",
+			Description: "Eastron SDM630 3-phase energy meter over Modbus TCP (via an RS485→TCP gateway). Read-only: a meter has nothing to actuate. Values are IEEE-754 float32 in INPUT registers (fn 4), big-endian (no word swap). See docs/kb/solar/eastron-sdm630.md.",
+			Transport:   "modbus",
+			ModbusMode:  "regmap",
+			PollSeconds: 10,
+			// float32 (RegKind "f32"), input registers (RegInput), no word swap, scale 1. The grid
+			// power sign follows CT orientation — document + verify, don't assume import-positive.
+			Keys: []SaveTelemetryKey{
+				{Key: "grid_ac_power", Label: "Grid power (total, +import/-export)", Unit: "W", DataType: "number", Register: 52, RegKind: "f32", RegInput: true, ScaleFactor: 1, Deadband: 20, HeartbeatSeconds: 300, Min: -100000, Max: 100000},
+				{Key: "grid_l1_power", Label: "L1 active power", Unit: "W", DataType: "number", Register: 12, RegKind: "f32", RegInput: true, ScaleFactor: 1, Deadband: 20, HeartbeatSeconds: 300, Min: -50000, Max: 50000},
+				{Key: "grid_l2_power", Label: "L2 active power", Unit: "W", DataType: "number", Register: 14, RegKind: "f32", RegInput: true, ScaleFactor: 1, Deadband: 20, HeartbeatSeconds: 300, Min: -50000, Max: 50000},
+				{Key: "grid_l3_power", Label: "L3 active power", Unit: "W", DataType: "number", Register: 16, RegKind: "f32", RegInput: true, ScaleFactor: 1, Deadband: 20, HeartbeatSeconds: 300, Min: -50000, Max: 50000},
+				{Key: "grid_l1_voltage", Label: "L1 voltage", Unit: "V", DataType: "number", Register: 0, RegKind: "f32", RegInput: true, ScaleFactor: 1, Deadband: 2, HeartbeatSeconds: 900, Min: 0, Max: 500},
+				{Key: "grid_l2_voltage", Label: "L2 voltage", Unit: "V", DataType: "number", Register: 2, RegKind: "f32", RegInput: true, ScaleFactor: 1, Deadband: 2, HeartbeatSeconds: 900, Min: 0, Max: 500},
+				{Key: "grid_l3_voltage", Label: "L3 voltage", Unit: "V", DataType: "number", Register: 4, RegKind: "f32", RegInput: true, ScaleFactor: 1, Deadband: 2, HeartbeatSeconds: 900, Min: 0, Max: 500},
+				{Key: "grid_frequency", Label: "Frequency", Unit: "Hz", DataType: "number", Register: 70, RegKind: "f32", RegInput: true, ScaleFactor: 1, Deadband: 0.05, HeartbeatSeconds: 900, Min: 45, Max: 65},
+				{Key: "grid_power_factor", Label: "Power factor", DataType: "number", Register: 62, RegKind: "f32", RegInput: true, ScaleFactor: 1, Deadband: 0.02, HeartbeatSeconds: 900, Min: -1, Max: 1},
+				{Key: "grid_energy_imported", Label: "Total import energy", Unit: "kWh", DataType: "number", Register: 72, RegKind: "f32", RegInput: true, ScaleFactor: 1, Deadband: 1, HeartbeatSeconds: 3600},
+				{Key: "grid_energy_exported", Label: "Total export energy", Unit: "kWh", DataType: "number", Register: 74, RegKind: "f32", RegInput: true, ScaleFactor: 1, Deadband: 1, HeartbeatSeconds: 3600},
+			},
+		},
 	}
 }

@@ -121,9 +121,8 @@ export function SchedulesPage({ onToast, session }) {
         {error ? <div className="status-line">{error}</div> : null}
         {!isAdmin ? <p className="field-hint">{t('sched.viewerHint')}</p> : null}
         <DataTable rows={schedules} columns={columns} busy={busy} pageSize={10} emptyText={t('sched.empty')} />
+        {isAdmin ? <p className="field-hint">{t('sched.locationInSettings')}</p> : null}
       </Panel>
-
-      {isAdmin ? <LocationPanel onToast={onToast} /> : null}
 
       {confirmDelete ? (
         <ConfirmModal
@@ -208,7 +207,7 @@ function ScheduleEditor({ schedule, scenes, onBack, onSaved, onToast }) {
               <input value={form.name || ''} required onChange={(e) => set({ name: e.target.value })} />
             </Field>
             <Field label={t('sched.enabled')}>
-              <label className="iot-checkbox">
+              <label className="check-row">
                 <input type="checkbox" checked={!!form.enabled} onChange={(e) => set({ enabled: e.target.checked })} />
                 <span>{t('sched.enabledHint')}</span>
               </label>
@@ -286,46 +285,3 @@ function ScheduleEditor({ schedule, scenes, onBack, onSaved, onToast }) {
   );
 }
 
-// LocationPanel sets the site latitude/longitude sunrise/sunset schedules need. Without it, a sun
-// schedule refuses to save — the server has no way to compute the sun's times.
-function LocationPanel({ onToast }) {
-  const t = useT();
-  const [lat, setLat] = useState('');
-  const [lon, setLon] = useState('');
-  const [set, setSet] = useState(false);
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    api('/api/settings/location').then((r) => {
-      if (r.ok) { setSet(!!r.body?.set); if (r.body?.set) { setLat(String(r.body.latitude)); setLon(String(r.body.longitude)); } }
-    });
-  }, []);
-
-  async function save(e) {
-    e.preventDefault();
-    setBusy(true);
-    const r = await api('/api/settings/location', { method: 'PUT', body: JSON.stringify({ latitude: Number(lat), longitude: Number(lon) }) });
-    setBusy(false);
-    if (!r.ok) { onToast(errorMessage(r, t('sched.locationFailed')), 'error'); return; }
-    setSet(true);
-    onToast(t('sched.locationSaved'), 'success');
-  }
-
-  return (
-    <Panel icon="map-pin" title={t('sched.location')} hint={t('sched.locationHint')}>
-      <form onSubmit={save} className="iot-form">
-        <div className="form-grid">
-          <Field label={t('sched.latitude')}>
-            <input type="number" step="any" min="-90" max="90" value={lat} onChange={(e) => setLat(e.target.value)} required />
-          </Field>
-          <Field label={t('sched.longitude')}>
-            <input type="number" step="any" min="-180" max="180" value={lon} onChange={(e) => setLon(e.target.value)} required />
-          </Field>
-        </div>
-        <div className="modal-actions">
-          <button type="submit" disabled={busy}>{busy ? t('common.saving') : (set ? t('sched.updateLocation') : t('sched.setLocation'))}</button>
-        </div>
-      </form>
-    </Panel>
-  );
-}

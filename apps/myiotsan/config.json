@@ -1,6 +1,6 @@
 {
   "jwt": {
-    "secret": ""
+    "secret": "lh5W9SWT6Lkg-0Im3v1r9k88D1yUR-qN8gX4VSNDzCI"
   },
   "loginSecurity": {
     "enabled": true,

@@ -25,7 +25,7 @@ func toEntityKeys(keys []SaveTelemetryKey) []*entities.TelemetryKey {
 	for _, k := range keys {
 		out = append(out, &entities.TelemetryKey{
 			Key: k.Key, Unit: k.Unit, Register: k.Register,
-			RegKind: k.RegKind, ScaleFactor: k.ScaleFactor, WordSwap: k.WordSwap,
+			RegKind: k.RegKind, ScaleFactor: k.ScaleFactor, WordSwap: k.WordSwap, RegInput: k.RegInput,
 		})
 	}
 	return out
@@ -43,16 +43,60 @@ func findBuiltin(t *testing.T, slug string) builtinProfile {
 }
 
 // TestPtypeOf pins the register-kind mapping and its rejection of nonsense.
+// TestBuiltinRegmapProfilesBuildValidMaps guards the shipped solar/meter profiles: every
+// register-map builtin must build a valid modbus.RegisterMap (a typo'd RegKind or a stray key
+// with a register but no kind would otherwise only surface when a real device is polled), and the
+// three new samples must be present.
+func TestBuiltinRegmapProfilesBuildValidMaps(t *testing.T) {
+	want := map[string]bool{"sungrow-sh-hybrid": false, "deye-hybrid": false, "eastron-sdm630-meter": false, "huawei-sun2000": false}
+	for _, b := range builtinProfiles() {
+		if b.Transport != "modbus" || b.ModbusMode != "regmap" {
+			continue
+		}
+		if _, ok := want[b.Slug]; ok {
+			want[b.Slug] = true
+		}
+		m, err := registerMapFromKeys(toEntityKeys(b.Keys))
+		if err != nil {
+			t.Errorf("profile %q: registerMapFromKeys: %v", b.Slug, err)
+			continue
+		}
+		if len(m.Points) == 0 {
+			t.Errorf("profile %q: built an empty register map", b.Slug)
+		}
+	}
+	for slug, seen := range want {
+		if !seen {
+			t.Errorf("expected builtin register-map profile %q to be present", slug)
+		}
+	}
+}
+
+// TestBuiltinFlowsParse guards the shipped flow templates: every builtin graph must be valid JSON
+// that parseGraph accepts (valid node types, no cycles), so a hand-authored sample can never ship
+// broken.
+func TestBuiltinFlowsParse(t *testing.T) {
+	flows := builtinFlows()
+	if len(flows) < 6 {
+		t.Fatalf("expected the solar templates to be seeded, got %d builtin flows", len(flows))
+	}
+	for _, f := range flows {
+		if _, err := parseGraph(f.Graph); err != nil {
+			t.Errorf("builtin flow %q (%s) failed to parse: %v", f.Slug, f.Name, err)
+		}
+	}
+}
+
 func TestPtypeOf(t *testing.T) {
-	cases := map[string]modbus.PType{"u16": modbus.PU16, "I16": modbus.PI16, " u32 ": modbus.PU32, "i32": modbus.PI32}
+	cases := map[string]modbus.PType{"u16": modbus.PU16, "I16": modbus.PI16, " u32 ": modbus.PU32, "i32": modbus.PI32, "f32": modbus.PF32, " F32 ": modbus.PF32}
 	for in, want := range cases {
 		got, err := ptypeOf(in)
 		if err != nil || got != want {
 			t.Errorf("ptypeOf(%q) = (%v,%v), want (%v,nil)", in, got, err, want)
 		}
 	}
-	if _, err := ptypeOf("f32"); err == nil {
-		t.Error("ptypeOf(f32) should error")
+	if _, err := ptypeOf("f64"); err == nil {
+		t.Error("ptypeOf(f64) should error")
 	}
 }
 

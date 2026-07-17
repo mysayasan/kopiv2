@@ -27,8 +27,19 @@ See `services/commands.go.md` and `docs/MYIOTSAN_PLAN.md` §3.4.
   - **An unrecognised `Kind` is REFUSED, not silently passed** (`services.validateValue`'s
     `default` case) — closes a hole where a misconfigured/unknown kind used to publish
     unvalidated.
-- `TopicTemplate` — where the command is published, `{deviceKey}` substituted.
-- `PayloadTemplate` — the message body. `{value}` is substituted for every kind; a `"color"`
+- `Transport` — decides HOW the command reaches the device: `""`/`"mqtt"` (default) PUBLISHES the
+  payload template below; `"modbus"` WRITES a holding register on the polled device instead — the
+  write half of the same driver the poller reads with (`services/modbus_poller.go.md`). A Modbus
+  command goes through the identical gates in `CommandService.Issue` as an MQTT one; only the send
+  step (`services.sendModbus` vs. the MQTT publish) differs. See `services/commands.go.md`.
+- `Register`/`RegKind`/`ScaleFactor` (Modbus only) — `Register` is the holding register written;
+  `RegKind` (`"u16"`/`"i16"` — single-register writes only, `services.encodeRegister` refuses
+  `u32`/`i32` rather than half-write one) is how the value is encoded; `ScaleFactor` is the SAME
+  multiplier the read-side `TelemetryKey` binding uses, applied in reverse: `raw = round(value /
+  ScaleFactor)`. Authored per the vendor's Modbus map exactly like the read bindings — getting it
+  wrong writes a wrong number to real hardware.
+- `TopicTemplate` — where the command is published (MQTT only), `{deviceKey}` substituted.
+- `PayloadTemplate` — the message body (MQTT only). `{value}` is substituted for every kind; a `"color"`
   command additionally substitutes `{r}`/`{g}`/`{b}` with the unpacked 0..255 channels. JSON in
   practice, e.g. `{"method":"Switch.Set","params":{"id":0,"on":{value}}}`. An empty template sends
   the bare value — for a device whose command topic IS the instruction.
@@ -56,6 +67,12 @@ See `services/commands.go.md` and `docs/MYIOTSAN_PLAN.md` §3.4.
   declarative document, and an edit that half-applies is worse than one that replaces.
 - Most of the shipped catalog (`profile_catalog.go.md`) declares no commands at all, and that is
   the correct default: a sensor that cannot be commanded cannot be commanded wrongly. `smart-relay`
-  and, since the home-automation kinds, `smart-lamp` (`switch`/`dimmer`/`cct`/`color`) are
-  currently the only profiles that declare any.
+  and, since the home-automation kinds, `smart-lamp` (`switch`/`dimmer`/`cct`/`color`) are the MQTT
+  profiles that declare any. `generic-sunspec-solar`, `huawei-sun2000`, and
+  `eastron-sdm630-meter` remain read-only (a meter has nothing to actuate, and the SunSpec/Huawei
+  profiles simply never declared a command). `sungrow-sh-hybrid` and `deye-hybrid` are the first
+  built-in Modbus profiles to declare commands (`Transport: "modbus"`) — seven and four
+  respectively, all `Kind: "mode"`/`"setpoint"`, and all INERT until an admin enables the device's
+  `ActuationEnabled` and bench-verifies the register (sign/scale/units differ by firmware — see
+  `apps/myiotsan/kb/solar/`).
 - Bootstrap creates this table from the registered entity (`app/app.go`'s `Entities()`).

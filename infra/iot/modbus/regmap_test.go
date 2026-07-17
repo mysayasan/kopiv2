@@ -70,6 +70,91 @@ func TestRegisterMapSingleRead(t *testing.T) {
 	}
 }
 
+// bankReader answers holding and input registers from two separate banks, so a test can prove a
+// map with mixed Input points reads each from the correct function code.
+type bankReader struct {
+	holding map[int]uint16
+	input   map[int]uint16
+	reads   []string // "H@addr" / "I@addr" per call, to assert the bank each cluster hit
+}
+
+func (b *bankReader) ReadHolding(addr, qty int) ([]uint16, error) {
+	b.reads = append(b.reads, fmt.Sprintf("H@%d", addr))
+	out := make([]uint16, qty)
+	for i := range out {
+		out[i] = b.holding[addr+i]
+	}
+	return out, nil
+}
+
+func (b *bankReader) ReadInput(addr, qty int) ([]uint16, error) {
+	b.reads = append(b.reads, fmt.Sprintf("I@%d", addr))
+	out := make([]uint16, qty)
+	for i := range out {
+		out[i] = b.input[addr+i]
+	}
+	return out, nil
+}
+
+// TestRegisterMapFloatAndInput exercises the two additions the cheap-meter/Sungrow profiles need:
+// an IEEE-754 float32 point, and a point read from the INPUT bank (fn 4) rather than holding (fn 3).
+// An Eastron SDM630 reports 230.0 V as float32 big-endian; a Sungrow-style word-swapped u32 reports
+// power low-word-first. The two banks must be read by different function codes and never merged.
+func TestRegisterMapFloatAndInput(t *testing.T) {
+	// 230.0f32 big-endian = 0x43660000 -> hi=0x4366, lo=0x0000.
+	m := RegisterMap{Points: []Point{
+		{Key: "voltage", Register: 0, Type: PF32, Scale: 1, Input: true},           // SDM630 float, input bank
+		{Key: "dc_power", Register: 5016, Type: PU32, Scale: 1, WordSwap: true, Input: true}, // Sungrow word-swap, input
+		{Key: "ems_mode", Register: 13049, Type: PU16, Scale: 1},                    // a holding-bank point
+	}}
+	r := &bankReader{
+		input: map[int]uint16{
+			0: 0x4366, 1: 0x0000, // 230.0 V
+			5016: 0x1388, 5017: 0x0000, // word-swapped: low word first (0x1388=5000) -> 5000 W
+		},
+		holding: map[int]uint16{13049: 2},
+	}
+	samples, err := m.Read(r)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	got := map[string]float64{}
+	for _, s := range samples {
+		got[s.Key] = s.Num
+	}
+	if math.Abs(got["voltage"]-230) > 0.01 {
+		t.Errorf("voltage = %v, want 230", got["voltage"])
+	}
+	if got["dc_power"] != 5000 {
+		t.Errorf("dc_power = %v, want 5000 (word-swapped)", got["dc_power"])
+	}
+	if got["ems_mode"] != 2 {
+		t.Errorf("ems_mode = %v, want 2", got["ems_mode"])
+	}
+	// The holding point and the input points must be fetched by different function codes.
+	var sawH, sawI bool
+	for _, rd := range r.reads {
+		if rd[0] == 'H' {
+			sawH = true
+		}
+		if rd[0] == 'I' {
+			sawI = true
+		}
+	}
+	if !sawH || !sawI {
+		t.Errorf("expected both a holding and an input read, got %v", r.reads)
+	}
+}
+
+// TestRegisterMapInputWithoutReader proves a map that binds an input-register point but is handed a
+// holding-only reader fails loudly rather than silently reading the wrong bank.
+func TestRegisterMapInputWithoutReader(t *testing.T) {
+	m := RegisterMap{Points: []Point{{Key: "v", Register: 0, Type: PU16, Input: true}}}
+	if _, err := m.Read(fakeReader{}); err == nil {
+		t.Fatal("expected an error when an input point is read by a holding-only reader")
+	}
+}
+
 // countingReader records every read so a test can assert how many round trips a map costs, and
 // rejects any read wider than the Modbus 125-register limit — the exact failure a naive single-span
 // read of a Huawei-style scattered map would hit against real hardware.
