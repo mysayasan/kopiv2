@@ -476,6 +476,8 @@ export default {
   'devices.endpointHint': '设备地址，格式为 host:port（Modbus TCP 通常使用 502 端口）。',
   'devices.unit': '单元 id',
   'devices.unitHint': 'Modbus 单元/从站 id（通常为 1）。一个网关可能在同一端点上托管多个单元。',
+  'devices.tabInventory': '设备列表',
+  'devices.tabDiscover': '发现',
   'devices.transport': '传输方式',
   'devices.transportHint': '如何连接设备：Modbus TCP、通过透明 TCP 网关的 RTU，或串行线路。',
   'transport.tcp': 'Modbus TCP',

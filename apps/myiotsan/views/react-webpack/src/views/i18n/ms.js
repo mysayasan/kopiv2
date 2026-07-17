@@ -476,6 +476,8 @@ export default {
   'devices.endpointHint': 'Alamat peranti sebagai host:port (Modbus TCP biasanya port 502).',
   'devices.unit': 'Id unit',
   'devices.unitHint': 'Id unit / hamba Modbus (selalunya 1). Get boleh mengehoskan beberapa unit pada satu titik akhir.',
+  'devices.tabInventory': 'Inventori',
+  'devices.tabDiscover': 'Penemuan',
   'devices.transport': 'Pengangkutan',
   'devices.transportHint': 'Cara mencapai peranti: Modbus TCP, RTU melalui get TCP telus, atau talian bersiri.',
   'transport.tcp': 'Modbus TCP',

@@ -485,6 +485,8 @@ export default {
   'devices.endpointHint': 'The device’s address as host:port (Modbus TCP is usually port 502).',
   'devices.unit': 'Unit id',
   'devices.unitHint': 'The Modbus unit / slave id (often 1). A gateway may host several units on one endpoint.',
+  'devices.tabInventory': 'Inventory',
+  'devices.tabDiscover': 'Discover',
   'devices.transport': 'Transport',
   'devices.transportHint': 'How to reach the device: Modbus TCP, RTU over a transparent TCP gateway, or a serial line.',
   'transport.tcp': 'Modbus TCP',

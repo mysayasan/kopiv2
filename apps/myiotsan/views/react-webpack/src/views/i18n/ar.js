@@ -476,6 +476,8 @@ export default {
   'devices.endpointHint': 'عنوان الجهاز بصيغة host:port (منفذ Modbus TCP عادة 502).',
   'devices.unit': 'معرّف الوحدة',
   'devices.unitHint': 'معرّف وحدة/تابع Modbus (غالبًا 1). قد تستضيف بوابة عدة وحدات على نقطة اتصال واحدة.',
+  'devices.tabInventory': 'المخزون',
+  'devices.tabDiscover': 'الاكتشاف',
   'devices.transport': 'النقل',
   'devices.transportHint': 'كيفية الوصول إلى الجهاز: Modbus TCP، أو RTU عبر بوابة TCP شفافة، أو خط تسلسلي.',
   'transport.tcp': 'Modbus TCP',
