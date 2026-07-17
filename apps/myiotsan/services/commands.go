@@ -2,7 +2,9 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -236,36 +238,105 @@ func (s *CommandService) declaration(ctx context.Context, profileId int64, name 
 	return nil, fmt.Errorf("this device type declares no command called %q", name)
 }
 
-// validateValue enforces the profile's bounds.
+// validateValue enforces the profile's bounds. Every kind the app knows has a case here, and the
+// DEFAULT is a refusal: an unrecognised kind is a misconfiguration, and a physical device is the
+// wrong place to guess. (Before the home-automation kinds this switch had no default, so an unknown
+// kind was published UNVALIDATED — that hole is closed here.)
 func validateValue(decl *entities.ProfileCommand, v float64) error {
 	switch strings.ToLower(strings.TrimSpace(decl.Kind)) {
 	case "switch":
 		if v != 0 && v != 1 {
 			return fmt.Errorf("a switch takes 0 or 1, not %s", trimNum(v))
 		}
-	case "setpoint":
+	case "dimmer", "position":
+		// A percentage. Fixed 0..100 — brightness and blind travel are both proportions, and a
+		// value outside that is a bug, not a brighter light.
+		if v < 0 || v > 100 {
+			return fmt.Errorf("%s is outside 0..100 for a %s", trimNum(v), strings.ToLower(decl.Kind))
+		}
+	case "setpoint", "cct":
 		// A zero Min AND Max means the profile declared no bounds. That is treated as a REFUSAL
 		// rather than as "anything goes": an unbounded setpoint on a physical device is not a
-		// configuration, it is an omission, and the safe reading of an omission is no.
+		// configuration, it is an omission, and the safe reading of an omission is no. (cct is a
+		// setpoint in Kelvin — same bounds discipline.)
 		if decl.Min == 0 && decl.Max == 0 {
-			return fmt.Errorf("this setpoint declares no safe range, so no value can be accepted — set its min and max on the device type")
+			return fmt.Errorf("this %s declares no safe range, so no value can be accepted — set its min and max on the device type", strings.ToLower(decl.Kind))
 		}
 		if v < decl.Min || v > decl.Max {
 			return fmt.Errorf("%s is outside the safe range %s..%s for this command",
 				trimNum(v), trimNum(decl.Min), trimNum(decl.Max))
 		}
+	case "mode":
+		vals, err := modeValues(decl.Options)
+		if err != nil {
+			return err
+		}
+		for _, ok := range vals {
+			if v == ok {
+				return nil
+			}
+		}
+		return fmt.Errorf("%s is not one of this command's allowed modes", trimNum(v))
+	case "color":
+		// A colour packed as 0xRRGGBB. Must be a whole number in range; the twin still confirms it
+		// as one float, so a device that reports colour back per-channel cannot be confirmed by it
+		// (declare no ConfirmKey there — "sent, never confirmed" is honest).
+		if v != math.Trunc(v) || v < 0 || v > 0xFFFFFF {
+			return fmt.Errorf("a colour must be a whole number 0..16777215 (0xRRGGBB), not %s", trimNum(v))
+		}
+	default:
+		return fmt.Errorf("this device type declares an unknown command kind %q", decl.Kind)
 	}
 	return nil
 }
 
-// renderPayload builds the message body. {value} is substituted; a template that does not
-// mention it sends itself verbatim (a device whose command topic IS the instruction).
+// modeValues parses a mode command's Options ([{"value":int,"label":string}]) to the set of allowed
+// integer values. An empty or malformed Options is a refusal — a mode with no declared options can
+// accept nothing, the same "omission means no" rule the unbounded setpoint follows.
+func modeValues(options string) ([]float64, error) {
+	options = strings.TrimSpace(options)
+	if options == "" {
+		return nil, fmt.Errorf("this mode command declares no options, so no value can be accepted — set its options on the device type")
+	}
+	var opts []struct {
+		Value float64 `json:"value"`
+	}
+	if err := json.Unmarshal([]byte(options), &opts); err != nil || len(opts) == 0 {
+		return nil, fmt.Errorf("this mode command's options are not a valid list")
+	}
+	out := make([]float64, len(opts))
+	for i, o := range opts {
+		out[i] = o.Value
+	}
+	return out, nil
+}
+
+// packRGB / unpackRGB carry a colour through the single-float command model. 0xRRGGBB (max
+// 16,777,215) is exactly representable in a float64 mantissa, so the audit value and the twin
+// equality check stay unchanged from every other kind.
+func packRGB(r, g, b int) float64 { return float64((r&0xFF)<<16 | (g&0xFF)<<8 | (b & 0xFF)) }
+
+func unpackRGB(v float64) (r, g, b int) {
+	n := int(v)
+	return (n >> 16) & 0xFF, (n >> 8) & 0xFF, n & 0xFF
+}
+
+// renderPayload builds the message body. {value} is substituted for every kind; a "color" command
+// also substitutes {r}/{g}/{b} with the unpacked channels. A template that mentions no token sends
+// itself verbatim (a device whose command topic IS the instruction).
 func renderPayload(decl *entities.ProfileCommand, v float64) string {
 	tpl := strings.TrimSpace(decl.PayloadTemplate)
 	if tpl == "" {
 		return trimNum(v)
 	}
-	return strings.ReplaceAll(tpl, "{value}", trimNum(v))
+	out := strings.ReplaceAll(tpl, "{value}", trimNum(v))
+	if strings.EqualFold(strings.TrimSpace(decl.Kind), "color") {
+		r, g, b := unpackRGB(v)
+		out = strings.ReplaceAll(out, "{r}", strconv.Itoa(r))
+		out = strings.ReplaceAll(out, "{g}", strconv.Itoa(g))
+		out = strings.ReplaceAll(out, "{b}", strconv.Itoa(b))
+	}
+	return out
 }
 
 func trimNum(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }

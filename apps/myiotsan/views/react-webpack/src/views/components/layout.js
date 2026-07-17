@@ -60,6 +60,13 @@ export function SideNav({ activeTab, busy, onTab, onLogout, session, pinned = tr
         navItem('notifications', t('nav.notifications'), 'send', 'steel'),
       ],
     },
+    {
+      label: t('group.automation'),
+      items: [
+        navItem('scenes', t('nav.scenes'), 'play', 'amber'),
+        navItem('schedules', t('nav.schedules'), 'clock', 'teal'),
+      ],
+    },
     { label: t('group.system'), items: systemItems },
   ];
 

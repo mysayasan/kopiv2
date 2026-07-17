@@ -120,6 +120,10 @@ func (m *module) Entities() []any {
 		appentities.ProfileCommand{},
 		appentities.DeviceCommand{},
 		appentities.DeviceAttribute{},
+		// Home automation: scenes (grouped commands) and time/sun schedules.
+		appentities.Scene{},
+		appentities.SceneAction{},
+		appentities.Schedule{},
 		// The fleet's node-side state (the fleet key, the pairing enrollment, the mTLS cert)
 		// lives in the shared runtime_setting table, encrypted at rest.
 		sharedentities.RuntimeSetting{},
@@ -364,6 +368,16 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		func(f string, a ...any) { deps.Logger.Infof("myiotsan.actuation", f, a...) })
 	ingest.SetTwin(commandService)
 
+	// Scenes: named groups of commands. Running one fans out through commandService.Issue, so every
+	// actuation gate still applies per action — a scene is convenience, not a new authority.
+	sceneService := services.NewSceneService(deps.Db, commandService,
+		func(f string, a ...any) { deps.Logger.Infof("myiotsan.scenes", f, a...) })
+
+	// Schedules: fire a scene or command on the clock, or at sunrise/sunset. Same actuation path,
+	// same gates; the firing actor is a synthetic "schedule:<name>" so the audit trail attributes it.
+	scheduleService := services.NewScheduleService(deps.Db, sceneService, commandService,
+		func(f string, a ...any) { deps.Logger.Infof("myiotsan.scheduler", f, a...) })
+
 	// Runtime metrics. Everything here instruments a SILENT failure — a dropped reading, a
 	// mistuned deadband, a device gone quiet, a command that failed — none of which raises an
 	// error a human sees. The ingest gauges are SAMPLED off ingest's own atomic counters rather
@@ -396,11 +410,37 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		modbusPoller.Run(ctx, modbusReconcileInterval)
 	})
 
+	// The scheduler. Ticks once a minute (aligned to the minute boundary) and fires every schedule
+	// due in that minute. Minute granularity is deliberate — a home schedule is "07:30", not
+	// "07:30:12" — and it is what the LastFiredAt double-fire guard is keyed to.
+	safego.Supervise(bgCtx, "myiotsan.scheduler", func(ctx context.Context) {
+		// Align the first tick to the next whole minute so a schedule fires at :00, not at a
+		// process-start offset into the minute.
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Until(time.Now().Truncate(time.Minute).Add(time.Minute))):
+		}
+		scheduleService.Tick(ctx, time.Now())
+		ticker := time.NewTicker(schedulerInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				scheduleService.Tick(ctx, time.Now())
+			}
+		}
+	})
+
 	apis.NewDevicesApi(protected, deviceService, telemetry, profileService, ingest)
 	apis.NewDiscoveryApi(protected, enrollment, deviceService)
 	apis.NewCommandsApi(protected, commandService, deviceService)
 	apis.NewProfilesApi(protected, profileService, ingest)
 	apis.NewRulesApi(protected, ruleService)
+	apis.NewScenesApi(protected, sceneService)
+	apis.NewSchedulesApi(protected, scheduleService)
 	apis.NewNotificationsApi(protected, notificationService)
 
 	// --- the fleet -------------------------------------------------------------------
@@ -448,6 +488,10 @@ const offlineSweepInterval = time.Minute
 // per-device poll goroutines. It governs how quickly a newly added Modbus device begins polling,
 // not the poll cadence itself (which is the profile's PollSeconds).
 const modbusReconcileInterval = 30 * time.Second
+
+// schedulerInterval is the automation scheduler's tick. A minute is the resolution a home schedule
+// is expressed at ("07:30"), and matches the LastFiredAt double-fire guard's minute granularity.
+const schedulerInterval = time.Minute
 
 // appVersion resolves this build's version for the fleet handshake.
 func appVersion(m *module) string {

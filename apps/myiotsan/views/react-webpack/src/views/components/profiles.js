@@ -11,7 +11,7 @@ const EMPTY_KEY = {
   deadband: 0, heartbeatSeconds: 900, min: 0, max: 0,
 };
 
-const COMMAND_KINDS = ['switch', 'setpoint'];
+const COMMAND_KINDS = ['switch', 'setpoint', 'dimmer', 'position', 'cct', 'mode', 'color'];
 
 // A command a device of this type can be TOLD to do. It starts as a switch with no bounds and no
 // confirmation key, and the editor warns about both — because both are how a command ends up
@@ -365,7 +365,7 @@ function ProfileEditor({ profileId, onBack, onSaved, onToast }) {
             // Both min and max at zero is not "unbounded" — the server treats it as an omission
             // and refuses EVERY value. Say so here, where it can still be fixed, rather than
             // letting an admin ship a command that mysteriously never works.
-            const noRange = kind === 'setpoint' && Number(c.min || 0) === 0 && Number(c.max || 0) === 0;
+            const noRange = (kind === 'setpoint' || kind === 'cct') && Number(c.min || 0) === 0 && Number(c.max || 0) === 0;
             return (
               <fieldset className="iot-fieldset" key={c.id || `new-cmd-${i}`}>
                 <legend>{c.label || c.name || t('profiles.newCommand')}</legend>
@@ -390,7 +390,7 @@ function ProfileEditor({ profileId, onBack, onSaved, onToast }) {
                   <Field label={t('profiles.cmdPayload')} hint={t('profiles.cmdPayloadHint')} span>
                     <input value={c.payloadTemplate || ''} onChange={(e) => setCmd(i, { payloadTemplate: e.target.value })} />
                   </Field>
-                  {kind === 'setpoint' ? (
+                  {(kind === 'setpoint' || kind === 'cct') ? (
                     <>
                       <Field label={t('profiles.cmdMin')} hint={t('profiles.cmdRangeHint')}>
                         <input type="number" step="any" value={c.min ?? 0} onChange={(e) => setCmd(i, { min: e.target.value })} />
@@ -399,6 +399,12 @@ function ProfileEditor({ profileId, onBack, onSaved, onToast }) {
                         <input type="number" step="any" value={c.max ?? 0} onChange={(e) => setCmd(i, { max: e.target.value })} />
                       </Field>
                     </>
+                  ) : null}
+                  {kind === 'mode' ? (
+                    <Field label={t('profiles.cmdOptions')} hint={t('profiles.cmdOptionsHint')} span>
+                      <input value={c.options || ''} onChange={(e) => setCmd(i, { options: e.target.value })}
+                        placeholder='[{"value":0,"label":"Off"},{"value":2,"label":"Cool"}]' />
+                    </Field>
                   ) : null}
                 </div>
 

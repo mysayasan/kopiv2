@@ -5,7 +5,7 @@ import './styles/iot.css';
 import { SideNav } from './components/layout';
 import { ToastStack, LangProvider, normalizeLang, LanguageDropdown, AppFooter } from '@shared';
 import { FormBusyOverlay, ThemeDropdown } from './components/ui';
-import { DashboardPage, DevicesPage, RulesPage, AlertsPage, NotificationsPage, ProfilesPage, DiscoveryPage } from './components/pages';
+import { DashboardPage, DevicesPage, RulesPage, AlertsPage, NotificationsPage, ProfilesPage, DiscoveryPage, ScenesPage, SchedulesPage } from './components/pages';
 import { FirstRunWizard } from './components/onboarding';
 import { LoginScreen, ChangePasswordScreen } from './components/auth_screens';
 import { api, apiBase } from './lib/helpers';
@@ -143,6 +143,11 @@ function AppInner({ lang, onLangChange }) {
         {activeTab === 'alerts' ? <AlertsPage onToast={pushToast} /> : null}
         {activeTab === 'notifications' ? <NotificationsPage onToast={pushToast} /> : null}
         {activeTab === 'profiles' ? <ProfilesPage onToast={pushToast} /> : null}
+        {/* Scenes are readable by anyone; RUNNING one is admin-only (the server 403s a non-admin
+            POST to /run, and ScenesPage hides the Run button off session.isAdmin). */}
+        {activeTab === 'scenes' ? <ScenesPage onToast={pushToast} session={session} /> : null}
+        {/* Schedules readable by anyone; authoring/test-firing/location are admin-only server-side. */}
+        {activeTab === 'schedules' ? <SchedulesPage onToast={pushToast} session={session} /> : null}
         {/* Discovery is admin-only. The check here (like the hidden nav entry) is UX: the
             server 403s every /api/discovery route for anyone else, which is the enforcement. */}
         {activeTab === 'discovery' && session?.isAdmin ? <DiscoveryPage onToast={pushToast} /> : null}

@@ -412,7 +412,7 @@ go run . -app myidsan
 The dev config file defaults `db.port` to `5433`. The example above overrides it to `5432`; keep whichever port matches your local PostgreSQL.
 `apps/myidsan/config.dev.json` also defaults PostgreSQL to port `5433`, database `myidsandb`, and HTTPS port `3001`. Both MyIDSan configs expect `apps/myidsan/certs/cert.pem` and `apps/myidsan/certs/key.pem`.
 
-Run the IoT hub app (P0-P4, P6, P7 shipped — boots, authenticates, ingests device telemetry over an embedded MQTT broker, evaluates alert rules, onboards devices via a time-boxed enrollment window, can command an actuation-enabled device within its declared profile bounds, is adoptable into a `myseliasan` fleet (and remotely manageable from it), and ships as an installable product with its own release pipeline; see `apps/myiotsan/README.md`):
+Run the IoT hub app (P0-P4, P6, P7 shipped — boots, authenticates, ingests device telemetry over an embedded MQTT broker, evaluates alert rules, onboards devices via a time-boxed enrollment window, can command an actuation-enabled device within its declared profile bounds (including dimmer/position/colour-temperature/mode/colour kinds, not just switches and plain setpoints), group commands into an admin-run scene and fire a scene or command on a clock/sunrise/sunset schedule, is adoptable into a `myseliasan` fleet (and remotely manageable from it), and ships as an installable product with its own release pipeline; see `apps/myiotsan/README.md`):
 
 ```bash
 go run . -app myiotsan

@@ -8,3 +8,5 @@ export { AlertsPage } from './alerts';
 export { NotificationsPage } from './notifications';
 export { ProfilesPage } from './profiles';
 export { DiscoveryPage } from './discovery';
+export { ScenesPage } from './scenes';
+export { SchedulesPage } from './schedules';

@@ -24,8 +24,15 @@ own poll cadence, and two built-in profiles ship: `generic-sunspec-solar` (reads
 inverter/meter/battery, no per-model work) and `huawei-sun2000` (the register-map worked example
 for the world's most-installed inverter). What remains of P5 is RTU (serial) and OPC-UA
 transports and guarded Modbus control writes; the solar "system workspace" (P8) is still
-design-only — see `docs/MYIOTSAN_PLAN.md` for the full roadmap and, in §8b/§8c/§8d/§8e/§8f/§8g,
-exactly what shipped and what was found by live-booting it.
+design-only. **Home automation (richer command kinds, scenes, schedules) has also shipped**: a
+device can now be dimmed, positioned, colour-tuned, or set to one of a named list of modes, not
+just switched or given a plain setpoint; commands can be grouped into a named **scene** and run
+together; and a scene or a single command can be fired on the clock or at sunrise/sunset via a
+**schedule**. Every one of these still fires through the exact same actuation gates a manual
+command does — see "Home automation" below. **Rule-driven actuation (a rule triggering a scene or
+command automatically, with no human in the loop) is deliberately NOT built** — see
+`docs/MYIOTSAN_PLAN.md` §8h for why. See `docs/MYIOTSAN_PLAN.md` for the full roadmap and, in
+§8b/§8c/§8d/§8e/§8f/§8g/§8h, exactly what shipped and what was found by live-booting it.
 
 ## Onboarding a device
 
@@ -166,21 +173,37 @@ A profile (see "The device-type catalog" above) declares zero or more commands a
 telemetry keys, via `POST/PUT /api/profiles`:
 
 - `name` / `label` — the command's identifier and display text.
-- `kind` — `"switch"` (accepts only `0`/`1`) or `"setpoint"` (accepts a number within `min..max`).
+- `kind` — decides how the value is validated and rendered:
+  - `"switch"` — accepts only `0`/`1`.
+  - `"setpoint"` — accepts a number within `min..max`.
+  - `"dimmer"` / `"position"` — a percentage, fixed `0..100` (brightness, blind travel).
+  - `"cct"` — colour temperature in Kelvin, a setpoint bounded by `min..max`.
+  - `"mode"` — one of the integer values enumerated in `options` (below), turning the command
+    into a named dropdown rather than a raw number.
+  - `"color"` — an RGB colour packed into one integer (`0xRRGGBB`).
+  - **An unrecognised `kind` is refused, not silently passed** — a command declaring a typo'd or
+    unknown kind cannot be issued at all.
 - `topicTemplate` — where the command is published, `{deviceKey}` substituted.
-- `payloadTemplate` — the message body, `{value}` substituted (e.g.
-  `{"method":"Switch.Set","params":{"id":0,"on":{value}}}`). Empty sends the bare value, for a
-  device whose topic itself is the instruction.
-- `min` / `max` — the safe range for a `setpoint`. **Required for a setpoint to be usable at
+- `payloadTemplate` — the message body. `{value}` is substituted for every kind (e.g.
+  `{"method":"Switch.Set","params":{"id":0,"on":{value}}}`); a `"color"` command additionally
+  substitutes `{r}`/`{g}`/`{b}` with the unpacked 0..255 channels. An empty template sends the
+  bare value, for a device whose topic itself is the instruction.
+- `min` / `max` — the safe range for a `setpoint` or `cct`. **Required for either to be usable at
   all** — leaving both at `0` means the command declares no safe range and every value will be
   refused.
+- `options` — for a `mode` command, a JSON list of `{"value":<int>,"label":<string>}` naming its
+  allowed values; a value not in the list is refused, and an empty/malformed `options` refuses
+  every value.
 - `confirmKey` — the telemetry key the device reports the resulting state back on. Without this,
-  a command can only ever reach `sent`, never `confirmed`.
+  a command can only ever reach `sent`, never `confirmed`. A `color` command typically declares
+  none: a bulb that reports colour back per-channel cannot be equality-confirmed against one
+  packed float, so "sent, never confirmed" is the honest status for it.
 
-Of the eight built-in profiles, only `smart-relay` (Shelly/Tasmota conventions) ships with a
-command declared (`output`, a switch, confirmed by the device's own `output` telemetry key) —
-every other shipped profile stays read-only, which is the correct default: a sensor that cannot
-be commanded cannot be commanded wrongly.
+Of the built-in profiles, `smart-relay` (Shelly/Tasmota conventions — `output`, a switch,
+confirmed by the device's own `output` telemetry key) and `smart-lamp` (Zigbee2MQTT conventions —
+`power`/`brightness`/`color_temp`/`color`, the worked example for the newer kinds) ship with
+commands declared; every other shipped profile stays read-only, which is the correct default: a
+sensor that cannot be commanded cannot be commanded wrongly.
 
 ### Sent, confirmed, failed — what an operator should read into each
 
@@ -208,6 +231,35 @@ changing.
 commands) and whether `actuationEnabled` is on — the response the "Actuate" panel in the device
 page is built from. `GET /api/devices/{id}/commands/history` is the full audit trail, readable
 by viewer and operator as well as admin (see "Role model" below).
+
+## Home automation: scenes and schedules
+
+Two more layers over the same gated actuation path above, for grouping and scheduling commands
+rather than issuing them one at a time by hand:
+
+- **Scenes** (`POST/GET/PUT/DELETE /api/scenes`) group an ordered set of device commands under one
+  name — "movie night", "all off", "goodnight". `POST /api/scenes/{id}/run` fires them in order.
+  **Running a scene is not a new authority**: each action goes through the exact same
+  `CommandService.Issue` a manual command does — actuation-enabled, admin-only, declared-commands-
+  only, server-side bounds, rate limit, audit, all apply per action. A scene never rolls back and
+  never stops early on a refusal: it runs every action and reports each outcome, so a partial
+  failure (e.g. two actions hitting the same device inside the 2-second rate limit) is visible,
+  not hidden. Running a scene is admin-only; reading one is not.
+- **Schedules** (`POST/GET/PUT/DELETE /api/schedules`) fire a scene or a single command at a time
+  — the automation a rule cannot express, because its trigger is the clock, not a reading. A
+  trigger is a fixed time of day (optionally restricted to certain weekdays) or sunrise/sunset ±
+  an offset (computed locally from the site's latitude/longitude, `GET/PUT
+  /api/settings/location` — no external API call, appropriate for an air-gapped install).
+  `POST /api/schedules/{id}/run` test-fires one immediately. A schedule fires through the identical
+  gated path as a scene or a manual command, attributed in the audit trail to a synthetic
+  `schedule:<name>` actor rather than "System". Authoring, test-firing, and setting the site
+  location are all admin-only; reading schedules is not.
+
+**Rule-driven actuation is deliberately not built.** An `iot_rule` (see "Rules and alerts" above)
+can only raise an alert — it cannot trigger a scene or a command on its own. That is a considered
+gap, not an oversight: a rule that can write to a device with no human in the loop is a materially
+different risk than one that raises an alert, and it is deferred to a later, security-reviewed
+change. See `docs/MYIOTSAN_PLAN.md` §8h.
 
 ## Authentication
 
@@ -256,7 +308,11 @@ broker at all, so an operator does not get to do it either. **`POST /api/devices
 (issuing a command) is admin-only**, but `GET /api/devices/{id}/commands/history` and
 `GET /api/devices/{id}/twin` are readable by viewer and operator — seeing what was done to a
 device, and whether it actually happened, is not the same power as doing it; an audit trail
-visible only to the people who could have written to it is not an audit trail.
+visible only to the people who could have written to it is not an audit trail. The same line is
+drawn for the two home-automation surfaces: reading scenes and schedules (`GET /api/scenes`,
+`GET /api/schedules`) is open to viewer/operator, but **running a scene, test-firing a schedule,
+authoring either, and setting the site location are all admin-only** — running one commands real
+devices through the identical actuation path a manual command takes.
 
 ## User and role management
 
@@ -389,13 +445,18 @@ module the same way myseliasan's is — no per-app copy of `DataTable`/`SideNav`
 Screens: **Dashboard** (estate health, recent alerts, and the ingest panel), **Devices**
 (inventory, live values, telemetry charts, provisioning, and — on a per-device **Control** tab
 shown to every role, since its history/twin are readable by everyone and only issuing a command
-is admin-only — the Actuation panel: available commands, command history, and the desired/
-reported twin; a separate tab rather than a strip on the readings page, because reading a sensor
-and firing a relay are different acts), **Discovery** (the enrollment window, its candidates,
-and adoption — see "Onboarding a device" above), **Rules**, **Alerts**,
-**Notifications**, and **Device types** (the profile catalog, its deadbands, and import/export).
-A first-run onboarding wizard leads a new install straight to opening its first enrollment
-window. All four locales — en, ms, zh, ar.
+is admin-only — the Actuation panel: available commands rendered as the appropriate widget per
+`kind` — a switch toggle, a bounded number, a slider for `dimmer`/`position`/`cct`, a dropdown for
+`mode`, a colour picker for `color` — command history, and the desired/reported twin; a separate
+tab rather than a strip on the readings page, because reading a sensor and firing a relay are
+different acts), **Discovery** (the enrollment window, its candidates, and adoption — see
+"Onboarding a device" above), **Rules**, **Alerts**, **Notifications**, **Device types** (the
+profile catalog, its deadbands, its declared commands — including authoring a `mode` command's
+`options` — and import/export), and, under a new **Automation** nav group, **Scenes** (author and
+run a named, ordered group of commands — the Run action hidden for anyone but an admin) and
+**Schedules** (author a clock or sunrise/sunset trigger, test-fire it, and set the site location
+the sun triggers need). A first-run onboarding wizard leads a new install straight to opening its
+first enrollment window. All four locales — en, ms, zh, ar.
 
 Two things on the Dashboard deserve an operator's attention:
 

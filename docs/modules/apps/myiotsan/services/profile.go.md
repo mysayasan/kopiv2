@@ -35,12 +35,14 @@ Request/response DTOs for the profile CRUD API (`apis/profiles.go`). **(P5)**
 `WordSwap` (see `entities.TelemetryKey`) — both plumbed through `Create`/`Update`/`replaceKeys`/
 `EnsureBuiltins` alongside the pre-existing MQTT-only fields, so a Modbus profile is saved,
 edited and seeded through the identical path an MQTT one always has been. `SaveProfileCommand` (P4)
-declares one command: `Name`/`Label`/`Kind` (`"switch"`/`"setpoint"`), `TopicTemplate`/
-`PayloadTemplate`, `Min`/`Max` (the safety bounds, enforced server-side when a command is
-actually issued — see `services/commands.go.md`), and `ConfirmKey` (the telemetry key the device
-reports the resulting state back on; without it a command can only ever be "sent", never
-"confirmed"). `ProfileDetail.Commands` (`[]*entities.ProfileCommand`) rides alongside `Keys` in
-every profile detail response.
+declares one command: `Name`/`Label`/`Kind` (`"switch"`/`"setpoint"`, and, since the
+home-automation kinds, `"dimmer"`/`"position"`/`"cct"`/`"mode"`/`"color"` — see
+`entities/profile_command.go.md`), `TopicTemplate`/`PayloadTemplate`, `Min`/`Max` (the safety
+bounds, enforced server-side when a command is actually issued — see `services/commands.go.md`),
+`Options` (a `"mode"` command's allowed `{value,label}` list, JSON, empty for every other kind),
+and `ConfirmKey` (the telemetry key the device reports the resulting state back on; without it a
+command can only ever be "sent", never "confirmed"). `ProfileDetail.Commands`
+(`[]*entities.ProfileCommand`) rides alongside `Keys` in every profile detail response.
 
 ## Key Function: replaceCommands
 

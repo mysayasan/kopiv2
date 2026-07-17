@@ -71,6 +71,11 @@ func Policy() []PolicyRule {
 		{Path: "/api/rules", Description: "See the alert rules", Viewer: read, Operator: read},
 		{Path: "/api/alerts", Description: "See the alert log", Viewer: read, Operator: read},
 		{Path: "/api/notifications", Description: "See the notification feed", Viewer: read, Operator: read},
+		// Scenes and schedules are readable by everyone signed in; authoring and — crucially —
+		// RUNNING them is admin-only (see below). A viewer can see that a "Goodnight" scene exists
+		// and what it does, the same way they can see an alert rule, without being able to fire it.
+		{Path: "/api/scenes", Description: "See the scenes (grouped device commands)", Viewer: read, Operator: read},
+		{Path: "/api/schedules", Description: "See the time/sunrise schedules", Viewer: read, Operator: read},
 
 		// --- Reviewing the record (operator and up) ---------------------------------------
 		// THIS is the viewer/operator line, and it is mymatasan's line exactly: a viewer sees
@@ -102,6 +107,13 @@ func Policy() []PolicyRule {
 		// gets WRITTEN to, and a bad relay write is physically dangerous in a way a bad PTZ move
 		// is not. Do not loosen this without deciding, out loud, that an operator may open doors.
 		{Path: "/api/devices/*/commands", Description: "Command a device (switch a relay, set a setpoint)", Viewer: none, Operator: none},
+		// Running a scene, running/testing a schedule, and setting the site location are ACTUATION
+		// (or its configuration). A scene run commands real devices through the exact path above, so
+		// it inherits the same admin-only rule — do not loosen these without deciding, out loud,
+		// that an operator may fire grouped commands.
+		{Path: "/api/scenes/*/run", Description: "Run a scene (command every device in it)", Viewer: none, Operator: none},
+		{Path: "/api/schedules/*/run", Description: "Test-fire a schedule now", Viewer: none, Operator: none},
+		{Path: "/api/settings/location", Description: "Set the site latitude/longitude for sun schedules", Viewer: none, Operator: none},
 		// Opening an enrollment window is the ONE act in the whole app that lets an unknown thing
 		// talk to the broker at all. It is time-boxed, key-gated and quarantined — and it is still
 		// not something an operator gets to do.

@@ -165,6 +165,29 @@ func builtinProfiles() []builtinProfile {
 			},
 		},
 
+		{
+			Slug:          "smart-lamp",
+			Name:          "Smart lamp / bulb",
+			Vendor:        "Generic (Zigbee2MQTT)",
+			Description:   "A controllable light: on/off, brightness, colour temperature and RGB colour. The worked example for the home-automation command kinds — adapt the payloads to your bulb's firmware.",
+			TopicTemplate: "zigbee2mqtt/{deviceKey}",
+			Keys: []SaveTelemetryKey{
+				// The bulb reports these back; each is a ConfirmKey below, so a command is CONFIRMED
+				// only when the bulb says it changed — not when we manage to publish.
+				{Key: "state", Label: "On/off", DataType: "bool", Deadband: 0, HeartbeatSeconds: 3600},
+				{Key: "brightness", Label: "Brightness", Unit: "%", DataType: "number", Deadband: 2, HeartbeatSeconds: 3600, Min: 0, Max: 100},
+				{Key: "color_temp", Label: "Colour temperature", Unit: "K", DataType: "number", Deadband: 50, HeartbeatSeconds: 3600, Min: 1000, Max: 10000},
+			},
+			Commands: []SaveProfileCommand{
+				{Name: "power", Label: "Power", Kind: "switch", TopicTemplate: "zigbee2mqtt/{deviceKey}/set", PayloadTemplate: `{"state":{value}}`, ConfirmKey: "state"},
+				{Name: "brightness", Label: "Brightness", Kind: "dimmer", TopicTemplate: "zigbee2mqtt/{deviceKey}/set", PayloadTemplate: `{"brightness":{value}}`, ConfirmKey: "brightness"},
+				{Name: "color_temp", Label: "Colour temperature", Kind: "cct", Min: 2200, Max: 6500, TopicTemplate: "zigbee2mqtt/{deviceKey}/set", PayloadTemplate: `{"color_temp_k":{value}}`, ConfirmKey: "color_temp"},
+				// Colour has no ConfirmKey: a bulb reports colour back per-channel, which one packed
+				// float cannot be equality-confirmed against — "sent, never confirmed" is honest.
+				{Name: "color", Label: "Colour", Kind: "color", TopicTemplate: "zigbee2mqtt/{deviceKey}/set", PayloadTemplate: `{"color":{"r":{r},"g":{g},"b":{b}}}`},
+			},
+		},
+
 		// --- POLLED devices: the solar / industrial-protocol profiles (P5) --------------------
 		//
 		// Everything above PUBLISHES to the broker; these two are POLLED over Modbus TCP. They are

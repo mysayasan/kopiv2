@@ -924,15 +924,120 @@ grouping + computed-value + layout descriptor, the same "declare once, instantia
 - **CAN-bus batteries stay out** (pure-Go CAN over the wire isn't viable in the single-binary model
   — same verdict as BACnet); those need a Modbus-TCP gateway.
 
+## 8h. Home automation: richer command kinds, scenes, schedules (Phases 1-3, shipped; Phase 4 deferred)
+
+Prompted by devices that are neither a relay nor a plain setpoint — a dimmable/tuneable-white/RGB
+lamp, a motorised blind, a multi-mode thermostat — plus the two things that make a handful of such
+devices actually feel like "home automation" rather than a pile of individual switches: grouping
+commands, and firing them on a schedule instead of by hand every time. Shipped 2026-07-15.
+
+### Phase 1 — richer command kinds
+
+`ProfileCommand.Kind` gained five values beyond `"switch"`/`"setpoint"`: `"dimmer"`/`"position"`
+(a percentage, fixed `0..100`), `"cct"` (colour temperature in Kelvin, a setpoint bounded by
+`Min..Max` the same way `"setpoint"` is), `"mode"` (one of the integer values a new `Options`
+field enumerates — `[{"value":int,"label":string}]` — turning the command into a named dropdown,
+bounded server-side the way `Min`/`Max` bound a setpoint: a value not in the list is refused, and
+an empty/malformed `Options` refuses everything), and `"color"` (an RGB colour packed into one
+integer, `0xRRGGBB`, carried through the existing single-float `DeviceCommand`/twin model
+unchanged — `packRGB`/`unpackRGB` in `services/commands.go`). `renderPayload` substitutes
+`{r}`/`{g}`/`{b}` from the packed value for a `"color"` command's template, alongside the existing
+`{value}` substitution every kind gets.
+
+**A real gap closed along the way, not merely a feature added.** `validateValue`'s `switch` had no
+`default` case before this — an unrecognised `Kind` fell through and was published
+**unvalidated**. It now refuses any `Kind` it does not recognise. This was a latent hole from P4
+(nothing exercised it, because every shipped profile only ever declared `"switch"`/`"setpoint"`)
+that a new kind arriving as, say, a typo'd string would have walked straight through.
+
+The catalog gained one built-in profile to exercise the new kinds: `smart-lamp` (Zigbee2MQTT
+conventions) — `power` (switch), `brightness` (dimmer), `color_temp` (cct, `2200..6500` K),
+`color` (color, no `ConfirmKey` — a bulb that reports colour back per-channel cannot be
+equality-confirmed against one packed float, so "sent, never confirmed" is the honest status).
+
+### Phase 2 — scenes
+
+`Scene` + `SceneAction` (a named, ordered group of device commands) and `services.SceneService`:
+CRUD (replace-children on save, the same shape `ProfileService` uses for a profile's keys/
+commands) plus `Run`, which fans its actions out through `CommandService.Issue` **one call per
+action**, so every gate — actuation-enabled, admin-only, declared-commands-only, server-side
+bounds, rate limit, audit, twin confirmation, never-auto-retry — applies exactly as if a person had
+issued each command by hand. `Run` depends on a `commandIssuer` interface, not `*CommandService`
+directly, so the fan-out/partial-failure logic is unit-testable with no broker or database
+(`scenes_test.go`).
+
+**Partial failure is first-class, not an edge case papered over.** A scene never rolls back (a
+physical action cannot be undone) and never stops early on a refusal: it runs every action and
+reports each outcome (`SceneRunResult.Results`, one `ActionResult` per action, carrying the
+underlying command's own status/error verbatim). Two actions in the same scene targeting the same
+device inside the 2-second rate-limit window will see the second refused, and the report says so
+rather than hiding it. Verified live: a scene run's per-action report included exactly this
+rate-limit refusal.
+
+New API: `GET/POST/PUT/DELETE /api/scenes`, `POST /api/scenes/{id}/run` (admin-only — running a
+scene commands real devices, the same line a single command draws). Frontend gained a Scenes page
+under a new "Automation" nav group.
+
+### Phase 3 — schedules
+
+`Schedule` fires a scene or a single command at a time — the automation a telemetry rule cannot
+express, because its trigger is the clock (or the sun), not a reading. `TriggerType` is `"clock"`
+(`TimeOfDay` + an optional weekday `Days` filter) or `"sunrise"`/`"sunset"` (± `OffsetMinutes`,
+resolved from the site's latitude/longitude via a new pure NOAA sunrise/sunset calculation,
+`services/sun.go` — no network dependency, appropriate for an air-gapped appliance; accurate to
+~1 minute, verified against published almanac times for London and the Svalbard midsummer
+polar-day case where neither event occurs).
+
+`services.ScheduleService.Tick` runs once a minute (`app.go`'s new `"myiotsan.scheduler"`
+`safego.Supervise`d task, aligned to the whole-minute boundary) and fires every due schedule for
+that minute through `SceneService.Run`/`CommandService.Issue` — the identical gated path. **The
+double-fire guard is `LastFiredAt`, rounded to the unix-minute and PERSISTED before firing**: a
+tick running twice in a minute, or a restart inside the firing minute, cannot fire a schedule
+twice — the same cooldown-survives-a-restart lesson `IotRule`'s alert cooldown already applies
+(§8b), now applied to time. If persisting the guard fails, `Tick` does not fire at all — a missed
+fire is preferred over a possible double one.
+
+The firing actor for a real (non-test) fire is a synthetic `"schedule:<name>"` (id `0`), the same
+pattern used elsewhere in this app for an action with no human behind it, so the audit trail
+attributes it rather than reading "System".
+
+The site location the sun triggers need is a single `RuntimeSetting` (`"site.location"`), not a
+field on `Schedule` — it belongs to the site, not to any one schedule, and it is operator-set
+runtime data (picked on a map), so it lives in the settings store rather than `config.json`.
+`GET`/`PUT /api/settings/location`, admin-only.
+
+New API: `GET/POST/PUT/DELETE /api/schedules`, `POST /api/schedules/{id}/run` (test-fire, ignoring
+the trigger), `GET/PUT /api/settings/location` — all admin-only except reading the list. Frontend
+gained a Schedules page (schedule editor + location panel) in the same "Automation" nav group.
+
+### Verified live, end to end
+
+Booted the app, seeded `smart-lamp`, issued a `dimmer` command (reached `sent`), ran a scene whose
+per-action report included a rate-limit refusal (confirming partial failure surfaces correctly),
+set the site location, and created and test-fired a sunset schedule.
+
+### Phase 4 — explicitly deferred, not shipped
+
+**Rule-driven actuation — an `iot_rule` triggering a scene or command automatically, with no human
+in the loop — is out of scope for this change and deferred to a later, security-reviewed PR.** A
+rule that can only raise an alert is a fundamentally lower-risk object than one that can WRITE to a
+device: every safety property this app has built for a *human-initiated* command (read-only-by-
+default, admin-only, server-side bounds, rate limit, never-auto-retry) needs deliberate
+re-examination before something can trigger it with nobody watching — a rule silently misfiring a
+scene at 3am is a different failure class than a rule silently failing to alert. This is also
+exactly the "scope creep into a Home Assistant clone" risk §9 already names: scenes and schedules
+are a deliberate, bounded step toward useful home automation, not an invitation to build a general
+automation-rule engine without first deciding, out loud, who is allowed to author a rule that acts.
+
 ## 9. Known risks
 
 | Risk | Mitigation |
 |---|---|
 | **SQLite write throughput** under telemetry load. | **RESOLVED (2026-07-14), measured, see §8b.** Deadband + batching + rollup (§3.2) shipped in P1. 20 devices / ~30,000 samples in under a second → 540 rows written, 98.2% suppressed, 0 dropped. `GET /api/devices/stats` keeps it observable going forward. Do not add a TSDB. |
 | **`frontend/shared/CameraHero.js`** is camera-specific but lives in the *shared* module. | Still open — P1/P2 shipped as a backend MVP with no device-page hero component yet built against it; decide before the device detail UI lands. |
-| **Scope creep** into a Home Assistant clone. | Hold the line stated in §1. |
+| **Scope creep** into a Home Assistant clone. | Hold the line stated in §1. **Revisited 2026-07-15 (§8h):** scenes and schedules shipped as a deliberate, bounded step (grouping/scheduling *human-initiated* commands) — Phase 4 (an `iot_rule` triggering actuation with no human in the loop, which is the step that would actually start looking like a general automation-rule engine) is explicitly deferred to a later, security-reviewed PR. |
 | **BACnet** demand from building-automation customers. | Out of scope; Go libs are not production-grade. External gateway if forced. |
-| **Actuation safety.** | **RESOLVED (2026-07-14), see §8d.** Read-only default, admin-only RBAC, declared-commands-only, server-side bounds, 2s rate limit, full audit (incl. refusals) — all shipped, plus never-auto-retry and non-re-applied expiring desired state, which the original §3.4 did not name. |
+| **Actuation safety.** | **RESOLVED (2026-07-14), see §8d.** Read-only default, admin-only RBAC, declared-commands-only, server-side bounds, 2s rate limit, full audit (incl. refusals) — all shipped, plus never-auto-retry and non-re-applied expiring desired state, which the original §3.4 did not name. **Extended 2026-07-15 (§8h):** `validateValue` gained a `default` case that refuses an unrecognised `Kind` — closes a latent hole where an unknown/misconfigured kind would have been published unvalidated; the five new home-automation kinds all route through the same server-side bounds discipline. |
 | **No scaffolding tooling exists** — every app so far was hand-copied. | Worth writing a small generator during P0, since this is the second fork. |
 | `SYSTEM_APP_CODES` and `sso.audience` are hardcoded lists. | Covered explicitly in the P0 checklist (item 7). |
 
