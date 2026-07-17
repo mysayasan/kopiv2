@@ -332,6 +332,20 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	deviceService.SetEnrollment(enrollment)
 	ingest.SetEnrollment(enrollment)
 
+	// Active network discovery — the counterpart to the announce/enroll window. A scan is an admin
+	// act that sweeps the LAN and files candidates; it is audited to the feed like opening the window.
+	scanService := services.NewScanService(deps.Db, profileService,
+		func(ctx context.Context, msg string, data map[string]any) {
+			notificationService.Publish(ctx, notification.Notification{
+				Category: notification.CategorySystem,
+				Severity: notification.Info,
+				Title:    "Network scan",
+				Body:     msg,
+				Source:   "discovery-scan",
+			})
+		},
+		func(f string, a ...any) { deps.Logger.Infof("myiotsan.scan", f, a...) })
+
 	// The embedded MQTT broker. Embedded, not depended upon: requiring the operator to run
 	// Mosquitto alongside would break the single-binary, air-gapped promise that is the product.
 	// Its authenticator is the DEVICE TABLE, so a device that is not in the inventory cannot
@@ -482,7 +496,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	})
 
 	apis.NewDevicesApi(protected, deviceService, telemetry, profileService, ingest)
-	apis.NewDiscoveryApi(protected, enrollment, deviceService)
+	apis.NewDiscoveryApi(protected, enrollment, deviceService, scanService)
 	apis.NewCommandsApi(protected, commandService, deviceService)
 	apis.NewProfilesApi(protected, profileService, ingest)
 	apis.NewRulesApi(protected, ruleService)

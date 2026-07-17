@@ -138,6 +138,14 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
       `ingest.SetEnrollment(enrollment)` wire the window into the authenticator and the hot path —
       see `services/enrollment.go.md` for why an unknown device presenting a device table that does
       not contain it is otherwise refused outright, and what the window's quarantine buys.
+  9c. **Wires active network discovery scanning**, right after the enrollment wiring:
+      `services.NewScanService(deps.Db, profileService, audit, logf)`, where `audit` publishes a
+      `notification.CategorySystem`/Info event through `notificationService.Publish` — a scan is
+      audited the same way opening the enrollment window is. `scanService` is then passed into
+      `apis.NewDiscoveryApi` alongside `enrollment`/`deviceService` (step 11) so `POST
+      /api/discovery/scan` can run it. See `services/scanner.go.md` and `infra/iot/discover`'s
+      module docs; this is the counterpart to the announce path that feeds the identical
+      quarantined `DiscoveredDevice` candidate list.
   10. Starts `telemetry.RunRollup(bgCtx, ...)` (rollup before purge — see `telemetry.go.md`) and
       a `safego.Supervise`d offline sweep (`ruleService.SweepOffline`) on a 1-minute
       `offlineSweepInterval` — the only way an "absence of readings" rule can ever fire, since a
@@ -187,7 +195,8 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
       other actuation path in this app uses, so a flow can command nothing a person could not; an
       `mqtt_out` output publishes data, not a command, so it does not go through that gate. See
       `services/flow_runtime.go.md` and `docs/MYIOTSAN_PLAN.md` §8i.
-  11. Registers `apis.NewDevicesApi`, `apis.NewDiscoveryApi` (P3), `apis.NewCommandsApi` (P4),
+  11. Registers `apis.NewDevicesApi`, `apis.NewDiscoveryApi` (P3, now also taking `scanService`
+      for the active-scan route — step 9c), `apis.NewCommandsApi` (P4),
       `apis.NewProfilesApi`, `apis.NewRulesApi`, `apis.NewScenesApi`, `apis.NewSchedulesApi`
       (home automation), `apis.NewFlowsApi` (Flow Engine, admin-only), `apis.NewKbApi` (the in-app
       knowledge base — reference content compiled into the binary via `go:embed`, granted to
@@ -269,12 +278,30 @@ adopted myiotsan node) were booted together for a live end-to-end check. See
   become `DiscoveredDevice` candidates and nothing else, no telemetry, no rule evaluation. The
   admin reviews candidates (each carrying a profile suggestion scored off its observed payload
   keys) and adopts or rejects them. mDNS/SSDP/portscan and a Modbus TCP scan, also listed under
-  P3 in `docs/MYIOTSAN_PLAN.md`, were deliberately NOT built: MQTT sensors announce over MQTT,
-  not mDNS, so a network scan would find gateways rather than sensors; the Modbus scan belongs
-  with the Modbus poller in P5, where it can be tested against an actual device. The frontend
-  gained a Discovery page and a first-run onboarding wizard
+  P3 in `docs/MYIOTSAN_PLAN.md`, were deliberately NOT built at the time: MQTT sensors announce
+  over MQTT, not mDNS, so a network scan would find gateways rather than sensors; the Modbus scan
+  belonged with the Modbus poller in P5, where it could be tested against an actual device. The
+  frontend gained a Discovery page and a first-run onboarding wizard
   (`views/react-webpack/src/views/components/discovery.js`, `.../onboarding.js`) that lead with
   enrollment as the primary onboarding path.
+- **Active network discovery scanning shipped 2026-07-17** (see step 9c above): once the
+  Modbus/SunSpec driver existed to test against, all four deferred scanners were built —
+  `infra/iot/discover` (`ScanModbus`/`ScanMDNS`/`ScanSSDP`/`ScanEtherNetIP`/`ScanBACnet`, every
+  scanner LAN-local/read-only/bounded/cancellable) plus `services.ScanService`
+  (`POST /api/discovery/scan`, admin-only) feed the SAME quarantined `DiscoveredDevice` candidate
+  table the announce path already wrote — a scan never adds a device, only proposes candidates
+  to adopt. The Modbus scanner reuses `infra/iot/sunspec.Discover` to auto-identify a device
+  (suggesting `generic-sunspec-solar`) or fall back to an "unidentified Modbus" candidate; a
+  Modbus-scan candidate's endpoint/unit/transport now carry through adoption
+  (`DiscoveredDevice.Endpoint`/`Unit`/`Transport`, `Enrollment.Adopt`) so it polls immediately.
+  Verified live end to end for Modbus/mDNS/SSDP (scan → SunSpec-identify → candidate → adopt →
+  device; mDNS/SSDP executed against a real LAN without error); EtherNet/IP and BACnet are
+  **parser-verified only** — their `ListIdentity`/`Who-Is` reply decoders are tested against
+  synthetic protocol-mock byte frames, since no real PLC was available in CI. See
+  `docs/DISCOVERY_SCANNING.md` for the full phase table, safety posture, and what remains
+  deliberately deferred (OPC-UA discovery, Profinet DCP, a Matter controller, native TV/AV
+  control) and why. Not to be confused with `infra/discovery` (mymatasan's older camera
+  ssdp/mdns/portscan discovery) — a separate package for a separate device family.
 - **P4 (actuation & device twin, shipped 2026-07-14):** a device can be commanded — switch a
   relay, set a setpoint — but only for the one shipped profile that declares any command
   (`smart-relay`; every other profile in the catalog remains read-only). Every gate `docs/MYIOTSAN_PLAN.md`

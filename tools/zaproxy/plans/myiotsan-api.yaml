@@ -35,6 +35,7 @@ env:
         - ".*/api/pairing/.*"                  # adopt / release / unpair / fleet-key
         # --- onboarding: opening an enrollment window admits unknown devices ----------
         - ".*/api/discovery/window.*"
+        - ".*/api/discovery/scan.*"            # a scan sweeps the LAN — fuzzing it is repeated live network traffic
         - ".*/api/discovery/candidates/.*"     # adopt / reject a candidate
         # --- config the scan itself depends on ---------------------------------------
         - ".*/api/settings/users/.*"           # delete / password-reset a user — could disable admin mid-scan

@@ -241,7 +241,7 @@ No new fleet port block is required: `myiotsan` dials the same `myseliasan` endp
 | **P0** | **Scaffolding.** `apps/myiotsan/`, `cmd/myiotsan/`, root `main.go` app map, `version.json` entry, config + dev certs, webpack FE off `@shared`, SPA shell that boots. Purely mechanical (§8). | ~3d |
 | **P1** | **Ingest spine.** `iot_device` CRUD, `device_profile` catalog, embedded MQTT broker, HTTP ingest, telemetry store + deadband + rollup + retention, live device page with `@shared/charts` TimeSeriesChart. | ~1.5wk |
 | **P2** | **Rules & alerts.** Port `detection_rule` → `iot_rule`, evaluators, `alert_event`, wire existing notification destinations. **P0–P2 is the shippable MVP.** | ~1.5wk |
-| **P3** | **Discovery & onboarding — SHIPPED 2026-07-14, see §8c.** Time-boxed enrollment window + quarantined candidate capture + admin adoption, profile-match suggestion, profile import/export, first-run wizard. mDNS/SSDP/portscan and a Modbus TCP scan deliberately deferred to P5 (see §8c). | ~1wk |
+| **P3** | **Discovery & onboarding — SHIPPED 2026-07-14, see §8c.** Time-boxed enrollment window + quarantined candidate capture + admin adoption, profile-match suggestion, profile import/export, first-run wizard. mDNS/SSDP/portscan and a Modbus TCP scan were deliberately deferred to P5 at the time (see §8c) — **active network discovery scanning (Modbus/mDNS/SSDP/EtherNet-IP/BACnet) then shipped 2026-07-17, see `docs/DISCOVERY_SCANNING.md`.** | ~1wk |
 | **P4** | **Actuation & twin — SHIPPED 2026-07-14, see §8d.** Commands, desired/reported, RBAC + audit + confirm (§3.4). | ~1wk |
 | **P5** | **Industrial protocols.** Modbus poller, OPC-UA. | ~1.5wk |
 | **P6** | **Fleet — SHIPPED 2026-07-14, see §8e.** Adoption by myseliasan; `Kind` column on `managed_node`; cross-domain correlation rules. A dedicated `nodeiot/` embed mirroring `nodecam/` (full remote device-management pages inside myseliasan, the way camera pages are embedded today) was **not** built in this pass — deliberately deferred to P7; see §8e "What was deliberately NOT built" and §8f. | ~2wk |
@@ -431,16 +431,22 @@ corruption wearing the costume of a successful import); an unknown format versio
 rather than guessed at. `GET /api/profiles/{id}/export`, `POST /api/profiles/import`
 (`apps/myiotsan/services/profile_transfer.go.md`).
 
-### What was deliberately NOT built
+### What was deliberately NOT built (at the time — since built, see below)
 
 The original P3 line in §7 also listed mDNS/SSDP/portscan and a Modbus TCP scan. Both were
-**deliberately deferred, not forgotten:**
+**deliberately deferred, not forgotten, at the time:**
 
 - **mDNS/SSDP/network portscan.** MQTT sensors announce over MQTT, not mDNS — a network scan
   would find gateways and hubs rather than the sensors themselves, which is a half-useful
   feature at best. The enrollment window covers the real onboarding path for MQTT devices.
 - **Modbus TCP scan.** Belongs with the Modbus poller in P5, where it can be tested against an
   actual device rather than built speculatively against a protocol this app does not speak yet.
+
+**Both then shipped as active network discovery scanning (2026-07-17)**, once the Modbus/SunSpec
+driver existed to test the Modbus scan against and the app had a real onboarding surface for
+non-MQTT devices to land in. See `docs/DISCOVERY_SCANNING.md` for the full design (safety
+posture, per-scanner status, and what remains deferred and why — OPC-UA discovery, Profinet DCP,
+a Matter controller, native TV/AV control) and the "New surface" list below for the file layout.
 
 ### New surface
 
@@ -457,8 +463,25 @@ The original P3 line in §7 also listed mDNS/SSDP/portscan and a Modbus TCP scan
 - Frontend: a Discovery page and a first-run onboarding wizard
   (`views/react-webpack/src/views/components/discovery.js`, `.../onboarding.js`).
 
-See `docs/modules/apps/myiotsan/**/*.go.md` and `docs/modules/infra/iot/mqtt/broker.go.md` for
-per-file detail.
+**Added 2026-07-17 (active network discovery scanning — see `docs/DISCOVERY_SCANNING.md`):**
+
+- `infra/iot/discover/` — the scanner package: `discover.go` (`Found`, `Hosts` CIDR expansion),
+  `modbus.go` (`ScanModbus`), `ssdp.go`, `mdns.go`, `ethernetip.go`, `bacnet.go`, +
+  `discover_test.go`. Not to be confused with `infra/discovery` (mymatasan's camera
+  ssdp/mdns/portscan discovery) — a separate package for a separate device family.
+- `apps/myiotsan/services/scanner.go` — `ScanService`, the orchestrator that runs the requested
+  scanners, records `Found`s as `DiscoveredDevice` candidates (deduped by a synthetic device key,
+  cap-guarded, generic-sunspec-solar suggested for identified SunSpec hits), and audits the scan.
+- `DiscoveredDevice` gained `Source`/`Address`/`Endpoint`/`Unit`/`Transport`; `Enrollment.Adopt`
+  carries the last three into the created device on adoption.
+- `apis/discovery.go`: `POST /api/discovery/scan`, admin-only, same subrouter as the rest of
+  `/discovery`.
+- Frontend: a Scan panel on the Discovery page (per-protocol toggles + CIDR/transport/units for
+  the Modbus sweep) and a scan-aware candidate card (shows how a candidate was found + its
+  address instead of a topic + observed keys).
+
+See `docs/modules/apps/myiotsan/**/*.go.md`, `docs/modules/infra/iot/discover/*.go.md`, and
+`docs/modules/infra/iot/mqtt/broker.go.md` for per-file detail.
 
 ---
 

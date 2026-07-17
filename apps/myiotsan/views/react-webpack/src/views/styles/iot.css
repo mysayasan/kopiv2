@@ -932,3 +932,17 @@
   .kb-layout { grid-template-columns: 1fr; }
   .kb-index { position: static; }
 }
+
+/* --- Network scan (Discovery) ---------------------------------------------- */
+.iot-scan { display: flex; flex-direction: column; gap: 14px; }
+.iot-scan-types {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 6px 18px;
+}
+.iot-scan-warn {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; border-radius: 8px;
+  background: var(--warn-bg); color: var(--warn-text);
+  border: 1px solid var(--warn-border); font-size: 13px;
+}
