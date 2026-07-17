@@ -6,7 +6,7 @@
 
 - HTTP API with cookie-backed JWT auth and RBAC enforcement.
 - Standalone ONVIF device discovery and RTSP stream probing for camera setup.
-- Reusable visual detection primitives for camera rules, rule-level schedules, motion detection, external object detection, persistent object workers, line crossing, multi-line crossing, crowd detection, license-plate recognition (LPR), hybrid dispatch, and alert events.
+- Reusable visual detection primitives for camera rules, rule-level schedules, motion detection, external object detection, persistent object workers, line crossing, multi-line crossing, crowd detection, license-plate recognition (LPR), face recognition (enroll/recognize against a global gallery), hybrid dispatch, and alert events.
 - SQL persistence using a generic repository layer.
 - Static SPA serving from app assets.
 - Public runtime version reporting with separate core and app SemVer values.

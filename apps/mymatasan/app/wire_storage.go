@@ -25,6 +25,8 @@ type repos struct {
 	TrainingImage     dbsql.IGenericRepo[appentities.TrainingImage]
 	TrainingModel     dbsql.IGenericRepo[appentities.TrainingModel]
 	TeachSkill        dbsql.IGenericRepo[appentities.TeachSkill]
+	FacePerson        dbsql.IGenericRepo[appentities.FacePerson]
+	FaceEmbedding     dbsql.IGenericRepo[appentities.FaceEmbedding]
 	RuntimeSetting    dbsql.IGenericRepo[appentities.RuntimeSetting]
 	LocalUser         dbsql.IGenericRepo[appentities.LocalUser]
 
@@ -48,6 +50,8 @@ func newRepos(db dbsql.IDbCrud) repos {
 		TrainingImage:     dbsql.NewGenericRepo[appentities.TrainingImage](db),
 		TrainingModel:     dbsql.NewGenericRepo[appentities.TrainingModel](db),
 		TeachSkill:        dbsql.NewGenericRepo[appentities.TeachSkill](db),
+		FacePerson:        dbsql.NewGenericRepo[appentities.FacePerson](db),
+		FaceEmbedding:     dbsql.NewGenericRepo[appentities.FaceEmbedding](db),
 		RuntimeSetting:    dbsql.NewGenericRepo[appentities.RuntimeSetting](db),
 		LocalUser:         dbsql.NewGenericRepo[appentities.LocalUser](db),
 

@@ -47,6 +47,13 @@ type detectorModelPaths struct {
 	// AnomalyManifestFile lists activated Teach anomaly skills; the worker scores the
 	// listed cameras against their normal-memory banks on every frame.
 	AnomalyManifestFile string
+	// FacesGalleryFile is the enrolled face gallery the worker matches live faces against.
+	FacesGalleryFile string
+	// FaceYunetFile / FaceSfaceFile are the YuNet detector + SFace embedder .onnx models.
+	FaceYunetFile string
+	FaceSfaceFile string
+	// FacesWorkerScript is the one-shot enrollment worker (faces_worker.py), next to the detector.
+	FacesWorkerScript string
 	// DetectorArgs are the worker-script arguments, resolved to absolute paths against
 	// HomeDir (see resolveDetectorScriptArgs).
 	DetectorArgs []string
@@ -64,13 +71,24 @@ func resolveDetectorModelPaths(deps apphost.Dependencies, appCfg *mmconfig.Confi
 		p, _ := filepath.Abs(filepath.Join(trainingDir, name))
 		return p
 	}
+	args := resolveDetectorScriptArgs(deps.HomeDir, appCfg.Vision.Detector.Args)
+	// The face .onnx models live next to the worker script (ai/ in dev, bin/ai/ staged), like the
+	// stock YOLO weights, so they resolve to wherever the detector script resolved to.
+	faceDir := trainingDir
+	if len(args) > 0 {
+		faceDir = filepath.Dir(args[0])
+	}
 	return detectorModelPaths{
 		TrainingDir:         trainingDir,
 		ActiveModelFile:     abs("active_model.txt"),
 		StockModelFile:      abs("stock_model.txt"),
 		LPRModelFile:        abs("lpr_model.txt"),
 		AnomalyManifestFile: abs("anomaly_models.json"),
-		DetectorArgs:        resolveDetectorScriptArgs(deps.HomeDir, appCfg.Vision.Detector.Args),
+		FacesGalleryFile:    abs("faces_gallery.json"),
+		FaceYunetFile:       filepath.Join(faceDir, "face_detection_yunet_2023mar.onnx"),
+		FaceSfaceFile:       filepath.Join(faceDir, "face_recognition_sface_2021dec.onnx"),
+		FacesWorkerScript:   filepath.Join(faceDir, "faces_worker.py"),
+		DetectorArgs:        args,
 	}
 }
 
@@ -85,6 +103,9 @@ func (p detectorModelPaths) PublishToProcessEnv() {
 	_ = os.Setenv("MYMATASAN_STOCK_MODEL_FILE", p.StockModelFile)
 	_ = os.Setenv("MYMATASAN_LPR_MODEL_FILE", p.LPRModelFile)
 	_ = os.Setenv("MYMATASAN_ANOMALY_FILE", p.AnomalyManifestFile)
+	_ = os.Setenv("MYMATASAN_FACES_FILE", p.FacesGalleryFile)
+	_ = os.Setenv("MYMATASAN_FACE_YUNET", p.FaceYunetFile)
+	_ = os.Setenv("MYMATASAN_FACE_SFACE", p.FaceSfaceFile)
 }
 
 // Env renders the model pointers as KEY=VALUE pairs, for a spawn site that hands the
@@ -95,6 +116,9 @@ func (p detectorModelPaths) Env() []string {
 		fmt.Sprintf("MYMATASAN_STOCK_MODEL_FILE=%s", p.StockModelFile),
 		fmt.Sprintf("MYMATASAN_LPR_MODEL_FILE=%s", p.LPRModelFile),
 		fmt.Sprintf("MYMATASAN_ANOMALY_FILE=%s", p.AnomalyManifestFile),
+		fmt.Sprintf("MYMATASAN_FACES_FILE=%s", p.FacesGalleryFile),
+		fmt.Sprintf("MYMATASAN_FACE_YUNET=%s", p.FaceYunetFile),
+		fmt.Sprintf("MYMATASAN_FACE_SFACE=%s", p.FaceSfaceFile),
 	}
 }
 

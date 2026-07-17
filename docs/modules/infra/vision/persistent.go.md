@@ -15,7 +15,7 @@ Adapts a long-lived object detector worker process into the reusable `ObjectDete
 
 ## Notes
 
-- Request shape: `{"cameraId":1,"format":"jpeg","image":"<base64>","lpr":true}`. The `lpr` boolean is forwarded from `Frame.WantLPR` and is omitted when false (zero-value omitempty). The worker runs the plate-localization + OCR stage only when `lpr` is `true`.
+- Request shape: `{"cameraId":1,"format":"jpeg","image":"<base64>","lpr":true,"face":true}`. The `lpr`/`face` booleans are forwarded from `Frame.WantLPR`/`Frame.WantFace` and are omitted when false (zero-value omitempty). The worker runs the plate-localization + OCR stage only when `lpr` is `true`, and the face detect+embed+match stage only when `face` is `true`.
 - Response shape is the same object-candidate contract as `external.go`: either an array or an object with `detections` or `objects`.
 - Worker errors can be returned as `{"error":"message"}` and become detector errors.
 - MyMataSan uses this for `vision.detector.mode=persistent`, usually with `apps/mymatasan/ai/yolo_worker.py`.

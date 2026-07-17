@@ -583,6 +583,7 @@ export function SideNav({ activeTab, isAdmin, busy, cameras, managingCameraId, t
       items: isAdmin
         ? [
             navItem('teach', t('tab.teach'), 'wand', 'amber'),
+            navItem('faces', t('tab.faces'), 'eye', 'violet'),
             navItem('objects', t('nav.objects'), 'eye', 'teal'),
           ]
         : [],

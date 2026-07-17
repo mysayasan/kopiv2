@@ -12,6 +12,7 @@ import { DashboardTab } from './components/dashboard';
 import { SetupWizard } from './components/setup';
 import { ViewsTab, CamerasTab } from './components/cameras';
 import { TeachTab } from './components/teach';
+import { FacesTab } from './components/faces';
 import { ObjectsPage } from './components/objects';
 import { SettingsTab } from './components/settings';
 import { NotificationsTab } from './components/notifications';
@@ -2855,6 +2856,10 @@ function AppInner({ lang, onLangChange }) {
           labelCatalog={visionLabels}
           onOpenModels={() => { setActiveTab('settings'); openSettingsSection('ai'); }}
         />
+      ) : null}
+
+      {activeTab === 'faces' ? (
+        <FacesTab authHeader={authHeader} cameras={saved} onMessage={setMessage} />
       ) : null}
 
       {activeTab === 'objects' ? (

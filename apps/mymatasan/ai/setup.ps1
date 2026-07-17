@@ -22,7 +22,8 @@
 param(
   [string]$Python = "python",
   [string]$Cuda = "",  # empty => auto-detect from the GPU
-  [switch]$Lpr         # also install the optional license-plate (OCR) dependencies
+  [switch]$Lpr,        # also install the optional license-plate (OCR) dependencies
+  [switch]$Faces       # also install face recognition (opencv + the YuNet/SFace models)
 )
 
 $ErrorActionPreference = "Stop"
@@ -173,6 +174,27 @@ if ($Lpr) {
     & $targetPython -m pip install --upgrade -r $lprReq
   } else {
     & $targetPython -m pip install --upgrade easyocr opencv-python numpy
+  }
+}
+
+# Optional: face recognition. Light — YuNet (detect) + SFace (embed) run on opencv-python via
+# cv2.FaceDetectorYN/FaceRecognizerSF, so this adds no heavy dependency (no insightface/onnxruntime).
+# It also downloads the two permissively-licensed model files (YuNet MIT, SFace Apache-2.0).
+if ($Faces) {
+  Write-Host "Installing face-recognition dependencies + models..." -ForegroundColor Green
+  $faceReq = Join-Path $PSScriptRoot "requirements-face.txt"
+  if (Test-Path $faceReq) { & $targetPython -m pip install --upgrade -r $faceReq }
+  else { & $targetPython -m pip install --upgrade opencv-python numpy }
+  $models = @(
+    @{ Url = "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"; File = "face_detection_yunet_2023mar.onnx" },
+    @{ Url = "https://github.com/opencv/opencv_zoo/raw/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx"; File = "face_recognition_sface_2021dec.onnx" }
+  )
+  foreach ($m in $models) {
+    $dest = Join-Path $PSScriptRoot $m.File
+    if (-not (Test-Path $dest)) {
+      Write-Host "Downloading $($m.File)..." -ForegroundColor Cyan
+      try { Invoke-WebRequest -Uri $m.Url -OutFile $dest -UseBasicParsing } catch { Write-Host "WARNING: could not download $($m.File): $_" -ForegroundColor Red }
+    }
   }
 }
 

@@ -18,7 +18,9 @@ thirty free variables pulled out of an 800-line scope.
   - Resolved values: `atrestKeyStore`, `atrestCipher`, `detectorPaths` (`detectorModelPaths`,
     see `wire_vision.go.md`), `objectBackend`, `httpsPort`.
   - Domain services: `camera`, `vision`, `detectionClass`, `training`, `teach`,
-    `recording`, `observation`, `metadata`, `localUser`, `setupState`, `pairing`.
+    `faceGallery` (`*services.FaceGalleryService` — the global enrolled-face gallery, see
+    `services/face_gallery.go.md`), `recording`, `observation`, `metadata`, `localUser`,
+    `setupState`, `pairing`.
   - Settings services: `settings`, `notificationSettings`, `healthSettings`,
     `machineHealthSettings`, `anomalySettings`.
   - Managers and monitors: `notification`, `notificationRollup`, `recorder`,

@@ -108,10 +108,36 @@ def _anomaly_manifest_path() -> str:
     return str(path) if path.is_file() else ""
 
 
+def _face_gallery_path() -> str:
+    """The enrolled face gallery (written by FaceGalleryService): JSON
+    {model, persons:[{id,name,embeddings:[[float]]}]}. Cameras with a face rule
+    match live faces against it. MYMATASAN_FACES_FILE env or faces_gallery.json
+    next to this script. Returns "" when absent (feature off)."""
+    pointer = os.environ.get("MYMATASAN_FACES_FILE", "").strip()
+    path = Path(pointer) if pointer else (SCRIPT_DIR / "faces_gallery.json")
+    return str(path) if path.is_file() else ""
+
+
+def _face_model_files() -> tuple[str, str]:
+    """The YuNet detector + SFace recognizer .onnx paths (env, else next to this
+    script). Returns ("","") when either is missing (feature off)."""
+    yunet = os.environ.get("MYMATASAN_FACE_YUNET", "").strip() or str(SCRIPT_DIR / "face_detection_yunet_2023mar.onnx")
+    sface = os.environ.get("MYMATASAN_FACE_SFACE", "").strip() or str(SCRIPT_DIR / "face_recognition_sface_2021dec.onnx")
+    if Path(yunet).is_file() and Path(sface).is_file():
+        return yunet, sface
+    return "", ""
+
+
 STOCK_MODEL_PATH = _stock_model_path()
 CUSTOM_MODEL_PATH = _custom_model_path()
 LPR_MODEL_PATH = _lpr_model_path()
 ANOMALY_MANIFEST_PATH = _anomaly_manifest_path()
+FACE_GALLERY_PATH = _face_gallery_path()
+FACE_YUNET_PATH, FACE_SFACE_PATH = _face_model_files()
+# The minimum cosine similarity to treat a live face as a recognized enrolled person. SFace's own
+# "same" floor is ~0.36; we default higher for an NVR because naming the WRONG person is worse than
+# naming nobody. The Go rule applies a second, per-rule floor on top of this.
+FACE_MATCH_MIN_COS = float(os.environ.get("MYMATASAN_FACE_MIN_COS", "0.40"))
 # OCR backend confidence is read per-character/line; this floors what we emit so a
 # blurry partial read is reported as "" (no plate) rather than a wrong string.
 LPR_OCR_MIN_CONF = float(os.environ.get("MYMATASAN_LPR_OCR_MIN_CONF", "0.3"))
@@ -396,6 +422,111 @@ def _anomaly_detect(camera_id: int, tmp_path: str) -> list[dict[str, Any]]:
     return detections
 
 
+# --- Face recognition stage (YuNet detect + SFace embed + gallery cosine match) ---------------
+
+_face_model_cache: Any = None
+_face_gallery_cache: dict[str, Any] = {"mtime": 0.0, "persons": []}
+
+
+def _get_face_model():
+    """Lazily build the shared YuNet+SFace model (face_model.FaceModel); cache it (or a None marker
+    on failure) so a missing opencv/model does not crash every frame."""
+    global _face_model_cache
+    if _face_model_cache is not None:
+        return _face_model_cache if _face_model_cache is not False else None
+    if not FACE_YUNET_PATH or not FACE_SFACE_PATH:
+        _face_model_cache = False
+        return None
+    try:
+        from face_model import FaceModel
+
+        _face_model_cache = FaceModel(FACE_YUNET_PATH, FACE_SFACE_PATH)
+    except Exception as exc:  # noqa: BLE001
+        print(f"faces: model load failed: {exc}", file=sys.stderr, flush=True)
+        _face_model_cache = False
+        return None
+    return _face_model_cache
+
+
+def _get_face_gallery():
+    """Load (and hot-reload on file change) the enrolled gallery as a list of {id, name, mat}, where
+    mat is a unit-normalized (N,128) matrix so one dot product per person IS a cosine similarity."""
+    global _face_gallery_cache
+    if not FACE_GALLERY_PATH:
+        return []
+    try:
+        mtime = Path(FACE_GALLERY_PATH).stat().st_mtime
+    except OSError:
+        return []
+    if mtime == _face_gallery_cache["mtime"]:
+        return _face_gallery_cache["persons"]
+    try:
+        import numpy as np
+
+        with open(FACE_GALLERY_PATH, "r", encoding="utf-8") as f:
+            blob = json.load(f)
+        persons = []
+        for p in blob.get("persons", []):
+            embs = p.get("embeddings") or []
+            if not embs:
+                continue
+            mat = np.asarray(embs, dtype=np.float32)
+            norms = np.linalg.norm(mat, axis=1, keepdims=True)
+            norms[norms == 0] = 1.0
+            persons.append({"id": int(p.get("id") or 0), "name": str(p.get("name") or ""), "mat": mat / norms})
+        _face_gallery_cache = {"mtime": mtime, "persons": persons}
+    except Exception as exc:  # noqa: BLE001
+        print(f"faces: gallery load failed: {exc}", file=sys.stderr, flush=True)
+    return _face_gallery_cache["persons"]
+
+
+def _faces_detect(tmp_path: str) -> list[dict[str, Any]]:
+    """Detect every face in the frame, embed it, and match against the enrolled gallery. Emits a
+    'face' candidate for EACH face — recognized (personName set) or not (unknown) — so a rule can
+    fire on known people, a chosen set, or strangers. Matching (in Go) applies the rule's policy."""
+    model = _get_face_model()
+    if model is None:
+        return []
+    gallery = _get_face_gallery()
+    detections: list[dict[str, Any]] = []
+    try:
+        import cv2
+        import numpy as np
+
+        img = cv2.imread(tmp_path)
+        if img is None:
+            return []
+        for f in model.detect_embed(img):
+            vec = np.asarray(f["vector"], dtype=np.float32)
+            n = np.linalg.norm(vec)
+            if n == 0:
+                continue
+            vec = vec / n
+            best_name, best_id, best_cos = "", 0, 0.0
+            for p in gallery:
+                sims = p["mat"] @ vec
+                c = float(sims.max()) if sims.size else 0.0
+                if c > best_cos:
+                    best_cos, best_name, best_id = c, p["name"], p["id"]
+            recognized = best_cos >= FACE_MATCH_MIN_COS
+            x, y, w, h = f["box"]
+            detections.append({
+                "label": "face",
+                "confidence": float(f["quality"]),
+                "box": {"x": float(x), "y": float(y), "w": float(w), "h": float(h)},
+                "metadata": {
+                    "model": "face",
+                    "personId": best_id if recognized else 0,
+                    "personName": best_name if recognized else "",
+                    "confidence": round(best_cos, 4),
+                },
+            })
+    except Exception as exc:  # noqa: BLE001
+        print(f"faces: scoring failed: {exc}", file=sys.stderr, flush=True)
+        return []
+    return detections
+
+
 # --- License-plate (LPR) stage -------------------------------------------------
 #
 # Everything below is lazy and guarded: if the plate model or OCR backend is
@@ -578,6 +709,7 @@ def _detect(stock_model: Any, custom_model: Any, plate_model: Any, request: dict
     image_bytes = base64.b64decode(image_b64)
     kwargs = _build_kwargs(request)
     want_lpr = bool(request.get("lpr")) and plate_model is not None
+    want_face = bool(request.get("face")) and bool(FACE_GALLERY_PATH) and bool(FACE_YUNET_PATH)
     tmp_path = ""
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
@@ -590,6 +722,9 @@ def _detect(stock_model: Any, custom_model: Any, plate_model: Any, request: dict
         # compute, not another decode — see the per-camera gating note.
         lpr_dets = _lpr_detect(plate_model, tmp_path, kwargs, stock_dets) if want_lpr else []
         anomaly_dets = _anomaly_detect(camera_id, tmp_path)
+        # The face stage reuses the SAME captured frame (no second grab) — enabling it adds only the
+        # detect+embed compute, and only on cameras whose rule set requested it (want_face gate).
+        face_dets = _faces_detect(tmp_path) if want_face else []
     finally:
         if tmp_path:
             Path(tmp_path).unlink(missing_ok=True)
@@ -597,6 +732,7 @@ def _detect(stock_model: Any, custom_model: Any, plate_model: Any, request: dict
     detections = _merge(stock_dets, custom_dets) if custom_dets else list(stock_dets)
     detections += lpr_dets
     detections += anomaly_dets
+    detections += face_dets
 
     if DEBUG:
         if detections:

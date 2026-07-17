@@ -46,6 +46,7 @@ type wiring struct {
 	detectionClass services.IDetectionClassService
 	training       services.ITrainingService
 	teach          services.ITeachService
+	faceGallery    *services.FaceGalleryService
 	recording      services.IRecordingService
 	observation    *services.ObservationService
 	metadata       *services.MetadataRecorder
@@ -116,6 +117,7 @@ func (w *wiring) validate() error {
 	check("detectionClass", w.detectionClass != nil)
 	check("training", w.training != nil)
 	check("teach", w.teach != nil)
+	check("faceGallery", w.faceGallery != nil)
 	check("recording", w.recording != nil)
 	check("observation", w.observation != nil)
 	check("metadata", w.metadata != nil)
