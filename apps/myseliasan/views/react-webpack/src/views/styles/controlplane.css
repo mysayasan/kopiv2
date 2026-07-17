@@ -123,3 +123,23 @@
    cascade, re-applying the 18px. Hence the doubled class: it outranks the scoped rule on
    specificity instead of relying on which stylesheet happens to be appended last. */
 .nodeiot-embed.nodeiot-manage .workspace { padding-top: 0; }
+
+/* An error variant of the settings hint, used when a fleet load FAILS rather than returning an
+   empty fleet — the two must look different, or an operator whose session lapsed thinks their
+   nodes vanished. */
+.settings-hint--error {
+  color: var(--danger, #c0392b);
+}
+.linklike {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--ui-accent, #4d759d);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}
+.linklike:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

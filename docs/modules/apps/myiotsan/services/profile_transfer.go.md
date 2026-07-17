@@ -21,12 +21,23 @@ type ProfileExport struct {
     Description   string
     TopicTemplate string
     PayloadFormat string
+    Transport     string `json:"transport,omitempty"`
+    ModbusMode    string `json:"modbusMode,omitempty"`
+    ModbusBase    int    `json:"modbusBase,omitempty"`
+    PollSeconds   int    `json:"pollSeconds,omitempty"`
     Keys          []SaveTelemetryKey
 }
 ```
 
 The portable form of a `DeviceProfile` + its `TelemetryKey`s. `profileExportVersion` (currently
-`1`) guards the format.
+`1`) guards the format. **(P5)** `Transport`/`ModbusMode`/`ModbusBase`/`PollSeconds` carry a
+POLLED (Modbus) profile and are `omitempty`'d for an MQTT one — additive fields, which is why the
+format version did NOT need to bump: an older importer that predates them simply ignores them,
+and a document missing them decodes as the zero value that means "the MQTT default". `Keys`
+(`SaveTelemetryKey`) likewise now carries each key's Modbus binding (`Register`/`RegKind`/
+`ScaleFactor`/`WordSwap`/`RegInput`) for a register-map profile — `RegInput` is the newest field; a
+document from before it existed simply decodes it `false`, which is exactly the fn-3-holding
+default every profile had before input-register support existed.
 
 ## Key Function: (*ProfileService) Export
 

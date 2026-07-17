@@ -42,4 +42,16 @@ type DiscoveredDevice struct {
 	MessageCount int64 `json:"messageCount" form:"messageCount" query:"messageCount"`
 	FirstSeenAt  int64 `json:"firstSeenAt" form:"firstSeenAt" query:"firstSeenAt"`
 	LastSeenAt   int64 `json:"lastSeenAt" form:"lastSeenAt" query:"lastSeenAt"`
+	// Source is how this candidate was found: "" / "mqtt" (announced itself during an enrollment
+	// window, the original path) or an active scan — "modbus", "mdns", "ssdp", "ethernetip",
+	// "bacnet". A scan candidate did not connect to the broker; it was found on the network and is
+	// still quarantined the same way (nothing is stored or actuated until an admin adopts it).
+	Source string `json:"source" form:"source" query:"source"`
+	// Address is where a scanned device lives (an IP, or ip:port). Empty for an MQTT candidate.
+	Address string `json:"address" form:"address" query:"address"`
+	// Endpoint/Unit/Transport pre-fill the device when a MODBUS-scan candidate is adopted, so
+	// "found -> adopt -> polling" needs no manual re-typing. Empty for non-Modbus candidates.
+	Endpoint  string `json:"endpoint" form:"endpoint" query:"endpoint"`
+	Unit      int    `json:"unit" form:"unit" query:"unit"`
+	Transport string `json:"transport" form:"transport" query:"transport"`
 }

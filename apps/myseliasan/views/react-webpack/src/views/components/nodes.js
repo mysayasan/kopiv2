@@ -113,7 +113,7 @@ export const DEFAULT_NODE_ICON = 'monitor';
 // management, LAN discovery, claim-code adoption (incl. manual address for other
 // subnets), and the adopted-nodes table with release. Uses the shared settings
 // panel / metric-card visual language.
-export function NodesTab({ onToast, nodes, reloadNodes, managingNodeId, managingCameraId, onManage, onClearFocus, onBack }) {
+export function NodesTab({ onToast, nodes, nodesLoad, reloadNodes, managingNodeId, managingCameraId, onManage, onClearFocus, onBack }) {
   const t = useT();
   const [fleetKey, setFleetKey] = useState(null);
   const [discovered, setDiscovered] = useState(null);
@@ -339,7 +339,17 @@ export function NodesTab({ onToast, nodes, reloadNodes, managingNodeId, managing
             </button>
           </div>
         </header>
-        {nodeList.length === 0 ? (
+        {nodeList.length === 0 && nodesLoad === 'error' ? (
+          // The load FAILED — this is NOT an empty fleet. Saying "no adopted nodes" here would
+          // tell an operator whose session just lapsed that their whole fleet vanished. Say what
+          // actually happened, and offer the retry.
+          <p className="settings-hint settings-hint--error">
+            {t('node.loadFailed')}{' '}
+            <button type="button" className="linklike" onClick={reloadNodes} disabled={busy}>{t('node.retry')}</button>
+          </p>
+        ) : nodeList.length === 0 && (nodesLoad === 'loading' || nodesLoad === 'idle') ? (
+          <p className="settings-hint">{t('node.loading')}</p>
+        ) : nodeList.length === 0 ? (
           <p className="settings-hint">{t('node.noAdopted')}</p>
         ) : (
           <table className="event-table">

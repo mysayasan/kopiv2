@@ -120,6 +120,12 @@ func (m *module) Entities() []any {
 		appentities.ProfileCommand{},
 		appentities.DeviceCommand{},
 		appentities.DeviceAttribute{},
+		// Home automation: scenes (grouped commands) and time/sun schedules.
+		appentities.Scene{},
+		appentities.SceneAction{},
+		appentities.Schedule{},
+		// Flow engine: saved executable data-flow graphs (the visual canvas).
+		appentities.IotFlow{},
 		// The fleet's node-side state (the fleet key, the pairing enrollment, the mTLS cert)
 		// lives in the shared runtime_setting table, encrypted at rest.
 		sharedentities.RuntimeSetting{},
@@ -146,6 +152,7 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Notifications", Description: "unified event feed", Path: "/api/notifications", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Discovery", Description: "enrollment window and device adoption", Path: "/api/discovery", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Settings", Description: "users and roles", Path: "/api/settings", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Knowledge base", Description: "shipped setup guides", Path: "/api/kb", AccessTier: apiaccessenums.AuthOnly},
 	}
 
 	statements := make([]string, 0, len(endpoints)*2)
@@ -198,6 +205,30 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	notificationRepo := dbsql.NewGenericRepo[sharedentities.Notification](deps.Db)
 	notificationService := notification.NewService(notificationRepo, notification.Options{Logger: deps.Logger})
 
+	// Runtime-editable settings, persisted in the shared RuntimeSetting KV and edited from the
+	// Settings page. Two blobs: outbound notification delivery, and the storage/broker knobs.
+	appCfg := m.appConfig()
+	notificationSettings := services.NewNotificationSettingsService(deps.Db, notificationService)
+	// Apply any saved webhook/telegram delivery config to the live hub. Until this runs, myiotsan
+	// only writes alerts to its in-app feed — nothing reaches a webhook or telegram.
+	if err := notificationSettings.Sync(ctx); err != nil {
+		deps.Logger.Warnf("myiotsan.notification", "apply saved delivery config: %v", err)
+	}
+	telemetrySettings := services.NewTelemetrySettingsService(deps.Db, services.TelemetrySettings{
+		RawRetentionDays:    appCfg.Telemetry.RawRetentionDays,
+		RollupRetentionDays: appCfg.Telemetry.RollupRetentionDays,
+		BatchSize:           appCfg.Telemetry.BatchSize,
+		FlushMs:             appCfg.Telemetry.FlushMs,
+		QueueSize:           appCfg.Telemetry.QueueSize,
+		MqttAddr:            appCfg.MQTT.Addr,
+	})
+	// Read the effective storage/broker settings ONCE — they are consumed at construction below, so
+	// an edit takes effect on the next restart (the Settings > Telemetry tab says so).
+	effTelemetry, err := telemetrySettings.Get(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load telemetry settings: %w", err)
+	}
+
 	authCfg := sharedapis.LocalAuthConfig{
 		AppName: m.Name(),
 		OnLockout: func(ctx context.Context, info sharedapis.LockoutInfo) {
@@ -229,7 +260,10 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// User and role management. Without it the viewer and operator roles — which have existed
 	// since P0 and which the policy catalog names — were UNASSIGNABLE, and the appliance was
 	// effectively single-admin.
-	apis.NewSettingsApi(protected, localUser, deps.AccessRoles)
+	apis.NewSettingsApi(protected, localUser, deps.AccessRoles, notificationSettings, telemetrySettings)
+	// System controls for the Settings > System tab: a restart (needed to apply the storage/broker
+	// settings, which are read once at boot). Version/health are already served by the host runtime.
+	apis.NewSystemApi(protected, deps.Restarter)
 
 	// --- the ingest spine -------------------------------------------------------------
 	//
@@ -256,13 +290,12 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	})
 
 	gate := services.NewDeadbandGate()
-	appCfg := m.appConfig()
 	writer := services.NewReadingWriter(
 		dbsql.NewGenericRepo[appentities.DeviceReading](deps.Db),
 		services.ReadingWriterOptions{
-			BatchSize:     appCfg.Telemetry.BatchSize,
-			FlushInterval: time.Duration(appCfg.Telemetry.FlushMs) * time.Millisecond,
-			QueueSize:     appCfg.Telemetry.QueueSize,
+			BatchSize:     effTelemetry.BatchSize,
+			FlushInterval: time.Duration(effTelemetry.FlushMs) * time.Millisecond,
+			QueueSize:     effTelemetry.QueueSize,
 			Logf:          func(f string, a ...any) { deps.Logger.Warnf("myiotsan.telemetry", f, a...) },
 		})
 	writer.Run(bgCtx)
@@ -299,12 +332,26 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	deviceService.SetEnrollment(enrollment)
 	ingest.SetEnrollment(enrollment)
 
+	// Active network discovery — the counterpart to the announce/enroll window. A scan is an admin
+	// act that sweeps the LAN and files candidates; it is audited to the feed like opening the window.
+	scanService := services.NewScanService(deps.Db, profileService,
+		func(ctx context.Context, msg string, data map[string]any) {
+			notificationService.Publish(ctx, notification.Notification{
+				Category: notification.CategorySystem,
+				Severity: notification.Info,
+				Title:    "Network scan",
+				Body:     msg,
+				Source:   "discovery-scan",
+			})
+		},
+		func(f string, a ...any) { deps.Logger.Infof("myiotsan.scan", f, a...) })
+
 	// The embedded MQTT broker. Embedded, not depended upon: requiring the operator to run
 	// Mosquitto alongside would break the single-binary, air-gapped promise that is the product.
 	// Its authenticator is the DEVICE TABLE, so a device that is not in the inventory cannot
 	// connect at all.
 	broker, err := iotmqtt.New(iotmqtt.Options{
-		Addr:      appCfg.MQTT.Addr,
+		Addr:      effTelemetry.MqttAddr,
 		Auth:      deviceService,
 		OnMessage: ingest.Handle,
 		Logf:      func(f string, a ...any) { deps.Logger.Infof("myiotsan.mqtt", f, a...) },
@@ -321,8 +368,8 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	// Rollup + retention. Rollups are built BEFORE the raw rows they summarize are purged.
 	telemetry.RunRollup(bgCtx, services.RetentionConfig{
-		RawDays:    appCfg.Telemetry.RawRetentionDays,
-		RollupDays: appCfg.Telemetry.RollupRetentionDays,
+		RawDays:    effTelemetry.RawRetentionDays,
+		RollupDays: effTelemetry.RollupRetentionDays,
 	})
 
 	// The offline sweep. An "offline" rule cannot be driven by a reading — its whole subject is
@@ -364,6 +411,16 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		func(f string, a ...any) { deps.Logger.Infof("myiotsan.actuation", f, a...) })
 	ingest.SetTwin(commandService)
 
+	// Scenes: named groups of commands. Running one fans out through commandService.Issue, so every
+	// actuation gate still applies per action — a scene is convenience, not a new authority.
+	sceneService := services.NewSceneService(deps.Db, commandService,
+		func(f string, a ...any) { deps.Logger.Infof("myiotsan.scenes", f, a...) })
+
+	// Schedules: fire a scene or command on the clock, or at sunrise/sunset. Same actuation path,
+	// same gates; the firing actor is a synthetic "schedule:<name>" so the audit trail attributes it.
+	scheduleService := services.NewScheduleService(deps.Db, sceneService, commandService,
+		func(f string, a ...any) { deps.Logger.Infof("myiotsan.scheduler", f, a...) })
+
 	// Runtime metrics. Everything here instruments a SILENT failure — a dropped reading, a
 	// mistuned deadband, a device gone quiet, a command that failed — none of which raises an
 	// error a human sees. The ingest gauges are SAMPLED off ingest's own atomic counters rather
@@ -385,11 +442,68 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		}
 	})
 
+	// The Modbus poll loop (P5). SunSpec and vendor register-map devices are POLLED, not published:
+	// the app dials OUT to each on its profile's cadence and feeds the decoded samples through the
+	// SAME ingest back half a broker message takes. The service reconciles against the inventory on
+	// a ticker, so a Modbus device added, edited or disabled in the UI is picked up without a
+	// restart — the same live-config property the rest of the app has.
+	modbusPoller := services.NewModbusPoller(deviceService, profileService, ingest,
+		func(f string, a ...any) { deps.Logger.Infof("myiotsan.modbus", f, a...) })
+	safego.Supervise(bgCtx, "myiotsan.modbus-poller", func(ctx context.Context) {
+		modbusPoller.Run(ctx, modbusReconcileInterval)
+	})
+
+	// The scheduler. Ticks once a minute (aligned to the minute boundary) and fires every schedule
+	// due in that minute. Minute granularity is deliberate — a home schedule is "07:30", not
+	// "07:30:12" — and it is what the LastFiredAt double-fire guard is keyed to.
+	safego.Supervise(bgCtx, "myiotsan.scheduler", func(ctx context.Context) {
+		// Align the first tick to the next whole minute so a schedule fires at :00, not at a
+		// process-start offset into the minute.
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Until(time.Now().Truncate(time.Minute).Add(time.Minute))):
+		}
+		scheduleService.Tick(ctx, time.Now())
+		ticker := time.NewTicker(schedulerInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				scheduleService.Tick(ctx, time.Now())
+			}
+		}
+	})
+
+	// The flow engine: saved, executable data-flow graphs authored on the visual canvas. The
+	// runtime taps the SAME decoded-sample stream the rules do (ingest.SetFlows), runs each flow's
+	// graph on its own worker, and reconciles compiled flows against the database on a ticker + on
+	// a change signal. Every actuation a flow performs goes through commandService.Issue, so a flow
+	// — even one with an arbitrary-JavaScript node — can command nothing a person could not.
+	flowService := services.NewFlowService(deps.Db,
+		func(f string, a ...any) { deps.Logger.Infof("myiotsan.flows", f, a...) })
+	if err := flowService.EnsureBuiltins(ctx); err != nil {
+		deps.Logger.Errorf("myiotsan.flows", "seed builtin flows: %v", err)
+	}
+	flowRuntime := services.NewFlowRuntime(flowService, commandService, notificationService, deviceService, writer, broker.Publish,
+		func(f string, a ...any) { deps.Logger.Infof("myiotsan.flows", f, a...) })
+	flowService.SetOnChange(flowRuntime.SignalReload)
+	ingest.SetFlows(flowRuntime)
+	safego.Supervise(bgCtx, "myiotsan.flows", func(ctx context.Context) {
+		flowRuntime.Run(ctx, flowReconcileInterval)
+	})
+
 	apis.NewDevicesApi(protected, deviceService, telemetry, profileService, ingest)
-	apis.NewDiscoveryApi(protected, enrollment, deviceService)
+	apis.NewDiscoveryApi(protected, enrollment, deviceService, scanService)
 	apis.NewCommandsApi(protected, commandService, deviceService)
 	apis.NewProfilesApi(protected, profileService, ingest)
 	apis.NewRulesApi(protected, ruleService)
+	apis.NewScenesApi(protected, sceneService)
+	apis.NewSchedulesApi(protected, scheduleService)
+	apis.NewFlowsApi(protected, flowService, flowRuntime)
+	apis.NewKbApi(protected)
 	apis.NewNotificationsApi(protected, notificationService)
 
 	// --- the fleet -------------------------------------------------------------------
@@ -432,6 +546,20 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 // offlineSweepInterval is how often silence is checked for. A minute is well under any sane
 // offline window and costs one query.
 const offlineSweepInterval = time.Minute
+
+// modbusReconcileInterval is how often the poller re-reads the inventory to start/stop/restart
+// per-device poll goroutines. It governs how quickly a newly added Modbus device begins polling,
+// not the poll cadence itself (which is the profile's PollSeconds).
+const modbusReconcileInterval = 30 * time.Second
+
+// flowReconcileInterval is how often the flow runtime re-reads the enabled flows to
+// compile/recompile/drop them. Like the Modbus poller, a change signal on save makes an edit take
+// effect immediately; this ticker is the backstop that also catches a direct database change.
+const flowReconcileInterval = 30 * time.Second
+
+// schedulerInterval is the automation scheduler's tick. A minute is the resolution a home schedule
+// is expressed at ("07:30"), and matches the LastFiredAt double-fire guard's minute granularity.
+const schedulerInterval = time.Minute
 
 // appVersion resolves this build's version for the fleet handshake.
 func appVersion(m *module) string {

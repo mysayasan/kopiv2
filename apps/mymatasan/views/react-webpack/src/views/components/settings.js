@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Ico } from './icons';
 import { Tabs } from '@shared/Tabs';
+import { DataTable } from '@shared/DataTable';
 import { useT } from '@shared/i18n';
 import { FormBusyOverlay, FieldTitle, AccordionList, AccordionItem } from './ui';
 import { ConsoleLog } from './console';
@@ -80,6 +81,256 @@ function RoleSelect({ roles, value, onChange, disabled, label }) {
         ))}
       </select>
     </label>
+  );
+}
+
+// --- Users & Roles --------------------------------------------------------------------------
+//
+// A scannable TABLE of accounts (initials avatar + name + @username, a colour-coded role badge,
+// a status pill), with add/edit behind a modal rather than a wall of inline inputs — the standard
+// admin user-management pattern: a table to compare at a glance, focused editing behind a dialog.
+// Self-contained like StockModelPanel above (its own fetch + state); ported from myiotsan so both
+// appliances present users the same way.
+
+const AVATAR_COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#ef4444', '#6366f1', '#0ea5e9', '#d946ef'];
+
+function userInitials(u) {
+  const src = (u.displayName || u.username || '?').trim();
+  const parts = src.split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return src.slice(0, 2).toUpperCase();
+}
+function avatarColor(seed) {
+  let h = 0;
+  for (const ch of String(seed || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+}
+function roleTone(role) {
+  if (!role) return '';
+  if (role.isSuperadmin) return 'is-admin';
+  return /operator/i.test(role.name) ? 'is-operator' : 'is-viewer';
+}
+
+// usersApi mirrors the panel-local fetch helper used elsewhere in this file (cf. StockModelPanel):
+// it carries the admin auth header and unwraps the API envelope, throwing on a non-2xx.
+async function usersApi(authHeader, path, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (authHeader) headers.Authorization = authHeader;
+  if (options.body) headers['Content-Type'] = 'application/json';
+  const resp = await fetch(`${apiBase()}${path}`, { credentials: 'include', ...options, headers });
+  const text = await resp.text();
+  let payload = null;
+  if (text) { try { payload = JSON.parse(text); } catch (_) { payload = { message: text }; } }
+  if (!resp.ok) throw new Error(payload?.message || payload?.data?.message || `Request failed (${resp.status})`);
+  return payload?.data?.result ?? payload?.result ?? payload;
+}
+
+function UsersManager({ authHeader, onMessage, focusUsername }) {
+  const t = useT();
+  const roles = useRoles(authHeader);
+  const [users, setUsers] = useState([]);
+  const [busy, setBusy] = useState(true);
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+
+  const load = useCallback(async () => {
+    setBusy(true);
+    try {
+      const result = await usersApi(authHeader, '/api/settings/users?limit=100&offset=0');
+      setUsers(Array.isArray(result) ? result : result?.items || []);
+    } catch (err) {
+      onMessage(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }, [authHeader, onMessage]);
+  useEffect(() => { load(); }, [load]);
+
+  // When a login-security notification deep-links here, open that account's editor.
+  useEffect(() => {
+    if (!focusUsername || busy) return;
+    const u = users.find((x) => x.username === focusUsername);
+    if (u) setEditing(u);
+  }, [focusUsername, busy, users]);
+
+  const roleOf = (id) => roles.find((x) => x.id === id);
+
+  async function remove(u) {
+    setConfirmDel(null);
+    try {
+      await usersApi(authHeader, `/api/settings/users/${u.id}`, { method: 'DELETE' });
+      onMessage(t('app.userDeleted'));
+      load();
+    } catch (err) { onMessage(err.message, 'error'); }
+  }
+
+  const columns = [
+    {
+      key: 'displayName', label: t('st.user'),
+      render: (_v, u) => (
+        <div className="user-cell">
+          <span className="user-avatar" style={{ background: avatarColor(u.username || u.id) }}>{userInitials(u)}</span>
+          <div className="user-idcol">
+            <button type="button" className="quiet user-link" onClick={() => setEditing(u)}>{u.displayName || u.username}</button>
+            <span className="user-sub">@{u.username}</span>
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'roleId', label: t('st.role'),
+      render: (_v, u) => { const role = roleOf(u.roleId); return role ? <span className={`role-badge ${roleTone(role)}`}>{roleLabel(t, role.name)}</span> : <span className="user-sub">—</span>; },
+    },
+    {
+      key: 'isActive', label: t('st.status'), filterType: 'boolean',
+      render: (_v, u) => (
+        <span className="user-status-cell">
+          <span className={`user-pill ${u.isActive ? 'is-on' : 'is-off'}`}>{u.isActive ? t('common.active') : t('common.inactive')}</span>
+          {u.mustChangePassword ? <span className="user-pill is-warn" title={t('st.pwChangePending')}><Ico n="key" sz={11} /></span> : null}
+        </span>
+      ),
+    },
+    {
+      key: 'actions', label: '', filterable: false,
+      render: (_v, u) => (
+        <div className="table-actions">
+          <button type="button" className="quiet" onClick={() => setEditing(u)}><span className="btn-icon"><Ico n="edit-2" sz={14} /> {t('common.edit')}</span></button>
+          <button type="button" className="quiet danger-text" onClick={() => setConfirmDel(u)}><Ico n="trash" sz={14} /></button>
+        </div>
+      ),
+    },
+  ];
+
+  return (
+    <div className="settings-layout">
+      <section className="settings-panel span-two">
+        <header>
+          <h2>{t('st.users')}</h2>
+          <div className="settings-header-actions">
+            <button type="button" className="quiet" onClick={load} disabled={busy}><span className="btn-icon"><Ico n="refresh" /> {t('common.reload')}</span></button>
+            <button type="button" onClick={() => setAdding(true)}><span className="btn-icon"><Ico n="user-plus" /> {t('st.addUser')}</span></button>
+          </div>
+        </header>
+        <p className="settings-hint">{t('st.usersHint')}</p>
+        <DataTable rows={users} columns={columns} busy={busy} pageSize={10} pageSizeOptions={[10, 25, 50]} emptyText={t('st.noUsers')} />
+      </section>
+
+      {adding ? <UserModal roles={roles} authHeader={authHeader} onClose={() => setAdding(false)} onSaved={() => { setAdding(false); load(); }} onMessage={onMessage} /> : null}
+      {editing ? <UserModal user={editing} roles={roles} authHeader={authHeader} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} onMessage={onMessage} /> : null}
+      {confirmDel ? (
+        <div className="modal-backdrop" onClick={() => setConfirmDel(null)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()} role="alertdialog" aria-modal="true">
+            <h2 className="user-modal-title">{t('st.deleteUserTitle')}</h2>
+            <p>{t('st.deleteUserBody', { name: confirmDel.username })}</p>
+            <div className="modal-actions">
+              <button type="button" className="quiet" onClick={() => setConfirmDel(null)}>{t('common.cancel')}</button>
+              <button type="button" className="danger-solid" onClick={() => remove(confirmDel)}>{t('common.delete')}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// UserModal creates a new account or edits an existing one — the focused editing surface the
+// table links into. On an existing user it also carries the reset-password action.
+function UserModal({ user, roles, authHeader, onClose, onSaved, onMessage }) {
+  const t = useT();
+  const isNew = !user;
+  const [form, setForm] = useState(() => ({
+    username: user?.username || '',
+    displayName: user?.displayName || '',
+    roleId: user?.roleId || 0,
+    isActive: isNew ? true : !!user?.isActive,
+    password: '',
+    newPassword: '',
+  }));
+  const [busy, setBusy] = useState(false);
+  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  const role = roles.find((r) => r.id === Number(form.roleId));
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!form.roleId) { onMessage(t('st.roleUnassigned'), 'error'); return; }
+    if (isNew && (form.password || '').length < 8) { onMessage(t('app.passwordMin'), 'error'); return; }
+    setBusy(true);
+    try {
+      if (isNew) {
+        const body = { username: form.username, password: form.password, displayName: form.displayName, roleId: Number(form.roleId), isAdmin: !!role?.isSuperadmin, isActive: form.isActive, mustChangePassword: true };
+        await usersApi(authHeader, '/api/settings/users', { method: 'POST', body: JSON.stringify(body) });
+        onMessage(t('app.userCreated'));
+      } else {
+        const body = { username: form.username, displayName: form.displayName, roleId: Number(form.roleId), isAdmin: !!role?.isSuperadmin, isActive: form.isActive };
+        await usersApi(authHeader, `/api/settings/users/${user.id}`, { method: 'PUT', body: JSON.stringify(body) });
+        onMessage(t('app.userSaved'));
+      }
+      onSaved();
+    } catch (err) {
+      onMessage(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resetPw() {
+    const password = form.newPassword.trim();
+    if (password.length < 8) { onMessage(t('app.passwordMin'), 'error'); return; }
+    setBusy(true);
+    try {
+      await usersApi(authHeader, `/api/settings/users/${user.id}/password`, { method: 'POST', body: JSON.stringify({ password }) });
+      set({ newPassword: '' });
+      onMessage(t('app.passwordReset'));
+    } catch (err) {
+      onMessage(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={busy ? undefined : onClose}>
+      <div className="modal-card user-modal-card" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        <h2 className="user-modal-title">{isNew ? t('st.addUser') : t('st.editUser', { name: user.displayName || user.username })}</h2>
+        <form onSubmit={submit} className="user-form">
+          <div className="settings-field-grid">
+            <label>
+              {t('common.username')}
+              <input value={form.username} required autoComplete="off" onChange={(e) => set({ username: e.target.value })} />
+            </label>
+            <label>
+              {t('st.displayName')}
+              <input value={form.displayName} autoComplete="off" onChange={(e) => set({ displayName: e.target.value })} />
+            </label>
+            {isNew ? (
+              <label>
+                {t('common.password')}
+                <PasswordField value={form.password} onChange={(p) => set({ password: p })} autoComplete="new-password" />
+              </label>
+            ) : null}
+            <RoleSelect roles={roles} value={form.roleId} onChange={(roleId) => set({ roleId })} disabled={busy} />
+          </div>
+          <label className="check-row"><input type="checkbox" checked={form.isActive} onChange={(e) => set({ isActive: e.target.checked })} /> {t('st.activeAccount')}</label>
+
+          {!isNew ? (
+            <>
+              <hr className="user-modal-sep" />
+              <p className="settings-hint">{t('st.resetPwHint')}</p>
+              <div className="user-pw-row">
+                <PasswordField value={form.newPassword} onChange={(p) => set({ newPassword: p })} autoComplete="new-password" placeholder={t('st.newPassword')} />
+                <button type="button" className="quiet" onClick={resetPw} disabled={busy || !form.newPassword.trim()}><span className="btn-icon"><Ico n="key" sz={14} /> {t('st.resetPassword')}</span></button>
+              </div>
+            </>
+          ) : null}
+
+          <div className="modal-actions">
+            <button type="button" className="quiet" onClick={onClose} disabled={busy}>{t('common.cancel')}</button>
+            <button type="submit" disabled={busy}>{busy ? t('common.saving') : t('common.save')}</button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 
@@ -1356,9 +1607,6 @@ export function SettingsTab({
   settings,
   authHeader,
   onMessage,
-  users,
-  newUser,
-  passwordDrafts,
   busy,
   hasChanges,
   onChange,
@@ -1375,15 +1623,7 @@ export function SettingsTab({
   visionToolStatus,
   onInstallPackages,
   visionInstallResult,
-  onLoadUsers,
   focusUsername,
-  onNewUser,
-  onCreateUser,
-  onEditUser,
-  onUpdateUser,
-  onPasswordDraft,
-  onResetPassword,
-  onDeleteUser,
   notificationSettings,
   savedNotificationSettings,
   onNotificationChange,
@@ -1417,9 +1657,6 @@ export function SettingsTab({
   onDeleteClass,
 }) {
   const t = useT();
-  // The roles an admin may assign. Authorization is a role now, not an "administrator"
-  // checkbox — see useRoles.
-  const assignableRoles = useRoles(authHeader);
   const iceServers = settings.stream.webrtc.iceServers || [];
   const capture = { ...defaultCaptureConfig, ...(settings.vision?.capture || {}),
     standalone: { ...defaultCaptureConfig.standalone, ...(settings.vision?.capture?.standalone || {}) },
@@ -1440,14 +1677,6 @@ export function SettingsTab({
     }
   }, [gpuDeviceSelectValue]);
   const effectiveGpuSelectValue = showManualGpuInput ? '__manual__' : gpuDeviceSelectValue;
-  // When a login-security notification deep-links here, scroll the targeted
-  // user's card into view and highlight it.
-  const focusedUserRef = useRef(null);
-  useEffect(() => {
-    if (settingsNav === 'users' && focusUsername && focusedUserRef.current) {
-      focusedUserRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-  }, [settingsNav, focusUsername, users]);
   function update(mutator) {
     onChange(mutator(settings));
   }
@@ -2275,153 +2504,7 @@ export function SettingsTab({
         ) : null}
 
         {settingsNav === 'users' ? (
-          <div className="settings-layout">
-          <section className="settings-panel span-two">
-            <header>
-              <h2>{t('st.addUser')}</h2>
-            </header>
-            <p className="settings-hint">{t('st.addUserHint')}</p>
-            <form onSubmit={onCreateUser}>
-              <div className="settings-field-grid">
-                <label>
-                  {t('common.username')}
-                  <input
-                    value={newUser.username}
-                    onChange={(event) => onNewUser({ ...newUser, username: event.target.value })}
-                    autoComplete="off"
-                    required
-                  />
-                </label>
-                <label>
-                  {t('st.displayName')}
-                  <input
-                    value={newUser.displayName}
-                    onChange={(event) => onNewUser({ ...newUser, displayName: event.target.value })}
-                    autoComplete="off"
-                  />
-                </label>
-                <label>
-                  {t('common.password')}
-                  <PasswordField
-                    value={newUser.password}
-                    onChange={(password) => onNewUser({ ...newUser, password })}
-                    autoComplete="new-password"
-                  />
-                </label>
-                <RoleSelect
-                  roles={assignableRoles}
-                  value={newUser.roleId}
-                  onChange={(roleId) => onNewUser({ ...newUser, roleId })}
-                  disabled={busy}
-                />
-              </div>
-              <div className="settings-actions">
-                <button type="submit" disabled={busy}>
-                  <span className="btn-icon"><Ico n="user-plus" /> {t('st.addUserBtn')}</span>
-                </button>
-              </div>
-            </form>
-          </section>
-
-          <section className="settings-panel span-two">
-            <header>
-              <h2>{t('st.users')}</h2>
-              <button type="button" className="quiet" onClick={onLoadUsers} disabled={busy}>
-                <span className="btn-icon"><Ico n="refresh" /> {t('common.reload')}</span>
-              </button>
-            </header>
-            <div className="user-list">
-              {users.length === 0 ? <p className="empty">{t('st.noUsers')}</p> : null}
-              {users.map((user) => {
-                const isFocused = focusUsername && user.username === focusUsername;
-                return (
-                <article
-                  className={`user-card${isFocused ? ' user-card--focused' : ''}`}
-                  key={user.id || user.username}
-                  ref={isFocused ? focusedUserRef : null}
-                >
-                  <div className="user-card-head">
-                    <Ico n="user" sz={16} />
-                    <span className="user-card-name">{user.displayName || user.username}</span>
-                    {(() => {
-                      const role = assignableRoles.find((x) => x.id === user.roleId);
-                      if (!role) return null;
-                      return (
-                        <span className={`user-badge${role.isSuperadmin ? ' user-badge--admin' : ''}`}>
-                          {roleLabel(t, role.name)}
-                        </span>
-                      );
-                    })()}
-                    <span className={`user-badge ${user.isActive ? 'user-badge--active' : 'user-badge--inactive'}`}>
-                      {user.isActive ? t('common.active') : t('common.inactive')}
-                    </span>
-                    {user.mustChangePassword ? <span className="user-badge user-badge--warn">{t('st.pwChangePending')}</span> : null}
-                  </div>
-                  <div className="settings-field-grid">
-                    <label>
-                      {t('common.username')}
-                      <input
-                        value={user.username || ''}
-                        onChange={(event) => onEditUser(user.id, { username: event.target.value })}
-                        autoComplete="off"
-                      />
-                    </label>
-                    <label>
-                      {t('st.displayName')}
-                      <input
-                        value={user.displayName || ''}
-                        onChange={(event) => onEditUser(user.id, { displayName: event.target.value })}
-                        autoComplete="off"
-                      />
-                    </label>
-                    <label>
-                      {t('st.newPassword')}
-                      <PasswordField
-                        value={passwordDrafts[user.id] || ''}
-                        onChange={(password) => onPasswordDraft(user.id, password)}
-                        autoComplete="new-password"
-                        placeholder={t('st.leaveBlankKeep')}
-                      />
-                    </label>
-                    <RoleSelect
-                      roles={assignableRoles}
-                      value={user.roleId}
-                      onChange={(roleId) => onEditUser(user.id, { roleId })}
-                      disabled={busy}
-                    />
-                    <div className="user-card-toggles">
-                      <label className="check-row">
-                        <input
-                          type="checkbox"
-                          checked={Boolean(user.isActive)}
-                          onChange={(event) => onEditUser(user.id, { isActive: event.target.checked })}
-                        />
-                        {t('common.active')}
-                      </label>
-                    </div>
-                  </div>
-                  <div className="user-actions">
-                    <button type="button" onClick={() => onUpdateUser(user)} disabled={busy}>
-                      <span className="btn-icon"><Ico n="save" /> {t('common.save')}</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="quiet"
-                      onClick={() => onResetPassword(user)}
-                      disabled={busy || !(passwordDrafts[user.id] || '').trim()}
-                    >
-                      <span className="btn-icon"><Ico n="key" /> {t('st.resetPassword')}</span>
-                    </button>
-                    <button type="button" className="quiet danger-text" onClick={() => onDeleteUser(user)} disabled={busy}>
-                      <span className="btn-icon"><Ico n="trash" /> {t('common.delete')}</span>
-                    </button>
-                  </div>
-                </article>
-                );
-              })}
-            </div>
-          </section>
-          </div>
+          <UsersManager authHeader={authHeader} onMessage={onMessage} focusUsername={focusUsername} />
         ) : null}
 
         {settingsNav === 'notifications' ? (

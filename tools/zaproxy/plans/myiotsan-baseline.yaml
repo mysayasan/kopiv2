@@ -32,6 +32,7 @@ env:
         - ".*/api/devices/[0-9]+/password.*"   # rotating a device's password revokes it
         - ".*/api/pairing/.*"                  # adopt/release/unpair/fleet-key
         - ".*/api/discovery/window.*"          # opening an enrollment window is a security event
+        - ".*/api/discovery/scan.*"            # a scan sweeps the LAN — fuzzing it is repeated live network traffic
         - ".*/purge.*"
         - ".*/reset.*"
       authentication:

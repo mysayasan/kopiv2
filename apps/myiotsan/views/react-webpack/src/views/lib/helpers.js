@@ -108,3 +108,44 @@ export function formatCount(v) {
   const n = Number(v || 0);
   try { return n.toLocaleString(); } catch (_) { return String(n); }
 }
+
+// roleLabel maps a stored role name to its translated label. The names are stable
+// server-side identifiers ("superadmin" / "operator" / "viewer") shared across the suite;
+// only the label is localised. The admin role is stored as "superadmin" but shown as
+// "Administrator" everywhere, matching mymatasan — a custom role falls back to its own name.
+export function roleLabel(t, name) {
+  switch (name) {
+    case 'superadmin': return t('role.admin');
+    case 'operator': return t('role.operator');
+    case 'viewer': return t('role.viewer');
+    default: return name;
+  }
+}
+
+// Notification-destination helpers (mirrors mymatasan's constants, scaled to the IoT hub). A
+// destination is one delivery target; empty `categories` = subscribed to everything.
+export const notificationCategories = [
+  ['device.alert', 'Device alerts', 'When an IoT rule fires on a sensor reading (including a device going offline).'],
+  ['system', 'System events', 'Enrollment, actuation, sign-in security, and the Test button.'],
+];
+
+export const notificationSeverityOptions = [
+  ['info', 'Info and above'],
+  ['warning', 'Warning and above'],
+  ['critical', 'Critical only'],
+];
+
+export function defaultDestination(type = 'webhook') {
+  return {
+    id: '',
+    name: type === 'telegram' ? 'Telegram' : type === 'mqtt' ? 'MQTT' : 'Webhook',
+    type,
+    enabled: true,
+    minSeverity: 'warning',
+    url: '',
+    botToken: '',
+    chatId: '',
+    categories: [], // empty = all
+    mqtt: { brokerUrl: '', topic: '', clientId: '', qos: 1, retain: false, username: '', password: '', caCert: '', clientCert: '', clientKey: '', insecureSkipVerify: false },
+  };
+}

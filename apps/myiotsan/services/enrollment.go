@@ -342,6 +342,11 @@ func (e *Enrollment) Adopt(ctx context.Context, id int64, req AdoptRequest, devi
 		// Read-only. Actuation is a separate, deliberate act — a device does not arrive able to
 		// switch a relay just because somebody plugged it in.
 		ActuationEnabled: false,
+		// A Modbus-scan candidate already knows where the device lives; carry that through so the
+		// adopted device polls immediately with no manual re-typing. Empty for an MQTT candidate.
+		Endpoint:  cand.Endpoint,
+		Unit:      cand.Unit,
+		Transport: cand.Transport,
 	}, actor)
 	if err != nil {
 		return nil, err

@@ -68,9 +68,15 @@ func Policy() []PolicyRule {
 		// the live picture, and it is all a viewer gets.
 		{Path: "/api/devices", Description: "See devices and their current readings", Viewer: read, Operator: read},
 		{Path: "/api/profiles", Description: "See device types and their datapoints", Viewer: read, Operator: read},
+		{Path: "/api/kb", Description: "Read the shipped setup guides", Viewer: read, Operator: read},
 		{Path: "/api/rules", Description: "See the alert rules", Viewer: read, Operator: read},
 		{Path: "/api/alerts", Description: "See the alert log", Viewer: read, Operator: read},
 		{Path: "/api/notifications", Description: "See the notification feed", Viewer: read, Operator: read},
+		// Scenes and schedules are readable by everyone signed in; authoring and — crucially —
+		// RUNNING them is admin-only (see below). A viewer can see that a "Goodnight" scene exists
+		// and what it does, the same way they can see an alert rule, without being able to fire it.
+		{Path: "/api/scenes", Description: "See the scenes (grouped device commands)", Viewer: read, Operator: read},
+		{Path: "/api/schedules", Description: "See the time/sunrise schedules", Viewer: read, Operator: read},
 
 		// --- Reviewing the record (operator and up) ---------------------------------------
 		// THIS is the viewer/operator line, and it is mymatasan's line exactly: a viewer sees
@@ -102,12 +108,36 @@ func Policy() []PolicyRule {
 		// gets WRITTEN to, and a bad relay write is physically dangerous in a way a bad PTZ move
 		// is not. Do not loosen this without deciding, out loud, that an operator may open doors.
 		{Path: "/api/devices/*/commands", Description: "Command a device (switch a relay, set a setpoint)", Viewer: none, Operator: none},
+		// Running a scene, running/testing a schedule, and setting the site location are ACTUATION
+		// (or its configuration). A scene run commands real devices through the exact path above, so
+		// it inherits the same admin-only rule — do not loosen these without deciding, out loud,
+		// that an operator may fire grouped commands.
+		{Path: "/api/scenes/*/run", Description: "Run a scene (command every device in it)", Viewer: none, Operator: none},
+		{Path: "/api/schedules/*/run", Description: "Test-fire a schedule now", Viewer: none, Operator: none},
+		// Flows are executable data-flow graphs authored on the canvas. A flow can run arbitrary
+		// (sandboxed) JavaScript and, through an output node, actuate a device via the SAME guarded
+		// command path everything else uses — so authoring, running and even reading a flow is
+		// admin-only, the same bar as a scene. Test-firing a flow (/run) actuates for real.
+		{Path: "/api/flows", Description: "Author and run executable flow graphs (the visual canvas)", Viewer: none, Operator: none},
+		{Path: "/api/flows/*/run", Description: "Test-fire a flow now (may actuate devices)", Viewer: none, Operator: none},
+		{Path: "/api/settings/location", Description: "Set the site latitude/longitude for sun schedules", Viewer: none, Operator: none},
 		// Opening an enrollment window is the ONE act in the whole app that lets an unknown thing
 		// talk to the broker at all. It is time-boxed, key-gated and quarantined — and it is still
 		// not something an operator gets to do.
 		{Path: "/api/discovery", Description: "Open enrollment and adopt new devices", Viewer: none, Operator: none},
 		{Path: "/api/settings/users", Description: "Manage users and their roles", Viewer: none, Operator: none},
 		{Path: "/api/settings/roles", Description: "See the roles that can be assigned", Viewer: none, Operator: none},
+		// The rest of the Settings page. Outbound notification delivery is where alerts LEAVE the
+		// box (webhook/telegram credentials); the telemetry/broker knobs and a restart can take the
+		// appliance down; fleet pairing adopts the node into a control plane. All administrator-only,
+		// and the whole Settings nav is hidden from non-admins in the UI on top of this.
+		{Path: "/api/settings/notification", Description: "Configure alert delivery destinations (webhook/telegram/mqtt)", Viewer: none, Operator: none},
+		{Path: "/api/settings/telemetry", Description: "Storage retention and broker address", Viewer: none, Operator: none},
+		{Path: "/api/system", Description: "Restart the appliance", Viewer: none, Operator: none},
+		// Fleet pairing (adopt into a myseliasan control plane). This was missing from the catalog —
+		// the matrix denies it to viewer/operator by default, but a route the catalog does not name
+		// is a route nobody can see they are not granting, which the catalog exists to prevent.
+		{Path: "/api/pairing", Description: "Fleet pairing: fleet key, claim code, adoption status", Viewer: none, Operator: none},
 	}
 }
 

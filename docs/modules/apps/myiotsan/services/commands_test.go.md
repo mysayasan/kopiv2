@@ -4,10 +4,18 @@
 
 Pins the pure, unit-testable half of actuation's safety gates — bounds validation and payload
 rendering — down to the byte. The database-dependent half (rate limiting, audit rows, the twin,
-`SweepUnconfirmed`) is exercised live instead; see `commands.go.md`'s "verified live" note.
+`SweepUnconfirmed`) is exercised live instead; see `commands.go.md`'s "verified live" note. The
+Modbus write path's own risky pure function, `encodeRegister`, is pinned the same way; the full
+`Issue`→write→read-back path is exercised live against the SunSpec simulator instead (which
+honours writes).
 
 ## Responsibilities
 
+- `TestCommand_EncodeRegisterScalesAndRangeChecks` — `encodeRegister` applies the read-side scale
+  in reverse (`raw = round(value / scale)`, including a `0` scale treated as `1` and a `""` kind
+  defaulting to `u16`), encodes `i16` as its two's-complement `uint16` bit pattern (`-5` →
+  `65531`, `-32768` → `32768`), range-checks `u16`/`i16` (rejects `70000`/`-1`/`40000`), and
+  refuses a multi-register kind (`u32`) outright rather than writing half of it.
 - `TestCommand_SwitchTakesOnlyZeroOrOne` — a `switch` command accepts exactly `0`/`1`; `2`/`-1`
   are refused.
 - `TestCommand_SetpointIsBoundedServerSide` — a `setpoint` inside `Min..Max` (inclusive of the
@@ -23,6 +31,23 @@ rendering — down to the byte. The database-dependent half (rate limiting, audi
 - `TestCommand_ValuesRenderCleanly` — `trimNum` never emits scientific notation or float noise
   (`1`, `0`, `21.5`, `100000`, `0.1`); a relay receiving `"1e+00"` instead of `"1"` does nothing,
   and the operator is left staring at a command that was "sent" and never took effect.
+
+The home-automation kinds, added alongside `scenes`/`schedules`:
+
+- `TestCommand_DimmerAndPositionAreBounded0to100` — `dimmer`/`position` accept `0..100` and
+  refuse `-1`/`101`/`254`.
+- `TestCommand_CctIsABoundedSetpoint` — `cct` behaves exactly like `setpoint`: inside `Min..Max`
+  is accepted, outside is refused, and an undeclared range (`Min == Max == 0`) refuses everything.
+- `TestCommand_ModeAcceptsOnlyDeclaredOptions` — a `mode` command accepts only the integer values
+  its `Options` enumerates and refuses anything else, including every value when `Options` is
+  empty.
+- `TestCommand_ColorIsAPackedRGBInteger` — `color` must be a whole number `0..0xFFFFFF` (a
+  fractional or out-of-range value is refused), and `packRGB`/`unpackRGB` round-trip losslessly
+  for a spread of colours including black/white.
+- `TestCommand_UnknownKindIsRefused` — an unrecognised `Kind` (e.g. `"teleport"`) is refused by
+  `validateValue`'s `default` case, pinning the closed silent-pass hole.
+- `TestCommand_ColorPayloadSubstitutesChannels` — `renderPayload` substitutes `{r}`/`{g}`/`{b}`
+  from the packed value for a `color` command's template, alongside `{value}`.
 
 ## Notes
 

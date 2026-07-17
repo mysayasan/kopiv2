@@ -5,13 +5,21 @@ import { ConfirmModal, EmptyState, Field, FormBusyOverlay, Panel } from './ui';
 
 const DATA_TYPES = ['number', 'bool', 'string'];
 const PAYLOAD_FORMATS = ['json', 'raw'];
+// How a device of this type is talked to. "" / "mqtt" = the device PUBLISHES to the broker (the
+// default). "modbus" = the app POLLS it over Modbus TCP.
+const TRANSPORTS = ['mqtt', 'modbus'];
+// SunSpec is self-describing (the driver discovers the keys); a register map is a custom vendor
+// device where every key names its register explicitly.
+const MODBUS_MODES = ['sunspec', 'regmap'];
+const REG_KINDS = ['u16', 'i16', 'u32', 'i32', 'f32'];
 
 const EMPTY_KEY = {
   key: '', label: '', unit: '', dataType: 'number', jsonPath: '',
   deadband: 0, heartbeatSeconds: 900, min: 0, max: 0,
+  register: 0, regKind: 'u16', scaleFactor: 1, wordSwap: false, regInput: false,
 };
 
-const COMMAND_KINDS = ['switch', 'setpoint'];
+const COMMAND_KINDS = ['switch', 'setpoint', 'dimmer', 'position', 'cct', 'mode', 'color'];
 
 // A command a device of this type can be TOLD to do. It starts as a switch with no bounds and no
 // confirmation key, and the editor warns about both — because both are how a command ends up
@@ -19,11 +27,13 @@ const COMMAND_KINDS = ['switch', 'setpoint'];
 const EMPTY_COMMAND = {
   name: '', label: '', kind: 'switch', topicTemplate: '', payloadTemplate: '',
   min: 0, max: 0, confirmKey: '',
+  register: 0, regKind: 'u16', scaleFactor: 1,
 };
 
 const EMPTY_PROFILE = {
   slug: '', name: '', vendor: '', description: '',
   topicTemplate: 'zigbee2mqtt/{deviceKey}', payloadFormat: 'json',
+  transport: '', modbusMode: 'regmap', modbusBase: 0, pollSeconds: 5,
 };
 
 // ProfilesPage is the device-type catalog: what a class of device reports, where it
@@ -189,6 +199,7 @@ function ProfileEditor({ profileId, onBack, onSaved, onToast }) {
     e.preventDefault();
     setBusy(true);
     setError('');
+    const isModbus = profile.transport === 'modbus';
     const payload = {
       slug: profile.slug,
       name: profile.name,
@@ -196,6 +207,10 @@ function ProfileEditor({ profileId, onBack, onSaved, onToast }) {
       description: profile.description || '',
       topicTemplate: profile.topicTemplate || '',
       payloadFormat: profile.payloadFormat || 'json',
+      transport: profile.transport || '',
+      modbusMode: isModbus ? (profile.modbusMode || 'regmap') : '',
+      modbusBase: Number(profile.modbusBase) || 0,
+      pollSeconds: Number(profile.pollSeconds) || 0,
       keys: keys.map((k) => ({
         key: k.key,
         label: k.label || '',
@@ -206,9 +221,15 @@ function ProfileEditor({ profileId, onBack, onSaved, onToast }) {
         heartbeatSeconds: Number(k.heartbeatSeconds) || 0,
         min: Number(k.min) || 0,
         max: Number(k.max) || 0,
+        register: Number(k.register) || 0,
+        regKind: k.regKind || '',
+        scaleFactor: Number(k.scaleFactor) || 0,
+        wordSwap: !!k.wordSwap,
+        regInput: !!k.regInput,
       })),
       // The commands, replaced wholesale like the keys. min/max ride along for every kind; the
-      // server only enforces them on a setpoint.
+      // server only enforces them on a setpoint. A Modbus profile's commands are register WRITES —
+      // they inherit the profile's transport so the command path routes them to the driver.
       commands: commands.map((c) => ({
         name: c.name,
         label: c.label || '',
@@ -218,6 +239,10 @@ function ProfileEditor({ profileId, onBack, onSaved, onToast }) {
         min: Number(c.min) || 0,
         max: Number(c.max) || 0,
         confirmKey: c.confirmKey || '',
+        transport: isModbus ? 'modbus' : '',
+        register: Number(c.register) || 0,
+        regKind: c.regKind || '',
+        scaleFactor: Number(c.scaleFactor) || 0,
       })),
     };
     const r = profileId
@@ -232,6 +257,11 @@ function ProfileEditor({ profileId, onBack, onSaved, onToast }) {
     onSaved();
     onBack();
   }
+
+  // A Modbus profile edits register bindings instead of MQTT topics/JSON paths; a register-map
+  // (regmap) profile also binds each key to a register, while SunSpec discovers them.
+  const isModbus = profile.transport === 'modbus';
+  const isRegmap = isModbus && (profile.modbusMode || 'regmap') === 'regmap';
 
   return (
     <section className="workspace">
@@ -260,18 +290,45 @@ function ProfileEditor({ profileId, onBack, onSaved, onToast }) {
             <Field label={t('profiles.vendor')}>
               <input value={profile.vendor || ''} onChange={(e) => setP({ vendor: e.target.value })} />
             </Field>
-            <Field label={t('profiles.payload')} hint={t('profiles.payloadHint')}>
-              <select value={profile.payloadFormat || 'json'} onChange={(e) => setP({ payloadFormat: e.target.value })}>
-                {PAYLOAD_FORMATS.map((f) => <option key={f} value={f}>{t(`payload.${f}`)}</option>)}
+            <Field label={t('profiles.transport')} hint={t('profiles.transportHint')}>
+              <select value={profile.transport || 'mqtt'} onChange={(e) => setP({ transport: e.target.value === 'mqtt' ? '' : e.target.value })}>
+                {TRANSPORTS.map((tp) => <option key={tp} value={tp}>{t(`transport.${tp}`)}</option>)}
               </select>
             </Field>
-            <Field label={t('profiles.topic')} hint={t('profiles.topicHint')} span>
-              <input value={profile.topicTemplate || ''} onChange={(e) => setP({ topicTemplate: e.target.value })} />
-            </Field>
+
+            {isModbus ? (
+              <>
+                <Field label={t('profiles.modbusMode')} hint={t('profiles.modbusModeHint')}>
+                  <select value={profile.modbusMode || 'regmap'} onChange={(e) => setP({ modbusMode: e.target.value })}>
+                    {MODBUS_MODES.map((m) => <option key={m} value={m}>{t(`modbusMode.${m}`)}</option>)}
+                  </select>
+                </Field>
+                {(profile.modbusMode || 'regmap') === 'sunspec' ? (
+                  <Field label={t('profiles.modbusBase')} hint={t('profiles.modbusBaseHint')}>
+                    <input type="number" value={profile.modbusBase ?? 0} onChange={(e) => setP({ modbusBase: e.target.value })} />
+                  </Field>
+                ) : null}
+                <Field label={t('profiles.pollSeconds')} hint={t('profiles.pollSecondsHint')}>
+                  <input type="number" min="1" value={profile.pollSeconds ?? 5} onChange={(e) => setP({ pollSeconds: e.target.value })} />
+                </Field>
+              </>
+            ) : (
+              <>
+                <Field label={t('profiles.payload')} hint={t('profiles.payloadHint')}>
+                  <select value={profile.payloadFormat || 'json'} onChange={(e) => setP({ payloadFormat: e.target.value })}>
+                    {PAYLOAD_FORMATS.map((f) => <option key={f} value={f}>{t(`payload.${f}`)}</option>)}
+                  </select>
+                </Field>
+                <Field label={t('profiles.topic')} hint={t('profiles.topicHint')} span>
+                  <input value={profile.topicTemplate || ''} onChange={(e) => setP({ topicTemplate: e.target.value })} />
+                </Field>
+              </>
+            )}
             <Field label={t('common.description')} span>
               <input value={profile.description || ''} onChange={(e) => setP({ description: e.target.value })} />
             </Field>
           </div>
+          {isModbus && !isRegmap ? <p className="settings-hint">{t('profiles.sunspecNote')}</p> : null}
 
           <div className="toolbar">
             <div>
@@ -303,9 +360,31 @@ function ProfileEditor({ profileId, onBack, onSaved, onToast }) {
                     {DATA_TYPES.map((d) => <option key={d} value={d}>{t(`dataType.${d}`)}</option>)}
                   </select>
                 </Field>
-                <Field label={t('profiles.jsonPath')} hint={t('profiles.jsonPathHint')}>
-                  <input value={k.jsonPath || ''} onChange={(e) => setKey(i, { jsonPath: e.target.value })} />
-                </Field>
+                {!isModbus ? (
+                  <Field label={t('profiles.jsonPath')} hint={t('profiles.jsonPathHint')}>
+                    <input value={k.jsonPath || ''} onChange={(e) => setKey(i, { jsonPath: e.target.value })} />
+                  </Field>
+                ) : isRegmap ? (
+                  <>
+                    <Field label={t('profiles.register')} hint={t('profiles.registerHint')}>
+                      <input type="number" value={k.register ?? 0} onChange={(e) => setKey(i, { register: e.target.value })} />
+                    </Field>
+                    <Field label={t('profiles.regKind')} hint={t('profiles.regKindHint')}>
+                      <select value={k.regKind || 'u16'} onChange={(e) => setKey(i, { regKind: e.target.value })}>
+                        {REG_KINDS.map((rk) => <option key={rk} value={rk}>{rk}</option>)}
+                      </select>
+                    </Field>
+                    <Field label={t('profiles.scaleFactor')} hint={t('profiles.scaleFactorHint')}>
+                      <input type="number" step="any" value={k.scaleFactor ?? 1} onChange={(e) => setKey(i, { scaleFactor: e.target.value })} />
+                    </Field>
+                    <Field label={t('profiles.wordSwap')} hint={t('profiles.wordSwapHint')}>
+                      <label className="check-row"><input type="checkbox" checked={!!k.wordSwap} onChange={(e) => setKey(i, { wordSwap: e.target.checked })} /> {t('profiles.wordSwapLabel')}</label>
+                    </Field>
+                    <Field label={t('profiles.regInput')} hint={t('profiles.regInputHint')}>
+                      <label className="check-row"><input type="checkbox" checked={!!k.regInput} onChange={(e) => setKey(i, { regInput: e.target.checked })} /> {t('profiles.regInputLabel')}</label>
+                    </Field>
+                  </>
+                ) : null}
 
                 {/* The deadband is the whole storage design, so it is explained where it is
                     set — not in a manual nobody will read. */}
@@ -365,7 +444,7 @@ function ProfileEditor({ profileId, onBack, onSaved, onToast }) {
             // Both min and max at zero is not "unbounded" — the server treats it as an omission
             // and refuses EVERY value. Say so here, where it can still be fixed, rather than
             // letting an admin ship a command that mysteriously never works.
-            const noRange = kind === 'setpoint' && Number(c.min || 0) === 0 && Number(c.max || 0) === 0;
+            const noRange = (kind === 'setpoint' || kind === 'cct') && Number(c.min || 0) === 0 && Number(c.max || 0) === 0;
             return (
               <fieldset className="iot-fieldset" key={c.id || `new-cmd-${i}`}>
                 <legend>{c.label || c.name || t('profiles.newCommand')}</legend>
@@ -381,16 +460,34 @@ function ProfileEditor({ profileId, onBack, onSaved, onToast }) {
                       {COMMAND_KINDS.map((k) => <option key={k} value={k}>{t(`cmdKind.${k}`)}</option>)}
                     </select>
                   </Field>
-                  <Field label={t('profiles.cmdConfirmKey')} hint={t('profiles.cmdConfirmKeyHint')}>
-                    <input value={c.confirmKey || ''} onChange={(e) => setCmd(i, { confirmKey: e.target.value })} />
-                  </Field>
-                  <Field label={t('profiles.cmdTopic')} hint={t('profiles.cmdTopicHint')} span>
-                    <input value={c.topicTemplate || ''} onChange={(e) => setCmd(i, { topicTemplate: e.target.value })} />
-                  </Field>
-                  <Field label={t('profiles.cmdPayload')} hint={t('profiles.cmdPayloadHint')} span>
-                    <input value={c.payloadTemplate || ''} onChange={(e) => setCmd(i, { payloadTemplate: e.target.value })} />
-                  </Field>
-                  {kind === 'setpoint' ? (
+                  {!isModbus ? (
+                    <>
+                      <Field label={t('profiles.cmdConfirmKey')} hint={t('profiles.cmdConfirmKeyHint')}>
+                        <input value={c.confirmKey || ''} onChange={(e) => setCmd(i, { confirmKey: e.target.value })} />
+                      </Field>
+                      <Field label={t('profiles.cmdTopic')} hint={t('profiles.cmdTopicHint')} span>
+                        <input value={c.topicTemplate || ''} onChange={(e) => setCmd(i, { topicTemplate: e.target.value })} />
+                      </Field>
+                      <Field label={t('profiles.cmdPayload')} hint={t('profiles.cmdPayloadHint')} span>
+                        <input value={c.payloadTemplate || ''} onChange={(e) => setCmd(i, { payloadTemplate: e.target.value })} />
+                      </Field>
+                    </>
+                  ) : (
+                    <>
+                      <Field label={t('profiles.register')} hint={t('profiles.cmdRegisterHint')}>
+                        <input type="number" value={c.register ?? 0} onChange={(e) => setCmd(i, { register: e.target.value })} />
+                      </Field>
+                      <Field label={t('profiles.regKind')} hint={t('profiles.cmdRegKindHint')}>
+                        <select value={c.regKind || 'u16'} onChange={(e) => setCmd(i, { regKind: e.target.value })}>
+                          {['u16', 'i16'].map((rk) => <option key={rk} value={rk}>{rk}</option>)}
+                        </select>
+                      </Field>
+                      <Field label={t('profiles.scaleFactor')} hint={t('profiles.scaleFactorHint')}>
+                        <input type="number" step="any" value={c.scaleFactor ?? 1} onChange={(e) => setCmd(i, { scaleFactor: e.target.value })} />
+                      </Field>
+                    </>
+                  )}
+                  {(kind === 'setpoint' || kind === 'cct') ? (
                     <>
                       <Field label={t('profiles.cmdMin')} hint={t('profiles.cmdRangeHint')}>
                         <input type="number" step="any" value={c.min ?? 0} onChange={(e) => setCmd(i, { min: e.target.value })} />
@@ -400,14 +497,21 @@ function ProfileEditor({ profileId, onBack, onSaved, onToast }) {
                       </Field>
                     </>
                   ) : null}
+                  {kind === 'mode' ? (
+                    <Field label={t('profiles.cmdOptions')} hint={t('profiles.cmdOptionsHint')} span>
+                      <input value={c.options || ''} onChange={(e) => setCmd(i, { options: e.target.value })}
+                        placeholder='[{"value":0,"label":"Off"},{"value":2,"label":"Cool"}]' />
+                    </Field>
+                  ) : null}
                 </div>
 
                 {noRange ? (
                   <p className="iot-cmd-warn"><Ico n="warning" sz={13} /> {t('profiles.cmdNoRangeWarn')}</p>
                 ) : null}
-                {/* Without a confirmation key the device has no way to report the result, so the
-                    command can only ever be "sent" — and "sent" is not "it happened". */}
-                {!c.confirmKey ? (
+                {/* Without a confirmation key an MQTT command can only ever be "sent" — and "sent"
+                    is not "it happened". A Modbus command needs no confirm key: WriteConfirm reads
+                    the register back, so it confirms inline. */}
+                {!isModbus && !c.confirmKey ? (
                   <p className="iot-cmd-warn"><Ico n="warning" sz={13} /> {t('profiles.cmdNoConfirmWarn')}</p>
                 ) : null}
 

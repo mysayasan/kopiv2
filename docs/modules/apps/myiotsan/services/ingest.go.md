@@ -20,7 +20,9 @@ thing allowed to be slow is an alert, because an alert is rare and matters.
 func NewIngest(devices *DeviceService, profile *ProfileService, gate *DeadbandGate, writer *ReadingWriter, rules *RuleService, logf func(string, ...any)) *Ingest
 func (i *Ingest) SetEnrollment(e *Enrollment)
 func (i *Ingest) SetTwin(c *CommandService)
+func (i *Ingest) SetFlows(f *FlowRuntime)
 func (i *Ingest) Handle(ctx context.Context, p iotmqtt.Principal, clientId, topic string, payload []byte)
+func (i *Ingest) HandlePolled(ctx context.Context, dev *entities.IotDevice, samples []codec.Sample)
 func (i *Ingest) InvalidateProfile(profileId int64)
 func (i *Ingest) Stats() IngestStats
 ```
@@ -31,6 +33,11 @@ client's payloads become candidates instead of telemetry.
 `SetTwin` (P4) wires actuation's device twin in. Every reading updates the twin's REPORTED half
 — this is what CONFIRMS a command: "we published a message" is not "the relay closed"; only the
 device saying so is. See `services/commands.go.md`.
+
+`SetFlows` (Flow Engine) wires the flow runtime in, the same way `SetTwin` does — after
+construction (the runtime is built later in `app.go`) and before the broker starts, so no reading
+is missed. A nil runtime means the flow engine is simply not consulted. See
+`services/flow_runtime.go.md`.
 
 `Handle` satisfies `mqtt.MessageHandler` and is also the entry point future HTTP ingest would
 call, so a device that cannot speak MQTT gets the same pipeline behind it.
@@ -63,10 +70,40 @@ For an adopted device (`p.DeviceId`), per message:
    would mean a perfectly steady overheat is never alerted on — deliberately called out as "the
    worst possible bug this app could contain" in the source comment.
 7. `rules.OnReading(ctx, dev, s.Key, s.Num, nowSec)` runs regardless of the admit decision.
-8. (P4) `twin.OnReported(ctx, deviceId, s.Key, s.Num, nowSec)` runs too, regardless of the admit
+8. (Flow Engine) `flows.OnReading(ctx, dev, s.Key, s.Num, nowSec)` runs alongside the rules — the
+   SAME reading, a parallel consumer. It only ENQUEUES onto the runtime's event channel here
+   (execution happens on the runtime's own worker goroutine), so a flow can never slow ingest. See
+   `services/flow_runtime.go.md`.
+9. (P4) `twin.OnReported(ctx, deviceId, s.Key, s.Num, nowSec)` runs too, regardless of the admit
    decision, unconditionally for every decoded sample — a reading is a fact about the world
    whether or not any command is outstanding on that key. This is the twin's REPORTED half, and
    it is the only thing that can confirm a `sent` `DeviceCommand`. See `services/commands.go.md`.
+
+## Key Function: handleSamples
+
+```go
+func (i *Ingest) handleSamples(ctx context.Context, dev *entities.IotDevice, binds *profileBindings, samples []codec.Sample, nowMs, nowSec int64)
+```
+
+**(P5)** The BACK HALF of `Handle` (deadband -> storage -> rules -> twin), extracted so a POLLED
+device rides it too. It is deliberately protocol- and codec-blind: an MQTT payload and a Modbus
+poll both arrive here as a `[]codec.Sample` and are treated identically — steps 5-8 of `Handle`'s
+per-message list above, unchanged.
+
+## Key Function: HandlePolled
+
+```go
+func (i *Ingest) HandlePolled(ctx context.Context, dev *entities.IotDevice, samples []codec.Sample)
+```
+
+**(P5)** The entry point a POLL driver (`services.ModbusPoller`, `modbus_poller.go.md`; later
+OPC-UA) calls with a batch it has already decoded — there is no payload to parse, so `Handle`'s
+JSON/raw decode step does not apply. **No quarantine either**: a polled device is one the operator
+configured and the app dialled OUT to, not a stranger that dialled in, so it skips straight past
+where `Handle`'s enrollment check would sit. It still does `TouchSeen` first and unconditionally
+(the same liveness rule as the MQTT path — a device polling an unchanged value must not look dead)
+and still drops a sample whose key the profile does not declare, exactly as an unbound MQTT field
+would be. Everything past that is `handleSamples`, identical to the MQTT path.
 
 ## Key Type: profileBindings
 
@@ -98,6 +135,10 @@ to be in trouble. `Written`/`Dropped`/`Queued` come from `ReadingWriter.Stats()`
 
 ## Notes
 
+- **(P5) Two entry points, one back half.** `Handle` (MQTT publish, decode-then-`handleSamples`)
+  and `HandlePolled` (Modbus/OPC-UA poll, already-decoded-then-`handleSamples`) converge on the
+  identical deadband/storage/rules/twin machinery — a polled inverter gets the same suppression,
+  history, alerting and command-confirmation a published door sensor does, for free.
 - Wired in `apps/myiotsan/app/app.go`'s ingest-spine assembly (see `app/app.go.md`).
 - The "measured 98.2% suppressed, zero dropped" result cited in `docs/MYIOTSAN_PLAN.md` §9 is
   this stats struct's own output from a live load test.

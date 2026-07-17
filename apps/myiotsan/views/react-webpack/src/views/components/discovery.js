@@ -140,6 +140,19 @@ export function DiscoveryPage({ onToast }) {
     return '';
   }
 
+  const [scanning, setScanning] = useState(false);
+  async function runScan(req) {
+    setScanning(true);
+    const r = await api('/api/discovery/scan', { method: 'POST', body: JSON.stringify(req) });
+    setScanning(false);
+    if (!r.ok) {
+      onToast(errorMessage(r, t('disc.scanFailed')), 'error');
+      return;
+    }
+    onToast(t('disc.scanDone', { n: r.body?.found || 0 }), 'success');
+    loadCandidates();
+  }
+
   async function reject(candidate) {
     setRejecting(true);
     const r = await api(`/api/discovery/candidates/${candidate.id}`, { method: 'DELETE' });
@@ -189,6 +202,10 @@ export function DiscoveryPage({ onToast }) {
           busy={busy}
           opening={opening}
         />
+      </Panel>
+
+      <Panel icon="wifi" title={t('disc.scanTitle')} hint={t('disc.scanHint')}>
+        <ScanCard onScan={runScan} scanning={scanning} />
       </Panel>
 
       <Panel icon="cpu" title={t('disc.candidatesTitle')} hint={t('disc.candidatesHint')}>
@@ -350,6 +367,9 @@ function CandidateCard({ candidate, profiles, onAdopt, onReject }) {
   const [adopting, setAdopting] = useState(false);
   const [error, setError] = useState('');
   const suggested = profiles.find((p) => p.id === candidate.suggestedProfileId) || null;
+  // A scan-sourced candidate (Modbus/mDNS/SSDP/…) was found on the network, not announced over the
+  // broker, so it shows how it was found + where it lives rather than a topic + observed fields.
+  const isScan = !!candidate.source && candidate.source !== 'mqtt';
 
   const [form, setForm] = useState(() => ({
     name: candidate.deviceKey,
@@ -394,20 +414,39 @@ function CandidateCard({ candidate, profiles, onAdopt, onReject }) {
       </header>
 
       <div className="iot-disc-card-facts">
-        <div>
-          <span>{t('disc.topic')}</span>
-          <code>{candidate.topic || '—'}</code>
-        </div>
-        <div>
-          <span>{t('disc.observed')}</span>
-          {keys.length > 0 ? (
-            <div className="iot-disc-keys">
-              {keys.map((k) => <code key={k} className="iot-disc-key">{k}</code>)}
+        {isScan ? (
+          <>
+            <div>
+              <span>{t('disc.foundVia')}</span>
+              <code>{t(`disc.scanType.${candidate.source}`)}</code>
             </div>
-          ) : (
-            <p className="field-hint">{t('disc.noObserved')}</p>
-          )}
-        </div>
+            <div>
+              <span>{t('disc.address')}</span>
+              <code>{candidate.address || candidate.endpoint || '—'}</code>
+            </div>
+            <div>
+              <span>{t('disc.identifiedAs')}</span>
+              <code>{candidate.observedKeys || '—'}</code>
+            </div>
+          </>
+        ) : (
+          <>
+            <div>
+              <span>{t('disc.topic')}</span>
+              <code>{candidate.topic || '—'}</code>
+            </div>
+            <div>
+              <span>{t('disc.observed')}</span>
+              {keys.length > 0 ? (
+                <div className="iot-disc-keys">
+                  {keys.map((k) => <code key={k} className="iot-disc-key">{k}</code>)}
+                </div>
+              ) : (
+                <p className="field-hint">{t('disc.noObserved')}</p>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       <button type="button" className="quiet iot-disc-payload-toggle" onClick={() => setShowPayload((v) => !v)}>
@@ -474,5 +513,72 @@ function CandidateCard({ candidate, profiles, onAdopt, onReject }) {
         </div>
       </form>
     </li>
+  );
+}
+
+// ScanCard is the ACTIVE-discovery counterpart to the enrollment window: instead of waiting for a
+// device to announce itself, it sweeps the LAN. It offers one toggle per protocol family, a network
+// range for the Modbus sweep, and is blunt about the fact that a scan is a deliberate, admin-only,
+// read-only probe — never a write.
+const SCAN_TYPES = ['modbus', 'mdns', 'ssdp', 'ethernetip', 'bacnet'];
+
+function ScanCard({ onScan, scanning }) {
+  const t = useT();
+  const [types, setTypes] = useState({ modbus: true, mdns: true, ssdp: true, ethernetip: false, bacnet: false });
+  const [cidr, setCidr] = useState('');
+  const [transport, setTransport] = useState('tcp');
+  const [units, setUnits] = useState('1');
+  const toggle = (k) => setTypes((s) => ({ ...s, [k]: !s[k] }));
+  const selected = SCAN_TYPES.filter((k) => types[k]);
+
+  function submit(e) {
+    e.preventDefault();
+    onScan({
+      types: selected,
+      cidr,
+      modbusTransport: transport,
+      units: units.split(',').map((u) => Number(u.trim())).filter((n) => n > 0),
+    });
+  }
+
+  return (
+    <form className="iot-scan" onSubmit={submit}>
+      <p className="settings-hint">{t('disc.scanIntro')}</p>
+      <div className="iot-scan-types">
+        {SCAN_TYPES.map((k) => (
+          <label key={k} className="check-row">
+            <input type="checkbox" checked={!!types[k]} onChange={() => toggle(k)} />
+            <span>{t(`disc.scanType.${k}`)}</span>
+          </label>
+        ))}
+      </div>
+      {types.modbus ? (
+        <div className="settings-field-grid">
+          <Field label={t('disc.scanCidr')} hint={t('disc.scanCidrHint')} required>
+            <input value={cidr} onChange={(e) => setCidr(e.target.value)} placeholder="192.168.1.0/24" />
+          </Field>
+          <Field label={t('devices.transport')} hint={t('disc.scanTransportHint')}>
+            <select value={transport} onChange={(e) => setTransport(e.target.value)}>
+              <option value="tcp">{t('transport.tcp')}</option>
+              <option value="rtutcp">{t('transport.rtutcp')}</option>
+            </select>
+          </Field>
+          <Field label={t('disc.scanUnits')} hint={t('disc.scanUnitsHint')}>
+            <input value={units} onChange={(e) => setUnits(e.target.value)} placeholder="1,2,3" />
+          </Field>
+        </div>
+      ) : null}
+      <div className="iot-scan-warn">
+        <Ico n="warning" sz={14} />
+        <span>{t('disc.scanWarn')}</span>
+      </div>
+      <div className="action-row iot-actions-end">
+        <button type="submit" disabled={scanning || selected.length === 0}>
+          <span className="btn-icon">
+            <Ico n="search" sz={14} /> {scanning ? t('disc.scanning') : t('disc.scanRun')}
+          </span>
+        </button>
+      </div>
+    </form>
   );
 }

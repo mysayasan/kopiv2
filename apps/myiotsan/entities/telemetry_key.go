@@ -22,8 +22,33 @@ type TelemetryKey struct {
 	// and which rule conditions may be applied to it.
 	DataType string `json:"dataType" form:"dataType" query:"dataType"`
 	// JsonPath is the dotted path into the payload ("battery.level"). Empty means the key
-	// name is itself a top-level field.
+	// name is itself a top-level field. It is the binding for a PUSH device (MQTT/HTTP).
 	JsonPath string `json:"jsonPath" form:"jsonPath" query:"jsonPath"`
+	// --- Modbus binding (POLL devices only) ------------------------------------------------
+	//
+	// For a SunSpec profile these are ignored: the device is self-describing, so its keys are
+	// discovered, not declared. For a non-SunSpec "register map" profile they are the whole
+	// point — each key names an explicit register, its integer encoding, and its scale. THE
+	// SIGN AND SCALE LIVE HERE, deliberately: import-positive vs export-positive on a meter,
+	// charge-positive vs discharge-positive on a battery, and a 0.1-W device vs a 1-W one are
+	// all the same class of footgun, and they belong to the binding, not to any decode code.
+	//
+	// Register is the starting holding-register address. 0 with an empty RegKind means this key
+	// is not a Modbus key (it is a JSON key), so a mixed profile is harmless.
+	Register int `json:"register" form:"register" query:"register"`
+	// RegKind is how to decode the register(s): "u16", "i16", "u32", "i32", "f32" (IEEE-754
+	// float, the encoding cheap meters like the Eastron SDM630 use). Empty = not Modbus.
+	RegKind string `json:"regKind" form:"regKind" query:"regKind"`
+	// RegInput reads the point from INPUT registers (Modbus fn 4) instead of holding registers
+	// (fn 3). Vendors split their maps: Huawei is all-holding, but an Eastron meter and a Sungrow
+	// SH keep their measurements in the input bank. False (the default) preserves the fn-3 path.
+	RegInput bool `json:"regInput" form:"regInput" query:"regInput"`
+	// ScaleFactor multiplies the raw integer to reach the real value (0.1 for a 0.1-unit device).
+	// 0 is treated as 1, so an unset scale is an identity, not a value annihilated to zero.
+	ScaleFactor float64 `json:"scaleFactor" form:"scaleFactor" query:"scaleFactor"`
+	// WordSwap is true when a 32-bit value is little-word-first (low register first). Vendors
+	// disagree on this, and getting it wrong turns a plausible number into a wild one.
+	WordSwap bool `json:"wordSwap" form:"wordSwap" query:"wordSwap"`
 	// Deadband is the smallest absolute change worth persisting. 0 means store every sample —
 	// correct for a door contact, where every transition matters, and wrong for a temperature
 	// probe, where every flicker of sensor noise would become a row.

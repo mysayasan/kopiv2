@@ -2,7 +2,9 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -11,8 +13,13 @@ import (
 	"github.com/mysayasan/kopiv2/apps/myiotsan/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	"github.com/mysayasan/kopiv2/infra/iot/modbus"
 	"github.com/mysayasan/kopiv2/infra/telemetry"
 )
+
+// modbusWriteFunc is the guarded-write seam (modbus.WriteConfirm in production, a fake in tests):
+// write value to a holding register and confirm it by reading it back, NEVER re-issuing.
+type modbusWriteFunc func(conf modbus.DeviceConf, reg int, value uint16, timeout time.Duration) error
 
 // Actuation: the point where a bug stops being a wrong number on a chart and becomes a relay
 // that physically fires.
@@ -44,14 +51,15 @@ import (
 
 // CommandService issues and tracks device commands.
 type CommandService struct {
-	commands   dbsql.IGenericRepo[entities.DeviceCommand]
-	profileCmd dbsql.IGenericRepo[entities.ProfileCommand]
-	attrs      dbsql.IGenericRepo[entities.DeviceAttribute]
-	devices    *DeviceService
-	publish    func(topic string, payload []byte, retain bool, qos byte) error
-	audit      func(ctx context.Context, msg string, data map[string]any)
-	metrics    telemetry.Metrics
-	logf       func(format string, args ...any)
+	commands    dbsql.IGenericRepo[entities.DeviceCommand]
+	profileCmd  dbsql.IGenericRepo[entities.ProfileCommand]
+	attrs       dbsql.IGenericRepo[entities.DeviceAttribute]
+	devices     *DeviceService
+	publish     func(topic string, payload []byte, retain bool, qos byte) error
+	modbusWrite modbusWriteFunc
+	audit       func(ctx context.Context, msg string, data map[string]any)
+	metrics     telemetry.Metrics
+	logf        func(format string, args ...any)
 
 	// rate limits the physical duty cycle, per device.
 	mu       sync.Mutex
@@ -65,6 +73,11 @@ const (
 	// confirmTimeout is how long a device has to report the state back before the command is
 	// declared unconfirmed. It is NOT a retry timer.
 	confirmTimeout = 30 * time.Second
+	// modbusWriteTimeout bounds the INLINE guarded Modbus write+read-back. It is short on purpose:
+	// the write is synchronous (a flow's command node waits on it), a healthy device confirms a
+	// setpoint in well under a second, and — like every actuation here — it is NEVER retried, so a
+	// slow confirmation fails and a human decides rather than the register being written twice.
+	modbusWriteTimeout = 5 * time.Second
 	// desiredTTL is how long a desired state stays actionable. A month-old "unlock" must not be
 	// applied to a door controller that finally reconnects — see entities.DeviceAttribute.
 	desiredTTL = 5 * time.Minute
@@ -90,10 +103,13 @@ func NewCommandService(
 		attrs:      dbsql.NewGenericRepo[entities.DeviceAttribute](db),
 		devices:    devices,
 		publish:    publish,
-		audit:      audit,
-		metrics:    metrics,
-		logf:       logf,
-		lastSent:   map[int64]time.Time{},
+		// The production guarded-write: dial the device (over its transport), write the register,
+		// confirm by read-back. WriteConfirm's signature is exactly modbusWriteFunc.
+		modbusWrite: modbus.WriteConfirm,
+		audit:    audit,
+		metrics:  metrics,
+		logf:     logf,
+		lastSent: map[int64]time.Time{},
 	}
 }
 
@@ -190,6 +206,14 @@ func (s *CommandService) Issue(ctx context.Context, deviceId int64, req IssueReq
 	}
 	cmd.Id = int64(id)
 
+	// SEND. Both transports arrive here having passed the identical gates above — that is the whole
+	// point: a Modbus device is commanded through the same read-only-by-default, admin-only,
+	// declared-bounds, rate-limited, audited, never-retried path an MQTT relay is. A Modbus command
+	// WRITES a holding register and confirms by reading it back; an MQTT command PUBLISHES.
+	if strings.EqualFold(strings.TrimSpace(decl.Transport), "modbus") {
+		return s.sendModbus(ctx, cmd, dev, decl, req.Value, actor, now)
+	}
+
 	topic := strings.ReplaceAll(decl.TopicTemplate, "{deviceKey}", dev.DeviceKey)
 	payload := renderPayload(decl, req.Value)
 
@@ -217,6 +241,82 @@ func (s *CommandService) Issue(ctx context.Context, deviceId int64, req IssueReq
 	return &cmd, nil
 }
 
+// sendModbus writes the command's holding register on the polled device and confirms it by
+// read-back (modbus.WriteConfirm). It runs AFTER every gate in Issue, so it is the write half of the
+// same guarded path the MQTT relay takes — nothing here re-checks a gate, and nothing here retries.
+// A confirmed write is the strongest status the system has: the device reported the value back.
+func (s *CommandService) sendModbus(ctx context.Context, cmd entities.DeviceCommand, dev *entities.IotDevice, decl *entities.ProfileCommand, value float64, actor int64, now time.Time) (*entities.DeviceCommand, error) {
+	fail := func(reason string) (*entities.DeviceCommand, error) {
+		cmd.Status = "failed"
+		cmd.Error = reason
+		_, _ = s.commands.UpdateById(ctx, "", cmd)
+		s.audit(ctx, fmt.Sprintf("FAILED modbus %s on %q — %s", cmd.Name, dev.Name, reason),
+			map[string]any{"deviceId": dev.Id, "command": cmd.Name, "value": value, "actor": actor})
+		s.countCommand("failed")
+		return &cmd, fmt.Errorf("%s", reason)
+	}
+
+	if strings.TrimSpace(dev.Endpoint) == "" {
+		return fail("this device has no Modbus endpoint (host:port) to write to")
+	}
+	raw, err := encodeRegister(decl.RegKind, decl.ScaleFactor, value)
+	if err != nil {
+		return fail(err.Error())
+	}
+
+	cmd.SentAt = now.Unix()
+	// The write inherits the device's transport (TCP / RTU-over-TCP / serial), so a serial inverter
+	// is actuated over the same guarded read-back path as a TCP one.
+	conf := modbus.DeviceConf{
+		Endpoint:  dev.Endpoint,
+		Unit:      byte(dev.Unit),
+		Transport: modbusTransportOf(dev.Transport),
+		Serial:    modbus.SerialParams{Baud: dev.Baud, DataBits: dev.DataBits, Parity: strings.TrimSpace(dev.Parity), StopBits: dev.StopBits},
+	}
+	if err := s.modbusWrite(conf, decl.Register, raw, modbusWriteTimeout); err != nil {
+		// A lost or unconfirmed write ENDS the command — it is never re-sent (a second register
+		// write is a second physical action). The operator sees plainly that it was not confirmed.
+		return fail("modbus write not confirmed: " + err.Error())
+	}
+
+	// WriteConfirm read the register back and saw the value — the device reported the state, which
+	// is exactly what "confirmed" means. A Modbus command therefore confirms inline, where an MQTT
+	// command has to wait for the twin's reported half.
+	cmd.Status = "confirmed"
+	cmd.ConfirmedAt = time.Now().Unix()
+	_, _ = s.commands.UpdateById(ctx, "", cmd)
+	s.countCommand("confirmed")
+	s.audit(ctx, fmt.Sprintf("CONFIRMED modbus %s=%s to reg %d on %q", cmd.Name, trimNum(value), decl.Register, dev.Name),
+		map[string]any{"deviceId": dev.Id, "command": cmd.Name, "value": value, "register": decl.Register, "actor": actor})
+	s.logf("command %d: modbus %s=%v confirmed at reg %d on %q", cmd.Id, cmd.Name, value, decl.Register, dev.DeviceKey)
+	return &cmd, nil
+}
+
+// encodeRegister turns a human value into the raw register word to write, applying the read scale in
+// reverse (raw = round(value / scaleFactor)) and the register kind's range check. Only single-register
+// kinds (u16/i16) are written for now — multi-register (u32/i32) writes are refused rather than
+// half-written. Getting encoding wrong writes a wrong number to real hardware, so it fails closed.
+func encodeRegister(kind string, scale float64, value float64) (uint16, error) {
+	if scale == 0 {
+		scale = 1
+	}
+	raw := math.Round(value / scale)
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "", "u16":
+		if raw < 0 || raw > 65535 {
+			return 0, fmt.Errorf("value %s is outside the u16 register range", trimNum(value))
+		}
+		return uint16(raw), nil
+	case "i16":
+		if raw < -32768 || raw > 32767 {
+			return 0, fmt.Errorf("value %s is outside the i16 register range", trimNum(value))
+		}
+		return uint16(int16(raw)), nil
+	default:
+		return 0, fmt.Errorf("a Modbus command can only write a u16 or i16 register, not %q", kind)
+	}
+}
+
 // declaration finds the command a profile declares, or explains that it does not.
 func (s *CommandService) declaration(ctx context.Context, profileId int64, name string) (*entities.ProfileCommand, error) {
 	if name == "" {
@@ -236,36 +336,105 @@ func (s *CommandService) declaration(ctx context.Context, profileId int64, name 
 	return nil, fmt.Errorf("this device type declares no command called %q", name)
 }
 
-// validateValue enforces the profile's bounds.
+// validateValue enforces the profile's bounds. Every kind the app knows has a case here, and the
+// DEFAULT is a refusal: an unrecognised kind is a misconfiguration, and a physical device is the
+// wrong place to guess. (Before the home-automation kinds this switch had no default, so an unknown
+// kind was published UNVALIDATED — that hole is closed here.)
 func validateValue(decl *entities.ProfileCommand, v float64) error {
 	switch strings.ToLower(strings.TrimSpace(decl.Kind)) {
 	case "switch":
 		if v != 0 && v != 1 {
 			return fmt.Errorf("a switch takes 0 or 1, not %s", trimNum(v))
 		}
-	case "setpoint":
+	case "dimmer", "position":
+		// A percentage. Fixed 0..100 — brightness and blind travel are both proportions, and a
+		// value outside that is a bug, not a brighter light.
+		if v < 0 || v > 100 {
+			return fmt.Errorf("%s is outside 0..100 for a %s", trimNum(v), strings.ToLower(decl.Kind))
+		}
+	case "setpoint", "cct":
 		// A zero Min AND Max means the profile declared no bounds. That is treated as a REFUSAL
 		// rather than as "anything goes": an unbounded setpoint on a physical device is not a
-		// configuration, it is an omission, and the safe reading of an omission is no.
+		// configuration, it is an omission, and the safe reading of an omission is no. (cct is a
+		// setpoint in Kelvin — same bounds discipline.)
 		if decl.Min == 0 && decl.Max == 0 {
-			return fmt.Errorf("this setpoint declares no safe range, so no value can be accepted — set its min and max on the device type")
+			return fmt.Errorf("this %s declares no safe range, so no value can be accepted — set its min and max on the device type", strings.ToLower(decl.Kind))
 		}
 		if v < decl.Min || v > decl.Max {
 			return fmt.Errorf("%s is outside the safe range %s..%s for this command",
 				trimNum(v), trimNum(decl.Min), trimNum(decl.Max))
 		}
+	case "mode":
+		vals, err := modeValues(decl.Options)
+		if err != nil {
+			return err
+		}
+		for _, ok := range vals {
+			if v == ok {
+				return nil
+			}
+		}
+		return fmt.Errorf("%s is not one of this command's allowed modes", trimNum(v))
+	case "color":
+		// A colour packed as 0xRRGGBB. Must be a whole number in range; the twin still confirms it
+		// as one float, so a device that reports colour back per-channel cannot be confirmed by it
+		// (declare no ConfirmKey there — "sent, never confirmed" is honest).
+		if v != math.Trunc(v) || v < 0 || v > 0xFFFFFF {
+			return fmt.Errorf("a colour must be a whole number 0..16777215 (0xRRGGBB), not %s", trimNum(v))
+		}
+	default:
+		return fmt.Errorf("this device type declares an unknown command kind %q", decl.Kind)
 	}
 	return nil
 }
 
-// renderPayload builds the message body. {value} is substituted; a template that does not
-// mention it sends itself verbatim (a device whose command topic IS the instruction).
+// modeValues parses a mode command's Options ([{"value":int,"label":string}]) to the set of allowed
+// integer values. An empty or malformed Options is a refusal — a mode with no declared options can
+// accept nothing, the same "omission means no" rule the unbounded setpoint follows.
+func modeValues(options string) ([]float64, error) {
+	options = strings.TrimSpace(options)
+	if options == "" {
+		return nil, fmt.Errorf("this mode command declares no options, so no value can be accepted — set its options on the device type")
+	}
+	var opts []struct {
+		Value float64 `json:"value"`
+	}
+	if err := json.Unmarshal([]byte(options), &opts); err != nil || len(opts) == 0 {
+		return nil, fmt.Errorf("this mode command's options are not a valid list")
+	}
+	out := make([]float64, len(opts))
+	for i, o := range opts {
+		out[i] = o.Value
+	}
+	return out, nil
+}
+
+// packRGB / unpackRGB carry a colour through the single-float command model. 0xRRGGBB (max
+// 16,777,215) is exactly representable in a float64 mantissa, so the audit value and the twin
+// equality check stay unchanged from every other kind.
+func packRGB(r, g, b int) float64 { return float64((r&0xFF)<<16 | (g&0xFF)<<8 | (b & 0xFF)) }
+
+func unpackRGB(v float64) (r, g, b int) {
+	n := int(v)
+	return (n >> 16) & 0xFF, (n >> 8) & 0xFF, n & 0xFF
+}
+
+// renderPayload builds the message body. {value} is substituted for every kind; a "color" command
+// also substitutes {r}/{g}/{b} with the unpacked channels. A template that mentions no token sends
+// itself verbatim (a device whose command topic IS the instruction).
 func renderPayload(decl *entities.ProfileCommand, v float64) string {
 	tpl := strings.TrimSpace(decl.PayloadTemplate)
 	if tpl == "" {
 		return trimNum(v)
 	}
-	return strings.ReplaceAll(tpl, "{value}", trimNum(v))
+	out := strings.ReplaceAll(tpl, "{value}", trimNum(v))
+	if strings.EqualFold(strings.TrimSpace(decl.Kind), "color") {
+		r, g, b := unpackRGB(v)
+		out = strings.ReplaceAll(out, "{r}", strconv.Itoa(r))
+		out = strings.ReplaceAll(out, "{g}", strconv.Itoa(g))
+		out = strings.ReplaceAll(out, "{b}", strconv.Itoa(b))
+	}
+	return out
 }
 
 func trimNum(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }

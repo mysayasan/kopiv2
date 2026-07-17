@@ -16,8 +16,24 @@ a time-boxed enrollment window rather than requiring every device to be provisio
 relay or set a setpoint, gated read-only-by-default/admin-only/declared-commands-only/
 server-side-bounds/rate-limited/audited, and never auto-retried (see
 `services/commands.go.md`). **It is also now an adoptable `myseliasan` fleet node** — see
-"Fleet (P6)" below and `apps/myiotsan/app/wire_fleet.go.md`. What remains is industrial
-protocols (P5) and release plumbing (P7).
+"Fleet (P6)" below and `apps/myiotsan/app/wire_fleet.go.md`. **P5 (industrial protocols) has now
+partially landed (2026-07-15): the Modbus/SunSpec driver foundation is WIRED IN** — a
+`services.ModbusPoller` (`services/modbus_poller.go.md`) dials out to Modbus devices on their
+profile's cadence and feeds `Ingest.HandlePolled`, and the shipped catalog gained its first two
+POLLED profiles (`generic-sunspec-solar`, `huawei-sun2000`). **Guarded Modbus control writes
+shipped 2026-07-16**, and the catalog then gained three more register-map profiles
+(`sungrow-sh-hybrid`, `deye-hybrid`, `eastron-sdm630-meter`), a driver enhancement (fn 4 input
+registers + float32 decoding, `infra/iot/modbus/regmap.go.md`), five more built-in solar Flow
+Engine templates, and a new in-app knowledge base (`/api/kb`) — see the "P5" note below. What
+remains of P5 is RTU (serial) and OPC-UA transports; the solar "system workspace" (P8) is still
+design-only. See `docs/MYIOTSAN_PLAN.md` §8g. **A tabbed Settings page shipped 2026-07-16**,
+consolidating users/roles, site location, outbound notification delivery (webhook/telegram — now
+actually wired to the shared notification hub for the first time), storage/broker settings, fleet
+pairing, and a restart control into one admin-only page — see the "Notes" section below. **A visual
+executable Flow Engine (Node-RED-style canvas) shipped 2026-07-16, P1-P3** — see step 10e below,
+`services/flow_runtime.go.md`, and `docs/MYIOTSAN_PLAN.md` §8i; this deliberately REVERSES §8g's
+original "no visual node-graph editor" scope line, kept safe because every flow's actuation still
+routes through the one guarded `CommandService.Issue` chokepoint.
 
 ## Key Type: module
 
@@ -39,13 +55,16 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
   `Notification`, `LocalUser`, `AccessRole`, `AccessRolePermission`) plus the IoT domain now
   registered here: `DeviceProfile`, `TelemetryKey`, `IotDevice`, `DeviceReading`,
   `ReadingRollup`, `IotRule`, `AlertEvent`, (P3) `DiscoveredDevice` — the enrollment window's
-  candidate table, and (P4) `ProfileCommand`, `DeviceCommand`, `DeviceAttribute` — the actuation
-  declaration, the command audit trail, and the device twin (`apps/myiotsan/entities`).
+  candidate table, (P4) `ProfileCommand`, `DeviceCommand`, `DeviceAttribute` — the actuation
+  declaration, the command audit trail, and the device twin, (home-automation) `Scene`,
+  `SceneAction`, `Schedule`, and (Flow Engine) `IotFlow` — the saved, executable data-flow graph
+  authored on the visual canvas (`apps/myiotsan/entities`).
 - `Seeders(...)` seeds the endpoint catalog for rate limiting/runtime metadata, now including
   `/api/devices`, `/api/profiles`, `/api/rules`, `/api/alerts`, `/api/notifications`, (P3)
-  `/api/discovery` (auth-only), and (P4) `/api/settings` (auth-only — users and roles; see the
-  gap this closes below), alongside the original `/api/health`, `/api/version` (public),
-  `/api/auth/login` (public), `/api/auth` (auth-only).
+  `/api/discovery` (auth-only), (P4) `/api/settings` (auth-only — users and roles; see the
+  gap this closes below), and `/api/kb` (auth-only — the shipped setup guides, see below),
+  alongside the original `/api/health`, `/api/version` (public), `/api/auth/login` (public),
+  `/api/auth` (auth-only).
 - `RegisterAppRoutes(api, deps)`:
   1. Builds `sharedservices.NewLocalUserService` on a `LocalUser` repo bound to `deps.Db`.
   2. Seeds roles **before** the admin is seeded (`services.EnsureRoles` — myiotsan's own
@@ -69,18 +88,40 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
      load-bearing: auth puts the principal in context, and the matrix needs a principal to
      decide against.
   8. Registers `sharedapis.NewLocalAuthApi` (session probe + change-password) on `protected`,
-     then (P4) `apis.NewSettingsApi(protected, localUser, deps.AccessRoles)` — user and role
-     management. **Closes a real gap**: the policy catalog has named `/api/settings/users`/
-     `/api/settings/roles` since P0, and the roles have existed since then, but nothing served
-     them — viewer and operator were UNASSIGNABLE, and the appliance was effectively
-     single-admin. See `apis/settings.go.md`.
+     then `apis.NewSettingsApi(protected, localUser, deps.AccessRoles, notificationSettings,
+     telemetrySettings)` — user and role management (P4; **closes a real gap**: the policy
+     catalog has named `/api/settings/users`/`/api/settings/roles` since P0, and the roles have
+     existed since then, but nothing served them — viewer and operator were UNASSIGNABLE, and the
+     appliance was effectively single-admin), plus, new with the tabbed Settings page, outbound
+     notification delivery and telemetry/broker settings. See `apis/settings.go.md`. Immediately
+     after, `apis.NewSystemApi(protected, deps.Restarter)` registers `POST /api/system/restart` —
+     the Settings > System tab's restart, needed because the telemetry settings below are read
+     once at boot (see `apis/system.go.md`).
+  8a. **Wires the two new runtime-editable settings stores, before the ingest spine is built**
+     (so their effective values can feed it): `services.NewNotificationSettingsService(deps.Db,
+     notificationService)`, then immediately `notificationSettings.Sync(ctx)` — applies any
+     previously-saved webhook/telegram config to this run's fresh notification hub (a sync
+     failure only logs a warning; it must not abort boot). **This Sync call is the reason
+     myiotsan can deliver outside the app at all** — before this file existed, nothing ever called
+     `notificationService.Configure`, so every alert stayed in the in-app feed no matter what an
+     operator wanted. Then `services.NewTelemetrySettingsService(deps.Db, services.TelemetrySettings{...})`,
+     seeded from `appCfg.Telemetry`/`appCfg.MQTT.Addr` as defaults, followed by
+     `telemetrySettings.Get(ctx)` (`effTelemetry`) — **the effective, store-over-config values**
+     that now feed `NewReadingWriter`'s batch/flush/queue sizing, `telemetry.RunRollup`'s
+     retention, and `iotmqtt.New`'s listen address, replacing the direct `appCfg.Telemetry`/
+     `appCfg.MQTT.Addr` reads those three call sites used before. A failure to load telemetry
+     settings aborts startup (`fmt.Errorf("load telemetry settings: %w", err)`) rather than
+     silently falling back, since a wrong broker address here means every device fails to
+     connect. See `services/notification_settings.go.md` and `services/telemetry_settings.go.md`.
   9. **Wires the ingest spine** in dependency order (each stage owns the one before it):
      `broker -> ingest (decode -> deadband -> batched write) -> rules -> alert -> notification`.
      `services.NewDeviceService` (also the broker's `Authenticator`), `services.NewProfileService`
      + `EnsureBuiltins` (seeds the shipped device catalog; existing profiles are left alone so a
      site's tuned deadbands survive a restart), `services.NewTelemetryService`,
      `services.NewDeadbandGate`, `services.NewReadingWriter` (batch/flush/queue sized from
-     `appCfg.Telemetry`) then `.Run(bgCtx)`, `services.NewRuleEngine` +
+     `effTelemetry`, the store-over-config values resolved in 8a — not `appCfg.Telemetry`
+     directly, since a saved edit must win over the shipped config) then `.Run(bgCtx)`,
+     `services.NewRuleEngine` +
      `services.NewRuleService` then `.Reload(ctx)` (**re-seeds every cooldown from the alert
      log** — skipping this re-arms every still-true rule on every restart, the alert storm
      mymatasan shipped), `services.NewIngest`, then `iotmqtt.New` (the embedded broker, refuses
@@ -97,6 +138,14 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
       `ingest.SetEnrollment(enrollment)` wire the window into the authenticator and the hot path —
       see `services/enrollment.go.md` for why an unknown device presenting a device table that does
       not contain it is otherwise refused outright, and what the window's quarantine buys.
+  9c. **Wires active network discovery scanning**, right after the enrollment wiring:
+      `services.NewScanService(deps.Db, profileService, audit, logf)`, where `audit` publishes a
+      `notification.CategorySystem`/Info event through `notificationService.Publish` — a scan is
+      audited the same way opening the enrollment window is. `scanService` is then passed into
+      `apis.NewDiscoveryApi` alongside `enrollment`/`deviceService` (step 11) so `POST
+      /api/discovery/scan` can run it. See `services/scanner.go.md` and `infra/iot/discover`'s
+      module docs; this is the counterpart to the announce path that feeds the identical
+      quarantined `DiscoveredDevice` candidate list.
   10. Starts `telemetry.RunRollup(bgCtx, ...)` (rollup before purge — see `telemetry.go.md`) and
       a `safego.Supervise`d offline sweep (`ruleService.SweepOffline`) on a 1-minute
       `offlineSweepInterval` — the only way an "absence of readings" rule can ever fire, since a
@@ -112,8 +161,47 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
       to be told promptly that it was never confirmed; a stale "in progress" is how somebody comes
       to believe a door is locked when it is not. See `services/commands.go.md` for every gate
       and why a command is never auto-retried.
-  11. Registers `apis.NewDevicesApi`, `apis.NewDiscoveryApi` (P3), `apis.NewCommandsApi` (P4),
-      `apis.NewProfilesApi`, `apis.NewRulesApi`, `apis.NewNotificationsApi` on `protected`.
+  10c. **Wires the Modbus poller (P5)**, right after the command sweep and just before the API
+      registrations: `services.NewModbusPoller(deviceService, profileService, ingest, logf)` run
+      via `safego.Supervise` on `modbusReconcileInterval` (30s). This is the POLLED counterpart to
+      the broker's PUSH path — a Modbus device does not publish, so something has to dial out to
+      it on a schedule, then feed the identical `Ingest.HandlePolled` back half a broker message
+      takes. See `services/modbus_poller.go.md`.
+  10d. **Wires home automation (scenes + schedules)**, right after the Modbus poller:
+      `services.NewSceneService(deps.Db, commandService, logf)` — a scene fans its ordered actions
+      out through `commandService.Issue`, so running one commands nothing a single manual command
+      could not; it is convenience, not a new authority. Then `services.NewScheduleService(deps.Db,
+      sceneService, commandService, logf)` — fires a scene or a single command on the clock, or at
+      sunrise/sunset ± an offset, through the identical actuation path, with the firing actor a
+      synthetic `"schedule:<name>"` (id 0) so the audit trail attributes it rather than reading
+      "System". A `safego.Supervise`d `"myiotsan.scheduler"` task (const `schedulerInterval` = 1
+      minute) aligns its first tick to the next whole-minute boundary, then calls
+      `scheduleService.Tick(ctx, time.Now())` once a minute — minute granularity matches the
+      `LastFiredAt` double-fire guard (`services/schedules.go.md`) and the resolution a home
+      schedule ("07:30") is actually expressed at. See `services/scenes.go.md` and
+      `services/schedules.go.md`.
+  10e. **Wires the Flow Engine**, right after home automation: `services.NewFlowService(deps.Db,
+      logf)`, then `flowService.EnsureBuiltins(ctx)` seeds the shipped "Solar system" sample
+      (`services/flow_catalog.go.md`). `services.NewFlowRuntime(flowService, commandService,
+      notificationService, deviceService, writer, broker.Publish, logf)` builds the runtime — the
+      `broker.Publish` param (P4) is the seam an `mqtt_out` output node uses to publish outward to
+      the embedded broker; `flowService.SetOnChange(flowRuntime.SignalReload)` wires save/enable/
+      delete to trigger an immediate recompile; `ingest.SetFlows(flowRuntime)` taps the SAME
+      decoded-sample stream the rules do (see `services/ingest.go.md`); a `safego.Supervise`d
+      `"myiotsan.flows"` task runs `flowRuntime.Run(ctx, flowReconcileInterval)` (const, 30s — the
+      same reconcile cadence the Modbus poller uses). A flow's nodes can run ARBITRARY sandboxed
+      JavaScript (`services/flow_eval.go.md`), but only a dedicated `command` output node can
+      actuate, and it routes through `commandService.Issue` — the identical guarded chokepoint every
+      other actuation path in this app uses, so a flow can command nothing a person could not; an
+      `mqtt_out` output publishes data, not a command, so it does not go through that gate. See
+      `services/flow_runtime.go.md` and `docs/MYIOTSAN_PLAN.md` §8i.
+  11. Registers `apis.NewDevicesApi`, `apis.NewDiscoveryApi` (P3, now also taking `scanService`
+      for the active-scan route — step 9c), `apis.NewCommandsApi` (P4),
+      `apis.NewProfilesApi`, `apis.NewRulesApi`, `apis.NewScenesApi`, `apis.NewSchedulesApi`
+      (home automation), `apis.NewFlowsApi` (Flow Engine, admin-only), `apis.NewKbApi` (the in-app
+      knowledge base — reference content compiled into the binary via `go:embed`, granted to
+      viewer/operator too since it is read-only; see `apps/myiotsan/kb/kb.go.md`),
+      `apis.NewNotificationsApi` on `protected`.
   11b. **Wires the fleet (P6)**, gated on `deps.Config.Pairing.Enabled`: resolves
       `openFleetSecretCipher(deps)` (fails closed — see "Fleet (P6)" below), builds the fleet
       via `buildFleet(api, deps, appVersion(m), fleetCipher, notificationService)`
@@ -190,12 +278,30 @@ adopted myiotsan node) were booted together for a live end-to-end check. See
   become `DiscoveredDevice` candidates and nothing else, no telemetry, no rule evaluation. The
   admin reviews candidates (each carrying a profile suggestion scored off its observed payload
   keys) and adopts or rejects them. mDNS/SSDP/portscan and a Modbus TCP scan, also listed under
-  P3 in `docs/MYIOTSAN_PLAN.md`, were deliberately NOT built: MQTT sensors announce over MQTT,
-  not mDNS, so a network scan would find gateways rather than sensors; the Modbus scan belongs
-  with the Modbus poller in P5, where it can be tested against an actual device. The frontend
-  gained a Discovery page and a first-run onboarding wizard
+  P3 in `docs/MYIOTSAN_PLAN.md`, were deliberately NOT built at the time: MQTT sensors announce
+  over MQTT, not mDNS, so a network scan would find gateways rather than sensors; the Modbus scan
+  belonged with the Modbus poller in P5, where it could be tested against an actual device. The
+  frontend gained a Discovery page and a first-run onboarding wizard
   (`views/react-webpack/src/views/components/discovery.js`, `.../onboarding.js`) that lead with
   enrollment as the primary onboarding path.
+- **Active network discovery scanning shipped 2026-07-17** (see step 9c above): once the
+  Modbus/SunSpec driver existed to test against, all four deferred scanners were built —
+  `infra/iot/discover` (`ScanModbus`/`ScanMDNS`/`ScanSSDP`/`ScanEtherNetIP`/`ScanBACnet`, every
+  scanner LAN-local/read-only/bounded/cancellable) plus `services.ScanService`
+  (`POST /api/discovery/scan`, admin-only) feed the SAME quarantined `DiscoveredDevice` candidate
+  table the announce path already wrote — a scan never adds a device, only proposes candidates
+  to adopt. The Modbus scanner reuses `infra/iot/sunspec.Discover` to auto-identify a device
+  (suggesting `generic-sunspec-solar`) or fall back to an "unidentified Modbus" candidate; a
+  Modbus-scan candidate's endpoint/unit/transport now carry through adoption
+  (`DiscoveredDevice.Endpoint`/`Unit`/`Transport`, `Enrollment.Adopt`) so it polls immediately.
+  Verified live end to end for Modbus/mDNS/SSDP (scan → SunSpec-identify → candidate → adopt →
+  device; mDNS/SSDP executed against a real LAN without error); EtherNet/IP and BACnet are
+  **parser-verified only** — their `ListIdentity`/`Who-Is` reply decoders are tested against
+  synthetic protocol-mock byte frames, since no real PLC was available in CI. See
+  `docs/DISCOVERY_SCANNING.md` for the full phase table, safety posture, and what remains
+  deliberately deferred (OPC-UA discovery, Profinet DCP, a Matter controller, native TV/AV
+  control) and why. Not to be confused with `infra/discovery` (mymatasan's older camera
+  ssdp/mdns/portscan discovery) — a separate package for a separate device family.
 - **P4 (actuation & device twin, shipped 2026-07-14):** a device can be commanded — switch a
   relay, set a setpoint — but only for the one shipped profile that declares any command
   (`smart-relay`; every other profile in the catalog remains read-only). Every gate `docs/MYIOTSAN_PLAN.md`
@@ -220,3 +326,91 @@ adopted myiotsan node) were booted together for a live end-to-end check. See
   (P4) now serves them on the shared appliance user service. See `apis/commands.go.md`,
   `apis/settings.go.md`, `entities/device_command.go.md`, `entities/profile_command.go.md`,
   `entities/device_attribute.go.md`.
+- **P5 (industrial protocols, app integration landed 2026-07-15)**: the Modbus/SunSpec driver
+  foundation (`infra/iot/modbus`, `infra/iot/sunspec`, `tools/sunspec-sim`) that shipped 2026-07-15
+  as a standalone, unwired foundation is now driven from this app. `entities.TelemetryKey` gained
+  a Modbus binding (`Register`/`RegKind`/`ScaleFactor`/`WordSwap`); `entities.DeviceProfile` gained
+  `Transport`/`ModbusMode`/`ModbusBase`/`PollSeconds`; `entities.IotDevice` gained `Endpoint`/`Unit`
+  for a device the app dials OUT to rather than one that dials in. `services.Ingest.Handle` was
+  split so its back half (`handleSamples`) is reusable, and a new `HandlePolled` entry point feeds
+  it from a POLL driver with no payload to parse and no enrollment quarantine to apply — a polled
+  device is one the operator configured, not a stranger that dialled in. `services.ModbusPoller`
+  (new, `services/modbus_poller.go.md`) is the per-device poll-goroutine service, reconciled
+  against the inventory on a ticker so a Modbus device added/edited/disabled in the UI is picked up
+  live. The catalog gained its first two POLLED profiles: `generic-sunspec-solar` (self-describing,
+  reads any compliant inverter/meter/battery with no per-model map) and `huawei-sun2000` (the
+  vendor-register worked example for the world's most-installed inverter, whose battery and meter
+  blocks sit far enough from its inverter block that `infra/iot/modbus.RegisterMap.Read` had to
+  gain **clustered reads** — bounded per-block requests instead of one span the Modbus 125-register
+  limit forbids). Verified live against `tools/sunspec-sim`'s new unit-4 Huawei persona: correctly
+  scaled/signed readings stored end to end (49.99 Hz, 13.2% SOC, +600 W grid import).
+  **Guarded Modbus control writes shipped 2026-07-16** (`entities.ProfileCommand` gained
+  `Transport`/`Register`/`RegKind`/`ScaleFactor`; `CommandService.sendModbus` writes and
+  read-back-confirms, single-register `u16`/`i16` only, never retried — `services/commands.go.md`).
+  **Three more register-map profiles, a driver enhancement, five solar flow templates, and an
+  in-app knowledge base shipped 2026-07-16** (branch `feat/myiotsan-solar-samples`):
+  `sungrow-sh-hybrid` (INPUT registers + word-swapped 32-bit values, and the first built-in profile
+  to pre-declare Modbus commands — `ems_mode`/`batt_force`/`batt_force_power`/`export_limit`/
+  `export_limit_enable`/`batt_min_soc`/`batt_max_soc`, every one inert until an admin enables the
+  device's actuation and bench-verifies the register), `deye-hybrid` (Deye/Sunsynk/Sol-Ark,
+  all-holding, `work_mode`/`solar_sell`/`grid_charge`/`max_sell_power` commands), and
+  `eastron-sdm630-meter` (read-only, float32 over input registers — the first profile needing float
+  decoding). `infra/iot/modbus/regmap.go` gained an optional `inputReader` interface + `Point.Input`
+  (`clusters()` now partitions by bank first, since fn 3/fn 4 can never share a round trip) and a
+  `PF32` `PType` (`math.Float32frombits`) — both additive and backward-compatible (`Input` defaults
+  `false`, so every existing holding-only map/reader is unchanged). `entities.TelemetryKey` gained
+  `RegInput` and `"f32"` became a valid `RegKind`, threaded through `registerMapFromKeys`/`ptypeOf`
+  and the profile CRUD/import-export/seed paths. Five new built-in Flow Engine templates
+  (`services/flow_catalog.go.md`) ride the `$inverter` slot: derived self-consumption/
+  self-sufficiency series, a low-SoC alert + force-charge guard, a grid export-limit control (the
+  control showcase), and an overheat/fault alert — every command node among them stays inert for the
+  same reason. A new in-app knowledge base (`apps/myiotsan/kb`, `go:embed`, `GET /api/kb`/
+  `/api/kb/{slug}`, `apps/myiotsan/apis/kb.go`, readable by viewer/operator — `services/rbac.go.md`)
+  ships eight compiled-in Markdown setup articles under `kb/solar/`; the frontend gained a Help page
+  (`components/kb.js`). Verified live: the KB served, all profiles/flows seeded, and the
+  FC04/f32/word-swap read path decoded correctly against a Modbus mock. Still outstanding: RTU
+  (serial) and OPC-UA transports, and the solar "system workspace" (P8) — see
+  `docs/MYIOTSAN_PLAN.md` §8g.
+- **Home automation, Phases 1-3 (richer command kinds, scenes, schedules), shipped 2026-07-15:**
+  moves `myiotsan` from "read sensors, actuate a relay" toward driving lamps/blinds/thermostats
+  and grouping/scheduling those commands — see `docs/MYIOTSAN_PLAN.md` §8h for the full writeup.
+  Phase 1 adds five `ProfileCommand` kinds beyond `switch`/`setpoint` (`dimmer`/`position`/`cct`/
+  `mode`/`color`) and closes a real gap along the way: `validateValue`'s `switch` gained a
+  `default` case that REFUSES an unrecognised `Kind` — before this change an unknown/misconfigured
+  kind was published **unvalidated**. Phase 2 adds `Scene`/`SceneAction` (a named, ordered group of
+  device commands) and `services.SceneService.Run`, which fans out through
+  `commandService.Issue` per action — every gate still applies, partial failure is first-class
+  (a scene never rolls back and never stops early), and a scene is convenience, not a new
+  authority. Phase 3 adds `Schedule` (clock, or sunrise/sunset ± an offset via a pure NOAA
+  calculation in `services/sun.go`, no network) and the `"myiotsan.scheduler"` minute tick above;
+  a schedule fires through the identical actuation path with a synthetic `"schedule:<name>"`
+  actor. **Phase 4 (rule-driven actuation — an `iot_rule` triggering a scene/command
+  automatically) is explicitly OUT OF SCOPE here and deferred to a later, security-reviewed PR**:
+  a rule that can WRITE to a device on its own is a materially different risk than a rule that
+  only raises an alert (see `docs/MYIOTSAN_PLAN.md` §9's "scope creep into a Home Assistant clone"
+  risk), and every safety property this app has built — read-only-by-default, admin-only,
+  server-side bounds, rate limit, never-auto-retry — needs deliberate re-examination before
+  something with no human in the loop can trigger it. Verified live end to end: seeded
+  `smart-lamp`, issued a `dimmer` command, ran a scene (whose per-action report included a
+  rate-limit refusal), set the site location, and created and test-fired a sunset schedule.
+- **Tabbed Settings page, shipped 2026-07-16:** collapses everything that configures the hub
+  itself (as opposed to the devices it watches) into one 6-tab page — users, location,
+  notifications, telemetry, connectivity (fleet pairing), system — behind a single admin-only
+  nav entry (`views/components/settings.js`). The two tabs new in this change are the ones with
+  real backend behavior: **notifications** wires `services.NotificationSettingsService`
+  (`services/notification_settings.go.md`) to `notification.Service.Configure` — before this,
+  myiotsan had no code path that ever called `Configure`, so every alert stayed in the in-app feed
+  no matter what an operator wanted; saving (or booting with a previously-saved config, via
+  `Sync`) is what makes an alert reach a webhook or telegram at all. **Telemetry** wires
+  `services.TelemetrySettingsService` (`services/telemetry_settings.go.md`), a store-over-config
+  blob for retention days/write-batcher sizing/broker address that `app.go` now reads once at
+  boot (`effTelemetry`) instead of reading `appCfg.Telemetry`/`appCfg.MQTT.Addr` directly — an
+  edit here takes effect only after a restart, which is why this change also added
+  `apis.NewSystemApi`'s `POST /api/system/restart` (`apis/system.go.md`). Along the way, the RBAC
+  catalog (`services/rbac.go.md`) gained explicit admin-only rows for
+  `/api/settings/notification`, `/api/settings/telemetry`, `/api/system`, and — a gap that
+  predated this change and was simply never caught — `/api/pairing`, which had never been listed
+  in the catalog at all. Verified live end to end: created a user and assigned it a role, set the
+  site location, saved and test-fired a webhook (confirming `Configure` reached the live hub),
+  saved telemetry retention (confirming defaults are preserved for unset fields), read pairing
+  status, and read version/health.
