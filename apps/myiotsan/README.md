@@ -51,9 +51,13 @@ command automatically, with no human in the loop) is deliberately NOT built** �
 `docs/MYIOTSAN_PLAN.md` §8h for why. **A Flow Engine — a Node-RED-style visual, executable
 data-flow canvas — has also shipped**: an admin can wire telemetry inputs through transforms
 (including sandboxed JavaScript), logic and outputs on a drag-and-drop canvas; every flow's
-actuation still goes through the identical guarded command path — see "Flow Engine" below. See
-`docs/MYIOTSAN_PLAN.md` for the full roadmap and, in §8b/§8c/§8d/§8e/§8f/§8g/§8h/§8i, exactly what
-shipped and what was found by live-booting it.
+actuation still goes through the identical guarded command path — see "Flow Engine" below.
+**Active network discovery scanning has also shipped**: alongside waiting for a device to
+announce itself, an admin can now sweep the LAN (Modbus, mDNS, SSDP, EtherNet/IP, BACnet) and
+have what it finds land in the same quarantined candidate list the enrollment window fills — see
+"Onboarding a device" below and `docs/DISCOVERY_SCANNING.md`. See `docs/MYIOTSAN_PLAN.md` for the
+full roadmap and, in §8b/§8c/§8d/§8e/§8f/§8g/§8h/§8i, exactly what shipped and what was found by
+live-booting it.
 
 ## Onboarding a device
 
@@ -90,6 +94,33 @@ A device profile is portable: `GET /api/profiles/{id}/export` / `POST /api/profi
 an integrator who tuned a deadband for a sensor at one site carry that tuning to the next,
 without retyping it. An imported profile is never marked builtin, and a slug collision is
 reported rather than silently overwriting the existing profile's decoding rules.
+
+### Scanning the network — the active counterpart to waiting
+
+Not every device announces itself. `POST /api/discovery/scan` (admin-only, same page) sweeps the
+LAN instead of waiting, and feeds the exact same quarantined candidate list — a scan never adds a
+device, it only proposes candidates you then adopt through the same review step above:
+
+- **Modbus** — a gentle subnet sweep (a cheap `:502` connect probe before it ever walks unit ids
+  on a host that answers), given a network range as CIDR. A responding unit is auto-identified via
+  SunSpec (vendor/model/serial, suggesting the `generic-sunspec-solar` profile) or, if it answers
+  Modbus but isn't SunSpec, filed as an "unidentified Modbus" candidate for you to assign a vendor
+  register-map profile to. Adopting a Modbus candidate carries its endpoint/unit/transport
+  straight into the new device — it polls immediately, no re-typing.
+- **mDNS** and **SSDP/UPnP** — find consumer/AV gear already on the LAN (Chromecast, Sonos,
+  HomeKit, printers). These are found for visibility, not necessarily control: a TV showing up
+  here means the app can *see* it, not that it can *drive* it, unless a matching profile/driver
+  exists.
+- **EtherNet/IP** and **BACnet** — broadcast the CIP/BACnet standard "who are you" probes
+  (ListIdentity, Who-Is) for industrial PLCs and building-automation controllers.
+
+**Every scan is read-only, admin-only, LAN-local, and bounded** (a 1024-host cap, a per-scan
+timeout, a concurrency cap) — nothing here ever writes to a device, and a scan is audited to the
+notification feed the same way opening an enrollment window is. See
+`docs/DISCOVERY_SCANNING.md` for the full safety posture, what each scanner has actually been
+verified against (Modbus/mDNS/SSDP live-booted end to end; EtherNet/IP and BACnet are
+parser-verified only — no real PLC was available to test against), and what was deliberately left
+out (OPC-UA discovery, Profinet DCP, a Matter controller, native TV/AV control) and why.
 
 ## Connecting a device manually
 

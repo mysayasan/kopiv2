@@ -77,10 +77,13 @@ func NewEnrollment(db dbsql.IDbCrud, profiles *ProfileService, logf func(string,
   promotes a candidate to a real `IotDevice` via `DeviceService.Create` (provisioned read-only:
   `ActuationEnabled: false` — a device does not arrive able to switch a relay just because
   somebody plugged it in), defaulting `ProfileId` to the candidate's suggestion if the admin did
-  not override it, then deletes the candidate row. **The enrollment key does not carry over**:
-  the device gets its own real, generated credential (returned once, same as any other
-  `DeviceService.Create`), so a leaked window key cannot be used to impersonate a device that was
-  adopted with it.
+  not override it, then deletes the candidate row. **Also carries the candidate's
+  `Endpoint`/`Unit`/`Transport` into the created device** — empty/zero for an MQTT candidate, but
+  for a Modbus-scan candidate (`services/scanner.go.md`) this is what lets an adopted device start
+  polling immediately with no manual re-typing of its connection. **The enrollment key does not
+  carry over**: the device gets its own real, generated credential (returned once, same as any
+  other `DeviceService.Create`), so a leaked window key cannot be used to impersonate a device
+  that was adopted with it.
 - `Reject(ctx, id) error` — discards a candidate.
 
 ## Notes
@@ -89,4 +92,8 @@ func NewEnrollment(db dbsql.IDbCrud, profiles *ProfileService, logf func(string,
   (`app.go`), because `Enrollment` itself depends on `ProfileService`, which depends on the db —
   a small ordering knot, not a design smell.
 - `payloadKeys`/`topicPrefix`/`truncate` are small package-private helpers exercised directly by
-  `enrollment_test.go`.
+  `enrollment_test.go`; `truncate`/`maxCandidates`/`isNoResultErr` are also reused by
+  `services/scanner.go.md`, whose `ScanService` writes the identical `DiscoveredDevice` table
+  through its own `recordCandidate` rather than through this type — a scan candidate is written
+  by a sibling service, not by `Enrollment` itself, since a scanned device was never a
+  quarantined MQTT session.

@@ -12,6 +12,7 @@ import (
 type discoveryApi struct {
 	enroll  *services.Enrollment
 	devices *services.DeviceService
+	scan    *services.ScanService
 }
 
 // NewDiscoveryApi registers onboarding: the enrollment window, the candidates it collects, and
@@ -20,15 +21,31 @@ type discoveryApi struct {
 // Every route here is ADMIN-ONLY (see services.Policy). Opening the window is the one act in
 // the whole app that lets an unknown thing talk to the broker at all, and an operator does not
 // get to do it.
-func NewDiscoveryApi(router *mux.Router, enroll *services.Enrollment, devices *services.DeviceService) {
-	h := &discoveryApi{enroll: enroll, devices: devices}
+func NewDiscoveryApi(router *mux.Router, enroll *services.Enrollment, devices *services.DeviceService, scan *services.ScanService) {
+	h := &discoveryApi{enroll: enroll, devices: devices, scan: scan}
 	g := router.PathPrefix("/discovery").Subrouter()
 	g.HandleFunc("/window", h.status).Methods("GET")
 	g.HandleFunc("/window", h.open).Methods("POST")
 	g.HandleFunc("/window", h.close).Methods("DELETE")
+	// Active network scan — the counterpart to the announce/enroll window. Admin-only like the rest
+	// of /discovery; its results land in the same candidate list.
+	g.HandleFunc("/scan", h.runScan).Methods("POST")
 	g.HandleFunc("/candidates", h.candidates).Methods("GET")
 	g.HandleFunc("/candidates/{id}/adopt", h.adopt).Methods("POST")
 	g.HandleFunc("/candidates/{id}", h.reject).Methods("DELETE")
+}
+
+func (a *discoveryApi) runScan(w http.ResponseWriter, r *http.Request) {
+	var body services.ScanRequest
+	if !decode(w, r, &body) {
+		return
+	}
+	res, err := a.scan.Scan(r.Context(), body, actorId(r))
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, res, "succeed")
 }
 
 func (a *discoveryApi) status(w http.ResponseWriter, r *http.Request) {
