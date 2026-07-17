@@ -57,6 +57,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-17 — mymatasan 1.109.0, core 1.63.0 (bd663c9)
+
+### Added
+
+- **mymatasan,infra**: Face recognition: a new global-gallery enroll->recognize feature, the detect-embed-match sibling of LPR, built as a stacked detection stage rather than the singleton custom-YOLO slot so it coexists with a trained model. Admins enroll named people once (People tab / POST/GET/PUT/DELETE /api/faces, one or more clear front-facing photos per person) into a gallery stored as encrypted embeddings (AES-256-GCM via the existing at-rest cipher, base64 TEXT so it stays portable across sqlite/MariaDB/Postgres); enrollment refuses an image with zero, multiple, low-quality, or too-small faces so a bad photo can never silently poison future matches. A new detection rule mode (detectionType: "face") fires on any recognized person (matchMode: known, the per-camera toggle's default), a chosen watchlist (include + a people list), or unrecognized strangers only (unknown), gated by a minConfidence floor (default 0.6) below which a marginal match is treated as unknown rather than risking naming the wrong person. Recognized identity (personId, personName, faceConfidence, recognized) is promoted to top-level alert metadata for notification templates, same pattern as LPR's plate metadata. The worker (OpenCV YuNet detect + SFace 128-d embed, both permissively licensed, both already-available-dependency opencv-python/numpy - zero new heavy dependency) shares the same high-resolution per-camera capture gate LPR already uses (WantFace, alongside WantLPR) so cameras without a face rule pay no extra capture or compute cost. setup.ps1 gained a -Faces switch that installs the Python deps and downloads the two .onnx model files.
 ## 2026-07-17 — myiotsan 0.20.0, mymatasan 1.108.0 (7409ee0)
 
 ### Added
