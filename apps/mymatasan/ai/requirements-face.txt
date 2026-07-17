@@ -1,0 +1,15 @@
+# Face recognition dependencies (mymatasan).
+#
+# Face recognition uses OpenCV's built-in YuNet detector (cv2.FaceDetectorYN) + SFace embedder
+# (cv2.FaceRecognizerSF) — the FaceDetectorYN/FaceRecognizerSF API shipped in opencv-python 4.5.4+.
+# No insightface, no onnxruntime, no torch: the whole face path runs on opencv-python + numpy, which
+# the LPR path already installs, so on most hosts this adds NOTHING new.
+#
+# The two model files (permissively licensed: YuNet MIT, SFace Apache-2.0) are downloaded separately
+# by the face-recognition setup into this directory:
+#   face_detection_yunet_2023mar.onnx   (~230 KB, MIT)      github.com/opencv/opencv_zoo
+#   face_recognition_sface_2021dec.onnx (~37 MB, Apache-2.0) github.com/opencv/opencv_zoo
+#
+# NOTE: opencv-python has no Python 3.14 wheels yet — target Python 3.12/3.13 for the worker runtime.
+opencv-python>=4.5.4
+numpy>=1.21

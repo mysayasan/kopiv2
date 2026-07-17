@@ -20,7 +20,7 @@ Registers AI detection rule and alert routes for standalone `mymatasan`.
 | `POST`   | `/api/vision/classes`             | Create or update a registry class/group. |
 | `DELETE` | `/api/vision/classes/{id}`        | Delete a custom class/group (built-ins cannot be deleted). |
 
-The `detectionType` field on a rule is the **mode** (`presence`, `crowd`, `intrusion`, `line_crossing`, `multi_line_crossing`, `lpr`); the **target classes** live in `ruleConfig.classes` and are resolved against the class registry at rule-load time. LPR rules instead carry their watchlist and match mode in `ruleConfig` (see `infra/vision/lpr.go`).
+The `detectionType` field on a rule is the **mode** (`presence`, `crowd`, `intrusion`, `line_crossing`, `multi_line_crossing`, `lpr`, `face`); the **target classes** live in `ruleConfig.classes` and are resolved against the class registry at rule-load time. LPR rules instead carry their watchlist and match mode in `ruleConfig` (see `infra/vision/lpr.go`); face rules instead carry a `people` list and `matchMode` (`known`/`include`/`unknown`) in `ruleConfig` (see `infra/vision/face.go`). Face rules also require at least one person enrolled via `/api/faces` to ever recognize anyone — the roster CRUD lives in a separate handler (`apis/faces.go`), not this file.
 
 ### GET /api/vision/alerts query parameters
 

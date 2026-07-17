@@ -23,6 +23,10 @@ Runs the MyMataSan background vision monitor that samples saved cameras and pers
 
 When any rule for a camera has `detectionType = "lpr"`, `sampleCamera` sets `wantLPR = true` (via `rulesContainLPR`). This has two effects: (1) `captureFrame` calls `DetectionSource.CaptureForLPR` instead of `Capture`, which forces standalone mode and grabs a full-resolution (default 1920 px wide) frame — bypassing the low-res siphon frame that would make plates unreadable; (2) `Frame.WantLPR` is set so the persistent worker runs its OCR stage. Non-LPR cameras are never affected: the OCR path and high-res capture never run for them.
 
+## Face capture path
+
+Faces need real pixels the same way plates do — a face on the low-res object-detection frame is unrecognizable — so `sampleCamera` also computes `wantFace = rulesContainFace(cameraRules)` (true when any rule for the camera has `detectionType = "face"`) and captures via `m.captureFrame(frameCtx, cameraID, wantLPR || wantFace)`: **either** an LPR rule **or** a face rule forces the same high-resolution `CaptureForLPR` grab, so a camera with both never captures twice. `Frame.WantFace` is set independently so the persistent worker only runs its (expensive) detect+embed+gallery-match stage when a face rule is actually active on that camera — the per-camera compute gate, mirroring `WantLPR`.
+
 ## Capture-rate throttle
 
 Each `reconcileSamplers` pass reads `settings.Vision.Capture.IntervalMs` and converts it via `sampleIntervalFromSettings` into the live per-camera detector-sampling cadence: `0`/unset falls back to the monitor's built-in `m.interval`; anything set is clamped to `[250ms, 60s]` so a stray value can't peg or stall a camera's loop. The resolved interval is pushed into each `cameraSampler.setState` and used to `Reset` its timer after every sample, so a Settings → AI → Capture interval change takes effect for every camera on the next reconcile without a restart — previously the sampler's own tick period ignored this setting and always ran on the monitor's fixed interval.

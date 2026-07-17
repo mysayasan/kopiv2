@@ -42,7 +42,9 @@ sequencing, and the helpers that don't belong to any one subsystem.
   the ready/not-ready verdict.
 - Registers app entities for bootstrap schema generation, including
   `appentities.ObjectObservation{}` and `sharedentities.NotificationRollup{}` (object
-  metadata recorder + dashboard-analytics rollup table), plus `sharedentities.AccessRole{}`
+  metadata recorder + dashboard-analytics rollup table), `appentities.FacePerson{}` and
+  `appentities.FaceEmbedding{}` (the global face-recognition gallery — see
+  `entities/face_person.go.md`/`entities/face_embedding.go.md`), plus `sharedentities.AccessRole{}`
   and `sharedentities.AccessRolePermission{}` — mymatasan uses the shared accessrbac role +
   permission **data model** (so the suite has one authorization schema and myiotsan
   inherits it) but not the shared `AccessSessionMidware` middleware, which hard-requires JWT
@@ -66,7 +68,7 @@ sequencing, and the helpers that don't belong to any one subsystem.
    master key **first, before any other service is built**. If it returns
    `RecoveryPending`, `RegisterAppRoutes` mounts nothing else and returns a no-op shutdown
    func immediately — the recovery gate API was already mounted inside `openAtRest`.
-4. `newRepos(deps.Db)` (see `wire_storage.go.md`) — builds all 16 repositories in one call.
+4. `newRepos(deps.Db)` (see `wire_storage.go.md`) — builds all 18 repositories in one call.
    `appCfg := m.cfg` is captured here too (mymatasan's own config, decoded earlier by
    `DecodeAppConfig`) — every step below that used to read `deps.Config.{Vision,Decoder,
    Stream,Health,Recording,Camera}` now reads the equivalent field off `appCfg`.
@@ -78,13 +80,21 @@ sequencing, and the helpers that don't belong to any one subsystem.
    publishes the pointers to the process environment for the Python worker, and builds the
    shared object-detection backend used by both the live monitor and the training
    auto-labeler.
-7. Constructs `trainingService`, `settingsService`, `setupStateService`, `pairingService`,
-   `localUserService` (now takes `deps.AccessRoles` as a second argument); resolves
-   `shredPasses` (`config_map.go`, off `appCfg`); sizes the NVENC semaphore from the
-   boot-time recording-storage settings; constructs `recordingService`, `metadataRecorder`,
-   `observationService`, `notificationService` (+ rollups/maintainer), and the settings
-   services (notification/health/machine-health/anomaly). Syncs persisted notification
-   delivery settings into the hub.
+7. Constructs `trainingService`, then the **face-recognition** pair —
+   `services.NewPythonFaceEmbedder` (the one-shot enrollment embedder, wired to
+   `detectorPaths.FacesWorkerScript`/`FaceYunetFile`/`FaceSfaceFile`) and
+   `services.NewFaceGalleryService` (`repo.FacePerson`, `repo.FaceEmbedding`, the shared
+   `atrestCipher`, that embedder, `detectorPaths.FacesGalleryFile`, and
+   `trainingService.ReloadDetector` as the gallery-file-changed callback) — then
+   `settingsService`, `setupStateService`, `pairingService`, `localUserService` (now takes
+   `deps.AccessRoles` as a second argument); resolves `shredPasses` (`config_map.go`, off
+   `appCfg`); sizes the NVENC semaphore from the boot-time recording-storage settings;
+   constructs `recordingService`, `metadataRecorder`, `observationService`,
+   `notificationService` (+ rollups/maintainer), and the settings services
+   (notification/health/machine-health/anomaly). Syncs persisted notification delivery
+   settings into the hub. Face recognition is off until an admin enrolls someone **and** a
+   camera has a face rule; the model files are downloaded by the face-recognition setup, so
+   a fresh install has the feature dormant with no extra startup cost.
 7a. `services.EnsureRoles(ctx, deps.AccessRoles, deps.AccessPerms)` seeds the built-in roles
     (`superadmin`, `viewer`, `operator`) and their permission matrices from
     `services.Policy()` (see `services/rbac.go.md`) — runs BEFORE the admin is seeded and

@@ -31,7 +31,10 @@ previously just inline statements in the middle of an 800-line function.
        through to any signed-in user and gated writes with a suffix-matched allow-list — see
        `apis/authorization.go.md`.
   3. Registers every protected API group in order: `NewLocalAuthApi`, `NewOnvifApi`,
-     `NewCameraApi`, `NewVisionApi`, `NewTrainingApi`, `NewTeachApi`, `NewSettingsApi`
+     `NewCameraApi`, `NewVisionApi`, `NewTrainingApi`, `NewTeachApi`, `NewFacesApi`
+     (`w.faceGallery` — the face-recognition roster/enrollment surface, see
+     `apis/faces.go.md`; admin-only via the same `NewRequireRolePermission` matrix, not a
+     separate check), `NewSettingsApi`
      (passing `visionToolSettingsFromAppConfig(w.appCfg, w.detectorPaths.DetectorArgs)`,
      `w.appCfg.Decoder.BrowseRoots` — both off mymatasan's own config since Tier 2 phase C,
      previously `deps.Config` — and `w.accessRoles`, which backs `GET /api/settings/roles`),

@@ -150,6 +150,7 @@ func (d *ObjectRuleDetector) Detect(ctx context.Context, frame Frame, rules []De
 		crowdCount := 0
 		var crowdBoxes []MetaBox
 		var plate *plateMatch
+		var face *faceMatchInfo
 		switch {
 		case isCrowdType(rule.DetectionType):
 			cfg, err := parseCrowdConfig(rule)
@@ -163,6 +164,12 @@ func (d *ObjectRuleDetector) Detect(ctx context.Context, frame Frame, rules []De
 				return nil, err
 			}
 			candidate, plate, matched = d.lprMatch(rule, cfg, candidates)
+		case isFaceType(rule.DetectionType):
+			cfg, err := parseFaceConfig(rule)
+			if err != nil {
+				return nil, err
+			}
+			candidate, face, matched = d.faceMatch(rule, cfg, candidates)
 		default:
 			candidate, matched = d.bestCandidate(rule, candidates)
 		}
@@ -233,6 +240,16 @@ func (d *ObjectRuleDetector) Detect(ctx context.Context, frame Frame, rules []De
 				meta["color"] = plate.Color
 			}
 			label = lprLabel(plate)
+		}
+		if face != nil {
+			// Promote the recognized identity to top-level metadata so notifications can template
+			// {{person}} and the alert can be filtered by who was seen, without reaching into
+			// objectMeta. personName is empty for an unknown face (stranger detection).
+			meta["personId"] = face.PersonId
+			meta["personName"] = face.PersonName
+			meta["faceConfidence"] = face.Confidence
+			meta["recognized"] = face.Recognized
+			label = faceLabel(face)
 		}
 		metadata, _ := json.Marshal(meta)
 		detections = append(detections, Detection{
@@ -375,6 +392,7 @@ func normalizeClassMap(raw map[string][]string) map[string]map[string]bool {
 		DetectionAnimal:            animalClasses,
 		DetectionCrowd:             {DetectionPerson},
 		DetectionLicensePlate:      {defaultPlateLabel},
+		DetectionFace:              {defaultFaceLabel},
 		DetectionIntrusion:         append([]string{"person"}, vehicleClasses...),
 		DetectionLineCrossing:      append([]string{"person"}, vehicleClasses...),
 		DetectionMultiLineCrossing: append([]string{"person"}, vehicleClasses...),

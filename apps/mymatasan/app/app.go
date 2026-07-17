@@ -129,6 +129,8 @@ func (m *module) Entities() []any {
 		appentities.TrainingImage{},
 		appentities.TrainingModel{},
 		appentities.TeachSkill{},
+		appentities.FacePerson{},
+		appentities.FaceEmbedding{},
 		appentities.RuntimeSetting{},
 		appentities.LocalUser{},
 		// The shared accessrbac tables. mymatasan uses the shared role + permission MODEL
@@ -284,6 +286,18 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		trainingRunConfigFromAppConfig(appCfg, deps.ConfigPath, detectorPaths.DetectorArgs),
 		atrestCipher,
 	)
+	// Face recognition: the enrollment embedder (one-shot YuNet+SFace worker) + the global gallery
+	// service. Off until an admin enrolls someone AND a camera has a face rule; the model files are
+	// downloaded by the face-recognition setup, so a fresh install has the feature dormant.
+	faceEmbedder := services.NewPythonFaceEmbedder(
+		appCfg.Vision.Detector.Command, detectorPaths.FacesWorkerScript,
+		detectorPaths.FaceYunetFile, detectorPaths.FaceSfaceFile,
+		func(f string, a ...any) { deps.Logger.Infof("mymatasan.faces", f, a...) })
+	faceGalleryService := services.NewFaceGalleryService(
+		repo.FacePerson, repo.FaceEmbedding, atrestCipher, faceEmbedder,
+		detectorPaths.FacesGalleryFile, trainingService.ReloadDetector,
+		func(f string, a ...any) { deps.Logger.Infof("mymatasan.faces", f, a...) })
+
 	settingsService := services.NewRuntimeSettingsService(repo.RuntimeSetting, runtimeSettingsFromAppConfig(appCfg))
 	setupStateService := services.NewSetupStateService(repo.RuntimeSetting)
 	pairingService := services.NewPairingService(repo.RuntimeSetting, atrestCipher, "", "")
@@ -555,6 +569,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		detectionClass: detectionClassService,
 		training:       trainingService,
 		teach:          teachService,
+		faceGallery:    faceGalleryService,
 		recording:      recordingService,
 		observation:    observationService,
 		metadata:       metadataRecorder,

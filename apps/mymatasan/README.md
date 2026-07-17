@@ -27,7 +27,10 @@ It is designed to run on small devices such as Raspberry Pi or Jetson-style micr
 - Line-crossing rules support an **Anything** wildcard class (`"*"`) that triggers on any detected YOLO object regardless of label, in addition to the named class list.
 - **Crowd** detection: a rule mode that fires when at least `minCount` people (default 2) are in the zone in a single frame.
 - **License-plate recognition (LPR)**: a rule mode (`detectionType: "lpr"`) that runs a second-stage plate detector + OCR on a dedicated high-resolution frame (default 1920 px wide) and fires on any readable plate or only on a watchlist (`matchMode: any/include/exclude`). Fuzzy watchlist matching (Levenshtein ≤ 1) absorbs common single-character OCR errors. Plate text, vehicle type, color, and watchlist flag ride the alert metadata and appear in notification templates (`{{plate}}`, `{{vehicleType}}`, `{{color}}`, `{{watchlisted}}`). Manage the plate-detector model and OCR dependencies from **Settings → AI** or via the `/api/training/lpr-model` endpoints.
-- **Two-axis rule model**: a detection rule is now a **Mode** (presence, crowd, intrusion, line crossing, multi-line crossing, lpr) plus a **target class list** chosen from a data-driven **detection class registry** under `/api/vision/classes` (built-in classes + user-defined groups + trained classes). Legacy single-object rules (`person`/`vehicle`/`animal`/`fire`/`smoke`) still work and open in the new editor.
+- **Face recognition** (People tab, admin-only): enroll named people once in a **global** gallery (`/api/faces`) and recognize them on any camera with a face rule — the detect→embed→match sibling of LPR, running as a stacked stage (not the singleton custom-YOLO slot, so it coexists with a trained model). Enrollment (`POST /api/faces/{id}/enroll`, an uploaded photo or a browser-grabbed camera snapshot) refuses an image with zero, multiple, low-quality, or too-small faces — a bad enrollment silently poisons every future match. A rule (`detectionType: "face"`) fires on any recognized person (`matchMode: known`), a chosen watchlist (`include` + a `people` list), or unrecognized strangers only (`unknown`), gated by a `minConfidence` floor (default 0.6) so a marginal match is treated as unknown rather than risk naming the wrong person. Recognized identity (`personId`/`personName`/`faceConfidence`) rides the alert metadata for notification templates. **Off by default, admin-only, and dormant** until an admin runs the face-recognition setup (below) *and* enrolls someone *and* a camera has a face rule — a fresh install pays no cost. Uses OpenCV's built-in YuNet (detect) + SFace (128-d embed) — no new heavy dependency beyond `opencv-python`/`numpy`, which LPR already needs.
+
+  > **Biometric data — read before enabling.** Face templates are biometric data under GDPR Art. 9 / BIPA-class regimes: embeddings are encrypted at rest (the same AES-256-GCM envelope as recordings), every `/api/faces` route is admin-only, and deleting a person crypto-shreds their embeddings. The YuNet/SFace **weights** are permissively licensed (YuNet MIT, SFace Apache-2.0) but were trained on research-only face datasets (WIDERFace/CASIA) — an unsettled legal question shared by essentially every mainstream face-recognition model, not unique to this integration; get legal sign-off before deploying in a regulated context. Accuracy drops hard on non-frontal, low-resolution, or poorly-lit CCTV faces — mitigate with a strict `minConfidence`, the built-in confidence margin, and by treating a marginal match as "unknown" rather than a name.
+- **Two-axis rule model**: a detection rule is now a **Mode** (presence, crowd, intrusion, line crossing, multi-line crossing, lpr, face) plus a **target class list** chosen from a data-driven **detection class registry** under `/api/vision/classes` (built-in classes + user-defined groups + trained classes) — face and LPR rules instead carry their own mode-specific `ruleConfig` shape (see above) rather than a class list. Legacy single-object rules (`person`/`vehicle`/`animal`/`fire`/`smoke`) still work and open in the new editor.
 - **Custom model training** under `/api/training`: build labeled image datasets (upload or import from alert snapshots), draw/correct bounding boxes in-browser, auto-label with the running model, export a YOLO dataset zip, train a custom model (in-app on a GPU, or offline), import a `best.pt`, and **activate** it to hot-swap the live detector and register its classes for rules.
 - YOLO Inference Tuning in Settings includes a **Best Calibration** button that applies recommended defaults (conf=0.20, IOU=0.35, imgsz=640, maxDet=100, augment on).
 - Alert log with true server-side filtering, sorting, and paging (any `AlertEvent` column — time range, rule, label, confidence, acknowledged status) via the shared `DataTable` grid in server mode; defaults to the latest detections, with a **Today** button for a one-click date-range filter.
@@ -212,6 +215,18 @@ Or install them separately (CPU-only, no GPU required):
 
 ```bash
 python -m pip install -r apps/mymatasan/ai/requirements-lpr.txt
+```
+
+To also install face-recognition dependencies (`opencv-python`, `numpy` — no new heavy dependency beyond what LPR already needs) and download the two permissively-licensed model files (YuNet MIT, SFace Apache-2.0, from `opencv_zoo`), add the `-Faces` flag — **Windows (`setup.ps1`) only for now**; `setup.sh` has no `--faces` equivalent yet, so on Linux/macOS/Raspberry Pi install `requirements-face.txt` and download the two `.onnx` files from `opencv_zoo` by hand:
+
+```bash
+powershell -ExecutionPolicy Bypass -File apps/mymatasan/ai/setup.ps1 -Faces
+```
+
+Or install the Python side separately (the model downloads still need `-Faces` or a manual fetch):
+
+```bash
+python -m pip install -r apps/mymatasan/ai/requirements-face.txt
 ```
 
 Or install core YOLO deps only:

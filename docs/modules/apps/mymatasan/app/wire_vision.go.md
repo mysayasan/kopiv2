@@ -9,9 +9,11 @@ value with explicit consumers and a single publication point.
 ## Responsibilities
 
 - `type detectorModelPaths struct` — `TrainingDir`, `ActiveModelFile`, `StockModelFile`,
-  `LPRModelFile`, `AnomalyManifestFile` (all absolute paths under the training dir) and
-  `DetectorArgs` (the worker-script arguments, resolved to absolute paths against
-  `deps.HomeDir` via `resolveDetectorScriptArgs` in `app.go`).
+  `LPRModelFile`, `AnomalyManifestFile` (all absolute paths under the training dir),
+  `FacesGalleryFile`/`FaceYunetFile`/`FaceSfaceFile`/`FacesWorkerScript` (the face-gallery
+  export file, the two YuNet/SFace `.onnx` model paths, and the one-shot enrollment worker
+  script — see below), and `DetectorArgs` (the worker-script arguments, resolved to
+  absolute paths against `deps.HomeDir` via `resolveDetectorScriptArgs` in `app.go`).
 - `resolveDetectorModelPaths(deps apphost.Dependencies, appCfg *mmconfig.Config)
   detectorModelPaths` — resolves `trainingDataDir(appCfg)` and every pointer-file path under
   it, plus the resolved detector args (from `appCfg.Vision.Detector.Args`). The script
@@ -20,13 +22,18 @@ value with explicit consumers and a single publication point.
   sits in `<HomeDir>/ai` and a repo-root-relative config path would otherwise double up as
   `<bin>/apps/mymatasan/ai/...`). `appCfg` is mymatasan's own config (Tier 2 phase C, see
   `docs/modules/apps/mymatasan/config/config.go.md`) — this function used to take only
-  `deps` and read `deps.Config.Vision`.
+  `deps` and read `deps.Config.Vision`. The face model files/worker resolve next to the
+  **resolved detector args' script** (`filepath.Dir(args[0])`, falling back to
+  `trainingDir` when no args are resolved) rather than under the training dir, since they
+  ship alongside `yolo_worker.py`/`faces_worker.py` in `ai/` (dev) or `bin/ai/` (staged) —
+  the same directory the stock YOLO weights resolve to, not the mutable training-data root.
 - `(p detectorModelPaths) PublishToProcessEnv()` — the **one** place that calls
-  `os.Setenv`, exporting all four model-pointer paths
-  (`MYMATASAN_ACTIVE_MODEL_FILE`/`_STOCK_MODEL_FILE`/`_LPR_MODEL_FILE`/`_ANOMALY_FILE`)
+  `os.Setenv`, exporting all seven model-pointer paths
+  (`MYMATASAN_ACTIVE_MODEL_FILE`/`_STOCK_MODEL_FILE`/`_LPR_MODEL_FILE`/`_ANOMALY_FILE`/
+  `_FACES_FILE`/`_FACE_YUNET`/`_FACE_SFACE`)
   into the process environment, where the Python YOLO worker reads them. Called once, from
   `RegisterAppRoutes`, immediately after `resolveDetectorModelPaths`.
-- `(p detectorModelPaths) Env() []string` — renders the same four pointers as `KEY=VALUE`
+- `(p detectorModelPaths) Env() []string` — renders the same seven pointers as `KEY=VALUE`
   pairs, for a spawn site that wants to hand a child process an explicit environment
   instead of relying on inheritance (`infra/vision`'s `PersistentOptions.Env` supports
   this).

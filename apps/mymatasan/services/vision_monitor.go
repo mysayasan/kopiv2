@@ -336,11 +336,15 @@ func (m *VisionMonitor) sampleCamera(ctx context.Context, cameraID int64, camera
 	// (plates need the pixels) and asks the worker to run the OCR stage; otherwise
 	// it uses the normal low-res object-detection frame and OCR never runs.
 	wantLPR := rulesContainLPR(cameraRules)
+	// Faces, like plates, need real pixels — a face on the low-res object frame is unrecognizable —
+	// so a face rule also forces the high-resolution grab and gates the worker's face stage.
+	wantFace := rulesContainFace(cameraRules)
 	frameCtx, cancel := context.WithTimeout(ctx, m.timeout)
-	frame, err := m.captureFrame(frameCtx, cameraID, wantLPR)
+	frame, err := m.captureFrame(frameCtx, cameraID, wantLPR || wantFace)
 	cancel()
 	frame.Inference = inference
 	frame.WantLPR = wantLPR
+	frame.WantFace = wantFace
 	if err != nil {
 		// A camera that silently fails every capture looks identical to a quiet camera in
 		// the alert log. This counter is what tells them apart.
@@ -518,6 +522,17 @@ func toStringSlice(value any) []string {
 func rulesContainLPR(rules []vision.DetectionRule) bool {
 	for _, rule := range rules {
 		if strings.ToLower(strings.TrimSpace(rule.DetectionType)) == vision.DetectionLicensePlate {
+			return true
+		}
+	}
+	return false
+}
+
+// rulesContainFace reports whether any rule in the set is a face-recognition rule, gating the
+// worker's (expensive) face detect+embed stage per camera.
+func rulesContainFace(rules []vision.DetectionRule) bool {
+	for _, rule := range rules {
+		if strings.ToLower(strings.TrimSpace(rule.DetectionType)) == vision.DetectionFace {
 			return true
 		}
 	}

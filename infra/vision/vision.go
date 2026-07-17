@@ -31,6 +31,11 @@ const (
 	// candidate metadata. Rules can fire on any readable plate or only on a
 	// watchlist — see lpr.go.
 	DetectionLicensePlate = "lpr"
+	// DetectionFace is face recognition. The worker detects faces, embeds each, and
+	// matches it against the GLOBAL enrolled gallery; the recognized person (or
+	// "unknown") plus a match confidence ride the candidate metadata. Rules can fire
+	// on any recognized person, only a chosen set, or only unknown faces — see face.go.
+	DetectionFace = "face"
 )
 
 // DetectionRuleRequest is the reusable request shape for configuring a visual detector.
@@ -120,6 +125,10 @@ type Frame struct {
 	// LPR rule so the expensive OCR path never runs on object-detection-only
 	// cameras — this is the per-camera compute gate.
 	WantLPR bool `json:"-"`
+	// WantFace requests the worker's face stage (detect faces + embed + match the enrolled gallery)
+	// for this frame. Set only for cameras with an active face rule — the per-camera compute gate,
+	// exactly like WantLPR, so the embedding path never runs on cameras that don't need it.
+	WantFace bool `json:"-"`
 }
 
 // Detection is one detector result before it is persisted as an alert event.
@@ -211,6 +220,9 @@ func ValidateDetectionRule(rule DetectionRule) error {
 		return err
 	}
 	if err := validateLPRRule(rule); err != nil {
+		return err
+	}
+	if err := validateFaceRule(rule); err != nil {
 		return err
 	}
 	return ValidateSchedulePolicy(rule.SchedulePolicy)
