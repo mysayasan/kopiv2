@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -18,7 +19,6 @@ import (
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
 	apiaccessenums "github.com/mysayasan/kopiv2/domain/enums/apiaccess"
 	"github.com/mysayasan/kopiv2/domain/notification"
-	"github.com/mysayasan/kopiv2/infra/telemetry"
 	"github.com/mysayasan/kopiv2/infra/apidocs"
 	"github.com/mysayasan/kopiv2/infra/apphost"
 	"github.com/mysayasan/kopiv2/infra/atrest"
@@ -26,6 +26,7 @@ import (
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/mediarelay"
 	"github.com/mysayasan/kopiv2/infra/stream"
+	"github.com/mysayasan/kopiv2/infra/telemetry"
 	"github.com/mysayasan/kopiv2/infra/versioning"
 )
 
@@ -83,6 +84,217 @@ func (m *module) SharedAPIs() apphost.SharedAPIConfig {
 	return cfg
 }
 
+// Migrations runs BEFORE the auto-migrator and independently of the autoMigrate config flag.
+// The single entry here guarantees the fleet-map columns exist on managed_node even in a
+// deployment that has autoMigrate turned off — without them, node adoption's INSERT fails
+// with a 500 (the node pairs, then the record can't be saved). Idempotent: it adds only the
+// columns that are missing, so it is a no-op where the auto-migrator already added them.
+func (m *module) Migrations() []bootstrap.Migration {
+	return []bootstrap.Migration{
+		{
+			ID:   "20260718-01-managed-node-geo",
+			Name: "add lat/lon/map_placed to managed_node (fleet map)",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				return ensureManagedNodeGeoColumns(ctx, tx, engine)
+			},
+		},
+		{
+			// A SEPARATE migration (new ID) so it runs even on databases where 01 already
+			// applied before the backfill logic existed: an ADD COLUMN without a default left
+			// existing rows NULL, and the non-pointer float64/bool entity fields cannot scan a
+			// NULL. Editing 01 would not re-run it; 02 always runs once. Idempotent.
+			ID:   "20260718-02-managed-node-geo-backfill",
+			Name: "backfill NULL lat/lon/map_placed on managed_node to zero",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				return backfillManagedNodeGeoNulls(ctx, tx, engine)
+			},
+		},
+		{
+			ID:   "20260719-01-placement-fov",
+			Name: "add heading/fov to node_placement (floor-plan camera coverage arcs)",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				return ensurePlacementFovColumns(ctx, tx, engine)
+			},
+		},
+		{
+			ID:   "20260719-02-floor-design",
+			Name: "add design (drawn-plan vector shapes) to floor_plan",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				return ensureFloorDesignColumn(ctx, tx, engine)
+			},
+		},
+		{
+			ID:   "20260719-03-floor-bgpath",
+			Name: "add bg_path (pristine background image) to floor_plan",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				existing, err := tableColumns(ctx, tx, engine, "floor_plan")
+				if err != nil {
+					return err
+				}
+				if !existing["bg_path"] {
+					if _, err := tx.ExecContext(ctx, "ALTER TABLE floor_plan ADD COLUMN bg_path TEXT"); err != nil {
+						return fmt.Errorf("add floor_plan.bg_path: %w", err)
+					}
+				}
+				if _, err := tx.ExecContext(ctx, "UPDATE floor_plan SET bg_path = '' WHERE bg_path IS NULL"); err != nil {
+					return fmt.Errorf("backfill floor_plan.bg_path NULLs: %w", err)
+				}
+				return nil
+			},
+		},
+	}
+}
+
+// ensureFloorDesignColumn adds the design column (drawn-plan vector JSON) to floor_plan if absent
+// and backfills NULLs to '' (the entity's Design string cannot scan a NULL). Idempotent.
+func ensureFloorDesignColumn(ctx context.Context, tx *sql.Tx, engine string) error {
+	existing, err := tableColumns(ctx, tx, engine, "floor_plan")
+	if err != nil {
+		return err
+	}
+	colType := "TEXT"
+	if engine == "mariadb" {
+		colType = "LONGTEXT"
+	}
+	if !existing["design"] {
+		if _, err := tx.ExecContext(ctx, "ALTER TABLE floor_plan ADD COLUMN design "+colType); err != nil {
+			return fmt.Errorf("add floor_plan.design: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE floor_plan SET design = '' WHERE design IS NULL"); err != nil {
+		return fmt.Errorf("backfill floor_plan.design NULLs: %w", err)
+	}
+	return nil
+}
+
+// ensurePlacementFovColumns adds the coverage-arc columns to node_placement if absent and
+// backfills any NULLs to zero (an ADD COLUMN without a default leaves existing rows NULL, and the
+// entity's Heading/Fov float64 fields cannot scan a NULL). Idempotent.
+func ensurePlacementFovColumns(ctx context.Context, tx *sql.Tx, engine string) error {
+	existing, err := tableColumns(ctx, tx, engine, "node_placement")
+	if err != nil {
+		return err
+	}
+	for _, name := range []string{"heading", "fov"} {
+		if existing[name] {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, "ALTER TABLE node_placement ADD COLUMN "+name+" "+geoColumnType("DOUBLE PRECISION", engine)); err != nil {
+			return fmt.Errorf("add node_placement.%s: %w", name, err)
+		}
+	}
+	for _, name := range []string{"heading", "fov"} {
+		if _, err := tx.ExecContext(ctx, "UPDATE node_placement SET "+name+" = 0 WHERE "+name+" IS NULL"); err != nil {
+			return fmt.Errorf("backfill node_placement.%s NULLs: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// ensureManagedNodeGeoColumns adds the geographic columns to managed_node if absent, using the
+// SAME per-engine types the auto-migrator generates (float64 and bool normalized per engine),
+// so a column added here is byte-identical to one the auto-migrator would add and never
+// triggers a schema-drift warning.
+func ensureManagedNodeGeoColumns(ctx context.Context, tx *sql.Tx, engine string) error {
+	existing, err := tableColumns(ctx, tx, engine, "managed_node")
+	if err != nil {
+		return err
+	}
+	adds := []struct{ name, base string }{
+		{"lat", "DOUBLE PRECISION"},
+		{"lon", "DOUBLE PRECISION"},
+		{"map_placed", "BOOLEAN"},
+	}
+	for _, c := range adds {
+		if existing[c.name] {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, "ALTER TABLE managed_node ADD COLUMN "+c.name+" "+geoColumnType(c.base, engine)); err != nil {
+			return fmt.Errorf("add managed_node.%s: %w", c.name, err)
+		}
+	}
+	return backfillManagedNodeGeoNulls(ctx, tx, engine)
+}
+
+// backfillManagedNodeGeoNulls sets any NULL lat/lon/map_placed to their zero value. An ADD
+// COLUMN without a default leaves EXISTING rows NULL, and the entity's Lat/Lon (float64) and
+// MapPlaced (bool) are non-pointer, so the row scanner fails on a NULL with "converting NULL
+// to float64 is unsupported" — breaking List AND adoption's read-back. Engine-aware:
+// map_placed is BOOLEAN on postgres, so its zero value is `false`, not `0` (a boolean-vs-
+// integer type error) — sqlite/mariadb store it as an integer where 0 is correct. Idempotent.
+func backfillManagedNodeGeoNulls(ctx context.Context, tx *sql.Tx, engine string) error {
+	falseLit := "0"
+	if engine == "postgres" {
+		falseLit = "false"
+	}
+	stmts := []string{
+		"UPDATE managed_node SET lat = 0 WHERE lat IS NULL",
+		"UPDATE managed_node SET lon = 0 WHERE lon IS NULL",
+		"UPDATE managed_node SET map_placed = " + falseLit + " WHERE map_placed IS NULL",
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("backfill managed_node geo NULLs: %w", err)
+		}
+	}
+	return nil
+}
+
+// geoColumnType maps a base SQL type to the concrete per-engine type the auto-migrator uses
+// (mirrors infra/db/bootstrap normalizeSQLType), so the explicit migration and the
+// auto-migrator produce the same column definition.
+func geoColumnType(base, engine string) string {
+	switch engine {
+	case "sqlite":
+		switch base {
+		case "DOUBLE PRECISION":
+			return "REAL"
+		case "BOOLEAN":
+			return "INTEGER"
+		}
+	case "mariadb":
+		switch base {
+		case "DOUBLE PRECISION":
+			return "DOUBLE"
+		case "BOOLEAN":
+			return "TINYINT(1)"
+		}
+	}
+	return base // postgres, or an already-concrete type
+}
+
+// tableColumns returns the lower-cased column names of a table for the given engine.
+func tableColumns(ctx context.Context, tx *sql.Tx, engine, table string) (map[string]bool, error) {
+	var query string
+	var args []any
+	switch engine {
+	case "postgres":
+		query = "SELECT column_name FROM information_schema.columns WHERE table_name = $1"
+		args = []any{table}
+	case "mariadb":
+		query = "SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ?"
+		args = []any{table}
+	case "sqlite":
+		query = "SELECT name FROM pragma_table_info('" + table + "')"
+	default:
+		return nil, fmt.Errorf("unsupported db engine %q", engine)
+	}
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out[strings.ToLower(name)] = true
+	}
+	return out, rows.Err()
+}
+
 func (m *module) Entities() []any {
 	return []any{
 		sharedentities.ApiEndpoint{},
@@ -99,6 +311,10 @@ func (m *module) Entities() []any {
 		// Cross-domain correlation: the reason the suite has a fourth app.
 		appentities.FleetRule{},
 		appentities.FleetRuleClause{},
+		// Fleet map: sites + uploaded floor plans (indoor view); node/camera placements.
+		appentities.Site{},
+		appentities.FloorPlan{},
+		appentities.NodePlacement{},
 	}
 }
 
@@ -120,6 +336,11 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Node Access", Description: "per-node read/write access grants (owner-role managed)", Path: "/api/nodes/access", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Node Self-Drop", Description: "node-initiated unpair notice (fleet-key authenticated)", Path: "/api/nodes/self-dropped", AccessTier: apiaccessenums.Public},
 		{Title: "Audit", Description: "append-only audit trail of sensitive actions (superadmin-gated)", Path: "/api/audit", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Basemap", Description: "offline vector basemap archive for the fleet map", Path: "/api/basemap", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Sites", Description: "sites and uploaded floor plans for the indoor map", Path: "/api/sites", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Floors", Description: "floor-plan images and node/camera placements", Path: "/api/floors", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Placements", Description: "reposition/remove node and camera markers on floor plans", Path: "/api/placements", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Node Floorplan", Description: "floor plans holding a node camera markers (geo-map drill-down)", Path: "/api/node-floorplan", AccessTier: apiaccessenums.AuthOnly},
 	}
 
 	statements := make([]string, 0, len(endpoints)*2)
@@ -182,6 +403,11 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewRbacAdminApi(api, *deps.Auth, controlSession, roleService, userService, auditService)
 	apis.NewAuditApi(api, *deps.Auth, controlSession, auditService)
 
+	// Offline vector basemap for the fleet map. Provisioned out-of-band as a
+	// single .pmtiles archive in the data dir (absent = map renders without
+	// cartography), so an intranet install never reaches for a tile CDN.
+	apis.NewBasemapApi(api, *deps.Auth, controlSession, apis.ResolveBasemapPath(deps.DataDir, ""))
+
 	// Node management: discover, adopt, and release mymatasan nodes over the
 	// fleet-key-authenticated pairing protocol. ParentBaseURL is recorded on each
 	// node so it can call back (enroll / release / self-drop). The control plane is
@@ -233,7 +459,14 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		CertWarnBefore: time.Duration(p.RenewBeforeHours) * time.Hour,
 		SecretCipher:   secretCipher,
 	})
-	apis.NewNodesApi(api, *deps.Auth, controlSession, registry, auditService)
+	nodesApi := apis.NewNodesApi(api, *deps.Auth, controlSession, registry, auditService,
+		func(f string, a ...any) { deps.Logger.Warnf("myseliasan.nodes", f, a...) })
+
+	// Sites + floor plans (indoor map). Plan images are encrypted at rest with the same
+	// fleet cipher that protects the CA key/PSK, stored under <dataDir>/floorplans.
+	planDir := apphost.ResolveWritablePath(deps.DataDir, "floorplans")
+	siteService := services.NewSiteService(deps.Db, secretCipher, planDir)
+	apis.NewSitesApi(api, *deps.Auth, controlSession, siteService)
 
 	bgCtx, stopBackground := context.WithCancel(context.Background())
 
@@ -320,6 +553,9 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// poll becomes a fallback that can no longer flap a control-connected node offline.
 	m.controlServer = controlServer
 	registry.SetControlPresence(controlServer.IsConnected)
+	// Surface nodes the control channel refuses (stranded: valid cert, no record) so an
+	// operator can see and block them. Wired now that the control server exists.
+	nodesApi.SetRejectTracker(controlServer)
 	// Proactive fleet-health alerting: the heartbeat reconciler detects a node dropping
 	// to "lost", recovering, or a certificate nearing expiry and hands each transition
 	// to this sink, which surfaces it in the unified notification feed (so a

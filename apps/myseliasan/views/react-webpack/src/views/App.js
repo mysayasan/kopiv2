@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, lazy, Suspense } from 'react';
 import './styles/app.css';
 import './styles/controlplane.css';
 import './styles/rbac-standard.css';
@@ -13,6 +13,9 @@ import { SideNav } from './components/layout';
 import { ToastStack, LangProvider, normalizeLang, useT, LanguageDropdown, AppFooter } from '@shared';
 import { FormBusyOverlay, ThemeDropdown } from './components/ui';
 import { DashboardTab } from './components/dashboard';
+// The Map page pulls in OpenLayers (~110KB gz). Lazy-load it so that weight is fetched only
+// when an operator actually opens the Map tab, keeping the initial bundle lean.
+const MapPage = lazy(() => import('./components/map_page').then((m) => ({ default: m.MapPage })));
 import { NodesTab } from './components/nodes';
 import { FleetRulesPage } from './components/fleet_rules';
 import { LiveViewsPage } from './components/live_views';
@@ -217,6 +220,11 @@ function AppInner({ lang, onLangChange }) {
         <ToastStack toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((t) => t.id !== id))} />
 
         {activeTab === 'dashboard' ? <DashboardTab nodes={nodes} /> : null}
+        {activeTab === 'map' ? (
+          <Suspense fallback={<div className="map-loading">{t('common.loading')}</div>}>
+            <MapPage nodes={nodes} reloadNodes={loadNodes} onToast={pushToast} onOpenNode={selectNode} />
+          </Suspense>
+        ) : null}
         {activeTab === 'liveviews' && canNodes ? <LiveViewsPage nodes={nodes} /> : null}
         {activeTab === 'objects' && canNodes ? <ObjectsPage nodes={nodes} onToast={pushToast} /> : null}
         {activeTab === 'teach' && canNodes ? <TeachPage nodes={nodes} onToast={pushToast} /> : null}

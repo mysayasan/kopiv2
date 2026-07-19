@@ -20,6 +20,8 @@ Defines the `ManagedNode` entity: the DB row that represents one `mymatasan` nod
 | `Token` | Pairing token returned by the node on adoption; stored here for release calls. Tagged `json:"-"` so it is never serialized in API responses. |
 | `Fingerprint` | Reserved; not currently used. Identity verification in the implemented mTLS channel uses the certificate CN (node ID), not a pinned fingerprint. |
 | `MTLSPort` | The node's mutual-TLS management listener port (heartbeat + release), recorded at adoption from `NodeRegistryConfig.MTLSPort`. Used by the control plane to dial `GET /heartbeat` and `POST /release`. |
+| `Lat` / `Lon` | The node's position on the geographic fleet map (see "Fleet Map" in `apps/myseliasan/README.md`), set by an operator dragging the pin via `PUT /api/nodes/{id}/position`. |
+| `MapPlaced` | Distinguishes "deliberately positioned" from the zero value — `(0,0)` is a real coordinate (Gulf of Guinea), so a bare `Lat`/`Lon` pair alone can't tell an unplaced node from one parked at null island. `false` (the default for every node adopted before this field existed) means the node is simply absent from the geographic map until someone places it. |
 | `CertExpiresAt` | Unix timestamp of the expiry of the last node certificate issued by the fleet CA. Recorded on successful enrollment/renewal so the UI can surface cert health. |
 | `OwnerRoleId` | The myseliasan `RoleId` that adopted this node. That role has full (admin) access by default, without an explicit `NodeAccessGrant`. Other roles need a grant. `0` means legacy/unknown owner (no default access). |
 | `Status` | `"online"` (adopted, reachable), `"lost"` (unreachable / mTLS probe failed), or `"self-dropped"` (node unpaired itself via admin self-drop). |

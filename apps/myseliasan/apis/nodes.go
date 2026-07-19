@@ -18,6 +18,8 @@ import (
 type nodesApi struct {
 	registry services.INodeRegistry
 	audit    services.IAuditService
+	rejects  rejectTracker        // set post-startup via SetRejectTracker; may be nil
+	logf     func(string, ...any) // server-log sink; may be nil
 }
 
 // NewNodesApi registers control-plane node-management endpoints.
@@ -35,8 +37,16 @@ type nodesApi struct {
 // Public route (called by a node, authenticated by a fleet-key assertion):
 //
 //	POST /nodes/self-dropped  — a node reports it unpaired itself
-func NewNodesApi(router *mux.Router, auth middlewares.AuthMidware, session *middlewares.AccessSessionMidware, registry services.INodeRegistry, audit services.IAuditService) {
-	h := &nodesApi{registry: registry, audit: audit}
+//
+// rejectTracker exposes the control server's list of refused (stranded) node connections and
+// a way to forget one. Satisfied by *services.ControlServer, injected after it is built.
+type rejectTracker interface {
+	Unrecognized() []services.RejectedNode
+	ForgetRejected(nodeID string)
+}
+
+func NewNodesApi(router *mux.Router, auth middlewares.AuthMidware, session *middlewares.AccessSessionMidware, registry services.INodeRegistry, audit services.IAuditService, logf func(string, ...any)) *nodesApi {
+	h := &nodesApi{registry: registry, audit: audit, logf: logf}
 
 	// Public self-drop notice — node has no session, carries its own signature.
 	router.HandleFunc("/nodes/self-dropped", h.selfDropped).Methods("POST")
@@ -50,13 +60,26 @@ func NewNodesApi(router *mux.Router, auth middlewares.AuthMidware, session *midd
 	g.Use(session.Middleware)
 	g.HandleFunc("", h.list).Methods("GET")
 	g.HandleFunc("/fleet-status", h.fleetStatus).Methods("GET")
+	// Stranded/refused nodes dialing the control channel with a valid cert but no record.
+	// Registered before the "/{id}" routes; distinct literal segment, so no conflict.
+	g.HandleFunc("/unrecognized", h.listUnrecognized).Methods("GET")
 	g.HandleFunc("/scan", h.scan).Methods("POST")
 	g.HandleFunc("/adopt", h.adopt).Methods("POST")
 	g.HandleFunc("/{id}", h.update).Methods("PUT")
+	g.HandleFunc("/{id}/position", h.updatePosition).Methods("PUT")
 	g.HandleFunc("/fleet-key", h.fleetKey).Methods("GET")
 	g.HandleFunc("/fleet-key", h.generateFleetKey).Methods("POST")
 	g.HandleFunc("/{id}/release", h.release).Methods("POST")
+	// Block a stranded node: revoke its cert so it can no longer enroll or connect. Forget
+	// removes it from the unrecognized list without revoking (operator dismissed it).
+	g.HandleFunc("/{id}/block", h.blockNode).Methods("POST")
+	g.HandleFunc("/{id}/forget", h.forgetNode).Methods("POST")
+	return h
 }
+
+// SetRejectTracker wires the control server's rejected-connection view in after it is built
+// (the control server is constructed later than this API in app startup).
+func (a *nodesApi) SetRejectTracker(rt rejectTracker) { a.rejects = rt }
 
 // recordNodeAction writes an audit entry for a node-targeted operator action,
 // attributing it to the caller's session identity. Best-effort (never blocks the
@@ -136,10 +159,23 @@ func (a *nodesApi) adopt(w http.ResponseWriter, r *http.Request) {
 	node, err := a.registry.Adopt(r.Context(), in)
 	if err != nil {
 		a.recordNodeAction(r, "node.adopt", in.NodeID, "error", "adopt failed: "+err.Error(), map[string]any{"ip": in.IP})
+		// Log the RAW error to the server log too (the client gets a friendlier message, and
+		// the audit trail is in the DB) so an operator reading the log file sees the actual
+		// cause — e.g. "insert failed: ... no such column: lat".
+		if a.logf != nil {
+			a.logf("adopt failed for ip=%s: %v", in.IP, err)
+		}
 		switch {
 		case errors.Is(err, services.ErrFleetKeyUnset):
 			controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		case errors.Is(err, services.ErrAdoptPersist):
+			// The node paired but we couldn't save its record (and we've rolled the node back
+			// so it can be re-adopted). Give an actionable message, not the raw DB string.
+			controllers.SendError(w, controllers.ErrInternalServerError,
+				"The node paired but its record could not be saved on the control plane, so the pairing was rolled back. Check the control-plane database, then adopt again with a fresh claim code.")
 		case errors.Is(err, services.ErrAdoptRejected):
+			// The node itself refused (already paired elsewhere, or an expired/used claim
+			// code). Pass the node's reason through — it is already human-readable.
 			controllers.SendError(w, controllers.ErrConflict, err.Error())
 		default:
 			controllers.SendError(w, controllers.ErrBadRequest, err.Error())
@@ -176,6 +212,42 @@ func (a *nodesApi) update(w http.ResponseWriter, r *http.Request) {
 	controllers.SendResult(w, node, "succeed")
 }
 
+// updatePosition sets a node's geographic map coordinates (from an operator dragging the
+// pin) or clears it off the map (placed=false). Separate from the meta update so a drag
+// never has to round-trip name/description/icon.
+func (a *nodesApi) updatePosition(w http.ResponseWriter, r *http.Request) {
+	nodeID := mux.Vars(r)["id"]
+	var body struct {
+		Lat    float64 `json:"lat"`
+		Lon    float64 `json:"lon"`
+		Placed *bool   `json:"placed"`
+	}
+	if err := decodeJSON(w, r, &body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	// Absent "placed" means "I'm positioning it" — the common drag case. Only an explicit
+	// false unplaces a node.
+	placed := true
+	if body.Placed != nil {
+		placed = *body.Placed
+	}
+	if placed && (body.Lat < -90 || body.Lat > 90 || body.Lon < -180 || body.Lon > 180) {
+		controllers.SendError(w, controllers.ErrBadRequest, "coordinates out of range")
+		return
+	}
+	var updatedBy int64
+	if claims, ok := r.Context().Value(enumauth.Claims).(*models.JwtCustomClaims); ok && claims != nil {
+		updatedBy = claims.Id
+	}
+	node, err := a.registry.UpdatePosition(r.Context(), nodeID, body.Lat, body.Lon, placed, updatedBy)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, node, "succeed")
+}
+
 func (a *nodesApi) release(w http.ResponseWriter, r *http.Request) {
 	nodeID := mux.Vars(r)["id"]
 	if err := a.registry.Release(r.Context(), nodeID); err != nil {
@@ -185,6 +257,45 @@ func (a *nodesApi) release(w http.ResponseWriter, r *http.Request) {
 	}
 	a.recordNodeAction(r, "node.release", nodeID, "success", "released node "+nodeID+" (certificate revoked)", nil)
 	controllers.SendResult(w, map[string]any{"released": true}, "succeed")
+}
+
+// listUnrecognized returns nodes that keep dialing the control channel but are refused (no
+// managed record, or a revoked cert) — the stranded nodes an operator otherwise can't see.
+func (a *nodesApi) listUnrecognized(w http.ResponseWriter, r *http.Request) {
+	if a.rejects == nil {
+		controllers.SendResult(w, []services.RejectedNode{}, "succeed")
+		return
+	}
+	controllers.SendResult(w, a.rejects.Unrecognized(), "succeed")
+}
+
+// blockNode revokes a stranded node's certificate so it can no longer enroll or hold a
+// control channel, then drops it from the unrecognized list. This is the control-plane-side
+// "remove" for a node that has no managed record to release — the node still needs a factory
+// reset on its own side to stop dialing entirely, which the UI explains.
+func (a *nodesApi) blockNode(w http.ResponseWriter, r *http.Request) {
+	nodeID := mux.Vars(r)["id"]
+	if err := a.registry.RevokeNode(r.Context(), nodeID); err != nil {
+		a.recordNodeAction(r, "node.block", nodeID, "error", "block failed: "+err.Error(), nil)
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	if a.rejects != nil {
+		a.rejects.ForgetRejected(nodeID)
+	}
+	a.recordNodeAction(r, "node.block", nodeID, "success", "blocked stranded node "+nodeID+" (certificate revoked)", nil)
+	controllers.SendResult(w, map[string]any{"blocked": true}, "succeed")
+}
+
+// forgetNode drops a node from the unrecognized list WITHOUT revoking (operator dismissed the
+// warning). It reappears if the node dials and is refused again.
+func (a *nodesApi) forgetNode(w http.ResponseWriter, r *http.Request) {
+	nodeID := mux.Vars(r)["id"]
+	if a.rejects != nil {
+		a.rejects.ForgetRejected(nodeID)
+	}
+	a.recordNodeAction(r, "node.forget", nodeID, "success", "dismissed unrecognized node "+nodeID, nil)
+	controllers.SendResult(w, map[string]any{"forgotten": true}, "succeed")
 }
 
 func (a *nodesApi) fleetKey(w http.ResponseWriter, r *http.Request) {

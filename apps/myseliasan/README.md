@@ -43,8 +43,81 @@ The **Mymatasan** view in the UI exposes:
 - **Recording playback over the tunnel**: the control channel caps each message at 16 MiB, and an encrypted or HEVC-stored clip isn't seekable end-to-end through it, so recorded video for a node camera streams through `GET /api/nodes/{id}/recording-stream/{segId}` instead of the generic command proxy. It caps every browser `Range` request to 8 MiB, forwards it to the node's now-Range-capable `GET /api/recording/segments/{id}/download` (which materializes a seekable plaintext temp copy of encrypted/HEVC segments on first touch), and returns `206 Partial Content` — so the `<video>` element can play and seek a clip of any size without any single tunneled message exceeding the cap. See `docs/REQUEST_FLOW.md` → "Recording Playback over the Control Tunnel Flow".
 - **Per-node access grants**: the adopting role and **superadmin roles** own the node (full access without a grant); other roles need an explicit grant via `GET/POST/DELETE /api/nodes/access`, set to one of three device-access levels — **Viewer** (`canRead`, watch live), **Operator** (`canOperate`, + review recorded footage, acknowledge alerts, PTZ, talk-back), or **Admin** (`canWrite`, everything including deleting footage) — mirroring mymatasan's own three local roles. The levels escalate (admin implies operator implies viewer) and are normalised on save, so a grant is really one choice of level. A superadmin can also query a role's grants across all nodes with `GET /api/nodes/access?roleId=ID` (central RBAC node-access matrix on the RBAC page).
 - **Adoption metadata**: when adopting a node, the operator can now set a custom **Name** (overrides the node's reported hostname), a **Description** (shown as a tooltip in the nav tree), and an **Icon** (glyph displayed in the side-nav node tree).
+- **Unrecognized (stranded) nodes**: a node can hold a valid fleet-CA certificate but have no managed record here anymore — typically released here without being reset on its own side. Previously that was entirely invisible: the control channel just refused the connection over and over. An **Unrecognized nodes** panel (only rendered when the list is non-empty) now surfaces each one — node id, refusal reason, remote address, attempt count, last-seen time (`GET /api/nodes/unrecognized`) — with **Block** (revokes the cert so it can never enroll or connect again — the control-plane-side "remove" for a node with no row to Release; a confirm dialog is required) and **Dismiss** (clears the entry without revoking; it reappears if the node dials again).
+- Adopting a node whose record fails to save on the control plane (after the node itself already committed to pairing) no longer leaves it permanently stranded: the pairing is automatically rolled back so the node stays discoverable and can be re-adopted with a fresh claim code, and the operator sees an actionable error instead of a raw database message.
 
 Both app and node must be on the same LAN segment for UDP multicast discovery to reach the node. Manual adoption by IP+port works across subnets if the node is reachable by HTTPS. The mTLS management port (code fallback 49532; shipped `config.json` sets 39532) must also be reachable from the control plane.
+
+## Fleet Map
+
+A **Map** nav item (top of the **Workspace** group, next to Dashboard) gives the fleet a
+geographic and indoor spatial view, entirely offline — no tile CDN, no external map service — so
+it works on an air-gapped/intranet install exactly like everything else in this app. It renders
+with [OpenLayers](https://openlayers.org/) (`ol` + `ol-pmtiles`, vendored into
+`apps/myseliasan/views/react-webpack`), lazy-loaded only when the tab is opened so the ~110KB
+gzipped mapping library never weighs down the initial bundle.
+
+A single segmented control switches between two views that share the same status-pin vocabulary
+and differ only in the plane the pins live on:
+
+- **Geographic view**: every node with a placed position renders as a pin at its lat/lon over an
+  offline basemap. Drag a pin to reposition it (`PUT /api/nodes/{id}/position`); an unplaced node
+  (never dragged onto the map, or explicitly removed from it) is listed separately rather than
+  plotted at `(0,0)` — see `ManagedNode.MapPlaced` in `entities/managed_node.go.md`. Clicking a
+  node pin opens a popup of its recent camera events; each event with footage can be **located on
+  its floor plan** (see below) or opened straight into a floating live/media window without
+  leaving the map.
+- **Floor plans view**: an operator creates one or more **sites** (a building, campus, or yard),
+  adds a **floor plan** per site — either **uploaded** as an image (PNG/JPEG/GIF, up to 24 MiB) or
+  **drawn from scratch** in the built-in **floor designer** (rooms, walls, text labels, freehand
+  pen, grid-snap, undo/redo, multi-select, rotate/flip, pan/zoom) — and drags nodes/cameras from a
+  palette onto the plan. An uploaded photo can also be annotated later in the same designer; its
+  original is preserved as a background layer so re-editing never draws over an already-flattened
+  render (`GET /api/floors/{id}/background`, `POST /api/floors/{id}/image` to re-save). Placements
+  are **myseliasan's own record** (`NodePlacement`), not fetched from the node — that is
+  deliberate: the live camera list is fetched over the tunnel and returns nothing when a node is
+  offline, so a placement carries a name snapshot and stays rendered (using that snapshot) even
+  while its node is unreachable. A camera placement carries a **coverage arc** (`heading`/`fov` in
+  degrees, dragged into aim via on-marker handles) drawn as a translucent wedge on the plan, so an
+  operator can see at a glance which part of a room a camera actually watches.
+- **Locate on plan**: from a camera event on the geographic view (or the camera's own context),
+  **Locate on plan** (`GET /api/node-floorplan/{nodeId}`) jumps straight to the floor plan holding
+  that camera's placement and focuses its marker — no need to know which site/floor it lives on.
+  Clicking a camera marker on a plan opens a small, draggable, resizable floating window
+  (`CameraWindow`) with its live footage (PTZ overlay when supported) on top and recent
+  events below; clicking an event opens its recorded snapshot/clip in its own floating
+  (`MediaWindow`). The geographic view's camera popups open the equivalent live-only
+  (`LiveWindow`) window the same way. All three float over the map, can be dragged by their
+  title bar, resized from a corner grip, and toggled small ⇄ maximized without tearing down and
+  restarting the underlying WebRTC stream.
+
+Both views color a node's pin/marker by the same status: **online** (green), **warning** — amber,
+cert expiring soon — (reusing the same cert-health signal the Dashboard's "Certs expiring" KPI
+and the Nodes table already surface), **critical** — red, the node is `lost` — and **idle** —
+grey, `self-dropped` or a legacy/unknown status.
+
+**Offline basemap**: the geographic view's cartography is a single self-hosted
+[Protomaps](https://protomaps.com/) `.pmtiles` archive (`GET /api/basemap/tiles.pmtiles`,
+Range-served — the browser fetches byte ranges of one file and does tile lookup client-side, so
+there is no tile-server process and no new Go dependency). The archive is provisioned
+out-of-band (`pmtiles extract`) and dropped at `<dataDir>/basemap/basemap.pmtiles`; its absence is
+a supported state (`GET /api/basemap/info` reports `available: false`) — the map still renders,
+just without cartography, rather than a fleet with no archive being unable to see node positions
+at all. Attribution (`"© OpenStreetMap contributors"`) is a static string, never a network call.
+
+Floor-plan images are **encrypted at rest** under `<dataDir>/floorplans`, using the same fleet
+cipher that protects the CA key and fleet PSK (see "Fleet secret encryption at rest" below) —
+only metadata and pixel dimensions live in the database.
+
+Endpoints (all `AuthOnly`, session-gated like every other operator route in this app):
+`GET/POST /api/sites`, `PUT/DELETE /api/sites/{id}`, `GET/POST /api/sites/{id}/floors`,
+`GET/PUT/DELETE /api/floors/{id}`, `GET /api/floors/{id}/image`,
+`POST /api/floors/{id}/image` (replace, used by the floor designer),
+`GET /api/floors/{id}/background` (pristine background for re-editing),
+`GET/POST /api/floors/{id}/placements`, `PUT/DELETE /api/placements/{id}` (position and/or
+`heading`/`fov` coverage aim), `GET /api/node-floorplan/{nodeId}` (locate-on-plan drill-down),
+`GET /api/basemap/info`, `GET /api/basemap/tiles.pmtiles`, and `PUT /api/nodes/{id}/position`
+(sets a node's geographic coordinates). See `docs/modules/apps/myseliasan/apis/{basemap,sites}.go.md`.
 
 ## Fleet rules — cross-domain correlation
 
@@ -126,7 +199,7 @@ The CA private key (`pairing.caKey`), the control plane's own parent leaf privat
 
 The UI is a React/webpack SPA under `apps/myseliasan/views/react-webpack/`, built into `apps/myseliasan/static/` (content-hashed bundles), mirroring `mymatasan`'s frontend architecture. Myseliasan-only styling lives in `styles/app.css` and the shared RBAC-standard rail in `styles/rbac-standard.css`. Build with `npm install && npm run build` in that directory.
 
-The shell uses the standardized dark icon side-nav (`SideNav` from `components/layout.js`), with top-level **Live Views**, **Objects**, and **Teach** nav items positioned above a bespoke **Nodes tree**: an expandable branch listing adopted nodes (root item → fleet page/node dashboard, child items → each node's own camera sub-tree, lazily loaded over the tunnel on first expand). Selecting a node opens its `NodeDashboard`; selecting a camera under it opens that camera's full page (Live View/Detection/Recordings/Settings). A single click on a node row now both navigates **and** expands its camera sub-tree (matching the root Nodes row); the caret or a double-click collapses/toggles it. Each camera row shows a liveness dot (green online / red offline / grey unknown) driven by the node-reported camera health, mirroring mymatasan's own camera nav. Admin pages (Users, Roles) appear under the **Administration** group — the former separate RBAC permission-matrix page is now part of the **Roles** page (see "Node management" above), which includes a central **Node Access** matrix where a superadmin assigns per-role node access (**Viewer** / **Operator** / **Admin**). A **System** group holds the badged **Notifications** nav item (see "Notifications" above). The side-nav's internal list area now scrolls independently of the fixed brand/account chrome (`--nav-scroll` tokens in `styles/rbac-standard.css`), matching mymatasan. A **pin/auto-hide toggle** in the brand slot (`nav-pin-toggle`, ported from mymatasan's own rail) lets the rail collapse to a 68px hover-expanding icon strip instead of always sitting in the grid flow; the choice is persisted to `localStorage` (`myseliasan_nav_pinned`) and applied via a `nav-autohide` class on `.app-shell`. It only takes effect at `min-width: 1081px` — mymatasan's rail stacks at `<=860px` but this app's stacks at `<=1080px`, and auto-hide is neutralized below that breakpoint since a fixed hover-strip makes no sense in a stacked layout.
+The shell uses the standardized dark icon side-nav (`SideNav` from `components/layout.js`). The **Workspace** group holds **Dashboard** and a **Map** nav item (the fleet map — Geographic + Floor plans views, see "Fleet Map" above; its OpenLayers-based components are lazy-loaded on first open). Below that sit top-level **Live Views**, **Objects**, and **Teach** nav items positioned above a bespoke **Nodes tree**: an expandable branch listing adopted nodes (root item → fleet page/node dashboard, child items → each node's own camera sub-tree, lazily loaded over the tunnel on first expand). Selecting a node opens its `NodeDashboard`; selecting a camera under it opens that camera's full page (Live View/Detection/Recordings/Settings). A single click on a node row now both navigates **and** expands its camera sub-tree (matching the root Nodes row); the caret or a double-click collapses/toggles it. Each camera row shows a liveness dot (green online / red offline / grey unknown) driven by the node-reported camera health, mirroring mymatasan's own camera nav. Admin pages (Users, Roles) appear under the **Administration** group — the former separate RBAC permission-matrix page is now part of the **Roles** page (see "Node management" above), which includes a central **Node Access** matrix where a superadmin assigns per-role node access (**Viewer** / **Operator** / **Admin**). A **System** group holds the badged **Notifications** nav item (see "Notifications" above). The side-nav's internal list area now scrolls independently of the fixed brand/account chrome (`--nav-scroll` tokens in `styles/rbac-standard.css`), matching mymatasan. A **pin/auto-hide toggle** in the brand slot (`nav-pin-toggle`, ported from mymatasan's own rail) lets the rail collapse to a 68px hover-expanding icon strip instead of always sitting in the grid flow; the choice is persisted to `localStorage` (`myseliasan_nav_pinned`) and applied via a `nav-autohide` class on `.app-shell`. It only takes effect at `min-width: 1081px` — mymatasan's rail stacks at `<=860px` but this app's stacks at `<=1080px`, and auto-hide is neutralized below that breakpoint since a fixed hover-strip makes no sense in a stacked layout.
 
 **Embedded node pages / design parity**: the camera tab components under `components/nodecam/` are the real mymatasan view source files (`vision.js`, `recording.js`, `previews.js`, `cameras.js` pieces, `ui.js`, `layout.js`, `hooks.js`, `ptz.js`, helpers/constants) copied in verbatim, so mymatasan behavior changes to those files should be ported here too. Two shims adapt them to run against a *remote* node: `nodecam/lib/helpers.js`'s `apiBase()` is repointed at the commander proxy (`setNodeProxyBase`), and `installProxyCsrf` teaches `window.fetch` to attach myseliasan's CSRF token on proxy writes (the copied components issue raw `fetch()` calls that predate the double-submit-cookie requirement below). Styling comes from mymatasan's actual stylesheets, imported as raw strings via a new `@mymatasan` webpack alias + `?raw` CSS rule (`webpack.config.js`), then injected once and CSSOM-scoped under `.nodecam-embed` (`components/node_embed.js`, `nodecam/scoped_css.js`) — this is a build-time re-import, not a manual copy, so mymatasan design changes flow into the embedded pages on the next `npm run build` here with no re-sync step. `components/nodeiot/` mirrors this exact trick for an adopted `myiotsan` node's own device-management pages, scoped under its own embed container and concatenating the `@shared` stylesheets in — see "Node management" above.
 

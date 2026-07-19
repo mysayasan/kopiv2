@@ -217,6 +217,32 @@ curl -u admin:admin -H "Content-Type: application/json" \
   "http://localhost:3000/api/vision/rules"
 ```
 
+## MySeliaSan Fleet Map — Offline Basemap
+
+The **Map** page's geographic view (nodes at lat/lon) uses a self-hosted
+[Protomaps](https://protomaps.com/) `.pmtiles` archive for cartography instead of any tile CDN, so
+it works on an air-gapped/intranet install. Provisioning is out-of-band and optional — with no
+archive, the map still renders node positions, just without a basemap underneath.
+
+1. Extract or download a `.pmtiles` archive covering your area (e.g. with the
+   [`pmtiles`](https://github.com/protomaps/go-pmtiles) CLI: `pmtiles extract <source-url>
+   basemap.pmtiles --bbox=<minlon,minlat,maxlon,maxlat>`).
+2. Drop it at `<dataDir>/basemap/basemap.pmtiles` (MySeliaSan's own data dir; the default local dev
+   path is `apps/myseliasan/data/basemap/basemap.pmtiles`). No config change or restart is
+   required — `GET /api/basemap/info` picks it up on the next request.
+3. Verify it's picked up:
+
+```bash
+curl -b cookies.txt https://localhost:3002/api/basemap/info
+# {"available":true,"attribution":"© OpenStreetMap contributors","sizeBytes":...}
+```
+
+Floor-plan images for the indoor view (Site → Upload floor plan in the UI) need no separate
+provisioning step — they're uploaded through the app itself and stored encrypted at rest under
+`<dataDir>/floorplans`. There is no floor-plan file at all to source: a site with no photo can
+instead be **drawn from scratch** in the built-in floor designer (rooms/walls/text/pen, right in
+the browser), which saves the same way.
+
 ## Run Tests
 
 ```bash

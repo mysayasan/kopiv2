@@ -39,6 +39,14 @@ type ManagedNode struct {
 	// Status: "online" (adopted, reachable), "lost" (unreachable / token rejected),
 	// or "self-dropped" (the node unpaired itself).
 	Status string `json:"status" form:"status" query:"status"`
+	// Lat/Lon are the node's position on the geographic fleet map, set by an operator
+	// dragging the pin. MapPlaced distinguishes "deliberately positioned" from the zero
+	// value — (0,0) is a real coordinate in the Gulf of Guinea, so a bare float can't tell
+	// an unplaced node from one a prankster parked at null island. A node with MapPlaced
+	// false is simply absent from the map until someone places it.
+	Lat       float64 `json:"lat" form:"lat" query:"lat"`
+	Lon       float64 `json:"lon" form:"lon" query:"lon"`
+	MapPlaced bool    `json:"mapPlaced" form:"mapPlaced" query:"mapPlaced"`
 	// OwnerRoleId is the myseliasan RoleId that adopted this node. That role gets full
 	// (admin) access to the node by default; other roles need an explicit
 	// NodeAccessGrant. 0 means legacy/unknown owner (no default access).

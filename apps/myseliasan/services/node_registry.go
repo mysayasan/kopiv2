@@ -35,6 +35,9 @@ var (
 	ErrAdoptRejected    = errors.New("node rejected adoption")
 	ErrNodeRevoked      = errors.New("node certificate is revoked")
 	ErrNodeUnknown      = errors.New("unknown node")
+	// ErrAdoptPersist wraps a failure to save an adopted node's record AFTER the node itself
+	// committed to the pairing. The node is rolled back so it can be re-adopted cleanly.
+	ErrAdoptPersist = errors.New("adopted the node but failed to save its record")
 )
 
 // DiscoveredNode is a node found on the LAN, annotated with whether this control
@@ -85,7 +88,14 @@ type INodeRegistry interface {
 	// UpdateMeta edits an adopted node's operator-facing fields (display name,
 	// description, nav icon). It never touches identity/trust fields.
 	UpdateMeta(ctx context.Context, nodeID, name, description, icon string, updatedBy int64) (*entities.ManagedNode, error)
+	// UpdatePosition sets a node's geographic map coordinates (from dragging its pin) and
+	// marks it placed. Kept separate from UpdateMeta so frequent drag writes never race
+	// with a name/description edit. Passing placed=false clears the node off the map.
+	UpdatePosition(ctx context.Context, nodeID string, lat, lon float64, placed bool, updatedBy int64) (*entities.ManagedNode, error)
 	Release(ctx context.Context, nodeID string) error
+	// RevokeNode blocklists a node's certificate at the fleet CA without needing a managed
+	// record. Used to shut down a stranded node that keeps dialing with a valid cert.
+	RevokeNode(ctx context.Context, nodeID string) error
 	MarkSelfDropped(ctx context.Context, nodeID, nonce string, ts int64, assertion string) error
 	// Enroll signs a node's CSR (token-authenticated) and returns its cert + the CA
 	// root. Called by the node right after adoption and on renewal.
@@ -441,10 +451,44 @@ func (s *nodeRegistry) Adopt(ctx context.Context, in AdoptInput) (*entities.Mana
 		UpdatedAt:   now,
 	}
 	if err := s.upsertNode(ctx, node); err != nil {
-		return nil, err
+		// CRITICAL: the node has ALREADY committed Paired=true and consumed its single-use
+		// claim code before replying to us. If we cannot persist our record now, the node is
+		// stranded — paired to us with no row on our side — so it dials the control channel
+		// forever as "unknown", disappears from discovery (a paired node stops answering
+		// scans), and every retry fails with "invalid or expired claim code" because the code
+		// is already burned. Roll the node back to unpaired using the token it just gave us, so
+		// it becomes discoverable and adoptable again. Then surface a clean error, not the raw
+		// DB string.
+		s.rollbackNodePairing(ctx, baseURL, res.Token)
+		return nil, fmt.Errorf("%w: %v", ErrAdoptPersist, err)
 	}
-	saved, _ := s.nodes.GetByUnique(ctx, "", "node_id", node.NodeId)
+	saved, err := s.nodes.GetByUnique(ctx, "", "node_id", node.NodeId)
+	if err != nil || saved == nil {
+		// The write succeeded but the read-back glitched; return what we just persisted rather
+		// than a nil node (which the API layer would render as an empty success).
+		nodeCopy := node
+		return &nodeCopy, nil
+	}
 	return saved, nil
+}
+
+// rollbackNodePairing best-effort tells a node to release (unpair) using the token from a
+// just-completed adopt reply. Used when the parent fails to persist the adoption: without it
+// the node is left paired-but-recordless (see Adopt). Errors are swallowed — this is a
+// recovery path and the node also ages out of trust on its own.
+func (s *nodeRegistry) rollbackNodePairing(ctx context.Context, baseURL, token string) {
+	if strings.TrimSpace(token) == "" || strings.TrimSpace(baseURL) == "" {
+		return
+	}
+	body, _ := json.Marshal(map[string]string{"token": token})
+	_, _ = s.postNode(ctx, baseURL+"/api/pairing/release", body)
+}
+
+// RevokeNode blocklists a node's certificate at the fleet CA. Future control-channel
+// connections and enroll/renew attempts from that node are refused. Used to shut down a
+// stranded/orphaned node that keeps dialing with a valid cert but has no managed record.
+func (s *nodeRegistry) RevokeNode(ctx context.Context, nodeID string) error {
+	return s.ca.Revoke(ctx, nodeID)
 }
 
 // Enroll signs a node's CSR after verifying the pairing token matches the adopted
@@ -491,6 +535,26 @@ func (s *nodeRegistry) UpdateMeta(ctx context.Context, nodeID, name, description
 	if i := strings.TrimSpace(icon); i != "" {
 		node.Icon = i
 	}
+	node.UpdatedBy = updatedBy
+	node.UpdatedAt = time.Now().Unix()
+	if _, err := s.nodes.UpdateById(ctx, "", *node); err != nil {
+		return nil, err
+	}
+	return node, nil
+}
+
+// UpdatePosition sets a node's geographic coordinates and placed flag. See INodeRegistry.
+func (s *nodeRegistry) UpdatePosition(ctx context.Context, nodeID string, lat, lon float64, placed bool, updatedBy int64) (*entities.ManagedNode, error) {
+	node, err := s.nodes.GetByUnique(ctx, "", "node_id", nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if node == nil {
+		return nil, ErrNodeUnknown
+	}
+	node.Lat = lat
+	node.Lon = lon
+	node.MapPlaced = placed
 	node.UpdatedBy = updatedBy
 	node.UpdatedAt = time.Now().Unix()
 	if _, err := s.nodes.UpdateById(ctx, "", *node); err != nil {
@@ -751,12 +815,15 @@ func (s *nodeRegistry) ParentServerTLS(ctx context.Context) (*tls.Config, error)
 // cert; here we reject nodes we never adopted or have since revoked, and bump
 // liveness (socket presence is a stronger signal than the heartbeat poll).
 func (s *nodeRegistry) AcceptControlConn(ctx context.Context, nodeID string) (*entities.ManagedNode, error) {
+	// Check revocation FIRST: a revoked node has no valid claim on the fleet even if its row
+	// still exists, and an operator who blocked a stranded (row-less) node needs that block to
+	// register as "revoked", not get masked by the "unknown" (no-row) case below.
+	if revoked, _ := s.ca.IsRevoked(ctx, nodeID); revoked {
+		return nil, ErrNodeRevoked
+	}
 	node, err := s.nodes.GetByUnique(ctx, "", "node_id", nodeID)
 	if err != nil || node == nil {
 		return nil, ErrNodeUnknown
-	}
-	if revoked, _ := s.ca.IsRevoked(ctx, nodeID); revoked {
-		return nil, ErrNodeRevoked
 	}
 	now := time.Now().Unix()
 	node.Status = "online"

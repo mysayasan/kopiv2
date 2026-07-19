@@ -20,12 +20,43 @@ Each field is only added once its backing listener has been wired (nil-guarded),
 
 **These are advisory only** — per the `apphost.ReadinessReporter` contract (see `docs/modules/infra/apphost/run.go.md` / `types.go`), they never flip the process's `ok`/HTTP status, which stays gated on db + cache alone. A dead control-channel or media listener alone does not make `/ready` return 503; it surfaces as `"down"` for an operator/monitor to notice. This closes the gap where a dead fleet listener still reported the process fully ready, without touching the core readiness contract — actually gating readiness on the fleet listeners would be a separate, core-scoped decision affecting every app and was deliberately not done here.
 
+## `Migrations` (implements `apphost.Migrator`)
+
+Returns a fixed list of `bootstrap.Migration`s that run **before** the auto-migrator and
+**independently of the `autoMigrate` config flag**, so the fleet-map columns exist even in a
+deployment that has auto-migration turned off — without them, node adoption's `INSERT` (or a
+floor upload) fails with a 500 after the fact. Every migration is idempotent (checks
+`information_schema`/`pragma_table_info` before `ALTER TABLE`, so it is a no-op wherever the
+auto-migrator already added the column) and, where a plain `ADD COLUMN` would leave existing
+rows `NULL`, immediately backfills them to the entity's zero value — the non-pointer
+`float64`/`bool`/`string` entity fields cannot scan a `NULL`, so an un-backfilled column breaks
+`List`/read-back with `"converting NULL to float64 is unsupported"` on every pre-existing row:
+
+- `20260718-01-managed-node-geo` / `20260718-02-managed-node-geo-backfill` — add
+  `managed_node.lat`/`lon`/`map_placed` (the geographic fleet map) and separately backfill any
+  `NULL`. Split into two migration IDs (rather than one edited migration) because editing an
+  already-applied migration's `Exec` does not re-run it; a database that had already applied `01`
+  before the backfill logic existed needed a **new** ID to guarantee it runs once.
+- `20260719-01-placement-fov` — add `node_placement.heading`/`fov` (camera coverage arcs),
+  backfilled to `0`.
+- `20260719-02-floor-design` — add `floor_plan.design` (drawn-plan vector JSON), backfilled to
+  `''`.
+- `20260719-03-floor-bgpath` — add `floor_plan.bg_path` (pristine background image path),
+  backfilled to `''`.
+
+`geoColumnType(base, engine)` maps a base SQL type (`DOUBLE PRECISION`/`BOOLEAN`) to the exact
+per-engine concrete type the auto-migrator itself generates (mirroring
+`infra/db/bootstrap`'s `normalizeSQLType`), so a column added here is byte-identical to one the
+auto-migrator would have added and never trips a schema-drift warning. `tableColumns` is the
+shared per-engine "does this column exist" probe (`information_schema.columns` on
+postgres/mariadb, `pragma_table_info` on sqlite).
+
 ## Responsibilities
 
 - Provides app identity and base directory.
-- Registers `ManagedNode`, `ControlSetting`, `NodeAccessGrant`, `ControlUser`, `AuditLog`, the shared `AccessRole`/`AccessRolePermission`, and — cross-domain correlation, the reason the suite has a fourth app — `FleetRule` + `FleetRuleClause` entities for DB bootstrap.
+- Registers `ManagedNode`, `ControlSetting`, `NodeAccessGrant`, `ControlUser`, `AuditLog`, the shared `AccessRole`/`AccessRolePermission`, `FleetRule` + `FleetRuleClause` (cross-domain correlation, the reason the suite has a fourth app), and — the fleet map — `Site`, `FloorPlan`, `NodePlacement` entities for DB bootstrap.
 - Enables only `Version` and `AccessRbac` from the shared API surface (`SharedAPIs()`); operational APIs (log, file storage, cache, app registry, etc.) are disabled for the control plane.
-- Seeds the local endpoint catalog for rate limiting and runtime metadata, including `Notifications`, `Node Access`, and `Audit` (`/api/audit`) endpoints.
+- Seeds the local endpoint catalog for rate limiting and runtime metadata, including `Notifications`, `Node Access`, `Audit` (`/api/audit`), and — the fleet map — `Basemap` (`/api/basemap`), `Sites` (`/api/sites`), `Floors` (`/api/floors`), and `Placements` (`/api/placements`) endpoints, all `AuthOnly`.
 - On startup, first calls `consumeAdminResetMarker` (see `app/firstrun.go.md`) to service a pending `RESET_ADMIN` lock-out-recovery marker if present; otherwise seeds the stock superadmin local account via `EnsureStockSuperadmin` using credentials from `localAuth.username` / `localAuth.password` in config. An empty config password no longer becomes the literal `admin`/`admin` default — `EnsureStockSuperadmin` resolves `LOCAL_ADMIN_PASSWORD`, then config, else generates a strong per-install password (see `services/rbac.go.md`). When the returned `StockSeedResult.Seeded` is true, `announceFirstRunAdmin` prints the console banner and writes `INITIAL_ADMIN_LOGIN.txt` to the data dir.
 - Binds the `ControlUser` service as the `AccessUserResolver` for `deps.Access`, so the shared accessrbac middleware enforces the permission matrix on myseliasan's own endpoints.
 - Registers auth/session routes (`NewAuthApi`, `NewSessionApi`).
@@ -33,7 +64,8 @@ Each field is only added once its backing listener has been wired (nil-guarded),
 - Registers myseliasan-specific RBAC admin surface (`NewRbacAdminApi` at `/api/rbac/*`) for user management and the bootstrap superadmin handoff.
 - Before building the node registry, resolves fleet-secret encryption at rest via `openFleetSecretCipher(deps)` (mirroring mymatasan's own `infra/atrest` boot sequence): reads the shared `security` block (`security.encryptAtRest`, default **true**; `security.keyPath`, default `<dataDir>/secret/atrest.key`; `security.keyProtector`/`passphrase`/`passphraseFile`/`passphraseEnv`; `security.recoveryPath`) and calls `atrest.OpenForStartup`. Returns `nil` (no encryption) when `encryptAtRest` is false. On `atrest.ModeRecoveryPending` (a key existed here before but is now missing) it **fails closed** — returns an error and refuses to boot rather than mint a replacement key and silently reset the whole fleet's trust; the operator must restore the key file or configure `security.recoveryPath` and restart. The resulting `*atrest.Cipher` (or `nil`) is passed into `NodeRegistryConfig.SecretCipher`.
 - Builds `INodeRegistry` with `ParentBaseURL` derived from `pairing.parentBaseUrl` (when set) or `sso.redirectBaseUrl` (fallback). `pairing.parentBaseUrl` must be the parent's LAN-reachable URL for deployments where node and parent are on separate machines.
-- Registers node-management routes (`NewNodesApi`).
+- Registers the offline vector basemap for the fleet map (`NewBasemapApi`, `apis/basemap.go.md`), resolving the `.pmtiles` archive path via `apis.ResolveBasemapPath(deps.DataDir, "")` — an absent archive is a supported state (the map renders without cartography), so this never blocks boot.
+- Registers node-management routes (`NewNodesApi`, now passed a `logf` closure so a failed adopt logs its raw cause server-side even though the client gets a friendlier message), which now also exposes `PUT /api/nodes/{id}/position` for the geographic map and `GET /api/nodes/unrecognized` + `POST /api/nodes/{id}/block`/`forget` for stranded-node visibility (see `apis/nodes.go.md`).
 - Starts the control channel server (`ControlServer`) on a dedicated fleet-mTLS port (`pairing.controlPort`, default `49533`). After the server is built, wires `ControlServer.IsConnected` into the registry via `SetControlPresence` so the heartbeat treats a live control connection as the authoritative online signal (mTLS poll becomes a fallback); also stashes the server on the module (`m.controlServer`) for `ReadinessStatus`.
 - Starts a background heartbeat goroutine (after `SetControlPresence` is wired) to reconcile node liveness with grace-window flap protection.
 - Wires proactive fleet-health alerting: before registering the sink, calls `services.DescribeMyseliasanMetrics(deps.Metrics)`. `registry.SetFleetEventSink` is set (before the heartbeat loop starts) to a closure that calls `publishFleetEvent`, so a node going online→lost, a lost node recovering, or a certificate nearing expiry (per `CertWarnBefore`, derived from `pairing.renewBeforeHours`) is surfaced in the unified notification feed instead of failing silently — the same closure also increments `MetricFleetEventsTotal` (`myseliasan_fleet_events_total{kind}`) via the package-level `fleetEventKind(e.Kind)` helper, so a burst of lost/recovered transitions or a trickle of cert-expiring warnings is visible on `/metrics` even if nobody is watching the notification feed at the time.
@@ -42,6 +74,8 @@ Each field is only added once its backing listener has been wired (nil-guarded),
 - **Builds the cross-domain correlator** (`services.NewCorrelator`, `services/correlate.go.md`) — THIS is the reason the fourth app exists: `motion on Camera 3 (mymatasan) AND a door contact opening (myiotsan) AND no badge swipe (myiotsan) -> intrusion`. No single node can see that; only the control plane, which already receives every node's events in one feed, is in a position to notice the conjunction. The `nodeKind` resolver passed in is a closure over `registry.List` — the node's kind is always resolved from the **adopted node's own record**, never from anything an event body claims, so a door sensor cannot assert it is a camera and satisfy a camera-scoped clause. Calls `correlator.SetMetrics(deps.Metrics)` right after construction, then `Reload`s the rule cache once at startup (fails boot on error) and registers `apis.NewFleetRulesApi(api, *deps.Auth, controlSession, correlator)`.
 - Starts a 1-second-ticker goroutine that calls `correlator.Sweep(bgCtx)` — this is what makes an ABSENCE decidable, since nothing ever arrives to say "the badge was never swiped"; the passage of time has to.
 - `onNodeEvent` (passed to `NewControlServer`) now does two things per node-pushed frame: `ingestNodeEvent` (unified feed, as before) AND `observeForCorrelation` (`app/correlate_bridge.go.md`) — the correlator is fed the **node's own event**, deliberately never the control plane's own re-published copy of it, because correlating on our own output would let one fleet rule's alert satisfy another fleet rule's clause and let two rules trigger each other forever.
+- Registers sites + floor plans for the indoor map (`NewSitesApi`, `apis/sites.go.md`), built with `services.NewSiteService(deps.Db, secretCipher, planDir)` where `planDir` is `<dataDir>/floorplans` — floor-plan images are encrypted at rest with the same fleet cipher that protects the CA key/PSK.
+- `SetRejectTracker` wires the `ControlServer` (once built, further down) into the already-registered `nodesApi` as its `rejectTracker` — the control server exposes `Unrecognized()`/`ForgetRejected()` for stranded (row-less or revoked) node connections, and `NewNodesApi` now returns the handler so this later wiring is possible. See `apis/nodes.go.md` and `services/control_server.go.md`.
 - Registers per-node access-grant management (`NewNodeAccessApi`). The node access service is constructed with the roles service (`NewNodeAccessService(db, roleService)`) so superadmin roles receive implicit full node access. All three node APIs (`NewNodeAccessApi`, `NewNodeMediaApi`, `NewNodeProxyApi`) now accept the `controlSession *AccessSessionMidware` so they resolve the caller's live role on every request.
 - Starts the node camera media relay: builds a `stream.WebRTCEngine` (from `nodeStream.publicIps` / `nodeStream.udpPort`; nil for same-LAN), starts a `mediarelay.Server` on `pairing.mediaPort` (default `49534`) using the fleet-CA mTLS server config, registers `NewNodeMediaApi` (`POST /api/nodes/{id}/cameras/{cam}/webrtc/offer`, `GET /api/node-stream/config`). The listener goroutine flips `m.mediaListening` (an `*atomic.Bool`) true around `srv.Run(bgCtx)` so `ReadinessStatus` can report `mediaRelay` up/down.
 - Registers the reverse command tunnel proxy (`NewNodeProxyApi` at `/api/nodes/{id}/proxy/...`).

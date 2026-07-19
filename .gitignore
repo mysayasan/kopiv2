@@ -57,6 +57,16 @@ apps/*/data/*.db
 apps/*/data/*.db-shm
 apps/*/data/*.db-wal
 
+# offline map basemap archives — large (~200MB+) provisioned assets, not source.
+# Generated out-of-band with `pmtiles extract` and dropped in <dataDir>/basemap (which is
+# <app>/basemap in a dev checkout, since DataDir defaults to the app's home dir).
+apps/*/basemap/*.pmtiles
+apps/*/data/basemap/*.pmtiles
+
+# floor-plan images written at runtime (encrypted at rest) — user data, not source.
+apps/*/floorplans/
+apps/*/data/floorplans/
+
 # tgbridge (telegram bridge): config holds the bot token; state file holds session ids
 tools/tgbridge/config.json
 tgbridge_state.json
