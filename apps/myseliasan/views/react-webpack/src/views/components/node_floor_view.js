@@ -265,24 +265,35 @@ export function CameraWindow({ nodeId, cameraId, name, iceServers, ptzSupported,
     } catch (_) { /* snapshot-only if segments can't be resolved */ }
   }, [nodeId, t]);
 
-  // This camera's events (worst-first, then newest). Scoped to the camera SERVER-SIDE via
-  // cameraId so the limit applies to THIS camera's feed — fetching the node feed and filtering
-  // client-side dropped events once they fell past the page limit (making the badge, which
-  // counts the full set, disagree with this list).
+  // This camera's events (worst-first, then newest). Read from the NODE's OWN feed over the
+  // control-channel proxy, because the node holds its full notification history whereas the
+  // control plane only has what streamed up while the channel was connected — so the relayed
+  // feed can undercount (a node with 3 events for a camera may have relayed only 1). Both feeds
+  // filter by cameraId server-side. When the node is unreachable (offline) we fall back to the
+  // relayed feed so the window still shows what the control plane captured.
   useEffect(() => {
     let live = true;
-    const load = () => api(`/api/notifications?nodeId=${encodeURIComponent(nodeId)}&cameraId=${encodeURIComponent(cameraId)}&limit=60`, { noRedirect: true })
-      .then((r) => {
-        if (!live) return;
-        const rows = Array.isArray(r.body?.items) ? r.body.items : (Array.isArray(r.body) ? r.body : []);
-        const mine = rows.slice();
-        mine.sort((a, b) => {
-          const s = (CW_SEV_RANK[(b.severity || '').toLowerCase()] || 0) - (CW_SEV_RANK[(a.severity || '').toLowerCase()] || 0);
-          return s !== 0 ? s : (b.createdAt || 0) - (a.createdAt || 0);
-        });
-        setEvents({ loading: false, list: mine });
-      })
-      .catch(() => { if (live) setEvents({ loading: false, list: [] }); });
+    const parse = (r) => (Array.isArray(r.body?.items) ? r.body.items : (Array.isArray(r.body) ? r.body : []));
+    const apply = (rows) => {
+      if (!live) return;
+      const mine = rows.slice();
+      mine.sort((a, b) => {
+        const s = (CW_SEV_RANK[(b.severity || '').toLowerCase()] || 0) - (CW_SEV_RANK[(a.severity || '').toLowerCase()] || 0);
+        return s !== 0 ? s : (b.createdAt || 0) - (a.createdAt || 0);
+      });
+      setEvents({ loading: false, list: mine });
+    };
+    const load = async () => {
+      // Primary: the node's authoritative feed (footage/snapshots already resolve from the node
+      // over this same proxy, so the ids line up).
+      const nodeResp = await api(`/api/nodes/${encodeURIComponent(nodeId)}/proxy/api/notifications?cameraId=${encodeURIComponent(cameraId)}&limit=60`, { noRedirect: true }).catch(() => ({ ok: false }));
+      if (!live) return;
+      if (nodeResp.ok) { apply(parse(nodeResp)); return; }
+      // Fallback: node offline/unreachable — show what the control plane relayed while connected.
+      const relayed = await api(`/api/notifications?nodeId=${encodeURIComponent(nodeId)}&cameraId=${encodeURIComponent(cameraId)}&limit=60`, { noRedirect: true }).catch(() => ({ ok: false }));
+      if (!live) return;
+      apply(relayed.ok ? parse(relayed) : []);
+    };
     load();
     const iv = setInterval(load, 30000);
     return () => { live = false; clearInterval(iv); };
