@@ -117,8 +117,8 @@ function NodeDetailsPanel({ node, t, onToast, onNodeUpdated }) {
   }
 
   return (
-    <form className="settings-layout" onSubmit={save}>
-      <section className="settings-panel span-two">
+    <div className="settings-layout">
+      <form className="settings-panel span-two" onSubmit={save}>
         <header><h2><span className="btn-icon"><Ico n="sliders" /> {t('nset.detailsTitle')}</span></h2></header>
         <p className="settings-hint">{t('nset.detailsHint')}</p>
         <div className="settings-field-grid">
@@ -133,8 +133,80 @@ function NodeDetailsPanel({ node, t, onToast, onNodeUpdated }) {
         <div className="settings-actions">
           <button type="submit" disabled={busy || !changed}><span className="btn-icon"><Ico n="check-ok" /> {t('nset.save')}</span></button>
         </div>
-      </section>
-    </form>
+      </form>
+
+      <NodeCertificatePanel node={node} t={t} onToast={onToast} onNodeUpdated={onNodeUpdated} />
+    </div>
+  );
+}
+
+// certState buckets a node's certificate by its unix expiry: none (never enrolled),
+// expired, expiring (inside the ~14d warn window), or ok. Drives the status pill colour.
+function certState(expiresAt) {
+  if (!expiresAt) return 'none';
+  const secsLeft = expiresAt - Math.floor(Date.now() / 1000);
+  if (secsLeft <= 0) return 'expired';
+  if (secsLeft <= 14 * 86400) return 'expiring';
+  return 'ok';
+}
+
+// NodeCertificatePanel shows the node's mTLS certificate expiry and the per-node auto-renew
+// toggle. Auto-renew is a myseliasan-side record flag (NOT tunneled): the node re-enrolls
+// itself before expiry, but the control plane only honours that renewal when this is on.
+// With it OFF (the default for a freshly adopted node) the certificate is allowed to lapse,
+// the node drops off the control channel, and it goes "lost" — a dead-man's switch so a
+// forgotten node falls out of the fleet without an explicit revoke. No code is ever needed
+// to renew; flipping this on lets the node's next automatic re-enrollment through.
+function NodeCertificatePanel({ node, t, onToast, onNodeUpdated }) {
+  const [autoRenew, setAutoRenew] = useState(!!node.autoRenew);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setAutoRenew(!!node.autoRenew); }, [node.autoRenew]);
+
+  const state = certState(node.certExpiresAt);
+  const pillClass = state === 'ok' ? 'online' : state === 'expiring' ? 'hh-warn' : state === 'expired' ? 'offline' : '';
+  const expiryText = node.certExpiresAt ? new Date(node.certExpiresAt * 1000).toLocaleString() : t('ncert.never');
+
+  async function toggle(next) {
+    setBusy(true);
+    setAutoRenew(next); // optimistic
+    const r = await api(`/api/nodes/${encodeURIComponent(node.nodeId)}/auto-renew`, {
+      method: 'PUT',
+      noRedirect: true,
+      body: JSON.stringify({ autoRenew: next }),
+    }).catch(() => ({ ok: false }));
+    setBusy(false);
+    if (r.ok) {
+      if (onToast) onToast(next ? t('ncert.enabled') : t('ncert.disabled'));
+      if (onNodeUpdated) onNodeUpdated(r.body || { ...node, autoRenew: next });
+    } else {
+      setAutoRenew(!!node.autoRenew); // revert on failure
+      if (onToast) onToast(r.message || t('nset.saveFailed'));
+    }
+  }
+
+  return (
+    <section className="settings-panel span-two">
+      <header>
+        <h2><span className="btn-icon"><Ico n="key" /> {t('ncert.title')}</span></h2>
+        <label className="check-row">
+          <input type="checkbox" checked={autoRenew} disabled={busy} onChange={(e) => toggle(e.target.checked)} /> {t('ncert.autoRenew')}
+        </label>
+      </header>
+      <p className="settings-hint">{t('ncert.hint')}</p>
+      <dl className="node-info-grid">
+        <div>
+          <dt>{t('ncert.expiresAt')}</dt>
+          <dd>{pillClass ? <span className={`status-pill ${pillClass}`}>{expiryText}</span> : expiryText}</dd>
+        </div>
+        <div>
+          <dt>{t('ncert.renewalState')}</dt>
+          <dd>{autoRenew
+            ? <span className="status-pill online">{t('ncert.stateOn')}</span>
+            : <span className="status-pill hh-warn">{t('ncert.stateOff')}</span>}</dd>
+        </div>
+      </dl>
+      {!autoRenew ? <p className="settings-hint danger-text">{t('ncert.lapseWarning')}</p> : null}
+    </section>
   );
 }
 

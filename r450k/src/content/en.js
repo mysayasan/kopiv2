@@ -53,6 +53,11 @@ const en = {
         body: 'A second-stage plate detector + OCR on a dedicated high-res frame fires on any readable plate or only a watchlist. Fuzzy matching absorbs OCR errors; plate text, vehicle type, and color ride the alert metadata.',
       },
       {
+        icon: 'face',
+        title: 'Face recognition',
+        body: 'Enroll the people you know, and a detection becomes a named alert. On the edge node, faces are aligned, embedded, and matched against your private gallery — so “person detected” turns into “a known face at the front door.” Enrollment and matching run entirely on-prem: no cloud service, no faces ever leaving your network.',
+      },
+      {
         icon: 'record',
         title: 'NVR recording + compression',
         body: 'Rolling segment buffer with event-triggered MP4 clip extraction, plus a low-resource JPEG ring-buffer mode. Optional one-pass GPU H.265/H.264 re-encode shrinks footage with on-the-fly playback transcode for any browser.',
@@ -75,12 +80,17 @@ const en = {
       {
         icon: 'bell',
         title: 'Unified notification feed',
-        body: 'One feed across AI detection, camera and machine health, and login security — with per-event acknowledge, annotated screenshots, and in-page clip playback. Route to webhook, Telegram, or MQTT.',
+        body: 'One feed across AI detection, camera and machine health, and login security — with per-event acknowledge, annotated screenshots, and in-page clip playback. Filter the feed down to a single source camera to isolate one view’s events. Route to webhook, Telegram, or MQTT.',
       },
       {
         icon: 'link',
         title: 'Fleet pairing over the LAN',
-        body: 'Authenticated UDP multicast discovery + single-parent adoption with a short-lived claim code. Nodes enroll for a fleet-CA certificate and serve a mutual-TLS management channel — no inbound ports, no cloud broker.',
+        body: 'Authenticated UDP multicast discovery + single-parent adoption with a short-lived claim code. Nodes enroll for a fleet-CA certificate and serve a mutual-TLS management channel — no inbound ports, no cloud broker. Each node’s certificate auto-renews on an operator-gated schedule, so fleet trust stays current and no forgotten node lapses.',
+      },
+      {
+        icon: 'map',
+        title: 'Fleet maps & floor plans',
+        body: 'The control plane puts your whole estate on a map — sites and buildings pinned by location, with every edge node and its cameras layered on top. Drop into a building to design its floor plan in-app, place each camera on the plan with a field-of-view coverage cone, and see one building’s cameras aggregated across several nodes. Click any camera to locate it or open its live view straight from the map.',
       },
       {
         icon: 'chart',
@@ -148,7 +158,7 @@ const en = {
       { title: 'Agriculture & remote sites', body: 'Spot animals or intruders across land with poor or no connectivity; detection and recording run entirely locally.' },
       { title: 'Care homes & clinics', body: 'After-hours movement and fall-style alerts with footage that never leaves the building — privacy by default.' },
       { title: 'Industrial & utilities', body: 'Zone and line-crossing rules for restricted areas and equipment, on rugged hardware where uplinks are unreliable.' },
-      { title: 'Multi-site fleets', body: 'A control plane adopts many edge nodes over the LAN and relays live view back to operators.' },
+      { title: 'Multi-site fleets', body: 'A control plane adopts many edge nodes over the LAN, maps every site and building, and relays live view back to operators — with per-building floor plans that place each camera and its coverage.' },
     ],
   },
   apps: {
@@ -160,7 +170,7 @@ const en = {
     items: [
       { name: 'mymatasan', status: 'Flagship · in active development', available: true, body: 'The standalone edge camera & video-intelligence node: ONVIF, AI detection, NVR, WebRTC live view, encryption, and LAN pairing.' },
       { name: 'myiotsan', status: 'Sensor hub · available now', available: true, body: 'The NVR, but for sensors: door contacts, motion, temperature, smoke, leaks, power and access readers over an embedded MQTT broker — with rules, alerts, safe actuation, and telemetry history.' },
-      { name: 'myseliasan', status: 'Control plane · available now', available: true, body: 'The fleet control plane that discovers, adopts, and manages both camera and sensor nodes — and correlates events across them: motion on a camera AND a door opening AND no badge swipe.' },
+      { name: 'myseliasan', status: 'Control plane · available now', available: true, body: 'The fleet control plane that discovers, adopts, and manages both camera and sensor nodes — mapping every site, building, and node with per-building floor plans and camera coverage — and correlates events across them: motion on a camera AND a door opening AND no badge swipe.' },
       { name: 'myidsan', status: 'Identity', available: false, body: 'Shared identity and access: JWT auth, SSO, and role-based access control across the platform.' },
     ],
   },

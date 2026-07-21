@@ -219,23 +219,36 @@ curl -u admin:admin -H "Content-Type: application/json" \
 
 ## MySeliaSan Fleet Map — Offline Basemap
 
-The **Map** page's geographic view (nodes at lat/lon) uses a self-hosted
-[Protomaps](https://protomaps.com/) `.pmtiles` archive for cartography instead of any tile CDN, so
-it works on an air-gapped/intranet install. Provisioning is out-of-band and optional — with no
-archive, the map still renders node positions, just without a basemap underneath.
+The **Map** page's geographic view (buildings + appliances at lat/lon — a digital twin anchored on
+`Site`, not the node appliance) uses one or more self-hosted [Protomaps](https://protomaps.com/)
+`.pmtiles` **region** archives for cartography instead of any tile CDN, so it works on an
+air-gapped/intranet install. Provisioning is out-of-band and optional — with no region archives,
+the map still renders building/node positions, just without a basemap underneath. A fleet spanning
+several disjoint areas is served as several region files rather than one planet-sized archive.
 
 1. Extract or download a `.pmtiles` archive covering your area (e.g. with the
    [`pmtiles`](https://github.com/protomaps/go-pmtiles) CLI: `pmtiles extract <source-url>
-   basemap.pmtiles --bbox=<minlon,minlat,maxlon,maxlat>`).
-2. Drop it at `<dataDir>/basemap/basemap.pmtiles` (MySeliaSan's own data dir; the default local dev
-   path is `apps/myseliasan/data/basemap/basemap.pmtiles`). No config change or restart is
-   required — `GET /api/basemap/info` picks it up on the next request.
+   region.pmtiles --bbox=<minlon,minlat,maxlon,maxlat>`).
+2. Drop it anywhere under `<dataDir>/basemap/` (MySeliaSan's own data dir; the default local dev
+   path is `apps/myseliasan/data/basemap/`), named `*.pmtiles`. No config change or restart is
+   required — `GET /api/basemap/info` picks it up on the next request and lists it as a region
+   with its bounds.
 3. Verify it's picked up:
 
 ```bash
 curl -b cookies.txt https://localhost:3002/api/basemap/info
-# {"available":true,"attribution":"© OpenStreetMap contributors","sizeBytes":...}
+# {"available":true,"attribution":"© OpenStreetMap contributors","canDownload":false,
+#  "regions":[{"name":"region.pmtiles","bounds":[...],"sizeBytes":...}]}
 ```
+
+**Optional: download a region from the UI instead of the CLI.** Set
+`MYSELIASAN_BASEMAP_SOURCE` to a remote pmtiles URL (and make sure the `pmtiles` binary is on
+`PATH`, or set `MYSELIASAN_PMTILES_BIN` to its path) before starting MySeliaSan, or configure the
+same source at runtime via `PUT /api/basemap/config` (`{"source":"https://..."}`, refused if the
+env var is set). An operator can then draw a bounding box in the Map UI and
+`POST /api/basemap/download` extracts just that region (capped at 25°×25°, zoom ≤14) without
+touching a terminal. This is the **one** action in MySeliaSan that reaches the internet; leaving
+both unset keeps the app fully offline exactly as before.
 
 Floor-plan images for the indoor view (Site → Upload floor plan in the UI) need no separate
 provisioning step — they're uploaded through the app itself and stored encrypted at rest under

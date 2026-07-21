@@ -100,12 +100,62 @@ function placementStyle(feature, nodesById, nowSec) {
   });
 }
 
+// Curated building glyphs an operator can tag a site with; the chosen one is drawn on the geo-map
+// marker and shown in pickers. Emoji so it needs no image asset and renders in the OL canvas.
+export const BUILDING_ICONS = ['🏢', '🏬', '🏭', '🏠', '🏘️', '🏗️', '🏪', '🏫', '🏥', '🏨', '🏦', '🏛️', '🏟️', '⛪', '🅿️', '⛽', '🗼', '🚧'];
+export const DEFAULT_BUILDING_ICON = '🏢';
+
+// SiteDialog is the small create/edit-building modal: a name field + a grid of glyphs to pick from.
+// Replaces the old name-only window.prompt so a building can carry an icon from the moment it's made.
+export function SiteDialog({ mode, initialName, initialIcon, busy, onSave, onCancel }) {
+  const t = useT();
+  const [name, setName] = useState(initialName || '');
+  const [icon, setIcon] = useState(initialIcon || DEFAULT_BUILDING_ICON);
+  const canSave = name.trim().length > 0 && !busy;
+  return (
+    <div className="fd-overlay" role="dialog" aria-label={mode === 'edit' ? t('map.editBuilding') : t('map.addBuilding')}>
+      <div className="site-dialog">
+        <div className="site-dialog-title"><span className="site-dialog-glyph">{icon}</span> {mode === 'edit' ? t('map.editBuilding') : t('map.addBuilding')}</div>
+        <label className="site-dialog-field">
+          <span>{t('map.buildingName')}</span>
+          <input
+            type="text"
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={t('map.buildingName')}
+            onKeyDown={(e) => { if (e.key === 'Enter' && canSave) onSave(name.trim(), icon); }}
+          />
+        </label>
+        <div className="site-dialog-field">
+          <span>{t('map.buildingIcon')}</span>
+          <div className="site-icon-grid" role="listbox" aria-label={t('map.buildingIcon')}>
+            {BUILDING_ICONS.map((g) => (
+              <button key={g} type="button" className={`site-icon${icon === g ? ' active' : ''}`} onClick={() => setIcon(g)} aria-selected={icon === g}>{g}</button>
+            ))}
+          </div>
+        </div>
+        <div className="site-dialog-actions">
+          <button type="button" className="quiet" onClick={onCancel} disabled={busy}>{t('map.cancel')}</button>
+          <button type="button" onClick={() => onSave(name.trim(), icon)} disabled={!canSave}>{mode === 'edit' ? t('fd.save') : t('map.addSite')}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+SiteDialog.propTypes = { mode: PropTypes.string, initialName: PropTypes.string, initialIcon: PropTypes.string, busy: PropTypes.bool, onSave: PropTypes.func, onCancel: PropTypes.func };
+
 // IndoorMap renders uploaded floor plans in an OL pixel projection (image pixels ARE map
 // coordinates) and lets operators drop nodes/cameras onto them. Placements are myseliasan-
 // owned, so a placed camera survives its node going offline — the defining behaviour of this
 // view, since the control plane otherwise has no camera inventory of its own.
-export function IndoorMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
+export function IndoorMap({ nodes = [], reloadNodes, onToast, onOpenNode, lockedSiteId = null, onFloorplansChanged, onActiveSiteChange }) {
   const t = useT();
+  const activeSiteChangeRef = useRef(onActiveSiteChange);
+  activeSiteChangeRef.current = onActiveSiteChange;
+  const changedRef = useRef(onFloorplansChanged);
+  changedRef.current = onFloorplansChanged;
+  const notifyChanged = () => { if (changedRef.current) changedRef.current(); };
   const [sites, setSites] = useState([]);
   const [activeSite, setActiveSite] = useState(null);
   const [floors, setFloors] = useState([]);
@@ -122,6 +172,7 @@ export function IndoorMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   // handler (set up once per floor) reads the live value.
   const [placing, setPlacing] = useState(null); // { nodeId, cameraId, name }
   const [designer, setDesigner] = useState(null); // null | { floor } — draw a new plan or edit an existing drawn one
+  const [siteDialog, setSiteDialog] = useState(null); // null | { mode:'create'|'edit', id?, name, icon }
   const [dropActive, setDropActive] = useState(false); // desktop image-file drag over the dropzone
   const placingRef = useRef(null);
   placingRef.current = placing;
@@ -146,7 +197,9 @@ export function IndoorMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
       const res = await api('/api/sites');
       const list = res.ok ? res.body || [] : [];
       setSites(list);
-      const pick = selectId ? list.find((s) => s.id === selectId) : list[0];
+      // When embedded (locked to a building) always select that one; otherwise honour selectId/first.
+      const want = selectId || lockedSiteId;
+      const pick = want ? list.find((s) => s.id === want) : list[0];
       setActiveSite(pick || null);
       return pick || null;
     } catch (_) { setSites([]); return null; }
@@ -160,6 +213,7 @@ export function IndoorMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
       setFloors(list);
       const pick = selectId ? list.find((f) => f.id === selectId) : list[0];
       setActiveFloor(pick || null);
+      notifyChanged();
     } catch (_) { setFloors([]); setActiveFloor(null); }
   }
   const loadPlacements = useCallback(async (floorId) => {
@@ -167,11 +221,16 @@ export function IndoorMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
     try {
       const res = await api(`/api/floors/${floorId}/placements`);
       setPlacements(res.ok ? res.body || [] : []);
+      notifyChanged();
     } catch (_) { setPlacements([]); }
   }, []);
 
   useEffect(() => { loadSites(); }, []);
+  // Embedded in the workspace: whenever the locked building changes, switch to it.
+  useEffect(() => { if (lockedSiteId && sites.length) { const s = sites.find((x) => x.id === lockedSiteId); if (s && (!activeSite || activeSite.id !== s.id)) setActiveSite(s); } }, [lockedSiteId, sites]);
   useEffect(() => { if (activeSite) loadFloors(activeSite.id); }, [activeSite && activeSite.id]);
+  // Report the viewed building up so the geo map can zoom to it when the operator switches back.
+  useEffect(() => { if (activeSiteChangeRef.current) activeSiteChangeRef.current(activeSite ? activeSite.id : null); }, [activeSite && activeSite.id]);
   useEffect(() => { loadPlacements(activeFloor && activeFloor.id); }, [activeFloor && activeFloor.id, loadPlacements]);
 
   // Live cameras for a node, fetched over the tunnel (same path the node tree uses). Returns
@@ -423,18 +482,64 @@ export function IndoorMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
     } finally { setBusy(false); }
   }
 
-  // --- site/floor management (unchanged from Phase 2) ---
-  async function createSite() {
-    const name = window.prompt(t('map.siteNamePrompt'));
-    if (!name || !name.trim()) return;
+  // Zoom + fit controls for the plan toolbar (mirrors the drawing canvas toolbar).
+  function zoomStep(delta) {
+    const v = mapRef.current && mapRef.current.getView();
+    if (!v) return;
+    v.animate({ zoom: (v.getZoom() || 1) + delta, duration: 150 });
+  }
+  function fitPlan() {
+    const m = mapRef.current;
+    if (!m || !activeFloor) return;
+    const w = activeFloor.width || 1024;
+    const h = activeFloor.height || 768;
+    m.getView().fit([0, 0, w, h], { padding: [20, 20, 20, 20], duration: 150 });
+  }
+
+  // Delete / Backspace removes the selected marker; Escape clears the selection — so a camera can
+  // be taken off the plan straight from the keyboard, mirroring the drawing canvas.
+  useEffect(() => {
+    if (!selectedId) return undefined;
+    const onKey = (e) => {
+      const el = e.target;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); removeSelected(); }
+      else if (e.key === 'Escape') { setSelectedId(null); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
+
+  // --- site/floor management ---
+  // Building create/edit go through SiteDialog (name + icon). createSite/editSite just open it;
+  // saveSiteDialog persists whichever mode is active.
+  function createSite() { setSiteDialog({ mode: 'create', name: '', icon: DEFAULT_BUILDING_ICON }); }
+  function editSite() {
+    if (!activeSite) return;
+    setSiteDialog({ mode: 'edit', id: activeSite.id, name: activeSite.name, icon: activeSite.icon || DEFAULT_BUILDING_ICON });
+  }
+  async function saveSiteDialog(name, icon) {
+    const dlg = siteDialog;
+    if (!dlg || !name.trim()) return;
     setBusy(true);
     try {
-      const res = await api('/api/sites', { method: 'POST', body: JSON.stringify({ name: name.trim() }) });
-      if (!res.ok) throw new Error();
-      const created = await loadSites(res.body && res.body.id);
-      if (created) loadFloors(created.id);
-      if (onToast) onToast(t('map.siteCreated'), 'success');
-    } catch (_) { if (onToast) onToast(t('map.siteCreateFailed'), 'error'); } finally { setBusy(false); }
+      if (dlg.mode === 'edit') {
+        const res = await api(`/api/sites/${dlg.id}`, { method: 'PUT', body: JSON.stringify({ name: name.trim(), description: activeSite?.description || '', icon, ordinal: activeSite?.ordinal || 0 }) });
+        if (!res.ok) throw new Error();
+        await loadSites(dlg.id);
+        if (onToast) onToast(t('map.siteUpdated'), 'success');
+      } else {
+        const res = await api('/api/sites', { method: 'POST', body: JSON.stringify({ name: name.trim(), icon }) });
+        if (!res.ok) throw new Error();
+        const created = await loadSites(res.body && res.body.id);
+        if (created) loadFloors(created.id);
+        if (onToast) onToast(t('map.siteCreated'), 'success');
+      }
+      setSiteDialog(null);
+    } catch (_) {
+      if (onToast) onToast(dlg.mode === 'edit' ? t('map.error') : t('map.siteCreateFailed'), 'error');
+    } finally { setBusy(false); }
   }
   async function deleteSite() {
     if (!activeSite) return;
@@ -549,15 +654,20 @@ export function IndoorMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
       <header>
         <h2><span className="btn-icon"><Ico n="building" /> {t('map.viewIndoor')}</span></h2>
         <div className="settings-header-actions">
-          <label className="indoor-field">
-            <span>{t('map.site')}</span>
-            <select value={activeSite ? activeSite.id : ''} onChange={(e) => setActiveSite(sites.find((s) => String(s.id) === e.target.value) || null)} disabled={sites.length === 0}>
-              {sites.length === 0 ? <option value="">{t('map.noSites')}</option> : null}
-              {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          </label>
-          <button type="button" className="quiet" onClick={createSite} disabled={busy}><span className="btn-icon"><Ico n="plus" sz={14} /> {t('map.addSite')}</span></button>
-          {activeSite ? <button type="button" className="quiet danger-text" onClick={deleteSite} disabled={busy}><span className="btn-icon"><Ico n="trash" sz={14} /> {t('map.deleteSite')}</span></button> : null}
+          {!lockedSiteId ? (
+            <>
+              <label className="indoor-field">
+                <span>{t('map.site')}</span>
+                <select value={activeSite ? activeSite.id : ''} onChange={(e) => setActiveSite(sites.find((s) => String(s.id) === e.target.value) || null)} disabled={sites.length === 0}>
+                  {sites.length === 0 ? <option value="">{t('map.noSites')}</option> : null}
+                  {sites.map((s) => <option key={s.id} value={s.id}>{s.icon ? `${s.icon} ${s.name}` : s.name}</option>)}
+                </select>
+              </label>
+              <button type="button" className="quiet" onClick={createSite} disabled={busy}><span className="btn-icon"><Ico n="plus" sz={14} /> {t('map.addSite')}</span></button>
+              {activeSite ? <button type="button" className="quiet" onClick={editSite} disabled={busy} title={t('map.editBuilding')}><span className="btn-icon"><Ico n="edit-2" sz={14} /> {t('map.editBuilding')}</span></button> : null}
+              {activeSite ? <button type="button" className="quiet danger-text" onClick={deleteSite} disabled={busy}><span className="btn-icon"><Ico n="trash" sz={14} /> {t('map.deleteSite')}</span></button> : null}
+            </>
+          ) : null}
           <button type="button" onClick={pickFile} disabled={busy || !activeSite}><span className="btn-icon"><Ico n="download" sz={14} /> {t('map.uploadFloor')}</span></button>
           <button type="button" className="quiet" onClick={() => { if (!activeSite) { if (onToast) onToast(t('map.pickSiteFirst'), 'info'); return; } setDesigner({ floor: null }); }} disabled={busy || !activeSite}><span className="btn-icon"><Ico n="edit-2" sz={14} /> {t('map.createPlan')}</span></button>
           <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/gif" style={{ display: 'none' }} onChange={onFileChosen} />
@@ -660,20 +770,34 @@ export function IndoorMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
                   <button type="button" className="linklike" onClick={() => setPlacing(null)}>{t('map.cancel')}</button>
                 </div>
               ) : null}
-              {selectedId ? (() => {
-                const sel = placements.find((p) => p.id === selectedId);
-                const isCam = sel && sel.cameraId;
-                return (
-                  <div className="fleet-map-placing indoor-remove-bar" role="status">
-                    <span>{isCam ? t('map.markerSelectedCam') : t('map.markerSelected')}</span>
-                    <button type="button" className="linklike" onClick={removeSelected} disabled={busy}>{t('map.removeMarker')}</button>
-                  </div>
-                );
-              })() : null}
-              <div className={`indoor-canvas${placing ? ' placing' : ''}${canvasDragOver ? ' drag-over' : ''}`} ref={containerRef} role="application" aria-label={t('map.viewIndoor')}
-                onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setCanvasDragOver(true); }}
-                onDragLeave={(e) => { if (!containerRef.current || !containerRef.current.contains(e.relatedTarget)) setCanvasDragOver(false); }}
-                onDrop={(e) => { setCanvasDragOver(false); onDrop(e); }} />
+              <div className="indoor-plan">
+                {(() => {
+                  const sel = selectedId ? placements.find((p) => p.id === selectedId) : null;
+                  const selName = sel ? (sel.lastKnownName || sel.nodeId) : '';
+                  return (
+                    <div className="fd-toolbar indoor-toolbar">
+                      <span className="indoor-tool-info">
+                        {sel ? (
+                          <><Ico n={sel.cameraId ? 'video' : 'cpu'} sz={14} /> <strong>{selName}</strong></>
+                        ) : (
+                          <span className="muted">{t('map.toolbarSelectHint')}</span>
+                        )}
+                      </span>
+                      <button type="button" className="fd-tool danger-text" onClick={removeSelected} disabled={!selectedId || busy} title={t('map.removeMarker')}>
+                        <Ico n="trash" sz={15} /> <span>{t('map.removeMarker')}</span>
+                      </button>
+                      <span className="fd-toolbar-sep" />
+                      <button type="button" className="fd-tool" onClick={() => zoomStep(-1)} title={t('fd.zoomOut')}><Ico n="minimize" sz={15} /></button>
+                      <button type="button" className="fd-tool" onClick={() => zoomStep(1)} title={t('fd.zoomIn')}><Ico n="plus" sz={15} /></button>
+                      <button type="button" className="fd-tool" onClick={fitPlan} title={t('fd.fit')}><Ico n="maximize" sz={15} /> <span>{t('fd.fitLabel')}</span></button>
+                    </div>
+                  );
+                })()}
+                <div className={`indoor-canvas${placing ? ' placing' : ''}${canvasDragOver ? ' drag-over' : ''}`} ref={containerRef} role="application" aria-label={t('map.viewIndoor')}
+                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setCanvasDragOver(true); }}
+                  onDragLeave={(e) => { if (!containerRef.current || !containerRef.current.contains(e.relatedTarget)) setCanvasDragOver(false); }}
+                  onDrop={(e) => { setCanvasDragOver(false); onDrop(e); }} />
+              </div>
             </>
           )}
         </div>
@@ -700,6 +824,17 @@ export function IndoorMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
           onSave={saveDesign}
         />
       ) : null}
+
+      {siteDialog ? (
+        <SiteDialog
+          mode={siteDialog.mode}
+          initialName={siteDialog.name}
+          initialIcon={siteDialog.icon}
+          busy={busy}
+          onSave={saveSiteDialog}
+          onCancel={() => setSiteDialog(null)}
+        />
+      ) : null}
     </section>
   );
 }
@@ -709,4 +844,7 @@ IndoorMap.propTypes = {
   reloadNodes: PropTypes.func,
   onToast: PropTypes.func,
   onOpenNode: PropTypes.func,
+  lockedSiteId: PropTypes.number,
+  onFloorplansChanged: PropTypes.func,
+  onActiveSiteChange: PropTypes.func,
 };

@@ -55,6 +55,7 @@ export function NotificationsTab({
   const t = useT();
   const [view, setView] = useState('unread'); // 'unread' | 'all'
   const [typeFilter, setTypeFilter] = useState('all');
+  const [camFilter, setCamFilter] = useState(0); // 0 = all cameras
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -122,6 +123,7 @@ export function NotificationsTab({
         const typeQuery = (TYPE_FILTERS.find((t) => t.id === typeFilter) || TYPE_FILTERS[0]).query;
         if (typeQuery.category) params.set('category', typeQuery.category);
         if (typeQuery.source) params.set('source', typeQuery.source);
+        if (camFilter > 0) params.set('cameraId', String(camFilter));
         const headers = authHeader ? { Authorization: authHeader } : {};
         const resp = await fetch(`${apiBase()}/api/notifications?${params}`, { credentials: 'include', headers, cache: 'no-store' });
         if (!resp.ok) throw new Error(`${resp.status}`);
@@ -136,7 +138,7 @@ export function NotificationsTab({
         setLoading(false);
       }
     },
-    [authHeader, view, typeFilter, onMessage],
+    [authHeader, view, typeFilter, camFilter, onMessage],
   );
 
   // Reload from the top whenever the filters change.
@@ -248,6 +250,19 @@ export function NotificationsTab({
             {t(f.labelKey)}
           </button>
         ))}
+        {/* Filter by source camera. Only AI and camera-health notifications carry a
+            cameraId, so a camera selection naturally narrows to those. */}
+        <select
+          className="notifications-camera-filter"
+          aria-label={t('meta.camera')}
+          value={camFilter}
+          onChange={(e) => setCamFilter(Number(e.target.value))}
+        >
+          <option value={0}>{t('meta.allCameras')}</option>
+          {(saved || []).map((c) => (
+            <option key={c.id} value={c.id}>{cameraTitle(c)}</option>
+          ))}
+        </select>
       </div>
 
       <div className="notifications-list">

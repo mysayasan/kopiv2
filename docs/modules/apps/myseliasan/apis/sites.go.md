@@ -3,8 +3,10 @@
 ## Purpose
 
 Exposes the indoor-map half of the fleet map: site + floor-plan management, and node/camera
-placements on a floor plan. The geographic half (`Lat`/`Lon`/`MapPlaced` on `ManagedNode`) is in
-`apis/nodes.go.md`; the offline basemap tile archive is in `apis/basemap.go.md`.
+placements on a floor plan. A `Site` is also the **digital-twin building** on the geographic map —
+it carries its own `Lat`/`Lon`/`MapPlaced` (mirroring `ManagedNode`'s, see `apis/nodes.go.md`) and
+an `Icon` glyph, so a building — not the appliance that happens to record its cameras — anchors
+cameras geographically. The offline basemap tile archive is in `apis/basemap.go.md`.
 
 ## Endpoints
 
@@ -13,11 +15,14 @@ All routes require a myseliasan session (`auth.Middleware` + `session.Middleware
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/api/sites` | List all sites (`Ordinal` then `Id` ascending). |
-| POST | `/api/sites` | Create a site. Body: `{name, description}`. `name` is required. |
-| PUT | `/api/sites/{id}` | Update a site's `{name, description, ordinal}`. |
+| POST | `/api/sites` | Create a site. Body: `{name, description, icon}`. `name` is required; `icon` is an operator-chosen emoji glyph shown on the geo-map building marker (empty = the default building glyph, rendered client-side). |
+| GET | `/api/sites/overview` | Compact per-building rollup for the geographic map: `[]SiteOverview` (`site`, `nodeIds` — every node with a camera physically placed in this building, `cameraKeys` — `"<nodeId>::<cameraId>"` per camera, `cameras`, `floors`). The marker takes the *worst* status among `nodeIds` and attributes unread notifications **per camera** (`cameraKeys`), not per whole node, since one node can record cameras in several buildings. Registered before the `/{id}` routes (literal path) so it is never captured as an id. |
+| PUT | `/api/sites/{id}` | Update a site's `{name, description, icon, ordinal}`. |
 | DELETE | `/api/sites/{id}` | Delete a site and cascade-delete its floor plans (and their encrypted images + placements — see `DeleteFloor` below). |
+| PUT | `/api/sites/{id}/position` | Set a building's geographic coordinates from an operator dragging its marker: `{lat, lon, placed}` — the exact counterpart of `PUT /api/nodes/{id}/position`. `placed` defaults to `true` when omitted (the common drag); an explicit `false` unplaces it (coordinates then unchecked). Otherwise `lat`/`lon` are validated to `[-90,90]`/`[-180,180]`. Returns the updated `Site`; 400 on an unknown site, out-of-range coordinates, or bad body. |
 | GET | `/api/sites/{id}/floors` | List a site's floor plans (`Ordinal` then `Id` ascending). |
 | POST | `/api/sites/{id}/floors` | Upload a floor-plan image. **Multipart form**: field `file` (the image), optional form `name` (falls back to the uploaded filename, then `"Floor plan"`), optional form `design` (drawn-plan vector JSON when saved from the in-app floor designer rather than an uploaded photo; empty otherwise). Capped at 24 MiB (`maxPlanUploadBytes`). Only `image/png`, `image/jpeg`, `image/gif` are accepted — content type is sniffed (`detectPlanType`) when the declared `Content-Type` isn't one of the three, so a wrong/missing header doesn't silently pass through as something else. Returns 400 on an unknown site, an unreadable image, or a disallowed type. |
+| GET | `/api/sites/{id}/floorplans` | A building's floor plans, each paired with **every** placement on it regardless of which node's camera it is (`[]NodeFloorplan`, `services.SiteFloorplans`) — the multi-node building drill-down the geo map's building marker opens into, distinct from the node-scoped `nodeFloorplans` below. |
 | GET | `/api/floors/{id}` | Get one floor plan's metadata. |
 | PUT | `/api/floors/{id}` | Update `{name, ordinal}`. |
 | DELETE | `/api/floors/{id}` | Delete a floor plan: removes its placements first (so no orphaned pins survive), then its encrypted image file(s) (rendered + background, if any), then the row. |
@@ -50,3 +55,10 @@ All routes require a myseliasan session (`auth.Middleware` + `session.Middleware
   `NodePlacement`) in both the editor (`indoor_map.js`) and the read-only plan viewer
   (`node_floor_view.js`), so an operator can see at a glance which part of a room a camera
   actually watches, not just where it is mounted.
+- **Digital-twin buildings**: a `Site` doubles as the geo-map's building marker (its own
+  `Lat`/`Lon`/`MapPlaced` + `Icon`), and `ManagedNode` separately carries a `SiteId` — the building
+  the *appliance itself* resides in, set via `PUT /api/nodes/{id}/building` (`apis/nodes.go.md`).
+  A node assigned to a building is drawn as part of that building's marker, not its own pin
+  (`UpdateNodeSite` clears `MapPlaced`); a node's *cameras* are separately anchored by their
+  floor-plan placements, which is what makes the building — not the node — the map's true anchor
+  for "where is this camera". See `entities/managed_node.go.md`.

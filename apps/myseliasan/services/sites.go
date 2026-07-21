@@ -33,19 +33,46 @@ type FloorImage struct {
 	ContentType string
 }
 
-// NodeFloorplan pairs a floor plan with one node's placements on it.
+// NodeFloorplan pairs a floor plan with a set of placements on it. Used both for a node's own
+// markers (NodeFloorplans, filtered to one node) and for a whole building's markers
+// (SiteFloorplans, EVERY node's cameras on that floor — the digital-twin view).
 type NodeFloorplan struct {
 	Floor      *entities.FloorPlan       `json:"floor"`
 	Placements []*entities.NodePlacement `json:"placements"`
+}
+
+// SiteOverview is the compact per-building rollup the geographic map needs to draw a building
+// marker: its geo-located site plus which nodes own cameras inside it (so the marker can take the
+// worst owning-node status) and how many floors/cameras it holds. Cheap enough to compute for the
+// whole (small) fleet in one call.
+type SiteOverview struct {
+	Site    *entities.Site `json:"site"`
+	NodeIds []string       `json:"nodeIds"`
+	// CameraKeys lists the "<nodeId>::<cameraId>" of every camera physically placed in this
+	// building. The map uses it to attribute notifications PER CAMERA — a node can record cameras
+	// in several buildings, so summing the whole node's alerts onto one building would over-count.
+	CameraKeys []string `json:"cameraKeys"`
+	Cameras    int      `json:"cameras"`
+	Floors     int      `json:"floors"`
 }
 
 // ISiteService manages sites and their floor-plan images. Plan image bytes are encrypted
 // at rest with the fleet cipher; only metadata + pixel dimensions live in the database.
 type ISiteService interface {
 	ListSites(ctx context.Context) ([]*entities.Site, error)
-	CreateSite(ctx context.Context, name, description string, by int64) (*entities.Site, error)
-	UpdateSite(ctx context.Context, id int64, name, description string, ordinal int, by int64) (*entities.Site, error)
+	CreateSite(ctx context.Context, name, description, icon string, by int64) (*entities.Site, error)
+	UpdateSite(ctx context.Context, id int64, name, description, icon string, ordinal int, by int64) (*entities.Site, error)
+	// UpdateSitePosition sets a building's geographic map coordinates (from dragging its marker)
+	// and placed flag — the counterpart to node placement, mirroring INodeRegistry.UpdatePosition.
+	UpdateSitePosition(ctx context.Context, id int64, lat, lon float64, placed bool, by int64) (*entities.Site, error)
 	DeleteSite(ctx context.Context, id int64) error
+
+	// SiteFloorplans returns every floor of a building, each with ALL of its placements (cameras
+	// from any node) — the building-oriented drill-down, so clicking a building on the map opens
+	// its plans with every camera inside regardless of which node records it.
+	SiteFloorplans(ctx context.Context, siteID int64) ([]NodeFloorplan, error)
+	// SiteOverview rolls up every site for the geographic map (marker health + counts).
+	SiteOverview(ctx context.Context) ([]SiteOverview, error)
 
 	ListFloors(ctx context.Context, siteID int64) ([]*entities.FloorPlan, error)
 	// AddFloor decodes the image (for its pixel dimensions), encrypts the bytes to disk, and
@@ -218,9 +245,9 @@ func (s *siteService) ListSites(ctx context.Context) ([]*entities.Site, error) {
 	return rows, nil
 }
 
-func (s *siteService) CreateSite(ctx context.Context, name, description string, by int64) (*entities.Site, error) {
+func (s *siteService) CreateSite(ctx context.Context, name, description, icon string, by int64) (*entities.Site, error) {
 	now := time.Now().Unix()
-	row := entities.Site{Name: name, Description: description, CreatedBy: by, CreatedAt: now, UpdatedBy: by, UpdatedAt: now}
+	row := entities.Site{Name: name, Description: description, Icon: icon, CreatedBy: by, CreatedAt: now, UpdatedBy: by, UpdatedAt: now}
 	id, err := s.sites.Create(ctx, "", row)
 	if err != nil {
 		return nil, err
@@ -229,13 +256,14 @@ func (s *siteService) CreateSite(ctx context.Context, name, description string, 
 	return &row, nil
 }
 
-func (s *siteService) UpdateSite(ctx context.Context, id int64, name, description string, ordinal int, by int64) (*entities.Site, error) {
+func (s *siteService) UpdateSite(ctx context.Context, id int64, name, description, icon string, ordinal int, by int64) (*entities.Site, error) {
 	row, err := s.sites.GetById(ctx, "", uint64(id))
 	if err != nil || row == nil {
 		return nil, ErrSiteUnknown
 	}
 	row.Name = name
 	row.Description = description
+	row.Icon = icon
 	row.Ordinal = ordinal
 	row.UpdatedBy = by
 	row.UpdatedAt = time.Now().Unix()
@@ -243,6 +271,82 @@ func (s *siteService) UpdateSite(ctx context.Context, id int64, name, descriptio
 		return nil, err
 	}
 	return row, nil
+}
+
+// UpdateSitePosition sets a building's geographic coordinates and placed flag. See ISiteService.
+func (s *siteService) UpdateSitePosition(ctx context.Context, id int64, lat, lon float64, placed bool, by int64) (*entities.Site, error) {
+	row, err := s.sites.GetById(ctx, "", uint64(id))
+	if err != nil || row == nil {
+		return nil, ErrSiteUnknown
+	}
+	row.Lat = lat
+	row.Lon = lon
+	row.MapPlaced = placed
+	row.UpdatedBy = by
+	row.UpdatedAt = time.Now().Unix()
+	if _, err := s.sites.UpdateById(ctx, "", *row); err != nil {
+		return nil, err
+	}
+	return row, nil
+}
+
+// SiteFloorplans returns each floor of a building with ALL its placements. See ISiteService.
+func (s *siteService) SiteFloorplans(ctx context.Context, siteID int64) ([]NodeFloorplan, error) {
+	floors, err := s.ListFloors(ctx, siteID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]NodeFloorplan, 0, len(floors))
+	for _, f := range floors {
+		placements, perr := s.ListPlacements(ctx, f.Id)
+		if perr != nil {
+			return nil, perr
+		}
+		out = append(out, NodeFloorplan{Floor: f, Placements: placements})
+	}
+	return out, nil
+}
+
+// SiteOverview rolls up every site for the geographic map. See ISiteService.
+func (s *siteService) SiteOverview(ctx context.Context) ([]SiteOverview, error) {
+	sites, err := s.ListSites(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SiteOverview, 0, len(sites))
+	for _, site := range sites {
+		floors, ferr := s.ListFloors(ctx, site.Id)
+		if ferr != nil {
+			return nil, ferr
+		}
+		seen := map[string]bool{}
+		seenCam := map[string]bool{}
+		nodeIds := []string{}
+		cameraKeys := []string{}
+		cameras := 0
+		for _, f := range floors {
+			placements, perr := s.ListPlacements(ctx, f.Id)
+			if perr != nil {
+				return nil, perr
+			}
+			for _, p := range placements {
+				if p.CameraId != "" {
+					cameras++
+					key := p.NodeId + "::" + p.CameraId
+					if !seenCam[key] {
+						seenCam[key] = true
+						cameraKeys = append(cameraKeys, key)
+					}
+				}
+				if p.NodeId != "" && !seen[p.NodeId] {
+					seen[p.NodeId] = true
+					nodeIds = append(nodeIds, p.NodeId)
+				}
+			}
+		}
+		out = append(out, SiteOverview{Site: site, NodeIds: nodeIds, CameraKeys: cameraKeys, Cameras: cameras, Floors: len(floors)})
+	}
+	return out, nil
 }
 
 // DeleteSite removes a site and all its floor plans (and their encrypted images). Node/camera

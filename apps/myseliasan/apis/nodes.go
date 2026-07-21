@@ -67,6 +67,11 @@ func NewNodesApi(router *mux.Router, auth middlewares.AuthMidware, session *midd
 	g.HandleFunc("/adopt", h.adopt).Methods("POST")
 	g.HandleFunc("/{id}", h.update).Methods("PUT")
 	g.HandleFunc("/{id}/position", h.updatePosition).Methods("PUT")
+	// Assign (or clear) the building an appliance resides in — the building-first map's alternative
+	// to placing a node's own pin.
+	g.HandleFunc("/{id}/building", h.updateBuilding).Methods("PUT")
+	// Toggle a node's certificate auto-renew gate. Off (default) lets the cert lapse.
+	g.HandleFunc("/{id}/auto-renew", h.setAutoRenew).Methods("PUT")
 	g.HandleFunc("/fleet-key", h.fleetKey).Methods("GET")
 	g.HandleFunc("/fleet-key", h.generateFleetKey).Methods("POST")
 	g.HandleFunc("/{id}/release", h.release).Methods("POST")
@@ -248,6 +253,60 @@ func (a *nodesApi) updatePosition(w http.ResponseWriter, r *http.Request) {
 	controllers.SendResult(w, node, "succeed")
 }
 
+// updateBuilding assigns a node to the building it resides in (siteId), or clears it (siteId 0).
+func (a *nodesApi) updateBuilding(w http.ResponseWriter, r *http.Request) {
+	nodeID := mux.Vars(r)["id"]
+	var body struct {
+		SiteId int64 `json:"siteId"`
+	}
+	if err := decodeJSON(w, r, &body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	var updatedBy int64
+	if claims, ok := r.Context().Value(enumauth.Claims).(*models.JwtCustomClaims); ok && claims != nil {
+		updatedBy = claims.Id
+	}
+	node, err := a.registry.UpdateNodeSite(r.Context(), nodeID, body.SiteId, updatedBy)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, node, "succeed")
+}
+
+// setAutoRenew turns a node's certificate auto-renew gate on or off. With it off (the
+// default for a newly adopted node) the node's cert is allowed to lapse when it expires,
+// dropping the node out of the fleet; with it on the node's automatic re-enrollment before
+// expiry is honoured. No certificate is issued here.
+func (a *nodesApi) setAutoRenew(w http.ResponseWriter, r *http.Request) {
+	nodeID := mux.Vars(r)["id"]
+	var body struct {
+		AutoRenew bool `json:"autoRenew"`
+	}
+	if err := decodeJSON(w, r, &body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	var updatedBy int64
+	if claims, ok := r.Context().Value(enumauth.Claims).(*models.JwtCustomClaims); ok && claims != nil {
+		updatedBy = claims.Id
+	}
+	node, err := a.registry.SetAutoRenew(r.Context(), nodeID, body.AutoRenew, updatedBy)
+	if err != nil {
+		a.recordNodeAction(r, "node.auto_renew", nodeID, "error", "set auto-renew failed: "+err.Error(), nil)
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	state := "disabled"
+	if body.AutoRenew {
+		state = "enabled"
+	}
+	a.recordNodeAction(r, "node.auto_renew", nodeID, "success", "certificate auto-renew "+state+" for node "+nodeID,
+		map[string]any{"autoRenew": body.AutoRenew})
+	controllers.SendResult(w, node, "succeed")
+}
+
 func (a *nodesApi) release(w http.ResponseWriter, r *http.Request) {
 	nodeID := mux.Vars(r)["id"]
 	if err := a.registry.Release(r.Context(), nodeID); err != nil {
@@ -350,7 +409,10 @@ func (a *nodesApi) enroll(w http.ResponseWriter, r *http.Request) {
 	certPEM, caRootPEM, err := a.registry.Enroll(r.Context(), body.NodeID, body.Token, []byte(body.CSR))
 	if err != nil {
 		switch {
-		case errors.Is(err, services.ErrNodeRevoked):
+		case errors.Is(err, services.ErrNodeRevoked), errors.Is(err, services.ErrRenewNotAuthorized):
+			// Revoked or renewal-not-authorized: the node is known but must not get a fresh
+			// cert. A distinct non-5xx status keeps the node's retry loop quiet-ish and lets
+			// it recover the moment an operator enables auto-renew.
 			controllers.SendError(w, controllers.ErrLimitedAccess, err.Error())
 		case errors.Is(err, services.ErrNodeUnknown), errors.Is(err, services.ErrAdoptRejected):
 			controllers.SendError(w, controllers.ErrPermission, err.Error())

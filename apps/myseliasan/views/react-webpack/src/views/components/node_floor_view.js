@@ -4,7 +4,13 @@ import { useT, Ico } from '@shared';
 import { api, apiBase } from '../lib/helpers';
 import { NodeCameraTile } from './node_manager';
 import { PTZRing } from './nodecam/ptz';
-import { nodeTone } from '../lib/fleet_status';
+import { nodeTone, TONES } from '../lib/fleet_status';
+
+// Same-origin control-plane URLs for an event's annotated snapshot and its recorded clip, routed
+// through myseliasan's node proxy / recording-stream (mirrors the fleet map). Used to show recorded
+// footage INLINE inside the camera window's live panel.
+const eventSnapshotSrc = (nodeId, alertId) => `${apiBase()}/api/nodes/${encodeURIComponent(nodeId)}/proxy/api/vision/alerts/${alertId}/snapshot?annotated=1`;
+const recordingStreamSrc = (nodeId, segId) => `${apiBase()}/api/nodes/${encodeURIComponent(nodeId)}/recording-stream/${segId}`;
 
 // A placement's stored (x, y) is in the floor's OpenLayers pixel projection (origin bottom-
 // left, y up). To position a marker over a plain <img> (origin top-left) we flip y.
@@ -231,20 +237,45 @@ const cwHasFootage = (e) => e && e.refType === 'alert_event' && Number(e.refId) 
 // below it, that camera's own recent events scrolling in a bounded strip. It floats, drags,
 // resizes and maximises like the other windows. Footage events open a MediaWindow. This is what a
 // camera marker on the plan opens — live first, its notifications underneath.
-export function CameraWindow({ nodeId, cameraId, name, iceServers, ptzSupported, x, y, onOpenMedia, onLocate, onClose }) {
+export function CameraWindow({ nodeId, cameraId, name, iceServers, ptzSupported, x, y, onLocate, onClose }) {
   const t = useT();
   const [maximized, setMaximized] = useState(false);
   const { pos, size, onHeadPointerDown, onResizePointerDown } = useFloatingWindow(x, y, maximized, CAM_MINI_W, CAM_MINI_H);
   const [events, setEvents] = useState({ loading: true, list: [] });
+  // Recorded-footage viewer shown INLINE over the live panel (a Back button returns to live). The
+  // live tile stays mounted underneath, so the WebRTC stream is never torn down and Back is instant.
+  const [mediaView, setMediaView] = useState(null); // { alertId, name, snapshotSrc, clipSrc } | null
+  const [mediaMode, setMediaMode] = useState('image'); // 'image' | 'video'
+  const [imgFailed, setImgFailed] = useState(false);
 
-  // This camera's events (worst-first, then newest), filtered from the node's feed by cameraId.
+  // Open a footage event in the live panel: show its snapshot at once, then resolve the recorded
+  // clip (match the segment whose alertId is this event's refId — same resolution the map uses) and
+  // reveal a play toggle if one exists. Guarded so a slow lookup can't overwrite a newer selection.
+  const openEventInline = useCallback(async (e) => {
+    const alertId = Number(e.refId);
+    const evName = e.title || e.body || t('map.event');
+    setMediaMode('image');
+    setImgFailed(false);
+    setMediaView({ alertId, name: evName, snapshotSrc: eventSnapshotSrc(nodeId, alertId), clipSrc: '' });
+    try {
+      const r = await api(`/api/nodes/${encodeURIComponent(nodeId)}/proxy/api/recording/segments?limit=500&offset=0`, { noRedirect: true });
+      const list = r.ok ? (Array.isArray(r.body) ? r.body : (r.body?.items || [])) : [];
+      const seg = list.find((s) => Number(s.alertId) === alertId && s.id);
+      if (seg) setMediaView((cur) => (cur && cur.alertId === alertId ? { ...cur, clipSrc: recordingStreamSrc(nodeId, seg.id) } : cur));
+    } catch (_) { /* snapshot-only if segments can't be resolved */ }
+  }, [nodeId, t]);
+
+  // This camera's events (worst-first, then newest). Scoped to the camera SERVER-SIDE via
+  // cameraId so the limit applies to THIS camera's feed — fetching the node feed and filtering
+  // client-side dropped events once they fell past the page limit (making the badge, which
+  // counts the full set, disagree with this list).
   useEffect(() => {
     let live = true;
-    const load = () => api(`/api/notifications?nodeId=${encodeURIComponent(nodeId)}&limit=60`, { noRedirect: true })
+    const load = () => api(`/api/notifications?nodeId=${encodeURIComponent(nodeId)}&cameraId=${encodeURIComponent(cameraId)}&limit=60`, { noRedirect: true })
       .then((r) => {
         if (!live) return;
         const rows = Array.isArray(r.body?.items) ? r.body.items : (Array.isArray(r.body) ? r.body : []);
-        const mine = rows.filter((e) => String(e.cameraId) === String(cameraId));
+        const mine = rows.slice();
         mine.sort((a, b) => {
           const s = (CW_SEV_RANK[(b.severity || '').toLowerCase()] || 0) - (CW_SEV_RANK[(a.severity || '').toLowerCase()] || 0);
           return s !== 0 ? s : (b.createdAt || 0) - (a.createdAt || 0);
@@ -273,9 +304,37 @@ export function CameraWindow({ nodeId, cameraId, name, iceServers, ptzSupported,
           <button type="button" className="icon-button" onClick={onClose} title={t('nset.close')} aria-label={t('nset.close')}><Ico n="x" sz={14} /></button>
         </span>
       </div>
-      <div className="camwin-live" onDoubleClick={(e) => { if (e.target.closest && e.target.closest('.floor-live-ptz')) return; setMaximized((m) => !m); }}>
+      <div className="camwin-live" onDoubleClick={(e) => { if (e.target.closest && (e.target.closest('.floor-live-ptz') || e.target.closest('.camwin-media'))) return; setMaximized((m) => !m); }}>
         <NodeCameraTile nodeId={nodeId} cam={{ id: cameraId, name }} iceServers={iceServers} />
-        {ptzSupported ? <WindowPTZ nodeId={nodeId} cameraId={cameraId} /> : null}
+        {ptzSupported && !mediaView ? <WindowPTZ nodeId={nodeId} cameraId={cameraId} /> : null}
+        {mediaView ? (() => {
+          const showVideo = mediaMode === 'video' && !!mediaView.clipSrc;
+          return (
+            <div className="camwin-media">
+              <div className="camwin-media-bar">
+                <button type="button" className="icon-button" onClick={() => setMediaView(null)} title={t('map.backToLive')} aria-label={t('map.backToLive')}><Ico n="arr-left" sz={14} /></button>
+                <span className="camwin-media-name" title={mediaView.name}>{mediaView.name}</span>
+                <span className="camwin-media-spacer" />
+                {mediaView.clipSrc ? (
+                  showVideo ? (
+                    <button type="button" className="icon-button" onClick={() => setMediaMode('image')} title={t('map.showSnapshot')} aria-label={t('map.showSnapshot')}><Ico n="camera" sz={13} /></button>
+                  ) : (
+                    <button type="button" className="icon-button" onClick={() => setMediaMode('video')} title={t('map.playClip')} aria-label={t('map.playClip')}><Ico n="play" sz={13} /></button>
+                  )
+                ) : null}
+              </div>
+              <div className="camwin-media-body">
+                {showVideo ? (
+                  <video className="floor-live-video" src={mediaView.clipSrc} controls autoPlay />
+                ) : imgFailed ? (
+                  <div className="floor-live-media-ph"><Ico n="camera" sz={22} /><span>{t('map.snapshotUnavailable')}</span></div>
+                ) : (
+                  <img className="floor-live-image" src={mediaView.snapshotSrc} alt={mediaView.name} draggable={false} onError={() => setImgFailed(true)} />
+                )}
+              </div>
+            </div>
+          );
+        })() : null}
       </div>
       <div className="camwin-events">
         <div className="camwin-events-head">
@@ -303,7 +362,7 @@ export function CameraWindow({ nodeId, cameraId, name, iceServers, ptzSupported,
             return (
               <div key={e.id} className={`mp-event${e.isRead ? ' read' : ''}`}>
                 {footage ? (
-                  <button type="button" className="mp-event-main has-footage" title={t('map.openFootage')} onClick={(ev) => onOpenMedia && onOpenMedia({ nodeId, alertId: Number(e.refId), name: title }, ev.clientX, ev.clientY)}>{main}</button>
+                  <button type="button" className={`mp-event-main has-footage${mediaView && mediaView.alertId === Number(e.refId) ? ' active' : ''}`} title={t('map.openFootage')} onClick={() => openEventInline(e)}>{main}</button>
                 ) : (
                   <span className="mp-event-main">{main}</span>
                 )}
@@ -317,7 +376,7 @@ export function CameraWindow({ nodeId, cameraId, name, iceServers, ptzSupported,
     </div>
   );
 }
-CameraWindow.propTypes = { nodeId: PropTypes.string, cameraId: PropTypes.any, name: PropTypes.string, iceServers: PropTypes.array, ptzSupported: PropTypes.bool, x: PropTypes.number, y: PropTypes.number, onOpenMedia: PropTypes.func, onLocate: PropTypes.func, onClose: PropTypes.func };
+CameraWindow.propTypes = { nodeId: PropTypes.string, cameraId: PropTypes.any, name: PropTypes.string, iceServers: PropTypes.array, ptzSupported: PropTypes.bool, x: PropTypes.number, y: PropTypes.number, onLocate: PropTypes.func, onClose: PropTypes.func };
 
 // NodeFloorView is the geo-map drill-down: it shows a node's floor plan with the cameras the
 // operator placed on it, and plays a camera's LIVE footage in an on-plan window (small, then
@@ -335,6 +394,27 @@ export function NodeFloorView({ node, floorplans, focusCameraId, onBack, onPlay 
   const [floorIdx, setFloorIdx] = useState(focusIdx);
   useEffect(() => { setFloorIdx(focusIdx); }, [focusIdx]);
   const nowSec = Math.floor(Date.now() / 1000);
+
+  // Placements don't store whether a camera supports PTZ — that's a live camera attribute, not
+  // part of the myseliasan-owned placement row — so a marker click alone can't tell the live
+  // window to show the pan/tilt ring. Fetch the node's cameras (the same proxy path the popup
+  // uses) and map cameraId → ptzSupported so the ring appears for PTZ cameras opened from the plan.
+  const [ptzByCam, setPtzByCam] = useState({});
+  useEffect(() => {
+    let live = true;
+    setPtzByCam({});
+    if (!node || !node.nodeId) return undefined;
+    api(`/api/nodes/${encodeURIComponent(node.nodeId)}/proxy/api/cameras?limit=200`, { noRedirect: true })
+      .then((r) => {
+        if (!live || !r.ok) return;
+        const list = Array.isArray(r.body) ? r.body : (r.body?.items || []);
+        const m = {};
+        list.forEach((c) => { m[String(c.id)] = !!c.ptzSupported; });
+        setPtzByCam(m);
+      })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [node && node.nodeId]);
 
   const current = floorplans[floorIdx] || floorplans[0];
   const floor = current && current.floor;
@@ -385,7 +465,7 @@ export function NodeFloorView({ node, floorplans, focusCameraId, onBack, onPlay 
                 type="button"
                 className={`floor-marker${isCam ? ' cam' : ' node'}${focused ? ' focus' : ''}`}
                 style={{ ...markerPos(p, w, h), borderColor: focused ? undefined : tone.ring }}
-                onClick={(e) => { if (isCam && onPlay) onPlay({ nodeId: node.nodeId, cameraId: p.cameraId, name: label, ptzSupported: !!p.ptzSupported }, e.clientX, e.clientY); }}
+                onClick={(e) => { if (isCam && onPlay) onPlay({ nodeId: node.nodeId, cameraId: p.cameraId, name: label, ptzSupported: ptzByCam[String(p.cameraId)] ?? !!p.ptzSupported }, e.clientX, e.clientY); }}
                 title={label}
               >
                 <Ico n={isCam ? 'video' : 'cpu'} sz={13} />
@@ -406,4 +486,196 @@ NodeFloorView.propTypes = {
   focusCameraId: PropTypes.any,
   onBack: PropTypes.func,
   onPlay: PropTypes.func,
+};
+
+// BuildingFloorView is the BUILDING-oriented drill-down (the digital-twin view): it shows a site's
+// floor plans with EVERY camera inside, regardless of which node records each one. It is the
+// counterpart to NodeFloorView — a floor plan is a building, and a building's cameras may belong to
+// several nodes, so each marker/coverage-wedge is coloured by ITS OWN owning node's status and its
+// live view streams over THAT node's tunnel. This is what fixes "the node isn't the building".
+export function BuildingFloorView({ site, floorplans, nodesById = {}, notifByCam = {}, focusCameraId, onBack, onPlay, onRemovePlacements }) {
+  const t = useT();
+  const focusIdx = useMemo(() => {
+    if (!focusCameraId) return 0;
+    const i = floorplans.findIndex((fp) => (fp.placements || []).some((p) => String(p.cameraId) === String(focusCameraId)));
+    return i >= 0 ? i : 0;
+  }, [floorplans, focusCameraId]);
+  const [floorIdx, setFloorIdx] = useState(focusIdx);
+  useEffect(() => { setFloorIdx(focusIdx); }, [focusIdx]);
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  const current = floorplans[floorIdx] || floorplans[0];
+  const floor = current && current.floor;
+  const placements = useMemo(() => (current && current.placements) || [], [current]);
+  const w = (floor && floor.width) || 1024;
+  const h = (floor && floor.height) || 768;
+
+  // Fetch each owning node's live cameras once, and derive per-(nodeId,cameraId): PTZ capability +
+  // health, plus which nodes actually answered (reachable). Reachability is what lets us tell a
+  // GHOST placement (camera removed from an ONLINE node) from a camera we simply can't reach.
+  const [camMeta, setCamMeta] = useState({}); // "nodeId::cameraId" -> { ptz, health }
+  const [reachable, setReachable] = useState({}); // nodeId -> bool (its camera list answered)
+  useEffect(() => {
+    let live = true;
+    setCamMeta({}); setReachable({});
+    const nodeIds = Array.from(new Set(placements.filter((p) => p.cameraId).map((p) => p.nodeId)));
+    if (nodeIds.length === 0) return undefined;
+    Promise.all(nodeIds.map((nid) => api(`/api/nodes/${encodeURIComponent(nid)}/proxy/api/cameras?limit=200`, { noRedirect: true })
+      .then((r) => ({ nid, ok: !!r.ok, list: r.ok ? (Array.isArray(r.body) ? r.body : (r.body?.items || [])) : [] }))
+      .catch(() => ({ nid, ok: false, list: [] }))))
+      .then((results) => {
+        if (!live) return;
+        const meta = {}; const reach = {};
+        results.forEach(({ nid, ok, list }) => { reach[nid] = ok; list.forEach((c) => { meta[`${nid}::${c.id}`] = { ptz: !!c.ptzSupported, health: (c.healthStatus || '').toLowerCase() }; }); });
+        setCamMeta(meta); setReachable(reach);
+      });
+    return () => { live = false; };
+  }, [placements]);
+
+  // Placements whose camera no longer exists on an online node — stale markers to clean up.
+  const ghostIds = useMemo(() => placements.filter((p) => p.cameraId && reachable[p.nodeId] && !camMeta[`${p.nodeId}::${p.cameraId}`]).map((p) => p.id), [placements, reachable, camMeta]);
+
+  // Pan + zoom for the plan (a large plan was previously a fixed, unreadable image). The wrap is
+  // centred in the viewport and transformed as translate(tx,ty) scale(z) about its centre; markers
+  // counter-scale (via the --inv CSS var) so they stay readable at any zoom.
+  const vpRef = useRef(null);
+  const panRef = useRef(null);
+  const [view, setView] = useState({ z: 1, tx: 0, ty: 0 });
+  useEffect(() => { setView({ z: 1, tx: 0, ty: 0 }); }, [floorIdx]); // reset when switching floors
+  const zoomAbout = useCallback((factor, cx, cy) => {
+    setView((v) => {
+      const rect = vpRef.current ? vpRef.current.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
+      const vcx = rect.left + rect.width / 2; const vcy = rect.top + rect.height / 2;
+      const px = cx == null ? vcx : cx; const py = cy == null ? vcy : cy;
+      const nz = Math.max(1, Math.min(6, v.z * factor));
+      if (nz === 1) return { z: 1, tx: 0, ty: 0 }; // snap back to fit when fully zoomed out
+      const relx = (px - vcx - v.tx) / v.z; const rely = (py - vcy - v.ty) / v.z;
+      return { z: nz, tx: v.tx + (v.z - nz) * relx, ty: v.ty + (v.z - nz) * rely };
+    });
+  }, []);
+  useEffect(() => {
+    const el = vpRef.current; if (!el) return undefined;
+    const onWheel = (e) => { e.preventDefault(); zoomAbout(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX, e.clientY); };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [zoomAbout, floor]);
+  const onPanStart = (e) => {
+    if (e.button !== 0 || (e.target.closest && e.target.closest('.floor-marker'))) return;
+    panRef.current = { sx: e.clientX, sy: e.clientY, tx: view.tx, ty: view.ty };
+    if (vpRef.current && vpRef.current.setPointerCapture) { try { vpRef.current.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ } }
+  };
+  const onPanMove = (e) => { if (!panRef.current) return; const p = panRef.current; setView((v) => ({ ...v, tx: p.tx + (e.clientX - p.sx), ty: p.ty + (e.clientY - p.sy) })); };
+  const onPanEnd = () => { panRef.current = null; };
+
+  // Tone for a placement = its OWNING node's status (idle when the node is gone).
+  const toneFor = useCallback((p) => nodeTone(nodesById[p.nodeId], nowSec), [nodesById, nowSec]);
+  const siteTone = useMemo(() => {
+    const order = ['critical', 'warning', 'online', 'idle'];
+    let worst = 'idle';
+    for (const fp of floorplans) for (const p of (fp.placements || [])) {
+      const k = nodeTone(nodesById[p.nodeId], nowSec).key;
+      if (order.indexOf(k) < order.indexOf(worst)) worst = k;
+    }
+    return TONES[worst];
+  }, [floorplans, nodesById, nowSec]);
+
+  if (!floor) {
+    return (
+      <div className="floor-view">
+        <div className="floor-view-bar">
+          <button type="button" className="quiet" onClick={onBack}><span className="btn-icon"><Ico n="arr-left" sz={14} /> {t('map.backToMap')}</span></button>
+          <span className="floor-view-title"><span className="floor-view-emoji">{site.icon || '🏢'}</span> {site.name}</span>
+        </div>
+        <div className="floor-view-stage"><div className="floor-view-empty">{t('map.noFloorsInBuilding')}</div></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="floor-view">
+      <div className="floor-view-bar">
+        <button type="button" className="quiet" onClick={onBack}>
+          <span className="btn-icon"><Ico n="arr-left" sz={14} /> {t('map.backToMap')}</span>
+        </button>
+        <span className="floor-view-title">
+          <span className="rail-dot" style={{ background: siteTone.color }} />
+          <span className="floor-view-emoji">{site.icon || '🏢'}</span> {site.name} · {floor.name}
+        </span>
+        {floorplans.length > 1 ? (
+          <div className="floor-view-switch">
+            {floorplans.map((fp, i) => (
+              <button key={fp.floor.id} type="button" className={`indoor-floor-tab${i === floorIdx ? ' active' : ''}`} onClick={() => setFloorIdx(i)}>
+                {fp.floor.name}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="floor-view-stage">
+        {ghostIds.length > 0 && onRemovePlacements ? (
+          <div className="floor-ghost-bar overlay" role="status">
+            <span><Ico n="warning" sz={13} /> {t('map.ghostCameras', { n: ghostIds.length })}</span>
+            <button type="button" className="linklike" onClick={() => onRemovePlacements(ghostIds)}>{t('map.removeGhosts')}</button>
+          </div>
+        ) : null}
+        <div className={`floor-plan-viewport${view.z > 1 ? ' zoomed' : ''}`} ref={vpRef} onPointerDown={onPanStart} onPointerMove={onPanMove} onPointerUp={onPanEnd} onPointerLeave={onPanEnd}>
+        <div className="floor-plan-wrap" style={{ aspectRatio: `${w} / ${h}`, transform: `translate(${view.tx}px, ${view.ty}px) scale(${view.z})`, '--inv': 1 / view.z }}>
+          <img className="floor-plan-img" src={`${apiBase()}/api/floors/${floor.id}/image`} alt={floor.name} draggable={false} />
+          {/* Coverage wedges, each in its owning node's tone. */}
+          <svg className="floor-fov" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden="true">
+            {placements.filter((p) => p.cameraId && (p.fov || 0) > 0).map((p) => {
+              const c = toneFor(p).color;
+              return <path key={`fov-${p.id}`} d={fovPath(p, w, h)} fill={c} fillOpacity="0.16" stroke={c} strokeOpacity="0.45" strokeWidth="1" vectorEffect="non-scaling-stroke" />;
+            })}
+          </svg>
+          {placements.map((p) => {
+            const isCam = !!p.cameraId;
+            const node = nodesById[p.nodeId];
+            const label = p.lastKnownName || (isCam ? t('nodes.cameraN', { id: p.cameraId }) : (node ? node.name || p.nodeId : p.nodeId));
+            const focused = isCam && focusCameraId && String(p.cameraId) === String(focusCameraId);
+            const tone = toneFor(p);
+            const notif = isCam ? notifByCam[`${p.nodeId}::${p.cameraId}`] : null;
+            const meta = camMeta[`${p.nodeId}::${p.cameraId}`];
+            const ghost = isCam && reachable[p.nodeId] && !meta; // camera removed from an online node
+            const camOffline = isCam && meta && meta.health && meta.health !== 'online';
+            const ptz = meta ? meta.ptz : !!p.ptzSupported;
+            const border = focused ? undefined : ghost ? '#94a3b8' : camOffline ? '#f59e0b' : tone.ring;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                className={`floor-marker${isCam ? ' cam' : ' node'}${focused ? ' focus' : ''}${ghost ? ' ghost' : ''}${camOffline ? ' cam-offline' : ''}`}
+                style={{ ...markerPos(p, w, h), borderColor: border }}
+                onClick={(e) => { if (isCam && !ghost && onPlay) onPlay({ nodeId: p.nodeId, cameraId: p.cameraId, name: label, ptzSupported: ptz }, e.clientX, e.clientY); }}
+                title={ghost ? t('map.cameraGone', { name: label }) : (camOffline ? `${label} · ${t('map.legend.critical')}` : label)}
+              >
+                <Ico n={ghost ? 'x' : isCam ? 'video' : 'cpu'} sz={13} />
+                <span className="floor-marker-label">{label}</span>
+                {notif && notif.count > 0 ? <span className={`floor-marker-badge sev-${notif.sev}`}>{notif.count > 99 ? '99+' : notif.count}</span> : null}
+              </button>
+            );
+          })}
+          {placements.length === 0 ? <div className="floor-view-empty">{t('map.noCamsOnPlan')}</div> : null}
+        </div>
+        </div>
+        <div className="floor-zoom">
+          <button type="button" onClick={() => zoomAbout(1.3)} title={t('fd.zoomIn')} aria-label={t('fd.zoomIn')}><Ico n="plus" sz={14} /></button>
+          <button type="button" onClick={() => zoomAbout(1 / 1.3)} title={t('fd.zoomOut')} aria-label={t('fd.zoomOut')}><Ico n="minimize" sz={14} /></button>
+          <button type="button" onClick={() => setView({ z: 1, tx: 0, ty: 0 })} title={t('fd.fit')} aria-label={t('fd.fit')}><Ico n="maximize" sz={14} /></button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+BuildingFloorView.propTypes = {
+  site: PropTypes.object,
+  floorplans: PropTypes.array,
+  nodesById: PropTypes.object,
+  notifByCam: PropTypes.object,
+  focusCameraId: PropTypes.any,
+  onBack: PropTypes.func,
+  onPlay: PropTypes.func,
+  onRemovePlacements: PropTypes.func,
 };

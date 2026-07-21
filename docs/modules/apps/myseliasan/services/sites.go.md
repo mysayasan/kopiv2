@@ -19,7 +19,22 @@ floor-plan images, and node/camera placements on those plans — the indoor half
 
 - **Sites** — `ListSites`/`CreateSite`/`UpdateSite`/`DeleteSite`. `DeleteSite` lists the site's
   floors and calls `DeleteFloor` on each before deleting the site row itself, so a deleted site
-  never leaves orphaned floor-plan files or placements behind.
+  never leaves orphaned floor-plan files or placements behind. `CreateSite`/`UpdateSite` now also
+  take an `icon` (the building glyph shown on the geo-map marker).
+  - `UpdateSitePosition(ctx, id, lat, lon, placed, by)` — sets `Site.Lat`/`Lon`/`MapPlaced` from an
+    operator dragging the building's marker on the geographic map, mirroring
+    `INodeRegistry.UpdatePosition`. Returns `ErrSiteUnknown` for an unknown site.
+  - `SiteOverview(ctx)` — rolls up **every** site for the geo map in one call: for each site, walks
+    its floors' placements to collect the distinct owning `nodeIds` (for marker health — the worst
+    status among them) and `cameraKeys` (`"<nodeId>::<cameraId>"`, for **per-camera** notification
+    attribution, since one node can record cameras across several buildings and summing the whole
+    node's alerts onto one building would over-count), plus `cameras`/`floors` counts. Cheap enough
+    to compute for a whole (small) fleet on every request; no caching.
+  - `SiteFloorplans(ctx, siteID)` — like `NodeFloorplans` below, but scoped to a **building**
+    rather than a node: every floor of the site, each paired with **all** of its placements
+    regardless of which node owns the camera. This is the multi-node building drill-down
+    (`BuildingFloorView` in `node_floor_view.js`) — clicking a building marker shows every camera
+    physically inside it, whichever node happens to record each one.
 - **Floors** — `ListFloors`/`GetFloor`/`UpdateFloor`/`DeleteFloor`, plus:
   - `AddFloor(ctx, siteID, name, img, contentType, design, by)` — decodes just the image header
     (`image.DecodeConfig`) to capture pixel `Width`/`Height` (these become the OL pixel-projection

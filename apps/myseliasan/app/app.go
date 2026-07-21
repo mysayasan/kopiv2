@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -142,11 +143,143 @@ func (m *module) Migrations() []bootstrap.Migration {
 				return nil
 			},
 		},
+		{
+			// Digital-twin buildings: a site now has a geographic position, so it can be a marker
+			// on the geo map (a building is where cameras physically live, independent of the node
+			// that records them). Without this an EXISTING site table has no lat/lon/map_placed, so
+			// both INSERT (create site) and List fail — the site never appears. Mirrors the
+			// managed_node geo migration (add + backfill NULLs; non-pointer float64/bool can't scan
+			// a NULL left by a defaultless ADD COLUMN). Idempotent.
+			ID:   "20260720-01-site-geo",
+			Name: "add lat/lon/map_placed to site (fleet map buildings)",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				return ensureSiteGeoColumns(ctx, tx, engine)
+			},
+		},
+		{
+			// A building can carry a chosen glyph (emoji) shown on the geo map. Same NULL-safety as
+			// the other string columns: ADD COLUMN then backfill NULLs to '' (the entity's Icon
+			// string cannot scan a NULL). Idempotent.
+			ID:   "20260720-02-site-icon",
+			Name: "add icon (building glyph) to site",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				existing, err := tableColumns(ctx, tx, engine, "site")
+				if err != nil {
+					return err
+				}
+				colType := "TEXT"
+				if engine == "mariadb" {
+					colType = "VARCHAR(32)"
+				}
+				if !existing["icon"] {
+					if _, err := tx.ExecContext(ctx, "ALTER TABLE site ADD COLUMN icon "+colType); err != nil {
+						return fmt.Errorf("add site.icon: %w", err)
+					}
+				}
+				if _, err := tx.ExecContext(ctx, "UPDATE site SET icon = '' WHERE icon IS NULL"); err != nil {
+					return fmt.Errorf("backfill site.icon NULLs: %w", err)
+				}
+				return nil
+			},
+		},
+		{
+			// The building an appliance resides in (building-first map). Same NULL-safety: ADD COLUMN
+			// then backfill NULLs to 0 (the entity's SiteId int64 is non-pointer and cannot scan a
+			// NULL). Idempotent.
+			ID:   "20260720-03-node-site",
+			Name: "add site_id (resides-in building) to managed_node",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				existing, err := tableColumns(ctx, tx, engine, "managed_node")
+				if err != nil {
+					return err
+				}
+				colType := "BIGINT"
+				if engine == "sqlite" {
+					colType = "INTEGER"
+				}
+				if !existing["site_id"] {
+					if _, err := tx.ExecContext(ctx, "ALTER TABLE managed_node ADD COLUMN site_id "+colType); err != nil {
+						return fmt.Errorf("add managed_node.site_id: %w", err)
+					}
+				}
+				if _, err := tx.ExecContext(ctx, "UPDATE managed_node SET site_id = 0 WHERE site_id IS NULL"); err != nil {
+					return fmt.Errorf("backfill managed_node.site_id NULLs: %w", err)
+				}
+				return nil
+			},
+		},
+		{
+			// The certificate auto-renew gate. Same NULL-safety as site_id: a bare ADD COLUMN
+			// leaves existing rows NULL and the entity's AutoRenew bool is non-pointer, so it
+			// cannot scan a NULL — ADD COLUMN then backfill NULLs to false. This only seeds the
+			// column's zero value; the separate one-time BackfillAutoRenew (services) then flips
+			// already-ENROLLED nodes to true so an existing fleet is not surprise-expired.
+			// Idempotent.
+			ID:   "20260720-04-node-auto-renew",
+			Name: "add auto_renew (cert renewal gate) to managed_node",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				existing, err := tableColumns(ctx, tx, engine, "managed_node")
+				if err != nil {
+					return err
+				}
+				if !existing["auto_renew"] {
+					if _, err := tx.ExecContext(ctx, "ALTER TABLE managed_node ADD COLUMN auto_renew "+geoColumnType("BOOLEAN", engine)); err != nil {
+						return fmt.Errorf("add managed_node.auto_renew: %w", err)
+					}
+				}
+				falseLit := "0"
+				if engine == "postgres" {
+					falseLit = "false"
+				}
+				if _, err := tx.ExecContext(ctx, "UPDATE managed_node SET auto_renew = "+falseLit+" WHERE auto_renew IS NULL"); err != nil {
+					return fmt.Errorf("backfill managed_node.auto_renew NULLs: %w", err)
+				}
+				return nil
+			},
+		},
 	}
 }
 
+// ensureSiteGeoColumns adds the geographic columns to site if absent (same per-engine types the
+// auto-migrator generates, so no schema-drift warning) and backfills any NULLs to zero/false.
+// Idempotent — a no-op once the columns exist and are non-NULL.
+func ensureSiteGeoColumns(ctx context.Context, tx *sql.Tx, engine string) error {
+	existing, err := tableColumns(ctx, tx, engine, "site")
+	if err != nil {
+		return err
+	}
+	adds := []struct{ name, base string }{
+		{"lat", "DOUBLE PRECISION"},
+		{"lon", "DOUBLE PRECISION"},
+		{"map_placed", "BOOLEAN"},
+	}
+	for _, c := range adds {
+		if existing[c.name] {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, "ALTER TABLE site ADD COLUMN "+c.name+" "+geoColumnType(c.base, engine)); err != nil {
+			return fmt.Errorf("add site.%s: %w", c.name, err)
+		}
+	}
+	falseLit := "0"
+	if engine == "postgres" {
+		falseLit = "false"
+	}
+	stmts := []string{
+		"UPDATE site SET lat = 0 WHERE lat IS NULL",
+		"UPDATE site SET lon = 0 WHERE lon IS NULL",
+		"UPDATE site SET map_placed = " + falseLit + " WHERE map_placed IS NULL",
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("backfill site geo NULLs: %w", err)
+		}
+	}
+	return nil
+}
+
 // ensureFloorDesignColumn adds the design column (drawn-plan vector JSON) to floor_plan if absent
-// and backfills NULLs to '' (the entity's Design string cannot scan a NULL). Idempotent.
+// and backfills NULLs to ” (the entity's Design string cannot scan a NULL). Idempotent.
 func ensureFloorDesignColumn(ctx context.Context, tx *sql.Tx, engine string) error {
 	existing, err := tableColumns(ctx, tx, engine, "floor_plan")
 	if err != nil {
@@ -403,10 +536,15 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewRbacAdminApi(api, *deps.Auth, controlSession, roleService, userService, auditService)
 	apis.NewAuditApi(api, *deps.Auth, controlSession, auditService)
 
-	// Offline vector basemap for the fleet map. Provisioned out-of-band as a
-	// single .pmtiles archive in the data dir (absent = map renders without
-	// cartography), so an intranet install never reaches for a tile CDN.
-	apis.NewBasemapApi(api, *deps.Auth, controlSession, apis.ResolveBasemapPath(deps.DataDir, ""))
+	// Offline vector basemap for the fleet map: a directory of .pmtiles region archives
+	// under the data dir (absent = map renders without cartography). Normally an intranet
+	// install never reaches a CDN; but if MYSELIASAN_BASEMAP_SOURCE is set to a remote
+	// pmtiles URL, an operator can DOWNLOAD a new region on demand (extracted with the
+	// pmtiles tool, MYSELIASAN_PMTILES_BIN or "pmtiles" on PATH) — the one online action.
+	apis.NewBasemapApi(api, *deps.Auth, controlSession,
+		apis.ResolveBasemapDir(deps.DataDir, ""),
+		os.Getenv("MYSELIASAN_BASEMAP_SOURCE"),
+		os.Getenv("MYSELIASAN_PMTILES_BIN"))
 
 	// Node management: discover, adopt, and release mymatasan nodes over the
 	// fleet-key-authenticated pairing protocol. ParentBaseURL is recorded on each
@@ -459,6 +597,12 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		CertWarnBefore: time.Duration(p.RenewBeforeHours) * time.Hour,
 		SecretCipher:   secretCipher,
 	})
+	// One-time: bless nodes already in the fleet with auto-renew so upgrading to the
+	// operator-gated renewal model doesn't silently expire a fleet that was renewing
+	// automatically. New adoptions start with auto-renew off (a dead-man's switch).
+	if err := registry.BackfillAutoRenew(context.Background()); err != nil {
+		deps.Logger.Warnf("myseliasan.nodes", "auto-renew backfill failed: %v", err)
+	}
 	nodesApi := apis.NewNodesApi(api, *deps.Auth, controlSession, registry, auditService,
 		func(f string, a ...any) { deps.Logger.Warnf("myseliasan.nodes", f, a...) })
 

@@ -36,5 +36,5 @@ Control-plane wrapper around `infra/fleetca`. It persists the CA key material an
 
 - `certNearExpiry(certPEM, within)` is an unexported helper that returns `true` when the leaf in `certPEM` expires within `within` of now, or is unparseable.
 - The control-plane client cert has a fixed 90-day TTL and is renewed when within 7 days of expiry.
-- Node cert TTL is configurable via `NodeRegistryConfig.CertTTL` (from `pairing.certTtlHours`); default is 7 days.
+- Node cert TTL is configurable via `NodeRegistryConfig.CertTTL` (from `pairing.certTtlHours`); default is 90 days (`defaultCertTTL`, raised from 7 days now that renewal is operator-gated per node — see `ManagedNode.AutoRenew` in `entities/managed_node.go.md` and `nodeRegistry.Enroll` in `services/node_registry.go.md` — so a node nobody blesses for auto-renew still stays in the fleet for a meaningful window rather than lapsing weekly).
 - The `fleetCA` struct is unexported; `nodeRegistry` holds a pointer and calls its methods directly.

@@ -14,6 +14,7 @@
   min-height: 0;
 }
 
+.fleet-map-header-right { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .fleet-map-legend {
   display: flex;
   gap: 14px;
@@ -22,6 +23,27 @@
 }
 .legend-item { display: inline-flex; align-items: center; gap: 5px; }
 .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+/* Layer toggle: show/hide the building vs node marker layers independently. */
+.fleet-map-layer-toggle { display: inline-flex; gap: 6px; }
+.layer-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 9px; border: 1px solid var(--border-soft); border-radius: 999px;
+  background: var(--bg-surface); color: var(--text-faint); font: inherit; font-size: 0.74rem; cursor: pointer;
+}
+.layer-chip:hover { border-color: var(--accent); }
+.layer-chip.on { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+
+/* Rail group heading (Buildings / Nodes sections). */
+.fleet-map-rail-group {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 12px 2px; font-size: 0.68rem; font-weight: 700;
+  letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-faint);
+}
+.fleet-map-rail-node .rail-square {
+  width: 15px; height: 15px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 3px; background: var(--accent-bg); color: var(--accent);
+}
 
 .fleet-map-body {
   display: flex;
@@ -101,6 +123,19 @@
 .fleet-map-rail-node .rail-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
 .fleet-map-rail-node .rail-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* Node rows carry an inline building selector (building-first placement): assign the appliance to a
+   building, or place it standalone. */
+.fleet-map-rail-noderow { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 6px; }
+.fleet-map-rail-noderow:hover { background: var(--bg-subtle2); }
+.fleet-map-rail-noderow .rail-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+.fleet-map-rail-noderow .rail-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.84rem; color: var(--text-primary); }
+.rail-building-select { flex: 0 0 auto; max-width: 84px; padding: 3px 4px; border: 1px solid var(--border-soft); border-radius: 6px; background: var(--bg-surface); color: var(--text-secondary); font: inherit; font-size: 0.72rem; cursor: pointer; }
+.rail-place-btn { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border: 1px solid var(--border-soft); border-radius: 6px; background: var(--bg-surface); color: var(--text-secondary); cursor: pointer; }
+.rail-place-btn:hover { border-color: var(--accent); color: var(--accent); }
+.rail-place-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.rail-onmap { flex: 0 0 auto; display: inline-flex; align-items: center; color: var(--text-faint); }
+.fleet-map-rail-group.muted { color: var(--text-faint); }
+
 /* --- Map stage (canvas + overlays) --- */
 .fleet-map-stage { position: relative; flex: 1 1 auto; min-height: 0; display: flex; }
 .fleet-map-canvas {
@@ -140,6 +175,27 @@
 .indoor-aim-field { display: inline-flex; align-items: center; gap: 6px; color: #fff; }
 .indoor-aim-field input[type="range"] { width: 96px; accent-color: #fff; cursor: pointer; }
 .indoor-aim-val { min-width: 34px; font-variant-numeric: tabular-nums; font-size: 0.78rem; }
+
+/* "No map data here — download this region" banner, shown when the view is panned beyond every
+   downloaded region's coverage and a remote tile source is configured. */
+.fleet-map-download {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 6;
+  display: inline-flex; align-items: center; gap: 12px;
+  background: var(--bg-surface); border: 1px solid var(--border-panel); border-radius: 999px;
+  padding: 7px 8px 7px 16px; box-shadow: 0 6px 20px var(--shadow-panel);
+  font-size: 0.82rem; color: var(--text-secondary); max-width: calc(100% - 28px);
+}
+.fleet-map-download > span { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.fleet-map-download button {
+  display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
+  border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 999px;
+  padding: 6px 14px; font: inherit; font-size: 0.8rem; font-weight: 600; cursor: pointer;
+}
+.fleet-map-download button:disabled { opacity: 0.7; cursor: default; }
+.fleet-map-download-note { color: var(--text-faint); font-style: italic; white-space: nowrap; }
+.bm-tool-status { display: inline-flex; align-items: center; gap: 6px; font-size: 0.78rem; padding: 7px 10px; border-radius: 8px; }
+.bm-tool-status.ok { color: var(--ok-text); background: rgba(34, 197, 94, 0.1); }
+.bm-tool-status.bad { color: #b45309; background: rgba(245, 158, 11, 0.14); }
 
 .fleet-map-attribution {
   margin-top: 6px;
@@ -270,7 +326,9 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
 /* Camera / node markers on the plan. */
 .floor-marker {
   position: absolute;
-  transform: translate(-50%, -50%);
+  /* --inv (= 1/zoom, set on the plan wrap) keeps markers a constant size while the plan zooms. */
+  transform: translate(-50%, -50%) scale(var(--inv, 1));
+  transform-origin: center center;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -286,11 +344,47 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
   white-space: nowrap;
 }
 .floor-marker.node { cursor: default; }
+/* A camera that dropped while its node stayed up (amber) vs one whose camera no longer exists on
+   the node at all (ghost — dashed, muted, not clickable). */
+.floor-marker.cam-offline { background: rgba(245, 158, 11, 0.14); }
+.floor-marker.ghost { border-style: dashed; color: var(--text-faint); opacity: 0.8; cursor: default; }
+.floor-ghost-bar { flex: 0 0 auto; align-self: stretch; display: flex; align-items: center; gap: 12px; padding: 7px 12px; margin-bottom: 8px; background: rgba(245, 158, 11, 0.14); border: 1px solid #f59e0b; border-radius: 8px; font-size: 0.8rem; color: var(--text-secondary); }
+.floor-ghost-bar.overlay { position: absolute; top: 8px; left: 8px; right: 8px; z-index: 7; margin: 0; box-shadow: 0 2px 10px var(--shadow-panel); }
+.floor-ghost-bar span { display: inline-flex; align-items: center; gap: 6px; }
+.floor-ghost-bar .linklike { color: #b45309; font-weight: 700; margin-left: auto; }
+
+/* Pan/zoom viewport for the drill-down floor plan (a large plan is no longer a fixed tiny image). */
+.floor-plan-viewport { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; touch-action: none; cursor: grab; }
+.floor-plan-viewport:active { cursor: grabbing; }
+.floor-plan-viewport .floor-plan-wrap { transform-origin: center center; will-change: transform; }
+.floor-zoom { position: absolute; right: 12px; bottom: 12px; display: flex; flex-direction: column; gap: 5px; z-index: 6; }
+.floor-zoom button { width: 30px; height: 30px; border: 1px solid var(--border-panel); background: var(--bg-surface); border-radius: 7px; cursor: pointer; color: var(--text-secondary); display: grid; place-items: center; box-shadow: 0 2px 6px var(--shadow-panel); }
+.floor-zoom button:hover { border-color: var(--accent); color: var(--accent); }
 .floor-marker.cam:hover, .floor-marker.active { background: var(--accent-bg); }
 /* A camera located from an event pulses so the operator's eye lands on it immediately. */
 .floor-marker.focus { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); z-index: 4; animation: floorMarkerPulse 1.4s ease-out infinite; }
 @keyframes floorMarkerPulse { 0% { box-shadow: 0 0 0 0 rgba(45, 108, 223, 0.55); } 70% { box-shadow: 0 0 0 12px rgba(45, 108, 223, 0); } 100% { box-shadow: 0 0 0 0 rgba(45, 108, 223, 0); } }
 .floor-marker-label { overflow: hidden; text-overflow: ellipsis; }
+/* Per-camera unread-notification badge, pinned to the marker's top-right corner. */
+.floor-marker-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 17px;
+  text-align: center;
+  border: 2px solid var(--bg-surface);
+  font-variant-numeric: tabular-nums;
+}
+.floor-marker-badge.sev-warning { background: #f59e0b; }
+.floor-marker-badge.sev-info { background: #3b82f6; }
 
 /* Live footage window: a floating window fixed to the viewport. Mini opens near the click
    (left/top set inline); maximised covers the whole screen. Multiple can be open at once. */
@@ -340,6 +434,18 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
 .camwin-live { flex: 1 1 auto; min-height: 120px; position: relative; background: #000; }
 .camwin-live .live-frame, .camwin-live video { width: 100%; height: 100%; }
 .camwin-live video { object-fit: contain; background: #000; }
+/* Recorded footage shown inline over the live panel (Back returns to the live stream). Covers the
+   live tile — which stays mounted underneath so the stream is never torn down. The media fills the
+   WHOLE panel (same size as the live footage); the Back/toggle bar floats OVER it rather than
+   taking layout space, so switching to a snapshot/clip never resizes the panel. */
+.camwin-media { position: absolute; inset: 0; z-index: 3; background: #000; }
+.camwin-media-body { position: absolute; inset: 0; z-index: 1; background: #000; }
+.camwin-media-bar { position: absolute; top: 0; left: 0; right: 0; z-index: 2; display: flex; align-items: center; gap: 6px; padding: 5px 8px; color: #fff; pointer-events: none; background: linear-gradient(to bottom, rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0)); }
+.camwin-media-bar > * { pointer-events: auto; }
+.camwin-media-bar .icon-button { color: #fff; }
+.camwin-media-name { font-size: 0.78rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6); }
+.camwin-media-spacer { flex: 1 1 auto; pointer-events: none; }
+.mp-event-main.has-footage.active { background: var(--accent-bg); }
 .camwin-events { flex: 0 0 auto; height: 150px; display: flex; flex-direction: column; min-height: 0; background: var(--bg-surface); border-top: 1px solid var(--border-panel); }
 .floor-live.camwin.maximized .camwin-events { height: 200px; }
 .camwin-events-head { display: flex; align-items: center; gap: 6px; padding: 5px 8px 5px 10px; flex: 0 0 auto; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text-faint); border-bottom: 1px solid var(--border-subtle); }
@@ -396,8 +502,11 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
 .palette-hint { padding: 8px 12px 4px; font-size: 0.72rem; color: var(--text-faint); }
 .palette-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; }
 .palette-node { margin-bottom: 1px; }
-.palette-node-row { display: flex; align-items: center; gap: 2px; }
-.palette-expand { border: none; background: transparent; padding: 4px; cursor: pointer; color: var(--text-muted); display: inline-flex; }
+.palette-node-row { display: flex; align-items: stretch; gap: 2px; }
+/* Stretch the caret button to the full row height and centre the icon, so it lines up with the
+   node text regardless of the item's padding/border (which used to make it read as offset). */
+.palette-expand { border: none; background: transparent; padding: 0; cursor: pointer; color: var(--text-muted); display: inline-flex; align-items: center; justify-content: center; width: 20px; flex: 0 0 auto; }
+.palette-expand:hover { color: var(--text-primary); }
 .palette-expand-spacer { width: 20px; flex: 0 0 auto; }
 .palette-item {
   display: flex; align-items: center; gap: 8px;
@@ -420,6 +529,12 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
 .palette-cam.muted { color: var(--text-faint); cursor: default; font-style: italic; }
 
 .indoor-stage { position: relative; flex: 1 1 auto; min-height: 0; display: flex; }
+/* Toolbar + canvas stack as one panel (the toolbar always shows, so removing a marker no longer
+   means hunting for a transient bar). Mirrors the drawing canvas's persistent toolbar. */
+.indoor-plan { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; }
+.indoor-toolbar { border: 1px solid var(--border-panel); border-bottom: none; border-radius: 8px 8px 0 0; }
+.indoor-toolbar .indoor-tool-info { display: inline-flex; align-items: center; gap: 6px; margin-right: auto; font-size: 0.82rem; color: var(--text-primary); }
+.indoor-toolbar .indoor-tool-info .muted { color: var(--text-faint); }
 .indoor-canvas {
   flex: 1 1 auto;
   min-height: 440px;
@@ -428,6 +543,7 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
   background: var(--bg-body);
   border: 1px solid var(--border-panel);
 }
+.indoor-plan .indoor-canvas { border-top: none; border-radius: 0 0 8px 8px; }
 .indoor-canvas.placing { cursor: crosshair; box-shadow: 0 0 0 2px var(--accent) inset; }
 /* While dragging a palette item over the plan: crosshair + accent frame, so the drop target reads. */
 .indoor-canvas.drag-over { cursor: crosshair; box-shadow: 0 0 0 2px var(--accent) inset; }
@@ -447,6 +563,21 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
 
 /* --- Floor-plan drawing designer (Create plan) --- */
 .fd-overlay { position: fixed; inset: 0; z-index: 1200; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(15, 23, 33, 0.55); }
+
+/* Building create/edit dialog: name + a grid of glyphs to pick from. Uses the .fd-overlay backdrop. */
+.site-dialog { width: min(420px, 92vw); background: var(--bg-surface); border: 1px solid var(--border-panel); border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4); }
+.site-dialog-title { display: flex; align-items: center; gap: 8px; font-size: 1rem; font-weight: 650; color: var(--text-primary); }
+.site-dialog-glyph { font-size: 1.3rem; line-height: 1; }
+.site-dialog-field { display: flex; flex-direction: column; gap: 6px; font-size: 0.8rem; color: var(--text-secondary); }
+.site-dialog-field input[type="text"] { padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: 7px; background: var(--bg-body); color: var(--text-primary); font: inherit; }
+.site-icon-grid { display: grid; grid-template-columns: repeat(9, 1fr); gap: 6px; }
+.site-icon { display: inline-flex; align-items: center; justify-content: center; padding: 6px 0; font-size: 1.15rem; line-height: 1; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--bg-body); cursor: pointer; }
+.site-icon:hover { border-color: var(--accent); }
+.site-icon.active { border-color: var(--accent); background: var(--accent-bg); box-shadow: 0 0 0 1px var(--accent) inset; }
+.site-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+/* Building glyph in the geo-map rail + the floor-view header. */
+.fleet-map-rail-node .rail-emoji { width: 16px; flex: 0 0 auto; text-align: center; font-size: 0.95rem; line-height: 1; }
+.floor-view-emoji { font-size: 1rem; line-height: 1; }
 .fd-dialog { display: flex; flex-direction: column; width: min(1160px, 96vw); max-height: 94vh; background: var(--bg-surface); border: 1px solid var(--border-panel); border-radius: 12px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4); overflow: hidden; }
 .fd-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border-subtle); }
 .fd-title { display: inline-flex; align-items: center; gap: 7px; font-weight: 650; color: var(--text-primary); flex: 0 0 auto; }

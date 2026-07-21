@@ -43,10 +43,17 @@ func NewSitesApi(router *mux.Router, auth middlewares.AuthMidware, session *midd
 	sg.Use(session.Middleware)
 	sg.HandleFunc("", h.listSites).Methods("GET")
 	sg.HandleFunc("", h.createSite).Methods("POST")
+	// Compact per-building rollup for the geographic map (health + counts). Literal path, so it
+	// is registered before the "/{id}" var routes it must not be captured by.
+	sg.HandleFunc("/overview", h.sitesOverview).Methods("GET")
 	sg.HandleFunc("/{id}", h.updateSite).Methods("PUT")
 	sg.HandleFunc("/{id}", h.deleteSite).Methods("DELETE")
+	// A building's position on the geo map (drag its marker) — mirrors PUT /nodes/{id}/position.
+	sg.HandleFunc("/{id}/position", h.updateSitePosition).Methods("PUT")
 	sg.HandleFunc("/{id}/floors", h.listFloors).Methods("GET")
 	sg.HandleFunc("/{id}/floors", h.uploadFloor).Methods("POST")
+	// A building's floor plans with EVERY node's cameras on them — the building drill-down.
+	sg.HandleFunc("/{id}/floorplans", h.siteFloorplans).Methods("GET")
 
 	fg := router.PathPrefix("/floors").Subrouter()
 	fg.Use(auth.Middleware)
@@ -102,6 +109,7 @@ func (a *sitesApi) createSite(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
+		Icon        string `json:"icon"`
 	}
 	if err := decodeJSON(w, r, &body); err != nil {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
@@ -111,7 +119,7 @@ func (a *sitesApi) createSite(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrBadRequest, "name is required")
 		return
 	}
-	site, err := a.sites.CreateSite(r.Context(), strings.TrimSpace(body.Name), strings.TrimSpace(body.Description), actorID(r))
+	site, err := a.sites.CreateSite(r.Context(), strings.TrimSpace(body.Name), strings.TrimSpace(body.Description), strings.TrimSpace(body.Icon), actorID(r))
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
@@ -128,13 +136,14 @@ func (a *sitesApi) updateSite(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
+		Icon        string `json:"icon"`
 		Ordinal     int    `json:"ordinal"`
 	}
 	if err := decodeJSON(w, r, &body); err != nil {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
 		return
 	}
-	site, err := a.sites.UpdateSite(r.Context(), id, strings.TrimSpace(body.Name), strings.TrimSpace(body.Description), body.Ordinal, actorID(r))
+	site, err := a.sites.UpdateSite(r.Context(), id, strings.TrimSpace(body.Name), strings.TrimSpace(body.Description), strings.TrimSpace(body.Icon), body.Ordinal, actorID(r))
 	if err != nil {
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
@@ -367,6 +376,67 @@ func (a *sitesApi) nodeFloorplans(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	plans, err := a.sites.NodeFloorplans(r.Context(), nodeID)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, plans, "succeed")
+}
+
+// sitesOverview returns the compact per-building rollup the geographic map draws building markers
+// from (health via owning nodes + camera/floor counts).
+func (a *sitesApi) sitesOverview(w http.ResponseWriter, r *http.Request) {
+	rows, err := a.sites.SiteOverview(r.Context())
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, rows, "succeed")
+}
+
+// updateSitePosition drags a building onto (or off) the geographic map — mirrors node positioning.
+func (a *sitesApi) updateSitePosition(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r)
+	if !ok {
+		controllers.SendError(w, controllers.ErrBadRequest, "invalid id")
+		return
+	}
+	var body struct {
+		Lat    float64 `json:"lat"`
+		Lon    float64 `json:"lon"`
+		Placed *bool   `json:"placed"`
+	}
+	if err := decodeJSON(w, r, &body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	// Absent "placed" means "I'm positioning it" (the common drag); only explicit false unplaces.
+	placed := true
+	if body.Placed != nil {
+		placed = *body.Placed
+	}
+	if placed && (body.Lat < -90 || body.Lat > 90 || body.Lon < -180 || body.Lon > 180) {
+		controllers.SendError(w, controllers.ErrBadRequest, "coordinates out of range")
+		return
+	}
+	site, err := a.sites.UpdateSitePosition(r.Context(), id, body.Lat, body.Lon, placed, actorID(r))
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, site, "succeed")
+}
+
+// siteFloorplans returns a building's floor plans, each with EVERY node's cameras on it — the data
+// the geo map needs to drill from a building marker into its plans (multi-node, unlike the
+// node-scoped nodeFloorplans).
+func (a *sitesApi) siteFloorplans(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r)
+	if !ok {
+		controllers.SendError(w, controllers.ErrBadRequest, "invalid id")
+		return
+	}
+	plans, err := a.sites.SiteFloorplans(r.Context(), id)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return

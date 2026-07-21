@@ -21,10 +21,14 @@ const (
 	parentCertKey  = "pairing.parentCert"
 	parentKeyKey   = "pairing.parentKey"
 	revokedKey     = "pairing.revoked"
-	caValidFor     = 10 * 365 * 24 * time.Hour
-	parentCertTTL  = 90 * 24 * time.Hour
-	parentRenewAt  = 7 * 24 * time.Hour
-	defaultCertTTL = 7 * 24 * time.Hour
+	caValidFor    = 10 * 365 * 24 * time.Hour
+	parentCertTTL = 90 * 24 * time.Hour
+	parentRenewAt = 7 * 24 * time.Hour
+	// defaultCertTTL is the node leaf lifetime. Renewal is operator-gated per node
+	// (ManagedNode.AutoRenew), so this is long enough that an un-renewed node stays in the
+	// fleet for a meaningful window rather than lapsing weekly. Overridable via config
+	// CertTTLHours.
+	defaultCertTTL = 90 * 24 * time.Hour
 )
 
 // fleetCA wraps the on-prem certificate authority for the pairing mTLS channel. It

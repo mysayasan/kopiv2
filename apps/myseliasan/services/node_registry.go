@@ -35,6 +35,11 @@ var (
 	ErrAdoptRejected    = errors.New("node rejected adoption")
 	ErrNodeRevoked      = errors.New("node certificate is revoked")
 	ErrNodeUnknown      = errors.New("unknown node")
+	// ErrRenewNotAuthorized is returned when a node tries to renew (re-enroll) a
+	// certificate it already holds but the operator has not enabled auto-renew for it.
+	// The node keeps its current cert until it lapses; enabling auto-renew lets the
+	// node's next re-enrollment attempt through. Initial enrollment is never gated.
+	ErrRenewNotAuthorized = errors.New("certificate renewal not authorized for this node")
 	// ErrAdoptPersist wraps a failure to save an adopted node's record AFTER the node itself
 	// committed to the pairing. The node is rolled back so it can be re-adopted cleanly.
 	ErrAdoptPersist = errors.New("adopted the node but failed to save its record")
@@ -92,6 +97,18 @@ type INodeRegistry interface {
 	// marks it placed. Kept separate from UpdateMeta so frequent drag writes never race
 	// with a name/description edit. Passing placed=false clears the node off the map.
 	UpdatePosition(ctx context.Context, nodeID string, lat, lon float64, placed bool, updatedBy int64) (*entities.ManagedNode, error)
+	// UpdateNodeSite sets (or clears with siteID=0) the building an appliance resides in. Assigning
+	// a building also clears the node off the geo map (a building-resident node has no own pin).
+	UpdateNodeSite(ctx context.Context, nodeID string, siteID int64, updatedBy int64) (*entities.ManagedNode, error)
+	// SetAutoRenew turns a node's certificate auto-renew gate on or off. Off (the default
+	// for a newly adopted node) lets the cert lapse when it expires; on honours the node's
+	// automatic re-enrollment before expiry. No cert is issued here — this only decides
+	// whether the node's next re-enrollment attempt is accepted.
+	SetAutoRenew(ctx context.Context, nodeID string, enabled bool, updatedBy int64) (*entities.ManagedNode, error)
+	// BackfillAutoRenew turns auto-renew on for every already-enrolled node exactly once,
+	// so upgrading an existing fleet (which was renewing automatically) does not silently
+	// expire its certificates. Guarded by a persisted flag; a no-op after its first run.
+	BackfillAutoRenew(ctx context.Context) error
 	Release(ctx context.Context, nodeID string) error
 	// RevokeNode blocklists a node's certificate at the fleet CA without needing a managed
 	// record. Used to shut down a stranded node that keeps dialing with a valid cert.
@@ -502,6 +519,14 @@ func (s *nodeRegistry) Enroll(ctx context.Context, nodeID, token string, csrPEM 
 	if node.Token == "" || node.Token != token {
 		return nil, nil, ErrAdoptRejected
 	}
+	// Renewal gate. A node with a previously issued cert (CertExpiresAt already set) is
+	// RENEWING; that is refused unless an operator turned on auto-renew for it, so an
+	// un-blessed node lets its cert lapse and drops out of the fleet on its own. The very
+	// first enrollment right after adoption (CertExpiresAt == 0) is always allowed — that is
+	// how a freshly adopted node gets its cert in the first place.
+	if node.CertExpiresAt != 0 && !node.AutoRenew {
+		return nil, nil, ErrRenewNotAuthorized
+	}
 	certPEM, caRootPEM, err := s.ca.SignNodeCSR(ctx, nodeID, csrPEM)
 	if err != nil {
 		return nil, nil, err
@@ -561,6 +586,82 @@ func (s *nodeRegistry) UpdatePosition(ctx context.Context, nodeID string, lat, l
 		return nil, err
 	}
 	return node, nil
+}
+
+// UpdateNodeSite sets or clears the building a node resides in. See INodeRegistry.
+func (s *nodeRegistry) UpdateNodeSite(ctx context.Context, nodeID string, siteID int64, updatedBy int64) (*entities.ManagedNode, error) {
+	node, err := s.nodes.GetByUnique(ctx, "", "node_id", nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if node == nil {
+		return nil, ErrNodeUnknown
+	}
+	node.SiteId = siteID
+	// A building-resident node is represented by its building, not its own pin, so assigning a
+	// building takes it off the geo map. Clearing the building leaves it off the map (it becomes a
+	// building-less node the operator can place standalone if they want).
+	if siteID > 0 {
+		node.MapPlaced = false
+	}
+	node.UpdatedBy = updatedBy
+	node.UpdatedAt = time.Now().Unix()
+	if _, err := s.nodes.UpdateById(ctx, "", *node); err != nil {
+		return nil, err
+	}
+	return node, nil
+}
+
+// SetAutoRenew flips a node's certificate auto-renew gate. See INodeRegistry.
+func (s *nodeRegistry) SetAutoRenew(ctx context.Context, nodeID string, enabled bool, updatedBy int64) (*entities.ManagedNode, error) {
+	node, err := s.nodes.GetByUnique(ctx, "", "node_id", nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if node == nil {
+		return nil, ErrNodeUnknown
+	}
+	node.AutoRenew = enabled
+	node.UpdatedBy = updatedBy
+	node.UpdatedAt = time.Now().Unix()
+	if _, err := s.nodes.UpdateById(ctx, "", *node); err != nil {
+		return nil, err
+	}
+	return node, nil
+}
+
+// autoRenewBackfilledKey guards the one-time backfill so it runs at most once per
+// control plane, no matter how many times the process restarts.
+const autoRenewBackfilledKey = "pairing.autoRenewBackfilled"
+
+// BackfillAutoRenew turns auto-renew on for every already-enrolled node exactly once.
+// See INodeRegistry. Runs at startup, before the heartbeat loop.
+func (s *nodeRegistry) BackfillAutoRenew(ctx context.Context) error {
+	if row, err := s.settings.GetByUnique(ctx, "", "key", autoRenewBackfilledKey); err != nil {
+		if !isNoResultFoundErr(err) {
+			return err
+		}
+	} else if row != nil && row.Value != "" {
+		return nil // already backfilled
+	}
+	nodes, err := s.List(ctx)
+	if err != nil {
+		return err
+	}
+	now := time.Now().Unix()
+	for _, node := range nodes {
+		// Only nodes that were actually enrolled (have an issued cert) were renewing
+		// automatically before this gate existed; leave never-enrolled records alone.
+		if node.CertExpiresAt == 0 || node.AutoRenew {
+			continue
+		}
+		node.AutoRenew = true
+		node.UpdatedAt = now
+		if _, err := s.nodes.UpdateById(ctx, "", *node); err != nil {
+			return err
+		}
+	}
+	return s.upsertSetting(ctx, autoRenewBackfilledKey, strconv.FormatInt(now, 10))
 }
 
 func (s *nodeRegistry) Release(ctx context.Context, nodeID string) error {
@@ -637,6 +738,15 @@ func (s *nodeRegistry) certWarnSeconds() int64 {
 func (s *nodeRegistry) checkCertExpiry(node *entities.ManagedNode, now int64) {
 	exp := node.CertExpiresAt
 	if exp <= 0 {
+		return
+	}
+	// A node with auto-renew ON will re-enroll before it lapses, so its approaching expiry
+	// is not actionable — warn only for nodes that will actually expire (auto-renew OFF),
+	// where the operator must enable renewal or accept the node dropping out of the fleet.
+	if node.AutoRenew {
+		s.certMu.Lock()
+		delete(s.certWarned, node.NodeId)
+		s.certMu.Unlock()
 		return
 	}
 	if exp-now > s.certWarnSeconds() {
