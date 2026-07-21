@@ -160,10 +160,21 @@ control channel, can correlate across them.
    `docs/modules/domain/shared/fleetnode/doc.go.md`).
 2. `myseliasan`'s `ControlServer` receives the event frame and invokes `onNodeEvent` (`app.go`),
    which does two things with it: `ingestNodeEvent` publishes it into the unified notification
-   feed (unchanged from before P6), and `observeForCorrelation`
+   feed via `republishNodeNotification` (unchanged from before P6, now deduped on the node's
+   stable engine id — see 2a below), and `observeForCorrelation`
    (`apps/myseliasan/app/correlate_bridge.go`) flattens it into a `services.NodeEvent` and hands
    it to the correlator — fed the **node's own event**, never the notification the first step
    just republished, so a fleet rule's own alert can never satisfy another fleet rule's clause.
+2a. **Replay on reconnect (the live path above only carries events published while the channel
+    is up):** a notification a node raises during a disconnect is otherwise dropped with no
+    backfill. `ControlServer.SetOnConnect` (`app.go`) fires whenever a node's control connection
+    is (re)accepted, pulling that node's `GET /api/notifications?since=<now-72h>` over the tunnel
+    (`domain/notification.Service.ListSince`, oldest-first) and feeding each missed row back
+    through the same `republishNodeNotification` as step 2. Both paths dedup against
+    `apps/myseliasan/services.RelayDedup` (a `relayed_notif` ledger keyed
+    `"<nodeId>|<originId>"`), so an event delivered live is never re-published by a later replay
+    and vice versa; the `originId` is the node's engine id, round-tripped through the persisted
+    row's `metadata.__oid` (`domain/notification.OriginIDKey`) so it survives the pull.
 3. `Correlator.Observe` resolves the event's node kind from the **adopted node's own record**
    (`ManagedNode.Kind`, via a `registry.List` closure), matches it against every enabled
    `FleetRule`'s clauses, and records which `"required"` clauses it satisfies.
@@ -180,8 +191,11 @@ control channel, can correlate across them.
    `Source: "fleet-rule"`.
 
 **Data path summary:** node event → control channel → `myseliasan` `onNodeEvent` → (a)
-notification feed, (b) `Correlator.Observe` → arm → `Sweep` (grace elapsed, absent clauses
-still unmatched) → fire → notification feed.
+notification feed (deduped via `RelayDedup`), (b) `Correlator.Observe` → arm → `Sweep` (grace
+elapsed, absent clauses still unmatched) → fire → notification feed. On reconnect, a second path
+backfills anything missed: node (re)connects → `ControlServer.SetOnConnect` → pull
+`GET /api/notifications?since=` over the tunnel → `RelayDedup`-gated `republishNodeNotification` →
+notification feed.
 
 ## Two-Way Audio (Talk-Back) Flow (browser mic → mymatasan → camera)
 

@@ -341,6 +341,24 @@ func (s *Service) List(ctx context.Context, limit, offset uint64, cameraId int64
 	return s.repo.Get(ctx, "", limit, offset, filters, listSorters())
 }
 
+// ListSince returns notifications created at or after `since` (unix seconds), OLDEST-first,
+// capped at limit (default/max 500). It is the replay query a fleet control plane uses to
+// catch up on a node's notifications it missed while the control channel was disconnected:
+// oldest-first + a (CreatedAt, Id) sort so a caller can page by advancing `since` without
+// skipping rows. Unlike List it applies no read/camera/category filter — the caller wants the
+// node's full feed for the window and dedups on its own side.
+func (s *Service) ListSince(ctx context.Context, since int64, limit uint64) ([]*entities.Notification, uint64, error) {
+	if limit == 0 || limit > 500 {
+		limit = 500
+	}
+	filters := []sqldataenums.Filter{{FieldName: "CreatedAt", Compare: sqldataenums.GreaterThanOrEqualTo, Value: since}}
+	sorters := []sqldataenums.Sorter{
+		{FieldName: "CreatedAt", Sort: sqldataenums.ASC},
+		{FieldName: "Id", Sort: sqldataenums.ASC},
+	}
+	return s.repo.Get(ctx, "", limit, 0, filters, sorters)
+}
+
 // MarkReadByRef marks every unread notification that references the given record
 // (refType + refId) as read, returning how many were updated. It keeps the feed
 // in sync when the underlying record is resolved elsewhere — e.g. acknowledging a

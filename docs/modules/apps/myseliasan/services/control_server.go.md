@@ -17,6 +17,7 @@ Built via `NewControlServer(registry, port, onEvent, logf)`. Default port: `4953
 - `IsListening() bool` — reports whether the control channel's serve loop (`Run`) is currently active, backed by an `atomic.Bool` set true for the duration of `srv.Run(ctx)`. Feeds `app.go`'s `ReadinessStatus` (advisory `controlChannel` field on `/api/ready`) — see that module's doc for the never-gates-ok contract.
 - `ConnectedCount() int` — returns the number of nodes currently holding a live control connection (`len(conns)`, mutex-guarded). Feeds the advisory `connectedNodes` field on `/api/ready`.
 - Receives node-pushed event frames and dispatches them to the optional `NodeEventHandler` callback (`onEvent`).
+- `SetOnConnect(fn func(nodeID string))` — registers an optional callback invoked (in its own goroutine, off the read loop) the moment `handleConn` accepts a node's connection, after `add`/`ForgetRejected`. This is the reconnect hook `app.go` uses to replay any notification a node published while its control channel was down (`replayNodeNotifications`) — see `app.go.md`'s "Replay on reconnect" note. Set once at startup, before `Run`; nil is a no-op (no field to check at the call site besides the nil guard in `handleConn`).
 
 ### Rejected (stranded) connection tracking
 

@@ -48,3 +48,31 @@ func TestToEntityEmptyDataYieldsEmptyMetadata(t *testing.T) {
 		t.Errorf("expected empty metadata for nil Data, got %q", entity.Metadata)
 	}
 }
+
+// The engine id must be folded into the persisted Metadata under OriginIDKey (alongside caller
+// Data), so a cross-process replay dedups on the same key the live push carries.
+func TestToEntityPersistsOriginId(t *testing.T) {
+	entity := toEntity(infranotif.Notification{ID: "eng-9", Title: "t", Data: map[string]any{"x": 1}})
+	var m map[string]any
+	if err := json.Unmarshal([]byte(entity.Metadata), &m); err != nil {
+		t.Fatalf("metadata not valid json: %v (%q)", err, entity.Metadata)
+	}
+	if m[OriginIDKey] != "eng-9" {
+		t.Fatalf("origin id not persisted: %q", entity.Metadata)
+	}
+	if _, ok := m["x"]; !ok {
+		t.Fatalf("caller data dropped: %q", entity.Metadata)
+	}
+}
+
+// An id but no caller Data still persists just the origin id (so a replay can dedup it).
+func TestToEntityOriginIdWithoutData(t *testing.T) {
+	entity := toEntity(infranotif.Notification{ID: "eng-1", Title: "t"})
+	var m map[string]any
+	if err := json.Unmarshal([]byte(entity.Metadata), &m); err != nil {
+		t.Fatalf("metadata not valid json: %v (%q)", err, entity.Metadata)
+	}
+	if m[OriginIDKey] != "eng-1" {
+		t.Fatalf("origin id not persisted: %q", entity.Metadata)
+	}
+}

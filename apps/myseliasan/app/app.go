@@ -23,6 +23,7 @@ import (
 	"github.com/mysayasan/kopiv2/infra/apidocs"
 	"github.com/mysayasan/kopiv2/infra/apphost"
 	"github.com/mysayasan/kopiv2/infra/atrest"
+	"github.com/mysayasan/kopiv2/infra/control"
 	"github.com/mysayasan/kopiv2/infra/db/bootstrap"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/mediarelay"
@@ -448,6 +449,8 @@ func (m *module) Entities() []any {
 		appentities.Site{},
 		appentities.FloorPlan{},
 		appentities.NodePlacement{},
+		// Dedup ledger for node-relayed notifications (reconnect replay idempotency).
+		appentities.RelayedNotif{},
 	}
 }
 
@@ -681,8 +684,13 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		}
 	}()
 
+	// Dedup ledger for node-relayed notifications: keys each ingested node event by the node's
+	// stable engine id so the reconnect replay (below) never re-publishes one already delivered
+	// live or by an earlier replay.
+	relayDedup := services.NewRelayDedup(deps.Db)
+
 	onNodeEvent := func(nodeID, kind string, body []byte) {
-		ingestNodeEvent(notificationService, nodeID, kind, body)
+		ingestNodeEvent(notificationService, relayDedup, nodeID, kind, body)
 		// Feed the same event to the correlator. It is deliberately fed the NODE event rather
 		// than the control plane's own re-published notification: correlating on our own output
 		// would let a fleet rule's alert satisfy another fleet rule's clause, and two rules could
@@ -691,6 +699,31 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	}
 	controlServer := services.NewControlServer(registry, p.ControlPort, onNodeEvent,
 		func(format string, args ...any) { deps.Logger.Infof("myseliasan.control", format, args...) })
+	// Replay-on-reconnect: the live push (above) drops any notification a node publishes while
+	// its control channel is down, and nothing backfills it — so the control plane's feed could
+	// undercount a busy node. When a node (re)connects, pull the notifications it created within
+	// the replay window and ingest the ones we're missing (relayDedup makes this idempotent).
+	controlServer.SetOnConnect(func(nodeID string) {
+		replayNodeNotifications(controlServer, notificationService, relayDedup, nodeID,
+			func(f string, a ...any) { deps.Logger.Infof("myseliasan.notif-replay", f, a...) })
+	})
+	// Keep the dedup ledger bounded: prune markers older than twice the replay window — a
+	// windowed pull can never re-offer them, so they are dead weight.
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-bgCtx.Done():
+				return
+			case <-ticker.C:
+				cutoff := time.Now().Add(-2 * notifReplayWindow).Unix()
+				if _, err := relayDedup.Prune(bgCtx, cutoff); err != nil {
+					deps.Logger.Warnf("myseliasan.notif-replay", "prune dedup ledger: %v", err)
+				}
+			}
+		}
+	}()
 	// The persistent node-dialed control channel is the authoritative liveness signal:
 	// a node holding a live connection is online even when the parent cannot reach its
 	// mTLS port directly. Wire its presence into the heartbeat reconciler so the mTLS
@@ -815,14 +848,14 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 // disk-full, alert, system, …) is surfaced rather than dropped: the frame is parsed
 // as a notification when it carries one, otherwise wrapped in a generic message
 // tagged with the raw kind — so a node reporting trouble is never silently lost.
-func ingestNodeEvent(svc *notification.Service, nodeID, kind string, body []byte) {
+func ingestNodeEvent(svc *notification.Service, dedup *services.RelayDedup, nodeID, kind string, body []byte) {
 	switch kind {
 	case "notification":
 		var n notification.Notification
 		if err := json.Unmarshal(body, &n); err != nil {
 			return
 		}
-		republishNodeNotification(svc, nodeID, n)
+		republishNodeNotification(svc, dedup, nodeID, n)
 	case "going-offline":
 		svc.Publish(context.Background(), notification.Notification{
 			Category: notification.CategorySystem,
@@ -843,7 +876,7 @@ func ingestNodeEvent(svc *notification.Service, nodeID, kind string, body []byte
 			if n.Severity == "" {
 				n.Severity = severityForNodeKind(kind)
 			}
-			republishNodeNotification(svc, nodeID, n)
+			republishNodeNotification(svc, dedup, nodeID, n)
 			return
 		}
 		svc.Publish(context.Background(), notification.Notification{
@@ -857,9 +890,17 @@ func ingestNodeEvent(svc *notification.Service, nodeID, kind string, body []byte
 	}
 }
 
-// republishNodeNotification re-tags a node-originated notification with its origin
-// node and lets the parent assign a fresh id in its own feed.
-func republishNodeNotification(svc *notification.Service, nodeID string, n notification.Notification) {
+// republishNodeNotification re-tags a node-originated notification with its origin node and
+// lets the parent assign a fresh id in its own feed. It is called on BOTH paths — the live
+// control-channel push and the reconnect replay pull — so it dedups on the node's stable engine
+// id (n.ID, which is the same value on both paths): once a given node event has been ingested it
+// is never published again, which is what makes replaying a disconnect window idempotent.
+// It returns true when the notification was published, false when dedup suppressed it.
+func republishNodeNotification(svc *notification.Service, dedup *services.RelayDedup, nodeID string, n notification.Notification) bool {
+	originID := n.ID // the node's engine id; identical on the live push and a pulled row's __oid
+	if dedup != nil && dedup.SeenOrRecord(context.Background(), nodeID, originID, n.CreatedAt) {
+		return false // already ingested (live or a prior replay)
+	}
 	n.ID = "" // parent assigns its own id in its own feed
 	n.Source = "node:" + nodeID
 	if n.Data == nil {
@@ -867,6 +908,119 @@ func republishNodeNotification(svc *notification.Service, nodeID string, n notif
 	}
 	n.Data["nodeId"] = nodeID
 	svc.Publish(context.Background(), n)
+	return true
+}
+
+// notifReplayWindow bounds how far back a reconnect replay pulls a node's notifications. It must
+// comfortably exceed a plausible disconnect; anything older is assumed already ingested (or not
+// worth backfilling), and dedup markers past twice this are pruned.
+const notifReplayWindow = 72 * time.Hour
+
+// nodeNotifRow is the subset of a node's persisted notification the replay needs. Fields mirror
+// domain/entities.Notification's JSON tags.
+type nodeNotifRow struct {
+	Category  string `json:"category"`
+	Severity  string `json:"severity"`
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	CameraId  int64  `json:"cameraId"`
+	RefType   string `json:"refType"`
+	RefId     int64  `json:"refId"`
+	Link      string `json:"link"`
+	Metadata  string `json:"metadata"`
+	CreatedAt int64  `json:"createdAt"`
+}
+
+// parseNodeNotifRows extracts the items from a node's /api/notifications response, tolerating both
+// the plain {result:{items}} envelope and a wrapping {data:{result:{items}}}.
+func parseNodeNotifRows(body []byte) []nodeNotifRow {
+	var env struct {
+		Result *struct {
+			Items []nodeNotifRow `json:"items"`
+		} `json:"result"`
+		Data *struct {
+			Result struct {
+				Items []nodeNotifRow `json:"items"`
+			} `json:"result"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return nil
+	}
+	if env.Result != nil {
+		return env.Result.Items
+	}
+	if env.Data != nil {
+		return env.Data.Result.Items
+	}
+	return nil
+}
+
+// nodeRowToNotification rebuilds an in-memory notification from a pulled row, restoring the node's
+// engine id (persisted under notification.OriginIDKey) as its ID so republish dedups on the same
+// key the live push carries, and keeping the original timestamp.
+func nodeRowToNotification(row nodeNotifRow) notification.Notification {
+	data := map[string]any{}
+	if row.Metadata != "" {
+		_ = json.Unmarshal([]byte(row.Metadata), &data)
+	}
+	originID, _ := data[notification.OriginIDKey].(string)
+	return notification.Notification{
+		ID:        originID,
+		Category:  row.Category,
+		Severity:  notification.Severity(row.Severity),
+		Title:     row.Title,
+		Body:      row.Body,
+		CameraId:  row.CameraId,
+		RefType:   row.RefType,
+		RefId:     row.RefId,
+		Link:      row.Link,
+		Data:      data,
+		CreatedAt: row.CreatedAt,
+	}
+}
+
+// replayNodeNotifications pulls a node's notifications from the replay window over the control
+// tunnel and ingests the ones the control plane is missing. Idempotent via relayDedup: events
+// already delivered live (or by an earlier replay) are skipped. Called on every (re)connect; a
+// node that is offline or has nothing to replay is a cheap no-op.
+func replayNodeNotifications(sender services.ControlSender, svc *notification.Service, dedup *services.RelayDedup, nodeID string, logf func(string, ...any)) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cursor := time.Now().Add(-notifReplayWindow).Unix()
+	ingested := 0
+	for page := 0; page < 50; page++ { // hard cap 50*500 = 25k events/reconnect
+		req := control.Request{
+			Method: "GET",
+			Path:   fmt.Sprintf("/api/notifications?since=%d&limit=500", cursor),
+			Role:   "admin",
+			Actor:  "control-plane:notif-replay",
+		}
+		resp, err := sender.SendRequest(ctx, nodeID, req)
+		if err != nil || resp.Status < 200 || resp.Status >= 300 {
+			return
+		}
+		rows := parseNodeNotifRows(resp.Body)
+		if len(rows) == 0 {
+			break
+		}
+		maxTs := cursor
+		for _, row := range rows {
+			if republishNodeNotification(svc, dedup, nodeID, nodeRowToNotification(row)) {
+				ingested++
+			}
+			if row.CreatedAt > maxTs {
+				maxTs = row.CreatedAt
+			}
+		}
+		if len(rows) < 500 || maxTs <= cursor {
+			break // last page, or no time progress (a full page in one second) — stop
+		}
+		cursor = maxTs // re-includes same-second boundary rows; dedup drops them
+	}
+	if ingested > 0 && logf != nil {
+		logf("replayed %d missed notification(s) from node %s", ingested, nodeID)
+	}
 }
 
 // categoryForNodeKind maps a node event kind to a notification category so unknown

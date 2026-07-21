@@ -54,6 +54,11 @@ type ControlServer struct {
 
 	running atomic.Bool // true while the control listener's serve loop is active
 
+	// onConnect, when set, is invoked (in its own goroutine) each time a node's control
+	// connection is accepted — the moment to reconcile anything that could have drifted while
+	// the node was gone (e.g. replay notifications published during the disconnect). Optional.
+	onConnect func(nodeID string)
+
 	mu    sync.Mutex
 	conns map[string]*control.Conn // nodeID -> current live connection
 
@@ -264,6 +269,10 @@ func (cs *ControlServer) Run(ctx context.Context) {
 // (advisory — it does not gate the process's db/cache readiness).
 func (cs *ControlServer) IsListening() bool { return cs.running.Load() }
 
+// SetOnConnect registers a callback invoked (in its own goroutine) whenever a node's control
+// connection is accepted. Set once at startup, before Run. See the onConnect field.
+func (cs *ControlServer) SetOnConnect(fn func(nodeID string)) { cs.onConnect = fn }
+
 // ConnectedCount returns the number of nodes currently holding a live control channel.
 func (cs *ControlServer) ConnectedCount() int {
 	cs.mu.Lock()
@@ -285,6 +294,11 @@ func (cs *ControlServer) handleConn(nodeID string, conn *control.Conn) {
 	cs.ForgetRejected(nodeID)
 	cs.add(nodeID, conn)
 	cs.logf("control: node %s (%s) connected", nodeID, node.Name)
+	// Reconcile drift from the disconnect (e.g. catch up on notifications the node published
+	// while the channel was down). Off the read loop so a slow reconcile never stalls frames.
+	if cs.onConnect != nil {
+		go cs.onConnect(nodeID)
+	}
 	defer func() {
 		cs.remove(nodeID, conn)
 		cs.logf("control: node %s disconnected", nodeID)

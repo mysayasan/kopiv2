@@ -2,6 +2,7 @@ package apis
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +34,18 @@ func NewNotificationApi(router *mux.Router, serv services.INotificationService) 
 
 func (a *notificationApi) list(w http.ResponseWriter, r *http.Request) {
 	limit, offset := readPaging(r)
+	// Replay pull (fleet control plane catching up after a disconnect): oldest-first feed
+	// from `since`, no other filter. Distinct from the normal newest-first browse below.
+	if sinceRaw := r.URL.Query().Get("since"); sinceRaw != "" {
+		since, _ := strconv.ParseInt(sinceRaw, 10, 64)
+		items, total, err := a.serv.ListSince(r.Context(), since, limit)
+		if err != nil {
+			controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+			return
+		}
+		controllers.SendResult(w, map[string]any{"items": items, "total": total}, "succeed")
+		return
+	}
 	cameraId := parseInt64Query(r, "cameraId")
 	unreadOnly := r.URL.Query().Get("unread") == "true"
 	category := r.URL.Query().Get("category")
