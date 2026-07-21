@@ -226,7 +226,9 @@ type PairingConfigModel struct {
 	// MTLSPort is the node's mutual-TLS management listener port (release, heartbeat)
 	// that comes up once a node is adopted and enrolled. 0 = default (49532).
 	MTLSPort int `json:"mtlsPort"`
-	// CertTTLHours is the lifetime of an issued node certificate. 0 = default (168 / 7d).
+	// CertTTLHours is the lifetime of an issued node certificate. 0 = default (2160 / 90d).
+	// Node renewal is operator-gated per node (auto-renew toggle in the control plane), so
+	// the lifetime is long enough that an un-renewed node stays in the fleet for a while.
 	CertTTLHours int `json:"certTtlHours"`
 	// RenewBeforeHours makes the node re-enroll when its cert is within this many
 	// hours of expiry. 0 = default (48).

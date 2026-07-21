@@ -28,6 +28,7 @@ func NewNotificationApi(router *mux.Router, auth middlewares.AuthMidware, sessio
 	g.Use(session.Middleware)
 	g.HandleFunc("", h.list).Methods("GET")
 	g.HandleFunc("/stats", h.stats).Methods("GET")
+	g.HandleFunc("/tally", h.tally).Methods("GET")
 	g.HandleFunc("/stream", h.stream).Methods("GET")
 	g.HandleFunc("/{id:[0-9]+}/read", h.markRead).Methods("POST")
 }
@@ -72,13 +73,31 @@ func (a *notificationApi) list(w http.ResponseWriter, r *http.Request) {
 		source = "node:" + nodeID
 	}
 	unreadOnly := r.URL.Query().Get("unread") == "true"
+	// cameraId scopes the feed to a single camera SERVER-SIDE. Without it the caller has to
+	// over-fetch the whole node feed and filter in the browser, which silently drops a
+	// camera's events once they fall outside the fetched page (the per-camera badge counts
+	// the full set via /tally, so the two disagree). 0 = no camera filter.
+	cameraId := int64(queryUint(r, "cameraId", 0))
 
-	items, total, err := a.serv.List(r.Context(), limit, offset, 0, unreadOnly, "", source)
+	items, total, err := a.serv.List(r.Context(), limit, offset, cameraId, unreadOnly, "", source)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
 	controllers.SendResult(w, map[string]any{"items": items, "total": total}, "succeed")
+}
+
+// tally returns compact per-(source,camera) notification counts aggregated on the server, so the
+// fleet map can badge nodes/buildings without paging every raw row to the browser. ?unread=true
+// (the map's use) restricts it to the unread feed.
+func (a *notificationApi) tally(w http.ResponseWriter, r *http.Request) {
+	unreadOnly := r.URL.Query().Get("unread") == "true"
+	rows, err := a.serv.Tally(r.Context(), unreadOnly)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, rows, "succeed")
 }
 
 func (a *notificationApi) stream(w http.ResponseWriter, r *http.Request) {

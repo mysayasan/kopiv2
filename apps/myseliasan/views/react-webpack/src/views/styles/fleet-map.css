@@ -1,0 +1,611 @@
+/* Fleet Map styling. Every color references a canonical app token (app.css :root/.theme-*)
+   so the page follows light/dark/contrast/slate themes. Status-pin/dot colours come from the
+   one source of truth in lib/fleet_status.js (deliberately theme-independent, like the brand
+   mark, so a status reads the same everywhere). */
+
+.map-page { min-height: 0; }
+.map-loading { padding: 40px; text-align: center; color: var(--text-muted); }
+
+/* --- Geographic + indoor share this panel shell (the standard .settings-panel) --- */
+.fleet-map-panel,
+.indoor-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.fleet-map-header-right { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.fleet-map-legend {
+  display: flex;
+  gap: 14px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+/* Layer toggle: show/hide the building vs node marker layers independently. */
+.fleet-map-layer-toggle { display: inline-flex; gap: 6px; }
+.layer-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 9px; border: 1px solid var(--border-soft); border-radius: 999px;
+  background: var(--bg-surface); color: var(--text-faint); font: inherit; font-size: 0.74rem; cursor: pointer;
+}
+.layer-chip:hover { border-color: var(--accent); }
+.layer-chip.on { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+
+/* Rail group heading (Buildings / Nodes sections). */
+.fleet-map-rail-group {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 12px 2px; font-size: 0.68rem; font-weight: 700;
+  letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-faint);
+}
+.fleet-map-rail-node .rail-square {
+  width: 15px; height: 15px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 3px; background: var(--accent-bg); color: var(--accent);
+}
+
+.fleet-map-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 12px;
+}
+
+/* --- Side rail: nodes waiting to be placed --- */
+.fleet-map-rail {
+  flex: 0 0 230px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-panel);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  overflow: hidden;
+}
+.fleet-map-rail-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.count-badge {
+  min-width: 20px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--accent-badge);
+  color: var(--accent);
+  font-size: 0.72rem;
+  text-align: center;
+}
+.fleet-map-rail-hint {
+  padding: 8px 12px 4px;
+  font-size: 0.72rem;
+  color: var(--text-faint);
+}
+.fleet-map-rail-empty {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--ok-text);
+  font-size: 0.82rem;
+}
+.fleet-map-rail-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; }
+.fleet-map-rail-list li { margin-bottom: 2px; }
+.fleet-map-rail-node {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.86rem;
+  color: var(--text-primary);
+  text-align: left;
+}
+.fleet-map-rail-node:hover { background: var(--bg-subtle2); }
+.fleet-map-rail-node.active {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.fleet-map-rail-node .rail-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+.fleet-map-rail-node .rail-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Node rows carry an inline building selector (building-first placement): assign the appliance to a
+   building, or place it standalone. */
+.fleet-map-rail-noderow { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 6px; }
+.fleet-map-rail-noderow:hover { background: var(--bg-subtle2); }
+.fleet-map-rail-noderow .rail-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+.fleet-map-rail-noderow .rail-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.84rem; color: var(--text-primary); }
+.rail-building-select { flex: 0 0 auto; max-width: 84px; padding: 3px 4px; border: 1px solid var(--border-soft); border-radius: 6px; background: var(--bg-surface); color: var(--text-secondary); font: inherit; font-size: 0.72rem; cursor: pointer; }
+.rail-place-btn { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border: 1px solid var(--border-soft); border-radius: 6px; background: var(--bg-surface); color: var(--text-secondary); cursor: pointer; }
+.rail-place-btn:hover { border-color: var(--accent); color: var(--accent); }
+.rail-place-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.rail-onmap { flex: 0 0 auto; display: inline-flex; align-items: center; color: var(--text-faint); }
+.fleet-map-rail-group.muted { color: var(--text-faint); }
+
+/* --- Map stage (canvas + overlays) --- */
+.fleet-map-stage { position: relative; flex: 1 1 auto; min-height: 0; display: flex; }
+.fleet-map-canvas {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 440px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-body);
+  border: 1px solid var(--border-panel);
+}
+.fleet-map-canvas.placing { cursor: crosshair; box-shadow: 0 0 0 2px var(--accent) inset; }
+.fleet-map-canvas .ol-attribution { display: none; }
+
+/* Placing-mode banner floating over the top of the map. */
+.fleet-map-placing {
+  position: absolute;
+  z-index: 5;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.82rem;
+  box-shadow: 0 4px 14px var(--shadow-panel);
+}
+.fleet-map-placing .linklike { color: #fff; text-decoration: underline; }
+/* Neutral variant used for the "marker selected — remove?" bar on the floor plan. */
+.indoor-remove-bar { background: var(--text-secondary); gap: 14px; flex-wrap: wrap; }
+/* Aim (heading + field-of-view) sliders for a selected camera. */
+.indoor-aim { display: inline-flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.indoor-aim-field { display: inline-flex; align-items: center; gap: 6px; color: #fff; }
+.indoor-aim-field input[type="range"] { width: 96px; accent-color: #fff; cursor: pointer; }
+.indoor-aim-val { min-width: 34px; font-variant-numeric: tabular-nums; font-size: 0.78rem; }
+
+/* "No map data here — download this region" banner, shown when the view is panned beyond every
+   downloaded region's coverage and a remote tile source is configured. */
+.fleet-map-download {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 6;
+  display: inline-flex; align-items: center; gap: 12px;
+  background: var(--bg-surface); border: 1px solid var(--border-panel); border-radius: 999px;
+  padding: 7px 8px 7px 16px; box-shadow: 0 6px 20px var(--shadow-panel);
+  font-size: 0.82rem; color: var(--text-secondary); max-width: calc(100% - 28px);
+}
+.fleet-map-download > span { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.fleet-map-download button {
+  display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
+  border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 999px;
+  padding: 6px 14px; font: inherit; font-size: 0.8rem; font-weight: 600; cursor: pointer;
+}
+.fleet-map-download button:disabled { opacity: 0.7; cursor: default; }
+.fleet-map-download-note { color: var(--text-faint); font-style: italic; white-space: nowrap; }
+.bm-tool-status { display: inline-flex; align-items: center; gap: 6px; font-size: 0.78rem; padding: 7px 10px; border-radius: 8px; }
+.bm-tool-status.ok { color: var(--ok-text); background: rgba(34, 197, 94, 0.1); }
+.bm-tool-status.bad { color: #b45309; background: rgba(245, 158, 11, 0.14); }
+
+.fleet-map-attribution {
+  margin-top: 6px;
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  text-align: right;
+}
+
+/* --- Camera popup anchored to a clicked pin --- */
+/* Fixed to the viewport and positioned by JS (see MapPopupFrame), which flips the card below the
+   pin and clamps it on screen so the header is never cut off near an edge. */
+.map-popup-anchor { position: fixed; z-index: 20; pointer-events: none; }
+/* Redesigned node card: a status-coloured header, a meta strip with glanceable counts + the
+   Open-node action, then Events / Cameras as tabs over ONE single-scroll body. */
+.mp-card {
+  pointer-events: auto;
+  width: 300px;
+  max-width: calc(100vw - 20px);
+  max-height: 72vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-panel);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px var(--shadow-panel);
+  overflow: hidden;
+}
+.mp-head { display: flex; align-items: center; gap: 6px; padding: 9px 10px 9px 8px; flex: 0 0 auto; }
+/* The identity is a button that opens the node — reset its chrome, add a hover cue. */
+.mp-id { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 9px; padding: 4px 6px; border: 0; border-radius: 8px; background: none; cursor: pointer; color: inherit; font: inherit; text-align: left; }
+.mp-id:hover:not(:disabled) { background: var(--bg-subtle); }
+.mp-id:disabled { cursor: default; }
+.mp-avatar { flex: 0 0 auto; width: 28px; height: 28px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; color: #fff; }
+.mp-title { flex: 1 1 auto; min-width: 0; font-weight: 650; font-size: 0.9rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-id-go { flex: 0 0 auto; display: inline-flex; color: var(--text-faint); opacity: 0; transform: translateX(-3px); transition: opacity 0.15s ease, transform 0.15s ease; }
+.mp-id:hover:not(:disabled) .mp-id-go { opacity: 1; transform: translateX(0); color: var(--accent); }
+.mp-close { flex: 0 0 auto; }
+
+.mp-meta { display: flex; align-items: center; gap: 8px; padding: 0 12px 11px; flex: 0 0 auto; }
+.mp-meta-spacer { flex: 1 1 auto; }
+.mp-stat { display: inline-flex; align-items: center; gap: 4px; font-size: 0.74rem; font-weight: 600; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.mp-stat.danger { color: var(--danger-text); }
+
+/* Shared Tabs bar: trim its standard 16px bar→content gap for this compact card. The two tabs
+   SPLIT the width evenly (flex:1) and centre their labels, so they always fit the card and never
+   overflow/clip — the shared bar hides its scrollbar, so an overflow would just look cut off. */
+.mp-tabs.ui-tabs { margin: 0 12px; padding-top: 2px; overflow: hidden; border-bottom: 1px solid var(--border-subtle); }
+.mp-tabs .ui-tab { flex: 1 1 0; min-width: 0; justify-content: center; padding: 9px 8px; gap: 6px; }
+.mp-tabs .ui-tab .ui-tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-solo-head { display: flex; align-items: center; gap: 6px; margin: 0 12px; padding: 6px 2px 8px; border-bottom: 1px solid var(--border-subtle); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text-faint); }
+.mp-tab-count { min-width: 16px; margin-left: 5px; padding: 0 5px; border-radius: 999px; background: var(--accent-badge, var(--bg-subtle2)); color: var(--text-secondary); font-size: 0.66rem; font-weight: 700; text-align: center; }
+.mp-tab-count.danger { background: var(--danger-bg); color: var(--danger-text); }
+
+/* ONE scroll area for whichever tab is active — stable height so switching tabs never jumps. */
+.mp-body { flex: 1 1 auto; min-height: 120px; height: 262px; max-height: 46vh; overflow-y: auto; padding: 6px; }
+.mp-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; height: 100%; min-height: 96px; padding: 16px; color: var(--text-faint); font-size: 0.8rem; text-align: center; }
+
+/* Event row: a main info area (plain, or a footage button) + time + an ack button. The main area
+   and the ack are separate buttons so they never nest. */
+.mp-event { display: flex; align-items: center; gap: 4px; width: 100%; margin: 0; padding: 0 4px 0 2px; border-radius: 7px; box-sizing: border-box; color: var(--text-secondary); }
+.mp-event + .mp-event { border-top: 1px solid var(--border-subtle); }
+.mp-event.read { opacity: 0.55; }
+.mp-event-main { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; margin: 0; padding: 7px 6px; border: 0; border-radius: 6px; background: none; box-sizing: border-box; font-family: inherit; font-size: 0.79rem; font-weight: 400; line-height: 1.35; color: inherit; text-align: left; }
+.mp-event-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-event-cam { flex: 0 0 auto; display: inline-flex; align-items: center; color: var(--accent); }
+button.mp-event-main { cursor: pointer; }
+button.mp-event-main:hover { background: var(--bg-subtle); color: var(--text-primary); }
+button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
+.mp-event-time { flex: 0 0 auto; color: var(--text-faint); font-size: 0.7rem; font-variant-numeric: tabular-nums; }
+/* Acknowledge button — a subtle check that solidifies on hover. */
+.mp-event-ack { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--text-faint); cursor: pointer; }
+.mp-event-ack:hover { background: var(--ok-bg, var(--bg-subtle2)); color: var(--ok-text); }
+/* Locate-on-plan button — jumps to the camera's spot on its floor plan. */
+.mp-event-locate { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--text-faint); cursor: pointer; }
+.mp-event-locate:hover { background: var(--accent-bg); color: var(--accent); }
+
+.sev-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.sev-dot.sev-critical { background: #ef4444; }
+.sev-dot.sev-warning { background: #f59e0b; }
+.sev-dot.sev-info { background: #3b82f6; }
+
+/* Sticky camera search stays put while the list scrolls beneath it. */
+.mp-camsearch { position: sticky; top: -6px; z-index: 1; display: flex; align-items: center; gap: 6px; margin: -6px -6px 6px; padding: 8px 10px; border-bottom: 1px solid var(--border-subtle); background: var(--bg-surface); color: var(--text-muted); }
+.mp-camsearch input { flex: 1 1 auto; min-width: 0; border: 0; background: none; outline: none; color: var(--text-primary); font-family: inherit; font-size: 0.79rem; }
+.mp-camsearch input::placeholder { color: var(--text-faint); }
+.mp-cam { width: 100%; display: flex; align-items: center; gap: 8px; padding: 7px 8px; border: none; background: transparent; border-radius: 7px; cursor: pointer; font-size: 0.82rem; color: var(--text-secondary); text-align: left; }
+.mp-cam + .mp-cam { border-top: 1px solid var(--border-subtle); border-radius: 0; }
+.mp-cam:hover { background: var(--bg-subtle2); border-radius: 7px; color: var(--text-primary); }
+.mp-cam .cam-dot { margin: 0 2px; }
+.mp-cam-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-cam > svg:last-child { flex: 0 0 auto; color: var(--text-faint); }
+.mp-cam:hover > svg:last-child { color: var(--accent); }
+.cam-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.cam-dot.on { background: var(--ok-text); }
+.cam-dot.off { background: var(--text-faint); }
+
+/* --- Geo drill-down: a node's floor plan with live cameras --- */
+.fleet-map-drill { position: absolute; inset: 0; z-index: 7; }
+.floor-view {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-panel);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.floor-view-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-subtle);
+}
+.floor-view-title { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 0.9rem; color: var(--text-primary); }
+.floor-view-title .rail-dot { width: 9px; height: 9px; border-radius: 50%; }
+.floor-view-switch { display: inline-flex; gap: 6px; margin-left: auto; }
+
+.floor-view-stage { position: relative; flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 12px; background: var(--bg-body); }
+.floor-plan-wrap { position: relative; max-width: 100%; max-height: 100%; margin: auto; }
+.floor-plan-img { display: block; width: 100%; height: 100%; object-fit: contain; border-radius: 4px; user-select: none; }
+/* Camera coverage wedges: an SVG stretched over the plan image, below the clickable markers. */
+.floor-fov { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.floor-view-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 0.85rem; }
+
+/* Camera / node markers on the plan. */
+.floor-marker {
+  position: absolute;
+  /* --inv (= 1/zoom, set on the plan wrap) keeps markers a constant size while the plan zooms. */
+  transform: translate(-50%, -50%) scale(var(--inv, 1));
+  transform-origin: center center;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 160px;
+  padding: 4px 8px 4px 6px;
+  border: 2px solid var(--accent);
+  border-radius: 999px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 0.74rem;
+  cursor: pointer;
+  box-shadow: 0 2px 6px var(--shadow-panel);
+  white-space: nowrap;
+}
+.floor-marker.node { cursor: default; }
+/* A camera that dropped while its node stayed up (amber) vs one whose camera no longer exists on
+   the node at all (ghost — dashed, muted, not clickable). */
+.floor-marker.cam-offline { background: rgba(245, 158, 11, 0.14); }
+.floor-marker.ghost { border-style: dashed; color: var(--text-faint); opacity: 0.8; cursor: default; }
+.floor-ghost-bar { flex: 0 0 auto; align-self: stretch; display: flex; align-items: center; gap: 12px; padding: 7px 12px; margin-bottom: 8px; background: rgba(245, 158, 11, 0.14); border: 1px solid #f59e0b; border-radius: 8px; font-size: 0.8rem; color: var(--text-secondary); }
+.floor-ghost-bar.overlay { position: absolute; top: 8px; left: 8px; right: 8px; z-index: 7; margin: 0; box-shadow: 0 2px 10px var(--shadow-panel); }
+.floor-ghost-bar span { display: inline-flex; align-items: center; gap: 6px; }
+.floor-ghost-bar .linklike { color: #b45309; font-weight: 700; margin-left: auto; }
+
+/* Pan/zoom viewport for the drill-down floor plan (a large plan is no longer a fixed tiny image). */
+.floor-plan-viewport { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; touch-action: none; cursor: grab; }
+.floor-plan-viewport:active { cursor: grabbing; }
+.floor-plan-viewport .floor-plan-wrap { transform-origin: center center; will-change: transform; }
+.floor-zoom { position: absolute; right: 12px; bottom: 12px; display: flex; flex-direction: column; gap: 5px; z-index: 6; }
+.floor-zoom button { width: 30px; height: 30px; border: 1px solid var(--border-panel); background: var(--bg-surface); border-radius: 7px; cursor: pointer; color: var(--text-secondary); display: grid; place-items: center; box-shadow: 0 2px 6px var(--shadow-panel); }
+.floor-zoom button:hover { border-color: var(--accent); color: var(--accent); }
+.floor-marker.cam:hover, .floor-marker.active { background: var(--accent-bg); }
+/* A camera located from an event pulses so the operator's eye lands on it immediately. */
+.floor-marker.focus { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); z-index: 4; animation: floorMarkerPulse 1.4s ease-out infinite; }
+@keyframes floorMarkerPulse { 0% { box-shadow: 0 0 0 0 rgba(45, 108, 223, 0.55); } 70% { box-shadow: 0 0 0 12px rgba(45, 108, 223, 0); } 100% { box-shadow: 0 0 0 0 rgba(45, 108, 223, 0); } }
+.floor-marker-label { overflow: hidden; text-overflow: ellipsis; }
+/* Per-camera unread-notification badge, pinned to the marker's top-right corner. */
+.floor-marker-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 17px;
+  text-align: center;
+  border: 2px solid var(--bg-surface);
+  font-variant-numeric: tabular-nums;
+}
+.floor-marker-badge.sev-warning { background: #f59e0b; }
+.floor-marker-badge.sev-info { background: #3b82f6; }
+
+/* Live footage window: a floating window fixed to the viewport. Mini opens near the click
+   (left/top set inline); maximised covers the whole screen. Multiple can be open at once. */
+.floor-live {
+  position: fixed;
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  background: #0b0f16;
+  border: 1px solid var(--border-panel);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.4);
+}
+.floor-live.maximized { inset: 0; width: auto !important; height: auto !important; border-radius: 0; z-index: 1000; }
+.floor-live-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 6px 5px 10px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+}
+.floor-live-name { display: inline-flex; align-items: center; gap: 6px; font-size: 0.78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.floor-live-actions { display: inline-flex; gap: 2px; flex: 0 0 auto; }
+.floor-live-head .icon-button { color: #fff; cursor: pointer; }
+/* Mini window: the title bar is the drag handle. */
+.floor-live.mini .floor-live-head { cursor: move; touch-action: none; }
+.floor-live-body { flex: 1 1 auto; min-height: 0; position: relative; }
+.floor-live-body .live-frame, .floor-live-body video { width: 100%; height: 100%; }
+.floor-live-body video { object-fit: contain; background: #000; }
+/* Recorded-footage window: snapshot image / clip video fill the body, contained on black. */
+.floor-live-body.media { background: #000; }
+.floor-live-image, .floor-live-video { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
+.floor-live-media-ph { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-muted); font-size: 0.78rem; }
+/* Bottom-right resize grip — drag to resize a mini window. */
+.floor-live-resize { position: absolute; right: 0; bottom: 0; width: 18px; height: 18px; cursor: nwse-resize; touch-action: none; z-index: 6; }
+.floor-live-resize::after { content: ''; position: absolute; right: 3px; bottom: 3px; width: 9px; height: 9px; border-right: 2px solid rgba(255, 255, 255, 0.7); border-bottom: 2px solid rgba(255, 255, 255, 0.7); border-bottom-right-radius: 3px; }
+/* PTZ ring keeps its standard bottom-right spot. Its wrapper is click-through so the ring's own
+   SVG shapes capture the pan/tilt presses while the transparent corner passes clicks to the resize
+   grip beneath it — the grip (z-index 6) sits above and stays grabbable at the very corner. */
+.floor-live-ptz { pointer-events: none; }
+.floor-live-ptz svg { pointer-events: auto; }
+
+/* Camera window: LIVE footage on top, that camera's events scrolling below. */
+.camwin-live { flex: 1 1 auto; min-height: 120px; position: relative; background: #000; }
+.camwin-live .live-frame, .camwin-live video { width: 100%; height: 100%; }
+.camwin-live video { object-fit: contain; background: #000; }
+/* Recorded footage shown inline over the live panel (Back returns to the live stream). Covers the
+   live tile — which stays mounted underneath so the stream is never torn down. The media fills the
+   WHOLE panel (same size as the live footage); the Back/toggle bar floats OVER it rather than
+   taking layout space, so switching to a snapshot/clip never resizes the panel. */
+.camwin-media { position: absolute; inset: 0; z-index: 3; background: #000; }
+.camwin-media-body { position: absolute; inset: 0; z-index: 1; background: #000; }
+.camwin-media-bar { position: absolute; top: 0; left: 0; right: 0; z-index: 2; display: flex; align-items: center; gap: 6px; padding: 5px 8px; color: #fff; pointer-events: none; background: linear-gradient(to bottom, rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0)); }
+.camwin-media-bar > * { pointer-events: auto; }
+.camwin-media-bar .icon-button { color: #fff; }
+.camwin-media-name { font-size: 0.78rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6); }
+.camwin-media-spacer { flex: 1 1 auto; pointer-events: none; }
+.mp-event-main.has-footage.active { background: var(--accent-bg); }
+.camwin-events { flex: 0 0 auto; height: 150px; display: flex; flex-direction: column; min-height: 0; background: var(--bg-surface); border-top: 1px solid var(--border-panel); }
+.floor-live.camwin.maximized .camwin-events { height: 200px; }
+.camwin-events-head { display: flex; align-items: center; gap: 6px; padding: 5px 8px 5px 10px; flex: 0 0 auto; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text-faint); border-bottom: 1px solid var(--border-subtle); }
+.camwin-events-spacer { flex: 1 1 auto; }
+.camwin-locate { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border: 1px solid var(--border-soft); border-radius: 999px; background: var(--bg-surface); color: var(--accent); font: inherit; font-size: 0.66rem; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; cursor: pointer; }
+.camwin-locate:hover { background: var(--accent-bg); border-color: var(--accent); }
+.camwin-events-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 4px 6px; }
+.camwin-events-list .mp-empty { min-height: 60px; }
+
+/* --- Indoor (floor plans) view --- */
+.indoor-map-page { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.indoor-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.indoor-field { display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; color: var(--text-secondary); }
+.indoor-field select {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  min-width: 160px;
+}
+.indoor-spacer { flex: 1 1 auto; }
+
+.indoor-floor-tabs { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+.indoor-floor-tab {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 0.83rem;
+  cursor: pointer;
+}
+.indoor-floor-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.indoor-body { display: flex; flex: 1 1 auto; min-height: 0; gap: 12px; }
+.indoor-palette {
+  flex: 0 0 230px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-panel);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  overflow: hidden;
+}
+.palette-head {
+  padding: 10px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.palette-hint { padding: 8px 12px 4px; font-size: 0.72rem; color: var(--text-faint); }
+.palette-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; }
+.palette-node { margin-bottom: 1px; }
+.palette-node-row { display: flex; align-items: stretch; gap: 2px; }
+/* Stretch the caret button to the full row height and centre the icon, so it lines up with the
+   node text regardless of the item's padding/border (which used to make it read as offset). */
+.palette-expand { border: none; background: transparent; padding: 0; cursor: pointer; color: var(--text-muted); display: inline-flex; align-items: center; justify-content: center; width: 20px; flex: 0 0 auto; }
+.palette-expand:hover { color: var(--text-primary); }
+.palette-expand-spacer { width: 20px; flex: 0 0 auto; }
+.palette-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 8px; border: 1px solid transparent; border-radius: 6px;
+  cursor: pointer; font-size: 0.85rem; color: var(--text-primary); flex: 1 1 auto; min-width: 0;
+  background: transparent; text-align: left; width: 100%;
+}
+.palette-item:hover { background: var(--bg-subtle2); }
+.palette-item.active { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+.palette-item .rail-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+.palette-item .rail-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette-cams { list-style: none; margin: 0 0 4px 22px; padding: 0; }
+.palette-cam {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 5px 8px; border: 1px solid transparent; border-radius: 6px; cursor: pointer;
+  font-size: 0.8rem; color: var(--text-secondary); background: transparent; text-align: left;
+}
+.palette-cam:hover { background: var(--bg-subtle2); }
+.palette-cam.active { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+.palette-cam.muted { color: var(--text-faint); cursor: default; font-style: italic; }
+
+.indoor-stage { position: relative; flex: 1 1 auto; min-height: 0; display: flex; }
+/* Toolbar + canvas stack as one panel (the toolbar always shows, so removing a marker no longer
+   means hunting for a transient bar). Mirrors the drawing canvas's persistent toolbar. */
+.indoor-plan { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; }
+.indoor-toolbar { border: 1px solid var(--border-panel); border-bottom: none; border-radius: 8px 8px 0 0; }
+.indoor-toolbar .indoor-tool-info { display: inline-flex; align-items: center; gap: 6px; margin-right: auto; font-size: 0.82rem; color: var(--text-primary); }
+.indoor-toolbar .indoor-tool-info .muted { color: var(--text-faint); }
+.indoor-canvas {
+  flex: 1 1 auto;
+  min-height: 440px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-body);
+  border: 1px solid var(--border-panel);
+}
+.indoor-plan .indoor-canvas { border-top: none; border-radius: 0 0 8px 8px; }
+.indoor-canvas.placing { cursor: crosshair; box-shadow: 0 0 0 2px var(--accent) inset; }
+/* While dragging a palette item over the plan: crosshair + accent frame, so the drop target reads. */
+.indoor-canvas.drag-over { cursor: crosshair; box-shadow: 0 0 0 2px var(--accent) inset; }
+
+/* Custom drag image: a bullseye + camera/node label, replacing the browser's text ghost. */
+.indoor-drag-ghost { position: fixed; top: -1000px; left: -1000px; display: inline-flex; align-items: center; gap: 7px; padding: 4px 12px 4px 5px; background: var(--accent); color: #fff; border-radius: 999px; font-size: 0.78rem; font-weight: 600; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); white-space: nowrap; pointer-events: none; }
+.indoor-drag-ghost-mark { width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: inset 0 0 0 2px var(--accent), inset 0 0 0 4px #fff, inset 0 0 0 6px var(--accent); }
+.indoor-drag-ghost.is-cam .indoor-drag-ghost-mark { box-shadow: inset 0 0 0 3px #fff, inset 0 0 0 6px var(--accent); }
+.indoor-drag-ghost-label { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+
+/* Empty-state dropzone: drag a plan image in, or launch the drawing designer. */
+.indoor-dropzone { flex: 1 1 auto; min-height: 300px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; border: 2px dashed var(--border-panel); border-radius: 10px; background: var(--bg-subtle); color: var(--text-muted); text-align: center; transition: border-color 0.15s, background 0.15s; }
+.indoor-dropzone.active { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); }
+.indoor-dropzone-title { font-size: 1rem; font-weight: 650; color: var(--text-primary); }
+.indoor-dropzone-sub { font-size: 0.85rem; }
+.indoor-dropzone-actions { display: inline-flex; gap: 10px; margin-top: 6px; }
+
+/* --- Floor-plan drawing designer (Create plan) --- */
+.fd-overlay { position: fixed; inset: 0; z-index: 1200; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(15, 23, 33, 0.55); }
+
+/* Building create/edit dialog: name + a grid of glyphs to pick from. Uses the .fd-overlay backdrop. */
+.site-dialog { width: min(420px, 92vw); background: var(--bg-surface); border: 1px solid var(--border-panel); border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4); }
+.site-dialog-title { display: flex; align-items: center; gap: 8px; font-size: 1rem; font-weight: 650; color: var(--text-primary); }
+.site-dialog-glyph { font-size: 1.3rem; line-height: 1; }
+.site-dialog-field { display: flex; flex-direction: column; gap: 6px; font-size: 0.8rem; color: var(--text-secondary); }
+.site-dialog-field input[type="text"] { padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: 7px; background: var(--bg-body); color: var(--text-primary); font: inherit; }
+.site-icon-grid { display: grid; grid-template-columns: repeat(9, 1fr); gap: 6px; }
+.site-icon { display: inline-flex; align-items: center; justify-content: center; padding: 6px 0; font-size: 1.15rem; line-height: 1; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--bg-body); cursor: pointer; }
+.site-icon:hover { border-color: var(--accent); }
+.site-icon.active { border-color: var(--accent); background: var(--accent-bg); box-shadow: 0 0 0 1px var(--accent) inset; }
+.site-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+/* Building glyph in the geo-map rail + the floor-view header. */
+.fleet-map-rail-node .rail-emoji { width: 16px; flex: 0 0 auto; text-align: center; font-size: 0.95rem; line-height: 1; }
+.floor-view-emoji { font-size: 1rem; line-height: 1; }
+.fd-dialog { display: flex; flex-direction: column; width: min(1160px, 96vw); max-height: 94vh; background: var(--bg-surface); border: 1px solid var(--border-panel); border-radius: 12px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4); overflow: hidden; }
+.fd-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border-subtle); }
+.fd-title { display: inline-flex; align-items: center; gap: 7px; font-weight: 650; color: var(--text-primary); flex: 0 0 auto; }
+.fd-name { flex: 0 1 280px; min-width: 0; padding: 7px 10px; border: 1px solid var(--border-soft); border-radius: 7px; background: var(--bg-subtle); color: var(--text-primary); font: inherit; font-size: 0.85rem; }
+.fd-head-spacer { flex: 1 1 auto; }
+.fd-toolbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px 14px; border-bottom: 1px solid var(--border-subtle); background: var(--bg-subtle); }
+.fd-tool { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid var(--border-soft); border-radius: 7px; background: var(--bg-surface); color: var(--text-secondary); font: inherit; font-size: 0.8rem; cursor: pointer; }
+.fd-tool:hover:not(:disabled) { border-color: var(--accent); color: var(--text-primary); }
+.fd-tool.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.fd-tool:disabled { opacity: 0.45; cursor: not-allowed; }
+.fd-toolbar-sep { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--border-panel); }
+.fd-mirror { display: inline-flex; transform: scaleX(-1); }
+.fd-stage { flex: 1 1 auto; min-height: 340px; overflow: hidden; padding: 0; background: #e9edf2; position: relative; }
+.fd-canvas { display: block; width: 100%; height: 100%; background: #e9edf2; touch-action: none; }
+.fd-canvas.fd-tool-select { cursor: default; }
+.fd-canvas.fd-tool-erase { cursor: not-allowed; }
+.fd-canvas.fd-tool-wall, .fd-canvas.fd-tool-room, .fd-canvas.fd-tool-pen, .fd-canvas.fd-tool-text { cursor: crosshair; }
+.fd-hint { padding: 8px 14px; border-top: 1px solid var(--border-subtle); font-size: 0.76rem; color: var(--text-faint); }
+.indoor-empty {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 320px;
+  border: 1px dashed var(--border-soft);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  text-align: center;
+  padding: 20px;
+}

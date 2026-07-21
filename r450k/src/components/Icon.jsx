@@ -63,6 +63,22 @@ const paths = {
     </>
   ),
   activity: <path d="M3 12h4l2.5 7 4-15 2.5 8h5" />,
+  map: (
+    <>
+      <path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Z" />
+      <path d="M9 4v14M15 6v14" />
+    </>
+  ),
+  face: (
+    <>
+      <path d="M4 8V6a2 2 0 0 1 2-2h2" />
+      <path d="M16 4h2a2 2 0 0 1 2 2v2" />
+      <path d="M20 16v2a2 2 0 0 1-2 2h-2" />
+      <path d="M8 20H6a2 2 0 0 1-2-2v-2" />
+      <circle cx="12" cy="11" r="2" />
+      <path d="M8.5 16.2a3.5 3.5 0 0 1 7 0" />
+    </>
+  ),
   search: (
     <>
       <circle cx="11" cy="11" r="7" />

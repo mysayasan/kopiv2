@@ -2,6 +2,7 @@ package apis
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/domain/notification"
@@ -29,6 +30,17 @@ func (a *notificationsApi) list(w http.ResponseWriter, r *http.Request) {
 		limit = 100
 	}
 	q := r.URL.Query()
+	// Replay pull (fleet control plane catching up after a disconnect): oldest-first from `since`.
+	if sinceRaw := q.Get("since"); sinceRaw != "" {
+		since, _ := strconv.ParseInt(sinceRaw, 10, 64)
+		rows, total, err := a.svc.ListSince(r.Context(), since, limit)
+		if err != nil {
+			controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+			return
+		}
+		controllers.SendResult(w, map[string]any{"items": rows, "total": total}, "succeed")
+		return
+	}
 	rows, total, err := a.svc.List(r.Context(), limit, offset, 0, q.Get("unread") == "true", q.Get("category"), q.Get("source"))
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())

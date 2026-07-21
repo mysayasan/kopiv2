@@ -367,6 +367,69 @@ func TestRegistryFleetStatusRollup(t *testing.T) {
 	}
 }
 
+// A node's FIRST enrollment (no prior cert) is always allowed, but a RENEWAL (it already
+// has an issued cert) is refused unless auto-renew is on — the dead-man's switch that lets
+// an un-blessed node's certificate lapse. Turning auto-renew on lets the next renewal through.
+func TestRegistryEnrollGatesRenewalOnAutoRenew(t *testing.T) {
+	reg, nodes := newTestRegistry()
+	ctx := context.Background()
+	nodes.rows = append(nodes.rows, &entities.ManagedNode{Id: 1, NodeId: "node-r", Token: "tok", Status: "online", AutoRenew: false})
+	_, csrPEM, _ := fleetca.GenerateKeyAndCSR("node-r")
+
+	// Initial enrollment (CertExpiresAt == 0) is allowed even with auto-renew off.
+	if _, _, err := reg.Enroll(ctx, "node-r", "tok", csrPEM); err != nil {
+		t.Fatalf("initial enroll: %v", err)
+	}
+	if nodes.rows[0].CertExpiresAt == 0 {
+		t.Fatal("initial enroll should record CertExpiresAt")
+	}
+
+	// Now it has a cert → a second enroll is a RENEWAL, refused while auto-renew is off.
+	if _, _, err := reg.Enroll(ctx, "node-r", "tok", csrPEM); !errors.Is(err, ErrRenewNotAuthorized) {
+		t.Fatalf("gated renewal: got %v want ErrRenewNotAuthorized", err)
+	}
+
+	// Enable auto-renew → renewal is honoured again.
+	if _, err := reg.SetAutoRenew(ctx, "node-r", true, 42); err != nil {
+		t.Fatalf("SetAutoRenew: %v", err)
+	}
+	if _, _, err := reg.Enroll(ctx, "node-r", "tok", csrPEM); err != nil {
+		t.Fatalf("renewal after enabling auto-renew: %v", err)
+	}
+}
+
+// BackfillAutoRenew blesses already-enrolled nodes once so upgrading an existing fleet does
+// not surprise-expire it, leaves never-enrolled records alone, and never runs twice.
+func TestRegistryBackfillAutoRenewOnceForEnrolledNodes(t *testing.T) {
+	nodes := &fakeNodesRepo{}
+	settings := &fakeSettingsRepo{}
+	reg := newNodeRegistry(nodes, settings, NodeRegistryConfig{ParentID: "p"})
+	ctx := context.Background()
+	nodes.rows = append(nodes.rows,
+		&entities.ManagedNode{Id: 1, NodeId: "enrolled", CertExpiresAt: 1000, AutoRenew: false},
+		&entities.ManagedNode{Id: 2, NodeId: "never", CertExpiresAt: 0, AutoRenew: false},
+	)
+
+	if err := reg.BackfillAutoRenew(ctx); err != nil {
+		t.Fatalf("BackfillAutoRenew: %v", err)
+	}
+	if !nodes.rows[0].AutoRenew {
+		t.Fatal("enrolled node should be backfilled to AutoRenew=true")
+	}
+	if nodes.rows[1].AutoRenew {
+		t.Fatal("never-enrolled node must stay AutoRenew=false")
+	}
+
+	// Idempotent: an operator turning it back off must not be re-flipped by a later run.
+	nodes.rows[0].AutoRenew = false
+	if err := reg.BackfillAutoRenew(ctx); err != nil {
+		t.Fatalf("second BackfillAutoRenew: %v", err)
+	}
+	if nodes.rows[0].AutoRenew {
+		t.Fatal("backfill must not run twice (operator's off choice was overwritten)")
+	}
+}
+
 func TestRegistryMarkSelfDroppedVerifiesAssertion(t *testing.T) {
 	reg, nodes := newTestRegistry()
 	ctx := context.Background()

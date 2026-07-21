@@ -2,9 +2,11 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -18,14 +20,15 @@ import (
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
 	apiaccessenums "github.com/mysayasan/kopiv2/domain/enums/apiaccess"
 	"github.com/mysayasan/kopiv2/domain/notification"
-	"github.com/mysayasan/kopiv2/infra/telemetry"
 	"github.com/mysayasan/kopiv2/infra/apidocs"
 	"github.com/mysayasan/kopiv2/infra/apphost"
 	"github.com/mysayasan/kopiv2/infra/atrest"
+	"github.com/mysayasan/kopiv2/infra/control"
 	"github.com/mysayasan/kopiv2/infra/db/bootstrap"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/mediarelay"
 	"github.com/mysayasan/kopiv2/infra/stream"
+	"github.com/mysayasan/kopiv2/infra/telemetry"
 	"github.com/mysayasan/kopiv2/infra/versioning"
 )
 
@@ -83,6 +86,349 @@ func (m *module) SharedAPIs() apphost.SharedAPIConfig {
 	return cfg
 }
 
+// Migrations runs BEFORE the auto-migrator and independently of the autoMigrate config flag.
+// The single entry here guarantees the fleet-map columns exist on managed_node even in a
+// deployment that has autoMigrate turned off — without them, node adoption's INSERT fails
+// with a 500 (the node pairs, then the record can't be saved). Idempotent: it adds only the
+// columns that are missing, so it is a no-op where the auto-migrator already added them.
+func (m *module) Migrations() []bootstrap.Migration {
+	return []bootstrap.Migration{
+		{
+			ID:   "20260718-01-managed-node-geo",
+			Name: "add lat/lon/map_placed to managed_node (fleet map)",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				return ensureManagedNodeGeoColumns(ctx, tx, engine)
+			},
+		},
+		{
+			// A SEPARATE migration (new ID) so it runs even on databases where 01 already
+			// applied before the backfill logic existed: an ADD COLUMN without a default left
+			// existing rows NULL, and the non-pointer float64/bool entity fields cannot scan a
+			// NULL. Editing 01 would not re-run it; 02 always runs once. Idempotent.
+			ID:   "20260718-02-managed-node-geo-backfill",
+			Name: "backfill NULL lat/lon/map_placed on managed_node to zero",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				return backfillManagedNodeGeoNulls(ctx, tx, engine)
+			},
+		},
+		{
+			ID:   "20260719-01-placement-fov",
+			Name: "add heading/fov to node_placement (floor-plan camera coverage arcs)",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				return ensurePlacementFovColumns(ctx, tx, engine)
+			},
+		},
+		{
+			ID:   "20260719-02-floor-design",
+			Name: "add design (drawn-plan vector shapes) to floor_plan",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				return ensureFloorDesignColumn(ctx, tx, engine)
+			},
+		},
+		{
+			ID:   "20260719-03-floor-bgpath",
+			Name: "add bg_path (pristine background image) to floor_plan",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				existing, err := tableColumns(ctx, tx, engine, "floor_plan")
+				if err != nil {
+					return err
+				}
+				if !existing["bg_path"] {
+					if _, err := tx.ExecContext(ctx, "ALTER TABLE floor_plan ADD COLUMN bg_path TEXT"); err != nil {
+						return fmt.Errorf("add floor_plan.bg_path: %w", err)
+					}
+				}
+				if _, err := tx.ExecContext(ctx, "UPDATE floor_plan SET bg_path = '' WHERE bg_path IS NULL"); err != nil {
+					return fmt.Errorf("backfill floor_plan.bg_path NULLs: %w", err)
+				}
+				return nil
+			},
+		},
+		{
+			// Digital-twin buildings: a site now has a geographic position, so it can be a marker
+			// on the geo map (a building is where cameras physically live, independent of the node
+			// that records them). Without this an EXISTING site table has no lat/lon/map_placed, so
+			// both INSERT (create site) and List fail — the site never appears. Mirrors the
+			// managed_node geo migration (add + backfill NULLs; non-pointer float64/bool can't scan
+			// a NULL left by a defaultless ADD COLUMN). Idempotent.
+			ID:   "20260720-01-site-geo",
+			Name: "add lat/lon/map_placed to site (fleet map buildings)",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				return ensureSiteGeoColumns(ctx, tx, engine)
+			},
+		},
+		{
+			// A building can carry a chosen glyph (emoji) shown on the geo map. Same NULL-safety as
+			// the other string columns: ADD COLUMN then backfill NULLs to '' (the entity's Icon
+			// string cannot scan a NULL). Idempotent.
+			ID:   "20260720-02-site-icon",
+			Name: "add icon (building glyph) to site",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				existing, err := tableColumns(ctx, tx, engine, "site")
+				if err != nil {
+					return err
+				}
+				colType := "TEXT"
+				if engine == "mariadb" {
+					colType = "VARCHAR(32)"
+				}
+				if !existing["icon"] {
+					if _, err := tx.ExecContext(ctx, "ALTER TABLE site ADD COLUMN icon "+colType); err != nil {
+						return fmt.Errorf("add site.icon: %w", err)
+					}
+				}
+				if _, err := tx.ExecContext(ctx, "UPDATE site SET icon = '' WHERE icon IS NULL"); err != nil {
+					return fmt.Errorf("backfill site.icon NULLs: %w", err)
+				}
+				return nil
+			},
+		},
+		{
+			// The building an appliance resides in (building-first map). Same NULL-safety: ADD COLUMN
+			// then backfill NULLs to 0 (the entity's SiteId int64 is non-pointer and cannot scan a
+			// NULL). Idempotent.
+			ID:   "20260720-03-node-site",
+			Name: "add site_id (resides-in building) to managed_node",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				existing, err := tableColumns(ctx, tx, engine, "managed_node")
+				if err != nil {
+					return err
+				}
+				colType := "BIGINT"
+				if engine == "sqlite" {
+					colType = "INTEGER"
+				}
+				if !existing["site_id"] {
+					if _, err := tx.ExecContext(ctx, "ALTER TABLE managed_node ADD COLUMN site_id "+colType); err != nil {
+						return fmt.Errorf("add managed_node.site_id: %w", err)
+					}
+				}
+				if _, err := tx.ExecContext(ctx, "UPDATE managed_node SET site_id = 0 WHERE site_id IS NULL"); err != nil {
+					return fmt.Errorf("backfill managed_node.site_id NULLs: %w", err)
+				}
+				return nil
+			},
+		},
+		{
+			// The certificate auto-renew gate. Same NULL-safety as site_id: a bare ADD COLUMN
+			// leaves existing rows NULL and the entity's AutoRenew bool is non-pointer, so it
+			// cannot scan a NULL — ADD COLUMN then backfill NULLs to false. This only seeds the
+			// column's zero value; the separate one-time BackfillAutoRenew (services) then flips
+			// already-ENROLLED nodes to true so an existing fleet is not surprise-expired.
+			// Idempotent.
+			ID:   "20260720-04-node-auto-renew",
+			Name: "add auto_renew (cert renewal gate) to managed_node",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				existing, err := tableColumns(ctx, tx, engine, "managed_node")
+				if err != nil {
+					return err
+				}
+				if !existing["auto_renew"] {
+					if _, err := tx.ExecContext(ctx, "ALTER TABLE managed_node ADD COLUMN auto_renew "+geoColumnType("BOOLEAN", engine)); err != nil {
+						return fmt.Errorf("add managed_node.auto_renew: %w", err)
+					}
+				}
+				falseLit := "0"
+				if engine == "postgres" {
+					falseLit = "false"
+				}
+				if _, err := tx.ExecContext(ctx, "UPDATE managed_node SET auto_renew = "+falseLit+" WHERE auto_renew IS NULL"); err != nil {
+					return fmt.Errorf("backfill managed_node.auto_renew NULLs: %w", err)
+				}
+				return nil
+			},
+		},
+	}
+}
+
+// ensureSiteGeoColumns adds the geographic columns to site if absent (same per-engine types the
+// auto-migrator generates, so no schema-drift warning) and backfills any NULLs to zero/false.
+// Idempotent — a no-op once the columns exist and are non-NULL.
+func ensureSiteGeoColumns(ctx context.Context, tx *sql.Tx, engine string) error {
+	existing, err := tableColumns(ctx, tx, engine, "site")
+	if err != nil {
+		return err
+	}
+	adds := []struct{ name, base string }{
+		{"lat", "DOUBLE PRECISION"},
+		{"lon", "DOUBLE PRECISION"},
+		{"map_placed", "BOOLEAN"},
+	}
+	for _, c := range adds {
+		if existing[c.name] {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, "ALTER TABLE site ADD COLUMN "+c.name+" "+geoColumnType(c.base, engine)); err != nil {
+			return fmt.Errorf("add site.%s: %w", c.name, err)
+		}
+	}
+	falseLit := "0"
+	if engine == "postgres" {
+		falseLit = "false"
+	}
+	stmts := []string{
+		"UPDATE site SET lat = 0 WHERE lat IS NULL",
+		"UPDATE site SET lon = 0 WHERE lon IS NULL",
+		"UPDATE site SET map_placed = " + falseLit + " WHERE map_placed IS NULL",
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("backfill site geo NULLs: %w", err)
+		}
+	}
+	return nil
+}
+
+// ensureFloorDesignColumn adds the design column (drawn-plan vector JSON) to floor_plan if absent
+// and backfills NULLs to ” (the entity's Design string cannot scan a NULL). Idempotent.
+func ensureFloorDesignColumn(ctx context.Context, tx *sql.Tx, engine string) error {
+	existing, err := tableColumns(ctx, tx, engine, "floor_plan")
+	if err != nil {
+		return err
+	}
+	colType := "TEXT"
+	if engine == "mariadb" {
+		colType = "LONGTEXT"
+	}
+	if !existing["design"] {
+		if _, err := tx.ExecContext(ctx, "ALTER TABLE floor_plan ADD COLUMN design "+colType); err != nil {
+			return fmt.Errorf("add floor_plan.design: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE floor_plan SET design = '' WHERE design IS NULL"); err != nil {
+		return fmt.Errorf("backfill floor_plan.design NULLs: %w", err)
+	}
+	return nil
+}
+
+// ensurePlacementFovColumns adds the coverage-arc columns to node_placement if absent and
+// backfills any NULLs to zero (an ADD COLUMN without a default leaves existing rows NULL, and the
+// entity's Heading/Fov float64 fields cannot scan a NULL). Idempotent.
+func ensurePlacementFovColumns(ctx context.Context, tx *sql.Tx, engine string) error {
+	existing, err := tableColumns(ctx, tx, engine, "node_placement")
+	if err != nil {
+		return err
+	}
+	for _, name := range []string{"heading", "fov"} {
+		if existing[name] {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, "ALTER TABLE node_placement ADD COLUMN "+name+" "+geoColumnType("DOUBLE PRECISION", engine)); err != nil {
+			return fmt.Errorf("add node_placement.%s: %w", name, err)
+		}
+	}
+	for _, name := range []string{"heading", "fov"} {
+		if _, err := tx.ExecContext(ctx, "UPDATE node_placement SET "+name+" = 0 WHERE "+name+" IS NULL"); err != nil {
+			return fmt.Errorf("backfill node_placement.%s NULLs: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// ensureManagedNodeGeoColumns adds the geographic columns to managed_node if absent, using the
+// SAME per-engine types the auto-migrator generates (float64 and bool normalized per engine),
+// so a column added here is byte-identical to one the auto-migrator would add and never
+// triggers a schema-drift warning.
+func ensureManagedNodeGeoColumns(ctx context.Context, tx *sql.Tx, engine string) error {
+	existing, err := tableColumns(ctx, tx, engine, "managed_node")
+	if err != nil {
+		return err
+	}
+	adds := []struct{ name, base string }{
+		{"lat", "DOUBLE PRECISION"},
+		{"lon", "DOUBLE PRECISION"},
+		{"map_placed", "BOOLEAN"},
+	}
+	for _, c := range adds {
+		if existing[c.name] {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, "ALTER TABLE managed_node ADD COLUMN "+c.name+" "+geoColumnType(c.base, engine)); err != nil {
+			return fmt.Errorf("add managed_node.%s: %w", c.name, err)
+		}
+	}
+	return backfillManagedNodeGeoNulls(ctx, tx, engine)
+}
+
+// backfillManagedNodeGeoNulls sets any NULL lat/lon/map_placed to their zero value. An ADD
+// COLUMN without a default leaves EXISTING rows NULL, and the entity's Lat/Lon (float64) and
+// MapPlaced (bool) are non-pointer, so the row scanner fails on a NULL with "converting NULL
+// to float64 is unsupported" — breaking List AND adoption's read-back. Engine-aware:
+// map_placed is BOOLEAN on postgres, so its zero value is `false`, not `0` (a boolean-vs-
+// integer type error) — sqlite/mariadb store it as an integer where 0 is correct. Idempotent.
+func backfillManagedNodeGeoNulls(ctx context.Context, tx *sql.Tx, engine string) error {
+	falseLit := "0"
+	if engine == "postgres" {
+		falseLit = "false"
+	}
+	stmts := []string{
+		"UPDATE managed_node SET lat = 0 WHERE lat IS NULL",
+		"UPDATE managed_node SET lon = 0 WHERE lon IS NULL",
+		"UPDATE managed_node SET map_placed = " + falseLit + " WHERE map_placed IS NULL",
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("backfill managed_node geo NULLs: %w", err)
+		}
+	}
+	return nil
+}
+
+// geoColumnType maps a base SQL type to the concrete per-engine type the auto-migrator uses
+// (mirrors infra/db/bootstrap normalizeSQLType), so the explicit migration and the
+// auto-migrator produce the same column definition.
+func geoColumnType(base, engine string) string {
+	switch engine {
+	case "sqlite":
+		switch base {
+		case "DOUBLE PRECISION":
+			return "REAL"
+		case "BOOLEAN":
+			return "INTEGER"
+		}
+	case "mariadb":
+		switch base {
+		case "DOUBLE PRECISION":
+			return "DOUBLE"
+		case "BOOLEAN":
+			return "TINYINT(1)"
+		}
+	}
+	return base // postgres, or an already-concrete type
+}
+
+// tableColumns returns the lower-cased column names of a table for the given engine.
+func tableColumns(ctx context.Context, tx *sql.Tx, engine, table string) (map[string]bool, error) {
+	var query string
+	var args []any
+	switch engine {
+	case "postgres":
+		query = "SELECT column_name FROM information_schema.columns WHERE table_name = $1"
+		args = []any{table}
+	case "mariadb":
+		query = "SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ?"
+		args = []any{table}
+	case "sqlite":
+		query = "SELECT name FROM pragma_table_info('" + table + "')"
+	default:
+		return nil, fmt.Errorf("unsupported db engine %q", engine)
+	}
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out[strings.ToLower(name)] = true
+	}
+	return out, rows.Err()
+}
+
 func (m *module) Entities() []any {
 	return []any{
 		sharedentities.ApiEndpoint{},
@@ -99,6 +445,12 @@ func (m *module) Entities() []any {
 		// Cross-domain correlation: the reason the suite has a fourth app.
 		appentities.FleetRule{},
 		appentities.FleetRuleClause{},
+		// Fleet map: sites + uploaded floor plans (indoor view); node/camera placements.
+		appentities.Site{},
+		appentities.FloorPlan{},
+		appentities.NodePlacement{},
+		// Dedup ledger for node-relayed notifications (reconnect replay idempotency).
+		appentities.RelayedNotif{},
 	}
 }
 
@@ -120,6 +472,11 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Node Access", Description: "per-node read/write access grants (owner-role managed)", Path: "/api/nodes/access", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Node Self-Drop", Description: "node-initiated unpair notice (fleet-key authenticated)", Path: "/api/nodes/self-dropped", AccessTier: apiaccessenums.Public},
 		{Title: "Audit", Description: "append-only audit trail of sensitive actions (superadmin-gated)", Path: "/api/audit", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Basemap", Description: "offline vector basemap archive for the fleet map", Path: "/api/basemap", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Sites", Description: "sites and uploaded floor plans for the indoor map", Path: "/api/sites", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Floors", Description: "floor-plan images and node/camera placements", Path: "/api/floors", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Placements", Description: "reposition/remove node and camera markers on floor plans", Path: "/api/placements", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Node Floorplan", Description: "floor plans holding a node camera markers (geo-map drill-down)", Path: "/api/node-floorplan", AccessTier: apiaccessenums.AuthOnly},
 	}
 
 	statements := make([]string, 0, len(endpoints)*2)
@@ -182,6 +539,16 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewRbacAdminApi(api, *deps.Auth, controlSession, roleService, userService, auditService)
 	apis.NewAuditApi(api, *deps.Auth, controlSession, auditService)
 
+	// Offline vector basemap for the fleet map: a directory of .pmtiles region archives
+	// under the data dir (absent = map renders without cartography). Normally an intranet
+	// install never reaches a CDN; but if MYSELIASAN_BASEMAP_SOURCE is set to a remote
+	// pmtiles URL, an operator can DOWNLOAD a new region on demand (extracted with the
+	// pmtiles tool, MYSELIASAN_PMTILES_BIN or "pmtiles" on PATH) — the one online action.
+	apis.NewBasemapApi(api, *deps.Auth, controlSession,
+		apis.ResolveBasemapDir(deps.DataDir, ""),
+		os.Getenv("MYSELIASAN_BASEMAP_SOURCE"),
+		os.Getenv("MYSELIASAN_PMTILES_BIN"))
+
 	// Node management: discover, adopt, and release mymatasan nodes over the
 	// fleet-key-authenticated pairing protocol. ParentBaseURL is recorded on each
 	// node so it can call back (enroll / release / self-drop). The control plane is
@@ -233,7 +600,20 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		CertWarnBefore: time.Duration(p.RenewBeforeHours) * time.Hour,
 		SecretCipher:   secretCipher,
 	})
-	apis.NewNodesApi(api, *deps.Auth, controlSession, registry, auditService)
+	// One-time: bless nodes already in the fleet with auto-renew so upgrading to the
+	// operator-gated renewal model doesn't silently expire a fleet that was renewing
+	// automatically. New adoptions start with auto-renew off (a dead-man's switch).
+	if err := registry.BackfillAutoRenew(context.Background()); err != nil {
+		deps.Logger.Warnf("myseliasan.nodes", "auto-renew backfill failed: %v", err)
+	}
+	nodesApi := apis.NewNodesApi(api, *deps.Auth, controlSession, registry, auditService,
+		func(f string, a ...any) { deps.Logger.Warnf("myseliasan.nodes", f, a...) })
+
+	// Sites + floor plans (indoor map). Plan images are encrypted at rest with the same
+	// fleet cipher that protects the CA key/PSK, stored under <dataDir>/floorplans.
+	planDir := apphost.ResolveWritablePath(deps.DataDir, "floorplans")
+	siteService := services.NewSiteService(deps.Db, secretCipher, planDir)
+	apis.NewSitesApi(api, *deps.Auth, controlSession, siteService)
 
 	bgCtx, stopBackground := context.WithCancel(context.Background())
 
@@ -304,8 +684,13 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		}
 	}()
 
+	// Dedup ledger for node-relayed notifications: keys each ingested node event by the node's
+	// stable engine id so the reconnect replay (below) never re-publishes one already delivered
+	// live or by an earlier replay.
+	relayDedup := services.NewRelayDedup(deps.Db)
+
 	onNodeEvent := func(nodeID, kind string, body []byte) {
-		ingestNodeEvent(notificationService, nodeID, kind, body)
+		ingestNodeEvent(notificationService, relayDedup, nodeID, kind, body)
 		// Feed the same event to the correlator. It is deliberately fed the NODE event rather
 		// than the control plane's own re-published notification: correlating on our own output
 		// would let a fleet rule's alert satisfy another fleet rule's clause, and two rules could
@@ -314,12 +699,40 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	}
 	controlServer := services.NewControlServer(registry, p.ControlPort, onNodeEvent,
 		func(format string, args ...any) { deps.Logger.Infof("myseliasan.control", format, args...) })
+	// Replay-on-reconnect: the live push (above) drops any notification a node publishes while
+	// its control channel is down, and nothing backfills it — so the control plane's feed could
+	// undercount a busy node. When a node (re)connects, pull the notifications it created within
+	// the replay window and ingest the ones we're missing (relayDedup makes this idempotent).
+	controlServer.SetOnConnect(func(nodeID string) {
+		replayNodeNotifications(controlServer, notificationService, relayDedup, nodeID,
+			func(f string, a ...any) { deps.Logger.Infof("myseliasan.notif-replay", f, a...) })
+	})
+	// Keep the dedup ledger bounded: prune markers older than twice the replay window — a
+	// windowed pull can never re-offer them, so they are dead weight.
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-bgCtx.Done():
+				return
+			case <-ticker.C:
+				cutoff := time.Now().Add(-2 * notifReplayWindow).Unix()
+				if _, err := relayDedup.Prune(bgCtx, cutoff); err != nil {
+					deps.Logger.Warnf("myseliasan.notif-replay", "prune dedup ledger: %v", err)
+				}
+			}
+		}
+	}()
 	// The persistent node-dialed control channel is the authoritative liveness signal:
 	// a node holding a live connection is online even when the parent cannot reach its
 	// mTLS port directly. Wire its presence into the heartbeat reconciler so the mTLS
 	// poll becomes a fallback that can no longer flap a control-connected node offline.
 	m.controlServer = controlServer
 	registry.SetControlPresence(controlServer.IsConnected)
+	// Surface nodes the control channel refuses (stranded: valid cert, no record) so an
+	// operator can see and block them. Wired now that the control server exists.
+	nodesApi.SetRejectTracker(controlServer)
 	// Proactive fleet-health alerting: the heartbeat reconciler detects a node dropping
 	// to "lost", recovering, or a certificate nearing expiry and hands each transition
 	// to this sink, which surfaces it in the unified notification feed (so a
@@ -435,14 +848,14 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 // disk-full, alert, system, …) is surfaced rather than dropped: the frame is parsed
 // as a notification when it carries one, otherwise wrapped in a generic message
 // tagged with the raw kind — so a node reporting trouble is never silently lost.
-func ingestNodeEvent(svc *notification.Service, nodeID, kind string, body []byte) {
+func ingestNodeEvent(svc *notification.Service, dedup *services.RelayDedup, nodeID, kind string, body []byte) {
 	switch kind {
 	case "notification":
 		var n notification.Notification
 		if err := json.Unmarshal(body, &n); err != nil {
 			return
 		}
-		republishNodeNotification(svc, nodeID, n)
+		republishNodeNotification(svc, dedup, nodeID, n)
 	case "going-offline":
 		svc.Publish(context.Background(), notification.Notification{
 			Category: notification.CategorySystem,
@@ -463,7 +876,7 @@ func ingestNodeEvent(svc *notification.Service, nodeID, kind string, body []byte
 			if n.Severity == "" {
 				n.Severity = severityForNodeKind(kind)
 			}
-			republishNodeNotification(svc, nodeID, n)
+			republishNodeNotification(svc, dedup, nodeID, n)
 			return
 		}
 		svc.Publish(context.Background(), notification.Notification{
@@ -477,9 +890,17 @@ func ingestNodeEvent(svc *notification.Service, nodeID, kind string, body []byte
 	}
 }
 
-// republishNodeNotification re-tags a node-originated notification with its origin
-// node and lets the parent assign a fresh id in its own feed.
-func republishNodeNotification(svc *notification.Service, nodeID string, n notification.Notification) {
+// republishNodeNotification re-tags a node-originated notification with its origin node and
+// lets the parent assign a fresh id in its own feed. It is called on BOTH paths — the live
+// control-channel push and the reconnect replay pull — so it dedups on the node's stable engine
+// id (n.ID, which is the same value on both paths): once a given node event has been ingested it
+// is never published again, which is what makes replaying a disconnect window idempotent.
+// It returns true when the notification was published, false when dedup suppressed it.
+func republishNodeNotification(svc *notification.Service, dedup *services.RelayDedup, nodeID string, n notification.Notification) bool {
+	originID := n.ID // the node's engine id; identical on the live push and a pulled row's __oid
+	if dedup != nil && dedup.SeenOrRecord(context.Background(), nodeID, originID, n.CreatedAt) {
+		return false // already ingested (live or a prior replay)
+	}
 	n.ID = "" // parent assigns its own id in its own feed
 	n.Source = "node:" + nodeID
 	if n.Data == nil {
@@ -487,6 +908,119 @@ func republishNodeNotification(svc *notification.Service, nodeID string, n notif
 	}
 	n.Data["nodeId"] = nodeID
 	svc.Publish(context.Background(), n)
+	return true
+}
+
+// notifReplayWindow bounds how far back a reconnect replay pulls a node's notifications. It must
+// comfortably exceed a plausible disconnect; anything older is assumed already ingested (or not
+// worth backfilling), and dedup markers past twice this are pruned.
+const notifReplayWindow = 72 * time.Hour
+
+// nodeNotifRow is the subset of a node's persisted notification the replay needs. Fields mirror
+// domain/entities.Notification's JSON tags.
+type nodeNotifRow struct {
+	Category  string `json:"category"`
+	Severity  string `json:"severity"`
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	CameraId  int64  `json:"cameraId"`
+	RefType   string `json:"refType"`
+	RefId     int64  `json:"refId"`
+	Link      string `json:"link"`
+	Metadata  string `json:"metadata"`
+	CreatedAt int64  `json:"createdAt"`
+}
+
+// parseNodeNotifRows extracts the items from a node's /api/notifications response, tolerating both
+// the plain {result:{items}} envelope and a wrapping {data:{result:{items}}}.
+func parseNodeNotifRows(body []byte) []nodeNotifRow {
+	var env struct {
+		Result *struct {
+			Items []nodeNotifRow `json:"items"`
+		} `json:"result"`
+		Data *struct {
+			Result struct {
+				Items []nodeNotifRow `json:"items"`
+			} `json:"result"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return nil
+	}
+	if env.Result != nil {
+		return env.Result.Items
+	}
+	if env.Data != nil {
+		return env.Data.Result.Items
+	}
+	return nil
+}
+
+// nodeRowToNotification rebuilds an in-memory notification from a pulled row, restoring the node's
+// engine id (persisted under notification.OriginIDKey) as its ID so republish dedups on the same
+// key the live push carries, and keeping the original timestamp.
+func nodeRowToNotification(row nodeNotifRow) notification.Notification {
+	data := map[string]any{}
+	if row.Metadata != "" {
+		_ = json.Unmarshal([]byte(row.Metadata), &data)
+	}
+	originID, _ := data[notification.OriginIDKey].(string)
+	return notification.Notification{
+		ID:        originID,
+		Category:  row.Category,
+		Severity:  notification.Severity(row.Severity),
+		Title:     row.Title,
+		Body:      row.Body,
+		CameraId:  row.CameraId,
+		RefType:   row.RefType,
+		RefId:     row.RefId,
+		Link:      row.Link,
+		Data:      data,
+		CreatedAt: row.CreatedAt,
+	}
+}
+
+// replayNodeNotifications pulls a node's notifications from the replay window over the control
+// tunnel and ingests the ones the control plane is missing. Idempotent via relayDedup: events
+// already delivered live (or by an earlier replay) are skipped. Called on every (re)connect; a
+// node that is offline or has nothing to replay is a cheap no-op.
+func replayNodeNotifications(sender services.ControlSender, svc *notification.Service, dedup *services.RelayDedup, nodeID string, logf func(string, ...any)) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cursor := time.Now().Add(-notifReplayWindow).Unix()
+	ingested := 0
+	for page := 0; page < 50; page++ { // hard cap 50*500 = 25k events/reconnect
+		req := control.Request{
+			Method: "GET",
+			Path:   fmt.Sprintf("/api/notifications?since=%d&limit=500", cursor),
+			Role:   "admin",
+			Actor:  "control-plane:notif-replay",
+		}
+		resp, err := sender.SendRequest(ctx, nodeID, req)
+		if err != nil || resp.Status < 200 || resp.Status >= 300 {
+			return
+		}
+		rows := parseNodeNotifRows(resp.Body)
+		if len(rows) == 0 {
+			break
+		}
+		maxTs := cursor
+		for _, row := range rows {
+			if republishNodeNotification(svc, dedup, nodeID, nodeRowToNotification(row)) {
+				ingested++
+			}
+			if row.CreatedAt > maxTs {
+				maxTs = row.CreatedAt
+			}
+		}
+		if len(rows) < 500 || maxTs <= cursor {
+			break // last page, or no time progress (a full page in one second) — stop
+		}
+		cursor = maxTs // re-includes same-second boundary rows; dedup drops them
+	}
+	if ingested > 0 && logf != nil {
+		logf("replayed %d missed notification(s) from node %s", ingested, nodeID)
+	}
 }
 
 // categoryForNodeKind maps a node event kind to a notification category so unknown

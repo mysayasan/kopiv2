@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -53,11 +54,36 @@ type ControlServer struct {
 
 	running atomic.Bool // true while the control listener's serve loop is active
 
+	// onConnect, when set, is invoked (in its own goroutine) each time a node's control
+	// connection is accepted — the moment to reconcile anything that could have drifted while
+	// the node was gone (e.g. replay notifications published during the disconnect). Optional.
+	onConnect func(nodeID string)
+
 	mu    sync.Mutex
 	conns map[string]*control.Conn // nodeID -> current live connection
 
 	pendingMu sync.Mutex
 	pending   map[string]pendingReq // correlation id -> response waiter
+
+	// rejected tracks nodes that dialed the control channel but were refused (unknown row or
+	// revoked cert). These are otherwise INVISIBLE — the connection is closed and nothing is
+	// persisted — so a stranded node (paired to us but with no managed record) would only ever
+	// show up as a recurring log line. Surfacing them lets an operator see and block one.
+	rejectedMu sync.Mutex
+	rejected   map[string]*RejectedNode
+}
+
+// RejectedNode is a node that keeps connecting to the control channel but is refused. It
+// holds a valid fleet-CA certificate (or the mTLS handshake would have failed) yet has no
+// usable managed record — typically a node released here but never reset on its side, or one
+// whose row was lost. Reason is human-facing ("unknown node" / "certificate revoked").
+type RejectedNode struct {
+	NodeID     string `json:"nodeId"`
+	Reason     string `json:"reason"`
+	RemoteAddr string `json:"remoteAddr"`
+	FirstSeen  int64  `json:"firstSeen"`
+	LastSeen   int64  `json:"lastSeen"`
+	Count      int    `json:"count"`
 }
 
 // pendingReq is an in-flight tunneled request awaiting its node response. nodeID lets
@@ -84,7 +110,59 @@ func NewControlServer(registry INodeRegistry, port int, onEvent NodeEventHandler
 		logf:     logf,
 		conns:    map[string]*control.Conn{},
 		pending:  map[string]pendingReq{},
+		rejected: map[string]*RejectedNode{},
 	}
+}
+
+// recordRejected notes a refused control-channel connection so an operator can see and act on
+// a stranded node. Deduped by nodeID; bumps the count + LastSeen on repeats (the node retries
+// in a tight loop). Bounded so a flood of distinct ids can't grow it without limit.
+func (cs *ControlServer) recordRejected(nodeID, remoteAddr, reason string) {
+	cs.rejectedMu.Lock()
+	defer cs.rejectedMu.Unlock()
+	now := time.Now().Unix()
+	if r, ok := cs.rejected[nodeID]; ok {
+		r.LastSeen = now
+		r.Count++
+		if remoteAddr != "" {
+			r.RemoteAddr = remoteAddr
+		}
+		r.Reason = reason
+		return
+	}
+	const maxRejected = 200
+	if len(cs.rejected) >= maxRejected {
+		// Evict the stalest entry so the map stays bounded.
+		var oldestID string
+		var oldest int64
+		for id, r := range cs.rejected {
+			if oldestID == "" || r.LastSeen < oldest {
+				oldestID, oldest = id, r.LastSeen
+			}
+		}
+		delete(cs.rejected, oldestID)
+	}
+	cs.rejected[nodeID] = &RejectedNode{NodeID: nodeID, Reason: reason, RemoteAddr: remoteAddr, FirstSeen: now, LastSeen: now, Count: 1}
+}
+
+// Unrecognized returns the currently-tracked refused nodes, most-recent first.
+func (cs *ControlServer) Unrecognized() []RejectedNode {
+	cs.rejectedMu.Lock()
+	defer cs.rejectedMu.Unlock()
+	out := make([]RejectedNode, 0, len(cs.rejected))
+	for _, r := range cs.rejected {
+		out = append(out, *r)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].LastSeen > out[j].LastSeen })
+	return out
+}
+
+// ForgetRejected drops a node from the rejected list (operator dismissed it, or it was
+// blocked/handled). It reappears only if it dials and is refused again.
+func (cs *ControlServer) ForgetRejected(nodeID string) {
+	cs.rejectedMu.Lock()
+	delete(cs.rejected, nodeID)
+	cs.rejectedMu.Unlock()
 }
 
 // SendRequest tunnels a request to nodeID over its live control connection and
@@ -191,6 +269,10 @@ func (cs *ControlServer) Run(ctx context.Context) {
 // (advisory — it does not gate the process's db/cache readiness).
 func (cs *ControlServer) IsListening() bool { return cs.running.Load() }
 
+// SetOnConnect registers a callback invoked (in its own goroutine) whenever a node's control
+// connection is accepted. Set once at startup, before Run. See the onConnect field.
+func (cs *ControlServer) SetOnConnect(fn func(nodeID string)) { cs.onConnect = fn }
+
 // ConnectedCount returns the number of nodes currently holding a live control channel.
 func (cs *ControlServer) ConnectedCount() int {
 	cs.mu.Lock()
@@ -204,11 +286,19 @@ func (cs *ControlServer) handleConn(nodeID string, conn *control.Conn) {
 	node, err := cs.registry.AcceptControlConn(context.Background(), nodeID)
 	if err != nil {
 		cs.logf("control: rejecting node %s: %v", nodeID, err)
+		cs.recordRejected(nodeID, conn.RemoteAddr(), err.Error())
 		_ = conn.Close()
 		return
 	}
+	// A node that now connects cleanly is no longer a problem — drop any stale rejection.
+	cs.ForgetRejected(nodeID)
 	cs.add(nodeID, conn)
 	cs.logf("control: node %s (%s) connected", nodeID, node.Name)
+	// Reconcile drift from the disconnect (e.g. catch up on notifications the node published
+	// while the channel was down). Off the read loop so a slow reconcile never stalls frames.
+	if cs.onConnect != nil {
+		go cs.onConnect(nodeID)
+	}
 	defer func() {
 		cs.remove(nodeID, conn)
 		cs.logf("control: node %s disconnected", nodeID)

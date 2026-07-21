@@ -37,12 +37,29 @@ func (s *repoStore) Save(ctx context.Context, n infranotif.Notification) (int64,
 	return int64(id), nil
 }
 
+// OriginIDKey is the reserved Data/Metadata key under which a notification's engine id
+// (infra/notification.Notification.ID) is persisted. The numeric DB primary key differs
+// between stores, but this id travels with the notification on the live control-channel
+// push too — so a fleet control plane replaying a node's missed notifications can dedup a
+// pulled row against a live-pushed one by a single stable key on both paths.
+const OriginIDKey = "__oid"
+
 // toEntity maps an infra notification to the persisted entity, serializing the
-// arbitrary Data map into the Metadata JSON column.
+// arbitrary Data map into the Metadata JSON column. The engine id is folded into the
+// serialized Data under OriginIDKey so it survives persistence (see OriginIDKey).
 func toEntity(n infranotif.Notification) entities.Notification {
 	metadata := ""
-	if len(n.Data) > 0 {
-		if raw, err := json.Marshal(n.Data); err == nil {
+	data := n.Data
+	if n.ID != "" {
+		merged := make(map[string]any, len(data)+1)
+		for k, v := range data {
+			merged[k] = v
+		}
+		merged[OriginIDKey] = n.ID
+		data = merged
+	}
+	if len(data) > 0 {
+		if raw, err := json.Marshal(data); err == nil {
 			metadata = string(raw)
 		}
 	}

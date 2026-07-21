@@ -36,9 +36,35 @@ type ManagedNode struct {
 	// CertExpiresAt is the unix expiry of the last node certificate this CA issued,
 	// so the UI can surface renewal health.
 	CertExpiresAt int64 `json:"certExpiresAt" form:"certExpiresAt" query:"certExpiresAt"`
+	// AutoRenew gates whether this node's certificate is allowed to renew. The node
+	// re-enrolls automatically before expiry, but the control plane REFUSES that renewal
+	// unless an operator has turned this on — so a node nobody blesses lets its cert lapse
+	// by itself, drops off the control channel, and goes "lost". It is a per-node
+	// dead-man's switch for fleet trust: forgotten or decommissioned nodes fall out of the
+	// fleet without any explicit revoke.
+	//
+	// DEFAULT FALSE for a newly adopted node (the initial enrollment right after adoption
+	// is always allowed; only subsequent renewals are gated). Nodes adopted before this
+	// field existed are backfilled to true once at startup so an existing fleet — which was
+	// renewing automatically — is not surprise-expired. See INodeRegistry.BackfillAutoRenew.
+	AutoRenew bool `json:"autoRenew" form:"autoRenew" query:"autoRenew"`
 	// Status: "online" (adopted, reachable), "lost" (unreachable / token rejected),
 	// or "self-dropped" (the node unpaired itself).
 	Status string `json:"status" form:"status" query:"status"`
+	// Lat/Lon are the node's position on the geographic fleet map, set by an operator
+	// dragging the pin. MapPlaced distinguishes "deliberately positioned" from the zero
+	// value — (0,0) is a real coordinate in the Gulf of Guinea, so a bare float can't tell
+	// an unplaced node from one a prankster parked at null island. A node with MapPlaced
+	// false is simply absent from the map until someone places it.
+	Lat       float64 `json:"lat" form:"lat" query:"lat"`
+	Lon       float64 `json:"lon" form:"lon" query:"lon"`
+	MapPlaced bool    `json:"mapPlaced" form:"mapPlaced" query:"mapPlaced"`
+	// SiteId is the building this appliance RESIDES IN (0 = none / standalone). A node's cameras
+	// physically live at the site+floor of each placement; SiteId records where the *box* itself
+	// sits, so the map can represent an in-building node by its building rather than a redundant
+	// pin. A node with a SiteId is NOT drawn as its own map pin — only a building-less node is
+	// (a standalone recorder, an IoT hub in the field, an off-site aggregator).
+	SiteId int64 `json:"siteId" form:"siteId" query:"siteId"`
 	// OwnerRoleId is the myseliasan RoleId that adopted this node. That role gets full
 	// (admin) access to the node by default; other roles need an explicit
 	// NodeAccessGrant. 0 means legacy/unknown owner (no default access).

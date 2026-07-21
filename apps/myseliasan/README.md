@@ -23,16 +23,17 @@ The **Mymatasan** view in the UI exposes:
 
 - **Fleet key**: generate or set the shared PSK (`POST /api/nodes/fleet-key`). Both the control plane and every node must have the same key for discovery to work.
 - **LAN scan**: discover unpaired nodes on the local subnet (`POST /api/nodes/scan`); each result shows whether the node is already adopted.
-- **Adopt**: opens a pop-up **Adopt** dialog — pre-filled with the address/hostname when opened from a discovered node, or blank via an **Adopt manually** button (for a node on another subnet, not reachable by multicast). Provide the HTTPS port and the claim code generated on the node UI to bind it (`POST /api/nodes/adopt`); name/description/icon are optional and can be edited later. After adoption, the node automatically contacts `POST /api/nodes/enroll` with a CSR; the control plane signs it and returns a short-lived certificate (default 7 days).
+- **Adopt**: opens a pop-up **Adopt** dialog — pre-filled with the address/hostname when opened from a discovered node, or blank via an **Adopt manually** button (for a node on another subnet, not reachable by multicast). Provide the HTTPS port and the claim code generated on the node UI to bind it (`POST /api/nodes/adopt`); name/description/icon are optional and can be edited later. After adoption, the node automatically contacts `POST /api/nodes/enroll` with a CSR; the control plane signs it and returns a certificate (default 90 days). That initial enrollment is always allowed, but every *subsequent* renewal (the node re-enrolling before its cert expires, exactly as it always has) is refused unless an operator turns on **auto-renew** for that node (off by default — see "Certificate auto-renew" below) — a per-node dead-man's switch so a forgotten or decommissioned node falls out of the fleet on its own instead of needing an explicit revoke.
 - **Adopted nodes**: table showing all adopted nodes with their status (`online`, `lost`, `self-dropped`), cert expiry, a **Manage** button (opens the node Settings dialog, below), a **Wipe** button, and a **Release** button. Release revokes the node's certificate and removes the registry row. A **node kind** column shows **"Camera node"** (a `mymatasan` NVR) or **"Sensor hub"** (a `myiotsan` device hub) — the AUTHORITATIVE value the node itself returned over the fleet-key-signed, claim-code-gated adopt call, never the unsigned display hint carried in a LAN scan result. A node adopted before this field existed shows as a camera node, since every one of those is.
 - **Wipe**: remotely factory-resets an adopted node over the control tunnel — the same secure wipe mymatasan can run on itself (see `Secure Wipe & Reset`), erasing its recordings/config and restarting it. Clicking Wipe first checks the node's `bootstrap.allowReset` gate (`GET .../proxy/api/system/reset/state`); if allowed, an auto-proceeding countdown modal (cancellable) confirms before `POST .../proxy/api/system/reset` is sent. The node returns immediately (reset runs asynchronously) then drops offline while it wipes and restarts.
 - **Node Settings dialog**: **Manage** opens a tabbed modal — Details, Camera Health, Users, Backup & Recovery, and Version & Health — styled like mymatasan's own Settings page (via the same embedded-node styling described under "Frontend"). Every tab except Details tunnels its reads/writes over the node proxy (`/api/nodes/{id}/proxy/...`):
-  - **Details** edits the control-plane record itself — name, description, icon — via `PUT /api/nodes/{id}` (not tunneled; this is myseliasan's own record of the node, distinct from anything on the node). Also shows the node ID and a clickable link to the node's own address.
+  - **Details** edits the control-plane record itself — name, description, icon — via `PUT /api/nodes/{id}` (not tunneled; this is myseliasan's own record of the node, distinct from anything on the node). Also shows the node ID and a clickable link to the node's own address. A **Certificate** section on the same tab shows the cert's expiry (status-tinted: ok / expiring within ~14 days / expired / not yet enrolled) and an **Auto-renew** toggle (`PUT /api/nodes/{id}/auto-renew`) — with it off, a warning explains the node will lose its fleet connection when the certificate expires; turning it on lets the node's next automatic re-enrollment through.
   - **Camera Health** reads/writes the node's camera-health monitor settings (`GET/PUT .../proxy/api/settings/health`).
   - **Users** lists/adds/deletes the node's local users and can toggle admin/reset password (`.../proxy/api/settings/users`).
   - **Backup & Recovery** shows the node's recovery-key configured state and hosts the **Wipe** danger-zone action; the actual `.mmbackup` file transfer stays on the node itself (it can exceed the control-channel frame cap, so it is not proxied here).
   - **Version & Health** mirrors mymatasan's own tab: software version + shared-core version + commit + build date, update check/apply, service health (API liveness via `.../proxy/api/health` and readiness via `.../proxy/api/ready` — the node-side `/api/ready` mirror described in `docs/modules/infra/apphost/run.go.md` — including per-component Db/Cache/Machine/Cameras status), and host CPU/memory/disk with the node's own warn/critical thresholds. An **older node whose API predates `/api/ready`** shows the readiness pill as unavailable rather than failing the panel.
 - **Heartbeat**: the control plane probes every adopted node over mTLS (`GET :<mtlsPort>/heartbeat`) on a configurable interval (default 60 s) and marks each node `online` or `lost`. The reconciler is also proactive rather than passive: a node dropping to `lost`, a lost node recovering, or a node certificate nearing expiry each raise a notification in the unified feed (see "Fleet-health alerting" below) — the control plane is no longer just a relay that silently stops hearing from a crashed node.
+- **Certificate auto-renew**: node certificates used to renew automatically and silently forever. Renewal is now gated per node by an **Auto-renew** toggle (`PUT /api/nodes/{id}/auto-renew`, shown on the node's Details tab — see below), **off by default for a newly adopted node**. With it off, the node's own automatic re-enrollment attempt before its cert expires is refused by the control plane (it needs no claim code — the node still authenticates with its existing pairing token — the control plane just declines to sign); the certificate then lapses on schedule, the node drops off the control channel, and it goes `lost` — a per-node dead-man's switch so a forgotten or decommissioned node quietly falls out of the fleet without an operator needing to remember to revoke it. Turning it on lets the node's next renewal through and keeps it current indefinitely, same as before this feature. Upgrading an existing fleet does not surprise-expire anything: a one-time startup pass (`INodeRegistry.BackfillAutoRenew`) turns auto-renew on for every node already enrolled before this feature shipped. The node certificate's default lifetime is also longer now (90 days, up from 7) so an un-renewed node stays reachable for a meaningful window rather than lapsing within a week.
 - **Command tunnel**: after pairing, each node dials a persistent WebSocket-over-fleet-mTLS connection to `myseliasan`'s control channel port (`pairing.controlPort`, code fallback 49533; shipped `config.json` sets 39533). The `/api/nodes/{id}/proxy/<node-path>` endpoint tunnels any HTTP command to the node's own API router; the node's authorization stack enforces viewer/operator/admin based on the per-node access grant. Node-pushed event frames (AI alerts, health, going-offline) are ingested into the control plane's notification feed at `/api/notifications`. If a node's control channel drops while a tunneled command is still in flight, the proxy now fails fast with a `404 node is not connected` instead of hanging until a 30 s timeout — but for a non-idempotent write (e.g. a settings change) the outcome on the node at the moment of disconnect is unknown and is **not** automatically retried, since there is no tunneled-write idempotency key yet.
 - **Node camera live view (media relay)**: the node also dials a separate media channel (`pairing.mediaPort`, code fallback 49534; shipped `config.json` sets 39534) over fleet mTLS. When a browser requests live view of a node camera (`POST /api/nodes/{id}/cameras/{cam}/webrtc/offer`), `myseliasan` asks the node to stream that camera's RTP over the media channel, then re-broadcasts it to the browser over WebRTC — at full frame rate, without the browser needing any direct path to the node.
 - **Embedded node camera pages**: selecting a camera in the side-nav node tree opens that camera's real `mymatasan` page inside `myseliasan` — Live View (relay video + PTZ + audio + "Add to Live Views"), Detection, Recordings, and Settings tabs, matching mymatasan's own tab bar exactly. The page header is the shared `@shared/CameraHero` (the same component mymatasan's own camera page renders): a breadcrumb trail (`Nodes > <node name> > <camera name>`, both non-final crumbs navigating back via the node manager's own back/clear-focus handlers) over a status-tinted camera tile with health/stream chips. This replaced a flat title row that used to show the camera's ONVIF/host URL underneath the name — that URL is no longer in the header, but is still available as the ONVIF URI / Host chips in the Live tab's info grid. These tabs are the actual mymatasan React components (copied into `components/nodecam/`), routed over the control/media channels instead of same-origin, so behavior and design track mymatasan automatically — see "Frontend" below. Recorded video plays through a dedicated range-capable endpoint rather than the command proxy (see the "Recording playback over the tunnel" bullet below). The Recordings tab includes the same **Purge now** action as mymatasan's own Recordings tab (see mymatasan's README) — deletes ALL footage and AI-event snapshots for the camera immediately, behind the same 5-second cancellable countdown — tunneled to the node's `POST /api/recording/purge-camera` via the control proxy. A cross-node **Live Views** wall (its own nav item, positioned above the Nodes tree) lets an operator pin cameras from any adopted node into one grid, built for parity with mymatasan's own Live Views: grid layout picker, pagination, fullscreen, drag-to-reorder tiles, per-tile maximize and PTZ, and an in-wall cross-node **Add camera** picker for adding tiles without leaving the wall; a **Node Dashboard** mirrors mymatasan's own analytics dashboard over the tunnel. Older nodes whose API predates a given feature show an inline "unavailable on this node" banner instead of a silent blank panel.
@@ -43,8 +44,116 @@ The **Mymatasan** view in the UI exposes:
 - **Recording playback over the tunnel**: the control channel caps each message at 16 MiB, and an encrypted or HEVC-stored clip isn't seekable end-to-end through it, so recorded video for a node camera streams through `GET /api/nodes/{id}/recording-stream/{segId}` instead of the generic command proxy. It caps every browser `Range` request to 8 MiB, forwards it to the node's now-Range-capable `GET /api/recording/segments/{id}/download` (which materializes a seekable plaintext temp copy of encrypted/HEVC segments on first touch), and returns `206 Partial Content` — so the `<video>` element can play and seek a clip of any size without any single tunneled message exceeding the cap. See `docs/REQUEST_FLOW.md` → "Recording Playback over the Control Tunnel Flow".
 - **Per-node access grants**: the adopting role and **superadmin roles** own the node (full access without a grant); other roles need an explicit grant via `GET/POST/DELETE /api/nodes/access`, set to one of three device-access levels — **Viewer** (`canRead`, watch live), **Operator** (`canOperate`, + review recorded footage, acknowledge alerts, PTZ, talk-back), or **Admin** (`canWrite`, everything including deleting footage) — mirroring mymatasan's own three local roles. The levels escalate (admin implies operator implies viewer) and are normalised on save, so a grant is really one choice of level. A superadmin can also query a role's grants across all nodes with `GET /api/nodes/access?roleId=ID` (central RBAC node-access matrix on the RBAC page).
 - **Adoption metadata**: when adopting a node, the operator can now set a custom **Name** (overrides the node's reported hostname), a **Description** (shown as a tooltip in the nav tree), and an **Icon** (glyph displayed in the side-nav node tree).
+- **Unrecognized (stranded) nodes**: a node can hold a valid fleet-CA certificate but have no managed record here anymore — typically released here without being reset on its own side. Previously that was entirely invisible: the control channel just refused the connection over and over. An **Unrecognized nodes** panel (only rendered when the list is non-empty) now surfaces each one — node id, refusal reason, remote address, attempt count, last-seen time (`GET /api/nodes/unrecognized`) — with **Block** (revokes the cert so it can never enroll or connect again — the control-plane-side "remove" for a node with no row to Release; a confirm dialog is required) and **Dismiss** (clears the entry without revoking; it reappears if the node dials again).
+- Adopting a node whose record fails to save on the control plane (after the node itself already committed to pairing) no longer leaves it permanently stranded: the pairing is automatically rolled back so the node stays discoverable and can be re-adopted with a fresh claim code, and the operator sees an actionable error instead of a raw database message.
 
 Both app and node must be on the same LAN segment for UDP multicast discovery to reach the node. Manual adoption by IP+port works across subnets if the node is reachable by HTTPS. The mTLS management port (code fallback 49532; shipped `config.json` sets 39532) must also be reachable from the control plane.
+
+## Fleet Map
+
+A **Map** nav item (top of the **Workspace** group, next to Dashboard) gives the fleet a
+geographic and indoor spatial view, entirely offline — no tile CDN, no external map service — so
+it works on an air-gapped/intranet install exactly like everything else in this app. It renders
+with [OpenLayers](https://openlayers.org/) (`ol` + `ol-pmtiles`, vendored into
+`apps/myseliasan/views/react-webpack`), lazy-loaded only when the tab is opened so the ~110KB
+gzipped mapping library never weighs down the initial bundle.
+
+A single segmented control switches between two views that share the same status-pin vocabulary
+and differ only in the plane the pins live on:
+
+- **Geographic view — digital twin**: the map draws **two kinds of marker**: **buildings** (a
+  `Site` with a geographic position, `GET /api/sites/overview`) and **building-less appliances**
+  (a `ManagedNode` with a placed position but no building, `!n.siteId`). A building — not the node
+  appliance that happens to record its cameras — is the map's true anchor for "where is this
+  camera physically": a node's own box can sit in a rack, another building, or off-site, while its
+  cameras are placed on that building's floor plans regardless. Drag a building marker to
+  reposition it (`PUT /api/sites/{id}/position`); drag a node pin the same way
+  (`PUT /api/nodes/{id}/position`). Dropping a building-less node pin **onto** a building (or
+  picking a building from the "needs a home" rail) assigns the node to reside there
+  (`PUT /api/nodes/{id}/building`) — it then stops drawing its own pin and is represented by that
+  building's marker instead; clearing the assignment returns it to the building-less list. An
+  unplaced/unassigned node (never dragged onto the map, or explicitly removed from it) is listed
+  separately rather than plotted at `(0,0)` — see `ManagedNode.MapPlaced`/`SiteId` and
+  `Site.MapPlaced` in `entities/managed_node.go.md`/`entities/site.go.md`. A building marker takes
+  the *worst* status among the nodes that own cameras inside it, and its unread-notification badge
+  sums only those cameras' alerts (`GET /api/notifications/tally?unread=true`), never a whole
+  node's — a node recording cameras in several buildings would otherwise over-count every one of
+  them. Clicking a building marker opens its **floor plans with every camera inside, from any
+  node** (`BuildingFloorView`, see below); clicking a building-less node pin opens a popup of its
+  recent camera events, each of which can be **located on its floor plan** or opened straight into
+  a floating live/media window without leaving the map. A site can be given its own **glyph**
+  (a curated emoji picker — office/factory/home/etc, `Site.Icon`) shown on its marker.
+- **Floor plans view**: an operator creates one or more **sites** (a building, campus, or yard,
+  each with a name and a picked icon), adds a **floor plan** per site — either **uploaded** as an
+  image (PNG/JPEG/GIF, up to 24 MiB) or **drawn from scratch** in the built-in **floor designer**
+  (rooms, walls, text labels, freehand pen, grid-snap, undo/redo, multi-select, rotate/flip,
+  pan/zoom) — and drags nodes/cameras from a palette onto the plan (with pan/zoom and a
+  select/delete toolbar for the plan canvas itself, and Delete/Backspace/Escape keyboard shortcuts
+  for the selected marker). An uploaded photo can also be annotated later in the same designer;
+  its original is preserved as a background layer so re-editing never draws over an
+  already-flattened render (`GET /api/floors/{id}/background`, `POST /api/floors/{id}/image` to
+  re-save). Placements are **myseliasan's own record** (`NodePlacement`), not fetched from the
+  node — that is deliberate: the live camera list is fetched over the tunnel and returns nothing
+  when a node is offline, so a placement carries a name snapshot and stays rendered (using that
+  snapshot) even while its node is unreachable; a placement whose camera no longer exists on an
+  *online, reachable* node (as opposed to one simply unreachable right now) is flagged as a
+  **ghost marker** for cleanup. A camera placement carries a **coverage arc** (`heading`/`fov` in
+  degrees, dragged into aim via on-marker handles) drawn as a translucent wedge on the plan, so an
+  operator can see at a glance which part of a room a camera actually watches. Opening the floor
+  plans view for a *building* (from the geographic view, or the tab itself) shows
+  `BuildingFloorView` — every floor's placements from **every owning node**, each marker/wedge
+  coloured by *its own* node's status and streaming live over *that* node's tunnel — the view that
+  makes "the building is the twin, not any one node" concrete.
+- **Locate on plan**: from a camera event on the geographic view (or the camera's own context),
+  **Locate on plan** (`GET /api/node-floorplan/{nodeId}`) jumps straight to the floor plan holding
+  that camera's placement and focuses its marker — no need to know which site/floor it lives on.
+  Clicking a camera marker on a plan opens a small, draggable, resizable floating window
+  (`CameraWindow`) with its live footage (PTZ overlay when supported) on top and recent
+  events below; clicking a footage event opens its recorded snapshot/clip **inline over the same
+  live panel** (a Back button returns to live without ever tearing down the underlying WebRTC
+  stream, since the live tile stays mounted underneath). The geographic view's camera popups open
+  the equivalent live-only (`LiveWindow`) window the same way. All windows float over the map, can
+  be dragged by their title bar, resized from a corner grip, and toggled small ⇄ maximized without
+  restarting the underlying stream.
+
+Both views color a node's pin/marker by the same status: **online** (green), **warning** — amber,
+cert expiring soon — (reusing the same cert-health signal the Dashboard's "Certs expiring" KPI
+and the Nodes table already surface), **critical** — red, the node is `lost` — and **idle** —
+grey, `self-dropped` or a legacy/unknown status.
+
+**Offline basemap**: the geographic view's cartography is one or more self-hosted
+[Protomaps](https://protomaps.com/) `.pmtiles` **region** archives (a fleet spanning several
+disjoint areas is served as several region files rather than one planet-sized archive),
+Range-served per region (`GET /api/basemap/tiles/{name}` — the browser fetches byte ranges of one
+file and does tile lookup client-side, so there is no tile-server process and no new Go
+dependency). Regions are normally provisioned out-of-band (`pmtiles extract`) and dropped at
+`<dataDir>/basemap/*.pmtiles`; an empty/absent directory is a supported state
+(`GET /api/basemap/info` reports `available: false`) — the map still renders, just without
+cartography, rather than a fleet with no archive being unable to see positions at all. Attribution
+(`"© OpenStreetMap contributors"`) is a static string, never a network call. **Optionally**, when
+an operator (or `MYSELIASAN_BASEMAP_SOURCE`/`MYSELIASAN_PMTILES_BIN` env vars) configures a remote
+pmtiles source and the `pmtiles` tool is installed, the UI can **download a new region on
+demand** (`POST /api/basemap/download`, a bounding box + max zoom, capped at 25°×25°/zoom 14) —
+this is the one action in the whole app that deliberately reaches the internet, and it stays off
+by default so an air-gapped install is unaffected.
+
+Floor-plan images are **encrypted at rest** under `<dataDir>/floorplans`, using the same fleet
+cipher that protects the CA key and fleet PSK (see "Fleet secret encryption at rest" below) —
+only metadata and pixel dimensions live in the database.
+
+Endpoints (all `AuthOnly`, session-gated like every other operator route in this app):
+`GET/POST /api/sites`, `GET /api/sites/overview` (building rollup for the geo map),
+`PUT/DELETE /api/sites/{id}`, `PUT /api/sites/{id}/position` (drag a building's marker),
+`GET/POST /api/sites/{id}/floors`, `GET /api/sites/{id}/floorplans` (multi-node building
+drill-down), `GET/PUT/DELETE /api/floors/{id}`, `GET /api/floors/{id}/image`,
+`POST /api/floors/{id}/image` (replace, used by the floor designer),
+`GET /api/floors/{id}/background` (pristine background for re-editing),
+`GET/POST /api/floors/{id}/placements`, `PUT/DELETE /api/placements/{id}` (position and/or
+`heading`/`fov` coverage aim), `GET /api/node-floorplan/{nodeId}` (locate-on-plan drill-down),
+`GET /api/basemap/info`, `GET/PUT /api/basemap/config`, `POST /api/basemap/download`,
+`GET /api/basemap/tiles/{name}`, `PUT /api/nodes/{id}/position` (a node's own geographic
+coordinates), and `PUT /api/nodes/{id}/building` (assign/clear the building a node resides in).
+See `docs/modules/apps/myseliasan/apis/{basemap,sites,nodes}.go.md`.
 
 ## Fleet rules — cross-domain correlation
 
@@ -126,7 +235,7 @@ The CA private key (`pairing.caKey`), the control plane's own parent leaf privat
 
 The UI is a React/webpack SPA under `apps/myseliasan/views/react-webpack/`, built into `apps/myseliasan/static/` (content-hashed bundles), mirroring `mymatasan`'s frontend architecture. Myseliasan-only styling lives in `styles/app.css` and the shared RBAC-standard rail in `styles/rbac-standard.css`. Build with `npm install && npm run build` in that directory.
 
-The shell uses the standardized dark icon side-nav (`SideNav` from `components/layout.js`), with top-level **Live Views**, **Objects**, and **Teach** nav items positioned above a bespoke **Nodes tree**: an expandable branch listing adopted nodes (root item → fleet page/node dashboard, child items → each node's own camera sub-tree, lazily loaded over the tunnel on first expand). Selecting a node opens its `NodeDashboard`; selecting a camera under it opens that camera's full page (Live View/Detection/Recordings/Settings). A single click on a node row now both navigates **and** expands its camera sub-tree (matching the root Nodes row); the caret or a double-click collapses/toggles it. Each camera row shows a liveness dot (green online / red offline / grey unknown) driven by the node-reported camera health, mirroring mymatasan's own camera nav. Admin pages (Users, Roles) appear under the **Administration** group — the former separate RBAC permission-matrix page is now part of the **Roles** page (see "Node management" above), which includes a central **Node Access** matrix where a superadmin assigns per-role node access (**Viewer** / **Operator** / **Admin**). A **System** group holds the badged **Notifications** nav item (see "Notifications" above). The side-nav's internal list area now scrolls independently of the fixed brand/account chrome (`--nav-scroll` tokens in `styles/rbac-standard.css`), matching mymatasan. A **pin/auto-hide toggle** in the brand slot (`nav-pin-toggle`, ported from mymatasan's own rail) lets the rail collapse to a 68px hover-expanding icon strip instead of always sitting in the grid flow; the choice is persisted to `localStorage` (`myseliasan_nav_pinned`) and applied via a `nav-autohide` class on `.app-shell`. It only takes effect at `min-width: 1081px` — mymatasan's rail stacks at `<=860px` but this app's stacks at `<=1080px`, and auto-hide is neutralized below that breakpoint since a fixed hover-strip makes no sense in a stacked layout.
+The shell uses the standardized dark icon side-nav (`SideNav` from `components/layout.js`). The **Workspace** group holds **Dashboard** and a **Map** nav item (the fleet map — Geographic + Floor plans views, see "Fleet Map" above; its OpenLayers-based components are lazy-loaded on first open). Below that sit top-level **Live Views**, **Objects**, and **Teach** nav items positioned above a bespoke **Nodes tree**: an expandable branch listing adopted nodes (root item → fleet page/node dashboard, child items → each node's own camera sub-tree, lazily loaded over the tunnel on first expand). Selecting a node opens its `NodeDashboard`; selecting a camera under it opens that camera's full page (Live View/Detection/Recordings/Settings). A single click on a node row now both navigates **and** expands its camera sub-tree (matching the root Nodes row); the caret or a double-click collapses/toggles it. Each camera row shows a liveness dot (green online / red offline / grey unknown) driven by the node-reported camera health, mirroring mymatasan's own camera nav. Admin pages (Users, Roles) appear under the **Administration** group — the former separate RBAC permission-matrix page is now part of the **Roles** page (see "Node management" above), which includes a central **Node Access** matrix where a superadmin assigns per-role node access (**Viewer** / **Operator** / **Admin**). A **System** group holds the badged **Notifications** nav item (see "Notifications" above). The side-nav's internal list area now scrolls independently of the fixed brand/account chrome (`--nav-scroll` tokens in `styles/rbac-standard.css`), matching mymatasan. A **pin/auto-hide toggle** in the brand slot (`nav-pin-toggle`, ported from mymatasan's own rail) lets the rail collapse to a 68px hover-expanding icon strip instead of always sitting in the grid flow; the choice is persisted to `localStorage` (`myseliasan_nav_pinned`) and applied via a `nav-autohide` class on `.app-shell`. It only takes effect at `min-width: 1081px` — mymatasan's rail stacks at `<=860px` but this app's stacks at `<=1080px`, and auto-hide is neutralized below that breakpoint since a fixed hover-strip makes no sense in a stacked layout.
 
 **Embedded node pages / design parity**: the camera tab components under `components/nodecam/` are the real mymatasan view source files (`vision.js`, `recording.js`, `previews.js`, `cameras.js` pieces, `ui.js`, `layout.js`, `hooks.js`, `ptz.js`, helpers/constants) copied in verbatim, so mymatasan behavior changes to those files should be ported here too. Two shims adapt them to run against a *remote* node: `nodecam/lib/helpers.js`'s `apiBase()` is repointed at the commander proxy (`setNodeProxyBase`), and `installProxyCsrf` teaches `window.fetch` to attach myseliasan's CSRF token on proxy writes (the copied components issue raw `fetch()` calls that predate the double-submit-cookie requirement below). Styling comes from mymatasan's actual stylesheets, imported as raw strings via a new `@mymatasan` webpack alias + `?raw` CSS rule (`webpack.config.js`), then injected once and CSSOM-scoped under `.nodecam-embed` (`components/node_embed.js`, `nodecam/scoped_css.js`) — this is a build-time re-import, not a manual copy, so mymatasan design changes flow into the embedded pages on the next `npm run build` here with no re-sync step. `components/nodeiot/` mirrors this exact trick for an adopted `myiotsan` node's own device-management pages, scoped under its own embed container and concatenating the `@shared` stylesheets in — see "Node management" above.
 
@@ -165,7 +274,7 @@ The control plane no longer just tracks liveness passively — every heartbeat s
 
 - **Node offline**: fires once, the instant a node crosses from any status into `lost`.
 - **Node back online**: fires once, when a previously-`lost` node becomes reachable again.
-- **Node certificate expiring**: fires once per distinct expiry when a node's certificate is within its renewal warn window of expiring, or has already expired — meaning the node's automatic re-enrollment is overdue or failing. The window is `pairing.renewBeforeHours` when set (the shipped `config.dev.json` sets `48`); if unset (`0`) the control plane falls back to 7 days (the node's own renewal fallback is 48 h — the two sides can differ when the key is left unset). A renewal that pushes the expiry out re-arms the warning for the next approach.
+- **Node certificate expiring**: fires once per distinct expiry when a node's certificate is within its renewal warn window of expiring, or has already expired — but **only for a node whose auto-renew toggle is off** (see "Certificate auto-renew" above); a node with auto-renew on will have its renewal honoured before it lapses, so its approaching expiry is not actionable and never warns. The window is `pairing.renewBeforeHours` when set (the shipped `config.json` sets `336`, i.e. 14 days, to match the longer 90-day cert lifetime; `config.dev.json` still sets `48`); if unset (`0`) the control plane falls back to 7 days (the node's own renewal-attempt fallback is a separate 48 h — the two sides can differ when the key is left unset). A renewal that pushes the expiry out re-arms the warning for the next approach.
 
 `GET /api/nodes/fleet-status` returns a rollup (`{total, online, lost, selfDropped, unknown, certsExpiring, certsExpired, certWarnDays}`) that backs the Dashboard's **Certs expiring** KPI card.
 
@@ -194,7 +303,7 @@ their respective sites — both are rare, discrete events, not a hot path.
 What's worth alerting on:
 - `myseliasan_control_channel_up == 0` — the entire fleet is unreachable.
 - `myseliasan_nodes_adopted - myseliasan_nodes_connected` growing — more of the fleet is missing than expected.
-- Any increase in `myseliasan_fleet_events_total{kind="cert_expiring"}` — a node's re-enrollment is at risk.
+- Any increase in `myseliasan_fleet_events_total{kind="cert_expiring"}` — a node with auto-renew off is approaching (or has passed) its certificate expiry and will drop out of the fleet unless an operator enables auto-renew for it.
 - A rising `myseliasan_task_panics_total` for any `task`.
 
 ## Networking / operations

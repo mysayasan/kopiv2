@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "mymatasan",
+  "summary": "Added a source-camera filter dropdown to the mymatasan Notifications page, alongside the existing Unread/All and category-type chip filters. Picking a camera passes cameraId straight through to the already-camera-aware GET /api/notifications endpoint (the backend already supported this parameter; only the UI was missing it), narrowing the feed to that camera's own AI-detection and camera-health notifications - the only notification kinds that carry a cameraId, so machine-health/login-security rows are naturally excluded once a specific camera is picked. Useful on any install with more than a couple of cameras, where the unified feed otherwise interleaves every camera's events together.",
+  "compatibility": "Backward compatible and additive; defaults to 'All cameras' (no filter), matching today's behavior exactly. No backend or config change - the cameraId query parameter was already supported server-side. All four shipped languages (en/ms/zh/ar) already had the needed 'All cameras' string reused from the existing dashboard/recordings camera pickers, so no new translation strings were required."
+}

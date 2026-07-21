@@ -65,6 +65,15 @@ func (c *Conn) Ping() error {
 	return c.ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeWait))
 }
 
+// RemoteAddr returns the peer's network address (host:port), for diagnostics/audit. Empty
+// when the socket has no addressable peer.
+func (c *Conn) RemoteAddr() string {
+	if c.ws == nil || c.ws.RemoteAddr() == nil {
+		return ""
+	}
+	return c.ws.RemoteAddr().String()
+}
+
 // Close tears down the underlying socket.
 func (c *Conn) Close() error {
 	return c.ws.Close()

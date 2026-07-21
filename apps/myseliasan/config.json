@@ -26,8 +26,8 @@
     "mtlsPort": 39532,
     "controlPort": 39533,
     "mediaPort": 39534,
-    "certTtlHours": 168,
-    "renewBeforeHours": 48,
+    "certTtlHours": 2160,
+    "renewBeforeHours": 336,
     "heartbeatIntervalSeconds": 60
   },
   "fileStorage": {

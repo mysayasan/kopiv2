@@ -117,6 +117,10 @@ export function NodesTab({ onToast, nodes, nodesLoad, reloadNodes, managingNodeI
   const t = useT();
   const [fleetKey, setFleetKey] = useState(null);
   const [discovered, setDiscovered] = useState(null);
+  // Nodes dialing the control channel that the server refuses (valid cert, no record). These
+  // are otherwise invisible — the whole point of surfacing them is so a stranded node can be
+  // seen and blocked.
+  const [unrecognized, setUnrecognized] = useState([]);
   const [busy, setBusy] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -140,6 +144,30 @@ export function NodesTab({ onToast, nodes, nodesLoad, reloadNodes, managingNodeI
     if (r.ok) setFleetKey(r.body);
   }
   useEffect(() => { loadFleetKey(); /* eslint-disable-next-line */ }, []);
+
+  async function loadUnrecognized() {
+    const r = await api('/api/nodes/unrecognized').catch(() => ({ ok: false }));
+    if (r.ok) setUnrecognized(Array.isArray(r.body) ? r.body : []);
+  }
+  useEffect(() => { loadUnrecognized(); /* eslint-disable-next-line */ }, []);
+
+  // Block a stranded node: revoke its certificate so it can no longer connect or re-enroll.
+  async function blockUnrecognized(nodeId) {
+    if (!window.confirm(t('node.confirmBlock', { id: (nodeId || '').slice(0, 8) }))) return;
+    setBusy(true);
+    const r = await api(`/api/nodes/${encodeURIComponent(nodeId)}/block`, { method: 'POST' });
+    setBusy(false);
+    if (r.ok) { toast(t('node.blocked')); loadUnrecognized(); }
+    else toast(r.message || t('node.blockFailed'));
+  }
+
+  // Dismiss a stranded node from the list without revoking (it reappears if it dials again).
+  async function dismissUnrecognized(nodeId) {
+    setBusy(true);
+    await api(`/api/nodes/${encodeURIComponent(nodeId)}/forget`, { method: 'POST' }).catch(() => {});
+    setBusy(false);
+    loadUnrecognized();
+  }
 
   async function generateFleetKey() {
     if (!window.confirm(t('node.confirmRotate'))) return;
@@ -328,6 +356,40 @@ export function NodesTab({ onToast, nodes, nodesLoad, reloadNodes, managingNodeI
 
       {adoptInitial ? (
         <AdoptDialog initial={adoptInitial} busy={busy} onClose={() => setAdoptInitial(null)} onAdopt={doAdopt} />
+      ) : null}
+
+      {unrecognized.length > 0 ? (
+        <section className="settings-panel span-two">
+          <header>
+            <h2><span className="btn-icon"><Ico n="warning" /> {t('node.unrecognizedTitle')}</span></h2>
+            <div className="settings-header-actions">
+              <button type="button" className="quiet" onClick={loadUnrecognized} disabled={busy}>
+                <span className="btn-icon"><Ico n="reload" /> {t('node.refresh')}</span>
+              </button>
+            </div>
+          </header>
+          <p className="settings-hint">{t('node.unrecognizedHint')}</p>
+          <table className="event-table">
+            <thead><tr><th>{t('node.colNodeId')}</th><th>{t('node.colReason')}</th><th>{t('node.colAddress')}</th><th>{t('node.colAttempts')}</th><th>{t('node.colLastSeen')}</th><th></th></tr></thead>
+            <tbody>
+              {unrecognized.map((n) => (
+                <tr key={n.nodeId}>
+                  <td>{(n.nodeId || '').slice(0, 8)}</td>
+                  <td><span className="status-pill offline">{n.reason}</span></td>
+                  <td>{n.remoteAddr || '—'}</td>
+                  <td>{n.count}</td>
+                  <td>{n.lastSeen ? formatTimestamp(n.lastSeen) : '—'}</td>
+                  <td className="node-row-actions">
+                    <button type="button" className="quiet danger-text" onClick={() => blockUnrecognized(n.nodeId)} disabled={busy}>
+                      <span className="btn-icon"><Ico n="lock" /> {t('node.block')}</span>
+                    </button>
+                    <button type="button" className="quiet" onClick={() => dismissUnrecognized(n.nodeId)} disabled={busy}>{t('node.dismiss')}</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
       ) : null}
 
       <section className="settings-panel span-two">

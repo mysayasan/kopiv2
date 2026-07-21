@@ -603,6 +603,9 @@ type ITeachService interface {
 type INotificationService interface {
 	INotificationPublisher
 	List(ctx context.Context, limit, offset uint64, cameraId int64, unreadOnly bool, category, source string) ([]*sharedentities.Notification, uint64, error)
+	// ListSince returns notifications created at/after `since` (unix seconds), oldest-first,
+	// for the fleet control plane to replay events it missed while disconnected.
+	ListSince(ctx context.Context, since int64, limit uint64) ([]*sharedentities.Notification, uint64, error)
 	Stats(ctx context.Context, from, to, bucketSeconds, tzOffsetSec int64) (*notification.Stats, error)
 	Heatmap(ctx context.Context, from, to, cameraId, tzOffsetSec int64) (*notification.Heatmap, error)
 	Baseline(ctx context.Context, from, to, bucketSeconds, tzOffsetSec, cameraId int64) (*notification.Baseline, error)

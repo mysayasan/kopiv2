@@ -20,12 +20,55 @@ Each field is only added once its backing listener has been wired (nil-guarded),
 
 **These are advisory only** — per the `apphost.ReadinessReporter` contract (see `docs/modules/infra/apphost/run.go.md` / `types.go`), they never flip the process's `ok`/HTTP status, which stays gated on db + cache alone. A dead control-channel or media listener alone does not make `/ready` return 503; it surfaces as `"down"` for an operator/monitor to notice. This closes the gap where a dead fleet listener still reported the process fully ready, without touching the core readiness contract — actually gating readiness on the fleet listeners would be a separate, core-scoped decision affecting every app and was deliberately not done here.
 
+## `Migrations` (implements `apphost.Migrator`)
+
+Returns a fixed list of `bootstrap.Migration`s that run **before** the auto-migrator and
+**independently of the `autoMigrate` config flag**, so the fleet-map columns exist even in a
+deployment that has auto-migration turned off — without them, node adoption's `INSERT` (or a
+floor upload) fails with a 500 after the fact. Every migration is idempotent (checks
+`information_schema`/`pragma_table_info` before `ALTER TABLE`, so it is a no-op wherever the
+auto-migrator already added the column) and, where a plain `ADD COLUMN` would leave existing
+rows `NULL`, immediately backfills them to the entity's zero value — the non-pointer
+`float64`/`bool`/`string` entity fields cannot scan a `NULL`, so an un-backfilled column breaks
+`List`/read-back with `"converting NULL to float64 is unsupported"` on every pre-existing row:
+
+- `20260718-01-managed-node-geo` / `20260718-02-managed-node-geo-backfill` — add
+  `managed_node.lat`/`lon`/`map_placed` (the geographic fleet map) and separately backfill any
+  `NULL`. Split into two migration IDs (rather than one edited migration) because editing an
+  already-applied migration's `Exec` does not re-run it; a database that had already applied `01`
+  before the backfill logic existed needed a **new** ID to guarantee it runs once.
+- `20260719-01-placement-fov` — add `node_placement.heading`/`fov` (camera coverage arcs),
+  backfilled to `0`.
+- `20260719-02-floor-design` — add `floor_plan.design` (drawn-plan vector JSON), backfilled to
+  `''`.
+- `20260719-03-floor-bgpath` — add `floor_plan.bg_path` (pristine background image path),
+  backfilled to `''`.
+- `20260720-01-site-geo` — add `site.lat`/`lon`/`map_placed` (the digital-twin building marker on
+  the geographic map), backfilled to `0`/`0`/`false` (`ensureSiteGeoColumns`). Mirrors the
+  `20260718` `managed_node` geo migration for the same reason: without it, an existing `site`
+  table has no lat/lon/map_placed, so both creating a site and listing sites fail.
+- `20260720-02-site-icon` — add `site.icon` (the building glyph shown on the geo-map marker),
+  backfilled to `''`.
+- `20260720-03-node-site` — add `managed_node.site_id` (the building an appliance resides in),
+  backfilled to `0`.
+- `20260720-04-node-auto-renew` — add `managed_node.auto_renew` (the certificate renewal gate,
+  `BOOLEAN`), backfilled to `false`. This only seeds the column's zero value; the separate
+  one-time `registry.BackfillAutoRenew` (below) then flips already-*enrolled* nodes to `true` so
+  an existing fleet is not surprise-expired.
+
+`geoColumnType(base, engine)` maps a base SQL type (`DOUBLE PRECISION`/`BOOLEAN`) to the exact
+per-engine concrete type the auto-migrator itself generates (mirroring
+`infra/db/bootstrap`'s `normalizeSQLType`), so a column added here is byte-identical to one the
+auto-migrator would have added and never trips a schema-drift warning. `tableColumns` is the
+shared per-engine "does this column exist" probe (`information_schema.columns` on
+postgres/mariadb, `pragma_table_info` on sqlite).
+
 ## Responsibilities
 
 - Provides app identity and base directory.
-- Registers `ManagedNode`, `ControlSetting`, `NodeAccessGrant`, `ControlUser`, `AuditLog`, the shared `AccessRole`/`AccessRolePermission`, and — cross-domain correlation, the reason the suite has a fourth app — `FleetRule` + `FleetRuleClause` entities for DB bootstrap.
+- Registers `ManagedNode`, `ControlSetting`, `NodeAccessGrant`, `ControlUser`, `AuditLog`, the shared `AccessRole`/`AccessRolePermission`, `FleetRule` + `FleetRuleClause` (cross-domain correlation, the reason the suite has a fourth app), — the fleet map — `Site`, `FloorPlan`, `NodePlacement`, and `RelayedNotif` (the reconnect-replay dedup ledger, see `entities/relayed_notif.go.md`) entities for DB bootstrap.
 - Enables only `Version` and `AccessRbac` from the shared API surface (`SharedAPIs()`); operational APIs (log, file storage, cache, app registry, etc.) are disabled for the control plane.
-- Seeds the local endpoint catalog for rate limiting and runtime metadata, including `Notifications`, `Node Access`, and `Audit` (`/api/audit`) endpoints.
+- Seeds the local endpoint catalog for rate limiting and runtime metadata, including `Notifications`, `Node Access`, `Audit` (`/api/audit`), and — the fleet map — `Basemap` (`/api/basemap`), `Sites` (`/api/sites`), `Floors` (`/api/floors`), and `Placements` (`/api/placements`) endpoints, all `AuthOnly`.
 - On startup, first calls `consumeAdminResetMarker` (see `app/firstrun.go.md`) to service a pending `RESET_ADMIN` lock-out-recovery marker if present; otherwise seeds the stock superadmin local account via `EnsureStockSuperadmin` using credentials from `localAuth.username` / `localAuth.password` in config. An empty config password no longer becomes the literal `admin`/`admin` default — `EnsureStockSuperadmin` resolves `LOCAL_ADMIN_PASSWORD`, then config, else generates a strong per-install password (see `services/rbac.go.md`). When the returned `StockSeedResult.Seeded` is true, `announceFirstRunAdmin` prints the console banner and writes `INITIAL_ADMIN_LOGIN.txt` to the data dir.
 - Binds the `ControlUser` service as the `AccessUserResolver` for `deps.Access`, so the shared accessrbac middleware enforces the permission matrix on myseliasan's own endpoints.
 - Registers auth/session routes (`NewAuthApi`, `NewSessionApi`).
@@ -33,15 +76,19 @@ Each field is only added once its backing listener has been wired (nil-guarded),
 - Registers myseliasan-specific RBAC admin surface (`NewRbacAdminApi` at `/api/rbac/*`) for user management and the bootstrap superadmin handoff.
 - Before building the node registry, resolves fleet-secret encryption at rest via `openFleetSecretCipher(deps)` (mirroring mymatasan's own `infra/atrest` boot sequence): reads the shared `security` block (`security.encryptAtRest`, default **true**; `security.keyPath`, default `<dataDir>/secret/atrest.key`; `security.keyProtector`/`passphrase`/`passphraseFile`/`passphraseEnv`; `security.recoveryPath`) and calls `atrest.OpenForStartup`. Returns `nil` (no encryption) when `encryptAtRest` is false. On `atrest.ModeRecoveryPending` (a key existed here before but is now missing) it **fails closed** — returns an error and refuses to boot rather than mint a replacement key and silently reset the whole fleet's trust; the operator must restore the key file or configure `security.recoveryPath` and restart. The resulting `*atrest.Cipher` (or `nil`) is passed into `NodeRegistryConfig.SecretCipher`.
 - Builds `INodeRegistry` with `ParentBaseURL` derived from `pairing.parentBaseUrl` (when set) or `sso.redirectBaseUrl` (fallback). `pairing.parentBaseUrl` must be the parent's LAN-reachable URL for deployments where node and parent are on separate machines.
-- Registers node-management routes (`NewNodesApi`).
+- Immediately after building the registry, calls `registry.BackfillAutoRenew(context.Background())` once at startup — this one-time pass turns on the new per-node certificate auto-renew gate (`ManagedNode.AutoRenew`) for every already-enrolled node, so upgrading an existing fleet (which was renewing automatically before this gate existed) does not silently start expiring certificates; a failure only logs a warning (`myseliasan.nodes`) rather than blocking boot. New adoptions after this point still start with `AutoRenew` off. See `services/node_registry.go.md`.
+- Registers the offline vector basemap for the fleet map (`NewBasemapApi`, `apis/basemap.go.md`), resolving the basemap **directory** (may hold several `.pmtiles` region archives) via `apis.ResolveBasemapDir(deps.DataDir, "")` — an empty/absent directory is a supported state (the map renders without cartography), so this never blocks boot. Also passes `os.Getenv("MYSELIASAN_BASEMAP_SOURCE")` and `os.Getenv("MYSELIASAN_PMTILES_BIN")` through: when the source env var is set, an operator can download a new region on demand (the one action here that reaches the internet); both are empty/unset by default, keeping the app fully offline.
+- Registers node-management routes (`NewNodesApi`, now passed a `logf` closure so a failed adopt logs its raw cause server-side even though the client gets a friendlier message), which now also exposes `PUT /api/nodes/{id}/position` for the geographic map, `PUT /api/nodes/{id}/building` for the digital-twin building assignment, and `GET /api/nodes/unrecognized` + `POST /api/nodes/{id}/block`/`forget` for stranded-node visibility (see `apis/nodes.go.md`).
 - Starts the control channel server (`ControlServer`) on a dedicated fleet-mTLS port (`pairing.controlPort`, default `49533`). After the server is built, wires `ControlServer.IsConnected` into the registry via `SetControlPresence` so the heartbeat treats a live control connection as the authoritative online signal (mTLS poll becomes a fallback); also stashes the server on the module (`m.controlServer`) for `ReadinessStatus`.
 - Starts a background heartbeat goroutine (after `SetControlPresence` is wired) to reconcile node liveness with grace-window flap protection.
 - Wires proactive fleet-health alerting: before registering the sink, calls `services.DescribeMyseliasanMetrics(deps.Metrics)`. `registry.SetFleetEventSink` is set (before the heartbeat loop starts) to a closure that calls `publishFleetEvent`, so a node going online→lost, a lost node recovering, or a certificate nearing expiry (per `CertWarnBefore`, derived from `pairing.renewBeforeHours`) is surfaced in the unified notification feed instead of failing silently — the same closure also increments `MetricFleetEventsTotal` (`myseliasan_fleet_events_total{kind}`) via the package-level `fleetEventKind(e.Kind)` helper, so a burst of lost/recovered transitions or a trickle of cert-expiring warnings is visible on `/metrics` even if nobody is watching the notification feed at the time.
 - After the control server starts, runs `services.RunFleetMetricsSampler(bgCtx, deps.Metrics, controlServer, <closure over registry.List>, 10*time.Second)` — samples `myseliasan_control_channel_up`, `myseliasan_nodes_connected`, and `myseliasan_nodes_adopted` off the control server every 10s, keeping the control-channel accept path free of a metrics lock. See `services/metrics.go.md`.
-- Builds the unified notification service and registers `NewNotificationApi`. Node-pushed events are ingested into the notification feed via `ingestNodeEvent`.
+- Builds the unified notification service and registers `NewNotificationApi`. Node-pushed events are ingested into the notification feed via `ingestNodeEvent`. Builds `services.NewRelayDedup(deps.Db)` and wires it into `ingestNodeEvent`/`republishNodeNotification`, and wires `controlServer.SetOnConnect` to `replayNodeNotifications` — see "Replay on reconnect" below.
 - **Builds the cross-domain correlator** (`services.NewCorrelator`, `services/correlate.go.md`) — THIS is the reason the fourth app exists: `motion on Camera 3 (mymatasan) AND a door contact opening (myiotsan) AND no badge swipe (myiotsan) -> intrusion`. No single node can see that; only the control plane, which already receives every node's events in one feed, is in a position to notice the conjunction. The `nodeKind` resolver passed in is a closure over `registry.List` — the node's kind is always resolved from the **adopted node's own record**, never from anything an event body claims, so a door sensor cannot assert it is a camera and satisfy a camera-scoped clause. Calls `correlator.SetMetrics(deps.Metrics)` right after construction, then `Reload`s the rule cache once at startup (fails boot on error) and registers `apis.NewFleetRulesApi(api, *deps.Auth, controlSession, correlator)`.
 - Starts a 1-second-ticker goroutine that calls `correlator.Sweep(bgCtx)` — this is what makes an ABSENCE decidable, since nothing ever arrives to say "the badge was never swiped"; the passage of time has to.
 - `onNodeEvent` (passed to `NewControlServer`) now does two things per node-pushed frame: `ingestNodeEvent` (unified feed, as before) AND `observeForCorrelation` (`app/correlate_bridge.go.md`) — the correlator is fed the **node's own event**, deliberately never the control plane's own re-published copy of it, because correlating on our own output would let one fleet rule's alert satisfy another fleet rule's clause and let two rules trigger each other forever.
+- Registers sites + floor plans for the indoor map (`NewSitesApi`, `apis/sites.go.md`), built with `services.NewSiteService(deps.Db, secretCipher, planDir)` where `planDir` is `<dataDir>/floorplans` — floor-plan images are encrypted at rest with the same fleet cipher that protects the CA key/PSK. `NewSitesApi` also now exposes `GET /api/sites/overview` (per-building rollup) and `PUT /api/sites/{id}/position` (drag a building's marker) for the geographic map's digital-twin building layer, and `GET /api/sites/{id}/floorplans` (multi-node building drill-down).
+- `SetRejectTracker` wires the `ControlServer` (once built, further down) into the already-registered `nodesApi` as its `rejectTracker` — the control server exposes `Unrecognized()`/`ForgetRejected()` for stranded (row-less or revoked) node connections, and `NewNodesApi` now returns the handler so this later wiring is possible. See `apis/nodes.go.md` and `services/control_server.go.md`.
 - Registers per-node access-grant management (`NewNodeAccessApi`). The node access service is constructed with the roles service (`NewNodeAccessService(db, roleService)`) so superadmin roles receive implicit full node access. All three node APIs (`NewNodeAccessApi`, `NewNodeMediaApi`, `NewNodeProxyApi`) now accept the `controlSession *AccessSessionMidware` so they resolve the caller's live role on every request.
 - Starts the node camera media relay: builds a `stream.WebRTCEngine` (from `nodeStream.publicIps` / `nodeStream.udpPort`; nil for same-LAN), starts a `mediarelay.Server` on `pairing.mediaPort` (default `49534`) using the fleet-CA mTLS server config, registers `NewNodeMediaApi` (`POST /api/nodes/{id}/cameras/{cam}/webrtc/offer`, `GET /api/node-stream/config`). The listener goroutine flips `m.mediaListening` (an `*atomic.Bool`) true around `srv.Run(bgCtx)` so `ReadinessStatus` can report `mediaRelay` up/down.
 - Registers the reverse command tunnel proxy (`NewNodeProxyApi` at `/api/nodes/{id}/proxy/...`).
@@ -49,11 +96,27 @@ Each field is only added once its backing listener has been wired (nil-guarded),
 
 ## `ingestNodeEvent`
 
-Maps a node-pushed event frame to the control plane's notification feed:
-- `"notification"` — re-published as-is (re-tagged with `nodeId` and a new parent-side ID) via `republishNodeNotification`.
+Maps a node-pushed event frame to the control plane's notification feed. Takes a `*services.RelayDedup` alongside the notification service now, threaded through to every `republishNodeNotification` call:
+- `"notification"` — re-published (re-tagged with `nodeId` and a new parent-side ID) via `republishNodeNotification`.
 - `"going-offline"` — converted to a system warning notification.
-- Any other kind (`health`, `disk-full`, `alert`, `system`, …) is no longer dropped: the frame is parsed as a `notification.Notification` when it carries a `Title`/`Body` (category/severity filled in via `categoryForNodeKind`/`severityForNodeKind` if unset), otherwise it is wrapped in a generic message (`"Node <kind> event"`, body truncated to 500 chars) tagged with the raw kind — so a node reporting trouble is never silently lost.
+- Any other kind (`health`, `disk-full`, `alert`, `system`, …) is no longer dropped: the frame is parsed as a `notification.Notification` when it carries a `Title`/`Body` (category/severity filled in via `categoryForNodeKind`/`severityForNodeKind` if unset, then also routed through `republishNodeNotification`), otherwise it is wrapped in a generic message (`"Node <kind> event"`, body truncated to 500 chars) tagged with the raw kind and published directly — so a node reporting trouble is never silently lost.
 - `categoryForNodeKind` buckets by substring match: `health`/`disk`/`cert` → `CategoryHealthCheck`, `alert` → `CategoryVisionAlert`, else `CategorySystem`. `severityForNodeKind` similarly guesses `Critical` (`alert`/`full`/`critical`/`fail`), `Warning` (`health`/`warn`/`disk`), else `Info`.
+
+### `republishNodeNotification` — dedup on the node's engine id
+
+Re-tags a node-originated notification with its origin node (`Source: "node:<id>"`, `Data["nodeId"]`) and lets the parent assign a fresh id in its own feed, exactly as before — but it is now called on **both** the live control-channel push (above) and the reconnect replay pull (below), so before publishing it checks `RelayDedup.SeenOrRecord(ctx, nodeID, n.ID, n.CreatedAt)` keyed on `n.ID`, the node's stable engine id (`infra/notification.Notification.ID`) which is identical on both paths. A hit means the event was already ingested (live or an earlier replay) and `republishNodeNotification` returns `false` without publishing; a miss records the marker and publishes, returning `true`. An empty `n.ID` (an older node build predating this feature) cannot be deduped and is always published — the accepted cost is a rare duplicate, not a dropped event.
+
+## Replay on reconnect
+
+The live push above only carries a notification while the node's control channel is up; one raised during a disconnect was previously dropped with no backfill, silently undercounting a busy node's feed. `controlServer.SetOnConnect(fn)` is wired to a closure over `replayNodeNotifications` (defined alongside `ingestNodeEvent` in `app.go`), invoked by `ControlServer` (in its own goroutine, see `services/control_server.go.md`) the moment a node's connection is (re)accepted:
+
+- `replayNodeNotifications(sender, svc, dedup, nodeID, logf)` pulls `GET /api/notifications?since=<cursor>&limit=500` from the node over the control tunnel (`ControlSender.SendRequest`, 60s overall timeout), starting `cursor` at `time.Now().Add(-notifReplayWindow)` (`notifReplayWindow = 72 * time.Hour`) and paging forward (cursor advances to the last row's `CreatedAt`) up to a hard cap of 50 pages (25k events) per reconnect.
+- `parseNodeNotifRows` tolerates both the plain `{result:{items}}` envelope and a wrapped `{data:{result:{items}}}` response.
+- `nodeRowToNotification` rebuilds an in-memory `notification.Notification` from a pulled row, restoring the node's engine id out of the row's `metadata.__oid` (`domain/notification.OriginIDKey`) as `n.ID` — this is what lets a pulled row dedup against a live-pushed one via the identical `RelayDedup` check in `republishNodeNotification`, which every replayed row is routed back through.
+- A node offline or with nothing new in the window is a cheap no-op (first `SendRequest` fails or returns zero rows). A non-2xx response or transport error aborts the pull for that reconnect; it will be retried on the node's next reconnect.
+- An hourly background goroutine (`app.go`, started alongside the control server) prunes `RelayDedup` markers older than `2 * notifReplayWindow` — a windowed pull can never reach back that far, so an older marker is dead weight. See `services/relay_dedup.go.md`.
+
+This requires the node's own `GET /api/notifications` to accept the replay pull — see `apps/mymatasan/apis/notification.go`'s `since=` handling and `INotificationService.ListSince` (`apps/mymatasan/services/ifaces.go.md`), and the equivalent `since=` param on `myiotsan` (`apps/myiotsan/apis/notifications.go`, `docs/modules/apps/myiotsan/apis/notifications.go.md`); a node build that predates the `since=` param ignores the query param and returns its normal newest-first page, so the replay pull would ingest the wrong window from an old node — deploying both halves together is required (see the versioning entry for this feature).
 
 ## `publishFleetEvent`
 

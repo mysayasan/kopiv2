@@ -17,6 +17,17 @@ Built via `NewControlServer(registry, port, onEvent, logf)`. Default port: `4953
 - `IsListening() bool` — reports whether the control channel's serve loop (`Run`) is currently active, backed by an `atomic.Bool` set true for the duration of `srv.Run(ctx)`. Feeds `app.go`'s `ReadinessStatus` (advisory `controlChannel` field on `/api/ready`) — see that module's doc for the never-gates-ok contract.
 - `ConnectedCount() int` — returns the number of nodes currently holding a live control connection (`len(conns)`, mutex-guarded). Feeds the advisory `connectedNodes` field on `/api/ready`.
 - Receives node-pushed event frames and dispatches them to the optional `NodeEventHandler` callback (`onEvent`).
+- `SetOnConnect(fn func(nodeID string))` — registers an optional callback invoked (in its own goroutine, off the read loop) the moment `handleConn` accepts a node's connection, after `add`/`ForgetRejected`. This is the reconnect hook `app.go` uses to replay any notification a node published while its control channel was down (`replayNodeNotifications`) — see `app.go.md`'s "Replay on reconnect" note. Set once at startup, before `Run`; nil is a no-op (no field to check at the call site besides the nil guard in `handleConn`).
+
+### Rejected (stranded) connection tracking
+
+`handleConn` refuses a connection whenever `registry.AcceptControlConn` errors (unknown node, or a revoked cert) — before this, that refusal was invisible beyond a log line, so a stranded node (paired, cert still valid, but no managed record on this side) would dial forever with no way for an operator to notice or stop it:
+
+- `recordRejected(nodeID, remoteAddr, reason)` — called from `handleConn` right before closing a refused connection. Deduped by `nodeID`: a repeat (the node retrying in a loop) bumps `Count`/`LastSeen`/`RemoteAddr`/`Reason` on the existing entry rather than growing the map; a genuinely new id gets a fresh `RejectedNode{FirstSeen, LastSeen: now, Count: 1}`. Bounded at `maxRejected` (200) — past that, the stalest entry (oldest `LastSeen`) is evicted first, so a flood of distinct fabricated ids can't grow the map without limit.
+- `Unrecognized() []RejectedNode` — snapshot of the tracked entries, newest (`LastSeen`) first. Backs `GET /api/nodes/unrecognized` (`apis/nodes.go.md`) via the `rejectTracker` seam.
+- `ForgetRejected(nodeID)` — drops one entry. Called both when an operator explicitly dismisses/blocks a stranded node (`apis/nodes.go.md`'s `forgetNode`/`blockNode`), and automatically from `handleConn` the moment a node that WAS being refused connects cleanly — a node that starts working again is no longer a problem worth flagging, so any stale rejection for it is cleared as soon as `AcceptControlConn` succeeds.
+- `RejectedNode` (`NodeID`, `Reason`, `RemoteAddr`, `FirstSeen`, `LastSeen`, `Count`, all JSON-tagged) is a value type returned by copy from `Unrecognized()`, so a caller can't mutate the server's internal tracking state.
+- Covered by `control_server_test.go`: dedup + count bump on a repeat rejection, newest-first ordering, `ForgetRejected` removing one entry, `AcceptControlConn`'s revoked-checked-before-unknown ordering (a blocked-but-row-less node reports `ErrNodeRevoked`, not `ErrNodeUnknown`), and an end-to-end test that dials a real stranded node (valid enrolled cert, row removed underneath it) through the real TLS listener and confirms it lands in `Unrecognized()`.
 
 ### In-flight request tracking (`pendingReq` / `failPending`)
 

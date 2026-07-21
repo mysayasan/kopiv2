@@ -272,6 +272,121 @@ func TestControlServerReadinessSignals(t *testing.T) {
 	}
 }
 
+// TestControlServerRejectedTracking verifies the unrecognized-node tracking: a repeat
+// rejection for the same node dedups + bumps the count, distinct nodes accumulate, the list
+// is newest-first, and ForgetRejected clears one. This is what makes a stranded node (valid
+// cert, no record) visible so an operator can block it.
+func TestControlServerRejectedTracking(t *testing.T) {
+	reg, _ := newTestRegistry()
+	cs := NewControlServer(reg, 0, nil, nil)
+
+	cs.recordRejected("node-a", "10.0.0.1:5000", "unknown node")
+	cs.recordRejected("node-a", "10.0.0.1:5001", "unknown node") // retry — same node
+	cs.recordRejected("node-b", "10.0.0.2:5000", "node certificate is revoked")
+
+	list := cs.Unrecognized()
+	if len(list) != 2 {
+		t.Fatalf("want 2 tracked nodes, got %d", len(list))
+	}
+	// (Ordering is newest-first by LastSeen; not asserted here because both records land in
+	// the same clock-second in a fast test, making the tie order arbitrary.)
+	var a *RejectedNode
+	for i := range list {
+		if list[i].NodeID == "node-a" {
+			a = &list[i]
+		}
+	}
+	if a == nil || a.Count != 2 {
+		t.Fatalf("node-a should have count 2 (deduped retries), got %+v", a)
+	}
+	if a.RemoteAddr != "10.0.0.1:5001" {
+		t.Fatalf("node-a should carry the latest remote addr, got %q", a.RemoteAddr)
+	}
+
+	cs.ForgetRejected("node-a")
+	if got := cs.Unrecognized(); len(got) != 1 || got[0].NodeID != "node-b" {
+		t.Fatalf("after ForgetRejected(node-a), want only node-b, got %+v", got)
+	}
+}
+
+// TestAcceptControlConnRevokedBeforeUnknown proves the ordering fix: a revoked node is
+// reported as revoked even when it has no managed record. Without the reorder, the missing
+// row would mask the revocation as a generic "unknown node", so an operator's Block action
+// would appear to do nothing.
+func TestAcceptControlConnRevokedBeforeUnknown(t *testing.T) {
+	reg, _ := newTestRegistry()
+	ctx := context.Background()
+
+	// No row for this node id. First: not revoked → unknown.
+	if _, err := reg.AcceptControlConn(ctx, "ghost"); !errors.Is(err, ErrNodeUnknown) {
+		t.Fatalf("un-revoked row-less node: got %v want ErrNodeUnknown", err)
+	}
+	// Now block it (revoke) — still no row — and it must report revoked, not unknown.
+	if err := reg.RevokeNode(ctx, "ghost"); err != nil {
+		t.Fatalf("RevokeNode: %v", err)
+	}
+	if _, err := reg.AcceptControlConn(ctx, "ghost"); !errors.Is(err, ErrNodeRevoked) {
+		t.Fatalf("revoked row-less node: got %v want ErrNodeRevoked", err)
+	}
+}
+
+// TestControlServerRecordsRejectedOnDial is the end-to-end wiring proof: a node that holds a
+// valid fleet cert but whose managed record is gone (released / lost row) dials the control
+// server, is refused, and shows up in Unrecognized() — the exact stranded state the operator
+// reported. Reuses the real fleet-CA enroll + dial path.
+func TestControlServerRecordsRejectedOnDial(t *testing.T) {
+	reg, nodes := newTestRegistry()
+	ctx := context.Background()
+
+	const nodeID = "node-stranded"
+	nodes.rows = append(nodes.rows, &entities.ManagedNode{Id: 1, NodeId: nodeID, Token: "tok", Status: "online"})
+	nodeKey, csr, err := fleetca.GenerateKeyAndCSR(nodeID)
+	if err != nil {
+		t.Fatalf("node key/csr: %v", err)
+	}
+	nodeCert, caRoot, err := reg.Enroll(ctx, nodeID, "tok", csr)
+	if err != nil {
+		t.Fatalf("enroll: %v", err)
+	}
+	clientTLS, err := fleetca.ClientTLSConfig(nodeCert, nodeKey, caRoot, "parent-1")
+	if err != nil {
+		t.Fatalf("client tls: %v", err)
+	}
+	// Simulate the record being removed (released here / DB divergence) while the node keeps
+	// its valid cert.
+	nodes.rows = nil
+
+	port := freePort(t)
+	cs := NewControlServer(reg, port, nil, nil)
+	srvCtx, cancelSrv := context.WithCancel(ctx)
+	defer cancelSrv()
+	go cs.Run(srvCtx)
+	waitTCP(t, port)
+
+	conn, err := control.Dial(ctx, wsURLForPort(port), clientTLS)
+	if err != nil {
+		t.Fatalf("node dial: %v", err)
+	}
+	defer conn.Close()
+
+	// The server accepts the TLS handshake (cert is CA-valid) then rejects the node and
+	// records it. Poll until the rejection lands.
+	var list []RejectedNode
+	for i := 0; i < 150; i++ {
+		list = cs.Unrecognized()
+		if len(list) > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(list) != 1 || list[0].NodeID != nodeID {
+		t.Fatalf("want stranded node %q in Unrecognized, got %+v", nodeID, list)
+	}
+	if list[0].Reason == "" {
+		t.Fatalf("rejection should carry a reason")
+	}
+}
+
 func freePort(t *testing.T) int {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
