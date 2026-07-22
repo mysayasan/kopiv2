@@ -3,13 +3,15 @@ package apis
 import (
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	inputdtos "github.com/mysayasan/kopiv2/apps/myidsan/dtos/input"
 	outputdtos "github.com/mysayasan/kopiv2/apps/myidsan/dtos/output"
 	"github.com/mysayasan/kopiv2/apps/myidsan/services"
-	enumauth "github.com/mysayasan/kopiv2/domain/enums/auth"
 	"github.com/mysayasan/kopiv2/domain/entities"
+	enumauth "github.com/mysayasan/kopiv2/domain/enums/auth"
 	"github.com/mysayasan/kopiv2/domain/models"
 	sharedapis "github.com/mysayasan/kopiv2/domain/shared/apis"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
@@ -48,8 +50,38 @@ func NewUserLoginApi(
 	// Group Handlers
 	group.HandleFunc("", handler.get).Methods("GET")
 	group.HandleFunc("/email", handler.getByEmail).Methods("GET")
+	group.HandleFunc("", handler.post).Methods("POST")
 	group.HandleFunc("", handler.put).Methods("PUT")
 	group.HandleFunc("/{id}", handler.delete).Methods("DELETE")
+}
+
+// post creates an account with a role assigned up front — the admin-provisioning
+// path (setup wizard "create your own superadmin", Users page). Distinct from
+// self-registration (/api/login/default/register), which always lands pending.
+func (m *userLoginApi) post(w http.ResponseWriter, r *http.Request) {
+	body, err := sharedapis.DecodeRequestDto[inputdtos.UserLoginDto, entities.UserLogin](w, r)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	if strings.TrimSpace(body.Email) == "" || strings.TrimSpace(body.Userpwd) == "" {
+		controllers.SendError(w, controllers.ErrBadRequest, "email and password are required")
+		return
+	}
+	body.Id = 0
+	body.IsActive = true
+	if body.CreatedAt == 0 {
+		body.CreatedAt = time.Now().Unix()
+	}
+	if claims, ok := r.Context().Value(enumauth.Claims).(*models.JwtCustomClaims); ok && claims != nil {
+		body.CreatedBy = claims.Id
+	}
+	id, err := m.serv.Create(r.Context(), *body)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, map[string]uint64{"id": id}, "succeed")
 }
 
 func (m *userLoginApi) get(w http.ResponseWriter, r *http.Request) {

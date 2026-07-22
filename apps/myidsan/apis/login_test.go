@@ -87,8 +87,12 @@ func (f *fakeUserLoginService) Delete(_ context.Context, _ uint64) (uint64, erro
 	return 0, nil
 }
 
-func (f *fakeUserLoginService) EnsureStockSuperadmin(_ context.Context, _, _ string, _ int64) error {
-	return nil
+func (f *fakeUserLoginService) EnsureStockSuperadmin(_ context.Context, _, _ string, _ int64) (services.StockSeedResult, error) {
+	return services.StockSeedResult{}, nil
+}
+
+func (f *fakeUserLoginService) ResetStockSuperadmin(_ context.Context, _, _ string, _ int64) (services.StockSeedResult, error) {
+	return services.StockSeedResult{}, nil
 }
 
 func (f *fakeUserLoginService) ChangePassword(_ context.Context, _ int64, _, _ string) error {

@@ -15,6 +15,7 @@ import {
 } from '../lib/api'
 import { Ico, DataTable as ClientDataTable, ToastStack, SideNav, LangProvider, LanguageDropdown, AppFooter, normalizeLang, useT } from '@shared'
 import { enBundle, loadLocaleDict } from './i18n'
+import SetupWizard from './components/setup'
 
 const ACTIVE_SECTION_COOKIE = 'myidsan_active_section'
 const STOCK_SUPERADMIN_EMAIL = 'superadmin'
@@ -211,6 +212,7 @@ function AppInner({ lang, onLangChange }) {
   const [mustChange, setMustChange] = useState(false)
   const [pending, setPending] = useState(false)
   const [isSuperadmin, setIsSuperadmin] = useState(false)
+  const [setupNeeded, setSetupNeeded] = useState(false)
   const [toasts, setToasts] = useState([])
 
   const pushToast = useCallback((text, kind = 'info') => {
@@ -278,6 +280,18 @@ function AppInner({ lang, onLangChange }) {
       setSession(true)
       setSessionError('')
       refreshHandoff()
+      // First-run wizard: only the superadmin sees it, and only until it is
+      // completed (a single server-side flag, shared across browsers).
+      if (me && me.isSuperadmin && !me.mustChangePassword) {
+        try {
+          const setup = resultOf(await apiRequest('/api/setup/state'))
+          setSetupNeeded(!setup?.completed)
+        } catch {
+          setSetupNeeded(false)
+        }
+      } else {
+        setSetupNeeded(false)
+      }
     } catch (err) {
       localStorage.removeItem('myidsan.session')
       setAccessList([])
@@ -346,6 +360,16 @@ function AppInner({ lang, onLangChange }) {
 
   if (pending) {
     return <PendingClearanceScreen email={currentEmail} onRefresh={refreshSession} onLogout={handleLogout} />
+  }
+
+  if (setupNeeded && isSuperadmin) {
+    return (
+      <SetupWizard
+        isSuperadmin={isSuperadmin}
+        onDone={() => { setSetupNeeded(false); refreshHandoff() }}
+        onToast={pushToast}
+      />
+    )
   }
 
   return (
@@ -1636,7 +1660,7 @@ function DirectoryPage({ accessList, onToast }) {
   const [form, setForm] = useState(emptyDirectoryConfig)
   const [roles, setRoles] = useState([])
   const [mappings, setMappings] = useState([])
-  const [newMapping, setNewMapping] = useState({ groupName: '', roleId: 0, priority: 0 })
+  const [newMapping, setNewMapping] = useState({ provider: 'ldap', groupName: '', roleId: 0, priority: 0 })
   const [sampleUser, setSampleUser] = useState('')
   const [testResult, setTestResult] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -1705,13 +1729,13 @@ function DirectoryPage({ accessList, onToast }) {
       await apiRequest('/api/federated-group-mapping', {
         method: 'POST',
         body: {
-          provider: 'ldap',
+          provider: (newMapping.provider || 'ldap').trim(),
           groupName: newMapping.groupName.trim(),
           roleId: Number(newMapping.roleId),
           priority: Number(newMapping.priority) || 0
         }
       })
-      setNewMapping({ groupName: '', roleId: 0, priority: 0 })
+      setNewMapping({ provider: newMapping.provider || 'ldap', groupName: '', roleId: 0, priority: 0 })
       await load()
     } catch (err) {
       setError(err.message)
@@ -1834,11 +1858,12 @@ function DirectoryPage({ accessList, onToast }) {
         {mappings.length > 0 && (
           <table className="plain-table">
             <thead>
-              <tr><th>{t('dir.group')}</th><th>{t('dir.role')}</th><th>{t('dir.priority')}</th><th></th></tr>
+              <tr><th>{t('dir.provider')}</th><th>{t('dir.group')}</th><th>{t('dir.role')}</th><th>{t('dir.priority')}</th><th></th></tr>
             </thead>
             <tbody>
               {mappings.map(row => (
                 <tr key={row.id}>
+                  <td>{row.provider}</td>
                   <td>{row.groupName}</td>
                   <td>{roleName(row.roleId)}</td>
                   <td>{row.priority}</td>
@@ -1853,9 +1878,15 @@ function DirectoryPage({ accessList, onToast }) {
         <form className="record-form" onSubmit={addMapping}>
           <div className="two-col">
             <label>
+              {t('dir.provider')}
+              <input value={newMapping.provider} onChange={event => setNewMapping({ ...newMapping, provider: event.target.value })} placeholder="ldap | oidc:keycloak" />
+            </label>
+            <label>
               {t('dir.group')}
               <input value={newMapping.groupName} onChange={event => setNewMapping({ ...newMapping, groupName: event.target.value })} placeholder="CN=Kopiv2-Admins,OU=Groups,DC=corp,DC=local" />
             </label>
+          </div>
+          <div className="two-col">
             <label>
               {t('dir.role')}
               <select value={newMapping.roleId} onChange={event => setNewMapping({ ...newMapping, roleId: Number(event.target.value) })}>

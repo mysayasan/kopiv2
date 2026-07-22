@@ -13,6 +13,7 @@ require (
 	github.com/dlclark/regexp2/v2 v2.2.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-asn1-ber/asn1-ber v1.5.8 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
 	github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e // indirect
@@ -20,6 +21,7 @@ require (
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
 	github.com/jcmturner/dnsutils/v2 v2.0.0 // indirect
 	github.com/jcmturner/gofork v1.7.6 // indirect
+	github.com/jcmturner/goidentity/v6 v6.0.1 // indirect
 	github.com/jcmturner/rpc/v2 v2.0.3 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
@@ -60,6 +62,7 @@ require (
 
 require (
 	github.com/bluenviron/gortsplib/v5 v5.5.4
+	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/dop251/goja v0.0.0-20260701091749-b07b74453ea9
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/go-ldap/ldap/v3 v3.4.14
@@ -70,7 +73,6 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/mdns v1.0.7
 	github.com/iancoleman/strcase v0.3.0
-	github.com/jcmturner/goidentity/v6 v6.0.1
 	github.com/jcmturner/gokrb5/v8 v8.4.4
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.12.3

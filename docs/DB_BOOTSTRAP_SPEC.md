@@ -364,7 +364,7 @@ Every new app should only need to do this:
 
 That is the standard I recommend for reuse across new apps.
 
-`myidsan` follows this contract as an identity app: it registers identity, app registry, user session, endpoint, RBAC, logging, cache, file-storage, and operation-job entities, then seeds its own identity-management endpoint catalog through app-local seeders.
+`myidsan` follows this contract as an identity app: it registers identity, app registry, user session, endpoint, RBAC, logging, cache, file-storage, operation-job, and the shared `RuntimeSetting` (first-run setup-wizard completion flag) entities, then seeds its own identity-management endpoint catalog through app-local seeders.
 
 ## Recommended Next Implementation Step
 

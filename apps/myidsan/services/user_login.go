@@ -2,9 +2,11 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -381,32 +383,81 @@ func (m *userLoginService) Delete(ctx context.Context, id uint64) (uint64, error
 	return m.repo.DeleteById(ctx, "", id)
 }
 
+// StockSeedResult describes the bootstrap superadmin credential this run
+// established. Seeded is true only when the account was actually created (or
+// force-reset), and Generated is true when the password came from neither config
+// nor env — meaning the operator does not know it yet and must be shown it.
+// Mirrors myseliasan's first-run contract.
+type StockSeedResult struct {
+	Username  string
+	Password  string
+	Generated bool
+	Seeded    bool
+}
+
+// resolveBootstrapPassword picks the password to seed with, and reports whether it
+// had to invent one. Precedence: the LOCAL_ADMIN_PASSWORD env override, then the
+// config value, else a strong generated one — so a fresh install with an empty
+// localAuth.password gets a per-install credential rather than a well-known default.
+func resolveBootstrapPassword(password string) (string, bool, error) {
+	if envPass := strings.TrimSpace(os.Getenv("LOCAL_ADMIN_PASSWORD")); envPass != "" {
+		return envPass, false, nil
+	}
+	if p := strings.TrimSpace(password); p != "" {
+		return p, false, nil
+	}
+	generated, err := generateBootstrapPassword()
+	if err != nil {
+		return "", false, err
+	}
+	return generated, true, nil
+}
+
+// generateBootstrapPassword returns a 16-char random password from an unambiguous
+// charset (no O/0/I/l/1), sourced from crypto/rand. Mirrors myseliasan/mymatasan.
+func generateBootstrapPassword() (string, error) {
+	const charset = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	for i, b := range buf {
+		buf[i] = charset[int(b)%len(charset)]
+	}
+	return string(buf), nil
+}
+
 // EnsureStockSuperadmin seeds the bootstrap superadmin (email = username) on first run
 // with a forced first-login password change, and — while the account is still the
 // untouched stock account (must-change + active) — refreshes its password from config.
-// It also keeps the stock account pinned to the superadmin role.
-func (m *userLoginService) EnsureStockSuperadmin(ctx context.Context, username, password string, superRoleId int64) error {
+// It also keeps the stock account pinned to the superadmin role. A *generated*
+// password is never refreshed in: a new one is minted every boot, and rewriting the
+// hash would invalidate the credential the operator just read from the recovery file.
+func (m *userLoginService) EnsureStockSuperadmin(ctx context.Context, username, password string, superRoleId int64) (StockSeedResult, error) {
 	username = strings.TrimSpace(username)
 	if username == "" {
 		username = defaultSuperadminUsername
 	}
-	if strings.TrimSpace(password) == "" {
-		password = defaultSuperadminPassword
-	}
-	hash, err := hashPassword(password)
+	resolved, generated, err := resolveBootstrapPassword(password)
 	if err != nil {
-		return err
+		return StockSeedResult{}, err
+	}
+	out := StockSeedResult{Username: username, Password: resolved, Generated: generated}
+
+	hash, err := hashPassword(resolved)
+	if err != nil {
+		return StockSeedResult{}, err
 	}
 	existing, err := m.repo.GetByUnique(ctx, "", "email", username)
 	if err != nil && !isNotFoundErr(err) {
-		return err
+		return StockSeedResult{}, err
 	}
 	if existing != nil {
 		changed := false
 		// Refresh the bootstrap password from config ONLY while the account is still
 		// untouched (must-change + active); once the operator sets their own password,
 		// config no longer overrides it.
-		if existing.MustChangePassword && existing.IsActive {
+		if !generated && existing.MustChangePassword && existing.IsActive {
 			existing.Userpwd = hash
 			changed = true
 		}
@@ -416,10 +467,11 @@ func (m *userLoginService) EnsureStockSuperadmin(ctx context.Context, username, 
 		}
 		if changed {
 			existing.UpdatedAt = time.Now().Unix()
-			_, uerr := m.repo.UpdateById(ctx, "", *existing)
-			return uerr
+			if _, uerr := m.repo.UpdateById(ctx, "", *existing); uerr != nil {
+				return StockSeedResult{}, uerr
+			}
 		}
-		return nil
+		return out, nil
 	}
 	now := time.Now().Unix()
 	_, err = m.repo.Create(ctx, "", entities.UserLogin{
@@ -433,7 +485,50 @@ func (m *userLoginService) EnsureStockSuperadmin(ctx context.Context, username, 
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	})
-	return err
+	if err != nil {
+		return StockSeedResult{}, err
+	}
+	out.Seeded = true
+	return out, nil
+}
+
+// ResetStockSuperadmin is the lock-out recovery path: it force-sets the stock
+// superadmin's password even when the account was taken over or deactivated at
+// handoff, re-flags it must-change, reactivates it, and re-pins the superadmin
+// role. Only ever reached by the app consuming a RESET_ADMIN marker file in the
+// data dir — needs local admin rights on the host, never exposed over the network.
+func (m *userLoginService) ResetStockSuperadmin(ctx context.Context, username, password string, superRoleId int64) (StockSeedResult, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		username = defaultSuperadminUsername
+	}
+	resolved, generated, err := resolveBootstrapPassword(password)
+	if err != nil {
+		return StockSeedResult{}, err
+	}
+	existing, err := m.repo.GetByUnique(ctx, "", "email", username)
+	if err != nil && !isNotFoundErr(err) {
+		return StockSeedResult{}, err
+	}
+	if existing == nil {
+		// Nothing to reset — seed fresh instead.
+		return m.EnsureStockSuperadmin(ctx, username, resolved, superRoleId)
+	}
+	hash, err := hashPassword(resolved)
+	if err != nil {
+		return StockSeedResult{}, err
+	}
+	existing.Userpwd = hash
+	existing.MustChangePassword = true
+	existing.IsActive = true
+	if superRoleId > 0 {
+		existing.UserRoleId = superRoleId
+	}
+	existing.UpdatedAt = time.Now().Unix()
+	if _, err := m.repo.UpdateById(ctx, "", *existing); err != nil {
+		return StockSeedResult{}, err
+	}
+	return StockSeedResult{Username: username, Password: resolved, Generated: generated, Seeded: true}, nil
 }
 
 func (m *userLoginService) ChangePassword(ctx context.Context, userId int64, current, next string) error {
