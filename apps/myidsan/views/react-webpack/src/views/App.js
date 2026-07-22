@@ -15,6 +15,7 @@ import {
 } from '../lib/api'
 import { Ico, DataTable as ClientDataTable, ToastStack, SideNav, LangProvider, LanguageDropdown, AppFooter, normalizeLang, useT } from '@shared'
 import { enBundle, loadLocaleDict } from './i18n'
+import SetupWizard from './components/setup'
 
 const ACTIVE_SECTION_COOKIE = 'myidsan_active_section'
 const STOCK_SUPERADMIN_EMAIL = 'superadmin'
@@ -211,6 +212,7 @@ function AppInner({ lang, onLangChange }) {
   const [mustChange, setMustChange] = useState(false)
   const [pending, setPending] = useState(false)
   const [isSuperadmin, setIsSuperadmin] = useState(false)
+  const [setupNeeded, setSetupNeeded] = useState(false)
   const [toasts, setToasts] = useState([])
 
   const pushToast = useCallback((text, kind = 'info') => {
@@ -278,6 +280,18 @@ function AppInner({ lang, onLangChange }) {
       setSession(true)
       setSessionError('')
       refreshHandoff()
+      // First-run wizard: only the superadmin sees it, and only until it is
+      // completed (a single server-side flag, shared across browsers).
+      if (me && me.isSuperadmin && !me.mustChangePassword) {
+        try {
+          const setup = resultOf(await apiRequest('/api/setup/state'))
+          setSetupNeeded(!setup?.completed)
+        } catch {
+          setSetupNeeded(false)
+        }
+      } else {
+        setSetupNeeded(false)
+      }
     } catch (err) {
       localStorage.removeItem('myidsan.session')
       setAccessList([])
@@ -346,6 +360,16 @@ function AppInner({ lang, onLangChange }) {
 
   if (pending) {
     return <PendingClearanceScreen email={currentEmail} onRefresh={refreshSession} onLogout={handleLogout} />
+  }
+
+  if (setupNeeded && isSuperadmin) {
+    return (
+      <SetupWizard
+        isSuperadmin={isSuperadmin}
+        onDone={() => { setSetupNeeded(false); refreshHandoff() }}
+        onToast={pushToast}
+      />
+    )
   }
 
   return (

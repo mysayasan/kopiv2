@@ -27,7 +27,12 @@ type IUserLoginService interface {
 	Delete(ctx context.Context, id uint64) (uint64, error)
 	// EnsureStockSuperadmin seeds (or refreshes, while still untouched) the bootstrap
 	// superadmin from config (email = username), forcing a first-login password change.
-	EnsureStockSuperadmin(ctx context.Context, username, password string, superRoleId int64) error
+	// The seed result reports whether the account was freshly created and whether the
+	// password was generated (empty config/env) — the first-run banner needs both.
+	EnsureStockSuperadmin(ctx context.Context, username, password string, superRoleId int64) (StockSeedResult, error)
+	// ResetStockSuperadmin force-resets the stock superadmin (lock-out recovery via
+	// the RESET_ADMIN marker file); recreates the account if it is gone.
+	ResetStockSuperadmin(ctx context.Context, username, password string, superRoleId int64) (StockSeedResult, error)
 	// ChangePassword verifies the current password, sets a new (hashed) one, and clears
 	// the must-change-password flag.
 	ChangePassword(ctx context.Context, userId int64, current, next string) error

@@ -55,6 +55,7 @@ func (m *module) Entities() []any {
 		sharedentities.UserSession{},
 		sharedentities.AccessRole{},
 		sharedentities.AccessRolePermission{},
+		sharedentities.RuntimeSetting{},
 		myidsanentities.SsoCa{},
 		myidsanentities.DirectoryConfig{},
 		myidsanentities.FederatedGroupMapping{},
@@ -122,6 +123,7 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{AppCode: "myidsan", Title: "Federated Group Mapping", Description: "directory/IdP group to role mapping management", Path: "/api/federated-group-mapping", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{AppCode: "myidsan", Title: "App Redirect URI", Description: "registered SSO client callback URL management", Path: "/api/app-redirect-uri", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{AppCode: "myidsan", Title: "SSO Introspection", Description: "internal token introspection access", Path: "/api/sso/introspect", AccessTier: apiaccessenums.DevOnly},
+		{AppCode: "myidsan", Title: "Setup Wizard", Description: "first-run setup state and completion", Path: "/api/setup", AccessTier: apiaccessenums.DevOnly},
 		{AppCode: "myidsan", Title: "User Group", Description: "user group module access", Path: "/api/user-group", Metadata: menuMetadata(menuItem{Enabled: true, Id: "groups", Label: "Groups", Group: "Identity", Order: 20, Summary: "Organize identity ownership and hierarchy roots.", Tone: "teal"}), AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{AppCode: "myidsan", Title: "User Credential", Description: "user login and role access", Path: "/api/user-credential", Metadata: menuMetadata(
 			menuItem{Enabled: true, Id: "users", Label: "Users", Group: "Identity", Order: 10, Summary: "Maintain credentials, profile details, and role assignment.", Tone: "blue"},
@@ -198,12 +200,31 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	ctx := context.Background()
 	// Seed (or refresh) the stock superadmin from config.localAuth, pinned to the
 	// accessrbac superadmin role and forced to change its password on first login.
+	// A RESET_ADMIN marker in the data dir (dropped by the installer's "reset the
+	// admin login" option, or by hand) is the lock-out recovery path — consume it
+	// BEFORE seeding, and it deletes itself so a restart never re-runs the reset.
+	// A fresh seed (or a reset) is announced: console banner + recovery file.
 	if sa, err := deps.AccessRoles.GetByName(ctx, sharedservices.RoleSuperadmin); err == nil && sa != nil {
-		if err := userLoginService.EnsureStockSuperadmin(ctx, deps.Config.LocalAuth.Username, deps.Config.LocalAuth.Password, sa.Id); err != nil {
-			return nil, fmt.Errorf("seed stock superadmin: %w", err)
+		seed, err := consumeAdminResetMarker(deps, userLoginService, sa.Id)
+		if err != nil {
+			return nil, fmt.Errorf("reset stock superadmin: %w", err)
+		}
+		if seed == nil {
+			established, serr := userLoginService.EnsureStockSuperadmin(ctx, deps.Config.LocalAuth.Username, deps.Config.LocalAuth.Password, sa.Id)
+			if serr != nil {
+				return nil, fmt.Errorf("seed stock superadmin: %w", serr)
+			}
+			seed = &established
+		}
+		if seed.Seeded {
+			announceFirstRunAdmin(deps, *seed)
 		}
 	}
 	deps.Access.SetResolver(&userLoginResolver{repo: userLoginRepo})
+
+	// First-run setup wizard completion flag (shared runtime-setting row).
+	runtimeSettingRepo := dbsql.NewGenericRepo[sharedentities.RuntimeSetting](deps.Db)
+	apis.NewSetupApi(api, *deps.Auth, deps.Access, services.NewSetupStateService(runtimeSettingRepo))
 
 	// Directory (LDAP/AD) login: the bind password is encrypted at rest, so the
 	// secret cipher must resolve before the service exists. Recovery-pending fails

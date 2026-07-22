@@ -543,13 +543,27 @@ The dev config defaults to PostgreSQL database `myidsandb` on port `5433`, Redis
 Both dev and non-dev configs expect certificates at `apps/myidsan/certs/cert.pem` and `apps/myidsan/certs/key.pem`, unless you change `tls.certPath` and `tls.keyPath`.
 It also sets `sso.issuer=myidsan`, `sso.audience=myidsan,mymatasan`, and a dev-only `sso.internalToken=dev-internal-token`.
 
-Login with the bootstrapped account after first startup:
+Login with the bootstrapped account after first startup. The stock superadmin's
+password comes from `LOCAL_ADMIN_PASSWORD` env → `config.localAuth.password` →,
+failing both, a generated 16-character per-install password (`crypto/rand`) printed
+once to the console banner and `INITIAL_ADMIN_LOGIN.txt` in the data dir — the dev
+config (`config.dev.json`) has no `localAuth` block, so a fresh local boot always
+generates one; check the banner/file for the actual password rather than assuming
+`admin`/`admin123`:
 
 ```bash
 curl -c cookies.txt -H "Content-Type: application/json" \
-  -d '{"username":"superadmin","password":"superadmin123"}' \
+  -d '{"username":"admin","password":"<from banner or INITIAL_ADMIN_LOGIN.txt>"}' \
   "https://localhost:3001/api/login/default"
 ```
+
+Locked out (or the recovery file was lost)? Drop a `RESET_ADMIN` marker file in the
+data dir and restart — the password is force-reset (re-generated the same way if
+`localAuth`/`LOCAL_ADMIN_PASSWORD` are still empty), the account is reactivated, and
+the credential is re-announced the same way. A signed-in superadmin who has cleared
+the forced password change and hasn't finished the first-run setup wizard
+(`GET /api/setup/state`) sees it before the normal app shell — every step is
+skippable, and `POST /api/setup/complete` records completion once.
 
 SSO fallback examples:
 
