@@ -11,6 +11,13 @@
     "policyCacheTtlSeconds": 30,
     "internalToken": "dev-internal-token"
   },
+  "kerberos": {
+    "enabled": false,
+    "keytabPath": "",
+    "servicePrincipal": "",
+    "onlyRealms": [],
+    "displayLabel": ""
+  },
   "login": {
     "google": {
       "client_id": "",

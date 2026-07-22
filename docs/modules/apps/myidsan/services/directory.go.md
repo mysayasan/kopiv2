@@ -4,8 +4,8 @@
 
 Implements `IDirectoryService`: the admin-facing directory (LDAP/AD) configuration
 CRUD, the "Test connection" probe, and the login-time bridge from
-`infra/login.LdapAuthenticate` to a local `entities.UserLogin` account with
-group→role mapping applied.
+`infra/login.LdapAuthenticate` (and, for Kerberos, `infra/login.LdapLookup`) to a
+local `entities.UserLogin` account with group→role mapping applied.
 
 ## Responsibilities
 
@@ -26,13 +26,31 @@ group→role mapping applied.
   account"). Consumed by `GET /api/login/providers` and both login pages so a
   disabled directory never renders a dead account-type choice.
 - `AuthenticateLdap(ctx, username, password) (*entities.UserLogin, error)` — the
-  login-time path:
-  1. Loads the config; `ErrDirectoryDisabled` if missing or `Enabled == false`.
-  2. Decrypts the stored bind password and calls `infra/login.LdapAuthenticate`.
-  3. Resolves the returned `Identity` to a local account via the existing
+  password login-time path: `loadEnabled` (below) then
+  `infra/login.LdapAuthenticate`, then `admitIdentity` (below).
+- `ResolveDirectoryUser(ctx, username) (*entities.UserLogin, error)` — the
+  Kerberos SPNEGO login-time path: `apps/myidsan/apis/login.go`'s
+  `kerberosLogin` has already verified the caller's identity via a ticket
+  (`infra/login.KerberosAuthenticator.Negotiate`); this resolves the verified
+  **username only** (no password, no credential check performed here — the doc
+  comment says so explicitly) via `loadEnabled` then `infra/login.LdapLookup`
+  (service-bind search, no user bind), then the same `admitIdentity` tail as
+  `AuthenticateLdap` — so a Kerberos-verified principal resolves to the exact
+  same `(ldap, objectGUID)` account, with the same group→role mapping, that a
+  password login for the same person would. `ErrDirectoryDisabled` when no
+  directory is configured/enabled — the caller (`kerberosLogin`) then falls
+  back to `login.StandaloneKerberosIdentity` for directory-less installs.
+- `loadEnabled(ctx) (*DirectoryConfig, login.LdapSettings, error)` — shared
+  config-load helper factored out of `AuthenticateLdap`/`ResolveDirectoryUser`:
+  loads the singleton row (`ErrDirectoryDisabled` if missing/disabled), decrypts
+  the bind password, and returns ready-to-use `LdapSettings`.
+- `admitIdentity(ctx, cfg, identity) (*entities.UserLogin, error)` — shared tail
+  of every directory-backed login, factored out of the old single
+  `AuthenticateLdap` body:
+  1. Resolves the `Identity` to a local account via the existing
      `IUserLoginService.UpsertFederated` (same strict `(provider, subject)` matching
      every other federated login uses — see `user_login.go.md`).
-  4. `resolveRole` looks up `FederatedGroupMapping` rows for `Provider == "ldap"` and
+  2. `resolveRole` looks up `FederatedGroupMapping` rows for `Provider == "ldap"` and
      calls the package-level `ResolveMappedRole` against the identity's groups. A
      match is applied via `IUserLoginService.AssignRole` when `cfg.Authoritative` is
      true (every login re-applies the mapped role) **or** the account's current
@@ -54,8 +72,12 @@ group→role mapping applied.
 
 ## Errors
 
-`ErrDirectoryDisabled` — LDAP login attempted while no enabled directory is
-configured; mapped by `apis/login.go` to `ErrLimitedAccess`.
+`ErrDirectoryDisabled` — a directory-backed login attempted while no enabled
+directory is configured. `AuthenticateLdap`'s caller (`apis/login.go`'s
+`ldapLogin`) maps it to `ErrLimitedAccess`; `ResolveDirectoryUser`'s caller
+(`kerberosLogin`) instead treats it as "no directory to resolve through" and
+falls back to `login.StandaloneKerberosIdentity` — a Kerberos ticket alone is
+still enough to sign in on a directory-less install.
 
 ## Notes
 

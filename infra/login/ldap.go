@@ -153,6 +153,34 @@ func LdapAuthenticate(ctx context.Context, settings LdapSettings, username, pass
 	return ldapIdentityFromEntry(entry, s, username)
 }
 
+// LdapLookup resolves a username to its directory identity WITHOUT any user bind:
+// service bind + single-entry search only. This is the resolution path for callers
+// that have already authenticated the user by other means — Kerberos SPNEGO proves
+// who the user is but carries no email/groups, so the directory fills those in.
+// NEVER call this on an unauthenticated username: it performs no credential check.
+func LdapLookup(ctx context.Context, settings LdapSettings, username string) (*Identity, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return nil, ErrLdapInvalidCredential
+	}
+	if err := settings.Validate(); err != nil {
+		return nil, err
+	}
+	s := settings.withDefaults()
+
+	conn, err := ldapConnect(ctx, s)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrLdapUnreachable, err)
+	}
+	defer conn.Close()
+
+	entry, err := ldapFindUser(conn, s, username)
+	if err != nil {
+		return nil, err
+	}
+	return ldapIdentityFromEntry(entry, s, username)
+}
+
 // LdapTest verifies the service bind (and, when sampleUsername is given, runs the
 // same lookup Authenticate would) WITHOUT ever binding as the sample user — it
 // never needs, takes, or checks a user password.

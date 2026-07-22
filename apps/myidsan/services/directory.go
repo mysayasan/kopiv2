@@ -78,6 +78,12 @@ type IDirectoryService interface {
 	// AuthenticateLdap authenticates the credential pair against the directory,
 	// resolves the account via UpsertFederated, and applies group→role mapping.
 	AuthenticateLdap(ctx context.Context, username string, password string) (*entities.UserLogin, error)
+	// ResolveDirectoryUser resolves an ALREADY-AUTHENTICATED username (Kerberos
+	// SPNEGO proved the ticket) to its account: directory lookup WITHOUT any user
+	// bind, then the same UpsertFederated + group→role tail as password logins —
+	// so a person gets ONE account regardless of how they signed in. Callers MUST
+	// have verified the username themselves; this performs no credential check.
+	ResolveDirectoryUser(ctx context.Context, username string) (*entities.UserLogin, error)
 }
 
 type directoryService struct {
@@ -222,22 +228,45 @@ func (m *directoryService) LoginOption(ctx context.Context) (bool, string) {
 }
 
 func (m *directoryService) AuthenticateLdap(ctx context.Context, username string, password string) (*entities.UserLogin, error) {
-	cfg, err := m.load(ctx)
+	cfg, settings, err := m.loadEnabled(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if cfg == nil || !cfg.Enabled {
-		return nil, ErrDirectoryDisabled
-	}
-
-	settings := ldapSettingsFromConfig(cfg)
-	settings.BindPassword = decodeDirectorySecret(m.cipher, cfg.BindPassword)
-
 	identity, err := login.LdapAuthenticate(ctx, settings, username, password)
 	if err != nil {
 		return nil, err
 	}
+	return m.admitIdentity(ctx, cfg, identity)
+}
 
+func (m *directoryService) ResolveDirectoryUser(ctx context.Context, username string) (*entities.UserLogin, error) {
+	cfg, settings, err := m.loadEnabled(ctx)
+	if err != nil {
+		return nil, err
+	}
+	identity, err := login.LdapLookup(ctx, settings, username)
+	if err != nil {
+		return nil, err
+	}
+	return m.admitIdentity(ctx, cfg, identity)
+}
+
+func (m *directoryService) loadEnabled(ctx context.Context) (*myidsanentities.DirectoryConfig, login.LdapSettings, error) {
+	cfg, err := m.load(ctx)
+	if err != nil {
+		return nil, login.LdapSettings{}, err
+	}
+	if cfg == nil || !cfg.Enabled {
+		return nil, login.LdapSettings{}, ErrDirectoryDisabled
+	}
+	settings := ldapSettingsFromConfig(cfg)
+	settings.BindPassword = decodeDirectorySecret(m.cipher, cfg.BindPassword)
+	return cfg, settings, nil
+}
+
+// admitIdentity is the shared tail of every directory-backed login: resolve the
+// account via strict UpsertFederated, then apply group→role mapping.
+func (m *directoryService) admitIdentity(ctx context.Context, cfg *myidsanentities.DirectoryConfig, identity *login.Identity) (*entities.UserLogin, error) {
 	user, err := m.users.UpsertFederated(ctx, *identity)
 	if err != nil {
 		return nil, err

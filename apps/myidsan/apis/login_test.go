@@ -7,9 +7,15 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/jcmturner/gokrb5/v8/iana/etypeID"
+	"github.com/jcmturner/gokrb5/v8/keytab"
 	"github.com/mysayasan/kopiv2/apps/myidsan/services"
 	"github.com/mysayasan/kopiv2/domain/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
@@ -87,6 +93,63 @@ func (f *fakeUserLoginService) EnsureStockSuperadmin(_ context.Context, _, _ str
 
 func (f *fakeUserLoginService) ChangePassword(_ context.Context, _ int64, _, _ string) error {
 	return nil
+}
+
+// Kerberos not configured: the endpoint refuses rather than challenging — a
+// challenge would make domain browsers pop credential prompts for nothing.
+func TestKerberosLogin_NotConfigured(t *testing.T) {
+	h, _ := newLoginHandlerForTest(t)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/login/kerberos", nil))
+	if rr.Code == http.StatusUnauthorized || rr.Header().Get("WWW-Authenticate") != "" {
+		t.Fatalf("unconfigured kerberos must not challenge: %d %q", rr.Code, rr.Header().Get("WWW-Authenticate"))
+	}
+}
+
+// Configured but no token yet: 401 + WWW-Authenticate: Negotiate (the challenge
+// that makes a domain browser retry with a ticket). A garbage token bounces to
+// the login page with error=sso_failed instead of a dead-end 401.
+func TestKerberosLogin_ChallengeAndFailureRedirect(t *testing.T) {
+	kt := keytab.New()
+	if err := kt.AddEntry("HTTP/idp.test.local", "TEST.LOCAL", "pw", time.Now(), 1, etypeID.AES256_CTS_HMAC_SHA1_96); err != nil {
+		t.Fatalf("AddEntry: %v", err)
+	}
+	raw, err := kt.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "svc.keytab")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write keytab: %v", err)
+	}
+	kerbAuth, err := login.NewKerberosAuthenticator(login.KerberosSettings{KeytabPath: path})
+	if err != nil {
+		t.Fatalf("NewKerberosAuthenticator: %v", err)
+	}
+
+	r := mux.NewRouter()
+	NewLoginApi(r, nil, *middlewares.NewAuth("unit-test-secret"), &fakeUserLoginService{}, LoginApiOptions{
+		Kerberos:      kerbAuth,
+		KerberosLabel: "Windows (SSO)",
+	})
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/login/kerberos?continue=%2Fapi%2Fauth%2Fauthorize", nil))
+	if rr.Code != http.StatusUnauthorized || rr.Header().Get("WWW-Authenticate") != "Negotiate" {
+		t.Fatalf("challenge = %d %q", rr.Code, rr.Header().Get("WWW-Authenticate"))
+	}
+
+	rr = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/login/kerberos?continue=%2Fapi%2Fauth%2Fauthorize", nil)
+	req.Header.Set("Authorization", "Negotiate aGVsbG8=")
+	r.ServeHTTP(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("garbage token: code = %d, want 302 redirect", rr.Code)
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "/api/auth/login") || !strings.Contains(loc, "error=sso_failed") {
+		t.Fatalf("garbage token redirect = %q", loc)
+	}
 }
 
 func TestDefaultLogin_SuccessIssuesSessionCookies(t *testing.T) {
@@ -299,7 +362,7 @@ func newLoginHandlerForTest(t *testing.T) (http.Handler, *fakeUserLoginService) 
 	r := mux.NewRouter()
 	svc := &fakeUserLoginService{}
 	auth := middlewares.NewAuth("unit-test-secret")
-	NewLoginApi(r, nil, *auth, svc, nil, nil, nil)
+	NewLoginApi(r, nil, *auth, svc, LoginApiOptions{})
 	return r, svc
 }
 
