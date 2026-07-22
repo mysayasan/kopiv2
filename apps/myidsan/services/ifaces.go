@@ -18,6 +18,9 @@ type IUserLoginService interface {
 	// identity once, a bound one refuses the login (ErrFederatedIdentityConflict).
 	// Full miss creates a pending-clearance account.
 	UpsertFederated(ctx context.Context, id login.Identity) (*entities.UserLogin, error)
+	// AssignRole sets only the account's role (used by federated group→role
+	// mapping); credentials and profile are untouched.
+	AssignRole(ctx context.Context, userId int64, roleId int64) error
 	RegisterLocal(ctx context.Context, model entities.UserLogin) (uint64, error)
 	Create(ctx context.Context, model entities.UserLogin) (uint64, error)
 	Update(ctx context.Context, model entities.UserLogin) (uint64, error)

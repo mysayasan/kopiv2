@@ -564,6 +564,26 @@ Use Redis for multi-app deployments so session/RBAC cache entries can be shared.
 
 The MyIDSan admin UI is served from the app shell and builds its sidebar from `/api/endpoint-rbac/ep/me` plus `api_endpoint.metadata` menu entries. The same RBAC method grants control toolbar actions: `POST` enables create, `PUT` enables edit, and `DELETE` enables delete. Table filter, sort, and page position are remembered per table resource in browser cookies, and the table clear control resets that remembered state. If a refreshed session remembers a page that the current role can no longer access, the UI shows the unauthorized access page.
 
+## MyIDSan LDAP / Active Directory Login
+
+Federation → Directory (`GET/PUT /api/directory-config`, `POST /api/directory-config/test`, superadmin or an explicitly delegated role) connects myidsan to an existing LDAP/AD server so domain accounts can sign in alongside local and Google/GitHub accounts. Covers AD, Samba AD, FreeIPA, OpenLDAP, and 389-ds.
+
+What you need before enabling it:
+
+- **A read-only service (bind) account** in the directory — used only to search for the signing-in user's entry, never to authenticate as them. Enter its DN as `bindDn` (e.g. `CN=svc-myidsan,OU=Service,DC=corp,DC=local`) and its password as `bindPassword`; the password is encrypted at rest (`infra/atrest`) once `security.encryptAtRest` is on (the default).
+- **TLS.** There is no insecure LDAP mode. Either the server has a certificate signed by a CA myidsan's host already trusts (leave `caCertPem` empty; system roots are used), or paste the server/CA's PEM into `caCertPem` to pin it (mirrors myseliasan's `sso.caCertPath` pattern). Use implicit TLS (`ldaps`, port 636, the default) unless the directory only offers `StartTLS` on 389, in which case check `useStartTls`.
+- **The base DN** to search under (e.g. `DC=corp,DC=local`) and, optionally, a custom `userFilter` if the built-in AD/inetOrgPerson default (`sAMAccountName`/`uid`/`mail`) doesn't fit your schema — it must contain `%s` for the escaped username.
+- **A group attribute** (`groupAttr`, default `memberOf` on AD) if you plan to map directory groups to myidsan roles.
+
+Steps:
+
+1. Fill in the form and click **Test connection** (with or without a sample username) *before* saving — this validates the settings you're about to save, never binds as the sample user, and reports the matched DN/email/group count so you can confirm the filter and attributes are right.
+2. Save, then check **Enabled**.
+3. Under **Group → role mappings**, add a mapping per directory group you want to grant a role automatically (paste the group's DN as it appears in `memberOf`, matched case-insensitively). Leave **Authoritative** off to only seed the role once for a still-pending account (a manually assigned role then sticks), or on to have the mapping re-assert the role on every login (directory is the system of record).
+4. A directory account with no matching group mapping signs in but lands in the same "access pending" state as any other new account — a superadmin must assign it a role, same as local/Google/GitHub signups.
+
+Both login surfaces (the SPA and the server-rendered `/api/auth/login` page myseliasan's SSO hop lands on) show an "Account type" selector only while directory login is enabled; it disappears automatically when disabled. LDAP login shares the same per-IP failed-login lockout (`loginSecurity` config) as local login.
+
 ## Filter Shared List APIs
 
 Shared DB-backed list endpoints accept backend filters and sorters in addition to `limit` and `offset`.

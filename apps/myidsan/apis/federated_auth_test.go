@@ -140,6 +140,8 @@ func TestAuthorizeRedirectsRegisteredClientWithoutSessionToLogin(t *testing.T) {
 		cfg,
 		auth,
 		login.NewRegistry(),
+		nil, // no directory service: LDAP login disabled in these tests
+		nil, // no login guard: lockout is nil-safe and off in these tests
 		services.NewUserLoginService(&fakeGenericRepo[entities.UserLogin]{}, cache.NewMemoryStore(time.Minute, time.Minute)),
 		&fakeGenericRepo[entities.AppRegistry]{byID: map[uint64]*entities.AppRegistry{uint64(app.Id): app}},
 		&fakeGenericRepo[entities.AppAuthConfig]{rows: []*entities.AppAuthConfig{client}},

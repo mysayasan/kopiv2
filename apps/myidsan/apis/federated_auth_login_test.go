@@ -19,8 +19,30 @@ func renderFor(t *testing.T, providers *login.OAuthProvidersConfigModel) string 
 		providers: login.BuildRegistry(providers),
 	}
 	w := httptest.NewRecorder()
-	m.renderLoginPage(w, http.StatusOK, "/api/auth/authorize?client_id=myseliasan", "", "")
+	m.renderLoginPage(w, http.StatusOK, "/api/auth/authorize?client_id=myseliasan", "", "local", "", "")
 	return w.Body.String()
+}
+
+// Directory login enabled: the page must offer the account-type choice with the
+// configured label; disabled (empty label): no method select at all.
+func TestLoginPageDirectoryOption(t *testing.T) {
+	m := &federatedAuthApi{cfg: &config.AppConfigModel{}, providers: login.NewRegistry()}
+
+	w := httptest.NewRecorder()
+	m.renderLoginPage(w, http.StatusOK, "/", "", "ldap", "ACME Domain", "")
+	body := w.Body.String()
+	if !strings.Contains(body, `name="method"`) || !strings.Contains(body, "ACME Domain") {
+		t.Fatal("enabled directory did not render the account-type select with its label")
+	}
+	if !strings.Contains(body, `value="ldap" selected`) {
+		t.Fatal("failed ldap attempt did not preserve the ldap selection")
+	}
+
+	w = httptest.NewRecorder()
+	m.renderLoginPage(w, http.StatusOK, "/", "", "local", "", "")
+	if strings.Contains(w.Body.String(), `name="method"`) {
+		t.Fatal("disabled directory must not render an account-type select")
+	}
 }
 
 // The federated login page is the one server-rendered page in the suite, and it is the

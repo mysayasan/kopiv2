@@ -4,7 +4,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log"
+	"math"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,29 +18,47 @@ import (
 	"github.com/mysayasan/kopiv2/domain/entities"
 	enumauth "github.com/mysayasan/kopiv2/domain/enums/auth"
 	"github.com/mysayasan/kopiv2/domain/models"
+	sharedapis "github.com/mysayasan/kopiv2/domain/shared/apis"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 	"github.com/mysayasan/kopiv2/infra/login"
+	"github.com/mysayasan/kopiv2/infra/telemetry"
 )
+
+// MetricFederatedLoginTotal counts federated login outcomes by provider and result
+// — the LDAP failure modes (unreachable directory, ambiguous filter) otherwise only
+// surface as individual users failing to sign in.
+const MetricFederatedLoginTotal = "myidsan_federated_login_total"
 
 // LoginApi struct
 type loginApi struct {
 	auth        middlewares.AuthMidware
 	userService services.IUserLoginService
 	providers   *login.Registry
+	directory   services.IDirectoryService
+	guard       *sharedapis.LoginGuard
+	metrics     telemetry.Metrics
 }
 
 // Create LoginApi. Returns the identity-provider registry so the server-rendered
-// federated login page can offer the same providers as the SPA.
+// federated login page can offer the same providers as the SPA. guard applies the
+// LoginSecurity per-IP lockout to every interactive credential check (local AND
+// directory); directory and metrics may be nil.
 func NewLoginApi(
 	router *mux.Router,
 	oAuth2Conf *login.OAuthProvidersConfigModel,
 	auth middlewares.AuthMidware,
-	userService services.IUserLoginService) *login.Registry {
+	userService services.IUserLoginService,
+	directory services.IDirectoryService,
+	guard *sharedapis.LoginGuard,
+	metrics telemetry.Metrics) *login.Registry {
 	handler := &loginApi{
 		auth:        auth,
 		userService: userService,
 		providers:   login.BuildRegistry(oAuth2Conf),
+		directory:   directory,
+		guard:       guard,
+		metrics:     metrics,
 	}
 
 	// Create api sub-router
@@ -52,6 +74,9 @@ func NewLoginApi(
 	// Authenticated: change the signed-in local account's password (also clears the
 	// forced first-login must-change flag).
 	loginGroup.Handle("/default/change-password", auth.Middleware(http.HandlerFunc(handler.changePassword))).Methods("POST")
+	// Directory (LDAP/AD) login is a credential POST, not a browser redirect, so it
+	// does not go through the redirect-provider registry.
+	loginGroup.HandleFunc("/ldap", handler.ldapLogin).Methods("POST")
 
 	// One generic pair of routes serves every registered redirect provider. The fixed
 	// paths above are registered first, so mux matches them before this catch-all.
@@ -62,13 +87,15 @@ func NewLoginApi(
 }
 
 // listProviders reports the configured federated login providers. `list` is the
-// authoritative registry view (key + button label, in render order); the per-key
-// booleans keep the pre-registry SPA contract (`{google:bool, github:bool}`) working
-// until every deployed frontend reads `list`.
+// authoritative registry view (key + button label + kind, in render order); the
+// per-key booleans keep the pre-registry SPA contract (`{google:bool, github:bool}`)
+// working until every deployed frontend reads `list`. Kind "redirect" is a browser
+// round-trip (OAuth); "form" is a credential form posted back to /api/login/{key}.
 func (m *loginApi) listProviders(w http.ResponseWriter, r *http.Request) {
 	type providerInfo struct {
 		Key         string `json:"key"`
 		DisplayName string `json:"displayName"`
+		Kind        string `json:"kind"`
 	}
 	resp := map[string]any{
 		"google": false,
@@ -81,10 +108,142 @@ func (m *loginApi) listProviders(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		resp[key] = true
-		list = append(list, providerInfo{Key: key, DisplayName: p.DisplayName()})
+		list = append(list, providerInfo{Key: key, DisplayName: p.DisplayName(), Kind: "redirect"})
+	}
+	if m.directory != nil {
+		if enabled, label := m.directory.LoginOption(r.Context()); enabled {
+			resp["ldap"] = true
+			list = append(list, providerInfo{Key: login.LdapProviderKey, DisplayName: label, Kind: "form"})
+		}
 	}
 	resp["list"] = list
 	controllers.SendResult(w, resp)
+}
+
+// ldapLogin authenticates a username/password pair against the configured
+// directory. Same lockout counters as local login: to a password sprayer both
+// surfaces are the same door.
+func (m *loginApi) ldapLogin(w http.ResponseWriter, r *http.Request) {
+	if m.directory == nil {
+		controllers.SendError(w, controllers.ErrLimitedAccess, services.ErrDirectoryDisabled.Error())
+		return
+	}
+
+	if locked, retry := guardLocked(m.guard, r); locked {
+		writeLoginLockout(w, retry)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+
+	body := new(login.DefaultLoginRequestModel)
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+
+	user, err := m.directory.AuthenticateLdap(r.Context(), body.Username, body.Password)
+	if err != nil {
+		m.recordFederatedLogin(login.LdapProviderKey, ldapResultLabel(err))
+		switch {
+		case errors.Is(err, login.ErrLdapInvalidCredential):
+			m.recordLoginFailure(w, r)
+			controllers.SendError(w, controllers.ErrAuthFailed, err.Error())
+		case errors.Is(err, services.ErrDirectoryDisabled),
+			errors.Is(err, services.ErrFederatedIdentityConflict),
+			errors.Is(err, services.ErrInactiveAccount):
+			controllers.SendError(w, controllers.ErrLimitedAccess, err.Error())
+		case errors.Is(err, login.ErrLdapNoEmail), errors.Is(err, login.ErrLdapAmbiguousUser):
+			controllers.SendError(w, controllers.ErrStatusUnprocessableEntity, err.Error())
+		default:
+			controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		}
+		return
+	}
+
+	guardSuccess(m.guard, r)
+	m.recordFederatedLogin(login.LdapProviderKey, "success")
+	m.issueLocalSession(w, r, user)
+}
+
+func (m *loginApi) recordFederatedLogin(provider, result string) {
+	if m.metrics == nil {
+		return
+	}
+	m.metrics.Inc(MetricFederatedLoginTotal, telemetry.Labels{"provider": provider, "result": result})
+}
+
+// recordLoginFailure counts a genuine credential failure toward the per-IP lockout
+// and applies the configured failure delay (slows offline-style guessing).
+func (m *loginApi) recordLoginFailure(w http.ResponseWriter, r *http.Request) {
+	if m.guard == nil {
+		return
+	}
+	time.Sleep(m.guard.FailedDelay())
+	if lockedNow, retry := m.guard.RecordFailure(loginGuardKey(r)); lockedNow {
+		log.Printf("login lockout engaged ip=%s retryAfter=%s", loginGuardKey(r), retry)
+	}
+}
+
+func guardLocked(guard *sharedapis.LoginGuard, r *http.Request) (bool, time.Duration) {
+	if guard == nil {
+		return false, 0
+	}
+	return guard.Locked(loginGuardKey(r))
+}
+
+func guardSuccess(guard *sharedapis.LoginGuard, r *http.Request) {
+	if guard == nil {
+		return
+	}
+	guard.RecordSuccess(loginGuardKey(r))
+}
+
+// loginGuardKey mirrors the shared login guard's keying: the connecting peer's IP
+// from RemoteAddr, never a spoofable forwarded header.
+func loginGuardKey(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return "ip:" + strings.TrimSpace(r.RemoteAddr)
+	}
+	return "ip:" + host
+}
+
+func writeLoginLockout(w http.ResponseWriter, retry time.Duration) {
+	secs := int(math.Ceil(retry.Seconds()))
+	if secs < 1 {
+		secs = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusTooManyRequests)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"message":           "too many failed login attempts",
+		"retryAfterSeconds": secs,
+	})
+}
+
+func ldapResultLabel(err error) string {
+	switch {
+	case errors.Is(err, login.ErrLdapInvalidCredential):
+		return "invalid_credential"
+	case errors.Is(err, login.ErrLdapUnreachable):
+		return "unreachable"
+	case errors.Is(err, login.ErrLdapAmbiguousUser):
+		return "ambiguous"
+	case errors.Is(err, login.ErrLdapNoEmail):
+		return "no_email"
+	case errors.Is(err, services.ErrFederatedIdentityConflict):
+		return "identity_conflict"
+	case errors.Is(err, services.ErrDirectoryDisabled):
+		return "disabled"
+	case errors.Is(err, services.ErrInactiveAccount):
+		return "inactive"
+	default:
+		return "error"
+	}
 }
 
 func (m *loginApi) providerLogin(w http.ResponseWriter, r *http.Request) {
@@ -143,6 +302,11 @@ func (m *loginApi) providerCallback(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *loginApi) defaultLogin(w http.ResponseWriter, r *http.Request) {
+	if locked, retry := guardLocked(m.guard, r); locked {
+		writeLoginLockout(w, retry)
+		return
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
@@ -160,6 +324,9 @@ func (m *loginApi) defaultLogin(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, services.ErrInvalidCredentialPayload):
 			controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		case errors.Is(err, services.ErrInvalidCredential):
+			// Only genuine credential failures count toward the lockout — payload
+			// or server errors are not guessing.
+			m.recordLoginFailure(w, r)
 			controllers.SendError(w, controllers.ErrAuthFailed, err.Error())
 		case errors.Is(err, services.ErrInactiveAccount):
 			controllers.SendError(w, controllers.ErrLimitedAccess, err.Error())
@@ -171,6 +338,7 @@ func (m *loginApi) defaultLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	guardSuccess(m.guard, r)
 	m.issueLocalSession(w, r, user)
 }
 

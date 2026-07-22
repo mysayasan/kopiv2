@@ -22,6 +22,7 @@ import (
 	"github.com/mysayasan/kopiv2/domain/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	"github.com/mysayasan/kopiv2/domain/models"
+	sharedapis "github.com/mysayasan/kopiv2/domain/shared/apis"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 	"github.com/mysayasan/kopiv2/infra/cache"
@@ -40,6 +41,8 @@ type federatedAuthApi struct {
 	cfg              *config.AppConfigModel
 	auth             *middlewares.AuthMidware
 	providers        *login.Registry
+	directory        services.IDirectoryService
+	guard            *sharedapis.LoginGuard
 	userService      services.IUserLoginService
 	apps             dbsql.IGenericRepo[entities.AppRegistry]
 	authConfigs      dbsql.IGenericRepo[entities.AppAuthConfig]
@@ -96,6 +99,8 @@ func NewFederatedAuthApi(
 	cfg *config.AppConfigModel,
 	auth *middlewares.AuthMidware,
 	providers *login.Registry,
+	directory services.IDirectoryService,
+	guard *sharedapis.LoginGuard,
 	userService services.IUserLoginService,
 	apps dbsql.IGenericRepo[entities.AppRegistry],
 	authConfigs dbsql.IGenericRepo[entities.AppAuthConfig],
@@ -106,6 +111,8 @@ func NewFederatedAuthApi(
 		cfg:              cfg,
 		auth:             auth,
 		providers:        providers,
+		directory:        directory,
+		guard:            guard,
 		userService:      userService,
 		apps:             apps,
 		authConfigs:      authConfigs,
@@ -192,7 +199,20 @@ func (m *federatedAuthApi) authorize(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *federatedAuthApi) loginPage(w http.ResponseWriter, r *http.Request) {
-	m.renderLoginPage(w, http.StatusOK, cleanContinuePath(r.URL.Query().Get("continue")), "", "")
+	m.renderLoginPage(w, http.StatusOK, cleanContinuePath(r.URL.Query().Get("continue")), "", "local", m.directoryLabel(r), "")
+}
+
+// directoryLabel returns the directory login option's display label, or "" when
+// directory login is not enabled (the page then renders no account-type choice).
+func (m *federatedAuthApi) directoryLabel(r *http.Request) string {
+	if m.directory == nil {
+		return ""
+	}
+	enabled, label := m.directory.LoginOption(r.Context())
+	if !enabled {
+		return ""
+	}
+	return label
 }
 
 // renderLoginPage draws the federated sign-in page. It is the suite's standard login
@@ -205,12 +225,25 @@ func (m *federatedAuthApi) loginPage(w http.ResponseWriter, r *http.Request) {
 //
 // `errMsg` is empty on the initial GET and set when a POST failed, so a bad password
 // re-renders the branded card instead of dumping raw text; `username` is echoed back
-// so the user only has to retype the password.
-func (m *federatedAuthApi) renderLoginPage(w http.ResponseWriter, status int, continueTo, username, errMsg string) {
+// so the user only has to retype the password. `method` ("local"/"ldap") is the
+// account-type selection to preserve across a failed POST; `ldapLabel` non-empty
+// renders the account-type choice (directory login is enabled) under that name.
+func (m *federatedAuthApi) renderLoginPage(w http.ResponseWriter, status int, continueTo, username, method, ldapLabel, errMsg string) {
 	social := m.socialButtonsHTML(continueTo)
 	errHTML := ""
 	if errMsg != "" {
 		errHTML = fmt.Sprintf(`<p class="status-line" role="alert">%s</p>`, html.EscapeString(errMsg))
+	}
+	methodHTML := ""
+	if ldapLabel != "" {
+		localSel, ldapSel := ` selected`, ``
+		if method == "ldap" {
+			localSel, ldapSel = ``, ` selected`
+		}
+		methodHTML = fmt.Sprintf(`<label>Account type<select name="method">`+
+			`<option value="local"%s>Local account</option>`+
+			`<option value="ldap"%s>%s</option>`+
+			`</select></label>`, localSel, ldapSel, html.EscapeString(ldapLabel))
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
@@ -237,7 +270,7 @@ func (m *federatedAuthApi) renderLoginPage(w http.ResponseWriter, status int, co
     .login-brand p { margin: 6px 0 0; color: #6a7888; }
     form { display: grid; gap: 16px; }
     label { display: grid; gap: 6px; color: #59687a; font-size: 13px; font-weight: 650; }
-    input { width: 100%%; min-height: 38px; padding: 8px 10px; font: inherit;
+    input, select { width: 100%%; min-height: 38px; padding: 8px 10px; font: inherit;
       border: 1px solid #c7d1dc; border-radius: 6px; background: #fff; color: #18212f; }
     button { width: 100%%; min-height: 38px; padding: 0 14px; font: inherit; font-weight: 650; cursor: pointer;
       border: 1px solid #2d6cdf; border-radius: 6px; background: #2d6cdf; color: #fff; }
@@ -274,13 +307,13 @@ func (m *federatedAuthApi) renderLoginPage(w http.ResponseWriter, status int, co
       <form method="post" action="/api/auth/login">
         <input type="hidden" name="continue" value="%s">
         <label>Username or email<input name="username" value="%s" autocomplete="username" autofocus required></label>
-        <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+        <label>Password<input name="password" type="password" autocomplete="current-password" required></label>%s
         <button type="submit">Log in</button>
       </form>%s
     </section>
   </main>
 </body>
-</html>`, errHTML, html.EscapeString(continueTo), html.EscapeString(username), social)
+</html>`, errHTML, html.EscapeString(continueTo), html.EscapeString(username), methodHTML, social)
 }
 
 // socialButtonsHTML renders a sign-in link for every registered identity provider.
@@ -320,12 +353,42 @@ func (m *federatedAuthApi) loginPost(w http.ResponseWriter, r *http.Request) {
 	}
 	continueTo := cleanContinuePath(r.Form.Get("continue"))
 	username := r.Form.Get("username")
-	user, err := m.userService.AuthenticateDefault(r.Context(), username, r.Form.Get("password"))
+	method := r.Form.Get("method")
+	ldapLabel := m.directoryLabel(r)
+	// The account-type choice only exists while directory login is enabled — an
+	// "ldap" POST against a disabled directory falls back to a local check.
+	useLdap := method == "ldap" && ldapLabel != ""
+	if !useLdap {
+		method = "local"
+	}
+
+	if locked, retry := guardLocked(m.guard, r); locked {
+		m.renderLoginPage(w, http.StatusTooManyRequests, continueTo, username, method, ldapLabel,
+			fmt.Sprintf("Too many failed attempts — try again in %d seconds.", int(retry.Seconds())+1))
+		return
+	}
+
+	var user *entities.UserLogin
+	var err error
+	if useLdap {
+		user, err = m.directory.AuthenticateLdap(r.Context(), username, r.Form.Get("password"))
+	} else {
+		user, err = m.userService.AuthenticateDefault(r.Context(), username, r.Form.Get("password"))
+	}
 	if err != nil {
+		if errors.Is(err, services.ErrInvalidCredential) || errors.Is(err, login.ErrLdapInvalidCredential) {
+			if m.guard != nil {
+				time.Sleep(m.guard.FailedDelay())
+				m.guard.RecordFailure(loginGuardKey(r))
+			}
+		}
 		// Re-render the branded card with the failure inline, rather than the bare
 		// "Login failed" text this used to dump.
-		m.renderLoginPage(w, http.StatusUnauthorized, continueTo, username, "Login failed: "+err.Error())
+		m.renderLoginPage(w, http.StatusUnauthorized, continueTo, username, method, ldapLabel, "Login failed: "+err.Error())
 		return
+	}
+	if m.guard != nil {
+		m.guard.RecordSuccess(loginGuardKey(r))
 	}
 	if err := m.issueProviderSession(w, r, user); err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())

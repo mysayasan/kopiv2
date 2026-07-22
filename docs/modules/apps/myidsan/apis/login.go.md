@@ -2,20 +2,48 @@
 
 ## Purpose
 
-Provides authentication endpoints for local credentials and any registered federated
-identity provider (`infra/login.Registry`, see `infra/login/provider.go.md`).
+Provides authentication endpoints for local credentials, LDAP/Active Directory
+credentials, and any registered redirect-style federated identity provider
+(`infra/login.Registry`, see `infra/login/provider.go.md`).
 
 ## Responsibilities
 
 - Handles local credential login via `POST /api/login/default`.
 - Handles local account registration via `POST /api/login/default/register`.
-- Sets HttpOnly JWT session cookies for successful local login/register and federated callbacks.
+- Handles LDAP/Active Directory credential login via `POST /api/login/ldap` (`ldapLogin`) — a JSON credential POST, not a browser redirect, so it is a fixed route rather than a member of the redirect-provider registry. Disabled (`directory == nil` or the configured directory is off) responds `ErrLimitedAccess`. On success it calls `services.IDirectoryService.AuthenticateLdap` (see `services/directory.go.md`) and issues the session through the same `issueLocalSession` local login uses.
+- Sets HttpOnly JWT session cookies for successful local/LDAP login/register and federated callbacks.
 - Sets a readable CSRF cookie that clients echo in `X-CSRF-Token` for unsafe authenticated requests.
 - Clears session cookies through logout.
-- `NewLoginApi` builds the provider registry via `login.BuildRegistry(oAuth2Conf)` (Google/GitHub register only when both `ClientId` and `ClientSecret` are present) and **returns it**, so `apps/myidsan/app/app.go` can thread the same registry into `NewFederatedAuthApi` — one registry, one provider list, shared by the server-rendered login page, the SPA, and the OAuth routes.
-- One generic route pair serves every registered provider: `GET /api/login/{provider}` (`providerLogin`) and `GET /api/callback/{provider}` (`providerCallback`), matched by `mux` against `{provider:[a-z][a-z0-9_.:-]*}` — registered *after* the fixed `/default*`/`/providers` routes so those still win the match. An unregistered provider key 404s with `ErrLimitedAccess` (`"<key> login is not configured"`).
+- `NewLoginApi` builds the provider registry via `login.BuildRegistry(oAuth2Conf)` (Google/GitHub register only when both `ClientId` and `ClientSecret` are present) and **returns it**, so `apps/myidsan/app/app.go` can thread the same registry into `NewFederatedAuthApi` — one registry, one provider list, shared by the server-rendered login page, the SPA, and the OAuth routes. `NewLoginApi` also takes `directory services.IDirectoryService`, `guard *sharedapis.LoginGuard`, and `metrics telemetry.Metrics` — all three may be nil (LDAP disabled / lockout off / metrics not wired).
+- One generic route pair serves every registered redirect provider: `GET /api/login/{provider}` (`providerLogin`) and `GET /api/callback/{provider}` (`providerCallback`), matched by `mux` against `{provider:[a-z][a-z0-9_.:-]*}` — registered *after* the fixed `/default*`/`/ldap`/`/providers` routes so those still win the match. An unregistered provider key 404s with `ErrLimitedAccess` (`"<key> login is not configured"`).
 - Prevents local credential takeover of third-party-managed accounts.
-- Exposes `GET /api/login/providers` (`listProviders`) — public, no auth — returning the registry's authoritative `list: [{key, displayName}]` (render order) plus legacy `{"google": bool, "github": bool}` booleans for older SPA builds that have not switched to reading `list`.
+- Exposes `GET /api/login/providers` (`listProviders`) — public, no auth — returning the registry's authoritative `list: [{key, displayName, kind}]` (render order) plus legacy `{"google": bool, "github": bool}` booleans for older SPA builds that have not switched to reading `list`. `kind` is `"redirect"` for every registry provider and `"form"` for the directory option, which the list gains an entry for (`{key: login.LdapProviderKey, displayName: <configured label>, kind: "form"}`, plus `resp["ldap"] = true`) only when `directory.LoginOption(ctx)` reports it enabled — so a disabled directory renders neither a button nor an account-type choice on either login surface.
+
+## Per-IP Login Lockout
+
+`NewLoginApi`'s `guard *sharedapis.LoginGuard` (built by `apps/myidsan/app/app.go`'s
+`loginGuardConfig` from the shared `LoginSecurity` config block — the same one
+`mymatasan`/`myiotsan` use) is applied to **every** interactive credential surface in
+this file: `defaultLogin` and `ldapLogin` both check `guardLocked` before doing any
+credential work and respond `429` + `Retry-After` (`writeLoginLockout`) when locked;
+only a genuine credential failure (`services.ErrInvalidCredential` /
+`login.ErrLdapInvalidCredential`, never a payload or server error) sleeps the
+configured `FailedDelay` and calls `guard.RecordFailure` (`recordLoginFailure`); a
+success calls `guard.RecordSuccess` (`guardSuccess`). `loginGuardKey` keys strictly on
+`RemoteAddr`'s host — never a spoofable forwarded header. **This closes a real gap**:
+before this change myidsan had no failed-login lockout at all on either credential
+surface. `apps/myidsan/apis/federated_auth.go`'s server-rendered `loginPost` shares
+the identical guard instance, so the counters are per source IP across both login
+surfaces, not per surface.
+
+## Federated Login Metrics
+
+`MetricFederatedLoginTotal = "myidsan_federated_login_total"` counts LDAP login
+outcomes by `{provider, result}` (`recordFederatedLogin`/`ldapResultLabel`: `success`,
+`invalid_credential`, `unreachable`, `ambiguous`, `no_email`, `identity_conflict`,
+`disabled`, `inactive`, `error`) — LDAP's failure modes (an unreachable directory, an
+ambiguous filter) otherwise only ever surface as individual users failing to sign in,
+with nothing in aggregate to alert an operator.
 
 ## Federated Callback Flow (`providerCallback`)
 

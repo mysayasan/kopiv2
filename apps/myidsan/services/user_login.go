@@ -244,6 +244,26 @@ func applyIdentityProfile(user *entities.UserLogin, id login.Identity) {
 	}
 }
 
+// AssignRole sets the account's role without touching credentials or profile.
+// Role changes take effect on the next login/session refresh — live sessions keep
+// their issued role by design (see middlewares/auth.go session validation).
+func (m *userLoginService) AssignRole(ctx context.Context, userId int64, roleId int64) error {
+	user, err := m.repo.GetById(ctx, "", uint64(userId))
+	if err != nil {
+		return err
+	}
+	if user == nil || user.Id == 0 {
+		return errors.New("user not found")
+	}
+	if user.UserRoleId == roleId {
+		return nil
+	}
+	user.UserRoleId = roleId
+	user.UpdatedAt = time.Now().Unix()
+	_, err = m.repo.UpdateById(ctx, "", *user)
+	return err
+}
+
 func (m *userLoginService) RegisterLocal(ctx context.Context, model entities.UserLogin) (uint64, error) {
 	model.Email = strings.TrimSpace(model.Email)
 	model.Userpwd = strings.TrimSpace(model.Userpwd)

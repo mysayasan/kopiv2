@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/myidsan/apis"
@@ -14,9 +16,11 @@ import (
 	"github.com/mysayasan/kopiv2/apps/myidsan/services"
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
 	apiaccessenums "github.com/mysayasan/kopiv2/domain/enums/apiaccess"
+	sharedapis "github.com/mysayasan/kopiv2/domain/shared/apis"
 	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/infra/apidocs"
 	"github.com/mysayasan/kopiv2/infra/apphost"
+	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/db/bootstrap"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/versioning"
@@ -51,6 +55,8 @@ func (m *module) Entities() []any {
 		sharedentities.AccessRole{},
 		sharedentities.AccessRolePermission{},
 		myidsanentities.SsoCa{},
+		myidsanentities.DirectoryConfig{},
+		myidsanentities.FederatedGroupMapping{},
 	}
 }
 
@@ -111,6 +117,8 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{AppCode: "myidsan", Title: "Cache Service", Description: "cache administration access", Path: "/api/cache-service", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{AppCode: "myidsan", Title: "App Registry", Description: "registered SSO app management", Path: "/api/app-registry", Metadata: menuMetadata(menuItem{Enabled: true, Id: "apps", Label: "Apps", Group: "Federation", Order: 40, Summary: "Manage relying apps, audiences, and SSO registration.", Tone: "indigo"}), AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{AppCode: "myidsan", Title: "App Auth Config", Description: "registered SSO client auth policy management", Path: "/api/app-auth-config", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
+		{AppCode: "myidsan", Title: "Directory", Description: "LDAP/Active Directory login configuration", Path: "/api/directory-config", Metadata: menuMetadata(menuItem{Enabled: true, Id: "directory", Label: "Directory", Group: "Federation", Order: 45, Summary: "Connect an LDAP/Active Directory server and map groups to roles.", Tone: "amber"}), AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
+		{AppCode: "myidsan", Title: "Federated Group Mapping", Description: "directory/IdP group to role mapping management", Path: "/api/federated-group-mapping", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{AppCode: "myidsan", Title: "App Redirect URI", Description: "registered SSO client callback URL management", Path: "/api/app-redirect-uri", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{AppCode: "myidsan", Title: "SSO Introspection", Description: "internal token introspection access", Path: "/api/sso/introspect", AccessTier: apiaccessenums.DevOnly},
 		{AppCode: "myidsan", Title: "User Group", Description: "user group module access", Path: "/api/user-group", Metadata: menuMetadata(menuItem{Enabled: true, Id: "groups", Label: "Groups", Group: "Identity", Order: 20, Summary: "Organize identity ownership and hierarchy roots.", Tone: "teal"}), AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
@@ -196,13 +204,31 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	}
 	deps.Access.SetResolver(&userLoginResolver{repo: userLoginRepo})
 
-	providerRegistry := apis.NewLoginApi(api, deps.Config.Login, *deps.Auth, userLoginService)
+	// Directory (LDAP/AD) login: the bind password is encrypted at rest, so the
+	// secret cipher must resolve before the service exists. Recovery-pending fails
+	// closed like myseliasan's fleet secrets.
+	secretCipher, err := openSecretCipher(deps)
+	if err != nil {
+		return nil, err
+	}
+	directoryConfigRepo := dbsql.NewGenericRepo[myidsanentities.DirectoryConfig](deps.Db)
+	groupMappingRepo := dbsql.NewGenericRepo[myidsanentities.FederatedGroupMapping](deps.Db)
+	directoryService := services.NewDirectoryService(directoryConfigRepo, groupMappingRepo, userLoginService, secretCipher)
+
+	// One LoginGuard covers every interactive credential surface (local JSON login,
+	// LDAP login, the server-rendered federated login page): to a password sprayer
+	// they are the same door, so they share the per-IP counters.
+	loginGuard := sharedapis.NewLoginGuard(loginGuardConfig(deps))
+	deps.Metrics.Describe(apis.MetricFederatedLoginTotal, "Federated login outcomes by provider and result (LDAP failures are otherwise invisible in aggregate).")
+
+	providerRegistry := apis.NewLoginApi(api, deps.Config.Login, *deps.Auth, userLoginService, directoryService, loginGuard, deps.Metrics)
 	apis.NewUserLoginApi(api, *deps.Auth, deps.Access, userLoginDtoService)
 	apis.NewUserGroupApi(api, *deps.Auth, deps.Access, userGroupDtoService)
 	// Role + permission management is the shared accessrbac surface (/api/access-rbac),
 	// mounted by apphost. The old per-app user_role admin endpoint is retired.
 	apis.NewSSOApi(api, deps.Config, deps.Auth)
-	apis.NewFederatedAuthApi(api, deps.Config, deps.Auth, providerRegistry, userLoginService, appRegistryRepo, appAuthConfigRepo, appRedirectUriRepo, deps.Cache)
+	apis.NewFederatedAuthApi(api, deps.Config, deps.Auth, providerRegistry, directoryService, loginGuard, userLoginService, appRegistryRepo, appAuthConfigRepo, appRedirectUriRepo, deps.Cache)
+	apis.NewDirectoryConfigApi(api, *deps.Auth, deps.Access, directoryService, groupMappingRepo)
 	apis.NewAppAuthConfigApi(api, *deps.Auth, deps.Access, appAuthConfigRepo)
 	apis.NewAppRedirectUriApi(api, *deps.Auth, deps.Access, appRedirectUriRepo)
 	// SSO certificate authority: issues relying-app client certificates for mTLS.
@@ -212,6 +238,57 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// stock account's email is the configured localAuth.username.
 	apis.NewIdentityStatusApi(api, *deps.Auth, deps.Access, userLoginRepo, deps.AccessRoles, deps.Config.LocalAuth.Username)
 	return nil, nil
+}
+
+// openSecretCipher resolves the at-rest master key for myidsan's stored secrets
+// (today: the directory bind password), mirroring myseliasan's fleet-secret boot.
+// Returns nil (no encryption) when the feature is disabled. A key that existed here
+// before but is now missing FAILS CLOSED — refusing to boot rather than minting a
+// fresh key and silently orphaning the encrypted secrets.
+func openSecretCipher(deps apphost.Dependencies) (*atrest.Cipher, error) {
+	enabled := true
+	if deps.Config.Security.EncryptAtRest != nil {
+		enabled = *deps.Config.Security.EncryptAtRest
+	}
+	if !enabled {
+		return nil, nil
+	}
+	keyPath := strings.TrimSpace(deps.Config.Security.KeyPath)
+	if keyPath == "" {
+		keyPath, _ = filepath.Abs(apphost.ResolveWritablePath(deps.DataDir, filepath.Join("secret", "atrest.key")))
+	}
+	recoveryPath := strings.TrimSpace(deps.Config.Security.RecoveryPath)
+	if recoveryPath == "" {
+		recoveryPath = filepath.Join(filepath.Dir(keyPath), "recovery.atrestkey")
+	}
+	protectorCfg := atrest.ProtectorConfig{
+		Name:           deps.Config.Security.KeyProtector,
+		Passphrase:     deps.Config.Security.Passphrase,
+		PassphraseFile: deps.Config.Security.PassphraseFile,
+		PassphraseEnv:  deps.Config.Security.PassphraseEnv,
+	}
+	outcome, err := atrest.OpenForStartup(keyPath, recoveryPath, protectorCfg)
+	if err != nil {
+		return nil, fmt.Errorf("secret encryption key: %w", err)
+	}
+	if outcome.Mode == atrest.ModeRecoveryPending {
+		return nil, fmt.Errorf("secret encryption key missing (id %s): restore %s or set security.recoveryPath, then restart", outcome.KeyId, keyPath)
+	}
+	log.Printf("myidsan secret encryption enabled (key %s, mode %s, id %s)", keyPath, outcome.Mode, outcome.KeyId)
+	return outcome.KeyStore.Cipher(), nil
+}
+
+// loginGuardConfig maps the shared LoginSecurity config block onto the login guard.
+func loginGuardConfig(deps apphost.Dependencies) sharedapis.LoginGuardConfig {
+	ls := deps.Config.LoginSecurity
+	return sharedapis.LoginGuardConfig{
+		Enabled:     ls.Enabled,
+		MaxAttempts: ls.MaxAttempts,
+		Window:      time.Duration(ls.WindowSeconds) * time.Second,
+		BaseLockout: time.Duration(ls.LockoutSeconds) * time.Second,
+		MaxLockout:  time.Duration(ls.LockoutMaxSeconds) * time.Second,
+		FailedDelay: time.Duration(ls.FailedDelayMs) * time.Millisecond,
+	}
 }
 
 // userLoginResolver adapts the myidsan user_login store to an accessrbac principal:

@@ -47,6 +47,7 @@ const routeCatalog = [
   { id: 'roles', label: 'Roles', group: 'Administration', order: 30, tone: 'violet', code: 'RO', icon: 'key', paths: ['/api/access-rbac'], summary: 'Create, edit, and remove accessrbac roles (shared module).', superadminOnly: true },
   { id: 'rbac', label: 'RBAC', group: 'Administration', order: 35, tone: 'green', code: 'RB', icon: 'lock', paths: ['/api/access-rbac'], summary: 'Manage accessrbac roles (shared module). Superadmin bypasses; viewer is read-only.', superadminOnly: true },
   { id: 'apps', label: 'Apps', group: 'Federation', order: 40, tone: 'indigo', code: 'AP', icon: 'grid2', paths: ['/api/app-registry'], summary: 'Manage registered relying apps and audiences.' },
+  { id: 'directory', label: 'Directory', group: 'Federation', order: 45, tone: 'amber', code: 'DI', icon: 'key', paths: ['/api/directory-config', '/api/federated-group-mapping'], summary: 'Connect an LDAP/Active Directory server and map groups to roles.' },
   { id: 'endpoints', label: 'Endpoints', group: 'Access Control', order: 50, tone: 'steel', code: 'EP', icon: 'list', paths: ['/api/endpoint'], summary: 'Maintain the protected endpoint catalog.' }
 ]
 
@@ -392,6 +393,7 @@ function AppInner({ lang, onLangChange }) {
         {active === 'groups' && sectionAllowedById('groups', accessList, isSuperadmin) && <GroupsPage accessList={accessList} onToast={pushToast} />}
         {active === 'roles' && sectionAllowedById('roles', accessList, isSuperadmin) && <RolesPage accessList={accessList} onToast={pushToast} />}
         {active === 'apps' && sectionAllowedById('apps', accessList, isSuperadmin) && <AppsPage accessList={accessList} onToast={pushToast} />}
+        {active === 'directory' && sectionAllowedById('directory', accessList, isSuperadmin) && <DirectoryPage accessList={accessList} onToast={pushToast} />}
         {active === 'endpoints' && sectionAllowedById('endpoints', accessList, isSuperadmin) && <EndpointsPage accessList={accessList} onToast={pushToast} />}
         {active === 'rbac' && sectionAllowedById('rbac', accessList, isSuperadmin) && <RbacPage accessList={accessList} onToast={pushToast} />}
         <AppFooter appName="MyIDSan" apiBase={apiBase} />
@@ -561,11 +563,15 @@ function AuthScreen({ onAuthed, sessionError }) {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [providers, setProviders] = useState([])
+  // 'local' or a form-provider key ('ldap' when directory login is enabled).
+  const [accountType, setAccountType] = useState('local')
 
   // Only offer buttons for providers myidsan actually has configured, so a dead
   // provider link never shows (it would just return 'not configured'). `list` is the
-  // registry view (key + label); the boolean fields are the legacy two-provider shape,
-  // kept as a fallback against an older backend.
+  // registry view (key + label + kind); the boolean fields are the legacy
+  // two-provider shape, kept as a fallback against an older backend. Kind
+  // 'redirect' renders a link; kind 'form' (the directory login) renders an
+  // account-type toggle on the credential form itself.
   useEffect(() => {
     let active = true
     apiRequest('/api/login/providers')
@@ -574,8 +580,8 @@ function AuthScreen({ onAuthed, sessionError }) {
         let list = Array.isArray(p.list) ? p.list.filter(item => item && item.key) : []
         if (!list.length) {
           list = [
-            p.google ? { key: 'google', displayName: 'Google' } : null,
-            p.github ? { key: 'github', displayName: 'GitHub' } : null
+            p.google ? { key: 'google', displayName: 'Google', kind: 'redirect' } : null,
+            p.github ? { key: 'github', displayName: 'GitHub', kind: 'redirect' } : null
           ].filter(Boolean)
         }
         if (active) setProviders(list)
@@ -584,14 +590,20 @@ function AuthScreen({ onAuthed, sessionError }) {
     return () => { active = false }
   }, [])
 
+  const redirectProviders = providers.filter(p => p.kind !== 'form')
+  const formProviders = providers.filter(p => p.kind === 'form')
+  const domainSelected = mode === 'login' && formProviders.some(p => p.key === accountType)
+
   const submit = async event => {
     event.preventDefault()
     setBusy(true)
     setError('')
     try {
-      const path = mode === 'login'
-        ? '/api/login/default'
-        : '/api/login/default/register'
+      const path = domainSelected
+        ? `/api/login/${encodeURIComponent(accountType)}`
+        : mode === 'login'
+          ? '/api/login/default'
+          : '/api/login/default/register'
       const payload = mode === 'login'
         ? { username: form.username, password: form.password }
         : form
@@ -621,6 +633,17 @@ function AuthScreen({ onAuthed, sessionError }) {
         <form className="auth-form" onSubmit={submit}>
           {sessionError && <div className="message warning">{sessionError}</div>}
           {error && <div className="message danger">{error}</div>}
+          {mode === 'login' && formProviders.length > 0 && (
+            <label>
+              {t('auth.accountType')}
+              <select value={accountType} onChange={event => setAccountType(event.target.value)}>
+                <option value="local">{t('auth.localAccount')}</option>
+                {formProviders.map(p => (
+                  <option key={p.key} value={p.key}>{p.displayName || p.key}</option>
+                ))}
+              </select>
+            </label>
+          )}
           <label>
             {t('auth.username')}
             <input autoComplete="username" value={form.username} onChange={event => setForm({ ...form, username: event.target.value })} />
@@ -642,9 +665,9 @@ function AuthScreen({ onAuthed, sessionError }) {
             </div>
           )}
           <button className="primary-button" disabled={busy} type="submit">{busy ? t('auth.working') : mode === 'login' ? t('auth.login') : t('auth.createAccount')}</button>
-          {providers.length > 0 && (
+          {redirectProviders.length > 0 && (
             <div className="oauth-row">
-              {providers.map(p => (
+              {redirectProviders.map(p => (
                 <a key={p.key} className="quiet-link" href={`/api/login/${encodeURIComponent(p.key)}`}>{p.displayName || p.key}</a>
               ))}
             </div>
@@ -1403,6 +1426,7 @@ const MENU_SECTIONS = [
   { labelKey: 'nav.groups', path: '/api/user-group' },
   { labelKey: 'rbac.menuRolesRbac', path: '/api/access-rbac' },
   { labelKey: 'nav.apps', path: '/api/app-registry' },
+  { labelKey: 'nav.directory', path: '/api/directory-config' },
   { labelKey: 'nav.endpoints', path: '/api/endpoint' }
 ]
 
@@ -1583,6 +1607,277 @@ function RolePermissions() {
         </>
       )}
     </section>
+  )
+}
+
+const emptyDirectoryConfig = {
+  enabled: false,
+  displayLabel: '',
+  host: '',
+  port: 636,
+  useStartTls: false,
+  caCertPem: '',
+  bindDn: '',
+  bindPassword: '',
+  baseDn: '',
+  userFilter: '',
+  groupAttr: '',
+  subjectAttr: '',
+  authoritative: false,
+  hasBindPassword: false
+}
+
+// DirectoryPage is Federation → Directory: the LDAP/Active Directory connection
+// (singleton config), a test-connection probe that runs against the UNSAVED form,
+// and the group→role mappings. The bind password is write-only (hasBindPassword
+// mirrors the SSO client-secret pattern).
+function DirectoryPage({ accessList, onToast }) {
+  const t = useT()
+  const [form, setForm] = useState(emptyDirectoryConfig)
+  const [roles, setRoles] = useState([])
+  const [mappings, setMappings] = useState([])
+  const [newMapping, setNewMapping] = useState({ groupName: '', roleId: 0, priority: 0 })
+  const [sampleUser, setSampleUser] = useState('')
+  const [testResult, setTestResult] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const canEdit = hasEndpointAccess(accessList, '/api/directory-config', 'PUT')
+  const canMap = hasEndpointAccess(accessList, '/api/federated-group-mapping', 'POST')
+
+  const load = useCallback(async () => {
+    try {
+      const cfg = resultOf(await apiRequest('/api/directory-config')) || {}
+      setForm(current => ({ ...current, ...cfg, bindPassword: '' }))
+      const rows = rowsOf(await apiRequest('/api/federated-group-mapping?limit=200&offset=0'))
+      setMappings(rows)
+    } catch (err) {
+      setError(err.message)
+    }
+    try {
+      setRoles(resultOf(await apiRequest('/api/access-rbac/roles')) || [])
+    } catch {
+      // Role names are a nicety; mappings still render with raw role ids.
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const save = async event => {
+    event.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      const saved = resultOf(await apiRequest('/api/directory-config', { method: 'PUT', body: form }))
+      setForm(current => ({ ...current, ...saved, bindPassword: '' }))
+      onToast?.(t('dir.saved'), 'success')
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const test = async () => {
+    setBusy(true)
+    setError('')
+    setTestResult(null)
+    try {
+      setTestResult(resultOf(await apiRequest('/api/directory-config/test', {
+        method: 'POST',
+        body: { ...form, sampleUsername: sampleUser }
+      })))
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const addMapping = async event => {
+    event.preventDefault()
+    if (!newMapping.groupName.trim() || !Number(newMapping.roleId)) {
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      await apiRequest('/api/federated-group-mapping', {
+        method: 'POST',
+        body: {
+          provider: 'ldap',
+          groupName: newMapping.groupName.trim(),
+          roleId: Number(newMapping.roleId),
+          priority: Number(newMapping.priority) || 0
+        }
+      })
+      setNewMapping({ groupName: '', roleId: 0, priority: 0 })
+      await load()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const removeMapping = async id => {
+    setBusy(true)
+    setError('')
+    try {
+      await apiRequest(`/api/federated-group-mapping/${id}`, { method: 'DELETE' })
+      await load()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const roleName = id => roles.find(role => role.id === Number(id))?.name || `#${id}`
+
+  return (
+    <PageFrame title={t('dir.title')} subtitle={t('dir.subtitle')}>
+      <div className="app-detail">
+        {error && <div className="message danger">{error}</div>}
+
+        <form className="record-form" onSubmit={save}>
+          <label className="checkbox-field">
+            <input type="checkbox" checked={Boolean(form.enabled)} onChange={event => setForm({ ...form, enabled: event.target.checked })} />
+            {t('dir.enabled')}
+          </label>
+          <div className="two-col">
+            <label>
+              {t('dir.host')}
+              <input value={form.host} onChange={event => setForm({ ...form, host: event.target.value })} placeholder="dc1.corp.local" />
+            </label>
+            <label>
+              {t('dir.port')}
+              <input type="number" value={form.port} onChange={event => setForm({ ...form, port: Number(event.target.value) })} />
+            </label>
+          </div>
+          <label className="checkbox-field">
+            <input type="checkbox" checked={Boolean(form.useStartTls)} onChange={event => setForm({ ...form, useStartTls: event.target.checked })} />
+            {t('dir.startTls')}
+          </label>
+          <div className="two-col">
+            <label>
+              {t('dir.bindDn')}
+              <input value={form.bindDn} onChange={event => setForm({ ...form, bindDn: event.target.value })} placeholder="CN=svc-myidsan,OU=Service,DC=corp,DC=local" />
+            </label>
+            <label>
+              {t('dir.bindPassword')}
+              <input type="password" value={form.bindPassword} onChange={event => setForm({ ...form, bindPassword: event.target.value })} placeholder={form.hasBindPassword ? t('dir.passwordKeep') : t('dir.passwordSet')} />
+            </label>
+          </div>
+          <label>
+            {t('dir.baseDn')}
+            <input value={form.baseDn} onChange={event => setForm({ ...form, baseDn: event.target.value })} placeholder="DC=corp,DC=local" />
+          </label>
+          <label>
+            {t('dir.userFilter')}
+            <input value={form.userFilter} onChange={event => setForm({ ...form, userFilter: event.target.value })} placeholder="(&(objectClass=user)(sAMAccountName=%s))" />
+          </label>
+          <div className="two-col">
+            <label>
+              {t('dir.groupAttr')}
+              <input value={form.groupAttr} onChange={event => setForm({ ...form, groupAttr: event.target.value })} placeholder="memberOf" />
+            </label>
+            <label>
+              {t('dir.subjectAttr')}
+              <input value={form.subjectAttr} onChange={event => setForm({ ...form, subjectAttr: event.target.value })} placeholder="objectGUID" />
+            </label>
+          </div>
+          <label>
+            {t('dir.caCert')}
+            <textarea rows={4} value={form.caCertPem} onChange={event => setForm({ ...form, caCertPem: event.target.value })} placeholder="-----BEGIN CERTIFICATE-----" />
+          </label>
+          <label>
+            {t('dir.displayLabel')}
+            <input value={form.displayLabel} onChange={event => setForm({ ...form, displayLabel: event.target.value })} placeholder={t('dir.displayLabelHint')} />
+          </label>
+          <label className="checkbox-field">
+            <input type="checkbox" checked={Boolean(form.authoritative)} onChange={event => setForm({ ...form, authoritative: event.target.checked })} />
+            {t('dir.authoritative')}
+          </label>
+          <div className="form-actions">
+            <button className="primary-button" type="submit" disabled={busy || !canEdit}>{t('dir.save')}</button>
+          </div>
+        </form>
+
+        <hr className="detail-divider" />
+        <div className="detail-heading">
+          <h3>{t('dir.testHeading')}</h3>
+        </div>
+        <div className="two-col">
+          <label>
+            {t('dir.sampleUser')}
+            <input value={sampleUser} onChange={event => setSampleUser(event.target.value)} placeholder="alice" />
+          </label>
+          <div className="form-actions">
+            <button className="secondary-button" type="button" onClick={test} disabled={busy}>{t('dir.test')}</button>
+          </div>
+        </div>
+        {testResult && (
+          <div className={testResult.ok ? 'message success' : 'message danger'}>
+            <div>{testResult.message}</div>
+            {testResult.matchedDn && <div><strong>DN:</strong> {testResult.matchedDn}</div>}
+            {testResult.email && <div><strong>{t('auth.username')}:</strong> {testResult.email} · <strong>Subject:</strong> {testResult.subject}</div>}
+            {testResult.groupCount > 0 && <div><strong>{t('dir.groups')}:</strong> {testResult.groupCount} ({(testResult.sampleGroups || []).join(', ')})</div>}
+          </div>
+        )}
+
+        <hr className="detail-divider" />
+        <div className="detail-heading">
+          <h3>{t('dir.mappingsHeading')}</h3>
+        </div>
+        <p className="cert-hint">{t('dir.mappingsHint')}</p>
+        {mappings.length > 0 && (
+          <table className="plain-table">
+            <thead>
+              <tr><th>{t('dir.group')}</th><th>{t('dir.role')}</th><th>{t('dir.priority')}</th><th></th></tr>
+            </thead>
+            <tbody>
+              {mappings.map(row => (
+                <tr key={row.id}>
+                  <td>{row.groupName}</td>
+                  <td>{roleName(row.roleId)}</td>
+                  <td>{row.priority}</td>
+                  <td>
+                    <button className="secondary-button danger" type="button" onClick={() => removeMapping(row.id)} disabled={busy || !canMap}>{t('dir.remove')}</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <form className="record-form" onSubmit={addMapping}>
+          <div className="two-col">
+            <label>
+              {t('dir.group')}
+              <input value={newMapping.groupName} onChange={event => setNewMapping({ ...newMapping, groupName: event.target.value })} placeholder="CN=Kopiv2-Admins,OU=Groups,DC=corp,DC=local" />
+            </label>
+            <label>
+              {t('dir.role')}
+              <select value={newMapping.roleId} onChange={event => setNewMapping({ ...newMapping, roleId: Number(event.target.value) })}>
+                <option value={0}>{t('dir.pickRole')}</option>
+                {roles.map(role => (
+                  <option key={role.id} value={role.id}>{role.name}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="two-col">
+            <label>
+              {t('dir.priority')}
+              <input type="number" value={newMapping.priority} onChange={event => setNewMapping({ ...newMapping, priority: Number(event.target.value) })} />
+            </label>
+            <div className="form-actions">
+              <button className="primary-button" type="submit" disabled={busy || !canMap}>{t('dir.addMapping')}</button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </PageFrame>
   )
 }
 

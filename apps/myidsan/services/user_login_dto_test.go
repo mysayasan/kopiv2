@@ -51,6 +51,10 @@ func (m *fakeUserLoginCoreService) UpsertFederated(ctx context.Context, id login
 	return nil, nil
 }
 
+func (m *fakeUserLoginCoreService) AssignRole(ctx context.Context, userId int64, roleId int64) error {
+	return nil
+}
+
 func (m *fakeUserLoginCoreService) RegisterLocal(ctx context.Context, model entities.UserLogin) (uint64, error) {
 	return 0, nil
 }

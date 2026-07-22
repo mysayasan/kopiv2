@@ -22,6 +22,7 @@ Implements user credential persistence operations for myidsan identity APIs.
   4. An inactive account is refused (`ErrInactiveAccount`) at any of the above paths.
   5. `id.Provider`/`id.Subject`/`id.Email` all being non-empty is a precondition; a provider identity missing any of them is refused with `ErrFederatedIdentityInvalid` rather than creating an unmatchable account.
   `applyIdentityProfile` refreshes only the display fields the provider owns (`FirstName`/`LastName`/`PicUrl`, falling `GivenName` back to `Name` when the provider has no split name) — it never touches credential or role fields.
+- `AssignRole(ctx, userId, roleId)` — sets only the account's `UserRoleId`; credentials and profile fields are untouched. Added for federated group→role mapping (`apps/myidsan/services/directory.go.md`'s `AuthenticateLdap`); a no-op (no write) when the account is already on the target role. Like every other role change in the suite, it takes effect on the account's next login/session refresh, not mid-session.
 - `Update` preserves the existing stored password when the incoming `userpwd` field is blank, and hashes the password when a plaintext value is supplied, so role/active toggles from the admin UI do not erase or store the password in plain text. The password-preserve lookup now uses `repo.GetById` (primary key) instead of `GetByUnique(ctx,"","id",id)`, which matched no field and would return the first user's password.
 - `ChangePassword` similarly uses `repo.GetById` to fetch the user before verifying the current password.
 

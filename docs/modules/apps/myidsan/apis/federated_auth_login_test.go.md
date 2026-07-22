@@ -18,3 +18,8 @@ Validates the rendered federated login page (`renderLoginPage`) served by
   `ClientId` and `ClientSecret` set. `renderFor` builds the test `federatedAuthApi` with
   `providers: login.BuildRegistry(providers)`, so this test exercises the actual registry
   construction path (`infra/login/provider.go.md`), not a hand-rolled substitute.
+- `TestLoginPageDirectoryOption` — directory login enabled (`method="ldap"`, a non-empty
+  label) renders the account-type `<select name="method">` with that label AND preserves
+  a failed `ldap` attempt's selection (`value="ldap" selected`); directory login disabled
+  (empty label) renders no `name="method"` element at all — a disabled directory must
+  never offer a dead account-type choice.

@@ -52,6 +52,10 @@ func (f *fakeUserLoginService) UpsertFederated(_ context.Context, _ login.Identi
 	return nil, nil
 }
 
+func (f *fakeUserLoginService) AssignRole(_ context.Context, _ int64, _ int64) error {
+	return nil
+}
+
 func (f *fakeUserLoginService) RegisterLocal(_ context.Context, model entities.UserLogin) (uint64, error) {
 	f.registerCalls++
 	copy := model
@@ -295,7 +299,7 @@ func newLoginHandlerForTest(t *testing.T) (http.Handler, *fakeUserLoginService) 
 	r := mux.NewRouter()
 	svc := &fakeUserLoginService{}
 	auth := middlewares.NewAuth("unit-test-secret")
-	NewLoginApi(r, nil, *auth, svc)
+	NewLoginApi(r, nil, *auth, svc, nil, nil, nil)
 	return r, svc
 }
 
