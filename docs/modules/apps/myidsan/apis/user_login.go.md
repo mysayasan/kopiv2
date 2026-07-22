@@ -21,7 +21,7 @@ Protected by auth middleware + `AccessSessionMidware` + `RequireSuperadmin`. The
 
 - GET supports `limit`, `offset`, `filters`, and `sorters` query parameters.
 - Filter and sorter query values use the shared SQL enum JSON contract from `query_options.go`.
-- Read handlers return myidsan output DTOs through `IUserLoginDtoService`.
+- Read handlers return myidsan output DTOs through `IUserLoginDtoService`. The output DTO carries no password field, so GET responses (including the account list) never include a stored bcrypt hash.
 - PUT decodes the myidsan input DTO, then projects it to a `UserLogin` entity for service writes.
 - PUT rejects unknown JSON fields.
 - PUT blocks self-role-change: if `body.Id` matches `claims.Id` and `body.UserRoleId` differs from `claims.RoleId`, the request is rejected with 403. This prevents a superadmin from accidentally (or maliciously) demoting or escalating their own role.
