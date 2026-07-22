@@ -13,7 +13,7 @@ import {
   rowsOf,
   setCookie
 } from '../lib/api'
-import { Ico, DataTable as ClientDataTable, ToastStack, SideNav, LangProvider, LanguageDropdown, AppFooter, normalizeLang, useT } from '@shared'
+import { Ico, DataTable as ClientDataTable, ToastStack, SideNav, LangProvider, LanguageDropdown, AppFooter, BrandLogo, normalizeLang, useT } from '@shared'
 import { enBundle, loadLocaleDict } from './i18n'
 import SetupWizard from './components/setup'
 
@@ -186,16 +186,50 @@ const normalizeAccessRole = data => ({
   ...data
 })
 
-// BrandMark is myidsan's identity glyph (line-art shield + keyhole) shown inside the
-// blue brand tile in the side-nav and on the login screen, replacing the old "ID"
-// text so the app has a real logo like myseliasan.
-function BrandMark({ size = 24 }) {
+// LoginBrand is the centered brand block at the top of the auth cards (login,
+// change-password, pending-clearance). It uses the suite's shared BrandLogo (shield
+// + eye + check, tinted violet via --brand-mark) instead of a bespoke tile, matching
+// mymatasan/myseliasan.
+function LoginBrand({ subtitle }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M12 3 5 6v5c0 4.4 3 7.6 7 9 4-1.4 7-4.6 7-9V6z" />
-      <circle cx="12" cy="10" r="1.7" />
-      <path d="M12 11.7V15" />
-    </svg>
+    <div className="login-brand">
+      <BrandLogo wordmark="myidsan" size={104} className="brand-logo--login" />
+      <p className="brand-subtitle">{subtitle}</p>
+    </div>
+  )
+}
+
+// AccountCard is the slim role chip + ghost logout under the brand in the side rail,
+// standardized with mymatasan/myseliasan. The signed-in identity is deliberately NOT
+// shown here — only the role.
+function AccountCard({ roleLabel, onLogout }) {
+  const t = useT()
+  return (
+    <div className="side-account">
+      <span className="side-account-avatar" aria-hidden="true"><Ico n="user" sz={15} /></span>
+      <span className="side-account-role">{roleLabel}</span>
+      <button
+        type="button"
+        className="side-account-logout"
+        onClick={onLogout}
+        title={t('common.logout')}
+        aria-label={t('common.logout')}
+      >
+        <Ico n="logout" sz={16} />
+      </button>
+    </div>
+  )
+}
+
+// WorkspaceHeader is the slim top strip of the main workspace: language switcher +
+// theme picker, top-right. Primary navigation and the account/logout block live in
+// the side rail. Standardized with mymatasan's shell.
+function WorkspaceHeader({ lang, onLangChange, theme, onThemeChange }) {
+  return (
+    <div className="workspace-header">
+      <LanguageDropdown lang={lang} onLang={onLangChange} />
+      <ThemeDropdown theme={theme} onThemeChange={onThemeChange} />
+    </div>
   )
 }
 
@@ -212,7 +246,20 @@ function AppInner({ lang, onLangChange }) {
   const [mustChange, setMustChange] = useState(false)
   const [pending, setPending] = useState(false)
   const [isSuperadmin, setIsSuperadmin] = useState(false)
+  const [roleName, setRoleName] = useState('')
   const [setupNeeded, setSetupNeeded] = useState(false)
+  // Pinned (default) keeps the full rail in the layout; unpinned collapses it to an
+  // icon strip that slides out on hover. Persisted per browser, mirroring mymatasan.
+  const [navPinned, setNavPinned] = useState(() => {
+    try { return localStorage.getItem('myidsan.navPinned') !== '0' } catch { return true }
+  })
+  const toggleNavPinned = useCallback(() => {
+    setNavPinned(prev => {
+      const next = !prev
+      try { localStorage.setItem('myidsan.navPinned', next ? '1' : '0') } catch { /* ignore */ }
+      return next
+    })
+  }, [])
   const [toasts, setToasts] = useState([])
 
   const pushToast = useCallback((text, kind = 'info') => {
@@ -255,6 +302,7 @@ function AppInner({ lang, onLangChange }) {
       // so the same matrix that gates the APIs also drives the navigation.
       const me = resultOf(await apiRequest('/api/access-rbac/me'))
       setCurrentEmail(me?.email || '')
+      setRoleName(me?.roleName || '')
       setMustChange(Boolean(me?.mustChangePassword))
       // pending = authenticated but no role assigned yet — gate the whole app behind a
       // clearance screen until an admin grants a role.
@@ -372,17 +420,27 @@ function AppInner({ lang, onLangChange }) {
     )
   }
 
+  const roleLabel = isSuperadmin ? t('role.superadmin') : (roleName || t('role.member'))
+
   return (
-    <div className="app-shell">
+    <div className={`app-shell${navPinned ? '' : ' nav-autohide'}`}>
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
       <SideNav
         brand={(
-          <div className="brand-block">
-            <div className="brand-mark"><BrandMark /></div>
-            <div>
-              <div className="brand-name">MyIDSan</div>
-              <div className="brand-subtitle">{t('brand.subtitle')}</div>
-            </div>
+          <div className="side-brand">
+            <button
+              type="button"
+              className="nav-pin-toggle"
+              onClick={event => { toggleNavPinned(); event.currentTarget.blur() }}
+              aria-pressed={navPinned}
+              title={navPinned ? t('nav.autohide') : t('nav.pin')}
+              aria-label={navPinned ? t('nav.autohide') : t('nav.pin')}
+            >
+              <Ico n={navPinned ? 'pin' : 'pin-off'} sz={16} />
+            </button>
+            <BrandLogo wordmark="myidsan" />
+            <div className="side-brand-sub">{t('brand.subtitle')}</div>
+            <AccountCard roleLabel={roleLabel} onLogout={handleLogout} />
           </div>
         )}
         groups={navGroups.map(group => ({
@@ -396,15 +454,10 @@ function AppInner({ lang, onLangChange }) {
             onClick: () => setActiveSection(section.id)
           }))
         }))}
-        footer={(
-          <>
-            <ThemeDropdown theme={theme} onThemeChange={changeTheme} />
-            <button className="logout-button" onClick={handleLogout} type="button">{t('common.logout')}</button>
-          </>
-        )}
+        footer={null}
       />
       <main className="main-workspace">
-        <div className="shared-lang-bar"><LanguageDropdown lang={lang} onLang={onLangChange} /></div>
+        <WorkspaceHeader lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={changeTheme} />
         {handoffPending && (
           <div className="handoff-banner" role="alert">
             <span className="handoff-banner-text">{t('handoff.text')}</span>
@@ -514,13 +567,7 @@ function ChangePasswordScreen({ onDone, onLogout }) {
   return (
     <div className="auth-layout">
       <section className="auth-panel">
-        <div className="brand-block auth-brand">
-          <div className="brand-mark"><BrandMark /></div>
-          <div>
-            <div className="brand-name">MyIDSan</div>
-            <div className="brand-subtitle">{t('cpw.subtitle')}</div>
-          </div>
-        </div>
+        <LoginBrand subtitle={t('cpw.subtitle')} />
         <div className="message warning">{t('cpw.securityNote')}</div>
         <form className="auth-form" onSubmit={submit}>
           {error && <div className="message danger">{error}</div>}
@@ -557,13 +604,7 @@ function PendingClearanceScreen({ email, onRefresh, onLogout }) {
   return (
     <div className="auth-layout">
       <section className="auth-panel">
-        <div className="brand-block auth-brand">
-          <div className="brand-mark"><BrandMark /></div>
-          <div>
-            <div className="brand-name">MyIDSan</div>
-            <div className="brand-subtitle">{t('pend.subtitle')}</div>
-          </div>
-        </div>
+        <LoginBrand subtitle={t('pend.subtitle')} />
         <div className="message warning">{t('pend.hint', { email: email ? ` (${email})` : '' })}</div>
         <p className="auth-hint">{t('pend.note')}</p>
         <div className="auth-form">
@@ -643,13 +684,7 @@ function AuthScreen({ onAuthed, sessionError }) {
   return (
     <div className="auth-layout">
       <section className="auth-panel">
-        <div className="brand-block auth-brand">
-          <div className="brand-mark"><BrandMark /></div>
-          <div>
-            <div className="brand-name">MyIDSan</div>
-            <div className="brand-subtitle">{t('auth.subAdmin')}</div>
-          </div>
-        </div>
+        <LoginBrand subtitle={t('auth.subAdmin')} />
         <div className="segmented">
           <button className={mode === 'login' ? 'selected' : ''} onClick={() => setMode('login')} type="button">{t('auth.login')}</button>
           <button className={mode === 'register' ? 'selected' : ''} onClick={() => setMode('register')} type="button">{t('auth.register')}</button>

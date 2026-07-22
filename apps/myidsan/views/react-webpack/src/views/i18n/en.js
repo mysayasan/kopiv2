@@ -14,6 +14,11 @@ export default {
   'nav.apps': 'Apps',
   'nav.directory': 'Directory',
   'nav.endpoints': 'Endpoints',
+  // Sidebar pin/auto-hide toggle
+  'nav.pin': 'Pin sidebar',
+  'nav.autohide': 'Auto-hide sidebar',
+  // Account chip role label (superadmin; fallback for a role with no name)
+  'role.superadmin': 'Superadmin',
   // Nav group headers
   'grp.Workspace': 'Workspace',
   'grp.Administration': 'Administration',

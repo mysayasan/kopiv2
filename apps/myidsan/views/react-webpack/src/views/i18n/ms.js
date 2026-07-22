@@ -11,6 +11,11 @@ export default {
   'nav.apps': 'Apl',
   'nav.directory': 'Direktori',
   'nav.endpoints': 'Titik Akhir',
+  // Sidebar pin/auto-hide toggle
+  'nav.pin': 'Sematkan bar sisi',
+  'nav.autohide': 'Auto-sembunyi bar sisi',
+  // Account chip role label (superadmin; fallback for a role with no name)
+  'role.superadmin': 'Superadmin',
   'grp.Workspace': 'Ruang Kerja',
   'grp.Administration': 'Pentadbiran',
   'grp.Federation': 'Persekutuan',

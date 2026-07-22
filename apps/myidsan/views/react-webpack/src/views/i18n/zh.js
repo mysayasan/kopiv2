@@ -11,6 +11,11 @@ export default {
   'nav.apps': '应用',
   'nav.directory': '目录',
   'nav.endpoints': '端点',
+  // Sidebar pin/auto-hide toggle
+  'nav.pin': '固定侧边栏',
+  'nav.autohide': '自动隐藏侧边栏',
+  // Account chip role label (superadmin; fallback for a role with no name)
+  'role.superadmin': '超级管理员',
   'grp.Workspace': '工作区',
   'grp.Administration': '管理',
   'grp.Federation': '联合',

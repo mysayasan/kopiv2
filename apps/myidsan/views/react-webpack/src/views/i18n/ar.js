@@ -11,6 +11,11 @@ export default {
   "nav.apps": "التطبيقات",
   "nav.directory": "الدليل",
   "nav.endpoints": "نقاط النهاية",
+  // Sidebar pin/auto-hide toggle
+  "nav.pin": "تثبيت الشريط الجانبي",
+  "nav.autohide": "إخفاء الشريط الجانبي تلقائيًا",
+  // Account chip role label (superadmin; fallback for a role with no name)
+  "role.superadmin": "مشرف أعلى",
   "grp.Workspace": "مساحة العمل",
   "grp.Administration": "الإدارة",
   "grp.Federation": "الاتحاد",

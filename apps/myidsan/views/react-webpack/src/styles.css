@@ -32,6 +32,15 @@
   color-scheme: light;
 }
 
+/* Brand mark hue for the shared @shared/BrandLogo (shield + eye + check). myidsan's
+   family tint is violet; --brand-tint is the eye catchlight. Set once — the geometry
+   is shared across the suite, only the hue changes per app. Theme-independent, so it
+   stays in the base :root and is inherited by the dark/contrast themes. */
+:root {
+  --brand-mark: #6f4d9d;
+  --brand-tint: #eae4f6;
+}
+
 .theme-dark {
   --bg: #0d1117;
   --panel: #161c26;
@@ -226,6 +235,64 @@ button:disabled {
   grid-template-columns: 260px minmax(0, 1fr);
 }
 
+/* Auto-hide rail (pin toggle off): the rail collapses to a 68px icon strip and slides
+   OVER the workspace on hover/focus instead of reflowing it. Pinned keeps the full
+   260px rail in the grid flow. Standardized with mymatasan/myseliasan. */
+@media (min-width: 1081px) {
+  .app-shell.nav-autohide {
+    grid-template-columns: 68px minmax(0, 1fr);
+  }
+
+  .app-shell.nav-autohide .main-workspace {
+    grid-column: 2;
+  }
+
+  .app-shell.nav-autohide .side-nav {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 68px;
+    padding-left: 12px;
+    padding-right: 12px;
+    overflow: hidden;
+    transition: width 0.18s ease, padding 0.18s ease, box-shadow 0.18s ease;
+  }
+
+  .app-shell.nav-autohide .side-nav:hover,
+  .app-shell.nav-autohide .side-nav:focus-within {
+    width: 260px;
+    padding-left: 16px;
+    padding-right: 16px;
+    box-shadow: 8px 0 30px rgba(15, 23, 42, 0.28);
+  }
+
+  /* Collapsed state: center each item's glyph and hide labels, headings, badges, the
+     brand wordmark/subtitle, the pin toggle and the account role — all return on hover. */
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-item {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-label,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-group-label,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .brand-wordmark,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .side-brand-sub,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .nav-pin-toggle,
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .side-account-role {
+    display: none;
+  }
+
+  /* Collapsed rail: the account chip stacks the avatar over the logout icon, no fill. */
+  .app-shell.nav-autohide .side-nav:not(:hover):not(:focus-within) .side-account {
+    flex-direction: column;
+    padding: 4px 0;
+    gap: 8px;
+    background: transparent;
+  }
+}
+
 .side-nav {
   background: var(--nav-bg);
   color: var(--nav-text);
@@ -240,35 +307,143 @@ button:disabled {
   transition: background 0.2s ease, color 0.2s ease;
 }
 
-.brand-block {
-  display: flex;
-  gap: 12px;
-  align-items: center;
+/* Side rail brand block: the shared BrandLogo centered, a subtitle, an account chip,
+   and the pin/auto-hide toggle tucked top-right. Standardized with mymatasan. */
+.side-brand {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
 }
 
-.auth-brand {
-  margin-bottom: 24px;
+.side-nav .brand-logo {
+  justify-self: center;
+  align-self: center;
 }
 
-.brand-mark {
-  width: 42px;
-  height: 42px;
+/* In the rail the wordmark takes the nav ink; on the login card it keeps the brand
+   hue (--brand-mark) from the shared brand.css. */
+.side-nav .brand-wordmark {
+  color: var(--nav-text);
+}
+
+.side-brand-sub {
+  text-align: center;
+  color: var(--nav-sub);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+/* Pin / auto-hide toggle — top-right corner of the brand block. */
+.nav-pin-toggle {
+  position: absolute;
+  top: -6px;
+  right: -4px;
+  width: 28px;
+  height: 28px;
+  min-height: 0;
+  padding: 0;
   display: grid;
   place-items: center;
-  border-radius: 8px;
-  background: var(--blue);
-  color: white;
-  font-weight: 800;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--nav-sub);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
-.brand-name {
-  font-weight: 800;
-  font-size: 18px;
+.nav-pin-toggle:hover {
+  background: var(--nav-hover);
+  color: var(--nav-text);
+}
+
+.nav-pin-toggle[aria-pressed="true"] {
+  color: var(--blue);
+}
+
+/* Account chip: role label + ghost logout under the brand. */
+.side-account {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 4px 4px 4px 6px;
+  border-radius: 999px;
+  background: var(--nav-fill);
+}
+
+.side-account-avatar {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--blue) 22%, transparent);
+  color: var(--blue);
+}
+
+.side-account-role {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--nav-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.side-account-logout {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  min-height: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--nav-sub);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.side-account-logout:hover {
+  background: rgba(192, 54, 44, 0.16);
+  color: var(--red);
+}
+
+/* Login/auth cards: the shared BrandLogo centered above the subtitle. */
+.login-brand {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+
+.login-brand .brand-subtitle {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .brand-subtitle {
   color: var(--nav-sub);
   font-size: 13px;
+}
+
+/* Workspace top strip: language + theme, top-right. Standardized with mymatasan. */
+.workspace-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
 }
 
 .side-nav nav {
