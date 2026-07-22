@@ -84,6 +84,13 @@ type IDirectoryService interface {
 	// so a person gets ONE account regardless of how they signed in. Callers MUST
 	// have verified the username themselves; this performs no credential check.
 	ResolveDirectoryUser(ctx context.Context, username string) (*entities.UserLogin, error)
+	// AdmitExternalIdentity resolves a provider-verified identity (OIDC, social)
+	// via UpsertFederated and applies any group→role mappings scoped to that
+	// identity's provider ("oidc:<key>"). Unlike the directory paths this is
+	// always NON-authoritative: a mapping only seeds accounts still pending
+	// clearance; manual role assignments stick. Works with the directory itself
+	// disabled — mappings are provider-scoped rows, not directory settings.
+	AdmitExternalIdentity(ctx context.Context, identity login.Identity) (*entities.UserLogin, error)
 }
 
 type directoryService struct {
@@ -249,6 +256,26 @@ func (m *directoryService) ResolveDirectoryUser(ctx context.Context, username st
 		return nil, err
 	}
 	return m.admitIdentity(ctx, cfg, identity)
+}
+
+func (m *directoryService) AdmitExternalIdentity(ctx context.Context, identity login.Identity) (*entities.UserLogin, error) {
+	user, err := m.users.UpsertFederated(ctx, identity)
+	if err != nil {
+		return nil, err
+	}
+	// Non-authoritative on purpose: an external IdP's groups claim seeds a role
+	// for brand-new (pending) accounts only. The Authoritative toggle belongs to
+	// the directory, whose group truth myidsan queries itself.
+	if user.UserRoleId == 0 && len(identity.Groups) > 0 {
+		if roleId, matched := m.resolveRole(ctx, identity.Provider, identity.Groups); matched {
+			if err := m.users.AssignRole(ctx, user.Id, roleId); err != nil {
+				return nil, err
+			}
+			log.Printf("federated group mapping seeded role: provider=%s user=%s role=%d", identity.Provider, user.Email, roleId)
+			user.UserRoleId = roleId
+		}
+	}
+	return user, nil
 }
 
 func (m *directoryService) loadEnabled(ctx context.Context) (*myidsanentities.DirectoryConfig, login.LdapSettings, error) {

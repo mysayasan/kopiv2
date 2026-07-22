@@ -74,7 +74,13 @@ func (f *fakeUserLoginRepo) GetSingle(_ context.Context, _ string, filters []sql
 	return nil, nil
 }
 
-func (f *fakeUserLoginRepo) GetById(_ context.Context, _ string, _ uint64) (*entities.UserLogin, error) {
+func (f *fakeUserLoginRepo) GetById(_ context.Context, _ string, id uint64) (*entities.UserLogin, error) {
+	for _, user := range f.usersByEmail {
+		if user.Id == int64(id) {
+			copy := *user
+			return &copy, nil
+		}
+	}
 	return nil, nil
 }
 

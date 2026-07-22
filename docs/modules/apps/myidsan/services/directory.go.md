@@ -3,9 +3,11 @@
 ## Purpose
 
 Implements `IDirectoryService`: the admin-facing directory (LDAP/AD) configuration
-CRUD, the "Test connection" probe, and the login-time bridge from
+CRUD, the "Test connection" probe, the login-time bridge from
 `infra/login.LdapAuthenticate` (and, for Kerberos, `infra/login.LdapLookup`) to a
-local `entities.UserLogin` account with group→role mapping applied.
+local `entities.UserLogin` account with group→role mapping applied, and — new in
+Phase 3 — the parallel, always-non-authoritative admission path for redirect-provider
+(OIDC) logins, `AdmitExternalIdentity`.
 
 ## Responsibilities
 
@@ -40,6 +42,24 @@ local `entities.UserLogin` account with group→role mapping applied.
   password login for the same person would. `ErrDirectoryDisabled` when no
   directory is configured/enabled — the caller (`kerberosLogin`) then falls
   back to `login.StandaloneKerberosIdentity` for directory-less installs.
+- `AdmitExternalIdentity(ctx, identity login.Identity) (*entities.UserLogin, error)`
+  — the admission path for any `infra/login.RedirectProvider` login (today: OIDC,
+  `Identity.Provider == "oidc:<key>"`; social logins carry no groups so this is a
+  no-op tail for them too). `apps/myidsan/apis/login.go`'s `admitRedirectIdentity`
+  calls this instead of the bare `IUserLoginService.UpsertFederated` whenever a
+  directory service is wired. Unlike `admitIdentity` (LDAP/Kerberos, below), this is
+  **always non-authoritative**, by design and regardless of `DirectoryConfig`: a
+  provider's `Groups` claim resolves via `resolveRole` against
+  `FederatedGroupMapping` rows scoped to that exact `Provider` string, and a match
+  is applied only when the account is brand-new/still pending (`UserRoleId == 0`) —
+  never re-applied on every login the way an authoritative LDAP directory can. The
+  reasoning is in the doc comment: the `Authoritative` toggle belongs to the
+  directory because myidsan queries LDAP group truth itself on demand; an external
+  IdP's `groups` claim is only ever as fresh as the last login's `id_token`, so
+  treating it as an ongoing source of truth would let a stale claim silently
+  demote/promote a user between logins. Works with the directory itself disabled
+  or unconfigured — mappings are rows scoped by `Provider`, not directory settings,
+  so OIDC group mapping needs no LDAP/AD connection at all.
 - `loadEnabled(ctx) (*DirectoryConfig, login.LdapSettings, error)` — shared
   config-load helper factored out of `AuthenticateLdap`/`ResolveDirectoryUser`:
   loads the singleton row (`ErrDirectoryDisabled` if missing/disabled), decrypts
@@ -84,5 +104,8 @@ still enough to sign in on a directory-less install.
 - `directoryService` depends on `IUserLoginService` for both `UpsertFederated` and
   the new `AssignRole` — it never touches the `user_login` table directly.
 - Covered by `directory_test.go`: `ResolveMappedRole`'s priority/tie-break/no-match/
-  inert-role cases, and the secret encode/decode round trip + legacy-plaintext/
-  nil-cipher passthrough.
+  inert-role cases, the secret encode/decode round trip + legacy-plaintext/
+  nil-cipher passthrough, and `TestAdmitExternalIdentity_SeedsPendingOnly` — a
+  matching group mapping seeds the role on a new pending account (case-insensitive),
+  the same mapping never overrides an existing account's manually assigned role, and
+  a groupless identity is a no-op that leaves the account pending.

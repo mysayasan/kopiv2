@@ -38,8 +38,8 @@ import (
 	"github.com/mysayasan/kopiv2/infra/db/sql/postgres"
 	"github.com/mysayasan/kopiv2/infra/db/sql/sqlite"
 	applog "github.com/mysayasan/kopiv2/infra/logging"
-	"github.com/mysayasan/kopiv2/infra/scheduler"
 	infraSafego "github.com/mysayasan/kopiv2/infra/safego"
+	"github.com/mysayasan/kopiv2/infra/scheduler"
 	infraTelemetry "github.com/mysayasan/kopiv2/infra/telemetry"
 	promTelemetry "github.com/mysayasan/kopiv2/infra/telemetry/prometheus"
 	"github.com/mysayasan/kopiv2/infra/versioning"
@@ -881,8 +881,33 @@ func applySensitiveConfig(appConfig *config.AppConfigModel, configPath string) e
 			appConfig.Login.GitHub = nil
 		}
 	}
+	if appConfig.Login != nil {
+		// OIDC secrets are env-overridable per provider key: OIDC_<KEY>_CLIENT_SECRET
+		// (key uppercased, non-alphanumerics -> underscore). Half-configured entries
+		// stay in the list — BuildRegistry logs and skips them, same policy as the
+		// nilled google/github blocks above.
+		for i := range appConfig.Login.Oidc {
+			envKey := "OIDC_" + oidcEnvSegment(appConfig.Login.Oidc[i].Key) + "_CLIENT_SECRET"
+			if secret := os.Getenv(envKey); secret != "" {
+				appConfig.Login.Oidc[i].ClientSecret = secret
+			}
+		}
+	}
 
 	return nil
+}
+
+// oidcEnvSegment maps an OIDC provider key to its env-variable segment:
+// uppercased, with every non-alphanumeric collapsed to '_' ("corp-idp" ->
+// "CORP_IDP").
+func oidcEnvSegment(key string) string {
+	key = strings.ToUpper(strings.TrimSpace(key))
+	return strings.Map(func(r rune) rune {
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		return '_'
+	}, key)
 }
 
 // weakJWTSecrets are placeholder values shipped in example configs that must

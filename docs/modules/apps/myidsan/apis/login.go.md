@@ -105,7 +105,16 @@ section when diagnosing a rollout.
 1. Resolve the provider from the registry; 404 if the key is unknown.
 2. `provider.Callback(r)` exchanges the code and returns a normalized `login.Identity`; a provider error becomes `ErrStatusUnprocessableEntity`.
 3. An identity with no email (e.g. a GitHub account with no public email) is rejected with `ErrStatusUnprocessableEntity` before it ever reaches the user service — no email means no account to show and no valid `Email` claim to issue.
-4. `m.userService.UpsertFederated(ctx, *identity)` resolves the identity to a local account (see `apps/myidsan/services/user_login.go.md`). Errors map to responses: `ErrFederatedIdentityConflict`/`ErrInactiveAccount` → `ErrLimitedAccess`; `ErrFederatedIdentityInvalid` → `ErrStatusUnprocessableEntity`; anything else → `ErrInternalServerError`.
+4. `m.admitRedirectIdentity(r, identity)` resolves the identity to a local account:
+   through `services.IDirectoryService.AdmitExternalIdentity` (see
+   `services/directory.go.md`) when a directory service is wired, so a
+   provider-scoped OIDC `groups` claim can seed a role for a still-pending account;
+   falls back to the bare `m.userService.UpsertFederated(ctx, *identity)` otherwise
+   (tests, minimal wiring) — Google/GitHub identities carry no `Groups` so the
+   directory path is a no-op tail for them regardless. Errors map to responses:
+   `ErrFederatedIdentityConflict`/`ErrInactiveAccount` → `ErrLimitedAccess`;
+   `ErrFederatedIdentityInvalid` → `ErrStatusUnprocessableEntity`; anything else →
+   `ErrInternalServerError`.
 5. `setOAuthSession` issues the session cookies from the resolved `*entities.UserLogin` and the `*login.Identity` (display name falls back from `identity.Name` to the stored user's first/last name, then to the account email).
 6. Redirect to the `continue` target consumed via `consumeOAuthContinue`.
 
@@ -128,4 +137,4 @@ section when diagnosing a rollout.
 - Provider callbacks validate the returned state before exchanging the provider code.
 - Third-party accounts (empty password) are rejected for local credential login/register override.
 - Federated login now carries the pending `continue` path (e.g. an `/api/auth/authorize` URL from a relying-app SSO redirect) through the round-trip. `setOAuthContinue` stores a base64-encoded, validated path in a short-lived provider-scoped HttpOnly cookie before the provider redirect; `consumeOAuthContinue` reads and clears it in the callback. `setOAuthSession` no longer writes a response body — control passes to the caller, which performs the redirect to the consumed `continue` target (or `/` when absent). This means a user arriving at myidsan's federated login page via a relying-app SSO redirect lands back at the relying app after completing federated login, not on a raw JSON payload.
-- Account resolution for a federated login is centralized in `services.UpsertFederated` (strict `(provider, subject)` matching; a same-email account with no bound identity may claim it once, a bound one is refused) — this file no longer does its own `GetByEmail`-then-`Create` per provider, which is what let Google and GitHub each hand-roll a slightly different account-matching path before.
+- Account resolution for a federated login is centralized in `services.UpsertFederated` (strict `(provider, subject)` matching; a same-email account with no bound identity may claim it once, a bound one is refused) — this file no longer does its own `GetByEmail`-then-`Create` per provider, which is what let Google and GitHub each hand-roll a slightly different account-matching path before. `admitRedirectIdentity` wraps that same call with the directory's group→role seeding when a directory service is wired (see "Federated Callback Flow" above and `services/directory.go.md`); the underlying `(provider, subject)` matching is unchanged either way.
