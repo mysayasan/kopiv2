@@ -16,6 +16,7 @@ import (
 	"github.com/mysayasan/kopiv2/infra/cache"
 	"github.com/mysayasan/kopiv2/infra/config"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	"github.com/mysayasan/kopiv2/infra/login"
 )
 
 type fakeGenericRepo[T any] struct {
@@ -138,6 +139,7 @@ func TestAuthorizeRedirectsRegisteredClientWithoutSessionToLogin(t *testing.T) {
 		api,
 		cfg,
 		auth,
+		login.NewRegistry(),
 		services.NewUserLoginService(&fakeGenericRepo[entities.UserLogin]{}, cache.NewMemoryStore(time.Minute, time.Minute)),
 		&fakeGenericRepo[entities.AppRegistry]{byID: map[uint64]*entities.AppRegistry{uint64(app.Id): app}},
 		&fakeGenericRepo[entities.AppAuthConfig]{rows: []*entities.AppAuthConfig{client}},

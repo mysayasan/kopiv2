@@ -39,6 +39,7 @@ const (
 type federatedAuthApi struct {
 	cfg              *config.AppConfigModel
 	auth             *middlewares.AuthMidware
+	providers        *login.Registry
 	userService      services.IUserLoginService
 	apps             dbsql.IGenericRepo[entities.AppRegistry]
 	authConfigs      dbsql.IGenericRepo[entities.AppAuthConfig]
@@ -94,6 +95,7 @@ func NewFederatedAuthApi(
 	router *mux.Router,
 	cfg *config.AppConfigModel,
 	auth *middlewares.AuthMidware,
+	providers *login.Registry,
 	userService services.IUserLoginService,
 	apps dbsql.IGenericRepo[entities.AppRegistry],
 	authConfigs dbsql.IGenericRepo[entities.AppAuthConfig],
@@ -103,6 +105,7 @@ func NewFederatedAuthApi(
 	handler := &federatedAuthApi{
 		cfg:              cfg,
 		auth:             auth,
+		providers:        providers,
 		userService:      userService,
 		apps:             apps,
 		authConfigs:      authConfigs,
@@ -280,34 +283,30 @@ func (m *federatedAuthApi) renderLoginPage(w http.ResponseWriter, status int, co
 </html>`, errHTML, html.EscapeString(continueTo), html.EscapeString(username), social)
 }
 
-// socialButtonsHTML renders the Google/GitHub sign-in links for the federated login
-// page, but only for providers that are actually configured. Each link carries the
-// pending `continue` target (the /api/auth/authorize URL) through the social-login
-// round-trip so the user lands back at the authorization step afterwards.
+// socialButtonsHTML renders a sign-in link for every registered identity provider.
+// Each link carries the pending `continue` target (the /api/auth/authorize URL)
+// through the login round-trip so the user lands back at the authorization step
+// afterwards.
 //
-// "Configured" means credentials are actually present, not merely that the config
-// block exists: the stock config.json ships empty `google`/`github` objects, and a
-// non-nil-but-blank provider used to render a button that sends the browser off to
-// accounts.google.com with an empty client_id — an OAuth error on the internet, and
-// a dead end on an air-gapped intranet, which is where myseliasan runs.
+// The registry only holds providers whose credentials are actually present (see
+// login.BuildRegistry), so no button can send the browser off with an empty
+// client_id — an OAuth error on the internet, and a dead end on an air-gapped
+// intranet, which is where myseliasan runs.
 func (m *federatedAuthApi) socialButtonsHTML(continueTo string) string {
-	configured := func(p *login.OAuth2ConfigModel) bool {
-		return p != nil && strings.TrimSpace(p.ClientId) != "" && strings.TrimSpace(p.ClientSecret) != ""
-	}
-	hasProviders := m.cfg != nil && m.cfg.Login != nil
-	hasGoogle := hasProviders && configured(m.cfg.Login.Google)
-	hasGitHub := hasProviders && configured(m.cfg.Login.GitHub)
-	if !hasGoogle && !hasGitHub {
+	keys := m.providers.Keys()
+	if len(keys) == 0 {
 		return ""
 	}
 	cont := url.QueryEscape(continueTo)
 	var b strings.Builder
 	b.WriteString(`<div class="login-divider"><span>or continue with</span></div><div class="oauth-row">`)
-	if hasGoogle {
-		fmt.Fprintf(&b, `<a class="oauth-btn" href="/api/login/google?continue=%s">Google</a>`, cont)
-	}
-	if hasGitHub {
-		fmt.Fprintf(&b, `<a class="oauth-btn" href="/api/login/github?continue=%s">GitHub</a>`, cont)
+	for _, key := range keys {
+		p := m.providers.Get(key)
+		if p == nil {
+			continue
+		}
+		fmt.Fprintf(&b, `<a class="oauth-btn" href="/api/login/%s?continue=%s">%s</a>`,
+			url.PathEscape(key), cont, html.EscapeString(p.DisplayName()))
 	}
 	b.WriteString(`</div>`)
 	return b.String()

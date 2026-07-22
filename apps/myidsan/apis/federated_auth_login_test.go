@@ -12,7 +12,12 @@ import (
 
 func renderFor(t *testing.T, providers *login.OAuthProvidersConfigModel) string {
 	t.Helper()
-	m := &federatedAuthApi{cfg: &config.AppConfigModel{Login: providers}}
+	// The page renders buttons from the provider registry; BuildRegistry applies the
+	// credentials-present guard the config used to be checked against inline.
+	m := &federatedAuthApi{
+		cfg:       &config.AppConfigModel{Login: providers},
+		providers: login.BuildRegistry(providers),
+	}
 	w := httptest.NewRecorder()
 	m.renderLoginPage(w, http.StatusOK, "/api/auth/authorize?client_id=myseliasan", "", "")
 	return w.Body.String()

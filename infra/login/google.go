@@ -5,27 +5,33 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
-	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 	"golang.org/x/oauth2"
 )
 
-// GoogleLogin struct
+// GoogleLogin implements RedirectProvider via Google's OAuth2 userinfo endpoint.
 type GoogleLogin struct {
 	conf oauth2.Config
-	auth middlewares.AuthMidware
 }
 
 // Create GoogleLogin
-func NewGoogleLogin(conf OAuth2ConfigModel, auth middlewares.AuthMidware) *GoogleLogin {
+func NewGoogleLogin(conf OAuth2ConfigModel) *GoogleLogin {
 	return &GoogleLogin{
 		conf: GoogleConfig(conf),
-		auth: auth,
 	}
 }
 
+func (m *GoogleLogin) Key() string {
+	return "google"
+}
+
+func (m *GoogleLogin) DisplayName() string {
+	return "Google"
+}
+
 func (m *GoogleLogin) Login(w http.ResponseWriter, r *http.Request) {
-	cookie, state, err := NewOAuthState("google", r.TLS != nil)
+	cookie, state, err := NewOAuthState(m.Key(), r.TLS != nil)
 	if err != nil {
 		http.Error(w, "oauth state generation failed", http.StatusInternalServerError)
 		return
@@ -35,8 +41,8 @@ func (m *GoogleLogin) Login(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, m.conf.AuthCodeURL(state), http.StatusSeeOther)
 }
 
-func (m *GoogleLogin) Callback(r *http.Request) (*GoogleUserInfoModel, error) {
-	if err := ValidateOAuthState(r, "google", r.URL.Query().Get("state")); err != nil {
+func (m *GoogleLogin) Callback(r *http.Request) (*Identity, error) {
+	if err := ValidateOAuthState(r, m.Key(), r.URL.Query().Get("state")); err != nil {
 		return nil, err
 	}
 
@@ -70,5 +76,18 @@ func (m *GoogleLogin) Callback(r *http.Request) (*GoogleUserInfoModel, error) {
 		return nil, fmt.Errorf("json parsing failed: %w", err)
 	}
 
-	return &userJson, nil
+	if strings.TrimSpace(userJson.Id) == "" {
+		return nil, errors.New("google userinfo did not include a subject id")
+	}
+
+	return &Identity{
+		Provider:      m.Key(),
+		Subject:       userJson.Id,
+		Email:         userJson.Email,
+		EmailVerified: userJson.VerifiedEmail,
+		Name:          userJson.Name,
+		GivenName:     userJson.GivenName,
+		FamilyName:    userJson.FamilyName,
+		Picture:       userJson.Picture,
+	}, nil
 }

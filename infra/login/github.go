@@ -5,27 +5,34 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 
-	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 	"golang.org/x/oauth2"
 )
 
-// GithubLogin struct
+// GithubLogin implements RedirectProvider via GitHub's OAuth2 user endpoint.
 type GithubLogin struct {
 	conf oauth2.Config
-	auth middlewares.AuthMidware
 }
 
 // Create GithubLogin
-func NewGithubLogin(conf OAuth2ConfigModel, auth middlewares.AuthMidware) *GithubLogin {
+func NewGithubLogin(conf OAuth2ConfigModel) *GithubLogin {
 	return &GithubLogin{
 		conf: GithubConfig(conf),
-		auth: auth,
 	}
 }
 
+func (m *GithubLogin) Key() string {
+	return "github"
+}
+
+func (m *GithubLogin) DisplayName() string {
+	return "GitHub"
+}
+
 func (m *GithubLogin) Login(w http.ResponseWriter, r *http.Request) {
-	cookie, state, err := NewOAuthState("github", r.TLS != nil)
+	cookie, state, err := NewOAuthState(m.Key(), r.TLS != nil)
 	if err != nil {
 		http.Error(w, "oauth state generation failed", http.StatusInternalServerError)
 		return
@@ -35,8 +42,8 @@ func (m *GithubLogin) Login(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, m.conf.AuthCodeURL(state), http.StatusSeeOther)
 }
 
-func (m *GithubLogin) Callback(r *http.Request) (*GitHubUserInfoModel, error) {
-	if err := ValidateOAuthState(r, "github", r.URL.Query().Get("state")); err != nil {
+func (m *GithubLogin) Callback(r *http.Request) (*Identity, error) {
+	if err := ValidateOAuthState(r, m.Key(), r.URL.Query().Get("state")); err != nil {
 		return nil, err
 	}
 
@@ -71,5 +78,23 @@ func (m *GithubLogin) Callback(r *http.Request) (*GitHubUserInfoModel, error) {
 		return nil, fmt.Errorf("json parsing failed: %w", err)
 	}
 
-	return &userJson, nil
+	if userJson.Id == 0 {
+		return nil, errors.New("github user response did not include an id")
+	}
+
+	name := strings.TrimSpace(userJson.Name)
+	if name == "" {
+		name = userJson.Login
+	}
+
+	return &Identity{
+		Provider: m.Key(),
+		Subject:  strconv.FormatInt(userJson.Id, 10),
+		Email:    userJson.Email,
+		// GitHub only exposes the account's verified public email on this endpoint.
+		EmailVerified: true,
+		Name:          name,
+		GivenName:     name,
+		Picture:       userJson.AvatarURL,
+	}, nil
 }

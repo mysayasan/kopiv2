@@ -38,7 +38,9 @@ func TestBuildSpecIncludesRoutesAndProviderDocs(t *testing.T) {
 	api.HandleFunc("/cache-service/wipe", func(http.ResponseWriter, *http.Request) {}).Methods("POST")
 	api.HandleFunc("/login/default", func(http.ResponseWriter, *http.Request) {}).Methods("POST")
 	api.HandleFunc("/login/default/register", func(http.ResponseWriter, *http.Request) {}).Methods("POST")
-	api.HandleFunc("/login/google", func(http.ResponseWriter, *http.Request) {}).Methods("GET")
+	// Mirrors the production federated-login route shape: one templated pair serves
+	// every registered provider (apps/myidsan/apis/login.go).
+	api.HandleFunc("/login/{provider:[a-z][a-z0-9_.:-]*}", func(http.ResponseWriter, *http.Request) {}).Methods("GET")
 	router.HandleFunc("/health", func(http.ResponseWriter, *http.Request) {})
 	router.PathPrefix("/").HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 
@@ -442,28 +444,36 @@ func TestBuildSpecIncludesRoutesAndProviderDocs(t *testing.T) {
 		t.Fatalf("unexpected request schema for /api/login/default/register: %v", loginRegisterRBSchema["$ref"])
 	}
 
-	loginGooglePath, ok := paths["/api/login/google"].(map[string]any)
+	providerLoginPath, ok := paths["/api/login/{provider:[a-z][a-z0-9_.:-]*}"].(map[string]any)
 	if !ok {
-		t.Fatalf("/api/login/google path missing")
+		t.Fatalf("/api/login/{provider} path missing (got paths: %v)", pathKeys(paths))
 	}
 
-	loginGoogleGet, ok := loginGooglePath["get"].(map[string]any)
+	providerLoginGet, ok := providerLoginPath["get"].(map[string]any)
 	if !ok {
-		t.Fatalf("get operation missing for /api/login/google")
+		t.Fatalf("get operation missing for /api/login/{provider}")
 	}
 
-	loginGoogleResponses, ok := loginGoogleGet["responses"].(map[string]any)
+	providerLoginResponses, ok := providerLoginGet["responses"].(map[string]any)
 	if !ok {
-		t.Fatalf("responses missing for /api/login/google")
+		t.Fatalf("responses missing for /api/login/{provider}")
 	}
 
-	if _, ok := loginGoogleResponses["302"].(map[string]any); !ok {
-		t.Fatalf("302 response missing for /api/login/google")
+	if _, ok := providerLoginResponses["302"].(map[string]any); !ok {
+		t.Fatalf("302 response missing for /api/login/{provider}")
 	}
 
 	if _, ok := paths["/"]; ok {
 		t.Fatalf("static catch-all path must not be included")
 	}
+}
+
+func pathKeys(paths map[string]any) []string {
+	keys := make([]string, 0, len(paths))
+	for k := range paths {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 func requireQueryParameters(t *testing.T, op map[string]any, names ...string) {

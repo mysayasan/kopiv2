@@ -15,4 +15,6 @@ Validates the rendered federated login page (`renderLoginPage`) served by
 - `TestSocialButtonsRequireCredentials` — table-driven over `nil`, empty-but-non-nil,
   client-id-only, and fully-configured `OAuthProvidersConfigModel` cases; asserts the
   Google/GitHub buttons (`href="/api/login/..."`) render only when a provider has both
-  `ClientId` and `ClientSecret` set.
+  `ClientId` and `ClientSecret` set. `renderFor` builds the test `federatedAuthApi` with
+  `providers: login.BuildRegistry(providers)`, so this test exercises the actual registry
+  construction path (`infra/login/provider.go.md`), not a hand-rolled substitute.
