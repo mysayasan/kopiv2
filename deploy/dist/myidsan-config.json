@@ -1,0 +1,174 @@
+{
+  "_comment": "MyIDSan distribution defaults — the identity provider / SSO hub for the kopiv2 suite. Safe to edit. On first run a strong jwt.secret is generated and saved here, a self-signed TLS certificate is generated into ./certs (so the app serves HTTPS on :3001 immediately — browsers show a one-time trust warning on a LAN), a one-time superadmin password is generated and written to INITIAL_ADMIN_LOGIN.txt in the data dir, and a short setup wizard walks you through registering your first relying app. This file lives in the app's data dir; locked out? create an empty RESET_ADMIN file next to it and restart.",
+  "jwt": {
+    "secret": ""
+  },
+  "sso": {
+    "_comment": "myidsan IS the SSO provider. issuer/audience are embedded in the tokens it signs; audience lists every relying app allowed to consume them. internalToken guards the internal introspection endpoint — set a long random value if a relying app cannot share the session cache.",
+    "issuer": "myidsan",
+    "audience": "myidsan,mymatasan,myseliasan,myiotsan",
+    "sessionTtlSeconds": 259200,
+    "authCodeTtlSeconds": 300,
+    "accessTokenTtlSeconds": 900,
+    "policyCacheTtlSeconds": 30,
+    "internalToken": ""
+  },
+  "localAuth": {
+    "_comment": "An empty password makes the first run generate a strong per-install one (printed to the log and saved to INITIAL_ADMIN_LOGIN.txt). Set LOCAL_ADMIN_PASSWORD to override. Never ship a shared default here.",
+    "enabled": true,
+    "username": "admin",
+    "password": ""
+  },
+  "kerberos": {
+    "_comment": "Optional SPNEGO single sign-on for domain-joined machines. Point keytabPath at a keytab exported for servicePrincipal (e.g. HTTP/myidsan.corp.local) — see the deploy README for the SPN/keytab/browser-trust runbook.",
+    "enabled": false,
+    "keytabPath": "",
+    "servicePrincipal": "",
+    "onlyRealms": [],
+    "displayLabel": ""
+  },
+  "login": {
+    "_comment": "Optional federated login providers. google/github need internet egress; oidc entries cover intranet IdPs (Keycloak, Authentik, ADFS, ...). LDAP/Active Directory login is configured in the UI under Federation → Directory, not here. Secrets may come from env: GOOGLE_CLIENT_SECRET, GITHUB_CLIENT_SECRET, OIDC_<KEY>_CLIENT_SECRET.",
+    "google": {
+      "client_id": "",
+      "client_secret": "",
+      "redirect_url": "https://localhost:3001/api/callback/google",
+      "scopes": [
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/userinfo.profile"
+      ]
+    },
+    "github": {
+      "client_id": "",
+      "client_secret": "",
+      "redirect_url": "https://localhost:3001/api/callback/github",
+      "scopes": ["read:user", "user:email"]
+    },
+    "oidc": []
+  },
+  "loginSecurity": {
+    "enabled": true,
+    "maxAttempts": 8,
+    "windowSeconds": 300,
+    "lockoutSeconds": 60,
+    "lockoutMaxSeconds": 3600,
+    "failedDelayMs": 400,
+    "notifyOnLockout": false
+  },
+  "fileStorage": {
+    "path": "./uploads",
+    "cleanup": {
+      "enabled": false,
+      "frequencySeconds": 60,
+      "batchSize": 100
+    }
+  },
+  "cache": {
+    "provider": "default",
+    "ttlSeconds": 30,
+    "keyPrefix": "kopiv2",
+    "redis": {
+      "address": "localhost:6379",
+      "password": "",
+      "db": 0,
+      "useTls": false,
+      "connectTimeoutMs": 2000,
+      "operationTimeoutMs": 2000
+    }
+  },
+  "rateLimit": {
+    "enabled": true,
+    "endpointCacheTtlSeconds": 30,
+    "defaultWindowSeconds": 60,
+    "devOnly": {
+      "enabled": false,
+      "requests": 300,
+      "windowSeconds": 60
+    },
+    "authOnly": {
+      "enabled": true,
+      "requests": 1200,
+      "windowSeconds": 60
+    },
+    "public": {
+      "enabled": true,
+      "requests": 30,
+      "windowSeconds": 60
+    }
+  },
+  "transaction": {
+    "lockProvider": "memory",
+    "lockWaitTimeoutMs": 30000,
+    "lockLeaseMs": 10000,
+    "operationTimeoutMs": 30000,
+    "stuckTimeoutMs": 30000,
+    "jobWorkerEnabled": false,
+    "jobWorkerFrequencySeconds": 5,
+    "maxAttempts": 3
+  },
+  "logging": {
+    "enabled": true,
+    "path": "./logs/myidsan.log",
+    "maxLineBytes": 8192,
+    "cleanup": {
+      "enabled": true,
+      "maxRetentionDays": 90,
+      "frequencyMinutes": 60
+    }
+  },
+  "apiLog": {
+    "cleanup": {
+      "enabled": true,
+      "maxRetentionDays": 90,
+      "frequencyMinutes": 60
+    }
+  },
+  "telemetry": {
+    "enabled": true,
+    "prometheus": {
+      "enabled": true,
+      "metricsPath": "/metrics",
+      "apiDurationThresholdMs": 1000
+    }
+  },
+  "tls": {
+    "certPath": "./certs/cert.pem",
+    "keyPath": "./certs/key.pem"
+  },
+  "server": {
+    "hostnames": [
+      "*"
+    ],
+    "tlsPorts": [
+      3001
+    ],
+    "nonTlsPorts": [],
+    "readHeaderTimeoutSeconds": 5,
+    "readTimeoutSeconds": 0,
+    "writeTimeoutSeconds": 0,
+    "idleTimeoutSeconds": 120
+  },
+  "allowOrigins": "",
+  "securityHeaders": {
+    "contentSecurityPolicy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+  },
+  "bootstrap": {
+    "enabled": true,
+    "autoCreateDatabase": true,
+    "autoCreateSchema": true,
+    "autoMigrate": true,
+    "autoSeed": true,
+    "allowReset": false,
+    "setupPath": "/setup",
+    "seedStatements": []
+  },
+  "db": {
+    "engine": "sqlite",
+    "host": "",
+    "port": 0,
+    "user": "",
+    "password": "",
+    "db_name": "./data/myidsan.db",
+    "ssl_mode": ""
+  }
+}

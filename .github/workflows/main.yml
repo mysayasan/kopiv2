@@ -29,6 +29,8 @@ jobs:
       sel_tag: ${{ steps.bump.outputs.sel_tag }}
       iot_released: ${{ steps.bump.outputs.iot_released }}
       iot_tag: ${{ steps.bump.outputs.iot_tag }}
+      idsan_released: ${{ steps.bump.outputs.idsan_released }}
+      idsan_tag: ${{ steps.bump.outputs.idsan_tag }}
 
     steps:
       - name: Checkout
@@ -70,6 +72,7 @@ jobs:
           #                                      in-app updater reads releases/latest)
           #   myseliasan -> myseliasan-v<ver>   (published with --latest=false)
           #   myiotsan   -> myiotsan-v<ver>     (published with --latest=false)
+          #   myidsan    -> myidsan-v<ver>      (published with --latest=false)
           #
           # Only mymatasan may ever be "latest": its in-app updater reads releases/latest
           # and matches assets by the `mymatasan_` name prefix. Let another product's tag
@@ -114,6 +117,7 @@ jobs:
 
           tag_if_new myseliasan "myseliasan-v" "sel"
           tag_if_new myiotsan "myiotsan-v" "iot"
+          tag_if_new myidsan "myidsan-v" "idsan"
 
   # Build + publish the release when the version job cut a new mymatasan tag.
   # Runs in the same workflow run (workflow_call), so no PAT is needed — a tag
@@ -151,6 +155,19 @@ jobs:
     uses: ./.github/workflows/release-myiotsan.yml
     with:
       tag: ${{ needs.version.outputs.iot_tag }}
+    permissions:
+      contents: write
+      packages: write
+    secrets: inherit
+
+  # Same, for the myidsan identity provider. Also published with --latest=false — see the
+  # tagging comment in the version job.
+  release-myidsan:
+    needs: version
+    if: ${{ needs.version.outputs.idsan_released == 'true' }}
+    uses: ./.github/workflows/release-myidsan.yml
+    with:
+      tag: ${{ needs.version.outputs.idsan_tag }}
     permissions:
       contents: write
       packages: write

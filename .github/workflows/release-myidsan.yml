@@ -1,0 +1,206 @@
+# Builds and publishes a MyIDSan release for a given tag: cross-compiled binaries +
+# archives + .deb/.rpm + multi-arch Docker images (GoReleaser) + a Windows installer,
+# with the matching CHANGELOG.md section as the GitHub Release notes.
+#
+# Invoked two ways:
+#   - automatically by main.yml's version job (workflow_call) right after it creates the
+#     myidsan-vX.Y.Z tag on a version bump;
+#   - manually via the Actions tab (workflow_dispatch) with a tag input.
+#
+# ── Why this differs from release.yml (mymatasan) ─────────────────────────────────────
+#
+# myidsan releases under its OWN tag namespace (`myidsan-v<ver>`) and are published
+# with `--latest=false`. Both matter:
+#
+#   * mymatasan's tags are bare `v<ver>`, so a shared namespace would collide.
+#   * mymatasan's IN-APP UPDATER reads `releases/latest` and picks its asset by name. If a
+#     myidsan release ever became "latest", a deployed node could download a myidsan
+#     archive and overwrite itself with it. Keeping myidsan off "latest" (plus the
+#     `mymatasan_` asset-prefix check in services/update.go) is what prevents that.
+#
+# GoReleaser OSS cannot derive a clean semver from a prefixed tag (its monorepo/tag_prefix
+# feature is Pro-only), so we hand it a plain version via GORELEASER_CURRENT_TAG and let it
+# build/push artifacts + Docker, but NOT create the GitHub Release (`release: disable: true`
+# in .goreleaser.myidsan.yaml). This workflow then publishes the release itself with
+# `gh release create`. `--skip=validate` is required because the checked-out git tag
+# intentionally does not match GORELEASER_CURRENT_TAG.
+#
+# The committed apps/myidsan/static bundle at the tag IS the release web UI, so there's
+# no frontend rebuild here (which would also dirty the tree).
+name: Release MyIDSan
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Tag to release (e.g. myidsan-v1.13.0)
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to release (e.g. myidsan-v1.13.0)
+        required: true
+        type: string
+
+# Never let two myidsan releases run at once — concurrent pushes to the shared Docker
+# `:latest-*` tags corrupt the multi-arch manifest. Queue, don't cancel. Separate group
+# from the other products, so their releases may run in parallel.
+concurrency:
+  group: myidsan-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - name: Checkout at tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Derive version from tag
+        id: ver
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          # myidsan-v1.13.0 -> 1.13.0
+          version="${TAG#myidsan-v}"
+          if [ "$version" = "$TAG" ]; then
+            echo "::error::tag '$TAG' is not of the form myidsan-v<semver>"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract release notes from CHANGELOG.md
+        env:
+          NOTES: ${{ runner.temp }}/release-notes.md
+        run: |
+          # The newest CHANGELOG entry (first "## " block) becomes the release body.
+          # Written outside the repo so the tree stays clean.
+          if [ -f CHANGELOG.md ]; then
+            awk '/^## /{c++} c==1{print} c==2{exit}' CHANGELOG.md > "$NOTES"
+          fi
+          if [ ! -s "$NOTES" ]; then
+            echo "MyIDSan ${{ inputs.tag }}" > "$NOTES"
+          fi
+
+      # Builds archives/deb/rpm into dist/ and pushes the Docker images. Does NOT create
+      # the GitHub Release — see the header.
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release -f .goreleaser.myidsan.yaml --clean --skip=validate
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Give GoReleaser a plain semver to template artifact names and the .deb/.rpm
+          # version from. The real tag is myidsan-v<ver> (see header).
+          GORELEASER_CURRENT_TAG: v${{ steps.ver.outputs.version }}
+
+      # Publish the release under the REAL tag, explicitly not "latest".
+      #
+      # Idempotent: a re-run (workflow_dispatch on the same tag, e.g. after a transient
+      # GHCR push failure) must be able to finish rather than dying on "release already
+      # exists". If the release is there, re-upload the artifacts over it instead.
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NOTES: ${{ runner.temp }}/release-notes.md
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          ARTIFACTS=(
+            dist/myidsan_*.tar.gz
+            dist/myidsan_*.zip
+            dist/myidsan_*.deb
+            dist/myidsan_*.rpm
+            dist/checksums.txt
+          )
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG already exists — re-uploading artifacts"
+            gh release upload "$TAG" "${ARTIFACTS[@]}" --clobber
+          else
+            gh release create "$TAG" \
+              --title "MyIDSan ${{ steps.ver.outputs.version }}" \
+              --notes-file "$NOTES" \
+              --latest=false \
+              "${ARTIFACTS[@]}"
+          fi
+
+  # Windows x64 service installer (Inno Setup). Runs after the GitHub Release exists and
+  # uploads the .exe to it. Windows arm64 users take the portable .zip.
+  windows-installer:
+    needs: goreleaser
+    runs-on: windows-latest
+    steps:
+      - name: Checkout at tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Embed brand icon + version into exe
+        shell: bash
+        run: bash packaging/gen-winres.sh "${{ needs.goreleaser.outputs.version }}" myidsan
+
+      - name: Build windows/amd64 binary
+        shell: pwsh
+        env:
+          CGO_ENABLED: "0"
+          GOOS: windows
+          GOARCH: amd64
+        run: go build -trimpath -ldflags "-s -w" -o dist\windows-installer-myidsan\myidsan.exe .\cmd\myidsan
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
+            /DAppVersion=${{ needs.goreleaser.outputs.version }} `
+            /DBinDir=${{ github.workspace }}\dist\windows-installer-myidsan `
+            packaging\windows\myidsan.iss
+
+      - name: Upload installer to release
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ inputs.tag }}" \
+            "packaging/windows/Output/myidsan-setup-${{ needs.goreleaser.outputs.version }}-windows-x64.exe" \
+            --clobber

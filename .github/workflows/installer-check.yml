@@ -35,6 +35,8 @@ jobs:
             bindir: dist\windows-installer-myseliasan
           - app: myiotsan
             bindir: dist\windows-installer-myiotsan
+          - app: myidsan
+            bindir: dist\windows-installer-myidsan
     steps:
       - name: Checkout
         uses: actions/checkout@v4
