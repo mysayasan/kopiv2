@@ -396,7 +396,7 @@ func (m *loginApi) providerCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := m.userService.UpsertFederated(r.Context(), *identity)
+	user, err := m.admitRedirectIdentity(r, identity)
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrFederatedIdentityConflict),
@@ -533,6 +533,17 @@ func (m *loginApi) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	controllers.SendResult(w, map[string]bool{"ok": true})
+}
+
+// admitRedirectIdentity resolves a redirect-provider identity to an account.
+// Through the directory service when available, so provider-scoped group→role
+// mappings (OIDC groups claim) can seed pending accounts; plain UpsertFederated
+// otherwise (tests, minimal wiring) — social identities carry no groups anyway.
+func (m *loginApi) admitRedirectIdentity(r *http.Request, identity *login.Identity) (*entities.UserLogin, error) {
+	if m.directory != nil {
+		return m.directory.AdmitExternalIdentity(r.Context(), *identity)
+	}
+	return m.userService.UpsertFederated(r.Context(), *identity)
 }
 
 // setOAuthSession issues the signed-in session cookies for a federated-login user. It

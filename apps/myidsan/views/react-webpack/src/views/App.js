@@ -1636,7 +1636,7 @@ function DirectoryPage({ accessList, onToast }) {
   const [form, setForm] = useState(emptyDirectoryConfig)
   const [roles, setRoles] = useState([])
   const [mappings, setMappings] = useState([])
-  const [newMapping, setNewMapping] = useState({ groupName: '', roleId: 0, priority: 0 })
+  const [newMapping, setNewMapping] = useState({ provider: 'ldap', groupName: '', roleId: 0, priority: 0 })
   const [sampleUser, setSampleUser] = useState('')
   const [testResult, setTestResult] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -1705,13 +1705,13 @@ function DirectoryPage({ accessList, onToast }) {
       await apiRequest('/api/federated-group-mapping', {
         method: 'POST',
         body: {
-          provider: 'ldap',
+          provider: (newMapping.provider || 'ldap').trim(),
           groupName: newMapping.groupName.trim(),
           roleId: Number(newMapping.roleId),
           priority: Number(newMapping.priority) || 0
         }
       })
-      setNewMapping({ groupName: '', roleId: 0, priority: 0 })
+      setNewMapping({ provider: newMapping.provider || 'ldap', groupName: '', roleId: 0, priority: 0 })
       await load()
     } catch (err) {
       setError(err.message)
@@ -1834,11 +1834,12 @@ function DirectoryPage({ accessList, onToast }) {
         {mappings.length > 0 && (
           <table className="plain-table">
             <thead>
-              <tr><th>{t('dir.group')}</th><th>{t('dir.role')}</th><th>{t('dir.priority')}</th><th></th></tr>
+              <tr><th>{t('dir.provider')}</th><th>{t('dir.group')}</th><th>{t('dir.role')}</th><th>{t('dir.priority')}</th><th></th></tr>
             </thead>
             <tbody>
               {mappings.map(row => (
                 <tr key={row.id}>
+                  <td>{row.provider}</td>
                   <td>{row.groupName}</td>
                   <td>{roleName(row.roleId)}</td>
                   <td>{row.priority}</td>
@@ -1853,9 +1854,15 @@ function DirectoryPage({ accessList, onToast }) {
         <form className="record-form" onSubmit={addMapping}>
           <div className="two-col">
             <label>
+              {t('dir.provider')}
+              <input value={newMapping.provider} onChange={event => setNewMapping({ ...newMapping, provider: event.target.value })} placeholder="ldap | oidc:keycloak" />
+            </label>
+            <label>
               {t('dir.group')}
               <input value={newMapping.groupName} onChange={event => setNewMapping({ ...newMapping, groupName: event.target.value })} placeholder="CN=Kopiv2-Admins,OU=Groups,DC=corp,DC=local" />
             </label>
+          </div>
+          <div className="two-col">
             <label>
               {t('dir.role')}
               <select value={newMapping.roleId} onChange={event => setNewMapping({ ...newMapping, roleId: Number(event.target.value) })}>

@@ -33,7 +33,8 @@
       "client_secret": "",
       "redirect_url": "https://localhost:3001/api/callback/github",
       "scopes": ["read:user", "user:email"]
-    }
+    },
+    "oidc": []
   },
   "fileStorage": {
     "path": "./uploads",

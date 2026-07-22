@@ -1,11 +1,82 @@
 package services
 
 import (
+	"context"
 	"testing"
 
 	myidsanentities "github.com/mysayasan/kopiv2/apps/myidsan/entities"
+	"github.com/mysayasan/kopiv2/domain/entities"
+	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	"github.com/mysayasan/kopiv2/infra/atrest"
+	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	"github.com/mysayasan/kopiv2/infra/login"
 )
+
+// fakeMappingRepo serves canned FederatedGroupMapping rows for Get; everything
+// else is unused by the directory service.
+type fakeMappingRepo struct {
+	dbsql.IGenericRepo[myidsanentities.FederatedGroupMapping]
+	rows []*myidsanentities.FederatedGroupMapping
+}
+
+func (f *fakeMappingRepo) Get(_ context.Context, _ string, _ uint64, _ uint64, filters []sqldataenums.Filter, _ []sqldataenums.Sorter) ([]*myidsanentities.FederatedGroupMapping, uint64, error) {
+	out := []*myidsanentities.FederatedGroupMapping{}
+	for _, row := range f.rows {
+		match := true
+		for _, filter := range filters {
+			if filter.FieldName == "Provider" {
+				if s, _ := filter.Value.(string); s != row.Provider {
+					match = false
+				}
+			}
+		}
+		if match {
+			out = append(out, row)
+		}
+	}
+	return out, uint64(len(out)), nil
+}
+
+// OIDC (external-IdP) logins: a groups-claim mapping seeds the role for a NEW
+// (pending) account, but never overrides an existing manual assignment.
+func TestAdmitExternalIdentity_SeedsPendingOnly(t *testing.T) {
+	userRepo := newFakeUserLoginRepo()
+	users := NewUserLoginService(userRepo, nil)
+	mappings := &fakeMappingRepo{rows: []*myidsanentities.FederatedGroupMapping{
+		{Id: 1, Provider: "oidc:kc", GroupName: "kopiv2-admins", RoleId: 4, Priority: 1},
+	}}
+	svc := NewDirectoryService(nil, mappings, users, nil)
+
+	identity := login.Identity{Provider: "oidc:kc", Subject: "sub-9", Email: "bob@corp.local", Groups: []string{"KOPIV2-ADMINS"}}
+	user, err := svc.AdmitExternalIdentity(context.Background(), identity)
+	if err != nil {
+		t.Fatalf("AdmitExternalIdentity: %v", err)
+	}
+	if user.UserRoleId != 4 {
+		t.Fatalf("pending account role = %d, want 4 (seeded from mapping, case-insensitive)", user.UserRoleId)
+	}
+
+	// Existing account with a manually assigned role: mapping must NOT touch it.
+	userRepo.usersByEmail["carol@corp.local"] = &entities.UserLogin{
+		Id: 30, Email: "carol@corp.local", SsoProvider: "oidc:kc", SsoSubject: "sub-30",
+		UserRoleId: 9, IsActive: true,
+	}
+	carol := login.Identity{Provider: "oidc:kc", Subject: "sub-30", Email: "carol@corp.local", Groups: []string{"kopiv2-admins"}}
+	user, err = svc.AdmitExternalIdentity(context.Background(), carol)
+	if err != nil {
+		t.Fatalf("existing account: %v", err)
+	}
+	if user.UserRoleId != 9 {
+		t.Fatalf("manual role overridden to %d, want 9 kept (non-authoritative)", user.UserRoleId)
+	}
+
+	// No groups → no mapping call → still pending.
+	nogroups := login.Identity{Provider: "oidc:kc", Subject: "sub-11", Email: "dave@corp.local"}
+	user, err = svc.AdmitExternalIdentity(context.Background(), nogroups)
+	if err != nil || user.UserRoleId != 0 {
+		t.Fatalf("groupless identity: role=%d err=%v, want pending", user.UserRoleId, err)
+	}
+}
 
 func mapping(id int64, group string, roleId int64, priority int64) *myidsanentities.FederatedGroupMapping {
 	return &myidsanentities.FederatedGroupMapping{Id: id, Provider: "ldap", GroupName: group, RoleId: roleId, Priority: priority}
