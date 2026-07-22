@@ -1,0 +1,6 @@
+{
+  "type": "added",
+  "scope": "myidsan",
+  "summary": "MyIDSan gains full installer/release packaging, mirroring MyMataSan and MySeliaSan: GoReleaser cross-compiled archives (linux/windows/darwin, amd64/arm64), .deb/.rpm packages with a systemd unit and dedicated system user, multi-arch Docker images, and a Windows Inno Setup installer (service registration, generated one-time admin password on the finish page, and a reset-admin-login option). Releases are cut under MyIDSan's own myidsan-v<version> tag namespace via a dedicated release-myidsan workflow.",
+  "compatibility": "Published with --latest=false and myidsan_-prefixed release assets, so a MyIDSan release can never become the repository's GitHub \"latest\" release or be picked up by MyMataSan's in-app updater (which only recognizes mymatasan_-prefixed assets under releases/latest) — existing MyMataSan fleets keep updating normally. This is packaging/release scaffolding only; no runtime behavior, config keys, or API routes change for existing MyIDSan installs."
+}

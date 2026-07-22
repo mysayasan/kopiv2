@@ -1,0 +1,30 @@
+# systemd unit installed by the MyIDSan .deb/.rpm package.
+#
+# Flat install: binary, web UI, config, database, logs, certs and the secret
+# encryption key all live under /opt/myidsan (home == data). Runs as the dedicated
+# unprivileged `myidsan` user created by the package postinstall.
+#
+# KOPIV2_SUPERVISED=1 + Restart=always: an in-app restart exits cleanly and systemd
+# relaunches it.
+[Unit]
+Description=MyIDSan identity provider
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=myidsan
+Group=myidsan
+WorkingDirectory=/opt/myidsan
+ExecStart=/opt/myidsan/myidsan
+Environment=KOPIV2_SUPERVISED=1
+Environment=MYIDSAN_HOME=/opt/myidsan
+Environment=MYIDSAN_DATA=/opt/myidsan
+# Package-managed: upgrade via apt/dnf.
+Environment=MYIDSAN_MANAGED=package
+Restart=always
+RestartSec=2
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

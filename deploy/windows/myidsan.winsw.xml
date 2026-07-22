@@ -1,0 +1,38 @@
+<!-- WinSW service wrapper for MyIDSan (Windows).
+
+  The Windows installer (myidsan-setup-*.exe) already registers a service for you —
+  this file is only for the portable .zip.
+
+  A Go console app isn't a native Windows service, so wrap it with WinSW (or NSSM).
+
+  WinSW (recommended):
+    1. Download WinSW (https://github.com/winsw/winsw), put WinSW.exe next to the app
+       and rename it myidsan-service.exe.
+    2. Put this file next to it as myidsan-service.xml (same base name).
+    3. Edit the <executable> / <workingdirectory> paths below.
+    4. Run (elevated):  myidsan-service.exe install   then   myidsan-service.exe start
+       Logs land next to the exe; manage via services.msc.
+
+  NSSM alternative:
+    nssm install MyIDSan "C:\myidsan\myidsan.exe"
+    nssm set MyIDSan AppDirectory "C:\myidsan"
+    nssm set MyIDSan AppEnvironmentExtra KOPIV2_SUPERVISED=1
+    nssm set MyIDSan AppExit Default Restart
+    nssm start MyIDSan
+
+  onfailure restart + KOPIV2_SUPERVISED=1 means an in-app restart exits cleanly and the
+  service control manager relaunches it.
+-->
+<service>
+  <id>myidsan</id>
+  <name>MyIDSan identity provider</name>
+  <description>MyIDSan — identity provider / SSO hub for the kopiv2 suite.</description>
+  <executable>C:\myidsan\myidsan.exe</executable>
+  <workingdirectory>C:\myidsan</workingdirectory>
+  <env name="KOPIV2_SUPERVISED" value="1"/>
+  <onfailure action="restart" delay="2 sec"/>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+</service>
