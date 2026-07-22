@@ -16,6 +16,13 @@
     "username": "admin",
     "password": "admin123"
   },
+  "kerberos": {
+    "enabled": false,
+    "keytabPath": "",
+    "servicePrincipal": "",
+    "onlyRealms": [],
+    "displayLabel": ""
+  },
   "login": {
     "google": {
       "client_id": "323260460700-kmbhjcg7leflb390vh8stsqi5iqgqac0.apps.googleusercontent.com",

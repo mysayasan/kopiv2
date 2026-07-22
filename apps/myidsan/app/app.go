@@ -23,6 +23,7 @@ import (
 	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/db/bootstrap"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	logininfra "github.com/mysayasan/kopiv2/infra/login"
 	"github.com/mysayasan/kopiv2/infra/versioning"
 )
 
@@ -219,15 +220,43 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// LDAP login, the server-rendered federated login page): to a password sprayer
 	// they are the same door, so they share the per-IP counters.
 	loginGuard := sharedapis.NewLoginGuard(loginGuardConfig(deps))
-	deps.Metrics.Describe(apis.MetricFederatedLoginTotal, "Federated login outcomes by provider and result (LDAP failures are otherwise invisible in aggregate).")
+	deps.Metrics.Describe(apis.MetricFederatedLoginTotal, "Federated login outcomes by provider and result (LDAP/Kerberos failures are otherwise invisible in aggregate).")
 
-	providerRegistry := apis.NewLoginApi(api, deps.Config.Login, *deps.Auth, userLoginService, directoryService, loginGuard, deps.Metrics)
+	// Kerberos SPNEGO: a bad keytab degrades to "not offered" with a warning
+	// (mirroring half-configured OAuth), never a failed boot.
+	var kerberosAuth *logininfra.KerberosAuthenticator
+	kerberosLabel := ""
+	if deps.Config.Kerberos.Enabled {
+		a, err := logininfra.NewKerberosAuthenticator(logininfra.KerberosSettings{
+			KeytabPath:       deps.Config.Kerberos.KeytabPath,
+			ServicePrincipal: deps.Config.Kerberos.ServicePrincipal,
+			OnlyRealms:       deps.Config.Kerberos.OnlyRealms,
+		})
+		if err != nil {
+			log.Printf("WARNING: kerberos login disabled — %v", err)
+		} else {
+			kerberosAuth = a
+			kerberosLabel = strings.TrimSpace(deps.Config.Kerberos.DisplayLabel)
+			if kerberosLabel == "" {
+				kerberosLabel = "Windows (SSO)"
+			}
+			log.Printf("kerberos SSO enabled spn=%s keytab=%s", deps.Config.Kerberos.ServicePrincipal, deps.Config.Kerberos.KeytabPath)
+		}
+	}
+
+	providerRegistry := apis.NewLoginApi(api, deps.Config.Login, *deps.Auth, userLoginService, apis.LoginApiOptions{
+		Directory:     directoryService,
+		Kerberos:      kerberosAuth,
+		KerberosLabel: kerberosLabel,
+		Guard:         loginGuard,
+		Metrics:       deps.Metrics,
+	})
 	apis.NewUserLoginApi(api, *deps.Auth, deps.Access, userLoginDtoService)
 	apis.NewUserGroupApi(api, *deps.Auth, deps.Access, userGroupDtoService)
 	// Role + permission management is the shared accessrbac surface (/api/access-rbac),
 	// mounted by apphost. The old per-app user_role admin endpoint is retired.
 	apis.NewSSOApi(api, deps.Config, deps.Auth)
-	apis.NewFederatedAuthApi(api, deps.Config, deps.Auth, providerRegistry, directoryService, loginGuard, userLoginService, appRegistryRepo, appAuthConfigRepo, appRedirectUriRepo, deps.Cache)
+	apis.NewFederatedAuthApi(api, deps.Config, deps.Auth, providerRegistry, directoryService, kerberosLabel, loginGuard, userLoginService, appRegistryRepo, appAuthConfigRepo, appRedirectUriRepo, deps.Cache)
 	apis.NewDirectoryConfigApi(api, *deps.Auth, deps.Access, directoryService, groupMappingRepo)
 	apis.NewAppAuthConfigApi(api, *deps.Auth, deps.Access, appAuthConfigRepo)
 	apis.NewAppRedirectUriApi(api, *deps.Auth, deps.Access, appRedirectUriRepo)

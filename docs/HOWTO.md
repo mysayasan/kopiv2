@@ -584,6 +584,70 @@ Steps:
 
 Both login surfaces (the SPA and the server-rendered `/api/auth/login` page myseliasan's SSO hop lands on) show an "Account type" selector only while directory login is enabled; it disappears automatically when disabled. LDAP login shares the same per-IP failed-login lockout (`loginSecurity` config) as local login.
 
+### Kerberos SPNEGO SSO
+
+Phase 2 of `docs/MYIDSAN_ENTERPRISE_SSO_PLAN.md`: on a domain-joined Windows machine
+(or any host with a valid Kerberos ticket for the realm), `GET /api/login/kerberos`
+authenticates the browser silently via its existing Windows/AD login — no password
+prompt. Both login surfaces show a "Windows (SSO)" button (label configurable via
+`kerberos.displayLabel`) once `kerberos.enabled` is `true` and a keytab loads
+successfully. When a directory (above) is also configured, the ticket-verified
+principal is resolved through LDAP to the **same account** a password/LDAP login for
+that person would reach (`ResolveDirectoryUser` — service-bind search, no user bind);
+without a directory, a principal-derived standalone identity is used instead. See
+`infra/login/kerberos.go.md` and `apps/myidsan/apis/login.go.md` for the implementation.
+
+What you need before enabling it:
+
+- **An SPN registered for myidsan** and a keytab exported for it — the exact steps
+  differ by directory:
+  - **Active Directory:** `setspn -S HTTP/myidsan.corp.local svc-myidsan` (registers
+    the SPN on the service account `svc-myidsan`; `-S` checks for duplicates first —
+    a duplicate SPN anywhere in the forest breaks Kerberos for every service sharing
+    it). Export the keytab with `ktpass /princ HTTP/myidsan.corp.local@CORP.LOCAL
+    /mapuser svc-myidsan /pass <password> /out myidsan.keytab /crypto AES256-SHA1
+    /ptype KRB5_NT_PRINCIPAL`. Prefer AES256 over older RC4 ciphers.
+  - **Samba AD:** `samba-tool spn add HTTP/myidsan.corp.local svc-myidsan` then
+    `samba-tool domain exportkeytab myidsan.keytab --principal=HTTP/myidsan.corp.local`.
+  - The `ServicePrincipal` in config (`kerberos.servicePrincipal`) must match the SPN
+    exactly — case and all — or every ticket verification fails.
+- **The keytab file itself**, copied to the myidsan host, with **file permissions
+  `0600`** (readable only by the account myidsan runs as — the keytab is as sensitive
+  as a password) and its path set in `kerberos.keytabPath`. Treat it as an ops
+  artifact: rotate it whenever the service account's password changes, and never
+  commit it to source control.
+- **Clock skew under 5 minutes** between the myidsan host, the KDC, and every client —
+  this is a hard Kerberos protocol requirement, not a suite-specific tolerance; sync
+  all three to the same NTP source. A skew beyond the default 5-minute window rejects
+  otherwise-valid tickets (see the failure table below).
+- **Browser trust for SPNEGO**, since browsers only attempt Negotiate auth against
+  sites they're told to trust:
+  - **Edge/Chrome:** add myidsan's URL to the intranet zone (Windows: Internet
+    Options → Security → Local intranet → Sites), or push the
+    `AuthNegotiateAllowlist` (Chrome/Edge) / `AuthServerAllowlist` group policy with
+    myidsan's hostname.
+  - **Firefox:** set `network.negotiate-auth.trusted-uris` in `about:config` to
+    myidsan's origin (e.g. `https://myidsan.corp.local`).
+  - The browser must reach myidsan via its **FQDN**, not a bare IP address — SPNEGO
+    matches the URL host against the SPN's hostname, so an IP in the address bar
+    never negotiates.
+
+Failure modes (each surfaces in the myidsan server log and as a distinct
+`myidsan_federated_login_total{provider="kerberos",result=...}` label — see
+`apps/myidsan/apis/login.go.md`):
+
+| Symptom | Underlying Kerberos error | `result` label | Likely cause |
+| --- | --- | --- | --- |
+| Ticket rejected immediately | `KRB_AP_ERR_MODIFIED` | `ticket_rejected` | Wrong/mismatched SPN, or the keytab doesn't match the service account's current password (rotate the keytab). |
+| Ticket rejected, works from some clients not others | `KRB_AP_ERR_SKEW` | `ticket_rejected` | Clock skew between client, KDC, and myidsan exceeds the 5-minute tolerance — fix NTP sync. |
+| Realm accepted by the KDC but myidsan still refuses | n/a (post-verification) | `realm_refused` | The ticket's realm isn't in `kerberos.onlyRealms` — add it, or clear the list to accept any realm the keytab can decrypt. |
+| Verified principal but the login still fails | n/a (directory lookup) | `not_in_directory` | The directory is enabled but has no matching account for the principal's username — same as any LDAP login with no matching entry. |
+| No SSO button shown at all | n/a | (not offered) | `kerberos.enabled` is `false`, or the keytab failed to load at boot — check the startup log for a `WARNING: kerberos login disabled` line. |
+
+Not yet verified against a real KDC/realm — this needs a domain-joined client and a
+real Active Directory/Samba AD/Kerberos realm to exercise the ticket-acceptance path
+end to end.
+
 ## Filter Shared List APIs
 
 Shared DB-backed list endpoints accept backend filters and sorters in addition to `limit` and `offset`.

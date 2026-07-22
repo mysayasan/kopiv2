@@ -35,6 +35,16 @@ is the only caller.
   with `LDAPResultInvalidCredentials` maps to `ErrLdapInvalidCredential`; any other
   connect/service-bind failure maps to `ErrLdapUnreachable` (an operational problem,
   not a credential one, so callers can distinguish "try again" from "wrong password").
+- `LdapLookup(ctx, settings, username) (*Identity, error)` — resolves a username
+  to its directory identity with **no user bind**: service bind + single-entry
+  search only (the same `ldapFindUser`/`ldapIdentityFromEntry` path
+  `LdapAuthenticate` uses, minus the final bind-as-user step). This is the
+  resolution path for callers that have already authenticated the user by other
+  means — Kerberos SPNEGO (`apps/myidsan/services/directory.go`'s
+  `ResolveDirectoryUser`, see `services/directory.go.md`) proves who the user is
+  but carries no email/groups, so the directory fills those in. **Never call
+  this on an unauthenticated username** — it performs no credential check; the
+  doc comment on the function says so explicitly.
 - `LdapTest(ctx, settings, sampleUsername) *LdapTestResult` — the admin "Test
   connection" probe. It NEVER binds as the sample user (no password is taken or
   checked): with no sample username it only proves the service bind and a base-DN
@@ -71,10 +81,12 @@ for the shared `LoginGuard` per-IP lockout counters.
 ## Notes
 
 - `LdapProviderKey = "ldap"` is the `Identity.Provider` value for every way of
-  proving a directory identity (password bind today; a future Kerberos identity
-  resolved via the same directory, per the plan's Phase 2, would share it) — so one
-  person always resolves to one local account regardless of which credential path
-  proved it.
+  proving a directory identity: password bind (`LdapAuthenticate`) and, as of
+  Phase 2, a Kerberos-verified principal resolved via `LdapLookup` — so one
+  person always resolves to one local account regardless of which credential
+  path proved it. Only the directory-less Kerberos fallback
+  (`login.StandaloneKerberosIdentity`, see `kerberos.go.md`) uses a different
+  provider key (`"kerberos"`).
 - Pure Go (`github.com/go-ldap/ldap/v3`), no cgo — consistent with the suite's
   single-static-binary rule.
 - Covered by `ldap_test.go`: filter-escaping/injection, empty/NUL-password refusal

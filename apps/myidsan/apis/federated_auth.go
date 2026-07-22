@@ -38,10 +38,12 @@ const (
 )
 
 type federatedAuthApi struct {
-	cfg              *config.AppConfigModel
-	auth             *middlewares.AuthMidware
-	providers        *login.Registry
-	directory        services.IDirectoryService
+	cfg       *config.AppConfigModel
+	auth      *middlewares.AuthMidware
+	providers *login.Registry
+	directory services.IDirectoryService
+	// kerbLabel non-empty renders the Kerberos SSO button under that name.
+	kerbLabel        string
 	guard            *sharedapis.LoginGuard
 	userService      services.IUserLoginService
 	apps             dbsql.IGenericRepo[entities.AppRegistry]
@@ -100,6 +102,7 @@ func NewFederatedAuthApi(
 	auth *middlewares.AuthMidware,
 	providers *login.Registry,
 	directory services.IDirectoryService,
+	kerberosLabel string,
 	guard *sharedapis.LoginGuard,
 	userService services.IUserLoginService,
 	apps dbsql.IGenericRepo[entities.AppRegistry],
@@ -112,6 +115,7 @@ func NewFederatedAuthApi(
 		auth:             auth,
 		providers:        providers,
 		directory:        directory,
+		kerbLabel:        strings.TrimSpace(kerberosLabel),
 		guard:            guard,
 		userService:      userService,
 		apps:             apps,
@@ -199,7 +203,13 @@ func (m *federatedAuthApi) authorize(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *federatedAuthApi) loginPage(w http.ResponseWriter, r *http.Request) {
-	m.renderLoginPage(w, http.StatusOK, cleanContinuePath(r.URL.Query().Get("continue")), "", "local", m.directoryLabel(r), "")
+	errMsg := ""
+	// A failed Kerberos SSO attempt bounces back here rather than dead-ending on a
+	// 401 body; the reason stays in the server log (never leaked to the browser).
+	if r.URL.Query().Get("error") == "sso_failed" {
+		errMsg = "Single sign-on failed. Sign in another way, or contact your administrator."
+	}
+	m.renderLoginPage(w, http.StatusOK, cleanContinuePath(r.URL.Query().Get("continue")), "", "local", m.directoryLabel(r), errMsg)
 }
 
 // directoryLabel returns the directory login option's display label, or "" when
@@ -327,7 +337,7 @@ func (m *federatedAuthApi) renderLoginPage(w http.ResponseWriter, status int, co
 // intranet, which is where myseliasan runs.
 func (m *federatedAuthApi) socialButtonsHTML(continueTo string) string {
 	keys := m.providers.Keys()
-	if len(keys) == 0 {
+	if len(keys) == 0 && m.kerbLabel == "" {
 		return ""
 	}
 	cont := url.QueryEscape(continueTo)
@@ -340,6 +350,12 @@ func (m *federatedAuthApi) socialButtonsHTML(continueTo string) string {
 		}
 		fmt.Fprintf(&b, `<a class="oauth-btn" href="/api/login/%s?continue=%s">%s</a>`,
 			url.PathEscape(key), cont, html.EscapeString(p.DisplayName()))
+	}
+	if m.kerbLabel != "" {
+		// Plain navigation: the 401/Negotiate dance happens transparently in the
+		// browser; a failure bounces back to this page with error=sso_failed.
+		fmt.Fprintf(&b, `<a class="oauth-btn" href="/api/login/kerberos?continue=%s">%s</a>`,
+			cont, html.EscapeString(m.kerbLabel))
 	}
 	b.WriteString(`</div>`)
 	return b.String()

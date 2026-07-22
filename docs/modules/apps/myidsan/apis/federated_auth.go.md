@@ -7,7 +7,7 @@ Implements MyIDSan browser-facing authorization-code login for relying apps.
 ## Routes
 
 - `GET /api/auth/authorize`: validates client, audience, redirect URI, and MyIDSan session, then redirects back with a one-time code.
-- `GET /api/auth/login`: serves the MyIDSan login form (with optional social-login buttons and, when directory login is enabled, an account-type select) when authorization starts without a MyIDSan session, via `renderLoginPage` (see below). The `continue` query parameter is carried through the page so a successful social/local/LDAP login redirects back to the authorization step.
+- `GET /api/auth/login`: serves the MyIDSan login form (with optional social-login buttons, a Kerberos SSO button when configured, and, when directory login is enabled, an account-type select) when authorization starts without a MyIDSan session, via `renderLoginPage` (see below). The `continue` query parameter is carried through the page so a successful social/local/LDAP/Kerberos login redirects back to the authorization step. A failed Kerberos attempt (`apps/myidsan/apis/login.go`'s `kerberosLogin` redirecting to `?error=sso_failed`) is handled here too: `loginPage` renders an inline "Single sign-on failed..." message instead of the browser landing on a bare `401`.
 - `POST /api/auth/login`: authenticates local **or** LDAP credentials via `loginPost` (branching on the posted `method` field), issues the MyIDSan session cookie, and resumes authorization. On failure, re-renders the same branded card (`renderLoginPage` with `errMsg` set, `username` echoed back, and the account-type selection preserved) instead of returning bare unstyled text — the user only has to retype the password.
 - `POST /api/auth/token`: exchanges one authorization code for a signed relying-app token response.
 
@@ -51,7 +51,14 @@ holds providers whose credentials are actually present (`login.BuildRegistry`'s
 `google`/`github` objects, and a non-nil-but-blank provider used to render a button that
 sent the browser to `accounts.google.com` with an empty `client_id` (an OAuth error on
 the internet, and a dead end on an intranet where myidsan is deployed — myseliasan's SSO
-hop lands on this exact page). Covered by `federated_auth_login_test.go`:
+hop lands on this exact page). When `m.kerbLabel` is non-empty (set from the
+`kerberosLabel` constructor parameter, itself sourced from
+`deps.Config.Kerberos.DisplayLabel`) an extra button links to
+`/api/login/kerberos?continue=...` — plain navigation, since the `401`/Negotiate dance
+happens transparently in the browser; a failure bounces back to this same page with
+`error=sso_failed`. The row is rendered as soon as *either* the registry is non-empty
+or `m.kerbLabel` is set (an empty registry with Kerberos configured must still show its
+button). Covered by `federated_auth_login_test.go`:
 `TestSocialButtonsRequireCredentials` (buttons appear only once both fields are set,
 now exercised through `login.BuildRegistry`) and `TestLoginPageHasNoExternalReferences`
 (the rendered page references no external host and only same-origin asset paths).
@@ -64,4 +71,4 @@ now exercised through `login.BuildRegistry`) and `TestLoginPageHasNoExternalRefe
 - Client secrets are verified against stored SHA-256 hashes.
 - Login resume paths reject absolute external URLs.
 - The rendered login page loads no external host (no CDN, no Google Fonts) — every asset is a same-origin path, verified by `federated_auth_login_test.go`.
-- `NewFederatedAuthApi` now also takes `directory services.IDirectoryService` and `guard *sharedapis.LoginGuard` (both may be nil — directory login off / lockout off); LDAP credential checks go through `directory.AuthenticateLdap`, never a hand-rolled bind here.
+- `NewFederatedAuthApi` now also takes `directory services.IDirectoryService`, `kerberosLabel string`, and `guard *sharedapis.LoginGuard` (directory/guard may be nil — directory login off / lockout off; `kerberosLabel` empty means Kerberos is not offered on this page); LDAP credential checks go through `directory.AuthenticateLdap`, never a hand-rolled bind here. Kerberos itself is never invoked from this file — SPNEGO verification only ever happens on `apps/myidsan/apis/login.go`'s dedicated `GET /api/login/kerberos` route; this file only decides whether to render the button and whether to show the `sso_failed` inline error.
