@@ -238,7 +238,88 @@ func (m *module) Migrations() []bootstrap.Migration {
 				return nil
 			},
 		},
+		{
+			// 3D floor plans: a floor carries a painted grid (walls/floor cells) plus real-world
+			// scale, wall height and stacking elevation. Same NULL-safety as design/fov — grid is a
+			// string ('' default), the three float64 fields backfill to 0. Idempotent.
+			ID:   "20260723-01-floor-3d",
+			Name: "add grid/scale/wall_height/elevation to floor_plan (3D view)",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				return ensureFloor3DColumns(ctx, tx, engine)
+			},
+		},
+		{
+			// 3D camera placement: a placement gains mount height (metres above floor) and downward
+			// pitch (degrees) so its coverage cone stands correctly in 3D. Same NULL-safety as the
+			// heading/fov columns (non-pointer float64 cannot scan a NULL). Idempotent.
+			ID:   "20260723-02-placement-mount",
+			Name: "add mount_height/pitch to node_placement (3D camera cones)",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				return ensurePlacementMountColumns(ctx, tx, engine)
+			},
+		},
 	}
+}
+
+// ensureFloor3DColumns adds the 3D layout columns to floor_plan if absent and backfills NULLs
+// (grid to '', the float columns to 0 — the entity's non-pointer fields cannot scan a NULL left
+// by a defaultless ADD COLUMN). Mirrors ensureFloorDesignColumn + ensurePlacementFovColumns.
+// Idempotent.
+func ensureFloor3DColumns(ctx context.Context, tx *sql.Tx, engine string) error {
+	existing, err := tableColumns(ctx, tx, engine, "floor_plan")
+	if err != nil {
+		return err
+	}
+	textType := "TEXT"
+	if engine == "mariadb" {
+		textType = "LONGTEXT"
+	}
+	if !existing["grid"] {
+		if _, err := tx.ExecContext(ctx, "ALTER TABLE floor_plan ADD COLUMN grid "+textType); err != nil {
+			return fmt.Errorf("add floor_plan.grid: %w", err)
+		}
+	}
+	for _, name := range []string{"scale", "wall_height", "elevation"} {
+		if existing[name] {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, "ALTER TABLE floor_plan ADD COLUMN "+name+" "+geoColumnType("DOUBLE PRECISION", engine)); err != nil {
+			return fmt.Errorf("add floor_plan.%s: %w", name, err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE floor_plan SET grid = '' WHERE grid IS NULL"); err != nil {
+		return fmt.Errorf("backfill floor_plan.grid NULLs: %w", err)
+	}
+	for _, name := range []string{"scale", "wall_height", "elevation"} {
+		if _, err := tx.ExecContext(ctx, "UPDATE floor_plan SET "+name+" = 0 WHERE "+name+" IS NULL"); err != nil {
+			return fmt.Errorf("backfill floor_plan.%s NULLs: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// ensurePlacementMountColumns adds mount_height/pitch to node_placement if absent and backfills
+// NULLs to zero (non-pointer float64 cannot scan a NULL). Mirrors ensurePlacementFovColumns.
+// Idempotent.
+func ensurePlacementMountColumns(ctx context.Context, tx *sql.Tx, engine string) error {
+	existing, err := tableColumns(ctx, tx, engine, "node_placement")
+	if err != nil {
+		return err
+	}
+	for _, name := range []string{"mount_height", "pitch"} {
+		if existing[name] {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, "ALTER TABLE node_placement ADD COLUMN "+name+" "+geoColumnType("DOUBLE PRECISION", engine)); err != nil {
+			return fmt.Errorf("add node_placement.%s: %w", name, err)
+		}
+	}
+	for _, name := range []string{"mount_height", "pitch"} {
+		if _, err := tx.ExecContext(ctx, "UPDATE node_placement SET "+name+" = 0 WHERE "+name+" IS NULL"); err != nil {
+			return fmt.Errorf("backfill node_placement.%s NULLs: %w", name, err)
+		}
+	}
+	return nil
 }
 
 // ensureSiteGeoColumns adds the geographic columns to site if absent (same per-engine types the

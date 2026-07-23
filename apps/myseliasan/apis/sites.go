@@ -52,6 +52,9 @@ func NewSitesApi(router *mux.Router, auth middlewares.AuthMidware, session *midd
 	sg.HandleFunc("/{id}/position", h.updateSitePosition).Methods("PUT")
 	sg.HandleFunc("/{id}/floors", h.listFloors).Methods("GET")
 	sg.HandleFunc("/{id}/floors", h.uploadFloor).Methods("POST")
+	// An area with no uploaded plan — a blank canvas to draw on. JSON (not multipart) so the
+	// building wizard can create "Ground floor", "1st floor", "Kitchen" in one request each.
+	sg.HandleFunc("/{id}/areas", h.addArea).Methods("POST")
 	// A building's floor plans with EVERY node's cameras on them — the building drill-down.
 	sg.HandleFunc("/{id}/floorplans", h.siteFloorplans).Methods("GET")
 
@@ -61,6 +64,9 @@ func NewSitesApi(router *mux.Router, auth middlewares.AuthMidware, session *midd
 	fg.HandleFunc("/{id}", h.getFloor).Methods("GET")
 	fg.HandleFunc("/{id}", h.updateFloor).Methods("PUT")
 	fg.HandleFunc("/{id}", h.deleteFloor).Methods("DELETE")
+	// The floor's 3D layout (painted grid + real-world scale + wall height + elevation). JSON, so a
+	// distinct endpoint from the multipart image routes and the name/ordinal updateFloor.
+	fg.HandleFunc("/{id}/model", h.updateFloorModel).Methods("PUT")
 	fg.HandleFunc("/{id}/image", h.floorImage).Methods("GET")
 	fg.HandleFunc("/{id}/image", h.replaceFloorImage).Methods("POST")
 	fg.HandleFunc("/{id}/background", h.floorBackground).Methods("GET")
@@ -232,6 +238,42 @@ func (a *sitesApi) uploadFloor(w http.ResponseWriter, r *http.Request) {
 	controllers.SendResult(w, floor, "succeed")
 }
 
+// addArea creates a floor with a generated blank plan — the building wizard's "this building has
+// these areas" step, and the "add an area" button in the building editor. Width/height are
+// optional; the service applies its canvas defaults and bounds.
+func (a *sitesApi) addArea(w http.ResponseWriter, r *http.Request) {
+	siteID, ok := pathID(r)
+	if !ok {
+		controllers.SendError(w, controllers.ErrBadRequest, "invalid id")
+		return
+	}
+	var body struct {
+		Name    string `json:"name"`
+		Ordinal int    `json:"ordinal"`
+		Width   int    `json:"width"`
+		Height  int    `json:"height"`
+	}
+	if err := decodeJSON(w, r, &body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		controllers.SendError(w, controllers.ErrBadRequest, "name is required")
+		return
+	}
+	floor, err := a.sites.AddBlankFloor(r.Context(), siteID, name, body.Ordinal, body.Width, body.Height, actorID(r))
+	if err != nil {
+		if err == services.ErrSiteUnknown {
+			controllers.SendError(w, controllers.ErrBadRequest, "unknown site")
+			return
+		}
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, floor, "succeed")
+}
+
 // replaceFloorImage rewrites an existing floor's rasterised image + design — used when the
 // operator re-saves a drawn plan from the designer. Same multipart shape as uploadFloor.
 func (a *sitesApi) replaceFloorImage(w http.ResponseWriter, r *http.Request) {
@@ -309,6 +351,36 @@ func (a *sitesApi) updateFloor(w http.ResponseWriter, r *http.Request) {
 	}
 	floor, err := a.sites.UpdateFloor(r.Context(), id, strings.TrimSpace(body.Name), body.Ordinal, actorID(r))
 	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, floor, "succeed")
+}
+
+// updateFloorModel rewrites a floor's 3D layout (grid + scale + wall height + elevation) — saved
+// from the in-app grid painter. Leaves the plan image and camera placements untouched.
+func (a *sitesApi) updateFloorModel(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r)
+	if !ok {
+		controllers.SendError(w, controllers.ErrBadRequest, "invalid id")
+		return
+	}
+	var body struct {
+		Grid       string  `json:"grid"`
+		Scale      float64 `json:"scale"`
+		WallHeight float64 `json:"wallHeight"`
+		Elevation  float64 `json:"elevation"`
+	}
+	if err := decodeJSON(w, r, &body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	floor, err := a.sites.UpdateFloorModel(r.Context(), id, body.Grid, body.Scale, body.WallHeight, body.Elevation, actorID(r))
+	if err != nil {
+		if err == services.ErrFloorUnknown {
+			controllers.SendError(w, controllers.ErrNotFound, "floor not found")
+			return
+		}
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
 	}
@@ -493,19 +565,22 @@ func (a *sitesApi) movePlacement(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrBadRequest, "invalid id")
 		return
 	}
-	// All fields optional: a drag sends x/y, the FOV editor sends heading/fov. Pointers let us
-	// tell "not provided" from "set to 0" so an aim edit never resets the position.
+	// All fields optional: a drag sends x/y, the FOV editor sends heading/fov, the 3D editor sends
+	// mountHeight/pitch. Pointers let us tell "not provided" from "set to 0" so one edit never
+	// resets another axis.
 	var body struct {
-		X       *float64 `json:"x"`
-		Y       *float64 `json:"y"`
-		Heading *float64 `json:"heading"`
-		Fov     *float64 `json:"fov"`
+		X           *float64 `json:"x"`
+		Y           *float64 `json:"y"`
+		Heading     *float64 `json:"heading"`
+		Fov         *float64 `json:"fov"`
+		MountHeight *float64 `json:"mountHeight"`
+		Pitch       *float64 `json:"pitch"`
 	}
 	if err := decodeJSON(w, r, &body); err != nil {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
 		return
 	}
-	p, err := a.sites.UpdatePlacement(r.Context(), id, body.X, body.Y, body.Heading, body.Fov, actorID(r))
+	p, err := a.sites.UpdatePlacement(r.Context(), id, body.X, body.Y, body.Heading, body.Fov, body.MountHeight, body.Pitch, actorID(r))
 	if err != nil {
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return

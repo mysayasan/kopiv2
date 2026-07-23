@@ -250,11 +250,13 @@ env var is set). An operator can then draw a bounding box in the Map UI and
 touching a terminal. This is the **one** action in MySeliaSan that reaches the internet; leaving
 both unset keeps the app fully offline exactly as before.
 
-Floor-plan images for the indoor view (Site → Upload floor plan in the UI) need no separate
-provisioning step — they're uploaded through the app itself and stored encrypted at rest under
-`<dataDir>/floorplans`. There is no floor-plan file at all to source: a site with no photo can
-instead be **drawn from scratch** in the built-in floor designer (rooms/walls/text/pen, right in
-the browser), which saves the same way.
+Floor-plan images for the indoor view need no separate provisioning step. A building's areas are
+created from the Map's `+ Add building` wizard (or the building editor's "add an area" button)
+with a **blank canvas generated in-app** — there is no floor-plan file to source at all — and the
+operator then draws walls/rooms over it (or over an uploaded photo) right in the browser; either
+way the image is stored encrypted at rest under `<dataDir>/floorplans`. A blank area's canvas can
+also be swapped for a real uploaded plan (scan/CAD export) later from the building editor's
+toolbar.
 
 ## Run Tests
 

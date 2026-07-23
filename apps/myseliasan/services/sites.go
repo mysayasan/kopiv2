@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	// Registers PNG/JPEG/GIF decoders for image.DecodeConfig (dimensions at upload).
+	"image/color"
+	"image/draw"
+	// Registers the GIF/JPEG decoders for image.DecodeConfig (dimensions at upload); PNG is
+	// imported for real because blank areas are generated as PNG.
 	_ "image/gif"
 	_ "image/jpeg"
-	_ "image/png"
+	"image/png"
 	"os"
 	"path/filepath"
 	"sort"
@@ -79,10 +82,19 @@ type ISiteService interface {
 	// records the floor plan. contentType must be image/png|jpeg|gif. design is the drawn-plan
 	// vector JSON ("" for an uploaded image).
 	AddFloor(ctx context.Context, siteID int64, name string, img []byte, contentType, design string, by int64) (*entities.FloorPlan, error)
+	// AddBlankFloor creates an area with no uploaded plan — a white canvas the operator draws walls
+	// on. Same storage path as an uploaded plan (the image is what every viewer renders); it just
+	// generates the image instead of receiving one, so the building wizard can create several areas
+	// in one call each rather than making the browser rasterise and upload a blank PNG per area.
+	AddBlankFloor(ctx context.Context, siteID int64, name string, ordinal, width, height int, by int64) (*entities.FloorPlan, error)
 	// ReplaceFloorImage rewrites an existing floor's image bytes, dimensions, name and design —
 	// used when re-saving a drawn plan from the designer.
 	ReplaceFloorImage(ctx context.Context, id int64, name string, img []byte, contentType, design string, by int64) (*entities.FloorPlan, error)
 	UpdateFloor(ctx context.Context, id int64, name string, ordinal int, by int64) (*entities.FloorPlan, error)
+	// UpdateFloorModel rewrites a floor's 3D layout: the painted grid (walls/floor cells) plus its
+	// real-world scale (metres-per-pixel), wall height and stacking elevation (all metres). Leaves
+	// the image and placements untouched — the 3D view is authored independently of the 2D plan.
+	UpdateFloorModel(ctx context.Context, id int64, grid string, scale, wallHeight, elevation float64, by int64) (*entities.FloorPlan, error)
 	DeleteFloor(ctx context.Context, id int64) error
 	// FloorImage decrypts and returns a plan image for serving.
 	FloorImage(ctx context.Context, id int64) (*FloorImage, error)
@@ -99,8 +111,8 @@ type ISiteService interface {
 	NodeFloorplans(ctx context.Context, nodeID string) ([]NodeFloorplan, error)
 	AddPlacement(ctx context.Context, floorID int64, nodeID, cameraID, lastKnownName string, x, y float64, by int64) (*entities.NodePlacement, error)
 	// UpdatePlacement moves and/or re-orients a placement; any nil field is left unchanged, so a
-	// drag sends x/y while the FOV editor sends heading/fov.
-	UpdatePlacement(ctx context.Context, id int64, x, y, heading, fov *float64, by int64) (*entities.NodePlacement, error)
+	// drag sends x/y, the FOV editor sends heading/fov, and the 3D editor sends mountHeight/pitch.
+	UpdatePlacement(ctx context.Context, id int64, x, y, heading, fov, mountHeight, pitch *float64, by int64) (*entities.NodePlacement, error)
 	DeletePlacement(ctx context.Context, id int64) error
 }
 
@@ -202,7 +214,7 @@ func (s *siteService) AddPlacement(ctx context.Context, floorID int64, nodeID, c
 	return &row, nil
 }
 
-func (s *siteService) UpdatePlacement(ctx context.Context, id int64, x, y, heading, fov *float64, by int64) (*entities.NodePlacement, error) {
+func (s *siteService) UpdatePlacement(ctx context.Context, id int64, x, y, heading, fov, mountHeight, pitch *float64, by int64) (*entities.NodePlacement, error) {
 	row, err := s.placements.GetById(ctx, "", uint64(id))
 	if err != nil || row == nil {
 		return nil, errors.New("placement not found")
@@ -218,6 +230,12 @@ func (s *siteService) UpdatePlacement(ctx context.Context, id int64, x, y, headi
 	}
 	if fov != nil {
 		row.Fov = *fov
+	}
+	if mountHeight != nil {
+		row.MountHeight = *mountHeight
+	}
+	if pitch != nil {
+		row.Pitch = *pitch
 	}
 	row.UpdatedBy = by
 	row.UpdatedAt = time.Now().Unix()
@@ -391,6 +409,54 @@ func (s *siteService) GetFloor(ctx context.Context, id int64) (*entities.FloorPl
 }
 
 func (s *siteService) AddFloor(ctx context.Context, siteID int64, name string, img []byte, contentType, design string, by int64) (*entities.FloorPlan, error) {
+	// An uploaded plan keeps a pristine background copy so a later re-save draws on the original
+	// photo rather than an already-composited render.
+	return s.addFloorBytes(ctx, siteID, name, img, contentType, design, design == "", by)
+}
+
+// Blank-area canvas defaults. 1600×1000 matches what the old client-side "blank floor" button
+// rasterised, so areas made either way share a coordinate space; the cap bounds the memory a
+// caller can make us allocate (an RGBA buffer is 4 bytes a pixel).
+const (
+	defaultBlankPlanW = 1600
+	defaultBlankPlanH = 1000
+	maxBlankPlanPx    = 8000
+)
+
+// AddBlankFloor generates a white plan image and stores it as a floor. See ISiteService.
+func (s *siteService) AddBlankFloor(ctx context.Context, siteID int64, name string, ordinal, width, height int, by int64) (*entities.FloorPlan, error) {
+	if width <= 0 || width > maxBlankPlanPx {
+		width = defaultBlankPlanW
+	}
+	if height <= 0 || height > maxBlankPlanPx {
+		height = defaultBlankPlanH
+	}
+	canvas := image.NewRGBA(image.Rect(0, 0, width, height))
+	draw.Draw(canvas, canvas.Bounds(), &image.Uniform{C: color.White}, image.Point{}, draw.Src)
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, canvas); err != nil {
+		return nil, err
+	}
+	// keepBg=false: there is no original photo worth preserving for a blank canvas, so don't
+	// double the bytes on disk for every area the wizard creates.
+	row, err := s.addFloorBytes(ctx, siteID, name, buf.Bytes(), "image/png", "", false, by)
+	if err != nil {
+		return nil, err
+	}
+	if ordinal != 0 {
+		row.Ordinal = ordinal
+		row.UpdatedAt = time.Now().Unix()
+		if _, err := s.floors.UpdateById(ctx, "", *row); err != nil {
+			return nil, err
+		}
+	}
+	return row, nil
+}
+
+// addFloorBytes is the shared store-a-plan path: decode for dimensions, create the row to get the
+// id that names the file, encrypt the bytes to disk, then write the paths back. keepBg additionally
+// stores a pristine copy as the re-editable background.
+func (s *siteService) addFloorBytes(ctx context.Context, siteID int64, name string, img []byte, contentType, design string, keepBg bool, by int64) (*entities.FloorPlan, error) {
 	if _, err := s.sites.GetById(ctx, "", uint64(siteID)); err != nil {
 		return nil, ErrSiteUnknown
 	}
@@ -436,9 +502,7 @@ func (s *siteService) AddFloor(ctx context.Context, siteID int64, name string, i
 		return nil, err
 	}
 	row.ImagePath = path
-	// For an UPLOADED image (no design), keep a pristine copy as the editable background so the
-	// designer can later annotate on top of the original photo rather than a re-composited one.
-	if design == "" {
+	if keepBg {
 		bgPath := filepath.Join(s.dir, fmt.Sprintf("floor-%d.bg.img", id))
 		if werr := os.WriteFile(bgPath, payload, 0o644); werr == nil {
 			row.BgPath = bgPath
@@ -512,6 +576,25 @@ func (s *siteService) UpdateFloor(ctx context.Context, id int64, name string, or
 	}
 	row.Name = name
 	row.Ordinal = ordinal
+	row.UpdatedBy = by
+	row.UpdatedAt = time.Now().Unix()
+	if _, err := s.floors.UpdateById(ctx, "", *row); err != nil {
+		return nil, err
+	}
+	return row, nil
+}
+
+// UpdateFloorModel rewrites a floor's 3D layout (grid + scale + wall height + elevation), leaving
+// the image and placements alone. See ISiteService.
+func (s *siteService) UpdateFloorModel(ctx context.Context, id int64, grid string, scale, wallHeight, elevation float64, by int64) (*entities.FloorPlan, error) {
+	row, err := s.floors.GetById(ctx, "", uint64(id))
+	if err != nil || row == nil {
+		return nil, ErrFloorUnknown
+	}
+	row.Grid = grid
+	row.Scale = scale
+	row.WallHeight = wallHeight
+	row.Elevation = elevation
 	row.UpdatedBy = by
 	row.UpdatedAt = time.Now().Unix()
 	if _, err := s.floors.UpdateById(ctx, "", *row); err != nil {
