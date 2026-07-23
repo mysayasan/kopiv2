@@ -4,6 +4,8 @@ import { useT, Ico, Tabs } from '@shared';
 import { api, apiBase } from '../lib/helpers';
 import { nodeTone, nodeToneKey, TONES } from '../lib/fleet_status';
 import { BuildingFloorView, CameraWindow, MediaWindow } from './node_floor_view';
+import { BuildingWizard } from './building_wizard';
+import { BuildingEditorDialog } from './building_editor_dialog';
 
 // OpenLayers, driven directly through refs (no React wrapper — see the note in Phase 0).
 import Map from 'ol/Map.js';
@@ -465,7 +467,7 @@ MapPopupFrame.propTypes = { x: PropTypes.number, y: PropTypes.number, children: 
 // PLACING a node is click-first (the discoverable path): pick a node in the side list, then
 // click its spot on the map. Dragging a node from the list, and dragging an existing pin to
 // move it, both still work for power users. Clicking a placed pin opens its cameras.
-export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode, focusSiteId }) {
+export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   const t = useT();
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -582,6 +584,12 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode, focusSi
   // floors }; showLayers toggles the two marker layers so an operator can focus on either.
   const [sites, setSites] = useState([]);
   const [showLayers, setShowLayers] = useState({ buildings: true, nodes: true });
+  // Adding a building is a three-beat flow owned here: the wizard collects name/glyph/areas, the
+  // map takes the drop point, then the editor opens on the building just created. editorSite is
+  // also the re-entry point for an EXISTING building (from the rail or the drill-down).
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [editorSite, setEditorSite] = useState(null);
+  const [busy, setBusy] = useState(false); // a building create/save is in flight
   const buildingSourceRef = useRef(null);
   const buildingLayerRef = useRef(null);
   const siteReloadRef = useRef(null);
@@ -737,13 +745,6 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode, focusSi
     if (!v || !s || !s.mapPlaced || typeof s.lon !== 'number' || typeof s.lat !== 'number') return;
     v.animate({ center: fromLonLat([s.lon, s.lat]), zoom: Math.max(13, v.getZoom() || DEFAULT_ZOOM), duration: 650 });
   }, []);
-  // Focus a building when arriving from the indoor tab (its selected site is passed as focusSiteId).
-  const focusedRef = useRef(null);
-  useEffect(() => {
-    if (!mapReady || !focusSiteId || focusedRef.current === focusSiteId) return;
-    const row = sites.find((s) => s.site && s.site.id === focusSiteId);
-    if (row && row.site.mapPlaced) { focusedRef.current = focusSiteId; flyToSite(row.site); }
-  }, [focusSiteId, mapReady, sites, flyToSite]);
 
   // Clicking a NODE opens its device card (status + cameras + events) — a node is an appliance, not
   // a building, so it never opens a floor plan. Mirrored to a ref for the once-bound OL handler.
@@ -822,6 +823,46 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode, focusSi
   }, [onToast, t]);
   const persistSitePosRef = useRef(persistSitePosition);
   persistSitePosRef.current = persistSitePosition;
+
+  // Create the building and its areas, then hand straight to placement mode. The site exists from
+  // this moment whether or not the operator ever clicks the map, so nothing is lost if they walk
+  // away mid-flow — it simply shows up in the rail as still-to-place.
+  const createBuilding = useCallback(async (name, icon, areaNames) => {
+    setBusy(true);
+    try {
+      const res = await api('/api/sites', { method: 'POST', body: JSON.stringify({ name, icon }) });
+      if (!res.ok || !res.body || !res.body.id) throw new Error();
+      const created = res.body;
+      // Areas are created in order so their ordinal matches what the operator typed.
+      for (let i = 0; i < areaNames.length; i++) {
+        // eslint-disable-next-line no-await-in-loop
+        const ar = await api(`/api/sites/${created.id}/areas`, { method: 'POST', body: JSON.stringify({ name: areaNames[i], ordinal: i }) });
+        if (!ar.ok) throw new Error();
+      }
+      setWizardOpen(false);
+      if (siteReloadRef.current) siteReloadRef.current();
+      // thenEdit: the map click that drops the marker also opens the editor, so "add a building"
+      // ends on the plan surface rather than back at a map with an unexplained new pin.
+      setPlacing({ kind: 'site', id: created.id, name: created.name, thenEdit: true });
+      if (onToast) onToast(t('bld.createdPlaceIt', { name: created.name }), 'success');
+    } catch (_) {
+      if (onToast) onToast(t('map.siteCreateFailed'), 'error');
+    } finally { setBusy(false); }
+  }, [onToast, t]);
+
+  // Open the authoring dialog for a building. Takes the site row (id/name/icon) from wherever the
+  // operator asked — rail row, drill-down header, or the drop that just finished.
+  const openEditor = useCallback((site) => {
+    setPopup(null);
+    setDrill(null);
+    setEditorSite(site);
+  }, []);
+  const openEditorRef = useRef(openEditor);
+  openEditorRef.current = openEditor;
+  // The OL click handler is bound once, so it reads the live site list through a ref to resolve
+  // the id it just placed into the full row the editor needs.
+  const sitesRef = useRef(sites);
+  sitesRef.current = sites;
 
   // Assign a node to the building it resides in (siteId), or clear it (siteId 0). Assigning takes
   // the node off the map (a building-resident node has no own pin); clearing returns it to the
@@ -997,6 +1038,13 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode, focusSi
           else persistPosition(target.id, lon, lat);
           setPlacing(null);
           if (onToast) onToast(t('map.placed', { name: target.name }), 'success');
+          // A building placed as the tail of "add building" continues into its editor. Resolve the
+          // freshest row we have, falling back to what the wizard told us if the overview reload
+          // hasn't landed yet.
+          if (target.thenEdit && target.kind === 'site') {
+            const row = sitesRef.current.find((s) => s.site && s.site.id === target.id);
+            openEditorRef.current((row && row.site) || { id: target.id, name: target.name });
+          }
           return;
         }
         let hitBuilding = null;
@@ -1149,6 +1197,13 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode, focusSi
     const [lon, lat] = toLonLat(coord);
     if (siteId) persistSitePosition(Number(siteId), lon, lat);
     else persistPosition(nodeId, lon, lat);
+    // Dragging is the power-user shortcut past click-to-place; honour the same "then edit" tail so
+    // both routes through the wizard end in the editor.
+    const target = placingRef.current;
+    if (target && target.thenEdit && target.kind === 'site' && Number(siteId) === target.id) {
+      const row = sitesRef.current.find((s) => s.site && s.site.id === target.id);
+      openEditorRef.current((row && row.site) || { id: target.id, name: target.name });
+    }
     setPlacing(null);
   }
 
@@ -1213,7 +1268,12 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode, focusSi
 
       <div className="fleet-map-body">
         <aside className="fleet-map-rail">
-          <div className="fleet-map-rail-head">{t('map.toPlace')} <span className="count-badge">{unplacedSites.length + nodesToPlace.length}</span></div>
+          <div className="fleet-map-rail-head">
+            <span>{t('map.toPlace')} <span className="count-badge">{unplacedSites.length + nodesToPlace.length}</span></span>
+            <button type="button" className="rail-addbuilding" onClick={() => setWizardOpen(true)} disabled={busy} title={t('map.addBuilding')}>
+              <Ico n="plus" sz={13} /> {t('map.addBuilding')}
+            </button>
+          </div>
           {unplacedSites.length === 0 && nodesToPlace.length === 0 && nodesManaged.length === 0 ? (
             <div className="fleet-map-rail-empty"><Ico n="check-ok" sz={22} /><span>{t('map.allPlaced')}</span></div>
           ) : (
@@ -1227,7 +1287,7 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode, focusSi
                       const s = row.site;
                       const active = placing && placing.kind === 'site' && placing.id === s.id;
                       return (
-                        <li key={`site-${s.id}`}>
+                        <li key={`site-${s.id}`} className="fleet-map-rail-siterow">
                           <button
                             type="button"
                             className={`fleet-map-rail-node${active ? ' active' : ''}`}
@@ -1239,6 +1299,11 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode, focusSi
                             <span className="rail-emoji" aria-hidden="true">{s.icon || DEFAULT_BUILDING_GLYPH}</span>
                             <span className="rail-name">{s.name}</span>
                             {active ? <Ico n="map-pin" sz={14} /> : null}
+                          </button>
+                          {/* A building that isn't on the map yet still needs to be editable — it
+                              has no marker to click into. */}
+                          <button type="button" className="rail-edit-btn" onClick={() => openEditor(s)} title={t('bld.editAreas')} aria-label={t('bld.editAreas')}>
+                            <Ico n="edit-2" sz={13} />
                           </button>
                         </li>
                       );
@@ -1313,7 +1378,7 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode, focusSi
           ) : null}
           {drill ? (
             <div className="fleet-map-drill">
-              <BuildingFloorView site={drill.site} floorplans={drill.floorplans} nodesById={nodesById} notifByCam={notifByCam} focusCameraId={drill.focusCameraId} onBack={() => { const s = drill.site; setDrill(null); flyToSite(s); }} onPlay={playCamera} onRemovePlacements={removeGhostPlacements} />
+              <BuildingFloorView site={drill.site} floorplans={drill.floorplans} nodesById={nodesById} notifByCam={notifByCam} focusCameraId={drill.focusCameraId} onBack={() => { const s = drill.site; setDrill(null); flyToSite(s); }} onPlay={playCamera} onRemovePlacements={removeGhostPlacements} onEdit={openEditor} />
             </div>
           ) : null}
         </div>
@@ -1338,6 +1403,20 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode, focusSi
             </div>
           </div>
         </div>
+      ) : null}
+
+      {wizardOpen ? (
+        <BuildingWizard busy={busy} onCreate={createBuilding} onCancel={() => setWizardOpen(false)} />
+      ) : null}
+
+      {editorSite ? (
+        <BuildingEditorDialog
+          site={editorSite}
+          nodes={nodes}
+          onToast={onToast}
+          onClose={() => { setEditorSite(null); if (siteReloadRef.current) siteReloadRef.current(); }}
+          onChanged={() => { if (siteReloadRef.current) siteReloadRef.current(); }}
+        />
       ) : null}
 
       {/* Floating live windows are position:fixed (viewport-anchored), so they live at the
@@ -1376,5 +1455,4 @@ FleetMap.propTypes = {
   reloadNodes: PropTypes.func,
   onToast: PropTypes.func,
   onOpenNode: PropTypes.func,
-  focusSiteId: PropTypes.number,
 };

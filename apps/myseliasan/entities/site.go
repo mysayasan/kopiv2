@@ -58,8 +58,24 @@ type FloorPlan struct {
 	// Design holds the JSON vector shapes when the plan was DRAWN in the in-app designer (empty
 	// for an uploaded image). It lets the operator reopen and re-edit a drawn plan; on save the
 	// designer re-rasterises to the image and rewrites this field.
-	Design    string `json:"design" form:"design" query:"design"`
-	CreatedBy int64  `json:"createdBy" form:"createdBy" query:"createdBy"`
+	Design string `json:"design" form:"design" query:"design"`
+	// Grid holds the JSON grid the operator paints in the 3D editor: cell size (in the SAME pixel
+	// space as Width/Height and placement X/Y) plus the wall/floor cells. Empty when no 3D layout
+	// has been authored — the 3D view then falls back to a perimeter box. Shape:
+	//   {"cellPx":32,"cols":32,"rows":24,"walls":[[c,r],...],"floors":[[c,r],...]}
+	Grid string `json:"grid" form:"grid" query:"grid"`
+	// Scale is the real-world size of one image pixel in METRES (metres-per-pixel). 0 = unset, in
+	// which case the 3D view assumes a nominal building size so proportions still read correctly.
+	// With a real scale set, wall/mount heights and camera coverage are physically accurate.
+	Scale float64 `json:"scale" form:"scale" query:"scale"`
+	// WallHeight is the extruded wall height in METRES for the 3D view. 0 = use the default storey
+	// height. Metres so it is meaningful regardless of Scale.
+	WallHeight float64 `json:"wallHeight" form:"wallHeight" query:"wallHeight"`
+	// Elevation is this floor's base height in METRES above the building's ground, used to STACK
+	// floors vertically in the 3D view (ground floor 0, first floor ~WallHeight, …). 0 = derive
+	// from Ordinal at render time.
+	Elevation float64 `json:"elevation" form:"elevation" query:"elevation"`
+	CreatedBy int64   `json:"createdBy" form:"createdBy" query:"createdBy"`
 	CreatedAt int64  `json:"createdAt" form:"createdAt" query:"createdAt"`
 	UpdatedBy int64  `json:"updatedBy" form:"updatedBy" query:"updatedBy"`
 	UpdatedAt int64  `json:"updatedAt" form:"updatedAt" query:"updatedAt"`

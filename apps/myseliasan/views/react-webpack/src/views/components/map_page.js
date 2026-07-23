@@ -1,37 +1,15 @@
-import { useState } from 'react';
 import PropTypes from 'prop-types';
-import { useT, Tabs } from '@shared';
 import { FleetMap } from './fleet_map';
-import { IndoorMap } from './indoor_map';
 import '../styles/fleet-map.css';
 
-// MapPage is the single "Map" module: the standard shared tab bar switches between the
-// geographic view (buildings + appliances at lat/lon over the offline basemap) and the floor-plan
-// view (cameras/appliances placed on uploaded plans). Both share the status vocabulary; they
-// differ only in the surface the markers sit on — the world, or a building.
+// MapPage is the single "Map" module: the geographic fleet map IS the map. Buildings are created,
+// positioned and authored from it — the wizard collects name/areas, the map takes the drop point,
+// and the building editor opens over it to draw the plan and pin cameras. There is no separate
+// floor-plan tab: a floor plan is something a building HAS, not a parallel place to navigate to.
 export function MapPage({ nodes, reloadNodes, onToast, onOpenNode }) {
-  const t = useT();
-  const [mode, setMode] = useState('geo'); // 'geo' | 'indoor'
-  // The building last viewed on the indoor (floor-plan) tab, so switching back to the map can zoom
-  // straight to it.
-  const [indoorSiteId, setIndoorSiteId] = useState(null);
-
   return (
     <section className="workspace map-page">
-      <Tabs
-        tabs={[
-          { id: 'geo', label: t('map.viewGeo'), icon: 'map' },
-          { id: 'indoor', label: t('map.viewIndoor'), icon: 'building' },
-        ]}
-        active={mode}
-        onChange={setMode}
-        ariaLabel={t('map.viewLabel')}
-      />
-      {mode === 'geo' ? (
-        <FleetMap nodes={nodes} reloadNodes={reloadNodes} onToast={onToast} onOpenNode={onOpenNode} focusSiteId={indoorSiteId} />
-      ) : (
-        <IndoorMap nodes={nodes} reloadNodes={reloadNodes} onToast={onToast} onOpenNode={onOpenNode} onActiveSiteChange={setIndoorSiteId} />
-      )}
+      <FleetMap nodes={nodes} reloadNodes={reloadNodes} onToast={onToast} onOpenNode={onOpenNode} />
     </section>
   );
 }
