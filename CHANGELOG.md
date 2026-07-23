@@ -61,6 +61,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-23 — myseliasan 1.37.0 (066b6e6)
+
+### Changed
+
+- **myseliasan**: The Fleet Map's separate 'Floor plans' tab is gone; buildings are now created and authored entirely from the geographic map. A new '+ Add building' wizard collects the building's name, glyph, and whether it is a single area or has several areas (floors/wings/rooms), creating the site plus one floor-plan row per area with a server-generated blank canvas (new POST /api/sites/{id}/areas, backed by services.AddBlankFloor) instead of the old client-side rasterise-and-multipart-upload trick. Saving enters map-placing mode; dropping the marker opens a new near-fullscreen building editor dialog with area tabs, a node/camera palette, and a single FloorEditor canvas (Select/Wall/Room/Erase drawing tools) that autosaves walls and placements as the operator works. Existing buildings get an edit entry point from the rail and from the read-only building drill-down. Bundled in the same change: floor plans gained a 3D view — a floor's painted wall/room grid plus real-world scale, wall height and per-floor elevation (FloorPlan.Grid/Scale/WallHeight/Elevation, autosaved via a new PUT /api/floors/{id}/model) is extruded into a three.js scene with floors stackable by elevation, and camera placements gained MountHeight/Pitch (via the existing PUT /api/placements/{id}, now accepting two more optional fields) to stand each camera's coverage as a 3D cone rather than only a flat 2D wedge. The building drill-down (BuildingFloorView) gained a 2D/3D toggle and a 'stack floors' option; three.js is code-split so it only loads when 3D is actually opened.
 ## 2026-07-23 — myidsan 1.21.0 (a4ce383)
 
 ### Added
