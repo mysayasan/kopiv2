@@ -14,6 +14,7 @@ import (
 	"github.com/mysayasan/kopiv2/domain/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
+	"github.com/mysayasan/kopiv2/infra/login"
 )
 
 type fakeUserLoginService struct {
@@ -45,6 +46,10 @@ func (f *fakeUserLoginService) AuthenticateDefault(_ context.Context, username s
 		return nil, f.authenticateErr
 	}
 	return f.authenticateResult, nil
+}
+
+func (f *fakeUserLoginService) UpsertFederated(_ context.Context, _ login.Identity) (*entities.UserLogin, error) {
+	return nil, nil
 }
 
 func (f *fakeUserLoginService) RegisterLocal(_ context.Context, model entities.UserLogin) (uint64, error) {

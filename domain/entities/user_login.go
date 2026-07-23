@@ -12,9 +12,16 @@ type UserLogin struct {
 	IsActive   bool   `json:"isActive" form:"isActive" query:"isActive"`
 	// MustChangePassword forces a password change on next login (set on the seeded
 	// stock superadmin; cleared once the operator sets their own password).
-	MustChangePassword bool  `json:"mustChangePassword" form:"mustChangePassword" query:"mustChangePassword"`
-	CreatedBy          int64 `json:"createdBy" form:"createdBy" query:"createdBy"`
-	CreatedAt  int64  `json:"createdAt" form:"createdAt" query:"createdAt"`
-	UpdatedBy  int64  `json:"updatedBy" form:"updatedBy" query:"updatedBy"`
-	UpdatedAt  int64  `json:"updatedAt" form:"updatedAt" query:"updatedAt"`
+	MustChangePassword bool `json:"mustChangePassword" form:"mustChangePassword" query:"mustChangePassword"`
+	// SsoProvider/SsoSubject bind the account to ONE federated identity: the provider
+	// registry key ("google", "github", …) and that provider's stable unique id for
+	// the user. Both empty on local-only accounts. Federated logins match on this
+	// pair — never on email alone, which would let a same-email account at another
+	// provider take over this one.
+	SsoProvider string `json:"ssoProvider" form:"ssoProvider" query:"ssoProvider"`
+	SsoSubject  string `json:"ssoSubject" form:"ssoSubject" query:"ssoSubject"`
+	CreatedBy   int64  `json:"createdBy" form:"createdBy" query:"createdBy"`
+	CreatedAt   int64  `json:"createdAt" form:"createdAt" query:"createdAt"`
+	UpdatedBy   int64  `json:"updatedBy" form:"updatedBy" query:"updatedBy"`
+	UpdatedAt   int64  `json:"updatedAt" form:"updatedAt" query:"updatedAt"`
 }

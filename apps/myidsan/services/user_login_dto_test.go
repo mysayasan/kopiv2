@@ -8,6 +8,7 @@ import (
 
 	"github.com/mysayasan/kopiv2/domain/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
+	"github.com/mysayasan/kopiv2/infra/login"
 )
 
 type userLoginDTOForTest struct {
@@ -43,6 +44,10 @@ func (m *fakeUserLoginCoreService) GetByEmail(ctx context.Context, email string)
 }
 
 func (m *fakeUserLoginCoreService) AuthenticateDefault(ctx context.Context, username string, password string) (*entities.UserLogin, error) {
+	return nil, nil
+}
+
+func (m *fakeUserLoginCoreService) UpsertFederated(ctx context.Context, id login.Identity) (*entities.UserLogin, error) {
 	return nil, nil
 }
 

@@ -39,7 +39,38 @@ func (f *fakeUserLoginRepo) GetJoinWithSpec(_ context.Context, _ string, _ any, 
 	return nil, 0, nil
 }
 
-func (f *fakeUserLoginRepo) GetSingle(_ context.Context, _ string, _ []sqldataenums.Filter) (*entities.UserLogin, error) {
+// GetSingle supports the (SsoProvider, SsoSubject) Equal-filter pair UpsertFederated
+// uses; other filter shapes miss. Mirrors the real repo's miss behavior (nil, nil).
+func (f *fakeUserLoginRepo) GetSingle(_ context.Context, _ string, filters []sqldataenums.Filter) (*entities.UserLogin, error) {
+	want := map[string]string{}
+	for _, filter := range filters {
+		if filter.Compare != sqldataenums.Equal {
+			return nil, nil
+		}
+		if s, ok := filter.Value.(string); ok {
+			want[filter.FieldName] = s
+		}
+	}
+	if len(want) == 0 {
+		return nil, nil
+	}
+	for _, user := range f.usersByEmail {
+		match := true
+		for field, value := range want {
+			switch field {
+			case "SsoProvider":
+				match = match && user.SsoProvider == value
+			case "SsoSubject":
+				match = match && user.SsoSubject == value
+			default:
+				match = false
+			}
+		}
+		if match {
+			copy := *user
+			return &copy, nil
+		}
+	}
 	return nil, nil
 }
 

@@ -13,6 +13,7 @@ import (
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	"github.com/mysayasan/kopiv2/infra/cache"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	"github.com/mysayasan/kopiv2/infra/login"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -33,6 +34,14 @@ var (
 	ErrThirdPartyOnlyAccount    = errors.New("account is managed by third-party login")
 	ErrInactiveAccount          = errors.New("account is inactive")
 	ErrAccountAlreadyExists     = errors.New("account already exists")
+	// ErrFederatedIdentityConflict: the login's email matches an existing account that
+	// is already bound to a DIFFERENT federated identity. Merging here would let a
+	// same-email account at another provider take over the existing one, so the login
+	// is refused and an operator has to resolve it.
+	ErrFederatedIdentityConflict = errors.New("an account with this email already belongs to another identity")
+	// ErrFederatedIdentityInvalid: the provider returned an identity without a stable
+	// subject id or email; refusing beats creating an unmatchable account.
+	ErrFederatedIdentityInvalid = errors.New("identity provider returned an incomplete identity")
 )
 
 // Create new IUserLoginService
@@ -116,6 +125,123 @@ func (m *userLoginService) AuthenticateDefault(ctx context.Context, username str
 	}
 
 	return user, nil
+}
+
+// UpsertFederated resolves a federated login to a local account with strict
+// (provider, subject) matching:
+//
+//  1. An account already bound to this exact identity is refreshed and returned.
+//  2. Otherwise an account with the same email is considered ONLY if it has no bound
+//     identity yet (pre-upgrade social users, or an operator pre-provisioning by
+//     email): the identity is stamped onto it once. An email match that is already
+//     bound to a different identity is refused (ErrFederatedIdentityConflict) — that
+//     merge is an account takeover, not a convenience.
+//  3. A full miss creates a new account with NO role (pending clearance).
+//
+// Inactive accounts are refused regardless of which path matched.
+func (m *userLoginService) UpsertFederated(ctx context.Context, id login.Identity) (*entities.UserLogin, error) {
+	provider := strings.ToLower(strings.TrimSpace(id.Provider))
+	subject := strings.TrimSpace(id.Subject)
+	email := strings.TrimSpace(id.Email)
+	if provider == "" || subject == "" || email == "" {
+		return nil, ErrFederatedIdentityInvalid
+	}
+
+	user, err := m.getBySsoIdentity(ctx, provider, subject)
+	if err != nil {
+		return nil, err
+	}
+
+	if user == nil {
+		// No bound account: an email match may claim the identity, but only while it
+		// is still unbound. GetByForeign is unusable here (limit-1 on one column);
+		// getBySsoIdentity filters on the full pair instead.
+		existing, err := m.GetByEmail(ctx, email)
+		if err != nil && !isNotFoundErr(err) {
+			return nil, err
+		}
+		if existing != nil {
+			if strings.TrimSpace(existing.SsoProvider) != "" || strings.TrimSpace(existing.SsoSubject) != "" {
+				log.Printf("federated login refused: email=%s provider=%s subject=%s conflicts with bound identity provider=%s", email, provider, subject, existing.SsoProvider)
+				return nil, ErrFederatedIdentityConflict
+			}
+			log.Printf("federated identity claimed by legacy account: email=%s provider=%s", email, provider)
+			user = existing
+		}
+	}
+
+	if user != nil {
+		if !user.IsActive {
+			return nil, ErrInactiveAccount
+		}
+		user.SsoProvider = provider
+		user.SsoSubject = subject
+		user.Email = email
+		applyIdentityProfile(user, id)
+		user.UpdatedAt = time.Now().Unix()
+		if _, err := m.repo.UpdateById(ctx, "", *user); err != nil {
+			return nil, err
+		}
+		return user, nil
+	}
+
+	created := entities.UserLogin{
+		Email:       email,
+		SsoProvider: provider,
+		SsoSubject:  subject,
+		// No role: pending clearance until a superadmin assigns one.
+		UserRoleId: 0,
+		IsActive:   true,
+		CreatedAt:  time.Now().Unix(),
+	}
+	applyIdentityProfile(&created, id)
+
+	res, err := m.Create(ctx, created)
+	if err != nil {
+		return nil, err
+	}
+	created.Id = int64(res)
+	return &created, nil
+}
+
+// getBySsoIdentity looks an account up by its bound (provider, subject) pair. A miss
+// is nil, not an error. GetSingle can hand back a zero-value struct on some engines,
+// so an Id of 0 also counts as a miss.
+func (m *userLoginService) getBySsoIdentity(ctx context.Context, provider, subject string) (*entities.UserLogin, error) {
+	filters := []sqldataenums.Filter{
+		{FieldName: "SsoProvider", Compare: sqldataenums.Equal, Value: provider},
+		{FieldName: "SsoSubject", Compare: sqldataenums.Equal, Value: subject},
+	}
+	user, err := m.repo.GetSingle(ctx, "", filters)
+	if err != nil {
+		if isNotFoundErr(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if user == nil || user.Id == 0 {
+		return nil, nil
+	}
+	return user, nil
+}
+
+// applyIdentityProfile refreshes the display fields the provider owns, without ever
+// touching credential or role fields.
+func applyIdentityProfile(user *entities.UserLogin, id login.Identity) {
+	given := strings.TrimSpace(id.GivenName)
+	family := strings.TrimSpace(id.FamilyName)
+	if given == "" {
+		given = strings.TrimSpace(id.Name)
+	}
+	if given != "" {
+		user.FirstName = given
+	}
+	if family != "" {
+		user.LastName = family
+	}
+	if pic := strings.TrimSpace(id.Picture); pic != "" {
+		user.PicUrl = pic
+	}
 }
 
 func (m *userLoginService) RegisterLocal(ctx context.Context, model entities.UserLogin) (uint64, error) {

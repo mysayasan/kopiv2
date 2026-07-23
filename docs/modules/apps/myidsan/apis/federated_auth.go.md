@@ -26,16 +26,19 @@ being a plain `GET` 200; `username` is echoed back into the form on a failed att
 
 ## `socialButtonsHTML`
 
-Renders the Google/GitHub buttons, but only for providers that are actually
-**configured** — meaning `ClientId` and `ClientSecret` are both non-empty, not merely
-that the `login.google`/`login.github` config block is non-nil. The stock
-`config.json` ships empty `google`/`github` objects; a non-nil-but-blank provider used
-to render a button that sent the browser to `accounts.google.com` with an empty
-`client_id` (an OAuth error on the internet, and a dead end on an intranet where
-myidsan is deployed — myseliasan's SSO hop lands on this exact page). Covered by
-`federated_auth_login_test.go`: `TestSocialButtonsRequireCredentials` (buttons appear
-only once both fields are set) and `TestLoginPageHasNoExternalReferences` (the
-rendered page references no external host and only same-origin asset paths).
+Renders one button per provider in the shared `*login.Registry` (`m.providers`, built
+once by `NewLoginApi` and passed into `NewFederatedAuthApi`) — the same registry that
+drives the SPA's `/api/login/providers` list and the `/api/login/{provider}` routes, so
+this page can never offer a button the routing layer would then 404. The registry only
+holds providers whose credentials are actually present (`login.BuildRegistry`'s
+`ClientId`/`ClientSecret`-non-empty guard): the stock `config.json` ships empty
+`google`/`github` objects, and a non-nil-but-blank provider used to render a button that
+sent the browser to `accounts.google.com` with an empty `client_id` (an OAuth error on
+the internet, and a dead end on an intranet where myidsan is deployed — myseliasan's SSO
+hop lands on this exact page). Covered by `federated_auth_login_test.go`:
+`TestSocialButtonsRequireCredentials` (buttons appear only once both fields are set,
+now exercised through `login.BuildRegistry`) and `TestLoginPageHasNoExternalReferences`
+(the rendered page references no external host and only same-origin asset paths).
 
 ## Security
 

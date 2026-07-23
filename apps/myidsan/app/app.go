@@ -196,13 +196,13 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	}
 	deps.Access.SetResolver(&userLoginResolver{repo: userLoginRepo})
 
-	apis.NewLoginApi(api, deps.Config.Login, *deps.Auth, userLoginService)
+	providerRegistry := apis.NewLoginApi(api, deps.Config.Login, *deps.Auth, userLoginService)
 	apis.NewUserLoginApi(api, *deps.Auth, deps.Access, userLoginDtoService)
 	apis.NewUserGroupApi(api, *deps.Auth, deps.Access, userGroupDtoService)
 	// Role + permission management is the shared accessrbac surface (/api/access-rbac),
 	// mounted by apphost. The old per-app user_role admin endpoint is retired.
 	apis.NewSSOApi(api, deps.Config, deps.Auth)
-	apis.NewFederatedAuthApi(api, deps.Config, deps.Auth, userLoginService, appRegistryRepo, appAuthConfigRepo, appRedirectUriRepo, deps.Cache)
+	apis.NewFederatedAuthApi(api, deps.Config, deps.Auth, providerRegistry, userLoginService, appRegistryRepo, appAuthConfigRepo, appRedirectUriRepo, deps.Cache)
 	apis.NewAppAuthConfigApi(api, *deps.Auth, deps.Access, appAuthConfigRepo)
 	apis.NewAppRedirectUriApi(api, *deps.Auth, deps.Access, appRedirectUriRepo)
 	// SSO certificate authority: issues relying-app client certificates for mTLS.

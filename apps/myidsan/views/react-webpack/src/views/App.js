@@ -560,18 +560,27 @@ function AuthScreen({ onAuthed, sessionError }) {
   })
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
-  const [providers, setProviders] = useState({ google: false, github: false })
+  const [providers, setProviders] = useState([])
 
-  // Only offer the social buttons for providers myidsan actually has configured, so a
-  // dead Google/GitHub link never shows (it would just return 'not configured').
+  // Only offer buttons for providers myidsan actually has configured, so a dead
+  // provider link never shows (it would just return 'not configured'). `list` is the
+  // registry view (key + label); the boolean fields are the legacy two-provider shape,
+  // kept as a fallback against an older backend.
   useEffect(() => {
     let active = true
     apiRequest('/api/login/providers')
       .then(payload => {
         const p = resultOf(payload) || {}
-        if (active) setProviders({ google: !!p.google, github: !!p.github })
+        let list = Array.isArray(p.list) ? p.list.filter(item => item && item.key) : []
+        if (!list.length) {
+          list = [
+            p.google ? { key: 'google', displayName: 'Google' } : null,
+            p.github ? { key: 'github', displayName: 'GitHub' } : null
+          ].filter(Boolean)
+        }
+        if (active) setProviders(list)
       })
-      .catch(() => { /* leave both off */ })
+      .catch(() => { /* leave the buttons off */ })
     return () => { active = false }
   }, [])
 
@@ -633,10 +642,11 @@ function AuthScreen({ onAuthed, sessionError }) {
             </div>
           )}
           <button className="primary-button" disabled={busy} type="submit">{busy ? t('auth.working') : mode === 'login' ? t('auth.login') : t('auth.createAccount')}</button>
-          {(providers.google || providers.github) && (
+          {providers.length > 0 && (
             <div className="oauth-row">
-              {providers.google && <a className="quiet-link" href="/api/login/google">Google</a>}
-              {providers.github && <a className="quiet-link" href="/api/login/github">GitHub</a>}
+              {providers.map(p => (
+                <a key={p.key} className="quiet-link" href={`/api/login/${encodeURIComponent(p.key)}`}>{p.displayName || p.key}</a>
+              ))}
             </div>
           )}
         </form>

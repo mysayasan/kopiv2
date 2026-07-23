@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -24,31 +23,20 @@ import (
 type loginApi struct {
 	auth        middlewares.AuthMidware
 	userService services.IUserLoginService
-	googleAuth  *login.GoogleLogin
-	githubAuth  *login.GithubLogin
+	providers   *login.Registry
 }
 
-// Create LoginApi
+// Create LoginApi. Returns the identity-provider registry so the server-rendered
+// federated login page can offer the same providers as the SPA.
 func NewLoginApi(
 	router *mux.Router,
 	oAuth2Conf *login.OAuthProvidersConfigModel,
 	auth middlewares.AuthMidware,
-	userService services.IUserLoginService) {
-	var googleLogin *login.GoogleLogin
-	var githubLogin *login.GithubLogin
-
-	if oAuth2Conf != nil && oAuth2Conf.Google != nil {
-		googleLogin = login.NewGoogleLogin(*oAuth2Conf.Google, auth)
-	}
-	if oAuth2Conf != nil && oAuth2Conf.GitHub != nil {
-		githubLogin = login.NewGithubLogin(*oAuth2Conf.GitHub, auth)
-	}
-
+	userService services.IUserLoginService) *login.Registry {
 	handler := &loginApi{
 		auth:        auth,
 		userService: userService,
-		googleAuth:  googleLogin,
-		githubAuth:  githubLogin,
+		providers:   login.BuildRegistry(oAuth2Conf),
 	}
 
 	// Create api sub-router
@@ -57,7 +45,7 @@ func NewLoginApi(
 
 	// Public: which social-login providers are actually configured, so the SPA shows
 	// only the buttons that work (no dead Google/GitHub links).
-	loginGroup.HandleFunc("/providers", handler.providers).Methods("GET")
+	loginGroup.HandleFunc("/providers", handler.listProviders).Methods("GET")
 	loginGroup.HandleFunc("/default", handler.defaultLogin).Methods("POST")
 	loginGroup.HandleFunc("/default/register", handler.defaultRegister).Methods("POST")
 	loginGroup.HandleFunc("/default/logout", handler.defaultLogout).Methods("POST")
@@ -65,25 +53,93 @@ func NewLoginApi(
 	// forced first-login must-change flag).
 	loginGroup.Handle("/default/change-password", auth.Middleware(http.HandlerFunc(handler.changePassword))).Methods("POST")
 
-	if handler.googleAuth != nil {
-		loginGroup.HandleFunc("/google", handler.googleLogin).Methods("GET")
-		callbackGroup.HandleFunc("/google", handler.googleCallback).Methods("GET")
-	}
+	// One generic pair of routes serves every registered redirect provider. The fixed
+	// paths above are registered first, so mux matches them before this catch-all.
+	loginGroup.HandleFunc("/{provider:[a-z][a-z0-9_.:-]*}", handler.providerLogin).Methods("GET")
+	callbackGroup.HandleFunc("/{provider:[a-z][a-z0-9_.:-]*}", handler.providerCallback).Methods("GET")
 
-	if handler.githubAuth != nil {
-		loginGroup.HandleFunc("/github", handler.githubLogin).Methods("GET")
-		callbackGroup.HandleFunc("/github", handler.githubCallback).Methods("GET")
-	}
+	return handler.providers
 }
 
-// providers reports which social-login providers are configured (non-nil after the
-// config's client id/secret were validated). The SPA gates its Google/GitHub buttons
-// on this so it never shows a link that would just return "not configured".
-func (m *loginApi) providers(w http.ResponseWriter, r *http.Request) {
-	controllers.SendResult(w, map[string]bool{
-		"google": m.googleAuth != nil,
-		"github": m.githubAuth != nil,
-	})
+// listProviders reports the configured federated login providers. `list` is the
+// authoritative registry view (key + button label, in render order); the per-key
+// booleans keep the pre-registry SPA contract (`{google:bool, github:bool}`) working
+// until every deployed frontend reads `list`.
+func (m *loginApi) listProviders(w http.ResponseWriter, r *http.Request) {
+	type providerInfo struct {
+		Key         string `json:"key"`
+		DisplayName string `json:"displayName"`
+	}
+	resp := map[string]any{
+		"google": false,
+		"github": false,
+	}
+	list := []providerInfo{}
+	for _, key := range m.providers.Keys() {
+		p := m.providers.Get(key)
+		if p == nil {
+			continue
+		}
+		resp[key] = true
+		list = append(list, providerInfo{Key: key, DisplayName: p.DisplayName()})
+	}
+	resp["list"] = list
+	controllers.SendResult(w, resp)
+}
+
+func (m *loginApi) providerLogin(w http.ResponseWriter, r *http.Request) {
+	key := mux.Vars(r)["provider"]
+	provider := m.providers.Get(key)
+	if provider == nil {
+		controllers.SendError(w, controllers.ErrLimitedAccess, key+" login is not configured")
+		return
+	}
+
+	// Remember where to land after the OAuth round-trip (e.g. an /api/auth/authorize
+	// URL when this login was reached via a relying-app SSO redirect).
+	setOAuthContinue(w, r, provider.Key(), r.URL.Query().Get("continue"))
+	provider.Login(w, r)
+}
+
+func (m *loginApi) providerCallback(w http.ResponseWriter, r *http.Request) {
+	key := mux.Vars(r)["provider"]
+	provider := m.providers.Get(key)
+	if provider == nil {
+		controllers.SendError(w, controllers.ErrLimitedAccess, key+" login is not configured")
+		return
+	}
+
+	identity, err := provider.Callback(r)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrStatusUnprocessableEntity, err.Error())
+		return
+	}
+	if strings.TrimSpace(identity.Email) == "" {
+		// e.g. a GitHub account with no public email — without an email there is no
+		// account to show the operator and no valid Email claim to issue.
+		controllers.SendError(w, controllers.ErrStatusUnprocessableEntity, provider.DisplayName()+" account email is not available")
+		return
+	}
+
+	user, err := m.userService.UpsertFederated(r.Context(), *identity)
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrFederatedIdentityConflict),
+			errors.Is(err, services.ErrInactiveAccount):
+			controllers.SendError(w, controllers.ErrLimitedAccess, err.Error())
+		case errors.Is(err, services.ErrFederatedIdentityInvalid):
+			controllers.SendError(w, controllers.ErrStatusUnprocessableEntity, err.Error())
+		default:
+			controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		}
+		return
+	}
+
+	if err := m.setOAuthSession(w, r, user, identity); err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	http.Redirect(w, r, consumeOAuthContinue(w, r, provider.Key()), http.StatusFound)
 }
 
 func (m *loginApi) defaultLogin(w http.ResponseWriter, r *http.Request) {
@@ -195,142 +251,31 @@ func (m *loginApi) changePassword(w http.ResponseWriter, r *http.Request) {
 	controllers.SendResult(w, map[string]bool{"ok": true})
 }
 
-func (m *loginApi) googleLogin(w http.ResponseWriter, r *http.Request) {
-	if m.googleAuth == nil {
-		controllers.SendError(w, controllers.ErrLimitedAccess, "google login is not configured")
-		return
-	}
-
-	// Remember where to land after the OAuth round-trip (e.g. an /api/auth/authorize
-	// URL when this login was reached via a relying-app SSO redirect).
-	setOAuthContinue(w, r, "google", r.URL.Query().Get("continue"))
-	m.googleAuth.Login(w, r)
-}
-
-func (m *loginApi) googleCallback(w http.ResponseWriter, r *http.Request) {
-	if m.googleAuth == nil {
-		controllers.SendError(w, controllers.ErrLimitedAccess, "google login is not configured")
-		return
-	}
-
-	userG, err := m.googleAuth.Callback(r)
-	if err != nil {
-		controllers.SendError(w, controllers.ErrStatusUnprocessableEntity, err.Error())
-		return
-	}
-
-	user, err := m.userService.GetByEmail(r.Context(), userG.Email)
-	if err != nil {
-		log.Printf("google callback user lookup warning email=%s err=%v", userG.Email, err)
-	}
-
-	if user == nil {
-		user = &entities.UserLogin{
-			Email:      userG.Email,
-			FirstName:  userG.GivenName,
-			LastName:   userG.FamilyName,
-			PicUrl:     userG.Picture,
-			UserRoleId: 0,
-			IsActive:   true,
-			CreatedBy:  0,
-			CreatedAt:  time.Now().Unix(),
-		}
-
-		res, err := m.userService.Create(r.Context(), *user)
-		if err != nil {
-			controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
-			return
-		}
-
-		user.Id = int64(res)
-	}
-
-	if err := m.setOAuthSession(w, r, user, userG.Name, userG.Email, userG.GivenName, userG.FamilyName, userG.Picture); err != nil {
-		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
-		return
-	}
-	http.Redirect(w, r, consumeOAuthContinue(w, r, "google"), http.StatusFound)
-}
-
-func (m *loginApi) githubLogin(w http.ResponseWriter, r *http.Request) {
-	if m.githubAuth == nil {
-		controllers.SendError(w, controllers.ErrLimitedAccess, "github login is not configured")
-		return
-	}
-
-	setOAuthContinue(w, r, "github", r.URL.Query().Get("continue"))
-	m.githubAuth.Login(w, r)
-}
-
-func (m *loginApi) githubCallback(w http.ResponseWriter, r *http.Request) {
-	if m.githubAuth == nil {
-		controllers.SendError(w, controllers.ErrLimitedAccess, "github login is not configured")
-		return
-	}
-
-	userG, err := m.githubAuth.Callback(r)
-	if err != nil {
-		controllers.SendError(w, controllers.ErrStatusUnprocessableEntity, err.Error())
-		return
-	}
-	if strings.TrimSpace(userG.Email) == "" {
-		controllers.SendError(w, controllers.ErrStatusUnprocessableEntity, "github account email is not public")
-		return
-	}
-
-	name := strings.TrimSpace(userG.Name)
-	if name == "" {
-		name = userG.Login
-	}
-
-	user, err := m.userService.GetByEmail(r.Context(), userG.Email)
-	if err != nil {
-		log.Printf("github callback user lookup warning email=%s err=%v", userG.Email, err)
-	}
-
-	if user == nil {
-		user = &entities.UserLogin{
-			Email:     userG.Email,
-			FirstName: name,
-			PicUrl:    userG.AvatarURL,
-			IsActive:  true,
-			CreatedBy: 0,
-			CreatedAt: time.Now().Unix(),
-		}
-
-		res, err := m.userService.Create(r.Context(), *user)
-		if err != nil {
-			controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
-			return
-		}
-
-		user.Id = int64(res)
-	}
-
-	if err := m.setOAuthSession(w, r, user, name, userG.Email, name, "", userG.AvatarURL); err != nil {
-		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
-		return
-	}
-	http.Redirect(w, r, consumeOAuthContinue(w, r, "github"), http.StatusFound)
-}
-
-// setOAuthSession issues the signed-in session cookies for a social-login user. It
+// setOAuthSession issues the signed-in session cookies for a federated-login user. It
 // does NOT write a response body, so the caller controls the outcome (a redirect to
 // the pending `continue` target, or the dashboard) instead of the browser landing on
 // a raw JSON payload after the OAuth round-trip.
-func (m *loginApi) setOAuthSession(w http.ResponseWriter, r *http.Request, user *entities.UserLogin, name string, email string, givenName string, familyName string, picture string) error {
-	if user == nil {
+func (m *loginApi) setOAuthSession(w http.ResponseWriter, r *http.Request, user *entities.UserLogin, identity *login.Identity) error {
+	if user == nil || identity == nil {
 		return errors.New("invalid user")
+	}
+
+	name := strings.TrimSpace(identity.Name)
+	if name == "" {
+		name = strings.TrimSpace(strings.TrimSpace(user.FirstName) + " " + strings.TrimSpace(user.LastName))
+	}
+	if name == "" {
+		name = user.Email
 	}
 
 	claims := &models.JwtCustomClaims{
 		Id:            user.Id,
 		Name:          name,
-		GivenName:     givenName,
-		Email:         email,
+		GivenName:     identity.GivenName,
+		Email:         user.Email,
 		VerifiedEmail: true,
-		FamilyName:    familyName,
-		Picture:       picture,
+		FamilyName:    identity.FamilyName,
+		Picture:       identity.Picture,
 		RoleId:        user.UserRoleId,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour * 72)),

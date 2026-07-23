@@ -408,6 +408,22 @@ func normalizeEndpointKey(key string) string {
 func defaultResponses(method string, path string) map[string]openAPIResponse {
 	key := endpointKey(method, path)
 
+	// The federated login/callback routes are a single templated pair
+	// (/api/login/{provider:...}), so the mux template carries the key's regex —
+	// match on the prefix rather than pinning the pattern here.
+	if strings.HasPrefix(key, "GET /api/login/{provider") {
+		return map[string]openAPIResponse{
+			"302": {Description: "Redirect to identity provider"},
+			"403": jsonResponse("Provider not configured", "ErrorResponse"),
+			"500": jsonResponse("Server error", "ErrorResponse"),
+		}
+	}
+	if strings.HasPrefix(key, "GET /api/callback/{provider") {
+		resp := withErrorResponse(map[string]openAPIResponse{"302": {Description: "Session issued; redirect to the pending continue target"}})
+		resp["422"] = jsonResponse("Provider callback validation failed", "ErrorResponse")
+		return resp
+	}
+
 	switch key {
 	case "GET /health":
 		return map[string]openAPIResponse{"200": jsonResponse("Service liveness", "HealthResponse")}
@@ -423,19 +439,6 @@ func defaultResponses(method string, path string) map[string]openAPIResponse {
 		return withErrorResponse(map[string]openAPIResponse{"200": jsonResponse("Default login result", "DefaultSessionResponse")})
 	case "POST /api/login/default/logout":
 		return withErrorResponse(map[string]openAPIResponse{"200": jsonResponse("Default logout result", "DefaultSessionResponse")})
-	case "GET /api/login/google", "GET /api/login/github":
-		return map[string]openAPIResponse{
-			"302": {Description: "Redirect to OAuth provider"},
-			"500": jsonResponse("Server error", "ErrorResponse"),
-		}
-	case "GET /api/callback/google":
-		resp := withErrorResponse(map[string]openAPIResponse{"200": jsonResponse("OAuth callback session result", "DefaultSessionResponse")})
-		resp["422"] = jsonResponse("OAuth callback validation failed", "ErrorResponse")
-		return resp
-	case "GET /api/callback/github":
-		resp := withErrorResponse(map[string]openAPIResponse{"200": jsonResponse("OAuth callback session result", "DefaultSessionResponse")})
-		resp["422"] = jsonResponse("OAuth callback validation failed", "ErrorResponse")
-		return resp
 	case "GET /api/file-storage/download":
 		return withRateLimitResponse(map[string]openAPIResponse{"200": binaryResponse("File content")})
 	case "GET /api/onvif/devices/{id}/live.mjpeg":
