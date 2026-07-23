@@ -1,0 +1,6 @@
+{
+  "type": "security",
+  "scope": "myidsan",
+  "summary": "GET /api/user-credential (the superadmin-only admin Users listing) was projecting every local account's stored bcrypt password hash into the JSON response, because the read/output UserLoginDto still declared a Userpwd field. Domain-level DTO projection (domain/utils/dtos.Project) copies only fields present on the destination struct, so any struct field on the output DTO is faithfully populated and returned to the client. Removing Userpwd from dtos/output.UserLoginDto stops the hash from ever being copied into a read response, closing an offline-cracking / credential-exposure risk for every superadmin who has loaded the Users admin page.",
+  "compatibility": "No config, schema, or API route changes. The write path is unaffected: dtos/input.UserLoginDto (used by PUT /api/user-credential) still carries Userpwd so password changes keep working normally. Any client code that relied on reading userpwd/Userpwd out of a GET /api/user-credential response will now see the field absent - no legitimate client should have depended on this, since it only ever exposed the hash."
+}
