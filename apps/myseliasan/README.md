@@ -58,8 +58,8 @@ with [OpenLayers](https://openlayers.org/) (`ol` + `ol-pmtiles`, vendored into
 `apps/myseliasan/views/react-webpack`), lazy-loaded only when the tab is opened so the ~110KB
 gzipped mapping library never weighs down the initial bundle.
 
-A single segmented control switches between two views that share the same status-pin vocabulary
-and differ only in the plane the pins live on:
+The geographic view **is** the Map module — there is no separate "floor plans" tab. A building is
+created, positioned and authored entirely from it:
 
 - **Geographic view — digital twin**: the map draws **two kinds of marker**: **buildings** (a
   `Site` with a geographic position, `GET /api/sites/overview`) and **building-less appliances**
@@ -81,29 +81,47 @@ and differ only in the plane the pins live on:
   them. Clicking a building marker opens its **floor plans with every camera inside, from any
   node** (`BuildingFloorView`, see below); clicking a building-less node pin opens a popup of its
   recent camera events, each of which can be **located on its floor plan** or opened straight into
-  a floating live/media window without leaving the map. A site can be given its own **glyph**
-  (a curated emoji picker — office/factory/home/etc, `Site.Icon`) shown on its marker.
-- **Floor plans view**: an operator creates one or more **sites** (a building, campus, or yard,
-  each with a name and a picked icon), adds a **floor plan** per site — either **uploaded** as an
-  image (PNG/JPEG/GIF, up to 24 MiB) or **drawn from scratch** in the built-in **floor designer**
-  (rooms, walls, text labels, freehand pen, grid-snap, undo/redo, multi-select, rotate/flip,
-  pan/zoom) — and drags nodes/cameras from a palette onto the plan (with pan/zoom and a
-  select/delete toolbar for the plan canvas itself, and Delete/Backspace/Escape keyboard shortcuts
-  for the selected marker). An uploaded photo can also be annotated later in the same designer;
-  its original is preserved as a background layer so re-editing never draws over an
-  already-flattened render (`GET /api/floors/{id}/background`, `POST /api/floors/{id}/image` to
-  re-save). Placements are **myseliasan's own record** (`NodePlacement`), not fetched from the
-  node — that is deliberate: the live camera list is fetched over the tunnel and returns nothing
-  when a node is offline, so a placement carries a name snapshot and stays rendered (using that
-  snapshot) even while its node is unreachable; a placement whose camera no longer exists on an
-  *online, reachable* node (as opposed to one simply unreachable right now) is flagged as a
-  **ghost marker** for cleanup. A camera placement carries a **coverage arc** (`heading`/`fov` in
-  degrees, dragged into aim via on-marker handles) drawn as a translucent wedge on the plan, so an
-  operator can see at a glance which part of a room a camera actually watches. Opening the floor
-  plans view for a *building* (from the geographic view, or the tab itself) shows
+  a floating live/media window without leaving the map.
+- **Adding a building**: a **`+ Add building`** button in the rail opens a wizard
+  (`building_wizard.js`) that collects a name, a **glyph** (a curated emoji picker —
+  office/factory/home/etc, `Site.Icon`), and the branch that shapes everything after — whether the
+  building is a **single area** or has **several areas** (floors, wings, rooms — "Ground floor",
+  "1st floor", "Kitchen"). Each area becomes a `FloorPlan` row under the new `Site`; a single-area
+  building still gets one so the editor always has a surface to draw on. On save the site and its
+  areas are created (`POST /api/sites`, then one `POST /api/sites/{id}/areas` per area — each area
+  is a **generated blank white canvas**, not an upload) and the map enters placing mode so the
+  operator clicks/drags the marker onto its geographic spot; dropping it opens the building editor
+  directly, so "add a building" ends on the plan surface rather than back at a map with an
+  unexplained new pin.
+- **Authoring a building**: dropping (or re-opening) a building opens `building_editor_dialog.js`,
+  a near-fullscreen modal over the map: area tabs along the top (add/rename/delete an area), a
+  node/camera palette down the side (drag or click-to-pick, then click the plan to place — the
+  same click-first pattern as the geographic view), and the `FloorEditor` canvas
+  (`floor_editor.js`) doing the actual drawing — Select/Move, Wall, Room (drag a rectangle → four
+  walls), Erase tools with grid-snap and undo/redo, plus a **2D ⇄ 3D** toggle in its own header (a
+  Select-mode marker inspector also sets a camera's `mountHeight`/`pitch` for the 3D coverage
+  cone). Walls/scale/wall-height autosave (debounced, `PUT /api/floors/{id}/model`); camera
+  placement/move/aim persist immediately (`POST`/`PUT /api/floors/{id}/placements`,
+  `PUT /api/placements/{id}`) — there is no separate "save" step. A blank area's generated canvas
+  can be replaced with a real uploaded plan (scan/CAD export) at any time from the editor's
+  toolbar without losing the drawn walls or placements. Re-entry for an existing building: an
+  **edit** button on an unplaced building's rail row (it has no marker to click into yet), and an
+  **Edit plan** button in the read-only building drill-down (`BuildingFloorView`, below).
+- **Floor plans**: an operator's placements (`NodePlacement`) are **myseliasan's own record**, not
+  fetched from the node — that is deliberate: the live camera list is fetched over the tunnel and
+  returns nothing when a node is offline, so a placement carries a name snapshot and stays
+  rendered (using that snapshot) even while its node is unreachable; a placement whose camera no
+  longer exists on an *online, reachable* node (as opposed to one simply unreachable right now) is
+  flagged as a **ghost marker** for cleanup. A camera placement carries a **coverage arc**
+  (`heading`/`fov` in degrees, dragged into aim via on-marker handles) drawn as a translucent
+  wedge on the plan, so an operator can see at a glance which part of a room a camera actually
+  watches; in the **3D view** the same placement's `mountHeight`/`pitch` stand its coverage as a
+  cone over the extruded walls. Clicking a building marker on the geographic view shows
   `BuildingFloorView` — every floor's placements from **every owning node**, each marker/wedge
-  coloured by *its own* node's status and streaming live over *that* node's tunnel — the view that
-  makes "the building is the twin, not any one node" concrete.
+  coloured by *its own* node's status and streaming live over *that* node's tunnel, with its own
+  2D/3D toggle (three.js code-split in, only loaded when 3D is opened) and, for a multi-floor
+  building, a "stack floors" option that renders every floor at its `Elevation` at once — the view
+  that makes "the building is the twin, not any one node" concrete.
 - **Locate on plan**: from a camera event on the geographic view (or the camera's own context),
   **Locate on plan** (`GET /api/node-floorplan/{nodeId}`) jumps straight to the floor plan holding
   that camera's placement and focuses its marker — no need to know which site/floor it lives on.
@@ -116,10 +134,10 @@ and differ only in the plane the pins live on:
   be dragged by their title bar, resized from a corner grip, and toggled small ⇄ maximized without
   restarting the underlying stream.
 
-Both views color a node's pin/marker by the same status: **online** (green), **warning** — amber,
-cert expiring soon — (reusing the same cert-health signal the Dashboard's "Certs expiring" KPI
-and the Nodes table already surface), **critical** — red, the node is `lost` — and **idle** —
-grey, `self-dropped` or a legacy/unknown status.
+The geographic view and the building drill-down color a node's pin/marker by the same status:
+**online** (green), **warning** — amber, cert expiring soon — (reusing the same cert-health
+signal the Dashboard's "Certs expiring" KPI and the Nodes table already surface), **critical** —
+red, the node is `lost` — and **idle** — grey, `self-dropped` or a legacy/unknown status.
 
 **Offline basemap**: the geographic view's cartography is one or more self-hosted
 [Protomaps](https://protomaps.com/) `.pmtiles` **region** archives (a fleet spanning several
@@ -144,12 +162,17 @@ only metadata and pixel dimensions live in the database.
 Endpoints (all `AuthOnly`, session-gated like every other operator route in this app):
 `GET/POST /api/sites`, `GET /api/sites/overview` (building rollup for the geo map),
 `PUT/DELETE /api/sites/{id}`, `PUT /api/sites/{id}/position` (drag a building's marker),
-`GET/POST /api/sites/{id}/floors`, `GET /api/sites/{id}/floorplans` (multi-node building
-drill-down), `GET/PUT/DELETE /api/floors/{id}`, `GET /api/floors/{id}/image`,
-`POST /api/floors/{id}/image` (replace, used by the floor designer),
+`GET/POST /api/sites/{id}/floors`, `POST /api/sites/{id}/areas` (create an area with a generated
+blank canvas — the building wizard/editor's "add an area" path), `GET /api/sites/{id}/floorplans`
+(multi-node building drill-down), `GET/PUT/DELETE /api/floors/{id}`,
+`PUT /api/floors/{id}/model` (autosave the 3D layout: grid/scale/wallHeight/elevation),
+`GET /api/floors/{id}/image`,
+`POST /api/floors/{id}/image` (replace, used by the floor editor and to upload a real plan over a
+generated blank canvas),
 `GET /api/floors/{id}/background` (pristine background for re-editing),
-`GET/POST /api/floors/{id}/placements`, `PUT/DELETE /api/placements/{id}` (position and/or
-`heading`/`fov` coverage aim), `GET /api/node-floorplan/{nodeId}` (locate-on-plan drill-down),
+`GET/POST /api/floors/{id}/placements`, `PUT/DELETE /api/placements/{id}` (position, and/or
+`heading`/`fov` coverage aim, and/or `mountHeight`/`pitch` for the 3D coverage cone),
+`GET /api/node-floorplan/{nodeId}` (locate-on-plan drill-down),
 `GET /api/basemap/info`, `GET/PUT /api/basemap/config`, `POST /api/basemap/download`,
 `GET /api/basemap/tiles/{name}`, `PUT /api/nodes/{id}/position` (a node's own geographic
 coordinates), and `PUT /api/nodes/{id}/building` (assign/clear the building a node resides in).
@@ -235,7 +258,7 @@ The CA private key (`pairing.caKey`), the control plane's own parent leaf privat
 
 The UI is a React/webpack SPA under `apps/myseliasan/views/react-webpack/`, built into `apps/myseliasan/static/` (content-hashed bundles), mirroring `mymatasan`'s frontend architecture. Myseliasan-only styling lives in `styles/app.css` and the shared RBAC-standard rail in `styles/rbac-standard.css`. Build with `npm install && npm run build` in that directory.
 
-The shell uses the standardized dark icon side-nav (`SideNav` from `components/layout.js`). The **Workspace** group holds **Dashboard** and a **Map** nav item (the fleet map — Geographic + Floor plans views, see "Fleet Map" above; its OpenLayers-based components are lazy-loaded on first open). Below that sit top-level **Live Views**, **Objects**, and **Teach** nav items positioned above a bespoke **Nodes tree**: an expandable branch listing adopted nodes (root item → fleet page/node dashboard, child items → each node's own camera sub-tree, lazily loaded over the tunnel on first expand). Selecting a node opens its `NodeDashboard`; selecting a camera under it opens that camera's full page (Live View/Detection/Recordings/Settings). A single click on a node row now both navigates **and** expands its camera sub-tree (matching the root Nodes row); the caret or a double-click collapses/toggles it. Each camera row shows a liveness dot (green online / red offline / grey unknown) driven by the node-reported camera health, mirroring mymatasan's own camera nav. Admin pages (Users, Roles) appear under the **Administration** group — the former separate RBAC permission-matrix page is now part of the **Roles** page (see "Node management" above), which includes a central **Node Access** matrix where a superadmin assigns per-role node access (**Viewer** / **Operator** / **Admin**). A **System** group holds the badged **Notifications** nav item (see "Notifications" above). The side-nav's internal list area now scrolls independently of the fixed brand/account chrome (`--nav-scroll` tokens in `styles/rbac-standard.css`), matching mymatasan. A **pin/auto-hide toggle** in the brand slot (`nav-pin-toggle`, ported from mymatasan's own rail) lets the rail collapse to a 68px hover-expanding icon strip instead of always sitting in the grid flow; the choice is persisted to `localStorage` (`myseliasan_nav_pinned`) and applied via a `nav-autohide` class on `.app-shell`. It only takes effect at `min-width: 1081px` — mymatasan's rail stacks at `<=860px` but this app's stacks at `<=1080px`, and auto-hide is neutralized below that breakpoint since a fixed hover-strip makes no sense in a stacked layout.
+The shell uses the standardized dark icon side-nav (`SideNav` from `components/layout.js`). The **Workspace** group holds **Dashboard** and a **Map** nav item (the fleet map — geographic view with in-place building creation/authoring, see "Fleet Map" above; its OpenLayers-based components are lazy-loaded on first open). Below that sit top-level **Live Views**, **Objects**, and **Teach** nav items positioned above a bespoke **Nodes tree**: an expandable branch listing adopted nodes (root item → fleet page/node dashboard, child items → each node's own camera sub-tree, lazily loaded over the tunnel on first expand). Selecting a node opens its `NodeDashboard`; selecting a camera under it opens that camera's full page (Live View/Detection/Recordings/Settings). A single click on a node row now both navigates **and** expands its camera sub-tree (matching the root Nodes row); the caret or a double-click collapses/toggles it. Each camera row shows a liveness dot (green online / red offline / grey unknown) driven by the node-reported camera health, mirroring mymatasan's own camera nav. Admin pages (Users, Roles) appear under the **Administration** group — the former separate RBAC permission-matrix page is now part of the **Roles** page (see "Node management" above), which includes a central **Node Access** matrix where a superadmin assigns per-role node access (**Viewer** / **Operator** / **Admin**). A **System** group holds the badged **Notifications** nav item (see "Notifications" above). The side-nav's internal list area now scrolls independently of the fixed brand/account chrome (`--nav-scroll` tokens in `styles/rbac-standard.css`), matching mymatasan. A **pin/auto-hide toggle** in the brand slot (`nav-pin-toggle`, ported from mymatasan's own rail) lets the rail collapse to a 68px hover-expanding icon strip instead of always sitting in the grid flow; the choice is persisted to `localStorage` (`myseliasan_nav_pinned`) and applied via a `nav-autohide` class on `.app-shell`. It only takes effect at `min-width: 1081px` — mymatasan's rail stacks at `<=860px` but this app's stacks at `<=1080px`, and auto-hide is neutralized below that breakpoint since a fixed hover-strip makes no sense in a stacked layout.
 
 **Embedded node pages / design parity**: the camera tab components under `components/nodecam/` are the real mymatasan view source files (`vision.js`, `recording.js`, `previews.js`, `cameras.js` pieces, `ui.js`, `layout.js`, `hooks.js`, `ptz.js`, helpers/constants) copied in verbatim, so mymatasan behavior changes to those files should be ported here too. Two shims adapt them to run against a *remote* node: `nodecam/lib/helpers.js`'s `apiBase()` is repointed at the commander proxy (`setNodeProxyBase`), and `installProxyCsrf` teaches `window.fetch` to attach myseliasan's CSRF token on proxy writes (the copied components issue raw `fetch()` calls that predate the double-submit-cookie requirement below). Styling comes from mymatasan's actual stylesheets, imported as raw strings via a new `@mymatasan` webpack alias + `?raw` CSS rule (`webpack.config.js`), then injected once and CSSOM-scoped under `.nodecam-embed` (`components/node_embed.js`, `nodecam/scoped_css.js`) — this is a build-time re-import, not a manual copy, so mymatasan design changes flow into the embedded pages on the next `npm run build` here with no re-sync step. `components/nodeiot/` mirrors this exact trick for an adopted `myiotsan` node's own device-management pages, scoped under its own embed container and concatenating the `@shared` stylesheets in — see "Node management" above.
 

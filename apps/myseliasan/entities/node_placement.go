@@ -22,9 +22,14 @@ type NodePlacement struct {
 	// Heading is the camera's facing direction in degrees clockwise from north (up on the plan
 	// image); Fov is the field-of-view spread in degrees. Together they draw the coverage arc on
 	// the plan. Fov of 0 means "no arc" (a plain marker) — used for node/sensor placements.
-	Heading   float64 `json:"heading" form:"heading" query:"heading"`
-	Fov       float64 `json:"fov" form:"fov" query:"fov"`
-	CreatedBy int64   `json:"createdBy" form:"createdBy" query:"createdBy"`
+	Heading float64 `json:"heading" form:"heading" query:"heading"`
+	Fov     float64 `json:"fov" form:"fov" query:"fov"`
+	// MountHeight is how high the camera sits above the floor in METRES (a wall-mounted camera is
+	// ~2.5m). Pitch is its downward tilt in degrees (0 = looking level, 90 = straight down).
+	// Together with Heading+Fov they position the 3D coverage cone. 0 = use sensible defaults.
+	MountHeight float64 `json:"mountHeight" form:"mountHeight" query:"mountHeight"`
+	Pitch       float64 `json:"pitch" form:"pitch" query:"pitch"`
+	CreatedBy   int64   `json:"createdBy" form:"createdBy" query:"createdBy"`
 	CreatedAt int64   `json:"createdAt" form:"createdAt" query:"createdAt"`
 	UpdatedBy int64   `json:"updatedBy" form:"updatedBy" query:"updatedBy"`
 	UpdatedAt int64   `json:"updatedAt" form:"updatedAt" query:"updatedAt"`

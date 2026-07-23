@@ -1,10 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
 import { useT, Ico } from '@shared';
 import { api, apiBase } from '../lib/helpers';
 import { NodeCameraTile } from './node_manager';
 import { PTZRing } from './nodecam/ptz';
 import { nodeTone, TONES } from '../lib/fleet_status';
+
+// The 3D building view is code-split: three.js (~150KB gz) loads only when an operator switches a
+// floor to 3D, so it never weighs on the rest of the SPA. It consumes the same { floor, placements }
+// payload as the 2D surface below.
+const Floor3D = lazy(() => import('./floor_3d'));
 
 // Same-origin control-plane URLs for an event's annotated snapshot and its recorded clip, routed
 // through myseliasan's node proxy / recording-stream (mirrors the fleet map). Used to show recorded
@@ -504,7 +509,7 @@ NodeFloorView.propTypes = {
 // counterpart to NodeFloorView — a floor plan is a building, and a building's cameras may belong to
 // several nodes, so each marker/coverage-wedge is coloured by ITS OWN owning node's status and its
 // live view streams over THAT node's tunnel. This is what fixes "the node isn't the building".
-export function BuildingFloorView({ site, floorplans, nodesById = {}, notifByCam = {}, focusCameraId, onBack, onPlay, onRemovePlacements }) {
+export function BuildingFloorView({ site, floorplans, nodesById = {}, notifByCam = {}, focusCameraId, onBack, onPlay, onRemovePlacements, onEdit }) {
   const t = useT();
   const focusIdx = useMemo(() => {
     if (!focusCameraId) return 0;
@@ -513,6 +518,15 @@ export function BuildingFloorView({ site, floorplans, nodesById = {}, notifByCam
   }, [floorplans, focusCameraId]);
   const [floorIdx, setFloorIdx] = useState(focusIdx);
   useEffect(() => { setFloorIdx(focusIdx); }, [focusIdx]);
+  // 2D top-down vs 3D building view. Sticky across floors and remounts (per-browser preference).
+  const [mode, setMode] = useState(() => {
+    try { return window.localStorage.getItem('myseliasan.floorView') === '3d' ? '3d' : '2d'; } catch (_) { return '2d'; }
+  });
+  const setModePersist = useCallback((m) => {
+    setMode(m);
+    try { window.localStorage.setItem('myseliasan.floorView', m); } catch (_) { /* ignore */ }
+  }, []);
+  const [stack3d, setStack3d] = useState(false); // 3D: show all floors stacked vs. the active one
   const nowSec = Math.floor(Date.now() / 1000);
 
   const current = floorplans[floorIdx] || floorplans[0];
@@ -596,6 +610,11 @@ export function BuildingFloorView({ site, floorplans, nodesById = {}, notifByCam
         <div className="floor-view-bar">
           <button type="button" className="quiet" onClick={onBack}><span className="btn-icon"><Ico n="arr-left" sz={14} /> {t('map.backToMap')}</span></button>
           <span className="floor-view-title"><span className="floor-view-emoji">{site.icon || '🏢'}</span> {site.name}</span>
+          {onEdit ? (
+            <button type="button" className="quiet floor-view-edit" onClick={() => onEdit(site)}>
+              <span className="btn-icon"><Ico n="edit-2" sz={14} /> {t('bld.editAreas')}</span>
+            </button>
+          ) : null}
         </div>
         <div className="floor-view-stage"><div className="floor-view-empty">{t('map.noFloorsInBuilding')}</div></div>
       </div>
@@ -621,9 +640,35 @@ export function BuildingFloorView({ site, floorplans, nodesById = {}, notifByCam
             ))}
           </div>
         ) : null}
+        <div className="floor-view-mode" role="group" aria-label={t('map.viewMode')}>
+          <button type="button" className={mode === '2d' ? 'active' : ''} onClick={() => setModePersist('2d')} title={t('map.view2d')}>
+            <span className="btn-icon"><Ico n="map" sz={13} /> {t('map.view2d')}</span>
+          </button>
+          <button type="button" className={mode === '3d' ? 'active' : ''} onClick={() => setModePersist('3d')} title={t('map.view3d')}>
+            <span className="btn-icon"><Ico n="box" sz={13} /> {t('map.view3d')}</span>
+          </button>
+        </div>
+        {/* This view is for monitoring; authoring (areas, walls, camera pins) happens in the
+            building editor, which this hands off to. */}
+        {onEdit ? (
+          <button type="button" className="quiet floor-view-edit" onClick={() => onEdit(site)}>
+            <span className="btn-icon"><Ico n="edit-2" sz={14} /> {t('bld.editAreas')}</span>
+          </button>
+        ) : null}
       </div>
 
       <div className="floor-view-stage">
+        {mode === '3d' ? (
+          <Suspense fallback={<div className="floor-view-empty">{t('map.loading3d')}</div>}>
+            {floorplans.length > 1 ? (
+              <button type="button" className={`floor3d-stack${stack3d ? ' active' : ''}`} onClick={() => setStack3d((v) => !v)} title={t('map.stackFloors')}>
+                <Ico n="layers" sz={13} /> {t('map.stackFloors')}
+              </button>
+            ) : null}
+            <Floor3D floors={floorplans} activeIndex={floorIdx} stacked={stack3d} nodesById={nodesById} focusCameraId={focusCameraId} nowSec={nowSec} onPlay={onPlay} />
+          </Suspense>
+        ) : (
+        <>
         {ghostIds.length > 0 && onRemovePlacements ? (
           <div className="floor-ghost-bar overlay" role="status">
             <span><Ico n="warning" sz={13} /> {t('map.ghostCameras', { n: ghostIds.length })}</span>
@@ -675,6 +720,8 @@ export function BuildingFloorView({ site, floorplans, nodesById = {}, notifByCam
           <button type="button" onClick={() => zoomAbout(1 / 1.3)} title={t('fd.zoomOut')} aria-label={t('fd.zoomOut')}><Ico n="minimize" sz={14} /></button>
           <button type="button" onClick={() => setView({ z: 1, tx: 0, ty: 0 })} title={t('fd.fit')} aria-label={t('fd.fit')}><Ico n="maximize" sz={14} /></button>
         </div>
+        </>
+        )}
       </div>
     </div>
   );
@@ -689,4 +736,5 @@ BuildingFloorView.propTypes = {
   onBack: PropTypes.func,
   onPlay: PropTypes.func,
   onRemovePlacements: PropTypes.func,
+  onEdit: PropTypes.func,
 };
