@@ -59,6 +59,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-23 — myidsan 1.14.0 (85aa058)
+
+### Security
+
+- **myidsan**: GET /api/user-credential (the superadmin-only admin Users listing) was projecting every local account's stored bcrypt password hash into the JSON response, because the read/output UserLoginDto still declared a Userpwd field. Domain-level DTO projection (domain/utils/dtos.Project) copies only fields present on the destination struct, so any struct field on the output DTO is faithfully populated and returned to the client. Removing Userpwd from dtos/output.UserLoginDto stops the hash from ever being copied into a read response, closing an offline-cracking / credential-exposure risk for every superadmin who has loaded the Users admin page.
 ## 2026-07-21 — myiotsan 0.21.0, mymatasan 1.111.0, myseliasan 1.36.0, core 1.64.0 (db914b1)
 
 ### Added
