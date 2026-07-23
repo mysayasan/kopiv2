@@ -178,6 +178,14 @@ generated blank canvas),
 coordinates), and `PUT /api/nodes/{id}/building` (assign/clear the building a node resides in).
 See `docs/modules/apps/myseliasan/apis/{basemap,sites,nodes}.go.md`.
 
+**In-flight redesign (not wired in):** `components/map/` (`geo_map.js`, `inspector.js`,
+`asset_browser.js`, `floor_view.js`, `styles/map-workspace.css`) holds early scaffolding for a
+unified three-pane "map workspace" shell — asset-browser rail, reworked geographic stage, and a
+single contextual inspector card replacing the current scatter of floating popups — intended to
+eventually supersede this section's `map_page.js`/`fleet_map.js`/`fleet-map.css`. Nothing imports
+these files yet: `App.js` still lazy-loads the shipped `map_page`, so none of the behavior
+described above has changed and the new components are not reachable from the UI.
+
 ## Fleet rules — cross-domain correlation
 
 **This is the reason the suite has a fourth app (`myiotsan`).** Once `myseliasan` has adopted
