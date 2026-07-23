@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- launchd daemon for MyIDSan (macOS).
+
+  Install:
+    sudo cp deploy/launchd/com.mysayasan.myidsan.plist /Library/LaunchDaemons/
+    # edit the paths below to match your install
+    sudo launchctl load -w /Library/LaunchDaemons/com.mysayasan.myidsan.plist
+    # logs: /usr/local/myidsan/logs/stdout.log / stderr.log
+    # the first-run admin password is in stdout.log and INITIAL_ADMIN_LOGIN.txt
+
+  KeepAlive + KOPIV2_SUPERVISED=1 means an in-app restart exits cleanly and launchd
+  relaunches it.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mysayasan.myidsan</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/myidsan/myidsan</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/usr/local/myidsan</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>KOPIV2_SUPERVISED</key>
+        <string>1</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/usr/local/myidsan/logs/stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/usr/local/myidsan/logs/stderr.log</string>
+</dict>
+</plist>

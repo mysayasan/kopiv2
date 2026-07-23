@@ -1,0 +1,34 @@
+# Runtime image for MyIDSan, consumed by GoReleaser's `dockers` builders.
+# The binary is cross-compiled by GoReleaser and placed at the build-context root;
+# extra_files supply the web UI and the default config.
+#
+# Pure Go, distroless-grade: ca-certificates is the only OS dependency, for outbound
+# TLS to social OAuth providers (Google/GitHub) and OIDC issuer discovery. Air-gapped
+# installs need neither.
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# GoReleaser copies the matching-arch binary to the context root as "myidsan".
+COPY myidsan /app/myidsan
+COPY apps/myidsan/static /app/static
+COPY deploy/dist/myidsan-config.json /app/config.json
+
+# Read-only app home vs writable data dir. Mount a volume at /data to persist the
+# database (every suite user, role, and registered SSO client), logs, TLS certs, and
+# secret/atrest.key — which encrypts the LDAP directory bind password.
+ENV MYIDSAN_HOME=/app \
+    MYIDSAN_DATA=/data \
+    KOPIV2_SUPERVISED=1 \
+    MYIDSAN_MANAGED=docker
+VOLUME ["/data"]
+
+# 3001 = web UI / API / SSO endpoints (relying apps redirect browsers here, so the
+# port must be reachable by every user's browser, not just the apps).
+EXPOSE 3001
+
+ENTRYPOINT ["/app/myidsan"]

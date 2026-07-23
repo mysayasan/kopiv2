@@ -21,6 +21,38 @@ type OAuth2ConfigModel struct {
 type OAuthProvidersConfigModel struct {
 	Google *OAuth2ConfigModel `json:"google"`
 	GitHub *OAuth2ConfigModel `json:"github"`
+	// Oidc lists generic OpenID Connect providers (Keycloak, Authentik, ADFS,
+	// Entra, ...). Each configured entry registers as its own login option; a
+	// half-configured entry is skipped with a warning, never fatal.
+	Oidc []OidcProviderConfigModel `json:"oidc"`
+}
+
+// OidcProviderConfigModel configures one OpenID Connect relying-party client.
+type OidcProviderConfigModel struct {
+	// Key is the stable lowercase identifier: it names the routes
+	// (/api/login/{key}), and accounts bind to "oidc:{key}" — CHANGING IT ORPHANS
+	// existing federated accounts. Must not collide with built-in provider keys.
+	Key string `json:"key"`
+	// DisplayName is the login-page button label (defaults to Key).
+	DisplayName string `json:"display_name"`
+	// IssuerUrl is the IdP's issuer; discovery loads
+	// {issuer}/.well-known/openid-configuration at startup.
+	IssuerUrl    string `json:"issuer_url"`
+	ClientId     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+	RedirectUrl  string `json:"redirect_url"`
+	// Scopes defaults to ["openid", "profile", "email"].
+	Scopes []string `json:"scopes"`
+	// CaCertPath optionally pins the IdP's CA for discovery/JWKS/token calls
+	// (air-gapped intranet IdPs with a private CA).
+	CaCertPath string `json:"ca_cert_path"`
+	// GroupsClaim optionally names an id_token claim (e.g. "groups", "roles")
+	// whose values feed the federated group→role mappings.
+	GroupsClaim string `json:"groups_claim"`
+	// InsecureSkipEmailVerified accepts accounts whose email_verified claim is
+	// false/absent. Intranet IdPs (Keycloak without SMTP) often never verify
+	// emails; only set this when the IdP is the org's own system of record.
+	InsecureSkipEmailVerified bool `json:"insecure_skip_email_verified"`
 }
 
 type GitHubUserInfoModel struct {

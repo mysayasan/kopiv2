@@ -53,6 +53,23 @@ type AppConfigModel struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	} `json:"localAuth"`
+	// Kerberos configures SPNEGO single sign-on (myidsan): a domain-joined machine's
+	// browser presents a service ticket for ServicePrincipal (e.g.
+	// "HTTP/myidsan.corp.local") verified against the exported keytab — no password
+	// prompt. File-based on purpose: the keytab is an ops-provisioned artifact, and
+	// this config decides whether the login endpoint exists at all.
+	Kerberos struct {
+		Enabled    bool   `json:"enabled"`
+		KeytabPath string `json:"keytabPath"`
+		// ServicePrincipal must match the SPN the keytab was exported for.
+		ServicePrincipal string `json:"servicePrincipal"`
+		// OnlyRealms optionally allow-lists accepted realms (case-insensitive);
+		// empty accepts any realm the keytab can decrypt tickets for.
+		OnlyRealms []string `json:"onlyRealms"`
+		// DisplayLabel names the SSO button on the login pages
+		// (default "Windows (SSO)").
+		DisplayLabel string `json:"displayLabel"`
+	} `json:"kerberos"`
 	// LoginSecurity throttles failed sign-in attempts to blunt brute-force /
 	// credential-stuffing against the standalone local-user login. Failures are
 	// tracked per source IP; once MaxAttempts within WindowSeconds is hit, that IP

@@ -18,13 +18,21 @@ type IUserLoginService interface {
 	// identity once, a bound one refuses the login (ErrFederatedIdentityConflict).
 	// Full miss creates a pending-clearance account.
 	UpsertFederated(ctx context.Context, id login.Identity) (*entities.UserLogin, error)
+	// AssignRole sets only the account's role (used by federated group→role
+	// mapping); credentials and profile are untouched.
+	AssignRole(ctx context.Context, userId int64, roleId int64) error
 	RegisterLocal(ctx context.Context, model entities.UserLogin) (uint64, error)
 	Create(ctx context.Context, model entities.UserLogin) (uint64, error)
 	Update(ctx context.Context, model entities.UserLogin) (uint64, error)
 	Delete(ctx context.Context, id uint64) (uint64, error)
 	// EnsureStockSuperadmin seeds (or refreshes, while still untouched) the bootstrap
 	// superadmin from config (email = username), forcing a first-login password change.
-	EnsureStockSuperadmin(ctx context.Context, username, password string, superRoleId int64) error
+	// The seed result reports whether the account was freshly created and whether the
+	// password was generated (empty config/env) — the first-run banner needs both.
+	EnsureStockSuperadmin(ctx context.Context, username, password string, superRoleId int64) (StockSeedResult, error)
+	// ResetStockSuperadmin force-resets the stock superadmin (lock-out recovery via
+	// the RESET_ADMIN marker file); recreates the account if it is gone.
+	ResetStockSuperadmin(ctx context.Context, username, password string, superRoleId int64) (StockSeedResult, error)
 	// ChangePassword verifies the current password, sets a new (hashed) one, and clears
 	// the must-change-password flag.
 	ChangePassword(ctx context.Context, userId int64, current, next string) error

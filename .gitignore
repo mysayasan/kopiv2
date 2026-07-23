@@ -10,12 +10,14 @@ logs
 cmd/mymatasan/*.syso
 cmd/myseliasan/*.syso
 cmd/myiotsan/*.syso
+cmd/myidsan/*.syso
 
 # goreleaser build output
 /dist/
 /packaging/staging/
 /packaging/staging-myseliasan/
 /packaging/staging-myiotsan/
+/packaging/staging-myidsan/
 
 # make build output (per-app)
 apps/*/bin/

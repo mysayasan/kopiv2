@@ -39,8 +39,8 @@ the file format. See `docs/modules/apps/mymatasan/config/config.go.md` and
 
 What stayed here is anything a second app already uses or obviously will: `Security`
 (encryption-at-rest — `myseliasan` uses it too), `Pairing`/`NodeStream` (the fleet),
-`Notification`, `LoginSecurity`, and every infra block (`server`, `db`, `cache`, `rateLimit`,
-`sso`, `tls`, `telemetry`, `fileStorage`, `logging`, `apiLog`, `transaction`,
+`Notification`, `LoginSecurity`, `Kerberos`, and every infra block (`server`, `db`, `cache`,
+`rateLimit`, `sso`, `tls`, `telemetry`, `fileStorage`, `logging`, `apiLog`, `transaction`,
 `securityHeaders`, `bootstrap`, `localAuth`, `login`).
 
 ## Notes
@@ -86,6 +86,7 @@ What stayed here is anything a second app already uses or obviously will: `Secur
 - `sso.redirectPath` configures the relying-app callback path.
 - `sso.authCodeTtlSeconds` and `sso.accessTokenTtlSeconds` provide MyIDSan defaults when per-client DB config does not override them.
 - `localAuth.enabled`, `localAuth.username`, and `localAuth.password` configure each standalone app's bootstrap local admin: `mymatasan` reads `localAuth.username`/`localAuth.password` at startup to seed its DB-backed first admin user (`ILocalUserService.EnsureDefaultAdmin`), falling back to `admin`/`admin` when empty, same as `myseliasan`'s stock superadmin.
+- `kerberos.enabled` turns on Kerberos SPNEGO single sign-on (`myidsan`, Phase 2 of `docs/MYIDSAN_ENTERPRISE_SSO_PLAN.md`); `false` (the shipped default in both `config.json` and `config.dev.json`) means the login endpoint isn't even registered as "offered" — no button, no challenge. `kerberos.keytabPath` is the exported service keytab (required when enabled; a missing/unreadable file logs a `WARNING` at boot and disables Kerberos rather than failing startup — see `apps/myidsan/app/app.go.md`). `kerberos.servicePrincipal` must match the SPN the keytab was exported for (e.g. `HTTP/myidsan.corp.local`); empty lets the acceptor match any principal present in the keytab. `kerberos.onlyRealms` optionally allow-lists accepted realms (case-insensitive); empty accepts any realm the keytab can decrypt tickets for. `kerberos.displayLabel` names the SSO button on both login surfaces (default `"Windows (SSO)"` when blank). See `infra/login/kerberos.go.md` and `docs/HOWTO.md`'s Kerberos SSO subsection for keytab provisioning (`ktpass`/`samba-tool`) and operational requirements (clock skew, browser trust).
 - `camera`, `decoder`, `stream`, `vision`, `health`, and `recording` are documented in
   `docs/modules/apps/mymatasan/config/config.go.md` — they are `mymatasan`-owned blocks, no
   longer part of this model (see "Per-app config seam" above).

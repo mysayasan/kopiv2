@@ -1,0 +1,6 @@
+{
+  "type": "changed",
+  "scope": "myidsan",
+  "summary": "MyIDSan's UI adopts the suite's standardized shell and brand mark. The login and auth cards now use the shared BrandLogo (the shield + eye + check mark, tinted violet via --brand-mark) instead of a bespoke glyph on a solid-blue tile that overpowered it. The post-login shell follows MyMataSan/MySeliaSan: a centered BrandLogo in the side rail, an account chip showing the signed-in role with a ghost logout, a pin / auto-hide rail toggle (collapses to an icon strip that slides out on hover), and a slim WorkspaceHeader top strip carrying the language switcher and theme picker.",
+  "compatibility": "Presentation only — no API routes, config keys, or data change. The pin/auto-hide preference persists per browser under localStorage (myidsan.navPinned)."
+}

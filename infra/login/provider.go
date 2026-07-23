@@ -1,6 +1,8 @@
 package login
 
 import (
+	"context"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -41,10 +43,13 @@ type RedirectProvider interface {
 
 // reservedProviderKeys are path segments under /api/login that are routes of their
 // own; a provider claiming one would be shadowed (or shadow them) in the router.
+// "ldap" and "kerberos" are the fixed non-redirect login routes.
 var reservedProviderKeys = map[string]bool{
 	"default":   true,
 	"providers": true,
 	"list":      true,
+	"ldap":      true,
+	"kerberos":  true,
 }
 
 // Registry holds the configured identity providers in registration order (which is
@@ -93,6 +98,10 @@ func (m *Registry) Keys() []string {
 // provider registers only when its credentials are actually present — the stock
 // config ships empty google/github objects, and a blank client id would send the
 // browser to the provider just to fail (a dead end on an air-gapped intranet).
+//
+// OIDC entries additionally need live discovery against their issuer; one that
+// fails (typo'd issuer, IdP down at boot, bad CA) is logged and SKIPPED so the
+// rest of the login page keeps working — it comes back on the next restart.
 func BuildRegistry(conf *OAuthProvidersConfigModel) *Registry {
 	reg := NewRegistry()
 	if conf == nil {
@@ -106,6 +115,18 @@ func BuildRegistry(conf *OAuthProvidersConfigModel) *Registry {
 	}
 	if configured(conf.GitHub) {
 		reg.Register(NewGithubLogin(*conf.GitHub))
+	}
+	for _, cfg := range conf.Oidc {
+		if strings.TrimSpace(cfg.ClientId) == "" || strings.TrimSpace(cfg.ClientSecret) == "" {
+			log.Printf("WARNING: oidc provider %q disabled — set client_id and a client secret (config or OIDC_%s_CLIENT_SECRET env)", cfg.Key, strings.ToUpper(strings.TrimSpace(cfg.Key)))
+			continue
+		}
+		p, err := NewOidcLogin(context.Background(), cfg)
+		if err != nil {
+			log.Printf("WARNING: oidc provider %q disabled — %v", cfg.Key, err)
+			continue
+		}
+		reg.Register(p)
 	}
 	return reg
 }

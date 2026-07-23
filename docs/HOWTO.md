@@ -543,13 +543,27 @@ The dev config defaults to PostgreSQL database `myidsandb` on port `5433`, Redis
 Both dev and non-dev configs expect certificates at `apps/myidsan/certs/cert.pem` and `apps/myidsan/certs/key.pem`, unless you change `tls.certPath` and `tls.keyPath`.
 It also sets `sso.issuer=myidsan`, `sso.audience=myidsan,mymatasan`, and a dev-only `sso.internalToken=dev-internal-token`.
 
-Login with the bootstrapped account after first startup:
+Login with the bootstrapped account after first startup. The stock superadmin's
+password comes from `LOCAL_ADMIN_PASSWORD` env → `config.localAuth.password` →,
+failing both, a generated 16-character per-install password (`crypto/rand`) printed
+once to the console banner and `INITIAL_ADMIN_LOGIN.txt` in the data dir — the dev
+config (`config.dev.json`) has no `localAuth` block, so a fresh local boot always
+generates one; check the banner/file for the actual password rather than assuming
+`admin`/`admin123`:
 
 ```bash
 curl -c cookies.txt -H "Content-Type: application/json" \
-  -d '{"username":"superadmin","password":"superadmin123"}' \
+  -d '{"username":"admin","password":"<from banner or INITIAL_ADMIN_LOGIN.txt>"}' \
   "https://localhost:3001/api/login/default"
 ```
+
+Locked out (or the recovery file was lost)? Drop a `RESET_ADMIN` marker file in the
+data dir and restart — the password is force-reset (re-generated the same way if
+`localAuth`/`LOCAL_ADMIN_PASSWORD` are still empty), the account is reactivated, and
+the credential is re-announced the same way. A signed-in superadmin who has cleared
+the forced password change and hasn't finished the first-run setup wizard
+(`GET /api/setup/state`) sees it before the normal app shell — every step is
+skippable, and `POST /api/setup/complete` records completion once.
 
 SSO fallback examples:
 
@@ -563,6 +577,168 @@ curl -H "Content-Type: application/json" \
 Use Redis for multi-app deployments so session/RBAC cache entries can be shared. Use in-memory cache only for isolated development, or call the fallback APIs above when a relying app cannot see myidsan cache state.
 
 The MyIDSan admin UI is served from the app shell and builds its sidebar from `/api/endpoint-rbac/ep/me` plus `api_endpoint.metadata` menu entries. The same RBAC method grants control toolbar actions: `POST` enables create, `PUT` enables edit, and `DELETE` enables delete. Table filter, sort, and page position are remembered per table resource in browser cookies, and the table clear control resets that remembered state. If a refreshed session remembers a page that the current role can no longer access, the UI shows the unauthorized access page.
+
+## MyIDSan LDAP / Active Directory Login
+
+Federation → Directory (`GET/PUT /api/directory-config`, `POST /api/directory-config/test`, superadmin or an explicitly delegated role) connects myidsan to an existing LDAP/AD server so domain accounts can sign in alongside local and Google/GitHub accounts. Covers AD, Samba AD, FreeIPA, OpenLDAP, and 389-ds.
+
+What you need before enabling it:
+
+- **A read-only service (bind) account** in the directory — used only to search for the signing-in user's entry, never to authenticate as them. Enter its DN as `bindDn` (e.g. `CN=svc-myidsan,OU=Service,DC=corp,DC=local`) and its password as `bindPassword`; the password is encrypted at rest (`infra/atrest`) once `security.encryptAtRest` is on (the default).
+- **TLS.** There is no insecure LDAP mode. Either the server has a certificate signed by a CA myidsan's host already trusts (leave `caCertPem` empty; system roots are used), or paste the server/CA's PEM into `caCertPem` to pin it (mirrors myseliasan's `sso.caCertPath` pattern). Use implicit TLS (`ldaps`, port 636, the default) unless the directory only offers `StartTLS` on 389, in which case check `useStartTls`.
+- **The base DN** to search under (e.g. `DC=corp,DC=local`) and, optionally, a custom `userFilter` if the built-in AD/inetOrgPerson default (`sAMAccountName`/`uid`/`mail`) doesn't fit your schema — it must contain `%s` for the escaped username.
+- **A group attribute** (`groupAttr`, default `memberOf` on AD) if you plan to map directory groups to myidsan roles.
+
+Steps:
+
+1. Fill in the form and click **Test connection** (with or without a sample username) *before* saving — this validates the settings you're about to save, never binds as the sample user, and reports the matched DN/email/group count so you can confirm the filter and attributes are right.
+2. Save, then check **Enabled**.
+3. Under **Group → role mappings**, add a mapping per directory group you want to grant a role automatically (paste the group's DN as it appears in `memberOf`, matched case-insensitively). Leave **Authoritative** off to only seed the role once for a still-pending account (a manually assigned role then sticks), or on to have the mapping re-assert the role on every login (directory is the system of record).
+4. A directory account with no matching group mapping signs in but lands in the same "access pending" state as any other new account — a superadmin must assign it a role, same as local/Google/GitHub signups.
+
+Both login surfaces (the SPA and the server-rendered `/api/auth/login` page myseliasan's SSO hop lands on) show an "Account type" selector only while directory login is enabled; it disappears automatically when disabled. LDAP login shares the same per-IP failed-login lockout (`loginSecurity` config) as local login.
+
+### Kerberos SPNEGO SSO
+
+Phase 2 of `docs/MYIDSAN_ENTERPRISE_SSO_PLAN.md`: on a domain-joined Windows machine
+(or any host with a valid Kerberos ticket for the realm), `GET /api/login/kerberos`
+authenticates the browser silently via its existing Windows/AD login — no password
+prompt. Both login surfaces show a "Windows (SSO)" button (label configurable via
+`kerberos.displayLabel`) once `kerberos.enabled` is `true` and a keytab loads
+successfully. When a directory (above) is also configured, the ticket-verified
+principal is resolved through LDAP to the **same account** a password/LDAP login for
+that person would reach (`ResolveDirectoryUser` — service-bind search, no user bind);
+without a directory, a principal-derived standalone identity is used instead. See
+`infra/login/kerberos.go.md` and `apps/myidsan/apis/login.go.md` for the implementation.
+
+What you need before enabling it:
+
+- **An SPN registered for myidsan** and a keytab exported for it — the exact steps
+  differ by directory:
+  - **Active Directory:** `setspn -S HTTP/myidsan.corp.local svc-myidsan` (registers
+    the SPN on the service account `svc-myidsan`; `-S` checks for duplicates first —
+    a duplicate SPN anywhere in the forest breaks Kerberos for every service sharing
+    it). Export the keytab with `ktpass /princ HTTP/myidsan.corp.local@CORP.LOCAL
+    /mapuser svc-myidsan /pass <password> /out myidsan.keytab /crypto AES256-SHA1
+    /ptype KRB5_NT_PRINCIPAL`. Prefer AES256 over older RC4 ciphers.
+  - **Samba AD:** `samba-tool spn add HTTP/myidsan.corp.local svc-myidsan` then
+    `samba-tool domain exportkeytab myidsan.keytab --principal=HTTP/myidsan.corp.local`.
+  - The `ServicePrincipal` in config (`kerberos.servicePrincipal`) must match the SPN
+    exactly — case and all — or every ticket verification fails.
+- **The keytab file itself**, copied to the myidsan host, with **file permissions
+  `0600`** (readable only by the account myidsan runs as — the keytab is as sensitive
+  as a password) and its path set in `kerberos.keytabPath`. Treat it as an ops
+  artifact: rotate it whenever the service account's password changes, and never
+  commit it to source control.
+- **Clock skew under 5 minutes** between the myidsan host, the KDC, and every client —
+  this is a hard Kerberos protocol requirement, not a suite-specific tolerance; sync
+  all three to the same NTP source. A skew beyond the default 5-minute window rejects
+  otherwise-valid tickets (see the failure table below).
+- **Browser trust for SPNEGO**, since browsers only attempt Negotiate auth against
+  sites they're told to trust:
+  - **Edge/Chrome:** add myidsan's URL to the intranet zone (Windows: Internet
+    Options → Security → Local intranet → Sites), or push the
+    `AuthNegotiateAllowlist` (Chrome/Edge) / `AuthServerAllowlist` group policy with
+    myidsan's hostname.
+  - **Firefox:** set `network.negotiate-auth.trusted-uris` in `about:config` to
+    myidsan's origin (e.g. `https://myidsan.corp.local`).
+  - The browser must reach myidsan via its **FQDN**, not a bare IP address — SPNEGO
+    matches the URL host against the SPN's hostname, so an IP in the address bar
+    never negotiates.
+
+Failure modes (each surfaces in the myidsan server log and as a distinct
+`myidsan_federated_login_total{provider="kerberos",result=...}` label — see
+`apps/myidsan/apis/login.go.md`):
+
+| Symptom | Underlying Kerberos error | `result` label | Likely cause |
+| --- | --- | --- | --- |
+| Ticket rejected immediately | `KRB_AP_ERR_MODIFIED` | `ticket_rejected` | Wrong/mismatched SPN, or the keytab doesn't match the service account's current password (rotate the keytab). |
+| Ticket rejected, works from some clients not others | `KRB_AP_ERR_SKEW` | `ticket_rejected` | Clock skew between client, KDC, and myidsan exceeds the 5-minute tolerance — fix NTP sync. |
+| Realm accepted by the KDC but myidsan still refuses | n/a (post-verification) | `realm_refused` | The ticket's realm isn't in `kerberos.onlyRealms` — add it, or clear the list to accept any realm the keytab can decrypt. |
+| Verified principal but the login still fails | n/a (directory lookup) | `not_in_directory` | The directory is enabled but has no matching account for the principal's username — same as any LDAP login with no matching entry. |
+| No SSO button shown at all | n/a | (not offered) | `kerberos.enabled` is `false`, or the keytab failed to load at boot — check the startup log for a `WARNING: kerberos login disabled` line. |
+
+Not yet verified against a real KDC/realm — this needs a domain-joined client and a
+real Active Directory/Samba AD/Kerberos realm to exercise the ticket-acceptance path
+end to end.
+
+### Generic OIDC login
+
+Phase 3 of `docs/MYIDSAN_ENTERPRISE_SSO_PLAN.md`: federate against any spec-compliant
+OpenID Connect IdP — Keycloak, Authentik, ADFS, Microsoft Entra ID, and others — the
+same way Google/GitHub work, but without a bespoke integration per IdP. Add one entry
+per IdP to the `login.oidc` array in config:
+
+```json
+{
+  "login": {
+    "oidc": [
+      {
+        "key": "keycloak",
+        "display_name": "Corp SSO",
+        "issuer_url": "https://keycloak.corp.local/realms/kopiv2",
+        "client_id": "myidsan",
+        "client_secret": "",
+        "redirect_url": "https://myidsan-host/api/callback/keycloak",
+        "scopes": ["openid", "profile", "email"],
+        "ca_cert_path": "",
+        "groups_claim": "groups",
+        "insecure_skip_email_verified": false
+      }
+    ]
+  }
+}
+```
+
+- **`key`** is a stable, lowercase identifier: it names the routes
+  (`GET /api/login/<key>`, `GET /api/callback/<key>`) and federated accounts bind to
+  `oidc:<key>`. **Changing it orphans every account that signed in through this
+  provider** — treat it like a primary key, not a display label, once real users have
+  logged in.
+- **Keycloak client setup** (the reference example above): create a new client under
+  the target realm, client type **OpenID Connect**, **Client authentication ON**
+  (confidential client — myidsan needs a client secret, not a public/PKCE-only
+  client), **Standard flow** enabled. Set **Valid redirect URIs** to
+  `https://myidsan-host/api/callback/keycloak` (must match `redirect_url` exactly,
+  including scheme and path). Copy the generated **Client secret** into
+  `client_secret` (or supply it via env — see below) and the **Client ID** into
+  `client_id`.
+- **Groups mapper (for `groups_claim`):** by default Keycloak does not put group
+  membership in the `id_token`. Under the client's **Client scopes** →
+  `<client>-dedicated` (or a shared scope), add a mapper of type **Group Membership**,
+  set **Token Claim Name** to `groups` (matching `groups_claim` in config), leave
+  **Full group path** off unless your mapping rules expect the full path, and turn on
+  **Add to ID token**. Without this mapper the `id_token` carries no groups claim and
+  `apps/myidsan/services.IDirectoryService.AdmitExternalIdentity` never seeds a role —
+  every new OIDC login lands in "access pending" until an admin assigns one manually,
+  which is a safe default but not what you want for an automated rollout.
+- **Pinned CA for private-CA intranet IdPs:** if Keycloak (or any other IdP) serves
+  TLS off a certificate signed by an internal CA that myidsan's host doesn't already
+  trust, set `ca_cert_path` to that CA's PEM file path. It is used for OIDC discovery,
+  JWKS fetch, and the authorization-code token exchange alike — mirrors the
+  `caCertPem`/`sso.caCertPath` pinning pattern used elsewhere in the suite (LDAP,
+  myseliasan's SSO hop).
+- **`OIDC_<KEY>_CLIENT_SECRET` env override:** the client secret for a given entry can
+  be supplied out-of-band instead of in `config.json` — take the `key`, upper-case it,
+  and replace every non-alphanumeric character with `_` (e.g. `key: "corp-idp"` →
+  `OIDC_CORP_IDP_CLIENT_SECRET`). Leave `client_secret` blank in the checked-in config
+  and set the env var per environment/host, the same convention as
+  `GOOGLE_CLIENT_SECRET`/`GITHUB_CLIENT_SECRET`.
+- **`insecure_skip_email_verified`:** many intranet Keycloak deployments have no SMTP
+  configured, so every account's `email_verified` claim is `false` (or absent). An
+  explicit `false` is refused by default — set this to `true` only when the IdP itself
+  is your organization's system of record for who owns an email address (i.e. you
+  trust it as much as you'd trust your own directory). An **absent** claim is accepted
+  either way; only a present-and-false claim is ever refused.
+- Once saved, a configured OIDC entry adds a login button (labeled `display_name`,
+  defaulting to `key`) to both the SPA and the server-rendered `/api/auth/login` page,
+  the same way Google/GitHub buttons appear. A misconfigured entry (bad issuer, IdP
+  unreachable at boot, missing client id/secret) is skipped with a `WARNING` in the
+  startup log rather than failing boot — fix the config or bring the IdP back up and
+  restart myidsan.
+
+Not yet verified against a real IdP — this needs a live Keycloak (or equivalent)
+instance to exercise the full authorization-code round trip end to end.
 
 ## Filter Shared List APIs
 

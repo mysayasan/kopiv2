@@ -1,6 +1,8 @@
 # myidsan Enterprise SSO Plan
 
-**Status: DRAFT — approved study, implementation not started.**
+**Status: Phases 0-3 built (stacked PRs #114 → #115 → #116 → Phase 3). LDAP,
+Kerberos and OIDC all await live bench tests (real AD/Samba realm, real IdP e.g.
+Keycloak). Phase 4 (SAML) stays parked pending concrete demand.**
 
 Goal: extend myidsan beyond Google/GitHub with intranet-friendly enterprise identity —
 LDAP / Active Directory, Kerberos SPNEGO, and generic OIDC — so the suite works as a

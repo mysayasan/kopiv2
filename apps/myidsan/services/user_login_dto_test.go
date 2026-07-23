@@ -51,6 +51,10 @@ func (m *fakeUserLoginCoreService) UpsertFederated(ctx context.Context, id login
 	return nil, nil
 }
 
+func (m *fakeUserLoginCoreService) AssignRole(ctx context.Context, userId int64, roleId int64) error {
+	return nil
+}
+
 func (m *fakeUserLoginCoreService) RegisterLocal(ctx context.Context, model entities.UserLogin) (uint64, error) {
 	return 0, nil
 }
@@ -67,8 +71,12 @@ func (m *fakeUserLoginCoreService) Delete(ctx context.Context, id uint64) (uint6
 	return 0, nil
 }
 
-func (m *fakeUserLoginCoreService) EnsureStockSuperadmin(ctx context.Context, username, password string, superRoleId int64) error {
-	return nil
+func (m *fakeUserLoginCoreService) EnsureStockSuperadmin(ctx context.Context, username, password string, superRoleId int64) (StockSeedResult, error) {
+	return StockSeedResult{}, nil
+}
+
+func (m *fakeUserLoginCoreService) ResetStockSuperadmin(ctx context.Context, username, password string, superRoleId int64) (StockSeedResult, error) {
+	return StockSeedResult{}, nil
 }
 
 func (m *fakeUserLoginCoreService) ChangePassword(ctx context.Context, userId int64, current, next string) error {

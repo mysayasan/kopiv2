@@ -16,6 +16,13 @@
     "username": "admin",
     "password": "admin123"
   },
+  "kerberos": {
+    "enabled": false,
+    "keytabPath": "",
+    "servicePrincipal": "",
+    "onlyRealms": [],
+    "displayLabel": ""
+  },
   "login": {
     "google": {
       "client_id": "323260460700-kmbhjcg7leflb390vh8stsqi5iqgqac0.apps.googleusercontent.com",
@@ -31,7 +38,8 @@
       "client_secret": "",
       "redirect_url": "https://localhost:3001/api/callback/github",
       "scopes": ["read:user", "user:email"]
-    }
+    },
+    "oidc": []
   },
   "fileStorage": {
     "path": "./uploads",
