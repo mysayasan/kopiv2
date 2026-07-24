@@ -197,6 +197,23 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
     } catch (_) { if (onToast) onToast(t('map.floorUploadFailed'), 'error'); } finally { setBusy(false); }
   }
 
+  // Remove the active area's plan picture, restoring the blank canvas it started as — the inverse
+  // of uploadPlan. The drawn walls and every placement survive; deleting the area is the
+  // destructive option. Offered unconditionally because a blank area and an uploaded one are
+  // indistinguishable in the model (both are just an image), and re-blanking a blank area is a
+  // harmless no-op.
+  async function removePlan() {
+    if (!activeFloor) return;
+    if (!window.confirm(t('bld.removePlanConfirm', { name: activeFloor.name }))) return;
+    setBusy(true);
+    try {
+      const res = await api(`/api/floors/${activeFloor.id}/image`, { method: 'DELETE' });
+      if (!res.ok) throw new Error();
+      await loadFloors(activeFloor.id);
+      if (onToast) onToast(t('bld.planRemoved'), 'success');
+    } catch (_) { if (onToast) onToast(t('bld.removePlanFailed'), 'error'); } finally { setBusy(false); }
+  }
+
   async function saveSite(name, icon) {
     setBusy(true);
     try {
@@ -235,6 +252,9 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
                 <span className="btn-icon"><Ico n="download" sz={13} /> {t('bld.uploadPlan')}</span>
               </button>
               <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/gif" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; uploadPlan(f); }} />
+              <button type="button" className="quiet" onClick={removePlan} disabled={busy} title={t('bld.removePlanHint')}>
+                <span className="btn-icon"><Ico n="trash" sz={13} /> {t('bld.removePlan')}</span>
+              </button>
             </>
           ) : null}
           <button type="button" className="icon-button bld-head-close" onClick={onClose} aria-label={t('bld.done')} title={t('bld.done')}><Ico n="x" sz={15} /></button>
@@ -326,6 +346,7 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
                 onAim={setAim}
                 onRemove={deletePlacement}
                 onSaveModel={saveModel}
+                onToast={onToast}
                 busy={busy}
               />
             )}

@@ -665,7 +665,7 @@ export function BuildingFloorView({ site, floorplans, nodesById = {}, notifByCam
                 <Ico n="layers" sz={13} /> {t('map.stackFloors')}
               </button>
             ) : null}
-            <Floor3D floors={floorplans} activeIndex={floorIdx} stacked={stack3d} nodesById={nodesById} focusCameraId={focusCameraId} nowSec={nowSec} onPlay={onPlay} />
+            <Floor3D floors={floorplans} activeIndex={floorIdx} stacked={stack3d} nodesById={nodesById} notifByCam={notifByCam} focusCameraId={focusCameraId} nowSec={nowSec} onPlay={onPlay} />
           </Suspense>
         ) : (
         <>

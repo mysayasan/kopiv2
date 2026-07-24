@@ -69,6 +69,18 @@ floor-plan images, and node/camera placements on those plans — the indoor half
     and copied to `BgPath` — this is the one moment the pristine original is captured for an
     uploaded photo that was never drawn on until now. Returns `ErrFloorUnknown`/`ErrBadImage`
     like `AddFloor`.
+  - `ClearFloorImage(ctx, id, by)` — the inverse of uploading/replacing a plan: regenerates
+    `blankPlanPNG` at the floor's **current** `Width`/`Height` (never resized — placement X/Y and
+    the 3D grid are expressed in that same pixel space, so resizing would silently shift every
+    camera marker and wall cell) and overwrites `ImagePath` with it. Also clears `Design` and
+    `BgPath`/deletes the background file, and stamps `ContentType` back to `image/png` — but
+    deliberately leaves `Width`/`Height`, `Grid`, `Scale`, `WallHeight`, `Elevation` and every
+    placement untouched, so removing the picture never throws away the authoring done on top of
+    it (deleting the floor is the destructive option for that). The background file is only
+    removed **after** `UpdateById` succeeds, so a failed row update can never orphan the floor by
+    deleting a file the row still references. Returns `ErrFloorUnknown` for an unknown floor.
+    Backs `DELETE /api/floors/{id}/image` (`apis/sites.go`'s `clearFloorImage`), which the
+    building editor's **Remove plan** action calls (`building_editor_dialog.js`).
   - `FloorImage(ctx, id)` — reads the file at `ImagePath` and decrypts it (`cipher.DecryptBytes`)
     when a cipher is configured, returning the raw bytes + content type ready to serve.
   - `FloorBackground(ctx, id)` — same as `FloorImage` but reads `BgPath` instead; returns
@@ -97,6 +109,11 @@ floor-plan images, and node/camera placements on those plans — the indoor half
   the shared SQLite layer's `GetByForeign` hardcodes `limit=1`, so it can only ever return one
   child row; a real one-to-many list needs the explicit-filter form (the same gotcha noted in
   `services/node_registry.go.md`'s sibling `ListFloors`).
+- **`blankPlanPNG(width, height)`** — the shared white-canvas renderer both `AddBlankFloor` and
+  `ClearFloorImage` call: an area with no uploaded plan is not a NULL image, it is a plain white
+  PNG stored exactly like an uploaded one, so both code paths funnel through here and cannot
+  drift apart. Applies the same `defaultBlankPlanW`/`H` and `maxBlankPlanPx` defaults/caps as
+  `AddBlankFloor` did before this was extracted.
 - **`NodeFloorplans(ctx, nodeID)`** — the geo-map drill-down query: finds every placement
   belonging to `nodeID` (again `Get` + explicit `NodeId` filter, not `GetByForeign`), groups them
   by `FloorId`, loads each referenced `FloorPlan` (skipping one that no longer resolves — the
@@ -111,7 +128,7 @@ floor-plan images, and node/camera placements on those plans — the indoor half
 | Error | Meaning |
 |---|---|
 | `ErrSiteUnknown` | Referenced site does not exist (`AddFloor`, `AddBlankFloor`, `UpdateSite`). |
-| `ErrFloorUnknown` | Referenced floor does not exist (`AddPlacement`, `UpdateFloor`, `UpdateFloorModel`, `GetFloor`, `FloorImage`, `ReplaceFloorImage`), or has no background image (`FloorBackground`). |
+| `ErrFloorUnknown` | Referenced floor does not exist (`AddPlacement`, `UpdateFloor`, `UpdateFloorModel`, `GetFloor`, `FloorImage`, `ReplaceFloorImage`, `ClearFloorImage`), or has no background image (`FloorBackground`). |
 | `ErrBadImage` | Uploaded image bytes could not be decoded, or had zero width/height (`AddFloor`, `ReplaceFloorImage`). |
 
 ## Notes

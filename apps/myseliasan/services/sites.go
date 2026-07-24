@@ -90,6 +90,12 @@ type ISiteService interface {
 	// ReplaceFloorImage rewrites an existing floor's image bytes, dimensions, name and design —
 	// used when re-saving a drawn plan from the designer.
 	ReplaceFloorImage(ctx context.Context, id int64, name string, img []byte, contentType, design string, by int64) (*entities.FloorPlan, error)
+	// ClearFloorImage removes a floor's plan picture, returning it to the blank white canvas an
+	// area starts life with — the inverse of uploading a plan. It regenerates the canvas at the
+	// floor's CURRENT dimensions and clears the drawn design and stored background, but leaves the
+	// 3D model (grid/scale/heights) and every camera placement intact, so removing a plan does not
+	// throw away the authoring done on top of it. To discard those too, delete the floor.
+	ClearFloorImage(ctx context.Context, id int64, by int64) (*entities.FloorPlan, error)
 	UpdateFloor(ctx context.Context, id int64, name string, ordinal int, by int64) (*entities.FloorPlan, error)
 	// UpdateFloorModel rewrites a floor's 3D layout: the painted grid (walls/floor cells) plus its
 	// real-world scale (metres-per-pixel), wall height and stacking elevation (all metres). Leaves
@@ -423,8 +429,10 @@ const (
 	maxBlankPlanPx    = 8000
 )
 
-// AddBlankFloor generates a white plan image and stores it as a floor. See ISiteService.
-func (s *siteService) AddBlankFloor(ctx context.Context, siteID int64, name string, ordinal, width, height int, by int64) (*entities.FloorPlan, error) {
+// blankPlanPNG renders the white canvas that represents "no plan". An area with no uploaded plan
+// is not a NULL image — it is a plain white PNG stored exactly like an uploaded one — so both
+// creating a blank area and clearing an uploaded plan go through here and cannot drift apart.
+func blankPlanPNG(width, height int) ([]byte, error) {
 	if width <= 0 || width > maxBlankPlanPx {
 		width = defaultBlankPlanW
 	}
@@ -437,9 +445,18 @@ func (s *siteService) AddBlankFloor(ctx context.Context, siteID int64, name stri
 	if err := png.Encode(&buf, canvas); err != nil {
 		return nil, err
 	}
+	return buf.Bytes(), nil
+}
+
+// AddBlankFloor generates a white plan image and stores it as a floor. See ISiteService.
+func (s *siteService) AddBlankFloor(ctx context.Context, siteID int64, name string, ordinal, width, height int, by int64) (*entities.FloorPlan, error) {
+	img, err := blankPlanPNG(width, height)
+	if err != nil {
+		return nil, err
+	}
 	// keepBg=false: there is no original photo worth preserving for a blank canvas, so don't
 	// double the bytes on disk for every area the wizard creates.
-	row, err := s.addFloorBytes(ctx, siteID, name, buf.Bytes(), "image/png", "", false, by)
+	row, err := s.addFloorBytes(ctx, siteID, name, img, "image/png", "", false, by)
 	if err != nil {
 		return nil, err
 	}
@@ -565,6 +582,55 @@ func (s *siteService) ReplaceFloorImage(ctx context.Context, id int64, name stri
 	row.UpdatedAt = time.Now().Unix()
 	if _, err := s.floors.UpdateById(ctx, "", *row); err != nil {
 		return nil, err
+	}
+	return row, nil
+}
+
+// ClearFloorImage returns a floor to a blank canvas. See ISiteService.
+func (s *siteService) ClearFloorImage(ctx context.Context, id int64, by int64) (*entities.FloorPlan, error) {
+	row, err := s.floors.GetById(ctx, "", uint64(id))
+	if err != nil || row == nil {
+		return nil, ErrFloorUnknown
+	}
+	// Keep the floor's existing pixel dimensions: placement X/Y and the 3D grid are expressed in
+	// that same pixel space and both survive this call, so resizing the canvas would silently
+	// shift every camera marker and wall cell.
+	img, err := blankPlanPNG(row.Width, row.Height)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+		return nil, err
+	}
+	payload := img
+	if s.cipher != nil {
+		enc, encErr := s.cipher.EncryptBytes(img)
+		if encErr != nil {
+			return nil, encErr
+		}
+		payload = enc
+	}
+	path := filepath.Join(s.dir, fmt.Sprintf("floor-%d.img", id))
+	if err := os.WriteFile(path, payload, 0o644); err != nil {
+		return nil, err
+	}
+	// Drop the pristine background too. It holds the very plan being removed, and leaving it would
+	// resurrect that image as the designer's canvas the next time the floor is edited.
+	bg := row.BgPath
+	row.ImagePath = path
+	row.BgPath = ""
+	row.ContentType = "image/png"
+	row.Design = ""
+	// Width/Height, Grid, Scale, WallHeight, Elevation and every placement are deliberately left
+	// alone — this clears the picture, not the authoring work done on top of it.
+	row.UpdatedBy = by
+	row.UpdatedAt = time.Now().Unix()
+	if _, err := s.floors.UpdateById(ctx, "", *row); err != nil {
+		return nil, err
+	}
+	// Only after the row no longer references it, so a failed update cannot orphan the floor.
+	if bg != "" && bg != path {
+		s.removeImage(bg)
 	}
 	return row, nil
 }

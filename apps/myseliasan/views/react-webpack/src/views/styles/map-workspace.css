@@ -1,0 +1,154 @@
+/* Fleet Map WORKSPACE — the unified three-pane surface (asset browser · stage · inspector) with a
+   breadcrumb + Monitor/Edit modes. Uses the app's shared tokens so it follows every theme; status
+   dot colours come from the one source of truth (lib/fleet_status TONES), theme-independent. */
+
+.mw {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--bg-body);
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border-panel);
+}
+
+/* status dots (shared, theme-independent) */
+.mw-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; display: inline-block; }
+.mw-dot.online { background: #22c55e; } .mw-dot.warning { background: #f59e0b; }
+.mw-dot.critical { background: #ef4444; } .mw-dot.idle { background: #94a3b8; }
+.mw-dot.sev-critical { background: #ef4444; } .mw-dot.sev-warning { background: #f59e0b; } .mw-dot.sev-info { background: #3b82f6; }
+
+/* ---------- top bar (breadcrumb + layer toggle + mode) ---------- */
+.mw-topbar { display: flex; align-items: center; gap: 12px; padding: 9px 12px; background: var(--bg-surface); border-bottom: 1px solid var(--border-panel); flex: 0 0 auto; flex-wrap: wrap; }
+.mw-crumbs { display: flex; align-items: center; gap: 3px; flex-wrap: wrap; }
+.mw-crumb { display: inline-flex; align-items: center; gap: 6px; background: transparent; border: 0; cursor: pointer; color: var(--text-secondary); font: inherit; font-weight: 600; font-size: 13px; padding: 5px 9px; border-radius: 7px; }
+.mw-crumb:hover { background: var(--bg-subtle); }
+.mw-crumb.here { color: var(--text-primary); background: var(--bg-subtle); cursor: default; }
+.mw-cg { font-size: 14px; line-height: 1; }
+.mw-sep { color: var(--text-faint); opacity: .6; }
+.mw-top-spacer { flex: 1 1 auto; }
+.mw-layertoggle { display: inline-flex; gap: 6px; }
+.mw-lchip { display: inline-flex; align-items: center; gap: 5px; padding: 5px 11px; border: 1px solid var(--border-soft); border-radius: 999px; background: var(--bg-surface); color: var(--text-faint); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.mw-lchip:hover { border-color: var(--accent); }
+.mw-lchip.on { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+.mw-modeswitch { display: inline-flex; background: var(--bg-subtle); border: 1px solid var(--border-soft); border-radius: 9px; padding: 3px; }
+.mw-modeswitch button { border: 0; background: transparent; padding: 6px 12px; border-radius: 6px; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--text-muted); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.mw-modeswitch button.on { background: var(--bg-surface); color: var(--text-primary); box-shadow: 0 1px 4px var(--shadow-panel); }
+.mw-modeswitch button.on.edit { color: var(--accent); }
+
+/* ---------- body grid ---------- */
+/* grid-template-rows:minmax(0,1fr) makes the single row FILL the body height (not collapse to the
+   map's min-height), so the stage — and the OpenLayers canvas inside it — fill the whole panel and
+   the side panels get a bounded height to scroll within. */
+.mw-body { display: grid; grid-template-columns: 288px 1fr 336px; grid-template-rows: minmax(0, 1fr); flex: 1 1 auto; min-height: 0; }
+.mw-rail { background: var(--bg-subtle); border-right: 1px solid var(--border-panel); display: flex; flex-direction: column; min-height: 0; }
+.mw-stage { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg-body); }
+.mw-inspector, .mw-rail { min-height: 0; }
+
+/* ---------- left rail ---------- */
+.mw-search { margin: 12px; display: flex; align-items: center; gap: 8px; background: var(--bg-surface); border: 1px solid var(--border-soft); border-radius: 9px; padding: 8px 10px; color: var(--text-faint); }
+.mw-search input { border: 0; background: transparent; outline: 0; color: var(--text-primary); font: inherit; width: 100%; }
+.mw-search-x { border: 0; background: transparent; color: var(--text-faint); cursor: pointer; padding: 0; display: grid; place-items: center; }
+.mw-statusbar { display: flex; gap: 6px; padding: 0 12px 10px; }
+.mw-schip { flex: 1; display: flex; flex-direction: column; gap: 2px; align-items: flex-start; background: var(--bg-surface); border: 1px solid var(--border-soft); border-radius: 9px; padding: 7px 9px; cursor: pointer; }
+.mw-schip:hover { border-color: var(--accent); }
+.mw-schip.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.mw-schip-n { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 6px; color: var(--text-primary); }
+.mw-schip-k { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-faint); }
+.mw-treescroll { overflow: auto; flex: 1 1 auto; min-height: 0; padding: 2px 8px 14px; }
+.mw-grouphdr { font-size: 10.5px; text-transform: uppercase; letter-spacing: .6px; color: var(--text-faint); font-weight: 700; padding: 12px 8px 5px; display: flex; align-items: center; gap: 6px; }
+.mw-cnt { margin-left: auto; background: var(--accent-bg); color: var(--accent); border-radius: 20px; font-size: 10px; padding: 1px 7px; font-weight: 700; }
+.mw-row { display: flex; align-items: center; gap: 7px; padding: 6px 8px; border-radius: 7px; position: relative; }
+.mw-row:hover { background: var(--bg-subtle2); }
+.mw-row.sel { background: var(--accent-bg); }
+.mw-row.sel::before { content: ""; position: absolute; left: 0; top: 5px; bottom: 5px; width: 3px; border-radius: 3px; background: var(--accent); }
+.mw-tw { width: 16px; min-width: 16px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-faint); background: transparent; border: 0; cursor: pointer; padding: 0; }
+.mw-glyph { font-size: 15px; line-height: 1; flex: 0 0 auto; }
+.mw-nm-btn { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; background: transparent; border: 0; cursor: pointer; color: var(--text-primary); font: inherit; font-size: 13px; padding: 0; }
+.mw-nm-btn.dim { color: var(--text-secondary); font-size: 12.5px; }
+.mw-meta { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.mw-children { margin-left: 13px; border-left: 1px solid var(--border-subtle); padding-left: 3px; }
+.mw-tree-empty { padding: 8px 10px; font-size: 12px; color: var(--text-faint); }
+.mw-tree-empty.sm { padding: 4px 10px; font-size: 11.5px; }
+
+/* ---------- stage ---------- */
+.mw-canvaswrap { position: relative; flex: 1 1 auto; min-height: 480px; overflow: hidden; }
+/* Sea-toned ground so any area outside the regional basemap reads as water, not a black void.
+   The basemap itself is light in both app themes, so this is deliberately theme-independent. */
+.mw-geo { position: absolute; inset: 0; background: #aacbe0; }
+.mw-geo .ol-attribution { display: none; }
+.mw-geo.placing { cursor: crosshair; box-shadow: 0 0 0 2px var(--accent) inset; }
+.mw-floorstage { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 18px; overflow: auto; }
+.mw-floorstage .floor-plan-wrap { max-width: 100%; max-height: 100%; }
+.mw-floor-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--text-faint); }
+
+.mw-floorsel { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 5px; background: var(--bg-surface); border: 1px solid var(--border-panel); border-radius: 11px; padding: 6px; box-shadow: 0 6px 20px var(--shadow-panel); z-index: 5; }
+.mw-floorsel button { border: 0; background: transparent; min-width: 42px; height: 34px; border-radius: 8px; font: inherit; font-weight: 700; color: var(--text-muted); cursor: pointer; font-variant-numeric: tabular-nums; }
+.mw-floorsel button:hover { background: var(--bg-subtle); }
+.mw-floorsel button.on { background: var(--accent); color: #fff; }
+.mw-floorsel-exit { border-top: 1px solid var(--border-subtle) !important; border-radius: 0 0 8px 8px !important; color: var(--text-faint) !important; }
+
+.mw-legend { position: absolute; right: 14px; bottom: 14px; display: flex; gap: 12px; background: var(--bg-surface); border: 1px solid var(--border-panel); border-radius: 10px; padding: 7px 12px; box-shadow: 0 2px 8px var(--shadow-panel); z-index: 4; font-size: 11.5px; color: var(--text-muted); }
+.mw-legend span { display: inline-flex; align-items: center; gap: 5px; }
+
+.mw-tray { position: absolute; left: 14px; bottom: 14px; right: 14px; max-width: 560px; background: var(--bg-surface); border: 1px solid var(--border-panel); border-radius: 11px; padding: 10px 12px; box-shadow: 0 6px 20px var(--shadow-panel); z-index: 6; }
+.mw-tray-head { display: flex; align-items: center; gap: 10px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; color: var(--text-faint); margin-bottom: 8px; }
+.mw-tray-new { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 7px; padding: 5px 10px; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; text-transform: none; letter-spacing: 0; }
+.mw-tray-items { display: flex; flex-wrap: wrap; gap: 6px; }
+.mw-tray-empty { font-size: 12.5px; color: var(--text-faint); }
+.mw-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border-soft); background: var(--bg-subtle); border-radius: 20px; padding: 5px 11px; font: inherit; font-size: 12.5px; color: var(--text-primary); cursor: pointer; }
+.mw-chip:hover { border-color: var(--accent); }
+.mw-chip.active { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); }
+.mw-tray-hint { margin-top: 8px; font-size: 12px; color: var(--text-muted); }
+
+/* ---------- right inspector ---------- */
+.mw-inspector { background: var(--bg-subtle); border-left: 1px solid var(--border-panel); display: flex; flex-direction: column; min-height: 0; }
+.mw-insp-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--text-faint); text-align: center; padding: 30px; }
+.mw-insp-empty-sub { font-size: 12px; margin-top: 4px; }
+.mw-insp-head { padding: 15px 16px 12px; border-bottom: 1px solid var(--border-panel); display: flex; gap: 12px; align-items: flex-start; }
+.mw-insp-ic { width: 44px; height: 44px; border-radius: 11px; display: grid; place-items: center; font-size: 22px; background: var(--bg-surface); border: 1px solid var(--border-soft); flex: 0 0 auto; color: var(--text-secondary); }
+.mw-insp-id { flex: 1; min-width: 0; }
+.mw-insp-t { font-weight: 700; font-size: 15px; color: var(--text-primary); }
+.mw-insp-s { font-size: 12px; color: var(--text-faint); }
+.mw-pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 20px; margin-top: 7px; text-transform: capitalize; }
+.mw-pill.online { background: rgba(34,197,94,.16); color: #16a34a; } .mw-pill.warning { background: rgba(245,158,11,.18); color: #d97706; }
+.mw-pill.critical { background: rgba(239,68,68,.16); color: #dc2626; } .mw-pill.idle { background: rgba(148,163,184,.2); color: #64748b; }
+.mw-inspscroll { overflow: auto; flex: 1 1 auto; min-height: 0; padding: 14px 16px; }
+.mw-kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+.mw-kpi { background: var(--bg-surface); border: 1px solid var(--border-soft); border-radius: 10px; padding: 10px 12px; }
+.mw-kpi .v { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text-primary); }
+.mw-kpi .l { font-size: 10.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--text-faint); }
+.mw-seclbl { font-size: 10.5px; text-transform: uppercase; letter-spacing: .6px; color: var(--text-faint); font-weight: 700; margin: 6px 0 8px; }
+.mw-lrow { width: 100%; display: flex; align-items: center; gap: 9px; padding: 8px 8px; border: 0; background: transparent; border-bottom: 1px solid var(--border-subtle); font: inherit; color: var(--text-primary); cursor: pointer; text-align: left; }
+.mw-lrow:hover:not(.static) { background: var(--bg-subtle2); }
+.mw-lrow.static { cursor: default; }
+.mw-lrow .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mw-lrow .rt { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.mw-erow { display: flex; align-items: center; gap: 9px; padding: 7px 6px; border-bottom: 1px solid var(--border-subtle); }
+.mw-erow .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--text-primary); }
+.mw-erow .nm.link { background: transparent; border: 0; text-align: left; cursor: pointer; font: inherit; color: var(--accent); padding: 0; }
+.mw-erow .rt { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.mw-act { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+.mw-btn { border: 1px solid var(--border-soft); background: var(--bg-surface); border-radius: 8px; padding: 8px 13px; font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; color: var(--text-primary); }
+.mw-btn:hover { border-color: var(--accent); }
+.mw-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.mw-field { display: flex; flex-direction: column; gap: 5px; margin-top: 12px; }
+.mw-field label { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .4px; font-weight: 700; }
+.mw-field select { padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--bg-surface); color: var(--text-primary); font: inherit; }
+.mw-insp-note { font-size: 11.5px; color: var(--text-faint); background: var(--bg-subtle); border: 1px solid var(--border-subtle); border-radius: 9px; padding: 9px 11px; margin-top: 12px; }
+.mw-insp-note.edit { background: var(--accent-bg); border-color: var(--accent); color: var(--text-secondary); }
+
+/* Camera card: fixed header/actions, then the events in their own bounded infinite-scroll list. */
+.mw-cam-actions { margin: 0; padding: 12px 16px 4px; flex: 0 0 auto; }
+.mw-cam-evhdr { margin: 0; padding: 6px 16px 6px; flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
+.mw-evcount { background: var(--accent-bg); color: var(--accent); border-radius: 20px; font-size: 10px; padding: 1px 7px; font-weight: 700; }
+.mw-evlist { padding-top: 2px; }
+.mw-loadmore { display: block; width: 100%; margin: 8px 0 2px; padding: 8px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--bg-surface); color: var(--text-secondary); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.mw-loadmore:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Embedded indoor editor fills the stage in edit mode. */
+.mw-stage > .indoor-panel { flex: 1 1 auto; min-height: 0; padding: 12px 14px; }
+
+@media (max-width: 1180px) { .mw-body { grid-template-columns: 250px 1fr; } .mw-inspector { display: none; } }
+@media (max-width: 860px) { .mw-body { grid-template-columns: 1fr; } .mw-rail { display: none; } }

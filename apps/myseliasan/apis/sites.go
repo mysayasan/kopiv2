@@ -35,6 +35,7 @@ type sitesApi struct {
 //	GET/POST         /api/sites/{id}/floors      (POST = multipart plan upload)
 //	GET/PUT/DELETE   /api/floors/{id}
 //	GET              /api/floors/{id}/image      (decrypted plan image, cookie-authed)
+//	DELETE           /api/floors/{id}/image      (clear the plan, keep the area + placements)
 func NewSitesApi(router *mux.Router, auth middlewares.AuthMidware, session *middlewares.AccessSessionMidware, sites services.ISiteService) {
 	h := &sitesApi{sites: sites}
 
@@ -69,6 +70,9 @@ func NewSitesApi(router *mux.Router, auth middlewares.AuthMidware, session *midd
 	fg.HandleFunc("/{id}/model", h.updateFloorModel).Methods("PUT")
 	fg.HandleFunc("/{id}/image", h.floorImage).Methods("GET")
 	fg.HandleFunc("/{id}/image", h.replaceFloorImage).Methods("POST")
+	// Remove the plan picture without removing the area — back to the blank canvas it started as.
+	// Placements and the 3D model survive; DELETE /floors/{id} is the one that discards those.
+	fg.HandleFunc("/{id}/image", h.clearFloorImage).Methods("DELETE")
 	fg.HandleFunc("/{id}/background", h.floorBackground).Methods("GET")
 	fg.HandleFunc("/{id}/placements", h.listPlacements).Methods("GET")
 	fg.HandleFunc("/{id}/placements", h.addPlacement).Methods("POST")
@@ -311,6 +315,27 @@ func (a *sitesApi) replaceFloorImage(w http.ResponseWriter, r *http.Request) {
 			controllers.SendError(w, controllers.ErrBadRequest, "unreadable image")
 			return
 		}
+		if err == services.ErrFloorUnknown {
+			controllers.SendError(w, controllers.ErrNotFound, "floor not found")
+			return
+		}
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, floor, "succeed")
+}
+
+// clearFloorImage removes a floor's plan picture and restores the blank canvas — the inverse of
+// uploadPlan, and the only way to un-upload a plan short of deleting the whole area. Camera
+// placements and the 3D model survive; the operator keeps their authoring work.
+func (a *sitesApi) clearFloorImage(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r)
+	if !ok {
+		controllers.SendError(w, controllers.ErrBadRequest, "invalid id")
+		return
+	}
+	floor, err := a.sites.ClearFloorImage(r.Context(), id, actorID(r))
+	if err != nil {
 		if err == services.ErrFloorUnknown {
 			controllers.SendError(w, controllers.ErrNotFound, "floor not found")
 			return

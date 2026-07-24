@@ -583,7 +583,12 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   // independent of which node records them. sites holds the overview rows { site, nodeIds, cameras,
   // floors }; showLayers toggles the two marker layers so an operator can focus on either.
   const [sites, setSites] = useState([]);
-  const [showLayers, setShowLayers] = useState({ buildings: true, nodes: true });
+  // Buildings-centric map: buildings are the only markers; node pins stay off.
+  const [showLayers] = useState({ buildings: true, nodes: false });
+  // Which building rows in the rail are expanded, and the lazily-loaded floors/areas inside each
+  // (id -> { loading, error, list }). A building's children are its floor plans (1st floor, kitchen…).
+  const [expandedSites, setExpandedSites] = useState({});
+  const [floorsBySite, setFloorsBySite] = useState({});
   // Adding a building is a three-beat flow owned here: the wizard collects name/glyph/areas, the
   // map takes the drop point, then the editor opens on the building just created. editorSite is
   // also the re-entry point for an EXISTING building (from the rail or the drill-down).
@@ -788,16 +793,20 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
     if (onToast) onToast(t('map.ghostsRemoved', { n: ids.length }), 'success');
   }, [drill, onToast, t]);
 
-  // Map pins are ONLY building-less placed nodes (a standalone recorder, IoT hub, off-site box). A
-  // node that resides in a building is represented by its building marker, not its own pin.
-  const placed = useMemo(() => nodes.filter((n) => n && n.mapPlaced && !n.siteId), [nodes]);
-  // Nodes that still need a home: no building AND not placed standalone — the ones the rail nudges.
-  const nodesToPlace = useMemo(() => nodes.filter((n) => n && !n.siteId && !n.mapPlaced), [nodes]);
-  // Nodes already located (in a building, or placed standalone) — a muted list for re-assignment.
-  const nodesManaged = useMemo(() => nodes.filter((n) => n && (n.siteId || n.mapPlaced)), [nodes]);
-  const unplacedSites = useMemo(() => sites.filter((s) => s.site && !s.site.mapPlaced), [sites]);
+  // Buildings-centric map: a node never gets its own pin — every node lives in a building and is
+  // reached by drilling into that building. Nothing is placed standalone, so there are no node pins.
+  const placed = useMemo(() => [], []);
+  // Nodes that still need a home: not yet assigned to any building — the rail nudges you to assign.
+  const nodesToPlace = useMemo(() => nodes.filter((n) => n && !n.siteId), [nodes]);
   // All sites (placed or not) are valid buildings to assign a node to.
   const allSites = useMemo(() => sites.map((row) => row.site).filter(Boolean), [sites]);
+  // A building's rail status = the worst status among the nodes that own cameras inside it.
+  const siteToneKey = (row) => {
+    const order = ['critical', 'warning', 'online', 'idle'];
+    let worst = 'idle';
+    (row.nodeIds || []).forEach((nid) => { const k = nodeToneKey(nodesById[nid], nowSec); if (order.indexOf(k) < order.indexOf(worst)) worst = k; });
+    return worst;
+  };
 
   const persistPosition = useCallback(async (nodeId, lon, lat) => {
     try {
@@ -878,6 +887,28 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
       if (reloadNodes) reloadNodes();
     }
   }, [reloadNodes, onToast, t]);
+
+  // Lazily fetch a building's floors/areas the first time its rail row is expanded.
+  const loadSiteFloors = useCallback(async (siteId) => {
+    setFloorsBySite((m) => ({ ...m, [siteId]: { ...(m[siteId] || {}), loading: true } }));
+    try {
+      const res = await api(`/api/sites/${siteId}/floors`, { noRedirect: true });
+      const list = res.ok && Array.isArray(res.body) ? res.body.slice().sort((a, b) => (a.ordinal || 0) - (b.ordinal || 0)) : [];
+      setFloorsBySite((m) => ({ ...m, [siteId]: { loading: false, list } }));
+    } catch (_) {
+      setFloorsBySite((m) => ({ ...m, [siteId]: { loading: false, error: true, list: [] } }));
+    }
+  }, []);
+  const toggleSite = useCallback((siteId) => {
+    setExpandedSites((e) => ({ ...e, [siteId]: !e[siteId] }));
+  }, []);
+  // Fetch floors for any expanded building we don't have them for. Driven off state (rather than the
+  // click) so an editor change that drops the cache re-loads the row that is still open.
+  useEffect(() => {
+    Object.keys(expandedSites).forEach((id) => {
+      if (expandedSites[id] && !floorsBySite[id]) loadSiteFloors(Number(id));
+    });
+  }, [expandedSites, floorsBySite, loadSiteFloors]);
 
   // Build the map once.
   useEffect(() => {
@@ -1207,52 +1238,30 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
     setPlacing(null);
   }
 
-  // A node rail row: status + name + a building selector (its "resides in"), and — only for a
-  // building-less unplaced node — a "place on map" button (the standalone case). Assigning a
-  // building takes the node off the map; the building marker then represents it.
-  const renderNodeRow = (n, placeable) => {
-    const active = placing && placing.kind === 'node' && placing.id === n.nodeId;
-    return (
-      <li
-        key={n.nodeId}
-        className="fleet-map-rail-noderow"
-        draggable={placeable}
-        onDragStart={placeable ? (e) => { e.dataTransfer.setData('text/node-id', n.nodeId); e.dataTransfer.effectAllowed = 'move'; setPlacing(null); } : undefined}
+  // A node rail row: status + name + a building selector. On a buildings-centric map a node is only
+  // ever assigned to a building (which then represents it on the map) — there is no standalone place.
+  const renderNodeRow = (n) => (
+    <li key={n.nodeId} className="fleet-map-rail-noderow">
+      <span className="rail-dot" style={{ background: nodeTone(n, nowSec).color }} />
+      <span className="rail-name" title={n.name || n.nodeId}>{n.name || n.nodeId}</span>
+      <select
+        className="rail-building-select"
+        value={n.siteId ? String(n.siteId) : ''}
+        onChange={(e) => assignBuilding(n.nodeId, Number(e.target.value) || 0)}
+        title={t('map.residesIn')}
+        aria-label={t('map.residesIn')}
       >
-        <span className="rail-dot" style={{ background: nodeTone(n, nowSec).color }} />
-        <span className="rail-name" title={n.name || n.nodeId}>{n.name || n.nodeId}</span>
-        <select
-          className="rail-building-select"
-          value={n.siteId ? String(n.siteId) : ''}
-          onChange={(e) => assignBuilding(n.nodeId, Number(e.target.value) || 0)}
-          title={t('map.residesIn')}
-          aria-label={t('map.residesIn')}
-        >
-          <option value="">{t('map.noBuilding')}</option>
-          {allSites.map((s) => <option key={s.id} value={s.id}>{s.icon ? `${s.icon} ${s.name}` : s.name}</option>)}
-        </select>
-        {placeable ? (
-          <button type="button" className={`rail-place-btn${active ? ' active' : ''}`} title={t('map.placeStandalone')} aria-label={t('map.placeStandalone')} onClick={() => setPlacing(active ? null : { kind: 'node', id: n.nodeId, name: n.name || n.nodeId })}><Ico n="map-pin" sz={13} /></button>
-        ) : (n.mapPlaced && !n.siteId ? <span className="rail-onmap" title={t('map.onMap')} aria-label={t('map.onMap')}><Ico n="map-pin" sz={12} /></span> : null)}
-      </li>
-    );
-  };
+        <option value="">{t('map.noBuilding')}</option>
+        {allSites.map((s) => <option key={s.id} value={s.id}>{s.icon ? `${s.icon} ${s.name}` : s.name}</option>)}
+      </select>
+    </li>
+  );
 
   return (
     <section className="settings-panel span-two fleet-map-panel">
       <header>
         <h2><span className="btn-icon"><Ico n="map" /> {t('map.title')}</span></h2>
         <div className="fleet-map-header-right">
-          {/* Layer toggle: a building is where cameras live; a node is the appliance — two honest
-              layers the operator can show independently. */}
-          <div className="fleet-map-layer-toggle">
-            <button type="button" className={`layer-chip${showLayers.buildings ? ' on' : ''}`} onClick={() => setShowLayers((s) => ({ ...s, buildings: !s.buildings }))} title={t('map.buildings')} aria-pressed={showLayers.buildings}>
-              <Ico n="building" sz={13} /> {t('map.buildings')}
-            </button>
-            <button type="button" className={`layer-chip${showLayers.nodes ? ' on' : ''}`} onClick={() => setShowLayers((s) => ({ ...s, nodes: !s.nodes }))} title={t('map.layerNodes')} aria-pressed={showLayers.nodes}>
-              <Ico n="cpu" sz={13} /> {t('map.layerNodes')}
-            </button>
-          </div>
           <div className="fleet-map-legend" aria-hidden="true">
             {['online', 'warning', 'critical', 'idle'].map((k) => (
               <span key={k} className="legend-item">
@@ -1269,62 +1278,77 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
       <div className="fleet-map-body">
         <aside className="fleet-map-rail">
           <div className="fleet-map-rail-head">
-            <span>{t('map.toPlace')} <span className="count-badge">{unplacedSites.length + nodesToPlace.length}</span></span>
+            <span>{t('map.buildings')} <span className="count-badge">{sites.length}</span></span>
             <button type="button" className="rail-addbuilding" onClick={() => setWizardOpen(true)} disabled={busy} title={t('map.addBuilding')}>
               <Ico n="plus" sz={13} /> {t('map.addBuilding')}
             </button>
           </div>
-          {unplacedSites.length === 0 && nodesToPlace.length === 0 && nodesManaged.length === 0 ? (
-            <div className="fleet-map-rail-empty"><Ico n="check-ok" sz={22} /><span>{t('map.allPlaced')}</span></div>
+          {sites.length === 0 && nodesToPlace.length === 0 ? (
+            <div className="fleet-map-rail-empty"><Ico n="building" sz={22} /><span>{t('map.noBuildingsYet')}</span></div>
           ) : (
             <>
-              {unplacedSites.length > 0 ? (
-                <>
-                  <div className="fleet-map-rail-group"><Ico n="building" sz={12} /> {t('map.buildings')}</div>
-                  <div className="fleet-map-rail-hint">{t('map.placeHint')}</div>
-                  <ul className="fleet-map-rail-list">
-                    {unplacedSites.map((row) => {
-                      const s = row.site;
-                      const active = placing && placing.kind === 'site' && placing.id === s.id;
-                      return (
-                        <li key={`site-${s.id}`} className="fleet-map-rail-siterow">
+              {/* Building-centric list: every building, each expandable to the appliances inside it.
+                  Placed buildings fly-to on click; unplaced ones enter placing mode. */}
+              {sites.length > 0 ? (
+                <ul className="fleet-map-rail-list">
+                  {sites.map((row) => {
+                    const s = row.site;
+                    if (!s) return null;
+                    const onMap = !!s.mapPlaced;
+                    const worst = siteToneKey(row);
+                    const isOpen = !!expandedSites[s.id];
+                    const fl = floorsBySite[s.id];
+                    const placingThis = placing && placing.kind === 'site' && placing.id === s.id;
+                    return (
+                      <li key={`site-${s.id}`} className="fleet-map-rail-bldgwrap">
+                        <div className="fleet-map-rail-siterow">
+                          <button type="button" className="rail-expand" onClick={() => toggleSite(s.id)} aria-label={t('map.showFloors')} aria-expanded={isOpen}><Ico n={isOpen ? 'chev-down' : 'chev-right'} sz={12} /></button>
                           <button
                             type="button"
-                            className={`fleet-map-rail-node${active ? ' active' : ''}`}
-                            draggable
-                            onDragStart={(e) => { e.dataTransfer.setData('text/site-id', String(s.id)); e.dataTransfer.effectAllowed = 'move'; setPlacing(null); }}
-                            onClick={() => setPlacing(active ? null : { kind: 'site', id: s.id, name: s.name })}
-                            title={t('map.placeHint')}
+                            className={`fleet-map-rail-node${placingThis ? ' active' : ''}`}
+                            draggable={!onMap}
+                            onDragStart={!onMap ? (e) => { e.dataTransfer.setData('text/site-id', String(s.id)); e.dataTransfer.effectAllowed = 'move'; setPlacing(null); } : undefined}
+                            onClick={() => (onMap ? flyToSite(s) : setPlacing(placingThis ? null : { kind: 'site', id: s.id, name: s.name }))}
+                            title={onMap ? t('map.flyTo') : t('map.placeHint')}
                           >
+                            <span className="rail-dot" style={{ background: TONES[worst].color }} />
                             <span className="rail-emoji" aria-hidden="true">{s.icon || DEFAULT_BUILDING_GLYPH}</span>
                             <span className="rail-name">{s.name}</span>
-                            {active ? <Ico n="map-pin" sz={14} /> : null}
+                            {row.cameras ? <span className="rail-count" title={t('map.cameras')}>{row.cameras}<Ico n="video" sz={11} /></span> : null}
+                            {placingThis ? <Ico n="map-pin" sz={14} /> : (!onMap ? <span className="rail-toplace" title={t('map.notOnMap')} aria-label={t('map.notOnMap')}><Ico n="map-pin" sz={12} /></span> : null)}
                           </button>
-                          {/* A building that isn't on the map yet still needs to be editable — it
-                              has no marker to click into. */}
                           <button type="button" className="rail-edit-btn" onClick={() => openEditor(s)} title={t('bld.editAreas')} aria-label={t('bld.editAreas')}>
                             <Ico n="edit-2" sz={13} />
                           </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </>
+                        </div>
+                        {isOpen ? (
+                          <ul className="fleet-map-rail-sublist">
+                            {!fl || fl.loading ? (
+                              <li className="rail-subfloor muted">{t('common.loading')}</li>
+                            ) : !fl.list.length ? (
+                              <li className="rail-subfloor muted">{t('map.noAreasYet')}</li>
+                            ) : fl.list.map((f) => (
+                              <li key={f.id} className="rail-subfloor">
+                                <button type="button" className="rail-floor-btn" onClick={() => openBuilding(s)} title={f.name}>
+                                  <Ico n="layers" sz={11} />
+                                  <span className="rail-name">{f.name}</span>
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
               ) : null}
+              {/* Appliances not yet in any building — assign each to a building. */}
               {nodesToPlace.length > 0 ? (
                 <>
-                  <div className="fleet-map-rail-group"><Ico n="cpu" sz={12} /> {t('map.nodesToPlace')}</div>
+                  <div className="fleet-map-rail-group"><Ico n="cpu" sz={12} /> {t('map.nodesToPlace')} <span className="count-badge">{nodesToPlace.length}</span></div>
                   <div className="fleet-map-rail-hint">{t('map.assignHint')}</div>
                   <ul className="fleet-map-rail-list">
-                    {nodesToPlace.map((n) => renderNodeRow(n, true))}
-                  </ul>
-                </>
-              ) : null}
-              {nodesManaged.length > 0 ? (
-                <>
-                  <div className="fleet-map-rail-group muted"><Ico n="check-ok" sz={12} /> {t('map.nodesLocated')}</div>
-                  <ul className="fleet-map-rail-list">
-                    {nodesManaged.map((n) => renderNodeRow(n, false))}
+                    {nodesToPlace.map((n) => renderNodeRow(n))}
                   </ul>
                 </>
               ) : null}
@@ -1414,8 +1438,8 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
           site={editorSite}
           nodes={nodes}
           onToast={onToast}
-          onClose={() => { setEditorSite(null); if (siteReloadRef.current) siteReloadRef.current(); }}
-          onChanged={() => { if (siteReloadRef.current) siteReloadRef.current(); }}
+          onClose={() => { const id = editorSite.id; setEditorSite(null); setFloorsBySite((m) => { const c = { ...m }; delete c[id]; return c; }); if (siteReloadRef.current) siteReloadRef.current(); }}
+          onChanged={() => { setFloorsBySite((m) => { const c = { ...m }; delete c[editorSite.id]; return c; }); if (siteReloadRef.current) siteReloadRef.current(); }}
         />
       ) : null}
 

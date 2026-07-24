@@ -1,0 +1,6 @@
+{
+  "type": "cleanup",
+  "scope": "myseliasan",
+  "summary": "Added early, unwired scaffolding for a planned 'map workspace' redesign of the Fleet Map: components/map/geo_map.js (reworked OpenLayers world map), inspector.js (a single contextual right-pane card for whatever is selected, replacing the current scatter of floating popups), asset_browser.js (a left-pane search + status + Building -> Floor -> Camera tree), floor_view.js (an in-workspace floor surface), and styles/map-workspace.css. None of these are imported anywhere yet -- App.js still lazy-loads the shipped map_page.js/fleet_map.js -- so this commit changes no shipped behavior; it is pure dead code preparing for a future three-pane workspace shell intended to eventually supersede the current map page.",
+  "compatibility": "No behavior, API, config, or schema change. No existing install is affected in any way; the new files are not reachable from the UI and ship inert until a follow-up change wires them into App.js and removes the old components."
+}

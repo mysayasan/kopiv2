@@ -64,7 +64,79 @@ function parseGrid(floor) {
   } catch (_) { return null; }
 }
 
-export default function Floor3D({ floors = [], activeIndex = 0, stacked = false, nodesById = {}, focusCameraId, nowSec, onPlay }) {
+// parseStairs reads the straight-flight stairs authored in the 2D editor. Independent of parseGrid
+// so a floor can carry stairs with no walls. Each entry is an image-space footprint + ascent dir.
+function parseStairs(floor) {
+  if (!floor || !floor.grid) return [];
+  try {
+    const g = typeof floor.grid === 'string' ? JSON.parse(floor.grid) : floor.grid;
+    return g && Array.isArray(g.stairs) ? g.stairs : [];
+  } catch (_) { return []; }
+}
+function parseDoors(floor) {
+  if (!floor || !floor.grid) return [];
+  try {
+    const g = typeof floor.grid === 'string' ? JSON.parse(floor.grid) : floor.grid;
+    return g && Array.isArray(g.doors) ? g.doors : [];
+  } catch (_) { return []; }
+}
+// doorSpanOnSeg mirrors the editor's version: the [t0,t1] opening a door cuts in wall segment s
+// (image space), or null. Kept in sync with floor_editor.js so 2D gaps and 3D gaps line up.
+function doorSpanOnSeg(s, d, tol) {
+  const vx = s.x2 - s.x1; const vy = s.y2 - s.y1; const len2 = vx * vx + vy * vy; if (len2 < 1e-6) return null;
+  const len = Math.sqrt(len2);
+  const t = ((d.cx - s.x1) * vx + (d.cy - s.y1) * vy) / len2;
+  const px = s.x1 + t * vx; const py = s.y1 + t * vy;
+  if (Math.hypot(d.cx - px, d.cy - py) > tol) return null;
+  let da = Math.abs((Math.atan2(vy, vx) - (d.a || 0)) % Math.PI); da = Math.min(da, Math.PI - da);
+  if (da > 0.35) return null;
+  const half = (d.w / 2) / len; const t0 = t - half; const t1 = t + half;
+  if (t1 <= 0 || t0 >= 1) return null;
+  return [Math.max(0, t0), Math.min(1, t1)];
+}
+// carveSpans → the wall pieces [t-intervals] that remain once door openings are removed, plus the
+// merged door intervals themselves (used to place a lintel over each opening).
+function carveSpans(s, doors, tol) {
+  const spans = [];
+  doors.forEach((d) => { const iv = doorSpanOnSeg(s, d, tol); if (iv) spans.push(iv); });
+  if (!spans.length) return { walls: [[0, 1]], doors: [] };
+  spans.sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  spans.forEach((sp) => { const last = merged[merged.length - 1]; if (!last || sp[0] > last[1]) merged.push([sp[0], sp[1]]); else last[1] = Math.max(last[1], sp[1]); });
+  const walls = []; let cursor = 0;
+  merged.forEach(([a, b]) => { if (a > cursor + 1e-4) walls.push([cursor, a]); cursor = Math.max(cursor, b); });
+  if (cursor < 1 - 1e-4) walls.push([cursor, 1]);
+  return { walls, doors: merged };
+}
+
+// Severity colours for the unread-notification badge, matching the 2D plan markers.
+const SEV_BADGE = { critical: '#ef4444', warning: '#f59e0b', info: '#2d6cdf' };
+const PULSE_MS = 1600;
+
+// badgeSprite draws the unread count on a canvas and returns it as a camera-facing sprite. Sprites
+// always billboard, so the number stays readable from any orbit angle; depthTest off keeps it
+// visible when the camera it belongs to is behind a wall.
+function badgeSprite(count, color) {
+  const size = 128;
+  const cv = document.createElement('canvas');
+  cv.width = size; cv.height = size;
+  const c2 = cv.getContext('2d');
+  c2.beginPath(); c2.arc(size / 2, size / 2, size * 0.4, 0, Math.PI * 2);
+  c2.fillStyle = color; c2.fill();
+  c2.lineWidth = size * 0.08; c2.strokeStyle = '#ffffff'; c2.stroke();
+  const label = count > 99 ? '99+' : String(count);
+  c2.fillStyle = '#ffffff';
+  c2.font = `bold ${label.length > 2 ? size * 0.34 : size * 0.46}px system-ui, sans-serif`;
+  c2.textAlign = 'center'; c2.textBaseline = 'middle';
+  c2.fillText(label, size / 2, size / 2 + size * 0.03);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false }));
+  sprite.renderOrder = 10;
+  return sprite;
+}
+
+export default function Floor3D({ floors = [], activeIndex = 0, stacked = false, nodesById = {}, notifByCam = {}, focusCameraId, nowSec, onPlay }) {
   const t = useT();
   const mountRef = useRef(null);
   const disposeRef = useRef(null);
@@ -76,9 +148,14 @@ export default function Floor3D({ floors = [], activeIndex = 0, stacked = false,
     const f = e.floor || {};
     return {
       id: f.id, w: f.width, h: f.height, s: f.scale, wh: f.wallHeight, el: f.elevation, g: f.grid,
-      p: (e.placements || []).map((p) => `${p.id}:${p.x},${p.y},${p.heading},${p.fov},${p.mountHeight || ''},${p.pitch || ''},${p.cameraId || ''}`),
+      // The unread count/severity is part of the signature: a new alert must rebuild the scene so
+      // the badge and its pulse appear (or clear) without waiting for some other input to change.
+      p: (e.placements || []).map((p) => {
+        const nt = p.cameraId ? notifByCam[`${p.nodeId}::${p.cameraId}`] : null;
+        return `${p.id}:${p.x},${p.y},${p.heading},${p.fov},${p.mountHeight || ''},${p.pitch || ''},${p.cameraId || ''},${nt ? `${nt.count}${nt.sev}` : ''}`;
+      }),
     };
-  })) + `|${activeIndex}|${stacked}|${focusCameraId}|${nowSec}`, [floors, activeIndex, stacked, focusCameraId, nowSec]);
+  })) + `|${activeIndex}|${stacked}|${focusCameraId}|${nowSec}`, [floors, activeIndex, stacked, focusCameraId, nowSec, notifByCam]);
 
   useEffect(() => {
     const host = mountRef.current;
@@ -120,6 +197,7 @@ export default function Floor3D({ floors = [], activeIndex = 0, stacked = false,
 
     const clickable = [];
     const disposables = [];
+    const pulses = []; // notification beacons animated in the render loop
     let pending = 0; // outstanding texture loads
 
     // buildFloor lays down one floor: slab + walls (grid or perimeter) + camera/node markers.
@@ -164,15 +242,24 @@ export default function Floor3D({ floors = [], activeIndex = 0, stacked = false,
       // frame as the texture (image top at -Z) and placement markers, so walls line up with both.
       if (grid && Array.isArray(grid.segments) && grid.segments.length) {
         const thick = Math.max(0.08, (grid.unit || 20) * mpp * 0.4);
-        grid.segments.forEach((s) => {
-          const ax = (s.x1 / w - 0.5) * fw; const az = (s.y1 / h - 0.5) * fh;
-          const bx = (s.x2 / w - 0.5) * fw; const bz = (s.y2 / h - 0.5) * fh;
+        const doors = parseDoors(f);
+        const doorTol = (grid.unit || 20) * 0.6;
+        const doorH = Math.min(2.1, wallH * 0.85); // metres of clear opening under the lintel
+        // Build one wall box spanning parameters [t0,t1] of segment s, at the given height/offset.
+        const addPiece = (s, t0, t1, height, yOff) => {
+          const ax = ((s.x1 + (s.x2 - s.x1) * t0) / w - 0.5) * fw; const az = ((s.y1 + (s.y2 - s.y1) * t0) / h - 0.5) * fh;
+          const bx = ((s.x1 + (s.x2 - s.x1) * t1) / w - 0.5) * fw; const bz = ((s.y1 + (s.y2 - s.y1) * t1) / h - 0.5) * fh;
           const dx = bx - ax; const dz = bz - az; const len = Math.hypot(dx, dz);
           if (len < 1e-4) return;
-          const mesh = new THREE.Mesh(new THREE.BoxGeometry(len + thick, wallH, thick), wallMat);
-          mesh.position.set((ax + bx) / 2, baseY + wallH / 2, (az + bz) / 2);
+          const mesh = new THREE.Mesh(new THREE.BoxGeometry(len + thick, height, thick), wallMat);
+          mesh.position.set((ax + bx) / 2, baseY + yOff + height / 2, (az + bz) / 2);
           mesh.rotation.y = Math.atan2(-dz, dx);
           scene.add(mesh);
+        };
+        grid.segments.forEach((s) => {
+          const { walls, doors: openings } = carveSpans(s, doors, doorTol);
+          walls.forEach(([t0, t1]) => addPiece(s, t0, t1, wallH, 0)); // full-height wall between doors
+          openings.forEach(([t0, t1]) => { if (wallH - doorH > 0.02) addPiece(s, t0, t1, wallH - doorH, doorH); }); // lintel above the opening
         });
       } else if (grid && Array.isArray(grid.walls) && grid.walls.length) {
         // Legacy painted-cell grid: extrude each cell into a box (instanced).
@@ -186,14 +273,41 @@ export default function Floor3D({ floors = [], activeIndex = 0, stacked = false,
         });
         inst.instanceMatrix.needsUpdate = true;
         scene.add(inst);
-      } else {
-        // No grid authored: a perimeter box so the slab reads as a room.
-        const th = span * 0.01;
-        const mkWall = (bw, bh, bd, x, z) => { const mesh = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), wallMat); mesh.position.set(x, baseY + bh / 2, z); scene.add(mesh); };
-        mkWall(fw, wallH, th, 0, -fh / 2);
-        mkWall(fw, wallH, th, 0, fh / 2);
-        mkWall(th, wallH, fh, -fw / 2, 0);
-        mkWall(th, wallH, fh, fw / 2, 0);
+      }
+      // No fallback perimeter: a floor shows exactly the walls that were drawn. An outer wall is
+      // something the operator authors, not something the viewer invents.
+
+      // Straight-flight stairs: a solid run of rising steps filling the footprint from the slab up
+      // to storey height, climbing in the authored ascent direction. Same image→world frame as the
+      // walls, so they sit correctly over the plan and under any camera placed above them.
+      const stairs = parseStairs(f);
+      if (stairs.length) {
+        const stairMat = new THREE.MeshLambertMaterial({ color: dark ? 0x64748b : 0x94a3b8, transparent: dim, opacity: dim ? 0.35 : 1, side: THREE.DoubleSide });
+        disposables.push(stairMat);
+        stairs.forEach((s) => {
+          const wx1 = (Math.min(s.x1, s.x2) / w - 0.5) * fw; const wx2 = (Math.max(s.x1, s.x2) / w - 0.5) * fw;
+          const wz1 = (Math.min(s.y1, s.y2) / h - 0.5) * fh; const wz2 = (Math.max(s.y1, s.y2) / h - 0.5) * fh;
+          const dx = wx2 - wx1; const dz = wz2 - wz1;
+          if (dx < 1e-3 || dz < 1e-3) return;
+          const dir = s.dir || 'n';
+          const vertical = dir === 'n' || dir === 's'; // ascent runs along z (image y)
+          const N = Math.max(3, Math.min(30, Math.round(wallH / 0.18)));
+          const stepH = wallH / N;
+          for (let k = 0; k < N; k++) {
+            const topH = stepH * (k + 1); // each tread stacks a little taller toward the top of the run
+            let bw; let bd; let cx; let cz;
+            if (vertical) {
+              bw = dx; bd = dz / N; cx = (wx1 + wx2) / 2;
+              cz = dir === 'n' ? wz2 - (k + 0.5) * bd : wz1 + (k + 0.5) * bd;
+            } else {
+              bd = dz; bw = dx / N; cz = (wz1 + wz2) / 2;
+              cx = dir === 'w' ? wx2 - (k + 0.5) * bw : wx1 + (k + 0.5) * bw;
+            }
+            const box = new THREE.Mesh(new THREE.BoxGeometry(bw, topH, bd), stairMat);
+            box.position.set(cx, baseY + topH / 2, cz);
+            scene.add(box);
+          }
+        });
       }
 
       // Markers.
@@ -231,6 +345,32 @@ export default function Floor3D({ floors = [], activeIndex = 0, stacked = false,
           new THREE.LineBasicMaterial({ color, transparent: true, opacity: dim ? 0.25 : 0.5 }),
         );
         scene.add(line);
+
+        // A camera with unread notifications gets the same treatment as on the 2D plan: a count
+        // badge, plus a pulse on the floor beneath it so it catches the eye while orbiting.
+        const notif = isCam ? notifByCam[`${p.nodeId}::${p.cameraId}`] : null;
+        if (notif && notif.count > 0) {
+          const sevColor = SEV_BADGE[notif.sev] || SEV_BADGE.info;
+          // The badge shows on every floor — an alert one storey down should not be invisible in
+          // the stacked view — but only the floor you are looking at pulses, to bound the motion.
+          const badge = badgeSprite(notif.count, sevColor);
+          const bs = markerR * 2.4;
+          badge.scale.set(bs, bs, 1);
+          badge.position.copy(apex).setY(apex.y + markerR * 2.2);
+          scene.add(badge);
+          if (!dim) {
+            // Two offset waves, so one is always mid-flight — matches the map marker's beacon.
+            const maxR = Math.max(markerR * 4, span * 0.05);
+            [0, 0.5].forEach((offset) => {
+              const ringMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(sevColor), transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false });
+              const ring = new THREE.Mesh(new THREE.RingGeometry(0.86, 1, 40), ringMat);
+              ring.rotation.x = -Math.PI / 2;
+              ring.position.set(base.x, baseY + 0.03, base.z);
+              scene.add(ring);
+              pulses.push({ mesh: ring, mat: ringMat, maxR, offset });
+            });
+          }
+        }
       });
     };
 
@@ -291,7 +431,19 @@ export default function Floor3D({ floors = [], activeIndex = 0, stacked = false,
     renderer.domElement.addEventListener('pointerleave', () => setHover(null));
 
     let raf = 0;
-    const tick = () => { controls.update(); renderer.render(scene, camera); raf = requestAnimationFrame(tick); };
+    const tick = () => {
+      controls.update();
+      if (pulses.length) {
+        const now = typeof performance !== 'undefined' ? performance.now() : 0;
+        pulses.forEach((pl) => {
+          const ph = ((now / PULSE_MS) + pl.offset) % 1;
+          pl.mesh.scale.setScalar(Math.max(0.001, pl.maxR * (0.25 + 0.75 * ph)));
+          pl.mat.opacity = 0.5 * (1 - ph);
+        });
+      }
+      renderer.render(scene, camera);
+      raf = requestAnimationFrame(tick);
+    };
     tick();
 
     disposeRef.current = () => {
@@ -302,7 +454,9 @@ export default function Floor3D({ floors = [], activeIndex = 0, stacked = false,
       renderer.domElement.removeEventListener('pointermove', onMove);
       controls.dispose();
       scene.traverse((o) => {
-        if (o.geometry) o.geometry.dispose();
+        // Sprites share ONE module-level geometry inside three.js — disposing it here would pull it
+        // out from under every sprite created afterwards, so only their material/texture is freed.
+        if (o.geometry && !o.isSprite) o.geometry.dispose();
         if (o.material) { const mats = Array.isArray(o.material) ? o.material : [o.material]; mats.forEach((mm) => { if (mm.map) mm.map.dispose(); mm.dispose(); }); }
       });
       disposables.forEach((d) => d.dispose && d.dispose());
@@ -327,6 +481,7 @@ Floor3D.propTypes = {
   activeIndex: PropTypes.number,
   stacked: PropTypes.bool,
   nodesById: PropTypes.object,
+  notifByCam: PropTypes.object, // "nodeId::cameraId" -> { count, sev }
   focusCameraId: PropTypes.any,
   nowSec: PropTypes.number,
   onPlay: PropTypes.func,
