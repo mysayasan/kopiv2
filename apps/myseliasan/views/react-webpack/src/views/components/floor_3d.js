@@ -109,7 +109,34 @@ function carveSpans(s, doors, tol) {
   return { walls, doors: merged };
 }
 
-export default function Floor3D({ floors = [], activeIndex = 0, stacked = false, nodesById = {}, focusCameraId, nowSec, onPlay }) {
+// Severity colours for the unread-notification badge, matching the 2D plan markers.
+const SEV_BADGE = { critical: '#ef4444', warning: '#f59e0b', info: '#2d6cdf' };
+const PULSE_MS = 1600;
+
+// badgeSprite draws the unread count on a canvas and returns it as a camera-facing sprite. Sprites
+// always billboard, so the number stays readable from any orbit angle; depthTest off keeps it
+// visible when the camera it belongs to is behind a wall.
+function badgeSprite(count, color) {
+  const size = 128;
+  const cv = document.createElement('canvas');
+  cv.width = size; cv.height = size;
+  const c2 = cv.getContext('2d');
+  c2.beginPath(); c2.arc(size / 2, size / 2, size * 0.4, 0, Math.PI * 2);
+  c2.fillStyle = color; c2.fill();
+  c2.lineWidth = size * 0.08; c2.strokeStyle = '#ffffff'; c2.stroke();
+  const label = count > 99 ? '99+' : String(count);
+  c2.fillStyle = '#ffffff';
+  c2.font = `bold ${label.length > 2 ? size * 0.34 : size * 0.46}px system-ui, sans-serif`;
+  c2.textAlign = 'center'; c2.textBaseline = 'middle';
+  c2.fillText(label, size / 2, size / 2 + size * 0.03);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false }));
+  sprite.renderOrder = 10;
+  return sprite;
+}
+
+export default function Floor3D({ floors = [], activeIndex = 0, stacked = false, nodesById = {}, notifByCam = {}, focusCameraId, nowSec, onPlay }) {
   const t = useT();
   const mountRef = useRef(null);
   const disposeRef = useRef(null);
@@ -121,9 +148,14 @@ export default function Floor3D({ floors = [], activeIndex = 0, stacked = false,
     const f = e.floor || {};
     return {
       id: f.id, w: f.width, h: f.height, s: f.scale, wh: f.wallHeight, el: f.elevation, g: f.grid,
-      p: (e.placements || []).map((p) => `${p.id}:${p.x},${p.y},${p.heading},${p.fov},${p.mountHeight || ''},${p.pitch || ''},${p.cameraId || ''}`),
+      // The unread count/severity is part of the signature: a new alert must rebuild the scene so
+      // the badge and its pulse appear (or clear) without waiting for some other input to change.
+      p: (e.placements || []).map((p) => {
+        const nt = p.cameraId ? notifByCam[`${p.nodeId}::${p.cameraId}`] : null;
+        return `${p.id}:${p.x},${p.y},${p.heading},${p.fov},${p.mountHeight || ''},${p.pitch || ''},${p.cameraId || ''},${nt ? `${nt.count}${nt.sev}` : ''}`;
+      }),
     };
-  })) + `|${activeIndex}|${stacked}|${focusCameraId}|${nowSec}`, [floors, activeIndex, stacked, focusCameraId, nowSec]);
+  })) + `|${activeIndex}|${stacked}|${focusCameraId}|${nowSec}`, [floors, activeIndex, stacked, focusCameraId, nowSec, notifByCam]);
 
   useEffect(() => {
     const host = mountRef.current;
@@ -165,6 +197,7 @@ export default function Floor3D({ floors = [], activeIndex = 0, stacked = false,
 
     const clickable = [];
     const disposables = [];
+    const pulses = []; // notification beacons animated in the render loop
     let pending = 0; // outstanding texture loads
 
     // buildFloor lays down one floor: slab + walls (grid or perimeter) + camera/node markers.
@@ -240,15 +273,9 @@ export default function Floor3D({ floors = [], activeIndex = 0, stacked = false,
         });
         inst.instanceMatrix.needsUpdate = true;
         scene.add(inst);
-      } else {
-        // No grid authored: a perimeter box so the slab reads as a room.
-        const th = span * 0.01;
-        const mkWall = (bw, bh, bd, x, z) => { const mesh = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), wallMat); mesh.position.set(x, baseY + bh / 2, z); scene.add(mesh); };
-        mkWall(fw, wallH, th, 0, -fh / 2);
-        mkWall(fw, wallH, th, 0, fh / 2);
-        mkWall(th, wallH, fh, -fw / 2, 0);
-        mkWall(th, wallH, fh, fw / 2, 0);
       }
+      // No fallback perimeter: a floor shows exactly the walls that were drawn. An outer wall is
+      // something the operator authors, not something the viewer invents.
 
       // Straight-flight stairs: a solid run of rising steps filling the footprint from the slab up
       // to storey height, climbing in the authored ascent direction. Same image→world frame as the
@@ -318,6 +345,32 @@ export default function Floor3D({ floors = [], activeIndex = 0, stacked = false,
           new THREE.LineBasicMaterial({ color, transparent: true, opacity: dim ? 0.25 : 0.5 }),
         );
         scene.add(line);
+
+        // A camera with unread notifications gets the same treatment as on the 2D plan: a count
+        // badge, plus a pulse on the floor beneath it so it catches the eye while orbiting.
+        const notif = isCam ? notifByCam[`${p.nodeId}::${p.cameraId}`] : null;
+        if (notif && notif.count > 0) {
+          const sevColor = SEV_BADGE[notif.sev] || SEV_BADGE.info;
+          // The badge shows on every floor — an alert one storey down should not be invisible in
+          // the stacked view — but only the floor you are looking at pulses, to bound the motion.
+          const badge = badgeSprite(notif.count, sevColor);
+          const bs = markerR * 2.4;
+          badge.scale.set(bs, bs, 1);
+          badge.position.copy(apex).setY(apex.y + markerR * 2.2);
+          scene.add(badge);
+          if (!dim) {
+            // Two offset waves, so one is always mid-flight — matches the map marker's beacon.
+            const maxR = Math.max(markerR * 4, span * 0.05);
+            [0, 0.5].forEach((offset) => {
+              const ringMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(sevColor), transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false });
+              const ring = new THREE.Mesh(new THREE.RingGeometry(0.86, 1, 40), ringMat);
+              ring.rotation.x = -Math.PI / 2;
+              ring.position.set(base.x, baseY + 0.03, base.z);
+              scene.add(ring);
+              pulses.push({ mesh: ring, mat: ringMat, maxR, offset });
+            });
+          }
+        }
       });
     };
 
@@ -378,7 +431,19 @@ export default function Floor3D({ floors = [], activeIndex = 0, stacked = false,
     renderer.domElement.addEventListener('pointerleave', () => setHover(null));
 
     let raf = 0;
-    const tick = () => { controls.update(); renderer.render(scene, camera); raf = requestAnimationFrame(tick); };
+    const tick = () => {
+      controls.update();
+      if (pulses.length) {
+        const now = typeof performance !== 'undefined' ? performance.now() : 0;
+        pulses.forEach((pl) => {
+          const ph = ((now / PULSE_MS) + pl.offset) % 1;
+          pl.mesh.scale.setScalar(Math.max(0.001, pl.maxR * (0.25 + 0.75 * ph)));
+          pl.mat.opacity = 0.5 * (1 - ph);
+        });
+      }
+      renderer.render(scene, camera);
+      raf = requestAnimationFrame(tick);
+    };
     tick();
 
     disposeRef.current = () => {
@@ -389,7 +454,9 @@ export default function Floor3D({ floors = [], activeIndex = 0, stacked = false,
       renderer.domElement.removeEventListener('pointermove', onMove);
       controls.dispose();
       scene.traverse((o) => {
-        if (o.geometry) o.geometry.dispose();
+        // Sprites share ONE module-level geometry inside three.js — disposing it here would pull it
+        // out from under every sprite created afterwards, so only their material/texture is freed.
+        if (o.geometry && !o.isSprite) o.geometry.dispose();
         if (o.material) { const mats = Array.isArray(o.material) ? o.material : [o.material]; mats.forEach((mm) => { if (mm.map) mm.map.dispose(); mm.dispose(); }); }
       });
       disposables.forEach((d) => d.dispose && d.dispose());
@@ -414,6 +481,7 @@ Floor3D.propTypes = {
   activeIndex: PropTypes.number,
   stacked: PropTypes.bool,
   nodesById: PropTypes.object,
+  notifByCam: PropTypes.object, // "nodeId::cameraId" -> { count, sev }
   focusCameraId: PropTypes.any,
   nowSec: PropTypes.number,
   onPlay: PropTypes.func,

@@ -133,9 +133,17 @@ created, positioned and authored entirely from it:
   (`heading`/`fov` in degrees, dragged into aim via on-marker handles) drawn as a translucent
   wedge on the plan, so an operator can see at a glance which part of a room a camera actually
   watches; in the **3D view** the same placement's `mountHeight`/`pitch` stand its coverage as a
-  cone over the extruded walls. A floor's authored **stairs** and **doors** (see "Authoring a
-  building" above) round-trip alongside the wall segments in `FloorPlan.Grid` and extrude the same
-  way in every 3D view, not just the editor's own. Clicking a building marker on the geographic view shows
+  cone over the extruded walls. The 3D view renders **only the walls the operator drew** — a floor
+  with no authored `segments[]` extrudes as a bare slab, never an invented perimeter box, since an
+  outer wall is something authored, not assumed. A floor's authored **stairs** and **doors** (see
+  "Authoring a building" above) round-trip alongside the wall segments in `FloorPlan.Grid` and
+  extrude the same way in every 3D view, not just the editor's own. A camera marker with unread
+  notifications carries a severity-coloured count badge in **both** the 2D plan and the 3D view
+  (`GET /api/notifications/tally?unread=true`, same per-camera attribution as the building marker's
+  own badge); the 3D view additionally pulses a beacon on the floor beneath that camera — the same
+  two-wave animation as the geographic view's building beacon — shown on every stacked floor but
+  only animated on the active/non-dimmed one, so an alert a storey down stays visible without
+  piling up motion. Clicking a building marker on the geographic view shows
   `BuildingFloorView` — every floor's placements from **every owning node**, each marker/wedge
   coloured by *its own* node's status and streaming live over *that* node's tunnel, with its own
   2D/3D toggle (three.js code-split in, only loaded when 3D is opened) and, for a multi-floor
