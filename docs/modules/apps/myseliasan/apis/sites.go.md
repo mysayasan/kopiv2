@@ -30,6 +30,7 @@ All routes require a myseliasan session (`auth.Middleware` + `session.Middleware
 | DELETE | `/api/floors/{id}` | Delete a floor plan: removes its placements first (so no orphaned pins survive), then its encrypted image file(s) (rendered + background, if any), then the row. |
 | GET | `/api/floors/{id}/image` | The **decrypted, rendered** plan image (background + any drawn shapes composited). Cookie-authed like every other route (so a plain `<img src="/api/floors/{id}/image">` works — same-origin, CSP `img-src 'self'` — while a link without a session does not). Sets `Cache-Control: private, max-age=300` and `X-Content-Type-Options: nosniff`. |
 | POST | `/api/floors/{id}/image` | **Replace** an existing floor's image + design — used when the operator uploads a real plan (scan/CAD export) over a blank area's generated canvas, or re-saves a drawn/annotated plan. Same multipart shape as the upload above (`file`, optional `name`, optional `design`). Returns `404` on an unknown floor, `400` on an unreadable/disallowed image. |
+| DELETE | `/api/floors/{id}/image` | **Clear** the plan picture, restoring the blank canvas the area started as (`services.ClearFloorImage`) — the inverse of the upload/replace routes above, and the only way to un-upload a plan short of `DELETE /api/floors/{id}` itself. The 3D model (`Grid`/`Scale`/`WallHeight`/`Elevation`) and every camera placement survive; only the picture, `Design`, and the pristine background are cleared. The building editor's **Remove plan** button calls this. Returns `404` on an unknown floor. |
 | GET | `/api/floors/{id}/background` | The **decrypted, pristine background** image (the original uploaded photo, before any in-app drawing) — what the floor editor loads as its canvas background so re-editing never draws on an already-composited render. `404` when the plan has no background (a generated blank area, or one drawn from scratch). `Cache-Control: no-store` (unlike `/image`, this is only fetched while actively editing). |
 | GET | `/api/floors/{id}/placements` | List a floor's node/camera markers. |
 | POST | `/api/floors/{id}/placements` | Add a marker. Body: `{nodeId, cameraId, lastKnownName, x, y}`. `nodeId` is required; `cameraId` empty means the marker represents the node itself. A camera marker (non-empty `cameraId`) gets a default `70`° coverage arc on drop; a node/sensor marker gets none. Returns 400 on an unknown floor or missing `nodeId`. |
@@ -51,24 +52,33 @@ All routes require a myseliasan session (`auth.Middleware` + `session.Middleware
   **generated blank canvas** (`POST /api/sites/{id}/areas` — the building wizard's "areas" step
   and the building editor's "add an area" button both go through this, never the old
   client-rasterised-PNG-then-upload path). Either way the walls/rooms are then **drawn** in-app
-  over it (the `floor_editor.js` canvas: Select/Wall/Room/Erase tools, grid-lock, undo/redo,
-  multi-select, rotate/flip, zoom/pan — one surface with a 2D⇄3D toggle, replacing the old
-  standalone `floor_designer.js`/`indoor_map.js` pair). A drawn plan's vector shapes round-trip
+  over it (the `floor_editor.js` canvas: Select/Wall/Room/Round/Door/Stairs/Erase tools, grid-lock,
+  undo/redo, multi-select, rotate/flip, zoom/pan — one surface with a 2D⇄3D toggle, replacing the
+  old standalone `floor_designer.js`/`indoor_map.js` pair). A drawn plan's vector shapes round-trip
   through `design` on upload/replace so it can be reopened and re-edited, not just re-rendered as
   a flat image; an uploaded photo can also be annotated later, at which point its original is
-  preserved as the background (see `services/sites.go.md`'s `ReplaceFloorImage`). Separately, the
-  wall/room layout an operator paints (not the image) round-trips through `Grid`/`Scale`/
-  `WallHeight`/`Elevation` via `PUT /api/floors/{id}/model` — this is what the 3D tab extrudes.
+  preserved as the background (see `services/sites.go.md`'s `ReplaceFloorImage`), and
+  `DELETE /api/floors/{id}/image` (**Remove plan** in the building editor) clears the picture back
+  to a blank canvas without touching the walls/placements underneath (`ClearFloorImage`).
+  Separately, the wall/room layout an operator paints (not the image) round-trips through
+  `Grid`/`Scale`/`WallHeight`/`Elevation` via `PUT /api/floors/{id}/model` — this is what the 3D
+  tab extrudes; `Grid` additionally carries `stairs[]`/`doors[]` (straight-flight stairs and wall
+  openings, both authored in the same 2D canvas and extruded in 3D) alongside the wall
+  `segments[]`.
 - Camera markers on a floor render a **coverage wedge** (SVG/canvas arc, `Heading`/`Fov` on
   `NodePlacement`) in both the editor (`building_editor_dialog.js`'s `FloorEditor`, i.e.
   `floor_editor.js`) and the read-only plan viewer (`node_floor_view.js`'s `BuildingFloorView`),
   so an operator can see at a glance which part of a room a camera actually watches, not just
   where it is mounted. The same placement additionally carries `MountHeight`/`Pitch` for the 3D
   view's coverage cone (see `entities/node_placement.go.md`).
-- **Digital-twin buildings**: a `Site` doubles as the geo-map's building marker (its own
-  `Lat`/`Lon`/`MapPlaced` + `Icon`), and `ManagedNode` separately carries a `SiteId` — the building
-  the *appliance itself* resides in, set via `PUT /api/nodes/{id}/building` (`apis/nodes.go.md`).
-  A node assigned to a building is drawn as part of that building's marker, not its own pin
-  (`UpdateNodeSite` clears `MapPlaced`); a node's *cameras* are separately anchored by their
-  floor-plan placements, which is what makes the building — not the node — the map's true anchor
-  for "where is this camera". See `entities/managed_node.go.md`.
+- **Digital-twin buildings — the map is buildings-only**: a `Site` doubles as the geo-map's
+  building marker (its own `Lat`/`Lon`/`MapPlaced` + `Icon`), and `ManagedNode` separately carries
+  a `SiteId` — the building the *appliance itself* resides in, set via
+  `PUT /api/nodes/{id}/building` (`apis/nodes.go.md`). The frontend (`fleet_map.js`) never draws a
+  node its own pin, assigned or not — a node with no `SiteId` yet is listed in the rail's
+  "Appliances" section to be assigned rather than placed standalone on the map (the old
+  building-less node pin, drag-to-place, and Nodes-layer toggle are gone); a node's *cameras* are
+  separately anchored by their floor-plan placements, which is what makes the building — not the
+  node — the map's true anchor for "where is this camera". `ManagedNode.Lat`/`Lon`/`MapPlaced` and
+  `PUT /api/nodes/{id}/position` still exist at the API layer (unchanged) but are no longer driven
+  by any reachable UI action. See `entities/managed_node.go.md`.

@@ -363,18 +363,53 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
 .grid-canvas.tool-select.placing { cursor: crosshair; }
 
 /* Embedded single floor editor: one surface, 2D draw + camera placement ⇄ 3D preview. */
-.floor-editor { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; border: 1px solid var(--border-panel); border-radius: 10px; overflow: hidden; background: var(--bg-surface); }
-.floor-editor-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 10px; border-bottom: 1px solid var(--border-subtle); background: var(--bg-subtle); }
+/* The editor surface: the canvas fills the stage, the properties inspector docks on the right, and
+   the tool palette floats on top (MS-Paint style) and can be dragged around. */
+.floor-editor { position: relative; flex: 1 1 auto; min-height: 0; min-width: 0; border: 1px solid var(--border-panel); border-radius: 10px; overflow: hidden; background: #e9edf2; }
+.floor-editor-main { position: absolute; inset: 0; display: flex; }
+.floor-editor-stage { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; }
 .floor-editor-modes { display: inline-flex; border: 1px solid var(--border-panel); border-radius: 7px; overflow: hidden; }
-.floor-editor-modes button { display: inline-flex; align-items: center; gap: 6px; border: 0; background: var(--bg-surface); color: var(--text-secondary); font: inherit; font-size: 0.8rem; padding: 6px 12px; cursor: pointer; }
+.floor-editor-modes button { flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 0; background: var(--bg-surface); color: var(--text-secondary); font: inherit; font-size: 0.8rem; padding: 6px 10px; cursor: pointer; }
 .floor-editor-modes button + button { border-left: 1px solid var(--border-panel); }
 .floor-editor-modes button:hover { color: var(--accent); }
 .floor-editor-modes button.active { background: var(--accent); color: #fff; }
-.floor-editor-tools { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.floor-editor-body { display: flex; flex: 1 1 auto; min-height: 0; }
-.floor-editor-canvas-wrap { flex: 1 1 auto; min-width: 0; display: flex; align-items: flex-start; justify-content: center; overflow: auto; background: #e9edf2; padding: 12px; }
-.floor-editor-body .grid-editor-side { flex: 0 0 224px; padding: 12px; border-left: 1px solid var(--border-subtle); overflow: auto; }
-.floor-editor-body .grid-3d-wrap { flex: 1 1 auto; align-self: stretch; min-height: 0; border-radius: 0; }
+/* Block + text-align:center (not flex centering) so a zoomed-in canvas that overflows can still be
+   scrolled all the way to its top/left edge — centered flex items clip their overflowing start. */
+.floor-editor-canvas-wrap { position: absolute; inset: 0; overflow: auto; background: #e9edf2; padding: 12px; text-align: center; }
+.floor-editor-canvas-wrap .grid-canvas { display: inline-block; vertical-align: top; }
+.floor-editor-stage .grid-3d-wrap { position: absolute; inset: 0; min-height: 0; border-radius: 0; }
+
+/* Dock zones flanking the stage; panels stack vertically inside. */
+.fe-dock { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 8px; overflow: auto; background: var(--bg-subtle); }
+.fe-dock-left { border-right: 1px solid var(--border-subtle); }
+.fe-dock-right { border-left: 1px solid var(--border-subtle); }
+
+/* A dockable panel is a bordered card; floating adds absolute position + shadow. */
+.fe-panel { background: var(--bg-surface); border: 1px solid var(--border-panel); border-radius: 10px; }
+.fe-panel.fe-float { position: absolute; z-index: 6; box-shadow: 0 10px 30px rgba(15, 23, 33, 0.22); }
+.fe-panel.fe-float.fe-toolbar { max-height: calc(100% - 24px); overflow-y: auto; }
+.fe-panel.fe-float.fe-inspector { max-height: calc(100% - 24px); overflow: auto; }
+/* Vertical tool palette laid out as a 2-column grid, so every button is the same square and the
+   undo/redo and zoom-out/in pairs each sit as a symmetrical row of two. */
+.fe-toolbar { display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 6px; width: 80px; }
+.fe-toolbar .fe-grip { width: auto; height: 16px; cursor: move; }
+.fe-toolbar .floor-editor-modes { flex-direction: row; }
+.fe-toolbar .floor-editor-modes button { padding: 6px 0; }
+.fe-toolbar .floor-editor-modes button + button { border-left: 1px solid var(--border-panel); border-top: 0; }
+.fe-toolbar .grid-tool-group { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; border: 0; border-radius: 0; padding: 0; overflow: visible; }
+.fe-toolbar .grid-tool-group button { width: auto; height: 34px; padding: 0; justify-content: center; border: 1px solid var(--border-soft); border-radius: 7px; }
+.fe-toolbar .grid-tool-group button + button { border-left: 1px solid var(--border-soft); }
+.fe-toolbar .grid-tool-group button.active { border-color: var(--accent); }
+.fe-toolbar > .fd-tool { width: 100%; height: 34px; padding: 0; justify-content: center; }
+.fe-toolbar-row { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.fe-toolbar-row .fd-tool { width: auto; height: 34px; padding: 0; justify-content: center; }
+.fe-toolbar .fd-toolbar-sep { width: auto; height: 1px; margin: 3px 2px; align-self: stretch; }
+.fe-inspector { width: 246px; max-width: calc(100% - 24px); padding: 8px 10px 10px; }
+.fe-grip { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 26px; border: 0; border-radius: 6px; background: var(--bg-subtle); color: var(--text-faint); cursor: move; touch-action: none; flex: 0 0 auto; }
+.fe-grip:hover { color: var(--accent); }
+.fe-float-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.fe-float-hint { font-size: 0.74rem; color: var(--text-muted); line-height: 1.25; }
+.fe-zoom-readout { min-width: 40px; justify-content: center; font-size: 0.72rem; }
 .fed-inspector { display: flex; flex-direction: column; gap: 12px; }
 .fed-inspector-title { display: inline-flex; align-items: center; gap: 7px; font-weight: 650; color: var(--text-primary); font-size: 0.85rem; }
 .fed-inspector .grid-field { flex-direction: row; align-items: center; gap: 8px; }
@@ -712,5 +747,19 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
 .fleet-map-rail-siterow .fleet-map-rail-node { flex: 1 1 auto; min-width: 0; }
 .rail-edit-btn { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex: 0 0 auto; border: 0; border-radius: 6px; background: transparent; color: var(--text-faint); cursor: pointer; }
 .rail-edit-btn:hover { background: var(--bg-subtle2); color: var(--accent); }
+/* Building-centric rail: a building row, an expand caret, and the appliances nested under it. */
+.fleet-map-rail-bldgwrap { list-style: none; }
+.rail-expand { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 24px; border: 0; background: transparent; color: var(--text-faint); cursor: pointer; }
+.rail-expand:hover { color: var(--accent); }
+.rail-expand-spacer { flex: 0 0 auto; width: 18px; }
+.fleet-map-rail-node .rail-count { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 2px; font-size: 0.72rem; color: var(--text-muted); }
+.rail-toplace { flex: 0 0 auto; display: inline-flex; align-items: center; color: var(--text-faint); }
+.fleet-map-rail-sublist { list-style: none; margin: 0 0 2px 26px; padding: 0; border-left: 1px solid var(--border-subtle); }
+.rail-subfloor { list-style: none; }
+.rail-subfloor.muted { padding: 4px 10px; font-size: 0.78rem; color: var(--text-faint); }
+.rail-floor-btn { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 0.8rem; cursor: pointer; text-align: left; }
+.rail-floor-btn:hover { background: var(--bg-subtle2); color: var(--accent); }
+.rail-floor-btn .rail-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-floor-btn svg { flex: 0 0 auto; color: var(--text-faint); }
 /* Hand-off from the read-only drill-down into the editor. */
 .floor-view-edit { flex: 0 0 auto; }
