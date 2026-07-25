@@ -63,6 +63,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-25 — myseliasan 1.40.0 (0b227d5)
+
+### Added
+
+- **myseliasan**: The Fleet Map's digital twin is no longer buildings-only: a Site now carries a Kind (building / outdoor / point), so an operator can add an outdoor area (a park, yard, car park -- one open ground surface, no storey stacking) or a point asset (a junction, pole, gate, barrier -- no floor plan at all, its cameras reached only through the appliance(s) assigned to it) alongside a regular building, each drawn with its own marker silhouette (disc/square/diamond) and glyph palette on the geographic map. The asset wizard (asset_wizard.js, replacing the old building-only building_wizard.js) leads with 'what is being added' before anything else. Node/camera placement is now exclusive: a camera (or a node's own marker) can hold at most one pin fleet-wide -- a second POST to place an already-placed camera is refused with 409 and a message naming the site/area it currently sits in (a new GET /api/placements fleet-wide index backs the floor editor's palette so it can grey out an already-placed camera up front). The floor editor (floor_editor.js) gained a finer snap grid, a multi-select transform gizmo (move/resize/rotate, oriented to a single selected object), copy/cut/paste of geometry (camera markers excluded -- they cannot be duplicated), a Window tool, per-kind tool sets (Gate/Parking for an outdoor area), a raised-floor (Platform) tool with an adjustable rise that stairs can lock onto as their base, richer stairs (step count, own climb height, up/down direction), mirrorable door hinge/swing, on-canvas camera POV drag handles, and a delete-asset button. The 3D view extrudes windows as glazing, raised floors as carved slabs, stairs resting on their platform, and a down flight carving a stairwell opening into the floor above. The read-only 2D building drill-down now renders this same authored geometry (walls/stairs/platforms/etc.) as a vector overlay over the plan image, so a floor with drawn walls no longer looks empty outside the 3D tab. Building navigation from the rail now opens the specific area that was clicked rather than always the first one.
 ## 2026-07-24 — myseliasan 1.39.0 (c803f69)
 
 ### Changed
