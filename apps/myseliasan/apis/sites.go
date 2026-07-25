@@ -1,6 +1,7 @@
 package apis
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -80,6 +81,10 @@ func NewSitesApi(router *mux.Router, auth middlewares.AuthMidware, session *midd
 	pg := router.PathPrefix("/placements").Subrouter()
 	pg.Use(auth.Middleware)
 	pg.Use(session.Middleware)
+	// Fleet-wide "what is placed, and where" — placement is exclusive, so the palette needs to know
+	// about pins in OTHER buildings, not just the floor being edited. Literal path, registered
+	// before the "/{id}" var routes it must not be captured by.
+	pg.HandleFunc("", h.placementIndex).Methods("GET")
 	pg.HandleFunc("/{id}", h.movePlacement).Methods("PUT")
 	pg.HandleFunc("/{id}", h.deletePlacement).Methods("DELETE")
 
@@ -120,6 +125,8 @@ func (a *sitesApi) createSite(w http.ResponseWriter, r *http.Request) {
 		Name        string `json:"name"`
 		Description string `json:"description"`
 		Icon        string `json:"icon"`
+		// Kind is normalised by the service; an unknown or absent value becomes "building".
+		Kind string `json:"kind"`
 	}
 	if err := decodeJSON(w, r, &body); err != nil {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
@@ -129,7 +136,7 @@ func (a *sitesApi) createSite(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrBadRequest, "name is required")
 		return
 	}
-	site, err := a.sites.CreateSite(r.Context(), strings.TrimSpace(body.Name), strings.TrimSpace(body.Description), strings.TrimSpace(body.Icon), actorID(r))
+	site, err := a.sites.CreateSite(r.Context(), strings.TrimSpace(body.Name), strings.TrimSpace(body.Description), strings.TrimSpace(body.Icon), strings.TrimSpace(body.Kind), actorID(r))
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
@@ -147,13 +154,14 @@ func (a *sitesApi) updateSite(w http.ResponseWriter, r *http.Request) {
 		Name        string `json:"name"`
 		Description string `json:"description"`
 		Icon        string `json:"icon"`
+		Kind        string `json:"kind"`
 		Ordinal     int    `json:"ordinal"`
 	}
 	if err := decodeJSON(w, r, &body); err != nil {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
 		return
 	}
-	site, err := a.sites.UpdateSite(r.Context(), id, strings.TrimSpace(body.Name), strings.TrimSpace(body.Description), strings.TrimSpace(body.Icon), body.Ordinal, actorID(r))
+	site, err := a.sites.UpdateSite(r.Context(), id, strings.TrimSpace(body.Name), strings.TrimSpace(body.Description), strings.TrimSpace(body.Icon), strings.TrimSpace(body.Kind), body.Ordinal, actorID(r))
 	if err != nil {
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
@@ -578,10 +586,35 @@ func (a *sitesApi) addPlacement(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := a.sites.AddPlacement(r.Context(), floorID, strings.TrimSpace(body.NodeId), strings.TrimSpace(body.CameraId), strings.TrimSpace(body.LastKnownName), body.X, body.Y, actorID(r))
 	if err != nil {
+		// Placement is exclusive. Answer 409 with WHERE the camera already sits, so the client can
+		// tell the operator which building and area to unplace it from — a bare "conflict" would
+		// leave them hunting through every building.
+		var taken *services.ErrAlreadyPlaced
+		if errors.As(err, &taken) {
+			controllers.SendError(w, controllers.ErrConflict, taken.Error(), map[string]interface{}{
+				"reason":    "alreadyPlaced",
+				"siteId":    taken.SiteId(),
+				"siteName":  taken.SiteName(),
+				"floorId":   taken.FloorId(),
+				"floorName": taken.FloorName(),
+			})
+			return
+		}
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
 	}
 	controllers.SendResult(w, p, "succeed")
+}
+
+// placementIndex lists every placement in the fleet with the area and building it sits in — what
+// the editor palette needs to grey out cameras that are already placed elsewhere.
+func (a *sitesApi) placementIndex(w http.ResponseWriter, r *http.Request) {
+	rows, err := a.sites.PlacementIndex(r.Context())
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, rows, "succeed")
 }
 
 func (a *sitesApi) movePlacement(w http.ResponseWriter, r *http.Request) {

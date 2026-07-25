@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
 import * as THREE from 'three';
+import { sillOf, headOf, openingSpanOnSeg, remainingSpans, pointInRotatedRect, rectCorners } from './plan_geometry';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { useT } from '@shared';
 import { apiBase } from '../lib/helpers';
@@ -73,41 +74,20 @@ function parseStairs(floor) {
     return g && Array.isArray(g.stairs) ? g.stairs : [];
   } catch (_) { return []; }
 }
-function parseDoors(floor) {
+// parseList reads one of the additive model arrays (doors, windows, parking). A floor authored
+// before a given array existed simply has no such key, which reads as empty.
+function parseList(floor, key) {
   if (!floor || !floor.grid) return [];
   try {
     const g = typeof floor.grid === 'string' ? JSON.parse(floor.grid) : floor.grid;
-    return g && Array.isArray(g.doors) ? g.doors : [];
+    return g && Array.isArray(g[key]) ? g[key] : [];
   } catch (_) { return []; }
 }
-// doorSpanOnSeg mirrors the editor's version: the [t0,t1] opening a door cuts in wall segment s
-// (image space), or null. Kept in sync with floor_editor.js so 2D gaps and 3D gaps line up.
-function doorSpanOnSeg(s, d, tol) {
-  const vx = s.x2 - s.x1; const vy = s.y2 - s.y1; const len2 = vx * vx + vy * vy; if (len2 < 1e-6) return null;
-  const len = Math.sqrt(len2);
-  const t = ((d.cx - s.x1) * vx + (d.cy - s.y1) * vy) / len2;
-  const px = s.x1 + t * vx; const py = s.y1 + t * vy;
-  if (Math.hypot(d.cx - px, d.cy - py) > tol) return null;
-  let da = Math.abs((Math.atan2(vy, vx) - (d.a || 0)) % Math.PI); da = Math.min(da, Math.PI - da);
-  if (da > 0.35) return null;
-  const half = (d.w / 2) / len; const t0 = t - half; const t1 = t + half;
-  if (t1 <= 0 || t0 >= 1) return null;
-  return [Math.max(0, t0), Math.min(1, t1)];
-}
-// carveSpans → the wall pieces [t-intervals] that remain once door openings are removed, plus the
-// merged door intervals themselves (used to place a lintel over each opening).
-function carveSpans(s, doors, tol) {
-  const spans = [];
-  doors.forEach((d) => { const iv = doorSpanOnSeg(s, d, tol); if (iv) spans.push(iv); });
-  if (!spans.length) return { walls: [[0, 1]], doors: [] };
-  spans.sort((a, b) => a[0] - b[0]);
-  const merged = [];
-  spans.forEach((sp) => { const last = merged[merged.length - 1]; if (!last || sp[0] > last[1]) merged.push([sp[0], sp[1]]); else last[1] = Math.max(last[1], sp[1]); });
-  const walls = []; let cursor = 0;
-  merged.forEach(([a, b]) => { if (a > cursor + 1e-4) walls.push([cursor, a]); cursor = Math.max(cursor, b); });
-  if (cursor < 1 - 1e-4) walls.push([cursor, 1]);
-  return { walls, doors: merged };
-}
+const parseDoors = (floor) => parseList(floor, 'doors');
+const parseWindows = (floor) => parseList(floor, 'windows');
+const parseParking = (floor) => parseList(floor, 'parking');
+const parsePlatforms = (floor) => parseList(floor, 'platforms');
+
 
 // Severity colours for the unread-notification badge, matching the 2D plan markers.
 const SEV_BADGE = { critical: '#ef4444', warning: '#f59e0b', info: '#2d6cdf' };
@@ -214,12 +194,50 @@ export default function Floor3D({ floors = [], activeIndex = 0, stacked = false,
       const dim = stacked && !isActive;
       const toWorld = (x, y) => new THREE.Vector3((x / w - 0.5) * fw, baseY, (0.5 - y / h) * fh);
 
-      // Floor slab, textured with the plan image (cookie-authed, same-origin).
-      const slabMat = new THREE.MeshLambertMaterial({ color: dark ? 0x334155 : 0xf8fafc, transparent: dim, opacity: dim ? 0.5 : 1 });
-      const slab = new THREE.Mesh(new THREE.PlaneGeometry(fw, fh), slabMat);
-      slab.rotation.x = -Math.PI / 2;
-      slab.position.y = baseY;
-      scene.add(slab);
+      // Floor slab, textured with the plan image (cookie-authed, same-origin). A DOWN stair descends
+      // below the slab, so the slab is cut around each one — otherwise the opaque floor covers the
+      // descent and it reads as being buried in concrete. The stairwell openings are the down-stair
+      // footprints (image-space AABBs); the slab is split into the rectangles left around them, each
+      // a textured plane with UVs taken from its window of the plan image so the picture still lines
+      // up. No down stairs → the ordinary single plane.
+      const slabMat = new THREE.MeshLambertMaterial({ color: dark ? 0x334155 : 0xf8fafc, transparent: dim, opacity: dim ? 0.5 : 1, side: THREE.DoubleSide });
+      const downHoles = parseStairs(f).filter((s) => s.down).map((s) => {
+        const cn = rectCorners(s);
+        return { x1: Math.min(...cn.map((c) => c.x)), y1: Math.min(...cn.map((c) => c.y)), x2: Math.max(...cn.map((c) => c.x)), y2: Math.max(...cn.map((c) => c.y)) };
+      });
+      if (downHoles.length) {
+        const rectMinus = (r, hole) => {
+          const ix1 = Math.max(r.x1, hole.x1); const iy1 = Math.max(r.y1, hole.y1);
+          const ix2 = Math.min(r.x2, hole.x2); const iy2 = Math.min(r.y2, hole.y2);
+          if (ix1 >= ix2 || iy1 >= iy2) return [r];
+          const out = [];
+          if (r.y1 < iy1) out.push({ x1: r.x1, y1: r.y1, x2: r.x2, y2: iy1 });
+          if (iy2 < r.y2) out.push({ x1: r.x1, y1: iy2, x2: r.x2, y2: r.y2 });
+          if (r.x1 < ix1) out.push({ x1: r.x1, y1: iy1, x2: ix1, y2: iy2 });
+          if (ix2 < r.x2) out.push({ x1: ix2, y1: iy1, x2: r.x2, y2: iy2 });
+          return out;
+        };
+        let pieces = [{ x1: 0, y1: 0, x2: w, y2: h }];
+        downHoles.forEach((hole) => { pieces = pieces.flatMap((r) => rectMinus(r, hole)); });
+        pieces.forEach((r) => {
+          const worldW = ((r.x2 - r.x1) / w) * fw; const worldD = ((r.y2 - r.y1) / h) * fh;
+          if (worldW < 1e-3 || worldD < 1e-3) return;
+          const geo = new THREE.PlaneGeometry(worldW, worldD);
+          // Vertex order for a 1×1 PlaneGeometry: top-left, top-right, bottom-left, bottom-right.
+          const u1 = r.x1 / w; const u2 = r.x2 / w; const v1 = 1 - r.y1 / h; const v2 = 1 - r.y2 / h;
+          const uv = geo.attributes.uv; uv.setXY(0, u1, v1); uv.setXY(1, u2, v1); uv.setXY(2, u1, v2); uv.setXY(3, u2, v2); uv.needsUpdate = true;
+          const mesh = new THREE.Mesh(geo, slabMat);
+          mesh.rotation.x = -Math.PI / 2;
+          const cix = (r.x1 + r.x2) / 2; const ciy = (r.y1 + r.y2) / 2;
+          mesh.position.set((cix / w - 0.5) * fw, baseY, (0.5 - ciy / h) * fh);
+          scene.add(mesh);
+        });
+      } else {
+        const slab = new THREE.Mesh(new THREE.PlaneGeometry(fw, fh), slabMat);
+        slab.rotation.x = -Math.PI / 2;
+        slab.position.y = baseY;
+        scene.add(slab);
+      }
       pending += 1;
       new THREE.TextureLoader().load(
         `${apiBase()}/api/floors/${f.id}/image`,
@@ -243,23 +261,46 @@ export default function Floor3D({ floors = [], activeIndex = 0, stacked = false,
       if (grid && Array.isArray(grid.segments) && grid.segments.length) {
         const thick = Math.max(0.08, (grid.unit || 20) * mpp * 0.4);
         const doors = parseDoors(f);
+        const windows = parseWindows(f);
         const doorTol = (grid.unit || 20) * 0.6;
         const doorH = Math.min(2.1, wallH * 0.85); // metres of clear opening under the lintel
         // Build one wall box spanning parameters [t0,t1] of segment s, at the given height/offset.
-        const addPiece = (s, t0, t1, height, yOff) => {
+        // Tinted glass for window openings — thinner than the wall so the reveal still reads.
+        const glassMat = new THREE.MeshLambertMaterial({ color: 0x7dd3fc, transparent: true, opacity: dim ? 0.14 : 0.34, side: THREE.DoubleSide, depthWrite: false });
+        disposables.push(glassMat);
+        const addPiece = (s, t0, t1, height, yOff, mat, thickScale) => {
           const ax = ((s.x1 + (s.x2 - s.x1) * t0) / w - 0.5) * fw; const az = ((s.y1 + (s.y2 - s.y1) * t0) / h - 0.5) * fh;
           const bx = ((s.x1 + (s.x2 - s.x1) * t1) / w - 0.5) * fw; const bz = ((s.y1 + (s.y2 - s.y1) * t1) / h - 0.5) * fh;
           const dx = bx - ax; const dz = bz - az; const len = Math.hypot(dx, dz);
           if (len < 1e-4) return;
-          const mesh = new THREE.Mesh(new THREE.BoxGeometry(len + thick, height, thick), wallMat);
+          const th = thick * (thickScale || 1);
+          const mesh = new THREE.Mesh(new THREE.BoxGeometry(len + (thickScale ? 0 : thick), height, th), mat || wallMat);
           mesh.position.set((ax + bx) / 2, baseY + yOff + height / 2, (az + bz) / 2);
           mesh.rotation.y = Math.atan2(-dz, dx);
           scene.add(mesh);
         };
         grid.segments.forEach((s) => {
-          const { walls, doors: openings } = carveSpans(s, doors, doorTol);
-          walls.forEach(([t0, t1]) => addPiece(s, t0, t1, wallH, 0)); // full-height wall between doors
-          openings.forEach(([t0, t1]) => { if (wallH - doorH > 0.02) addPiece(s, t0, t1, wallH - doorH, doorH); }); // lintel above the opening
+          const walls = remainingSpans(s, doors.concat(windows), doorTol);
+          walls.forEach(([t0, t1]) => addPiece(s, t0, t1, wallH, 0)); // full-height wall between openings
+          // A door leaves a lintel above it and nothing below — you walk through.
+          doors.forEach((d) => {
+            const iv = openingSpanOnSeg(s, d, doorTol);
+            if (iv && wallH - doorH > 0.02) addPiece(s, iv[0], iv[1], wallH - doorH, doorH);
+          });
+          // A window leaves wall BELOW (up to the sill) and ABOVE (from the head), which is the
+          // whole reason it differs from a door: a camera's sight line passes only through the gap.
+          windows.forEach((d) => {
+            const iv = openingSpanOnSeg(s, d, doorTol);
+            if (!iv) return;
+            const sill = Math.min(sillOf(d), wallH);
+            const head = Math.min(headOf(d), wallH);
+            if (sill > 0.02) addPiece(s, iv[0], iv[1], sill, 0);
+            if (wallH - head > 0.02) addPiece(s, iv[0], iv[1], wallH - head, head);
+            // Glazing fills what is left. Without it a window is just a hole and reads exactly like
+            // a doorway with an odd lintel; a tinted pane says "you can see through here but not
+            // walk through", which is the distinction the whole feature exists to make.
+            if (head - sill > 0.05) addPiece(s, iv[0], iv[1], head - sill, sill, glassMat, 0.35);
+          });
         });
       } else if (grid && Array.isArray(grid.walls) && grid.walls.length) {
         // Legacy painted-cell grid: extrude each cell into a box (instanced).
@@ -277,6 +318,69 @@ export default function Floor3D({ floors = [], activeIndex = 0, stacked = false,
       // No fallback perimeter: a floor shows exactly the walls that were drawn. An outer wall is
       // something the operator authors, not something the viewer invents.
 
+      // Parking bays (outdoor areas): ground markings, not solids — a painted bay has no height, so
+      // it is drawn as thin strips lying on the slab. Without this the 3D view would show a car park
+      // as bare ground while the 2D plan showed its rows.
+      const parking = parseParking(f);
+      if (parking.length) {
+        const markMat = new THREE.MeshBasicMaterial({ color: dark ? 0x94a3b8 : 0x64748b, transparent: true, opacity: dim ? 0.25 : 0.7 });
+        disposables.push(markMat);
+        const STRIPE = Math.max(0.06, 0.12 * mpp * 20); // a painted line, in metres
+        parking.forEach((p) => {
+          const wx1 = (Math.min(p.x1, p.x2) / w - 0.5) * fw; const wx2 = (Math.max(p.x1, p.x2) / w - 0.5) * fw;
+          const wz1 = (Math.min(p.y1, p.y2) / h - 0.5) * fh; const wz2 = (Math.max(p.y1, p.y2) / h - 0.5) * fh;
+          const dx = wx2 - wx1; const dz = wz2 - wz1;
+          if (dx < 1e-3 || dz < 1e-3) return;
+          const n = Math.max(1, Math.min(60, p.bays || 1));
+          const acrossX = dx >= dz; // bays divide along the longer side, mirroring the 2D editor
+          // The row is built flat and then turned as a whole: image-space angles run clockwise with
+          // y down, three.js y-rotation runs the other way, hence the negation.
+          const group = new THREE.Group();
+          group.position.set((wx1 + wx2) / 2, baseY + 0.006, (wz1 + wz2) / 2);
+          group.rotation.y = -(p.a || 0);
+          const strip = (cx, cz, sw, sd) => {
+            const mesh = new THREE.Mesh(new THREE.BoxGeometry(sw, 0.01, sd), markMat);
+            mesh.position.set(cx - (wx1 + wx2) / 2, 0, cz - (wz1 + wz2) / 2); // local to the group
+            group.add(mesh);
+          };
+          // outline
+          strip((wx1 + wx2) / 2, wz1, dx, STRIPE); strip((wx1 + wx2) / 2, wz2, dx, STRIPE);
+          strip(wx1, (wz1 + wz2) / 2, STRIPE, dz); strip(wx2, (wz1 + wz2) / 2, STRIPE, dz);
+          // bay dividers
+          for (let k = 1; k < n; k++) {
+            const fr = k / n;
+            if (acrossX) strip(wx1 + dx * fr, (wz1 + wz2) / 2, STRIPE, dz);
+            else strip((wx1 + wx2) / 2, wz1 + dz * fr, dx, STRIPE);
+          }
+          scene.add(group);
+        });
+      }
+
+      // Raised floors: a solid slab lifted `rise` metres above the storey floor — a platform you
+      // reach by stairs. Built axis-aligned then turned as a whole (image angles are clockwise,
+      // three.js is not), so a rotated platform keeps its footprint. A stair that overlaps a platform
+      // sits ON TOP of it (its base is lifted to the slab, see the stair block below), so the slab is
+      // a plain full box here.
+      const platforms = parsePlatforms(f);
+      if (platforms.length) {
+        const platMat = new THREE.MeshLambertMaterial({ color: dark ? 0x92826a : 0xd6c39a, transparent: dim, opacity: dim ? 0.35 : 1, side: THREE.DoubleSide });
+        disposables.push(platMat);
+        platforms.forEach((p) => {
+          const wx1 = (Math.min(p.x1, p.x2) / w - 0.5) * fw; const wx2 = (Math.max(p.x1, p.x2) / w - 0.5) * fw;
+          const wz1 = (Math.min(p.y1, p.y2) / h - 0.5) * fh; const wz2 = (Math.max(p.y1, p.y2) / h - 0.5) * fh;
+          const dxp = wx2 - wx1; const dzp = wz2 - wz1;
+          if (dxp < 1e-3 || dzp < 1e-3) return;
+          const rise = p.rise > 0 ? p.rise : 0.6;
+          const box = new THREE.Mesh(new THREE.BoxGeometry(dxp, rise, dzp), platMat);
+          box.position.set(0, rise / 2, 0);
+          const group = new THREE.Group();
+          group.position.set((wx1 + wx2) / 2, baseY, (wz1 + wz2) / 2);
+          group.rotation.y = -(p.a || 0);
+          group.add(box);
+          scene.add(group);
+        });
+      }
+
       // Straight-flight stairs: a solid run of rising steps filling the footprint from the slab up
       // to storey height, climbing in the authored ascent direction. Same image→world frame as the
       // walls, so they sit correctly over the plan and under any camera placed above them.
@@ -291,10 +395,31 @@ export default function Floor3D({ floors = [], activeIndex = 0, stacked = false,
           if (dx < 1e-3 || dz < 1e-3) return;
           const dir = s.dir || 'n';
           const vertical = dir === 'n' || dir === 's'; // ascent runs along z (image y)
-          const N = Math.max(3, Math.min(30, Math.round(wallH / 0.18)));
-          const stepH = wallH / N;
+          // A stair whose CENTRE sits on a raised floor rests ON IT: its base is lifted to the
+          // platform height and it climbs from there. (Centre, not any overlap, matches the 2D lock —
+          // the drop snaps the stair fully onto the slab, so nothing floats.) Else the base is 0.
+          let base = 0; let best = -1;
+          const scx = (s.x1 + s.x2) / 2; const scy = (s.y1 + s.y2) / 2;
+          platforms.forEach((pl) => { if (pointInRotatedRect(scx, scy, pl)) { const r = pl.rise > 0 ? pl.rise : 0.6; if (r > best) best = r; } });
+          if (best > 0) base = best;
+          // The flight's OWN climb height (a full storey by default), kept regardless of the base it
+          // rests on — so a stair on a raised floor is the same flight, just lifted, not flattened.
+          const climbH = s.height > 0 ? s.height : wallH;
+          // Step count matches the 2D plan: the stair's own setting, or a default from the climb.
+          const N = Math.max(2, Math.min(40, s.steps || Math.round(climbH / 0.18)));
+          const stepH = climbH / N;
+          // The flight is built axis-aligned then turned as a whole, so a rotated stair keeps its
+          // step spacing and its ascent direction (image angles are clockwise, three.js is not).
+          const gx = (wx1 + wx2) / 2; const gz = (wz1 + wz2) / 2;
+          const group = new THREE.Group();
+          group.position.set(gx, baseY, gz);
+          group.rotation.y = -(s.a || 0);
           for (let k = 0; k < N; k++) {
-            const topH = stepH * (k + 1); // each tread stacks a little taller toward the top of the run
+            // Going up, each slice is solid from the base up to its tread (near end short, far end
+            // full). Going down, the slices descend below the base to the level below — the same
+            // profile, mirrored, so a down stair reads as a descent to a lower floor / basement.
+            const boxH = s.down ? Math.max(0.01, climbH - stepH * k) : stepH * (k + 1);
+            const cy = s.down ? base - (stepH * k + climbH) / 2 : base + boxH / 2;
             let bw; let bd; let cx; let cz;
             if (vertical) {
               bw = dx; bd = dz / N; cx = (wx1 + wx2) / 2;
@@ -303,10 +428,11 @@ export default function Floor3D({ floors = [], activeIndex = 0, stacked = false,
               bd = dz; bw = dx / N; cz = (wz1 + wz2) / 2;
               cx = dir === 'w' ? wx2 - (k + 0.5) * bw : wx1 + (k + 0.5) * bw;
             }
-            const box = new THREE.Mesh(new THREE.BoxGeometry(bw, topH, bd), stairMat);
-            box.position.set(cx, baseY + topH / 2, cz);
-            scene.add(box);
+            const box = new THREE.Mesh(new THREE.BoxGeometry(bw, boxH, bd), stairMat);
+            box.position.set(cx - gx, cy, cz - gz);
+            group.add(box);
           }
+          scene.add(group);
         });
       }
 

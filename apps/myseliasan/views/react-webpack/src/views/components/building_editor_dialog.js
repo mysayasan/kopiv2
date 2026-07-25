@@ -4,7 +4,8 @@ import { useT, Ico } from '@shared';
 import { api, apiBase, csrfToken } from '../lib/helpers';
 import { nodeTone } from '../lib/fleet_status';
 import { FloorEditor } from './floor_editor';
-import { SiteDialog } from './building_wizard';
+import { SiteDialog } from './asset_wizard';
+import { multiPlan, normKind, siteGlyph } from './site_kinds';
 
 // BuildingEditorDialog is the authoring surface for ONE building, opened as a modal over the
 // geographic map: pick an area (floor) along the top, drag a node or camera off the palette, and
@@ -14,6 +15,14 @@ import { SiteDialog } from './building_wizard';
 // Placements are myseliasan-owned, so a camera stays on the plan while its node is offline — the
 // control plane has no camera inventory of its own, and the live palette list goes empty when the
 // node is unreachable. That is why a placement carries a lastKnownName snapshot.
+
+// placedLabel names where a pin sits — "Head Office / Ground floor", falling back to whichever
+// part the server could resolve. Shared by the palette tooltip and the refused-placement toast.
+function placedLabel(where) {
+  if (!where) return '';
+  if (where.siteName && where.floorName) return `${where.siteName} / ${where.floorName}`;
+  return where.siteName || where.floorName || '';
+}
 
 function AreaTab({ floor, active, onOpen, onRename }) {
   const t = useT();
@@ -41,12 +50,15 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [placing, setPlacing] = useState(null); // { nodeId, cameraId, name }
+  const [placedIndex, setPlacedIndex] = useState({}); // "nodeId::cameraId" -> { siteName, floorName, floorId, … }
   const [editSite, setEditSite] = useState(false);
   const fileInputRef = useRef(null);
   const dragGhostRef = useRef(null);
   const dragGhostLabelRef = useRef(null);
   const aimTimerRef = useRef(null);
   const nowSec = Math.floor(Date.now() / 1000);
+  // Multi-plan affordances are a building's alone (see site_kinds).
+  const canAddAreas = multiPlan(building.kind);
 
   const nodesById = {};
   for (const n of nodes) nodesById[n.nodeId] = n;
@@ -74,7 +86,20 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
     catch (_) { setPlacements([]); }
   }, []);
 
+  // Placement is exclusive fleet-wide, so the palette has to know about pins in OTHER buildings —
+  // the per-floor list above can only ever see the area being edited. Keyed "nodeId::cameraId".
+  const loadPlacedIndex = useCallback(async () => {
+    try {
+      const res = await api('/api/placements', { noRedirect: true });
+      const rows = res.ok && Array.isArray(res.body) ? res.body : [];
+      const m = {};
+      rows.forEach((p) => { m[`${p.nodeId}::${p.cameraId || ''}`] = p; });
+      setPlacedIndex(m);
+    } catch (_) { /* leave the last good index; the server still refuses a double placement */ }
+  }, []);
+
   useEffect(() => { loadFloors(); }, [loadFloors]);
+  useEffect(() => { loadPlacedIndex(); }, [loadPlacedIndex]);
   useEffect(() => { loadPlacements(activeFloor && activeFloor.id); }, [activeFloor && activeFloor.id, loadPlacements]);
   useEffect(() => () => clearTimeout(aimTimerRef.current), []);
 
@@ -106,10 +131,23 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
     setBusy(true);
     try {
       const res = await api(`/api/floors/${activeFloor.id}/placements`, { method: 'POST', body: JSON.stringify({ nodeId: payload.nodeId, cameraId: payload.cameraId || '', lastKnownName: payload.name, x, y }) });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        // 409: the camera already holds a pin. The palette normally prevents this, but a stale
+        // index or a second operator can still get here — so say WHERE it is rather than "failed",
+        // and refresh the index so the palette catches up.
+        const d = res.body && res.body.details;
+        const taken = Array.isArray(d) ? d.find((x2) => x2 && x2.reason === 'alreadyPlaced') : (d && d.reason === 'alreadyPlaced' ? d : null);
+        if (taken) {
+          if (onToast) onToast(t('bld.unplaceFirst', { where: placedLabel(taken) }), 'error');
+          loadPlacedIndex();
+          return;
+        }
+        throw new Error();
+      }
       await loadPlacements(activeFloor.id);
+      loadPlacedIndex();
     } catch (_) { if (onToast) onToast(t('map.placeFailed'), 'error'); } finally { setBusy(false); }
-  }, [activeFloor, loadPlacements, onToast, t]);
+  }, [activeFloor, loadPlacements, loadPlacedIndex, onToast, t]);
 
   const persistMove = useCallback(async (id, x, y) => {
     setPlacements((list) => list.map((p) => (p.id === id ? { ...p, x, y } : p)));
@@ -127,9 +165,11 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
 
   const deletePlacement = useCallback(async (id) => {
     setBusy(true);
-    try { await api(`/api/placements/${id}`, { method: 'DELETE' }); await loadPlacements(activeFloor && activeFloor.id); }
+    // Unplacing is what frees a camera to be placed elsewhere, so the palette index has to be
+    // refreshed here or the camera would stay greyed out until the dialog is reopened.
+    try { await api(`/api/placements/${id}`, { method: 'DELETE' }); await loadPlacements(activeFloor && activeFloor.id); loadPlacedIndex(); }
     catch (_) { if (onToast) onToast(t('map.error'), 'error'); } finally { setBusy(false); }
-  }, [activeFloor, loadPlacements, onToast, t]);
+  }, [activeFloor, loadPlacements, loadPlacedIndex, onToast, t]);
 
   // saveModel persists the drawn walls + scale + wall height (autosaved by FloorEditor). It patches
   // local floor state (same id) so the editor never re-seeds or refetches the image.
@@ -199,9 +239,8 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
 
   // Remove the active area's plan picture, restoring the blank canvas it started as — the inverse
   // of uploadPlan. The drawn walls and every placement survive; deleting the area is the
-  // destructive option. Offered unconditionally because a blank area and an uploaded one are
-  // indistinguishable in the model (both are just an image), and re-blanking a blank area is a
-  // harmless no-op.
+  // destructive option. Only reachable when the floor actually carries an uploaded plan
+  // (floor.hasPlanImage) — a blank area has nothing to remove.
   async function removePlan() {
     if (!activeFloor) return;
     if (!window.confirm(t('bld.removePlanConfirm', { name: activeFloor.name }))) return;
@@ -217,13 +256,28 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
   async function saveSite(name, icon) {
     setBusy(true);
     try {
-      const res = await api(`/api/sites/${building.id}`, { method: 'PUT', body: JSON.stringify({ name, description: building.description || '', icon, ordinal: building.ordinal || 0 }) });
+      // kind is echoed back unchanged — an asset's kind is fixed once its plans hang off it, and
+      // omitting it here would silently normalise a park back into a building.
+      const res = await api(`/api/sites/${building.id}`, { method: 'PUT', body: JSON.stringify({ name, description: building.description || '', icon, kind: normKind(building.kind), ordinal: building.ordinal || 0 }) });
       if (!res.ok) throw new Error();
       setBuilding((b) => ({ ...b, name, icon }));
       setEditSite(false);
       notifyChanged();
       if (onToast) onToast(t('map.siteUpdated'), 'success');
     } catch (_) { if (onToast) onToast(t('map.error'), 'error'); } finally { setBusy(false); }
+  }
+
+  // Delete the whole asset — its floor plans, their images, and every camera placement on them go
+  // with it. Guarded by a confirm, then the editor closes back to the map.
+  async function deleteSite() {
+    if (!window.confirm(t('map.deleteAssetConfirm', { name: building.name }))) return;
+    setBusy(true);
+    try {
+      const res = await api(`/api/sites/${building.id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error();
+      if (onToast) onToast(t('map.assetDeleted', { name: building.name }), 'success');
+      if (onClose) onClose(); // parent reloads the overview on close, so the marker vanishes
+    } catch (_) { if (onToast) onToast(t('map.error'), 'error'); setBusy(false); }
   }
 
   // --- palette drag/pick ---
@@ -236,14 +290,28 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
   function pick(payload) { setPlacing((cur) => (cur && cur.nodeId === payload.nodeId && cur.cameraId === payload.cameraId ? null : payload)); }
   const isPicked = (nodeId, cameraId) => placing && placing.nodeId === nodeId && (placing.cameraId || '') === (cameraId || '');
 
+  // Where this camera/node is already pinned, or undefined when it is free to place. A camera holds
+  // one pin fleet-wide, so this is what disables it in the palette.
+  const placedAt = (nodeId, cameraId) => placedIndex[`${nodeId}::${cameraId || ''}`];
+  // The tooltip on an already-placed entry: "this area" when the pin is on the floor being edited
+  // (it is visible right there), otherwise the building and area to go and unplace it from.
+  const placedTitle = (where) => (
+    where.floorId === (activeFloor && activeFloor.id)
+      ? t('bld.placedHere')
+      : t('bld.placedIn', { where: placedLabel(where) })
+  );
+
   return (
     <div className="bld-overlay" role="dialog" aria-modal="true" aria-label={t('bld.editorLabel', { name: building.name })}>
       <div className="bld-dialog">
         <header className="bld-head">
-          <span className="bld-head-glyph" aria-hidden="true">{building.icon || '🏢'}</span>
+          <span className="bld-head-glyph" aria-hidden="true">{siteGlyph(building)}</span>
           <h2 className="bld-head-name">{building.name}</h2>
           <button type="button" className="quiet bld-head-edit" onClick={() => setEditSite(true)} disabled={busy}>
-            <span className="btn-icon"><Ico n="edit-2" sz={13} /> {t('map.editBuilding')}</span>
+            <span className="btn-icon"><Ico n="edit-2" sz={13} /> {t('map.editAsset')}</span>
+          </button>
+          <button type="button" className="quiet danger-text bld-head-edit" onClick={deleteSite} disabled={busy}>
+            <span className="btn-icon"><Ico n="trash" sz={13} /> {t('map.deleteAsset')}</span>
           </button>
           <span className="bld-head-spacer" />
           {activeFloor ? (
@@ -252,9 +320,14 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
                 <span className="btn-icon"><Ico n="download" sz={13} /> {t('bld.uploadPlan')}</span>
               </button>
               <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/gif" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; uploadPlan(f); }} />
-              <button type="button" className="quiet" onClick={removePlan} disabled={busy} title={t('bld.removePlanHint')}>
-                <span className="btn-icon"><Ico n="trash" sz={13} /> {t('bld.removePlan')}</span>
-              </button>
+              {/* Only offered when there is actually a plan picture to remove. An area that is
+                  still the blank canvas has nothing to restore it to, so the button would be a
+                  no-op dressed up as a destructive action. */}
+              {activeFloor.hasPlanImage ? (
+                <button type="button" className="quiet" onClick={removePlan} disabled={busy} title={t('bld.removePlanHint')}>
+                  <span className="btn-icon"><Ico n="trash" sz={13} /> {t('bld.removePlan')}</span>
+                </button>
+              ) : null}
             </>
           ) : null}
           <button type="button" className="icon-button bld-head-close" onClick={onClose} aria-label={t('bld.done')} title={t('bld.done')}><Ico n="x" sz={15} /></button>
@@ -264,12 +337,14 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
           {floors.map((f) => (
             <AreaTab key={f.id} floor={f} active={activeFloor && activeFloor.id === f.id} onOpen={setActiveFloor} onRename={renameArea} />
           ))}
-          <button type="button" className="bld-areaadd" onClick={addArea} disabled={busy}><Ico n="plus" sz={12} /> {t('bld.addArea')}</button>
+          {/* Only a building has more than one plan. An outdoor area is a single ground surface,
+              so it is offered neither "add area" nor a delete that would leave it with none. */}
+          {canAddAreas ? <button type="button" className="bld-areaadd" onClick={addArea} disabled={busy}><Ico n="plus" sz={12} /> {t('bld.addArea')}</button> : null}
           <span className="bld-areabar-spacer" />
           {activeFloor ? (
             <>
               <button type="button" className="quiet bld-areaact" onClick={() => renameArea(activeFloor)} disabled={busy}><Ico n="edit-2" sz={12} /> {t('bld.renameArea')}</button>
-              <button type="button" className="quiet danger-text bld-areaact" onClick={() => deleteArea(activeFloor)} disabled={busy}><Ico n="trash" sz={12} /> {t('bld.deleteArea')}</button>
+              {canAddAreas ? <button type="button" className="quiet danger-text bld-areaact" onClick={() => deleteArea(activeFloor)} disabled={busy}><Ico n="trash" sz={12} /> {t('bld.deleteArea')}</button> : null}
             </>
           ) : null}
         </div>
@@ -283,30 +358,53 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
               {nodes.map((n) => {
                 const isCamera = (n.kind || 'camera') !== 'iot';
                 const cams = camsByNode[n.nodeId];
+                const nodeWhere = placedAt(n.nodeId, '');
                 return (
                   <li key={n.nodeId} className="palette-node">
                     <div className="palette-node-row">
                       {isCamera ? (
                         <button type="button" className="palette-expand" onClick={() => toggleNode(n.nodeId)} aria-label={t('map.showCameras')}><Ico n={expanded[n.nodeId] ? 'chev-down' : 'chev-right'} sz={12} /></button>
                       ) : <span className="palette-expand-spacer" />}
-                      <button type="button" className={`palette-item${isPicked(n.nodeId, '') ? ' active' : ''}`} draggable onDragStart={(e) => { dragPayload(e, { nodeId: n.nodeId, cameraId: '', name: n.name || n.nodeId }); setPlacing(null); }} onClick={() => pick({ nodeId: n.nodeId, cameraId: '', name: n.name || n.nodeId })} title={t('bld.paletteHint')}>
+                      {/* Already pinned somewhere → not draggable, not pickable. It has one physical
+                          home, so the way to move it is to unplace it there first. */}
+                      <button
+                        type="button"
+                        className={`palette-item${isPicked(n.nodeId, '') ? ' active' : ''}${nodeWhere ? ' placed' : ''}`}
+                        draggable={!nodeWhere}
+                        disabled={!!nodeWhere}
+                        onDragStart={nodeWhere ? undefined : (e) => { dragPayload(e, { nodeId: n.nodeId, cameraId: '', name: n.name || n.nodeId }); setPlacing(null); }}
+                        onClick={() => pick({ nodeId: n.nodeId, cameraId: '', name: n.name || n.nodeId })}
+                        title={nodeWhere ? placedTitle(nodeWhere) : t('bld.paletteHint')}
+                      >
                         <span className="rail-dot" style={{ background: nodeTone(n, nowSec).color }} />
                         <span className="rail-name">{n.name || n.nodeId}</span>
-                        {isPicked(n.nodeId, '') ? <Ico n="map-pin" sz={13} /> : null}
+                        {nodeWhere ? <Ico n="map-pin" sz={12} /> : (isPicked(n.nodeId, '') ? <Ico n="map-pin" sz={13} /> : null)}
                       </button>
                     </div>
                     {isCamera && expanded[n.nodeId] ? (
                       <ul className="palette-cams">
                         {cams?.loading ? <li className="palette-cam muted">{t('common.loading')}</li> : null}
                         {cams?.error ? <li className="palette-cam muted">{t('map.camsOffline')}</li> : null}
-                        {cams?.cams?.map((c) => (
-                          <li key={c.id}>
-                            <button type="button" className={`palette-cam${isPicked(n.nodeId, String(c.id)) ? ' active' : ''}`} draggable onDragStart={(e) => { dragPayload(e, { nodeId: n.nodeId, cameraId: String(c.id), name: c.name || t('nodes.cameraN', { id: c.id }) }); setPlacing(null); }} onClick={() => pick({ nodeId: n.nodeId, cameraId: String(c.id), name: c.name || t('nodes.cameraN', { id: c.id }) })} title={t('bld.paletteHint')}>
-                              <Ico n="video" sz={12} /> {c.name || t('nodes.cameraN', { id: c.id })}
-                              {isPicked(n.nodeId, String(c.id)) ? <Ico n="map-pin" sz={12} /> : null}
-                            </button>
-                          </li>
-                        ))}
+                        {cams?.cams?.map((c) => {
+                          const camWhere = placedAt(n.nodeId, String(c.id));
+                          const camName = c.name || t('nodes.cameraN', { id: c.id });
+                          return (
+                            <li key={c.id}>
+                              <button
+                                type="button"
+                                className={`palette-cam${isPicked(n.nodeId, String(c.id)) ? ' active' : ''}${camWhere ? ' placed' : ''}`}
+                                draggable={!camWhere}
+                                disabled={!!camWhere}
+                                onDragStart={camWhere ? undefined : (e) => { dragPayload(e, { nodeId: n.nodeId, cameraId: String(c.id), name: camName }); setPlacing(null); }}
+                                onClick={() => pick({ nodeId: n.nodeId, cameraId: String(c.id), name: camName })}
+                                title={camWhere ? placedTitle(camWhere) : t('bld.paletteHint')}
+                              >
+                                <Ico n="video" sz={12} /> <span className="rail-name">{camName}</span>
+                                {camWhere ? <Ico n="map-pin" sz={12} /> : (isPicked(n.nodeId, String(c.id)) ? <Ico n="map-pin" sz={12} /> : null)}
+                              </button>
+                            </li>
+                          );
+                        })}
                         {cams && !cams.loading && !cams.error && cams.cams.length === 0 ? <li className="palette-cam muted">{t('map.noCams')}</li> : null}
                       </ul>
                     ) : null}
@@ -337,6 +435,7 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
             ) : (
               <FloorEditor
                 floor={activeFloor}
+                siteKind={normKind(building.kind)}
                 placements={placements}
                 nodesById={nodesById}
                 placing={placing}
@@ -365,7 +464,7 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
       </div>
 
       {editSite ? (
-        <SiteDialog initialName={building.name} initialIcon={building.icon} busy={busy} onSave={saveSite} onCancel={() => setEditSite(false)} />
+        <SiteDialog initialName={building.name} initialIcon={building.icon} kind={building.kind} busy={busy} onSave={saveSite} onCancel={() => setEditSite(false)} />
       ) : null}
     </div>
   );

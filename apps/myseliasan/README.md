@@ -61,83 +61,127 @@ gzipped mapping library never weighs down the initial bundle.
 The geographic view **is** the Map module — there is no separate "floor plans" tab. A building is
 created, positioned and authored entirely from it:
 
-- **Geographic view — buildings-only digital twin**: the map draws exactly **one kind of
-  marker**: a **building** (a `Site` with a geographic position, `GET /api/sites/overview`). A
-  node appliance **never** gets its own pin — a building, not the node that happens to record its
-  cameras, is the map's true anchor for "where is this camera physically": a node's own box can
-  sit in a rack, another building, or off-site, while its cameras are placed on that building's
-  floor plans regardless. There is no standalone/off-site node placement any more (the old
-  "place on map" button, node drag-to-place, and the Nodes-layer toggle are all gone; the node-pin
-  map layer is kept in the code but is fed no data and stays hidden). Drag a building marker to
-  reposition it (`PUT /api/sites/{id}/position`). An unplaced building (never dragged onto the
-  map) stays in the rail rather than plotted at `(0,0)` — see `Site.MapPlaced` in
-  `entities/site.go.md`. A building marker takes the *worst* status among the nodes that own
-  cameras inside it, and its unread-notification badge sums only those cameras' alerts
-  (`GET /api/notifications/tally?unread=true`), never a whole node's — a node recording cameras in
-  several buildings would otherwise over-count every one of them. Clicking a building marker opens
-  its **floor plans with every camera inside, from any node** (`BuildingFloorView`, see below).
-- **Building-centric rail**: the side rail lists **every building** — placed and unplaced — each
-  with a status dot (worst among its cameras' owning nodes) and camera count, and an expand caret
-  that lazily lists that building's **floors/areas** (1st floor, Kitchen, Carporch…,
-  `GET /api/sites/{id}/floors`, fetched once per expand and invalidated whenever the building
-  editor changes its areas) — clicking a floor row jumps straight into the building editor on that
-  area. A placed building's row flies the map to it on click; an unplaced one enters placing mode
-  the same way it always did. Nodes not yet assigned to any building appear in a separate
-  **"Appliances"** section below the building list, each row offering a building-selector dropdown
-  (`PUT /api/nodes/{id}/building`) — assigning one is now the *only* way an appliance is
-  represented on the map, since it stops needing a pin of its own the moment it belongs somewhere.
-- **Adding a building**: a **`+ Add building`** button in the rail opens a wizard
-  (`building_wizard.js`) that collects a name, a **glyph** (a curated emoji picker —
-  office/factory/home/etc, `Site.Icon`), and the branch that shapes everything after — whether the
-  building is a **single area** or has **several areas** (floors, wings, rooms — "Ground floor",
-  "1st floor", "Kitchen"). Each area becomes a `FloorPlan` row under the new `Site`; a single-area
-  building still gets one so the editor always has a surface to draw on. On save the site and its
-  areas are created (`POST /api/sites`, then one `POST /api/sites/{id}/areas` per area — each area
+- **Geographic view — site-only digital twin, never a bare node pin**: the map draws exactly
+  **one kind of thing**: a **site** (`Site` with a geographic position, `GET /api/sites/overview`).
+  A site is one of three **kinds**, chosen once at creation and shown as a distinct marker
+  silhouette (disc/square/diamond) so the shape reads even when the name label doesn't: a
+  **building** (has storeys, drawn with walls/doors/stairs and stacked by elevation in 3D), an
+  **outdoor area** (one open ground surface — a park, yard, campus, car park — with exactly one
+  plan, no "how many areas" question), or a **point asset** (a junction, pole, gate, barrier — no
+  plan at all; its cameras reach it only through the appliance(s) assigned to it). A node appliance
+  **never** gets its own pin — a site, not the node that happens to record its cameras, is the
+  map's true anchor for "where is this camera physically": a node's own box can sit in a rack,
+  another building, or off-site, while its cameras are placed on that site's floor plans (or, for a
+  point asset, simply assigned to it) regardless. There is no standalone/off-site node placement
+  any more (the old "place on map" button, node drag-to-place, and the Nodes-layer toggle are all
+  gone; the node-pin map layer is kept in the code but is fed no data and stays hidden). Drag a
+  site's marker to reposition it (`PUT /api/sites/{id}/position`). An unplaced site (never dragged
+  onto the map) stays in the rail rather than plotted at `(0,0)` — see `Site.MapPlaced` in
+  `entities/site.go.md`. A marker takes the *worst* status among the nodes that answer for it (own
+  cameras inside it, or are assigned to it for a point asset), and its unread-notification badge
+  sums only those cameras' alerts (`GET /api/notifications/tally?unread=true`), never a whole
+  node's — a node recording cameras in several sites would otherwise over-count every one of them.
+  Clicking a building or outdoor marker opens its **floor plans with every camera inside, from any
+  node** (`BuildingFloorView`, see below); clicking a point marker instead opens the device card of
+  the appliance mounted there (or a chooser when several share the point, or an empty state when
+  none do) — there is no plan surface for a point asset to drill into.
+- **Site-centric rail**: the side rail lists **every site**, grouped by kind (buildings, outdoor
+  areas, point assets — a stable order so the headings don't jump around) — placed and unplaced —
+  each with a status dot (worst among the nodes that answer for it) and camera count. A building
+  or outdoor row has an expand caret that lazily lists its **floors/areas** (1st floor, Kitchen,
+  Carporch…, `GET /api/sites/{id}/floors`, fetched once per expand and invalidated whenever the
+  building editor changes its areas) — clicking a floor row jumps straight into the building editor
+  on that specific area (not just the first one). A placed row flies the map to it on click; an
+  unplaced one enters placing mode the same way it always did. A point asset's row has an **edit**
+  (pencil) button that opens a small rename/re-glyph dialog directly, since it has no editor to
+  jump into. Nodes not yet assigned to any site appear in a separate **"Appliances"** section below
+  the site list, each row offering a site-selector dropdown (`PUT /api/nodes/{id}/building`) —
+  assigning one is now the *only* way an appliance is represented on the map, since it stops
+  needing a pin of its own the moment it belongs somewhere.
+- **Adding an asset**: a **`+ Add`** button in the rail opens a wizard (`asset_wizard.js`,
+  replacing the old building-only `building_wizard.js`) whose first question is **what is being
+  added** — building / outdoor area / point asset — because the kind decides everything after: a
+  **glyph** picker drawn from that kind's own palette (`Site.Icon`, `site_kinds.js`), and, for a
+  building only, whether it is a **single area** or has **several areas** (floors, wings, rooms —
+  "Ground floor", "1st floor", "Kitchen"); an outdoor area always gets exactly one ground plan and
+  a point asset gets none at all — there is no area question for either. Each area becomes a
+  `FloorPlan` row under the new `Site`. On save the site and its areas are created (`POST
+  /api/sites` with `{name, icon, kind}`, then one `POST /api/sites/{id}/areas` per area — each area
   is a **generated blank white canvas**, not an upload) and the map enters placing mode so the
   operator clicks/drags the marker onto its geographic spot; dropping it opens the building editor
-  directly, so "add a building" ends on the plan surface rather than back at a map with an
-  unexplained new pin.
-- **Authoring a building**: dropping (or re-opening) a building opens `building_editor_dialog.js`,
-  a near-fullscreen modal over the map: area tabs along the top (add/rename/delete an area), a
-  node/camera palette down the side (drag or click-to-pick, then click the plan to place — the
-  same click-first pattern as the geographic view), and the `FloorEditor` canvas
-  (`floor_editor.js`) doing the actual drawing — **Select/Move, Wall, Room** (drag a rectangle →
-  four walls), **Round** (drag a box → an elliptical room, decomposed into short wall segments so
-  it reuses the same 2D/3D pipeline as a straight wall), **Door** (click a wall to cut an opening —
-  the wall is carved in both 2D and 3D with a lintel above it, width adjustable from the inspector,
-  a toast if you click off a wall), **Stairs** (drag a footprint for a straight flight, rotatable
-  ascent direction N/E/S/W, rendered in 3D as rising steps up to storey height), and **Erase**
-  tools, with grid-snap and undo/redo (walls/stairs/doors snapshot together as one history), plus
-  a **2D ⇄ 3D** toggle in its own header (a Select-mode marker inspector also sets a camera's
-  `mountHeight`/`pitch` for the 3D coverage cone). A wall run in progress can be cancelled with
-  **Esc** (Enter or double-click still finishes it) without exiting the whole editor. The tool
-  palette and the properties inspector are both **dockable panels** — drag either by its grip to
-  float it, or drop it near the left/right edge to dock there (dropping both on one side stacks
-  them). **Zoom** — toolbar zoom in/out/fit-to-100%, or Ctrl/⌘+wheel — lets the canvas grow past
-  the viewport (scrollbars appear only once zoomed past fit). Walls/scale/wall-height autosave
+  for a building/outdoor area, so "add an asset" ends on the plan surface rather than back at a map
+  with an unexplained new marker — a point asset simply lands on the map with nothing further to
+  author until an appliance is assigned to it.
+- **Authoring a building or outdoor area**: dropping (or re-opening) one opens
+  `building_editor_dialog.js`, a near-fullscreen modal over the map: area tabs along the top
+  (add/rename/delete an area — a single-plan outdoor area has none of this), a node/camera palette
+  down the side (drag or click-to-pick, then click the plan to place — the same click-first pattern
+  as the geographic view; an already-placed camera is greyed out with a note naming where it sits,
+  since placement is now **exclusive** — see "Floor plans" below), and the `FloorEditor` canvas
+  (`floor_editor.js`) doing the actual drawing, with a **toolset that follows the site's kind**: a
+  building offers **Select/Move, Wall, Room** (drag a rectangle → four walls), **Round** (drag a
+  box → an elliptical room, decomposed into short wall segments so it reuses the same 2D/3D
+  pipeline as a straight wall), **Door** (click a wall to cut an opening, hinge/swing mirrorable for
+  the four real door hands, carved in both 2D and 3D with a lintel above it, width adjustable from
+  the inspector, a toast if you click off a wall), **Window** (a glazing symbol cut into a wall,
+  no swing), **Stairs** (drag a footprint for a straight flight, a chosen step count, its own
+  climb height, rotatable ascent direction, an up/down toggle, and — when dropped on a **Platform**
+  — locks onto it as its base so the flight's labelled climb reads next to the platform's own
+  height), and **Platform** (a raised floor with an adjustable rise in metres, carved under any
+  stairs that land on it); an outdoor area swaps the building-only tools for **Gate** (the outdoor
+  counterpart of a door) and **Parking** (striped bays), keeping Wall/Room/Round/Platform/Erase. In
+  **Select** mode: a multi-select **transform gizmo** (drag to move, corner/edge handles to resize,
+  a rotate knob — oriented to the object's own rotation when exactly one is selected) replaces the
+  plain move-only selection, **copy/cut/paste** (Ctrl+C/X/V) duplicates geometry with a stepped
+  offset on repeated pastes (camera markers are never copied — a camera is placed exactly once
+  fleet-wide, so a copy would be something the server must refuse), a **delete** button/key removes
+  the selection, and a selected camera gets on-canvas **POV drag handles** to aim and widen its
+  coverage wedge directly on the plan instead of only through the inspector. Undo/redo snapshots
+  every authored layer together (walls/stairs/doors/windows/platforms/parking) as one history. A
+  wall run in progress can be cancelled with **Esc** (Enter or double-click still finishes it)
+  without exiting the whole editor. The tool palette and the properties inspector are both
+  **dockable panels** — drag either by its grip to float it, or drop it near the left/right edge to
+  dock there (dropping both on one side stacks them). **Zoom** — toolbar zoom in/out/fit-to-100%, or
+  Ctrl/⌘+wheel — lets the canvas grow past the viewport (scrollbars appear only once zoomed past
+  fit). A **2D ⇄ 3D** toggle sits in its own header (a Select-mode marker inspector also sets a
+  camera's `mountHeight`/`pitch` for the 3D coverage cone). Walls/scale/wall-height autosave
   (debounced, `PUT /api/floors/{id}/model`); camera placement/move/aim persist immediately
   (`POST`/`PUT /api/floors/{id}/placements`, `PUT /api/placements/{id}`) — there is no separate
   "save" step. A blank area's generated canvas can be replaced with a real uploaded plan (scan/CAD
   export) at any time from the editor's toolbar without losing the drawn walls or placements, and
   a **Remove plan** button (beside Upload plan, confirm-gated) clears an uploaded/drawn plan back
   to that same blank canvas (`DELETE /api/floors/{id}/image`) — walls, stairs, doors and camera
-  placements all survive; only the picture is cleared. Re-entry for an existing building: an
-  **edit** button on an unplaced building's rail row (it has no marker to click into yet), and an
-  **Edit plan** button in the read-only building drill-down (`BuildingFloorView`, below).
+  placements all survive; only the picture is cleared (`FloorPlan.HasPlanImage` is what lets the
+  editor know whether there is a plan to remove — see `entities/site.go.md`). Re-entry for an
+  existing building/outdoor area: an **edit** button on an unplaced site's rail row (it has no
+  marker to click into yet), and an **Edit plan** button in the read-only building drill-down
+  (`BuildingFloorView`, below). A point asset has no plan surface — its rail-row pencil opens the
+  small rename/re-glyph dialog instead (see "Site-centric rail" above).
 - **Floor plans**: an operator's placements (`NodePlacement`) are **myseliasan's own record**, not
   fetched from the node — that is deliberate: the live camera list is fetched over the tunnel and
   returns nothing when a node is offline, so a placement carries a name snapshot and stays
   rendered (using that snapshot) even while its node is unreachable; a placement whose camera no
   longer exists on an *online, reachable* node (as opposed to one simply unreachable right now) is
-  flagged as a **ghost marker** for cleanup. A camera placement carries a **coverage arc**
-  (`heading`/`fov` in degrees, dragged into aim via on-marker handles) drawn as a translucent
-  wedge on the plan, so an operator can see at a glance which part of a room a camera actually
-  watches; in the **3D view** the same placement's `mountHeight`/`pitch` stand its coverage as a
-  cone over the extruded walls. The 3D view renders **only the walls the operator drew** — a floor
-  with no authored `segments[]` extrudes as a bare slab, never an invented perimeter box, since an
-  outer wall is something authored, not assumed. A floor's authored **stairs** and **doors** (see
-  "Authoring a building" above) round-trip alongside the wall segments in `FloorPlan.Grid` and
-  extrude the same way in every 3D view, not just the editor's own. A camera marker with unread
+  flagged as a **ghost marker** for cleanup. **Placement is exclusive**: a camera (or a node's own
+  marker) holds at most one pin fleet-wide — dropping one already placed elsewhere is refused
+  (`409`, naming the site/area it already sits in) rather than silently duplicating it; move it by
+  unplacing it first (`GET /api/placements` backs the palette's "already placed, and where" state
+  across the whole fleet, not just the floor being edited). A camera placement carries a
+  **coverage arc** (`heading`/`fov` in degrees, dragged into aim via on-marker handles, or the
+  editor's on-canvas POV drag handles) drawn as a translucent wedge on the plan, so an operator can
+  see at a glance which part of a room a camera actually watches; in the **3D view** the same
+  placement's `mountHeight`/`pitch` stand its coverage as a cone over the extruded walls. The 3D
+  view renders **only the walls the operator drew** — a floor with no authored `segments[]`
+  extrudes as a bare slab, never an invented perimeter box, since an outer wall is something
+  authored, not assumed. A floor's authored **stairs**, **doors**, **windows**, **raised floors**
+  and **parking** (see "Authoring a building or outdoor area" above) round-trip alongside the wall
+  segments in `FloorPlan.Grid` and extrude the same way in every 3D view, not just the editor's
+  own; windows render as glazing, a raised floor as a slab (carved underneath any stairs that land
+  on it), and stairs rest on their platform when they have one, descending stairs carving a
+  stairwell opening into the floor slab above when going down. The **read-only 2D drill-down**
+  (`BuildingFloorView`/`node_floor_view.js`) now renders this same authored geometry as a vector
+  overlay over the plan image too, not just the 3D tab — a floor with drawn walls no longer looks
+  empty in the 2D view. A camera marker with unread
   notifications carries a severity-coloured count badge in **both** the 2D plan and the 3D view
   (`GET /api/notifications/tally?unread=true`, same per-camera attribution as the building marker's
   own badge); the 3D view additionally pulses a beacon on the floor beneath that camera — the same
@@ -187,11 +231,12 @@ cipher that protects the CA key and fleet PSK (see "Fleet secret encryption at r
 only metadata and pixel dimensions live in the database.
 
 Endpoints (all `AuthOnly`, session-gated like every other operator route in this app):
-`GET/POST /api/sites`, `GET /api/sites/overview` (building rollup for the geo map),
-`PUT/DELETE /api/sites/{id}`, `PUT /api/sites/{id}/position` (drag a building's marker),
+`GET/POST /api/sites` (create body `{name, description, icon, kind}` — `kind` is
+`building`/`outdoor`/`point`), `GET /api/sites/overview` (per-site rollup for the geo map),
+`PUT/DELETE /api/sites/{id}`, `PUT /api/sites/{id}/position` (drag a site's marker),
 `GET/POST /api/sites/{id}/floors`, `POST /api/sites/{id}/areas` (create an area with a generated
-blank canvas — the building wizard/editor's "add an area" path), `GET /api/sites/{id}/floorplans`
-(multi-node building drill-down), `GET/PUT/DELETE /api/floors/{id}`,
+blank canvas — the asset wizard/editor's "add an area" path), `GET /api/sites/{id}/floorplans`
+(multi-node building/outdoor-area drill-down), `GET/PUT/DELETE /api/floors/{id}`,
 `PUT /api/floors/{id}/model` (autosave the 3D layout: grid/scale/wallHeight/elevation),
 `GET /api/floors/{id}/image`,
 `POST /api/floors/{id}/image` (replace, used by the floor editor and to upload a real plan over a
@@ -199,12 +244,15 @@ generated blank canvas),
 `DELETE /api/floors/{id}/image` (clear the plan back to a blank canvas — walls/stairs/doors and
 placements survive — the building editor's **Remove plan** button),
 `GET /api/floors/{id}/background` (pristine background for re-editing),
-`GET/POST /api/floors/{id}/placements`, `PUT/DELETE /api/placements/{id}` (position, and/or
+`GET/POST /api/floors/{id}/placements` (`POST` is `409` when the camera already holds a pin
+elsewhere — placement is exclusive), `GET /api/placements` (fleet-wide placement index — every
+placement with the site/floor it sits on, for the editor palette's "already placed, where"
+state), `PUT/DELETE /api/placements/{id}` (position, and/or
 `heading`/`fov` coverage aim, and/or `mountHeight`/`pitch` for the 3D coverage cone),
 `GET /api/node-floorplan/{nodeId}` (locate-on-plan drill-down),
 `GET /api/basemap/info`, `GET/PUT /api/basemap/config`, `POST /api/basemap/download`,
 `GET /api/basemap/tiles/{name}`, `PUT /api/nodes/{id}/position` (a node's own geographic
-coordinates), and `PUT /api/nodes/{id}/building` (assign/clear the building a node resides in).
+coordinates), and `PUT /api/nodes/{id}/building` (assign/clear the site a node resides in).
 See `docs/modules/apps/myseliasan/apis/{basemap,sites,nodes}.go.md`.
 
 **In-flight redesign (not wired in):** `components/map/` (`geo_map.js`, `inspector.js`,
