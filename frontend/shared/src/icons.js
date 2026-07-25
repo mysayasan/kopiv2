@@ -80,6 +80,22 @@ export const icoSvg = {
   globe:       '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
   truck:       '<rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>',
   door:        '<path d="M3 21h18"/><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"/><circle cx="15" cy="12" r="1"/>',
+  // Floor-plan authoring tools.
+  line:        '<line x1="5" y1="19" x2="19" y2="5"/><circle cx="5" cy="19" r="2.2"/><circle cx="19" cy="5" r="2.2"/>',
+  // `wall` draws a wall run. A masonry/brick glyph reads unambiguously as "wall" — the old
+  // line-with-end-dots looked like a node-graph connector.
+  wall:        '<rect x="3" y="6" width="18" height="12" rx="1"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="9" y1="6" x2="9" y2="12"/><line x1="15" y1="12" x2="15" y2="18"/>',
+  // `square` = a plain enclosure outline for the Room / Enclosure tool, kept visually distinct from
+  // the mullioned Window glyph (which the old four-pane `grid2` was too close to).
+  square:      '<rect x="4" y="4" width="16" height="16" rx="1.5"/>',
+  window:      '<rect x="3" y="4" width="18" height="16" rx="1"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="3" y1="12" x2="21" y2="12"/>',
+  // A gate is the outdoor counterpart of a door: two posts with a barred leaf between them.
+  gate:        '<line x1="3" y1="4" x2="3" y2="20"/><line x1="21" y1="4" x2="21" y2="20"/><rect x="6" y="8" width="12" height="9"/><line x1="10" y1="8" x2="10" y2="17"/><line x1="14" y1="8" x2="14" y2="17"/>',
+  parking:     '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 17V7h3.5a3 3 0 0 1 0 6H9"/>',
+  // A raised floor / platform: a slab lifted above the ground on supports — the thing you climb
+  // stairs to reach.
+  platform:    '<rect x="3" y="7" width="18" height="4" rx="1"/><path d="M6 11v8M18 11v8M3 19h18"/>',
+  fence:       '<path d="M4 21V8l3-3 3 3v13"/><path d="M14 21V8l3-3 3 3v13"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="16" x2="22" y2="16"/>',
   contrast:    '<circle cx="12" cy="12" r="10"/><path d="M12 2 a10 10 0 0 1 0 20 Z" fill="currentColor"/>',
   pin:         '<path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/>',
   'pin-off':   '<path d="M12 17v5"/><path d="M15 9.34V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H7.89"/><path d="m2 2 20 20"/><path d="M9 9v1.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h11"/>',

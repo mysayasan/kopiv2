@@ -19,8 +19,10 @@ floor-plan images, and node/camera placements on those plans — the indoor half
 
 - **Sites** — `ListSites`/`CreateSite`/`UpdateSite`/`DeleteSite`. `DeleteSite` lists the site's
   floors and calls `DeleteFloor` on each before deleting the site row itself, so a deleted site
-  never leaves orphaned floor-plan files or placements behind. `CreateSite`/`UpdateSite` now also
-  take an `icon` (the building glyph shown on the geo-map marker).
+  never leaves orphaned floor-plan files or placements behind. `CreateSite`/`UpdateSite` take an
+  `icon` (the marker glyph shown on the geo-map) and a `kind` (`entities.NormalizeSiteKind(kind)`
+  — anything unrecognised is normalised to `SiteKindBuilding` rather than stored as-is, so an
+  unknown value can never reach the database).
   - `UpdateSitePosition(ctx, id, lat, lon, placed, by)` — sets `Site.Lat`/`Lon`/`MapPlaced` from an
     operator dragging the building's marker on the geographic map, mirroring
     `INodeRegistry.UpdatePosition`. Returns `ErrSiteUnknown` for an unknown site.
@@ -37,43 +39,49 @@ floor-plan images, and node/camera placements on those plans — the indoor half
     physically inside it, whichever node happens to record each one.
 - **Floors** — `ListFloors`/`GetFloor`/`UpdateFloor`/`DeleteFloor`, plus:
   - `AddFloor(ctx, siteID, name, img, contentType, design, by)` — the **uploaded-image** path;
-    thin wrapper over `addFloorBytes` (below) with `keepBg = (design == "")`, i.e. a plain
-    uploaded photo keeps a pristine background copy, a drawn plan does not.
+    thin wrapper over `addFloorBytes` (below) with `keepBg = (design == "")` (a plain uploaded
+    photo keeps a pristine background copy, a drawn plan does not) and `hasPlanImage = true`
+    always — these bytes are the operator's plan either way, never a blank canvas.
   - `AddBlankFloor(ctx, siteID, name, ordinal, width, height, by)` — the **generated-canvas**
     path used by `POST /api/sites/{id}/areas`: renders a white `image.NewRGBA` (via `image/draw`),
     PNG-encodes it, and stores it through `addFloorBytes` with `keepBg = false` (no original photo
-    worth doubling on disk for a blank canvas). `width`/`height` default to
+    worth doubling on disk for a blank canvas) and `hasPlanImage = false` (this IS the blank
+    canvas — there is no plan yet to remove). `width`/`height` default to
     `defaultBlankPlanW`/`H` (1600×1000 — the same size the old client-side rasteriser used, so
     areas made either way share a coordinate space) when `<= 0` or `> maxBlankPlanPx` (8000, an
     allocation-size guard: an RGBA buffer is 4 bytes/pixel). A non-zero `ordinal` is applied with
     a follow-up `UpdateById` after the row is created (the id is needed first to name the file).
-  - `addFloorBytes(ctx, siteID, name, img, contentType, design, keepBg, by)` — the shared
-    store-a-plan path both of the above now funnel through: decodes just the image header
+  - `addFloorBytes(ctx, siteID, name, img, contentType, design, keepBg, hasPlanImage, by)` — the
+    shared store-a-plan path both of the above now funnel through: decodes just the image header
     (`image.DecodeConfig`) to capture pixel `Width`/`Height` (these become the OL pixel-projection
     extent the frontend renders the plan in), creates the DB row first (to get an id to name the
-    file), writes the image to `<planDir>/floor-<id>.img` — encrypted via `cipher.EncryptBytes`
-    when a cipher is configured, plaintext otherwise — then stamps `ImagePath` on the row.
-    `keepBg` additionally copies the same bytes to `<planDir>/floor-<id>.bg.img` and stamps
-    `BgPath`, so the floor editor has a pristine original to draw on if the plan is later
-    annotated in-app (an uploaded photo gets this; a generated blank canvas does not, since there
-    is no "original" worth a second copy). Any failure after the DB row is created rolls back by
-    deleting that row (and any file already written), so a failed upload/generate never leaves a
-    half-created floor plan.
+    file, stamping `HasPlanImage` from the caller), writes the image to `<planDir>/floor-<id>.img`
+    — encrypted via `cipher.EncryptBytes` when a cipher is configured, plaintext otherwise — then
+    stamps `ImagePath` on the row. `keepBg` additionally copies the same bytes to
+    `<planDir>/floor-<id>.bg.img` and stamps `BgPath`, so the floor editor has a pristine original
+    to draw on if the plan is later annotated in-app (an uploaded photo gets this; a generated
+    blank canvas does not, since there is no "original" worth a second copy). Any failure after
+    the DB row is created rolls back by deleting that row (and any file already written), so a
+    failed upload/generate never leaves a half-created floor plan.
   - `ReplaceFloorImage(ctx, id, name, img, contentType, design, by)` — rewrites an existing
     floor's rasterised image + `Design`, used when the operator uploads a real plan over a
     generated blank canvas, or re-saves a plan from the in-app editor (`floor_editor.js`).
     `name`/`contentType`/`Width`/`Height`/`UpdatedBy`/`UpdatedAt` are all refreshed; `name == ""`
-    leaves the existing name unchanged. **First-time annotation of a plain uploaded image** (the
-    row has no `Design` and no `BgPath` yet, and this call is the first one to carry a non-empty
-    `design`): before the new composite overwrites `ImagePath`, the *current* file is read back
-    and copied to `BgPath` — this is the one moment the pristine original is captured for an
-    uploaded photo that was never drawn on until now. Returns `ErrFloorUnknown`/`ErrBadImage`
-    like `AddFloor`.
+    leaves the existing name unchanged. `HasPlanImage` is set `true` only when `design == ""` — a
+    plain picture upload puts a real plan on the floor, but a designer re-save (non-empty
+    `design`) only re-rasterises what is already there and must not claim a plan image on a floor
+    that is still the blank canvas (drawing walls on a blank area doesn't make it an uploaded
+    plan). **First-time annotation of a plain uploaded image** (the row has no `Design` and no
+    `BgPath` yet, and this call is the first one to carry a non-empty `design`): before the new
+    composite overwrites `ImagePath`, the *current* file is read back and copied to `BgPath` —
+    this is the one moment the pristine original is captured for an uploaded photo that was never
+    drawn on until now. Returns `ErrFloorUnknown`/`ErrBadImage` like `AddFloor`.
   - `ClearFloorImage(ctx, id, by)` — the inverse of uploading/replacing a plan: regenerates
     `blankPlanPNG` at the floor's **current** `Width`/`Height` (never resized — placement X/Y and
     the 3D grid are expressed in that same pixel space, so resizing would silently shift every
     camera marker and wall cell) and overwrites `ImagePath` with it. Also clears `Design` and
-    `BgPath`/deletes the background file, and stamps `ContentType` back to `image/png` — but
+    `BgPath`/deletes the background file, stamps `ContentType` back to `image/png`, and clears
+    `HasPlanImage` (back to the blank canvas, so there is no longer a plan to remove) — but
     deliberately leaves `Width`/`Height`, `Grid`, `Scale`, `WallHeight`, `Elevation` and every
     placement untouched, so removing the picture never throws away the authoring done on top of
     it (deleting the floor is the destructive option for that). The background file is only
@@ -97,9 +105,28 @@ floor-plan images, and node/camera placements on those plans — the indoor half
     is a no-op on an empty path), then deletes the row. A floor that no longer exists is treated
     as already deleted (returns `nil`), not an error.
 - **Placements** — `ListPlacements`/`AddPlacement`/`UpdatePlacement`/`DeletePlacement`.
-  `AddPlacement` validates the floor exists first (`ErrFloorUnknown` otherwise) and gives a
-  camera placement (non-empty `cameraId`) a default `70`° `Fov` on drop so it has a visible
-  coverage arc immediately; a node/sensor placement (`cameraId == ""`) gets `Fov: 0` (no arc).
+  `AddPlacement` validates the floor exists first (`ErrFloorUnknown` otherwise), then enforces
+  **exclusive placement**: a camera is in one physical place, so it holds at most one pin
+  fleet-wide. It calls `FindPlacementOf(ctx, nodeID, cameraID)` and, if the camera (or node
+  marker) is already pinned somewhere, returns `*ErrAlreadyPlaced{Placement, Floor, Site}` instead
+  of inserting — checked before the insert so the operator gets a message naming where it already
+  sits (`apis/sites.go`'s `addPlacement` maps this to `409` with the site/floor names) rather than
+  a raw unique-constraint violation off `ux_node_placement_camera` (the DB index is the backstop
+  against two concurrent requests both winning, not the primary check). Moving a camera means
+  unplacing it first. A camera placement (non-empty `cameraId`) then gets a default `70`° `Fov` on
+  drop so it has a visible coverage arc immediately; a node/sensor placement (`cameraId == ""`)
+  gets `Fov: 0` (no arc).
+  - `FindPlacementOf(ctx, nodeID, cameraID)` returns the pin a camera already holds plus its
+    floor/site, or all-`nil` when unplaced. Uses `Get` with an explicit `NodeId`/`CameraId` filter
+    (not `GetByForeign`, which hardcodes `limit=1`). A pin whose `FloorId` no longer resolves is
+    treated as **not** a placement — it renders nowhere and there is no screen to unplace it from,
+    so it is deleted here on the next lookup rather than left as a phantom that blocks the camera
+    from ever being placed again. A site lookup failure leaves `Site` nil but still reports the
+    (real, blocking) placement — the error just can't be named.
+  - `PlacementIndex(ctx)` lists every placement fleet-wide as `[]PlacedAt` (placement id,
+    `nodeId`/`cameraId`, floor id/name, site id/name/kind), backing `GET /api/placements` — what
+    the floor editor's palette needs to grey out an already-placed camera and say where, without a
+    request per camera. Reads all sites/floors into maps once rather than per placement.
   `UpdatePlacement(ctx, id, x, y, heading, fov, mountHeight, pitch *float64, by)` takes every
   positional/orientation/3D field as a pointer — nil means "leave unchanged" — so a plain drag
   (`x`/`y`) never resets a camera's aim, the FOV editor (`heading`/`fov`) never resets its
@@ -130,6 +157,7 @@ floor-plan images, and node/camera placements on those plans — the indoor half
 | `ErrSiteUnknown` | Referenced site does not exist (`AddFloor`, `AddBlankFloor`, `UpdateSite`). |
 | `ErrFloorUnknown` | Referenced floor does not exist (`AddPlacement`, `UpdateFloor`, `UpdateFloorModel`, `GetFloor`, `FloorImage`, `ReplaceFloorImage`, `ClearFloorImage`), or has no background image (`FloorBackground`). |
 | `ErrBadImage` | Uploaded image bytes could not be decoded, or had zero width/height (`AddFloor`, `ReplaceFloorImage`). |
+| `*ErrAlreadyPlaced` | A **struct** error, not a sentinel — check with `errors.As`, not `==`. Returned by `AddPlacement` when the camera (or node marker) already holds a pin elsewhere; carries `Placement`/`Floor`/`Site` (`SiteId`/`FloorId`/`SiteName`/`FloorName` accessors tolerate a partially-resolved site) so the caller can say where. |
 
 ## Notes
 

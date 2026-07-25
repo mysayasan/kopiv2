@@ -1,12 +1,53 @@
 package entities
 
-// Site is a named physical location — a building, campus, or yard — that groups one or
-// more floor plans. It is the container an operator drags cameras and nodes onto in the
-// non-geographic (indoor) view, the counterpart to the lat/lon geographic map.
+// Site kinds. A site is not always a building: a park is one open ground surface with no storeys,
+// and a traffic-light junction is a pole with cameras on it and no surface at all. One field keeps
+// all three on the same map, the same overview and the same node assignment.
+const (
+	// SiteKindBuilding has one or more floors, drawn with walls/doors/stairs and stacked by
+	// elevation in the 3D view. The default, and what an empty Kind means.
+	SiteKindBuilding = "building"
+	// SiteKindOutdoor is an open area — a park, yard, car park, campus. It holds exactly ONE plan
+	// (its ground surface), which is why the wizard never asks it "how many areas"; in 3D it is a
+	// flat ground plane with no storey above it.
+	SiteKindOutdoor = "outdoor"
+	// SiteKindPoint has NO plan: a junction, pole, gate, barrier. Its cameras reach it through the
+	// owning node's SiteId, so clicking its marker opens the node's device card rather than a plan.
+	SiteKindPoint = "point"
+)
+
+// NormalizeSiteKind maps whatever a client sent onto a known kind, defaulting to building. It is
+// the ONE place that decides what a kind may be, so an unknown string can never reach the database
+// and leave the frontend guessing how to draw the marker.
+func NormalizeSiteKind(kind string) string {
+	switch kind {
+	case SiteKindOutdoor:
+		return SiteKindOutdoor
+	case SiteKindPoint:
+		return SiteKindPoint
+	default:
+		return SiteKindBuilding
+	}
+}
+
+// HasPlans reports whether a site of this kind owns floor plans at all. A point asset does not, so
+// callers can skip the plan fetch (and the UI can skip the editor) instead of showing an empty one.
+func HasPlans(kind string) bool { return NormalizeSiteKind(kind) != SiteKindPoint }
+
+// Site is a named physical location that a fleet's cameras belong to. It is the container an
+// operator drags cameras and nodes onto in the non-geographic (indoor) view, the counterpart to
+// the lat/lon geographic map.
+//
+// Not every monitored place is a building. Kind says WHAT the site is, and everything downstream
+// (how many plans it can hold, whether it stacks in 3D, what its map marker looks like, what a
+// click on it opens) follows from that one field — see the SiteKind* constants.
 type Site struct {
 	Id          int64  `json:"id" form:"id" query:"id" params:"id" skipWhenInsert:"true" pkey:"true" validate:"required"`
 	Name        string `json:"name" form:"name" query:"name" validate:"required"`
 	Description string `json:"description" form:"description" query:"description"`
+	// Kind is one of the SiteKind* values. Empty means SiteKindBuilding — every site that predates
+	// this field is a building, so the zero value needs no backfill beyond NULL-safety.
+	Kind string `json:"kind" form:"kind" query:"kind"`
 	// Icon is the building glyph shown on the geo map and pickers — a single emoji chosen at
 	// creation (🏢 office, 🏭 factory, 🏠 home, …). Emoji so it needs no image asset and renders
 	// natively in the OpenLayers canvas marker. Empty = the default building glyph.
@@ -51,8 +92,14 @@ type FloorPlan struct {
 	// on a blank canvas). ImagePath is the RENDERED plan (background + drawn shapes) shown
 	// everywhere; BgPath is loaded as the designer's canvas background so re-editing draws on the
 	// original image, never on an already-composited one.
-	BgPath      string `json:"-" form:"bgPath" query:"bgPath"`
-	ContentType string `json:"contentType" form:"contentType" query:"contentType"`
+	BgPath string `json:"-" form:"bgPath" query:"bgPath"`
+	// HasPlanImage records whether this floor's picture came from an OPERATOR UPLOAD rather than
+	// being the generated blank canvas. Both are stored identically — a blank area is a plain white
+	// PNG on disk, not a NULL image — so without this flag the two are indistinguishable and the
+	// editor cannot tell whether there is a plan to remove. Set by the upload paths, cleared by
+	// AddBlankFloor and ClearFloorImage.
+	HasPlanImage bool   `json:"hasPlanImage" form:"hasPlanImage" query:"hasPlanImage"`
+	ContentType  string `json:"contentType" form:"contentType" query:"contentType"`
 	Width       int    `json:"width" form:"width" query:"width"`
 	Height      int    `json:"height" form:"height" query:"height"`
 	// Design holds the JSON vector shapes when the plan was DRAWN in the in-app designer (empty

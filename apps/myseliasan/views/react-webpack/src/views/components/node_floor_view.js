@@ -5,6 +5,81 @@ import { api, apiBase } from '../lib/helpers';
 import { NodeCameraTile } from './node_manager';
 import { PTZRing } from './nodecam/ptz';
 import { nodeTone, TONES } from '../lib/fleet_status';
+import { carveSeg, rectCenter, rectSize } from './plan_geometry';
+
+// FloorPlanGrid draws the AUTHORED geometry (walls, openings, stairs, raised floors, parking) over
+// the plan image in the read-only 2D view. The editor stores this as vectors in floor.grid and only
+// EXTRUDES it in 3D — it is never baked into the plan image — so without this overlay a floor drawn
+// with walls looked empty in 2D (just the blank canvas and the camera pins). Same image-pixel space
+// as the FOV layer, so it lines up with the markers.
+function FloorPlanGrid({ floor, w, h }) {
+  const t = useT();
+  const g = (() => { try { return floor && floor.grid ? (typeof floor.grid === 'string' ? JSON.parse(floor.grid) : floor.grid) : null; } catch (_) { return null; } })();
+  if (!g) return null;
+  const unit = g.unit || g.cellPx || 20;
+  const wallW = Math.max(3, unit * 0.22);
+  const doors = Array.isArray(g.doors) ? g.doors : [];
+  const windows = Array.isArray(g.windows) ? g.windows : [];
+  const openings = doors.concat(windows);
+  const els = [];
+  // Rotated footprint wrapper — the group carries the rotation so the shapes stay axis-aligned.
+  const rot = (r, key, children) => {
+    const c = rectCenter(r); const deg = ((r.a || 0) * 180) / Math.PI;
+    return <g key={key} transform={`rotate(${deg} ${c.x} ${c.y})`}>{children}</g>;
+  };
+  // Raised floors (drawn first, so walls/stairs sit over them).
+  (g.platforms || []).forEach((p, i) => {
+    const s = rectSize(p); const x = Math.min(p.x1, p.x2); const y = Math.min(p.y1, p.y2);
+    els.push(rot(p, `plat${i}`, (
+      <>
+        <rect x={x} y={y} width={s.w} height={s.h} fill="rgba(161,98,7,0.14)" stroke="#a16207" strokeWidth={Math.max(2, wallW * 0.5)} />
+        <text x={x + s.w / 2} y={y + s.h / 2} fill="#a16207" fontSize={Math.max(11, unit * 0.5)} textAnchor="middle" dominantBaseline="middle">{`+${(p.rise > 0 ? p.rise : 0.6).toFixed(2)} m`}</text>
+      </>
+    )));
+  });
+  // Parking rows.
+  (g.parking || []).forEach((p, i) => {
+    const s = rectSize(p); const x = Math.min(p.x1, p.x2); const y = Math.min(p.y1, p.y2);
+    const n = Math.max(1, Math.min(60, p.bays || 1)); const acrossX = s.w >= s.h;
+    const divs = [];
+    for (let k = 1; k < n; k++) { const f = k / n; if (acrossX) divs.push(<line key={k} x1={x + s.w * f} y1={y} x2={x + s.w * f} y2={y + s.h} stroke="#475569" strokeWidth="1" />); else divs.push(<line key={k} x1={x} y1={y + s.h * f} x2={x + s.w} y2={y + s.h * f} stroke="#475569" strokeWidth="1" />); }
+    els.push(rot(p, `park${i}`, (
+      <>
+        <rect x={x} y={y} width={s.w} height={s.h} fill="rgba(71,85,105,0.08)" stroke="#475569" strokeWidth={Math.max(2, wallW * 0.4)} />
+        {divs}
+      </>
+    )));
+  });
+  // Stairs: footprint + tread lines + ascent arrow.
+  (g.stairs || []).forEach((st, i) => {
+    const s = rectSize(st); const x = Math.min(st.x1, st.x2); const y = Math.min(st.y1, st.y2);
+    const climb = st.height > 0 ? st.height : (floor.wallHeight > 0 ? floor.wallHeight : 2.7);
+    const steps = Math.max(2, Math.min(40, st.steps || Math.round(climb / 0.18)));
+    const vertical = st.dir === 'n' || st.dir === 's';
+    const treads = [];
+    for (let k = 1; k < steps; k++) { const f = k / steps; if (vertical) treads.push(<line key={k} x1={x} y1={y + s.h * f} x2={x + s.w} y2={y + s.h * f} stroke="#0f766e" strokeWidth="1" />); else treads.push(<line key={k} x1={x + s.w * f} y1={y} x2={x + s.w * f} y2={y + s.h} stroke="#0f766e" strokeWidth="1" />); }
+    els.push(rot(st, `stair${i}`, (
+      <>
+        <rect x={x} y={y} width={s.w} height={s.h} fill="rgba(15,118,110,0.12)" stroke="#0f766e" strokeWidth={Math.max(2, wallW * 0.5)} />
+        {treads}
+        <text x={x + s.w / 2} y={y + s.h / 2} fill="#0f766e" fontSize={Math.max(11, unit * 0.5)} fontWeight="700" textAnchor="middle" dominantBaseline="middle">{st.down ? t('grid.stairDownMark') : t('grid.stairUpMark')}</text>
+      </>
+    )));
+  });
+  // Legacy painted-cell walls.
+  if (Array.isArray(g.walls) && !(Array.isArray(g.segments) && g.segments.length)) {
+    const cell = g.cellPx || unit;
+    g.walls.forEach(([c, r], i) => els.push(<rect key={`cw${i}`} x={c * cell} y={r * cell} width={cell} height={cell} fill="#334155" />));
+  }
+  // Walls (segments), broken by every opening on them.
+  (g.segments || []).forEach((s, i) => carveSeg(s, openings, unit * 0.6).forEach((pc, j) => els.push(
+    <line key={`w${i}-${j}`} x1={pc.x1} y1={pc.y1} x2={pc.x2} y2={pc.y2} stroke="#334155" strokeWidth={wallW} strokeLinecap="round" />,
+  )));
+  // Windows: a glazing line across the opening (doors are left as a plain gap).
+  windows.forEach((d, i) => { const ux = Math.cos(d.a || 0); const uy = Math.sin(d.a || 0); const hw = d.w / 2; els.push(<line key={`win${i}`} x1={d.cx - ux * hw} y1={d.cy - uy * hw} x2={d.cx + ux * hw} y2={d.cy + uy * hw} stroke="#38bdf8" strokeWidth={Math.max(2, wallW * 0.5)} />); });
+  return <svg className="floor-plan-grid" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden="true">{els}</svg>;
+}
+FloorPlanGrid.propTypes = { floor: PropTypes.object, w: PropTypes.number, h: PropTypes.number };
 
 // The 3D building view is code-split: three.js (~150KB gz) loads only when an operator switches a
 // floor to 3D, so it never weighs on the rest of the SPA. It consumes the same { floor, placements }
@@ -509,13 +584,20 @@ NodeFloorView.propTypes = {
 // counterpart to NodeFloorView — a floor plan is a building, and a building's cameras may belong to
 // several nodes, so each marker/coverage-wedge is coloured by ITS OWN owning node's status and its
 // live view streams over THAT node's tunnel. This is what fixes "the node isn't the building".
-export function BuildingFloorView({ site, floorplans, nodesById = {}, notifByCam = {}, focusCameraId, onBack, onPlay, onRemovePlacements, onEdit }) {
+export function BuildingFloorView({ site, floorplans, nodesById = {}, notifByCam = {}, focusCameraId, focusFloorId, onBack, onPlay, onRemovePlacements, onEdit }) {
   const t = useT();
   const focusIdx = useMemo(() => {
+    // Open on the AREA that was asked for — by floor id first (a rail click names the area), then by
+    // the camera being located, else the first plan. Without the floor-id case, clicking an empty
+    // area fell through to index 0 and showed the other area.
+    if (focusFloorId != null) {
+      const j = floorplans.findIndex((fp) => fp.floor && String(fp.floor.id) === String(focusFloorId));
+      if (j >= 0) return j;
+    }
     if (!focusCameraId) return 0;
     const i = floorplans.findIndex((fp) => (fp.placements || []).some((p) => String(p.cameraId) === String(focusCameraId)));
     return i >= 0 ? i : 0;
-  }, [floorplans, focusCameraId]);
+  }, [floorplans, focusCameraId, focusFloorId]);
   const [floorIdx, setFloorIdx] = useState(focusIdx);
   useEffect(() => { setFloorIdx(focusIdx); }, [focusIdx]);
   // 2D top-down vs 3D building view. Sticky across floors and remounts (per-browser preference).
@@ -678,6 +760,9 @@ export function BuildingFloorView({ site, floorplans, nodesById = {}, notifByCam
         <div className={`floor-plan-viewport${view.z > 1 ? ' zoomed' : ''}`} ref={vpRef} onPointerDown={onPanStart} onPointerMove={onPanMove} onPointerUp={onPanEnd} onPointerLeave={onPanEnd}>
         <div className="floor-plan-wrap" style={{ aspectRatio: `${w} / ${h}`, transform: `translate(${view.tx}px, ${view.ty}px) scale(${view.z})`, '--inv': 1 / view.z }}>
           <img className="floor-plan-img" src={`${apiBase()}/api/floors/${floor.id}/image`} alt={floor.name} draggable={false} />
+          {/* Authored geometry (walls, stairs, raised floors, …) — stored as vectors, not baked into
+              the plan image, so it is drawn here over the (often blank) canvas. */}
+          <FloorPlanGrid floor={floor} w={w} h={h} />
           {/* Coverage wedges, each in its owning node's tone. */}
           <svg className="floor-fov" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden="true">
             {placements.filter((p) => p.cameraId && (p.fov || 0) > 0).map((p) => {
@@ -733,6 +818,7 @@ BuildingFloorView.propTypes = {
   nodesById: PropTypes.object,
   notifByCam: PropTypes.object,
   focusCameraId: PropTypes.any,
+  focusFloorId: PropTypes.any,
   onBack: PropTypes.func,
   onPlay: PropTypes.func,
   onRemovePlacements: PropTypes.func,

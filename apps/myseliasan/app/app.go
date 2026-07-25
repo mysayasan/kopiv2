@@ -258,6 +258,125 @@ func (m *module) Migrations() []bootstrap.Migration {
 				return ensurePlacementMountColumns(ctx, tx, engine)
 			},
 		},
+		{
+			// Not every monitored place is a building — a park has one open ground surface, a
+			// traffic-light junction has none. `kind` says which, and the marker/editor/3D all read
+			// it. Backfilled to 'building' rather than '' so an existing fleet reads the same in the
+			// database as it does in the UI (entities.NormalizeSiteKind treats both as building).
+			// Same NULL-safety as site.icon: the entity's Kind string cannot scan a NULL left by a
+			// defaultless ADD COLUMN. Idempotent.
+			ID:   "20260724-01-site-kind",
+			Name: "add kind (building/outdoor/point) to site",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				existing, err := tableColumns(ctx, tx, engine, "site")
+				if err != nil {
+					return err
+				}
+				colType := "TEXT"
+				if engine == "mariadb" {
+					colType = "VARCHAR(32)"
+				}
+				if !existing["kind"] {
+					if _, err := tx.ExecContext(ctx, "ALTER TABLE site ADD COLUMN kind "+colType); err != nil {
+						return fmt.Errorf("add site.kind: %w", err)
+					}
+				}
+				if _, err := tx.ExecContext(ctx, "UPDATE site SET kind = 'building' WHERE kind IS NULL OR kind = ''"); err != nil {
+					return fmt.Errorf("backfill site.kind: %w", err)
+				}
+				return nil
+			},
+		},
+		{
+			// Does this floor's picture come from an operator upload, or is it the generated blank
+			// canvas? Both are stored the same way, so the editor could not tell and offered
+			// "Remove plan" on areas that had no plan to remove.
+			//
+			// Existing rows carry no record of which they are, so they are classified by shape: a
+			// generated blank is a PNG at the canvas defaults with no stored background (see
+			// AddBlankFloor — the wizard and the editor never pass their own dimensions). A drawn
+			// design does NOT count as a plan: annotating an uploaded picture always preserves it
+			// as bg_path first (ReplaceFloorImage), so a design with no background means the walls
+			// were drawn on a blank canvas.
+			//
+			// Everything else is assumed to be a real plan, so this can only ever hide the button,
+			// never a plan. The one misjudged case — an upload that happens to be a PNG at exactly
+			// the blank canvas size and was never annotated — is recovered by uploading it again.
+			ID:   "20260724-02-floor-has-plan-image",
+			Name: "add has_plan_image (uploaded vs blank canvas) to floor_plan",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				existing, err := tableColumns(ctx, tx, engine, "floor_plan")
+				if err != nil {
+					return err
+				}
+				if !existing["has_plan_image"] {
+					if _, err := tx.ExecContext(ctx, "ALTER TABLE floor_plan ADD COLUMN has_plan_image "+geoColumnType("BOOLEAN", engine)); err != nil {
+						return fmt.Errorf("add floor_plan.has_plan_image: %w", err)
+					}
+				}
+				trueLit, falseLit := "1", "0"
+				if engine == "postgres" {
+					trueLit, falseLit = "true", "false"
+				}
+				blank := "(COALESCE(bg_path, '') = '' AND content_type = 'image/png' AND width = 1600 AND height = 1000)"
+				if _, err := tx.ExecContext(ctx, "UPDATE floor_plan SET has_plan_image = "+falseLit+" WHERE has_plan_image IS NULL AND "+blank); err != nil {
+					return fmt.Errorf("backfill floor_plan.has_plan_image (blank): %w", err)
+				}
+				if _, err := tx.ExecContext(ctx, "UPDATE floor_plan SET has_plan_image = "+trueLit+" WHERE has_plan_image IS NULL"); err != nil {
+					return fmt.Errorf("backfill floor_plan.has_plan_image NULLs: %w", err)
+				}
+				return nil
+			},
+		},
+		{
+			// Placement is EXCLUSIVE: a camera is in one physical place, so it holds one pin. The
+			// service refuses a second placement with a message naming where the first one is; this
+			// unique index is the backstop that keeps two concurrent requests from both winning.
+			//
+			// It must run BEFORE the auto-migrator, which creates the same index off the entity's
+			// ukey tag and would fail on a database that already contains duplicates. So duplicates
+			// are resolved first — the OLDEST pin of each camera is kept (it is the one the
+			// operator has been looking at; later ones were the accident) and the rest deleted.
+			// Pins on a floor that no longer exists go too: they render nowhere, so keeping one
+			// would silently block its camera from ever being placed again.
+			//
+			// Same index name the auto-migrator derives (ux_<table>_<ukey group>), so whichever
+			// runs second is a no-op.
+			ID:   "20260724-03-placement-unique-camera",
+			Name: "one pin per camera: dedupe node_placement and add the unique index",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				cols, err := tableColumns(ctx, tx, engine, "node_placement")
+				if err != nil {
+					return err
+				}
+				if len(cols) == 0 {
+					return nil // fresh install: the auto-migrator creates the table with the index
+				}
+				if _, err := tx.ExecContext(ctx, `DELETE FROM node_placement WHERE floor_id NOT IN (SELECT id FROM floor_plan)`); err != nil {
+					return fmt.Errorf("drop orphaned placements: %w", err)
+				}
+				if _, err := tx.ExecContext(ctx, `
+DELETE FROM node_placement
+WHERE id NOT IN (
+	SELECT MIN(id) FROM node_placement GROUP BY node_id, camera_id
+)`); err != nil {
+					return fmt.Errorf("dedupe node_placement: %w", err)
+				}
+				create := "CREATE UNIQUE INDEX IF NOT EXISTS ux_node_placement_camera ON node_placement (node_id, camera_id)"
+				if engine == "mariadb" {
+					// MariaDB lacks IF NOT EXISTS for CREATE INDEX on the versions we support; a
+					// duplicate-name error here means the index is already there.
+					if _, err := tx.ExecContext(ctx, "CREATE UNIQUE INDEX ux_node_placement_camera ON node_placement (node_id, camera_id)"); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate key name") {
+						return fmt.Errorf("add ux_node_placement_camera: %w", err)
+					}
+					return nil
+				}
+				if _, err := tx.ExecContext(ctx, create); err != nil {
+					return fmt.Errorf("add ux_node_placement_camera: %w", err)
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -556,7 +675,7 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Basemap", Description: "offline vector basemap archive for the fleet map", Path: "/api/basemap", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Sites", Description: "sites and uploaded floor plans for the indoor map", Path: "/api/sites", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Floors", Description: "floor-plan images and node/camera placements", Path: "/api/floors", AccessTier: apiaccessenums.AuthOnly},
-		{Title: "Placements", Description: "reposition/remove node and camera markers on floor plans", Path: "/api/placements", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Placements", Description: "list, reposition and remove node/camera markers on floor plans", Path: "/api/placements", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Node Floorplan", Description: "floor plans holding a node camera markers (geo-map drill-down)", Path: "/api/node-floorplan", AccessTier: apiaccessenums.AuthOnly},
 	}
 

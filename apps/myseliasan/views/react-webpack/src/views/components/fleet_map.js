@@ -4,8 +4,9 @@ import { useT, Ico, Tabs } from '@shared';
 import { api, apiBase } from '../lib/helpers';
 import { nodeTone, nodeToneKey, TONES } from '../lib/fleet_status';
 import { BuildingFloorView, CameraWindow, MediaWindow } from './node_floor_view';
-import { BuildingWizard } from './building_wizard';
+import { AssetWizard, SiteDialog } from './asset_wizard';
 import { BuildingEditorDialog } from './building_editor_dialog';
+import { KIND_BUILDING, KIND_OUTDOOR, KIND_POINT, KIND_ORDER, normKind, hasPlans, siteGlyph } from './site_kinds';
 
 // OpenLayers, driven directly through refs (no React wrapper — see the note in Phase 0).
 import Map from 'ol/Map.js';
@@ -19,7 +20,7 @@ import Point from 'ol/geom/Point.js';
 import Translate from 'ol/interaction/Translate.js';
 import { fromLonLat, toLonLat } from 'ol/proj.js';
 import { getCenter } from 'ol/extent.js';
-import { Fill, Stroke, Style, Circle as CircleStyle, Text } from 'ol/style.js';
+import { Fill, Stroke, Style, Circle as CircleStyle, RegularShape, Text } from 'ol/style.js';
 import { getVectorContext } from 'ol/render.js';
 import { PMTilesVectorSource } from 'ol-pmtiles';
 import 'ol/ol.css';
@@ -192,24 +193,38 @@ function pinStyle(clusterFeature) {
   return styles;
 }
 
-// BUILDING_GLYPH_FONT prefers the platform colour-emoji font so a chosen building icon renders in
+// BUILDING_GLYPH_FONT prefers the platform colour-emoji font so a chosen asset icon renders in
 // colour on the OL canvas (Windows/Chrome/macOS all ship one).
 const BUILDING_GLYPH_FONT = '15px "Segoe UI Emoji", "Noto Color Emoji", "Apple Color Emoji", system-ui, sans-serif';
-const DEFAULT_BUILDING_GLYPH = '🏢';
 const HOVER = '#2f6bd6'; // accent used for the hover/selection highlight ring + halo
 
-// buildingStyle renders a placed building (site): the operator's chosen glyph on a white disc ringed
-// in the worst owning-node tone (so status still reads at a glance and a building is distinct from a
-// node pin), the site name below, and a camera-count badge top-right.
-function buildingStyle(feature) {
+// markerShape draws a site marker in the SHAPE of its kind: a disc for a building, a square for an
+// outdoor area, a diamond for a point asset. Zoomed out past the point where the name label is
+// legible, the silhouette is the only thing left to tell a park from an office block — so the shape
+// carries the kind, and the glyph inside carries the specifics.
+//
+// The radii are tuned so the three read as the same visual weight: a square of radius r covers more
+// area than a disc of radius r, and a diamond covers less, hence the multipliers.
+function markerShape(kind, radius, fill, stroke) {
+  const opts = { fill, stroke };
+  if (kind === KIND_OUTDOOR) return new RegularShape({ ...opts, points: 4, angle: Math.PI / 4, radius: radius * 1.06 });
+  if (kind === KIND_POINT) return new RegularShape({ ...opts, points: 4, angle: 0, radius: radius * 1.3 });
+  return new CircleStyle({ ...opts, radius });
+}
+
+// siteStyle renders a placed site: the operator's chosen glyph on a white marker ringed in the worst
+// owning-node tone (so status still reads at a glance), shaped by the site's kind, the name below,
+// and a camera-count badge.
+function siteStyle(feature) {
   const tone = feature.get('tone') || TONES.idle;
   const cams = feature.get('cameras') || 0;
-  const icon = feature.get('icon') || DEFAULT_BUILDING_GLYPH;
+  const kind = normKind(feature.get('kind'));
+  const icon = feature.get('icon');
   const hover = feature.get('hover');
   const styles = [];
   // Hover halo + accent ring — a clear "this is clickable" affordance for the canvas marker.
-  if (hover) styles.push(new Style({ image: new CircleStyle({ radius: 19, fill: new Fill({ color: hexToRgba(HOVER, 0.16) }) }) }));
-  styles.push(new Style({ image: new CircleStyle({ radius: hover ? 15 : 14, fill: new Fill({ color: '#ffffff' }), stroke: new Stroke({ color: hover ? HOVER : tone.ring, width: hover ? 4 : 3 }) }) }));
+  if (hover) styles.push(new Style({ image: markerShape(kind, 19, new Fill({ color: hexToRgba(HOVER, 0.16) }), undefined) }));
+  styles.push(new Style({ image: markerShape(kind, hover ? 15 : 14, new Fill({ color: '#ffffff' }), new Stroke({ color: hover ? HOVER : tone.ring, width: hover ? 4 : 3 })) }));
   styles.push(new Style({ text: new Text({ text: icon, font: BUILDING_GLYPH_FONT }) }));
   styles.push(new Style({ text: new Text({ text: feature.get('name') || '', offsetY: 24, font: '600 11px system-ui, sans-serif', fill: new Fill({ color: '#1f2937' }), stroke: new Stroke({ color: 'rgba(255,255,255,0.85)', width: 3 }) }) }));
   // Camera badge (bottom-right): "online/total" when live health shows some are down (amber/red),
@@ -428,6 +443,38 @@ function NodeCameraPopup({ node, nowSec, onOpenNode, onPlay, onOpenMedia, onLoca
 }
 NodeCameraPopup.propTypes = { node: PropTypes.object, nowSec: PropTypes.number, onOpenNode: PropTypes.func, onPlay: PropTypes.func, onOpenMedia: PropTypes.func, onLocate: PropTypes.func, onAck: PropTypes.func, onClose: PropTypes.func };
 
+// SiteAssetPopup is what a POINT asset (a junction, a gate, a pole) opens: it has no plan to drill
+// into, so the marker answers "what is mounted here?" instead. With exactly one appliance the map
+// skips this and opens that appliance's device card directly — this card is for the none and
+// several cases, where jumping to "the" appliance would be a guess.
+function SiteAssetPopup({ site, nodes, nowSec, onOpenNode, onClose }) {
+  const t = useT();
+  return (
+    <div className="mp-card" role="dialog" aria-label={site.name}>
+      <div className="mp-head">
+        <span className="mp-id as-static">
+          <span className="mp-avatar as-glyph" aria-hidden="true">{siteGlyph(site)}</span>
+          <span className="mp-title" title={site.name}>{site.name}</span>
+        </span>
+        <button type="button" className="icon-button mp-close" onClick={onClose} aria-label={t('nset.close')}><Ico n="x" sz={14} /></button>
+      </div>
+      <div className="mp-solo-head"><Ico n="cpu" sz={13} /> {t('map.appliancesHere')} {nodes.length > 0 ? <span className="mp-tab-count">{nodes.length}</span> : null}</div>
+      <div className="mp-body">
+        {nodes.length === 0 ? (
+          <div className="mp-empty"><Ico n="cpu" sz={22} /><span>{t('map.noAppliancesHere')}</span></div>
+        ) : nodes.map((n) => (
+          <button key={n.nodeId} type="button" className="mp-cam" onClick={() => onOpenNode(n)}>
+            <span className="cam-dot" style={{ background: nodeTone(n, nowSec).color }} />
+            <span className="mp-cam-name">{n.name || n.nodeId}</span>
+            <Ico n="chev-right" sz={12} />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+SiteAssetPopup.propTypes = { site: PropTypes.object, nodes: PropTypes.array, nowSec: PropTypes.number, onOpenNode: PropTypes.func, onClose: PropTypes.func };
+
 // MapPopupFrame positions the node popup relative to the pin's VIEWPORT coordinates (x, y) and
 // keeps it fully on screen: centred over the pin and floated above it, but dropped below when the
 // header would clip the top edge, and clamped horizontally + vertically so it never spills out —
@@ -563,6 +610,9 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   placingRef.current = placing;
   // Camera popup: the node whose pin was clicked + where to anchor the card.
   const [popup, setPopup] = useState(null); // { node, x, y }
+  // A point asset's appliance chooser: shown when a junction/pole has none or several appliances,
+  // since there is no single device card to jump straight to.
+  const [sitePopup, setSitePopup] = useState(null); // { site, nodes, x, y }
   // Drill-down: the node whose floor plan is open (with its cameras), or null for the map.
   const [drill, setDrill] = useState(null); // { node, floorplans }
   // Live footage windows: several can be open at once (each its own floating window). Opened
@@ -577,6 +627,7 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   const [notifByNode, setNotifByNode] = useState({});
   const [notifByCam, setNotifByCam] = useState({}); // "nodeId::cameraId" -> { count, sev } — building attribution
   const [camHealth, setCamHealth] = useState({}); // "nodeId::cameraId" -> health string ('online'|'offline'|…)
+  const [camsByNode, setCamsByNode] = useState({}); // nodeId -> ["nodeId::cameraId", …] — a point asset's cameras
   const pinLayerRef = useRef(null);
   const notifReloadRef = useRef(null); // the notif-tally loader, so an ack can refresh pin badges now
   // Buildings (sites) are the OTHER thing on the map — a building is where cameras physically live,
@@ -594,6 +645,7 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   // also the re-entry point for an EXISTING building (from the rail or the drill-down).
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editorSite, setEditorSite] = useState(null);
+  const [renameSite, setRenameSite] = useState(null); // a point asset being renamed (it has no editor)
   const [busy, setBusy] = useState(false); // a building create/save is in flight
   const buildingSourceRef = useRef(null);
   const buildingLayerRef = useRef(null);
@@ -666,19 +718,32 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   // (~30s); one proxy call per owning node, skipped when there are no placed buildings.
   useEffect(() => {
     let live = true;
-    const nodeIds = Array.from(new Set(sites.filter((s) => s.site && s.site.mapPlaced).flatMap((s) => s.nodeIds || [])));
-    if (nodeIds.length === 0) { setCamHealth({}); return undefined; }
+    const nodeIds = Array.from(new Set(sites.filter((s) => s.site && s.site.mapPlaced).flatMap((s) => resolvedNodeIds(s))));
+    if (nodeIds.length === 0) { setCamHealth({}); setCamsByNode({}); return undefined; }
     Promise.all(nodeIds.map((nid) => api(`/api/nodes/${encodeURIComponent(nid)}/proxy/api/cameras?limit=200`, { noRedirect: true })
       .then((r) => ({ nid, list: r.ok ? (Array.isArray(r.body) ? r.body : (r.body?.items || [])) : [] }))
       .catch(() => ({ nid, list: [] }))))
       .then((results) => {
         if (!live) return;
         const m = {};
-        results.forEach(({ nid, list }) => list.forEach((c) => { m[`${nid}::${c.id}`] = (c.healthStatus || '').toLowerCase(); }));
+        const byNode = {};
+        results.forEach(({ nid, list }) => {
+          byNode[nid] = list.map((c) => `${nid}::${c.id}`);
+          list.forEach((c) => { m[`${nid}::${c.id}`] = (c.healthStatus || '').toLowerCase(); });
+        });
         setCamHealth(m);
+        setCamsByNode(byNode);
       });
     return () => { live = false; };
-  }, [sites]);
+  }, [sites, resolvedNodeIds]);
+
+  // A site's cameras. A building/outdoor area knows them from its plan placements; a point asset has
+  // no plan, so its cameras are simply every camera on the appliance assigned to it.
+  const resolvedCamKeys = useCallback((row) => {
+    const keys = row.cameraKeys || [];
+    if (keys.length > 0 || !row.site || hasPlans(row.site.kind)) return keys;
+    return resolvedNodeIds(row).flatMap((nid) => camsByNode[nid] || []);
+  }, [resolvedNodeIds, camsByNode]);
 
 
   // Open a live footage window for a camera near the click (x, y = viewport coords). Adds a new
@@ -763,17 +828,33 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   const openNodeRef = useRef(openNode);
   openNodeRef.current = openNode;
 
-  // Clicking a BUILDING opens its floor plans with EVERY camera inside (multi-node) — the digital-
-  // twin drill. Opens even with no floors yet (the view shows an empty-building message).
-  const openBuilding = useCallback(async (site) => {
+  // Clicking a site opens the right thing for what it IS. A building or outdoor area opens its
+  // plans with EVERY camera on them (multi-node) — the digital-twin drill, shown even with no plans
+  // yet. A point asset has no plan to open, so it opens the device card of the appliance mounted
+  // there instead; with several appliances it first offers the choice, with none it says so.
+  // focusFloorId opens the drill-down on a SPECIFIC area (clicked in the rail), rather than the
+  // default first plan — otherwise clicking one area could land you on the other.
+  const openBuilding = useCallback(async (site, px, focusFloorId) => {
+    if (!hasPlans(site.kind)) {
+      const rect = containerRef.current ? containerRef.current.getBoundingClientRect() : { left: 0, top: 0 };
+      const x = Math.round(rect.left + (px ? px[0] : 0));
+      const y = Math.round(rect.top + (px ? px[1] : 0));
+      const mine = nodesBySiteId[site.id] || [];
+      setDrill(null);
+      if (mine.length === 1) { setSitePopup(null); setPopup({ node: mine[0], x, y }); return; }
+      setPopup(null);
+      setSitePopup({ site, nodes: mine, x, y });
+      return;
+    }
     let plans = [];
     try {
       const res = await api(`/api/sites/${site.id}/floorplans`);
       plans = res.ok && Array.isArray(res.body) ? res.body.filter((p) => p && p.floor) : [];
     } catch (_) { /* open empty */ }
     setPopup(null);
-    setDrill({ kind: 'site', site, floorplans: plans });
-  }, []);
+    setSitePopup(null);
+    setDrill({ kind: 'site', site, floorplans: plans, focusFloorId });
+  }, [nodesBySiteId]);
   const openBuildingRef = useRef(openBuilding);
   openBuildingRef.current = openBuilding;
 
@@ -793,20 +874,40 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
     if (onToast) onToast(t('map.ghostsRemoved', { n: ids.length }), 'success');
   }, [drill, onToast, t]);
 
-  // Buildings-centric map: a node never gets its own pin — every node lives in a building and is
-  // reached by drilling into that building. Nothing is placed standalone, so there are no node pins.
+  // Buildings-centric map: a node never gets its own pin — every node lives in a site and is
+  // reached by drilling into that site. Nothing is placed standalone, so there are no node pins.
   const placed = useMemo(() => [], []);
-  // Nodes that still need a home: not yet assigned to any building — the rail nudges you to assign.
+  // Nodes that still need a home: not yet assigned to any site — the rail nudges you to assign.
   const nodesToPlace = useMemo(() => nodes.filter((n) => n && !n.siteId), [nodes]);
-  // All sites (placed or not) are valid buildings to assign a node to.
+  // All sites (placed or not) are valid homes to assign a node to.
   const allSites = useMemo(() => sites.map((row) => row.site).filter(Boolean), [sites]);
-  // A building's rail status = the worst status among the nodes that own cameras inside it.
+  // Nodes assigned to each site, by site id. The server's overview derives a site's nodes from its
+  // camera PLACEMENTS, which a point asset has none of — a junction's cameras reach it only through
+  // this assignment. So every consumer resolves nodes as "placed on a plan here" ∪ "assigned here".
+  const nodesBySiteId = useMemo(() => {
+    const m = {};
+    nodes.forEach((n) => { if (n && n.siteId) (m[n.siteId] = m[n.siteId] || []).push(n); });
+    return m;
+  }, [nodes]);
+  const resolvedNodeIds = useCallback((row) => {
+    const s = row.site || {};
+    const ids = (row.nodeIds || []).slice();
+    (nodesBySiteId[s.id] || []).forEach((n) => { if (ids.indexOf(n.nodeId) < 0) ids.push(n.nodeId); });
+    return ids;
+  }, [nodesBySiteId]);
+  // A site's rail status = the worst status among the nodes that answer for it.
   const siteToneKey = (row) => {
     const order = ['critical', 'warning', 'online', 'idle'];
     let worst = 'idle';
-    (row.nodeIds || []).forEach((nid) => { const k = nodeToneKey(nodesById[nid], nowSec); if (order.indexOf(k) < order.indexOf(worst)) worst = k; });
+    resolvedNodeIds(row).forEach((nid) => { const k = nodeToneKey(nodesById[nid], nowSec); if (order.indexOf(k) < order.indexOf(worst)) worst = k; });
     return worst;
   };
+  // Sites split by kind for the rail, each group in the wizard's order so the headings are stable.
+  const sitesByKind = useMemo(() => {
+    const g = { [KIND_BUILDING]: [], [KIND_OUTDOOR]: [], [KIND_POINT]: [] };
+    sites.forEach((row) => { if (row.site) g[normKind(row.site.kind)].push(row); });
+    return g;
+  }, [sites]);
 
   const persistPosition = useCallback(async (nodeId, lon, lat) => {
     try {
@@ -833,16 +934,17 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   const persistSitePosRef = useRef(persistSitePosition);
   persistSitePosRef.current = persistSitePosition;
 
-  // Create the building and its areas, then hand straight to placement mode. The site exists from
-  // this moment whether or not the operator ever clicks the map, so nothing is lost if they walk
-  // away mid-flow — it simply shows up in the rail as still-to-place.
-  const createBuilding = useCallback(async (name, icon, areaNames) => {
+  // Create the asset and its plans, then hand straight to placement mode. The site exists from this
+  // moment whether or not the operator ever clicks the map, so nothing is lost if they walk away
+  // mid-flow — it simply shows up in the rail as still-to-place.
+  const createBuilding = useCallback(async (name, icon, siteKind, areaNames) => {
     setBusy(true);
     try {
-      const res = await api('/api/sites', { method: 'POST', body: JSON.stringify({ name, icon }) });
+      const res = await api('/api/sites', { method: 'POST', body: JSON.stringify({ name, icon, kind: siteKind }) });
       if (!res.ok || !res.body || !res.body.id) throw new Error();
       const created = res.body;
-      // Areas are created in order so their ordinal matches what the operator typed.
+      // Areas are created in order so their ordinal matches what the operator typed. A point asset
+      // passes none — it has no surface to author.
       for (let i = 0; i < areaNames.length; i++) {
         // eslint-disable-next-line no-await-in-loop
         const ar = await api(`/api/sites/${created.id}/areas`, { method: 'POST', body: JSON.stringify({ name: areaNames[i], ordinal: i }) });
@@ -850,20 +952,55 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
       }
       setWizardOpen(false);
       if (siteReloadRef.current) siteReloadRef.current();
-      // thenEdit: the map click that drops the marker also opens the editor, so "add a building"
-      // ends on the plan surface rather than back at a map with an unexplained new pin.
-      setPlacing({ kind: 'site', id: created.id, name: created.name, thenEdit: true });
+      // thenEdit: the map click that drops the marker also opens the editor, so "add an asset" ends
+      // on the plan surface rather than back at a map with an unexplained new marker. A point asset
+      // has no editor, so it simply lands on the map and waits for an appliance to be assigned.
+      setPlacing({ kind: 'site', id: created.id, name: created.name, siteKind: normKind(siteKind), thenEdit: hasPlans(siteKind) });
       if (onToast) onToast(t('bld.createdPlaceIt', { name: created.name }), 'success');
     } catch (_) {
       if (onToast) onToast(t('map.siteCreateFailed'), 'error');
     } finally { setBusy(false); }
   }, [onToast, t]);
 
-  // Open the authoring dialog for a building. Takes the site row (id/name/icon) from wherever the
-  // operator asked — rail row, drill-down header, or the drop that just finished.
+  // Rename / re-glyph an asset in place. A building or outdoor area gets this inside its editor;
+  // a point asset has no editor, so the rail's pencil opens this dialog directly.
+  const saveSiteMeta = useCallback(async (site, name, icon) => {
+    setBusy(true);
+    try {
+      const res = await api(`/api/sites/${site.id}`, { method: 'PUT', body: JSON.stringify({ name, description: site.description || '', icon, kind: normKind(site.kind), ordinal: site.ordinal || 0 }) });
+      if (!res.ok) throw new Error();
+      setRenameSite(null);
+      if (siteReloadRef.current) siteReloadRef.current();
+      if (onToast) onToast(t('map.siteUpdated'), 'success');
+    } catch (_) {
+      if (onToast) onToast(t('map.error'), 'error');
+    } finally { setBusy(false); }
+  }, [onToast, t]);
+
+  // Delete an asset from the rename dialog (used for point assets, which have no editor). Takes its
+  // floor plans and camera placements with it; guarded by a confirm.
+  const deleteSiteMeta = useCallback(async (site) => {
+    if (!window.confirm(t('map.deleteAssetConfirm', { name: site.name }))) return;
+    setBusy(true);
+    try {
+      const res = await api(`/api/sites/${site.id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error();
+      setRenameSite(null);
+      if (siteReloadRef.current) siteReloadRef.current();
+      if (onToast) onToast(t('map.assetDeleted', { name: site.name }), 'success');
+    } catch (_) {
+      if (onToast) onToast(t('map.error'), 'error');
+    } finally { setBusy(false); }
+  }, [onToast, t]);
+
+  // Open the authoring dialog for an asset. Takes the site row (id/name/icon/kind) from wherever the
+  // operator asked — rail row, drill-down header, or the drop that just finished. A point asset has
+  // no plan surface to author, so for it "edit" means renaming/re-glyphing the marker.
   const openEditor = useCallback((site) => {
     setPopup(null);
+    setSitePopup(null);
     setDrill(null);
+    if (!hasPlans(site.kind)) { setRenameSite(site); return; }
     setEditorSite(site);
   }, []);
   const openEditorRef = useRef(openEditor);
@@ -935,7 +1072,7 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
       // Buildings layer sits UNDER the node pins (buildings are the larger, fewer markers).
       const buildingSource = new VectorSource();
       buildingSourceRef.current = buildingSource;
-      const buildingLayer = new VectorLayer({ source: buildingSource, style: buildingStyle });
+      const buildingLayer = new VectorLayer({ source: buildingSource, style: siteStyle });
       buildingLayerRef.current = buildingLayer;
       buildingLayer.setVisible(showLayers.buildings);
       layers.push(buildingLayer);
@@ -951,13 +1088,15 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
           if (!f.get('critical')) continue;
           animating = true;
           const color = f.get('beaconColor') || (f.get('tone') || TONES.idle).ring;
+          const kind = normKind(f.get('kind'));
           const geom = f.getGeometry();
           for (const offset of [0, 0.5]) {
             const p = (base + offset) % 1;
             const grown = easeOutCubic(p);
             const alpha = 0.5 * (1 - p);
             if (alpha <= 0.01) continue;
-            vctx.setStyle(new Style({ image: new CircleStyle({ radius: 14 + grown * 16, stroke: new Stroke({ color: hexToRgba(color, alpha), width: 2.5 - grown }) }) }));
+            // The ring echoes the marker's silhouette, so a junction pulses as a diamond.
+            vctx.setStyle(new Style({ image: markerShape(kind, 14 + grown * 16, undefined, new Stroke({ color: hexToRgba(color, alpha), width: 2.5 - grown })) }));
             vctx.drawGeometry(geom);
           }
         }
@@ -1084,7 +1223,7 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
           if (layer === buildingLayerRef.current && !hitBuilding) hitBuilding = f;
           else if (layer === pinLayerRef.current && !hitNode) hitNode = f;
         }, { hitTolerance: 5 });
-        if (hitBuilding) { openBuildingRef.current(hitBuilding.get('site')); return; }
+        if (hitBuilding) { openBuildingRef.current(hitBuilding.get('site'), map.getPixelFromCoordinate(evt.coordinate)); return; }
         const members = hitNode ? (hitNode.get('features') || []) : [];
         if (members.length === 1) {
           const node = members[0].get('node');
@@ -1092,10 +1231,11 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
           openNodeRef.current(node, px);
         } else {
           setPopup(null);
+          setSitePopup(null);
         }
       });
-      // Close the popup when the map moves (it would otherwise float away from its pin).
-      map.on('movestart', () => setPopup(null));
+      // Close the popups when the map moves (they would otherwise float away from their marker).
+      map.on('movestart', () => { setPopup(null); setSitePopup(null); });
 
       // Track whether the current view is beyond every downloaded region's coverage (→ offer a
       // download of the area you're looking at).
@@ -1171,35 +1311,36 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
     src.addFeatures(sites.filter((s) => s.site && s.site.mapPlaced).map((row) => {
       const s = row.site;
       let worst = 'idle';
-      (row.nodeIds || []).forEach((nid) => {
+      resolvedNodeIds(row).forEach((nid) => {
         const k = nodeToneKey(nodesById[nid], nowSec);
         if (order.indexOf(k) < order.indexOf(worst)) worst = k;
       });
-      // Unread notifications from the cameras PHYSICALLY IN this building (per-camera, not the whole
-      // node's tally — a node may record cameras in several buildings).
+      // Unread notifications from the cameras PHYSICALLY AT this site (per-camera, not the whole
+      // node's tally — a node may record cameras at several sites).
+      const keys = resolvedCamKeys(row);
       let count = 0; let sev = 'info';
-      (row.cameraKeys || []).forEach((key) => { const c = notifByCam[key]; if (c && c.count) { count += c.count; sev = ((SEV_RANK[c.sev] || 0) > (SEV_RANK[sev] || 0) ? c.sev : sev); } });
+      keys.forEach((key) => { const c = notifByCam[key]; if (c && c.count) { count += c.count; sev = ((SEV_RANK[c.sev] || 0) > (SEV_RANK[sev] || 0) ? c.sev : sev); } });
       const notif = count > 0 ? { count, sev } : null;
       // Camera online/total from live health (a camera down while its node is up shows here).
-      const keys = row.cameraKeys || [];
       let online = 0; let known = 0;
       keys.forEach((k) => { const hs = camHealth[k]; if (hs !== undefined) { known += 1; if (hs === 'online') online += 1; } });
       const f = new Feature({ geometry: new Point(fromLonLat([s.lon, s.lat])) });
       f.set('site', s);
+      f.set('kind', normKind(s.kind));
       f.set('tone', TONES[worst]);
-      f.set('cameras', row.cameras || 0);
+      f.set('cameras', row.cameras || keys.length);
       f.set('camTotal', keys.length);
       f.set('camOnline', online);
       f.set('camKnown', known); // how many cameras we have a live health reading for
       f.set('name', s.name);
-      f.set('icon', s.icon || DEFAULT_BUILDING_GLYPH);
+      f.set('icon', siteGlyph(s));
       f.set('notif', notif);
-      // Blink when the building is lost OR it has an unread warning/critical notification.
+      // Blink when the site is lost OR it has an unread warning/critical notification.
       f.set('critical', worst === 'critical' || (notif && notif.sev !== 'info'));
       f.set('beaconColor', worst === 'critical' ? TONES.critical.ring : (notif && notif.sev !== 'info' ? SEV_COLOR[notif.sev] : TONES[worst].ring));
       return f;
     }));
-  }, [sites, nodesById, notifByCam, camHealth, nowSec, mapReady]);
+  }, [sites, nodesById, notifByCam, camHealth, nowSec, mapReady, resolvedNodeIds, resolvedCamKeys]);
 
   // Toggle marker layers on/off.
   useEffect(() => {
@@ -1252,10 +1393,67 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
         aria-label={t('map.residesIn')}
       >
         <option value="">{t('map.noBuilding')}</option>
-        {allSites.map((s) => <option key={s.id} value={s.id}>{s.icon ? `${s.icon} ${s.name}` : s.name}</option>)}
+        {allSites.map((s) => <option key={s.id} value={s.id}>{`${siteGlyph(s)} ${s.name}`}</option>)}
       </select>
     </li>
   );
+
+  // One rail row per site. A building or outdoor area expands to the plans inside it; a point asset
+  // has none, so its caret is replaced by a spacer and its pencil renames the marker instead of
+  // opening an editor.
+  const renderSiteRow = (row) => {
+    const s = row.site;
+    const kind = normKind(s.kind);
+    const onMap = !!s.mapPlaced;
+    const worst = siteToneKey(row);
+    const expandable = hasPlans(kind);
+    const isOpen = expandable && !!expandedSites[s.id];
+    const fl = floorsBySite[s.id];
+    const placingThis = placing && placing.kind === 'site' && placing.id === s.id;
+    const camCount = row.cameras || resolvedCamKeys(row).length;
+    return (
+      <li key={`site-${s.id}`} className="fleet-map-rail-bldgwrap">
+        <div className="fleet-map-rail-siterow">
+          {expandable ? (
+            <button type="button" className="rail-expand" onClick={() => toggleSite(s.id)} aria-label={t('map.showFloors')} aria-expanded={isOpen}><Ico n={isOpen ? 'chev-down' : 'chev-right'} sz={12} /></button>
+          ) : <span className="rail-expand-spacer" />}
+          <button
+            type="button"
+            className={`fleet-map-rail-node${placingThis ? ' active' : ''}`}
+            draggable={!onMap}
+            onDragStart={!onMap ? (e) => { e.dataTransfer.setData('text/site-id', String(s.id)); e.dataTransfer.effectAllowed = 'move'; setPlacing(null); } : undefined}
+            onClick={() => (onMap ? flyToSite(s) : setPlacing(placingThis ? null : { kind: 'site', id: s.id, name: s.name, siteKind: kind }))}
+            title={onMap ? t('map.flyTo') : t('map.placeHint')}
+          >
+            <span className="rail-dot" style={{ background: TONES[worst].color }} />
+            <span className="rail-emoji" aria-hidden="true">{siteGlyph(s)}</span>
+            <span className="rail-name">{s.name}</span>
+            {camCount ? <span className="rail-count" title={t('map.cameras')}>{camCount}<Ico n="video" sz={11} /></span> : null}
+            {placingThis ? <Ico n="map-pin" sz={14} /> : (!onMap ? <span className="rail-toplace" title={t('map.notOnMap')} aria-label={t('map.notOnMap')}><Ico n="map-pin" sz={12} /></span> : null)}
+          </button>
+          <button type="button" className="rail-edit-btn" onClick={() => openEditor(s)} title={expandable ? t('bld.editAreas') : t('map.editAsset')} aria-label={expandable ? t('bld.editAreas') : t('map.editAsset')}>
+            <Ico n="edit-2" sz={13} />
+          </button>
+        </div>
+        {isOpen ? (
+          <ul className="fleet-map-rail-sublist">
+            {!fl || fl.loading ? (
+              <li className="rail-subfloor muted">{t('common.loading')}</li>
+            ) : !fl.list.length ? (
+              <li className="rail-subfloor muted">{t('map.noAreasYet')}</li>
+            ) : fl.list.map((f) => (
+              <li key={f.id} className="rail-subfloor">
+                <button type="button" className="rail-floor-btn" onClick={() => openBuilding(s, null, f.id)} title={f.name}>
+                  <Ico n="layers" sz={11} />
+                  <span className="rail-name">{f.name}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </li>
+    );
+  };
 
   return (
     <section className="settings-panel span-two fleet-map-panel">
@@ -1278,71 +1476,32 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
       <div className="fleet-map-body">
         <aside className="fleet-map-rail">
           <div className="fleet-map-rail-head">
-            <span>{t('map.buildings')} <span className="count-badge">{sites.length}</span></span>
-            <button type="button" className="rail-addbuilding" onClick={() => setWizardOpen(true)} disabled={busy} title={t('map.addBuilding')}>
-              <Ico n="plus" sz={13} /> {t('map.addBuilding')}
+            <span>{t('map.assets')} <span className="count-badge">{sites.length}</span></span>
+            <button type="button" className="rail-addbuilding" onClick={() => setWizardOpen(true)} disabled={busy} title={t('map.addAsset')}>
+              <Ico n="plus" sz={13} /> {t('map.addAsset')}
             </button>
           </div>
+          {/* One scroll region for the whole rail body — see .fleet-map-rail-scroll. */}
+          <div className="fleet-map-rail-scroll">
           {sites.length === 0 && nodesToPlace.length === 0 ? (
-            <div className="fleet-map-rail-empty"><Ico n="building" sz={22} /><span>{t('map.noBuildingsYet')}</span></div>
+            <div className="fleet-map-rail-empty"><Ico n="building" sz={22} /><span>{t('map.noAssetsYet')}</span></div>
           ) : (
             <>
-              {/* Building-centric list: every building, each expandable to the appliances inside it.
-                  Placed buildings fly-to on click; unplaced ones enter placing mode. */}
-              {sites.length > 0 ? (
-                <ul className="fleet-map-rail-list">
-                  {sites.map((row) => {
-                    const s = row.site;
-                    if (!s) return null;
-                    const onMap = !!s.mapPlaced;
-                    const worst = siteToneKey(row);
-                    const isOpen = !!expandedSites[s.id];
-                    const fl = floorsBySite[s.id];
-                    const placingThis = placing && placing.kind === 'site' && placing.id === s.id;
-                    return (
-                      <li key={`site-${s.id}`} className="fleet-map-rail-bldgwrap">
-                        <div className="fleet-map-rail-siterow">
-                          <button type="button" className="rail-expand" onClick={() => toggleSite(s.id)} aria-label={t('map.showFloors')} aria-expanded={isOpen}><Ico n={isOpen ? 'chev-down' : 'chev-right'} sz={12} /></button>
-                          <button
-                            type="button"
-                            className={`fleet-map-rail-node${placingThis ? ' active' : ''}`}
-                            draggable={!onMap}
-                            onDragStart={!onMap ? (e) => { e.dataTransfer.setData('text/site-id', String(s.id)); e.dataTransfer.effectAllowed = 'move'; setPlacing(null); } : undefined}
-                            onClick={() => (onMap ? flyToSite(s) : setPlacing(placingThis ? null : { kind: 'site', id: s.id, name: s.name }))}
-                            title={onMap ? t('map.flyTo') : t('map.placeHint')}
-                          >
-                            <span className="rail-dot" style={{ background: TONES[worst].color }} />
-                            <span className="rail-emoji" aria-hidden="true">{s.icon || DEFAULT_BUILDING_GLYPH}</span>
-                            <span className="rail-name">{s.name}</span>
-                            {row.cameras ? <span className="rail-count" title={t('map.cameras')}>{row.cameras}<Ico n="video" sz={11} /></span> : null}
-                            {placingThis ? <Ico n="map-pin" sz={14} /> : (!onMap ? <span className="rail-toplace" title={t('map.notOnMap')} aria-label={t('map.notOnMap')}><Ico n="map-pin" sz={12} /></span> : null)}
-                          </button>
-                          <button type="button" className="rail-edit-btn" onClick={() => openEditor(s)} title={t('bld.editAreas')} aria-label={t('bld.editAreas')}>
-                            <Ico n="edit-2" sz={13} />
-                          </button>
-                        </div>
-                        {isOpen ? (
-                          <ul className="fleet-map-rail-sublist">
-                            {!fl || fl.loading ? (
-                              <li className="rail-subfloor muted">{t('common.loading')}</li>
-                            ) : !fl.list.length ? (
-                              <li className="rail-subfloor muted">{t('map.noAreasYet')}</li>
-                            ) : fl.list.map((f) => (
-                              <li key={f.id} className="rail-subfloor">
-                                <button type="button" className="rail-floor-btn" onClick={() => openBuilding(s)} title={f.name}>
-                                  <Ico n="layers" sz={11} />
-                                  <span className="rail-name">{f.name}</span>
-                                </button>
-                              </li>
-                            ))}
-                          </ul>
-                        ) : null}
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : null}
-              {/* Appliances not yet in any building — assign each to a building. */}
+              {/* Assets grouped by what they ARE — buildings, outdoor areas, point assets — so a
+                  junction doesn't sit in a list headed "Buildings". A group with nothing in it is
+                  simply absent. Placed assets fly-to on click; unplaced ones enter placing mode. */}
+              {KIND_ORDER.map((k) => (sitesByKind[k].length === 0 ? null : (
+                <div key={`grp-${k}`} className="fleet-map-rail-kindgroup">
+                  <div className="fleet-map-rail-group">
+                    <Ico n={k === KIND_BUILDING ? 'building' : (k === KIND_OUTDOOR ? 'grid2' : 'map-pin')} sz={12} />
+                    {t(`bld.kindPlural.${k}`)} <span className="count-badge">{sitesByKind[k].length}</span>
+                  </div>
+                  <ul className="fleet-map-rail-list">
+                    {sitesByKind[k].map((row) => renderSiteRow(row))}
+                  </ul>
+                </div>
+              )))}
+              {/* Appliances not yet at any asset — assign each to one. */}
               {nodesToPlace.length > 0 ? (
                 <>
                   <div className="fleet-map-rail-group"><Ico n="cpu" sz={12} /> {t('map.nodesToPlace')} <span className="count-badge">{nodesToPlace.length}</span></div>
@@ -1354,6 +1513,7 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
               ) : null}
             </>
           )}
+          </div>
         </aside>
 
         <div className="fleet-map-stage">
@@ -1400,9 +1560,20 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
               />
             </MapPopupFrame>
           ) : null}
+          {sitePopup ? (
+            <MapPopupFrame x={sitePopup.x} y={sitePopup.y}>
+              <SiteAssetPopup
+                site={sitePopup.site}
+                nodes={sitePopup.nodes}
+                nowSec={nowSec}
+                onOpenNode={(n) => { const { x, y } = sitePopup; setSitePopup(null); setPopup({ node: n, x, y }); }}
+                onClose={() => setSitePopup(null)}
+              />
+            </MapPopupFrame>
+          ) : null}
           {drill ? (
             <div className="fleet-map-drill">
-              <BuildingFloorView site={drill.site} floorplans={drill.floorplans} nodesById={nodesById} notifByCam={notifByCam} focusCameraId={drill.focusCameraId} onBack={() => { const s = drill.site; setDrill(null); flyToSite(s); }} onPlay={playCamera} onRemovePlacements={removeGhostPlacements} onEdit={openEditor} />
+              <BuildingFloorView site={drill.site} floorplans={drill.floorplans} nodesById={nodesById} notifByCam={notifByCam} focusCameraId={drill.focusCameraId} focusFloorId={drill.focusFloorId} onBack={() => { const s = drill.site; setDrill(null); flyToSite(s); }} onPlay={playCamera} onRemovePlacements={removeGhostPlacements} onEdit={openEditor} />
             </div>
           ) : null}
         </div>
@@ -1430,7 +1601,19 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
       ) : null}
 
       {wizardOpen ? (
-        <BuildingWizard busy={busy} onCreate={createBuilding} onCancel={() => setWizardOpen(false)} />
+        <AssetWizard busy={busy} onCreate={createBuilding} onCancel={() => setWizardOpen(false)} />
+      ) : null}
+
+      {renameSite ? (
+        <SiteDialog
+          initialName={renameSite.name}
+          initialIcon={renameSite.icon}
+          kind={renameSite.kind}
+          busy={busy}
+          onSave={(name, icon) => saveSiteMeta(renameSite, name, icon)}
+          onDelete={() => deleteSiteMeta(renameSite)}
+          onCancel={() => setRenameSite(null)}
+        />
       ) : null}
 
       {editorSite ? (

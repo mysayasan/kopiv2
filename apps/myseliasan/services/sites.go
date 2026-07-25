@@ -30,6 +30,57 @@ var (
 	ErrBadImage     = errors.New("unsupported or unreadable image")
 )
 
+// ErrAlreadyPlaced is returned when a camera (or a node's own marker) is placed while it already
+// holds a pin somewhere. A camera is in exactly one physical place, so it gets exactly one pin;
+// putting it elsewhere means removing the existing one first.
+//
+// It carries WHERE the existing pin is, because "already placed" on its own is not actionable —
+// the operator needs to know which building and area to go and unplace it from, and that may be a
+// building they are not currently looking at.
+type ErrAlreadyPlaced struct {
+	Placement *entities.NodePlacement
+	Floor     *entities.FloorPlan
+	Site      *entities.Site
+}
+
+func (e *ErrAlreadyPlaced) Error() string {
+	where := "another area"
+	switch {
+	case e.Site != nil && e.Floor != nil:
+		where = e.Site.Name + " / " + e.Floor.Name
+	case e.Floor != nil:
+		where = e.Floor.Name
+	}
+	return "already placed in " + where
+}
+
+// SiteId/FloorId/FloorName/SiteName are convenience readers for the API layer, tolerating the
+// partially-resolved case (an existing pin whose site row could not be read).
+func (e *ErrAlreadyPlaced) SiteId() int64 {
+	if e.Site != nil {
+		return e.Site.Id
+	}
+	return 0
+}
+func (e *ErrAlreadyPlaced) FloorId() int64 {
+	if e.Floor != nil {
+		return e.Floor.Id
+	}
+	return 0
+}
+func (e *ErrAlreadyPlaced) SiteName() string {
+	if e.Site != nil {
+		return e.Site.Name
+	}
+	return ""
+}
+func (e *ErrAlreadyPlaced) FloorName() string {
+	if e.Floor != nil {
+		return e.Floor.Name
+	}
+	return ""
+}
+
 // FloorImage is a decrypted plan image ready to serve.
 type FloorImage struct {
 	Data        []byte
@@ -59,12 +110,27 @@ type SiteOverview struct {
 	Floors     int      `json:"floors"`
 }
 
+// PlacedAt says where one camera (or node marker) is pinned. It is the shape the editor palette
+// needs to grey out an already-placed camera and say where it sits, without a request per camera.
+type PlacedAt struct {
+	PlacementId int64  `json:"placementId"`
+	NodeId      string `json:"nodeId"`
+	CameraId    string `json:"cameraId"`
+	FloorId     int64  `json:"floorId"`
+	FloorName   string `json:"floorName"`
+	SiteId      int64  `json:"siteId"`
+	SiteName    string `json:"siteName"`
+	SiteKind    string `json:"siteKind"`
+}
+
 // ISiteService manages sites and their floor-plan images. Plan image bytes are encrypted
 // at rest with the fleet cipher; only metadata + pixel dimensions live in the database.
 type ISiteService interface {
 	ListSites(ctx context.Context) ([]*entities.Site, error)
-	CreateSite(ctx context.Context, name, description, icon string, by int64) (*entities.Site, error)
-	UpdateSite(ctx context.Context, id int64, name, description, icon string, ordinal int, by int64) (*entities.Site, error)
+	// CreateSite/UpdateSite take the site's kind (building, outdoor area, point asset); anything
+	// unrecognised is normalised to building rather than stored as-is.
+	CreateSite(ctx context.Context, name, description, icon, kind string, by int64) (*entities.Site, error)
+	UpdateSite(ctx context.Context, id int64, name, description, icon, kind string, ordinal int, by int64) (*entities.Site, error)
 	// UpdateSitePosition sets a building's geographic map coordinates (from dragging its marker)
 	// and placed flag — the counterpart to node placement, mirroring INodeRegistry.UpdatePosition.
 	UpdateSitePosition(ctx context.Context, id int64, lat, lon float64, placed bool, by int64) (*entities.Site, error)
@@ -115,7 +181,18 @@ type ISiteService interface {
 	// the node's markers on it — so clicking the node on the geo map can drill into its plan.
 	// Ordered by marker count (the plan with the most of this node's cameras first).
 	NodeFloorplans(ctx context.Context, nodeID string) ([]NodeFloorplan, error)
+	// AddPlacement pins a camera (or the node itself) to a spot on a floor. Placement is
+	// EXCLUSIVE: a camera is in one physical place, so it holds at most one pin fleet-wide, and
+	// a second placement fails with *ErrAlreadyPlaced naming where the existing one is. Move it by
+	// unplacing it first.
 	AddPlacement(ctx context.Context, floorID int64, nodeID, cameraID, lastKnownName string, x, y float64, by int64) (*entities.NodePlacement, error)
+	// FindPlacementOf returns the pin a camera already holds plus the floor/site it is on, or nils
+	// when it is unplaced. A pin on a floor that no longer exists is treated as unplaced (and
+	// cleaned up) — nothing renders it, so there would be no way to unplace it by hand.
+	FindPlacementOf(ctx context.Context, nodeID, cameraID string) (*entities.NodePlacement, *entities.FloorPlan, *entities.Site, error)
+	// PlacementIndex lists every placement in the fleet with the area and building it sits in, so
+	// the editor's palette can show what is already placed and where without asking per camera.
+	PlacementIndex(ctx context.Context) ([]PlacedAt, error)
 	// UpdatePlacement moves and/or re-orients a placement; any nil field is left unchanged, so a
 	// drag sends x/y, the FOV editor sends heading/fov, and the 3D editor sends mountHeight/pitch.
 	UpdatePlacement(ctx context.Context, id int64, x, y, heading, fov, mountHeight, pitch *float64, by int64) (*entities.NodePlacement, error)
@@ -197,9 +274,110 @@ func (s *siteService) floorPlacements(ctx context.Context, floorID int64) []*ent
 	return rows
 }
 
+// FindPlacementOf returns the pin a camera (or a node's own marker) already holds, with the floor
+// and site it sits on, or nil when it is unplaced. See ISiteService.
+//
+// A pin whose floor no longer exists is NOT a placement: nothing renders it and there is no screen
+// on which to unplace it, so it is deleted here and reported as unplaced. Without that, a leftover
+// orphan would make the camera permanently unplaceable once placement became exclusive.
+func (s *siteService) FindPlacementOf(ctx context.Context, nodeID, cameraID string) (*entities.NodePlacement, *entities.FloorPlan, *entities.Site, error) {
+	// Get (not GetByForeign) — GetByForeign returns only one row regardless of matches.
+	rows, _, err := s.placements.Get(ctx, "", 50, 0, []sqldataenums.Filter{
+		{FieldName: "NodeId", Compare: sqldataenums.Equal, Value: nodeID},
+		{FieldName: "CameraId", Compare: sqldataenums.Equal, Value: cameraID},
+	}, nil)
+	if err != nil {
+		if isNoResultFoundErr(err) {
+			return nil, nil, nil, nil
+		}
+		return nil, nil, nil, err
+	}
+	for _, p := range rows {
+		if p == nil {
+			continue
+		}
+		floor, ferr := s.floors.GetById(ctx, "", uint64(p.FloorId))
+		if ferr != nil || floor == nil {
+			_, _ = s.placements.DeleteById(ctx, "", uint64(p.Id))
+			continue
+		}
+		site, serr := s.sites.GetById(ctx, "", uint64(floor.SiteId))
+		if serr != nil {
+			site = nil // the pin is real and blocking; we just cannot name its building
+		}
+		return p, floor, site, nil
+	}
+	return nil, nil, nil, nil
+}
+
+// PlacementIndex lists every placement with the area and building it sits in. See ISiteService.
+//
+// Floors and sites are read once into maps rather than per placement: the palette asks for this
+// every time the editor opens, and a fleet with hundreds of cameras would otherwise issue hundreds
+// of lookups to answer one question.
+func (s *siteService) PlacementIndex(ctx context.Context) ([]PlacedAt, error) {
+	rows, _, err := s.placements.Get(ctx, "", 5000, 0, nil, nil)
+	if err != nil {
+		if isNoResultFoundErr(err) {
+			return []PlacedAt{}, nil
+		}
+		return nil, err
+	}
+	sites, err := s.ListSites(ctx)
+	if err != nil {
+		return nil, err
+	}
+	siteById := make(map[int64]*entities.Site, len(sites))
+	for _, st := range sites {
+		siteById[st.Id] = st
+	}
+	floorById := map[int64]*entities.FloorPlan{}
+	for _, st := range sites {
+		floors, ferr := s.ListFloors(ctx, st.Id)
+		if ferr != nil {
+			return nil, ferr
+		}
+		for _, f := range floors {
+			floorById[f.Id] = f
+		}
+	}
+
+	out := make([]PlacedAt, 0, len(rows))
+	for _, p := range rows {
+		if p == nil {
+			continue
+		}
+		// A pin whose floor is gone is not a placement — it renders nowhere and blocks nothing
+		// (FindPlacementOf deletes it on the next attempt), so it must not be reported as one.
+		floor := floorById[p.FloorId]
+		if floor == nil {
+			continue
+		}
+		at := PlacedAt{
+			PlacementId: p.Id, NodeId: p.NodeId, CameraId: p.CameraId,
+			FloorId: floor.Id, FloorName: floor.Name, SiteId: floor.SiteId,
+		}
+		if st := siteById[floor.SiteId]; st != nil {
+			at.SiteName = st.Name
+			at.SiteKind = entities.NormalizeSiteKind(st.Kind)
+		}
+		out = append(out, at)
+	}
+	return out, nil
+}
+
 func (s *siteService) AddPlacement(ctx context.Context, floorID int64, nodeID, cameraID, lastKnownName string, x, y float64, by int64) (*entities.NodePlacement, error) {
 	if _, err := s.floors.GetById(ctx, "", uint64(floorID)); err != nil {
 		return nil, ErrFloorUnknown
+	}
+	// Exclusive placement: one camera, one pin. Checked before the insert so the operator gets a
+	// message naming where it already sits rather than a unique-constraint violation.
+	existing, floor, site, err := s.FindPlacementOf(ctx, nodeID, cameraID)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		return nil, &ErrAlreadyPlaced{Placement: existing, Floor: floor, Site: site}
 	}
 	now := time.Now().Unix()
 	// A camera gets a default coverage arc on drop (the operator then aims it); a node/sensor
@@ -269,9 +447,9 @@ func (s *siteService) ListSites(ctx context.Context) ([]*entities.Site, error) {
 	return rows, nil
 }
 
-func (s *siteService) CreateSite(ctx context.Context, name, description, icon string, by int64) (*entities.Site, error) {
+func (s *siteService) CreateSite(ctx context.Context, name, description, icon, kind string, by int64) (*entities.Site, error) {
 	now := time.Now().Unix()
-	row := entities.Site{Name: name, Description: description, Icon: icon, CreatedBy: by, CreatedAt: now, UpdatedBy: by, UpdatedAt: now}
+	row := entities.Site{Name: name, Description: description, Icon: icon, Kind: entities.NormalizeSiteKind(kind), CreatedBy: by, CreatedAt: now, UpdatedBy: by, UpdatedAt: now}
 	id, err := s.sites.Create(ctx, "", row)
 	if err != nil {
 		return nil, err
@@ -280,7 +458,7 @@ func (s *siteService) CreateSite(ctx context.Context, name, description, icon st
 	return &row, nil
 }
 
-func (s *siteService) UpdateSite(ctx context.Context, id int64, name, description, icon string, ordinal int, by int64) (*entities.Site, error) {
+func (s *siteService) UpdateSite(ctx context.Context, id int64, name, description, icon, kind string, ordinal int, by int64) (*entities.Site, error) {
 	row, err := s.sites.GetById(ctx, "", uint64(id))
 	if err != nil || row == nil {
 		return nil, ErrSiteUnknown
@@ -288,6 +466,7 @@ func (s *siteService) UpdateSite(ctx context.Context, id int64, name, descriptio
 	row.Name = name
 	row.Description = description
 	row.Icon = icon
+	row.Kind = entities.NormalizeSiteKind(kind)
 	row.Ordinal = ordinal
 	row.UpdatedBy = by
 	row.UpdatedAt = time.Now().Unix()
@@ -416,8 +595,9 @@ func (s *siteService) GetFloor(ctx context.Context, id int64) (*entities.FloorPl
 
 func (s *siteService) AddFloor(ctx context.Context, siteID int64, name string, img []byte, contentType, design string, by int64) (*entities.FloorPlan, error) {
 	// An uploaded plan keeps a pristine background copy so a later re-save draws on the original
-	// photo rather than an already-composited render.
-	return s.addFloorBytes(ctx, siteID, name, img, contentType, design, design == "", by)
+	// photo rather than an already-composited render. Either way these bytes are the operator's
+	// plan, not a blank canvas, so the floor has a plan image.
+	return s.addFloorBytes(ctx, siteID, name, img, contentType, design, design == "", true, by)
 }
 
 // Blank-area canvas defaults. 1600×1000 matches what the old client-side "blank floor" button
@@ -455,8 +635,9 @@ func (s *siteService) AddBlankFloor(ctx context.Context, siteID int64, name stri
 		return nil, err
 	}
 	// keepBg=false: there is no original photo worth preserving for a blank canvas, so don't
-	// double the bytes on disk for every area the wizard creates.
-	row, err := s.addFloorBytes(ctx, siteID, name, img, "image/png", "", false, by)
+	// double the bytes on disk for every area the wizard creates. hasPlanImage=false: this IS the
+	// blank canvas — there is no plan here to remove until the operator uploads one.
+	row, err := s.addFloorBytes(ctx, siteID, name, img, "image/png", "", false, false, by)
 	if err != nil {
 		return nil, err
 	}
@@ -472,8 +653,9 @@ func (s *siteService) AddBlankFloor(ctx context.Context, siteID int64, name stri
 
 // addFloorBytes is the shared store-a-plan path: decode for dimensions, create the row to get the
 // id that names the file, encrypt the bytes to disk, then write the paths back. keepBg additionally
-// stores a pristine copy as the re-editable background.
-func (s *siteService) addFloorBytes(ctx context.Context, siteID int64, name string, img []byte, contentType, design string, keepBg bool, by int64) (*entities.FloorPlan, error) {
+// stores a pristine copy as the re-editable background; hasPlanImage records whether these bytes
+// are an operator's plan or the generated blank canvas (the two are otherwise identical on disk).
+func (s *siteService) addFloorBytes(ctx context.Context, siteID int64, name string, img []byte, contentType, design string, keepBg, hasPlanImage bool, by int64) (*entities.FloorPlan, error) {
 	if _, err := s.sites.GetById(ctx, "", uint64(siteID)); err != nil {
 		return nil, ErrSiteUnknown
 	}
@@ -485,13 +667,14 @@ func (s *siteService) addFloorBytes(ctx context.Context, siteID int64, name stri
 
 	now := time.Now().Unix()
 	row := entities.FloorPlan{
-		SiteId:      siteID,
-		Name:        name,
-		ContentType: contentType,
-		Width:       cfg.Width,
-		Height:      cfg.Height,
-		Design:      design,
-		CreatedBy:   by, CreatedAt: now, UpdatedBy: by, UpdatedAt: now,
+		SiteId:       siteID,
+		Name:         name,
+		ContentType:  contentType,
+		Width:        cfg.Width,
+		Height:       cfg.Height,
+		Design:       design,
+		HasPlanImage: hasPlanImage,
+		CreatedBy:    by, CreatedAt: now, UpdatedBy: by, UpdatedAt: now,
 	}
 	// Create first to obtain the id, which names the on-disk file.
 	id, err := s.floors.Create(ctx, "", row)
@@ -578,6 +761,13 @@ func (s *siteService) ReplaceFloorImage(ctx context.Context, id int64, name stri
 	row.Width = cfg.Width
 	row.Height = cfg.Height
 	row.Design = design
+	// A plain picture upload (no design) puts a real plan on the floor. A designer re-save carries
+	// a design and only re-rasterises what is ALREADY there, so it must not claim a plan image on a
+	// floor that is still the blank canvas — drawing walls on a blank area does not make it an
+	// uploaded plan.
+	if design == "" {
+		row.HasPlanImage = true
+	}
 	row.UpdatedBy = by
 	row.UpdatedAt = time.Now().Unix()
 	if _, err := s.floors.UpdateById(ctx, "", *row); err != nil {
@@ -621,6 +811,8 @@ func (s *siteService) ClearFloorImage(ctx context.Context, id int64, by int64) (
 	row.BgPath = ""
 	row.ContentType = "image/png"
 	row.Design = ""
+	// Back to the blank canvas, so there is no longer a plan to remove.
+	row.HasPlanImage = false
 	// Width/Height, Grid, Scale, WallHeight, Elevation and every placement are deliberately left
 	// alone — this clears the picture, not the authoring work done on top of it.
 	row.UpdatedBy = by

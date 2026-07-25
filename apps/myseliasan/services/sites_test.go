@@ -29,6 +29,15 @@ func (f *fakeFloorRepo) GetById(_ context.Context, _ string, id uint64) (*entiti
 	return &cp, nil
 }
 
+// Create stores the row and hands back the id that names its on-disk file, so the add-a-floor path
+// can be exercised as well as the get-modify-update one.
+func (f *fakeFloorRepo) Create(_ context.Context, _ string, m entities.FloorPlan) (uint64, error) {
+	cp := m
+	cp.Id = 11
+	f.row = &cp
+	return uint64(cp.Id), nil
+}
+
 func (f *fakeFloorRepo) UpdateById(_ context.Context, _ string, m entities.FloorPlan) (uint64, error) {
 	if f.updateErr != nil {
 		return 0, f.updateErr

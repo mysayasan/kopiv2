@@ -97,7 +97,22 @@
   color: var(--ok-text);
   font-size: 0.82rem;
 }
-.fleet-map-rail-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; }
+/* Everything under the rail head scrolls as ONE region, on BOTH axes: vertically when there are
+   more buildings/appliances than fit, horizontally when a long name or a deeply nested area would
+   otherwise be silently ellipsised. Each block is at least the rail's width (`min-width: 100%`) but
+   grows to its own content (`width: max-content`) — that content width is what the scroller scrolls,
+   so the rail never has to lie about a name it can't show. */
+.fleet-map-rail-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  overscroll-behavior: contain;
+}
+.fleet-map-rail-scroll > * { width: max-content; min-width: 100%; }
+.fleet-map-rail-list { list-style: none; margin: 0; padding: 6px; }
 .fleet-map-rail-list li { margin-bottom: 2px; }
 .fleet-map-rail-node {
   width: 100%;
@@ -228,6 +243,10 @@
 .mp-id:hover:not(:disabled) { background: var(--bg-subtle); }
 .mp-id:disabled { cursor: default; }
 .mp-avatar { flex: 0 0 auto; width: 28px; height: 28px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; color: #fff; }
+/* A point asset's card names the ASSET, which is not itself clickable (its appliances below are),
+   so the identity block drops the button affordances and the avatar carries the asset's glyph. */
+.mp-id.as-static { cursor: default; }
+.mp-avatar.as-glyph { background: var(--bg-subtle2); font-size: 1rem; line-height: 1; }
 .mp-title { flex: 1 1 auto; min-width: 0; font-weight: 650; font-size: 0.9rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mp-id-go { flex: 0 0 auto; display: inline-flex; color: var(--text-faint); opacity: 0; transform: translateX(-3px); transition: opacity 0.15s ease, transform 0.15s ease; }
 .mp-id:hover:not(:disabled) .mp-id-go { opacity: 1; transform: translateX(0); color: var(--accent); }
@@ -417,6 +436,11 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
 .fed-inspector .grid-field input[type="range"] { flex: 1 1 auto; min-width: 0; }
 .fed-inspector .grid-field em { font-style: normal; min-width: 42px; text-align: right; color: var(--text-primary); font-variant-numeric: tabular-nums; }
 .fed-remove { align-self: flex-start; margin-top: 4px; }
+/* A row of small toggle buttons in the inspector (e.g. a door's hinge/swing mirrors). The active
+   one reads as pressed so the current hand is obvious at a glance. */
+.fe-btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.fe-btn-row .fed-remove { margin-top: 0; }
+.fe-btn-row .active { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
 .grid-editor-body { display: flex; flex: 1 1 auto; gap: 14px; padding: 14px; min-height: 440px; overflow: auto; }
 .grid-canvas-wrap { flex: 1 1 auto; display: flex; align-items: flex-start; justify-content: center; overflow: auto; background: #e9edf2; border-radius: 8px; padding: 10px; }
 .grid-canvas { display: block; border: 1px solid var(--border-panel); border-radius: 4px; cursor: crosshair; background: #fff; }
@@ -435,6 +459,7 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
 .floor-plan-wrap { position: relative; max-width: 100%; max-height: 100%; margin: auto; }
 .floor-plan-img { display: block; width: 100%; height: 100%; object-fit: contain; border-radius: 4px; user-select: none; }
 /* Camera coverage wedges: an SVG stretched over the plan image, below the clickable markers. */
+.floor-plan-grid { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .floor-fov { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
 .floor-view-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 0.85rem; }
 
@@ -615,6 +640,15 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
   background: transparent; text-align: left; width: 100%;
 }
 .palette-item:hover { background: var(--bg-subtle2); }
+/* Already pinned somewhere: a camera has one physical home, so it reads as spoken-for rather than
+   broken. Dimmed with the pin still showing (that IS the reason), and the cursor says "not here" —
+   the tooltip names the area to unplace it from. */
+.palette-item.placed,
+.palette-cam.placed { opacity: 0.5; cursor: not-allowed; }
+.palette-item.placed:hover,
+.palette-cam.placed:hover { background: transparent; }
+.palette-item.placed svg:last-child,
+.palette-cam.placed svg:last-child { color: var(--accent); opacity: 0.9; }
 .palette-item.active { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
 .palette-item .rail-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
 .palette-item .rail-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -647,7 +681,11 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
 .site-icon { display: inline-flex; align-items: center; justify-content: center; padding: 6px 0; font-size: 1.15rem; line-height: 1; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--bg-body); cursor: pointer; }
 .site-icon:hover { border-color: var(--accent); }
 .site-icon.active { border-color: var(--accent); background: var(--accent-bg); box-shadow: 0 0 0 1px var(--accent) inset; }
-.site-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+.site-dialog-actions { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+/* A spacer pushes Cancel/Save to the right, leaving Delete alone on the left. */
+.site-dialog-spacer { flex: 1 1 auto; }
+.site-dialog-delete { background: transparent; border: 1px solid var(--border-soft); border-radius: 6px; padding: 6px 12px; cursor: pointer; font: inherit; }
+.site-dialog-delete:hover:not(:disabled) { border-color: var(--danger, #ef4444); background: var(--danger-bg, rgba(239, 68, 68, 0.08)); }
 /* Building glyph in the geo-map rail + the floor-view header. */
 .fleet-map-rail-node .rail-emoji { width: 16px; flex: 0 0 auto; text-align: center; font-size: 0.95rem; line-height: 1; }
 .floor-view-emoji { font-size: 1rem; line-height: 1; }
@@ -673,6 +711,10 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
 /* Wider than the plain site dialog because the area list needs room to breathe. */
 .bld-wizard { width: min(480px, 94vw); max-height: 92vh; overflow-y: auto; }
 .bld-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+/* The kind question has three answers (building / outdoor area / point asset), so it gets its own
+   track count; it stacks to one column on a narrow dialog rather than squeezing three tiles. */
+.bld-choice-3 { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 620px) { .bld-choice-3 { grid-template-columns: 1fr; } }
 .bld-choice-opt {
   display: grid; grid-template-columns: auto 1fr; grid-template-areas: "ico title" "ico sub";
   gap: 2px 8px; align-items: center; text-align: left;
@@ -749,6 +791,9 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
 .rail-edit-btn:hover { background: var(--bg-subtle2); color: var(--accent); }
 /* Building-centric rail: a building row, an expand caret, and the appliances nested under it. */
 .fleet-map-rail-bldgwrap { list-style: none; }
+/* Assets are grouped by kind; each group is heading + list so the two scroll as one block. */
+.fleet-map-rail-kindgroup { display: block; }
+.fleet-map-rail-kindgroup + .fleet-map-rail-kindgroup { border-top: 1px solid var(--border-subtle); }
 .rail-expand { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 24px; border: 0; background: transparent; color: var(--text-faint); cursor: pointer; }
 .rail-expand:hover { color: var(--accent); }
 .rail-expand-spacer { flex: 0 0 auto; width: 18px; }
