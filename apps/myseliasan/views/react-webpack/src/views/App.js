@@ -24,6 +24,7 @@ import { TeachPage } from './components/teach';
 import { NotificationsPage } from './components/notifications';
 import { UsersPage, RolesAccessPage } from './components/rbac_admin';
 import { AuditLogPage } from './components/audit_log';
+import { ReportsPage } from './components/reports';
 import { LoginScreen, ChangePasswordScreen, PendingClearanceScreen } from './components/auth_screens';
 import { api, sessionCanGet, apiBase } from './lib/helpers';
 import { enBundle, loadLocaleDict } from './i18n';
@@ -248,6 +249,7 @@ function AppInner({ lang, onLangChange }) {
         ) : null}
         {activeTab === 'roles' && session?.isSuperadmin ? <RolesAccessPage onToast={pushToast} /> : null}
         {activeTab === 'audit' && session?.isSuperadmin ? <AuditLogPage onToast={pushToast} /> : null}
+        {activeTab === 'reports' ? <ReportsPage session={session} onToast={pushToast} /> : null}
         <AppFooter appName="MySeliaSan" apiBase={apiBase()} />
       </main>
     </div>
