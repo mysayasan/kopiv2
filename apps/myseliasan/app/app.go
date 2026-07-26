@@ -677,6 +677,8 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Floors", Description: "floor-plan images and node/camera placements", Path: "/api/floors", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Placements", Description: "list, reposition and remove node/camera markers on floor plans", Path: "/api/placements", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Node Floorplan", Description: "floor plans holding a node camera markers (geo-map drill-down)", Path: "/api/node-floorplan", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Settings", Description: "in-app editor for the safe subset of config.json (superadmin-gated)", Path: "/api/settings", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "System", Description: "process restart to apply settings changes (superadmin-gated)", Path: "/api/system", AccessTier: apiaccessenums.AuthOnly},
 	}
 
 	statements := make([]string, 0, len(endpoints)*2)
@@ -832,6 +834,16 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	reportService := services.NewReportService(registry, siteService, notificationService,
 		auditService, userService, roleService, deps.AccessPerms)
 	apis.NewReportsApi(api, *deps.Auth, controlSession, reportService, auditService)
+
+	// In-app editor for the safe subset of config.json (localAuth, SSO, pairing, security,
+	// storage, logging) plus a process restart. Superadmin-gated. Because the shared host
+	// reads these infra blocks only at boot, an edit is written back to config.json and takes
+	// effect on the next restart — see services/settings_materialize.go for why the DB alone
+	// can't apply them. The first-run defaults snapshot is encrypted with the same fleet cipher.
+	settingsService := services.NewSettingsService(deps.Config, deps.ConfigPath, deps.Db, secretCipher,
+		func(f string, a ...any) { deps.Logger.Warnf("myseliasan.settings", f, a...) })
+	apis.NewSettingsApi(api, *deps.Auth, controlSession, settingsService, auditService, []string{deps.DataDir, deps.HomeDir})
+	apis.NewSystemApi(api, *deps.Auth, controlSession, deps.Restarter)
 
 	// Control channel server: a dedicated fleet-mTLS listener accepting the
 	// persistent, node-dialed bi-directional channel. Connection presence bumps a

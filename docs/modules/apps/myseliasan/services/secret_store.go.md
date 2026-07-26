@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Encryption-at-rest helpers for the handful of SECRET control-plane settings — the fleet CA private key, the parent leaf private key, and the fleet PSK — that would otherwise sit in plaintext in the control-plane database (`ControlSetting` rows). Reuses the shared `infra/atrest` AES-256-GCM module rather than inventing a new primitive; see `docs/modules/infra/atrest/cipher.go.md`. Consumed by `fleet_ca.go` (`readSecret`/`writeSecret`) and `node_registry.go` (`FleetKey`/`upsertFleetKey`).
+Encryption-at-rest helpers for the handful of SECRET control-plane settings — the fleet CA private key, the parent leaf private key, and the fleet PSK — that would otherwise sit in plaintext in the control-plane database (`ControlSetting` rows). Reuses the shared `infra/atrest` AES-256-GCM module rather than inventing a new primitive; see `docs/modules/infra/atrest/cipher.go.md`. Consumed by `fleet_ca.go` (`readSecret`/`writeSecret`), `node_registry.go` (`FleetKey`/`upsertFleetKey`), and `settings.go` (`ensureDefaults`/`loadDefaults`, encrypting the in-app settings editor's first-run defaults snapshot — see `services/settings.go.md`).
 
 ## Responsibilities
 
@@ -11,6 +11,6 @@ Encryption-at-rest helpers for the handful of SECRET control-plane settings — 
 
 ## Notes
 
-- Only the three PRIVATE-key/secret settings route through these helpers (`pairing.caKey`, `pairing.parentKey`, `pairing.fleetKey`). Public certs (`pairing.caCert`, `pairing.parentCert`) and the revocation list (`pairing.revoked`) are not secrets and are read/written as plain `ControlSetting` values, unaffected by this module.
+- The three PRIVATE-key/secret pairing settings route through these helpers (`pairing.caKey`, `pairing.parentKey`, `pairing.fleetKey`). Public certs (`pairing.caCert`, `pairing.parentCert`) and the revocation list (`pairing.revoked`) are not secrets and are read/written as plain `ControlSetting` values, unaffected by this module. `settings.go`'s `settings.defaults` row (the whole first-run config snapshot, which itself contains secret leaves like `localAuth.password`) is also encrypted through the same two helpers, even though it is not a `pairing.*` key.
 - The cipher is resolved once at startup by `apps/myseliasan/app/app.go`'s `openFleetSecretCipher` (see `app.go.md`) from the shared `security` config block (`infra/config.SecurityConfigModel` — the same block mymatasan documents for media encryption at rest) and threaded in via `NodeRegistryConfig.SecretCipher` → `newFleetCA`'s `secretCipher` parameter. A nil cipher throughout means encryption at rest is off and behavior is byte-for-byte the same as before this feature.
 - Tests in `secret_store_test.go` cover the encode/decode roundtrip, legacy-plaintext passthrough, and (via `fleet_ca.go`/`node_registry.go`) that the CA key and fleet PSK are actually stored encrypted when a cipher is configured, and that a legacy plaintext PSK remains readable.

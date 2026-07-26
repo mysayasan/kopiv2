@@ -25,6 +25,7 @@ import { NotificationsPage } from './components/notifications';
 import { UsersPage, RolesAccessPage } from './components/rbac_admin';
 import { AuditLogPage } from './components/audit_log';
 import { ReportsPage } from './components/reports';
+import { SettingsPage } from './components/settings';
 import { LoginScreen, ChangePasswordScreen, PendingClearanceScreen } from './components/auth_screens';
 import { api, sessionCanGet, apiBase } from './lib/helpers';
 import { enBundle, loadLocaleDict } from './i18n';
@@ -186,7 +187,7 @@ function AppInner({ lang, onLangChange }) {
   // Reading correlation rules follows the permission matrix (the API is behind it); WRITING
   // them is superadmin-only and enforced server-side.
   const canFleetRules = sessionCanGet(session, '/api/fleet-rules');
-  const adminTabs = ['users', 'roles', 'audit'];
+  const adminTabs = ['users', 'roles', 'audit', 'settings'];
   if (adminTabs.includes(activeTab) && !session?.isSuperadmin) setActiveTab('dashboard');
   if ((activeTab === 'nodes' || activeTab === 'liveviews' || activeTab === 'objects' || activeTab === 'teach') && !canNodes) setActiveTab('dashboard');
   if (activeTab === 'fleetrules' && !canFleetRules) setActiveTab('dashboard');
@@ -250,6 +251,7 @@ function AppInner({ lang, onLangChange }) {
         {activeTab === 'roles' && session?.isSuperadmin ? <RolesAccessPage onToast={pushToast} /> : null}
         {activeTab === 'audit' && session?.isSuperadmin ? <AuditLogPage onToast={pushToast} /> : null}
         {activeTab === 'reports' ? <ReportsPage session={session} onToast={pushToast} /> : null}
+        {activeTab === 'settings' && session?.isSuperadmin ? <SettingsPage session={session} onToast={pushToast} /> : null}
         <AppFooter appName="MySeliaSan" apiBase={apiBase()} />
       </main>
     </div>

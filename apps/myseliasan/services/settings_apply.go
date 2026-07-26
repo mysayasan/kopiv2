@@ -1,0 +1,197 @@
+package services
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/mysayasan/kopiv2/infra/config"
+)
+
+// This file is the typed half of the settings editor: it validates a section's merged
+// values and writes them onto the strongly-typed AppConfigModel. Values arrive either as
+// native Go types (from read()) or JSON-decoded types (float64 for numbers), so every
+// getter coerces both.
+
+// validateSection rejects clearly unsafe values before anything is written. It is
+// deliberately lenient about values an operator legitimately might want (e.g. disabling a
+// block), and strict only where a bad value would break boot or security.
+func validateSection(section string, data map[string]any) error {
+	g := boundGetters(data)
+	switch section {
+	case "localAuth":
+		if g.b("localAuth.enabled") && strings.TrimSpace(g.s("localAuth.username")) == "" {
+			return fmt.Errorf("username is required when local login is enabled")
+		}
+	case "sso":
+		if g.i("sso.sessionTtlSeconds") < 0 || g.i("sso.policyCacheTtlSeconds") < 0 {
+			return fmt.Errorf("SSO TTLs cannot be negative")
+		}
+	case "pairing":
+		for _, key := range []string{"pairing.mtlsPort", "pairing.controlPort", "pairing.mediaPort"} {
+			if p := g.i(key); p != 0 && (p < 1 || p > 65535) {
+				return fmt.Errorf("%s must be between 1 and 65535", strings.TrimPrefix(key, "pairing."))
+			}
+		}
+		if addr := strings.TrimSpace(g.s("pairing.multicastAddr")); addr != "" && !strings.Contains(addr, ":") {
+			return fmt.Errorf("multicast address must be host:port")
+		}
+	case "security":
+		if len(strings.TrimSpace(g.s("jwt.secret"))) < 16 {
+			return fmt.Errorf("JWT secret must be at least 16 characters")
+		}
+		if strings.TrimSpace(g.s("allowOrigins")) == "" {
+			return fmt.Errorf("allowed origins cannot be empty")
+		}
+		if strings.TrimSpace(g.s("tls.certPath")) == "" || strings.TrimSpace(g.s("tls.keyPath")) == "" {
+			return fmt.Errorf("TLS certificate and key paths are required")
+		}
+		for _, tier := range []string{"devOnly", "authOnly", "public"} {
+			if g.i("rateLimit."+tier+".requests") < 0 || g.i("rateLimit."+tier+".windowSeconds") < 0 {
+				return fmt.Errorf("rate-limit values cannot be negative")
+			}
+		}
+	case "storage":
+		if strings.TrimSpace(g.s("fileStorage.path")) == "" {
+			return fmt.Errorf("file storage path is required")
+		}
+		if g.i("cache.ttlSeconds") < 0 {
+			return fmt.Errorf("cache TTL cannot be negative")
+		}
+	case "logging":
+		if g.i("logging.maxLineBytes") < 0 {
+			return fmt.Errorf("max log line bytes cannot be negative")
+		}
+		if mp := strings.TrimSpace(g.s("telemetry.prometheus.metricsPath")); mp != "" && !strings.HasPrefix(mp, "/") {
+			return fmt.Errorf("metrics path must start with '/'")
+		}
+	default:
+		return fmt.Errorf("unknown settings section %q", section)
+	}
+	return nil
+}
+
+// applyToConfig writes a validated section's values onto the live config model so the UI
+// reflects the pending change immediately (the host still needs a restart to consume them).
+func applyToConfig(cfg *config.AppConfigModel, section string, data map[string]any) error {
+	g := boundGetters(data)
+	switch section {
+	case "localAuth":
+		cfg.LocalAuth.Enabled = g.b("localAuth.enabled")
+		cfg.LocalAuth.Username = g.s("localAuth.username")
+		cfg.LocalAuth.Password = g.s("localAuth.password")
+	case "sso":
+		cfg.SSO.Issuer = g.s("sso.issuer")
+		cfg.SSO.Audience = g.s("sso.audience")
+		cfg.SSO.SessionTTLSeconds = g.i("sso.sessionTtlSeconds")
+		cfg.SSO.PolicyCacheTTLSeconds = g.i("sso.policyCacheTtlSeconds")
+		cfg.SSO.ProviderBaseURL = g.s("sso.providerBaseUrl")
+		cfg.SSO.CACertPath = g.s("sso.caCertPath")
+		cfg.SSO.ClientID = g.s("sso.clientId")
+		cfg.SSO.ClientSecret = g.s("sso.clientSecret")
+		cfg.SSO.RedirectBaseURL = g.s("sso.redirectBaseUrl")
+		cfg.SSO.RedirectPath = g.s("sso.redirectPath")
+	case "pairing":
+		enabled := g.b("pairing.enabled")
+		cfg.Pairing.Enabled = &enabled
+		cfg.Pairing.MulticastAddr = g.s("pairing.multicastAddr")
+		cfg.Pairing.ReplayWindowSeconds = g.i("pairing.replayWindowSeconds")
+		cfg.Pairing.MTLSPort = g.i("pairing.mtlsPort")
+		cfg.Pairing.ControlPort = g.i("pairing.controlPort")
+		cfg.Pairing.MediaPort = g.i("pairing.mediaPort")
+		cfg.Pairing.CertTTLHours = g.i("pairing.certTtlHours")
+		cfg.Pairing.RenewBeforeHours = g.i("pairing.renewBeforeHours")
+		cfg.Pairing.HeartbeatIntervalSeconds = g.i("pairing.heartbeatIntervalSeconds")
+		cfg.Pairing.ParentBaseURL = g.s("pairing.parentBaseUrl")
+	case "security":
+		cfg.Jwt.Secret = g.s("jwt.secret")
+		cfg.AllowOrigin = g.s("allowOrigins")
+		cfg.Tls.CertPath = g.s("tls.certPath")
+		cfg.Tls.KeyPath = g.s("tls.keyPath")
+		cfg.SecurityHeaders.ContentSecurityPolicy = g.s("securityHeaders.contentSecurityPolicy")
+		cfg.RateLimit.Enabled = g.b("rateLimit.enabled")
+		cfg.RateLimit.DefaultWindowSeconds = g.i("rateLimit.defaultWindowSeconds")
+		applyTier(&cfg.RateLimit.DevOnly, g, "rateLimit.devOnly")
+		applyTier(&cfg.RateLimit.AuthOnly, g, "rateLimit.authOnly")
+		applyTier(&cfg.RateLimit.Public, g, "rateLimit.public")
+	case "storage":
+		cfg.FileStorage.Path = g.s("fileStorage.path")
+		cfg.FileStorage.Cleanup.Enabled = g.b("fileStorage.cleanup.enabled")
+		cfg.FileStorage.Cleanup.FrequencySeconds = g.i("fileStorage.cleanup.frequencySeconds")
+		cfg.FileStorage.Cleanup.BatchSize = g.i("fileStorage.cleanup.batchSize")
+		cfg.Cache.Provider = g.s("cache.provider")
+		cfg.Cache.TTLSeconds = g.i("cache.ttlSeconds")
+		cfg.Cache.KeyPrefix = g.s("cache.keyPrefix")
+		cfg.Cache.Redis.Address = g.s("cache.redis.address")
+		cfg.Cache.Redis.Password = g.s("cache.redis.password")
+		cfg.Cache.Redis.DB = g.i("cache.redis.db")
+		cfg.Cache.Redis.UseTLS = g.b("cache.redis.useTls")
+		cfg.Cache.Redis.ConnectTimeoutMs = g.i("cache.redis.connectTimeoutMs")
+		cfg.Cache.Redis.OperationTimeoutMs = g.i("cache.redis.operationTimeoutMs")
+	case "logging":
+		cfg.Logging.Enabled = g.b("logging.enabled")
+		cfg.Logging.Path = g.s("logging.path")
+		cfg.Logging.MaxLineBytes = g.i("logging.maxLineBytes")
+		cfg.Logging.Cleanup.Enabled = g.b("logging.cleanup.enabled")
+		cfg.Logging.Cleanup.MaxRetentionDays = g.i("logging.cleanup.maxRetentionDays")
+		cfg.Logging.Cleanup.FrequencyMinutes = g.i("logging.cleanup.frequencyMinutes")
+		cfg.ApiLog.Cleanup.Enabled = g.b("apiLog.cleanup.enabled")
+		cfg.ApiLog.Cleanup.MaxRetentionDays = g.i("apiLog.cleanup.maxRetentionDays")
+		cfg.ApiLog.Cleanup.FrequencyMinutes = g.i("apiLog.cleanup.frequencyMinutes")
+		cfg.Telemetry.Enabled = g.b("telemetry.enabled")
+		cfg.Telemetry.Prometheus.Enabled = g.b("telemetry.prometheus.enabled")
+		cfg.Telemetry.Prometheus.MetricsPath = g.s("telemetry.prometheus.metricsPath")
+		cfg.Telemetry.Prometheus.ApiDurationThresholdMs = g.i64("telemetry.prometheus.apiDurationThresholdMs")
+	default:
+		return fmt.Errorf("unknown settings section %q", section)
+	}
+	return nil
+}
+
+func applyTier(t *config.RateLimitTierConfigModel, g getters, prefix string) {
+	t.Enabled = g.b(prefix + ".enabled")
+	t.Requests = g.i(prefix + ".requests")
+	t.WindowSeconds = g.i(prefix + ".windowSeconds")
+}
+
+// getters is a small typed accessor over a nested map, coercing JSON/native numbers.
+type getters struct{ data map[string]any }
+
+func boundGetters(data map[string]any) getters { return getters{data: data} }
+
+func (g getters) s(path string) string {
+	v, ok := leafAny(g.data, path)
+	if !ok {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
+func (g getters) b(path string) bool {
+	v, ok := leafAny(g.data, path)
+	if !ok {
+		return false
+	}
+	b, _ := v.(bool)
+	return b
+}
+
+func (g getters) i(path string) int { return int(g.i64(path)) }
+
+func (g getters) i64(path string) int64 {
+	v, ok := leafAny(g.data, path)
+	if !ok {
+		return 0
+	}
+	switch n := v.(type) {
+	case float64:
+		return int64(n)
+	case int:
+		return int64(n)
+	case int64:
+		return n
+	}
+	return 0
+}

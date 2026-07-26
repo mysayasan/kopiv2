@@ -328,10 +328,18 @@ export function SideNav({ activeTab, busy, onTab, onLogout, session, nodes, mana
           ]
         : [],
     },
-    // System: the consolidated notification feed + the printable-report hub, both
-    // available to any signed-in operator (the security report is superadmin-gated
-    // inside the Reports page itself, not here).
-    { label: t('group.system'), items: [notificationsItem, navItem('reports', t('nav.reports'), 'copy', 'steel')] },
+    // System: the consolidated notification feed + the printable-report hub (any signed-in
+    // operator; the security report is superadmin-gated inside the Reports page itself),
+    // plus the config editor — Settings sits here as a system-level control and stays
+    // superadmin-only.
+    {
+      label: t('group.system'),
+      items: [
+        notificationsItem,
+        navItem('reports', t('nav.reports'), 'copy', 'steel'),
+        ...(session?.isSuperadmin ? [navItem('settings', t('nav.settings'), 'sliders', 'steel')] : []),
+      ],
+    },
   ];
 
   const brand = (
