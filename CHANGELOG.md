@@ -64,6 +64,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-26 — myseliasan 1.41.0 (95e9ae4)
+
+### Added
+
+- **myseliasan**: Added a Reports page to the myseliasan control plane that generates four on-demand, printable PDF reports entirely server-side (a new pure-Go domain/report builder over github.com/go-pdf/fpdf -- no headless browser, so it works on an air-gapped install): Fleet Health (node online/offline roster, certificate expiry, an alert summary over a selectable trailing window), Site & Asset Inventory (per-building asset register with a rendered floor plan per floor -- including the authored walls/doors/windows/stairs/parking/raised-floor geometry from the floor editor, plus camera coverage wedges and markers -- not just the flat plan image), Incident Detail (recent alerts with per-event detail and an inline snapshot when carried), and Security & Access (users/roles/permission matrix/audit trail plus a data-protection attestation, gated to superadmins only, both at the API and hidden from the SPA for anyone else). Every report is served as a PDF attachment (GET /api/reports/{fleet-health,inventory,security,incident}.pdf) and every generation is written to the audit trail as a report.* action, since it is a sensitive bulk read of fleet data. The frontend shows the generated PDF in a preview modal (the browser's own PDF viewer) with Print/Download/Close, rather than triggering a blind download.
 ## 2026-07-25 — myseliasan 1.40.0 (0b227d5)
 
 ### Added
