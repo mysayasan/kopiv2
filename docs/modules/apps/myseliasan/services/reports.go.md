@@ -1,0 +1,101 @@
+# Module: apps/myseliasan/services/reports.go
+
+## Purpose
+
+Implements `IReportService`, the four on-demand printable-PDF report builders behind
+`apis/reports.go`. Each gathers data from the existing fleet services (node registry, site
+service, notification feed, audit log, RBAC) and renders it through the shared
+`domain/report` builder (`domain/report/doc.go.md`) into a ready-to-stream `Report{Filename,
+Data}`.
+
+## Constructor
+
+`NewReportService(registry, sites, notif, audit, users, roles, perms)`:
+
+| Param | Type | Used for |
+|---|---|---|
+| `registry` | `INodeRegistry` | `FleetHealth`'s `FleetStatus`/`List`; `Inventory`'s per-site resident-node lookup. |
+| `sites` | `ISiteService` | Every report's site list; `Inventory`'s floor plans + placements. |
+| `notif` | `*notification.Service` (accepted as the concrete type, stored behind the internal `notifLister` interface — just `List`) | `FleetHealth`'s alert summary; `Incident`'s event list. |
+| `audit` | `IAuditService` | `Security`'s audit-trail section. |
+| `users` | `IControlUserService` | `Security`'s user roster. |
+| `roles` | `sharedservices.IAccessRoleService` | `Security`'s role list + permission-matrix section. |
+| `perms` | `sharedservices.IAccessPermissionService` | `Security`'s per-role endpoint grants. |
+
+`now time.Time` is a parameter on every builder (never read from the clock), so the header
+stamp and every `rangeDays` calculation are deterministic and unit-testable.
+
+## `IReportService`
+
+| Method | Report |
+|---|---|
+| `FleetHealth(ctx, now, rangeDays)` | Live online/offline + certificate roster + alert summary over the trailing `rangeDays` (default 30 via `normDays`). |
+| `Inventory(ctx, now, siteID)` | Asset register per building with rendered floor plans + camera placements. `siteID == 0` = the whole fleet; `>0` narrows to one site. |
+| `Security(ctx, now, rangeDays)` | RBAC users/roles/permission matrix + audit trail over `rangeDays` + a data-protection attestation paragraph. Superadmin-gated at the API layer, not here. |
+| `Incident(ctx, now, rangeDays, notificationID)` | Recent alerts over `rangeDays` with per-event detail (and an inline snapshot when one is carried in the event's metadata). `notificationID > 0` narrows to a single event. |
+
+## Fleet Health
+
+`H1 "Fleet Summary"` stat tiles (Total/Online/Lost/Self-dropped/Certs expiring/Certs
+expired, the danger-tinted ones sourced straight from `INodeRegistry.FleetStatus`) plus a
+note naming the cert-warn window. `H1 "Nodes"` — every adopted node, name-sorted, one row
+per node (site, `statusLabel`, last-seen, cert-expiry, auto-renew). `H1 "Alerts (last N
+days)"` — counts from `recentNotifications` (capped at the feed's 500-row read) grouped by
+category and by the top-10 noisiest `Source`.
+
+## Inventory
+
+One `H1` block per site (icon + name), each on `doc.AddPage()` after the first, with a
+`KeyValues` block (kind, description, coordinates when placed) and an "Appliances on site"
+table of nodes whose `SiteId` matches. A site whose kind has no plans
+(`!entities.HasPlans(s.Kind)` — a point asset) gets a note and skips straight to the next
+site. Otherwise every floor is fetched via `ISiteService.SiteFloorplans`, ordinal-sorted,
+and each gets its **own page** (`H1` = `"<site> — <floor>"`) with:
+
+- `renderFloorPlan` — decrypts the plan image (`ISiteService.FloorImage`) and composites the
+  camera pins + the authored wall/door/window/stairs geometry via
+  `renderFloorPlacements`/`renderFloorGrid` (`report_floorplan.go.md`/
+  `report_floorgrid.go.md`), embedding the result via `doc.Image`. Any failure — no image,
+  undecodable bytes — is surfaced as a note on the page (`"Floor plan image could not be
+  shown: <reason>"`), never dropped silently: an absent plan is otherwise
+  indistinguishable from "this floor has no plan".
+- A table of the floor's placements (name, camera/node kind, coverage `<fov>° @ <heading>°`,
+  mount height).
+
+## Security
+
+`H1 "Users"` (name/kind/role/state/last-login, sorted by `userLabel`), `H1 "Roles"`
+(name/superadmin/built-in/description), `H1 "Permission Matrix"` — one `H2` sub-section per
+role: a superadmin role gets a one-line "unrestricted" note (its access is a bypass, not
+rows); every other role's endpoint grants come from `perms.ListForRole`, path-sorted, GET/
+POST/PUT/DELETE as bullet ticks. `H1 "Audit Trail (last N days)"` reads up to 500 entries
+via `audit.List` and keeps only `CreatedAt >= from`. `H1 "Data Protection"` is a fixed
+attestation paragraph describing AES-256-GCM at-rest encryption of fleet secrets and
+floor-plan images, and the audit trail's append-only, tamper-evident nature.
+
+## Incident
+
+`H1 "Events"`; with `notificationID > 0`, filters to that single event, else to
+`CreatedAt >= from` over the trailing `rangeDays`, from the same 500-row feed read as Fleet
+Health's alert summary. Each event gets an `H2` (`"#<id>  <title-or-category>"`), a
+`KeyValues` block (time/category/severity/source), its body paragraph, and — via
+`snapshotFromMetadata` + `decodeImageBytes` — an inline `doc.Image` when the notification's
+JSON `Metadata` carries an `image`/`snapshot`/`thumbnail`/`imageData` key holding a data URI
+or bare base64 string. A closing note clarifies that camera snapshots otherwise live on the
+recording node and are not fetched here.
+
+## Notes
+
+- `snapshotFromMetadata`/`decodeImageBytes` never error out to the caller on a bad/missing
+  image — a snapshot is opportunistic, not required, for the incident report to render.
+- `sortedCountRows`/`topCountRows` are the shared count→table helpers behind Fleet Health's
+  "by category"/"noisiest sources" breakdowns.
+- `kindLabel`/`nodeKindLabel`/`statusLabel`/`yesNo`/`tsFmt`/`orDash`/`tick` are small
+  operator-facing label formatters shared across all four builders, kept in this file rather
+  than duplicated per report.
+- Every builder's final step is `doc.Output()`; the returned `*Report`'s `Filename` embeds
+  `now.Format("20060102")` (e.g. `fleet-health-20260726.pdf`), matching what `apis/
+  reports.go`'s `deliver` sets as the `Content-Disposition` filename.
+- `reports_test.go` covers the builders directly against fake `registry`/`sites`/`notif`/
+  `audit`/`users`/`roles`/`perms` implementations (no DB), including the floor-plan render
+  failure path surfacing as a note rather than an error.

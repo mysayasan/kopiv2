@@ -328,8 +328,10 @@ export function SideNav({ activeTab, busy, onTab, onLogout, session, nodes, mana
           ]
         : [],
     },
-    // System: the consolidated notification feed, available to any signed-in operator.
-    { label: t('group.system'), items: [notificationsItem] },
+    // System: the consolidated notification feed + the printable-report hub, both
+    // available to any signed-in operator (the security report is superadmin-gated
+    // inside the Reports page itself, not here).
+    { label: t('group.system'), items: [notificationsItem, navItem('reports', t('nav.reports'), 'copy', 'steel')] },
   ];
 
   const brand = (

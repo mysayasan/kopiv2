@@ -825,6 +825,14 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	notificationService := notification.NewService(notificationRepo, notification.Options{Logger: deps.Logger})
 	apis.NewNotificationApi(api, *deps.Auth, controlSession, notificationService)
 
+	// On-demand printable PDF reports (fleet health, site/asset inventory, security &
+	// access, incident detail). Rendered pure-Go (domain/report) so generation needs no
+	// headless browser — the control plane runs air-gapped. The security report is
+	// superadmin-gated inside the API; every generation is written to the audit trail.
+	reportService := services.NewReportService(registry, siteService, notificationService,
+		auditService, userService, roleService, deps.AccessPerms)
+	apis.NewReportsApi(api, *deps.Auth, controlSession, reportService, auditService)
+
 	// Control channel server: a dedicated fleet-mTLS listener accepting the
 	// persistent, node-dialed bi-directional channel. Connection presence bumps a
 	// node online (stronger liveness than the heartbeat poll, which still runs as a
