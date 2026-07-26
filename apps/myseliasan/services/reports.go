@@ -1,0 +1,772 @@
+package services
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"image"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/mysayasan/kopiv2/apps/myseliasan/entities"
+	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
+	"github.com/mysayasan/kopiv2/domain/notification"
+	"github.com/mysayasan/kopiv2/domain/report"
+	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
+)
+
+// Report is a rendered PDF ready to stream: the bytes plus a suggested download name.
+type Report struct {
+	Filename string
+	Data     []byte
+}
+
+// IReportService builds the on-demand, printable PDF reports the operator generates
+// from the Reports page. Each builder gathers from the existing fleet services and
+// renders through the shared domain/report seam. now is passed in (not read from the
+// clock) so the header stamp and range maths are deterministic and testable.
+type IReportService interface {
+	// FleetHealth: live online/offline + certificate roster + alert summary over the
+	// trailing rangeDays (default 30).
+	FleetHealth(ctx context.Context, now time.Time, rangeDays int) (*Report, error)
+	// Inventory: asset register per building with rendered floor plans + camera
+	// placements. siteID 0 = the whole fleet; >0 = one building.
+	Inventory(ctx context.Context, now time.Time, siteID int64) (*Report, error)
+	// Security: RBAC users/roles/permission matrix + audit trail over rangeDays +
+	// data-protection attestation. Superadmin-gated at the API.
+	Security(ctx context.Context, now time.Time, rangeDays int) (*Report, error)
+	// Incident: recent alerts over the trailing rangeDays with per-event detail (and an
+	// inline snapshot when one is carried in the event metadata). notificationID>0
+	// narrows to a single event.
+	Incident(ctx context.Context, now time.Time, rangeDays int, notificationID int64) (*Report, error)
+}
+
+// notifLister is the sliver of the notification service the reports need — reading the
+// recent feed. Depending on this rather than the concrete *notification.Service keeps
+// the report builders testable with a lightweight fake.
+type notifLister interface {
+	List(ctx context.Context, limit, offset uint64, cameraId int64, unreadOnly bool, category, source string) ([]*sharedentities.Notification, uint64, error)
+}
+
+type reportService struct {
+	registry INodeRegistry
+	sites    ISiteService
+	notif    notifLister
+	audit    IAuditService
+	users    IControlUserService
+	roles    sharedservices.IAccessRoleService
+	perms    sharedservices.IAccessPermissionService
+}
+
+// NewReportService wires the report builders over the existing fleet services.
+func NewReportService(
+	registry INodeRegistry,
+	sites ISiteService,
+	notif *notification.Service,
+	audit IAuditService,
+	users IControlUserService,
+	roles sharedservices.IAccessRoleService,
+	perms sharedservices.IAccessPermissionService,
+) IReportService {
+	return &reportService{
+		registry: registry,
+		sites:    sites,
+		notif:    notif,
+		audit:    audit,
+		users:    users,
+		roles:    roles,
+		perms:    perms,
+	}
+}
+
+// --- shared small helpers ---------------------------------------------------------
+
+func normDays(d int) int {
+	if d <= 0 {
+		return 30
+	}
+	if d > 366 {
+		return 366
+	}
+	return d
+}
+
+func tsFmt(unix int64) string {
+	if unix <= 0 {
+		return "—"
+	}
+	return time.Unix(unix, 0).Format("2006-01-02 15:04")
+}
+
+// statusLabel renders a node's raw status into a title-case, operator-facing word.
+func statusLabel(s string) string {
+	switch s {
+	case "online":
+		return "Online"
+	case "lost":
+		return "Lost"
+	case "self-dropped":
+		return "Self-dropped"
+	case "":
+		return "Unknown"
+	default:
+		return s
+	}
+}
+
+func yesNo(b bool) string {
+	if b {
+		return "Yes"
+	}
+	return "No"
+}
+
+func siteNameMap(sites []*entities.Site) map[int64]string {
+	m := make(map[int64]string, len(sites))
+	for _, s := range sites {
+		m[s.Id] = s.Name
+	}
+	return m
+}
+
+// --- Fleet Health -----------------------------------------------------------------
+
+func (r *reportService) FleetHealth(ctx context.Context, now time.Time, rangeDays int) (*Report, error) {
+	rangeDays = normDays(rangeDays)
+	from := now.AddDate(0, 0, -rangeDays).Unix()
+
+	status, err := r.registry.FleetStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
+	nodes, err := r.registry.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	sites, _ := r.sites.ListSites(ctx)
+	siteName := siteNameMap(sites)
+
+	doc := report.New(report.Options{
+		Title:       "Fleet Health Report",
+		Subtitle:    fmt.Sprintf("%d node(s) across %d site(s)", len(nodes), len(sites)),
+		Period:      fmt.Sprintf("Last %d days", rangeDays),
+		GeneratedAt: now,
+	})
+
+	doc.H1("Fleet Summary")
+	doc.StatTiles([]report.Tile{
+		{Label: "Total nodes", Value: itoa(status.Total), Accent: true},
+		{Label: "Online", Value: itoa(status.Online)},
+		{Label: "Lost", Value: itoa(status.Lost), Danger: status.Lost > 0},
+		{Label: "Self-dropped", Value: itoa(status.SelfDropped)},
+		{Label: "Certs expiring", Value: itoa(status.CertsExpiring), Danger: status.CertsExpiring > 0},
+		{Label: "Certs expired", Value: itoa(status.CertsExpired), Danger: status.CertsExpired > 0},
+	})
+	doc.Note(fmt.Sprintf("A certificate is flagged \"expiring\" within %d day(s) of expiry. Status reflects the fleet at report time; historical uptime is not yet tracked.", status.CertWarnDays))
+
+	doc.H1("Nodes")
+	if len(nodes) == 0 {
+		doc.Empty("No nodes have been adopted yet.")
+	} else {
+		sort.Slice(nodes, func(i, j int) bool { return strings.ToLower(nodes[i].Name) < strings.ToLower(nodes[j].Name) })
+		rows := make([][]string, 0, len(nodes))
+		for _, n := range nodes {
+			name := n.Name
+			if name == "" {
+				name = n.NodeId
+			}
+			site := siteName[n.SiteId]
+			if site == "" {
+				site = "—"
+			}
+			rows = append(rows, []string{
+				name, site, statusLabel(n.Status), tsFmt(n.LastSeenAt), tsFmt(n.CertExpiresAt), yesNo(n.AutoRenew),
+			})
+		}
+		doc.Table([]report.Column{
+			{Header: "Node", Width: 0},
+			{Header: "Site", Width: 34},
+			{Header: "Status", Width: 24, Align: "C"},
+			{Header: "Last seen", Width: 30},
+			{Header: "Cert expiry", Width: 30},
+			{Header: "Auto-renew", Width: 22, Align: "C"},
+		}, rows)
+	}
+
+	doc.H1(fmt.Sprintf("Alerts (last %d days)", rangeDays))
+	events, _ := r.recentNotifications(ctx, from, now.Unix())
+	if len(events) == 0 {
+		doc.Empty("No alerts in the selected period.")
+	} else {
+		byCat := map[string]int{}
+		bySrc := map[string]int{}
+		for _, e := range events {
+			cat := e.Category
+			if cat == "" {
+				cat = "uncategorised"
+			}
+			byCat[cat]++
+			if e.Source != "" {
+				bySrc[e.Source]++
+			}
+		}
+		doc.H2("By category")
+		doc.Table([]report.Column{
+			{Header: "Category", Width: 0},
+			{Header: "Count", Width: 30, Align: "R"},
+		}, sortedCountRows(byCat))
+
+		if len(bySrc) > 0 {
+			doc.H2("Noisiest sources (top 10)")
+			doc.Table([]report.Column{
+				{Header: "Source", Width: 0},
+				{Header: "Alerts", Width: 30, Align: "R"},
+			}, topCountRows(bySrc, 10))
+		}
+		doc.Note(fmt.Sprintf("%d alert(s) counted. The feed is a live relay; up to 500 most-recent events are summarised.", len(events)))
+	}
+
+	data, err := doc.Output()
+	if err != nil {
+		return nil, err
+	}
+	return &Report{Filename: fmt.Sprintf("fleet-health-%s.pdf", now.Format("20060102")), Data: data}, nil
+}
+
+// --- Inventory --------------------------------------------------------------------
+
+func (r *reportService) Inventory(ctx context.Context, now time.Time, siteID int64) (*Report, error) {
+	sites, err := r.sites.ListSites(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if siteID > 0 {
+		filtered := sites[:0]
+		for _, s := range sites {
+			if s.Id == siteID {
+				filtered = append(filtered, s)
+			}
+		}
+		sites = filtered
+	}
+	nodes, _ := r.registry.List(ctx)
+
+	subtitle := "All sites"
+	if siteID > 0 && len(sites) == 1 {
+		subtitle = sites[0].Name
+	}
+	doc := report.New(report.Options{
+		Title:       "Site & Asset Inventory",
+		Subtitle:    subtitle,
+		GeneratedAt: now,
+	})
+
+	if len(sites) == 0 {
+		doc.H1("Inventory")
+		doc.Empty("No sites match the selection.")
+		data, err := doc.Output()
+		if err != nil {
+			return nil, err
+		}
+		return &Report{Filename: fmt.Sprintf("inventory-%s.pdf", now.Format("20060102")), Data: data}, nil
+	}
+
+	sort.Slice(sites, func(i, j int) bool {
+		if sites[i].Ordinal != sites[j].Ordinal {
+			return sites[i].Ordinal < sites[j].Ordinal
+		}
+		return strings.ToLower(sites[i].Name) < strings.ToLower(sites[j].Name)
+	})
+
+	for si, s := range sites {
+		if si > 0 {
+			doc.AddPage()
+		}
+		icon := s.Icon
+		if icon != "" {
+			icon += " "
+		}
+		doc.H1(icon + s.Name)
+
+		kv := [][2]string{
+			{"Kind", kindLabel(s.Kind)},
+		}
+		if s.Description != "" {
+			kv = append(kv, [2]string{"Description", s.Description})
+		}
+		if s.MapPlaced {
+			kv = append(kv, [2]string{"Coordinates", fmt.Sprintf("%.5f, %.5f", s.Lat, s.Lon)})
+		}
+		doc.KeyValues(kv)
+
+		// Nodes resident in this building.
+		var resident []*entities.ManagedNode
+		for _, n := range nodes {
+			if n.SiteId == s.Id {
+				resident = append(resident, n)
+			}
+		}
+		doc.H2("Appliances on site")
+		if len(resident) == 0 {
+			doc.Empty("No node appliances reside in this site.")
+		} else {
+			rows := make([][]string, 0, len(resident))
+			for _, n := range resident {
+				name := n.Name
+				if name == "" {
+					name = n.NodeId
+				}
+				rows = append(rows, []string{name, nodeKindLabel(n.Kind), statusLabel(n.Status), tsFmt(n.LastSeenAt)})
+			}
+			doc.Table([]report.Column{
+				{Header: "Appliance", Width: 0},
+				{Header: "Kind", Width: 28},
+				{Header: "Status", Width: 26, Align: "C"},
+				{Header: "Last seen", Width: 34},
+			}, rows)
+		}
+
+		if !entities.HasPlans(s.Kind) {
+			doc.Note("This is a point asset — it holds no floor plans; its cameras reach it through the owning node.")
+			continue
+		}
+
+		plans, _ := r.sites.SiteFloorplans(ctx, s.Id)
+		if len(plans) == 0 {
+			doc.H2("Floors")
+			doc.Empty("No floor plans have been added.")
+			continue
+		}
+		sort.Slice(plans, func(i, j int) bool { return plans[i].Floor.Ordinal < plans[j].Floor.Ordinal })
+		for _, fp := range plans {
+			floor := fp.Floor
+			// Each floor/area gets its own page so a printed plan stands alone; the heading
+			// carries the building name too, since the page may be handed out on its own.
+			doc.AddPage()
+			doc.H1(s.Name + " — " + floor.Name)
+			// Rendered plan with camera pins. Surface why a plan can't be shown rather than
+			// dropping it silently (a missing/undecodable image is exactly what the reader
+			// would otherwise mistake for "this floor has no plan").
+			if err := r.renderFloorPlan(ctx, doc, floor, fp.Placements); err != nil {
+				doc.Note(fmt.Sprintf("Floor plan image could not be shown: %s", err.Error()))
+			}
+			if len(fp.Placements) == 0 {
+				doc.Empty("No cameras placed on this floor.")
+				continue
+			}
+			rows := make([][]string, 0, len(fp.Placements))
+			for _, pl := range fp.Placements {
+				name := pl.LastKnownName
+				if name == "" {
+					name = pl.CameraId
+				}
+				kind := "Camera"
+				if pl.CameraId == "" {
+					kind = "Node"
+				}
+				fov := "—"
+				if pl.Fov > 0 {
+					fov = fmt.Sprintf("%.0f° @ %.0f°", pl.Fov, pl.Heading)
+				}
+				mount := "—"
+				if pl.MountHeight > 0 {
+					mount = fmt.Sprintf("%.1f m", pl.MountHeight)
+				}
+				rows = append(rows, []string{name, kind, fov, mount})
+			}
+			doc.Table([]report.Column{
+				{Header: "Placement", Width: 0},
+				{Header: "Type", Width: 24, Align: "C"},
+				{Header: "Coverage", Width: 40},
+				{Header: "Mount", Width: 26, Align: "R"},
+			}, rows)
+		}
+	}
+
+	data, err := doc.Output()
+	if err != nil {
+		return nil, err
+	}
+	return &Report{Filename: fmt.Sprintf("inventory-%s.pdf", now.Format("20060102")), Data: data}, nil
+}
+
+// renderFloorPlan decrypts a floor's plan image, composites the camera/node pins onto
+// it, and embeds the result. Any failure is returned (not swallowed) so the caller can
+// print the reason in the report.
+func (r *reportService) renderFloorPlan(ctx context.Context, doc *report.Document, floor *entities.FloorPlan, placements []*entities.NodePlacement) error {
+	img, err := r.sites.FloorImage(ctx, floor.Id)
+	if err != nil {
+		return fmt.Errorf("plan image unavailable: %w", err)
+	}
+	if img == nil || len(img.Data) == 0 {
+		return errors.New("plan image is empty")
+	}
+	composed, err := renderFloorPlacements(img.Data, floor.Grid, placements)
+	if err != nil {
+		return fmt.Errorf("could not decode plan image: %w", err)
+	}
+	if err := doc.Image(fmt.Sprintf("floor-%d", floor.Id), composed, 172); err != nil {
+		return fmt.Errorf("could not embed plan image: %w", err)
+	}
+	doc.Spacer(2)
+	return nil
+}
+
+// --- Security / Audit -------------------------------------------------------------
+
+func (r *reportService) Security(ctx context.Context, now time.Time, rangeDays int) (*Report, error) {
+	rangeDays = normDays(rangeDays)
+	from := now.AddDate(0, 0, -rangeDays).Unix()
+
+	users, err := r.users.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	roles, _ := r.roles.List(ctx)
+	roleName := map[int64]string{}
+	for _, ro := range roles {
+		roleName[ro.Id] = ro.Name
+	}
+
+	doc := report.New(report.Options{
+		Title:       "Security & Access Report",
+		Subtitle:    fmt.Sprintf("%d user(s), %d role(s)", len(users), len(roles)),
+		Period:      fmt.Sprintf("Audit trail: last %d days", rangeDays),
+		GeneratedAt: now,
+	})
+
+	doc.H1("Users")
+	if len(users) == 0 {
+		doc.Empty("No users.")
+	} else {
+		sort.Slice(users, func(i, j int) bool { return strings.ToLower(userLabel(users[i])) < strings.ToLower(userLabel(users[j])) })
+		rows := make([][]string, 0, len(users))
+		for _, u := range users {
+			state := "Active"
+			if u.Disabled {
+				state = "Disabled"
+			}
+			rn := roleName[u.RoleId]
+			if rn == "" {
+				rn = "—"
+			}
+			rows = append(rows, []string{userLabel(u), u.Kind, rn, state, tsFmt(u.LastLoginAt)})
+		}
+		doc.Table([]report.Column{
+			{Header: "User", Width: 0},
+			{Header: "Kind", Width: 24},
+			{Header: "Role", Width: 30},
+			{Header: "State", Width: 22, Align: "C"},
+			{Header: "Last login", Width: 30},
+		}, rows)
+	}
+
+	doc.H1("Roles")
+	if len(roles) == 0 {
+		doc.Empty("No roles.")
+	} else {
+		rows := make([][]string, 0, len(roles))
+		for _, ro := range roles {
+			rows = append(rows, []string{ro.Name, yesNo(ro.IsSuperadmin), yesNo(ro.Builtin), ro.Description})
+		}
+		doc.Table([]report.Column{
+			{Header: "Role", Width: 40},
+			{Header: "Superadmin", Width: 26, Align: "C"},
+			{Header: "Built-in", Width: 22, Align: "C"},
+			{Header: "Description", Width: 0},
+		}, rows)
+	}
+
+	doc.H1("Permission Matrix")
+	if r.perms == nil || len(roles) == 0 {
+		doc.Empty("No permission data available.")
+	} else {
+		for _, ro := range roles {
+			if ro.IsSuperadmin {
+				doc.H2(ro.Name)
+				doc.Para("Superadmin — unrestricted access to all endpoints.")
+				continue
+			}
+			perms, _ := r.perms.ListForRole(ctx, ro.Id)
+			doc.H2(ro.Name)
+			if len(perms) == 0 {
+				doc.Empty("No endpoint grants (no access).")
+				continue
+			}
+			sort.Slice(perms, func(i, j int) bool { return perms[i].Path < perms[j].Path })
+			rows := make([][]string, 0, len(perms))
+			for _, p := range perms {
+				rows = append(rows, []string{p.Path, tick(p.CanGet), tick(p.CanPost), tick(p.CanPut), tick(p.CanDelete)})
+			}
+			doc.Table([]report.Column{
+				{Header: "Endpoint", Width: 0},
+				{Header: "GET", Width: 18, Align: "C"},
+				{Header: "POST", Width: 18, Align: "C"},
+				{Header: "PUT", Width: 18, Align: "C"},
+				{Header: "DELETE", Width: 22, Align: "C"},
+			}, rows)
+		}
+	}
+
+	doc.H1(fmt.Sprintf("Audit Trail (last %d days)", rangeDays))
+	entries, _, _ := r.audit.List(ctx, 500, 0, "", "", "")
+	var recent []*entities.AuditLog
+	for _, e := range entries {
+		if e.CreatedAt >= from {
+			recent = append(recent, e)
+		}
+	}
+	if len(recent) == 0 {
+		doc.Empty("No audited actions in the selected period.")
+	} else {
+		rows := make([][]string, 0, len(recent))
+		for _, e := range recent {
+			actor := e.ActorEmail
+			if actor == "" {
+				actor = "system"
+			}
+			target := e.TargetType
+			if e.TargetId != "" {
+				target += ":" + e.TargetId
+			}
+			rows = append(rows, []string{tsFmt(e.CreatedAt), actor, e.Action, target, e.Outcome, e.Detail})
+		}
+		doc.Table([]report.Column{
+			{Header: "Time", Width: 30},
+			{Header: "Actor", Width: 34},
+			{Header: "Action", Width: 30},
+			{Header: "Target", Width: 30},
+			{Header: "Outcome", Width: 20, Align: "C"},
+			{Header: "Detail", Width: 0},
+		}, rows)
+	}
+
+	doc.H1("Data Protection")
+	doc.Para("Fleet secrets (the mTLS CA private key and the fleet pre-shared key) are encrypted at rest with AES-256-GCM using a master key held outside the database. Floor-plan images are encrypted at rest under the same fleet cipher. The audit trail above is append-only — there is no update or delete path — so it is tamper-evident for incident review.")
+
+	data, err := doc.Output()
+	if err != nil {
+		return nil, err
+	}
+	return &Report{Filename: fmt.Sprintf("security-%s.pdf", now.Format("20060102")), Data: data}, nil
+}
+
+// --- Incident / Alert -------------------------------------------------------------
+
+func (r *reportService) Incident(ctx context.Context, now time.Time, rangeDays int, notificationID int64) (*Report, error) {
+	rangeDays = normDays(rangeDays)
+	from := now.AddDate(0, 0, -rangeDays).Unix()
+
+	all, _, err := r.notif.List(ctx, 500, 0, 0, false, "", "")
+	if err != nil {
+		return nil, err
+	}
+	var events []*sharedentities.Notification
+	for _, e := range all {
+		if notificationID > 0 {
+			if e.Id == notificationID {
+				events = append(events, e)
+			}
+			continue
+		}
+		if e.CreatedAt >= from {
+			events = append(events, e)
+		}
+	}
+
+	title := "Incident Report"
+	subtitle := fmt.Sprintf("Last %d days", rangeDays)
+	if notificationID > 0 {
+		subtitle = fmt.Sprintf("Event #%d", notificationID)
+	}
+	doc := report.New(report.Options{
+		Title:       title,
+		Subtitle:    subtitle,
+		GeneratedAt: now,
+	})
+
+	doc.H1("Events")
+	if len(events) == 0 {
+		doc.Empty("No matching events.")
+		data, oerr := doc.Output()
+		if oerr != nil {
+			return nil, oerr
+		}
+		return &Report{Filename: fmt.Sprintf("incident-%s.pdf", now.Format("20060102")), Data: data}, nil
+	}
+
+	for i, e := range events {
+		if i > 0 {
+			doc.Spacer(3)
+		}
+		heading := e.Title
+		if heading == "" {
+			heading = e.Category
+		}
+		doc.H2(fmt.Sprintf("#%d  %s", e.Id, heading))
+		doc.KeyValues([][2]string{
+			{"Time", tsFmt(e.CreatedAt)},
+			{"Category", orDash(e.Category)},
+			{"Severity", orDash(e.Severity)},
+			{"Source", orDash(e.Source)},
+		})
+		if e.Body != "" {
+			doc.Para(e.Body)
+		}
+		// Inline snapshot when the event metadata carries one (data URI / base64).
+		if img := snapshotFromMetadata(e.Metadata); img != nil {
+			if decoded, derr := decodeImageBytes(img); derr == nil && decoded != nil {
+				_ = doc.Image(fmt.Sprintf("evt-%d", e.Id), decoded, 110)
+			}
+		}
+	}
+	doc.Note("Camera snapshots are held on the recording node; they appear here only when the event carried an inline image. Up to 500 most-recent events are considered.")
+
+	data, err := doc.Output()
+	if err != nil {
+		return nil, err
+	}
+	return &Report{Filename: fmt.Sprintf("incident-%s.pdf", now.Format("20060102")), Data: data}, nil
+}
+
+// --- notification + count helpers -------------------------------------------------
+
+// recentNotifications returns events created within [from, to], newest-first, capped by
+// the feed's 500-row read.
+func (r *reportService) recentNotifications(ctx context.Context, from, to int64) ([]*sharedentities.Notification, error) {
+	all, _, err := r.notif.List(ctx, 500, 0, 0, false, "", "")
+	if err != nil {
+		return nil, err
+	}
+	out := all[:0]
+	for _, e := range all {
+		if e.CreatedAt >= from && e.CreatedAt <= to {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
+func sortedCountRows(m map[string]int) [][]string {
+	type kv struct {
+		k string
+		v int
+	}
+	arr := make([]kv, 0, len(m))
+	for k, v := range m {
+		arr = append(arr, kv{k, v})
+	}
+	sort.Slice(arr, func(i, j int) bool {
+		if arr[i].v != arr[j].v {
+			return arr[i].v > arr[j].v
+		}
+		return arr[i].k < arr[j].k
+	})
+	rows := make([][]string, 0, len(arr))
+	for _, e := range arr {
+		rows = append(rows, []string{e.k, itoa(e.v)})
+	}
+	return rows
+}
+
+func topCountRows(m map[string]int, n int) [][]string {
+	rows := sortedCountRows(m)
+	if len(rows) > n {
+		rows = rows[:n]
+	}
+	return rows
+}
+
+// snapshotFromMetadata pulls a likely image reference out of a notification's JSON
+// metadata (common keys used by the alert sources), returning the raw string (data URI
+// or base64) or "".
+func snapshotFromMetadata(meta string) []byte {
+	meta = strings.TrimSpace(meta)
+	if meta == "" || meta[0] != '{' {
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(meta), &m); err != nil {
+		return nil
+	}
+	for _, key := range []string{"image", "snapshot", "thumbnail", "imageData"} {
+		if v, ok := m[key]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				return []byte(s)
+			}
+		}
+	}
+	return nil
+}
+
+// decodeImageBytes turns a data URI or bare base64 image string into an image.Image
+// (PNG/JPEG/GIF decoders are registered by the floor renderer's blank imports).
+func decodeImageBytes(raw []byte) (image.Image, error) {
+	s := string(raw)
+	if i := strings.Index(s, "base64,"); i >= 0 {
+		s = s[i+len("base64,"):]
+	}
+	b, err := base64.StdEncoding.DecodeString(strings.TrimSpace(s))
+	if err != nil {
+		return nil, err
+	}
+	img, _, err := image.Decode(bytes.NewReader(b))
+	return img, err
+}
+
+// --- label helpers ----------------------------------------------------------------
+
+func itoa(n int) string { return fmt.Sprintf("%d", n) }
+
+func orDash(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
+}
+
+func tick(b bool) string {
+	if b {
+		return "•"
+	}
+	return ""
+}
+
+func userLabel(u *entities.ControlUser) string {
+	if u.Name != "" {
+		return u.Name
+	}
+	if u.Email != "" {
+		return u.Email
+	}
+	if u.Username != "" {
+		return u.Username
+	}
+	return fmt.Sprintf("user %d", u.Id)
+}
+
+func kindLabel(kind string) string {
+	switch entities.NormalizeSiteKind(kind) {
+	case entities.SiteKindOutdoor:
+		return "Outdoor area"
+	case entities.SiteKindPoint:
+		return "Point asset"
+	default:
+		return "Building"
+	}
+}
+
+func nodeKindLabel(kind string) string {
+	switch kind {
+	case "iot":
+		return "Sensor hub"
+	case "camera", "":
+		return "Camera node"
+	default:
+		return kind
+	}
+}
