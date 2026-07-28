@@ -378,12 +378,11 @@ export default {
   'app.generateCert': 'Generate client certificate',
   // Apps: guided registration (step rail, primer, per-field guidance, live preview)
   'app.welcomeTitle': 'Registering an app',
-  'app.newLede': 'Fill in the fields below, then save. Everything you type is reflected live in the panel on the right — those are the exact values the app itself has to be configured with.',
+  'app.newLede': 'Fill in the fields, then save. The panel on the right shows what the app itself must be configured with. Tap any (i) for detail.',
   'app.editLede': 'Registry details, SSO client, callback URLs and certificates for this app.',
   'app.stepOf': 'Step {n}',
   'app.optional': 'Optional',
   'app.requiredTip': 'Required',
-  'app.exampleLabel': 'Example',
   'app.copy': 'Copy',
   'app.copied': 'Copied',
   'app.copyTip': 'Copy to clipboard',
@@ -471,4 +470,7 @@ export default {
   'app.trouble2': 'the redirect_uri the app sent is not in the list above — check for a trailing slash or a different port.',
   'app.trouble3': 'the app is asking for an audience other than the one registered here.',
   'app.trouble4': 'the app is using an old secret; rotate it and update both sides.',
+  'app.infoTip': 'What is this?',
+  'app.titleExample': 'Fleet Console',
+  'app.descriptionExample': 'Ops console for the vehicle fleet',
 };

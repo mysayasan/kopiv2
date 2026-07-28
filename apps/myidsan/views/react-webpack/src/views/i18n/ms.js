@@ -359,12 +359,11 @@ export default {
   'app.generateCert': 'Jana sijil klien',
   // Apps: pendaftaran berpandu (rel langkah, panduan ringkas, panduan setiap medan, pratonton langsung)
   'app.welcomeTitle': 'Mendaftarkan aplikasi',
-  'app.newLede': 'Isi medan di bawah, kemudian simpan. Semua yang anda taip dipaparkan secara langsung dalam panel di sebelah kanan — itulah nilai tepat yang perlu dikonfigurasikan pada aplikasi itu sendiri.',
+  'app.newLede': 'Isi medan, kemudian simpan. Panel di sebelah menunjukkan apa yang perlu dikonfigurasikan pada aplikasi itu sendiri. Ketik mana-mana (i) untuk butiran.',
   'app.editLede': 'Butiran pendaftaran, klien SSO, URL panggil balik dan sijil untuk aplikasi ini.',
   'app.stepOf': 'Langkah {n}',
   'app.optional': 'Pilihan',
   'app.requiredTip': 'Wajib',
-  'app.exampleLabel': 'Contoh',
   'app.copy': 'Salin',
   'app.copied': 'Disalin',
   'app.copyTip': 'Salin ke papan keratan',
@@ -452,4 +451,7 @@ export default {
   'app.trouble2': 'redirect_uri yang dihantar aplikasi tiada dalam senarai di atas — semak sengkang miring di hujung atau port yang berbeza.',
   'app.trouble3': 'aplikasi meminta audiens selain daripada yang didaftarkan di sini.',
   'app.trouble4': 'aplikasi menggunakan rahsia lama; putarkannya dan kemas kini kedua-dua belah pihak.',
+  'app.infoTip': 'Apa ini?',
+  'app.titleExample': 'Konsol Armada',
+  'app.descriptionExample': 'Konsol operasi untuk armada kenderaan',
 };

@@ -359,12 +359,11 @@ export default {
   'app.generateCert': '生成客户端证书',
   // 应用：引导式注册（步骤条、入门说明、逐字段指引、实时预览）
   'app.welcomeTitle': '注册应用',
-  'app.newLede': '填写下面的字段后保存。你输入的内容会实时反映在右侧面板中——那正是应用自身必须配置的确切值。',
+  'app.newLede': '填写字段后保存。旁边的面板显示应用自身必须配置的内容。点按任意 (i) 查看详情。',
   'app.editLede': '此应用的注册信息、SSO 客户端、回调地址与证书。',
   'app.stepOf': '第 {n} 步',
   'app.optional': '可选',
   'app.requiredTip': '必填',
-  'app.exampleLabel': '示例',
   'app.copy': '复制',
   'app.copied': '已复制',
   'app.copyTip': '复制到剪贴板',
@@ -452,4 +451,7 @@ export default {
   'app.trouble2': '应用发送的 redirect_uri 不在上面的列表中——检查末尾斜杠或端口是否不同。',
   'app.trouble3': '应用请求的受众与这里注册的不一致。',
   'app.trouble4': '应用使用的是旧密钥；请轮换密钥并同时更新两侧。',
+  'app.infoTip': '这是什么？',
+  'app.titleExample': '车队控制台',
+  'app.descriptionExample': '车辆车队的运维控制台',
 };
