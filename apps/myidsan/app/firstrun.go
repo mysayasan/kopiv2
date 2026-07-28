@@ -22,6 +22,38 @@ const firstRunCredentialFile = "INITIAL_ADMIN_LOGIN.txt"
 // also the documented manual recovery path for a locked-out operator.
 const adminResetMarkerFile = "RESET_ADMIN"
 
+// mfaResetMarkerFile is the one-shot marker an operator drops in the data dir to
+// clear the stock superadmin's second factor on next start — the documented escape
+// hatch for the "sole superadmin lost the authenticator AND the recovery codes"
+// lockout. It resets ONLY the second factor, not the password.
+const mfaResetMarkerFile = "RESET_MFA"
+
+// consumeMfaResetMarker clears the stock superadmin's enrolled second factor when
+// the RESET_MFA marker is present, so a lost-device lockout of the sole superadmin
+// can be recovered offline (mirrors the RESET_ADMIN password-recovery path). The
+// marker is deleted BEFORE the reset runs, so a crash can never silently re-clear
+// MFA on a later restart. No-op (nil) when the marker is absent.
+func consumeMfaResetMarker(deps apphost.Dependencies, mfaService services.IMfaService, users services.IUserLoginService) error {
+	marker := filepath.Join(deps.DataDir, mfaResetMarkerFile)
+	if _, err := os.Stat(marker); err != nil {
+		return nil // absent marker is the normal path
+	}
+	if err := os.Remove(marker); err != nil {
+		return fmt.Errorf("remove mfa reset marker %s: %w", marker, err)
+	}
+	ctx := context.Background()
+	user, err := users.GetByEmail(ctx, deps.Config.LocalAuth.Username)
+	if err != nil || user == nil || user.Id == 0 {
+		log.Printf("WARNING: RESET_MFA marker found but stock superadmin %q not found — nothing to clear", deps.Config.LocalAuth.Username)
+		return nil
+	}
+	if err := mfaService.Disable(ctx, user.Id); err != nil {
+		return fmt.Errorf("clear stock superadmin mfa: %w", err)
+	}
+	log.Printf("WARNING: RESET_MFA marker consumed — cleared the second factor for stock superadmin %q", deps.Config.LocalAuth.Username)
+	return nil
+}
+
 // consumeAdminResetMarker performs the lock-out recovery reset if the marker is
 // present, returning the new credential so the caller can announce it. Returns
 // (nil, nil) when there is no marker — the normal path.

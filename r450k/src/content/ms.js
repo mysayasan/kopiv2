@@ -46,7 +46,7 @@ const A = [
   { s: 'Perdana · dalam pembangunan aktif', b: 'Nod kamera & risikan video edge berdiri sendiri: ONVIF, pengesanan AI, NVR, paparan langsung WebRTC, penyulitan, dan pemadanan LAN.' },
   { s: 'Hab penderia · tersedia sekarang', b: 'NVR, tetapi untuk penderia: sesentuh pintu, gerakan, suhu, asap, kebocoran, kuasa dan pembaca akses melalui broker MQTT terbenam — dengan peraturan, amaran, penggerakan selamat, dan sejarah telemetri.' },
   { s: 'Satah kawalan · tersedia sekarang', b: 'Satah kawalan armada yang menemui, mengambil alih, dan mengurus kedua-dua nod kamera dan penderia — memetakan setiap tapak, bangunan, dan nod dengan pelan lantai setiap bangunan dan liputan kamera — dan mengaitkan peristiwa merentasinya: gerakan pada kamera DAN pintu terbuka DAN tiada leretan lencana.' },
-  { s: 'Identiti', b: 'Identiti dan akses dikongsi: pengesahan JWT, SSO, dan kawalan akses berasaskan peranan merentas platform.' },
+  { s: 'Identiti · tersedia sekarang', b: 'Pintu hadapan log masuk tunggal (SSO): satu identiti bersekutu merentas setiap aplikasi, dengan akaun tempatan, LDAP / Active Directory perusahaan, SSO desktop Kerberos SPNEGO, dan pembekal OIDC generik — serta pemetaan kumpulan-ke-peranan dan kawalan akses berasaskan peranan setiap aplikasi. Satu binari Go tulen yang berjalan sepenuhnya di intranet anda, tiada egress.' },
 ];
 
 const SHOT_ALT = [
@@ -149,6 +149,11 @@ export default {
         name: 'MyIotSan',
         tagline: 'Hab penderia — satu pemasangan bagi setiap lokasi. Penderia bangunan & keselamatan melalui broker MQTT terbenam, dengan stor telemetri bertapis-hingar, peraturan ambang dan korelasi, amaran, dan penggerakan selamat sahkan-untuk-laksana. Satu binari Go tulen: tiada ffmpeg, tiada Python. Membuka port MQTT (1883) untuk peranti.',
         dockerHint: 'Jalankan imej berbilang-seni bina (membuka port MQTT 1883 untuk peranti):',
+      },
+      myidsan: {
+        name: 'MyIDSan',
+        tagline: 'Broker identiti — satu log masuk merentas setiap aplikasi. Akaun tempatan serta LDAP / Active Directory perusahaan, SSO desktop Kerberos SPNEGO dan OIDC generik, dengan pemetaan kumpulan-ke-peranan dan RBAC setiap aplikasi. Satu binari Go tulen yang berjalan sepenuhnya di intranet anda: tiada ffmpeg, tiada Python, tiada egress.',
+        dockerHint: 'Jalankan imej berbilang-seni bina:',
       },
     },
     license: 'Percuma untuk kegunaan peribadi dan bukan komersial — individu, badan bukan untung, pendidikan, dan penyelidikan. Kegunaan komersial atau dalam perniagaan, dan sebarang penjualan semula, memerlukan lesen komersial.',

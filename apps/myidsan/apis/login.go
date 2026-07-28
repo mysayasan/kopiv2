@@ -1,6 +1,7 @@
 package apis
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -18,10 +19,12 @@ import (
 	"github.com/mysayasan/kopiv2/apps/myidsan/services"
 	"github.com/mysayasan/kopiv2/domain/entities"
 	enumauth "github.com/mysayasan/kopiv2/domain/enums/auth"
+	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	"github.com/mysayasan/kopiv2/domain/models"
 	sharedapis "github.com/mysayasan/kopiv2/domain/shared/apis"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
+	"github.com/mysayasan/kopiv2/infra/cache"
 	"github.com/mysayasan/kopiv2/infra/login"
 	"github.com/mysayasan/kopiv2/infra/telemetry"
 )
@@ -41,6 +44,8 @@ type loginApi struct {
 	kerbLabel   string
 	guard       *sharedapis.LoginGuard
 	metrics     telemetry.Metrics
+	mfa         *mfaChallenger
+	reset       services.IPasswordResetService
 }
 
 // LoginApiOptions carries the optional login integrations; every field may be
@@ -55,6 +60,13 @@ type LoginApiOptions struct {
 	// credential check (local AND directory).
 	Guard   *sharedapis.LoginGuard
 	Metrics telemetry.Metrics
+	// Mfa (non-nil) gates the two PASSWORD paths (local + directory) behind a
+	// pre-session second factor; Store backs the opaque challenge tokens. Both must
+	// be set together to arm MFA — either absent leaves password-only behaviour.
+	Mfa   services.IMfaService
+	Store cache.Store
+	// Reset (non-nil) enables the public forgot-password request endpoint.
+	Reset services.IPasswordResetService
 }
 
 // Create LoginApi. Returns the identity-provider registry so the server-rendered
@@ -69,6 +81,10 @@ func NewLoginApi(
 	if kerbLabel == "" {
 		kerbLabel = "Windows (SSO)"
 	}
+	var challenger *mfaChallenger
+	if opts.Mfa != nil && opts.Store != nil {
+		challenger = newMfaChallenger(opts.Store, opts.Mfa)
+	}
 	handler := &loginApi{
 		auth:        auth,
 		userService: userService,
@@ -78,6 +94,8 @@ func NewLoginApi(
 		kerbLabel:   kerbLabel,
 		guard:       opts.Guard,
 		metrics:     opts.Metrics,
+		mfa:         challenger,
+		reset:       opts.Reset,
 	}
 
 	// Create api sub-router
@@ -90,6 +108,14 @@ func NewLoginApi(
 	loginGroup.HandleFunc("/default", handler.defaultLogin).Methods("POST")
 	loginGroup.HandleFunc("/default/register", handler.defaultRegister).Methods("POST")
 	loginGroup.HandleFunc("/default/logout", handler.defaultLogout).Methods("POST")
+	// Pre-session second-factor exchange: swap a challenge token + code for the
+	// session cookies. PUBLIC (there is no session yet) — the token itself is the
+	// short-lived, single-use, client-bound authorization to complete this login.
+	loginGroup.HandleFunc("/mfa", handler.mfaLogin).Methods("POST")
+	// Public account-recovery request. PUBLIC and deliberately non-committal: it
+	// always returns the same generic result whether or not the identifier matches,
+	// so it is not an account-enumeration oracle.
+	loginGroup.HandleFunc("/forgot", handler.forgotPassword).Methods("POST")
 	// Authenticated: change the signed-in local account's password (also clears the
 	// forced first-login must-change flag).
 	loginGroup.Handle("/default/change-password", auth.Middleware(http.HandlerFunc(handler.changePassword))).Methods("POST")
@@ -281,7 +307,7 @@ func (m *loginApi) ldapLogin(w http.ResponseWriter, r *http.Request) {
 
 	guardSuccess(m.guard, r)
 	m.recordFederatedLogin(login.LdapProviderKey, "success")
-	m.issueLocalSession(w, r, user)
+	m.completeLoginOrChallenge(w, r, user)
 }
 
 func (m *loginApi) recordFederatedLogin(provider, result string) {
@@ -455,7 +481,157 @@ func (m *loginApi) defaultLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	guardSuccess(m.guard, r)
+	m.completeLoginOrChallenge(w, r, user)
+}
+
+// completeLoginOrChallenge is the fork every PASSWORD login takes after the
+// credential check succeeds: if the account has a confirmed second factor, mint a
+// pre-session challenge token and return {mfaRequired, mfaToken} with NO cookies;
+// otherwise issue the session as before. Kerberos and OAuth deliberately do NOT
+// route through here (their upstream IdP owns factor policy).
+func (m *loginApi) completeLoginOrChallenge(w http.ResponseWriter, r *http.Request, user *entities.UserLogin) {
+	if user == nil {
+		controllers.SendError(w, controllers.ErrAuthFailed, "invalid username or password")
+		return
+	}
+	if m.mfa != nil {
+		required, err := m.mfa.required(r.Context(), user.Id)
+		if err != nil {
+			controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+			return
+		}
+		if required {
+			token, err := m.mfa.issue(r.Context(), r, user.Id)
+			if err != nil {
+				controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+				return
+			}
+			m.recordMfaChallenge("issued")
+			controllers.SendResult(w, map[string]any{"mfaRequired": true, "mfaToken": token})
+			return
+		}
+	}
 	m.issueLocalSession(w, r, user)
+}
+
+// mfaLogin completes a challenged password login: it redeems the token + code and,
+// on success, issues the session that completeLoginOrChallenge withheld. Failures
+// count toward the per-IP lockout exactly like a bad password would.
+func (m *loginApi) mfaLogin(w http.ResponseWriter, r *http.Request) {
+	if m.mfa == nil {
+		controllers.SendError(w, controllers.ErrLimitedAccess, "mfa is not configured")
+		return
+	}
+	if locked, retry := guardLocked(m.guard, r); locked {
+		writeLoginLockout(w, retry)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 65536)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	body := struct {
+		MfaToken string `json:"mfaToken"`
+		Code     string `json:"code"`
+	}{}
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+
+	userId, err := m.mfa.redeem(r.Context(), r, body.MfaToken, body.Code)
+	if err != nil {
+		if errors.Is(err, services.ErrMfaBadCode) {
+			m.recordMfaChallenge("failed")
+			m.recordLoginFailure(w, r)
+			controllers.SendError(w, controllers.ErrAuthFailed, "invalid verification code")
+			return
+		}
+		// Unknown/expired/rebound token, or an internal error — either way the
+		// client must restart the login. Do not distinguish, to avoid oracles.
+		m.recordMfaChallenge("expired")
+		controllers.SendError(w, controllers.ErrAuthFailed, "your verification session expired — sign in again")
+		return
+	}
+
+	// Reload the resolved account to sign a fresh session, and re-check it is still
+	// active in case it was disabled during the challenge window.
+	user, err := m.loadActiveUser(r.Context(), userId)
+	if err != nil || user == nil {
+		controllers.SendError(w, controllers.ErrAuthFailed, "account is not available")
+		return
+	}
+	guardSuccess(m.guard, r)
+	m.recordMfaChallenge("success")
+	m.issueLocalSession(w, r, user)
+}
+
+// loadActiveUser fetches an account by id and returns it only if still active.
+func (m *loginApi) loadActiveUser(ctx context.Context, userId int64) (*entities.UserLogin, error) {
+	rows, _, err := m.userService.Get(ctx, 1, 0, []sqldataenums.Filter{
+		{FieldName: "Id", Compare: sqldataenums.Equal, Value: userId},
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 || rows[0] == nil || rows[0].Id == 0 || !rows[0].IsActive {
+		return nil, nil
+	}
+	return rows[0], nil
+}
+
+func (m *loginApi) recordMfaChallenge(result string) {
+	if m.metrics == nil {
+		return
+	}
+	m.metrics.Inc(MetricMfaChallengeTotal, telemetry.Labels{"result": result})
+}
+
+// forgotPassword accepts a public account-recovery request. It NEVER reveals whether
+// the identifier matched an account: the response is identical in every case (the
+// service silently records a queue entry and, when mail is enabled, emails a link
+// only for a real local account). `mailEnabled` reflects global config, not account
+// state, so it is safe to return — it just lets the UI say "check your email" versus
+// "an administrator has been notified".
+func (m *loginApi) forgotPassword(w http.ResponseWriter, r *http.Request) {
+	if locked, retry := guardLocked(m.guard, r); locked {
+		writeLoginLockout(w, retry)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 65536)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	body := struct {
+		Username string `json:"username"`
+	}{}
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	mailEnabled := false
+	if m.reset != nil {
+		mailEnabled = m.reset.MailEnabled()
+		// A storage error is swallowed too — surfacing it would itself be an oracle.
+		if err := m.reset.Request(r.Context(), body.Username, loginGuardKey(r), requestOrigin(r)); err != nil {
+			log.Printf("password reset request error: %v", err)
+		}
+	}
+	controllers.SendResult(w, map[string]any{"ok": true, "mailEnabled": mailEnabled})
+}
+
+// requestOrigin reconstructs the public scheme+host the client reached us on, used
+// to build absolute self-service reset links. Host comes from the request (the user
+// is standing on our login page); scheme is TLS-derived, honouring a terminating
+// proxy's X-Forwarded-Proto.
+func requestOrigin(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if proto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); proto != "" {
+		scheme = proto
+	}
+	return scheme + "://" + r.Host
 }
 
 func (m *loginApi) defaultRegister(w http.ResponseWriter, r *http.Request) {

@@ -99,6 +99,14 @@ func (f *fakeUserLoginService) ChangePassword(_ context.Context, _ int64, _, _ s
 	return nil
 }
 
+func (f *fakeUserLoginService) AdminResetPassword(_ context.Context, _ int64) (string, error) {
+	return "temp-pass", nil
+}
+
+func (f *fakeUserLoginService) SetPasswordSelfService(_ context.Context, _ int64, _ string) error {
+	return nil
+}
+
 // Kerberos not configured: the endpoint refuses rather than challenging — a
 // challenge would make domain browsers pop credential prompts for nothing.
 func TestKerberosLogin_NotConfigured(t *testing.T) {

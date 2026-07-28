@@ -44,12 +44,17 @@ const routeCatalog = [
   // ordinary RBAC-governed sections — their APIs are matrix-gated, so a role granted
   // GET on /api/app-registry or /api/endpoint sees the menu and the list.
   { id: 'users', label: 'Users', group: 'Administration', order: 10, tone: 'blue', code: 'US', icon: 'user', paths: ['/api/user-credential'], summary: 'Maintain credentials, profile details, and role assignments.', superadminOnly: true },
+  { id: 'resetRequests', label: 'Reset requests', group: 'Administration', order: 15, tone: 'amber', code: 'PR', icon: 'key', paths: ['/api/password-reset'], summary: 'Review and resolve forgotten-password requests from local accounts.', superadminOnly: true },
   { id: 'groups', label: 'Groups', group: 'Administration', order: 20, tone: 'teal', code: 'GR', icon: 'folder', paths: ['/api/user-group'], summary: 'Organize identity ownership and hierarchy roots.', superadminOnly: true },
   { id: 'roles', label: 'Roles', group: 'Administration', order: 30, tone: 'violet', code: 'RO', icon: 'key', paths: ['/api/access-rbac'], summary: 'Create, edit, and remove accessrbac roles (shared module).', superadminOnly: true },
   { id: 'rbac', label: 'RBAC', group: 'Administration', order: 35, tone: 'green', code: 'RB', icon: 'lock', paths: ['/api/access-rbac'], summary: 'Manage accessrbac roles (shared module). Superadmin bypasses; viewer is read-only.', superadminOnly: true },
   { id: 'apps', label: 'Apps', group: 'Federation', order: 40, tone: 'indigo', code: 'AP', icon: 'grid2', paths: ['/api/app-registry'], summary: 'Manage registered relying apps and audiences.' },
   { id: 'directory', label: 'Directory', group: 'Federation', order: 45, tone: 'amber', code: 'DI', icon: 'key', paths: ['/api/directory-config', '/api/federated-group-mapping'], summary: 'Connect an LDAP/Active Directory server and map groups to roles.' },
-  { id: 'endpoints', label: 'Endpoints', group: 'Access Control', order: 50, tone: 'steel', code: 'EP', icon: 'list', paths: ['/api/endpoint'], summary: 'Maintain the protected endpoint catalog.' }
+  { id: 'endpoints', label: 'Endpoints', group: 'Access Control', order: 50, tone: 'steel', code: 'EP', icon: 'list', paths: ['/api/endpoint'], summary: 'Maintain the protected endpoint catalog.' },
+  // Profile is self-service (change password + second factor). It is NOT a nav item —
+  // it is reached from the account chip in the side rail (chipOnly), so it never shows
+  // in the nav or the dashboard, but it is still a "known + allowed" active section.
+  { id: 'profile', label: 'Profile', group: 'Account', order: 5, tone: 'green', code: 'ME', icon: 'user', paths: [], summary: 'Your account: change your password and manage two-factor authentication.', chipOnly: true }
 ]
 
 const routeCatalogById = routeCatalog.reduce((acc, section) => {
@@ -200,14 +205,23 @@ function LoginBrand({ subtitle }) {
 }
 
 // AccountCard is the slim role chip + ghost logout under the brand in the side rail,
-// standardized with mymatasan/myseliasan. The signed-in identity is deliberately NOT
-// shown here — only the role.
-function AccountCard({ roleLabel, onLogout }) {
+// standardized with mymatasan/myseliasan. The avatar + role open the self-service
+// Profile (change password, two-factor); the signed-in identity itself is shown there,
+// not here.
+function AccountCard({ roleLabel, onLogout, onOpenProfile }) {
   const t = useT()
   return (
     <div className="side-account">
-      <span className="side-account-avatar" aria-hidden="true"><Ico n="user" sz={15} /></span>
-      <span className="side-account-role">{roleLabel}</span>
+      <button
+        type="button"
+        className="side-account-open"
+        onClick={onOpenProfile}
+        title={t('nav.profile')}
+        aria-label={t('nav.profile')}
+      >
+        <span className="side-account-avatar" aria-hidden="true"><Ico n="user" sz={15} /></span>
+        <span className="side-account-role">{roleLabel}</span>
+      </button>
       <button
         type="button"
         className="side-account-logout"
@@ -360,7 +374,9 @@ function AppInner({ lang, onLangChange }) {
   }, [accessList, isSuperadmin])
 
   const navGroups = useMemo(() => groupNavSections(visibleSections), [visibleSections])
-  const activeAllowed = visibleSections.some(section => section.id === active)
+  // chipOnly sections (Profile) aren't in the nav/visible list but are still allowed —
+  // they're opened from the account chip, so treat them as reachable.
+  const activeAllowed = visibleSections.some(section => section.id === active) || Boolean(routeCatalogById[active]?.chipOnly)
   const activeKnown = active === 'dashboard' || Boolean(routeCatalogById[active])
 
   const setActiveSection = useCallback(sectionId => {
@@ -440,7 +456,7 @@ function AppInner({ lang, onLangChange }) {
             </button>
             <BrandLogo wordmark="myidsan" />
             <div className="side-brand-sub">{t('brand.subtitle')}</div>
-            <AccountCard roleLabel={roleLabel} onLogout={handleLogout} />
+            <AccountCard roleLabel={roleLabel} onLogout={handleLogout} onOpenProfile={() => setActiveSection('profile')} />
           </div>
         )}
         groups={navGroups.map(group => ({
@@ -473,6 +489,8 @@ function AppInner({ lang, onLangChange }) {
         {active === 'directory' && sectionAllowedById('directory', accessList, isSuperadmin) && <DirectoryPage accessList={accessList} onToast={pushToast} />}
         {active === 'endpoints' && sectionAllowedById('endpoints', accessList, isSuperadmin) && <EndpointsPage accessList={accessList} onToast={pushToast} />}
         {active === 'rbac' && sectionAllowedById('rbac', accessList, isSuperadmin) && <RbacPage accessList={accessList} onToast={pushToast} />}
+        {active === 'profile' && <ProfilePage currentEmail={currentEmail} roleLabel={roleLabel} onToast={pushToast} />}
+        {active === 'resetRequests' && sectionAllowedById('resetRequests', accessList, isSuperadmin) && <ResetRequestsPage onToast={pushToast} />}
         <AppFooter appName="MyIDSan" apiBase={apiBase} />
       </main>
     </div>
@@ -482,8 +500,9 @@ function AppInner({ lang, onLangChange }) {
 // Toast / ToastStack now live in the shared module (@shared) so both control planes
 // share one notification design — imported at the top of this file.
 
-// ThemeDropdown mirrors myseliasan's light/dark selector, sitting at the foot of
-// the side-nav. The menu opens upward (see .theme-menu) so it is never clipped.
+// ThemeDropdown mirrors myseliasan's light/dark selector. In myidsan it sits in the
+// right-aligned workspace header (top strip), so it is content-sized and its menu
+// opens downward, right-aligned (see .theme-drop-wrap / .theme-menu).
 function ThemeDropdown({ theme, onThemeChange }) {
   const t = useT()
   const [open, setOpen] = useState(false)
@@ -630,6 +649,15 @@ function AuthScreen({ onAuthed, sessionError }) {
   const [providers, setProviders] = useState([])
   // 'local' or a form-provider key ('ldap' when directory login is enabled).
   const [accountType, setAccountType] = useState('local')
+  // Non-null once a password login is challenged for a second factor: { token }.
+  // No session cookie exists yet — the token is the only pre-session state.
+  const [mfa, setMfa] = useState(null)
+  const [code, setCode] = useState('')
+  // Account-recovery sub-view: showForgot toggles the request form; forgotDone holds
+  // the generic confirmation once a request is submitted.
+  const [showForgot, setShowForgot] = useState(false)
+  const [forgotId, setForgotId] = useState('')
+  const [forgotDone, setForgotDone] = useState('')
 
   // Only offer buttons for providers myidsan actually has configured, so a dead
   // provider link never shows (it would just return 'not configured'). `list` is the
@@ -672,8 +700,57 @@ function AuthScreen({ onAuthed, sessionError }) {
       const payload = mode === 'login'
         ? { username: form.username, password: form.password }
         : form
-      await apiRequest(path, { method: 'POST', body: payload })
+      const res = await apiRequest(path, { method: 'POST', body: payload })
+      const outcome = resultOf(res) || {}
+      if (outcome.mfaRequired && outcome.mfaToken) {
+        // Password verified, but a second factor is required. No session was issued;
+        // switch the card to the code step and hold the one-time challenge token.
+        setMfa({ token: outcome.mfaToken })
+        setCode('')
+        setBusy(false)
+        return
+      }
       onAuthed()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // submitMfa completes a challenged login: exchange the token + code for the
+  // session. A bad code keeps us on this step (the token survives) with an inline
+  // error; an expired/exhausted token drops back to the password form.
+  const submitMfa = async event => {
+    event.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      await apiRequest('/api/login/mfa', { method: 'POST', body: { mfaToken: mfa.token, code } })
+      onAuthed()
+    } catch (err) {
+      setError(err.message)
+      if (err.status === 401 && /expired/i.test(err.message || '')) {
+        setMfa(null)
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // submitForgot posts an account-recovery request. The response is deliberately
+  // generic (no account-enumeration oracle); `mailEnabled` only reflects whether the
+  // deployment has an SMTP relay, so we can tailor the confirmation wording.
+  const openForgot = () => { setShowForgot(true); setError(''); setForgotDone(''); setForgotId(form.username || '') }
+  const closeForgot = () => { setShowForgot(false); setError(''); setForgotDone('') }
+  const submitForgot = async event => {
+    event.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      const res = await apiRequest('/api/login/forgot', { method: 'POST', body: { username: forgotId } })
+      const mailEnabled = (resultOf(res) || {}).mailEnabled
+      setForgotDone(mailEnabled ? t('forgot.doneMail') : t('forgot.doneAdmin'))
     } catch (err) {
       setError(err.message)
     } finally {
@@ -685,6 +762,39 @@ function AuthScreen({ onAuthed, sessionError }) {
     <div className="auth-layout">
       <section className="auth-panel">
         <LoginBrand subtitle={t('auth.subAdmin')} />
+        {mfa ? (
+          <form className="auth-form" onSubmit={submitMfa}>
+            <p className="message warning">{t('mfa.challengePrompt')}</p>
+            {error && <div className="message danger">{error}</div>}
+            <label>
+              {t('mfa.code')}
+              <input autoComplete="one-time-code" inputMode="numeric" autoFocus value={code} placeholder="123456" onChange={event => setCode(event.target.value)} />
+            </label>
+            <button className="primary-button" disabled={busy} type="submit">{busy ? t('auth.working') : t('mfa.verify')}</button>
+            <button className="quiet-link" type="button" onClick={() => { setMfa(null); setError(''); setCode('') }}>{t('mfa.backToLogin')}</button>
+          </form>
+        ) : showForgot ? (
+          <form className="auth-form" onSubmit={submitForgot}>
+            <p className="message warning">{t('forgot.intro')}</p>
+            {error && <div className="message danger">{error}</div>}
+            {forgotDone ? (
+              <>
+                <div className="message success">{forgotDone}</div>
+                <button className="primary-button" type="button" onClick={closeForgot}>{t('mfa.backToLogin')}</button>
+              </>
+            ) : (
+              <>
+                <label>
+                  {t('auth.username')}
+                  <input autoComplete="username" autoFocus value={forgotId} onChange={event => setForgotId(event.target.value)} />
+                </label>
+                <button className="primary-button" disabled={busy} type="submit">{busy ? t('auth.working') : t('forgot.submit')}</button>
+                <button className="quiet-link" type="button" onClick={closeForgot}>{t('mfa.backToLogin')}</button>
+              </>
+            )}
+          </form>
+        ) : (
+        <>
         <div className="segmented">
           <button className={mode === 'login' ? 'selected' : ''} onClick={() => setMode('login')} type="button">{t('auth.login')}</button>
           <button className={mode === 'register' ? 'selected' : ''} onClick={() => setMode('register')} type="button">{t('auth.register')}</button>
@@ -724,6 +834,9 @@ function AuthScreen({ onAuthed, sessionError }) {
             </div>
           )}
           <button className="primary-button" disabled={busy} type="submit">{busy ? t('auth.working') : mode === 'login' ? t('auth.login') : t('auth.createAccount')}</button>
+          {mode === 'login' && (
+            <button className="quiet-link" type="button" onClick={openForgot}>{t('forgot.link')}</button>
+          )}
           {redirectProviders.length > 0 && (
             <div className="oauth-row">
               {redirectProviders.map(p => (
@@ -732,6 +845,8 @@ function AuthScreen({ onAuthed, sessionError }) {
             </div>
           )}
         </form>
+        </>
+        )}
       </section>
     </div>
   )
@@ -788,6 +903,50 @@ function UnauthorizedPage({ section, onNavigate }) {
 // editor. Role/active changes PUT the user back (password preserved server-side). The
 // stock superadmin (email "superadmin") is flagged and can only be disabled once a real
 // superadmin is active, and you can never disable your own account.
+// RowAvatar renders a small circular avatar for a user row (uploaded picture, or an
+// initials fallback) with an optional inline camera button that lets a superadmin set
+// that user's picture. Each instance owns its cache-busting version so one upload
+// refreshes only its own row.
+function RowAvatar({ userId, email, canEdit, onToast }) {
+  const t = useT()
+  const [ver, setVer] = useState(() => Date.now())
+  const [hasImg, setHasImg] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const fileRef = useRef(null)
+  const initial = ((email || '?').trim()[0] || '?').toUpperCase()
+
+  const pick = () => fileRef.current && fileRef.current.click()
+  const onFile = async event => {
+    const file = event.target.files && event.target.files[0]
+    event.target.value = ''
+    if (!file) return
+    setBusy(true)
+    try {
+      const dataUrl = await resizeImageToDataUrl(file, 256)
+      await apiRequest(`/api/profile/avatar/${userId}`, { method: 'POST', body: { dataUrl } })
+      setHasImg(true)
+      setVer(Date.now())
+      onToast?.(t('user.photoSet'), 'success')
+    } catch (err) { onToast?.(err.message === 'IMAGE_READ_ERROR' ? t('profile.photoReadError') : err.message, 'danger') } finally { setBusy(false) }
+  }
+
+  return (
+    <span className="row-avatar-wrap">
+      <span className="row-avatar">
+        {hasImg
+          ? <img className="row-avatar-img" src={`${apiBase}/api/profile/avatar/${userId}?v=${ver}`} alt="" onError={() => setHasImg(false)} />
+          : <span className="row-avatar-initial">{initial}</span>}
+      </span>
+      {canEdit && (
+        <button type="button" className="row-avatar-edit" onClick={pick} disabled={busy} title={t('user.setPhoto')} aria-label={t('user.setPhoto')}>
+          <Ico n="camera" sz={10} />
+        </button>
+      )}
+      <input ref={fileRef} type="file" accept="image/*" hidden onChange={onFile} />
+    </span>
+  )
+}
+
 function UsersPage({ accessList, currentEmail, stockEmail = STOCK_SUPERADMIN_EMAIL, onChanged, onToast }) {
   const t = useT()
   const [users, setUsers] = useState([])
@@ -861,10 +1020,13 @@ function UsersPage({ accessList, currentEmail, stockEmail = STOCK_SUPERADMIN_EMA
       key: 'email',
       label: t('user.colUser'),
       render: (value, u) => (
-        <>
-          {value || `#${u.id}`}
-          {u.email === stockEmail ? <span className="status-pill off" style={{ marginLeft: 6 }}>{t('user.stock')}</span> : null}
-        </>
+        <div className="user-cell">
+          <RowAvatar userId={u.id} email={u.email} canEdit={canEdit} onToast={onToast} />
+          <span className="user-cell-text">
+            {value || `#${u.id}`}
+            {u.email === stockEmail ? <span className="status-pill off" style={{ marginLeft: 6 }}>{t('user.stock')}</span> : null}
+          </span>
+        </div>
       )
     },
     {
@@ -2247,6 +2409,396 @@ function CrudPage({
           value={selected}
         />
       )}
+    </PageFrame>
+  )
+}
+
+// resizeImageToDataUrl loads a picked image file, center-crops it to a square and
+// scales it down to `size`px, returning a compact JPEG data URL. Doing the resize in
+// the browser keeps the stored avatar tiny and means the server needs no image codec
+// (important for the air-gapped, dependency-light build).
+function resizeImageToDataUrl(file, size = 256) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      try {
+        const canvas = document.createElement('canvas')
+        canvas.width = size
+        canvas.height = size
+        const ctx = canvas.getContext('2d')
+        const scale = Math.max(size / img.width, size / img.height) // cover
+        const w = img.width * scale
+        const h = img.height * scale
+        ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h)
+        resolve(canvas.toDataURL('image/jpeg', 0.85))
+      } catch (err) { reject(err) }
+    }
+    // Untranslated sentinel — the promise has no i18n context, so callers translate
+    // this specific failure (via `profile.photoReadError`) at the catch site.
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('IMAGE_READ_ERROR')) }
+    img.src = url
+  })
+}
+
+// ProfilePage is the self-service account surface: it shows who is signed in and lets
+// the user set a profile picture, change their own password and manage their second
+// factor (TOTP). It acts entirely on the caller's own account (auth-only routes, never
+// RBAC-gated), and is reachable from the account chip in the side rail.
+function ProfilePage({ currentEmail, roleLabel, onToast }) {
+  const t = useT()
+  const [status, setStatus] = useState(null)      // {enrolled, confirmedAt, label, recoveryRemaining}
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [enroll, setEnroll] = useState(null)       // {secret, otpauthUri, qrPngBase64}
+  const [label, setLabel] = useState('')
+  const [code, setCode] = useState('')
+  const [recoveryCodes, setRecoveryCodes] = useState(null) // shown ONCE after confirm/regenerate
+  const [disarm, setDisarm] = useState({ open: false, password: '', code: '' })
+  // Self-service change-password (distinct from the forced must-change screen).
+  const [pw, setPw] = useState({ current: '', next: '', confirm: '' })
+  const [pwBusy, setPwBusy] = useState(false)
+  const [pwError, setPwError] = useState('')
+  // Avatar: an <img> tries the endpoint; onError flips to an initials fallback. A
+  // version counter busts the image cache after upload/remove.
+  const [avatarVer, setAvatarVer] = useState(() => Date.now())
+  const [hasAvatar, setHasAvatar] = useState(true)
+  const [avatarBusy, setAvatarBusy] = useState(false)
+  const fileRef = useRef(null)
+  const initial = ((currentEmail || '?').trim()[0] || '?').toUpperCase()
+  const displayName = (currentEmail || '').split('@')[0] || (currentEmail || '')
+
+  const pickAvatar = () => fileRef.current && fileRef.current.click()
+  const onAvatarFile = async event => {
+    const file = event.target.files && event.target.files[0]
+    event.target.value = ''
+    if (!file) return
+    setAvatarBusy(true)
+    try {
+      const dataUrl = await resizeImageToDataUrl(file, 256)
+      await apiRequest('/api/profile/avatar', { method: 'POST', body: { dataUrl } })
+      setHasAvatar(true)
+      setAvatarVer(Date.now())
+      onToast?.(t('profile.photoUpdated'), 'success')
+    } catch (err) { onToast?.(err.message === 'IMAGE_READ_ERROR' ? t('profile.photoReadError') : (err.message || t('profile.photoError')), 'danger') } finally { setAvatarBusy(false) }
+  }
+  const removeAvatar = async () => {
+    setAvatarBusy(true)
+    try {
+      await apiRequest('/api/profile/avatar', { method: 'DELETE' })
+      setHasAvatar(false)
+      setAvatarVer(Date.now())
+      onToast?.(t('profile.photoRemoved'), 'success')
+    } catch (err) { onToast?.(err.message, 'danger') } finally { setAvatarBusy(false) }
+  }
+
+  const changePassword = async event => {
+    event.preventDefault()
+    setPwError('')
+    if (pw.next.length < 8) { setPwError(t('cpw.min')); return }
+    if (pw.next !== pw.confirm) { setPwError(t('cpw.noMatch')); return }
+    setPwBusy(true)
+    try {
+      await apiRequest('/api/login/default/change-password', { method: 'POST', body: { currentPassword: pw.current, newPassword: pw.next } })
+      setPw({ current: '', next: '', confirm: '' })
+      onToast?.(t('cpw.changed'), 'success')
+    } catch (err) { setPwError(err.message) } finally { setPwBusy(false) }
+  }
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const res = await apiRequest('/api/mfa')
+      setStatus(resultOf(res) || { enrolled: false })
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+  useEffect(() => { load() }, [])
+
+  const beginEnroll = async () => {
+    setBusy(true); setError('')
+    try {
+      const res = await apiRequest('/api/mfa/enroll', { method: 'POST', body: { label } })
+      setEnroll(resultOf(res))
+      setCode('')
+    } catch (err) { setError(err.message) } finally { setBusy(false) }
+  }
+
+  const confirmEnroll = async event => {
+    event.preventDefault()
+    setBusy(true); setError('')
+    try {
+      const res = await apiRequest('/api/mfa/enroll/verify', { method: 'POST', body: { code } })
+      setRecoveryCodes(resultOf(res)?.recoveryCodes || [])
+      setEnroll(null); setCode('')
+      onToast?.(t('mfa.enabledToast'), 'success')
+      await load()
+    } catch (err) { setError(err.message) } finally { setBusy(false) }
+  }
+
+  const regenerate = async () => {
+    const entered = window.prompt(t('mfa.confirmCodePrompt'))
+    if (!entered) return
+    setBusy(true); setError('')
+    try {
+      const res = await apiRequest('/api/mfa/recovery', { method: 'POST', body: { code: entered } })
+      setRecoveryCodes(resultOf(res)?.recoveryCodes || [])
+      await load()
+    } catch (err) { setError(err.message); onToast?.(err.message, 'danger') } finally { setBusy(false) }
+  }
+
+  const disable = async event => {
+    event.preventDefault()
+    setBusy(true); setError('')
+    try {
+      await apiRequest('/api/mfa', { method: 'DELETE', body: { password: disarm.password, code: disarm.code } })
+      setDisarm({ open: false, password: '', code: '' })
+      setRecoveryCodes(null)
+      onToast?.(t('mfa.disabledToast'), 'success')
+      await load()
+    } catch (err) { setError(err.message); onToast?.(err.message, 'danger') } finally { setBusy(false) }
+  }
+
+  const enrolled = status?.enrolled
+
+  return (
+    <PageFrame title={t('profile.title')} subtitle={t('profile.subtitle')}>
+      <div className="profile-grid">
+
+        <section className="profile-hero">
+          <div className="profile-avatar-wrap">
+            <div className="profile-avatar">
+              {hasAvatar ? (
+                <img
+                  className="profile-avatar-img"
+                  src={`${apiBase}/api/profile/avatar?v=${avatarVer}`}
+                  alt=""
+                  onError={() => setHasAvatar(false)}
+                />
+              ) : (
+                <span className="profile-avatar-initial">{initial}</span>
+              )}
+            </div>
+            <button type="button" className="profile-avatar-edit" onClick={pickAvatar} disabled={avatarBusy} title={t('profile.changePhoto')} aria-label={t('profile.changePhoto')}>
+              <Ico n="camera" sz={15} />
+            </button>
+            <input ref={fileRef} type="file" accept="image/*" hidden onChange={onAvatarFile} />
+          </div>
+          <div className="profile-identity">
+            <div className="profile-name">{displayName}</div>
+            <div className="profile-meta"><Ico n="mail" sz={14} /> {currentEmail || '—'}</div>
+            <span className="profile-role-badge"><Ico n="shield" sz={13} /> {roleLabel || ''}</span>
+            <div className="profile-photo-actions">
+              <button type="button" className="quiet-link" onClick={pickAvatar} disabled={avatarBusy}>
+                <Ico n="upload" sz={13} /> {t('profile.changePhoto')}
+              </button>
+              {hasAvatar && (
+                <button type="button" className="quiet-link" onClick={removeAvatar} disabled={avatarBusy}>
+                  <Ico n="trash" sz={13} /> {t('profile.removePhoto')}
+                </button>
+              )}
+            </div>
+          </div>
+        </section>
+
+        <section className="profile-card">
+          <div className="profile-card-head"><span className="profile-card-icon"><Ico n="key" sz={16} /></span><h2>{t('cpw.change')}</h2></div>
+          <form className="record-form" onSubmit={changePassword}>
+            {pwError && <div className="message danger">{pwError}</div>}
+            <label>
+              {t('cpw.current')}
+              <input type="password" autoComplete="current-password" value={pw.current} onChange={event => setPw({ ...pw, current: event.target.value })} />
+            </label>
+            <div className="two-col">
+              <label>
+                {t('cpw.new')}
+                <input type="password" autoComplete="new-password" value={pw.next} onChange={event => setPw({ ...pw, next: event.target.value })} />
+              </label>
+              <label>
+                {t('cpw.confirm')}
+                <input type="password" autoComplete="new-password" value={pw.confirm} onChange={event => setPw({ ...pw, confirm: event.target.value })} />
+              </label>
+            </div>
+            <div>
+              <button className="primary-button" disabled={pwBusy} type="submit">{pwBusy ? t('cpw.saving') : t('cpw.change')}</button>
+            </div>
+          </form>
+        </section>
+
+        <section className="profile-card">
+          <div className="profile-card-head"><span className="profile-card-icon"><Ico n="shield-check" sz={16} /></span><h2>{t('mfa.title')}</h2></div>
+          <p className="auth-hint" style={{ marginTop: 0 }}>{t('mfa.subtitle')}</p>
+        {error && <div className="message danger">{error}</div>}
+
+        {recoveryCodes && (
+          <div className="message warning" style={{ display: 'grid', gap: 8 }}>
+            <strong>{t('mfa.recoveryTitle')}</strong>
+            <span>{t('mfa.recoveryHint')}</span>
+            <div className="mfa-recovery-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 6, fontFamily: 'monospace' }}>
+              {recoveryCodes.map(rc => <span key={rc}>{rc}</span>)}
+            </div>
+            <div>
+              <button className="quiet-link" type="button" onClick={() => navigator.clipboard?.writeText(recoveryCodes.join('\n'))}>{t('mfa.copyCodes')}</button>
+              <button className="quiet-link" type="button" onClick={() => setRecoveryCodes(null)}>{t('mfa.dismiss')}</button>
+            </div>
+          </div>
+        )}
+
+        {loading ? (
+          <p className="auth-hint">{t('common.loading')}</p>
+        ) : enroll ? (
+          <form className="record-form" onSubmit={confirmEnroll}>
+            <p className="auth-hint">{t('mfa.scanHint')}</p>
+            <img alt={t('mfa.qrAlt')} src={`data:image/png;base64,${enroll.qrPngBase64}`} width={200} height={200} style={{ background: '#fff', padding: 8, borderRadius: 8 }} />
+            <p className="auth-hint">{t('mfa.manualEntry')}: <code>{enroll.secret}</code></p>
+            <label>
+              {t('mfa.code')}
+              <input autoComplete="one-time-code" inputMode="numeric" value={code} placeholder="123456" onChange={event => setCode(event.target.value)} />
+            </label>
+            <div>
+              <button className="primary-button" disabled={busy} type="submit">{busy ? t('auth.working') : t('mfa.confirmEnable')}</button>
+              <button className="quiet-link" type="button" onClick={() => { setEnroll(null); setError('') }}>{t('common.cancel')}</button>
+            </div>
+          </form>
+        ) : enrolled ? (
+          <div className="record-form">
+            <div className="message success">{t('mfa.activeStatus', { remaining: status.recoveryRemaining })}</div>
+            <div>
+              <button className="secondary-button" disabled={busy} type="button" onClick={regenerate}>{t('mfa.regenerate')}</button>
+              <button className="secondary-button danger" disabled={busy} type="button" onClick={() => setDisarm({ open: true, password: '', code: '' })}>{t('mfa.disable')}</button>
+            </div>
+            {disarm.open && (
+              <form className="record-form" onSubmit={disable} style={{ marginTop: 12, borderTop: '1px solid var(--ui-border, #d6dee7)', paddingTop: 12 }}>
+                <p className="auth-hint">{t('mfa.disableHint')}</p>
+                <label>
+                  {t('cpw.current')}
+                  <input type="password" autoComplete="current-password" value={disarm.password} onChange={event => setDisarm({ ...disarm, password: event.target.value })} />
+                </label>
+                <label>
+                  {t('mfa.code')}
+                  <input autoComplete="one-time-code" inputMode="numeric" value={disarm.code} onChange={event => setDisarm({ ...disarm, code: event.target.value })} />
+                </label>
+                <div>
+                  <button className="secondary-button danger" disabled={busy} type="submit">{busy ? t('auth.working') : t('mfa.confirmDisable')}</button>
+                  <button className="quiet-link" type="button" onClick={() => setDisarm({ open: false, password: '', code: '' })}>{t('common.cancel')}</button>
+                </div>
+              </form>
+            )}
+          </div>
+        ) : (
+          <div className="record-form">
+            <div className="message warning">{t('mfa.notEnrolled')}</div>
+            <label>
+              {t('mfa.deviceLabel')}
+              <input value={label} placeholder={t('mfa.deviceLabelHint')} onChange={event => setLabel(event.target.value)} />
+            </label>
+            <div>
+              <button className="primary-button" disabled={busy} type="button" onClick={beginEnroll}>{busy ? t('auth.working') : t('mfa.enable')}</button>
+            </div>
+          </div>
+        )}
+        </section>
+      </div>
+    </PageFrame>
+  )
+}
+
+// ResetRequestsPage is the superadmin account-recovery queue: pending forgot-password
+// requests from local accounts. Resolving one issues a one-time temporary password
+// (shown once, must-change on first use) for the operator to hand over out-of-band;
+// dismissing closes a bogus request without touching the account.
+function ResetRequestsPage({ onToast }) {
+  const t = useT()
+  const [rows, setRows] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [busyId, setBusyId] = useState(0)
+  const [issued, setIssued] = useState(null) // { email, temporaryPassword }
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const res = await apiRequest('/api/password-reset')
+      setRows(rowsOf(res))
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+  useEffect(() => { load() }, [])
+
+  const resolve = async row => {
+    setBusyId(row.id); setError('')
+    try {
+      const res = await apiRequest(`/api/password-reset/${row.id}/resolve`, { method: 'POST' })
+      const temp = (resultOf(res) || {}).temporaryPassword
+      setIssued({ email: row.email, temporaryPassword: temp })
+      await load()
+    } catch (err) { setError(err.message); onToast?.(err.message, 'danger') } finally { setBusyId(0) }
+  }
+
+  const dismiss = async row => {
+    setBusyId(row.id); setError('')
+    try {
+      await apiRequest(`/api/password-reset/${row.id}/dismiss`, { method: 'POST' })
+      onToast?.(t('reset.dismissed'), 'success')
+      await load()
+    } catch (err) { setError(err.message); onToast?.(err.message, 'danger') } finally { setBusyId(0) }
+  }
+
+  return (
+    <PageFrame title={t('reset.title')} subtitle={t('reset.subtitle')}>
+      <div className="app-detail">
+        {error && <div className="message danger">{error}</div>}
+
+        {issued && (
+          <div className="message warning" style={{ display: 'grid', gap: 8 }}>
+            <strong>{t('reset.issuedTitle', { email: issued.email })}</strong>
+            <span>{t('reset.issuedHint')}</span>
+            <code style={{ fontSize: 16, letterSpacing: '0.05em' }}>{issued.temporaryPassword}</code>
+            <div>
+              <button className="quiet-link" type="button" onClick={() => navigator.clipboard?.writeText(issued.temporaryPassword)}>{t('mfa.copyCodes')}</button>
+              <button className="quiet-link" type="button" onClick={() => setIssued(null)}>{t('mfa.dismiss')}</button>
+            </div>
+          </div>
+        )}
+
+        {loading ? (
+          <p className="auth-hint">{t('common.loading')}</p>
+        ) : rows.length === 0 ? (
+          <div className="empty-state">{t('reset.empty')}</div>
+        ) : (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>{t('reset.colAccount')}</th>
+                <th>{t('reset.colRequested')}</th>
+                <th>{t('reset.colIp')}</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(row => (
+                <tr key={row.id}>
+                  <td>{row.email}</td>
+                  <td>{formatDateTime(row.requestedAt)}</td>
+                  <td>{String(row.requestIp || '').replace(/^ip:/, '')}</td>
+                  <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    <button className="secondary-button" disabled={busyId === row.id} type="button" onClick={() => resolve(row)}>{t('reset.resolve')}</button>
+                    <button className="quiet-link" disabled={busyId === row.id} type="button" onClick={() => dismiss(row)}>{t('reset.dismiss')}</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </PageFrame>
   )
 }

@@ -108,6 +108,13 @@ const PRODUCTS = [
     version: (tag) => tag.replace(/^myiotsan-v/, ''),
     image: 'ghcr.io/mysayasan/myiotsan',
   },
+  {
+    id: 'myidsan',
+    name: 'MyIDSan',
+    matchTag: (tag) => /^myidsan-v\d/.test(tag),
+    version: (tag) => tag.replace(/^myidsan-v/, ''),
+    image: 'ghcr.io/mysayasan/myidsan',
+  },
 ];
 
 // categorizeAsset maps a release asset filename to a platform card, or null for assets

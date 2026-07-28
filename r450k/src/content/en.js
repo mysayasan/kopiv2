@@ -171,7 +171,7 @@ const en = {
       { name: 'mymatasan', status: 'Flagship · in active development', available: true, body: 'The standalone edge camera & video-intelligence node: ONVIF, AI detection, NVR, WebRTC live view, encryption, and LAN pairing.' },
       { name: 'myiotsan', status: 'Sensor hub · available now', available: true, body: 'The NVR, but for sensors: door contacts, motion, temperature, smoke, leaks, power and access readers over an embedded MQTT broker — with rules, alerts, safe actuation, and telemetry history.' },
       { name: 'myseliasan', status: 'Control plane · available now', available: true, body: 'The fleet control plane that discovers, adopts, and manages both camera and sensor nodes — mapping every site, building, and node with per-building floor plans and camera coverage — and correlates events across them: motion on a camera AND a door opening AND no badge swipe.' },
-      { name: 'myidsan', status: 'Identity', available: false, body: 'Shared identity and access: JWT auth, SSO, and role-based access control across the platform.' },
+      { name: 'myidsan', status: 'Identity · available now', available: true, body: 'The single sign-on front door: one federated identity across every app, with local accounts, enterprise LDAP / Active Directory, Kerberos SPNEGO desktop SSO, and generic OIDC providers — plus group-to-role mapping and per-app role-based access control. A single pure-Go binary that runs fully on your intranet, no egress.' },
     ],
   },
   downloads: {
@@ -201,6 +201,11 @@ const en = {
         name: 'MyIotSan',
         tagline: 'The sensor hub — one install per site. Building & security sensors over an embedded MQTT broker, with a deadbanded telemetry store, threshold and correlation rules, alerts, and safe confirm-to-execute actuation. A single pure-Go binary: no ffmpeg, no Python. Opens an MQTT port (1883) for devices.',
         dockerHint: 'Run the multi-arch image (opens the MQTT port 1883 for devices):',
+      },
+      myidsan: {
+        name: 'MyIDSan',
+        tagline: 'The identity broker — one sign-on across every app. Local accounts plus enterprise LDAP / Active Directory, Kerberos SPNEGO desktop SSO and generic OIDC, with group-to-role mapping and per-app RBAC. A single pure-Go binary that runs entirely on your intranet: no ffmpeg, no Python, no egress.',
+        dockerHint: 'Run the multi-arch image:',
       },
     },
     loading: 'Loading the latest release…',

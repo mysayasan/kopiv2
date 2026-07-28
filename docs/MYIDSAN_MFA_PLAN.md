@@ -1,7 +1,37 @@
 # myidsan MFA Plan (TOTP + recovery codes)
 
-**Status: PLANNED, nothing built.** Prerequisite work (enterprise SSO P0–P3) is built
-and live-benched — see `docs/MYIDSAN_ENTERPRISE_SSO_PLAN.md`.
+**Status: SHIPPED (P0–P3).** Prerequisite work (enterprise SSO P0–P3) is built
+and live-benched — see `docs/MYIDSAN_ENTERPRISE_SSO_PLAN.md`. WebAuthn/passkeys
+(P4) remain unbuilt — see §8.
+
+Built as designed below, with two deviations from this plan, both intentional:
+
+- **§6 Policy is NOT implemented.** There is no `mfa.policy` (`off`/`optional`/
+  `required`) `RuntimeSetting`, no `mfa.requiredRoleIds`, and no
+  `mfa.applyToDirectory` toggle. Enrollment is self-serve only, for every account
+  myidsan itself verifies (local **and** LDAP/AD password logins are both gated
+  unconditionally once a factor is confirmed) — "optional, self-serve" is the
+  entire shipped policy. A future `required`-for-some-roles mode is still a valid
+  follow-up but was not built.
+- **§7's offline escape hatch is a `RESET_MFA` marker file, not a
+  `bootstrap.allowMfaReset` config flag.** It mirrors the existing `RESET_ADMIN`
+  password-recovery marker exactly (drop the file in the data dir, restart, the
+  marker is deleted and the stock superadmin's factor is cleared) rather than a
+  config-flag-plus-restart — simpler, consistent with the existing recovery
+  pattern, and it requires the same local-filesystem access `RESET_ADMIN` does.
+  See `apps/myidsan/app/firstrun.go`'s `consumeMfaResetMarker` and
+  `docs/modules/apps/myidsan/app/firstrun.go.md`.
+- **UI location moved after P1 shipped.** The enrollment/status/recovery screens
+  described below as "Account → Security" now live on a single self-service
+  **Profile** page (also home to change-password and a new profile-picture
+  editor), reached only from the account chip in the side rail — a `chipOnly`
+  route, not a standalone nav item. See
+  `docs/modules/apps/myidsan/apis/profile.go.md`.
+
+Everything else — the schema (§1), the pre-session challenge protocol (§2), the
+TOTP primitives and QR rendering (§3), the enrollment/recovery APIs (§4), the
+gated-login-path table (§5), and the metric (§3/§8 P3) — shipped as designed.
+`DELETE /api/mfa-admin/{id}` (superadmin admin-reset, §4) also shipped.
 
 Goal: give myidsan a second factor for the credentials **myidsan itself verifies**, so a
 stolen or phished password is no longer sufficient to reach the suite. myidsan is the
@@ -177,26 +207,32 @@ one they already hold.
 If the only superadmin enrolls MFA and loses the device **and** the recovery codes, the
 entire suite is unadministrable. Mitigations, all three:
 
-1. Recovery codes are mandatory at enrollment (not skippable).
-2. A documented offline escape: a `bootstrap`-style config flag (e.g.
-   `bootstrap.allowMfaReset=true` + restart) that clears MFA for the seeded superadmin,
-   mirroring how `bootstrap.allowReset` gates factory reset ([[secure-wipe-reset-plan]]).
+1. Recovery codes are mandatory at enrollment (not skippable). **Shipped.**
+2. A documented offline escape. **Shipped as the `RESET_MFA` marker file** (data-dir
+   marker, deleted before the reset runs, consumed at boot) rather than the
+   `bootstrap.allowMfaReset` config flag originally sketched here — see the
+   deviations note at the top of this document and
+   `docs/modules/apps/myidsan/app/firstrun.go.md`.
 3. The first-run wizard should encourage a SECOND superadmin account before MFA is
-   made `required`.
+   made `required`. **Not applicable as shipped** — there is no `required` policy
+   (see the deviations note); this remains a good idea if `required` is ever built.
 
 ## 8. Phasing
 
 - **P0** — `infra/mfa` (TOTP + RFC 6238 test vectors + skew/replay unit tests), the two
-  entities, at-rest sealing of the secret. No HTTP surface.
+  entities, at-rest sealing of the secret. No HTTP surface. **Shipped.**
 - **P1** — enrollment/verify/recovery APIs + SPA screens (Account → Security), self-serve
-  only, nothing gated yet. Ship-able and safe on its own.
+  only, nothing gated yet. Ship-able and safe on its own. **Shipped.**
 - **P2** — the pre-session `mfaToken` exchange + gating the two password paths + both
   login surfaces (SPA and the server-rendered `/api/auth/login` page — remember there are
-  two, per [[federated-login-social-buttons]]).
-- **P3** — policy settings, admin reset, the bootstrap escape hatch, metrics
+  two, per [[federated-login-social-buttons]]). **Shipped.**
+- **P3** — admin reset, the offline escape hatch (`RESET_MFA`), metrics
   (`mfa_challenge_total{result}` — a spike in failures is the signal that matters,
-  per [[tier3-metrics]]).
-- **P4** — WebAuthn/passkeys as a second `Kind`, reusing the whole §2 exchange.
+  per [[tier3-metrics]]). **Shipped, except policy settings** — see the deviations
+  note at the top (no `mfa.policy`/`mfa.requiredRoleIds`/`mfa.applyToDirectory`;
+  LDAP is gated unconditionally alongside local, not behind a toggle).
+- **P4** — WebAuthn/passkeys as a second `Kind`, reusing the whole §2 exchange. **Not
+  built.**
 
 ## 9. Downstream impact: none
 

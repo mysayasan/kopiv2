@@ -15,7 +15,6 @@ require (
 	github.com/go-asn1-ber/asn1-ber v1.5.8 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
-	github.com/go-pdf/fpdf v0.9.0 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
 	github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e // indirect
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
@@ -67,6 +66,7 @@ require (
 	github.com/dop251/goja v0.0.0-20260701091749-b07b74453ea9
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/go-ldap/ldap/v3 v3.4.14
+	github.com/go-pdf/fpdf v0.9.0
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
@@ -84,6 +84,7 @@ require (
 	github.com/pion/webrtc/v4 v4.2.15
 	github.com/redis/go-redis/v9 v9.20.0
 	github.com/shirou/gopsutil/v3 v3.24.5
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	go.bug.st/serial v1.8.0
 	golang.org/x/crypto v0.54.0
 	golang.org/x/image v0.42.0
