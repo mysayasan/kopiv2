@@ -68,6 +68,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-28 — myidsan 1.25.0 (91932cf)
+
+### Changed
+
+- **myidsan**: The myidsan Apps page's app-registration form is redesigned from a bare CRUD sheet into a guided walkthrough, since one wrong field here (code, audience, redirect URI) fails later at runtime on the relying app's side with a terse error far from this screen. A data-derived step rail (register -> SSO client -> redirect URIs -> connect) tracks progress against what actually exists rather than a wizard cursor. A collapsible "How app registration works" primer (open by default for a new app) explains the authorize -> login -> one-time code -> token-exchange flow. Every registry and SSO-client field now carries inline guidance and a worked example, plus client-side validation that blocks Save: the app code is held to a slug shape, code/audience are checked against the already-loaded app list for a ukey1/ukey2 clash before it can hit the database as a 500, and the base URL is parsed with a (non-blocking) warning for plain http on a non-localhost host. A live "Configure the app with these" panel renders the provider base URL, audience, redirect URI, authorize URL, token URL, and a ready-to-paste sso config.json block, each with a Copy button. A "Connect the app" section adds a handoff checklist and a troubleshooting table mapping the literal server errors (client is not registered / redirect_uri is not registered / audience not registered for client / client secret not valid) to their likely cause. The SSO client form's Require PKCE and Allow refresh tokens hints now say explicitly that both are recorded on the client row but not yet enforced -- the token endpoint only implements the authorization_code grant. Frontend-only: no API, schema, or config changes.
 ## 2026-07-28 — myidsan 1.24.0 (4c760e8)
 
 ### Added
