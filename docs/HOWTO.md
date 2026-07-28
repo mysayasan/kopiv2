@@ -567,6 +567,53 @@ the forced password change and hasn't finished the first-run setup wizard
 (`GET /api/setup/state`) sees it before the normal app shell — every step is
 skippable, and `POST /api/setup/complete` records completion once.
 
+Locked out of two-factor authentication instead (lost the authenticator device
+**and** the recovery codes for the stock superadmin — a different lockout from the
+password one above)? Drop a `RESET_MFA` marker file in the data dir and restart —
+only that account's enrolled second factor is cleared (the password is untouched).
+Any other user's factor can be cleared without a restart by a signed-in superadmin
+via `DELETE /api/mfa-admin/{id}`. See `docs/MYIDSAN_MFA_PLAN.md` for the full MFA
+design (self-service enrollment on the **Profile** page — reached from the account
+chip in the side rail, not a nav item — alongside change-password and the profile
+picture, gated local + LDAP password logins, Kerberos/OIDC ungated).
+
+### Account recovery ("Forgot your password?")
+
+An ordinary local-account user (not the stock superadmin lockout above) who forgot
+their password clicks "Forgot your password?" on either login surface and submits
+their username/email. The response is always the same generic confirmation — myidsan
+never reveals whether the identifier matched an account. Only **local** accounts are
+eligible; LDAP/Kerberos/OIDC accounts are directed to sign in through their upstream
+identity provider instead (there is no local password for myidsan to reset).
+
+Two channels back this, both wired from a single request:
+
+1. **Operator queue (always on, zero configuration)** — a superadmin opens
+   **Reset requests** in the sidebar (`GET /api/password-reset`), sees every pending
+   request (account email, request time, source IP), and either:
+   - **Resolve** (`POST /api/password-reset/{id}/resolve`) — issues a fresh
+     temporary password, shown to the operator **once**, to hand over to the user
+     out-of-band (phone, in person, ticketing system). The account is flagged
+     must-change, so the temporary password is single-use in practice.
+   - **Dismiss** (`POST /api/password-reset/{id}/dismiss`) — closes a spam/duplicate
+     request without touching the account.
+
+   This channel works on a fully air-gapped install with no additional
+   configuration — it is the recommended default.
+
+2. **Self-service email link (optional)** — set the new `smtp` config block
+   (`smtp.enabled: true`, `smtp.host`, `smtp.port`, `smtp.from`, and optionally
+   `smtp.username`/`smtp.password`/`smtp.useStartTls` for an authenticating relay)
+   to point at an **internal mail relay only**. Once enabled, a forgot-password
+   request also emails the user a link (`/api/auth/reset?token=...`) valid for 30
+   minutes and single-use; the user sets their own new password and is sent back to
+   the login page — **no session is issued**, so any second factor they have
+   enrolled is still required at their next normal login. If `smtp.username` is set,
+   `smtp.useStartTls` is required — the sender refuses to transmit relay credentials
+   over a cleartext connection. Leave `smtp.enabled` false (the default; the block
+   is absent from the shipped `config.json`) on an air-gapped deployment — the
+   operator queue above already covers recovery without any network egress.
+
 SSO fallback examples:
 
 ```bash

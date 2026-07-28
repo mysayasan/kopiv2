@@ -562,3 +562,65 @@ func (m *userLoginService) ChangePassword(ctx context.Context, userId int64, cur
 	_, err = m.repo.UpdateById(ctx, "", *user)
 	return err
 }
+
+// AdminResetPassword implements the operator-driven reset that backs the
+// forgot-password admin queue: it force-sets a fresh generated password and flags
+// the account must-change, so the temporary password is single-use by design.
+func (m *userLoginService) AdminResetPassword(ctx context.Context, userId int64) (string, error) {
+	user, err := m.repo.GetById(ctx, "", uint64(userId))
+	if err != nil {
+		return "", err
+	}
+	if user == nil {
+		return "", errors.New("user not found")
+	}
+	if strings.TrimSpace(user.Userpwd) == "" {
+		// Federated/SSO-only account: no local password to reset (owned by the IdP).
+		return "", ErrThirdPartyOnlyAccount
+	}
+	temp, err := generateBootstrapPassword()
+	if err != nil {
+		return "", err
+	}
+	hash, err := hashPassword(temp)
+	if err != nil {
+		return "", err
+	}
+	user.Userpwd = hash
+	user.MustChangePassword = true
+	// Deliberately do NOT touch IsActive — a reset must never silently reactivate a
+	// disabled account.
+	user.UpdatedAt = time.Now().Unix()
+	if _, err := m.repo.UpdateById(ctx, "", *user); err != nil {
+		return "", err
+	}
+	return temp, nil
+}
+
+// SetPasswordSelfService backs the optional SMTP self-service reset: the user proved
+// possession of the reset token, so no current-password check — but the account must
+// still be a local one, and the new password must meet the length rule.
+func (m *userLoginService) SetPasswordSelfService(ctx context.Context, userId int64, newPassword string) error {
+	if len(strings.TrimSpace(newPassword)) < 8 {
+		return fmt.Errorf("new password must be at least 8 characters")
+	}
+	user, err := m.repo.GetById(ctx, "", uint64(userId))
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return errors.New("user not found")
+	}
+	if strings.TrimSpace(user.Userpwd) == "" {
+		return ErrThirdPartyOnlyAccount
+	}
+	hash, err := hashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+	user.Userpwd = hash
+	user.MustChangePassword = false
+	user.UpdatedAt = time.Now().Unix()
+	_, err = m.repo.UpdateById(ctx, "", *user)
+	return err
+}

@@ -396,6 +396,195 @@ button:disabled {
   text-overflow: ellipsis;
 }
 
+/* The avatar + role act as a button opening the self-service Profile. */
+.side-account-open {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.side-account-open:hover .side-account-role {
+  text-decoration: underline;
+}
+
+/* ---- Self-service Profile page ------------------------------------------- */
+.profile-grid {
+  display: grid;
+  gap: 20px;
+  max-width: 720px;
+}
+
+/* Hero: avatar + identity */
+.profile-hero {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--blue) 8%, var(--surface)), var(--surface));
+}
+.profile-avatar-wrap {
+  position: relative;
+  flex: none;
+}
+.profile-avatar {
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--blue) 20%, transparent);
+  color: var(--blue);
+  border: 3px solid var(--surface);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.16);
+}
+.profile-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.profile-avatar-initial {
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1;
+}
+.profile-avatar-edit {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 2px solid var(--surface);
+  background: var(--blue);
+  color: #fff;
+  cursor: pointer;
+  padding: 0;
+}
+.profile-avatar-edit:hover { filter: brightness(1.08); }
+.profile-avatar-edit:disabled { opacity: 0.6; cursor: default; }
+.profile-identity { display: grid; gap: 4px; min-width: 0; }
+.profile-name {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.profile-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted, #6a7888);
+  font-size: 13px;
+}
+.profile-role-badge {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 14%, transparent);
+}
+.profile-photo-actions { display: flex; gap: 14px; margin-top: 8px; }
+.profile-photo-actions .quiet-link { display: inline-flex; align-items: center; gap: 5px; }
+
+/* Per-row user avatar in the Users management table */
+.user-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.user-cell-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.row-avatar-wrap {
+  position: relative;
+  flex: none;
+  display: inline-block;
+  line-height: 0;
+}
+.row-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--blue) 18%, transparent);
+  color: var(--blue);
+}
+.row-avatar-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.row-avatar-initial { font-size: 14px; font-weight: 700; line-height: 1; }
+.row-avatar-edit {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 2px solid var(--surface);
+  background: var(--blue);
+  color: #fff;
+  cursor: pointer;
+  padding: 0;
+}
+.row-avatar-edit:hover { filter: brightness(1.08); }
+.row-avatar-edit:disabled { opacity: 0.6; cursor: default; }
+
+/* Setting cards (change password, two-factor) */
+.profile-card {
+  padding: 20px 22px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.profile-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.profile-card-head h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+.profile-card-icon {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 12%, transparent);
+}
+
 .side-account-logout {
   flex: none;
   width: 30px;
@@ -1994,7 +2183,9 @@ textarea:focus {
 
 .theme-drop-wrap {
   position: relative;
-  width: 100%;
+  /* Content-sized: this control lives in the right-aligned workspace header, not a
+     full-width side-nav footer, so it must not stretch across the whole strip. */
+  display: inline-flex;
 }
 
 .theme-toggle {
@@ -2026,9 +2217,14 @@ textarea:focus {
 
 .theme-menu {
   position: absolute;
-  left: 0;
+  /* Opens downward and right-aligned under the toggle (the control sits at the top
+     of the workspace, so an upward menu would clip off-screen). min-width keeps it at
+     least as wide as the toggle without stretching to the content area. */
+  left: auto;
   right: 0;
-  bottom: calc(100% + 6px);
+  top: calc(100% + 6px);
+  min-width: 100%;
+  white-space: nowrap;
   z-index: 60;
   display: flex;
   flex-direction: column;

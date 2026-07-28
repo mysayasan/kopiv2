@@ -36,6 +36,15 @@ type IUserLoginService interface {
 	// ChangePassword verifies the current password, sets a new (hashed) one, and clears
 	// the must-change-password flag.
 	ChangePassword(ctx context.Context, userId int64, current, next string) error
+	// AdminResetPassword force-sets a fresh generated temporary password on a LOCAL
+	// account, flags it must-change, and returns the plaintext ONCE for an operator to
+	// hand over out-of-band. Refuses a third-party-only (federated) account and never
+	// reactivates a disabled one.
+	AdminResetPassword(ctx context.Context, userId int64) (string, error)
+	// SetPasswordSelfService sets a user-chosen new password on a LOCAL account
+	// (min length enforced) and clears the must-change flag — completes a self-service
+	// reset token. Refuses a third-party-only account.
+	SetPasswordSelfService(ctx context.Context, userId int64, newPassword string) error
 }
 
 // IUserGroupService interface

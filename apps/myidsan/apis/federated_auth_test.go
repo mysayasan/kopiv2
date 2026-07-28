@@ -148,6 +148,8 @@ func TestAuthorizeRedirectsRegisteredClientWithoutSessionToLogin(t *testing.T) {
 		&fakeGenericRepo[entities.AppAuthConfig]{rows: []*entities.AppAuthConfig{client}},
 		&fakeGenericRepo[entities.AppRedirectUri]{rows: []*entities.AppRedirectUri{redirect}},
 		cache.NewMemoryStore(time.Minute, time.Minute),
+		nil, // no MFA service: the challenge path is nil-safe and off in these tests
+		nil, // no password-reset service: the forgot/reset paths are nil-safe in tests
 	)
 
 	rr := httptest.NewRecorder()

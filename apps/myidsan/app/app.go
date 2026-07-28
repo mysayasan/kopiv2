@@ -24,6 +24,7 @@ import (
 	"github.com/mysayasan/kopiv2/infra/db/bootstrap"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	logininfra "github.com/mysayasan/kopiv2/infra/login"
+	"github.com/mysayasan/kopiv2/infra/mailer"
 	"github.com/mysayasan/kopiv2/infra/versioning"
 )
 
@@ -59,6 +60,10 @@ func (m *module) Entities() []any {
 		myidsanentities.SsoCa{},
 		myidsanentities.DirectoryConfig{},
 		myidsanentities.FederatedGroupMapping{},
+		myidsanentities.UserMfaFactor{},
+		myidsanentities.UserMfaRecoveryCode{},
+		myidsanentities.PasswordResetRequest{},
+		myidsanentities.UserAvatar{},
 	}
 }
 
@@ -125,6 +130,7 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{AppCode: "myidsan", Title: "SSO Introspection", Description: "internal token introspection access", Path: "/api/sso/introspect", AccessTier: apiaccessenums.DevOnly},
 		{AppCode: "myidsan", Title: "Setup Wizard", Description: "first-run setup state and completion", Path: "/api/setup", AccessTier: apiaccessenums.DevOnly},
 		{AppCode: "myidsan", Title: "User Group", Description: "user group module access", Path: "/api/user-group", Metadata: menuMetadata(menuItem{Enabled: true, Id: "groups", Label: "Groups", Group: "Identity", Order: 20, Summary: "Organize identity ownership and hierarchy roots.", Tone: "teal"}), AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
+		{AppCode: "myidsan", Title: "Password Reset Requests", Description: "account-recovery request queue", Path: "/api/password-reset", Metadata: menuMetadata(menuItem{Enabled: true, Id: "resetRequests", Label: "Reset requests", Group: "Identity", Order: 15, Summary: "Review and resolve forgotten-password requests from local accounts.", Tone: "amber"}), AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{AppCode: "myidsan", Title: "User Credential", Description: "user login and role access", Path: "/api/user-credential", Metadata: menuMetadata(
 			menuItem{Enabled: true, Id: "users", Label: "Users", Group: "Identity", Order: 10, Summary: "Maintain credentials, profile details, and role assignment.", Tone: "blue"},
 			menuItem{Enabled: true, Id: "roles", Label: "Roles", Group: "Identity", Order: 30, Summary: "Create group-scoped roles and parent role chains.", Tone: "violet"},
@@ -237,6 +243,37 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	groupMappingRepo := dbsql.NewGenericRepo[myidsanentities.FederatedGroupMapping](deps.Db)
 	directoryService := services.NewDirectoryService(directoryConfigRepo, groupMappingRepo, userLoginService, secretCipher)
 
+	// TOTP second factor for myidsan-verified credentials. Constructed before the
+	// login API so the two password paths can gate on it; the shared secret is sealed
+	// with the same at-rest cipher as the directory bind password.
+	mfaFactorRepo := dbsql.NewGenericRepo[myidsanentities.UserMfaFactor](deps.Db)
+	mfaRecoveryRepo := dbsql.NewGenericRepo[myidsanentities.UserMfaRecoveryCode](deps.Db)
+	mfaService := services.NewMfaService(mfaFactorRepo, mfaRecoveryRepo, secretCipher, "myidsan")
+	deps.Metrics.Describe(apis.MetricMfaChallengeTotal, "Second-factor verification outcomes (result=issued|success|failed|expired): a spike in failures flags online guessing against a known password.")
+	// Escape hatch for a sole-superadmin lost-device lockout: a RESET_MFA marker in
+	// the data dir clears the stock superadmin's second factor on boot.
+	if err := consumeMfaResetMarker(deps, mfaService, userLoginService); err != nil {
+		return nil, err
+	}
+
+	// Account recovery: an always-on operator queue plus an OPTIONAL internal-SMTP
+	// self-service link. The mailer stays disabled unless config.smtp.enabled — an
+	// air-gapped install never reaches for a network; the queue covers it regardless.
+	resetRequestRepo := dbsql.NewGenericRepo[myidsanentities.PasswordResetRequest](deps.Db)
+	resetMailer := mailer.New(mailer.Config{
+		Enabled:     deps.Config.Smtp.Enabled,
+		Host:        deps.Config.Smtp.Host,
+		Port:        deps.Config.Smtp.Port,
+		From:        deps.Config.Smtp.From,
+		Username:    deps.Config.Smtp.Username,
+		Password:    deps.Config.Smtp.Password,
+		UseStartTls: deps.Config.Smtp.UseStartTls,
+	})
+	if resetMailer.Enabled() {
+		log.Printf("myidsan self-service password reset enabled (smtp %s:%d)", deps.Config.Smtp.Host, deps.Config.Smtp.Port)
+	}
+	passwordResetService := services.NewPasswordResetService(resetRequestRepo, userLoginService, resetMailer, deps.Cache)
+
 	// One LoginGuard covers every interactive credential surface (local JSON login,
 	// LDAP login, the server-rendered federated login page): to a password sprayer
 	// they are the same door, so they share the per-IP counters.
@@ -271,19 +308,31 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		KerberosLabel: kerberosLabel,
 		Guard:         loginGuard,
 		Metrics:       deps.Metrics,
+		Mfa:           mfaService,
+		Store:         deps.Cache,
+		Reset:         passwordResetService,
 	})
 	apis.NewUserLoginApi(api, *deps.Auth, deps.Access, userLoginDtoService)
 	apis.NewUserGroupApi(api, *deps.Auth, deps.Access, userGroupDtoService)
 	// Role + permission management is the shared accessrbac surface (/api/access-rbac),
 	// mounted by apphost. The old per-app user_role admin endpoint is retired.
 	apis.NewSSOApi(api, deps.Config, deps.Auth)
-	apis.NewFederatedAuthApi(api, deps.Config, deps.Auth, providerRegistry, directoryService, kerberosLabel, loginGuard, userLoginService, appRegistryRepo, appAuthConfigRepo, appRedirectUriRepo, deps.Cache)
+	apis.NewFederatedAuthApi(api, deps.Config, deps.Auth, providerRegistry, directoryService, kerberosLabel, loginGuard, userLoginService, appRegistryRepo, appAuthConfigRepo, appRedirectUriRepo, deps.Cache, mfaService, passwordResetService)
 	apis.NewDirectoryConfigApi(api, *deps.Auth, deps.Access, directoryService, groupMappingRepo)
 	apis.NewAppAuthConfigApi(api, *deps.Auth, deps.Access, appAuthConfigRepo)
 	apis.NewAppRedirectUriApi(api, *deps.Auth, deps.Access, appRedirectUriRepo)
 	// SSO certificate authority: issues relying-app client certificates for mTLS.
 	ssoCaRepo := dbsql.NewGenericRepo[myidsanentities.SsoCa](deps.Db)
 	apis.NewSsoCertApi(api, *deps.Auth, deps.Access, services.NewSsoCaService(ssoCaRepo), appAuthConfigRepo)
+	// Self-service + admin MFA management surface. The login-time challenge is wired
+	// into the login/federated-auth APIs above via the same mfaService.
+	apis.NewMfaApi(api, *deps.Auth, deps.Access, mfaService, userLoginService, deps.Metrics)
+	// Superadmin account-recovery queue (the public request endpoint is on the login
+	// API; the self-service email flow is on the federated-auth API).
+	apis.NewPasswordResetApi(api, *deps.Auth, deps.Access, passwordResetService)
+	// Profile avatars: self-service (own, auth-only) + admin-by-id (superadmin) for
+	// the Users management page.
+	apis.NewProfileApi(api, *deps.Auth, deps.Access, dbsql.NewGenericRepo[myidsanentities.UserAvatar](deps.Db))
 	// Superadmin-handoff status drives the "disable the stock superadmin" banner. The
 	// stock account's email is the configured localAuth.username.
 	apis.NewIdentityStatusApi(api, *deps.Auth, deps.Access, userLoginRepo, deps.AccessRoles, deps.Config.LocalAuth.Username)

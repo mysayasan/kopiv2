@@ -83,6 +83,14 @@ func (m *fakeUserLoginCoreService) ChangePassword(ctx context.Context, userId in
 	return nil
 }
 
+func (m *fakeUserLoginCoreService) AdminResetPassword(ctx context.Context, userId int64) (string, error) {
+	return "", nil
+}
+
+func (m *fakeUserLoginCoreService) SetPasswordSelfService(ctx context.Context, userId int64, newPassword string) error {
+	return nil
+}
+
 func TestUserLoginDtoServiceReturnsSuppliedDTO(t *testing.T) {
 	shared := &fakeUserLoginCoreService{
 		users: []*entities.UserLogin{{

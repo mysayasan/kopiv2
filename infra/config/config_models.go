@@ -70,6 +70,22 @@ type AppConfigModel struct {
 		// (default "Windows (SSO)").
 		DisplayLabel string `json:"displayLabel"`
 	} `json:"kerberos"`
+	// Smtp is the OPTIONAL internal mail relay for self-service account recovery
+	// (myidsan's forgot-password email link). Disabled by default so an air-gapped
+	// install never reaches for a network — the operator reset queue covers recovery
+	// either way. When enabled, it must point at an internal relay only.
+	Smtp struct {
+		Enabled bool   `json:"enabled"`
+		Host    string `json:"host"`
+		Port    int    `json:"port"`
+		// From is the sender address on recovery mail (falls back to Username).
+		From string `json:"from"`
+		// Username/Password authenticate to the relay; when set, UseStartTls must be
+		// on (the sender refuses to transmit credentials over a cleartext link).
+		Username    string `json:"username"`
+		Password    string `json:"password"`
+		UseStartTls bool   `json:"useStartTls"`
+	} `json:"smtp"`
 	// LoginSecurity throttles failed sign-in attempts to blunt brute-force /
 	// credential-stuffing against the standalone local-user login. Failures are
 	// tracked per source IP; once MaxAttempts within WindowSeconds is hit, that IP

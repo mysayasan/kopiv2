@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -50,6 +51,8 @@ type federatedAuthApi struct {
 	authConfigs      dbsql.IGenericRepo[entities.AppAuthConfig]
 	redirectURIs     dbsql.IGenericRepo[entities.AppRedirectUri]
 	store            cache.Store
+	mfa              *mfaChallenger
+	reset            services.IPasswordResetService
 	authCodeTTL      time.Duration
 	accessTokenTTL   time.Duration
 	defaultSessionTL time.Duration
@@ -109,7 +112,13 @@ func NewFederatedAuthApi(
 	authConfigs dbsql.IGenericRepo[entities.AppAuthConfig],
 	redirectURIs dbsql.IGenericRepo[entities.AppRedirectUri],
 	store cache.Store,
+	mfaService services.IMfaService,
+	resetService services.IPasswordResetService,
 ) {
+	var challenger *mfaChallenger
+	if mfaService != nil && store != nil {
+		challenger = newMfaChallenger(store, mfaService)
+	}
 	handler := &federatedAuthApi{
 		cfg:              cfg,
 		auth:             auth,
@@ -122,6 +131,8 @@ func NewFederatedAuthApi(
 		authConfigs:      authConfigs,
 		redirectURIs:     redirectURIs,
 		store:            store,
+		mfa:              challenger,
+		reset:            resetService,
 		authCodeTTL:      secondsDuration(configInt(cfg, "authCode"), defaultAuthCodeTTLSeconds),
 		accessTokenTTL:   secondsDuration(configInt(cfg, "accessToken"), defaultAccessTokenTTLSeconds),
 		defaultSessionTL: secondsDuration(configInt(cfg, "session"), defaultFederatedSessionTTL),
@@ -131,6 +142,15 @@ func NewFederatedAuthApi(
 	group.HandleFunc("/authorize", handler.authorize).Methods("GET")
 	group.HandleFunc("/login", handler.loginPage).Methods("GET")
 	group.HandleFunc("/login", handler.loginPost).Methods("POST")
+	// Server-rendered second-factor step: the password POST that needs MFA renders
+	// this challenge instead of a session; this route redeems the token + code.
+	group.HandleFunc("/mfa", handler.mfaPost).Methods("POST")
+	// Server-rendered account recovery: request a reset (forgot) and, when the
+	// optional SMTP link is used, set a new password from an emailed token.
+	group.HandleFunc("/forgot", handler.forgotPage).Methods("GET")
+	group.HandleFunc("/forgot", handler.forgotPost).Methods("POST")
+	group.HandleFunc("/reset", handler.resetPage).Methods("GET")
+	group.HandleFunc("/reset", handler.resetPost).Methods("POST")
 	group.HandleFunc("/token", handler.token).Methods("POST")
 }
 
@@ -319,11 +339,218 @@ func (m *federatedAuthApi) renderLoginPage(w http.ResponseWriter, status int, co
         <label>Username or email<input name="username" value="%s" autocomplete="username" autofocus required></label>
         <label>Password<input name="password" type="password" autocomplete="current-password" required></label>%s
         <button type="submit">Log in</button>
-      </form>%s
+      </form>
+      <p class="hint" style="text-align:center;margin:0"><a href="/api/auth/forgot">Forgot your password?</a></p>%s
     </section>
   </main>
 </body>
 </html>`, errHTML, html.EscapeString(continueTo), html.EscapeString(username), methodHTML, social)
+}
+
+// renderMfaChallenge renders the second-factor step: a single code field posting
+// back to /api/auth/mfa with the opaque challenge token. It reuses the login card
+// chrome. No session cookie exists at this point — the token is the only state.
+func (m *federatedAuthApi) renderMfaChallenge(w http.ResponseWriter, status int, continueTo, token, errMsg string) {
+	errHTML := ""
+	if errMsg != "" {
+		errHTML = fmt.Sprintf(`<p class="status-line" role="alert">%s</p>`, html.EscapeString(errMsg))
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	fmt.Fprintf(w, `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
+  <link rel="alternate icon" href="/favicon.ico">
+  <meta name="theme-color" content="#0f1a14">
+  <link rel="stylesheet" href="/assets/fonts.css">
+  <title>MyIDSan Auth</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Inter, "Segoe UI", Arial, sans-serif; background: #f4f6f8; color: #18212f; }
+    .login-screen { min-height: 100vh; display: flex; padding: 24px; }
+    .login-panel { margin: auto; width: min(100%%, 380px); display: grid; gap: 16px; padding: 24px;
+      border: 1px solid #d6dee7; border-radius: 8px; background: #fff; box-shadow: 0 12px 30px rgba(32, 42, 54, .08); }
+    .login-brand { display: grid; justify-items: center; text-align: center; }
+    .brand-wordmark { font-family: Quicksand, Fredoka, system-ui, sans-serif; font-weight: 600; font-size: 34px; letter-spacing: .5px; color: #6f4d9d; }
+    .login-brand p { margin: 6px 0 0; color: #6a7888; }
+    form { display: grid; gap: 16px; }
+    label { display: grid; gap: 6px; color: #59687a; font-size: 13px; font-weight: 650; }
+    input { width: 100%%; min-height: 38px; padding: 8px 10px; font: inherit; letter-spacing: .3em; text-align: center;
+      border: 1px solid #c7d1dc; border-radius: 6px; background: #fff; color: #18212f; }
+    button { width: 100%%; min-height: 38px; padding: 0 14px; font: inherit; font-weight: 650; cursor: pointer;
+      border: 1px solid #2d6cdf; border-radius: 6px; background: #2d6cdf; color: #fff; }
+    .status-line { margin: 0; padding: 10px 12px; font-size: 13px;
+      border-left: 4px solid #d28d1f; background: #fff8e9; color: #64450d; }
+    .hint { margin: 0; color: #6a7888; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <main class="login-screen">
+    <section class="login-panel">
+      <div class="login-brand">
+        <span class="brand-wordmark">myidsan</span>
+        <p>Two-step verification</p>
+      </div>
+      %s
+      <form method="post" action="/api/auth/mfa">
+        <input type="hidden" name="continue" value="%s">
+        <input type="hidden" name="mfaToken" value="%s">
+        <label>Verification code<input name="code" inputmode="numeric" autocomplete="one-time-code" autofocus required
+          placeholder="123456"></label>
+        <button type="submit">Verify</button>
+      </form>
+      <p class="hint">Enter the 6-digit code from your authenticator app, or a recovery code.</p>
+    </section>
+  </main>
+</body>
+</html>`, errHTML, html.EscapeString(continueTo), html.EscapeString(token))
+}
+
+// authPageShell wraps inner card content in the shared branded chrome used by the
+// login / MFA / recovery pages, so the recovery screens match without duplicating
+// the full stylesheet in every handler.
+func authPageShell(subtitle, innerHTML string) string {
+	return fmt.Sprintf(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
+  <link rel="alternate icon" href="/favicon.ico">
+  <meta name="theme-color" content="#0f1a14">
+  <link rel="stylesheet" href="/assets/fonts.css">
+  <title>MyIDSan Auth</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Inter, "Segoe UI", Arial, sans-serif; background: #f4f6f8; color: #18212f; }
+    .login-screen { min-height: 100vh; display: flex; padding: 24px; }
+    .login-panel { margin: auto; width: min(100%%, 380px); display: grid; gap: 16px; padding: 24px;
+      border: 1px solid #d6dee7; border-radius: 8px; background: #fff; box-shadow: 0 12px 30px rgba(32, 42, 54, .08); }
+    .login-brand { display: grid; justify-items: center; text-align: center; }
+    .brand-wordmark { font-family: Quicksand, Fredoka, system-ui, sans-serif; font-weight: 600; font-size: 34px; letter-spacing: .5px; color: #6f4d9d; }
+    .login-brand p { margin: 6px 0 0; color: #6a7888; }
+    form { display: grid; gap: 16px; }
+    label { display: grid; gap: 6px; color: #59687a; font-size: 13px; font-weight: 650; }
+    input { width: 100%%; min-height: 38px; padding: 8px 10px; font: inherit;
+      border: 1px solid #c7d1dc; border-radius: 6px; background: #fff; color: #18212f; }
+    button { width: 100%%; min-height: 38px; padding: 0 14px; font: inherit; font-weight: 650; cursor: pointer;
+      border: 1px solid #2d6cdf; border-radius: 6px; background: #2d6cdf; color: #fff; }
+    a { color: #2d6cdf; }
+    .status-line { margin: 0; padding: 10px 12px; font-size: 13px;
+      border-left: 4px solid #d28d1f; background: #fff8e9; color: #64450d; }
+    .ok-line { margin: 0; padding: 10px 12px; font-size: 13px;
+      border-left: 4px solid #2f9e5f; background: #eafaf933; background: #ecfaf1; color: #14532d; }
+    .hint { margin: 0; color: #6a7888; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <main class="login-screen">
+    <section class="login-panel">
+      <div class="login-brand">
+        <span class="brand-wordmark">myidsan</span>
+        <p>%s</p>
+      </div>
+      %s
+    </section>
+  </main>
+</body>
+</html>`, html.EscapeString(subtitle), innerHTML)
+}
+
+// forgotPage renders the account-recovery request form (server-rendered login surface).
+func (m *federatedAuthApi) forgotPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	inner := `<form method="post" action="/api/auth/forgot">
+        <p class="hint">Enter your username or email. If a local account matches, we'll start recovery. Domain / single-sign-on accounts are managed by your provider.</p>
+        <label>Username or email<input name="username" autocomplete="username" autofocus required></label>
+        <button type="submit">Request reset</button>
+      </form>
+      <p class="hint" style="text-align:center;margin:0"><a href="/api/auth/login">Back to sign in</a></p>`
+	fmt.Fprint(w, authPageShell("Recover your account", inner))
+}
+
+// forgotPost submits the recovery request and ALWAYS renders the same confirmation,
+// whether or not an account matched (no account-enumeration oracle).
+func (m *federatedAuthApi) forgotPost(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 65536)
+	_ = r.ParseForm()
+	if locked, retry := guardLocked(m.guard, r); locked {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, authPageShell("Recover your account",
+			fmt.Sprintf(`<p class="status-line">Too many attempts — try again in %d seconds.</p>
+        <p class="hint" style="text-align:center;margin:0"><a href="/api/auth/login">Back to sign in</a></p>`, int(retry.Seconds())+1)))
+		return
+	}
+	mailEnabled := false
+	if m.reset != nil {
+		mailEnabled = m.reset.MailEnabled()
+		if err := m.reset.Request(r.Context(), r.Form.Get("username"), loginGuardKey(r), requestOrigin(r)); err != nil {
+			log.Printf("password reset request error: %v", err)
+		}
+	}
+	msg := "If a matching local account exists, an administrator has been notified to reset it for you."
+	if mailEnabled {
+		msg = "If a matching local account exists, we've emailed a link to reset your password. The link is valid for 30 minutes."
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, authPageShell("Recover your account",
+		fmt.Sprintf(`<p class="ok-line">%s</p>
+      <p class="hint" style="text-align:center;margin:0"><a href="/api/auth/login">Back to sign in</a></p>`, html.EscapeString(msg))))
+}
+
+// resetPage renders the set-new-password form for a valid self-service token, or a
+// plain error when the token is missing/expired.
+func (m *federatedAuthApi) resetPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	token := r.URL.Query().Get("token")
+	if m.reset == nil {
+		fmt.Fprint(w, authPageShell("Reset password", `<p class="status-line">Password reset is not available.</p>`))
+		return
+	}
+	if _, err := m.reset.ResolveToken(r.Context(), token); err != nil {
+		fmt.Fprint(w, authPageShell("Reset password",
+			`<p class="status-line">This reset link is invalid or has expired. Request a new one.</p>
+        <p class="hint" style="text-align:center;margin:0"><a href="/api/auth/forgot">Request a new link</a></p>`))
+		return
+	}
+	inner := fmt.Sprintf(`<form method="post" action="/api/auth/reset">
+        <input type="hidden" name="token" value="%s">
+        <p class="hint">Choose a new password (at least 8 characters).</p>
+        <label>New password<input name="password" type="password" autocomplete="new-password" minlength="8" autofocus required></label>
+        <button type="submit">Set new password</button>
+      </form>`, html.EscapeString(token))
+	fmt.Fprint(w, authPageShell("Reset password", inner))
+}
+
+// resetPost completes a self-service reset: validate the token, set the password,
+// consume the token. On success, send the user to the login page (deliberately does
+// NOT issue a session — any enrolled second factor must still be presented at login).
+func (m *federatedAuthApi) resetPost(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 65536)
+	_ = r.ParseForm()
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if m.reset == nil {
+		fmt.Fprint(w, authPageShell("Reset password", `<p class="status-line">Password reset is not available.</p>`))
+		return
+	}
+	token := r.Form.Get("token")
+	err := m.reset.CompleteSelfService(r.Context(), token, r.Form.Get("password"))
+	if err != nil {
+		msg := "This reset link is invalid or has expired. Request a new one."
+		if !errors.Is(err, services.ErrResetTokenInvalid) {
+			msg = "Could not set the password: " + err.Error()
+		}
+		inner := fmt.Sprintf(`<p class="status-line">%s</p>
+        <p class="hint" style="text-align:center;margin:0"><a href="/api/auth/forgot">Request a new link</a></p>`, html.EscapeString(msg))
+		fmt.Fprint(w, authPageShell("Reset password", inner))
+		return
+	}
+	fmt.Fprint(w, authPageShell("Reset password",
+		`<p class="ok-line">Your password has been reset. You can now sign in.</p>
+      <p class="hint" style="text-align:center;margin:0"><a href="/api/auth/login">Go to sign in</a></p>`))
 }
 
 // socialButtonsHTML renders a sign-in link for every registered identity provider.
@@ -406,11 +633,103 @@ func (m *federatedAuthApi) loginPost(w http.ResponseWriter, r *http.Request) {
 	if m.guard != nil {
 		m.guard.RecordSuccess(loginGuardKey(r))
 	}
+	// If the account has a confirmed second factor, withhold the session and render
+	// the challenge page — the same pre-session ordering the SPA uses. No cookie is
+	// set until the code is verified.
+	if m.mfa != nil {
+		required, err := m.mfa.required(r.Context(), user.Id)
+		if err != nil {
+			controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+			return
+		}
+		if required {
+			token, err := m.mfa.issue(r.Context(), r, user.Id)
+			if err != nil {
+				controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+				return
+			}
+			m.renderMfaChallenge(w, http.StatusOK, continueTo, token, "")
+			return
+		}
+	}
 	if err := m.issueProviderSession(w, r, user); err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
 	http.Redirect(w, r, continueTo, http.StatusFound)
+}
+
+// mfaPost redeems the server-rendered second-factor challenge. On success it issues
+// the session withheld by loginPost and redirects to the pending continue target;
+// on a bad code it re-renders the challenge (the token survives until its attempts
+// or TTL are exhausted); on an exhausted/expired token it bounces to the login page.
+func (m *federatedAuthApi) mfaPost(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 65536)
+	if err := r.ParseForm(); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	continueTo := cleanContinuePath(r.Form.Get("continue"))
+	if m.mfa == nil {
+		m.redirectToLogin(w, r)
+		return
+	}
+	if locked, retry := guardLocked(m.guard, r); locked {
+		m.renderMfaChallenge(w, http.StatusTooManyRequests, continueTo, r.Form.Get("mfaToken"),
+			fmt.Sprintf("Too many failed attempts — try again in %d seconds.", int(retry.Seconds())+1))
+		return
+	}
+
+	token := r.Form.Get("mfaToken")
+	userId, err := m.mfa.redeem(r.Context(), r, token, r.Form.Get("code"))
+	if err != nil {
+		if errors.Is(err, services.ErrMfaBadCode) {
+			if m.guard != nil {
+				time.Sleep(m.guard.FailedDelay())
+				m.guard.RecordFailure(loginGuardKey(r))
+			}
+			m.renderMfaChallenge(w, http.StatusUnauthorized, continueTo, token, "That code did not match. Try again.")
+			return
+		}
+		// Token expired, exhausted, or rebound — restart the whole login.
+		http.Redirect(w, r, "/api/auth/login?error=sso_failed"+continueQuery(continueTo), http.StatusFound)
+		return
+	}
+	if m.guard != nil {
+		m.guard.RecordSuccess(loginGuardKey(r))
+	}
+
+	user, err := m.loadActiveUserById(r.Context(), userId)
+	if err != nil || user == nil {
+		http.Redirect(w, r, "/api/auth/login?error=sso_failed"+continueQuery(continueTo), http.StatusFound)
+		return
+	}
+	if err := m.issueProviderSession(w, r, user); err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	http.Redirect(w, r, continueTo, http.StatusFound)
+}
+
+// loadActiveUserById fetches an account by id, returning it only while still active.
+func (m *federatedAuthApi) loadActiveUserById(ctx context.Context, userId int64) (*entities.UserLogin, error) {
+	rows, _, err := m.userService.Get(ctx, 1, 0, []sqldataenums.Filter{
+		{FieldName: "Id", Compare: sqldataenums.Equal, Value: userId},
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 || rows[0] == nil || rows[0].Id == 0 || !rows[0].IsActive {
+		return nil, nil
+	}
+	return rows[0], nil
+}
+
+func continueQuery(continueTo string) string {
+	if continueTo == "" || continueTo == "/" {
+		return ""
+	}
+	return "&continue=" + url.QueryEscape(continueTo)
 }
 
 func (m *federatedAuthApi) token(w http.ResponseWriter, r *http.Request) {
