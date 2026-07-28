@@ -1158,6 +1158,170 @@ function randomSecret() {
   return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
+// ---------------------------------------------------------------------------
+// Apps: registration guidance
+//
+// Registering a relying app is a four-step job spanning three tables
+// (app_registry -> app_auth_config -> app_redirect_uri), and almost every value
+// entered here has to be matched *exactly* by the other side — the relying app's
+// own SSO config. Getting one of them wrong fails at runtime with a terse
+// "client is not registered" / "redirect_uri is not registered", far away from
+// this screen. So the editor below is written as a guided walkthrough rather than
+// a bare CRUD sheet: each field explains what it is and where it surfaces at
+// runtime, the values are validated as they are typed, and a live panel renders
+// the exact endpoints and config block the operator has to hand to the app.
+// ---------------------------------------------------------------------------
+
+// App codes become the `appCode` claim in issued tokens and the default client_id,
+// so they are held to a slug shape: leading letter, then lowercase/digits/dashes.
+const APP_CODE_PATTERN = /^[a-z][a-z0-9-]{1,62}$/
+
+// DEFAULT_CALLBACK_PATH is where the suite's own relying apps mount their OAuth
+// callback (see myseliasan's sso.redirectPath), so it is the suggested default.
+const DEFAULT_CALLBACK_PATH = '/api/auth/callback'
+
+// slugifyAppCode converts free text (a pasted title) into a candidate app code.
+function slugifyAppCode(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 63)
+}
+
+// providerBaseUrl is the base URL relying apps use to reach this myidsan instance.
+// The admin SPA is served from the same origin as the API, so the browser's origin
+// is the answer unless the build points the SPA at a separate API host.
+function providerBaseUrl() {
+  const base = apiBase || (typeof window === 'undefined' ? '' : window.location.origin)
+  return String(base).replace(/\/+$/, '')
+}
+
+function trimTrailingSlash(value) {
+  return String(value || '').trim().replace(/\/+$/, '')
+}
+
+// copyToClipboard writes a value to the clipboard, falling back to a hidden
+// textarea + execCommand where the async clipboard API is blocked (plain http).
+async function copyToClipboard(value) {
+  const text = String(value == null ? '' : value)
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch (err) {
+    try {
+      const area = document.createElement('textarea')
+      area.value = text
+      area.setAttribute('readonly', 'readonly')
+      area.style.position = 'fixed'
+      area.style.opacity = '0'
+      document.body.appendChild(area)
+      area.select()
+      const ok = document.execCommand('copy')
+      area.remove()
+      return ok
+    } catch (fallbackErr) {
+      return false
+    }
+  }
+}
+
+// CopyButton copies a value and flips to a short "copied" state so the operator
+// gets feedback without a toast interrupting the form.
+function CopyButton({ value, disabled }) {
+  const t = useT()
+  const [copied, setCopied] = useState(false)
+  const timer = useRef(null)
+  useEffect(() => () => clearTimeout(timer.current), [])
+  const copy = async () => {
+    const ok = await copyToClipboard(value)
+    if (!ok) {
+      return
+    }
+    setCopied(true)
+    clearTimeout(timer.current)
+    timer.current = setTimeout(() => setCopied(false), 1600)
+  }
+  return (
+    <button className="copy-button" type="button" onClick={copy} disabled={disabled || !String(value || '').trim()} title={t('app.copyTip')}>
+      {copied ? t('app.copied') : t('app.copy')}
+    </button>
+  )
+}
+
+// GuideField wraps one input with the guidance that makes it answerable: what the
+// value is used for at runtime, a worked example, and inline validation. The label
+// is a plain block (not the global grid `label`) because the hint/example rows sit
+// between the control and the next field.
+function GuideField({ id, label, hint, example, required, issue, children }) {
+  const t = useT()
+  return (
+    <div className={issue?.level === 'error' ? 'guide-field has-error' : 'guide-field'}>
+      <label className="guide-label" htmlFor={id}>
+        {label}
+        {required && <span className="guide-required" title={t('app.requiredTip')}>*</span>}
+      </label>
+      {children}
+      {hint && <p className="guide-hint">{hint}</p>}
+      {example && (
+        <p className="guide-example">
+          <span>{t('app.exampleLabel')}</span>
+          <code>{example}</code>
+        </p>
+      )}
+      {issue && <p className={issue.level === 'error' ? 'guide-issue error' : 'guide-issue warn'}>{issue.text}</p>}
+    </div>
+  )
+}
+
+// GuideCallout is the collapsible primer at the top of the editor. It defaults to
+// open while registering a new app (when the operator most needs it) and stays
+// closed for an app that already exists.
+function GuideCallout({ title, open, onToggle, children }) {
+  return (
+    <section className={open ? 'guide-callout open' : 'guide-callout'}>
+      <button className="guide-callout-head" type="button" onClick={onToggle} aria-expanded={open}>
+        <span className="guide-callout-icon" aria-hidden="true">{open ? '−' : '?'}</span>
+        <strong>{title}</strong>
+      </button>
+      {open && <div className="guide-callout-body">{children}</div>}
+    </section>
+  )
+}
+
+// StepRail shows where the operator is in the four-step registration. Steps are
+// derived from data (does an SSO client exist? are there redirect URIs?) rather
+// than from a wizard cursor, so it stays honest for half-configured apps too.
+function StepRail({ steps }) {
+  return (
+    <ol className="step-rail">
+      {steps.map((step, index) => (
+        <li key={step.key} className={`step-rail-item ${step.state}`}>
+          <span className="step-rail-num" aria-hidden="true">{step.state === 'done' ? '✓' : index + 1}</span>
+          <span className="step-rail-text">
+            <strong>{step.title}</strong>
+            <span>{step.hint}</span>
+          </span>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
+// PreviewRow is one copyable value in the integration panel.
+function PreviewRow({ label, value, hint, mono = true }) {
+  return (
+    <div className="preview-row">
+      <div className="preview-row-head">
+        <span>{label}</span>
+        <CopyButton value={value} />
+      </div>
+      <code className={mono ? 'preview-value' : 'preview-value plain'}>{value}</code>
+      {hint && <p className="preview-hint">{hint}</p>}
+    </div>
+  )
+}
+
 // AppsPage is a master-detail manager: pick (or add) a relying app on the left and
 // edit everything for it inline on the right — the registry fields AND its SSO client
 // (credentials, PKCE, token lifetimes, redirect URLs). No modal editor and no separate
@@ -1214,12 +1378,23 @@ function AppsPage({ accessList }) {
               key={selectedId}
               accessList={accessList}
               app={selectedApp || null}
+              apps={apps}
               onCreated={code => loadApps(code)}
               onSaved={() => loadApps()}
               onDeleted={() => { setSelectedId(null); loadApps() }}
             />
           ) : (
-            <div className="empty-state">{t('app.selectPrompt')}</div>
+            <div className="apps-welcome">
+              <h2>{t('app.welcomeTitle')}</h2>
+              <p>{t('app.selectPrompt')}</p>
+              <ol className="apps-welcome-steps">
+                <li><strong>{t('app.step1Title')}</strong> {t('app.step1Hint')}</li>
+                <li><strong>{t('app.step2Title')}</strong> {t('app.step2Hint')}</li>
+                <li><strong>{t('app.step3Title')}</strong> {t('app.step3Hint')}</li>
+                <li><strong>{t('app.step4Title')}</strong> {t('app.step4Hint')}</li>
+              </ol>
+              <button className="primary-button" type="button" onClick={() => setSelectedId('new')}>{t('app.newApp')}</button>
+            </div>
           )}
         </section>
       </div>
@@ -1245,7 +1420,10 @@ const emptyAuthConfig = {
 // inline (registry fields) plus its SSO client (auth config + redirect URIs). It is
 // remounted (keyed by selection) when a different app is picked, so its forms reset
 // cleanly. The client secret is write-only — the API returns only whether one is set.
-function AppDetail({ accessList, app, onCreated, onSaved, onDeleted }) {
+//
+// `apps` is the sibling list, used to catch a duplicate code/audience here rather
+// than letting the unique-key violation come back from the database as a 500.
+function AppDetail({ accessList, app, apps = [], onCreated, onSaved, onDeleted }) {
   const t = useT()
   const isNew = !app
   // Built-in apps power SSO/federation and the seeders key on their codes, so their
@@ -1260,6 +1438,11 @@ function AppDetail({ accessList, app, onCreated, onSaved, onDeleted }) {
     audience: app?.audience || '',
     isActive: app ? Boolean(app.isActive) : true
   }))
+  // While registering, the audience trails the code (the suite's convention is that
+  // they match) until the operator edits it — an app whose `aud` differs from its
+  // code is legal, it just has to be said explicitly.
+  const [audienceLinked, setAudienceLinked] = useState(isNew)
+  const [showPrimer, setShowPrimer] = useState(isNew)
   const [config, setConfig] = useState(null)
   const [authForm, setAuthForm] = useState(emptyAuthConfig)
   const [uris, setUris] = useState([])
@@ -1273,6 +1456,115 @@ function AppDetail({ accessList, app, onCreated, onSaved, onDeleted }) {
   const canEdit = hasEndpointAccess(accessList, '/api/app-registry', isNew ? 'POST' : 'PUT')
   const canDelete = hasEndpointAccess(accessList, '/api/app-registry', 'DELETE')
   const canSso = hasEndpointAccess(accessList, '/api/app-auth-config', 'POST') || hasEndpointAccess(accessList, '/api/app-auth-config', 'PUT')
+
+  // ---- validation ---------------------------------------------------------
+  // Code and audience are unique keys on app_registry (ukey1/ukey2), so a clash is
+  // caught here against the loaded list instead of surfacing as a database error.
+  const codeIssue = useMemo(() => {
+    const code = appForm.code.trim()
+    if (!code) {
+      return null
+    }
+    if (!APP_CODE_PATTERN.test(code)) {
+      return { level: 'error', text: t('app.codeInvalid') }
+    }
+    const clash = apps.some(row => Number(row.id) !== Number(appForm.id) && String(row.code || '').toLowerCase() === code.toLowerCase())
+    return clash ? { level: 'error', text: t('app.codeTaken') } : null
+  }, [appForm.code, appForm.id, apps, t])
+
+  const audienceIssue = useMemo(() => {
+    const audience = appForm.audience.trim()
+    if (!audience) {
+      return null
+    }
+    if (/\s/.test(audience)) {
+      return { level: 'error', text: t('app.audienceSpaces') }
+    }
+    const clash = apps.some(row => Number(row.id) !== Number(appForm.id) && String(row.audience || '').toLowerCase() === audience.toLowerCase())
+    return clash ? { level: 'error', text: t('app.audienceTaken') } : null
+  }, [appForm.audience, appForm.id, apps, t])
+
+  const baseUrlIssue = useMemo(() => {
+    const raw = appForm.baseUrl.trim()
+    if (!raw) {
+      return null
+    }
+    let parsed
+    try {
+      parsed = new URL(raw)
+    } catch (err) {
+      return { level: 'error', text: t('app.baseUrlInvalid') }
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return { level: 'error', text: t('app.baseUrlScheme') }
+    }
+    if (parsed.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname)) {
+      return { level: 'warn', text: t('app.baseUrlInsecure') }
+    }
+    return null
+  }, [appForm.baseUrl, t])
+
+  const appFormBlocked = Boolean(codeIssue?.level === 'error' || audienceIssue?.level === 'error' || baseUrlIssue?.level === 'error')
+
+  // ---- integration preview -------------------------------------------------
+  // The values the *relying app* has to be configured with. Rendered live while the
+  // form is being filled in, so the operator can see what they are committing to.
+  const provider = providerBaseUrl()
+  const previewClientId = (authForm.clientId || appForm.code || 'your-app').trim()
+  const previewAudience = (appForm.audience || appForm.code || 'your-app').trim()
+  const previewBase = trimTrailingSlash(appForm.baseUrl) || 'https://app.example.com'
+  const suggestedUri = `${previewBase}${DEFAULT_CALLBACK_PATH}`
+  const previewUri = uris.find(row => row.isActive)?.redirectUri || suggestedUri
+  const authorizeUrl = `${provider}/api/auth/authorize?response_type=code&client_id=${encodeURIComponent(previewClientId)}`
+    + `&audience=${encodeURIComponent(previewAudience)}&redirect_uri=${encodeURIComponent(previewUri)}&state=RANDOM`
+  const tokenUrl = `${provider}/api/auth/token`
+  const configSnippet = JSON.stringify({
+    sso: {
+      issuer: 'myidsan',
+      audience: previewAudience,
+      providerBaseUrl: provider,
+      clientId: previewClientId,
+      clientSecret: '<paste the generated secret>',
+      redirectBaseUrl: previewBase,
+      redirectPath: DEFAULT_CALLBACK_PATH,
+      sessionTtlSeconds: Number(authForm.sessionTtlSeconds) || 259200
+    }
+  }, null, 2)
+
+  const steps = [
+    {
+      key: 'register',
+      title: t('app.step1Title'),
+      hint: t('app.step1Hint'),
+      state: isNew ? 'current' : 'done'
+    },
+    {
+      key: 'client',
+      title: t('app.step2Title'),
+      hint: t('app.step2Hint'),
+      state: config ? 'done' : (isNew ? 'todo' : 'current')
+    },
+    {
+      key: 'redirect',
+      title: t('app.step3Title'),
+      hint: t('app.step3Hint'),
+      state: uris.length > 0 ? 'done' : (!isNew && config ? 'current' : 'todo')
+    },
+    {
+      key: 'connect',
+      title: t('app.step4Title'),
+      hint: t('app.step4Hint'),
+      state: !isNew && config && uris.length > 0 ? 'current' : 'todo'
+    }
+  ]
+
+  const setCode = value => {
+    setAppForm(current => ({
+      ...current,
+      code: value,
+      audience: audienceLinked ? value : current.audience
+    }))
+  }
 
   const generateSecret = () => {
     setAuthForm(current => ({ ...current, clientSecret: randomSecret() }))
@@ -1428,114 +1720,236 @@ function AppDetail({ accessList, app, onCreated, onSaved, onDeleted }) {
     }
   }
 
+  const codeSuggestion = isNew && !appForm.code.trim() ? slugifyAppCode(appForm.title) : ''
+
   return (
     <div className="app-detail">
-      <h2>{isNew ? t('app.newApp') : (appForm.title || appForm.code)}</h2>
+      <div className="app-detail-head">
+        <h2>{isNew ? t('app.newApp') : (appForm.title || appForm.code)}</h2>
+        <p className="app-detail-lede">{isNew ? t('app.newLede') : t('app.editLede')}</p>
+      </div>
       {isSystem && <p className="cert-hint">{t('app.systemNote')}</p>}
       {error && <div className="message danger">{error}</div>}
       {notice && <div className="message success">{notice}</div>}
 
-      <form className="record-form" onSubmit={saveApp}>
-        <div className="two-col">
-          <label>
-            {t('app.code')}
-            <input value={appForm.code} onChange={event => setAppForm({ ...appForm, code: event.target.value })} required readOnly={isSystem} disabled={isSystem} />
-          </label>
-          <label>
-            {t('app.audience')}
-            <input value={appForm.audience} onChange={event => setAppForm({ ...appForm, audience: event.target.value })} required readOnly={isSystem} disabled={isSystem} />
-          </label>
+      <StepRail steps={steps} />
+
+      <GuideCallout title={t('app.primerTitle')} open={showPrimer} onToggle={() => setShowPrimer(value => !value)}>
+        <p>{t('app.primerIntro')}</p>
+        <ol>
+          <li>{t('app.primerFlow1')}</li>
+          <li>{t('app.primerFlow2')}</li>
+          <li>{t('app.primerFlow3')}</li>
+          <li>{t('app.primerFlow4')}</li>
+        </ol>
+        <p>{t('app.primerMatch')}</p>
+      </GuideCallout>
+
+      <div className="app-guide-grid">
+        <div className="app-guide-main">
+          <div className="detail-heading">
+            <h3>{t('app.sectionIdentity')}</h3>
+            <span className="step-badge">{t('app.stepOf', { n: 1 })}</span>
+          </div>
+          <p className="section-lede">{t('app.identityLede')}</p>
+
+          <form className="record-form" onSubmit={saveApp}>
+            <GuideField id="app-title" label={t('f.title')} hint={t('app.titleHint')} example="Fleet Console" required>
+              <input id="app-title" value={appForm.title} onChange={event => setAppForm({ ...appForm, title: event.target.value })} required />
+            </GuideField>
+
+            <GuideField id="app-code" label={t('app.code')} hint={isSystem ? t('app.codeLockedHint') : t('app.codeHint')} example="myseliasan" required issue={codeIssue}>
+              <input
+                id="app-code"
+                value={appForm.code}
+                onChange={event => setCode(event.target.value)}
+                placeholder="my-app"
+                spellCheck="false"
+                autoComplete="off"
+                required
+                readOnly={isSystem}
+                disabled={isSystem}
+              />
+              {codeSuggestion && (
+                <button className="ghost-button" type="button" onClick={() => setCode(codeSuggestion)}>
+                  {t('app.useSuggestion', { value: codeSuggestion })}
+                </button>
+              )}
+            </GuideField>
+
+            <GuideField
+              id="app-audience"
+              label={t('app.audience')}
+              hint={isSystem ? t('app.audienceLockedHint') : (audienceLinked ? t('app.audienceLinkedHint') : t('app.audienceHint'))}
+              example="myseliasan"
+              required
+              issue={audienceIssue}
+            >
+              <input
+                id="app-audience"
+                value={appForm.audience}
+                onChange={event => { setAudienceLinked(false); setAppForm({ ...appForm, audience: event.target.value }) }}
+                spellCheck="false"
+                autoComplete="off"
+                required
+                readOnly={isSystem}
+                disabled={isSystem}
+              />
+            </GuideField>
+
+            <GuideField id="app-base-url" label={t('app.baseUrl')} hint={t('app.baseUrlHint')} example="https://fleet.example.com" issue={baseUrlIssue}>
+              <input id="app-base-url" value={appForm.baseUrl} onChange={event => setAppForm({ ...appForm, baseUrl: event.target.value })} placeholder="https://app.example.com" spellCheck="false" autoComplete="off" />
+            </GuideField>
+
+            <GuideField id="app-description" label={t('f.description')} hint={t('app.descriptionHint')}>
+              <input id="app-description" value={appForm.description} onChange={event => setAppForm({ ...appForm, description: event.target.value })} />
+            </GuideField>
+
+            <div className="guide-field">
+              <label className="checkbox-field">
+                <input type="checkbox" checked={Boolean(appForm.isActive)} onChange={event => setAppForm({ ...appForm, isActive: event.target.checked })} />
+                {t('f.active')}
+              </label>
+              <p className="guide-hint">{t('app.activeHint')}</p>
+            </div>
+
+            <div className="form-actions">
+              <button className="primary-button" type="submit" disabled={busy || !canEdit || appFormBlocked}>{isNew ? t('app.createApp') : t('app.saveApp')}</button>
+              {!isNew && !isSystem && <button className="secondary-button danger" type="button" onClick={deleteApp} disabled={busy || !canDelete}>{t('app.deleteApp')}</button>}
+            </div>
+            {!canEdit && <p className="guide-issue warn">{t('app.noPermission')}</p>}
+          </form>
         </div>
-        <label>
-          {t('f.title')}
-          <input value={appForm.title} onChange={event => setAppForm({ ...appForm, title: event.target.value })} required />
-        </label>
-        <label>
-          {t('f.description')}
-          <input value={appForm.description} onChange={event => setAppForm({ ...appForm, description: event.target.value })} />
-        </label>
-        <label>
-          {t('app.baseUrl')}
-          <input value={appForm.baseUrl} onChange={event => setAppForm({ ...appForm, baseUrl: event.target.value })} placeholder="https://app.example.com" />
-        </label>
-        <label className="checkbox-field">
-          <input type="checkbox" checked={Boolean(appForm.isActive)} onChange={event => setAppForm({ ...appForm, isActive: event.target.checked })} />
-          {t('f.active')}
-        </label>
-        <div className="form-actions">
-          <button className="primary-button" type="submit" disabled={busy || !canEdit}>{isNew ? t('app.createApp') : t('app.saveApp')}</button>
-          {!isNew && !isSystem && <button className="secondary-button danger" type="button" onClick={deleteApp} disabled={busy || !canDelete}>{t('app.deleteApp')}</button>}
-        </div>
-      </form>
+
+        <aside className="app-guide-side">
+          <div className="preview-card">
+            <h4>{t('app.previewTitle')}</h4>
+            <p className="preview-lede">{t('app.previewLede')}</p>
+            <PreviewRow label={t('app.previewProvider')} value={provider} hint={t('app.previewProviderHint')} />
+            <PreviewRow label={t('app.previewAudience')} value={previewAudience} hint={t('app.previewAudienceHint')} />
+            <PreviewRow label={t('app.previewCallback')} value={previewUri} hint={t('app.previewCallbackHint')} />
+            <PreviewRow label={t('app.previewAuthorize')} value={authorizeUrl} hint={t('app.previewAuthorizeHint')} />
+            <PreviewRow label={t('app.previewToken')} value={tokenUrl} hint={t('app.previewTokenHint')} />
+            <div className="preview-row">
+              <div className="preview-row-head">
+                <span>{t('app.previewConfig')}</span>
+                <CopyButton value={configSnippet} />
+              </div>
+              <pre className="preview-code">{configSnippet}</pre>
+              <p className="preview-hint">{t('app.previewConfigHint')}</p>
+            </div>
+          </div>
+        </aside>
+      </div>
 
       {isNew ? (
-        <p className="message">{t('app.saveFirst')}</p>
+        <div className="next-steps">
+          <h3>{t('app.nextTitle')}</h3>
+          <p className="section-lede">{t('app.saveFirst')}</p>
+          <ol className="next-steps-list">
+            <li><strong>{t('app.step2Title')}</strong><span>{t('app.step2Detail')}</span></li>
+            <li><strong>{t('app.step3Title')}</strong><span>{t('app.step3Detail')}</span></li>
+            <li><strong>{t('app.step4Title')}</strong><span>{t('app.step4Detail')}</span></li>
+          </ol>
+        </div>
       ) : (
         <>
           <hr className="detail-divider" />
           <div className="detail-heading">
             <h3>{t('app.ssoClient')}</h3>
+            <span className="step-badge">{t('app.stepOf', { n: 2 })}</span>
             <span className={config ? 'status-pill on' : 'status-pill off'}>{config ? t('app.ssoConfigured') : t('app.noSsoClient')}</span>
           </div>
+          <p className="section-lede">{t('app.ssoLede')}</p>
+          {!config && <div className="message">{t('app.ssoNext')}</div>}
           <form className="record-form" onSubmit={saveConfig}>
+            <GuideField id="sso-client-id" label={t('app.clientId')} hint={t('app.clientIdHint')} example={appForm.code || 'myseliasan'} required>
+              <input id="sso-client-id" value={authForm.clientId} onChange={event => setAuthForm({ ...authForm, clientId: event.target.value })} spellCheck="false" autoComplete="off" required />
+            </GuideField>
+
+            <GuideField id="sso-client-secret" label={t('app.clientSecret')} hint={config?.hasClientSecret ? t('app.secretRotateHint') : t('app.secretHint')}>
+              <div className="secret-row">
+                <input
+                  id="sso-client-secret"
+                  type={secretRevealed ? 'text' : 'password'}
+                  value={authForm.clientSecret}
+                  onChange={event => setAuthForm({ ...authForm, clientSecret: event.target.value })}
+                  placeholder={config?.hasClientSecret ? t('app.secretKeep') : t('app.secretSet')}
+                  spellCheck="false"
+                  autoComplete="new-password"
+                />
+                <button className="secondary-button" type="button" onClick={generateSecret} disabled={busy} title={t('app.generateTip')}>{t('app.generate')}</button>
+                {authForm.clientSecret && <CopyButton value={authForm.clientSecret} />}
+              </div>
+            </GuideField>
+
             <div className="two-col">
-              <label>
-                {t('app.clientId')}
-                <input value={authForm.clientId} onChange={event => setAuthForm({ ...authForm, clientId: event.target.value })} required />
-              </label>
-              <label>
-                {t('app.clientSecret')}
-                <div className="secret-row">
-                  <input type={secretRevealed ? 'text' : 'password'} value={authForm.clientSecret} onChange={event => setAuthForm({ ...authForm, clientSecret: event.target.value })} placeholder={config?.hasClientSecret ? t('app.secretKeep') : t('app.secretSet')} />
-                  <button className="secondary-button" type="button" onClick={generateSecret} disabled={busy} title={t('app.generateTip')}>{t('app.generate')}</button>
-                </div>
-              </label>
+              <GuideField id="sso-code-ttl" label={t('app.authCodeTtl')} hint={t('app.authCodeTtlHint')} example="300">
+                <input id="sso-code-ttl" type="number" min="0" value={authForm.authCodeTtlSeconds} onChange={event => setAuthForm({ ...authForm, authCodeTtlSeconds: event.target.value })} />
+              </GuideField>
+              <GuideField id="sso-access-ttl" label={t('app.accessTtl')} hint={t('app.accessTtlHint')} example="900">
+                <input id="sso-access-ttl" type="number" min="0" value={authForm.accessTokenTtlSeconds} onChange={event => setAuthForm({ ...authForm, accessTokenTtlSeconds: event.target.value })} />
+              </GuideField>
             </div>
             <div className="two-col">
-              <label>
-                {t('app.authCodeTtl')}
-                <input type="number" value={authForm.authCodeTtlSeconds} onChange={event => setAuthForm({ ...authForm, authCodeTtlSeconds: event.target.value })} />
-              </label>
-              <label>
-                {t('app.accessTtl')}
-                <input type="number" value={authForm.accessTokenTtlSeconds} onChange={event => setAuthForm({ ...authForm, accessTokenTtlSeconds: event.target.value })} />
-              </label>
+              <GuideField id="sso-session-ttl" label={t('app.sessionTtl')} hint={t('app.sessionTtlHint')} example="259200">
+                <input id="sso-session-ttl" type="number" min="0" value={authForm.sessionTtlSeconds} onChange={event => setAuthForm({ ...authForm, sessionTtlSeconds: event.target.value })} />
+              </GuideField>
+              <GuideField id="sso-refresh-ttl" label={t('app.refreshTtl')} hint={t('app.refreshTtlHint')} example="0">
+                <input id="sso-refresh-ttl" type="number" min="0" value={authForm.refreshTokenTtlSeconds} onChange={event => setAuthForm({ ...authForm, refreshTokenTtlSeconds: event.target.value })} />
+              </GuideField>
             </div>
-            <div className="two-col">
-              <label>
-                {t('app.sessionTtl')}
-                <input type="number" value={authForm.sessionTtlSeconds} onChange={event => setAuthForm({ ...authForm, sessionTtlSeconds: event.target.value })} />
+
+            <div className="guide-field">
+              <label className="checkbox-field">
+                <input type="checkbox" checked={Boolean(authForm.requirePkce)} onChange={event => setAuthForm({ ...authForm, requirePkce: event.target.checked })} />
+                {t('app.requirePkce')}
               </label>
-              <label>
-                {t('app.refreshTtl')}
-                <input type="number" value={authForm.refreshTokenTtlSeconds} onChange={event => setAuthForm({ ...authForm, refreshTokenTtlSeconds: event.target.value })} />
-              </label>
+              <p className="guide-hint">{t('app.requirePkceHint')}</p>
             </div>
-            <label className="checkbox-field">
-              <input type="checkbox" checked={Boolean(authForm.requirePkce)} onChange={event => setAuthForm({ ...authForm, requirePkce: event.target.checked })} />
-              {t('app.requirePkce')}
-            </label>
-            <label className="checkbox-field">
-              <input type="checkbox" checked={Boolean(authForm.allowRefreshToken)} onChange={event => setAuthForm({ ...authForm, allowRefreshToken: event.target.checked })} />
-              {t('app.allowRefresh')}
-            </label>
-            <label className="checkbox-field">
-              <input type="checkbox" checked={Boolean(authForm.isActive)} onChange={event => setAuthForm({ ...authForm, isActive: event.target.checked })} />
-              {t('f.active')}
-            </label>
+            <div className="guide-field">
+              <label className="checkbox-field">
+                <input type="checkbox" checked={Boolean(authForm.allowRefreshToken)} onChange={event => setAuthForm({ ...authForm, allowRefreshToken: event.target.checked })} />
+                {t('app.allowRefresh')}
+              </label>
+              <p className="guide-hint">{t('app.allowRefreshHint')}</p>
+            </div>
+            <div className="guide-field">
+              <label className="checkbox-field">
+                <input type="checkbox" checked={Boolean(authForm.isActive)} onChange={event => setAuthForm({ ...authForm, isActive: event.target.checked })} />
+                {t('f.active')}
+              </label>
+              <p className="guide-hint">{t('app.ssoActiveHint')}</p>
+            </div>
             <button className="primary-button" type="submit" disabled={busy || !canSso}>{config ? t('app.saveSso') : t('app.createSso')}</button>
+            {!canSso && <p className="guide-issue warn">{t('app.noSsoPermission')}</p>}
           </form>
 
           <div className="sso-uris">
-            <h3>{t('app.redirectUris')}</h3>
+            <div className="detail-heading">
+              <h3>{t('app.redirectUris')}</h3>
+              <span className="step-badge">{t('app.stepOf', { n: 3 })}</span>
+            </div>
+            <p className="section-lede">{t('app.redirectLede')}</p>
             {!config ? (
               <p className="message">{t('app.createSsoFirst')}</p>
             ) : (
               <>
-                <div className="permission-add">
-                  <input value={newUri} onChange={event => setNewUri(event.target.value)} placeholder="https://app.example.com/api/auth/callback" disabled={busy} />
-                  <button className="secondary-button" onClick={addUri} type="button" disabled={busy}>{t('app.addUri')}</button>
+                <div className="guide-hint-block">
+                  <strong>{t('app.redirectRulesTitle')}</strong>
+                  <ul>
+                    <li>{t('app.redirectRule1')}</li>
+                    <li>{t('app.redirectRule2')}</li>
+                    <li>{t('app.redirectRule3')}</li>
+                  </ul>
                 </div>
+                <div className="permission-add">
+                  <input value={newUri} onChange={event => setNewUri(event.target.value)} placeholder={suggestedUri} spellCheck="false" autoComplete="off" disabled={busy} />
+                  <button className="secondary-button" onClick={addUri} type="button" disabled={busy || !newUri.trim()}>{t('app.addUri')}</button>
+                </div>
+                {!newUri.trim() && !uris.some(row => row.redirectUri === suggestedUri) && (
+                  <button className="ghost-button" type="button" onClick={() => setNewUri(suggestedUri)}>{t('app.useSuggestion', { value: suggestedUri })}</button>
+                )}
                 {uris.length === 0 ? (
                   <p className="message">{t('app.noUris')}</p>
                 ) : (
@@ -1558,9 +1972,32 @@ function AppDetail({ accessList, app, onCreated, onSaved, onDeleted }) {
             )}
           </div>
 
+          <div className="handoff-block">
+            <div className="detail-heading">
+              <h3>{t('app.sectionConnect')}</h3>
+              <span className="step-badge">{t('app.stepOf', { n: 4 })}</span>
+            </div>
+            <p className="section-lede">{t('app.connectLede')}</p>
+            <ol className="next-steps-list">
+              <li><strong>{t('app.connect1Title')}</strong><span>{t('app.connect1Detail')}</span></li>
+              <li><strong>{t('app.connect2Title')}</strong><span>{t('app.connect2Detail')}</span></li>
+              <li><strong>{t('app.connect3Title')}</strong><span>{t('app.connect3Detail')}</span></li>
+            </ol>
+            <div className="guide-hint-block">
+              <strong>{t('app.troubleTitle')}</strong>
+              <ul>
+                <li><code>client is not registered</code> — {t('app.trouble1')}</li>
+                <li><code>redirect_uri is not registered</code> — {t('app.trouble2')}</li>
+                <li><code>audience not registered for client</code> — {t('app.trouble3')}</li>
+                <li><code>client secret not valid</code> — {t('app.trouble4')}</li>
+              </ul>
+            </div>
+          </div>
+
           <div className="sso-certs">
             <div className="detail-heading">
               <h3>{t('app.clientCert')}</h3>
+              <span className="step-badge optional">{t('app.optional')}</span>
               <button className="info-button" type="button" onClick={() => setShowCertHelp(value => !value)} title={t('app.certHelpTip')} aria-label={t('app.certHelpAria')}>?</button>
             </div>
             {showCertHelp && (
