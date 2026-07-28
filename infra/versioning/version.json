@@ -4,7 +4,7 @@
   },
   "apps": {
     "myidsan": {
-      "version": "1.21.0"
+      "version": "1.24.0"
     },
     "myiotsan": {
       "version": "0.21.0"
@@ -16,6 +16,6 @@
       "version": "1.44.0"
     }
   },
-  "commit": "84c1c2c608c2594e8a7cc3c9db73b09152996f42",
-  "updatedAt": "2026-07-26T12:45:41Z"
+  "commit": "4c760e866afe5e78bdd9af8b3ce8796373aa1422",
+  "updatedAt": "2026-07-28T06:23:57Z"
 }
