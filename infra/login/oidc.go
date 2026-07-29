@@ -186,7 +186,12 @@ func OidcIdentityFromClaims(key, subject string, claims map[string]any, groupsCl
 	verified, hasVerified := claims["email_verified"].(bool)
 	if email != "" && !skipEmailVerified && hasVerified && !verified {
 		// A present-but-false claim is an explicit "don't trust this address".
-		return nil, errors.New("identity provider reports the account email as unverified")
+		//
+		// The address is named because this error becomes the audit record's Detail, and a
+		// refusal that does not say WHICH account was refused leaves an operator with
+		// nothing to act on. Disclosing it costs nothing: reaching this line requires
+		// having just authenticated at the IdP as that very account.
+		return nil, fmt.Errorf("identity provider reports the account email as unverified: %s", email)
 	}
 
 	name := claimString(claims, "name")

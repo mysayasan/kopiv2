@@ -2,9 +2,10 @@
 
 ## Purpose
 
-`IAuditService` — the append-only security trail: record and list only. Deliberately no
-update or delete, so the trail cannot be edited from inside the product by the same
-superadmin whose actions it records (see `entities/audit_log.go.md`).
+`IAuditService` — the append-only security trail: record, list, and one narrowly-shaped
+retention purge. Deliberately no update and no targeted delete, so the trail cannot be
+edited from inside the product by the same superadmin whose actions it records (see
+`entities/audit_log.go.md`).
 
 ## Responsibilities
 
@@ -36,6 +37,16 @@ superadmin whose actions it records (see `entities/audit_log.go.md`).
   newest-first by `Id` (not `CreatedAt` alone — that field has only second resolution, so
   several events in the same second would otherwise come back in an arbitrary order).
   `limit` defaults/caps to 100/1000.
+- `PurgeOlderThan(ctx, maxRetentionDays, archiveDir)` — the one exception to "no delete",
+  implemented in `services/audit_retention.go.md`. It cannot be reached over the API: it
+  runs only from `startAuditRetention` (`app/audit_retention.go.md`) when
+  `config.audit.retention.enabled` is on. It takes an age, never a selection of rows;
+  archives every row older than the cutoff to a JSON-lines file under `archiveDir` and
+  fsyncs/renames it into place **before** deleting anything from the table, so a run that
+  cannot finish its archive deletes nothing; and it records its own run in the trail
+  (`ActionAuditPurge = "audit.retention_purge"`) naming the cutoff, row count, and archive
+  file, so a reader who finds history starting abruptly can tell a deliberate trim from an
+  empty past.
 
 ## Notes
 

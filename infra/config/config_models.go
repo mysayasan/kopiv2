@@ -208,6 +208,7 @@ type AppConfigModel struct {
 			FrequencyMinutes int  `json:"frequencyMinutes"`
 		} `json:"cleanup"`
 	} `json:"apiLog"`
+	Audit AuditRetentionConfigModel `json:"audit"`
 	Telemetry struct {
 		Enabled    bool `json:"enabled"`
 		Prometheus struct {

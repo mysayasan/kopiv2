@@ -243,6 +243,12 @@ func (m *loginApi) kerberosLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		log.Printf("kerberos login refused: %v", err)
 		m.recordFederatedLogin(login.KerberosProviderKey, kerberosResultLabel(err))
+		// A ticket that was presented and did NOT verify is the interesting Kerberos
+		// event — a forged or replayed token, a realm outside the allow-list, a clock
+		// skew wide enough to matter. It is audited; the no-token case above is not,
+		// because that is just the first half of every SPNEGO handshake and recording it
+		// would bury the real events under one entry per browser request.
+		m.recordKerberosLoginFailure(r, "", err.Error())
 		m.redirectKerberosFailure(w, r, continueTo)
 		return
 	}
@@ -251,11 +257,15 @@ func (m *loginApi) kerberosLogin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("kerberos principal %s@%s not admitted: %v", principal.Username, principal.Realm, err)
 		m.recordFederatedLogin(login.KerberosProviderKey, kerberosResultLabel(err))
+		// The ticket verified but the principal was not admitted (no directory match, a
+		// disabled account). Attribution is available here, so the record names it.
+		m.recordKerberosLoginFailure(r, principal.Username+"@"+principal.Realm, err.Error())
 		m.redirectKerberosFailure(w, r, continueTo)
 		return
 	}
 
 	if err := m.issueSessionCookies(w, r, user); err != nil {
+		m.recordKerberosLoginFailure(r, user.Email, "session issue failed: "+err.Error())
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
@@ -408,6 +418,59 @@ func (m *loginApi) recordLoginFailure(w http.ResponseWriter, r *http.Request, at
 // the post-second-factor completion, where the original request that started the challenge
 // is long gone: labelling a directory user's MFA completion as a "local" sign-in would
 // quietly misreport how they authenticate.
+// recordFederatedLoginFailure audits a redirect-provider sign-in that was refused.
+//
+// It deliberately does NOT go through recordLoginFailure: that helper also advances the
+// failed-login lockout, and a federated callback failure is not password guessing — the
+// credential was checked at the IdP. Counting it would let a misconfigured provider (a
+// clock skew, an unverified email, a rotated client secret) lock legitimate users out of
+// an address they never guessed a password from.
+//
+// attempted may be empty when the failure happened before any identity could be resolved
+// (a bad state, a failed code exchange); the provider key is always recorded, so the event
+// still answers "which login surface was this?".
+func (m *loginApi) recordFederatedLoginFailure(r *http.Request, providerKey, attempted, reason string) {
+	m.recordAudit(r, services.AuditEntry{
+		Action:     services.ActionLoginFailure,
+		ActorEmail: attempted,
+		TargetType: "user",
+		TargetId:   attempted,
+		Outcome:    services.OutcomeDenied,
+		Detail:     reason,
+		Metadata:   map[string]any{"method": federatedMethodForKey(providerKey), "provider": providerKey},
+	})
+}
+
+// recordKerberosLoginFailure audits a SPNEGO sign-in that was refused.
+//
+// Like the redirect-provider equivalent it does NOT advance the failed-login lockout: a
+// ticket is verified cryptographically against the keytab, not guessed, so there is no
+// online guessing to slow down — and a keytab that goes stale after a machine-account
+// password rotation would otherwise lock out every domain user at once.
+func (m *loginApi) recordKerberosLoginFailure(r *http.Request, attempted, reason string) {
+	m.recordAudit(r, services.AuditEntry{
+		Action:     services.ActionLoginFailure,
+		ActorEmail: attempted,
+		TargetType: "user",
+		TargetId:   attempted,
+		Outcome:    services.OutcomeDenied,
+		Detail:     reason,
+		Metadata:   map[string]any{"method": services.MethodKerberos, "provider": login.KerberosProviderKey},
+	})
+}
+
+// federatedMethodForKey classifies a redirect provider by its config key, mirroring
+// loginMethodForUser but usable when no account was resolved.
+func federatedMethodForKey(providerKey string) string {
+	switch strings.ToLower(strings.TrimSpace(providerKey)) {
+	case "", "google", "github":
+		return services.MethodSocial
+	default:
+		// Everything else is a configured generic OIDC entry (login.oidc[].key).
+		return services.MethodOIDC
+	}
+}
+
 func loginMethodForUser(user *entities.UserLogin) string {
 	if user == nil {
 		return services.MethodLocal
@@ -557,20 +620,27 @@ func (m *loginApi) providerCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Every rejection below is audited. A federated sign-in that was refused is exactly as
+	// security-relevant as a refused password — "show me the failed sign-in attempts" must
+	// not silently omit SSO — and these are the events that expose a tampered callback, an
+	// IdP that stopped vouching for an address, or an account someone disabled.
 	identity, err := provider.Callback(r)
 	if err != nil {
+		m.recordFederatedLoginFailure(r, key, "", err.Error())
 		controllers.SendError(w, controllers.ErrStatusUnprocessableEntity, err.Error())
 		return
 	}
 	if strings.TrimSpace(identity.Email) == "" {
 		// e.g. a GitHub account with no public email — without an email there is no
 		// account to show the operator and no valid Email claim to issue.
+		m.recordFederatedLoginFailure(r, key, identity.Subject, provider.DisplayName()+" account email is not available")
 		controllers.SendError(w, controllers.ErrStatusUnprocessableEntity, provider.DisplayName()+" account email is not available")
 		return
 	}
 
 	user, err := m.admitRedirectIdentity(r, identity)
 	if err != nil {
+		m.recordFederatedLoginFailure(r, key, identity.Email, err.Error())
 		switch {
 		case errors.Is(err, services.ErrFederatedIdentityConflict),
 			errors.Is(err, services.ErrInactiveAccount):
@@ -584,6 +654,7 @@ func (m *loginApi) providerCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := m.setOAuthSession(w, r, user, identity); err != nil {
+		m.recordFederatedLoginFailure(r, key, identity.Email, "session issue failed: "+err.Error())
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}

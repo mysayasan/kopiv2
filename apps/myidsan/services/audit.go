@@ -113,15 +113,25 @@ type AuditFilter struct {
 	To   int64
 }
 
-// IAuditService is the append-only security trail. It exposes only recording and reading —
-// deliberately no update or delete, so the trail cannot be edited from inside the product
-// by the same superadmin whose actions it records.
+// IAuditService is the append-only security trail. It exposes recording and reading, and
+// deliberately no update and no targeted delete, so the trail cannot be edited from inside
+// the product by the same superadmin whose actions it records.
+//
+// PurgeOlderThan is the single exception and is shaped so as not to weaken that. It cannot
+// be reached over the API at all — it runs only from a config-file setting that is off by
+// default — it takes an age rather than a selection of rows, it archives to disk before it
+// deletes anything, and it records its own run in the trail. Trimming disk usage is
+// possible; quietly removing a specific inconvenient event is not.
 type IAuditService interface {
 	// Record persists one entry. It is best-effort by design: a write failure is logged
 	// but never returned, so auditing can never block or fail the action being audited.
 	// The alternative — refusing a login because the audit table is full — is worse.
 	Record(ctx context.Context, e AuditEntry)
 	List(ctx context.Context, limit, offset uint64, f AuditFilter) ([]*entities.AuditLog, uint64, error)
+	// PurgeOlderThan archives entries older than maxRetentionDays to a file under
+	// archiveDir and then removes them from the table. It deletes nothing unless the
+	// archive was written and flushed successfully. See audit_retention.go.
+	PurgeOlderThan(ctx context.Context, maxRetentionDays int, archiveDir string) (PurgeResult, error)
 }
 
 type auditService struct {

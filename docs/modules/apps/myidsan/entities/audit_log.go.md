@@ -30,11 +30,18 @@ export/restore.
 
 ## Notes
 
-- The service (`services/audit.go.md`) only ever `INSERT`s: there is no update, delete, or
-  retention-cleanup path, so the trail is append-only. This is deliberately different from
-  `api_log`, a per-request HTTP access log subject to retention deletion that carries no
-  action semantics — "someone called `PUT /api/user-credential` and got a `200`" does not
-  answer "who granted that role, from where, and when".
+- The service (`services/audit.go.md`) only ever `INSERT`s during normal operation: there is
+  no update path and no way to delete a chosen row, so the trail is append-only. The one
+  removal path is age-based retention (`config.audit.retention`, off by default — see
+  `infra/config/audit_retention.go.md`), and it is built not to lose anything: expired rows
+  are archived to a JSON-lines file on disk before they ever leave the table
+  (`services/audit_retention.go.md`'s `PurgeOlderThan`), a run that cannot finish its archive
+  deletes nothing, and the purge records itself here (`ActionAuditPurge =
+  "audit.retention_purge"`) naming the cutoff, row count, and archive file. That is still
+  deliberately stricter than `api_log`, a per-request HTTP access log freely subject to
+  retention deletion that carries no action semantics — "someone called
+  `PUT /api/user-credential` and got a `200`" does not answer "who granted that role, from
+  where, and when".
 - Two fields differ from myseliasan's equivalent audit log, because an identity server
   records events for people who are not (yet) authenticated: the actor may be anonymous
   (above), and `UserAgent` is captured — for login, MFA, and session events, the client is

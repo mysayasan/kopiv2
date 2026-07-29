@@ -41,6 +41,37 @@ Every credential surface in this file now records to `services.IAuditService` (n
   `social`) from the account's `SsoProvider` binding, used where the original request that
   started an MFA challenge is long gone — labelling a directory user's MFA completion as
   `local` would misreport how they authenticate.
+- `recordFederatedLoginFailure(r, providerKey, attempted, reason)` — audits a refused
+  redirect-provider (`login.oidc[]`/Google/GitHub) sign-in, called from all four rejection
+  paths in `providerCallback` (below). Records `services.ActionLoginFailure` /
+  `OutcomeDenied` with `ActorEmail`/`TargetId` set to `attempted` (may be empty — a bad
+  `state` or a failed code exchange fails before any identity is known) and
+  `Metadata: {method: federatedMethodForKey(providerKey), provider: providerKey}`.
+  Deliberately does **not** go through `recordLoginFailure`: that helper also advances the
+  per-IP/per-account `LoginGuard` lockout, and a federated failure is not password guessing
+  — the credential was checked at the IdP, so counting it would let a misconfigured provider
+  (clock skew, an unverified email, a rotated client secret) lock legitimate users out of an
+  address they never guessed a password from. A live bench against a real Keycloak 26 found
+  this gap: every refused SSO sign-in was previously invisible on the audit page while a
+  refused password login was recorded — see `TestFederatedCallbackAuditsARefusedSignIn` in
+  `apis/login_federated_audit_test.go.md`.
+- `federatedMethodForKey(providerKey)` classifies a provider key into `services.MethodSocial`
+  (`""`, `"google"`, `"github"`) or `services.MethodOIDC` (anything else — a configured
+  `login.oidc[].key`), mirroring `loginMethodForUser` but usable before any account has been
+  resolved.
+- `recordKerberosLoginFailure(r, attempted, reason)` — the Kerberos counterpart of
+  `recordFederatedLoginFailure`, called from all three rejection paths in `kerberosLogin`
+  (see "Kerberos SPNEGO SSO" below). Records `services.ActionLoginFailure` / `OutcomeDenied`
+  with `Metadata: {method: services.MethodKerberos, provider: login.KerberosProviderKey}`.
+  Deliberately does **not** advance the `LoginGuard` lockout, for the same reason as the
+  federated case: a ticket is verified cryptographically against the keytab rather than
+  guessed, and a keytab gone stale after a machine-account password rotation would otherwise
+  lock out every domain user at once. A live bench against a real Samba AD DC (realm
+  `KOPI.TEST`) found the same gap here as the federated case: a rejected SPNEGO ticket left
+  no audit record at all — only a Prometheus counter via `recordFederatedLogin` — while a
+  rejected LDAP password login was recorded. The `ErrKerberosNoToken` challenge path
+  deliberately does **not** call this helper — see `TestKerberosChallengeIsNotAudited` in
+  `apis/login_kerberos_audit_test.go.md`.
 - `defaultLogout` records `services.ActionLogout` by reading claims straight off the cookie
   via `m.auth.ClaimsFromRequest(r)` rather than the request context — logout is a public
   route (must work even with an expired session) that never passes through the auth
@@ -71,8 +102,9 @@ body or a dead-end `401` page:
      `WWW-Authenticate: Negotiate`, making a domain-joined browser retry with a
      service ticket.
    - Any other error (rejected ticket, disallowed realm) → logged, recorded via
-     `recordFederatedLogin`/`kerberosResultLabel`, and redirected via
-     `redirectKerberosFailure`.
+     `recordFederatedLogin`/`kerberosResultLabel` **and** audited via
+     `recordKerberosLoginFailure(r, "", err.Error())` (empty `attempted` — no
+     principal was resolved), then redirected via `redirectKerberosFailure`.
 3. `resolveKerberosUser(r, principal)`: if a directory is configured, resolves
    through `services.IDirectoryService.ResolveDirectoryUser` (the directory
    describes the ticket-verified principal — see `services/directory.go.md`);
@@ -80,9 +112,12 @@ body or a dead-end `401` page:
    `login.StandaloneKerberosIdentity(principal)` +
    `IUserLoginService.UpsertFederated` for directory-less installs. Any other
    resolution error (not found, identity conflict, inactive account) is also
-   recorded and redirected.
+   metered and audited (`recordKerberosLoginFailure(r, principal.Username+"@"+
+   principal.Realm, err.Error())`) and redirected.
 4. Success calls the shared `issueSessionCookies` (below) and redirects
-   `302` to the pending `continue` target.
+   `302` to the pending `continue` target. A failure here is also audited
+   (`recordKerberosLoginFailure(r, user.Email, "session issue failed: "+
+   err.Error())`) before the `ErrInternalServerError` response.
 5. `redirectKerberosFailure` always lands on `/api/auth/login?error=sso_failed`
    (preserving `continue`), which `federated_auth.go`'s `loginPage` renders as
    an inline "Single sign-on failed..." message — see
@@ -222,21 +257,39 @@ section when diagnosing a rollout.
 
 ## Federated Callback Flow (`providerCallback`)
 
+Every rejection below is now audited via `recordFederatedLoginFailure` (above) — a refused
+federated sign-in is exactly as security-relevant as a refused password, and these are the
+events that expose a tampered callback, an IdP that stopped vouching for an address, or an
+account someone disabled.
+
 1. Resolve the provider from the registry; 404 if the key is unknown.
-2. `provider.Callback(r)` exchanges the code and returns a normalized `login.Identity`; a provider error becomes `ErrStatusUnprocessableEntity`.
-3. An identity with no email (e.g. a GitHub account with no public email) is rejected with `ErrStatusUnprocessableEntity` before it ever reaches the user service — no email means no account to show and no valid `Email` claim to issue.
+2. `provider.Callback(r)` exchanges the code and returns a normalized `login.Identity`; a
+   provider error is audited (`attempted` empty — no identity resolved yet) and becomes
+   `ErrStatusUnprocessableEntity`.
+3. An identity with no email (e.g. a GitHub account with no public email) is audited
+   (`attempted` = `identity.Subject`, the only available attribution) and rejected with
+   `ErrStatusUnprocessableEntity` before it ever reaches the user service — no email means
+   no account to show and no valid `Email` claim to issue.
 4. `m.admitRedirectIdentity(r, identity)` resolves the identity to a local account:
    through `services.IDirectoryService.AdmitExternalIdentity` (see
    `services/directory.go.md`) when a directory service is wired, so a
    provider-scoped OIDC `groups` claim can seed a role for a still-pending account;
    falls back to the bare `m.userService.UpsertFederated(ctx, *identity)` otherwise
    (tests, minimal wiring) — Google/GitHub identities carry no `Groups` so the
-   directory path is a no-op tail for them regardless. Errors map to responses:
+   directory path is a no-op tail for them regardless. An error here is audited
+   (`attempted` = `identity.Email`) before being mapped to a response:
    `ErrFederatedIdentityConflict`/`ErrInactiveAccount` → `ErrLimitedAccess`;
    `ErrFederatedIdentityInvalid` → `ErrStatusUnprocessableEntity`; anything else →
    `ErrInternalServerError`.
-5. `setOAuthSession` issues the session cookies from the resolved `*entities.UserLogin` and the `*login.Identity` (display name falls back from `identity.Name` to the stored user's first/last name, then to the account email).
+5. `setOAuthSession` issues the session cookies from the resolved `*entities.UserLogin` and
+   the `*login.Identity` (display name falls back from `identity.Name` to the stored user's
+   first/last name, then to the account email). A failure here is audited too
+   (`"session issue failed: " + err.Error()`) before `ErrInternalServerError`.
 6. Redirect to the `continue` target consumed via `consumeOAuthContinue`.
+
+None of the four rejection paths advance the `LoginGuard` failed-login lockout (see "Per-IP
++ Per-Account Login Lockout" below) — deliberately: the credential was checked at the IdP,
+not guessed here.
 
 ## Local Auth Contract
 
