@@ -7,6 +7,7 @@ MariaDB implementation of `IDbCrud` for runtime repository operations.
 ## Key Responsibilities
 
 - Open and validate MariaDB connection in `NewDbCrud`.
+- Apply the connection-pool budget via `dbsql.ApplyPool(db, config.Pool)` right after `sql.Open`, before `Ping` — see `config_models.go` (`dbsql.DbConfigModel.Pool`, `dbsql.ApplyPool`). An absent/zero `db.pool` config yields a bounded pool (25 max open, 5 idle, 30-minute lifetime), not `database/sql`'s unlimited default, so a traffic burst cannot exhaust the connection budget of a database server shared with other applications.
 - Expose transaction lifecycle methods, including request-scoped transaction handles through `BeginScopedTx`.
 - Expose `Ping(ctx)` for readiness checks.
 - Reuse the existing SQL CRUD generation strategy used by shared repositories.

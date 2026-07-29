@@ -28,6 +28,10 @@ func NewDbCrud(config dbsql.DbConfigModel) (dbsql.IDbCrud, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Before the pool is used at all: database/sql defaults to unlimited connections, so
+	// one traffic burst could otherwise consume the whole server's connection budget and
+	// take down every other application sharing that database.
+	dbsql.ApplyPool(db, config.Pool)
 	if err = db.Ping(); err != nil {
 		return nil, err
 	}

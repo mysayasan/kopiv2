@@ -458,7 +458,7 @@ edits-to-`config.json`-plus-restart seam — see [[myseliasan-settings-feature]]
 same safe-subset exclusions (db, server, bootstrap). Add a "send test email" action for
 SMTP; there is no way to verify mail configuration today.
 
-### 4.2 The HA boundary — *S, mostly documentation*
+### 4.2 The HA boundary — *S, mostly documentation* — **DONE**
 
 Sessions are cache-backed, and the shipped config uses the in-process memory cache — so
 **two instances behind a load balancer silently log users out**. Redis is supported and is
@@ -469,13 +469,44 @@ Document it, and make the app log a startup warning when it detects a memory cac
 looks like a multi-instance deployment. The LoginGuard state move in 3.4 is part of the
 same story.
 
-### 4.3 Resource limits — *S*
+**DONE.** Every boot now states the boundary (`warnSharedStateBoundary`): a shared cache
+confirms the app can sit behind a load balancer; a per-process cache says plainly that the
+instance is SINGLE-INSTANCE ONLY, what breaks if it is not (users signed out on every
+switch, all sessions lost on restart), and how to fix it.
 
-- `SetMaxOpenConns` is set only for SQLite. Postgres and MariaDB use Go's default —
-  unlimited — and will exhaust a customer's connection budget under load. Add
-  `MaxOpenConns` / `MaxIdleConns` / `ConnMaxLifetime` config keys.
-- Log files rotate by calendar day with no size cap, compression, or deletion. The existing
-  cleanup prunes database rows, not the `.log` files on disk.
+The *loud* case is deliberately a contradiction rather than a guess. A process cannot tell
+from the inside whether it is one of several replicas, and a warning that fires on healthy
+single-instance installs is one operators learn to ignore — which costs the real one. But an
+operator who configured a **distributed transaction lock** has already said they expect more
+than one instance, since that is the only reason to pay for one. A distributed lock beside a
+per-process session cache is therefore a self-inconsistent configuration, and saying so is a
+fact about the config rather than a hunch about the topology.
+
+### 4.3 Resource limits — *S* — **connection pool DONE; log size cap OUTSTANDING**
+
+- ~~`SetMaxOpenConns` is set only for SQLite. Postgres and MariaDB use Go's default —
+  unlimited — and will exhaust a customer's connection budget under load.~~ **DONE.**
+  `db.pool` (`maxOpenConns` / `maxIdleConns` / `maxLifetimeSeconds` / `maxIdleTimeSeconds`,
+  plus an explicit `unlimited` escape hatch) is applied by both server engines. The
+  defaults matter more than the knobs: an absent block now yields a *bounded* pool (25/5,
+  30-minute lifetime), never Go's unlimited default, so forgetting to configure it can no
+  longer take down every other application sharing that database server.
+
+- **The second bullet was wrong and is corrected here.** It claimed the existing cleanup
+  "prunes database rows, not the `.log` files on disk". It does prune the files:
+  `startRuntimeLogCleanupScheduler` → `runtimeLogService.DeleteOlderThan` →
+  `fileLogger.DeleteOlderThan`, which removes dated `.log` files, and
+  `deploy/dist/myidsan-config.json` ships with `logging.cleanup.enabled: true` at 90 days.
+  (The in-repo dev config has it off, which is what made this look absent.)
+
+  What is genuinely missing is a **size cap**: rotation is purely by calendar day, so a
+  single chatty or hostile day can fill the disk long before the 90-day retention is
+  relevant. Deliberately not implemented in a hurry, because it has a trap — retention
+  finds files via `logFiles()` and `dateValueFromPath()`, so a size-based rotation that
+  introduces a new filename shape (`…-2026-07-29.1.log`) without teaching those two
+  functions to recognise it would leave the extra files **undeletable forever**, causing
+  exactly the disk exhaustion the cap was added to prevent. Any implementation must change
+  the parser and the writer together, with a test that a sequenced file is still pruned.
 
 ### 4.4 IdP metrics — *S*
 

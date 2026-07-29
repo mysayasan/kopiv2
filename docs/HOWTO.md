@@ -392,6 +392,8 @@ Use Redis transaction locking for multi-instance deployments:
 }
 ```
 
+A distributed `lockProvider` only works as a true multi-instance deployment if `cache.provider` is also pointed at that same Redis — sessions live in the cache, so a per-process cache behind a load balancer signs users out whenever they are routed to a different instance. Setting `lockProvider: redis` with a per-process cache logs a `WARNING` at startup for exactly this reason; matching the two is the fix. Also raise `db.pool.maxOpenConns` (default 25 per instance) for Postgres/MariaDB when adding instances, since each one opens its own pool against the same database server's connection budget.
+
 For single-process development only, `lockProvider` can be `memory` or `inmemory`.
 
 Queue file-storage work through the durable backend worker:
