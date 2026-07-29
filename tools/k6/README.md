@@ -156,21 +156,14 @@ cd tools/k6
 ./run.ps1 -App myiotsan -Script load             # myiotsan ramping load
 ./run.ps1 -App myidsan                           # myidsan smoke
 ./run.ps1 -App myidsan -Script load              # myidsan ramping load (read ceiling)
-./run.ps1 -App myidsan -Script stress -MaxVus 100  # stress, MODE defaults to read
+./run.ps1 -App myidsan -Script stress -MaxVus 100  # stress, read ceiling (default)
+./run.ps1 -App myidsan -Script stress -Mode login  # stress, LOGIN-storm ceiling (bcrypt)
 ./run.ps1 -Script load -NoBackend                # backend already up — skip the up step
 ```
 
-> `MODE=login` (the login-storm ceiling, see **Auth** above) is not yet one of
-> the wrapper's named parameters — `run.ps1`/`run.sh` only forward
-> `TARGET_VUS`/`MAX_VUS`/`RAMP`/`HOLD` to the container. Until that's added,
-> drive it straight through `docker compose` from `tools/k6/` (after
-> `run.ps1 -App myidsan -NoBackend` or `docker compose up -d influxdb grafana`
-> has started the backend once):
-> ```powershell
-> $env:BASE_URL='https://host.docker.internal:3001'; $env:AUTH_USER='admin'; $env:AUTH_PASS='<password>'
-> docker compose run --rm -e BASE_URL -e AUTH_USER -e AUTH_PASS -e MODE=login `
->   k6 run --summary-export=/results/myidsan-stress-login.summary.json /scripts/myidsan-stress.js
-> ```
+> `-Mode login` is the one worth running against an identity provider — see **Auth**
+> above. Turn the failed-login lockout OFF on the throwaway first, or the run measures
+> the lockout rather than bcrypt.
 
 Linux/Mac/WSL/Git-Bash:
 ```bash
@@ -181,17 +174,11 @@ cd tools/k6
 ./run.sh --app myseliasan stress
 ./run.sh --app myiotsan         # myiotsan smoke (HTTP console only)
 ./run.sh --app myidsan          # myidsan smoke
-./run.sh --app myidsan stress   # stress, MODE defaults to read
-# env overrides: BASE_URL=… AUTH_USER=… TARGET_VUS=100 HOLD=2m ./run.sh load
+./run.sh --app myidsan stress   # stress, read ceiling (default)
+MODE=login ./run.sh --app myidsan stress   # stress, LOGIN-storm ceiling (bcrypt)
+# env overrides: BASE_URL=… AUTH_USER=… TARGET_VUS=100 HOLD=2m MODE=login ./run.sh load
 ```
 
-> Same `MODE=login` caveat as above — `run.sh` doesn't forward it yet, so run
-> it directly:
-> ```bash
-> BASE_URL=https://host.docker.internal:3001 AUTH_USER=admin AUTH_PASS='<password>' \
->   docker compose run --rm -e BASE_URL -e AUTH_USER -e AUTH_PASS -e MODE=login \
->   k6 run --summary-export=/results/myidsan-stress-login.summary.json /scripts/myidsan-stress.js
-> ```
 
 Then open **http://localhost:3300** → dashboard **"k6 Load Testing Results"**
 (anonymous admin, no login). The dashboard updates live during a run: VUs,

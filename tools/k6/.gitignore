@@ -2,6 +2,7 @@
 config/target.env
 config/myseliasan.target.env
 config/myiotsan.target.env
+config/myidsan.target.env
 
 # Generated run artifacts
 results/*

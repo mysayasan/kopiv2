@@ -19,7 +19,9 @@
 # myiotsan caveat: these scripts load the HTTP CONSOLE only. Its real throughput
 # risk is MQTT telemetry into SQLite, which k6 does not speak.
 #
-# Env overrides: APP, BASE_URL, AUTH_USER, AUTH_PASS, TARGET_VUS, MAX_VUS, RAMP, HOLD
+# Env overrides: APP, BASE_URL, AUTH_USER, AUTH_PASS, TARGET_VUS, MAX_VUS, RAMP, HOLD,
+#                MODE (myidsan-stress.js only: read|login -- 'login' pays a full bcrypt per
+#                iteration to measure sign-in throughput, the ceiling that matters for an IdP)
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -78,7 +80,7 @@ echo "Report : results/${SCRIPTFILE}-${STAMP}.summary.json"
 echo
 
 K6ENV=()
-for v in TARGET_VUS MAX_VUS RAMP HOLD; do
+for v in TARGET_VUS MAX_VUS RAMP HOLD MODE; do
   [[ -n "${!v:-}" ]] && K6ENV+=("-e" "$v=${!v}")
 done
 

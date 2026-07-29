@@ -21,6 +21,10 @@
   ./run.ps1 -Script load -TargetVus 100 -Hold 2m
 
 .EXAMPLE
+  # An identity provider's real ceiling: a login storm, one full bcrypt per iteration.
+  ./run.ps1 -App myidsan -Script stress -Mode login
+
+.EXAMPLE
   ./run.ps1 -Script stress -BaseUrl https://host.docker.internal:3000 -User admin -Pass 'secret'
 
 .EXAMPLE
@@ -48,6 +52,11 @@ param(
   [int]$MaxVus,
   [string]$Ramp,
   [string]$Hold,
+  # myidsan-stress.js only: 'read' (default) measures the read path, 'login' pays a full
+  # bcrypt per iteration to measure sign-in throughput -- the ceiling that actually matters
+  # for an identity provider, and one an order of magnitude below the read ceiling.
+  [ValidateSet('read', 'login')]
+  [string]$Mode,
   [switch]$NoBackend,   # skip bringing up Grafana/InfluxDB (already up)
   [switch]$KeepOpen     # print the Grafana URL and leave everything running
 )
@@ -141,6 +150,7 @@ if ($TargetVus) { $k6env += @('-e', "TARGET_VUS=$TargetVus") }
 if ($MaxVus) { $k6env += @('-e', "MAX_VUS=$MaxVus") }
 if ($Ramp) { $k6env += @('-e', "RAMP=$Ramp") }
 if ($Hold) { $k6env += @('-e', "HOLD=$Hold") }
+if ($Mode) { $k6env += @('-e', "MODE=$Mode") }
 
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $summary = "/results/$scriptFile-$stamp.summary.json"
