@@ -508,7 +508,7 @@ fact about the config rather than a hunch about the topology.
   exactly the disk exhaustion the cap was added to prevent. Any implementation must change
   the parser and the writer together, with a test that a sequenced file is still pruned.
 
-### 4.4 IdP metrics — *S*
+### 4.4 IdP metrics — *S* — **DONE**
 
 Two app-specific metrics today (`myidsan_federated_login_total`,
 `myidsan_mfa_challenge_total`), and myidsan is absent from the metrics catalogue in
@@ -516,6 +516,35 @@ Two app-specific metrics today (`myidsan_federated_login_total`,
 instrument what fails silently: active sessions, token issuance and exchange failures,
 authorization-code redemption failures, upstream LDAP/OIDC latency and error rate, SSO CA
 expiry as a gauge. Then add the catalogue section.
+
+**DONE.** Four metrics added and myidsan is now in the `docs/HOWTO.md` catalogue alongside
+the other three apps. The selection follows [[tier3-metrics]] — instrument what fails
+*silently* — which for an IdP means the failures somebody ELSE experiences:
+
+| Metric | Why it exists |
+|---|---|
+| `myidsan_token_exchange_total{outcome}` | Every non-success is a **relying app that just failed to sign a user in**. The app shows its own user its own error; nothing here raises anything an operator would notice. Nine closed-set outcomes, so `secret_invalid` (a rotated secret) is alertable separately from the ordinary `code_invalid` race. |
+| `myidsan_audit_write_failures_total` | The audit service swallows write errors **by design** — auditing must never fail the action being audited — so a trail that has stopped recording has no other symptom. Alert on any increase. |
+| `myidsan_audit_retention_purged_total` | Makes trail shrinkage attributable: rows vanishing without this moving did not come from retention. |
+| `myidsan_sessions_active` | Capacity, and confirming a revocation actually took effect. |
+
+Verified live, not just unit-tested: driving two different token failures against a running
+instance produced `myidsan_token_exchange_total{outcome="client_unknown"} 1` and
+`{outcome="unsupported_grant"} 1` on a real `/metrics` scrape, with the help text attached.
+
+Two things worth recording about the session gauge. It is **polled** rather than incremented
+at the call sites, because sessions also end without anyone calling `Revoke` (a cache entry
+simply expires), so a hand-maintained counter would drift from the truth and never recover.
+And `CountActive` filters on a boolean column while the query builder renders bool filter
+values as quoted literals — if the engine stored them as `0`/`1` the filter would match
+nothing and the gauge would read a permanent zero that looks exactly like "no sessions". A
+fake repo cannot answer that (it compares Go values, so it agrees with whatever was assumed),
+so it is verified against a real sqlite database instead.
+
+**Not done from this list:** upstream LDAP/OIDC latency and error rate, and SSO CA expiry as
+a gauge. Both are worth having — a CA that expires takes the whole fleet down at once with
+no warning, which is the definition of a silent failure — but they need instrumentation
+inside the directory client and the CA service rather than at a handler boundary.
 
 ### 4.5 ZAP scan and k6 load profile — *port, M*
 

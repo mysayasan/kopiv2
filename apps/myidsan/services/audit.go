@@ -9,6 +9,7 @@ import (
 	"github.com/mysayasan/kopiv2/apps/myidsan/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	"github.com/mysayasan/kopiv2/infra/telemetry"
 )
 
 // Action names. Kept as constants rather than inline strings so the set stays greppable
@@ -137,6 +138,17 @@ type IAuditService interface {
 type auditService struct {
 	repo dbsql.IGenericRepo[entities.AuditLog]
 	logf func(format string, args ...any)
+	// metrics is optional. It exists for one counter, and that counter exists because
+	// this service swallows its own write errors on purpose: auditing must never fail
+	// the action being audited, which means a broken trail has no symptom at all.
+	metrics telemetry.Metrics
+}
+
+// WithMetrics attaches a recorder so audit write failures become observable. Optional and
+// chainable so existing construction sites are unaffected.
+func (s *auditService) WithMetrics(m telemetry.Metrics) IAuditService {
+	s.metrics = m
+	return s
 }
 
 // NewAuditService builds the audit service over its own table. logf receives write-failure
@@ -174,8 +186,15 @@ func (s *auditService) Record(ctx context.Context, e AuditEntry) {
 		UserAgent:  truncate(e.UserAgent, 512),
 		CreatedAt:  time.Now().Unix(),
 	}
-	if _, err := s.repo.Create(ctx, "", row); err != nil && s.logf != nil {
-		s.logf("audit write failed for %q on %s/%s: %v", e.Action, e.TargetType, e.TargetId, err)
+	if _, err := s.repo.Create(ctx, "", row); err != nil {
+		// Counted before logging: the log line is what an operator reads if they already
+		// suspect a problem, the counter is what tells them there IS one.
+		if s.metrics != nil {
+			s.metrics.Inc(MetricAuditWriteFailuresTotal, nil)
+		}
+		if s.logf != nil {
+			s.logf("audit write failed for %q on %s/%s: %v", e.Action, e.TargetType, e.TargetId, err)
+		}
 	}
 }
 

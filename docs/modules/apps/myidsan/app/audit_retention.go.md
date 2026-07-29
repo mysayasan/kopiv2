@@ -28,6 +28,21 @@ Wires the audit-log retention purge (`services/audit_retention.go.md`) into the 
     A run that actually deleted rows (`res.Deleted > 0`) logs a one-line summary
     (archived/deleted counts, cutoff, archive path).
 
+- `startSessionGauge(deps apphost.Dependencies, sessions services.ISessionService)`, called
+  from `RegisterAppRoutes` right after `services.NewSessionService` is constructed:
+  - No-ops when `deps.Scheduler`, `deps.Metrics`, or `sessions` is nil.
+  - Registers `deps.Scheduler.StartPeriodic("myidsan-session-gauge", sessionGaugeInterval,
+    ...)` (`sessionGaugeInterval = time.Minute`), whose task calls
+    `services.PublishActiveSessions(taskCtx, sessions, deps.Metrics)` — see
+    `services/session.go.md`, `services/metrics.go.md`.
+  - **Polled, not incremented at call sites**: a session also ends without anyone calling
+    `Revoke` (a cache entry simply expires on its own), so a hand-maintained counter would
+    drift from the truth and never recover, while a periodic read of the index is at worst
+    one interval stale. The one-minute period is a deliberate compromise — often enough
+    that a revocation shows up on a dashboard while an operator is still looking at it,
+    rare enough that it costs one trivial `COUNT` per minute rather than being a load
+    source of its own.
+
 ## Notes
 
 - Config resolution lives in `infra/config/audit_retention.go.md`
@@ -35,3 +50,7 @@ Wires the audit-log retention purge (`services/audit_retention.go.md`) into the 
   resolved `AuditRetentionEffective` and the `clamped` flag.
 - See `docs/MYIDSAN_PRODUCTIZATION_PLAN.md` Phase 4 and `apps/myidsan/README.md`'s Audit log
   bullet for the operator-facing description.
+- Despite the filename, this file also hosts `startSessionGauge` — the session-gauge
+  scheduler task, unrelated to audit retention — because it is small, is wired from the
+  same block of `RegisterAppRoutes`, and shares the "periodic `deps.Scheduler` task,
+  no-op unless its dependencies are present" shape with `startAuditRetention`.

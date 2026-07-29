@@ -9,6 +9,7 @@ import (
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	"github.com/mysayasan/kopiv2/infra/cache"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	"github.com/mysayasan/kopiv2/infra/telemetry"
 )
 
 // Session administration.
@@ -63,6 +64,9 @@ type ISessionService interface {
 	// RevokeAllForUser ends every session belonging to a user except optionally one
 	// (used by "sign out everywhere else"). Returns how many were ended.
 	RevokeAllForUser(ctx context.Context, userId int64, exceptSessionId string) (int, error)
+	// CountActive returns how many sessions the index currently marks live. Backs the
+	// myidsan_sessions_active gauge; see PublishActiveSessions.
+	CountActive(ctx context.Context) (uint64, error)
 }
 
 type sessionService struct {
@@ -164,6 +168,40 @@ func (s *sessionService) isLive(ctx context.Context, row *sharedentities.UserSes
 		return true
 	}
 	return found
+}
+
+// CountActive counts rows the index still marks active.
+//
+// The INDEX, not the cache: the cache remains the authority on whether any individual
+// session is valid, but it cannot be enumerated, so a gauge has to come from the table.
+// The two can differ briefly — a cache entry that expired on its own leaves a row still
+// marked active until something reconciles it — which makes this a capacity and
+// anomaly signal rather than an exact count, and it is documented that way.
+func (s *sessionService) CountActive(ctx context.Context) (uint64, error) {
+	_, total, err := s.repo.Get(ctx, "", 1, 0, []sqldataenums.Filter{
+		{FieldName: "IsActive", Compare: sqldataenums.Equal, Value: true},
+	}, nil)
+	if err != nil {
+		if isNotFoundErr(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return total, nil
+}
+
+// PublishActiveSessions sets the gauge. Separate from CountActive so the scheduler task
+// stays a one-liner and the count is testable without a metrics recorder.
+func PublishActiveSessions(ctx context.Context, sessions ISessionService, m telemetry.Metrics) error {
+	if sessions == nil || m == nil {
+		return nil
+	}
+	total, err := sessions.CountActive(ctx)
+	if err != nil {
+		return err
+	}
+	m.Set(MetricSessionsActive, nil, float64(total))
+	return nil
 }
 
 func (s *sessionService) Revoke(ctx context.Context, sessionId string) (bool, error) {

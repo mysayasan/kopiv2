@@ -10,6 +10,26 @@ import (
 	"github.com/mysayasan/kopiv2/infra/config"
 )
 
+// startSessionGauge refreshes the active-session gauge on a timer.
+//
+// Polled rather than incremented at the call sites because sessions also end without
+// anyone calling Revoke — a cache entry simply expires — so a counter maintained by hand
+// would drift away from the truth and never come back. A periodic read of the index cannot
+// drift; it is at worst one interval stale, which is fine for a capacity and anomaly gauge.
+func startSessionGauge(deps apphost.Dependencies, sessions services.ISessionService) {
+	if deps.Scheduler == nil || deps.Metrics == nil || sessions == nil {
+		return
+	}
+	deps.Scheduler.StartPeriodic("myidsan-session-gauge", sessionGaugeInterval, func(taskCtx context.Context) error {
+		return services.PublishActiveSessions(taskCtx, sessions, deps.Metrics)
+	})
+}
+
+// sessionGaugeInterval is a compromise: often enough that a revocation shows up on a
+// dashboard while an operator is still looking at it, rare enough that it is one trivial
+// COUNT per minute rather than a load source of its own.
+const sessionGaugeInterval = time.Minute
+
 // startAuditRetention schedules the age-based trim of the security trail. It is a no-op
 // unless an operator has switched it on in config.json, because unbounded growth costs disk
 // while missing security history costs an investigation.

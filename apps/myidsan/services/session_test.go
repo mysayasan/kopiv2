@@ -32,6 +32,15 @@ func (f *fakeSessionRepo) Get(_ context.Context, _ string, limit uint64, offset 
 				if row.SessionId != filter.Value.(string) {
 					keep = false
 				}
+			case "IsActive":
+				// Honoured because CountActive filters on it. A fake that silently
+				// ignores a filter reports every row as matching, which makes a
+				// count assertion pass for the wrong reason or fail for a reason
+				// that has nothing to do with the code under test.
+				want, ok := filter.Value.(bool)
+				if ok && row.IsActive != want {
+					keep = false
+				}
 			}
 		}
 		if keep {
