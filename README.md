@@ -325,7 +325,7 @@ Rate limiting is controlled by `rateLimit` in config:
 - `enabled`: enables sliding-window limits for `/api` routes.
 - `endpointCacheTtlSeconds`: caches endpoint access-tier metadata.
 - `defaultWindowSeconds`: fallback window for tier configs.
-- `trustedProxies`: IPs/CIDRs of reverse proxies allowed to supply the client's real address via `X-Forwarded-For`/`X-Real-IP`. Empty (default) trusts none — the direct TCP peer is used, so a directly-exposed instance can't have its rate-limit bucket (or the shared login-lockout keying) spoofed by a forged header. Set this to your proxy's address(es) when deploying behind a reverse proxy.
+- `trustedProxies`: IPs/CIDRs of reverse proxies allowed to supply the client's real address via `X-Forwarded-For`/`X-Real-IP`. Empty (default) trusts none — the direct TCP peer is used, so a directly-exposed instance can't have its rate-limit bucket (or the shared login-lockout keying) spoofed by a forged header. Set this to your proxy's address(es) when deploying behind a reverse proxy. See `deploy/reverse-proxy/` for sample nginx/Caddy configs and the full `X-Forwarded-*` trust model (written for MyIDSan, but the rules apply to any of the four apps).
 - `devOnly`, `authOnly`, `public`: per-tier `enabled`, `requests`, and `windowSeconds`.
 - Redis cache is recommended for production multi-instance deployments so counters are shared.
 

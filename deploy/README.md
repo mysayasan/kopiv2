@@ -202,6 +202,12 @@ For a **trusted** setup, pick one:
   a forged header), but behind a real proxy it needs to be told which peer to
   trust.
 
+  See [`reverse-proxy/`](reverse-proxy/) for more thorough sample configs and a
+  fuller explanation of the `X-Forwarded-*` trust model. Those samples are
+  written for MyIDSan, so their redirect-URI-exactness and Kerberos
+  connection-affinity notes don't apply here, but the header-trust and
+  `trustedProxies` rules are identical for MyMataSan.
+
 ---
 
 # Running MyMataSan under a process supervisor

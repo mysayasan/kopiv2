@@ -1,0 +1,45 @@
+# Caddy in front of MyIDSan — TLS terminated at the proxy, plain HTTP upstream.
+#
+# Pair this with `server.enableTLS: false` and `server.nonTlsPorts: [3001]` in
+# config.json, and bind the app to loopback so nothing reaches it except Caddy.
+#
+# Caddy obtains and renews the certificate itself and redirects HTTP to HTTPS with
+# no configuration, which is most of why the file is this short. Read
+# deploy/reverse-proxy/README.md before adapting it — the redirect-URI and
+# X-Forwarded-* notes there apply identically to both proxies.
+#
+# Air-gapped installs cannot reach an ACME CA. Use `tls /path/cert.pem /path/key.pem`
+# (or `tls internal`) instead of automatic HTTPS — see the README.
+
+sso.example.com {
+	# An IdP is exactly the host you never want reached over cleartext. Add
+	# includeSubDomains/preload only once every subdomain is HTTPS.
+	header Strict-Transport-Security "max-age=31536000"
+
+	# A sign-in page has no business being framed by another origin. The app also
+	# sends this; here it is defence in depth at the edge.
+	header X-Frame-Options "SAMEORIGIN"
+
+	# Sign-in posts are small. A large body limit on an auth endpoint is a cheap way
+	# to make the app do work. Raise it only if you use profile picture uploads.
+	request_body {
+		max_size 4MB
+	}
+
+	reverse_proxy 127.0.0.1:3001 {
+		# Caddy sets X-Forwarded-For / -Proto / -Host itself and, by default,
+		# REPLACES any value the client sent. Do not add `trusted_proxies` unless
+		# Caddy is itself behind another proxy — that directive makes Caddy start
+		# TRUSTING inbound X-Forwarded-* from the listed hops, which is the opposite
+		# of what you want at the outermost edge.
+		header_up Host {host}
+
+		# Kerberos SPNEGO only: the Negotiate handshake is per-CONNECTION, so it
+		# breaks if requests from different clients share one upstream connection.
+		# If you set kerberos.enabled, uncomment this.
+		# transport http {
+		# 	versions 1.1
+		# 	keepalive off
+		# }
+	}
+}

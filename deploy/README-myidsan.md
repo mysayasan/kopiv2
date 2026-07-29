@@ -35,6 +35,15 @@ Because relying apps redirect users' **browsers** to MyIDSan, the URL you reach 
 must be reachable by those browsers (not just by the apps). Use a real hostname in
 production, not `localhost`.
 
+**Behind a reverse proxy?** See [`reverse-proxy/`](reverse-proxy/) for working nginx and
+Caddy configs and the rules that matter for an identity provider specifically: registered
+redirect URIs are matched **exactly**, so the proxy must forward the hostname the *client*
+used (`$host`, never `$proxy_host`) or every relying app breaks at the callback; and
+`X-Forwarded-*` must be overwritten at the edge, with `rateLimit.trustedProxies` set to
+the proxy address so the audit trail and the failed-login lockout key on the real client
+rather than on the proxy. Kerberos SPNEGO additionally needs upstream keep-alive disabled,
+because the handshake authenticates a connection rather than a request.
+
 **First-run login.** A strong one-time superadmin password is generated per install,
 printed to the log, and saved to `INITIAL_ADMIN_LOGIN.txt` in the data dir. You must
 change it on first sign-in, after which a short **setup wizard** walks you through

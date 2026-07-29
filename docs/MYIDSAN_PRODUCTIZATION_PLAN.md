@@ -530,13 +530,40 @@ rate limiter during a scan, the full ZAP plan OOMs Docker, swagger paths need
 `{id:[0-9]+}`, k6 resets the cookie jar per iteration, and a must-change-password state
 blocks reads.
 
-### 4.6 Reverse-proxy guidance — *S*
+### 4.6 Reverse-proxy guidance — *S* — **DONE (docs); one code fix deferred, see below**
 
 One sentence exists today. Nearly every real deployment terminates TLS upstream. Ship
 sample nginx and Caddy configs, document the `X-Forwarded-*` trust model, and — critically
 for an IdP — explain that the public issuer URL must match what redirect URIs are
-registered against. Note the inconsistency to fix: the rate limiter has a `TrustedProxies`
-allow-list, but `X-Forwarded-Proto` is trusted unconditionally in the auth middleware.
+registered against.
+
+**DONE.** `deploy/reverse-proxy/` now holds working `nginx-myidsan.conf`, a
+`Caddyfile.myidsan`, and a README covering: forwarding the *client's* hostname (`$host`,
+never `$proxy_host`) because registered redirect URIs are matched exactly and a drifted
+public URL fails every relying app at the **callback**, after the user has already signed
+in; overwriting rather than appending `X-Forwarded-*`; setting `rateLimit.trustedProxies`
+so the audit trail and the lockout key on the real client instead of counting the whole
+building as one address; disabling upstream keep-alive when Kerberos is on, since SPNEGO
+authenticates a **connection** rather than a request; and an air-gap note, because Caddy's
+automatic HTTPS needs an ACME CA it cannot reach.
+
+**The flagged inconsistency is real — verified, not assumed.** `IsSecureRequest` in
+`domain/utils/middlewares/auth.go` honours `X-Forwarded-Proto: https` from any caller
+despite a comment claiming it requires a trusted proxy, while `ClientIP` does consult the
+allow-list.
+
+Assessed before acting on it, so it is neither ignored nor over-read: the check is
+`r.TLS != nil || XFP == https`, so the header can only make a request look *more* secure,
+never less — a genuine HTTPS request cannot be downgraded. It selects the cookie name and
+`Secure` flag, so a caller asserting it over cleartext makes the server set `Secure`
+cookies their own browser then refuses to store. **That is a self-inflicted denial of
+service, not privilege escalation or session fixation.**
+
+Deferred rather than rushed: the fix threads the trusted-proxy allow-list through five
+call sites across the shared middleware, myidsan and myseliasan, and it decides cookie
+naming — getting it wrong breaks authentication suite-wide, which is far worse than the
+availability issue it closes. Mitigated meanwhile by the sample configs, which strip the
+header at the edge.
 
 ### 4.7 Audit log retention — **DONE**
 
