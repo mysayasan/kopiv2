@@ -696,6 +696,12 @@ What you need before enabling it:
   - The browser must reach myidsan via its **FQDN**, not a bare IP address — SPNEGO
     matches the URL host against the SPN's hostname, so an IP in the address bar
     never negotiates.
+- **If myidsan sits behind a reverse proxy, disable upstream keep-alive.** SPNEGO
+  authenticates a **connection**, not a request; a proxy that multiplexes requests from
+  different clients onto one pooled upstream connection can attribute one client's
+  completed handshake to another's request, and sign-in fails intermittently in a way
+  that looks random. See `deploy/reverse-proxy/README.md` and the commented-out
+  keep-alive directives in the sample nginx/Caddy configs there.
 
 Failure modes (each surfaces in the myidsan server log and as a distinct
 `myidsan_federated_login_total{provider="kerberos",result=...}` label — see

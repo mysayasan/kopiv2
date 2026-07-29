@@ -28,7 +28,10 @@ myseliasan.exe          # Windows
 Then open <https://localhost:3002>. It serves HTTPS immediately using a **self-signed**
 certificate generated on first boot, so the browser shows a one-time trust warning. For
 a trusted chain, drop your own cert/key at `tls.certPath` / `tls.keyPath`, or front the
-app with a TLS-terminating reverse proxy and switch to `server.nonTlsPorts`.
+app with a TLS-terminating reverse proxy and switch to `server.nonTlsPorts`. See
+[`reverse-proxy/`](reverse-proxy/) (written for MyIDSan) for working nginx/Caddy configs
+and the `X-Forwarded-*`/`rateLimit.trustedProxies` trust model, which applies here
+unchanged.
 
 **First-run login.** A strong one-time superadmin password is generated per install,
 printed to the log, and saved to `INITIAL_ADMIN_LOGIN.txt` in the data dir. You must

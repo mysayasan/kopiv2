@@ -184,7 +184,7 @@ TLS config contract (`tls` in app config):
 - `certPath`: certificate path used when any HTTPS listener is enabled.
 - `keyPath`: private-key path used when any HTTPS listener is enabled.
 - Relative TLS paths resolve from the writable data directory (see home/data directory split above).
-- If an HTTPS listener is configured and either `certPath` or `keyPath` does not exist, `apphost` generates a long-lived (10-year) self-signed ECDSA P-256 keypair covering `localhost`, every configured `server.hostnames` entry, and every local IP address, so a fresh install serves HTTPS immediately without manual cert setup. Existing files are left untouched (bring your own cert, or front the app with a TLS-terminating reverse proxy — see `deploy/README.md`).
+- If an HTTPS listener is configured and either `certPath` or `keyPath` does not exist, `apphost` generates a long-lived (10-year) self-signed ECDSA P-256 keypair covering `localhost`, every configured `server.hostnames` entry, and every local IP address, so a fresh install serves HTTPS immediately without manual cert setup. Existing files are left untouched (bring your own cert, or front the app with a TLS-terminating reverse proxy — see `deploy/README.md`, or `deploy/reverse-proxy/` for sample configs and the `X-Forwarded-*`/`trustedProxies` trust model).
 
 Database config contract (`db` in app config):
 
@@ -359,7 +359,7 @@ Rate limit config contract (`rateLimit` in app config):
 - `enabled`: enables sliding-window API rate limiting.
 - `endpointCacheTtlSeconds`: caches endpoint tier metadata to avoid DB reads on every request.
 - `defaultWindowSeconds`: fallback window for tiers that omit `windowSeconds`.
-- `trustedProxies`: IPs/CIDRs of reverse proxies permitted to declare the client's real address via `X-Forwarded-For`/`X-Real-IP`. `X-Forwarded-For`/`X-Real-IP` are honored only when the direct TCP peer matches an entry here; otherwise the peer address is used as-is. Defaults to empty (trust none), so a directly internet-exposed instance can't be tricked into bucketing by a forged header.
+- `trustedProxies`: IPs/CIDRs of reverse proxies permitted to declare the client's real address via `X-Forwarded-For`/`X-Real-IP`. `X-Forwarded-For`/`X-Real-IP` are honored only when the direct TCP peer matches an entry here; otherwise the peer address is used as-is. Defaults to empty (trust none), so a directly internet-exposed instance can't be tricked into bucketing by a forged header. See `deploy/reverse-proxy/README.md` for the full trust model, including the known gap where `middlewares.IsSecureRequest` does not yet consult this allow-list (cookie `Secure`-flag selection only; a genuine HTTPS request cannot be downgraded by it).
 - `devOnly`, `authOnly`, `public`: per-tier `enabled`, `requests`, and `windowSeconds`.
 
 Transaction config contract (`transaction` in app config):
