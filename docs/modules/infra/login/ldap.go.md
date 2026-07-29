@@ -91,7 +91,15 @@ for the shared `LoginGuard` per-IP lockout counters.
   single-static-binary rule.
 - Covered by `ldap_test.go`: filter-escaping/injection, empty/NUL-password refusal
   (no network I/O), `LdapSettings.Validate`/`withDefaults`, and `decodeObjectGUID`'s
-  mixed-endian decode against a known byte layout. The bind/search paths themselves
-  are exercised through `apps/myidsan/services/directory_test.go` and live-boot
-  testing against a fake host; they are not yet verified against a real
-  AD/Samba directory.
+  mixed-endian decode against a known byte layout.
+- **Live-tested** (`ldap_integration_test.go`, 9 tests, gated on `RUN_LDAP_IT=1` so it
+  never runs in the default `go test`/CI pass) against a real OpenLDAP 2.4 server over
+  both implicit TLS (LDAPS/636) and StartTLS/389: `LdapAuthenticate` (correct bind,
+  wrong password, empty password, unknown user), `memberOf` group retrieval,
+  `LdapLookup` (bind-free) resolving to the same `Identity.Subject` as an authenticated
+  bind for the same account, `LdapTest`'s admin probe, and CA-pinning fail-closed
+  behavior. The file itself carries the container recipe (bind DN, base DN, LDIF
+  fixtures) so the bench is repeatable. Not yet exercised against Active Directory or
+  Samba AD specifically, where `objectGUID` (rather than `entryUUID`) is the subject
+  attribute — the bind/search paths against those are still only proven through
+  `apps/myidsan/services/directory_test.go` and live-boot testing against a fake host.

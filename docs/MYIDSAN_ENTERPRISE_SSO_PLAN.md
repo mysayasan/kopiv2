@@ -1,8 +1,12 @@
 # myidsan Enterprise SSO Plan
 
-**Status: Phases 0-3 built (stacked PRs #114 → #115 → #116 → Phase 3). LDAP,
-Kerberos and OIDC all await live bench tests (real AD/Samba realm, real IdP e.g.
-Keycloak). Phase 4 (SAML) stays parked pending concrete demand.**
+**Status: Phases 0-3 built (stacked PRs #114 → #115 → #116 → Phase 3). LDAP is now
+live-bench-tested against a real OpenLDAP 2.4 server (LDAPS + StartTLS, repeatable via
+`infra/login/ldap_integration_test.go` under `RUN_LDAP_IT=1` — see
+`docs/modules/infra/login/ldap.go.md`), but not yet against Active Directory or Samba AD
+specifically (`objectGUID` vs `entryUUID` subject resolution). Kerberos and OIDC still
+await a live bench (real AD/Samba realm, real IdP e.g. Keycloak) — do not claim otherwise.
+Phase 4 (SAML) stays parked pending concrete demand.**
 
 Goal: extend myidsan beyond Google/GitHub with intranet-friendly enterprise identity —
 LDAP / Active Directory, Kerberos SPNEGO, and generic OIDC — so the suite works as a

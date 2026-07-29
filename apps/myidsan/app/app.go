@@ -131,6 +131,10 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{AppCode: "myidsan", Title: "Setup Wizard", Description: "first-run setup state and completion", Path: "/api/setup", AccessTier: apiaccessenums.DevOnly},
 		{AppCode: "myidsan", Title: "User Group", Description: "user group module access", Path: "/api/user-group", Metadata: menuMetadata(menuItem{Enabled: true, Id: "groups", Label: "Groups", Group: "Identity", Order: 20, Summary: "Organize identity ownership and hierarchy roots.", Tone: "teal"}), AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{AppCode: "myidsan", Title: "Password Reset Requests", Description: "account-recovery request queue", Path: "/api/password-reset", Metadata: menuMetadata(menuItem{Enabled: true, Id: "resetRequests", Label: "Reset requests", Group: "Identity", Order: 15, Summary: "Review and resolve forgotten-password requests from local accounts.", Tone: "amber"}), AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
+		// Superadmin-only in the API regardless of matrix grants (see apis/backup.go):
+		// an export is the whole identity store in one file and a restore rewrites every
+		// account. SeedRbac is deliberately omitted so it is never delegated by default.
+		{AppCode: "myidsan", Title: "Backup & Restore", Description: "encrypted identity-store export and disaster recovery", Path: "/api/backup", Metadata: menuMetadata(menuItem{Enabled: true, Id: "backup", Label: "Backup & restore", Group: "System", Order: 10, Summary: "Export an encrypted copy of users, roles and SSO clients — or rebuild this server from one.", Tone: "amber"}), AccessTier: apiaccessenums.DevOnly},
 		{AppCode: "myidsan", Title: "User Credential", Description: "user login and role access", Path: "/api/user-credential", Metadata: menuMetadata(
 			menuItem{Enabled: true, Id: "users", Label: "Users", Group: "Identity", Order: 10, Summary: "Maintain credentials, profile details, and role assignment.", Tone: "blue"},
 			menuItem{Enabled: true, Id: "roles", Label: "Roles", Group: "Identity", Order: 30, Summary: "Create group-scoped roles and parent role chains.", Tone: "violet"},
@@ -230,7 +234,8 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	// First-run setup wizard completion flag (shared runtime-setting row).
 	runtimeSettingRepo := dbsql.NewGenericRepo[sharedentities.RuntimeSetting](deps.Db)
-	apis.NewSetupApi(api, *deps.Auth, deps.Access, services.NewSetupStateService(runtimeSettingRepo))
+	setupStateService := services.NewSetupStateService(runtimeSettingRepo)
+	apis.NewSetupApi(api, *deps.Auth, deps.Access, setupStateService)
 
 	// Directory (LDAP/AD) login: the bind password is encrypted at rest, so the
 	// secret cipher must resolve before the service exists. Recovery-pending fails
@@ -324,6 +329,35 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// SSO certificate authority: issues relying-app client certificates for mTLS.
 	ssoCaRepo := dbsql.NewGenericRepo[myidsanentities.SsoCa](deps.Db)
 	apis.NewSsoCertApi(api, *deps.Auth, deps.Access, services.NewSsoCaService(ssoCaRepo), appAuthConfigRepo)
+
+	// Backup & restore. myidsan holds every user, role, SSO client, the SSO CA private
+	// key, all TOTP secrets and the LDAP bind password, so losing this database locks the
+	// whole suite out at once — and the previous recovery story was "copy the files
+	// yourself". The service takes secretCipher because the sealed columns are unsealed
+	// on export and re-sealed with the destination host's key on restore; carrying the
+	// sealed bytes would restore cleanly and then fail every second-factor check.
+	// deps.Cache is passed so a restore can drop every live session.
+	avatarRepo := dbsql.NewGenericRepo[myidsanentities.UserAvatar](deps.Db)
+	backupService := services.NewBackupService(
+		dbsql.NewGenericRepo[sharedentities.AccessRole](deps.Db),
+		dbsql.NewGenericRepo[sharedentities.AccessRolePermission](deps.Db),
+		userLoginRepo,
+		userGroupRepo,
+		avatarRepo,
+		mfaFactorRepo,
+		mfaRecoveryRepo,
+		appRegistryRepo,
+		appAuthConfigRepo,
+		appRedirectUriRepo,
+		directoryConfigRepo,
+		groupMappingRepo,
+		ssoCaRepo,
+		secretCipher,
+		deps.Cache,
+		setupStateService,
+		moduleAppVersion(m),
+	)
+	apis.NewBackupApi(api, *deps.Auth, deps.Access, backupService)
 	// Self-service + admin MFA management surface. The login-time challenge is wired
 	// into the login/federated-auth APIs above via the same mfaService.
 	apis.NewMfaApi(api, *deps.Auth, deps.Access, mfaService, userLoginService, deps.Metrics)
@@ -332,7 +366,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewPasswordResetApi(api, *deps.Auth, deps.Access, passwordResetService)
 	// Profile avatars: self-service (own, auth-only) + admin-by-id (superadmin) for
 	// the Users management page.
-	apis.NewProfileApi(api, *deps.Auth, deps.Access, dbsql.NewGenericRepo[myidsanentities.UserAvatar](deps.Db))
+	apis.NewProfileApi(api, *deps.Auth, deps.Access, avatarRepo)
 	// Superadmin-handoff status drives the "disable the stock superadmin" banner. The
 	// stock account's email is the configured localAuth.username.
 	apis.NewIdentityStatusApi(api, *deps.Auth, deps.Access, userLoginRepo, deps.AccessRoles, deps.Config.LocalAuth.Username)
@@ -379,7 +413,7 @@ func openSecretCipher(deps apphost.Dependencies) (*atrest.Cipher, error) {
 
 // loginGuardConfig maps the shared LoginSecurity config block onto the login guard.
 func loginGuardConfig(deps apphost.Dependencies) sharedapis.LoginGuardConfig {
-	ls := deps.Config.LoginSecurity
+	ls := deps.Config.LoginSecurity.Effective()
 	return sharedapis.LoginGuardConfig{
 		Enabled:     ls.Enabled,
 		MaxAttempts: ls.MaxAttempts,
@@ -412,13 +446,20 @@ func (r *userLoginResolver) ResolveAccessUser(ctx context.Context, userId int64)
 	return &sharedservices.AccessPrincipal{RoleId: u.UserRoleId, Disabled: !u.IsActive, MustChangePassword: u.MustChangePassword}, nil
 }
 
-func (m *module) APIDocs() apidocs.SpecConfig {
-	docVersion := "1.0.0"
+// moduleAppVersion reports this app's released version from the shared version manifest,
+// falling back to a placeholder when the manifest is unreadable. It is stamped into a
+// backup manifest so a restore can warn about a version mismatch.
+func moduleAppVersion(m *module) string {
 	if manifest, err := versioning.LoadDefault(); err == nil {
 		if info, err := manifest.InfoForApp(m.Name()); err == nil {
-			docVersion = info.AppVersion
+			return info.AppVersion
 		}
 	}
+	return "1.0.0"
+}
+
+func (m *module) APIDocs() apidocs.SpecConfig {
+	docVersion := moduleAppVersion(m)
 
 	return apidocs.SpecConfig{
 		Metadata: apidocs.Metadata{

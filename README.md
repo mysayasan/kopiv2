@@ -603,6 +603,7 @@ Runtime serves OpenAPI and Swagger UI for FE integration:
 
 - `GET /swagger` -> Swagger UI
 - `GET /swagger/openapi.json` -> OpenAPI 3.0 JSON
+- `GET /swagger/assets/{file}` -> Swagger UI's own JS/CSS, served from an embedded, vendored copy (`swagger-ui-dist@5.32.11`) — `/swagger` no longer reaches out to a CDN, so it renders on an air-gapped/egress-filtered install and no longer needs a `script-src`/`style-src` CSP exception for a third-party host.
 
 Notes:
 

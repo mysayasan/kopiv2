@@ -78,6 +78,12 @@ apps/*/secret/
 secret/atrest.key
 secret/atrest.key.init
 *.atrestkey
+
+# TLS keypairs. apps/*/secret/ was already ignored but apps/*/certs/ was not, so
+# apps/myidsan/certs/key.pem sat in the repo as a tracked private key. Nothing needs it
+# committed: ensureSelfSignedCert (infra/apphost/run.go) generates a keypair on first boot
+# whenever a TLS listener is configured and the files are missing.
+apps/*/certs/
 *.atrestkey.applied
 
 # GitHub CLI local machine state (device-id etc.); not project data

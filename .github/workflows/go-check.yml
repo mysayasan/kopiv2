@@ -1,0 +1,93 @@
+# Build, vet and test the Go tree on every PR and every push to a long-lived branch.
+#
+# Until this existed, NO workflow in the repo ran `go test`, `go vet` or a linter — the
+# only Go command in CI was `go build` inside the four release workflows, which run on a
+# tag rather than on a PR. So the ~60 Go test files in the tree were only ever run by hand,
+# and a release could ship code that had not been compiled outside a developer's machine.
+#
+# That gap was not theoretical: TestApplySensitiveConfigRequiresOAuthSecretsWhenProviderConfigured
+# had been asserting the OLD fail-closed behaviour for a half-configured OAuth provider long
+# after the code deliberately changed to disable-with-a-warning, and nothing caught it.
+#
+# govulncheck is advisory (continue-on-error) so a freshly published advisory in a
+# transitive dependency reports without blocking an unrelated PR. Promote it to blocking
+# once the tree is known clean and someone owns triaging it.
+name: Go check
+
+on:
+  pull_request:
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/go-check.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/go-check.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: go-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-vet-test:
+    name: build / vet / test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      # Compiles every package including the four cmd/ entrypoints. CGO stays off to match
+      # the release builds — the suite ships a single static binary per app and a cgo-only
+      # dependency must fail here, not at release time.
+      - name: Build
+        env:
+          CGO_ENABLED: '0'
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./... -count=1
+
+  vulncheck:
+    name: govulncheck (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Dependabot covers the npm frontends only, so the Go dependency tree has had no
+      # automated advisory scanning at all — including the crypto-adjacent auth path
+      # (gokrb5, go-ldap, go-oidc, golang-jwt, x/crypto).
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...

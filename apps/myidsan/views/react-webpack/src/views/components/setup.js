@@ -35,6 +35,16 @@ export default function SetupWizard({ isSuperadmin, onDone, onToast }) {
   const [adminForm, setAdminForm] = useState({ firstName: '', lastName: '', email: '', password: '' })
   const [adminDone, setAdminDone] = useState(false)
 
+  // Restore-instead-of-configure, offered on the welcome step. Someone rebuilding a lost
+  // server should not be walked through registering apps and creating an admin by hand —
+  // that is exactly the state a backup already captures. A successful restore marks setup
+  // complete server-side, so the wizard does not reappear.
+  const [showRestore, setShowRestore] = useState(false)
+  const [restoreFile, setRestoreFile] = useState(null)
+  const [restorePass, setRestorePass] = useState('')
+  const [restoreManifest, setRestoreManifest] = useState(null)
+  const [restoreDone, setRestoreDone] = useState(false)
+
   useEffect(() => {
     apiRequest('/api/access-rbac/roles')
       .then(payload => setRoles(resultOf(payload) || []))
@@ -44,6 +54,43 @@ export default function SetupWizard({ isSuperadmin, onDone, onToast }) {
   const step = STEP_KEYS[stepIndex]
   const next = () => { setError(''); setStepIndex(index => Math.min(index + 1, STEP_KEYS.length - 1)) }
   const back = () => { setError(''); setStepIndex(index => Math.max(index - 1, 0)) }
+
+  const pickRestoreFile = async event => {
+    const picked = event.target.files && event.target.files[0]
+    setRestoreManifest(null); setError('')
+    if (!picked) { setRestoreFile(null); return }
+    const bytes = new Uint8Array(await picked.arrayBuffer())
+    let binary = ''
+    for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i])
+    setRestoreFile({ name: picked.name, base64: btoa(binary) })
+  }
+
+  const previewRestore = async () => {
+    if (!restoreFile) return
+    setBusy(true); setError('')
+    try {
+      const res = await apiRequest('/api/backup/preview', {
+        method: 'POST',
+        body: { dataBase64: restoreFile.base64, passphrase: restorePass }
+      })
+      setRestoreManifest(resultOf(res))
+    } catch (err) { setError(err.message) } finally { setBusy(false) }
+  }
+
+  const applyRestore = async () => {
+    if (!restoreFile || !restoreManifest) return
+    setBusy(true); setError('')
+    try {
+      await apiRequest('/api/backup/restore', {
+        method: 'POST',
+        body: { dataBase64: restoreFile.base64, passphrase: restorePass, mode: 'replace' }
+      })
+      // The restore invalidated every session, this one included, and already marked
+      // setup complete. Tell the operator to sign in with an account from the backup
+      // rather than dropping them into a shell that will 401 on its next request.
+      setRestoreDone(true)
+    } catch (err) { setError(err.message) } finally { setBusy(false) }
+  }
 
   const finish = async () => {
     setBusy(true)
@@ -89,9 +136,6 @@ export default function SetupWizard({ isSuperadmin, onDone, onToast }) {
           authCodeTtlSeconds: 300,
           accessTokenTtlSeconds: 900,
           sessionTtlSeconds: 259200,
-          refreshTokenTtlSeconds: 0,
-          requirePkce: false,
-          allowRefreshToken: false,
           isActive: true
         }
       }))
@@ -202,15 +246,82 @@ export default function SetupWizard({ isSuperadmin, onDone, onToast }) {
 
         {error && <div className="message danger">{error}</div>}
 
-        {step === 'welcome' && (
+        {step === 'welcome' && restoreDone && (
+          <div className="setup-step">
+            <h2>{t('setup.restoreDoneTitle')}</h2>
+            <div className="message success">{t('setup.restoreDoneBody')}</div>
+            <div className="form-actions">
+              <button className="primary-button" type="button" onClick={() => window.location.reload()}>
+                {t('setup.restoreSignIn')}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === 'welcome' && !restoreDone && (
           <div className="setup-step">
             <h2>{t('setup.welcomeTitle')}</h2>
             <p>{t('setup.welcomeBody')}</p>
             <p className="cert-hint">{t('setup.welcomePassword')}</p>
-            <div className="form-actions">
-              <button className="primary-button" type="button" onClick={next}>{t('setup.start')}</button>
-              <button className="secondary-button" type="button" onClick={finish} disabled={busy}>{t('setup.skipAll')}</button>
-            </div>
+
+            {!showRestore ? (
+              <>
+                <div className="form-actions">
+                  <button className="primary-button" type="button" onClick={next}>{t('setup.start')}</button>
+                  <button className="secondary-button" type="button" onClick={finish} disabled={busy}>{t('setup.skipAll')}</button>
+                </div>
+                {/* Offered here rather than as a wizard step: someone rebuilding a lost
+                    server should not walk through configuring it by hand first. */}
+                <p className="cert-hint">
+                  {t('setup.restorePrompt')}{' '}
+                  <button className="link-button" type="button" onClick={() => setShowRestore(true)}>
+                    {t('setup.restoreLink')}
+                  </button>
+                </p>
+              </>
+            ) : (
+              <div className="setup-restore">
+                <h3>{t('setup.restoreTitle')}</h3>
+                <p>{t('setup.restoreBody')}</p>
+                <label>
+                  {t('setup.restoreFile')}
+                  <input type="file" accept=".idbackup" onChange={pickRestoreFile} disabled={busy} />
+                </label>
+                {restoreFile && (
+                  <label>
+                    {t('setup.restorePassphrase')}
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      value={restorePass}
+                      onChange={event => setRestorePass(event.target.value)}
+                    />
+                  </label>
+                )}
+                {restoreManifest && (
+                  <div className="message success">
+                    <div>{t('setup.restoreFound', { version: restoreManifest.appVersion || '?' })}</div>
+                    <div className="cert-hint">
+                      {(restoreManifest.sections || []).map(s => t(`backup.section.${s}`)).join(', ')}
+                    </div>
+                  </div>
+                )}
+                <div className="form-actions">
+                  {!restoreManifest ? (
+                    <button className="primary-button" type="button" onClick={previewRestore} disabled={busy || !restoreFile || !restorePass}>
+                      {t('setup.restoreInspect')}
+                    </button>
+                  ) : (
+                    <button className="primary-button" type="button" onClick={applyRestore} disabled={busy}>
+                      {t('setup.restoreApply')}
+                    </button>
+                  )}
+                  <button className="secondary-button" type="button" onClick={() => { setShowRestore(false); setRestoreManifest(null) }} disabled={busy}>
+                    {t('setup.back')}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

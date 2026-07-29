@@ -202,7 +202,10 @@ func TestAuthenticateDefault_BcryptWrongPassword(t *testing.T) {
 	}
 }
 
-func TestAuthenticateDefault_ThirdPartyOnlyAccount(t *testing.T) {
+// A password login against a federated-only account must fail GENERICALLY. Returning
+// ErrThirdPartyOnlyAccount here confirmed both that the username existed and that it was
+// federated, to a caller holding no credential at all.
+func TestAuthenticateDefault_ThirdPartyOnlyAccountIsNotAnOracle(t *testing.T) {
 	repo := newFakeUserLoginRepo()
 	repo.usersByEmail["oauth-user"] = &entities.UserLogin{
 		Id:       12,
@@ -213,8 +216,58 @@ func TestAuthenticateDefault_ThirdPartyOnlyAccount(t *testing.T) {
 
 	svc := NewUserLoginService(repo, nil)
 	_, err := svc.AuthenticateDefault(context.Background(), "oauth-user", "anything")
-	if !errors.Is(err, ErrThirdPartyOnlyAccount) {
-		t.Fatalf("expected ErrThirdPartyOnlyAccount, got %v", err)
+	if !errors.Is(err, ErrInvalidCredential) {
+		t.Fatalf("expected the generic ErrInvalidCredential, got %v", err)
+	}
+	if errors.Is(err, ErrThirdPartyOnlyAccount) {
+		t.Fatal("federated-only status must not be disclosed pre-authentication")
+	}
+}
+
+// A disabled account with the WRONG password must be indistinguishable from any other
+// failure — otherwise the endpoint still answers "does this username exist?".
+func TestAuthenticateDefault_InactiveAccountWrongPasswordStaysGeneric(t *testing.T) {
+	hashed, err := hashPassword("correct-horse")
+	if err != nil {
+		t.Fatalf("hashPassword: %v", err)
+	}
+	repo := newFakeUserLoginRepo()
+	repo.usersByEmail["disabled"] = &entities.UserLogin{
+		Id:       13,
+		Email:    "disabled",
+		Userpwd:  hashed,
+		IsActive: false,
+	}
+
+	svc := NewUserLoginService(repo, nil)
+	_, err = svc.AuthenticateDefault(context.Background(), "disabled", "wrong-password")
+	if !errors.Is(err, ErrInvalidCredential) {
+		t.Fatalf("expected the generic ErrInvalidCredential, got %v", err)
+	}
+	if errors.Is(err, ErrInactiveAccount) {
+		t.Fatal("disabled status leaked before the password was verified")
+	}
+}
+
+// Once the password IS proven, telling the user their account is disabled costs nothing
+// and is the far better experience than a blanket "invalid username or password".
+func TestAuthenticateDefault_InactiveAccountCorrectPasswordDisclosesState(t *testing.T) {
+	hashed, err := hashPassword("correct-horse")
+	if err != nil {
+		t.Fatalf("hashPassword: %v", err)
+	}
+	repo := newFakeUserLoginRepo()
+	repo.usersByEmail["disabled"] = &entities.UserLogin{
+		Id:       13,
+		Email:    "disabled",
+		Userpwd:  hashed,
+		IsActive: false,
+	}
+
+	svc := NewUserLoginService(repo, nil)
+	_, err = svc.AuthenticateDefault(context.Background(), "disabled", "correct-horse")
+	if !errors.Is(err, ErrInactiveAccount) {
+		t.Fatalf("expected ErrInactiveAccount once the password is proven, got %v", err)
 	}
 }
 

@@ -1,0 +1,630 @@
+# MyIDSan — Productization Plan
+
+Status: **Phase 0 done except the Kerberos/OIDC benches; Phase 1 DONE** (written
+2026-07-29, against myidsan v1.25.0; Phases 0 and 1 executed the same day on
+`feat/myidsan-phase0-hygiene`).
+
+Phase 1 outcome: `.idbackup` export/restore shipped with a superadmin-only API, an admin
+page, and a "restore from a backup instead" path on the first-run wizard. Verified
+end-to-end against a live instance: enrol MFA → export → destroy the database **and** the
+at-rest key → fresh install → restore → sign in with the pre-disaster password and redeem a
+TOTP code generated from the pre-disaster secret. The design point that makes that work is
+that sealed columns are unsealed on export and re-sealed with the destination's key on
+restore (§1.1 below), so the at-rest key never travels and the archive is never inert.
+
+Phase 0 outcome, in brief — full detail in each sub-phase below:
+
+| Item | State |
+|---|---|
+| 0.1 LDAP live bench | **DONE** — 9 integration tests green against OpenLDAP over LDAPS *and* StartTLS (`infra/login/ldap_integration_test.go`) |
+| 0.1 Kerberos / OIDC benches | **OUTSTANDING** — the only Phase 0 work left |
+| 0.2 Dead PKCE/refresh controls | **DONE** — removed from form, DTO and admin API; columns kept and annotated |
+| 0.3 Config + git hygiene | **DONE** — lockout now defaults ON in code, 8 private keys untracked, secrets scrubbed, `sso.internalToken` placeholder guard |
+| 0.4 CI gate | **DONE** — `.github/workflows/go-check.yml`; found and fixed a stale test that had been failing unnoticed |
+| 0.5 Swagger air-gap | **DONE** — vendored swagger-ui-dist@5.32.11, no inline script, live-verified |
+| 0.6 Correctness fixes | **DONE** — toast kinds, bulk-delete confirm, backslash open redirect, account-existence oracle |
+
+Goal: take myidsan from "the SSO hub the kopiv2 suite happens to include" to something a
+customer's IT department will accept, pay for, and operate without you in the room.
+
+This plan is the sequenced form of the sell-readiness audit. The audit's finding is that
+the *engineering* is ahead of the *product*: authentication depth (LDAP/AD, Kerberos
+SPNEGO, generic OIDC, TOTP with a pre-session challenge), packaging, and first-run are
+genuinely strong, while the gaps are the boring checkable things a buyer asks for first —
+backup, audit, session control, and standards conformance.
+
+Two audit findings were checked against source and **withdrawn** — do not re-plan them:
+
+- *"Login lockout is off by default."* True only for `apps/myidsan/config.json`, which
+  developers run via `go run . -app myidsan`. Every shipping channel installs
+  `deploy/dist/myidsan-config.json`, which enables lockout, ships a strict CSP, and leaves
+  all secrets blank for first-run generation. Phase 0.3 reconciles the two files; there is
+  no customer-facing exposure.
+- *"Relying apps share myidsan's HMAC signing secret."* They do not. An RP calls the token
+  endpoint over TLS on the back channel, reads identity out of the JSON body
+  (`apps/myseliasan/apis/auth.go:334-341`), and mints its own session with its own
+  independently generated `jwt.secret`. The trust boundary is sound.
+
+---
+
+## The fork in the road
+
+**Phase 5 is the largest phase in this plan and it is conditional.** Everything else is
+worth doing under either answer to this question:
+
+> Are you selling **the kopiv2 suite** (with myidsan as its identity layer), or selling
+> **myidsan as a standalone identity product**?
+
+If the suite: myidsan only ever talks to mymatasan, myseliasan, and myiotsan, the bespoke
+authorization-code flow is adequate, and Phase 5 is optional polish. Phases 0–4 and 6–7
+still all apply, and you reach market considerably sooner.
+
+If standalone: Phase 5 is not optional. myidsan currently serves no
+`/.well-known/openid-configuration`, no JWKS, no `id_token`, no userinfo, no scopes and no
+consent screen, and implements only the `authorization_code` grant
+(`apps/myidsan/apis/federated_auth.go:741`). No third-party software — Grafana, GitLab,
+Nextcloud, Proxmox, a customer's own Keycloak-ready app — can integrate. "SSO hub" sets an
+expectation that fails at the first integration attempt.
+
+Decide this before starting Phase 5, not during it. Nothing in Phases 0–4 forecloses
+either answer.
+
+---
+
+## Non-goals
+
+- **SAML.** Stays parked, per [MYIDSAN_ENTERPRISE_SSO_PLAN.md](./MYIDSAN_ENTERPRISE_SSO_PLAN.md).
+  Revisit on concrete demand only; the XML-dsig attack surface is not worth speculative work.
+- **Multi-tenancy.** One deployment per customer. This is a defensible on-prem product
+  decision, but it rules out SaaS and MSP hosting and is currently undocumented — Phase 7
+  writes it down as a stated boundary rather than leaving buyers to discover it.
+- **Phone-home telemetry.** Contradicts the air-gap positioning, which is one of the
+  product's few real moats. Phase 7's licensing is an offline signed file for the same reason.
+- **SCIM provisioning.** Deferred on the SAML pattern — real, but wait for a customer to ask.
+  Note the consequence in the meantime: a user deleted in AD keeps their myidsan account and
+  role, they merely stop being able to authenticate.
+- **PAM, RADIUS, trusted-header proxy auth.** Unchanged from the enterprise SSO plan.
+
+---
+
+## Phase map
+
+| Phase | Name | Gate it clears | Blocking? |
+|---|---|---|---|
+| 0 | Truth &amp; hygiene | Before you demo to anyone who might pay | Yes |
+| 1 | Survivability | Before first install you don't control | Yes |
+| 2 | Accountability | Before a security review | Yes |
+| 3 | Policy | Before a security review | Yes |
+| 4 | Operability | Before first paid deployment | Yes |
+| 5 | OIDC conformance | Only if selling standalone | Conditional |
+| 6 | End-user product | Before charging per-seat | Recommended |
+| 7 | Commercial | Before invoicing | Yes |
+
+Sizing below is relative (S / M / L) and distinguishes **port** (the pattern exists in a
+sibling app and is being adapted) from **net-new**. Ports are dramatically cheaper and are
+deliberately front-loaded.
+
+---
+
+## Phase 0 — Truth &amp; hygiene
+
+**Everything here makes an existing claim true, or deletes the claim.** Nothing is a new
+feature. This is the cheapest phase and the one that most changes how the product reads.
+
+### 0.1 Live-bench LDAP, Kerberos, and OIDC — *net-new, M* ← **do this first**
+
+`apps/myidsan/README.md:11-13` says of each of the three federation paths, in the shipped
+documentation, *"Not yet live-tested against a real directory / KDC / IdP."* These are the
+enterprise features being sold. Until this runs they are unverified claims.
+
+The harness already exists: [[myidsan-sso-bench-recipe]] — throwaway Samba AD DC plus
+Keycloak, with LDAP StartTLS and LDAPS both previously verified. Known gotchas recorded
+there: `samba-dsdb-modules`, a named volume for xattrs, the cert needs an IP SAN, and
+bench the real SUT rather than `ldapsearch`.
+
+Assert per path: bind succeeds; group → role mapping resolves; `Authoritative` on re-applies
+the mapping every login and off seeds pending accounts only; a directory user and an LDAP
+password login for the same person land on **one** account; Kerberos principal resolution
+reaches that same account; a bad keytab degrades to "not offered" rather than failing boot.
+
+This is first because it can invalidate later phases. Everything downstream assumes these
+work.
+
+### 0.2 Delete the dead controls — *S*
+
+`RequirePKCE`, `AllowRefreshToken`, and `RefreshTokenTTLSeconds` are stored on
+`AppAuthConfig`, round-tripped through the admin API, and rendered as live checkboxes and
+an input on the app registration form. **No code path reads any of them** —
+`code_challenge` is never parsed at authorize, and the token endpoint rejects
+`grant_type=refresh_token`.
+
+Hint text was added saying so, which is not enough: a checkbox that persists a value reads
+as functional, and an operator who ticks "Require PKCE" will believe PKCE is enforced.
+
+Remove all three from the form, the DTO, and the admin API. Leave the columns in place
+(dropping them is a migration for no benefit) with a comment pointing at Phase 5.3/5.4,
+which reintroduces both properly. See [[myidsan-app-registration-guide]].
+
+### 0.3 Reconcile the two configs and clean the repo — *S*
+
+`apps/myidsan/config.json` and `config.dev.json` are **tracked in git** and contain a real
+`jwt.secret`, a Redis password, a DB password, `admin123`, a live Google `client_id`, and
+`"internalToken": "change-me-in-production"`. `apps/myidsan/certs/key.pem` is tracked too.
+`apps/*/secret/` is correctly gitignored; `certs/` is not.
+
+Customers never receive these — they get `deploy/dist/myidsan-config.json` — but they are
+public the moment the repo is, and the dev config is a bad example someone will copy.
+
+- Add `loginSecurity` and `securityHeaders` to the dev config so it matches what ships.
+  Better still, default `LoginSecurity.Enabled` to true when the block is absent
+  (`apps/myidsan/app/app.go:384` currently passes `ls.Enabled` straight through with no
+  default, and `domain/shared/apis/login_guard.go:89` makes a disabled guard a silent no-op).
+- Gitignore `apps/*/certs/` and both config files; ship `config.example.json`.
+- Rotate everything that leaked.
+- Add a weak-value guard for `sso.internalToken` mirroring the one `jwt.secret` already has
+  in `infra/apphost/run.go:839-966`, and make its comparison constant-time
+  (`apps/myidsan/apis/sso.go:81-85` uses `==`).
+
+### 0.4 Turn on CI — *S*
+
+**No workflow in `.github/workflows/` runs `go test`, `go vet`, or a linter.** The only Go
+command in CI is `go build`, inside the four release workflows. myidsan has 10 test files
+and the shared modules have more; none of them run automatically.
+
+Add a PR gate: `go build ./...`, `go vet ./...`, `go test ./...`. Add `govulncheck` while
+you are there — Dependabot currently covers the npm frontends only, and the auth path
+carries `gokrb5 v8.4.4` (last released 2022) and `skip2/go-qrcode` (2020).
+
+### 0.5 Self-host Swagger UI — *S*
+
+`infra/apidocs/openapi.go:1141,1149` load Swagger UI's CSS and JS from
+`cdn.jsdelivr.net`. This breaks on any air-gapped install **and** violates the strict CSP
+myidsan itself ships (`script-src 'self'`), so `/swagger` renders blank in both cases.
+`/swagger/openapi.json` is unaffected.
+
+Vendor the `swagger-ui-dist` assets and serve them from the app. This is suite-wide — the
+fix lands in shared `infra/apidocs` and benefits all four apps. Air-gap operation is one of
+your genuine differentiators; shipping a CDN reference undercuts the pitch.
+
+### 0.6 Correctness fixes worth doing while you're here — *S*
+
+| Fix | Where |
+|---|---|
+| Toast `kind: 'danger'` matches no CSS class (only `success`/`error` exist), so 8 error paths render as neutral grey | `App.js` Profile / Reset requests / avatar; `frontend/shared/src/styles/toast.css:38-39` |
+| Bulk delete fires with no confirmation on Groups, Roles, Endpoints — while single-app delete *does* prompt | `CrudPage.removeSelected` |
+| `cleanContinuePath` rejects `//evil.com` but accepts `/\evil.com`, which browsers normalise into a protocol-relative redirect | `apis/federated_auth.go:933-945` |
+| Login returns "account is inactive" and "managed by third-party login" pre-authentication — a positive account-existence oracle | `services/user_login.go:98-104` |
+| `INITIAL_ADMIN_LOGIN.txt` is left in the app dir after the password is changed | `app/firstrun.go` |
+
+**Phase 0 exit:** the three federation paths are verified working, nothing in the UI claims
+a capability that doesn't exist, CI runs tests, and `/swagger` works offline.
+
+---
+
+## Phase 1 — Survivability
+
+### 1.1 Backup and restore — *port from mymatasan, M*
+
+There is no backup API, no scheduled dump, no restore path, and no documented DR procedure.
+`deploy/README-myidsan.md:109-117` tells the operator to copy the database and
+`secret/atrest.key` themselves, as a pair.
+
+That database holds every user, every role, every registered SSO client, the SSO CA private
+key, all TOTP secrets, and the LDAP bind password. Losing it locks every employee out of
+every app in the suite at once. This is the first question an IT buyer asks.
+
+The pattern is already built and tested in `apps/mymatasan/apis/backup.go`,
+`apps/mymatasan/services/backup.go`, and `backup_test.go` — a portable passphrase-encrypted
+archive with FK remapping on restore and secrets carried via shadow fields, per
+[[backup-restore-plan]]. Port it.
+
+myidsan-specific care:
+
+- **The at-rest key must travel with the backup or the backup is inert.** TOTP secrets and
+  the LDAP bind password are sealed by `infra/atrest`; a database-only restore yields
+  accounts whose second factor cannot be verified. Either seal the key into the archive
+  under the backup passphrase, or refuse to produce a backup without an explicit
+  acknowledgement — silently producing an unrestorable archive is the worst option.
+- The SSO CA private key lives in the DB, so a restore re-establishes issued client certs.
+- Restoring onto a live instance must invalidate cached sessions, or restored users inherit
+  pre-restore sessions.
+
+### 1.2 First-run restore — *S*
+
+Offer "restore from backup" in the setup wizard, mirroring mymatasan. A customer whose host
+died needs this path to exist before they have a working superadmin.
+
+### 1.3 Document the DR procedure — *S*
+
+Backup cadence, what the archive contains, how to verify one restores, and the RTO a
+customer should expect. A backup feature nobody trusts is not a backup feature.
+
+**Phase 1 exit:** a customer can lose the host and come back.
+
+---
+
+## Phase 2 — Accountability
+
+Audit and session control are one phase because they answer one question — *who did what,
+and can I stop them* — and a reviewer will ask both together.
+
+### 2.1 Security audit log — *port from myseliasan, M*
+
+myidsan has no audit entity, service, or API. myseliasan has all three
+(`apps/myseliasan/entities/audit_log.go`, `services/audit.go`, `apis/audit.go`). Today
+myidsan's security-relevant events are free-text `log.Printf` lines in a rolling file, with
+no structure, no UI, no export, and cleanup disabled by default in the shipped config.
+
+Events that must be recorded: login success and failure (with method — local / LDAP /
+Kerberos / OIDC / social), lockout engaged, MFA enrol / disable / admin reset, recovery-code
+consumption, role assignment and role change, user create / disable / delete, app
+registration and client-secret rotation, redirect-URI change, password-reset request and
+resolution, directory config change, session revocation.
+
+Each row: timestamp, actor user ID and email, target, action, source IP, user agent, outcome.
+
+### 2.2 Audit UI and export — *S*
+
+An **Audit** page under Administration with filtering by actor, action, target, and date
+range, plus CSV export. `/api/log` and `/api/log-service` exist but are seeded without menu
+metadata, so nothing is reachable from the console today. Compliance reporting is the whole
+point; an audit log with no export does not serve it.
+
+### 2.3 Start writing `user_session` — *S*
+
+`domain/entities/user_session.go` is declared, registered at `apps/myidsan/app/app.go:56`,
+and its table is created — and **nothing ever writes or reads a row**. The comment says
+"for audit and future revocation flows"; this is that future.
+
+Write a row on session issue, mark it revoked on logout and on expiry. The entity needs
+three fields added for the screen in 2.4 to be useful: `IpAddress`, `UserAgent`,
+`LastSeenAt`. The bootstrap auto-adds missing columns from the struct, so this is additive.
+
+> **Infra gotcha:** listing sessions for a user is a foreign-key query, and
+> `dbsql.GetByForeign` returns only **one** child row (hardcoded `limit=1`) —
+> see [[getbyforeign-limit1-bug]]. Use `Get` with an `Equal` filter on the FK instead.
+
+### 2.4 Session administration and self-service — *net-new, M*
+
+- Admin: list a user's active sessions, revoke one, revoke all.
+- User: "your active sessions" on the Profile page with device, IP, last-seen, and a
+  sign-out control — plus "sign out everywhere".
+- **Disabling or deleting an account must terminate its live sessions.** Today
+  `validateSession` checks the cache entry, not `IsActive`, so a disabled user's session
+  survives; RBAC-gated routes block, but auth-only routes (`/api/profile/*`, `/api/mfa`,
+  change-password) stay reachable.
+
+### 2.5 Admin step-up re-authentication — *S*
+
+`RequireSuperadmin` gates role changes, MFA admin-reset, and password-reset resolution on
+role alone. A stolen 72-hour session cookie is therefore full superadmin. Require a fresh
+password or TOTP confirmation for those actions, on a short re-auth window.
+
+**Phase 2 exit:** you can answer "who granted that role, from where, and when" and "sign
+that person out of everything" — the two questions that end security reviews.
+
+---
+
+## Phase 3 — Policy
+
+### 3.1 Password policy — *net-new, M*
+
+The only rule anywhere is `len(trimmed) >= 8`, applied in exactly two of the four
+password-setting paths (`ChangePassword` and `SetPasswordSelfService`). **Admin-created
+accounts and self-registration have no minimum at all.** There is no complexity check, no
+expiry, no history, no reuse prevention, and no breach check. The single sanity rule is
+"username ≠ password".
+
+Add a `passwordPolicy` config block — minimum length, character classes, optional
+`LastLoginAt`-based dormancy — and apply it at **all four** call sites behind one
+validator. A local denylist of the common-password top-N is worth more than an HIBP
+integration here, because HIBP needs egress that the air-gap positioning forbids.
+
+### 3.2 MFA enforcement policy — *net-new, S*
+
+MFA is entirely opt-in per user, with no org or role-level requirement, no enrolment grace
+period, and no admin view of who has enrolled. [[myidsan-mfa-plan]] documents `mfa.policy`
+and `mfa.requiredRoleIds` as designed but not built — build them, plus a "MFA enrolled"
+column on the Users page. At minimum: superadmins must enrol.
+
+Note that Kerberos and OIDC logins deliberately bypass the local factor (the upstream IdP
+owns factor policy); the policy layer must not accidentally lock those users out.
+
+### 3.3 Rehash client secrets — *S*
+
+`hashClientSecret` is an **unsalted single-round SHA-256**
+(`apis/federated_auth.go:956`). A database read gives offline recovery of operator-chosen
+secrets at GPU speed. Move to bcrypt, or HMAC-SHA256 under a server key. Support both on
+read during a transition, and rehash on next successful client authentication.
+
+### 3.4 Per-account lockout — *S*
+
+`loginGuardKey` returns only `"ip:"+host`, so distributed password spray against one
+account is unthrottled. The guard already accepts multiple keys — pass an account key
+alongside the IP key. Also note the guard is in-process memory, so lockouts evaporate on
+restart and do not coordinate across instances; move its state to the cache, which is
+already a hard boot dependency.
+
+### 3.5 CSRF on the server-rendered auth forms — *S*
+
+`POST /api/auth/login`, `/api/auth/mfa`, `/api/auth/forgot`, and `/api/auth/reset` are
+public routes that never pass through the auth middleware, and the rendered forms carry no
+token. Authenticated JSON APIs are correctly protected by the double-submit cookie; these
+four are not. Enables login-CSRF and forced reset submission.
+
+**Phase 3 exit:** the product enforces the policies a reviewer assumes exist.
+
+---
+
+## Phase 4 — Operability
+
+### 4.1 Settings UI — *port, M*
+
+myidsan is the **only** app in the suite without one: `apis/settings.go` exists in
+myseliasan, mymatasan, and myiotsan. SMTP, lockout thresholds, session TTL, Kerberos, and
+OIDC providers are config-file-only and need a restart; adding an OIDC identity provider
+means editing JSON on the server. Only LDAP has a UI.
+
+Port myseliasan's pattern, including its `settings_apply.go` / `settings_materialize.go`
+edits-to-`config.json`-plus-restart seam — see [[myseliasan-settings-feature]]. Keep the
+same safe-subset exclusions (db, server, bootstrap). Add a "send test email" action for
+SMTP; there is no way to verify mail configuration today.
+
+### 4.2 The HA boundary — *S, mostly documentation*
+
+Sessions are cache-backed, and the shipped config uses the in-process memory cache — so
+**two instances behind a load balancer silently log users out**. Redis is supported and is
+the answer, but nothing in `deploy/README-myidsan.md` tells a myidsan operator that the
+default is single-instance-only.
+
+Document it, and make the app log a startup warning when it detects a memory cache in what
+looks like a multi-instance deployment. The LoginGuard state move in 3.4 is part of the
+same story.
+
+### 4.3 Resource limits — *S*
+
+- `SetMaxOpenConns` is set only for SQLite. Postgres and MariaDB use Go's default —
+  unlimited — and will exhaust a customer's connection budget under load. Add
+  `MaxOpenConns` / `MaxIdleConns` / `ConnMaxLifetime` config keys.
+- Log files rotate by calendar day with no size cap, compression, or deletion. The existing
+  cleanup prunes database rows, not the `.log` files on disk.
+
+### 4.4 IdP metrics — *S*
+
+Two app-specific metrics today (`myidsan_federated_login_total`,
+`myidsan_mfa_challenge_total`), and myidsan is absent from the metrics catalogue in
+`docs/HOWTO.md:317-378` while myiotsan and myseliasan are documented. Per [[tier3-metrics]],
+instrument what fails silently: active sessions, token issuance and exchange failures,
+authorization-code redemption failures, upstream LDAP/OIDC latency and error rate, SSO CA
+expiry as a gauge. Then add the catalogue section.
+
+### 4.5 ZAP scan and k6 load profile — *port, M*
+
+Both tools already have per-app plans for the other three apps and **none for myidsan** —
+no `myidsan-*.yaml` in `tools/zaproxy/plans/`, no `myidsan-*.js` in `tools/k6/scripts/`.
+The identity provider is simultaneously the highest-value attack surface in the suite and
+the component every request depends on, and it is the only one that has never been scanned
+or load-tested.
+
+Known gotchas from [[myseliasan-zap-hardening]] and [[k6-load-testing-tool]]: disable the
+rate limiter during a scan, the full ZAP plan OOMs Docker, swagger paths need
+`{id:[0-9]+}`, k6 resets the cookie jar per iteration, and a must-change-password state
+blocks reads.
+
+### 4.6 Reverse-proxy guidance — *S*
+
+One sentence exists today. Nearly every real deployment terminates TLS upstream. Ship
+sample nginx and Caddy configs, document the `X-Forwarded-*` trust model, and — critically
+for an IdP — explain that the public issuer URL must match what redirect URIs are
+registered against. Note the inconsistency to fix: the rate limiter has a `TrustedProxies`
+allow-list, but `X-Forwarded-Proto` is trusted unconditionally in the auth middleware.
+
+**Phase 4 exit:** a competent sysadmin can deploy, monitor, and tune it without you.
+
+---
+
+## Phase 5 — OIDC conformance *(conditional — see "The fork in the road")*
+
+The largest phase. It converts myidsan from a bespoke SSO for three known clients into
+something any OIDC-capable software can sit behind. Sub-phases are ordered by dependency;
+5.1 gates everything after it.
+
+### 5.1 Asymmetric signing, JWKS, and key rotation — *net-new, L* ← **prerequisite**
+
+Today: HS256, one symmetric secret, no `kid`, no rotation path — rotating invalidates every
+session and every relying app simultaneously.
+
+Move to RS256 or EdDSA with a keypair generated at first boot and sealed with
+`infra/atrest`. Publish `/.well-known/jwks.json`. Add `kid` to the header and a
+verification key set so rotation overlaps rather than cuts over. Keep HS256 verification
+during a transition window so existing suite RPs keep working.
+
+### 5.2 Discovery, `id_token`, userinfo, scopes and claims — *net-new, L*
+
+`/.well-known/openid-configuration`; a real `id_token` alongside the access token; a
+`userinfo` endpoint; a scope model (`openid profile email groups`) with per-client allowed
+scopes; `nonce` handling on the IdP leg (it is already correct on the RP leg). Move the
+token response to the RFC 6749 shape (`access_token`, `token_type`, `expires_in`) —
+keep the current camelCase body behind a per-client compatibility flag so the three suite
+apps do not break on upgrade.
+
+### 5.3 PKCE and public clients — *net-new, M*
+
+Parse and enforce `code_challenge` / `code_verifier` (S256), reintroducing the
+`RequirePKCE` flag deleted in Phase 0.2 — this time wired. Add a public/confidential client
+type, since today every client must present a secret, which means SPAs and mobile apps
+cannot integrate at all.
+
+### 5.4 Refresh tokens — *net-new, M*
+
+Implement the `refresh_token` grant with rotation and reuse detection, reintroducing
+`AllowRefreshToken` and `RefreshTokenTTLSeconds`.
+
+This also fixes a real current problem: because there is no refresh, the token endpoint
+**raises the access-token TTL to the session TTL** whenever the session TTL is longer
+(`federated_auth.go:777-781`). So the configured 15-minute access token is issued with a
+72-hour lifetime, and combined with the absence of revocation, a leaked token is good for
+three days. Short access tokens plus refresh is the correct fix.
+
+### 5.5 Consent screen — *net-new, M*
+
+`authorize()` mints a code and redirects with no user approval and no scope display. That
+is defensible for first-party apps and indefensible for third-party ones. Add a consent
+step showing the requesting app and the scopes it wants, with remembered grants and a
+per-client "skip consent (first-party)" flag so suite apps keep their current behaviour.
+
+### 5.6 Logout propagation — *net-new, M*
+
+There is no `end_session_endpoint`, no front-channel logout, and no back-channel logout, so
+signing out of myidsan leaves every relying-app session alive. Implement RP-initiated
+logout plus back-channel notification. This depends on Phase 2.3 — you cannot notify
+sessions you never recorded.
+
+### 5.7 Conformance testing — *M*
+
+Run the OpenID Foundation's conformance suite for Basic OP and Config OP. Publish the
+result. "Certified" is a procurement checkbox worth more than any feature bullet on this list.
+
+**Phase 5 exit:** a customer can put software you have never heard of behind myidsan.
+
+---
+
+## Phase 6 — End-user product
+
+Phases 0–5 satisfy the buyer. This phase satisfies the several hundred people who use it
+every morning — which is what renewals turn on.
+
+### 6.1 App launcher — *net-new, M*
+
+A non-admin signs in and sees an empty dashboard reading "no menus". The dashboard renders
+only admin sections the role grants, while `app_registry` sits full of relying apps with
+base URLs that are surfaced to nobody. The launcher is *the* screen users associate with
+SSO and it does not exist. Add per-app visibility rules so users see only what they can reach.
+
+### 6.2 White-labelling — *net-new, M*
+
+The login page's brand is a literal inline SVG with a hardcoded `myidsan` wordmark and a
+hardcoded `#6f4d9d`; the console's is a hardcoded `<BrandLogo wordmark="myidsan" />` and a
+CSS literal. There is no branding table, API, upload, or config key — a customer cannot put
+their own logo on the page their staff see daily. For an on-prem IdP this is usually a
+requirement, not a nice-to-have.
+
+Add branding as configuration (logo upload, wordmark, accent colour, optional custom CSS)
+applied to both the login page and the console.
+
+### 6.3 Fix the login page properly — *M*
+
+It is English-only, LTR-only, and light-theme-only — hardcoded strings across three
+near-identical copies of an inline stylesheet — while the console behind it has four
+languages, RTL, and three themes. This is the screen every federated user sees, and
+myseliasan's SSO hop lands on it, so it matters beyond myidsan.
+
+Give it the shared i18n dictionary, theme tokens, and RTL. Add a language switcher — today
+a user cannot choose their language until *after* logging in. Deduplicate the three inline
+stylesheets into the real asset pipeline that now exists.
+
+### 6.4 Make RTL real — *M*
+
+`dir="rtl"` is set for Arabic, and the CSS contains **zero** `[dir="rtl"]` rules; layout
+relies entirely on the browser's flex/grid inference, while physical properties
+(`margin-left`, `textAlign: right`, `borderLeft`) are used throughout. Arabic renders
+visibly broken. Convert to logical properties (`margin-inline-start`, `text-align: start`,
+`border-inline-start`). Your locale set says this market matters to you.
+
+### 6.5 Console debt — *M*
+
+- **URL routing.** Section is a `useState` plus a cookie — no deep links, no back button,
+  nothing to paste into a ticket. The clearest "unfinished" signal in the product.
+- **Users page cannot create, delete, or edit a user** — role assignment and enable/disable
+  only. The most-used admin screen is read-mostly.
+- Replace `window.confirm` / `window.prompt` for real decisions (make superadmin, delete
+  app, MFA regenerate) with the modal system that already exists.
+- Add an error boundary; a render throw currently white-screens the app.
+- Add a documentation link — the console contains exactly one `href` and it's a social login.
+- Converge on one table component; four implementations coexist with four different empty
+  and loading behaviours.
+- Re-adopt `rbac-standard.css` instead of the 2,831-line fork, and split the 4,272-line
+  `App.js`. Both are due-diligence findings as much as maintenance ones.
+
+**Phase 6 exit:** the product is pleasant for the people who did not buy it.
+
+---
+
+## Phase 7 — Commercial
+
+### 7.1 Offline license enforcement — *net-new, M*
+
+There is no license key, seat counting, expiry, feature gating, or activation anywhere in
+the repo. The `LICENSE` is already dual — PolyForm Noncommercial plus a paid commercial
+tier — so **selling is legally provided for**; what is missing is technical metering, not
+legal basis.
+
+Ship a signed offline license file: customer name, seat count, expiry, enabled features,
+Ed25519-signed. Enforce at boot and on user creation, degrading to read-only rather than
+refusing to start — locking an IT team out of their own identity provider over a license
+check is worse for you than for them. No phone-home, per the non-goals.
+
+### 7.2 Integration guide and sample relying party — *M*
+
+Nothing in `docs/` explains the flow end to end for a customer's own application; the
+in-console Apps walkthrough is good but only reachable after installing, and the only
+working example is a whole application. Write the guide, and ship a minimal sample RP in
+one or two languages so a prospect's developer can evaluate before installing.
+
+Also state the multi-tenancy boundary here — one deployment per customer — rather than
+letting an MSP discover it late.
+
+### 7.3 Signed installers and SBOM — *S*
+
+The Windows installer is unsigned, so SmartScreen warns on every install, and SBOM
+generation is explicitly disabled in the goreleaser config. Both are routine procurement
+friction with no engineering interest and a real cost in lost deals. Note the code-signing
+certificate has a lead time — start it early, not in this phase.
+
+### 7.4 Support policy — *S*
+
+`SECURITY.md` is absent. No disclosure policy, no version-support matrix, no EOL policy, no
+consolidated upgrade notes (the `compatibility` field exists per-change but is buried in
+`changes/applied/*/change.json`). Cheap to write, and asked for more often than you would think.
+
+**Phase 7 exit:** you can invoice.
+
+---
+
+## Verification
+
+Each phase carries its own gate; none is complete on "the code is written."
+
+| Phase | Verified by |
+|---|---|
+| 0 | The bench asserts all three federation paths; CI is green on a PR; `/swagger` renders with egress blocked |
+| 1 | Restore a backup onto a clean host and log in with an **MFA-enrolled** account — this is what catches a missing at-rest key |
+| 2 | Perform a role change, find it in the audit export, then revoke that user's session and confirm the next request fails |
+| 3 | Password policy rejects at all four call sites; a superadmin without MFA is forced to enrol; spray one account from many IPs and get locked out |
+| 4 | Two instances behind a load balancer with Redis keep a session alive; ZAP baseline is clean; k6 gives a documented concurrent-user number |
+| 5 | OpenID Foundation conformance suite passes; a stock Grafana or GitLab logs in with no myidsan-side special-casing |
+| 6 | An end user with no admin role signs in and reaches an app from the launcher; Arabic renders correctly on the login page |
+| 7 | An expired license degrades to read-only without data loss; a developer integrates using only the published guide |
+
+The suite-wide lesson from [[suite-status-resume]] applies throughout: **boot and exercise
+it, don't trust green.** Several items in this plan exist precisely because something
+compiled, shipped, and was never run — the dead PKCE checkbox, the `user_session` table
+nothing writes, and three federation paths whose own README says they were never tested.
+
+---
+
+## Sequencing notes
+
+- **Phases 0 and 1 are the minimum before showing this to a paying prospect.** Together
+  they are mostly ports and deletions.
+- **Phases 2–4 can run in parallel** once Phase 1 lands; they touch largely disjoint code.
+  2 and 3 are one reviewer conversation, so ship them together if you can.
+- **Phase 5 should not start before the fork question is answered.** If the answer is
+  "suite", skip to 6.
+- **Phase 6.2 and 6.3 sell together.** White-labelling a login page that is English-only is
+  half a feature.
+- **Phase 7.3's code-signing certificate has a procurement lead time** — start it during
+  Phase 0 even though the work lands last.
+
+Run `docs-sync` and `i18n-sync` before committing any of this, per [[commit-push-docs-sync]] —
+`i18n-sync` applies to every phase that touches frontend source, which is most of 6.

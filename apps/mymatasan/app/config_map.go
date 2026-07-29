@@ -32,7 +32,7 @@ import (
 // failed-login guard config. Numeric tunables left at zero are filled with safe
 // defaults inside the guard.
 func loginGuardConfigFromAppConfig(cfg *config.AppConfigModel) apis.LoginGuardConfig {
-	ls := cfg.LoginSecurity
+	ls := cfg.LoginSecurity.Effective()
 	return apis.LoginGuardConfig{
 		Enabled:     ls.Enabled,
 		MaxAttempts: ls.MaxAttempts,

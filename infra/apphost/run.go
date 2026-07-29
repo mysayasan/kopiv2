@@ -910,16 +910,18 @@ func oidcEnvSegment(key string) string {
 	}, key)
 }
 
-// weakJWTSecrets are placeholder values shipped in example configs that must
-// never reach production. Compared case-insensitively against the trimmed value.
-var weakJWTSecrets = map[string]struct{}{
-	"change-me":            {},
-	"changeme":             {},
-	"standalone-change-me": {},
-	"please-change-me":     {},
-	"your-secret-here":     {},
-	"secret":               {},
-	"test0123456789":       {},
+// placeholderSecrets are values shipped in example configs that must never reach
+// production. Compared case-insensitively against the trimmed value. Shared by the JWT
+// secret guard and the SSO internal-token guard.
+var placeholderSecrets = map[string]struct{}{
+	"change-me":               {},
+	"changeme":                {},
+	"change-me-in-production": {},
+	"standalone-change-me":    {},
+	"please-change-me":        {},
+	"your-secret-here":        {},
+	"secret":                  {},
+	"test0123456789":          {},
 }
 
 // isWeakJWTSecret reports whether a JWT secret is unsafe to run with: empty, too
@@ -929,8 +931,20 @@ func isWeakJWTSecret(secret string) bool {
 	if len(s) < 16 {
 		return true
 	}
-	_, weak := weakJWTSecrets[strings.ToLower(s)]
+	_, weak := placeholderSecrets[strings.ToLower(s)]
 	return weak
+}
+
+// isPlaceholderSecret reports whether a value is a known example-config placeholder.
+// Unlike isWeakJWTSecret there is no length floor: an operator may legitimately choose a
+// short shared token, and an empty value is "not configured" rather than "unsafe".
+func isPlaceholderSecret(secret string) bool {
+	s := strings.TrimSpace(secret)
+	if s == "" {
+		return false
+	}
+	_, placeholder := placeholderSecrets[strings.ToLower(s)]
+	return placeholder
 }
 
 // generateRandomSecret returns a URL-safe base64 string of nBytes of CSPRNG
@@ -1062,6 +1076,16 @@ func applySSOConfigFromEnv(appConfig *config.AppConfigModel) {
 	}
 	if v := os.Getenv("SSO_INTERNAL_TOKEN"); v != "" {
 		appConfig.SSO.InternalToken = v
+	}
+	// sso.internalToken gates /api/sso/introspect — a relying app presenting it gets to ask
+	// "is this token valid" for any session. It shipped as the literal placeholder
+	// "change-me-in-production" and, unlike jwt.secret, had no weak-value guard, so an
+	// install that never touched it accepted a value published in the repo. Refuse to carry
+	// a known placeholder forward: drop it instead, which disables the endpoint (a nil
+	// token makes authorizeInternal reject everything) rather than leaving it wide open.
+	if isPlaceholderSecret(appConfig.SSO.InternalToken) {
+		log.Printf("WARNING: sso.internalToken is a placeholder value — /api/sso/introspect is DISABLED. Set a long random value (config sso.internalToken or SSO_INTERNAL_TOKEN) if a relying app cannot share the session cache.")
+		appConfig.SSO.InternalToken = ""
 	}
 	if v := strings.TrimSpace(os.Getenv("SSO_PROVIDER_BASE_URL")); v != "" {
 		appConfig.SSO.ProviderBaseURL = v

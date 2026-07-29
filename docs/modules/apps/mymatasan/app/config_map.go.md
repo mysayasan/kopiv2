@@ -15,8 +15,10 @@ which blocks moved.
 
 ## Responsibilities
 
-- `loginGuardConfigFromAppConfig(cfg *config.AppConfigModel)` — maps `loginSecurity` into
-  `apis.LoginGuardConfig`. **Shared model** — `loginSecurity` did not move.
+- `loginGuardConfigFromAppConfig(cfg *config.AppConfigModel)` — maps `cfg.LoginSecurity.Effective()` into
+  `apis.LoginGuardConfig`. **Shared model** — `loginSecurity` did not move. Reading through `Effective()`
+  (rather than the struct fields directly) is what makes an absent `loginSecurity` block resolve to
+  the guard being ON — see `infra/config/config_models.go.md`.
 - `notificationOptionsFromAppConfig(cfg *config.AppConfigModel, logger, metrics)` — builds
   always-on `notification.Options` (logger, SSE client buffer, metrics). Outbound delivery
   channels (webhook/telegram) are applied separately, from the persisted runtime-editable

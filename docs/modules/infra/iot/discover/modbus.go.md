@@ -66,3 +66,6 @@ model 1 is present, close. Returns `ok=false` (not an error) for "no SunSpec her
   of.
 - Called from `apps/myiotsan/services/scanner.go.md`'s `Scan`, with hosts already expanded and
   capped by `discover.Hosts` before this function ever runs.
+- The dial target is built with `net.JoinHostPort(host, port)`, not `fmt.Sprintf("%s:%d", ...)` —
+  the latter mis-forms an IPv6 literal host (`fe80::1:502` is ambiguous; it needs to be
+  `[fe80::1]:502`), which `net.JoinHostPort` handles correctly for both address families.
