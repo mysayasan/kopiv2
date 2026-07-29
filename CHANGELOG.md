@@ -69,6 +69,16 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-29 — myidsan 1.27.0, myseliasan 1.45.0 (483a2b1)
+
+### Added
+
+- **myidsan,myseliasan**: myidsan's Apps page can now export a registered app's SSO client settings as a small JSON bundle, and myseliasan's Settings > Single Sign-On section can import that same bundle into its form. The bundle (`{kind:"myidsan.sso.client", version:1, ...}`) carries issuer, audience, provider base URL, client ID, redirect base URL/path, and session TTL, plus the client secret only when one was just generated in that browser tab (myidsan stores only a hash and never returns it otherwise); a permanent note above the Export button states which case applies. On the myseliasan side, Import parses the file client-side, refuses a wrong `kind` or a `version` newer than the build understands, and fills the SSO form fields without saving -- the operator still reviews and presses the existing Save. Fields absent from the bundle (notably a missing secret) are left alone rather than blanked, matching the settings editor's existing 'blank = keep current' semantics. This removes the main source of federated-login misconfiguration: client ID, audience, and redirect URL must match byte-for-byte across the two consoles, and retyping them by hand is exactly where operators slip.
+
+### Changed
+
+- **myidsan**: The myidsan Apps page's guided app-registration form is compacted on UX feedback that it carried too much text to actually be read. No guidance was removed -- it is now disclosed on demand instead of all at once. Every per-field explanation, section lede, preview-panel note and checklist step detail moved behind a new (i) info tip beside its label, which opens on click and closes on Escape, an outside click, or a second click. Each field's worked example is no longer a separate line under the input; it is the input's own placeholder, so the shape of a valid value (Fleet Console, fleet-console, https://fleet.example.com, the TTL numbers) is visible without any prose. The redirect-URI matching rules and the sign-in troubleshooting list became collapsed-by-default callouts, and the "How app registration works" primer now auto-opens only on a genuinely first registration (no apps registered yet) rather than on every new app. Validation messages deliberately stay permanently visible, since those have to be seen rather than asked for. Measured on a live instance, the full editor's rendered height dropped from 3382px to 2337px, about 31% shorter. Frontend-only: no API, schema, or config changes.
 ## 2026-07-28 — myidsan 1.25.0 (91932cf)
 
 ### Changed
