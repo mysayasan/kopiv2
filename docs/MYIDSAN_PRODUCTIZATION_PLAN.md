@@ -1,9 +1,14 @@
 # MyIDSan — Productization Plan
 
-Status: **Phase 0 done except the Kerberos/OIDC benches; Phases 1, 2 and 3 DONE** (written
-2026-07-29, against myidsan v1.25.0; Phases 0 and 1 on `feat/myidsan-phase0-hygiene`,
-Phase 2 on `feat/myidsan-phase2-audit-sessions`, Phase 3 on `feat/myidsan-phase3-policy`,
-each stacked on the last).
+Status: **Phase 0 DONE (LDAP, OIDC and Kerberos benches all complete); Phases 1, 2 and 3
+DONE; Phase 4 §4.7 (audit log retention) DONE** (written 2026-07-29, against myidsan
+v1.25.0; Phases 0 and 1 on `feat/myidsan-phase0-hygiene`, Phase 2 on
+`feat/myidsan-phase2-audit-sessions`, Phase 3 on `feat/myidsan-phase3-policy`, §4.7 (and
+the Kerberos bench) on `feat/myidsan-phase4-operability`, each stacked on the last). The
+Generic OIDC bench and the Kerberos bench are both now done, against a real Keycloak 26
+realm and a real Samba AD DC respectively — see `docs/MYIDSAN_ENTERPRISE_SSO_PLAN.md`.
+Both benches found the same class of gap: a rejected federated/Kerberos sign-in was
+recorded only as a metric, never in the audit trail (§4.7 below).
 
 Phase 1 outcome: `.idbackup` export/restore shipped with a superadmin-only API, an admin
 page, and a "restore from a backup instead" path on the first-run wizard. Verified
@@ -17,7 +22,7 @@ Phase 2 outcome — all five sub-phases done:
 
 | Item | State |
 |---|---|
-| 2.1 Security audit log | **DONE** — append-only entity/service, no update or delete path exists; login success/failure/lockout/logout, user create/update/delete, MFA admin reset, directory change, password-reset resolution, backup export/restore, session revocation, step-up success/failure |
+| 2.1 Security audit log | **DONE** — append-only entity/service, no update path and no way to delete a chosen row; login success/failure/lockout/logout, user create/update/delete, MFA admin reset, directory change, password-reset resolution, backup export/restore, session revocation, step-up success/failure. The one exception, added in Phase 4 (§4.7): config-file-only, age-based, archive-first retention |
 | 2.2 Audit UI and export | **DONE** — superadmin `GET /api/audit` + `/api/audit/export.csv` with a filter row, pagination and CSV export. `csvSafe()` defuses spreadsheet formula injection, because the export carries attacker-controlled text |
 | 2.3 Write `user_session` | **DONE** — the table declared years ago and never written to is now populated, with `IpAddress`/`UserAgent`/`LastSeenAt` added |
 | 2.4 Session administration | **DONE** — self-service list/revoke/revoke-others on Profile (auth-only, NOT matrix-gated), superadmin per-user revoke on Users, and **disabling or deleting an account now ends its sessions** |
@@ -54,7 +59,8 @@ Phase 0 outcome, in brief — full detail in each sub-phase below:
 | Item | State |
 |---|---|
 | 0.1 LDAP live bench | **DONE** — 9 integration tests green against OpenLDAP over LDAPS *and* StartTLS (`infra/login/ldap_integration_test.go`) |
-| 0.1 Kerberos / OIDC benches | **OUTSTANDING** — the only Phase 0 work left |
+| 0.1 OIDC live bench | **DONE (2026-07-29)** — against a real Keycloak 26 realm: discovery, PKCE S256 + nonce + state, `id_token`/JWKS verification, session issuance, and refusal of a tampered state/missing flow cookies/unverified email. Found and fixed one gap: refused federated sign-ins were not audited (see §4.7) |
+| 0.1 Kerberos bench | **DONE (2026-07-29)** — against a real Samba AD DC (realm `KOPI.TEST`): `kinit`-obtained ticket signs in, no-token request gets the `Negotiate` challenge, forged token is refused with no session (verdict read from `Location` + the `kopiv2_access` cookie, since both outcomes answer `302`). Found and fixed the same gap as the OIDC bench: a rejected ticket was recorded only as a metric, never audited (see §4.7). Realm allow-list exercised only in the accepting direction — a cross-realm rejection remains unbenched |
 | 0.2 Dead PKCE/refresh controls | **DONE** — removed from form, DTO and admin API; columns kept and annotated |
 | 0.3 Config + git hygiene | **DONE** — lockout now defaults ON in code, 8 private keys untracked, secrets scrubbed, `sso.internalToken` placeholder guard |
 | 0.4 CI gate | **DONE** — `.github/workflows/go-check.yml`; found and fixed a stale test that had been failing unnoticed |
@@ -84,27 +90,37 @@ Two audit findings were checked against source and **withdrawn** — do not re-p
 
 ---
 
-## The fork in the road
+## The fork in the road — DECIDED: selling the suite
 
-**Phase 5 is the largest phase in this plan and it is conditional.** Everything else is
-worth doing under either answer to this question:
+**Decision (2026-07-29): the product is the kopiv2 suite, not myidsan standalone.**
+**Phase 5 (OIDC conformance) is therefore SKIPPED.**
+
+The question was:
 
 > Are you selling **the kopiv2 suite** (with myidsan as its identity layer), or selling
 > **myidsan as a standalone identity product**?
 
-If the suite: myidsan only ever talks to mymatasan, myseliasan, and myiotsan, the bespoke
-authorization-code flow is adequate, and Phase 5 is optional polish. Phases 0–4 and 6–7
-still all apply, and you reach market considerably sooner.
+The answer is the suite. myidsan only ever talks to mymatasan, myseliasan and myiotsan,
+which are all clients written against its own authorization-code flow, so the bespoke flow
+is adequate and Phase 5 is optional polish rather than a blocker.
 
-If standalone: Phase 5 is not optional. myidsan currently serves no
-`/.well-known/openid-configuration`, no JWKS, no `id_token`, no userinfo, no scopes and no
-consent screen, and implements only the `authorization_code` grant
-(`apps/myidsan/apis/federated_auth.go:741`). No third-party software — Grafana, GitLab,
-Nextcloud, Proxmox, a customer's own Keycloak-ready app — can integrate. "SSO hub" sets an
-expectation that fails at the first integration attempt.
+What that decision buys and what it costs, stated plainly so it can be revisited on
+evidence rather than re-argued from memory:
 
-Decide this before starting Phase 5, not during it. Nothing in Phases 0–4 forecloses
-either answer.
+- **Buys:** the largest phase in this plan disappears. No asymmetric signing and JWKS with
+  key rotation, no discovery document, no `id_token`/userinfo/scope model, no consent
+  screen, no refresh-token grant, no back-channel logout, no conformance suite. Market date
+  moves in by a large margin.
+- **Costs:** no third-party software can be put behind myidsan. Grafana, GitLab, Nextcloud,
+  Proxmox and a customer's own OIDC-ready application cannot integrate, and will not be able
+  to without doing Phase 5. Marketing must therefore not describe myidsan as a general
+  "SSO hub" — the honest framing is "single sign-on across the kopiv2 suite".
+
+**Revisit this if** a prospect asks to put their own application behind it, or if myidsan
+is ever priced or sold separately from the suite. Nothing built in Phases 0–4, 6 or 7
+forecloses doing Phase 5 later; it simply is not on the path to this product.
+
+Remaining path: **Phase 4 (operability) → Phase 6 (end-user product) → Phase 7 (commercial)**.
 
 ---
 
@@ -133,7 +149,7 @@ either answer.
 | 2 | Accountability | Before a security review | Yes |
 | 3 | Policy | Before a security review | Yes |
 | 4 | Operability | Before first paid deployment | Yes |
-| 5 | OIDC conformance | Only if selling standalone | Conditional |
+| 5 | OIDC conformance | ~~Only if selling standalone~~ | **SKIPPED** — suite chosen |
 | 6 | End-user product | Before charging per-seat | Recommended |
 | 7 | Commercial | Before invoicing | Yes |
 
@@ -166,6 +182,41 @@ reaches that same account; a bad keytab degrades to "not offered" rather than fa
 
 This is first because it can invalidate later phases. Everything downstream assumes these
 work.
+
+**DONE (2026-07-29) — and it did invalidate an assumption.** All three paths are now
+benched against real infrastructure and the README claims replaced with results:
+
+| Path | Infrastructure | Outcome |
+|---|---|---|
+| LDAP | Samba AD DC, StartTLS + LDAPS | passed (earlier run) |
+| OIDC | Keycloak 26 realm | passed: discovery, PKCE S256, nonce, state, `id_token` verified against real JWKS, session issued and accepted by a later API call |
+| Kerberos | Samba AD DC, realm `KOPI.TEST` | passed: `kinit` ticket over SPNEGO signs in; no token gets the `Negotiate` challenge; forged token refused with no session |
+
+Negative cases hold on both new paths: a tampered `state`, a callback with no flow
+cookies, an IdP-reported `email_verified:false`, and a forged SPNEGO token are each
+refused without issuing a session.
+
+**The benches found two real defects that no unit test had caught**, both now fixed with
+regression tests:
+
+1. `providerCallback` audited only *successful* federated sign-ins. Every refused SSO
+   attempt was invisible on the Audit log page, while a refused *password* login was
+   recorded — so "show me the failed sign-in attempts" silently omitted all of SSO.
+2. `kerberosLogin` had the same gap in a different shape: a rejected ticket only
+   incremented a Prometheus counter. `recordFederatedLogin` is a **metrics** call, not an
+   audit call — a distinction that reads as auditing at a glance and is why this survived.
+
+Both fixes deliberately leave the failed-login lockout alone: the credential was checked
+at the IdP or KDC, not guessed here, so counting these would let a rotated client secret,
+a clock skew, or a stale keytab lock out every user at once. The SPNEGO *no-token* request
+stays unaudited on purpose — it is the first half of every handshake, and recording it
+would add an entry per request and bury the real rejections.
+
+Remaining unbenched, and stated as such in the README rather than claimed: the Kerberos
+realm allow-list was exercised only in the accepting direction (single-realm bench), and
+the OIDC `groups_claim` → `FederatedGroupMapping` role seeding was not driven end-to-end
+(the claim was emitted by a Keycloak group-membership mapper and the account correctly
+landed with **no** role under pending-clearance, but no mapping row was configured).
 
 ### 0.2 Delete the dead controls — *S*
 
@@ -456,11 +507,47 @@ for an IdP — explain that the public issuer URL must match what redirect URIs 
 registered against. Note the inconsistency to fix: the rate limiter has a `TrustedProxies`
 allow-list, but `X-Forwarded-Proto` is trusted unconditionally in the auth middleware.
 
+### 4.7 Audit log retention — **DONE**
+
+The security trail (§2.1) was append-only with genuinely no delete path at all — the right
+default, but an unbounded table on a long-lived install is still a real disk-growth problem
+nobody had a lever for. `config.audit.retention` (off by default) adds the one sanctioned
+exception, shaped so it cannot become a way to quietly erase an inconvenient event: it is
+config-file-only (no API — trimming the trail needs filesystem access to the server, not a
+session on it), it takes an age rather than a selection of rows, expired rows are archived to
+a JSON-lines file and fsynced/renamed into place **before** anything is deleted from the
+table (a run that cannot finish its archive deletes nothing), and the purge records itself
+back into the trail (`audit.retention_purge`, naming the cutoff, row count, and archive file)
+so a reader who finds history starting abruptly can tell a deliberate trim from an empty
+past. `maxRetentionDays` defaults 365 with a hard 30-day floor (anything configured lower is
+raised and a startup warning logged); `frequencyHours` defaults 24; `archiveDir` defaults
+`audit-archive`, data-dir-relative, and its files are unsealed (0600) — treat that directory
+with the same care as the database. See `infra/config/audit_retention.go.md`,
+`apps/myidsan/services/audit_retention.go.md`, `apps/myidsan/app/audit_retention.go.md`, and
+`docs/HOWTO.md`'s "MyIDSan Audit Log Retention" section.
+
+Alongside this, live benches against a real Keycloak 26 realm and a real Samba AD DC found
+and fixed the same class of audit gap in two different handlers: the federated (OIDC/social)
+callback and Kerberos SPNEGO login had each audited only successful sign-ins, so every
+refused SSO/ticket attempt was invisible on the audit page while a refused password login
+was recorded. All four federated rejection paths now record `login.failure` naming the
+provider (`recordFederatedLoginFailure`), and all three Kerberos rejection paths do the same
+naming `services.MethodKerberos` (`recordKerberosLoginFailure`) — except the no-token
+challenge, which is the first half of every SPNEGO handshake and deliberately stays
+unaudited. Neither path advances the failed-login lockout — the credential was checked at
+the IdP or against the keytab, not guessed against myidsan. See `apps/myidsan/apis/login.go.md`
+and `docs/MYIDSAN_ENTERPRISE_SSO_PLAN.md` for both bench statuses.
+
 **Phase 4 exit:** a competent sysadmin can deploy, monitor, and tune it without you.
 
 ---
 
-## Phase 5 — OIDC conformance *(conditional — see "The fork in the road")*
+## Phase 5 — OIDC conformance — **SKIPPED**
+
+> **Not being built.** The product is the kopiv2 suite, so nothing outside it needs to
+> integrate. Kept below in full because the decision is reversible: if a prospect ever asks
+> to put their own application behind myidsan, this is the work, and the sub-phase ordering
+> (5.1 gates everything after it) still holds.
 
 The largest phase. It converts myidsan from a bespoke SSO for three known clients into
 something any OIDC-capable software can sit behind. Sub-phases are ordered by dependency;
@@ -639,7 +726,7 @@ Each phase carries its own gate; none is complete on "the code is written."
 | 2 | Perform a role change, find it in the audit export, then revoke that user's session and confirm the next request fails |
 | 3 | Password policy rejects at all four call sites; a superadmin without MFA is forced to enrol; spray one account from many IPs and get locked out |
 | 4 | Two instances behind a load balancer with Redis keep a session alive; ZAP baseline is clean; k6 gives a documented concurrent-user number |
-| 5 | OpenID Foundation conformance suite passes; a stock Grafana or GitLab logs in with no myidsan-side special-casing |
+| 5 | *(skipped — suite chosen; see "The fork in the road")* |
 | 6 | An end user with no admin role signs in and reaches an app from the launcher; Arabic renders correctly on the login page |
 | 7 | An expired license degrades to read-only without data loss; a developer integrates using only the published guide |
 

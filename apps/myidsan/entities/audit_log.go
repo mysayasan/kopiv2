@@ -5,9 +5,13 @@ package entities
 // assignment, an account or SSO-client change, a password reset, a session revocation, or
 // a backup export/restore.
 //
-// The service only ever INSERTS: there is no update, delete or retention-cleanup path, so
-// the trail is append-only. That is deliberately different from api_log, which is a
-// per-request HTTP access log subject to retention deletion and carries no action
+// The service only ever INSERTS during normal operation: there is no update path and no way
+// to delete a chosen row, so the trail is append-only. The one removal path is age-based
+// retention (config.audit.retention, off by default), and it is built not to lose anything —
+// rows are written to a JSON-lines archive on disk before they leave the table, a run that
+// cannot finish its archive deletes nothing, and the purge records itself here naming the
+// cutoff and the archive file. That is still deliberately stricter than api_log, which is a
+// per-request HTTP access log freely subject to retention deletion and carries no action
 // semantics — "someone called PUT /api/user-credential and got a 200" is not an answer to
 // "who granted that role, from where, and when".
 //

@@ -4,9 +4,23 @@
 live-bench-tested against a real OpenLDAP 2.4 server (LDAPS + StartTLS, repeatable via
 `infra/login/ldap_integration_test.go` under `RUN_LDAP_IT=1` — see
 `docs/modules/infra/login/ldap.go.md`), but not yet against Active Directory or Samba AD
-specifically (`objectGUID` vs `entryUUID` subject resolution). Kerberos and OIDC still
-await a live bench (real AD/Samba realm, real IdP e.g. Keycloak) — do not claim otherwise.
-Phase 4 (SAML) stays parked pending concrete demand.**
+specifically (`objectGUID` vs `entryUUID` subject resolution). Generic OIDC is now
+live-benched against a real Keycloak 26 realm (2026-07-29) — startup discovery, PKCE S256 +
+nonce + state, `id_token` verification against the IdP's real JWKS, and refusal of a
+tampered `state`, a callback missing its flow cookies, and an `email_verified:false`
+identity; see `apps/myidsan/README.md`'s Generic OIDC bullet and
+`docs/modules/infra/login/oidc.go.md`. That bench found and fixed one real gap: the
+federated callback previously audited only successes, so every refused SSO sign-in was
+invisible on the audit page — see `apps/myidsan/apis/login.go.md`'s
+`recordFederatedLoginFailure`. Kerberos SPNEGO is now also live-bench-tested, against a
+real Samba AD DC (realm `KOPI.TEST`, 2026-07-29): a genuine ticket signs in, a no-token
+request gets the `Negotiate` challenge, and a forged token is refused with no session —
+judge the outcome by `Location` + the `kopiv2_access` cookie, since both a good and bad
+token answer `302`. The realm allow-list was exercised only in the accepting direction
+(a single-realm bench); a cross-realm rejection remains unbenched. That bench found the
+same audit gap as the OIDC one, in the Kerberos handler: a rejected ticket was recorded
+only as a metric, never in the audit trail — see `recordKerberosLoginFailure` in the same
+file. Phase 4 (SAML) stays parked pending concrete demand.**
 
 Goal: extend myidsan beyond Google/GitHub with intranet-friendly enterprise identity —
 LDAP / Active Directory, Kerberos SPNEGO, and generic OIDC — so the suite works as a

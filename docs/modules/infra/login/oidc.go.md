@@ -45,11 +45,16 @@ not a same-origin credential check or ticket negotiation.
     `apps/myidsan/services/directory.go`'s group→role mapping which provider a
     login came from (see `AdmitExternalIdentity` in `services/directory.go.md`).
   - `email_verified`: a claim that is present and explicitly `false` refuses the
-    login (`identity provider reports the account email as unverified`) unless
-    `cfg.InsecureSkipEmailVerified` is set; an **absent** claim is accepted as-is
-    (many IdPs, especially intranet Keycloak without SMTP, never set it) —
-    `EmailVerified` on the returned `Identity` is `true` whenever the claim was
-    true or the override is on.
+    login (`identity provider reports the account email as unverified: <email>`
+    — the address is named because this error becomes the audit record's
+    `Detail` via `apps/myidsan/apis/login.go.md`'s `recordFederatedLoginFailure`,
+    and a refusal that does not say which account was refused leaves an operator
+    with nothing to act on; disclosing it costs nothing, since reaching this
+    line requires having just authenticated at the IdP as that very account)
+    unless `cfg.InsecureSkipEmailVerified` is set; an **absent** claim is
+    accepted as-is (many IdPs, especially intranet Keycloak without SMTP, never
+    set it) — `EmailVerified` on the returned `Identity` is `true` whenever the
+    claim was true or the override is on.
   - `Groups` comes from `claimStrings`, which accepts either a JSON array of
     strings or a single bare string (ADFS emits a bare string, not a
     single-element array, for a user in exactly one group).
@@ -82,7 +87,12 @@ not a same-origin credential check or ticket negotiation.
   (endpoints carried through into the built `oauth2.Config`, key normalized to
   lowercase, display name defaulting to the key), and `NewOidcLogin`'s
   validation errors for a missing key/issuer/secret/redirect. The full
-  authorization-code round trip (`Login`/`Callback` against a real IdP) is not
-  yet exercised in automated tests — noted in
-  `docs/MYIDSAN_ENTERPRISE_SSO_PLAN.md` alongside LDAP/Kerberos as needing a
-  live bench (Keycloak) test.
+  authorization-code round trip (`Login`/`Callback`) is not exercised by an
+  automated test, but **has been live-benched against a real Keycloak 26 realm
+  (2026-07-29)**: startup discovery, PKCE S256 + nonce + state, `id_token`
+  verification against the IdP's real JWKS, a tampered `state`, a callback with
+  no flow cookies, and an `email_verified:false` identity were all exercised —
+  see `apps/myidsan/README.md`'s Generic OIDC bullet and
+  `docs/MYIDSAN_ENTERPRISE_SSO_PLAN.md`. That bench is what found the audit gap
+  fixed alongside this change — see `apps/myidsan/apis/login.go.md`'s
+  `recordFederatedLoginFailure`.

@@ -113,8 +113,12 @@ Zero-prompt sign-in for domain-joined machines. Set `kerberos.enabled`, point
    - Use the **FQDN** in the URL bar, not an IP.
 
 A misconfiguration never breaks password login — the SSO button just fails back to the
-login page. Check the service log and the `myidsan_federated_login_total{result=...}`
-metric (`KRB_AP_ERR_MODIFIED` → wrong SPN/keytab; `KRB_AP_ERR_SKEW` → clock skew).
+login page. Check the service log, the `myidsan_federated_login_total{result=...}` metric
+(`KRB_AP_ERR_MODIFIED` → wrong SPN/keytab; `KRB_AP_ERR_SKEW` → clock skew), and the
+**Audit log** — a rejected ticket (a forged/replayed token, or a realm outside
+`kerberos.onlyRealms`) now writes a `login.failure` entry there too, not just the metric;
+the no-token challenge that starts every SPNEGO handshake deliberately does not appear in
+the audit trail.
 
 ## Running as a service
 
@@ -222,10 +226,37 @@ together.
 ## Audit trail
 
 The **Audit log** page (superadmin only) is an append-only record of every security-relevant
-event on this server — sign-ins and failures, lockouts, MFA changes, account and directory
-changes, password-reset resolutions, session revocations, backup export/restore, and
-step-up attempts. There is no update or delete route for it: nothing in the product,
-including a superadmin session, can edit an entry once it is written.
+event on this server — sign-ins and failures (including refused federated/SSO sign-ins, not
+just local/LDAP ones), lockouts, MFA changes, account and directory changes, password-reset
+resolutions, session revocations, backup export/restore, and step-up attempts. There is no
+update route for it and no way to delete a chosen entry: nothing in the product, including a
+superadmin session, can edit or selectively remove what is already written.
+
+The one removal path is **age-based retention**, off by default and reachable only from
+`config.json` — it is deliberately not an in-product control. Add an `audit` block to turn
+it on:
+
+```json
+{
+  "audit": {
+    "retention": {
+      "enabled": true,
+      "maxRetentionDays": 365,
+      "frequencyHours": 24,
+      "archiveDir": "audit-archive"
+    }
+  }
+}
+```
+
+`maxRetentionDays` has a hard 30-day floor (anything lower is raised, with a startup
+warning); expired rows are archived to a JSON-lines file under `archiveDir`
+(data-directory-relative) and fsynced/renamed into place **before** they are deleted from
+the table, so a failed run costs a retention cycle, never history. Every purge records
+itself back into the trail it just trimmed, naming the cutoff, row count and archive file.
+The archive files are plaintext (0600, not sealed) and hold emails, IPs and User-Agent
+strings — back that directory up with the same care as the database. See `docs/HOWTO.md`'s
+"MyIDSan Audit Log Retention" section.
 
 For compliance review or offline retention, export it as CSV rather than screen-scraping:
 

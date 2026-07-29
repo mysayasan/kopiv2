@@ -332,6 +332,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		dbsql.NewGenericRepo[myidsanentities.AuditLog](deps.Db),
 		log.Printf,
 	)
+	startAuditRetention(deps, auditService)
 
 	// Session index. The cache entry remains the authority on whether a session is valid;
 	// this table exists so sessions can be LISTED per user, which the cache cannot answer.

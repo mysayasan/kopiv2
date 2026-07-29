@@ -13,7 +13,7 @@ config: see "Per-app config seam" below.
 - Model bootstrap, JWT, SSO, local app auth, notification startup defaults, login-lockout
   security, password strength policy, MFA enforcement policy, encryption-at-rest,
   pairing/fleet, file storage, cache, rate limiting, transaction coordination, logging,
-  API log cleanup, telemetry, TLS, and DB settings.
+  API log cleanup, audit-log retention, telemetry, TLS, and DB settings.
 - Retain the raw config document (`raw []byte`, unexported/untagged) that
   `LoadAppConfiguration` (`app_config.go.md`) decoded it from, exposed via `Raw()`, so an app
   that owns config blocks of its own can decode them from the same bytes. See "Per-app
@@ -102,6 +102,18 @@ What stayed here is anything a second app already uses or obviously will: `Secur
 - `apiLog.cleanup.enabled` starts database-backed API log retention cleanup.
 - `apiLog.cleanup.maxRetentionDays` controls the API log row retention cutoff.
 - `apiLog.cleanup.frequencyMinutes` controls API log cleanup frequency and defaults to 60 minutes in apphost.
+- `audit` (`AuditRetentionConfigModel`, `infra/config/audit_retention.go.md`, myidsan) bounds
+  how long the append-only security trail is kept — the one exception to that trail having
+  no delete path at all. Read only through `.EffectiveAuditRetention()`, never field-by-field.
+  `audit.retention.enabled` defaults **false** (keep everything forever). `maxRetentionDays`
+  defaults `365` and anything below the 30-day floor (`MinAuditRetentionDays()`) is raised to
+  it and a warning logged, since a trail trimmed to a week answers almost no investigative
+  question. `frequencyHours` defaults `24`. `archiveDir` defaults `audit-archive`
+  (data-dir-relative) and holds the JSON-lines files rows are archived to **before** they are
+  deleted from the table — a run that cannot write its archive deletes nothing. Wired by
+  `apps/myidsan/app/audit_retention.go.md`'s `startAuditRetention` into
+  `apps/myidsan/services/audit_retention.go.md`'s `PurgeOlderThan`. See
+  `docs/MYIDSAN_PRODUCTIZATION_PLAN.md` Phase 4.
 - `telemetry.enabled` enables shared telemetry wiring.
 - `telemetry.prometheus.enabled` exposes Prometheus-format metrics.
 - `telemetry.prometheus.metricsPath` controls the metrics scrape route.

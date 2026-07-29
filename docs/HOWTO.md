@@ -707,9 +707,24 @@ Failure modes (each surfaces in the myidsan server log and as a distinct
 | Verified principal but the login still fails | n/a (directory lookup) | `not_in_directory` | The directory is enabled but has no matching account for the principal's username — same as any LDAP login with no matching entry. |
 | No SSO button shown at all | n/a | (not offered) | `kerberos.enabled` is `false`, or the keytab failed to load at boot — check the startup log for a `WARNING: kerberos login disabled` line. |
 
-Not yet verified against a real KDC/realm — this needs a domain-joined client and a
-real Active Directory/Samba AD/Kerberos realm to exercise the ticket-acceptance path
-end to end.
+**Live-benched against a real Samba AD DC (realm `KOPI.TEST`, 2026-07-29)**: a genuine
+ticket obtained by `kinit` and presented over SPNEGO signs in and receives a session; a
+request with no token gets the `WWW-Authenticate: Negotiate` challenge (not an error);
+a forged token is refused to `/api/auth/login?error=sso_failed` with no session issued.
+Because both a good and a bad token can answer `302`, judge the outcome by `Location`
+plus the presence of the `kopiv2_access` cookie, never by status code alone. That bench
+found the same gap the Generic OIDC bench found above: a **rejected** ticket previously
+only incremented the `ticket_rejected`/`realm_refused` metric and left no audit record,
+so a forged or replayed SPNEGO token was invisible on the **Audit log** page while a
+rejected LDAP password login was recorded. Every rejection path in `kerberosLogin` now
+also records a `login.failure` entry naming `services.MethodKerberos` (see
+`apps/myidsan/apis/login.go.md`'s `recordKerberosLoginFailure`); the no-token challenge
+path deliberately does **not** audit, since it is the first half of every SPNEGO
+handshake and recording it would add one entry per browser request. Kerberos failures
+do not advance the failed-login lockout either, for the same reason as federated
+failures — a ticket is verified cryptographically against the keytab, not guessed. The
+realm allow-list (`kerberos.onlyRealms`) was exercised only in the accepting direction
+in this bench; a cross-realm rejection remains unbenched.
 
 ### Generic OIDC login
 
@@ -786,8 +801,16 @@ per IdP to the `login.oidc` array in config:
   startup log rather than failing boot — fix the config or bring the IdP back up and
   restart myidsan.
 
-Not yet verified against a real IdP — this needs a live Keycloak (or equivalent)
-instance to exercise the full authorization-code round trip end to end.
+**Live-benched against a real Keycloak 26 realm (2026-07-29)**: startup discovery, PKCE
+S256 + nonce + state on the login leg, `id_token` verification against the IdP's real JWKS,
+session issuance, and refusal (no session issued) of a tampered `state`, a callback with no
+flow cookies, and an `email_verified:false` identity. That bench found one real gap, now
+fixed: the federated callback previously audited only successes, so a refused SSO sign-in
+never showed up on the **Audit log** page — every rejection path now records a
+`login.failure` entry naming the provider (see `apps/myidsan/apis/login.go.md`'s
+`recordFederatedLoginFailure`). Federated failures deliberately do not count toward the
+failed-login lockout described above, since the credential was checked at the IdP, not
+guessed against myidsan.
 
 ## Filter Shared List APIs
 
@@ -892,6 +915,45 @@ curl -X DELETE -b cookies.txt -H "X-CSRF-Token: $CSRF_TOKEN" \
 The log base path is configured by `logging.path` or `LOG_PATH`. Relative paths resolve from the selected app directory and work across Linux, Windows, and macOS. A base path such as `./logs/mymatasan.log` writes dated files like `mymatasan-2026-06-07.log`.
 
 Current-month deletion is blocked in the runtime log service. Scheduled cleanup can be enabled with `logging.cleanup.enabled`, `logging.cleanup.maxRetentionDays`, and `logging.cleanup.frequencyMinutes`; the frequency defaults to `60` minutes when omitted.
+
+## MyIDSan Audit Log Retention
+
+Unlike the API/runtime logs above, myidsan's `GET /api/audit` security trail has **no**
+delete route at all — trimming it is entirely a config-file decision, so an operator needs
+filesystem access to the server, not just a session on it. Enable it with the `audit` block:
+
+```json
+{
+  "audit": {
+    "retention": {
+      "enabled": true,
+      "maxRetentionDays": 365,
+      "frequencyHours": 24,
+      "archiveDir": "audit-archive"
+    }
+  }
+}
+```
+
+- `enabled` defaults `false` — the block is absent from the shipped `config.json`, and an
+  install that never adds it keeps every audit row forever.
+- `maxRetentionDays` defaults `365`; anything set below **30** is raised to the floor and a
+  `WARNING` is logged at startup, since a security trail trimmed to a week answers almost no
+  investigative question.
+- `frequencyHours` defaults `24` — how often the purge task runs, not how far back it looks.
+- `archiveDir` defaults `audit-archive` (resolved relative to the data directory). Rows past
+  the cutoff are written to a JSON-lines file here, fsynced, and renamed into place **before**
+  they are deleted from the table — a run that cannot finish its archive deletes nothing.
+  These files hold emails, source IPs, and User-Agent strings in the clear (they are not
+  at-rest sealed), so treat this directory with the same care as the database and include it
+  in backups.
+- Every purge records itself back into the trail it just trimmed (`audit.retention_purge`,
+  naming the cutoff, row count, and archive filename), so a reader who finds the history
+  starting abruptly can tell a deliberate trim from an empty past.
+
+See `docs/modules/infra/config/audit_retention.go.md` and
+`docs/modules/apps/myidsan/services/audit_retention.go.md` for the implementation, and
+`docs/MYIDSAN_PRODUCTIZATION_PLAN.md` Phase 4 for the design rationale.
 
 ## systemd Deployment
 

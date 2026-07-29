@@ -51,6 +51,10 @@ Implements the `myidsan` app module for the shared runtime host.
   from the Profile page, not a nav item), `/api/session-admin` (`DevOnly`, no menu — reached
   inline from the Users page), and `/api/audit` (`DevOnly`, menu `Id: "audit"`, group
   `System`, order 5) — `SeedRbac` is omitted on all four so none is delegated by default.
+  Immediately after `auditService` is constructed, calls `startAuditRetention(deps,
+  auditService)` (`app/audit_retention.go.md`, `docs/MYIDSAN_PRODUCTIZATION_PLAN.md` Phase 4)
+  — a no-op unless `config.audit.retention.enabled` is set, in which case it schedules the
+  age-based, archive-first trim of the trail as a periodic `deps.Scheduler` task.
 - `moduleAppVersion(m)` — a small helper factored out of `APIDocs()` (below) so both the OpenAPI metadata and the backup manifest read this app's released version from the shared version manifest the same way, falling back to `"1.0.0"` when the manifest is unreadable.
 - Provides OpenAPI metadata and descriptions for the identity and RBAC administration surface.
 
