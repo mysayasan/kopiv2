@@ -54,7 +54,7 @@ High-level flow:
 4. A shared bootstrap engine checks/creates the database and syncs schema from registered entity types before the server starts.
 5. Business services orchestrate repository access, ONVIF devices, live stream sessions, and app workers such as the MyMataSan vision monitor.
 6. Transaction coordination uses Redis (or in-memory fallback for single-process/dev apps) to serialize critical file-storage work with FIFO lock acquisition and stuck-lock telemetry.
-7. Shared cache layer uses Redis or the in-process default cache depending on the selected app profile.
+7. Shared cache layer uses Redis or the in-process default cache depending on the selected app profile. Since sessions live in the cache, startup logs whether that cache is shared (safe behind a load balancer) or per-process (single-instance only), and warns loudly if a distributed transaction lock is paired with a per-process cache.
 8. The configured SQL engine stores persistent entities; `mymatasan` defaults to SQLite for small-device deployment.
 9. Static SPA assets are served from the selected app directory, for example `apps/mymatasan/static` or `apps/myidsan/static`.
 
@@ -268,6 +268,7 @@ Database behavior is controlled by `db` in config:
 - Runtime DB adapter and bootstrap are implemented for `postgres`, `mariadb`, and `sqlite`.
 - For SQLite, `db_name` is the database file path; relative paths resolve from the selected app directory. `:memory:` is supported for tests/dev experiments only.
 - SQLite runs through the same CRUD/bootstrap contracts, but it is best for single-process or small-device deployments. Prefer PostgreSQL or MariaDB for multi-instance production workloads.
+- `pool` (Postgres/MariaDB only): `maxOpenConns` (default 25), `maxIdleConns` (default 5), `maxLifetimeSeconds` (default 1800), `maxIdleTimeSeconds` (default 300), and `unlimited` (opt out of the bounded pool entirely). An absent or zero-value `pool` block yields the bounded default rather than Go's unbounded-connections default, so an existing install that never sets this now gets a 25-connection cap — raise `maxOpenConns` if your deployment is high-concurrency and the database server has headroom for it.
 - Core bootstrap seed SQL is dialect-portable for supported engines.
 - `apps/mymatasan/config.dev.json` defaults to SQLite at `./data/mymatasan.db` with `CACHE_PROVIDER=default` for standalone small-device operation.
 

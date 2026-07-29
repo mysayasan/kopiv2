@@ -28,6 +28,9 @@ func NewDbCrud(config dbsql.DbConfigModel) (dbsql.IDbCrud, error) {
 	if err != nil {
 		return nil, err
 	}
+	// See the Postgres equivalent: an unbounded pool is a way to exhaust the database
+	// server's connection budget for every application sharing it, not just this one.
+	dbsql.ApplyPool(db, config.Pool)
 	if err = db.Ping(); err != nil {
 		return nil, err
 	}

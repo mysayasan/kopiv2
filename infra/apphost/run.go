@@ -300,6 +300,8 @@ func runApp(app App) error {
 	}
 	log.Printf("transaction lock provider=%s waitTimeoutMs=%d leaseMs=%d stuckTimeoutMs=%d", txLockProvider, transactionLockWaitTimeout(appConfig).Milliseconds(), transactionLockLease(appConfig).Milliseconds(), transactionStuckTimeout(appConfig).Milliseconds())
 
+	warnSharedStateBoundary(cacheProvider, txLockProvider)
+
 	readyHolder := &readinessHolder{}
 	router.HandleFunc("/ready", readinessCheckHandler(dbCrud, cacheStore, readyHolder)).Methods("GET")
 

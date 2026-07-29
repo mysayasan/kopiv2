@@ -95,6 +95,7 @@ The runtime now uses a reusable multi-app launcher pattern:
 - Cache abstraction is runtime-selected via configuration (`default`, `redis`, `inmemory`, or `memory`).
 - Primary shared cache backend for multi-instance deployments: Redis.
 - `default`, `inmemory`, and `memory` all select the local in-process memory cache.
+- Sessions are held in the cache, and the cache is the authority on session validity. Every boot logs a shared-state boundary statement (`infra/apphost.warnSharedStateBoundary`, `shared_state.go`): a shared (Redis) cache confirms the app can run behind a load balancer; a per-process (`inmemory`/`default`/`memory`) cache states plainly that this instance is single-instance only — a second instance behind a load balancer signs users out whenever it is moved, and a restart ends every session. A distributed transaction lock (`transaction.lockProvider=redis`) paired with a per-process cache logs a `WARNING` instead, since a distributed lock only makes sense with more than one instance.
 - SSO sessions are cached as `sso:session:<sid>`.
 - Readiness includes cache ping to ensure runtime dependencies are available.
 - Shared admin cache API is exposed under `/api/cache-service` for key listing and controlled wipe operations.
@@ -192,6 +193,7 @@ Database config contract (`db` in app config):
 - For SQLite, `db_name` is a database file path and relative paths resolve from the selected app directory. `:memory:` is supported for tests/dev experiments only.
 - SQLite is intended for single-process small-device deployments; use PostgreSQL or MariaDB for multi-instance production deployments.
 - `apps/mymatasan/config.dev.json` defaults to SQLite at `./data/mymatasan.db` with the in-process default cache for standalone small-device deployment.
+- `pool` (`db.pool` in app config; Postgres and MariaDB only — SQLite ignores it and stays pinned to a single connection, a correctness constraint since concurrent writers to one file deadlock, not a tunable): `maxOpenConns` (default 25 when absent/zero), `maxIdleConns` (default 5; clamped down to `maxOpenConns` if configured higher, since `database/sql` would otherwise silently reduce it while the config kept claiming a number it never honoured), `maxLifetimeSeconds` (default 1800 = 30 minutes), `maxIdleTimeSeconds` (default 300 = 5 minutes), and `unlimited` (explicit opt-in for Go's old unbounded-open-connections behavior; idle/lifetime bounds still apply even when set). Applied via `dbsql.ApplyPool` right after `sql.Open`, before `Ping`, in both engines' `NewDbCrud`. The default matters more than the knobs: `database/sql` defaults to unlimited open connections, so before this existed a traffic burst could exhaust a database server's entire connection budget and take down every other application sharing it; an absent `pool` block now yields the bounded 25/5 default instead.
 
 SSO relying-app config contract (`sso` in app config):
 

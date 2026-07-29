@@ -62,6 +62,7 @@ Implements the reusable runtime host for all app modules.
 - Mount shared operational route groups; identity apps such as `myidsan` register login/user routes from their own app package.
 - Build and validate cache provider (`default`, `redis`, `inmemory`, or `memory`) from runtime config.
 - Build and validate transaction lock provider (`redis`, `memory`, or `inmemory`) from runtime config.
+- Log the shared-state boundary once, right after the transaction-lock provider log line, via `warnSharedStateBoundary(cacheProvider, txLockProvider)` (`shared_state.go.md`): a shared (Redis) cache confirms the app can run behind a load balancer; a per-process cache states plainly that this instance is single-instance only; a distributed transaction lock paired with a per-process cache is flagged as a self-inconsistent config.
 - Register shared Swagger/OpenAPI routes for runtime API documentation.
 - Invoke app-specific route registration.
 - Register a catch-all `/api/*` 404 JSON handler on the `api` subrouter, after every app
