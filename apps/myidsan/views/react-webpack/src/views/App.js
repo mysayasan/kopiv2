@@ -1180,6 +1180,12 @@ const APP_CODE_PATTERN = /^[a-z][a-z0-9-]{1,62}$/
 // callback (see myseliasan's sso.redirectPath), so it is the suggested default.
 const DEFAULT_CALLBACK_PATH = '/api/auth/callback'
 
+// Identity of the exported SSO bundle. A relying app's importer checks `kind` before
+// touching its own config, so a stray JSON file cannot be mistaken for one of these;
+// `version` lets a future field addition stay readable by an older importer.
+const SSO_BUNDLE_KIND = 'myidsan.sso.client'
+const SSO_BUNDLE_VERSION = 1
+
 // slugifyAppCode converts free text (a pasted title) into a candidate app code.
 function slugifyAppCode(value) {
   return String(value || '')
@@ -1603,6 +1609,39 @@ function AppDetail({ accessList, app, apps = [], onCreated, onSaved, onDeleted }
     }
   }, null, 2)
 
+  // ---- export bundle -------------------------------------------------------
+  // The same values as a machine-readable file a relying app can import, so an
+  // operator never has to retype a client ID or an audience across two consoles.
+  //
+  // The plaintext secret exists ONLY in this browser tab and only right after
+  // Generate — myidsan stores a hash and the API never returns it. So the export
+  // can carry the secret when one was just generated, and must be honest about
+  // its absence otherwise rather than shipping a file that silently fails to work.
+  const secretForExport = String(authForm.clientSecret || '').trim()
+  const buildExportBundle = () => JSON.stringify({
+    kind: SSO_BUNDLE_KIND,
+    version: SSO_BUNDLE_VERSION,
+    exportedAt: new Date().toISOString(),
+    appCode: appForm.code,
+    appTitle: appForm.title,
+    secretIncluded: Boolean(secretForExport),
+    sso: {
+      issuer: 'myidsan',
+      audience: previewAudience,
+      providerBaseUrl: provider,
+      clientId: previewClientId,
+      clientSecret: secretForExport,
+      redirectBaseUrl: previewBase,
+      redirectPath: DEFAULT_CALLBACK_PATH,
+      sessionTtlSeconds: Number(authForm.sessionTtlSeconds) || 259200
+    }
+  }, null, 2)
+
+  const exportBundle = () => {
+    downloadText(`${appForm.code || 'app'}-sso.json`, buildExportBundle())
+    setNotice(secretForExport ? t('app.exportedWithSecret') : t('app.exportedNoSecret'))
+  }
+
   const steps = [
     {
       key: 'register',
@@ -1897,7 +1936,13 @@ function AppDetail({ accessList, app, apps = [], onCreated, onSaved, onDeleted }
             <div className="preview-card-head">
               <h4>{t('app.previewTitle')}</h4>
               <InfoTip text={t('app.previewLede')} align="end" />
+              <button className="secondary-button export-button" type="button" onClick={exportBundle} title={t('app.exportTip')}>
+                {t('app.exportBundle')}
+              </button>
             </div>
+            <p className={secretForExport ? 'export-note ok' : 'export-note warn'}>
+              {secretForExport ? t('app.exportSecretIncluded') : t('app.exportSecretMissing')}
+            </p>
             <PreviewRow label={t('app.previewProvider')} value={provider} hint={t('app.previewProviderHint')} />
             <PreviewRow label={t('app.previewAudience')} value={previewAudience} hint={t('app.previewAudienceHint')} />
             <PreviewRow label={t('app.previewCallback')} value={previewUri} hint={t('app.previewCallbackHint')} />

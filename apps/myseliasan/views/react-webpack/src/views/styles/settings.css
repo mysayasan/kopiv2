@@ -45,6 +45,11 @@
   color: var(--accent);
   flex: 0 0 auto;
 }
+/* Section-level action (SSO: import a myidsan bundle), pinned to the trailing edge. */
+.settings-hero-action {
+  margin-inline-start: auto;
+  flex: 0 0 auto;
+}
 .settings-hero-text h3 {
   margin: 0;
   font-size: 15.5px;

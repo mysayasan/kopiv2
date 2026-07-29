@@ -454,4 +454,10 @@ export default {
   'app.infoTip': 'Apa ini?',
   'app.titleExample': 'Konsol Armada',
   'app.descriptionExample': 'Konsol operasi untuk armada kenderaan',
+  'app.exportBundle': 'Eksport',
+  'app.exportTip': 'Muat turun tetapan ini sebagai fail yang boleh diimport oleh aplikasi',
+  'app.exportSecretIncluded': 'Rahsia klien yang baru anda jana akan disertakan. Anggap fail itu sebagai kelayakan.',
+  'app.exportSecretMissing': 'Tiada rahsia dalam fail ini — myidsan menyimpan cincangan sahaja. Jana yang baharu dahulu untuk menyertakannya, atau tetapkannya pada aplikasi secara manual.',
+  'app.exportedWithSecret': 'Tetapan dieksport, termasuk rahsia klien. Serahkan fail itu melalui saluran yang dipercayai dan padamkannya selepas itu.',
+  'app.exportedNoSecret': 'Tetapan dieksport tanpa rahsia klien. Aplikasi masih memerlukan satu.',
 };

@@ -2499,4 +2499,12 @@ export default {
   'node.online': 'متصل',
   'iot.dash.loadFailed': 'تعذّر تحميل الأجهزة.',
   'iot.notif.title': 'الإشعار',
+  "settings.sso.import": "استيراد من myidsan",
+  "settings.sso.importTip": "حمّل ملف الإعدادات المُصدَّر من صفحة التطبيقات في myidsan",
+  "settings.sso.importBadJson": "هذا الملف ليس JSON صالحًا.",
+  "settings.sso.importWrongKind": "هذا ليس ملف إعدادات SSO من myidsan. صدّر واحدًا من صفحة التطبيقات في myidsan.",
+  "settings.sso.importTooNew": "كُتب هذا الملف بإصدار من myidsan أحدث مما تفهمه هذه النسخة. حدّث myseliasan أولًا.",
+  "settings.sso.importNoChange": "لا شيء لاستيراده — هذه الإعدادات مطابقة للملف بالفعل.",
+  "settings.sso.importedWithSecret": "تم استيراد {n} من الإعدادات، متضمنةً سر العميل. راجعها ثم اضغط حفظ.",
+  "settings.sso.importedNoSecret": "تم استيراد {n} من الإعدادات. لم يحمل الملف سر عميل، لذا يبقى السر المخزَّن — اضبطه يدويًا إن كان قد تغيّر. راجع ثم اضغط حفظ.",
 };

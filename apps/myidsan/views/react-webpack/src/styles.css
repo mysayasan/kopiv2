@@ -2515,6 +2515,30 @@ textarea:focus {
   gap: 6px;
 }
 
+.export-button {
+  margin-inline-start: auto;
+  min-height: 28px;
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+/* Whether the downloaded bundle carries the client secret. The secret only exists
+   in this tab right after Generate, so the state has to be visible before download
+   rather than discovered when the relying app fails to authenticate. */
+.export-note {
+  margin: -6px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.export-note.ok {
+  color: var(--green);
+}
+
+.export-note.warn {
+  color: var(--amber);
+}
+
 .preview-card h4 {
   margin: 0;
   font-size: 14px;

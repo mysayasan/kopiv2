@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { Ico, useT, Tabs } from '@shared';
 import { api, apiBase } from '../lib/helpers';
 import '../styles/settings.css';
@@ -11,6 +11,28 @@ import '../styles/settings.css';
 
 // Redis database numbers (0–15) as a dropdown, so the field is a pick, not a type-in.
 const DB_OPTIONS = Array.from({ length: 16 }, (_, i) => ({ v: i, label: String(i) }));
+
+// --- myidsan SSO bundle import ----------------------------------------------
+// myidsan's Apps page exports the client it just registered as a small JSON file.
+// Every value in it has to be matched here byte-for-byte (client ID, audience, the
+// redirect URL), and retyping them across two consoles is exactly where operators
+// slip. Importing fills the form; it does NOT save — the operator still reviews and
+// presses Save, because this is the setting that decides who can log in.
+const SSO_BUNDLE_KIND = 'myidsan.sso.client';
+const SSO_BUNDLE_MAX_VERSION = 1;
+
+// Bundle leaf -> settings-form path. Anything absent from the file is left alone
+// rather than blanked, so a partial bundle cannot silently wipe working config.
+const SSO_BUNDLE_FIELDS = [
+  ['issuer', 'sso.issuer'],
+  ['audience', 'sso.audience'],
+  ['clientId', 'sso.clientId'],
+  ['clientSecret', 'sso.clientSecret'],
+  ['providerBaseUrl', 'sso.providerBaseUrl'],
+  ['redirectBaseUrl', 'sso.redirectBaseUrl'],
+  ['redirectPath', 'sso.redirectPath'],
+  ['sessionTtlSeconds', 'sso.sessionTtlSeconds'],
+];
 
 // SECTIONS drives both the tab bar and each form. A field's `path` is relative to the
 // section payload root (the same shape the API returns/accepts); `k` is its i18n label key
@@ -26,6 +48,7 @@ const SECTIONS = [
   },
   {
     id: 'sso', icon: 'lock', tone: 'violet',
+    action: 'importSso',
     fields: [
       { path: 'sso.issuer', k: 'issuer', type: 'text' },
       { path: 'sso.audience', k: 'audience', type: 'text' },
@@ -257,7 +280,13 @@ export function SettingsPage({ session, onToast }) {
         <p className="settings-hint settings-hint--error">{t('settings.loadFailed')}</p>
       ) : (
         <div className="settings-body">
-          <SectionHero section={activeSection} t={t} />
+          <SectionHero
+            section={activeSection}
+            t={t}
+            action={activeSection.action === 'importSso'
+              ? <SsoImportButton form={form} setForm={setForm} t={t} onToast={onToast} />
+              : null}
+          />
           <div className="settings-cards">
             {toGroups(activeSection.fields, t).filter((g) => !g.when || g.when(form)).map((g, i) => (
               <section key={g.title || `g${i}`} className="settings-card">
@@ -305,6 +334,78 @@ function toGroups(fields, t) {
   return groups;
 }
 
+// SsoImportButton loads a myidsan-exported bundle into the SSO form. It deliberately
+// stops at filling the fields: the operator sees exactly what changed, can correct it,
+// and presses Save themselves. Nothing is sent to the server here, so the import needs
+// no new endpoint and no new permission — it rides the existing settings save.
+function SsoImportButton({ form, setForm, t, onToast }) {
+  const inputRef = useRef(null);
+
+  const apply = useCallback(async (file) => {
+    if (!file) return;
+    let bundle;
+    try {
+      bundle = JSON.parse(await file.text());
+    } catch (_) {
+      onToast && onToast(t('settings.sso.importBadJson'), 'error');
+      return;
+    }
+    if (!bundle || bundle.kind !== SSO_BUNDLE_KIND) {
+      onToast && onToast(t('settings.sso.importWrongKind'), 'error');
+      return;
+    }
+    // A newer major bundle may carry fields this build cannot honour; refuse rather
+    // than import a subset and let the operator believe it is complete.
+    if (Number(bundle.version) > SSO_BUNDLE_MAX_VERSION) {
+      onToast && onToast(t('settings.sso.importTooNew'), 'error');
+      return;
+    }
+    const sso = bundle.sso || {};
+    let next = form;
+    const applied = [];
+    for (const [leaf, path] of SSO_BUNDLE_FIELDS) {
+      const value = sso[leaf];
+      if (value === undefined || value === null || value === '') continue;
+      if (String(getAt(next, path) ?? '') === String(value)) continue;
+      next = setAt(next, path, value);
+      applied.push(leaf);
+    }
+    if (!applied.length) {
+      onToast && onToast(t('settings.sso.importNoChange'), 'info');
+      return;
+    }
+    setForm(next);
+    // The secret is the one field myidsan can only hand over at generation time, so
+    // say plainly when the bundle did not carry one and the old value still stands.
+    const withSecret = applied.includes('clientSecret');
+    onToast && onToast(
+      withSecret
+        ? t('settings.sso.importedWithSecret', { n: applied.length })
+        : t('settings.sso.importedNoSecret', { n: applied.length }),
+      'success',
+    );
+  }, [form, setForm, onToast, t]);
+
+  return (
+    <>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="application/json,.json"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const file = e.target.files && e.target.files[0];
+          e.target.value = ''; // let the same file be picked again after a correction
+          apply(file);
+        }}
+      />
+      <button type="button" className="settings-btn" onClick={() => inputRef.current && inputRef.current.click()} title={t('settings.sso.importTip')}>
+        <Ico n="upload" sz={15} /><span>{t('settings.sso.import')}</span>
+      </button>
+    </>
+  );
+}
+
 // CacheTestButton pings Redis with the values currently in the form (a blank password
 // falls back to the stored one, resolved server-side). It shows an inline result pill and
 // toasts, so an operator can verify connectivity before saving.
@@ -343,7 +444,7 @@ function CacheTestButton({ form, t, onToast }) {
 
 // SectionHero is the tinted banner atop each section: an icon chip in the section's tone,
 // the section title, and its one-line description.
-function SectionHero({ section, t }) {
+function SectionHero({ section, t, action }) {
   return (
     <div className={`settings-hero tone-${section.tone}`}>
       <span className="settings-hero-ico"><Ico n={section.icon} sz={22} /></span>
@@ -351,6 +452,7 @@ function SectionHero({ section, t }) {
         <h3>{t(`settings.sec.${section.id}.title`)}</h3>
         <p>{t(`settings.sec.${section.id}.desc`)}</p>
       </div>
+      {action ? <div className="settings-hero-action">{action}</div> : null}
     </div>
   );
 }

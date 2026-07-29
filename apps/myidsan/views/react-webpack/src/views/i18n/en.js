@@ -473,4 +473,10 @@ export default {
   'app.infoTip': 'What is this?',
   'app.titleExample': 'Fleet Console',
   'app.descriptionExample': 'Ops console for the vehicle fleet',
+  'app.exportBundle': 'Export',
+  'app.exportTip': 'Download these settings as a file the relying app can import',
+  'app.exportSecretIncluded': 'The client secret you just generated will be included. Treat the file as a credential.',
+  'app.exportSecretMissing': 'No secret in this file — myidsan keeps only a hash. Generate a new one first to include it, or set it on the app by hand.',
+  'app.exportedWithSecret': 'Settings exported, including the client secret. Hand the file over on a trusted channel and delete it afterwards.',
+  'app.exportedNoSecret': 'Settings exported without a client secret. The relying app will still need one.',
 };

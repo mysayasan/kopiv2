@@ -454,4 +454,10 @@ export default {
   'app.infoTip': '这是什么？',
   'app.titleExample': '车队控制台',
   'app.descriptionExample': '车辆车队的运维控制台',
+  'app.exportBundle': '导出',
+  'app.exportTip': '将这些设置下载为依赖方应用可导入的文件',
+  'app.exportSecretIncluded': '刚生成的客户端密钥将包含在内。请将该文件视为凭据妥善保管。',
+  'app.exportSecretMissing': '此文件中不含密钥——myidsan 只保留哈希值。请先生成一个新密钥以将其包含在内，或在应用上手动设置。',
+  'app.exportedWithSecret': '设置已导出，含客户端密钥。请通过可信渠道移交该文件，用后删除。',
+  'app.exportedNoSecret': '设置已导出，但不含客户端密钥。依赖方应用仍然需要一个。',
 };
