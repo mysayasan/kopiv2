@@ -1,6 +1,8 @@
 package config
 
 import (
+	"strings"
+
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/login"
 )
@@ -96,6 +98,12 @@ type AppConfigModel struct {
 	// Read this through Effective(), never field-by-field — an omitted block must
 	// resolve to ON. See LoginSecurityConfigModel.
 	LoginSecurity LoginSecurityConfigModel `json:"loginSecurity"`
+	// PasswordPolicy constrains the passwords a human may choose. Read through
+	// Effective() so an omitted block still enforces a sane floor.
+	PasswordPolicy PasswordPolicyConfigModel `json:"passwordPolicy"`
+	// Mfa decides who is REQUIRED to hold a second factor. Enrolment is self-service
+	// either way; this only controls who cannot skip it.
+	Mfa MfaPolicyConfigModel `json:"mfa"`
 	// Pairing configures LAN discovery + single-parent adoption between a
 	// mymatasan node and a myseliasan control plane. When enabled (default), an
 	// unpaired node answers authenticated discovery probes on the multicast group
@@ -341,6 +349,149 @@ type RateLimitTierConfigModel struct {
 	Enabled       bool `json:"enabled"`
 	Requests      int  `json:"requests"`
 	WindowSeconds int  `json:"windowSeconds"`
+}
+
+// PasswordPolicyConfigModel constrains passwords a HUMAN chooses. It deliberately does not
+// apply to server-generated credentials (the bootstrap superadmin password, the temporary
+// password issued from the reset queue): those are 16 characters of CSPRNG output, already
+// far stronger than any policy here, and subjecting them to a symbol requirement would only
+// mean the generator had to be taught to satisfy a rule that adds nothing to their entropy.
+//
+// There is no breach-corpus check. myidsan is positioned to run air-gapped, so an HIBP
+// k-anonymity lookup is not available; the embedded denylist of the most-reused passwords
+// covers the same ground for the passwords people actually pick, without egress.
+type PasswordPolicyConfigModel struct {
+	// MinLength floors the length. Length is the single most useful control, so it is the
+	// one that defaults to something meaningful rather than zero.
+	MinLength int `json:"minLength"`
+	// RequireUpper/Lower/Digit/Symbol are character-class requirements. All default OFF:
+	// composition rules push people toward predictable substitutions (P@ssw0rd1) and a
+	// longer passphrase beats a short password with a symbol bolted on. They exist because
+	// some customers are contractually obliged to switch them on.
+	RequireUpper  bool `json:"requireUpper"`
+	RequireLower  bool `json:"requireLower"`
+	RequireDigit  bool `json:"requireDigit"`
+	RequireSymbol bool `json:"requireSymbol"`
+	// BlockCommon rejects the embedded denylist of widely-reused passwords. Pointer so an
+	// absent block still enables it — this is the check with the best ratio of protection
+	// to annoyance, and it should not be off merely because nobody wrote the block.
+	BlockCommon *bool `json:"blockCommon"`
+}
+
+// EffectivePasswordPolicy is PasswordPolicyConfigModel with defaults resolved.
+type EffectivePasswordPolicy struct {
+	MinLength     int
+	RequireUpper  bool
+	RequireLower  bool
+	RequireDigit  bool
+	RequireSymbol bool
+	BlockCommon   bool
+}
+
+// defaultPasswordMinLength is the floor when none is configured. Twelve rather than the
+// eight that two of myidsan's four password paths used to enforce (and the other two did
+// not enforce at all): eight is inside brute-force range for an offline attack on a bcrypt
+// hash with modern hardware, and this is the password protecting an identity provider.
+const defaultPasswordMinLength = 12
+
+// Effective resolves the block. An absent or zero MinLength means the default rather than
+// "no minimum" — a zero here would otherwise silently disable the only control that is on
+// by default.
+func (p PasswordPolicyConfigModel) Effective() EffectivePasswordPolicy {
+	eff := EffectivePasswordPolicy{
+		MinLength:     p.MinLength,
+		RequireUpper:  p.RequireUpper,
+		RequireLower:  p.RequireLower,
+		RequireDigit:  p.RequireDigit,
+		RequireSymbol: p.RequireSymbol,
+		BlockCommon:   p.BlockCommon == nil || *p.BlockCommon,
+	}
+	if eff.MinLength <= 0 {
+		eff.MinLength = defaultPasswordMinLength
+	}
+	return eff
+}
+
+// MfaPolicyConfigModel decides who must hold a second factor.
+//
+// Until now MFA was purely opt-in per user, with no way to say "administrators must have
+// one" — so the accounts that can assign roles and export the identity store were exactly
+// as likely to be password-only as anyone else.
+//
+// Enforcement happens AFTER the password succeeds: a user who owes a factor still gets a
+// session, but is pinned to the enrolment screen. That is safe because they are being made
+// to ADD a factor, not to prove one they do not have — the alternative (refusing the login
+// outright) would lock out every existing admin the moment the policy is switched on.
+type MfaPolicyConfigModel struct {
+	// Policy is "off" | "optional" | "required".
+	//
+	//	off       nobody is prompted; existing factors are still honoured at login
+	//	optional  self-service only (the behaviour before this setting existed) — DEFAULT
+	//	required  everyone in scope must enrol before they can use the app
+	//
+	// Default is "optional" rather than "required": switching a live identity server to
+	// mandatory MFA is an operator decision with real support consequences, not something
+	// an upgrade should do silently.
+	Policy string `json:"policy"`
+	// RequiredRoleIds narrows "required" to specific roles — the common case being
+	// "required for administrators, optional for everyone else". Empty under "required"
+	// means everyone.
+	RequiredRoleIds []int64 `json:"requiredRoleIds"`
+	// ApplyToDirectory extends the requirement to directory (LDAP) accounts. Off by
+	// default: those users' factor policy usually belongs to the directory, and forcing a
+	// second factor here can duplicate one the domain already enforces.
+	ApplyToDirectory bool `json:"applyToDirectory"`
+}
+
+// MFA policy values.
+const (
+	MfaPolicyOff      = "off"
+	MfaPolicyOptional = "optional"
+	MfaPolicyRequired = "required"
+)
+
+// EffectiveMfaPolicy is MfaPolicyConfigModel with defaults resolved.
+type EffectiveMfaPolicy struct {
+	Policy           string
+	RequiredRoleIds  []int64
+	ApplyToDirectory bool
+}
+
+// Effective resolves the block. An unset or unrecognised policy becomes "optional" — an
+// unreadable value must not silently mean "required" and lock everyone out, nor "off" and
+// silently drop a control the operator asked for.
+func (p MfaPolicyConfigModel) Effective() EffectiveMfaPolicy {
+	policy := strings.ToLower(strings.TrimSpace(p.Policy))
+	switch policy {
+	case MfaPolicyOff, MfaPolicyRequired:
+	default:
+		policy = MfaPolicyOptional
+	}
+	return EffectiveMfaPolicy{
+		Policy:           policy,
+		RequiredRoleIds:  append([]int64(nil), p.RequiredRoleIds...),
+		ApplyToDirectory: p.ApplyToDirectory,
+	}
+}
+
+// RequiresFactor reports whether an account with this role must hold a second factor.
+// isDirectoryAccount carries the LDAP/Kerberos/OIDC distinction.
+func (p EffectiveMfaPolicy) RequiresFactor(roleId int64, isDirectoryAccount bool) bool {
+	if p.Policy != MfaPolicyRequired {
+		return false
+	}
+	if isDirectoryAccount && !p.ApplyToDirectory {
+		return false
+	}
+	if len(p.RequiredRoleIds) == 0 {
+		return true
+	}
+	for _, id := range p.RequiredRoleIds {
+		if id == roleId {
+			return true
+		}
+	}
+	return false
 }
 
 // LoginSecurityConfigModel is the failed-login lockout block.

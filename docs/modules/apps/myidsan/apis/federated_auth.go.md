@@ -29,13 +29,15 @@ issued by one login surface can, in principle, be redeemed by the other.
   factor, it mints a challenge token (`m.mfa.issue`) and calls `renderMfaChallenge`
   instead of setting any cookie or redirecting — the same pre-session ordering the
   SPA uses. No `kopiv2_access` cookie exists until the code is verified.
-- `renderMfaChallenge(w, status, continueTo, token, errMsg)` draws a minimal
+- `renderMfaChallenge(w, r, status, continueTo, token, errMsg)` draws a minimal
   single-field code form (reusing the login card chrome, self-hosted assets only)
   posting back to `/api/auth/mfa` with the opaque token and the pending `continue`
   target as hidden fields.
-- `mfaPost` parses the form, checks `guardLocked` (rendering the challenge again
-  with a `429` "too many failed attempts" message if locked), then calls
-  `m.mfa.redeem(ctx, r, token, code)`:
+- `mfaPost` parses the form, validates the CSRF double-submit token (re-rendering the
+  challenge with "that form expired" on a mismatch), checks `guardLocked` — source-IP
+  key only, since this step presents a challenge token rather than a username
+  (rendering the challenge again with a `429` "too many failed attempts" message if
+  locked) — then calls `m.mfa.redeem(ctx, r, token, code)`:
   - `services.ErrMfaBadCode` → sleeps the guard's failure delay, records the
     failure, and re-renders the challenge (`401`) with "That code did not match" —
     the token survives so the user can retry until it hits its attempt cap or TTL.
@@ -65,18 +67,34 @@ are silently excluded by the service layer (no oracle either way).
   use, without duplicating the full stylesheet per handler.
 - The login page (`renderLoginPage`) now carries a "Forgot your password?" link to
   `/api/auth/forgot`.
-- `forgotPage` renders the request form (username/email). `forgotPost` checks
-  `guardLocked` (the same shared `LoginGuard` credential surfaces use, so the
-  endpoint cannot be hammered to fingerprint accounts), then calls
-  `m.reset.Request(ctx, username, loginGuardKey(r), requestOrigin(r))` and **always**
-  renders the same generic confirmation — wording only varies on `m.reset.MailEnabled()`
-  ("an administrator has been notified" vs. "we've emailed a link... valid for 30
-  minutes") — never on whether an account actually matched.
+- `forgotPage` renders the request form (username/email). `forgotPost` validates the
+  CSRF double-submit token (see "CSRF on the Server-Rendered Auth Forms" below;
+  re-renders "that form expired" on a mismatch), then checks `guardLocked` — here keyed
+  on **both** the source IP and the submitted username (`guardLocked(m.guard, r,
+  r.Form.Get("username"))`) — before calling `m.reset.Request(ctx, username,
+  loginGuardKey(r), requestOrigin(r))`. **Note:** this differs from the SPA's
+  equivalent JSON endpoint, `apis/login.go`'s `forgotPassword`, which deliberately
+  checks the guard *before* parsing the body so only the source-IP key is ever used —
+  that file's comment argues that keying a recovery-request check on the submitted
+  account would let anyone lock a known user out of recovery simply by repeatedly
+  naming them. This page's account-keyed check was not called out as an intentional
+  deviation; flagged here as worth reconciling. Either way, the response **always**
+  renders the same generic confirmation — wording only varies on
+  `m.reset.MailEnabled()` ("an administrator has been notified" vs. "we've emailed a
+  link... valid for 30 minutes") — never on whether an account actually matched.
 - `resetPage` (`GET /api/auth/reset?token=...`) is only meaningful when the SMTP link
   was used: it calls `m.reset.ResolveToken` to validate the token before rendering the
   set-new-password form; an invalid/expired/missing token (or `m.reset == nil`) renders
-  an error card with a link back to `/api/auth/forgot` instead.
-- `resetPost` calls `m.reset.CompleteSelfService(ctx, token, password)`, which sets the
+  an error card with a link back to `/api/auth/forgot` instead. The form's copy and the
+  `<input>` no longer hard-code "at least 8 characters"/`minlength="8"` — the password
+  policy is now configurable (`services/password_policy.go.md`), so the hint reads
+  "must meet this server's password policy" and client-side length is unenforced,
+  relying entirely on the server-side `ValidatePassword` check in `resetPost`.
+- `resetPost` validates the CSRF double-submit token (see below; a mismatch renders
+  "that form expired, open the link from your email again") before doing anything else
+  — without it, a victim holding a valid reset token could be made to submit a password
+  of the attacker's choosing from their own browser. It then calls
+  `m.reset.CompleteSelfService(ctx, token, password)`, which sets the
   new password and consumes the token (single-use). On success it renders a plain
   "password has been reset, you can now sign in" confirmation — **deliberately does
   NOT issue a session**: any second factor the account has enrolled is still presented
@@ -96,7 +114,9 @@ loads. It reuses the same visual language as mymatasan's/myseliasan's React
 stylesheet to import CSS custom properties from here), self-hosted assets only
 (`/assets/favicon.svg`, `/assets/fonts.css` — no external font/CDN references, required
 because myidsan and the apps that redirect here run on an air-gapped intranet), and
-takes `(w, status, continueTo, username, method, ldapLabel, errMsg)`: `status`/`errMsg`
+takes `(w, r, status, continueTo, username, method, ldapLabel, errMsg)` — `r` was added
+(Productization Phase 3) so the CSRF token can be minted per render; see "CSRF on the
+Server-Rendered Auth Forms" below. `status`/`errMsg`
 let `loginPost` re-render the card with an inline error on `POST` failure instead of the
 page always being a plain `GET` 200; `username` is echoed back into the form on a
 failed attempt; `method` (`"local"`/`"ldap"`) preserves the account-type choice across
@@ -107,14 +127,37 @@ disabled directory never offers a dead choice.
 
 ## `loginPost` — local vs. LDAP
 
+`loginPost` validates the CSRF double-submit token first (see "CSRF on the
+Server-Rendered Auth Forms" below); a mismatch re-renders the login page with "that
+form expired, please try again" (`400`) rather than an error — a stale/back-navigated
+tab is the common legitimate cause, and the fresh render carries a fresh token.
 `useLdap := method == "ldap" && ldapLabel != ""` — an "ldap" POST against a currently
 disabled directory silently falls back to a local credential check (`method` is reset
 to `"local"`) rather than erroring, since the account-type choice only exists in the
 rendered form while directory login is enabled. The shared `*sharedapis.LoginGuard`
-(`m.guard`, the same instance `apis/login.go` uses — see that doc's "Per-IP Login
-Lockout" section) is checked before either credential path runs, and a genuine
-credential failure (`services.ErrInvalidCredential` or `login.ErrLdapInvalidCredential`)
-records against the guard's per-IP counters after the configured failure delay.
+(`m.guard`, the same instance `apis/login.go` uses — see that doc's "Per-IP + Per-Account
+Login Lockout" section) is checked (keyed on both source IP and the posted `username`)
+before either credential path runs, and a genuine credential failure
+(`services.ErrInvalidCredential` or `login.ErrLdapInvalidCredential`) records against
+both guard counters after the configured failure delay.
+
+## CSRF on the Server-Rendered Auth Forms
+
+`/api/auth/{login,mfa,forgot,reset}` are public routes that exist precisely for callers
+with no session yet, so they never pass through the auth middleware's session-bound CSRF
+check and previously had none at all — a login-CSRF/session-fixation gap, and a way to
+force a password-reset submission on behalf of a victim holding a valid reset token. Every
+render (`renderLoginPage`, `renderMfaChallenge`, `forgotPage`, `resetPage`) now mints a
+session-less double-submit token via `issueAuthFormCSRF`/`authFormCSRFInput`
+(`apps/myidsan/apis/auth_form_csrf.go`, see that file's doc) and embeds it as a hidden
+field; every POST handler (`loginPost`, `mfaPost`, `forgotPost`, `resetPost`) calls
+`validateAuthFormCSRF(r)` first and re-renders the originating form on a mismatch.
+**Gotcha, worth knowing before touching any of these renderers:** the token must be minted
+into a local variable *before* `w.WriteHeader(status)` — `http.SetCookie` only appends to
+the response's header map, and a cookie set from inside the `fmt.Fprintf` argument list
+(after the status line has already been written) is silently discarded, leaving a form
+whose token has no matching cookie and every genuine submission failing. See
+`apps/myidsan/apis/auth_form_csrf.go.md`.
 
 ## `socialButtonsHTML`
 
@@ -144,7 +187,17 @@ now exercised through `login.BuildRegistry`) and `TestLoginPageHasNoExternalRefe
 - Client registration is loaded from `app_auth_config`.
 - Callback URLs must match active `app_redirect_uri` rows exactly.
 - Authorization codes are random, short-lived, stored in cache, and deleted after token exchange.
-- Client secrets are verified against stored SHA-256 hashes.
+- Client secrets are verified with `secretMatches`, which now hashes with **bcrypt**
+  (Productization Phase 3) rather than the previous unsalted single-round SHA-256 — a
+  read of `app_auth_config` used to hand an attacker every operator-chosen client
+  secret at GPU speed. `secretMatches` accepts **both** the current bcrypt form and the
+  legacy SHA-256 form (`isBcryptClientSecret` distinguishes them by the `$2a$`/`$2b$`/
+  `$2y$` prefix) and reports `needsRehash`; `token` (`POST /api/auth/token`) rewrites a
+  legacy row to bcrypt the first time its secret is presented (best-effort — a rewrite
+  failure is logged, never fails the token exchange that already succeeded), so an
+  existing install migrates itself without an operator re-entering every client
+  secret. `hashClientSecret` (used by `apps/myidsan/apis/app_auth_config.go`'s create/
+  update handlers) now returns `(string, error)` for the same reason.
 - Login resume paths (`cleanContinuePath`, guarding the OAuth `continue` cookie and the Kerberos failure redirect) reject absolute external URLs, any value carrying a host (`parsed.Host != ""`, catching `//evil.example` even though it isn't scheme-absolute), and any value containing a backslash. The backslash check is load-bearing on its own: browsers normalise `\` to `/` in the authority position, so `/\evil.example` used to pass both the `IsAbs()` check and the `strings.HasPrefix(value, "//")` check and then navigate off-origin as a protocol-relative URL — an open redirect on the login flow, the classic phishing primitive against an identity provider. Covered by `TestCleanContinuePathRejectsBackslashBypass` and `TestCleanContinuePathRejectsEmbeddedHost` in `federated_auth_test.go`.
 - The rendered login page loads no external host (no CDN, no Google Fonts) — every asset is a same-origin path, verified by `federated_auth_login_test.go`.
 - `NewFederatedAuthApi` now also takes `directory services.IDirectoryService`, `kerberosLabel string`, `guard *sharedapis.LoginGuard`, `mfaService services.IMfaService`, and a trailing `resetService services.IPasswordResetService` (directory/guard/mfaService/resetService may be nil — directory login off / lockout off / MFA not armed / recovery pages a no-op; `kerberosLabel` empty means Kerberos is not offered on this page); LDAP credential checks go through `directory.AuthenticateLdap`, never a hand-rolled bind here. Kerberos itself is never invoked from this file — SPNEGO verification only ever happens on `apps/myidsan/apis/login.go`'s dedicated `GET /api/login/kerberos` route; this file only decides whether to render the button and whether to show the `sso_failed` inline error.

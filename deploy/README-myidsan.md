@@ -58,10 +58,33 @@ Edit `config.json`:
 | `login.google` / `login.github` | Optional social login; needs internet egress. Secrets can come from `GOOGLE_CLIENT_SECRET` / `GITHUB_CLIENT_SECRET`. |
 | `login.oidc[]` | Optional generic OIDC providers (Keycloak, Authentik, ADFS, Entra…). Secrets can come from `OIDC_<KEY>_CLIENT_SECRET`. |
 | `kerberos` | Optional SPNEGO single sign-on for domain-joined machines — see the runbook below. |
+| `passwordPolicy` | Password-strength rules for every human-chosen password. `minLength` defaults to `12` (was a hard-coded 8). `requireUpper`/`requireLower`/`requireDigit`/`requireSymbol` default off. `blockCommon` (embedded denylist) defaults on. Leave the block out of `config.json` entirely to take all the defaults. |
+| `mfa` | MFA enforcement policy. `policy`: `off` \| `optional` (default) \| `required`. `requiredRoleIds`: narrow `required` to specific roles; empty = every role. `applyToDirectory`: also require it for LDAP-bound accounts (default `false`). See "MFA-required rollout" below before setting `policy` to `required`. |
 | `db` | Defaults to SQLite (`./data/myidsan.db`), fine for a single identity server. Postgres and MariaDB are also supported. |
 
 **LDAP / Active Directory** login is configured in the UI (Federation → Directory), not
 in `config.json` — the bind password is stored encrypted at rest.
+
+**MFA-required rollout.** Switching `mfa.policy` to `required` does not lock anyone out
+immediately: a user with no confirmed factor still signs in, but is pinned to the
+enrollment screen on every request until they add one — the same pattern as the forced
+first-login password change. The risk is operational, not a hard lockout: if your *only*
+superadmin cannot complete enrollment right now (lost phone, no authenticator app handy)
+they are stuck on that screen until they can. Before flipping the switch on a live
+install: confirm at least one administrator has already enrolled a factor, or is present
+and able to enroll immediately after the restart that picks up the config change. The
+`RESET_MFA` marker file (data dir, mirrors `RESET_ADMIN`) recovers a sole superadmin who
+gets stuck anyway — see "Locked out?" above.
+
+**Per-account login lockout tradeoff.** The failed-login lockout now keys on both the
+connecting IP address and the submitted account identifier (previously IP-only), so a
+password spray spread across many source addresses against one account is throttled too.
+The tradeoff: anyone who knows a username can now lock that account out on purpose by
+repeatedly guessing its password from anywhere. This is a deliberate choice — a locked
+account recovers on its own once the lockout window passes (or immediately on a
+successful sign-in), whereas the unthrottled alternative let an attacker guess a known
+account's password without limit. If this becomes a nuisance for a specific deployment,
+`loginSecurity.maxAttempts`/`windowSeconds`/`lockoutSeconds` tune how forgiving it is.
 
 ## Ports
 

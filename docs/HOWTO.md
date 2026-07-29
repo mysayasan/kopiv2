@@ -645,7 +645,7 @@ Steps:
 3. Under **Group → role mappings**, add a mapping per directory group you want to grant a role automatically (paste the group's DN as it appears in `memberOf`, matched case-insensitively). Leave **Authoritative** off to only seed the role once for a still-pending account (a manually assigned role then sticks), or on to have the mapping re-assert the role on every login (directory is the system of record).
 4. A directory account with no matching group mapping signs in but lands in the same "access pending" state as any other new account — a superadmin must assign it a role, same as local/Google/GitHub signups.
 
-Both login surfaces (the SPA and the server-rendered `/api/auth/login` page myseliasan's SSO hop lands on) show an "Account type" selector only while directory login is enabled; it disappears automatically when disabled. LDAP login shares the same per-IP failed-login lockout (`loginSecurity` config) as local login.
+Both login surfaces (the SPA and the server-rendered `/api/auth/login` page myseliasan's SSO hop lands on) show an "Account type" selector only while directory login is enabled; it disappears automatically when disabled. LDAP login shares the same per-IP-and-per-account failed-login lockout (`loginSecurity` config) as local login — a lockout now keys on both the source IP and the submitted account identifier, so a spray against one account from many addresses is throttled too, not just one address hammering many accounts.
 
 ### Kerberos SPNEGO SSO
 

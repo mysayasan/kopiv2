@@ -14,6 +14,11 @@ import (
 // user to the change-password screen.
 const PasswordChangeRequiredCode = "password_change_required"
 
+// MfaEnrollmentRequiredCode is the equivalent sentinel for a server whose MFA policy
+// requires a second factor for this account's role. The SPA pins the user to enrolment
+// until they have one, exactly as it does for a forced password change.
+const MfaEnrollmentRequiredCode = "mfa_enrollment_required"
+
 // AccessSessionMidware enforces an app's own (accessrbac) authorization on its own
 // endpoints: it rejects disabled/unknown users, blocks must-change users, lets a
 // superadmin role through, and otherwise checks the role permission matrix. It runs
@@ -77,6 +82,12 @@ func (m *AccessSessionMidware) Middleware(next http.Handler) http.Handler {
 		}
 		if principal.MustChangePassword {
 			controllers.SendError(w, controllers.ErrPermission, PasswordChangeRequiredCode)
+			return
+		}
+		// Checked after the password gate so someone owing both is walked through them in
+		// a sensible order: set a password you chose, then add a factor to it.
+		if principal.MustEnrollMfa {
+			controllers.SendError(w, controllers.ErrPermission, MfaEnrollmentRequiredCode)
 			return
 		}
 		// The live DB role is authoritative — re-stamp it onto the request claims so an

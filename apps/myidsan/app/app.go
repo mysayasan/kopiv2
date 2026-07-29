@@ -21,6 +21,7 @@ import (
 	"github.com/mysayasan/kopiv2/infra/apidocs"
 	"github.com/mysayasan/kopiv2/infra/apphost"
 	"github.com/mysayasan/kopiv2/infra/atrest"
+	"github.com/mysayasan/kopiv2/infra/config"
 	"github.com/mysayasan/kopiv2/infra/db/bootstrap"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	logininfra "github.com/mysayasan/kopiv2/infra/login"
@@ -204,7 +205,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	appAuthConfigRepo := dbsql.NewGenericRepo[sharedentities.AppAuthConfig](deps.Db)
 	appRedirectUriRepo := dbsql.NewGenericRepo[sharedentities.AppRedirectUri](deps.Db)
 
-	userLoginService := services.NewUserLoginService(userLoginRepo, deps.Cache)
+	userLoginService := services.NewUserLoginService(userLoginRepo, deps.Cache, deps.Config.PasswordPolicy.Effective())
 	userGroupService := services.NewUserGroupService(userGroupRepo, deps.Cache)
 	userLoginDtoService := services.NewUserLoginDtoService[outputdtos.UserLoginDto](userLoginService)
 	userGroupDtoService := services.NewUserGroupDtoService[outputdtos.UserGroupDto](userGroupService)
@@ -235,7 +236,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 			announceFirstRunAdmin(deps, *seed)
 		}
 	}
-	deps.Access.SetResolver(&userLoginResolver{repo: userLoginRepo})
+	// The resolver is given the MFA policy below, once mfaService exists.
 
 	// First-run setup wizard completion flag (shared runtime-setting row).
 	runtimeSettingRepo := dbsql.NewGenericRepo[sharedentities.RuntimeSetting](deps.Db)
@@ -259,6 +260,13 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	mfaFactorRepo := dbsql.NewGenericRepo[myidsanentities.UserMfaFactor](deps.Db)
 	mfaRecoveryRepo := dbsql.NewGenericRepo[myidsanentities.UserMfaRecoveryCode](deps.Db)
 	mfaService := services.NewMfaService(mfaFactorRepo, mfaRecoveryRepo, secretCipher, "myidsan")
+	// Set here rather than earlier: the resolver needs the MFA service to decide whether
+	// an account owes a factor, and the access middleware consults it on every request.
+	deps.Access.SetResolver(&userLoginResolver{
+		repo:      userLoginRepo,
+		mfa:       mfaService,
+		mfaPolicy: deps.Config.Mfa.Effective(),
+	})
 	deps.Metrics.Describe(apis.MetricMfaChallengeTotal, "Second-factor verification outcomes (result=issued|success|failed|expired): a spike in failures flags online guessing against a known password.")
 	// Escape hatch for a sole-superadmin lost-device lockout: a RESET_MFA marker in
 	// the data dir clears the stock superadmin's second factor on boot.
@@ -344,12 +352,13 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		Reset:         passwordResetService,
 		Audit:         auditService,
 		Sessions:      sessionService,
+		PasswordPolicy: deps.Config.PasswordPolicy.Effective(),
 		// Only a configured reverse proxy may declare the client address recorded
 		// against an event; otherwise the peer address is used. Sharing the rate
 		// limiter's list keeps one answer to "who is the caller".
 		TrustedProxies: deps.Config.RateLimit.TrustedProxies,
 	})
-	apis.NewUserLoginApi(api, *deps.Auth, deps.Access, userLoginDtoService, sessionService, auditService, deps.Config.RateLimit.TrustedProxies)
+	apis.NewUserLoginApi(api, *deps.Auth, deps.Access, userLoginDtoService, sessionService, auditService, deps.Config.PasswordPolicy.Effective(), deps.Config.RateLimit.TrustedProxies)
 	apis.NewUserGroupApi(api, *deps.Auth, deps.Access, userGroupDtoService)
 	// Role + permission management is the shared accessrbac surface (/api/access-rbac),
 	// mounted by apphost. The old per-app user_role admin endpoint is retired.
@@ -467,6 +476,10 @@ func loginGuardConfig(deps apphost.Dependencies) sharedapis.LoginGuardConfig {
 // the user's UserRoleId is its accessrbac role, and an inactive account is disabled.
 type userLoginResolver struct {
 	repo dbsql.IGenericRepo[sharedentities.UserLogin]
+	// mfa and mfaPolicy decide whether this account is pinned to second-factor
+	// enrolment. Both may be nil/zero, in which case nobody is pinned.
+	mfa       services.IMfaService
+	mfaPolicy config.EffectiveMfaPolicy
 }
 
 func (r *userLoginResolver) ResolveAccessUser(ctx context.Context, userId int64) (*sharedservices.AccessPrincipal, error) {
@@ -482,7 +495,27 @@ func (r *userLoginResolver) ResolveAccessUser(ctx context.Context, userId int64)
 	if u == nil {
 		return nil, nil
 	}
-	return &sharedservices.AccessPrincipal{RoleId: u.UserRoleId, Disabled: !u.IsActive, MustChangePassword: u.MustChangePassword}, nil
+	principal := &sharedservices.AccessPrincipal{
+		RoleId:             u.UserRoleId,
+		Disabled:           !u.IsActive,
+		MustChangePassword: u.MustChangePassword,
+	}
+
+	// A directory/social account's factor policy usually belongs to its upstream provider,
+	// so it is only in scope when the operator explicitly says so.
+	isDirectory := strings.TrimSpace(u.SsoProvider) != ""
+	if r.mfa != nil && r.mfaPolicy.RequiresFactor(u.UserRoleId, isDirectory) {
+		enrolled, err := r.mfa.HasConfirmedFactor(ctx, u.Id)
+		if err != nil {
+			// Fail OPEN on a lookup error rather than locking every admin out of the
+			// product because one query failed. The login itself already succeeded; the
+			// worst case is that a required factor is not enforced for this request.
+			log.Printf("mfa policy: could not read factor state for user %d: %v", u.Id, err)
+		} else {
+			principal.MustEnrollMfa = !enrolled
+		}
+	}
+	return principal, nil
 }
 
 // moduleAppVersion reports this app's released version from the shared version manifest,

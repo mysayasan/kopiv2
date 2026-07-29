@@ -29,7 +29,10 @@ Protected by auth middleware + `AccessSessionMidware` + `RequireSuperadmin`. The
   `RequireSuperadmin` middleware below. Used today by the SPA's setup wizard
   ("create your own superadmin" step,
   `views/react-webpack/src/views/components/setup.js`) and is available for the
-  Users admin page as well.
+  Users admin page as well. The password is now checked against the configured
+  policy (`services.ValidatePassword`, Productization Phase 3 — see
+  `services/password_policy.go.md`) before the account is created; previously this
+  was the one password-setting path with no strength check at all beyond non-empty.
 - GET supports `limit`, `offset`, `filters`, and `sorters` query parameters.
 - Filter and sorter query values use the shared SQL enum JSON contract from `query_options.go`.
 - Read handlers return myidsan output DTOs through `IUserLoginDtoService`. The output DTO carries no password field, so GET responses (including the account list) never include a stored bcrypt hash.
@@ -58,6 +61,7 @@ reachable.) When at least one session was actually ended, an audit entry
 `services.ActionUserDelete` from `delete`.
 
 `userLoginApi` now also carries `sessions services.ISessionService`, `audit
-services.IAuditService`, and `trusted []*net.IPNet` (parsed from the shared
-`trustedProxies` config via `middlewares.ParseTrustedProxies`); `NewUserLoginApi`'s
-signature gained matching trailing parameters.
+services.IAuditService`, `trusted []*net.IPNet` (parsed from the shared
+`trustedProxies` config via `middlewares.ParseTrustedProxies`), and (Productization
+Phase 3) `policy config.EffectivePasswordPolicy`; `NewUserLoginApi`'s signature gained
+matching trailing parameters, `policy` inserted before `trustedProxies`.

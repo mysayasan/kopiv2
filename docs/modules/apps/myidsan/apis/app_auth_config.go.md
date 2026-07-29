@@ -18,4 +18,11 @@ Protected MyIDSan management API for relying-app auth client policy.
 
 ## Notes
 
+- `hashClientSecret` (`federated_auth.go`) now returns `(string, error)` instead of a bare
+  string, since it hashes with bcrypt (Productization Phase 3) rather than an unsalted
+  SHA-256 sum and `bcrypt.GenerateFromPassword` can fail. Both `post` and `put` propagate a
+  hashing error as `ErrInternalServerError` rather than silently storing an empty/zero
+  hash. See `federated_auth.go.md`'s Security section for the migration story (legacy
+  rows are rewritten to bcrypt the first time their secret is presented at the token
+  endpoint, not here).
 - `appAuthConfigPayload`/`appAuthConfigView` no longer carry `refreshTokenTtlSeconds`, `requirePkce`, or `allowRefreshToken`. The columns still exist on `entities.AppAuthConfig` (see `domain/entities/app_auth_config.go.md`), but nothing in `/api/auth/authorize` or `/api/auth/token` has ever read them — no `code_challenge` parsing, and `grant_type=refresh_token` is rejected outright — so accepting and echoing them back told an operator a security control was configured when it was inert. `appAuthConfigPayloadToEntity` writes those three fields as the Go zero value rather than passing through an operator-supplied value. They come back, enforced, with OIDC conformance work (`docs/MYIDSAN_PRODUCTIZATION_PLAN.md` phases 5.3/5.4).

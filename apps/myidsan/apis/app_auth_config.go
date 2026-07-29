@@ -93,7 +93,12 @@ func (m *appAuthConfigApi) post(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrBadRequest, "clientSecret is required")
 		return
 	}
-	model := appAuthConfigPayloadToEntity(*payload, hashClientSecret(payload.ClientSecret))
+	secretHash, err := hashClientSecret(payload.ClientSecret)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	model := appAuthConfigPayloadToEntity(*payload, secretHash)
 	id, err := m.repo.Create(r.Context(), "", model)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
@@ -115,7 +120,12 @@ func (m *appAuthConfigApi) put(w http.ResponseWriter, r *http.Request) {
 	}
 	secretHash := existing.ClientSecretHash
 	if strings.TrimSpace(payload.ClientSecret) != "" {
-		secretHash = hashClientSecret(payload.ClientSecret)
+		hashed, err := hashClientSecret(payload.ClientSecret)
+		if err != nil {
+			controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+			return
+		}
+		secretHash = hashed
 	}
 	model := appAuthConfigPayloadToEntity(*payload, secretHash)
 	affected, err := m.repo.UpdateById(r.Context(), "", model)

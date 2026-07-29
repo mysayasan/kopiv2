@@ -11,13 +11,14 @@ Authorization middleware for the shared "accessrbac" RBAC core. Runs after `Auth
 ## Authorization Logic (Middleware method)
 
 1. Extract JWT claims from request context (set by `AuthMidware`).
-2. Call `AccessUserResolver.ResolveAccessUser(userId)` to obtain the app's `AccessPrincipal` (role id, disabled flag, must-change-password flag).
+2. Call `AccessUserResolver.ResolveAccessUser(userId)` to obtain the app's `AccessPrincipal` (role id, disabled flag, must-change-password flag, must-enroll-MFA flag).
 3. If the user is disabled or not found, return `403`.
 4. If `mustChangePassword` is set, return `403` with the sentinel code `password_change_required`.
-5. **Re-stamp `claims.RoleId` from the live principal** so downstream handlers that read the JWT claims see the current role without a re-login. This makes an admin's role change take effect on the user's very next request.
-6. Look up the role. If `IsSuperadmin`, pass through unconditionally (bypass the matrix).
-7. Otherwise call `IAccessPermissionService.Authorize(roleId, path, method)` — longest-prefix match over the role's permission rows; no match = deny.
-8. Return `403` when the matrix denies access.
+5. If `MustEnrollMfa` is set, return `403` with the sentinel code `mfa_enrollment_required` (`MfaEnrollmentRequiredCode`, Productization Phase 3) — checked *after* the password gate so a user owing both is walked through them in a sensible order: set a password you chose, then add a factor to it. `AccessPrincipal.MustEnrollMfa` is the app-agnostic flag; the app decides how it is computed (e.g. `apps/myidsan/app/app.go`'s `userLoginResolver` consults its `EffectiveMfaPolicy` and the account's confirmed-factor state — see `infra/config/config_models.go.md`'s `mfa` block).
+6. **Re-stamp `claims.RoleId` from the live principal** so downstream handlers that read the JWT claims see the current role without a re-login. This makes an admin's role change take effect on the user's very next request.
+7. Look up the role. If `IsSuperadmin`, pass through unconditionally (bypass the matrix).
+8. Otherwise call `IAccessPermissionService.Authorize(roleId, path, method)` — longest-prefix match over the role's permission rows; no match = deny.
+9. Return `403` when the matrix denies access.
 
 ## Helper Methods
 

@@ -91,6 +91,10 @@ func (a *accessRbacApi) me(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{
 		"roleId":             principal.RoleId,
 		"mustChangePassword": principal.MustChangePassword,
+		// mustEnrollMfa mirrors mustChangePassword: the SPA pins the user to
+		// second-factor enrolment when the server's policy requires one and this
+		// account has none. Always false for apps with no MFA policy.
+		"mustEnrollMfa":      principal.MustEnrollMfa,
 		"isSuperadmin":       false,
 		// pending = authenticated but no role assigned yet (awaiting admin clearance).
 		// The SPA shows an "access pending" screen instead of the app.

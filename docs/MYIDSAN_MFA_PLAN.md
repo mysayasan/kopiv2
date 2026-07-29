@@ -4,15 +4,23 @@
 and live-benched — see `docs/MYIDSAN_ENTERPRISE_SSO_PLAN.md`. WebAuthn/passkeys
 (P4) remain unbuilt — see §8.
 
-Built as designed below, with two deviations from this plan, both intentional:
+Built as designed below, with the following deviations from this plan, both intentional:
 
-- **§6 Policy is NOT implemented.** There is no `mfa.policy` (`off`/`optional`/
-  `required`) `RuntimeSetting`, no `mfa.requiredRoleIds`, and no
-  `mfa.applyToDirectory` toggle. Enrollment is self-serve only, for every account
-  myidsan itself verifies (local **and** LDAP/AD password logins are both gated
-  unconditionally once a factor is confirmed) — "optional, self-serve" is the
-  entire shipped policy. A future `required`-for-some-roles mode is still a valid
-  follow-up but was not built.
+- **§6 Policy is now implemented, but as a `config.json` block, not a `RuntimeSetting`.**
+  `PasswordPolicyConfigModel`'s sibling `MfaPolicyConfigModel` (`infra/config/config_models.go`)
+  adds `mfa.policy` (`off`/`optional`/`required`, default `optional`), `mfa.requiredRoleIds`,
+  and `mfa.applyToDirectory` — matching this section's shape exactly, except it is boot-time
+  config rather than an editable-without-restart `RuntimeSetting`: enforcing MFA is an
+  operator decision with real support consequences, and every other suite-wide security
+  toggle (`loginSecurity`, `passwordPolicy`) already lives in `config.json`, so this followed
+  the established pattern instead of introducing the first admin-editable-at-runtime policy
+  switch. Enforcement lands where §6 said it should: after a successful password login, as an
+  `AccessPrincipal.MustEnrollMfa` flag consulted by `AccessSessionMidware`
+  (`domain/utils/middlewares/access_rbac.go`'s `MfaEnrollmentRequiredCode` sentinel) — the
+  same must-change-password pattern, computed by `apps/myidsan/app/app.go`'s
+  `userLoginResolver` from the account's role and confirmed-factor state. See
+  `docs/MYIDSAN_PRODUCTIZATION_PLAN.md` Phase 3 (§3.2) and
+  `apps/myidsan/services/password_policy.go.md`/`infra/config/config_models.go.md`.
 - **§7's offline escape hatch is a `RESET_MFA` marker file, not a
   `bootstrap.allowMfaReset` config flag.** It mirrors the existing `RESET_ADMIN`
   password-recovery marker exactly (drop the file in the data dir, restart, the
@@ -191,7 +199,8 @@ check in `issueLocalSession` and the LDAP handler, and add a short comment at
 
 ## 6. Policy
 
-New `RuntimeSetting` keys (runtime-editable, no restart):
+**Shipped as a `config.json` block (`mfa`), not the `RuntimeSetting` originally sketched
+here** — see the deviations note at the top of this document:
 
 - `mfa.policy` = `off` | `optional` | `required` (default `optional`)
 - `mfa.requiredRoleIds` = list — "required for admins, optional for viewers"
@@ -228,9 +237,9 @@ entire suite is unadministrable. Mitigations, all three:
   two, per [[federated-login-social-buttons]]). **Shipped.**
 - **P3** — admin reset, the offline escape hatch (`RESET_MFA`), metrics
   (`mfa_challenge_total{result}` — a spike in failures is the signal that matters,
-  per [[tier3-metrics]]). **Shipped, except policy settings** — see the deviations
-  note at the top (no `mfa.policy`/`mfa.requiredRoleIds`/`mfa.applyToDirectory`;
-  LDAP is gated unconditionally alongside local, not behind a toggle).
+  per [[tier3-metrics]]). **Shipped.** Policy settings (`mfa.policy`/`mfa.requiredRoleIds`/
+  `mfa.applyToDirectory`) were deferred at the time this note was written and have since
+  shipped in Productization Phase 3 — see the deviations note at the top.
 - **P4** — WebAuthn/passkeys as a second `Kind`, reusing the whole §2 exchange. **Not
   built.**
 
