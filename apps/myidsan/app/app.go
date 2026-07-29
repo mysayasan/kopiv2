@@ -64,6 +64,7 @@ func (m *module) Entities() []any {
 		myidsanentities.UserMfaRecoveryCode{},
 		myidsanentities.PasswordResetRequest{},
 		myidsanentities.UserAvatar{},
+		myidsanentities.AuditLog{},
 	}
 }
 
@@ -134,6 +135,10 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		// Superadmin-only in the API regardless of matrix grants (see apis/backup.go):
 		// an export is the whole identity store in one file and a restore rewrites every
 		// account. SeedRbac is deliberately omitted so it is never delegated by default.
+		{AppCode: "myidsan", Title: "Step-up Re-authentication", Description: "short-lived credential re-check for sensitive actions", Path: "/api/step-up", AccessTier: apiaccessenums.AuthOnly},
+		{AppCode: "myidsan", Title: "Sessions", Description: "self-service session listing and revocation", Path: "/api/session", AccessTier: apiaccessenums.AuthOnly},
+		{AppCode: "myidsan", Title: "Session Administration", Description: "cross-account session listing and revocation", Path: "/api/session-admin", AccessTier: apiaccessenums.DevOnly},
+		{AppCode: "myidsan", Title: "Audit Log", Description: "append-only security event trail", Path: "/api/audit", Metadata: menuMetadata(menuItem{Enabled: true, Id: "audit", Label: "Audit log", Group: "System", Order: 5, Summary: "Who signed in, what changed, and from where — exportable for compliance review.", Tone: "steel"}), AccessTier: apiaccessenums.DevOnly},
 		{AppCode: "myidsan", Title: "Backup & Restore", Description: "encrypted identity-store export and disaster recovery", Path: "/api/backup", Metadata: menuMetadata(menuItem{Enabled: true, Id: "backup", Label: "Backup & restore", Group: "System", Order: 10, Summary: "Export an encrypted copy of users, roles and SSO clients — or rebuild this server from one.", Tone: "amber"}), AccessTier: apiaccessenums.DevOnly},
 		{AppCode: "myidsan", Title: "User Credential", Description: "user login and role access", Path: "/api/user-credential", Metadata: menuMetadata(
 			menuItem{Enabled: true, Id: "users", Label: "Users", Group: "Identity", Order: 10, Summary: "Maintain credentials, profile details, and role assignment.", Tone: "blue"},
@@ -307,6 +312,27 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		}
 	}
 
+	// Step-up re-authentication. A 72-hour superadmin session can assign roles, clear
+	// anyone's second factor and export the whole identity store; the most dangerous of
+	// those now require proving the credential again within a short window.
+	stepUpService := services.NewStepUpService(userLoginService, mfaService, deps.Cache)
+
+	// Append-only security trail. Constructed before the login API because authentication
+	// events are the bulk of what it records, and it is passed by value into every handler
+	// that performs a sensitive action rather than being reached through a global.
+	auditService := services.NewAuditService(
+		dbsql.NewGenericRepo[myidsanentities.AuditLog](deps.Db),
+		log.Printf,
+	)
+
+	// Session index. The cache entry remains the authority on whether a session is valid;
+	// this table exists so sessions can be LISTED per user, which the cache cannot answer.
+	sessionService := services.NewSessionService(
+		dbsql.NewGenericRepo[sharedentities.UserSession](deps.Db),
+		deps.Cache,
+		log.Printf,
+	)
+
 	providerRegistry := apis.NewLoginApi(api, deps.Config.Login, *deps.Auth, userLoginService, apis.LoginApiOptions{
 		Directory:     directoryService,
 		Kerberos:      kerberosAuth,
@@ -316,14 +342,20 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		Mfa:           mfaService,
 		Store:         deps.Cache,
 		Reset:         passwordResetService,
+		Audit:         auditService,
+		Sessions:      sessionService,
+		// Only a configured reverse proxy may declare the client address recorded
+		// against an event; otherwise the peer address is used. Sharing the rate
+		// limiter's list keeps one answer to "who is the caller".
+		TrustedProxies: deps.Config.RateLimit.TrustedProxies,
 	})
-	apis.NewUserLoginApi(api, *deps.Auth, deps.Access, userLoginDtoService)
+	apis.NewUserLoginApi(api, *deps.Auth, deps.Access, userLoginDtoService, sessionService, auditService, deps.Config.RateLimit.TrustedProxies)
 	apis.NewUserGroupApi(api, *deps.Auth, deps.Access, userGroupDtoService)
 	// Role + permission management is the shared accessrbac surface (/api/access-rbac),
 	// mounted by apphost. The old per-app user_role admin endpoint is retired.
 	apis.NewSSOApi(api, deps.Config, deps.Auth)
 	apis.NewFederatedAuthApi(api, deps.Config, deps.Auth, providerRegistry, directoryService, kerberosLabel, loginGuard, userLoginService, appRegistryRepo, appAuthConfigRepo, appRedirectUriRepo, deps.Cache, mfaService, passwordResetService)
-	apis.NewDirectoryConfigApi(api, *deps.Auth, deps.Access, directoryService, groupMappingRepo)
+	apis.NewDirectoryConfigApi(api, *deps.Auth, deps.Access, directoryService, groupMappingRepo, auditService, deps.Config.RateLimit.TrustedProxies)
 	apis.NewAppAuthConfigApi(api, *deps.Auth, deps.Access, appAuthConfigRepo)
 	apis.NewAppRedirectUriApi(api, *deps.Auth, deps.Access, appRedirectUriRepo)
 	// SSO certificate authority: issues relying-app client certificates for mTLS.
@@ -357,13 +389,20 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		setupStateService,
 		moduleAppVersion(m),
 	)
-	apis.NewBackupApi(api, *deps.Auth, deps.Access, backupService)
+	apis.NewBackupApi(api, *deps.Auth, deps.Access, backupService, auditService, stepUpService, deps.Config.RateLimit.TrustedProxies)
+	// Read-only append-only security trail. Superadmin-only: it names who did what
+	// from where, and on an identity server it also reveals which usernames exist.
+	apis.NewStepUpApi(api, *deps.Auth, stepUpService, auditService, deps.Config.RateLimit.TrustedProxies)
+	apis.NewAuditApi(api, *deps.Auth, deps.Access, auditService)
+	// Session listing and revocation. Self-service routes are auth-only (ending your own
+	// session is not privileged); cross-account routes are superadmin.
+	apis.NewSessionApi(api, *deps.Auth, deps.Access, sessionService, auditService, deps.Config.RateLimit.TrustedProxies)
 	// Self-service + admin MFA management surface. The login-time challenge is wired
 	// into the login/federated-auth APIs above via the same mfaService.
-	apis.NewMfaApi(api, *deps.Auth, deps.Access, mfaService, userLoginService, deps.Metrics)
+	apis.NewMfaApi(api, *deps.Auth, deps.Access, mfaService, userLoginService, deps.Metrics, auditService, stepUpService, deps.Config.RateLimit.TrustedProxies)
 	// Superadmin account-recovery queue (the public request endpoint is on the login
 	// API; the self-service email flow is on the federated-auth API).
-	apis.NewPasswordResetApi(api, *deps.Auth, deps.Access, passwordResetService)
+	apis.NewPasswordResetApi(api, *deps.Auth, deps.Access, passwordResetService, auditService, stepUpService, deps.Config.RateLimit.TrustedProxies)
 	// Profile avatars: self-service (own, auth-only) + admin-by-id (superadmin) for
 	// the Users management page.
 	apis.NewProfileApi(api, *deps.Auth, deps.Access, avatarRepo)

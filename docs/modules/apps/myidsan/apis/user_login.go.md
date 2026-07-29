@@ -38,3 +38,26 @@ Protected by auth middleware + `AccessSessionMidware` + `RequireSuperadmin`. The
 - PUT blocks self-role-change: if `body.Id` matches `claims.Id` and `body.UserRoleId` differs from `claims.RoleId`, the request is rejected with 403. This prevents a superadmin from accidentally (or maliciously) demoting or escalating their own role.
 - `/email` uses the `email` query parameter for exact unique lookup.
 - DELETE parses `{id}` from route params.
+
+## Session Termination on Disable/Delete (Phase 2)
+
+`endSessionsFor(r, userId, reason)` calls `services.ISessionService.RevokeAllForUser` for
+every live session belonging to a user, called from `put` when `!body.IsActive` (an
+account just disabled) and unconditionally from `delete`. Before this, disabling an
+account did not sign anybody out: the auth middleware only validates the cached session
+entry, which carries no account-status flag, so an already signed-in user kept working
+until their session expired — up to 72 hours after an administrator believed access was
+cut off. (RBAC-gated routes did start refusing them, since the role resolver reports the
+account disabled — but auth-only routes such as `/api/profile/*` and `/api/mfa` stayed
+reachable.) When at least one session was actually ended, an audit entry
+(`services.ActionSessionRevokeAll`, `Detail: "sessions ended because the account was
+<disabled|deleted>"`) is written via `m.audit`.
+
+`recordUserAudit(r, action, targetId, targetEmail, meta)` also records
+`services.ActionUserUpdate` (with `{isActive, roleId}` metadata) from `put` and
+`services.ActionUserDelete` from `delete`.
+
+`userLoginApi` now also carries `sessions services.ISessionService`, `audit
+services.IAuditService`, and `trusted []*net.IPNet` (parsed from the shared
+`trustedProxies` config via `middlewares.ParseTrustedProxies`); `NewUserLoginApi`'s
+signature gained matching trailing parameters.

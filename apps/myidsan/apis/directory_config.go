@@ -20,6 +20,7 @@ import (
 type directoryConfigApi struct {
 	directory services.IDirectoryService
 	mappings  dbsql.IGenericRepo[myidsanentities.FederatedGroupMapping]
+	auditRecorder
 }
 
 func NewDirectoryConfigApi(
@@ -28,8 +29,14 @@ func NewDirectoryConfigApi(
 	access *middlewares.AccessSessionMidware,
 	directory services.IDirectoryService,
 	mappings dbsql.IGenericRepo[myidsanentities.FederatedGroupMapping],
+	audit services.IAuditService,
+	trustedProxies []string,
 ) {
-	handler := &directoryConfigApi{directory: directory, mappings: mappings}
+	handler := &directoryConfigApi{
+		directory:     directory,
+		mappings:      mappings,
+		auditRecorder: newAuditRecorder(audit, trustedProxies),
+	}
 
 	group := router.PathPrefix("/directory-config").Subrouter()
 	group.Use(auth.Middleware)
@@ -69,6 +76,24 @@ func (m *directoryConfigApi) put(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
 	}
+	// Repointing the directory changes who can sign in and what role they land on, so
+	// the host/base-DN and the authoritative flag are worth recording. The bind password
+	// is deliberately NOT included — this table is readable by every superadmin and is
+	// exported to CSV.
+	m.record(r, services.AuditEntry{
+		Action:     services.ActionDirectoryUpdate,
+		TargetType: "directory",
+		TargetId:   payload.Host,
+		Detail:     "updated the directory connection",
+		Metadata: map[string]any{
+			"enabled":       payload.Enabled,
+			"host":          payload.Host,
+			"port":          payload.Port,
+			"useStartTls":   payload.UseStartTls,
+			"baseDn":        payload.BaseDn,
+			"authoritative": payload.Authoritative,
+		},
+	})
 	controllers.SendResult(w, view, "succeed")
 }
 

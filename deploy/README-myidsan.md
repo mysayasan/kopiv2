@@ -124,9 +124,21 @@ TOTP secrets and a CA private key in a form that a restore can use. Store the fi
 passphrase separately, and treat the file with the same care as the database itself. There
 is no recovery path if the passphrase is lost.
 
+Export and restore both require a **recent re-authentication** ("step-up"): re-enter the
+password (plus a TOTP code, if you have one enrolled) at the prompt before the action —
+`POST /api/step-up` with `{password, code}` — then proceed within its 5-minute window. This
+closes the gap where a stolen session cookie alone could export or replace the whole
+identity store.
+
 The same thing from the API:
 
 ```bash
+# Step up first (skip if your session already re-authenticated in the last 5 minutes):
+curl -sS -X POST https://myidsan.example.com/api/step-up \
+  -H 'Content-Type: application/json' \
+  -H "X-CSRF-Token: $CSRF" -b cookies.txt \
+  -d '{"password":"'"$PASSWORD"'","code":"'"$TOTP_CODE"'"}'
+
 curl -sS -X POST https://myidsan.example.com/api/backup/export \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" -b cookies.txt \
@@ -135,6 +147,8 @@ curl -sS -X POST https://myidsan.example.com/api/backup/export \
 ```
 
 Schedule that from cron or a scheduled task and keep the output off the myidsan host.
+`TOTP_CODE` can be omitted (or left empty) for a scripted account that has no MFA factor
+enrolled.
 
 ### What is and is not in the file
 
@@ -143,9 +157,12 @@ codes, registered apps with their client configuration and redirect URIs, the di
 configuration and its group→role mappings, and the SSO CA.
 
 Deliberately excluded: `config.json`, TLS certificates, `secret/atrest.key`, the API and
-runtime logs, pending password-reset requests, and live sessions. Those are host-local —
-copying them onto a second machine would clone that machine's identity rather than restore
-its data.
+runtime logs, pending password-reset requests, live sessions, and the **audit log**. Those
+are host-local — copying them onto a second machine would clone that machine's identity
+rather than restore its data. The audit log's exclusion is also what makes it useful as a
+record of the restore itself: a restore drops every session and rewrites every account, but
+the entry it writes for having done so is not touched by the operation it describes. See
+"Audit trail" below for its own export path.
 
 The at-rest key not being included is the important one, and it is not a gap. The two
 sealed values (TOTP secrets, the LDAP bind password) are **unsealed when the backup is
@@ -178,6 +195,31 @@ A backup nobody has restored is a hypothesis. At least once, restore into a thro
 instance and confirm you can sign in with an account that has two-factor enabled — that
 single check exercises the password hash, the role assignment and the secret re-sealing
 together.
+
+## Audit trail
+
+The **Audit log** page (superadmin only) is an append-only record of every security-relevant
+event on this server — sign-ins and failures, lockouts, MFA changes, account and directory
+changes, password-reset resolutions, session revocations, backup export/restore, and
+step-up attempts. There is no update or delete route for it: nothing in the product,
+including a superadmin session, can edit an entry once it is written.
+
+For compliance review or offline retention, export it as CSV rather than screen-scraping:
+
+```bash
+curl -sS "https://myidsan.example.com/api/audit/export.csv?from=2026-07-01&to=2026-07-31" \
+  -H "X-CSRF-Token: $CSRF" -b cookies.txt \
+  -o myidsan-audit-2026-07.csv
+```
+
+The export is capped at 50,000 rows per request — narrow the `from`/`to` range for a busy
+server rather than expecting one file to hold everything. Values that could be misread as a
+spreadsheet formula (a failed-login "username" or a User-Agent starting with `=`/`+`/`-`/`@`)
+are quoted before export, so opening the CSV in Excel or Sheets is safe.
+
+The audit table is **not** part of an `.idbackup` archive and is never cleared by a restore —
+it is host-local history, the same category as the API/runtime logs, and it is what lets you
+confirm afterwards that a restore actually happened and who ran it.
 
 ## Upgrading
 

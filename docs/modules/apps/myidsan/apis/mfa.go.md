@@ -43,7 +43,11 @@ Admin, `auth.Middleware` + `access.Middleware` + `access.RequireSuperadmin`:
   superadmin-gated, the same privilege tier as role assignment). This is the
   lost-device recovery path for a non-superadmin user; for the **stock
   superadmin** specifically, see the `RESET_MFA` boot marker in
-  `app/firstrun.go.md`.
+  `app/firstrun.go.md`. **Gated by `requireStepUp`** (`apis/stepup.go.md`, Phase 2) —
+  clearing someone else's second factor is exactly what an attacker with a stolen cookie
+  would do to take over an account, so it requires a fresh credential. On success, records
+  `services.ActionMfaAdminReset` (`apis/audit.go.md`) — if it was not the account holder
+  who asked for it, this entry is how they find out.
 
 ## Metrics
 
@@ -61,5 +65,7 @@ online guessing attempt against a known password. Described once via
   with the same `services.IMfaService` instance the login APIs use
   (`apps/myidsan/app/app.go`), so enrollment state is immediately visible to the
   next login attempt.
+- `mfaApi` embeds `auditRecorder` (`apis/audit.go.md`); `NewMfaApi` now also takes
+  `services.IAuditService` and `services.IStepUpService` parameters (Phase 2).
 - `writeCodeGateError` centralizes the `ErrMfaBadCode`/`ErrMfaNotEnrolled`/other
   mapping used by both `regenerateRecovery` and `disable`.

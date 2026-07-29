@@ -23,17 +23,27 @@ grants, so it sits with the other privilege-affecting surfaces (`user-credential
 - `POST /api/backup/export` (`export`) — body `{sections, passphrase}`. Refuses a
   passphrase shorter than `backupMinPassphraseLen` (12) with `ErrBadRequest` before
   calling the service. Returns `{filename: "myidsan-backup-<timestamp>.idbackup",
-  dataBase64}` — the caller decodes and downloads the bytes client-side.
+  dataBase64}` — the caller decodes and downloads the bytes client-side. Records
+  `services.ActionBackupExport` (section list, byte count) on success. **Gated by
+  `requireStepUp`** (`apis/stepup.go.md`) — an export hands the caller the entire identity
+  store in one file, among the most sensitive actions available.
 - `POST /api/backup/preview` (`preview`) — body `{dataBase64, passphrase}`. Decrypts
   only the manifest (`IBackupService.Preview`) so the operator can confirm app version,
   sections, and row counts before committing to a restore that replaces live accounts.
-  Writes nothing.
+  Writes nothing. Deliberately **not** step-up gated — it only reads a manifest from a
+  file the operator already holds, and forcing re-authentication to look before they leap
+  would push them to skip the looking.
 - `POST /api/backup/restore` (`restore`) — body `{dataBase64, passphrase, sections,
   mode}`. Calls `IBackupService.Restore` and returns the `RestoreResult` (restored/
-  skipped counts per section, `sessionsInvalidated`, `setupCompleted`). The caller's own
-  session is invalidated along with everyone else's, so the SPA must treat a successful
-  restore response as an immediate sign-out rather than continuing to poll with the
-  now-dead cookie.
+  skipped counts per section, `sessionsInvalidated`, `setupCompleted`). Records
+  `services.ActionBackupRestore` (mode, sections, restored/skipped counts, app version) —
+  the actor is captured from the request's claims **before** the restore invalidates every
+  session including the caller's own, and the entry survives the restore because the audit
+  table is not itself a backup section and is never cleared by one; it is the only record
+  that the rewrite happened at all. The caller's own session is invalidated along with
+  everyone else's, so the SPA must treat a successful restore response as an immediate
+  sign-out rather than continuing to poll with the now-dead cookie. **Gated by
+  `requireStepUp`** — a restore rewrites the whole identity store.
 
 ## Limits
 
@@ -51,5 +61,8 @@ grants, so it sits with the other privilege-affecting surfaces (`user-credential
 - `dataBase64` round-trips the encrypted archive as base64 inside a JSON body rather
   than a raw multipart upload, matching the size caps above and keeping the handler
   symmetric with `export`'s response shape.
+- `backupApi` embeds `auditRecorder` (`apis/audit.go.md`), constructed via
+  `newAuditRecorder(audit, trustedProxies)`, for its `a.record(...)` calls.
 - Mounted from `apps/myidsan/app/app.go`'s `RegisterAppRoutes`, alongside the other
-  privilege-affecting admin surfaces.
+  privilege-affecting admin surfaces. `NewBackupApi` now also takes `services.IAuditService`
+  and `services.IStepUpService` parameters (Phase 2).
