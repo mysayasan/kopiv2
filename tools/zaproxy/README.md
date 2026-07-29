@@ -1,9 +1,9 @@
-# zaproxy — OWASP ZAP security scanner for mymatasan / myseliasan / myiotsan
+# zaproxy — OWASP ZAP security scanner for mymatasan / myseliasan / myiotsan / myidsan
 
 Developer/security tooling that points [OWASP ZAP](https://www.zaproxy.org/)
 (the `ghcr.io/zaproxy/zaproxy:stable` Docker image) at a running **mymatasan**,
-**myseliasan**, or **myiotsan** instance and produces HTML + JSON vulnerability
-reports.
+**myseliasan**, **myiotsan**, or **myidsan** instance and produces HTML + JSON
+vulnerability reports.
 
 Like `tools/tgbridge`, this is **developer tooling only** — not part of any
 shipped app, no runtime dependency on the apps/domain/infra, and not covered by
@@ -17,6 +17,7 @@ authenticates differently, so each has its own plans + config file:
 | `mymatasan` (default) | 3000 | HTTP Basic (replayed every request) | `plans/<mode>.yaml` | `config/target.env` |
 | `myseliasan` | 3002 | JSON login → session cookie + double-submit CSRF | `plans/myseliasan-<mode>.yaml` | `config/myseliasan.target.env` |
 | `myiotsan` | 3003 | JSON login (appliance auth stack, own login path) → session cookie, no CSRF token | `plans/myiotsan-<mode>.yaml` | `config/myiotsan.target.env` |
+| `myidsan` | 3001 | JSON login (own login path) → session cookie + double-submit CSRF | `plans/myidsan-<mode>.yaml` | `config/myidsan.target.env` |
 
 ## What it checks
 
@@ -240,6 +241,74 @@ rate-limiting caveat as myseliasan: start the throwaway with
 `RATE_LIMIT_ENABLED=false` before an active run, or `429`s from ZAP's repeated
 re-login will collapse the session and abort the scan.
 
+## myidsan (identity provider)
+
+myidsan is JSON login + cookie session like myseliasan, but on its own login
+path — `POST /api/login/default {username,password}` sets the session cookie
+(`kopiv2_access`) — and, like myseliasan, requires a **double-submit CSRF
+token** for state-changing requests (`X-CSRF-Token` must equal the readable
+`kopiv2_csrf` cookie), so the active plans load the same
+`scripts/csrf-doublesubmit.js` script.
+
+**myidsan needs more care than the other three apps because it is the identity
+provider the whole suite depends on**, which changes what "safe to scan" means
+in two ways that have no analogue elsewhere in this repo:
+
+- **Exclusions have to cover "would break the scanner itself", not just
+  "destructive".** myidsan can revoke the scanner's own session, clear its
+  MFA, change its password, disable its account, or mutate the RBAC matrix out
+  from under it — after which the rest of the run is a wall of 401s that looks
+  like coverage but is not. `plans/myidsan-{api,full}.yaml` exclude that whole
+  class (`/api/session/*`, `/api/session-admin/*`, `/api/mfa/*`,
+  `/api/mfa-admin/*`, `/api/access-rbac*`, the user-DELETE route,
+  change-password), alongside the genuinely destructive routes that reach
+  beyond this app (`/api/backup*`, `/api/sso-ca*` — regenerating the CA breaks
+  fleet trust, `/api/app-auth-config/*/secret` — rotating a client secret
+  breaks **every relying app's** logins, redirect-URI/app-registry/directory
+  DELETE and reconfig routes, password-reset resolution, `/api/step-up*`).
+  Deliberately left **in** scope, because it is the actual point of scanning
+  an IdP: `/api/auth/authorize`, `/api/auth/token`, the login endpoints, and
+  MFA verification.
+- **The failed-login lockout must be off, not just the rate limiter.**
+  myidsan locks out per IP *and* per account, and an active scanner hammering
+  `/api/login/default` trips both within seconds — turn `loginSecurity.enabled`
+  and `rateLimit.enabled` off on the throwaway target before an `api`/`full`
+  run, the same as the rate-limit caveat below but with an extra knob. Both are
+  security features working correctly; disabling them is only ever for a
+  throwaway.
+
+Setup:
+
+1. Start myidsan (dev instance listens on TLS `:3001`).
+2. Copy `config/myidsan.target.env.example` to `config/myidsan.target.env` and
+   fill in `TARGET` + `ZAP_AUTH_USER`/`ZAP_AUTH_PASS`. There is no shipped
+   default password — the bootstrap superadmin's password is generated per
+   install into `INITIAL_ADMIN_LOGIN.txt` in the data dir. The account is
+   must-change-password on first login: clear that flag first (sign in once,
+   or `POST /api/login/default/change-password`) and put the *resulting*
+   password here, or every authenticated endpoint 401s
+   `password_change_required` and the scan finds almost nothing.
+
+Run:
+
+```powershell
+./scan.ps1 -App myidsan                 # safe passive baseline (:3001)
+./scan.ps1 -App myidsan -Mode api       # active /api scan (prompts; excludes the "breaks the scanner" + "breaks other apps" routes above)
+./scan.ps1 -App myidsan -Mode full -Yes # full active, skip prompt
+```
+
+```bash
+./scan.sh --app myidsan                 # baseline
+./scan.sh --app myidsan api             # active /api scan (prompts)
+./scan.sh --app myidsan full --yes      # full active, skip prompt
+```
+
+Reports land in `reports/myidsan-<mode>-<timestamp>.{html,json}`. The same
+`failOnError: false` note as myseliasan applies (the swagger generator emits
+the Gorilla-mux `{id:[0-9]+}` path parameter, which is not valid OpenAPI and
+logs a non-fatal import warning); `full` carries the same AJAX-spider memory
+caveat, so prefer `api` unless Docker Desktop's memory is raised.
+
 ## Known / accepted findings
 
 - **`CSP: style-src unsafe-inline` (Medium)** — kept intentionally. The React
@@ -275,6 +344,7 @@ scan.ps1 / scan.sh                   entrypoints (Windows / POSIX); -App/--app s
 config/target.env.example            mymatasan — copy to config/target.env
 config/myseliasan.target.env.example myseliasan — copy to config/myseliasan.target.env
 config/myiotsan.target.env.example   myiotsan — copy to config/myiotsan.target.env
+config/myidsan.target.env.example    myidsan — copy to config/myidsan.target.env
 plans/baseline.yaml                  mymatasan passive plan (safe)
 plans/api.yaml                       mymatasan active plan, /api only (destructive routes excluded)
 plans/full.yaml                      mymatasan active plan, whole app (destructive routes excluded)
@@ -284,6 +354,9 @@ plans/myseliasan-full.yaml           myseliasan active plan, whole app (+ CSRF s
 plans/myiotsan-baseline.yaml         myiotsan passive plan (JSON auth + cookie session)
 plans/myiotsan-api.yaml              myiotsan active plan, /api only (actuation/pairing/enrollment excluded)
 plans/myiotsan-full.yaml             myiotsan active plan, whole app (actuation/pairing/enrollment excluded)
-scripts/csrf-doublesubmit.js         HttpSender script: mirrors CSRF cookie into X-CSRF-Token (myseliasan only)
+plans/myidsan-baseline.yaml          myidsan passive plan (JSON auth + cookie session)
+plans/myidsan-api.yaml               myidsan active plan, /api only (+ CSRF script; IdP-specific exclusions)
+plans/myidsan-full.yaml              myidsan active plan, whole app (+ CSRF script + AJAX spider; IdP-specific exclusions)
+scripts/csrf-doublesubmit.js         HttpSender script: mirrors CSRF cookie into X-CSRF-Token (myseliasan + myidsan)
 reports/                             generated HTML+JSON (git-ignored)
 ```

@@ -28,7 +28,7 @@
 #>
 [CmdletBinding()]
 param(
-  [ValidateSet('mymatasan', 'myseliasan', 'myiotsan')]
+  [ValidateSet('mymatasan', 'myseliasan', 'myiotsan', 'myidsan')]
   [string]$App = 'mymatasan',
   [ValidateSet('baseline', 'api', 'full')]
   [string]$Mode = 'baseline',
@@ -55,6 +55,15 @@ if ($App -eq 'myseliasan') {
   $planFile = "myseliasan-$Mode.yaml"
   $defaultTarget = 'https://host.docker.internal:3002'
   $reportPrefix = "myseliasan-$Mode"
+}
+elseif ($App -eq 'myidsan') {
+  # myidsan is JSON login + cookie session like myseliasan, but on its own login path
+  # (/api/login/default) and WITH the CSRF double-submit token, so its active plans load
+  # the same csrf-doublesubmit.js script.
+  $envFileName = 'myidsan.target.env'
+  $planFile = "myidsan-$Mode.yaml"
+  $defaultTarget = 'https://host.docker.internal:3001'
+  $reportPrefix = "myidsan-$Mode"
 }
 elseif ($App -eq 'myiotsan') {
   $envFileName = 'myiotsan.target.env'

@@ -85,6 +85,29 @@ export function ensureLogin(loginPath) {
   if (cookieHeader === '') fail('login succeeded but set no cookies');
 }
 
+// loginFresh performs an UNCONDITIONAL login and deliberately does not cache the result.
+//
+// ensureLogin() above is once-per-VU on purpose, so a read test pays bcrypt once and then
+// measures the read path. This is the opposite tool, and it exists for one case: measuring
+// an identity provider's LOGIN throughput, where every request must pay a full bcrypt
+// because that is what a Monday-morning sign-in storm actually does. Using ensureLogin for
+// that would measure nothing but the cookie check.
+//
+// Returns the response so the caller can decide what a failure means. It does NOT fail()
+// on a bad status, because in a stress run at the knee, failures ARE the measurement.
+export function loginFresh(loginPath) {
+  if (AUTH_USER === '') return null;
+  const res = http.post(
+    `${BASE_URL}${loginPath || DEFAULT_LOGIN_PATH}`,
+    JSON.stringify({ username: AUTH_USER, password: AUTH_PASS }),
+    { headers: { 'Content-Type': 'application/json' }, tags: { endpoint: 'login_fresh' } }
+  );
+  loginTrend.add(res.timings.duration);
+  endpointTrend.add(res.timings.duration, { endpoint: 'login_fresh' });
+  endpointErrors.add(res.status !== 200, { endpoint: 'login_fresh' });
+  return res;
+}
+
 export function authParams(extra) {
   const headers = {};
   if (cookieHeader) headers['Cookie'] = cookieHeader;

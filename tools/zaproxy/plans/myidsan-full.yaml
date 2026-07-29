@@ -1,0 +1,153 @@
+# OWASP ZAP Automation Framework plan — myidsan FULL ACTIVE scan (whole app).
+#
+# DANGER: authenticates, loads the CSRF script, spiders the whole app (UI + API,
+# including an AJAX spider that drives a real browser through the SPA), then runs ACTIVE
+# attack rules against everything in scope except the destructive routes excluded below.
+# Active scanning SENDS ATTACK PAYLOADS and WILL create, modify and delete data. NEVER
+# run against production — use a THROWAWAY instance (see ../README.md).
+#
+# myidsan needs more care than the other apps for two reasons. It is the identity
+# provider for the whole suite, so a route that succeeds destructively does not just
+# damage this app — rotating a client secret breaks every relying app's logins, and
+# regenerating the SSO CA breaks fleet trust. And several of its endpoints can end the
+# SCANNER's own session (session revoke, disable-user, MFA reset, password change),
+# which turns the rest of the run into a wall of 401s that looks like coverage but is
+# not. Everything in that class is excluded below.
+#
+# What is deliberately left IN scope, because it is the point of scanning an IdP:
+# /api/auth/authorize and /api/auth/token (redirect-URI matching, code handling,
+# client-secret checks), the login endpoints, MFA verification, and the read side of
+# every admin surface.
+env:
+  contexts:
+    - name: myidsan
+      urls:
+        - ${TARGET}
+      includePaths:
+        - "${TARGET}.*"
+      excludePaths:
+        # --- would end or break the scanner's own session -------------------------
+        - ".*/api/login/default/logout.*"
+        - ".*/api/login/default/change-password.*"
+        - ".*/api/session/.*"                     # self-service revoke
+        - ".*/api/session-admin.*"                # revoke anyone's session
+        - ".*/api/user-credential/[0-9]+$"        # DELETE user — could delete the admin
+        - ".*/api/mfa-admin/.*"                   # clearing MFA on the scanning account
+        - ".*/api/mfa/.*"                         # enrolling/disabling the scanner's own factor
+        - ".*/api/access-rbac.*"                  # mutating the matrix locks the scan out
+        # --- destructive beyond this app ------------------------------------------
+        - ".*/api/backup.*"                       # export removes the identity store; restore rewrites it
+        - ".*/api/sso-ca.*"                       # regenerating the CA breaks fleet trust
+        - ".*/api/app-auth-config/.*/secret.*"    # rotating a client secret breaks every relying app
+        - ".*/api/app-auth-config/[0-9]+$"        # DELETE a relying app's client
+        - ".*/api/app-registry/[0-9]+$"           # DELETE a registered app
+        - ".*/api/app-redirect-uri/[0-9]+$"       # DELETE a redirect URI — breaks that app's callback
+        - ".*/api/directory-config.*"             # repointing LDAP breaks directory logins
+        - ".*/api/federated-group-mapping.*"      # regrants roles on next federated login
+        - ".*/api/password-reset/.*/resolve.*"    # resolving a reset issues a real credential
+        - ".*/api/step-up.*"                      # consumes the step-up window the scan may need
+        - ".*/setup/complete.*"
+        # --- protocol endpoints that hang or loop a scanner ------------------------
+        - ".*/api/login/kerberos.*"               # SPNEGO 401-challenge loop
+      authentication:
+        method: "json"
+        parameters:
+          loginPageUrl: "${TARGET}/"
+          loginRequestUrl: "${TARGET}/api/login/default"
+          loginRequestBody: '{"username":"{%username%}","password":"{%password%}"}'
+        verification:
+          method: "poll"
+          pollUrl: "${TARGET}/api/identity-status"
+          pollFrequency: 60
+          pollUnits: "requests"
+          loggedInRegex: '.*(\"result\"|\"email\"|\"roleId\").*'
+          loggedOutRegex: '.*(not authenticated|401|403|unauthorized).*'
+      sessionManagement:
+        method: "cookie"
+      users:
+        - name: "admin"
+          credentials:
+            username: "${ZAP_AUTH_USER}"
+            password: "${ZAP_AUTH_PASS}"
+  parameters:
+    # false for the same reason as myseliasan: the swagger generator emits the
+    # Gorilla-mux path param `{id:[0-9]+}`, which is not valid OpenAPI and logs a
+    # non-fatal import warning. With failOnError:true that warning aborts the plan
+    # before activeScan ever runs.
+    failOnError: false
+    progressToStdout: true
+  vars:
+    TARGET: ${TARGET}
+
+jobs:
+  # Mirror the CSRF cookie into the X-CSRF-Token header, so active-scan writes reach the
+  # handlers instead of being 403'd at the middleware and reported as "not vulnerable".
+  - type: script
+    parameters:
+      action: "add"
+      type: "httpsender"
+      engine: "ECMAScript : Graal.js"
+      name: "csrf-doublesubmit"
+      file: "/zap/wrk/scripts/csrf-doublesubmit.js"
+  - type: script
+    parameters:
+      action: "enable"
+      name: "csrf-doublesubmit"
+
+  # The SPA calls /api/* from JS the spiders cannot see, so the real active coverage
+  # comes from importing the OpenAPI spec.
+  - type: openapi
+    parameters:
+      apiUrl: ${TARGET}/swagger/openapi.json
+      targetUrl: ${TARGET}
+      context: myidsan
+      user: admin
+
+  - type: spider
+    parameters:
+      context: myidsan
+      user: admin
+      url: ${TARGET}
+      maxDuration: 5
+
+  # The traditional spider cannot execute JS, so it never sees the /api calls the SPA
+  # makes at runtime. The AJAX spider drives a real headless browser through ZAP, logged
+  # in via the session cookie, and captures those requests for activeScan to attack.
+  - type: spiderAjax
+    parameters:
+      context: myidsan
+      user: admin
+      url: ${TARGET}
+      maxDuration: 8
+      browserId: firefox-headless
+      # One browser: two headless Firefox instances alongside ZAP's ~8 GB JVM heap
+      # OOM-kill the container inside Docker Desktop. The real API coverage comes from
+      # the openapi import above, so the AJAX spider is only a bonus.
+      numberOfBrowsers: 1
+
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 15
+
+  - type: activeScan
+    parameters:
+      context: myidsan
+      user: admin
+      maxRuleDurationInMins: 3
+      maxScanDurationInMins: 60
+    policyDefinition:
+      defaultStrength: medium
+      defaultThreshold: medium
+      rules: []
+
+  - type: report
+    parameters:
+      template: traditional-html
+      reportDir: /zap/wrk/reports
+      reportFile: myidsan-full-${STAMP}
+      reportTitle: myidsan ZAP full active scan
+  - type: report
+    parameters:
+      template: traditional-json
+      reportDir: /zap/wrk/reports
+      reportFile: myidsan-full-${STAMP}

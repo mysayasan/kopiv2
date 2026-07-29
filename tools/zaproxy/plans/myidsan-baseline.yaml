@@ -1,0 +1,104 @@
+# OWASP ZAP Automation Framework plan — myidsan BASELINE (passive, safe).
+#
+# What it does: authenticates (JSON login), spiders the authenticated SPA, then runs
+# ZAP's PASSIVE rules only (security headers, cookie flags, info disclosure, mixed
+# content). It NEVER sends attack payloads and NEVER submits forms, so it is safe
+# against a live myidsan instance.
+#
+# Auth: myidsan is a cookie-session app like myseliasan, but on its own login path —
+# POST /api/login/default {username,password} — and it issues TWO cookies: the session
+# (kopiv2_access) and a readable CSRF token (kopiv2_csrf) for double submit. Passive
+# scanning only needs the session cookie, so this plan carries no CSRF script; that is
+# only required by the active plans.
+#
+# Worth scanning carefully: this is the login surface for the whole suite, so the
+# passive findings that matter most here are cookie flags (Secure/HttpOnly/SameSite on
+# kopiv2_access), cache headers on token responses, and anything that leaks an account
+# identifier in a response body or a URL.
+#
+# NOTE: point this at an account that is PAST must-change-password. While that flag is
+# set, login succeeds but every other authenticated endpoint returns 401
+# password_change_required, and the spider will find nothing.
+#
+# Driven by scan.ps1 / scan.sh, which substitute the ${...} tokens from env.
+env:
+  contexts:
+    - name: myidsan
+      urls:
+        - ${TARGET}
+      includePaths:
+        - "${TARGET}.*"
+      excludePaths:
+        # Even a passive spider follows GET links, and some of these have side effects
+        # or would end the scan's own session.
+        - ".*/api/login/default/logout.*"
+        - ".*/api/login/default/change-password.*"   # would change the scan's own password
+        - ".*/api/login/kerberos.*"                  # SPNEGO challenge loop
+        - ".*/api/backup.*"                          # export removes the whole identity store
+        - ".*/api/session-admin.*"                   # revoking sessions kills the scan's session
+        - ".*/api/session/.*"                        # self-service revoke, same problem
+        - ".*/api/sso-ca.*"                          # regenerating the CA breaks fleet trust
+        - ".*/setup/complete.*"
+      authentication:
+        method: "json"
+        parameters:
+          loginPageUrl: "${TARGET}/"
+          loginRequestUrl: "${TARGET}/api/login/default"
+          loginRequestBody: '{"username":"{%username%}","password":"{%password%}"}'
+        verification:
+          method: "poll"
+          pollUrl: "${TARGET}/api/identity-status"
+          pollFrequency: 60
+          pollUnits: "requests"
+          loggedInRegex: '.*(\"result\"|\"email\"|\"roleId\").*'
+          loggedOutRegex: '.*(not authenticated|401|403|unauthorized).*'
+      sessionManagement:
+        method: "cookie"
+      users:
+        - name: "admin"
+          credentials:
+            username: "${ZAP_AUTH_USER}"
+            password: "${ZAP_AUTH_PASS}"
+  parameters:
+    failOnError: true
+    failOnWarning: false
+    progressToStdout: true
+  vars:
+    TARGET: ${TARGET}
+
+jobs:
+  - type: spider
+    parameters:
+      context: myidsan
+      user: admin
+      url: ${TARGET}
+      maxDuration: 5
+      maxDepth: 10
+      maxChildren: 0
+    tests:
+      - name: at-least-one-url
+        type: stats
+        statistic: automation.spider.urls.added
+        operator: ">="
+        value: 1
+        onFail: warn
+
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 10
+
+  - type: passiveScan-config
+    parameters:
+      scanOnlyInScope: true
+
+  - type: report
+    parameters:
+      template: traditional-html
+      reportDir: /zap/wrk/reports
+      reportFile: myidsan-baseline-${STAMP}
+      reportTitle: myidsan ZAP Baseline (passive)
+  - type: report
+    parameters:
+      template: traditional-json
+      reportDir: /zap/wrk/reports
+      reportFile: myidsan-baseline-${STAMP}

@@ -37,7 +37,7 @@
 #>
 [CmdletBinding()]
 param(
-  [ValidateSet('mymatasan', 'myseliasan', 'myiotsan')]
+  [ValidateSet('mymatasan', 'myseliasan', 'myiotsan', 'myidsan')]
   [string]$App = 'mymatasan',
   [ValidateSet('smoke', 'load', 'stress')]
   [string]$Script = 'smoke',
@@ -66,6 +66,14 @@ if ($App -eq 'myseliasan') {
   $envFileName = 'myseliasan.target.env'
   $scriptFile = "myseliasan-$Script"
   $defaultBaseUrl = 'https://host.docker.internal:3002'
+}
+elseif ($App -eq 'myidsan') {
+  # Also JSON login + cookie session, but on myidsan's own path (/api/login/default) and
+  # on :3001. Its stress script additionally supports MODE=login, which pays a full
+  # bcrypt per iteration to measure sign-in throughput rather than read throughput.
+  $envFileName = 'myidsan.target.env'
+  $scriptFile = "myidsan-$Script"
+  $defaultBaseUrl = 'https://host.docker.internal:3001'
 }
 elseif ($App -eq 'myiotsan') {
   $envFileName = 'myiotsan.target.env'
