@@ -1,8 +1,8 @@
 # MyIDSan — Productization Plan
 
-Status: **Phase 0 done except the Kerberos/OIDC benches; Phase 1 DONE** (written
-2026-07-29, against myidsan v1.25.0; Phases 0 and 1 executed the same day on
-`feat/myidsan-phase0-hygiene`).
+Status: **Phase 0 done except the Kerberos/OIDC benches; Phases 1 and 2 DONE** (written
+2026-07-29, against myidsan v1.25.0; Phases 0 and 1 on `feat/myidsan-phase0-hygiene`,
+Phase 2 on `feat/myidsan-phase2-audit-sessions` stacked on it).
 
 Phase 1 outcome: `.idbackup` export/restore shipped with a superadmin-only API, an admin
 page, and a "restore from a backup instead" path on the first-run wizard. Verified
@@ -11,6 +11,25 @@ at-rest key → fresh install → restore → sign in with the pre-disaster pass
 TOTP code generated from the pre-disaster secret. The design point that makes that work is
 that sealed columns are unsealed on export and re-sealed with the destination's key on
 restore (§1.1 below), so the at-rest key never travels and the archive is never inert.
+
+Phase 2 outcome — all five sub-phases done:
+
+| Item | State |
+|---|---|
+| 2.1 Security audit log | **DONE** — append-only entity/service, no update or delete path exists; login success/failure/lockout/logout, user create/update/delete, MFA admin reset, directory change, password-reset resolution, backup export/restore, session revocation, step-up success/failure |
+| 2.2 Audit UI and export | **DONE** — superadmin `GET /api/audit` + `/api/audit/export.csv` with a filter row, pagination and CSV export. `csvSafe()` defuses spreadsheet formula injection, because the export carries attacker-controlled text |
+| 2.3 Write `user_session` | **DONE** — the table declared years ago and never written to is now populated, with `IpAddress`/`UserAgent`/`LastSeenAt` added |
+| 2.4 Session administration | **DONE** — self-service list/revoke/revoke-others on Profile (auth-only, NOT matrix-gated), superadmin per-user revoke on Users, and **disabling or deleting an account now ends its sessions** |
+| 2.5 Step-up re-authentication | **DONE** — 5-minute cache-backed marker keyed by session id, gating backup export/restore, MFA admin reset and password-reset resolution; the SPA re-runs the original action after the prompt |
+
+Two things worth carrying forward. First, `middlewares.ClientIP` was extracted from the
+rate limiter so the audit trail shares one trusted-proxy implementation — myseliasan's
+audit log has its own copy that trusts `X-Forwarded-For` unconditionally, and an audit
+trail whose source address the caller can choose is worse than one with no address at all.
+Second, the self-service session routes are deliberately **not** behind the RBAC matrix: the
+first implementation put them there and an ordinary user got a 403 listing their own
+sessions, which is exactly backwards — the person whose laptop was stolen is the one who
+needs that screen.
 
 Phase 0 outcome, in brief — full detail in each sub-phase below:
 

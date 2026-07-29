@@ -46,6 +46,23 @@ type loginApi struct {
 	metrics     telemetry.Metrics
 	mfa         *mfaChallenger
 	reset       services.IPasswordResetService
+	audit       services.IAuditService
+	sessions    services.ISessionService
+	// trustedProxies decides whether a forwarded client address may be believed when an
+	// event is recorded. Empty means "trust nothing but the peer", which is correct for a
+	// directly-exposed instance — an audit trail whose source IP the caller can choose is
+	// worse than one with no IP at all.
+	trustedProxies []*net.IPNet
+}
+
+// recordAudit writes one security event, tolerating a nil service so tests and any caller
+// that has not been given one keep working.
+func (m *loginApi) recordAudit(r *http.Request, e services.AuditEntry) {
+	if m.audit == nil {
+		return
+	}
+	e.ClientIp, e.UserAgent = auditContext(r, m.trustedProxies)
+	m.audit.Record(r.Context(), e)
 }
 
 // LoginApiOptions carries the optional login integrations; every field may be
@@ -67,6 +84,12 @@ type LoginApiOptions struct {
 	Store cache.Store
 	// Reset (non-nil) enables the public forgot-password request endpoint.
 	Reset services.IPasswordResetService
+	// Audit (non-nil) records authentication events to the append-only security trail.
+	Audit services.IAuditService
+	// Sessions (non-nil) indexes issued sessions so they can be listed and revoked.
+	Sessions services.ISessionService
+	// TrustedProxies gates whether X-Forwarded-For may set the recorded client address.
+	TrustedProxies []string
 }
 
 // Create LoginApi. Returns the identity-provider registry so the server-rendered
@@ -92,10 +115,13 @@ func NewLoginApi(
 		directory:   opts.Directory,
 		kerberos:    opts.Kerberos,
 		kerbLabel:   kerbLabel,
-		guard:       opts.Guard,
-		metrics:     opts.Metrics,
-		mfa:         challenger,
-		reset:       opts.Reset,
+		guard:          opts.Guard,
+		metrics:        opts.Metrics,
+		mfa:            challenger,
+		reset:          opts.Reset,
+		audit:          opts.Audit,
+		sessions:       opts.Sessions,
+		trustedProxies: middlewares.ParseTrustedProxies(opts.TrustedProxies),
 	}
 
 	// Create api sub-router
@@ -211,6 +237,7 @@ func (m *loginApi) kerberosLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.recordFederatedLogin(login.KerberosProviderKey, "success")
+	m.recordLoginSuccess(r, user, services.MethodKerberos)
 	http.Redirect(w, r, continueTo, http.StatusFound)
 }
 
@@ -291,7 +318,7 @@ func (m *loginApi) ldapLogin(w http.ResponseWriter, r *http.Request) {
 		m.recordFederatedLogin(login.LdapProviderKey, ldapResultLabel(err))
 		switch {
 		case errors.Is(err, login.ErrLdapInvalidCredential):
-			m.recordLoginFailure(w, r)
+			m.recordLoginFailure(w, r, body.Username, services.MethodDirectory, "invalid directory credentials")
 			controllers.SendError(w, controllers.ErrAuthFailed, err.Error())
 		case errors.Is(err, services.ErrDirectoryDisabled),
 			errors.Is(err, services.ErrFederatedIdentityConflict),
@@ -307,7 +334,7 @@ func (m *loginApi) ldapLogin(w http.ResponseWriter, r *http.Request) {
 
 	guardSuccess(m.guard, r)
 	m.recordFederatedLogin(login.LdapProviderKey, "success")
-	m.completeLoginOrChallenge(w, r, user)
+	m.completeLoginOrChallenge(w, r, user, services.MethodDirectory)
 }
 
 func (m *loginApi) recordFederatedLogin(provider, result string) {
@@ -319,14 +346,77 @@ func (m *loginApi) recordFederatedLogin(provider, result string) {
 
 // recordLoginFailure counts a genuine credential failure toward the per-IP lockout
 // and applies the configured failure delay (slows offline-style guessing).
-func (m *loginApi) recordLoginFailure(w http.ResponseWriter, r *http.Request) {
+// The attempted identifier and sign-in method are passed in so the trail can answer
+// "which account was being guessed, and over which surface" — the two questions a failed
+// sign-in raises. The identifier may not name a real account; that is expected and is
+// recorded as-is (bounded by the audit service) rather than resolved, since resolving it
+// would turn the trail into its own account-existence oracle.
+func (m *loginApi) recordLoginFailure(w http.ResponseWriter, r *http.Request, attempted, method, reason string) {
+	m.recordAudit(r, services.AuditEntry{
+		Action:     services.ActionLoginFailure,
+		ActorEmail: attempted,
+		TargetType: "user",
+		TargetId:   attempted,
+		Outcome:    services.OutcomeDenied,
+		Detail:     reason,
+		Metadata:   map[string]any{"method": method},
+	})
 	if m.guard == nil {
 		return
 	}
 	time.Sleep(m.guard.FailedDelay())
 	if lockedNow, retry := m.guard.RecordFailure(loginGuardKey(r)); lockedNow {
 		log.Printf("login lockout engaged ip=%s retryAfter=%s", loginGuardKey(r), retry)
+		m.recordAudit(r, services.AuditEntry{
+			Action:     services.ActionLoginLockout,
+			ActorEmail: attempted,
+			TargetType: "user",
+			TargetId:   attempted,
+			Outcome:    services.OutcomeDenied,
+			Detail:     "too many failed sign-in attempts from this address",
+			Metadata:   map[string]any{"method": method, "retryAfterSeconds": int(retry.Seconds())},
+		})
 	}
+}
+
+// loginMethodForUser derives the sign-in method from the account's binding. It exists for
+// the post-second-factor completion, where the original request that started the challenge
+// is long gone: labelling a directory user's MFA completion as a "local" sign-in would
+// quietly misreport how they authenticate.
+func loginMethodForUser(user *entities.UserLogin) string {
+	if user == nil {
+		return services.MethodLocal
+	}
+	switch provider := strings.ToLower(strings.TrimSpace(user.SsoProvider)); {
+	case provider == login.LdapProviderKey:
+		return services.MethodDirectory
+	case provider == login.KerberosProviderKey:
+		return services.MethodKerberos
+	case strings.HasPrefix(provider, "oidc:"):
+		return services.MethodOIDC
+	case provider != "":
+		return services.MethodSocial
+	}
+	return services.MethodLocal
+}
+
+// recordLoginSuccess is called once a session has actually been issued — not when the
+// password merely verified, since a password-correct login that stops at the second-factor
+// challenge has not signed anyone in.
+func (m *loginApi) recordLoginSuccess(r *http.Request, user *entities.UserLogin, method string) {
+	if user == nil {
+		return
+	}
+	m.recordAudit(r, services.AuditEntry{
+		Action:     services.ActionLoginSuccess,
+		ActorId:    user.Id,
+		ActorEmail: user.Email,
+		ActorRole:  user.UserRoleId,
+		TargetType: "user",
+		TargetId:   strconv.FormatInt(user.Id, 10),
+		Detail:     "signed in",
+		Metadata:   map[string]any{"method": method},
+	})
 }
 
 func guardLocked(guard *sharedapis.LoginGuard, r *http.Request) (bool, time.Duration) {
@@ -440,6 +530,7 @@ func (m *loginApi) providerCallback(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
+	m.recordLoginSuccess(r, user, loginMethodForUser(user))
 	http.Redirect(w, r, consumeOAuthContinue(w, r, provider.Key()), http.StatusFound)
 }
 
@@ -468,7 +559,7 @@ func (m *loginApi) defaultLogin(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, services.ErrInvalidCredential):
 			// Only genuine credential failures count toward the lockout — payload
 			// or server errors are not guessing.
-			m.recordLoginFailure(w, r)
+			m.recordLoginFailure(w, r, body.Username, services.MethodLocal, "invalid username or password")
 			controllers.SendError(w, controllers.ErrAuthFailed, err.Error())
 		case errors.Is(err, services.ErrInactiveAccount):
 			controllers.SendError(w, controllers.ErrLimitedAccess, err.Error())
@@ -481,7 +572,7 @@ func (m *loginApi) defaultLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	guardSuccess(m.guard, r)
-	m.completeLoginOrChallenge(w, r, user)
+	m.completeLoginOrChallenge(w, r, user, services.MethodLocal)
 }
 
 // completeLoginOrChallenge is the fork every PASSWORD login takes after the
@@ -489,7 +580,7 @@ func (m *loginApi) defaultLogin(w http.ResponseWriter, r *http.Request) {
 // pre-session challenge token and return {mfaRequired, mfaToken} with NO cookies;
 // otherwise issue the session as before. Kerberos and OAuth deliberately do NOT
 // route through here (their upstream IdP owns factor policy).
-func (m *loginApi) completeLoginOrChallenge(w http.ResponseWriter, r *http.Request, user *entities.UserLogin) {
+func (m *loginApi) completeLoginOrChallenge(w http.ResponseWriter, r *http.Request, user *entities.UserLogin, method string) {
 	if user == nil {
 		controllers.SendError(w, controllers.ErrAuthFailed, "invalid username or password")
 		return
@@ -511,7 +602,7 @@ func (m *loginApi) completeLoginOrChallenge(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
-	m.issueLocalSession(w, r, user)
+	m.issueLocalSession(w, r, user, method)
 }
 
 // mfaLogin completes a challenged password login: it redeems the token + code and,
@@ -543,7 +634,9 @@ func (m *loginApi) mfaLogin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, services.ErrMfaBadCode) {
 			m.recordMfaChallenge("failed")
-			m.recordLoginFailure(w, r)
+			// The password already verified to reach this point, so the identifier is
+			// withheld here: the challenge token, not a username, is what was presented.
+			m.recordLoginFailure(w, r, "", services.MethodLocal, "invalid second-factor code")
 			controllers.SendError(w, controllers.ErrAuthFailed, "invalid verification code")
 			return
 		}
@@ -563,7 +656,7 @@ func (m *loginApi) mfaLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	guardSuccess(m.guard, r)
 	m.recordMfaChallenge("success")
-	m.issueLocalSession(w, r, user)
+	m.issueLocalSession(w, r, user, loginMethodForUser(user))
 }
 
 // loadActiveUser fetches an account by id and returns it only if still active.
@@ -675,10 +768,30 @@ func (m *loginApi) defaultRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	m.issueLocalSession(w, r, user)
+	m.issueLocalSession(w, r, user, services.MethodLocal)
 }
 
 func (m *loginApi) defaultLogout(w http.ResponseWriter, r *http.Request) {
+	// Read the identity straight off the cookie rather than from request context: this
+	// route is deliberately public (signing out must work even with an expired session),
+	// so it never passes through the auth middleware and the context carries no claims.
+	// Recorded before the cookies are cleared, while there is still an identity to
+	// attribute the event to.
+	if claims, err := m.auth.ClaimsFromRequest(r); err == nil && claims != nil && claims.Id != 0 {
+		label := strings.TrimSpace(claims.Email)
+		if label == "" {
+			label = strings.TrimSpace(claims.Name)
+		}
+		m.recordAudit(r, services.AuditEntry{
+			Action:     services.ActionLogout,
+			ActorId:    claims.Id,
+			ActorEmail: label,
+			ActorRole:  claims.RoleId,
+			TargetType: "self",
+			TargetId:   strconv.FormatInt(claims.Id, 10),
+			Detail:     "signed out",
+		})
+	}
 	m.auth.ClearAuthCookies(w, r)
 	controllers.SendResult(w, map[string]bool{"ok": true})
 }
@@ -804,7 +917,7 @@ func consumeOAuthContinue(w http.ResponseWriter, r *http.Request, provider strin
 	return cleanContinuePath(string(raw))
 }
 
-func (m *loginApi) issueLocalSession(w http.ResponseWriter, r *http.Request, user *entities.UserLogin) {
+func (m *loginApi) issueLocalSession(w http.ResponseWriter, r *http.Request, user *entities.UserLogin, method string) {
 	if user == nil {
 		controllers.SendError(w, controllers.ErrAuthFailed, "invalid username or password")
 		return
@@ -814,6 +927,7 @@ func (m *loginApi) issueLocalSession(w http.ResponseWriter, r *http.Request, use
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
+	m.recordLoginSuccess(r, user, method)
 
 	controllers.SendResult(w, map[string]bool{"ok": true})
 }
@@ -831,6 +945,7 @@ func (m *loginApi) issueSessionCookies(w http.ResponseWriter, r *http.Request, u
 		name = user.Email
 	}
 
+	expiresAt := time.Now().Add(time.Hour * 72)
 	claims := &models.JwtCustomClaims{
 		Id:            user.Id,
 		Name:          name,
@@ -841,9 +956,43 @@ func (m *loginApi) issueSessionCookies(w http.ResponseWriter, r *http.Request, u
 		Picture:       user.PicUrl,
 		RoleId:        user.UserRoleId,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour * 72)),
+			ExpiresAt: jwt.NewNumericDate(expiresAt),
 		},
 	}
 
-	return m.auth.IssueAuthCookies(w, r, *claims)
+	// Pre-generate the session id so this app can index the session it is about to issue.
+	// IssueAuthCookies mints one only when the field is empty and never reports it back,
+	// so without this the caller cannot know which session it just created — and an
+	// unindexed session is one no administrator can list or revoke.
+	if m.sessions != nil {
+		sessionId, err := newFederatedOpaqueToken()
+		if err != nil {
+			return err
+		}
+		claims.SessionId = sessionId
+	}
+
+	if err := m.auth.IssueAuthCookies(w, r, *claims); err != nil {
+		return err
+	}
+	m.recordSession(r, user, claims.SessionId, expiresAt)
+	return nil
+}
+
+// recordSession indexes an issued session so it can later be listed and revoked. The
+// session is already live at this point, so a failure here must not undo it — the service
+// swallows and logs its own write errors for that reason.
+func (m *loginApi) recordSession(r *http.Request, user *entities.UserLogin, sessionId string, expiresAt time.Time) {
+	if m.sessions == nil || user == nil || strings.TrimSpace(sessionId) == "" {
+		return
+	}
+	ip, ua := auditContext(r, m.trustedProxies)
+	m.sessions.Record(r.Context(), entities.UserSession{
+		SessionId:   sessionId,
+		UserLoginId: user.Id,
+		ExpiresAt:   expiresAt.Unix(),
+		IpAddress:   ip,
+		UserAgent:   ua,
+		CreatedBy:   user.Id,
+	})
 }

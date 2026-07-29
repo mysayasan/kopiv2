@@ -24,7 +24,12 @@ privilege-affecting action (it produces a working credential for the account):
   to the operator exactly once; the account is flagged must-change so the temporary
   password is effectively single-use. Maps `ErrResetRequestNotFound` → `404` and
   `services.ErrThirdPartyOnlyAccount` → `ErrLimitedAccess` ("this account signs in
-  through an external identity provider — reset it there").
+  through an external identity provider — reset it there"). Records
+  `services.ActionPasswordReset` (`apis/audit.go.md`) on success — the temporary password
+  itself is **never** recorded, only that it happened, to whom, and by whom. **Gated by
+  `requireStepUp`** (`apis/stepup.go.md`, Phase 2): issuing a working credential for
+  someone else's account requires proving the operator is still present, not just that a
+  session cookie exists.
 - `POST /api/password-reset/{id}/dismiss` (`dismiss`) — closes a request without
   issuing a password (spam/duplicate/mistaken submission), stamping `ResolvedBy`.
   Maps `ErrResetRequestNotFound` → `404`.
@@ -40,3 +45,6 @@ privilege-affecting action (it produces a working credential for the account):
 - The menu row for this page (`Id: "resetRequests"`, seeded in `app.go`'s
   `Seeders`) is matrix-gated (`SeedRbac: true`) like any other admin section, on top
   of the `RequireSuperadmin` gate applied here.
+- `passwordResetApi` embeds `auditRecorder` (`apis/audit.go.md`); `NewPasswordResetApi`
+  now also takes `services.IAuditService` and `services.IStepUpService` parameters
+  (Phase 2).

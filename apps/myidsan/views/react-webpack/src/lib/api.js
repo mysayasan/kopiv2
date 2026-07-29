@@ -1,6 +1,8 @@
 import config from 'config'
 
 const unsafeMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+export const STEP_UP_REQUIRED = 'step_up_required'
+
 export const apiBase = (config && config.apiUrl ? config.apiUrl : '').replace(/\/$/, '')
 
 export const ACCESS_TIERS = [
@@ -72,6 +74,10 @@ export async function apiRequest(path, options = {}) {
     const err = new Error(message)
     err.status = response.status
     err.payload = payload
+    // The server answers a step-up-gated action with this sentinel. Flag it here so
+    // callers can open the re-authentication prompt instead of surfacing a dead-end
+    // "forbidden" for an action that IS theirs to take.
+    err.stepUpRequired = message === STEP_UP_REQUIRED
     throw err
   }
 

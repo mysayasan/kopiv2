@@ -1,6 +1,8 @@
 package apis
 
 import (
+	"log"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,8 +22,46 @@ import (
 
 // UserLoginApi struct
 type userLoginApi struct {
-	auth middlewares.AuthMidware
-	serv services.IUserLoginDtoService[outputdtos.UserLoginDto]
+	auth     middlewares.AuthMidware
+	serv     services.IUserLoginDtoService[outputdtos.UserLoginDto]
+	sessions services.ISessionService
+	audit    services.IAuditService
+	trusted  []*net.IPNet
+}
+
+// endSessionsFor terminates every live session belonging to a user. Called when an account
+// is disabled or deleted.
+//
+// Without this, disabling an account did not sign anybody out: the auth middleware
+// validates the cached session entry, which carries no account-status flag, so an already
+// signed-in user kept working until their session expired — up to 72 hours after an
+// administrator believed they had cut off access. RBAC-gated routes did start refusing
+// them (the role resolver reports the account disabled), but auth-only routes such as
+// /api/profile/* and /api/mfa stayed reachable.
+func (m *userLoginApi) endSessionsFor(r *http.Request, userId int64, reason string) {
+	if m.sessions == nil || userId <= 0 {
+		return
+	}
+	count, err := m.sessions.RevokeAllForUser(r.Context(), userId, "")
+	if err != nil {
+		log.Printf("failed to end sessions for user %d after %s: %v", userId, reason, err)
+		return
+	}
+	if count == 0 || m.audit == nil {
+		return
+	}
+	entry := services.AuditEntry{
+		Action:     services.ActionSessionRevokeAll,
+		TargetType: "user",
+		TargetId:   strconv.FormatInt(userId, 10),
+		Detail:     "sessions ended because the account was " + reason,
+		Metadata:   map[string]any{"revoked": count, "reason": reason},
+	}
+	if claims, ok := r.Context().Value(enumauth.Claims).(*models.JwtCustomClaims); ok && claims != nil {
+		entry.ActorId, entry.ActorEmail, entry.ActorRole = claims.Id, claims.Email, claims.RoleId
+	}
+	entry.ClientIp, entry.UserAgent = auditContext(r, m.trusted)
+	m.audit.Record(r.Context(), entry)
 }
 
 // Create UserLoginApi
@@ -35,10 +75,16 @@ func NewUserLoginApi(
 	router *mux.Router,
 	auth middlewares.AuthMidware,
 	access *middlewares.AccessSessionMidware,
-	serv services.IUserLoginDtoService[outputdtos.UserLoginDto]) {
+	serv services.IUserLoginDtoService[outputdtos.UserLoginDto],
+	sessions services.ISessionService,
+	audit services.IAuditService,
+	trustedProxies []string) {
 	handler := &userLoginApi{
-		auth: auth,
-		serv: serv,
+		auth:     auth,
+		serv:     serv,
+		sessions: sessions,
+		audit:    audit,
+		trusted:  middlewares.ParseTrustedProxies(trustedProxies),
 	}
 
 	// Create api sub-router — the whole user-account surface is superadmin-only.
@@ -136,7 +182,33 @@ func (m *userLoginApi) put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An account that has just been disabled must lose its live sessions. Done after the
+	// update succeeds so a failed save never signs anyone out.
+	if !body.IsActive {
+		m.endSessionsFor(r, body.Id, "disabled")
+	}
+	m.recordUserAudit(r, services.ActionUserUpdate, body.Id, body.Email, map[string]any{"isActive": body.IsActive, "roleId": body.UserRoleId})
+
 	controllers.SendResult(w, res, "succeed")
+}
+
+// recordUserAudit records an account-management action against the target user.
+func (m *userLoginApi) recordUserAudit(r *http.Request, action string, targetId int64, targetEmail string, meta map[string]any) {
+	if m.audit == nil {
+		return
+	}
+	entry := services.AuditEntry{
+		Action:     action,
+		TargetType: "user",
+		TargetId:   strconv.FormatInt(targetId, 10),
+		Detail:     targetEmail,
+		Metadata:   meta,
+	}
+	if claims, ok := r.Context().Value(enumauth.Claims).(*models.JwtCustomClaims); ok && claims != nil {
+		entry.ActorId, entry.ActorEmail, entry.ActorRole = claims.Id, claims.Email, claims.RoleId
+	}
+	entry.ClientIp, entry.UserAgent = auditContext(r, m.trusted)
+	m.audit.Record(r.Context(), entry)
 }
 
 func (m *userLoginApi) delete(w http.ResponseWriter, r *http.Request) {
@@ -148,6 +220,11 @@ func (m *userLoginApi) delete(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
+
+	// A deleted account's sessions would otherwise keep working until they expired,
+	// authenticating a user row that no longer exists.
+	m.endSessionsFor(r, int64(id), "deleted")
+	m.recordUserAudit(r, services.ActionUserDelete, int64(id), "", nil)
 
 	controllers.SendResult(w, res, "succeed")
 }

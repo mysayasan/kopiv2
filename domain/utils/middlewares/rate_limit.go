@@ -67,30 +67,10 @@ func NewRateLimit(endpoints apiEndpointLister, store cache.Store, auth *AuthMidw
 	}
 }
 
-// parseTrustedProxies turns the configured IP/CIDR strings into networks. Bare
-// IPs become /32 (v4) or /128 (v6). Unparseable entries are skipped (logged).
+// parseTrustedProxies delegates to the shared implementation in clientip.go so the rate
+// limiter and the audit trail cannot drift on which peers may declare a client address.
 func parseTrustedProxies(entries []string) []*net.IPNet {
-	nets := make([]*net.IPNet, 0, len(entries))
-	for _, raw := range entries {
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
-			continue
-		}
-		if _, cidr, err := net.ParseCIDR(raw); err == nil {
-			nets = append(nets, cidr)
-			continue
-		}
-		if ip := net.ParseIP(raw); ip != nil {
-			bits := 32
-			if ip.To4() == nil {
-				bits = 128
-			}
-			nets = append(nets, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
-			continue
-		}
-		log.Printf("rate-limit: ignoring unparseable trustedProxies entry %q", raw)
-	}
-	return nets
+	return ParseTrustedProxies(entries)
 }
 
 func (m *RateLimitMidware) Middleware(next http.Handler) http.Handler {
@@ -284,42 +264,7 @@ func (m *RateLimitMidware) identityForRequest(r *http.Request, accessTier apiacc
 // that shares this keying), while still giving per-client buckets behind a real
 // reverse proxy.
 func (m *RateLimitMidware) clientIP(r *http.Request) string {
-	peer := strings.TrimSpace(r.RemoteAddr)
-	if host, _, err := net.SplitHostPort(peer); err == nil {
-		peer = host
-	}
-	if !m.peerIsTrustedProxy(peer) {
-		return peer
-	}
-	if fwd := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); fwd != "" {
-		// Left-most entry is the original client the trusted proxy saw.
-		if i := strings.Index(fwd, ","); i >= 0 {
-			fwd = strings.TrimSpace(fwd[:i])
-		}
-		if fwd != "" {
-			return fwd
-		}
-	}
-	if real := strings.TrimSpace(r.Header.Get("X-Real-IP")); real != "" {
-		return real
-	}
-	return peer
-}
-
-func (m *RateLimitMidware) peerIsTrustedProxy(peer string) bool {
-	if len(m.trustedProxies) == 0 {
-		return false
-	}
-	ip := net.ParseIP(peer)
-	if ip == nil {
-		return false
-	}
-	for _, cidr := range m.trustedProxies {
-		if cidr.Contains(ip) {
-			return true
-		}
-	}
-	return false
+	return ClientIP(r, m.trustedProxies)
 }
 
 func rateLimitKey(accessTier apiaccessenums.AccessTier, identity string, path string) string {
