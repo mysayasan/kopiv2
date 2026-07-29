@@ -2499,4 +2499,12 @@ export default {
   'node.online': '在线',
   'iot.dash.loadFailed': '无法加载设备资产。',
   'iot.notif.title': '通知',
+  'settings.sso.import': '从 myidsan 导入',
+  'settings.sso.importTip': '载入从 myidsan 应用页导出的设置文件',
+  'settings.sso.importBadJson': '该文件不是有效的 JSON。',
+  'settings.sso.importWrongKind': '这不是 myidsan 的 SSO 设置文件。请从 myidsan 的应用页导出一个。',
+  'settings.sso.importTooNew': '该文件由比此版本更新的 myidsan 生成。请先更新 myseliasan。',
+  'settings.sso.importNoChange': '无需导入——这些设置已与文件一致。',
+  'settings.sso.importedWithSecret': '已导入 {n} 项设置（含客户端密钥）。请检查后按保存。',
+  'settings.sso.importedNoSecret': '已导入 {n} 项设置。文件未包含客户端密钥，因此保留已存储的密钥——若已更改请手动设置。请检查后按保存。',
 };

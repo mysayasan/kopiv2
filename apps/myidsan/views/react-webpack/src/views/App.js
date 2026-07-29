@@ -1180,6 +1180,12 @@ const APP_CODE_PATTERN = /^[a-z][a-z0-9-]{1,62}$/
 // callback (see myseliasan's sso.redirectPath), so it is the suggested default.
 const DEFAULT_CALLBACK_PATH = '/api/auth/callback'
 
+// Identity of the exported SSO bundle. A relying app's importer checks `kind` before
+// touching its own config, so a stray JSON file cannot be mistaken for one of these;
+// `version` lets a future field addition stay readable by an older importer.
+const SSO_BUNDLE_KIND = 'myidsan.sso.client'
+const SSO_BUNDLE_VERSION = 1
+
 // slugifyAppCode converts free text (a pasted title) into a candidate app code.
 function slugifyAppCode(value) {
   return String(value || '')
@@ -1249,27 +1255,91 @@ function CopyButton({ value, disabled }) {
   )
 }
 
-// GuideField wraps one input with the guidance that makes it answerable: what the
-// value is used for at runtime, a worked example, and inline validation. The label
-// is a plain block (not the global grid `label`) because the hint/example rows sit
-// between the control and the next field.
+// InfoTip is the (i) affordance that carries this screen's guidance. The explanations
+// are long — deliberately, they are the whole point of the redesign — but a wall of
+// permanent prose is a wall nobody reads, so each one hides behind its own icon and
+// opens only when asked. Click to toggle; Escape or a click elsewhere closes it.
+function InfoTip({ text, align = 'start' }) {
+  const t = useT()
+  const [open, setOpen] = useState(false)
+  const holder = useRef(null)
+
+  useEffect(() => {
+    if (!open) {
+      return undefined
+    }
+    const onDocDown = event => {
+      if (holder.current && !holder.current.contains(event.target)) {
+        setOpen(false)
+      }
+    }
+    const onKey = event => {
+      if (event.key === 'Escape') {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDocDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDocDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  if (!text) {
+    return null
+  }
+  return (
+    <span className="info-tip" ref={holder}>
+      <button
+        className={open ? 'info-tip-btn open' : 'info-tip-btn'}
+        type="button"
+        onClick={() => setOpen(value => !value)}
+        aria-expanded={open}
+        aria-label={t('app.infoTip')}
+        title={t('app.infoTip')}
+      >
+        i
+      </button>
+      {open && <span className={`info-tip-bubble ${align}`} role="note">{text}</span>}
+    </span>
+  )
+}
+
+// GuideField wraps one input with the guidance that makes it answerable. The
+// explanation lives behind an (i) next to the label; the worked example becomes the
+// input's own placeholder, so the shape of a valid value is visible without costing
+// a line of prose. Only validation stays permanently on screen — that has to be seen.
 function GuideField({ id, label, hint, example, required, issue, children }) {
   const t = useT()
+  // Push `example` down as the placeholder when the control is a plain input that
+  // does not already set one (the client-secret row, for instance, brings its own).
+  const control = example && React.isValidElement(children) && children.type === 'input' && !children.props.placeholder
+    ? React.cloneElement(children, { placeholder: example })
+    : children
   return (
     <div className={issue?.level === 'error' ? 'guide-field has-error' : 'guide-field'}>
       <label className="guide-label" htmlFor={id}>
         {label}
         {required && <span className="guide-required" title={t('app.requiredTip')}>*</span>}
+        <InfoTip text={hint} />
       </label>
-      {children}
-      {hint && <p className="guide-hint">{hint}</p>}
-      {example && (
-        <p className="guide-example">
-          <span>{t('app.exampleLabel')}</span>
-          <code>{example}</code>
-        </p>
-      )}
+      {control}
       {issue && <p className={issue.level === 'error' ? 'guide-issue error' : 'guide-issue warn'}>{issue.text}</p>}
+    </div>
+  )
+}
+
+// GuideCheck is the checkbox equivalent of GuideField: the toggle and its label on
+// one line, its explanation behind the same (i).
+function GuideCheck({ label, hint, checked, onChange }) {
+  return (
+    <div className="guide-check">
+      <label className="checkbox-field">
+        <input type="checkbox" checked={checked} onChange={onChange} />
+        {label}
+      </label>
+      <InfoTip text={hint} />
     </div>
   )
 }
@@ -1308,16 +1378,19 @@ function StepRail({ steps }) {
   )
 }
 
-// PreviewRow is one copyable value in the integration panel.
+// PreviewRow is one copyable value in the integration panel. The panel is narrow, so
+// its per-value notes hide behind the same (i) and open toward the label.
 function PreviewRow({ label, value, hint, mono = true }) {
   return (
     <div className="preview-row">
       <div className="preview-row-head">
-        <span>{label}</span>
+        <span className="preview-row-label">
+          {label}
+          <InfoTip text={hint} align="end" />
+        </span>
         <CopyButton value={value} />
       </div>
       <code className={mono ? 'preview-value' : 'preview-value plain'}>{value}</code>
-      {hint && <p className="preview-hint">{hint}</p>}
     </div>
   )
 }
@@ -1442,7 +1515,12 @@ function AppDetail({ accessList, app, apps = [], onCreated, onSaved, onDeleted }
   // they match) until the operator edits it — an app whose `aud` differs from its
   // code is legal, it just has to be said explicitly.
   const [audienceLinked, setAudienceLinked] = useState(isNew)
-  const [showPrimer, setShowPrimer] = useState(isNew)
+  // The primer is the one long read on the page. It opens by itself only on a truly
+  // first registration (no apps exist yet); after that the operator knows the drill
+  // and it stays a one-click header rather than a wall to scroll past.
+  const [showPrimer, setShowPrimer] = useState(isNew && apps.length === 0)
+  const [showUriRules, setShowUriRules] = useState(false)
+  const [showTrouble, setShowTrouble] = useState(false)
   const [config, setConfig] = useState(null)
   const [authForm, setAuthForm] = useState(emptyAuthConfig)
   const [uris, setUris] = useState([])
@@ -1530,6 +1608,39 @@ function AppDetail({ accessList, app, apps = [], onCreated, onSaved, onDeleted }
       sessionTtlSeconds: Number(authForm.sessionTtlSeconds) || 259200
     }
   }, null, 2)
+
+  // ---- export bundle -------------------------------------------------------
+  // The same values as a machine-readable file a relying app can import, so an
+  // operator never has to retype a client ID or an audience across two consoles.
+  //
+  // The plaintext secret exists ONLY in this browser tab and only right after
+  // Generate — myidsan stores a hash and the API never returns it. So the export
+  // can carry the secret when one was just generated, and must be honest about
+  // its absence otherwise rather than shipping a file that silently fails to work.
+  const secretForExport = String(authForm.clientSecret || '').trim()
+  const buildExportBundle = () => JSON.stringify({
+    kind: SSO_BUNDLE_KIND,
+    version: SSO_BUNDLE_VERSION,
+    exportedAt: new Date().toISOString(),
+    appCode: appForm.code,
+    appTitle: appForm.title,
+    secretIncluded: Boolean(secretForExport),
+    sso: {
+      issuer: 'myidsan',
+      audience: previewAudience,
+      providerBaseUrl: provider,
+      clientId: previewClientId,
+      clientSecret: secretForExport,
+      redirectBaseUrl: previewBase,
+      redirectPath: DEFAULT_CALLBACK_PATH,
+      sessionTtlSeconds: Number(authForm.sessionTtlSeconds) || 259200
+    }
+  }, null, 2)
+
+  const exportBundle = () => {
+    downloadText(`${appForm.code || 'app'}-sso.json`, buildExportBundle())
+    setNotice(secretForExport ? t('app.exportedWithSecret') : t('app.exportedNoSecret'))
+  }
 
   const steps = [
     {
@@ -1750,38 +1861,38 @@ function AppDetail({ accessList, app, apps = [], onCreated, onSaved, onDeleted }
           <div className="detail-heading">
             <h3>{t('app.sectionIdentity')}</h3>
             <span className="step-badge">{t('app.stepOf', { n: 1 })}</span>
+            <InfoTip text={t('app.identityLede')} />
           </div>
-          <p className="section-lede">{t('app.identityLede')}</p>
 
           <form className="record-form" onSubmit={saveApp}>
-            <GuideField id="app-title" label={t('f.title')} hint={t('app.titleHint')} example="Fleet Console" required>
+            <GuideField id="app-title" label={t('f.title')} hint={t('app.titleHint')} example={t('app.titleExample')} required>
               <input id="app-title" value={appForm.title} onChange={event => setAppForm({ ...appForm, title: event.target.value })} required />
             </GuideField>
 
-            <GuideField id="app-code" label={t('app.code')} hint={isSystem ? t('app.codeLockedHint') : t('app.codeHint')} example="myseliasan" required issue={codeIssue}>
+            <GuideField id="app-code" label={t('app.code')} hint={isSystem ? t('app.codeLockedHint') : t('app.codeHint')} required issue={codeIssue}>
               <input
                 id="app-code"
                 value={appForm.code}
                 onChange={event => setCode(event.target.value)}
-                placeholder="my-app"
+                placeholder="fleet-console"
                 spellCheck="false"
                 autoComplete="off"
                 required
                 readOnly={isSystem}
                 disabled={isSystem}
               />
-              {codeSuggestion && (
-                <button className="ghost-button" type="button" onClick={() => setCode(codeSuggestion)}>
-                  {t('app.useSuggestion', { value: codeSuggestion })}
-                </button>
-              )}
             </GuideField>
+            {codeSuggestion && (
+              <button className="ghost-button" type="button" onClick={() => setCode(codeSuggestion)}>
+                {t('app.useSuggestion', { value: codeSuggestion })}
+              </button>
+            )}
 
             <GuideField
               id="app-audience"
               label={t('app.audience')}
               hint={isSystem ? t('app.audienceLockedHint') : (audienceLinked ? t('app.audienceLinkedHint') : t('app.audienceHint'))}
-              example="myseliasan"
+              example="fleet-console"
               required
               issue={audienceIssue}
             >
@@ -1797,21 +1908,20 @@ function AppDetail({ accessList, app, apps = [], onCreated, onSaved, onDeleted }
               />
             </GuideField>
 
-            <GuideField id="app-base-url" label={t('app.baseUrl')} hint={t('app.baseUrlHint')} example="https://fleet.example.com" issue={baseUrlIssue}>
-              <input id="app-base-url" value={appForm.baseUrl} onChange={event => setAppForm({ ...appForm, baseUrl: event.target.value })} placeholder="https://app.example.com" spellCheck="false" autoComplete="off" />
+            <GuideField id="app-base-url" label={t('app.baseUrl')} hint={t('app.baseUrlHint')} issue={baseUrlIssue}>
+              <input id="app-base-url" value={appForm.baseUrl} onChange={event => setAppForm({ ...appForm, baseUrl: event.target.value })} placeholder="https://fleet.example.com" spellCheck="false" autoComplete="off" />
             </GuideField>
 
-            <GuideField id="app-description" label={t('f.description')} hint={t('app.descriptionHint')}>
+            <GuideField id="app-description" label={t('f.description')} hint={t('app.descriptionHint')} example={t('app.descriptionExample')}>
               <input id="app-description" value={appForm.description} onChange={event => setAppForm({ ...appForm, description: event.target.value })} />
             </GuideField>
 
-            <div className="guide-field">
-              <label className="checkbox-field">
-                <input type="checkbox" checked={Boolean(appForm.isActive)} onChange={event => setAppForm({ ...appForm, isActive: event.target.checked })} />
-                {t('f.active')}
-              </label>
-              <p className="guide-hint">{t('app.activeHint')}</p>
-            </div>
+            <GuideCheck
+              label={t('f.active')}
+              hint={t('app.activeHint')}
+              checked={Boolean(appForm.isActive)}
+              onChange={event => setAppForm({ ...appForm, isActive: event.target.checked })}
+            />
 
             <div className="form-actions">
               <button className="primary-button" type="submit" disabled={busy || !canEdit || appFormBlocked}>{isNew ? t('app.createApp') : t('app.saveApp')}</button>
@@ -1823,8 +1933,16 @@ function AppDetail({ accessList, app, apps = [], onCreated, onSaved, onDeleted }
 
         <aside className="app-guide-side">
           <div className="preview-card">
-            <h4>{t('app.previewTitle')}</h4>
-            <p className="preview-lede">{t('app.previewLede')}</p>
+            <div className="preview-card-head">
+              <h4>{t('app.previewTitle')}</h4>
+              <InfoTip text={t('app.previewLede')} align="end" />
+              <button className="secondary-button export-button" type="button" onClick={exportBundle} title={t('app.exportTip')}>
+                {t('app.exportBundle')}
+              </button>
+            </div>
+            <p className={secretForExport ? 'export-note ok' : 'export-note warn'}>
+              {secretForExport ? t('app.exportSecretIncluded') : t('app.exportSecretMissing')}
+            </p>
             <PreviewRow label={t('app.previewProvider')} value={provider} hint={t('app.previewProviderHint')} />
             <PreviewRow label={t('app.previewAudience')} value={previewAudience} hint={t('app.previewAudienceHint')} />
             <PreviewRow label={t('app.previewCallback')} value={previewUri} hint={t('app.previewCallbackHint')} />
@@ -1832,11 +1950,13 @@ function AppDetail({ accessList, app, apps = [], onCreated, onSaved, onDeleted }
             <PreviewRow label={t('app.previewToken')} value={tokenUrl} hint={t('app.previewTokenHint')} />
             <div className="preview-row">
               <div className="preview-row-head">
-                <span>{t('app.previewConfig')}</span>
+                <span className="preview-row-label">
+                  {t('app.previewConfig')}
+                  <InfoTip text={t('app.previewConfigHint')} align="end" />
+                </span>
                 <CopyButton value={configSnippet} />
               </div>
               <pre className="preview-code">{configSnippet}</pre>
-              <p className="preview-hint">{t('app.previewConfigHint')}</p>
             </div>
           </div>
         </aside>
@@ -1844,12 +1964,14 @@ function AppDetail({ accessList, app, apps = [], onCreated, onSaved, onDeleted }
 
       {isNew ? (
         <div className="next-steps">
-          <h3>{t('app.nextTitle')}</h3>
-          <p className="section-lede">{t('app.saveFirst')}</p>
-          <ol className="next-steps-list">
-            <li><strong>{t('app.step2Title')}</strong><span>{t('app.step2Detail')}</span></li>
-            <li><strong>{t('app.step3Title')}</strong><span>{t('app.step3Detail')}</span></li>
-            <li><strong>{t('app.step4Title')}</strong><span>{t('app.step4Detail')}</span></li>
+          <div className="detail-heading">
+            <h3>{t('app.nextTitle')}</h3>
+            <InfoTip text={t('app.saveFirst')} />
+          </div>
+          <ol className="next-steps-list compact">
+            <li><strong>{t('app.step2Title')}</strong><InfoTip text={t('app.step2Detail')} /></li>
+            <li><strong>{t('app.step3Title')}</strong><InfoTip text={t('app.step3Detail')} /></li>
+            <li><strong>{t('app.step4Title')}</strong><InfoTip text={t('app.step4Detail')} /></li>
           </ol>
         </div>
       ) : (
@@ -1859,11 +1981,11 @@ function AppDetail({ accessList, app, apps = [], onCreated, onSaved, onDeleted }
             <h3>{t('app.ssoClient')}</h3>
             <span className="step-badge">{t('app.stepOf', { n: 2 })}</span>
             <span className={config ? 'status-pill on' : 'status-pill off'}>{config ? t('app.ssoConfigured') : t('app.noSsoClient')}</span>
+            <InfoTip text={t('app.ssoLede')} />
           </div>
-          <p className="section-lede">{t('app.ssoLede')}</p>
           {!config && <div className="message">{t('app.ssoNext')}</div>}
           <form className="record-form" onSubmit={saveConfig}>
-            <GuideField id="sso-client-id" label={t('app.clientId')} hint={t('app.clientIdHint')} example={appForm.code || 'myseliasan'} required>
+            <GuideField id="sso-client-id" label={t('app.clientId')} hint={t('app.clientIdHint')} example={appForm.code || 'fleet-console'} required>
               <input id="sso-client-id" value={authForm.clientId} onChange={event => setAuthForm({ ...authForm, clientId: event.target.value })} spellCheck="false" autoComplete="off" required />
             </GuideField>
 
@@ -1900,27 +2022,24 @@ function AppDetail({ accessList, app, apps = [], onCreated, onSaved, onDeleted }
               </GuideField>
             </div>
 
-            <div className="guide-field">
-              <label className="checkbox-field">
-                <input type="checkbox" checked={Boolean(authForm.requirePkce)} onChange={event => setAuthForm({ ...authForm, requirePkce: event.target.checked })} />
-                {t('app.requirePkce')}
-              </label>
-              <p className="guide-hint">{t('app.requirePkceHint')}</p>
-            </div>
-            <div className="guide-field">
-              <label className="checkbox-field">
-                <input type="checkbox" checked={Boolean(authForm.allowRefreshToken)} onChange={event => setAuthForm({ ...authForm, allowRefreshToken: event.target.checked })} />
-                {t('app.allowRefresh')}
-              </label>
-              <p className="guide-hint">{t('app.allowRefreshHint')}</p>
-            </div>
-            <div className="guide-field">
-              <label className="checkbox-field">
-                <input type="checkbox" checked={Boolean(authForm.isActive)} onChange={event => setAuthForm({ ...authForm, isActive: event.target.checked })} />
-                {t('f.active')}
-              </label>
-              <p className="guide-hint">{t('app.ssoActiveHint')}</p>
-            </div>
+            <GuideCheck
+              label={t('app.requirePkce')}
+              hint={t('app.requirePkceHint')}
+              checked={Boolean(authForm.requirePkce)}
+              onChange={event => setAuthForm({ ...authForm, requirePkce: event.target.checked })}
+            />
+            <GuideCheck
+              label={t('app.allowRefresh')}
+              hint={t('app.allowRefreshHint')}
+              checked={Boolean(authForm.allowRefreshToken)}
+              onChange={event => setAuthForm({ ...authForm, allowRefreshToken: event.target.checked })}
+            />
+            <GuideCheck
+              label={t('f.active')}
+              hint={t('app.ssoActiveHint')}
+              checked={Boolean(authForm.isActive)}
+              onChange={event => setAuthForm({ ...authForm, isActive: event.target.checked })}
+            />
             <button className="primary-button" type="submit" disabled={busy || !canSso}>{config ? t('app.saveSso') : t('app.createSso')}</button>
             {!canSso && <p className="guide-issue warn">{t('app.noSsoPermission')}</p>}
           </form>
@@ -1929,20 +2048,19 @@ function AppDetail({ accessList, app, apps = [], onCreated, onSaved, onDeleted }
             <div className="detail-heading">
               <h3>{t('app.redirectUris')}</h3>
               <span className="step-badge">{t('app.stepOf', { n: 3 })}</span>
+              <InfoTip text={t('app.redirectLede')} />
             </div>
-            <p className="section-lede">{t('app.redirectLede')}</p>
             {!config ? (
               <p className="message">{t('app.createSsoFirst')}</p>
             ) : (
               <>
-                <div className="guide-hint-block">
-                  <strong>{t('app.redirectRulesTitle')}</strong>
+                <GuideCallout title={t('app.redirectRulesTitle')} open={showUriRules} onToggle={() => setShowUriRules(value => !value)}>
                   <ul>
                     <li>{t('app.redirectRule1')}</li>
                     <li>{t('app.redirectRule2')}</li>
                     <li>{t('app.redirectRule3')}</li>
                   </ul>
-                </div>
+                </GuideCallout>
                 <div className="permission-add">
                   <input value={newUri} onChange={event => setNewUri(event.target.value)} placeholder={suggestedUri} spellCheck="false" autoComplete="off" disabled={busy} />
                   <button className="secondary-button" onClick={addUri} type="button" disabled={busy || !newUri.trim()}>{t('app.addUri')}</button>
@@ -1976,28 +2094,28 @@ function AppDetail({ accessList, app, apps = [], onCreated, onSaved, onDeleted }
             <div className="detail-heading">
               <h3>{t('app.sectionConnect')}</h3>
               <span className="step-badge">{t('app.stepOf', { n: 4 })}</span>
+              <InfoTip text={t('app.connectLede')} />
             </div>
-            <p className="section-lede">{t('app.connectLede')}</p>
-            <ol className="next-steps-list">
-              <li><strong>{t('app.connect1Title')}</strong><span>{t('app.connect1Detail')}</span></li>
-              <li><strong>{t('app.connect2Title')}</strong><span>{t('app.connect2Detail')}</span></li>
-              <li><strong>{t('app.connect3Title')}</strong><span>{t('app.connect3Detail')}</span></li>
+            <ol className="next-steps-list compact">
+              <li><strong>{t('app.connect1Title')}</strong><InfoTip text={t('app.connect1Detail')} /></li>
+              <li><strong>{t('app.connect2Title')}</strong><InfoTip text={t('app.connect2Detail')} /></li>
+              <li><strong>{t('app.connect3Title')}</strong><InfoTip text={t('app.connect3Detail')} /></li>
             </ol>
-            <div className="guide-hint-block">
-              <strong>{t('app.troubleTitle')}</strong>
+            <GuideCallout title={t('app.troubleTitle')} open={showTrouble} onToggle={() => setShowTrouble(value => !value)}>
               <ul>
                 <li><code>client is not registered</code> — {t('app.trouble1')}</li>
                 <li><code>redirect_uri is not registered</code> — {t('app.trouble2')}</li>
                 <li><code>audience not registered for client</code> — {t('app.trouble3')}</li>
                 <li><code>client secret not valid</code> — {t('app.trouble4')}</li>
               </ul>
-            </div>
+            </GuideCallout>
           </div>
 
           <div className="sso-certs">
             <div className="detail-heading">
               <h3>{t('app.clientCert')}</h3>
               <span className="step-badge optional">{t('app.optional')}</span>
+              <InfoTip text={t('app.certIssuerNote')} />
               <button className="info-button" type="button" onClick={() => setShowCertHelp(value => !value)} title={t('app.certHelpTip')} aria-label={t('app.certHelpAria')}>?</button>
             </div>
             {showCertHelp && (
@@ -2016,7 +2134,6 @@ function AppDetail({ accessList, app, apps = [], onCreated, onSaved, onDeleted }
               <p className="message">{t('app.createSsoCertFirst')}</p>
             ) : (
               <>
-                <p className="cert-hint">{t('app.certIssuerNote')}</p>
                 <div className="form-actions">
                   <button className="secondary-button" type="button" onClick={downloadCA} disabled={busy}>{t('app.downloadCa')}</button>
                   <button className="primary-button" type="button" onClick={generateCert} disabled={busy || !canSso}>{t('app.generateCert')}</button>

@@ -2507,4 +2507,12 @@ export default {
   'node.online': 'Online',
   'iot.dash.loadFailed': 'Could not load the estate.',
   'iot.notif.title': 'Notification',
+  'settings.sso.import': 'Import from myidsan',
+  'settings.sso.importTip': 'Load the settings file exported from myidsan’s Apps page',
+  'settings.sso.importBadJson': 'That file is not valid JSON.',
+  'settings.sso.importWrongKind': 'That is not a myidsan SSO settings file. Export one from myidsan’s Apps page.',
+  'settings.sso.importTooNew': 'That file was written by a newer myidsan than this build understands. Update myseliasan first.',
+  'settings.sso.importNoChange': 'Nothing to import — these settings already match the file.',
+  'settings.sso.importedWithSecret': 'Imported {n} settings, including the client secret. Review them, then press Save.',
+  'settings.sso.importedNoSecret': 'Imported {n} settings. The file carried no client secret, so the stored one is kept — set it by hand if it changed. Review, then press Save.',
 };

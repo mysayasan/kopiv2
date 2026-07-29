@@ -2499,4 +2499,12 @@ export default {
   'node.online': 'Dalam talian',
   'iot.dash.loadFailed': 'Tidak dapat memuatkan estet peranti.',
   'iot.notif.title': 'Pemberitahuan',
+  'settings.sso.import': 'Import dari myidsan',
+  'settings.sso.importTip': 'Muatkan fail tetapan yang dieksport dari halaman Apps myidsan',
+  'settings.sso.importBadJson': 'Fail itu bukan JSON yang sah.',
+  'settings.sso.importWrongKind': 'Itu bukan fail tetapan SSO myidsan. Eksport satu dari halaman Apps myidsan.',
+  'settings.sso.importTooNew': 'Fail itu ditulis oleh myidsan yang lebih baharu daripada yang difahami binaan ini. Kemas kini myseliasan dahulu.',
+  'settings.sso.importNoChange': 'Tiada apa untuk diimport — tetapan ini sudah sepadan dengan fail itu.',
+  'settings.sso.importedWithSecret': 'Mengimport {n} tetapan, termasuk rahsia klien. Semak, kemudian tekan Simpan.',
+  'settings.sso.importedNoSecret': 'Mengimport {n} tetapan. Fail itu tidak membawa rahsia klien, jadi yang tersimpan dikekalkan — tetapkannya secara manual jika ia berubah. Semak, kemudian tekan Simpan.',
 };

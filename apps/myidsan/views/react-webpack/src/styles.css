@@ -2317,12 +2317,22 @@ textarea:focus {
   color: var(--muted);
 }
 
-.guide-callout-body ol {
+.guide-callout-body ol,
+.guide-callout-body ul {
   margin: 0 0 10px;
   padding-inline-start: 20px;
   display: grid;
   gap: 6px;
   max-width: 82ch;
+}
+
+.guide-callout-body ol:last-child,
+.guide-callout-body ul:last-child {
+  margin-bottom: 0;
+}
+
+.guide-callout-body code {
+  font-size: 11px;
 }
 
 /* Two-column editor: fields on the left, live integration values on the right. */
@@ -2344,22 +2354,17 @@ textarea:focus {
   min-width: 0;
 }
 
-.section-lede {
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.55;
-  max-width: 78ch;
-}
-
-/* One guided field: label, control, hint, example, validation. */
+/* One guided field: label (+ its (i)), control, validation. The explanation is not
+   in the flow at all — it lives in the InfoTip bubble, so the form stays scannable. */
 .guide-field {
   display: grid;
   gap: 6px;
 }
 
 .guide-label {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   color: var(--ink-strong);
   font-size: 13px;
   font-weight: 700;
@@ -2367,7 +2372,7 @@ textarea:focus {
 
 .guide-required {
   color: var(--red);
-  margin-inline-start: 3px;
+  margin-inline-start: -3px;
   font-weight: 900;
 }
 
@@ -2375,29 +2380,85 @@ textarea:focus {
   border-color: var(--red);
 }
 
-.guide-hint {
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
-  max-width: 78ch;
-}
-
-.guide-example {
+/* Checkbox row: toggle, label, and the same (i) affordance on one line. */
+.guide-check {
   display: flex;
-  gap: 6px;
-  align-items: baseline;
+  align-items: center;
+  gap: 8px;
+}
+
+.guide-check .checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0;
-  font-size: 12px;
+}
+
+/* The (i) affordance and its on-demand bubble. */
+.info-tip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.info-tip-btn {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
   color: var(--muted);
-}
-
-.guide-example span {
+  font-family: Georgia, "Times New Roman", serif;
+  font-style: italic;
+  font-size: 11px;
   font-weight: 700;
+  line-height: 1;
 }
 
-.guide-example code {
+.info-tip-btn:hover,
+.info-tip-btn.open {
+  border-color: var(--blue);
+  background: var(--blue);
+  color: #fff;
+}
+
+.info-tip-btn:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.22);
+}
+
+.info-tip-bubble {
+  position: absolute;
+  top: calc(100% + 6px);
+  z-index: 40;
+  width: max-content;
+  max-width: min(360px, 70vw);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 10px 26px var(--ui-shadow, rgba(17, 24, 39, 0.16));
+  padding: 9px 11px;
+  color: var(--text);
   font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: normal;
+  text-align: start;
+}
+
+.info-tip-bubble.start {
+  inset-inline-start: -8px;
+}
+
+/* Narrow containers (the preview panel) open the bubble toward the label instead,
+   so it does not run off the edge of the card. */
+.info-tip-bubble.end {
+  inset-inline-end: -8px;
 }
 
 .guide-issue {
@@ -2413,35 +2474,6 @@ textarea:focus {
 
 .guide-issue.warn {
   color: var(--amber);
-}
-
-.guide-hint-block {
-  margin: 0 0 12px;
-  padding: 10px 14px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface-alt);
-  font-size: 12px;
-  line-height: 1.55;
-  color: var(--muted);
-}
-
-.guide-hint-block strong {
-  display: block;
-  margin-bottom: 6px;
-  color: var(--ink-strong);
-  font-size: 13px;
-}
-
-.guide-hint-block ul {
-  margin: 0;
-  padding-inline-start: 20px;
-  display: grid;
-  gap: 4px;
-}
-
-.guide-hint-block code {
-  font-size: 11px;
 }
 
 .ghost-button {
@@ -2477,16 +2509,39 @@ textarea:focus {
   gap: 12px;
 }
 
+.preview-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.export-button {
+  margin-inline-start: auto;
+  min-height: 28px;
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+/* Whether the downloaded bundle carries the client secret. The secret only exists
+   in this tab right after Generate, so the state has to be visible before download
+   rather than discovered when the relying app fails to authenticate. */
+.export-note {
+  margin: -6px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.export-note.ok {
+  color: var(--green);
+}
+
+.export-note.warn {
+  color: var(--amber);
+}
+
 .preview-card h4 {
   margin: 0;
   font-size: 14px;
-}
-
-.preview-lede {
-  margin: -6px 0 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
 }
 
 .preview-row {
@@ -2503,6 +2558,13 @@ textarea:focus {
   color: var(--ink-strong);
   font-size: 12px;
   font-weight: 800;
+}
+
+.preview-row-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
 }
 
 .preview-value {
@@ -2525,13 +2587,6 @@ textarea:focus {
   font-size: 11px;
   line-height: 1.45;
   overflow-x: auto;
-}
-
-.preview-hint {
-  margin: 0;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.45;
 }
 
 .copy-button {
@@ -2593,6 +2648,24 @@ textarea:focus {
 
 .next-steps-list span {
   color: var(--muted);
+}
+
+/* Compact variant: each step is one line — its detail sits behind the (i). */
+.next-steps-list.compact {
+  gap: 5px;
+}
+
+.next-steps-list.compact li {
+  display: list-item;
+}
+
+.next-steps-list.compact strong {
+  font-weight: 700;
+}
+
+.next-steps-list.compact .info-tip {
+  vertical-align: middle;
+  margin-inline-start: 2px;
 }
 
 @media (max-width: 1180px) {
