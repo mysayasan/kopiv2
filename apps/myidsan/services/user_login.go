@@ -15,6 +15,7 @@ import (
 	"github.com/mysayasan/kopiv2/domain/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	"github.com/mysayasan/kopiv2/infra/cache"
+	"github.com/mysayasan/kopiv2/infra/config"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/login"
 	"golang.org/x/crypto/bcrypt"
@@ -22,8 +23,9 @@ import (
 
 // userLoginService struct
 type userLoginService struct {
-	repo  dbsql.IGenericRepo[entities.UserLogin]
-	cache cache.Store
+	repo   dbsql.IGenericRepo[entities.UserLogin]
+	cache  cache.Store
+	policy config.EffectivePasswordPolicy
 }
 
 const (
@@ -58,10 +60,12 @@ var (
 func NewUserLoginService(
 	repo dbsql.IGenericRepo[entities.UserLogin],
 	cacheStore cache.Store,
+	policy config.EffectivePasswordPolicy,
 ) IUserLoginService {
 	return &userLoginService{
-		repo:  repo,
-		cache: cacheStore,
+		repo:   repo,
+		cache:  cacheStore,
+		policy: policy,
 	}
 }
 
@@ -290,9 +294,12 @@ func (m *userLoginService) AssignRole(ctx context.Context, userId int64, roleId 
 
 func (m *userLoginService) RegisterLocal(ctx context.Context, model entities.UserLogin) (uint64, error) {
 	model.Email = strings.TrimSpace(model.Email)
-	model.Userpwd = strings.TrimSpace(model.Userpwd)
-	if model.Email == "" || model.Userpwd == "" {
+	if model.Email == "" || strings.TrimSpace(model.Userpwd) == "" {
 		return 0, ErrInvalidCredentialPayload
+	}
+	// Self-registration used to check non-empty and nothing else.
+	if err := ValidatePassword(m.policy, model.Userpwd, model.Email); err != nil {
+		return 0, err
 	}
 
 	existing, err := m.repo.GetByUnique(ctx, "", "email", model.Email)
@@ -554,8 +561,8 @@ func (m *userLoginService) ResetStockSuperadmin(ctx context.Context, username, p
 }
 
 func (m *userLoginService) ChangePassword(ctx context.Context, userId int64, current, next string) error {
-	if len(strings.TrimSpace(next)) < 8 {
-		return fmt.Errorf("new password must be at least 8 characters")
+	if err := ValidatePassword(m.policy, next, ""); err != nil {
+		return err
 	}
 	user, err := m.repo.GetById(ctx, "", uint64(userId))
 	if err != nil {
@@ -623,8 +630,8 @@ func (m *userLoginService) AdminResetPassword(ctx context.Context, userId int64)
 // possession of the reset token, so no current-password check — but the account must
 // still be a local one, and the new password must meet the length rule.
 func (m *userLoginService) SetPasswordSelfService(ctx context.Context, userId int64, newPassword string) error {
-	if len(strings.TrimSpace(newPassword)) < 8 {
-		return fmt.Errorf("new password must be at least 8 characters")
+	if err := ValidatePassword(m.policy, newPassword, ""); err != nil {
+		return err
 	}
 	user, err := m.repo.GetById(ctx, "", uint64(userId))
 	if err != nil {

@@ -1,8 +1,9 @@
 # MyIDSan — Productization Plan
 
-Status: **Phase 0 done except the Kerberos/OIDC benches; Phases 1 and 2 DONE** (written
+Status: **Phase 0 done except the Kerberos/OIDC benches; Phases 1, 2 and 3 DONE** (written
 2026-07-29, against myidsan v1.25.0; Phases 0 and 1 on `feat/myidsan-phase0-hygiene`,
-Phase 2 on `feat/myidsan-phase2-audit-sessions` stacked on it).
+Phase 2 on `feat/myidsan-phase2-audit-sessions`, Phase 3 on `feat/myidsan-phase3-policy`,
+each stacked on the last).
 
 Phase 1 outcome: `.idbackup` export/restore shipped with a superadmin-only API, an admin
 page, and a "restore from a backup instead" path on the first-run wizard. Verified
@@ -21,6 +22,23 @@ Phase 2 outcome — all five sub-phases done:
 | 2.3 Write `user_session` | **DONE** — the table declared years ago and never written to is now populated, with `IpAddress`/`UserAgent`/`LastSeenAt` added |
 | 2.4 Session administration | **DONE** — self-service list/revoke/revoke-others on Profile (auth-only, NOT matrix-gated), superadmin per-user revoke on Users, and **disabling or deleting an account now ends its sessions** |
 | 2.5 Step-up re-authentication | **DONE** — 5-minute cache-backed marker keyed by session id, gating backup export/restore, MFA admin reset and password-reset resolution; the SPA re-runs the original action after the prompt |
+
+Phase 3 outcome — all five sub-phases done:
+
+| Item | State |
+|---|---|
+| 3.1 Password policy | **DONE** — enforced at all FOUR paths (previously two, and admin account creation had no check at all). Default minimum 12; character-class rules default off on purpose; embedded common-password denylist on by default. Server-generated credentials exempt, with a test proving they still satisfy the default policy |
+| 3.2 MFA enforcement | **DONE** — `mfa.policy` off/optional/**required** (default optional), narrowable by role, directory accounts out of scope unless opted in. Enforced AFTER the password succeeds: the user gets a session but is pinned to enrolment, so switching the policy on does not lock out every existing admin |
+| 3.3 Client secrets | **DONE** — bcrypt replaces unsalted single-round SHA-256. Legacy hashes still authenticate and are rewritten the first time their secret is presented, so installs migrate themselves |
+| 3.4 Per-account lockout | **DONE** — the guard was IP-only, so a spray distributed across addresses against one account was unthrottled. Lock check moved after request decoding so the username is available |
+| 3.5 CSRF on auth forms | **DONE** — session-less double-submit token on the four public server-rendered forms, which previously had none at all |
+
+Two gotchas from Phase 3 worth remembering. The CSRF token must be minted **before**
+`WriteHeader`: `http.SetCookie` appends to the header map, so a cookie set from inside the
+`Fprintf` argument list is silently discarded, and every genuine submission then fails
+while forged ones still look correctly rejected. And the per-account lockout is a
+deliberate tradeoff — an attacker who knows a username can lock that user out, which is a
+nuisance they recover from by waiting, versus unlimited guessing which they do not.
 
 Two things worth carrying forward. First, `middlewares.ClientIP` was extracted from the
 rate limiter so the audit trail shares one trusted-proxy implementation — myseliasan's

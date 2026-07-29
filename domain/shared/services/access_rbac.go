@@ -32,6 +32,14 @@ type AccessPrincipal struct {
 	RoleId             int64
 	Disabled           bool
 	MustChangePassword bool
+	// MustEnrollMfa pins the user to second-factor enrolment, the same way
+	// MustChangePassword pins them to the password form. Set when the server's MFA policy
+	// requires a factor for this account's role and none is confirmed yet.
+	//
+	// Safe to enforce AFTER a session exists: the password already succeeded, and the user
+	// is being made to ADD a factor, not to prove one they do not have. Apps with no MFA
+	// policy simply leave it false.
+	MustEnrollMfa bool
 }
 
 // AccessUserResolver adapts an app's user store to an AccessPrincipal. Returning

@@ -41,7 +41,7 @@ func (f *fakeMappingRepo) Get(_ context.Context, _ string, _ uint64, _ uint64, f
 // (pending) account, but never overrides an existing manual assignment.
 func TestAdmitExternalIdentity_SeedsPendingOnly(t *testing.T) {
 	userRepo := newFakeUserLoginRepo()
-	users := NewUserLoginService(userRepo, nil)
+	users := NewUserLoginService(userRepo, nil, testPasswordPolicy())
 	mappings := &fakeMappingRepo{rows: []*myidsanentities.FederatedGroupMapping{
 		{Id: 1, Provider: "oidc:kc", GroupName: "kopiv2-admins", RoleId: 4, Priority: 1},
 	}}

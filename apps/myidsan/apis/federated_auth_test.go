@@ -91,13 +91,77 @@ func (f *fakeGenericRepo[T]) DeleteByForeign(ctx context.Context, datasrc string
 	return 0, nil
 }
 
-func TestSecretMatchesSHA256Hash(t *testing.T) {
-	hash := "736c6859eceedb2db6b79b2f96d8e53a714ac644d83ee1dd3b52f89ae55cc274"
-	if !secretMatches(hash, "dev-myseliasan-secret") {
-		t.Fatalf("expected dev secret to match hash")
+// An existing install stores client secrets as unsalted SHA-256. Those rows must keep
+// authenticating across the upgrade, and must be flagged for rewriting once the plaintext
+// is in hand — otherwise every operator would have to re-enter every client secret.
+func TestSecretMatchesAcceptsLegacySHA256AndAsksForRehash(t *testing.T) {
+	legacy := "736c6859eceedb2db6b79b2f96d8e53a714ac644d83ee1dd3b52f89ae55cc274"
+
+	ok, needsRehash := secretMatches(legacy, "dev-myseliasan-secret")
+	if !ok {
+		t.Fatal("a legacy SHA-256 hash must still authenticate")
 	}
-	if secretMatches(hash, "wrong-secret") {
-		t.Fatalf("expected wrong secret to fail")
+	if !needsRehash {
+		t.Fatal("a legacy hash must be flagged for rewriting to bcrypt")
+	}
+
+	if ok, _ := secretMatches(legacy, "wrong-secret"); ok {
+		t.Fatal("a wrong secret must not match the legacy hash")
+	}
+}
+
+// The current form is bcrypt: salted and deliberately slow, so a database read no longer
+// yields every operator-chosen client secret at GPU speed.
+func TestSecretMatchesVerifiesBcryptAndDoesNotAskForRehash(t *testing.T) {
+	hashed, err := hashClientSecret("a-real-client-secret")
+	if err != nil {
+		t.Fatalf("hashClientSecret: %v", err)
+	}
+	if !isBcryptClientSecret(hashed) {
+		t.Fatalf("new hashes must be bcrypt, got %q", hashed)
+	}
+
+	ok, needsRehash := secretMatches(hashed, "a-real-client-secret")
+	if !ok {
+		t.Fatal("the correct secret must verify against its bcrypt hash")
+	}
+	if needsRehash {
+		t.Fatal("a bcrypt hash must not be flagged for rehashing")
+	}
+
+	if ok, _ := secretMatches(hashed, "wrong-secret"); ok {
+		t.Fatal("a wrong secret must not verify")
+	}
+}
+
+// bcrypt salts, so the same secret hashed twice must differ — the property the old
+// unsalted scheme lacked, which is what made a stolen table so cheap to crack in bulk.
+func TestClientSecretHashesAreSalted(t *testing.T) {
+	first, err := hashClientSecret("same-secret")
+	if err != nil {
+		t.Fatalf("hashClientSecret: %v", err)
+	}
+	second, err := hashClientSecret("same-secret")
+	if err != nil {
+		t.Fatalf("hashClientSecret: %v", err)
+	}
+	if first == second {
+		t.Fatal("two hashes of the same secret are identical — the hash is not salted")
+	}
+	for _, h := range []string{first, second} {
+		if ok, _ := secretMatches(h, "same-secret"); !ok {
+			t.Fatal("both salted hashes must verify the same secret")
+		}
+	}
+}
+
+func TestSecretMatchesRejectsEmptyInputs(t *testing.T) {
+	for _, tc := range []struct{ stored, presented string }{
+		{"", "something"}, {"somehash", ""}, {"", ""}, {"   ", "  "},
+	} {
+		if ok, _ := secretMatches(tc.stored, tc.presented); ok {
+			t.Errorf("empty input pair (%q,%q) must not match", tc.stored, tc.presented)
+		}
 	}
 }
 
@@ -170,7 +234,7 @@ func TestAuthorizeRedirectsRegisteredClientWithoutSessionToLogin(t *testing.T) {
 		nil, // no directory service: LDAP login disabled in these tests
 		"",  // no kerberos label: SSO button off in these tests
 		nil, // no login guard: lockout is nil-safe and off in these tests
-		services.NewUserLoginService(&fakeGenericRepo[entities.UserLogin]{}, cache.NewMemoryStore(time.Minute, time.Minute)),
+		services.NewUserLoginService(&fakeGenericRepo[entities.UserLogin]{}, cache.NewMemoryStore(time.Minute, time.Minute), config.PasswordPolicyConfigModel{}.Effective()),
 		&fakeGenericRepo[entities.AppRegistry]{byID: map[uint64]*entities.AppRegistry{uint64(app.Id): app}},
 		&fakeGenericRepo[entities.AppAuthConfig]{rows: []*entities.AppAuthConfig{client}},
 		&fakeGenericRepo[entities.AppRedirectUri]{rows: []*entities.AppRedirectUri{redirect}},

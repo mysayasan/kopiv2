@@ -18,6 +18,7 @@ import (
 	sharedapis "github.com/mysayasan/kopiv2/domain/shared/apis"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
+	"github.com/mysayasan/kopiv2/infra/config"
 )
 
 // UserLoginApi struct
@@ -27,6 +28,11 @@ type userLoginApi struct {
 	sessions services.ISessionService
 	audit    services.IAuditService
 	trusted  []*net.IPNet
+	// policy is enforced HERE rather than in userLoginService.Create, because Create is
+	// also the hashing chokepoint for the server-generated bootstrap superadmin password;
+	// applying a human-password policy there would make the seed subject to rules that add
+	// nothing to a 16-character CSPRNG credential.
+	policy config.EffectivePasswordPolicy
 }
 
 // endSessionsFor terminates every live session belonging to a user. Called when an account
@@ -78,6 +84,7 @@ func NewUserLoginApi(
 	serv services.IUserLoginDtoService[outputdtos.UserLoginDto],
 	sessions services.ISessionService,
 	audit services.IAuditService,
+	policy config.EffectivePasswordPolicy,
 	trustedProxies []string) {
 	handler := &userLoginApi{
 		auth:     auth,
@@ -85,6 +92,7 @@ func NewUserLoginApi(
 		sessions: sessions,
 		audit:    audit,
 		trusted:  middlewares.ParseTrustedProxies(trustedProxies),
+		policy:   policy,
 	}
 
 	// Create api sub-router — the whole user-account surface is superadmin-only.
@@ -112,6 +120,13 @@ func (m *userLoginApi) post(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(body.Email) == "" || strings.TrimSpace(body.Userpwd) == "" {
 		controllers.SendError(w, controllers.ErrBadRequest, "email and password are required")
+		return
+	}
+	// An administrator creating an account was previously the ONE password path with no
+	// strength check at all — "a" was an acceptable password on the identity server that
+	// authenticates the whole suite.
+	if err := services.ValidatePassword(m.policy, body.Userpwd, body.Email); err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
 	}
 	body.Id = 0

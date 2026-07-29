@@ -9,13 +9,14 @@ identity provider (`infra/login.Registry`, see `infra/login/provider.go.md`).
 ## Responsibilities
 
 - Handles local credential login via `POST /api/login/default`.
-- Handles local account registration via `POST /api/login/default/register`.
+- Handles local account registration via `POST /api/login/default/register` — the password is validated against the configured policy (`services.ValidatePassword`, see `services/password_policy.go.md`) inside `services.RegisterLocal` before the account is created.
+- Publishes the effective password-strength policy at `GET /api/login/password-policy` (public, `handler.passwordPolicy`) — `{minLength, requireUpper, requireLower, requireDigit, requireSymbol, blockCommon}` — so the sign-up/change-password forms can state the rules before the user types, rather than a hardcoded hint that can drift from the configured policy (which is exactly what "at least 8 characters" had become). `NewLoginApi`'s `LoginApiOptions` gained a `PasswordPolicy config.EffectivePasswordPolicy` field, resolved once from `deps.Config.PasswordPolicy.Effective()` in `apps/myidsan/app/app.go` and stored on the handler.
 - Handles LDAP/Active Directory credential login via `POST /api/login/ldap` (`ldapLogin`) — a JSON credential POST, not a browser redirect, so it is a fixed route rather than a member of the redirect-provider registry. Disabled (`directory == nil` or the configured directory is off) responds `ErrLimitedAccess`. On success it calls `services.IDirectoryService.AuthenticateLdap` (see `services/directory.go.md`) and issues the session through the same `issueLocalSession` local login uses.
 - Handles Kerberos SPNEGO SSO via `GET /api/login/kerberos` (`kerberosLogin`) — see "Kerberos SPNEGO SSO" below.
 - Sets HttpOnly JWT session cookies for successful local/LDAP/Kerberos login/register and federated callbacks.
 - Sets a readable CSRF cookie that clients echo in `X-CSRF-Token` for unsafe authenticated requests.
 - Clears session cookies through logout.
-- `NewLoginApi` builds the provider registry via `login.BuildRegistry(oAuth2Conf)` (Google/GitHub register only when both `ClientId` and `ClientSecret` are present) and **returns it**, so `apps/myidsan/app/app.go` can thread the same registry into `NewFederatedAuthApi` — one registry, one provider list, shared by the server-rendered login page, the SPA, and the OAuth routes. `NewLoginApi`'s remaining parameters are now collected into a `LoginApiOptions` struct (`Directory services.IDirectoryService`, `Kerberos *login.KerberosAuthenticator`, `KerberosLabel string`, `Guard *sharedapis.LoginGuard`, `Metrics telemetry.Metrics`, `Mfa services.IMfaService`, `Store cache.Store`, `Reset services.IPasswordResetService`, `Audit services.IAuditService`, `Sessions services.ISessionService`, `TrustedProxies []string`) — every field may be zero (tests pass the empty struct; LDAP/Kerberos disabled / lockout off / metrics not wired / MFA not armed / reset request endpoint a no-op / audit+session recording a no-op). `KerberosLabel` defaults to `"Windows (SSO)"` when blank and `Kerberos` is non-nil. `Mfa` and `Store` must both be set together to arm the second-factor challenge (see "Second-Factor (MFA) Login Challenge" below); either absent leaves password-only behaviour unchanged. `Reset` (nil-safe) enables `POST /api/login/forgot` (see "Account Recovery (Forgot Password)" below). `TrustedProxies` is parsed once via `middlewares.ParseTrustedProxies` and stored on the api so every audit/session-recording call resolves the same client address.
+- `NewLoginApi` builds the provider registry via `login.BuildRegistry(oAuth2Conf)` (Google/GitHub register only when both `ClientId` and `ClientSecret` are present) and **returns it**, so `apps/myidsan/app/app.go` can thread the same registry into `NewFederatedAuthApi` — one registry, one provider list, shared by the server-rendered login page, the SPA, and the OAuth routes. `NewLoginApi`'s remaining parameters are now collected into a `LoginApiOptions` struct (`Directory services.IDirectoryService`, `Kerberos *login.KerberosAuthenticator`, `KerberosLabel string`, `Guard *sharedapis.LoginGuard`, `Metrics telemetry.Metrics`, `Mfa services.IMfaService`, `Store cache.Store`, `Reset services.IPasswordResetService`, `Audit services.IAuditService`, `Sessions services.ISessionService`, `TrustedProxies []string`, `PasswordPolicy config.EffectivePasswordPolicy`) — every field may be zero (tests pass the empty struct; LDAP/Kerberos disabled / lockout off / metrics not wired / MFA not armed / reset request endpoint a no-op / audit+session recording a no-op). `KerberosLabel` defaults to `"Windows (SSO)"` when blank and `Kerberos` is non-nil. `Mfa` and `Store` must both be set together to arm the second-factor challenge (see "Second-Factor (MFA) Login Challenge" below); either absent leaves password-only behaviour unchanged. `Reset` (nil-safe) enables `POST /api/login/forgot` (see "Account Recovery (Forgot Password)" below). `TrustedProxies` is parsed once via `middlewares.ParseTrustedProxies` and stored on the api so every audit/session-recording call resolves the same client address.
 
 ## Login/Session Auditing (Phase 2)
 
@@ -164,7 +165,7 @@ This is the SPA side of account recovery; the server-rendered equivalent
 `apps/myidsan/apis/federated_auth.go` — see that file's doc for the operator-queue vs.
 self-service-email design and the `docs/HOWTO.md` operator workflow.
 
-## Per-IP Login Lockout
+## Per-IP + Per-Account Login Lockout
 
 `NewLoginApi`'s `guard *sharedapis.LoginGuard` (built by `apps/myidsan/app/app.go`'s
 `loginGuardConfig` from the shared `LoginSecurity` config block — the same one
@@ -174,16 +175,36 @@ doing any credential work and respond `429` + `Retry-After` (`writeLoginLockout`
 locked; only a genuine credential failure (`services.ErrInvalidCredential` /
 `login.ErrLdapInvalidCredential`, never a payload or server error) sleeps the
 configured `FailedDelay` and calls `guard.RecordFailure` (`recordLoginFailure`); a
-success calls `guard.RecordSuccess` (`guardSuccess`). `loginGuardKey` keys strictly on
-`RemoteAddr`'s host — never a spoofable forwarded header. **This closes a real gap**:
-before this change myidsan had no failed-login lockout at all on either credential
+success calls `guard.RecordSuccess` (`guardSuccess`). **This closes a real gap**:
+before this, myidsan had no failed-login lockout at all on either credential
 surface. `apps/myidsan/apis/federated_auth.go`'s server-rendered `loginPost` shares
-the identical guard instance, so the counters are per source IP across both login
+the identical guard instance, so the counters are shared across both login
 surfaces, not per surface. `kerberosLogin` deliberately does **not** consult the
 guard: a Kerberos ticket is cryptographically verified against the keytab (there is
 no password to guess, and a forged/expired token is rejected by `AcceptSecContext`
 itself), so per-IP credential-attempt throttling does not apply the same way it does
 to a password or LDAP bind attempt.
+
+**Two keys, not one (Productization Phase 3).** `loginGuardKey(r)` is the per-source
+key (`RemoteAddr`'s host — never a spoofable forwarded header), throttling one machine
+trying many accounts. `loginGuardAccountKey(identifier)` is the new per-account key
+(`"user:" + lowercased identifier`, empty for an empty identifier); `loginGuardKeys(r,
+identifier)` returns both (skipping the account key when empty) and is what
+`guardLocked`/`guardSuccess`/`RecordFailure` now key against. Without the account key,
+a password spray distributed across many source addresses against **one** account —
+the shape credential-stuffing actually takes — was completely unthrottled no matter
+how many attempts it made. `defaultLogin` and `ldapLogin` moved their `guardLocked`
+check to **after** request-body decoding specifically so the attempted username is
+available to key on. **Deliberate tradeoff**: an attacker who knows a username can now
+lock that account out by spraying it — a nuisance the user recovers from by waiting
+(and the lockout also clears on any successful sign-in, source and account both), set
+against unlimited unthrottled guessing against a known account, which is not
+recoverable. Token-based steps stay source-keyed only, since they present a challenge
+token rather than an unproven username: `mfaLogin` (the second-factor redemption) and
+`forgotPassword` (a recovery request never proves anything about the identifier it
+names — throttling it per-account would let anyone lock a known user out of recovery
+by repeatedly asking for it) both call `guardLocked`/`guardSuccess` with an empty
+identifier.
 
 ## Federated Login Metrics
 
@@ -227,7 +248,7 @@ section when diagnosing a rollout.
 
 ## Change Password
 
-`POST /api/login/default/change-password` is an authenticated endpoint (JWT cookie required). It verifies the caller's current password, hashes and stores the new one, and clears the `must_change_password` flag so the forced first-login gate is released. Returns `{ ok: true }` on success. Error responses distinguish between an incorrect current password (`ErrAuthFailed`) and a third-party-only account with no local password (`ErrLimitedAccess`). New password must be at least 8 characters (enforced by the service layer).
+`POST /api/login/default/change-password` is an authenticated endpoint (JWT cookie required). It verifies the caller's current password, hashes and stores the new one, and clears the `must_change_password` flag so the forced first-login gate is released. Returns `{ ok: true }` on success. Error responses distinguish between an incorrect current password (`ErrAuthFailed`) and a third-party-only account with no local password (`ErrLimitedAccess`). The new password must pass the configured password policy (`services.ValidatePassword`, `GET /api/login/password-policy` above publishes the rules; previously a hard-coded "at least 8 characters" — see `services/password_policy.go.md`).
 
 ## Notes
 

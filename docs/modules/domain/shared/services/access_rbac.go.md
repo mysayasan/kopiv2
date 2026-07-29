@@ -14,9 +14,18 @@ The app-agnostic view of an authenticated user that the RBAC middleware needs:
 RoleId             int64
 Disabled           bool
 MustChangePassword bool
+MustEnrollMfa      bool
 ```
 
-Apps map their own user record to this via `AccessUserResolver`.
+`MustEnrollMfa` (Productization Phase 3) pins a user to second-factor enrollment the same
+way `MustChangePassword` pins them to the password-change form — set when the app's MFA
+policy requires a factor for this account's role and none is confirmed yet. Safe to
+enforce **after** a session already exists: the password has already succeeded, and the
+user is being made to *add* a factor, not to prove one they do not have (the alternative —
+refusing the login outright — would lock out every existing admin the moment a
+`required` policy is switched on). An app with no MFA policy (or one that has not wired
+this field) simply leaves it `false`. Apps map their own user record to this via
+`AccessUserResolver`.
 
 ### AccessUserResolver (interface)
 

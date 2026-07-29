@@ -168,7 +168,7 @@ func TestAuthenticateDefault_BcryptSuccess(t *testing.T) {
 		IsActive: true,
 	}
 
-	svc := NewUserLoginService(repo, nil)
+	svc := NewUserLoginService(repo, nil, testPasswordPolicy())
 	user, err := svc.AuthenticateDefault(context.Background(), "alice", "secret123")
 	if err != nil {
 		t.Fatalf("AuthenticateDefault returned error: %v", err)
@@ -195,7 +195,7 @@ func TestAuthenticateDefault_BcryptWrongPassword(t *testing.T) {
 		IsActive: true,
 	}
 
-	svc := NewUserLoginService(repo, nil)
+	svc := NewUserLoginService(repo, nil, testPasswordPolicy())
 	_, err = svc.AuthenticateDefault(context.Background(), "alice", "wrong")
 	if !errors.Is(err, ErrInvalidCredential) {
 		t.Fatalf("expected ErrInvalidCredential, got %v", err)
@@ -214,7 +214,7 @@ func TestAuthenticateDefault_ThirdPartyOnlyAccountIsNotAnOracle(t *testing.T) {
 		IsActive: true,
 	}
 
-	svc := NewUserLoginService(repo, nil)
+	svc := NewUserLoginService(repo, nil, testPasswordPolicy())
 	_, err := svc.AuthenticateDefault(context.Background(), "oauth-user", "anything")
 	if !errors.Is(err, ErrInvalidCredential) {
 		t.Fatalf("expected the generic ErrInvalidCredential, got %v", err)
@@ -239,7 +239,7 @@ func TestAuthenticateDefault_InactiveAccountWrongPasswordStaysGeneric(t *testing
 		IsActive: false,
 	}
 
-	svc := NewUserLoginService(repo, nil)
+	svc := NewUserLoginService(repo, nil, testPasswordPolicy())
 	_, err = svc.AuthenticateDefault(context.Background(), "disabled", "wrong-password")
 	if !errors.Is(err, ErrInvalidCredential) {
 		t.Fatalf("expected the generic ErrInvalidCredential, got %v", err)
@@ -264,7 +264,7 @@ func TestAuthenticateDefault_InactiveAccountCorrectPasswordDisclosesState(t *tes
 		IsActive: false,
 	}
 
-	svc := NewUserLoginService(repo, nil)
+	svc := NewUserLoginService(repo, nil, testPasswordPolicy())
 	_, err = svc.AuthenticateDefault(context.Background(), "disabled", "correct-horse")
 	if !errors.Is(err, ErrInactiveAccount) {
 		t.Fatalf("expected ErrInactiveAccount once the password is proven, got %v", err)
@@ -280,7 +280,7 @@ func TestAuthenticateDefault_LegacyPlaintextMigratesToBcrypt(t *testing.T) {
 		IsActive: true,
 	}
 
-	svc := NewUserLoginService(repo, nil)
+	svc := NewUserLoginService(repo, nil, testPasswordPolicy())
 	user, err := svc.AuthenticateDefault(context.Background(), "legacy", "legacy-pass")
 	if err != nil {
 		t.Fatalf("AuthenticateDefault returned error: %v", err)
@@ -302,7 +302,7 @@ func TestAuthenticateDefault_LegacyPlaintextMigratesToBcrypt(t *testing.T) {
 
 func TestCreate_HashesPassword(t *testing.T) {
 	repo := newFakeUserLoginRepo()
-	svc := NewUserLoginService(repo, nil)
+	svc := NewUserLoginService(repo, nil, testPasswordPolicy())
 
 	_, err := svc.Create(context.Background(), entities.UserLogin{
 		Email:   "new-user",
@@ -328,7 +328,7 @@ func TestRegisterLocal_RejectsThirdPartyOnlyExistingAccount(t *testing.T) {
 		IsActive: true,
 	}
 
-	svc := NewUserLoginService(repo, nil)
+	svc := NewUserLoginService(repo, nil, testPasswordPolicy())
 	_, err := svc.RegisterLocal(context.Background(), entities.UserLogin{
 		Email:   "oauth-only",
 		Userpwd: "new-pass",

@@ -264,6 +264,7 @@ function AppInner({ lang, onLangChange }) {
   const [currentEmail, setCurrentEmail] = useState('')
   const [stockEmail, setStockEmail] = useState(STOCK_SUPERADMIN_EMAIL)
   const [mustChange, setMustChange] = useState(false)
+  const [mustEnrollMfa, setMustEnrollMfa] = useState(false)
   const [pending, setPending] = useState(false)
   const [isSuperadmin, setIsSuperadmin] = useState(false)
   const [roleName, setRoleName] = useState('')
@@ -324,6 +325,7 @@ function AppInner({ lang, onLangChange }) {
       setCurrentEmail(me?.email || '')
       setRoleName(me?.roleName || '')
       setMustChange(Boolean(me?.mustChangePassword))
+      setMustEnrollMfa(Boolean(me?.mustEnrollMfa))
       // pending = authenticated but no role assigned yet — gate the whole app behind a
       // clearance screen until an admin grants a role.
       setPending(Boolean(me?.pending))
@@ -426,6 +428,12 @@ function AppInner({ lang, onLangChange }) {
 
   if (mustChange) {
     return <ChangePasswordScreen onDone={refreshSession} onLogout={handleLogout} />
+  }
+
+  // Checked after the password gate so someone owing both is walked through them in a
+  // sensible order: set a password you chose, then add a factor to it.
+  if (mustEnrollMfa) {
+    return <EnrollMfaScreen onDone={refreshSession} onLogout={handleLogout} />
   }
 
   if (pending) {
@@ -561,6 +569,97 @@ function ThemeDropdown({ theme, onThemeChange }) {
   )
 }
 
+
+// EnrollMfaScreen pins a user whose role requires a second factor but who has none.
+//
+// It appears AFTER a successful password sign-in, which is what makes it safe: the person
+// is being made to ADD a factor, not to prove one they do not hold. Refusing the login
+// outright would lock out every existing administrator the moment the policy is switched
+// on — the opposite of what turning on MFA is meant to achieve.
+//
+// Sign out is deliberately offered: someone who cannot enrol right now (no phone to hand)
+// must be able to leave rather than be trapped on a screen they cannot complete.
+function EnrollMfaScreen({ onDone, onLogout }) {
+  const t = useT()
+  const [enroll, setEnroll] = useState(null)
+  const [label, setLabel] = useState('')
+  const [code, setCode] = useState('')
+  const [codes, setCodes] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const begin = async () => {
+    setBusy(true); setError('')
+    try {
+      setEnroll(resultOf(await apiRequest('/api/mfa/enroll', { method: 'POST', body: { label } })))
+    } catch (err) { setError(err.message) } finally { setBusy(false) }
+  }
+
+  const confirm = async event => {
+    event.preventDefault()
+    setBusy(true); setError('')
+    try {
+      const res = await apiRequest('/api/mfa/enroll/verify', { method: 'POST', body: { code } })
+      // Recovery codes are shown ONCE. Hold the screen until they are acknowledged
+      // rather than dropping straight into the app and losing them.
+      setCodes((resultOf(res) || {}).recoveryCodes || [])
+    } catch (err) { setError(err.message) } finally { setBusy(false) }
+  }
+
+  return (
+    <div className="auth-layout">
+      <section className="auth-panel">
+        <div className="brand-block auth-brand">
+          <BrandLogo wordmark="myidsan" />
+        </div>
+        <h2>{t('mfaReq.title')}</h2>
+        <p className="guide-note">{t('mfaReq.body')}</p>
+        {error && <div className="message danger">{error}</div>}
+
+        {codes ? (
+          <div className="record-form">
+            <div className="message success">
+              <strong>{t('mfa.recoveryTitle')}</strong>
+              <p className="cert-hint">{t('mfa.recoveryHint')}</p>
+              <ul>{codes.map(c => <li key={c}><code>{c}</code></li>)}</ul>
+            </div>
+            <button className="primary-button" type="button" onClick={onDone}>{t('mfaReq.continue')}</button>
+          </div>
+        ) : !enroll ? (
+          <div className="record-form">
+            <label>
+              {t('mfa.deviceLabel')}
+              <input value={label} placeholder={t('mfa.deviceLabelHint')} onChange={e => setLabel(e.target.value)} />
+            </label>
+            <div className="form-actions">
+              <button className="primary-button" type="button" onClick={begin} disabled={busy}>
+                {busy ? t('auth.working') : t('mfa.enable')}
+              </button>
+              <button className="secondary-button" type="button" onClick={onLogout}>{t('common.logout')}</button>
+            </div>
+          </div>
+        ) : (
+          <form className="record-form" onSubmit={confirm}>
+            <p className="cert-hint">{t('mfa.scanHint')}</p>
+            {enroll.qrPngBase64 && <img alt={t('mfa.qrAlt')} src={`data:image/png;base64,${enroll.qrPngBase64}`} />}
+            <p className="cert-hint">{t('mfa.manualEntry')}: <code>{enroll.secret}</code></p>
+            <label>
+              {t('mfa.code')}
+              <input value={code} inputMode="numeric" autoComplete="one-time-code" onChange={e => setCode(e.target.value)} required />
+            </label>
+            <div className="form-actions">
+              <button className="primary-button" type="submit" disabled={busy}>
+                {busy ? t('auth.working') : t('mfa.confirmEnable')}
+              </button>
+              <button className="secondary-button" type="button" onClick={onLogout}>{t('common.logout')}</button>
+            </div>
+          </form>
+        )}
+      </section>
+    </div>
+  )
+}
+
 // ChangePasswordScreen forces the seeded stock superadmin (must-change-password) to
 // set its own password before reaching the app — mirrors myseliasan's first-login flow.
 function ChangePasswordScreen({ onDone, onLogout }) {
@@ -571,10 +670,6 @@ function ChangePasswordScreen({ onDone, onLogout }) {
 
   const submit = async event => {
     event.preventDefault()
-    if (form.next.length < 8) {
-      setError(t('cpw.min'))
-      return
-    }
     if (form.next !== form.confirm) {
       setError(t('cpw.noMatch'))
       return
@@ -3068,7 +3163,6 @@ function ProfilePage({ currentEmail, roleLabel, onToast }) {
   const changePassword = async event => {
     event.preventDefault()
     setPwError('')
-    if (pw.next.length < 8) { setPwError(t('cpw.min')); return }
     if (pw.next !== pw.confirm) { setPwError(t('cpw.noMatch')); return }
     setPwBusy(true)
     try {

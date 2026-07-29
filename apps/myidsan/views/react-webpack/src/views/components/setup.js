@@ -196,7 +196,7 @@ export default function SetupWizard({ isSuperadmin, onDone, onToast }) {
       setError(t('setup.adminNoRole'))
       return
     }
-    if (!adminForm.email.trim() || adminForm.password.length < 8) {
+    if (!adminForm.email.trim() || !adminForm.password) {
       setError(t('setup.adminMissingFields'))
       return
     }

@@ -25,6 +25,7 @@ import (
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 	"github.com/mysayasan/kopiv2/infra/cache"
+	"github.com/mysayasan/kopiv2/infra/config"
 	"github.com/mysayasan/kopiv2/infra/login"
 	"github.com/mysayasan/kopiv2/infra/telemetry"
 )
@@ -48,6 +49,7 @@ type loginApi struct {
 	reset       services.IPasswordResetService
 	audit       services.IAuditService
 	sessions    services.ISessionService
+	policy      config.EffectivePasswordPolicy
 	// trustedProxies decides whether a forwarded client address may be believed when an
 	// event is recorded. Empty means "trust nothing but the peer", which is correct for a
 	// directly-exposed instance — an audit trail whose source IP the caller can choose is
@@ -90,6 +92,8 @@ type LoginApiOptions struct {
 	Sessions services.ISessionService
 	// TrustedProxies gates whether X-Forwarded-For may set the recorded client address.
 	TrustedProxies []string
+	// PasswordPolicy is published at /api/login/password-policy for the UI hints.
+	PasswordPolicy config.EffectivePasswordPolicy
 }
 
 // Create LoginApi. Returns the identity-provider registry so the server-rendered
@@ -121,6 +125,7 @@ func NewLoginApi(
 		reset:          opts.Reset,
 		audit:          opts.Audit,
 		sessions:       opts.Sessions,
+		policy:         opts.PasswordPolicy,
 		trustedProxies: middlewares.ParseTrustedProxies(opts.TrustedProxies),
 	}
 
@@ -131,6 +136,11 @@ func NewLoginApi(
 	// Public: which social-login providers are actually configured, so the SPA shows
 	// only the buttons that work (no dead Google/GitHub links).
 	loginGroup.HandleFunc("/providers", handler.listProviders).Methods("GET")
+	// PUBLIC: the password rules are not a secret, and the sign-up / change-password
+	// forms need them BEFORE the user types. A form that states the rules up front beats
+	// one that rejects after the fact — and beats a hardcoded hint that drifts from the
+	// configured policy, which is exactly what "at least 8 characters" had become.
+	loginGroup.HandleFunc("/password-policy", handler.passwordPolicy).Methods("GET")
 	loginGroup.HandleFunc("/default", handler.defaultLogin).Methods("POST")
 	loginGroup.HandleFunc("/default/register", handler.defaultRegister).Methods("POST")
 	loginGroup.HandleFunc("/default/logout", handler.defaultLogout).Methods("POST")
@@ -158,6 +168,19 @@ func NewLoginApi(
 	callbackGroup.HandleFunc("/{provider:[a-z][a-z0-9_.:-]*}", handler.providerCallback).Methods("GET")
 
 	return handler.providers
+}
+
+// passwordPolicy publishes the effective password rules so the UI can state them.
+func (m *loginApi) passwordPolicy(w http.ResponseWriter, r *http.Request) {
+	p := m.policy
+	controllers.SendResult(w, map[string]any{
+		"minLength":     p.MinLength,
+		"requireUpper":  p.RequireUpper,
+		"requireLower":  p.RequireLower,
+		"requireDigit":  p.RequireDigit,
+		"requireSymbol": p.RequireSymbol,
+		"blockCommon":   p.BlockCommon,
+	})
 }
 
 // listProviders reports the configured federated login providers. `list` is the
@@ -298,11 +321,6 @@ func (m *loginApi) ldapLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if locked, retry := guardLocked(m.guard, r); locked {
-		writeLoginLockout(w, retry)
-		return
-	}
-
 	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
@@ -310,6 +328,13 @@ func (m *loginApi) ldapLogin(w http.ResponseWriter, r *http.Request) {
 	body := new(login.DefaultLoginRequestModel)
 	if err := dec.Decode(&body); err != nil {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+
+	// Checked AFTER decoding so the per-account key is available: a lockout keyed only on
+	// the source address never sees a spray distributed across many addresses.
+	if locked, retry := guardLocked(m.guard, r, body.Username); locked {
+		writeLoginLockout(w, retry)
 		return
 	}
 
@@ -332,7 +357,7 @@ func (m *loginApi) ldapLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	guardSuccess(m.guard, r)
+	guardSuccess(m.guard, r, body.Username)
 	m.recordFederatedLogin(login.LdapProviderKey, "success")
 	m.completeLoginOrChallenge(w, r, user, services.MethodDirectory)
 }
@@ -365,8 +390,8 @@ func (m *loginApi) recordLoginFailure(w http.ResponseWriter, r *http.Request, at
 		return
 	}
 	time.Sleep(m.guard.FailedDelay())
-	if lockedNow, retry := m.guard.RecordFailure(loginGuardKey(r)); lockedNow {
-		log.Printf("login lockout engaged ip=%s retryAfter=%s", loginGuardKey(r), retry)
+	if lockedNow, retry := m.guard.RecordFailure(loginGuardKeys(r, attempted)...); lockedNow {
+		log.Printf("login lockout engaged ip=%s account=%q retryAfter=%s", loginGuardKey(r), attempted, retry)
 		m.recordAudit(r, services.AuditEntry{
 			Action:     services.ActionLoginLockout,
 			ActorEmail: attempted,
@@ -419,28 +444,60 @@ func (m *loginApi) recordLoginSuccess(r *http.Request, user *entities.UserLogin,
 	})
 }
 
-func guardLocked(guard *sharedapis.LoginGuard, r *http.Request) (bool, time.Duration) {
+func guardLocked(guard *sharedapis.LoginGuard, r *http.Request, identifier string) (bool, time.Duration) {
 	if guard == nil {
 		return false, 0
 	}
-	return guard.Locked(loginGuardKey(r))
+	return guard.Locked(loginGuardKeys(r, identifier)...)
 }
 
-func guardSuccess(guard *sharedapis.LoginGuard, r *http.Request) {
+// guardSuccess clears BOTH keys: a correct password proves this source is not spraying and
+// that this account's owner is present, so neither counter should keep counting.
+func guardSuccess(guard *sharedapis.LoginGuard, r *http.Request, identifier string) {
 	if guard == nil {
 		return
 	}
-	guard.RecordSuccess(loginGuardKey(r))
+	guard.RecordSuccess(loginGuardKeys(r, identifier)...)
 }
 
-// loginGuardKey mirrors the shared login guard's keying: the connecting peer's IP
-// from RemoteAddr, never a spoofable forwarded header.
+// loginGuardKey is the per-SOURCE key: the connecting peer's IP from RemoteAddr, never a
+// spoofable forwarded header. It throttles one machine trying many accounts.
 func loginGuardKey(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return "ip:" + strings.TrimSpace(r.RemoteAddr)
 	}
 	return "ip:" + host
+}
+
+// loginGuardAccountKey is the per-ACCOUNT key. Without it, the lockout only ever saw one
+// source at a time, so a password spray distributed across many addresses — the shape
+// credential-stuffing actually takes — was completely unthrottled no matter how many
+// attempts it made against a single account.
+//
+// The tradeoff is real and deliberate: an attacker who knows a username can now lock that
+// user out by spraying it. That is a nuisance the user recovers from by waiting, whereas
+// unlimited guessing against a known account is a compromise they do not recover from. The
+// lockout is also cleared on any successful sign-in, so a legitimate user who still knows
+// their password is not held out by someone else's failures once the window passes.
+//
+// Returns "" for an empty identifier, and callers skip empty keys — a failure with no
+// username attached (a malformed body) must not be attributed to some arbitrary account.
+func loginGuardAccountKey(identifier string) string {
+	id := strings.ToLower(strings.TrimSpace(identifier))
+	if id == "" {
+		return ""
+	}
+	return "user:" + id
+}
+
+// loginGuardKeys is the pair every credential surface should throttle on.
+func loginGuardKeys(r *http.Request, identifier string) []string {
+	keys := []string{loginGuardKey(r)}
+	if accountKey := loginGuardAccountKey(identifier); accountKey != "" {
+		keys = append(keys, accountKey)
+	}
+	return keys
 }
 
 func writeLoginLockout(w http.ResponseWriter, retry time.Duration) {
@@ -535,11 +592,6 @@ func (m *loginApi) providerCallback(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *loginApi) defaultLogin(w http.ResponseWriter, r *http.Request) {
-	if locked, retry := guardLocked(m.guard, r); locked {
-		writeLoginLockout(w, retry)
-		return
-	}
-
 	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
@@ -548,6 +600,12 @@ func (m *loginApi) defaultLogin(w http.ResponseWriter, r *http.Request) {
 	err := dec.Decode(&body)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+
+	// Checked AFTER decoding so the per-account key is available.
+	if locked, retry := guardLocked(m.guard, r, body.Username); locked {
+		writeLoginLockout(w, retry)
 		return
 	}
 
@@ -571,7 +629,7 @@ func (m *loginApi) defaultLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	guardSuccess(m.guard, r)
+	guardSuccess(m.guard, r, body.Username)
 	m.completeLoginOrChallenge(w, r, user, services.MethodLocal)
 }
 
@@ -613,7 +671,8 @@ func (m *loginApi) mfaLogin(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrLimitedAccess, "mfa is not configured")
 		return
 	}
-	if locked, retry := guardLocked(m.guard, r); locked {
+	// Source key only: the MFA redemption presents a challenge token, not a username.
+	if locked, retry := guardLocked(m.guard, r, ""); locked {
 		writeLoginLockout(w, retry)
 		return
 	}
@@ -654,7 +713,8 @@ func (m *loginApi) mfaLogin(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrAuthFailed, "account is not available")
 		return
 	}
-	guardSuccess(m.guard, r)
+	// Source key only: this step redeemed a challenge token, not a username.
+	guardSuccess(m.guard, r, "")
 	m.recordMfaChallenge("success")
 	m.issueLocalSession(w, r, user, loginMethodForUser(user))
 }
@@ -687,7 +747,10 @@ func (m *loginApi) recordMfaChallenge(result string) {
 // state, so it is safe to return — it just lets the UI say "check your email" versus
 // "an administrator has been notified".
 func (m *loginApi) forgotPassword(w http.ResponseWriter, r *http.Request) {
-	if locked, retry := guardLocked(m.guard, r); locked {
+	// Source key only, and checked before parsing: a recovery request names an account
+	// but never proves anything about it, so throttling per-account here would let anyone
+	// lock a known user out of recovery by asking for it repeatedly.
+	if locked, retry := guardLocked(m.guard, r, ""); locked {
 		writeLoginLockout(w, retry)
 		return
 	}

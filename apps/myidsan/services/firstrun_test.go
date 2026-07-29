@@ -16,7 +16,7 @@ import (
 // recovery file).
 func TestEnsureStockSuperadmin_GeneratesAndDoesNotRotate(t *testing.T) {
 	repo := newFakeUserLoginRepo()
-	svc := NewUserLoginService(repo, nil)
+	svc := NewUserLoginService(repo, nil, testPasswordPolicy())
 
 	seed, err := svc.EnsureStockSuperadmin(context.Background(), "admin", "", 7)
 	if err != nil {
@@ -46,7 +46,7 @@ func TestEnsureStockSuperadmin_GeneratesAndDoesNotRotate(t *testing.T) {
 // behavior) and is reported as not generated / not seeded on later boots.
 func TestEnsureStockSuperadmin_ConfigPassword(t *testing.T) {
 	repo := newFakeUserLoginRepo()
-	svc := NewUserLoginService(repo, nil)
+	svc := NewUserLoginService(repo, nil, testPasswordPolicy())
 
 	seed, err := svc.EnsureStockSuperadmin(context.Background(), "admin", "cfg-pass-1", 7)
 	if err != nil || !seed.Seeded || seed.Generated || seed.Password != "cfg-pass-1" {
@@ -65,7 +65,7 @@ func TestEnsureStockSuperadmin_ConfigPassword(t *testing.T) {
 // must-change re-flagged, account reactivated, role re-pinned.
 func TestResetStockSuperadmin_ForcesRecovery(t *testing.T) {
 	repo := newFakeUserLoginRepo()
-	svc := NewUserLoginService(repo, nil)
+	svc := NewUserLoginService(repo, nil, testPasswordPolicy())
 	if _, err := svc.EnsureStockSuperadmin(context.Background(), "admin", "cfg-pass-1", 7); err != nil {
 		t.Fatalf("seed: %v", err)
 	}

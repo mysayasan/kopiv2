@@ -24,7 +24,7 @@ func googleIdentity() login.Identity {
 // A full miss creates a pending-clearance account bound to the identity.
 func TestUpsertFederated_CreatesPendingAccount(t *testing.T) {
 	repo := newFakeUserLoginRepo()
-	svc := NewUserLoginService(repo, nil)
+	svc := NewUserLoginService(repo, nil, testPasswordPolicy())
 
 	user, err := svc.UpsertFederated(context.Background(), googleIdentity())
 	if err != nil {
@@ -48,7 +48,7 @@ func TestUpsertFederated_CreatesPendingAccount(t *testing.T) {
 // even when the email at the provider has changed since.
 func TestUpsertFederated_MatchesBySubjectNotEmail(t *testing.T) {
 	repo := newFakeUserLoginRepo()
-	svc := NewUserLoginService(repo, nil)
+	svc := NewUserLoginService(repo, nil, testPasswordPolicy())
 
 	first, err := svc.UpsertFederated(context.Background(), googleIdentity())
 	if err != nil {
@@ -82,7 +82,7 @@ func TestUpsertFederated_LegacyEmailAccountClaimsIdentity(t *testing.T) {
 		UserRoleId: 3,
 		IsActive:   true,
 	}
-	svc := NewUserLoginService(repo, nil)
+	svc := NewUserLoginService(repo, nil, testPasswordPolicy())
 
 	user, err := svc.UpsertFederated(context.Background(), googleIdentity())
 	if err != nil {
@@ -114,7 +114,7 @@ func TestUpsertFederated_RefusesEmailTakeover(t *testing.T) {
 		UserRoleId:  5,
 		IsActive:    true,
 	}
-	svc := NewUserLoginService(repo, nil)
+	svc := NewUserLoginService(repo, nil, testPasswordPolicy())
 
 	_, err := svc.UpsertFederated(context.Background(), googleIdentity())
 	if !errors.Is(err, ErrFederatedIdentityConflict) {
@@ -135,7 +135,7 @@ func TestUpsertFederated_RefusesInactiveAccount(t *testing.T) {
 		SsoSubject:  "sub-123",
 		IsActive:    false,
 	}
-	svc := NewUserLoginService(repo, nil)
+	svc := NewUserLoginService(repo, nil, testPasswordPolicy())
 
 	_, err := svc.UpsertFederated(context.Background(), googleIdentity())
 	if !errors.Is(err, ErrInactiveAccount) {
@@ -145,7 +145,7 @@ func TestUpsertFederated_RefusesInactiveAccount(t *testing.T) {
 
 // An identity without a stable subject (or email) is refused outright.
 func TestUpsertFederated_RefusesIncompleteIdentity(t *testing.T) {
-	svc := NewUserLoginService(newFakeUserLoginRepo(), nil)
+	svc := NewUserLoginService(newFakeUserLoginRepo(), nil, testPasswordPolicy())
 
 	for _, id := range []login.Identity{
 		{Provider: "google", Email: "a@b.c"},           // no subject

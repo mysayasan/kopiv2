@@ -30,6 +30,7 @@ import (
 	"github.com/mysayasan/kopiv2/infra/config"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/login"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -229,7 +230,7 @@ func (m *federatedAuthApi) loginPage(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("error") == "sso_failed" {
 		errMsg = "Single sign-on failed. Sign in another way, or contact your administrator."
 	}
-	m.renderLoginPage(w, http.StatusOK, cleanContinuePath(r.URL.Query().Get("continue")), "", "local", m.directoryLabel(r), errMsg)
+	m.renderLoginPage(w, r, http.StatusOK, cleanContinuePath(r.URL.Query().Get("continue")), "", "local", m.directoryLabel(r), errMsg)
 }
 
 // directoryLabel returns the directory login option's display label, or "" when
@@ -258,7 +259,7 @@ func (m *federatedAuthApi) directoryLabel(r *http.Request) string {
 // so the user only has to retype the password. `method` ("local"/"ldap") is the
 // account-type selection to preserve across a failed POST; `ldapLabel` non-empty
 // renders the account-type choice (directory login is enabled) under that name.
-func (m *federatedAuthApi) renderLoginPage(w http.ResponseWriter, status int, continueTo, username, method, ldapLabel, errMsg string) {
+func (m *federatedAuthApi) renderLoginPage(w http.ResponseWriter, r *http.Request, status int, continueTo, username, method, ldapLabel, errMsg string) {
 	social := m.socialButtonsHTML(continueTo)
 	errHTML := ""
 	if errMsg != "" {
@@ -275,6 +276,11 @@ func (m *federatedAuthApi) renderLoginPage(w http.ResponseWriter, status int, co
 			`<option value="ldap"%s>%s</option>`+
 			`</select></label>`, localSel, ldapSel, html.EscapeString(ldapLabel))
 	}
+	// Minted BEFORE WriteHeader: http.SetCookie appends to the header map, and once the
+	// status line is written the headers are already flushed, so a cookie set from inside
+	// the Fprintf argument list is silently discarded — the form then carries a token with
+	// no cookie to match it, and every genuine submission is rejected.
+	csrfField := authFormCSRFInput(issueAuthFormCSRF(w, r))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	fmt.Fprintf(w, `<!doctype html>
@@ -335,6 +341,7 @@ func (m *federatedAuthApi) renderLoginPage(w http.ResponseWriter, status int, co
       </div>
       %s
       <form method="post" action="/api/auth/login">
+        %s
         <input type="hidden" name="continue" value="%s">
         <label>Username or email<input name="username" value="%s" autocomplete="username" autofocus required></label>
         <label>Password<input name="password" type="password" autocomplete="current-password" required></label>%s
@@ -344,17 +351,22 @@ func (m *federatedAuthApi) renderLoginPage(w http.ResponseWriter, status int, co
     </section>
   </main>
 </body>
-</html>`, errHTML, html.EscapeString(continueTo), html.EscapeString(username), methodHTML, social)
+</html>`, errHTML, csrfField, html.EscapeString(continueTo), html.EscapeString(username), methodHTML, social)
 }
 
 // renderMfaChallenge renders the second-factor step: a single code field posting
 // back to /api/auth/mfa with the opaque challenge token. It reuses the login card
 // chrome. No session cookie exists at this point — the token is the only state.
-func (m *federatedAuthApi) renderMfaChallenge(w http.ResponseWriter, status int, continueTo, token, errMsg string) {
+func (m *federatedAuthApi) renderMfaChallenge(w http.ResponseWriter, r *http.Request, status int, continueTo, token, errMsg string) {
 	errHTML := ""
 	if errMsg != "" {
 		errHTML = fmt.Sprintf(`<p class="status-line" role="alert">%s</p>`, html.EscapeString(errMsg))
 	}
+	// Minted BEFORE WriteHeader: http.SetCookie appends to the header map, and once the
+	// status line is written the headers are already flushed, so a cookie set from inside
+	// the Fprintf argument list is silently discarded — the form then carries a token with
+	// no cookie to match it, and every genuine submission is rejected.
+	csrfField := authFormCSRFInput(issueAuthFormCSRF(w, r))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	fmt.Fprintf(w, `<!doctype html>
@@ -396,6 +408,7 @@ func (m *federatedAuthApi) renderMfaChallenge(w http.ResponseWriter, status int,
       </div>
       %s
       <form method="post" action="/api/auth/mfa">
+        %s
         <input type="hidden" name="continue" value="%s">
         <input type="hidden" name="mfaToken" value="%s">
         <label>Verification code<input name="code" inputmode="numeric" autocomplete="one-time-code" autofocus required
@@ -406,7 +419,7 @@ func (m *federatedAuthApi) renderMfaChallenge(w http.ResponseWriter, status int,
     </section>
   </main>
 </body>
-</html>`, errHTML, html.EscapeString(continueTo), html.EscapeString(token))
+</html>`, errHTML, csrfField, html.EscapeString(continueTo), html.EscapeString(token))
 }
 
 // authPageShell wraps inner card content in the shared branded chrome used by the
@@ -462,8 +475,11 @@ func authPageShell(subtitle, innerHTML string) string {
 
 // forgotPage renders the account-recovery request form (server-rendered login surface).
 func (m *federatedAuthApi) forgotPage(w http.ResponseWriter, r *http.Request) {
+	// Minted before any body write; see renderLoginPage.
+	csrfField := authFormCSRFInput(issueAuthFormCSRF(w, r))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	inner := `<form method="post" action="/api/auth/forgot">
+        ` + csrfField + `
         <p class="hint">Enter your username or email. If a local account matches, we'll start recovery. Domain / single-sign-on accounts are managed by your provider.</p>
         <label>Username or email<input name="username" autocomplete="username" autofocus required></label>
         <button type="submit">Request reset</button>
@@ -477,7 +493,19 @@ func (m *federatedAuthApi) forgotPage(w http.ResponseWriter, r *http.Request) {
 func (m *federatedAuthApi) forgotPost(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 65536)
 	_ = r.ParseForm()
-	if locked, retry := guardLocked(m.guard, r); locked {
+	if !validateAuthFormCSRF(r) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, authPageShell("Recover your account",
+			`<p class="hint">That form expired. <a href="/api/auth/forgot">Try again</a>.</p>`))
+		return
+	}
+	// Source key ONLY, matching loginApi.forgotPassword: keying a recovery-request
+	// lockout on the submitted account would let anyone lock a known user out of
+	// recovery simply by asking for a reset repeatedly. A recovery request names an
+	// account but proves nothing about it, so there is no credential being guessed here
+	// for a per-account counter to protect.
+	if locked, retry := guardLocked(m.guard, r, ""); locked {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, authPageShell("Recover your account",
 			fmt.Sprintf(`<p class="status-line">Too many attempts — try again in %d seconds.</p>
@@ -504,6 +532,8 @@ func (m *federatedAuthApi) forgotPost(w http.ResponseWriter, r *http.Request) {
 // resetPage renders the set-new-password form for a valid self-service token, or a
 // plain error when the token is missing/expired.
 func (m *federatedAuthApi) resetPage(w http.ResponseWriter, r *http.Request) {
+	// Minted before any body write; see renderLoginPage.
+	csrfField := authFormCSRFInput(issueAuthFormCSRF(w, r))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	token := r.URL.Query().Get("token")
 	if m.reset == nil {
@@ -517,11 +547,12 @@ func (m *federatedAuthApi) resetPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	inner := fmt.Sprintf(`<form method="post" action="/api/auth/reset">
+        %s
         <input type="hidden" name="token" value="%s">
-        <p class="hint">Choose a new password (at least 8 characters).</p>
-        <label>New password<input name="password" type="password" autocomplete="new-password" minlength="8" autofocus required></label>
+        <p class="hint">Choose a new password. It must meet this server’s password policy.</p>
+        <label>New password<input name="password" type="password" autocomplete="new-password" autofocus required></label>
         <button type="submit">Set new password</button>
-      </form>`, html.EscapeString(token))
+      </form>`, csrfField, html.EscapeString(token))
 	fmt.Fprint(w, authPageShell("Reset password", inner))
 }
 
@@ -531,6 +562,15 @@ func (m *federatedAuthApi) resetPage(w http.ResponseWriter, r *http.Request) {
 func (m *federatedAuthApi) resetPost(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 65536)
 	_ = r.ParseForm()
+	// Without this, a victim holding a valid reset token could be made to submit a
+	// password of the attacker's choosing from their own browser.
+	if !validateAuthFormCSRF(r) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, authPageShell("Set a new password",
+			`<p class="hint">That form expired. Open the link from your email again.</p>`))
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if m.reset == nil {
 		fmt.Fprint(w, authPageShell("Reset password", `<p class="status-line">Password reset is not available.</p>`))
@@ -605,8 +645,15 @@ func (m *federatedAuthApi) loginPost(w http.ResponseWriter, r *http.Request) {
 		method = "local"
 	}
 
-	if locked, retry := guardLocked(m.guard, r); locked {
-		m.renderLoginPage(w, http.StatusTooManyRequests, continueTo, username, method, ldapLabel,
+	if !validateAuthFormCSRF(r) {
+		// Re-render rather than erroring: a stale tab is the common cause, and the fresh
+		// page carries a fresh token so the person simply signs in again.
+		m.renderLoginPage(w, r, http.StatusBadRequest, continueTo, username, method, ldapLabel,
+			"That form expired. Please try again.")
+		return
+	}
+	if locked, retry := guardLocked(m.guard, r, username); locked {
+		m.renderLoginPage(w, r, http.StatusTooManyRequests, continueTo, username, method, ldapLabel,
 			fmt.Sprintf("Too many failed attempts — try again in %d seconds.", int(retry.Seconds())+1))
 		return
 	}
@@ -622,12 +669,12 @@ func (m *federatedAuthApi) loginPost(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, services.ErrInvalidCredential) || errors.Is(err, login.ErrLdapInvalidCredential) {
 			if m.guard != nil {
 				time.Sleep(m.guard.FailedDelay())
-				m.guard.RecordFailure(loginGuardKey(r))
+				m.guard.RecordFailure(loginGuardKeys(r, username)...)
 			}
 		}
 		// Re-render the branded card with the failure inline, rather than the bare
 		// "Login failed" text this used to dump.
-		m.renderLoginPage(w, http.StatusUnauthorized, continueTo, username, method, ldapLabel, "Login failed: "+err.Error())
+		m.renderLoginPage(w, r, http.StatusUnauthorized, continueTo, username, method, ldapLabel, "Login failed: "+err.Error())
 		return
 	}
 	if m.guard != nil {
@@ -648,7 +695,7 @@ func (m *federatedAuthApi) loginPost(w http.ResponseWriter, r *http.Request) {
 				controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 				return
 			}
-			m.renderMfaChallenge(w, http.StatusOK, continueTo, token, "")
+			m.renderMfaChallenge(w, r, http.StatusOK, continueTo, token, "")
 			return
 		}
 	}
@@ -674,8 +721,15 @@ func (m *federatedAuthApi) mfaPost(w http.ResponseWriter, r *http.Request) {
 		m.redirectToLogin(w, r)
 		return
 	}
-	if locked, retry := guardLocked(m.guard, r); locked {
-		m.renderMfaChallenge(w, http.StatusTooManyRequests, continueTo, r.Form.Get("mfaToken"),
+	// No identifier here: the second-factor step presents a challenge token, not a
+	// username, so only the per-source key applies.
+	if !validateAuthFormCSRF(r) {
+		m.renderMfaChallenge(w, r, http.StatusBadRequest, continueTo, r.Form.Get("mfaToken"),
+			"That form expired. Please try again.")
+		return
+	}
+	if locked, retry := guardLocked(m.guard, r, ""); locked {
+		m.renderMfaChallenge(w, r, http.StatusTooManyRequests, continueTo, r.Form.Get("mfaToken"),
 			fmt.Sprintf("Too many failed attempts — try again in %d seconds.", int(retry.Seconds())+1))
 		return
 	}
@@ -686,9 +740,10 @@ func (m *federatedAuthApi) mfaPost(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, services.ErrMfaBadCode) {
 			if m.guard != nil {
 				time.Sleep(m.guard.FailedDelay())
+				// Source key only: this step presents a challenge token, not a username.
 				m.guard.RecordFailure(loginGuardKey(r))
 			}
-			m.renderMfaChallenge(w, http.StatusUnauthorized, continueTo, token, "That code did not match. Try again.")
+			m.renderMfaChallenge(w, r, http.StatusUnauthorized, continueTo, token, "That code did not match. Try again.")
 			return
 		}
 		// Token expired, exhausted, or rebound — restart the whole login.
@@ -696,6 +751,7 @@ func (m *federatedAuthApi) mfaPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if m.guard != nil {
+		// Source key only: the second-factor step carries a challenge token, not a username.
 		m.guard.RecordSuccess(loginGuardKey(r))
 	}
 
@@ -748,9 +804,23 @@ func (m *federatedAuthApi) token(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrLimitedAccess, err.Error())
 		return
 	}
-	if !secretMatches(client.ClientSecretHash, body.ClientSecret) {
+	secretOK, needsRehash := secretMatches(client.ClientSecretHash, body.ClientSecret)
+	if !secretOK {
 		controllers.SendError(w, controllers.ErrLimitedAccess, "client secret not valid")
 		return
+	}
+	if needsRehash {
+		// The secret was still stored under the legacy unsalted SHA-256. Rewrite it now
+		// that the plaintext is in hand, so an install migrates itself as its apps
+		// authenticate rather than requiring every client secret to be re-entered.
+		// Best-effort: a failure here must not fail a token exchange that just succeeded.
+		if rehashed, err := hashClientSecret(body.ClientSecret); err == nil {
+			updated := *client
+			updated.ClientSecretHash = rehashed
+			if _, err := m.authConfigs.UpdateById(r.Context(), "", updated); err != nil {
+				log.Printf("client secret rehash failed for client_id=%s: %v", client.ClientId, err)
+			}
+		}
 	}
 	if err := m.validateRedirectURI(r.Context(), client.Id, body.RedirectURI); err != nil {
 		controllers.SendError(w, controllers.ErrLimitedAccess, err.Error())
@@ -957,16 +1027,51 @@ func cleanContinuePath(value string) string {
 	return value
 }
 
-func secretMatches(storedHash string, secret string) bool {
-	storedHash = strings.TrimSpace(strings.ToLower(storedHash))
-	if storedHash == "" || strings.TrimSpace(secret) == "" {
-		return false
+// secretMatches verifies a presented client secret against the stored hash, accepting
+// BOTH the current bcrypt form and the legacy unsalted SHA-256 so an existing install keeps
+// authenticating its relying apps across the upgrade. It reports whether the row should be
+// rewritten, so a legacy hash is replaced the first time its secret is presented rather
+// than requiring every operator to re-enter every client secret.
+func secretMatches(storedHash string, secret string) (ok bool, needsRehash bool) {
+	stored := strings.TrimSpace(storedHash)
+	if stored == "" || strings.TrimSpace(secret) == "" {
+		return false, false
 	}
-	actual := hashClientSecret(secret)
-	return subtle.ConstantTimeCompare([]byte(storedHash), []byte(actual)) == 1
+	if isBcryptClientSecret(stored) {
+		return bcrypt.CompareHashAndPassword([]byte(stored), []byte(secret)) == nil, false
+	}
+	// Legacy path. Case-folded because the old hash was stored lowercase hex.
+	actual := legacyClientSecretHash(secret)
+	matched := subtle.ConstantTimeCompare([]byte(strings.ToLower(stored)), []byte(actual)) == 1
+	return matched, matched
 }
 
-func hashClientSecret(secret string) string {
+// isBcryptClientSecret distinguishes the two stored forms. A bcrypt hash always begins
+// with a $2<x>$ version marker; the legacy value is 64 hex characters and never does.
+func isBcryptClientSecret(stored string) bool {
+	return strings.HasPrefix(stored, "$2a$") ||
+		strings.HasPrefix(stored, "$2b$") ||
+		strings.HasPrefix(stored, "$2y$")
+}
+
+// hashClientSecret hashes a relying app's client secret for storage.
+//
+// bcrypt, not SHA-256. The previous scheme was an UNSALTED single-round SHA-256, so a
+// read of app_auth_config handed an attacker every operator-chosen client secret at GPU
+// speed — and those secrets are frequently reused or human-memorable, which is exactly the
+// case SHA-256 is worst at. bcrypt is deliberately slow and salted; a client secret is
+// verified once per token exchange, so the cost is irrelevant here.
+func hashClientSecret(secret string) (string, error) {
+	hashed, err := bcrypt.GenerateFromPassword([]byte(secret), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hashed), nil
+}
+
+// legacyClientSecretHash reproduces the old unsalted SHA-256 so existing rows keep working
+// until they are rewritten. Kept private and used only by secretMatches.
+func legacyClientSecretHash(secret string) string {
 	sum := sha256.Sum256([]byte(secret))
 	return hex.EncodeToString(sum[:])
 }
