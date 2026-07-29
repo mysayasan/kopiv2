@@ -113,8 +113,12 @@ Zero-prompt sign-in for domain-joined machines. Set `kerberos.enabled`, point
    - Use the **FQDN** in the URL bar, not an IP.
 
 A misconfiguration never breaks password login — the SSO button just fails back to the
-login page. Check the service log and the `myidsan_federated_login_total{result=...}`
-metric (`KRB_AP_ERR_MODIFIED` → wrong SPN/keytab; `KRB_AP_ERR_SKEW` → clock skew).
+login page. Check the service log, the `myidsan_federated_login_total{result=...}` metric
+(`KRB_AP_ERR_MODIFIED` → wrong SPN/keytab; `KRB_AP_ERR_SKEW` → clock skew), and the
+**Audit log** — a rejected ticket (a forged/replayed token, or a realm outside
+`kerberos.onlyRealms`) now writes a `login.failure` entry there too, not just the metric;
+the no-token challenge that starts every SPNEGO handshake deliberately does not appear in
+the audit trail.
 
 ## Running as a service
 
