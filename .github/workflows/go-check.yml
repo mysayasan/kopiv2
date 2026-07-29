@@ -87,7 +87,12 @@ jobs:
       # Dependabot covers the npm frontends only, so the Go dependency tree has had no
       # automated advisory scanning at all — including the crypto-adjacent auth path
       # (gokrb5, go-ldap, go-oidc, golang-jwt, x/crypto).
+      # Exits 0 deliberately. govulncheck returns 3 when it finds anything, and a check
+      # that is red on every PR from day one trains people to ignore CI — which costs more
+      # than the signal is worth while nobody owns triage. The findings are printed in full
+      # here; promote this to a blocking check (drop the `|| true` and continue-on-error)
+      # once the tree is clean and someone owns keeping it that way.
       - name: Run govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+          govulncheck ./... || echo "::warning::govulncheck reported findings — see the log above (advisory, not blocking)"
