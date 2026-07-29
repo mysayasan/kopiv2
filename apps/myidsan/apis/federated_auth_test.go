@@ -113,6 +113,33 @@ func TestCleanContinuePathRejectsExternalURL(t *testing.T) {
 	}
 }
 
+// Browsers normalise "\" to "/" in the authority position, so a backslash-prefixed value
+// used to slip past both the IsAbs() and the "//" checks and then navigate off-origin as
+// a protocol-relative URL. Every one of these must collapse to "/".
+func TestCleanContinuePathRejectsBackslashBypass(t *testing.T) {
+	bypasses := []string{
+		`/\evil.example`,
+		`/\/evil.example`,
+		`\\evil.example`,
+		`\/evil.example`,
+		`/api/auth\@evil.example`,
+	}
+	for _, raw := range bypasses {
+		if got := cleanContinuePath(raw); got != "/" {
+			t.Errorf("backslash bypass %q survived as %q", raw, got)
+		}
+	}
+}
+
+// A value carrying an authority must be refused even when it is not scheme-absolute.
+func TestCleanContinuePathRejectsEmbeddedHost(t *testing.T) {
+	for _, raw := range []string{"//evil.example", "https://evil.example", "http://evil.example/x"} {
+		if got := cleanContinuePath(raw); got != "/" {
+			t.Errorf("host-bearing continue path %q survived as %q", raw, got)
+		}
+	}
+}
+
 func TestAuthorizeRedirectsRegisteredClientWithoutSessionToLogin(t *testing.T) {
 	cfg := &config.AppConfigModel{}
 	cfg.Jwt.Secret = "test-secret"

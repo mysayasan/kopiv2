@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"log"
@@ -29,6 +30,13 @@ const (
 	defaultSuperadminUsername = "superadmin"
 	defaultSuperadminPassword = "superadmin123"
 )
+
+// dummyBcryptHash is compared against when no real hash is available (unknown username,
+// federated-only account), so that the "no such account" path costs about the same as a
+// genuine verification. Without it, response time alone answers "does this user exist?".
+// It is a valid cost-10 hash of a value nobody can present, since the plaintext is
+// unknown to anyone including us.
+const dummyBcryptHash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
 
 var (
 	ErrInvalidCredentialPayload = errors.New("username and password are required")
@@ -92,38 +100,52 @@ func (m *userLoginService) AuthenticateDefault(ctx context.Context, username str
 	}
 
 	if user == nil {
+		// Spend roughly the same time a real bcrypt verification would, so that
+		// "no such account" and "wrong password" are not distinguishable by timing.
+		bcrypt.CompareHashAndPassword([]byte(dummyBcryptHash), []byte(password))
 		return nil, ErrInvalidCredential
 	}
 
-	if !user.IsActive {
-		return nil, ErrInactiveAccount
-	}
-
+	// Account STATE (disabled, federated-only) must not be reported until the caller has
+	// proved they hold the password. Returning ErrInactiveAccount or
+	// ErrThirdPartyOnlyAccount straight off a username lookup made this endpoint a
+	// positive account-existence oracle: an attacker learned which usernames were real,
+	// and which of those were federated, without any credential at all.
 	if strings.TrimSpace(user.Userpwd) == "" {
-		return nil, ErrThirdPartyOnlyAccount
+		// A federated-only account has no local password to verify, so there is nothing
+		// the caller could prove. Fail generically and keep the real reason server-side.
+		bcrypt.CompareHashAndPassword([]byte(dummyBcryptHash), []byte(password))
+		log.Printf("user_login: password login refused for federated-only account email=%s", user.Email)
+		return nil, ErrInvalidCredential
 	}
 
 	if isBcryptHash(user.Userpwd) {
 		if err := bcrypt.CompareHashAndPassword([]byte(user.Userpwd), []byte(password)); err != nil {
 			return nil, ErrInvalidCredential
 		}
+	} else {
+		// Legacy plaintext row. Compare in constant time — a byte-wise != leaks the
+		// length and a prefix of the stored password through timing.
+		if subtle.ConstantTimeCompare([]byte(user.Userpwd), []byte(password)) != 1 {
+			return nil, ErrInvalidCredential
+		}
 
-		return user, nil
-	}
-
-	if user.Userpwd != password {
-		return nil, ErrInvalidCredential
-	}
-
-	if upgraded, err := hashPassword(password); err == nil {
-		originalPwd := user.Userpwd
-		user.Userpwd = upgraded
-		if _, err := m.repo.UpdateById(ctx, "", *user); err != nil {
-			if _, errByUnique := m.repo.UpdateByUnique(ctx, "", "email", *user); errByUnique != nil {
-				user.Userpwd = originalPwd
-				log.Printf("user_login migration warning email=%s errById=%v errByUnique=%v", user.Email, err, errByUnique)
+		if upgraded, err := hashPassword(password); err == nil {
+			originalPwd := user.Userpwd
+			user.Userpwd = upgraded
+			if _, err := m.repo.UpdateById(ctx, "", *user); err != nil {
+				if _, errByUnique := m.repo.UpdateByUnique(ctx, "", "email", *user); errByUnique != nil {
+					user.Userpwd = originalPwd
+					log.Printf("user_login migration warning email=%s errById=%v errByUnique=%v", user.Email, err, errByUnique)
+				}
 			}
 		}
+	}
+
+	// The password is correct, so disclosing that the account is disabled tells an
+	// attacker nothing they could not already confirm.
+	if !user.IsActive {
+		return nil, ErrInactiveAccount
 	}
 
 	return user, nil

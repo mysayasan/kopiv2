@@ -92,15 +92,10 @@ type AppConfigModel struct {
 	// is locked, with the lockout doubling on each repeat up to LockoutMaxSeconds
 	// (escalating backoff). FailedDelayMs adds a small constant delay to every
 	// failed attempt to slow online guessing.
-	LoginSecurity struct {
-		Enabled           bool `json:"enabled"`
-		MaxAttempts       int  `json:"maxAttempts"`
-		WindowSeconds     int  `json:"windowSeconds"`
-		LockoutSeconds    int  `json:"lockoutSeconds"`
-		LockoutMaxSeconds int  `json:"lockoutMaxSeconds"`
-		FailedDelayMs     int  `json:"failedDelayMs"`
-		NotifyOnLockout   bool `json:"notifyOnLockout"`
-	} `json:"loginSecurity"`
+	//
+	// Read this through Effective(), never field-by-field — an omitted block must
+	// resolve to ON. See LoginSecurityConfigModel.
+	LoginSecurity LoginSecurityConfigModel `json:"loginSecurity"`
 	// Pairing configures LAN discovery + single-parent adoption between a
 	// mymatasan node and a myseliasan control plane. When enabled (default), an
 	// unpaired node answers authenticated discovery probes on the multicast group
@@ -346,4 +341,78 @@ type RateLimitTierConfigModel struct {
 	Enabled       bool `json:"enabled"`
 	Requests      int  `json:"requests"`
 	WindowSeconds int  `json:"windowSeconds"`
+}
+
+// LoginSecurityConfigModel is the failed-login lockout block.
+//
+// Enabled is a pointer on purpose: an ABSENT block must be distinguishable from an
+// explicit "enabled": false. It used to be a plain bool, so any config.json without a
+// loginSecurity block silently resolved to Enabled=false and the guard became a no-op —
+// which is what shipped in deploy/dist/myseliasan-config.json and in the myidsan and
+// myseliasan dev configs. An identity provider with no brute-force protection is not a
+// defensible default, so an absent block now means ON with the tuned defaults below.
+// Turning the lockout off is still possible; it just takes a deliberate "enabled": false.
+type LoginSecurityConfigModel struct {
+	Enabled           *bool `json:"enabled"`
+	MaxAttempts       int   `json:"maxAttempts"`
+	WindowSeconds     int   `json:"windowSeconds"`
+	LockoutSeconds    int   `json:"lockoutSeconds"`
+	LockoutMaxSeconds int   `json:"lockoutMaxSeconds"`
+	FailedDelayMs     int   `json:"failedDelayMs"`
+	NotifyOnLockout   bool  `json:"notifyOnLockout"`
+}
+
+// EffectiveLoginSecurity is LoginSecurityConfigModel with every unset field resolved.
+type EffectiveLoginSecurity struct {
+	Enabled           bool
+	MaxAttempts       int
+	WindowSeconds     int
+	LockoutSeconds    int
+	LockoutMaxSeconds int
+	FailedDelayMs     int
+	NotifyOnLockout   bool
+}
+
+// Default lockout tuning, matching what deploy/dist/myidsan-config.json already ships:
+// eight attempts in five minutes, then a 60s lockout doubling to at most an hour, plus a
+// small constant delay on every failure to slow online guessing.
+const (
+	defaultLoginMaxAttempts       = 8
+	defaultLoginWindowSeconds     = 300
+	defaultLoginLockoutSeconds    = 60
+	defaultLoginLockoutMaxSeconds = 3600
+	defaultLoginFailedDelayMs     = 400
+)
+
+// Effective resolves the block: an absent Enabled means on, and any tunable left at zero
+// is filled from the defaults above rather than taking Go's zero value — a zero
+// MaxAttempts would otherwise lock a user out on their first failed attempt.
+func (l LoginSecurityConfigModel) Effective() EffectiveLoginSecurity {
+	eff := EffectiveLoginSecurity{
+		Enabled:           l.Enabled == nil || *l.Enabled,
+		MaxAttempts:       l.MaxAttempts,
+		WindowSeconds:     l.WindowSeconds,
+		LockoutSeconds:    l.LockoutSeconds,
+		LockoutMaxSeconds: l.LockoutMaxSeconds,
+		FailedDelayMs:     l.FailedDelayMs,
+		NotifyOnLockout:   l.NotifyOnLockout,
+	}
+	if eff.MaxAttempts <= 0 {
+		eff.MaxAttempts = defaultLoginMaxAttempts
+	}
+	if eff.WindowSeconds <= 0 {
+		eff.WindowSeconds = defaultLoginWindowSeconds
+	}
+	if eff.LockoutSeconds <= 0 {
+		eff.LockoutSeconds = defaultLoginLockoutSeconds
+	}
+	if eff.LockoutMaxSeconds <= 0 {
+		eff.LockoutMaxSeconds = defaultLoginLockoutMaxSeconds
+	}
+	if eff.FailedDelayMs < 0 {
+		eff.FailedDelayMs = 0
+	} else if eff.FailedDelayMs == 0 {
+		eff.FailedDelayMs = defaultLoginFailedDelayMs
+	}
+	return eff
 }

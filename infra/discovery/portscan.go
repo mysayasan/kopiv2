@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -107,7 +108,7 @@ func scanHost(ctx context.Context, ip string) (Device, bool) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			addr := fmt.Sprintf("%s:%d", ip, port)
+			addr := net.JoinHostPort(ip, strconv.Itoa(port))
 			conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
 			open := err == nil
 			if conn != nil {

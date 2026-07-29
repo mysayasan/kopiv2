@@ -235,8 +235,10 @@ route table; the node simply had no pairing routes at all. It was caught only by
 `/api/pairing/fleet-key` when three real apps (myseliasan + an adopted mymatasan node + an
 adopted myiotsan node) were booted together for a live end-to-end check. See
 `docs/MYIOTSAN_PLAN.md` §8e for the full verification.
-- `loginGuardConfig(deps)` maps `deps.Config.LoginSecurity` onto `sharedapis.LoginGuardConfig`
-  — identical shape to mymatasan's own mapping.
+- `loginGuardConfig(deps)` maps `deps.Config.LoginSecurity.Effective()` onto `sharedapis.LoginGuardConfig`
+  — identical shape to mymatasan's own mapping. Reading through `.Effective()` (rather than the
+  struct fields directly) is what makes an absent `loginSecurity` block resolve to the guard
+  being ON by default — see `infra/config/config_models.go.md`.
 - `RegisterWebRoutes` serves `index.html` from `deps.HomeDir` (not `BaseDir()` — see the
   `myseliasan`/`mymatasan` note on why: a packaged install runs with the binary and `static/`
   side by side and a working directory pointed elsewhere), with

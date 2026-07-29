@@ -619,7 +619,7 @@ const commandSweepInterval = 10 * time.Second
 
 // loginGuardConfig maps the shared login-security config onto the failed-login lockout.
 func loginGuardConfig(deps apphost.Dependencies) sharedapis.LoginGuardConfig {
-	ls := deps.Config.LoginSecurity
+	ls := deps.Config.LoginSecurity.Effective()
 	return sharedapis.LoginGuardConfig{
 		Enabled:     ls.Enabled,
 		MaxAttempts: ls.MaxAttempts,

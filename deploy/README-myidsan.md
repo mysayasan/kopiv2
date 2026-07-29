@@ -106,14 +106,120 @@ Use the matching file in `deploy/`:
 All of them set `KOPIV2_SUPERVISED=1`, so an in-app restart exits cleanly and the
 supervisor relaunches it.
 
-## Back up the database and `secret/atrest.key`
+## Backup and disaster recovery
 
-The database holds **every user, role and registered SSO client** in the suite — every
-relying app authenticates against it. `secret/atrest.key` (in the data dir) encrypts the
-LDAP directory **bind password** stored in it.
+myidsan is the one component whose loss takes the whole suite down at once: its database
+holds **every user and password hash, every role and permission, every registered SSO
+client, the SSO certificate authority's private key, all two-factor secrets, and the LDAP
+bind password.** Every relying app authenticates against it.
 
-Back up the database and the key together, as a pair. Losing the database means
-re-registering every relying app and re-creating every account.
+### Taking a backup
+
+**Backup & restore** in the side nav (superadmin only) produces a single encrypted
+`.idbackup` file. Choose which sections to include, set a passphrase of at least 12
+characters, and download it.
+
+The passphrase is the **only** thing protecting the file — it contains password hashes,
+TOTP secrets and a CA private key in a form that a restore can use. Store the file and the
+passphrase separately, and treat the file with the same care as the database itself. There
+is no recovery path if the passphrase is lost.
+
+Export and restore both require a **recent re-authentication** ("step-up"): re-enter the
+password (plus a TOTP code, if you have one enrolled) at the prompt before the action —
+`POST /api/step-up` with `{password, code}` — then proceed within its 5-minute window. This
+closes the gap where a stolen session cookie alone could export or replace the whole
+identity store.
+
+The same thing from the API:
+
+```bash
+# Step up first (skip if your session already re-authenticated in the last 5 minutes):
+curl -sS -X POST https://myidsan.example.com/api/step-up \
+  -H 'Content-Type: application/json' \
+  -H "X-CSRF-Token: $CSRF" -b cookies.txt \
+  -d '{"password":"'"$PASSWORD"'","code":"'"$TOTP_CODE"'"}'
+
+curl -sS -X POST https://myidsan.example.com/api/backup/export \
+  -H 'Content-Type: application/json' \
+  -H "X-CSRF-Token: $CSRF" -b cookies.txt \
+  -d '{"passphrase":"'"$PASSPHRASE"'"}' \
+  | jq -r .result.dataBase64 | base64 -d > myidsan-backup.idbackup
+```
+
+Schedule that from cron or a scheduled task and keep the output off the myidsan host.
+`TOTP_CODE` can be omitted (or left empty) for a scripted account that has no MFA factor
+enrolled.
+
+### What is and is not in the file
+
+Included: accounts and groups, roles and permissions, two-factor enrolments and recovery
+codes, registered apps with their client configuration and redirect URIs, the directory
+configuration and its group→role mappings, and the SSO CA.
+
+Deliberately excluded: `config.json`, TLS certificates, `secret/atrest.key`, the API and
+runtime logs, pending password-reset requests, live sessions, and the **audit log**. Those
+are host-local — copying them onto a second machine would clone that machine's identity
+rather than restore its data. The audit log's exclusion is also what makes it useful as a
+record of the restore itself: a restore drops every session and rewrites every account, but
+the entry it writes for having done so is not touched by the operation it describes. See
+"Audit trail" below for its own export path.
+
+The at-rest key not being included is the important one, and it is not a gap. The two
+sealed values (TOTP secrets, the LDAP bind password) are **unsealed when the backup is
+written and re-sealed with the destination host's own key when it is restored.** That is
+what lets a backup restore onto a brand-new machine and still have everyone's authenticator
+app work. Carrying the sealed bytes instead would produce a file that restores without
+error and then fails every second-factor check.
+
+### Restoring onto a rebuilt server
+
+1. Install myidsan on the new host and start it. It generates a fresh TLS certificate,
+   at-rest key and one-time superadmin password as usual.
+2. Sign in as that superadmin and change the password when prompted.
+3. On the setup wizard's first screen choose **Restore from a backup instead**; or, if
+   setup was already completed, go to **Backup & restore**.
+4. Upload the `.idbackup`, enter the passphrase, and press **Open and inspect** — this only
+   reads the manifest and writes nothing, so you can confirm the version and contents first.
+5. Choose **Replace what is here** (the correct choice when rebuilding) and restore.
+
+Everyone is signed out, including you: the restore drops every live session, because a
+session issued a moment earlier would still carry pre-restore authority. Sign in again with
+an account from the backup — its password, role and second factor are exactly as they were.
+
+`config.json` is not restored, so re-apply any host settings by hand: listener ports, TLS
+paths, SMTP, Kerberos and any `login.oidc[]` providers.
+
+### Verify a backup before you need it
+
+A backup nobody has restored is a hypothesis. At least once, restore into a throwaway
+instance and confirm you can sign in with an account that has two-factor enabled — that
+single check exercises the password hash, the role assignment and the secret re-sealing
+together.
+
+## Audit trail
+
+The **Audit log** page (superadmin only) is an append-only record of every security-relevant
+event on this server — sign-ins and failures, lockouts, MFA changes, account and directory
+changes, password-reset resolutions, session revocations, backup export/restore, and
+step-up attempts. There is no update or delete route for it: nothing in the product,
+including a superadmin session, can edit an entry once it is written.
+
+For compliance review or offline retention, export it as CSV rather than screen-scraping:
+
+```bash
+curl -sS "https://myidsan.example.com/api/audit/export.csv?from=2026-07-01&to=2026-07-31" \
+  -H "X-CSRF-Token: $CSRF" -b cookies.txt \
+  -o myidsan-audit-2026-07.csv
+```
+
+The export is capped at 50,000 rows per request — narrow the `from`/`to` range for a busy
+server rather than expecting one file to hold everything. Values that could be misread as a
+spreadsheet formula (a failed-login "username" or a User-Agent starting with `=`/`+`/`-`/`@`)
+are quoted before export, so opening the CSV in Excel or Sheets is safe.
+
+The audit table is **not** part of an `.idbackup` archive and is never cleared by a restore —
+it is host-local history, the same category as the API/runtime logs, and it is what lets you
+confirm afterwards that a restore actually happened and who ran it.
 
 ## Upgrading
 

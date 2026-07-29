@@ -539,7 +539,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	loginGuard := apis.NewLoginGuard(loginGuardConfigFromAppConfig(deps.Config))
 	var loginLockoutNotifier services.INotificationPublisher
-	if deps.Config.LoginSecurity.NotifyOnLockout {
+	if deps.Config.LoginSecurity.Effective().NotifyOnLockout {
 		loginLockoutNotifier = notificationService
 	}
 

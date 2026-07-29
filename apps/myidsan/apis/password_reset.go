@@ -20,6 +20,7 @@ import (
 type passwordResetApi struct {
 	auth    middlewares.AuthMidware
 	service services.IPasswordResetService
+	auditRecorder
 }
 
 // NewPasswordResetApi wires the superadmin reset-request queue. Clearing/issuing a
@@ -30,8 +31,15 @@ func NewPasswordResetApi(
 	auth middlewares.AuthMidware,
 	access *middlewares.AccessSessionMidware,
 	service services.IPasswordResetService,
+	audit services.IAuditService,
+	stepUp services.IStepUpService,
+	trustedProxies []string,
 ) {
-	handler := &passwordResetApi{auth: auth, service: service}
+	handler := &passwordResetApi{
+		auth:          auth,
+		service:       service,
+		auditRecorder: newAuditRecorder(audit, trustedProxies),
+	}
 
 	group := router.PathPrefix("/password-reset").Subrouter()
 	group.Use(auth.Middleware)
@@ -39,7 +47,9 @@ func NewPasswordResetApi(
 	group.Use(access.RequireSuperadmin)
 
 	group.HandleFunc("", handler.list).Methods("GET")
-	group.HandleFunc("/{id}/resolve", handler.resolve).Methods("POST")
+	// Issuing a working credential for someone else's account requires proving the
+	// operator is still present, not just that a session cookie exists.
+	group.HandleFunc("/{id}/resolve", requireStepUp(stepUp, handler.resolve)).Methods("POST")
 	group.HandleFunc("/{id}/dismiss", handler.dismiss).Methods("POST")
 }
 
@@ -73,6 +83,17 @@ func (m *passwordResetApi) resolve(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	// Issuing a temporary password hands an operator a working credential for someone
+	// else's account. The password itself is NEVER recorded — only that it happened, to
+	// whom, and by whom.
+	m.record(r, services.AuditEntry{
+		Action:     services.ActionPasswordReset,
+		TargetType: "user",
+		TargetId:   strconv.FormatInt(id, 10),
+		Detail:     "issued a temporary password from the reset queue",
+		Metadata:   map[string]any{"channel": "operator_queue", "requestId": id},
+	})
+
 	// The temporary password is shown to the operator ONCE (must-change on first use).
 	controllers.SendResult(w, map[string]any{"temporaryPassword": temp})
 }

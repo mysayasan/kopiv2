@@ -26,6 +26,7 @@ const MetricMfaChallengeTotal = "myidsan_mfa_challenge_total"
 // login challenge lives in login.go (it has no session yet); admin reset of another
 // user's factor is superadmin-gated and lives on its own sub-router below.
 type mfaApi struct {
+	auditRecorder
 	auth    middlewares.AuthMidware
 	service services.IMfaService
 	users   services.IUserLoginService
@@ -41,8 +42,11 @@ func NewMfaApi(
 	service services.IMfaService,
 	users services.IUserLoginService,
 	metrics telemetry.Metrics,
+	audit services.IAuditService,
+	stepUp services.IStepUpService,
+	trustedProxies []string,
 ) {
-	handler := &mfaApi{auth: auth, service: service, users: users, metrics: metrics}
+	handler := &mfaApi{auth: auth, service: service, users: users, metrics: metrics, auditRecorder: newAuditRecorder(audit, trustedProxies)}
 
 	// Self-service: any authenticated user, acting on their own account. No RBAC
 	// matrix — mirrors /api/login/default/change-password.
@@ -60,7 +64,9 @@ func NewMfaApi(
 	admin.Use(auth.Middleware)
 	admin.Use(access.Middleware)
 	admin.Use(access.RequireSuperadmin)
-	admin.HandleFunc("/{id}", handler.adminReset).Methods("DELETE")
+	// Clearing someone else's second factor is exactly what an attacker with a stolen
+	// cookie would do to take over an account, so it requires a fresh credential.
+	admin.HandleFunc("/{id}", requireStepUp(stepUp, handler.adminReset)).Methods("DELETE")
 }
 
 func (m *mfaApi) claims(r *http.Request) *models.JwtCustomClaims {
@@ -218,6 +224,14 @@ func (m *mfaApi) adminReset(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
+	// Clearing someone else's second factor removes a control they rely on and cannot
+	// see happen. If it was not them who asked for it, this entry is how they find out.
+	m.record(r, services.AuditEntry{
+		Action:     services.ActionMfaAdminReset,
+		TargetType: "user",
+		TargetId:   strconv.FormatInt(userId, 10),
+		Detail:     "administrator cleared this account's second factor",
+	})
 	controllers.SendResult(w, map[string]bool{"ok": true})
 }
 

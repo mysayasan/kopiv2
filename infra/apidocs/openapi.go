@@ -1,6 +1,7 @@
 package apidocs
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,6 +10,15 @@ import (
 
 	"github.com/gorilla/mux"
 )
+
+// swaggerUIAssets carries Swagger UI in the binary. It used to be pulled from
+// cdn.jsdelivr.net at page load, which broke /swagger twice over: an air-gapped or
+// egress-filtered install rendered a blank page, and the CDN <script>/<link> violated the
+// apps' own shipped Content-Security-Policy (script-src 'self'), so the page was dead even
+// with internet access. Vendored from swagger-ui-dist@5.32.11.
+//
+//go:embed swaggerui/swagger-ui-bundle.js swaggerui/swagger-ui.css
+var swaggerUIAssets embed.FS
 
 // Metadata controls top-level OpenAPI info fields.
 type Metadata struct {
@@ -131,6 +141,36 @@ func Register(router *mux.Router, appName string, provider Provider) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(spec)
+	}).Methods("GET")
+
+	// Serve the vendored Swagger UI bundle from the binary. Long cache lifetime is safe:
+	// the asset path is version-pinned by the build, not by a query string.
+	router.HandleFunc("/swagger/assets/{file}", func(w http.ResponseWriter, r *http.Request) {
+		name := mux.Vars(r)["file"]
+		var data []byte
+		switch name {
+		case "swagger-ui-bundle.js":
+			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		case "swagger-ui.css":
+			w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		case "swagger-init.js":
+			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+			w.Header().Set("Cache-Control", "public, max-age=86400")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(swaggerInitJS))
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		data, err := swaggerUIAssets.ReadFile("swaggerui/" + name)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
 	}).Methods("GET")
 
 	router.HandleFunc("/swagger", swaggerUIHandler).Methods("GET")
@@ -1129,6 +1169,29 @@ func pagingResponseSchema(itemSchema openAPISchema) openAPISchema {
 	}
 }
 
+// swaggerInitJS is served as its own file rather than inlined into the page. The apps ship
+// a Content-Security-Policy of script-src 'self', which forbids inline <script> just as
+// firmly as it forbids a CDN — so moving the bundle on-box without moving this too would
+// have left /swagger just as broken. The page's small <style> block can stay inline
+// because the shipped policy allows style-src 'unsafe-inline' (Swagger UI itself injects
+// inline styles, so tightening that is a separate exercise).
+const swaggerInitJS = `window.ui = SwaggerUIBundle({
+  url: '/swagger/openapi.json',
+  dom_id: '#swagger-ui',
+  deepLinking: true,
+  displayRequestDuration: true,
+  docExpansion: 'none',
+  withCredentials: true,
+  requestInterceptor: function (req) {
+    if (typeof FormData !== 'undefined' && req.body instanceof FormData && req.headers) {
+      delete req.headers['Content-Type'];
+      delete req.headers['content-type'];
+    }
+    return req;
+  },
+});
+`
+
 func swaggerUIHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
@@ -1138,7 +1201,7 @@ func swaggerUIHandler(w http.ResponseWriter, _ *http.Request) {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>API Docs</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css" />
+  <link rel="stylesheet" href="/swagger/assets/swagger-ui.css" />
   <style>
     body { margin: 0; background: #f4f7f9; }
     #swagger-ui { max-width: 1200px; margin: 0 auto; }
@@ -1146,24 +1209,8 @@ func swaggerUIHandler(w http.ResponseWriter, _ *http.Request) {
 </head>
 <body>
   <div id="swagger-ui"></div>
-  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
-  <script>
-    window.ui = SwaggerUIBundle({
-      url: '/swagger/openapi.json',
-      dom_id: '#swagger-ui',
-      deepLinking: true,
-      displayRequestDuration: true,
-      docExpansion: 'none',
-      withCredentials: true,
-      requestInterceptor: (req) => {
-        if (typeof FormData !== 'undefined' && req.body instanceof FormData && req.headers) {
-          delete req.headers['Content-Type'];
-          delete req.headers['content-type'];
-        }
-        return req;
-      },
-    });
-  </script>
+  <script src="/swagger/assets/swagger-ui-bundle.js"></script>
+  <script src="/swagger/assets/swagger-init.js"></script>
 </body>
 </html>`))
 }

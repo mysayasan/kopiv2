@@ -51,6 +51,12 @@ const routeCatalog = [
   { id: 'apps', label: 'Apps', group: 'Federation', order: 40, tone: 'indigo', code: 'AP', icon: 'grid2', paths: ['/api/app-registry'], summary: 'Manage registered relying apps and audiences.' },
   { id: 'directory', label: 'Directory', group: 'Federation', order: 45, tone: 'amber', code: 'DI', icon: 'key', paths: ['/api/directory-config', '/api/federated-group-mapping'], summary: 'Connect an LDAP/Active Directory server and map groups to roles.' },
   { id: 'endpoints', label: 'Endpoints', group: 'Access Control', order: 50, tone: 'steel', code: 'EP', icon: 'list', paths: ['/api/endpoint'], summary: 'Maintain the protected endpoint catalog.' },
+  // Backup is superadminOnly for the same reason its API is: an export is the entire
+  // identity store in one file, and a restore rewrites every account and role.
+  // Audit is superadminOnly for the same reason its API is: the trail names who did what
+  // from where, and on an identity server it also reveals which usernames exist.
+  { id: 'audit', label: 'Audit log', group: 'System', order: 55, tone: 'steel', code: 'AU', icon: 'list', paths: ['/api/audit'], summary: 'Who signed in, what changed, and from where.', superadminOnly: true },
+  { id: 'backup', label: 'Backup & restore', group: 'System', order: 60, tone: 'amber', code: 'BK', icon: 'folder', paths: ['/api/backup'], summary: 'Export an encrypted copy of this server, or rebuild it from one.', superadminOnly: true },
   // Profile is self-service (change password + second factor). It is NOT a nav item —
   // it is reached from the account chip in the side rail (chipOnly), so it never shows
   // in the nav or the dashboard, but it is still a "known + allowed" active section.
@@ -491,6 +497,8 @@ function AppInner({ lang, onLangChange }) {
         {active === 'rbac' && sectionAllowedById('rbac', accessList, isSuperadmin) && <RbacPage accessList={accessList} onToast={pushToast} />}
         {active === 'profile' && <ProfilePage currentEmail={currentEmail} roleLabel={roleLabel} onToast={pushToast} />}
         {active === 'resetRequests' && sectionAllowedById('resetRequests', accessList, isSuperadmin) && <ResetRequestsPage onToast={pushToast} />}
+        {active === 'audit' && sectionAllowedById('audit', accessList, isSuperadmin) && <AuditPage onToast={pushToast} />}
+        {active === 'backup' && sectionAllowedById('backup', accessList, isSuperadmin) && <BackupPage onToast={pushToast} />}
         <AppFooter appName="MyIDSan" apiBase={apiBase} />
       </main>
     </div>
@@ -927,7 +935,7 @@ function RowAvatar({ userId, email, canEdit, onToast }) {
       setHasImg(true)
       setVer(Date.now())
       onToast?.(t('user.photoSet'), 'success')
-    } catch (err) { onToast?.(err.message === 'IMAGE_READ_ERROR' ? t('profile.photoReadError') : err.message, 'danger') } finally { setBusy(false) }
+    } catch (err) { onToast?.(err.message === 'IMAGE_READ_ERROR' ? t('profile.photoReadError') : err.message, 'error') } finally { setBusy(false) }
   }
 
   return (
@@ -1014,6 +1022,21 @@ function UsersPage({ accessList, currentEmail, stockEmail = STOCK_SUPERADMIN_EMA
     saveUser(user, { userRoleId: superRole.id }, t('user.nowSuperadmin', { label }))
   }
 
+  const endSessions = async u => {
+    if (!window.confirm(t('user.endSessionsConfirm'))) return
+    setBusy(true)
+    try {
+      const res = await apiRequest(`/api/session-admin/user/${u.id}/revoke`, { method: 'POST', body: {} })
+      const count = (resultOf(res) || {}).revoked || 0
+      onToast?.(t('user.sessionsEnded', { n: count }), 'success')
+    } catch (err) {
+      setError(err.message)
+      onToast?.(err.message, 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const columns = [
     { key: 'id', label: t('f.id') },
     {
@@ -1057,6 +1080,10 @@ function UsersPage({ accessList, currentEmail, stockEmail = STOCK_SUPERADMIN_EMA
               ? <button type="button" className="secondary-button" onClick={() => makeSuperadmin(u)} disabled={busy || !canEdit} title={t('user.makeSuperadminTip')}>{t('user.makeSuperadmin')}</button> : null}
             {showDisable
               ? <button type="button" className="secondary-button danger" onClick={() => toggleActive(u)} disabled={busy || !canEdit}>{u.isActive ? t('user.disable') : t('user.enable')}</button> : null}
+            {/* Ending sessions without disabling the account is the right response to a
+                lost laptop or a shared password: the person keeps their access, the
+                stolen cookie stops working. Disabling already ends sessions on its own. */}
+            <button type="button" className="secondary-button" onClick={() => endSessions(u)} disabled={busy || !canEdit} title={t('user.endSessions')}>{t('user.endSessions')}</button>
           </div>
         )
       }
@@ -1483,9 +1510,6 @@ const emptyAuthConfig = {
   authCodeTtlSeconds: 300,
   accessTokenTtlSeconds: 900,
   sessionTtlSeconds: 259200,
-  refreshTokenTtlSeconds: 0,
-  requirePkce: false,
-  allowRefreshToken: false,
   isActive: true
 }
 
@@ -1786,9 +1810,6 @@ function AppDetail({ accessList, app, apps = [], onCreated, onSaved, onDeleted }
         authCodeTtlSeconds: emptyToZero(authForm.authCodeTtlSeconds),
         accessTokenTtlSeconds: emptyToZero(authForm.accessTokenTtlSeconds),
         sessionTtlSeconds: emptyToZero(authForm.sessionTtlSeconds),
-        refreshTokenTtlSeconds: emptyToZero(authForm.refreshTokenTtlSeconds),
-        requirePkce: Boolean(authForm.requirePkce),
-        allowRefreshToken: Boolean(authForm.allowRefreshToken),
         isActive: Boolean(authForm.isActive)
       }
       await apiRequest('/api/app-auth-config', { method: isUpdate ? 'PUT' : 'POST', body: payload })
@@ -2013,27 +2034,16 @@ function AppDetail({ accessList, app, apps = [], onCreated, onSaved, onDeleted }
                 <input id="sso-access-ttl" type="number" min="0" value={authForm.accessTokenTtlSeconds} onChange={event => setAuthForm({ ...authForm, accessTokenTtlSeconds: event.target.value })} />
               </GuideField>
             </div>
-            <div className="two-col">
-              <GuideField id="sso-session-ttl" label={t('app.sessionTtl')} hint={t('app.sessionTtlHint')} example="259200">
-                <input id="sso-session-ttl" type="number" min="0" value={authForm.sessionTtlSeconds} onChange={event => setAuthForm({ ...authForm, sessionTtlSeconds: event.target.value })} />
-              </GuideField>
-              <GuideField id="sso-refresh-ttl" label={t('app.refreshTtl')} hint={t('app.refreshTtlHint')} example="0">
-                <input id="sso-refresh-ttl" type="number" min="0" value={authForm.refreshTokenTtlSeconds} onChange={event => setAuthForm({ ...authForm, refreshTokenTtlSeconds: event.target.value })} />
-              </GuideField>
-            </div>
+            <GuideField id="sso-session-ttl" label={t('app.sessionTtl')} hint={t('app.sessionTtlHint')} example="259200">
+              <input id="sso-session-ttl" type="number" min="0" value={authForm.sessionTtlSeconds} onChange={event => setAuthForm({ ...authForm, sessionTtlSeconds: event.target.value })} />
+            </GuideField>
 
-            <GuideCheck
-              label={t('app.requirePkce')}
-              hint={t('app.requirePkceHint')}
-              checked={Boolean(authForm.requirePkce)}
-              onChange={event => setAuthForm({ ...authForm, requirePkce: event.target.checked })}
-            />
-            <GuideCheck
-              label={t('app.allowRefresh')}
-              hint={t('app.allowRefreshHint')}
-              checked={Boolean(authForm.allowRefreshToken)}
-              onChange={event => setAuthForm({ ...authForm, allowRefreshToken: event.target.checked })}
-            />
+            {/* Require PKCE, Allow refresh tokens and the refresh-token TTL used to sit
+                here. All three persisted a value that no code path read: the authorize
+                endpoint never parsed code_challenge and the token endpoint rejects
+                grant_type=refresh_token, so an operator ticking "Require PKCE" was told a
+                security control was on when it was not. They return, wired, in the OIDC
+                conformance phase — see docs/MYIDSAN_PRODUCTIZATION_PLAN.md phases 5.3/5.4. */}
             <GuideCheck
               label={t('f.active')}
               hint={t('app.ssoActiveHint')}
@@ -2897,6 +2907,13 @@ function CrudPage({
       setError(t('crud.cantDelete'))
       return
     }
+    // Deleting from the toolbar removed every selected row with no confirmation at all,
+    // on Groups, Roles and Endpoints alike — while deleting a single app one screen over
+    // did ask. The unguarded path was the multi-row one, and these rows are roles and
+    // endpoint grants: removing them silently revokes access.
+    if (!window.confirm(t('crud.confirmDeleteN', { n: items.length }))) {
+      return
+    }
     setBusy(true)
     setError('')
     setNotice('')
@@ -3036,7 +3053,7 @@ function ProfilePage({ currentEmail, roleLabel, onToast }) {
       setHasAvatar(true)
       setAvatarVer(Date.now())
       onToast?.(t('profile.photoUpdated'), 'success')
-    } catch (err) { onToast?.(err.message === 'IMAGE_READ_ERROR' ? t('profile.photoReadError') : (err.message || t('profile.photoError')), 'danger') } finally { setAvatarBusy(false) }
+    } catch (err) { onToast?.(err.message === 'IMAGE_READ_ERROR' ? t('profile.photoReadError') : (err.message || t('profile.photoError')), 'error') } finally { setAvatarBusy(false) }
   }
   const removeAvatar = async () => {
     setAvatarBusy(true)
@@ -3045,7 +3062,7 @@ function ProfilePage({ currentEmail, roleLabel, onToast }) {
       setHasAvatar(false)
       setAvatarVer(Date.now())
       onToast?.(t('profile.photoRemoved'), 'success')
-    } catch (err) { onToast?.(err.message, 'danger') } finally { setAvatarBusy(false) }
+    } catch (err) { onToast?.(err.message, 'error') } finally { setAvatarBusy(false) }
   }
 
   const changePassword = async event => {
@@ -3103,7 +3120,7 @@ function ProfilePage({ currentEmail, roleLabel, onToast }) {
       const res = await apiRequest('/api/mfa/recovery', { method: 'POST', body: { code: entered } })
       setRecoveryCodes(resultOf(res)?.recoveryCodes || [])
       await load()
-    } catch (err) { setError(err.message); onToast?.(err.message, 'danger') } finally { setBusy(false) }
+    } catch (err) { setError(err.message); onToast?.(err.message, 'error') } finally { setBusy(false) }
   }
 
   const disable = async event => {
@@ -3115,7 +3132,7 @@ function ProfilePage({ currentEmail, roleLabel, onToast }) {
       setRecoveryCodes(null)
       onToast?.(t('mfa.disabledToast'), 'success')
       await load()
-    } catch (err) { setError(err.message); onToast?.(err.message, 'danger') } finally { setBusy(false) }
+    } catch (err) { setError(err.message); onToast?.(err.message, 'error') } finally { setBusy(false) }
   }
 
   const enrolled = status?.enrolled
@@ -3257,8 +3274,129 @@ function ProfilePage({ currentEmail, roleLabel, onToast }) {
           </div>
         )}
         </section>
+
+        <SessionList onToast={onToast} />
       </div>
     </PageFrame>
+  )
+}
+
+// SessionList is the self-service "where am I signed in" panel on the Profile page.
+//
+// This is the screen a person needs when a laptop goes missing, so it is deliberately NOT
+// behind the RBAC permission matrix — /api/session is auth-only for the same reason.
+// Sessions the server reports as no longer active are still listed, greyed out, because
+// "this device signed in last Tuesday and that session has since ended" is useful history;
+// only live ones offer a sign-out control.
+function SessionList({ onToast }) {
+  const t = useT()
+  const [rows, setRows] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [busyId, setBusyId] = useState('')
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const res = await apiRequest('/api/session')
+      setRows(resultOf(res) || [])
+      setError('')
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+  useEffect(() => { load() }, [])
+
+  const revoke = async row => {
+    // Ending the session you are using logs you out immediately, so it is worth a
+    // confirmation the other rows do not need.
+    if (row.current && !window.confirm(t('session.confirmCurrent'))) return
+    setBusyId(row.sessionId)
+    try {
+      await apiRequest(`/api/session/${encodeURIComponent(row.sessionId)}`, { method: 'DELETE' })
+      if (row.current) {
+        // The cookie backing this page is now dead; anything else would 401.
+        window.location.reload()
+        return
+      }
+      onToast?.(t('session.ended'), 'success')
+      await load()
+    } catch (err) {
+      setError(err.message)
+      onToast?.(err.message, 'error')
+    } finally {
+      setBusyId('')
+    }
+  }
+
+  const revokeOthers = async () => {
+    if (!window.confirm(t('session.confirmOthers'))) return
+    setBusyId('all')
+    try {
+      const res = await apiRequest('/api/session/revoke-all', { method: 'POST', body: {} })
+      const count = (resultOf(res) || {}).revoked || 0
+      onToast?.(t('session.endedOthers', { n: count }), 'success')
+      await load()
+    } catch (err) {
+      setError(err.message)
+      onToast?.(err.message, 'error')
+    } finally {
+      setBusyId('')
+    }
+  }
+
+  const live = rows.filter(row => row.active)
+
+  return (
+    <section className="profile-section">
+      <h2>{t('session.title')}</h2>
+      <p className="guide-note">{t('session.subtitle')}</p>
+      {error && <div className="message danger">{error}</div>}
+      {loading && <p className="guide-note">{t('common.loading')}</p>}
+
+      {!loading && !rows.length && <p className="guide-note">{t('session.empty')}</p>}
+
+      {!loading && rows.length > 0 && (
+        <>
+          <ul className="session-list">
+            {rows.map(row => (
+              <li key={row.sessionId} className={row.active ? 'session-row' : 'session-row ended'}>
+                <div className="session-main">
+                  <div className="session-device">
+                    {row.userAgent || t('session.unknownDevice')}
+                    {row.current && <span className="pill pill-ok">{t('session.current')}</span>}
+                    {!row.active && <span className="pill">{t('session.endedLabel')}</span>}
+                  </div>
+                  <div className="session-meta">
+                    {row.ipAddress || '—'}
+                    {row.lastSeenAt ? ` · ${t('session.lastSeen')} ${new Date(row.lastSeenAt * 1000).toLocaleString()}` : ''}
+                  </div>
+                </div>
+                {row.active && (
+                  <button
+                    className="secondary-button danger"
+                    type="button"
+                    disabled={Boolean(busyId)}
+                    onClick={() => revoke(row)}
+                  >
+                    {row.current ? t('session.endThis') : t('session.end')}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+          {live.length > 1 && (
+            <div>
+              <button className="secondary-button" type="button" disabled={Boolean(busyId)} onClick={revokeOthers}>
+                {t('session.endOthers')}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </section>
   )
 }
 
@@ -3294,7 +3432,7 @@ function ResetRequestsPage({ onToast }) {
       const temp = (resultOf(res) || {}).temporaryPassword
       setIssued({ email: row.email, temporaryPassword: temp })
       await load()
-    } catch (err) { setError(err.message); onToast?.(err.message, 'danger') } finally { setBusyId(0) }
+    } catch (err) { setError(err.message); onToast?.(err.message, 'error') } finally { setBusyId(0) }
   }
 
   const dismiss = async row => {
@@ -3303,7 +3441,7 @@ function ResetRequestsPage({ onToast }) {
       await apiRequest(`/api/password-reset/${row.id}/dismiss`, { method: 'POST' })
       onToast?.(t('reset.dismissed'), 'success')
       await load()
-    } catch (err) { setError(err.message); onToast?.(err.message, 'danger') } finally { setBusyId(0) }
+    } catch (err) { setError(err.message); onToast?.(err.message, 'error') } finally { setBusyId(0) }
   }
 
   return (
@@ -3354,6 +3492,490 @@ function ResetRequestsPage({ onToast }) {
         )}
       </div>
     </PageFrame>
+  )
+}
+
+// BackupPage is the superadmin disaster-recovery surface. Export writes an encrypted
+// archive of the identity store; restore rebuilds this server from one.
+//
+// The restore side is deliberately two-step — the file is previewed (manifest only,
+// nothing written) before anything is applied — because a replace-mode restore removes
+// every account currently on this server, including the operator running it.
+// AuditPage is the superadmin security trail: who signed in, what changed, from where.
+//
+// It is read-only by construction — the API exposes no write route — so this page has no
+// edit or delete affordance at all. Filters are applied server-side and the CSV export
+// reuses exactly the same query string, so an export always contains what the screen was
+// showing rather than a silently different set.
+function AuditPage({ onToast }) {
+  const t = useT()
+  const [rows, setRows] = useState([])
+  const [total, setTotal] = useState(0)
+  const [offset, setOffset] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [filters, setFilters] = useState({ action: '', outcome: '', actorEmail: '', from: '', to: '' })
+
+  const pageSize = 50
+
+  // One place builds the query, so the table and the export can never diverge.
+  const buildQuery = (extra = {}) => {
+    const params = new URLSearchParams()
+    Object.entries({ ...filters, ...extra }).forEach(([key, value]) => {
+      if (String(value || '').trim()) params.set(key, String(value).trim())
+    })
+    return params.toString()
+  }
+
+  const load = async (nextOffset = 0) => {
+    setLoading(true)
+    setError('')
+    try {
+      const res = await apiRequest(`/api/audit?limit=${pageSize}&offset=${nextOffset}&${buildQuery()}`)
+      setRows(rowsOf(res))
+      setTotal(Number(pageOf(res).totalCnt || 0))
+      setOffset(nextOffset)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+  useEffect(() => { load(0) }, [])
+
+  const exportCsv = () => {
+    // A plain navigation rather than fetch+blob: the response is an attachment and the
+    // session cookie rides along, so the browser saves it without buffering it in memory.
+    window.location.href = `${apiBase}/api/audit/export.csv?${buildQuery()}`
+    onToast?.(t('audit.exportStarted'), 'success')
+  }
+
+  const outcomeTone = outcome => (outcome === 'denied' ? 'danger' : outcome === 'error' ? 'warn' : 'ok')
+  const outcomeLabel = outcome => (
+    outcome === 'denied' ? t('audit.outcomeDenied') : outcome === 'error' ? t('audit.outcomeError') : outcome === 'success' ? t('audit.outcomeSuccess') : outcome
+  )
+
+  return (
+    <PageFrame title={t('audit.title')} subtitle={t('audit.subtitle')}>
+      <div className="app-detail">
+        {error && <div className="message danger">{error}</div>}
+
+        <section className="guide-block">
+          <div className="audit-filters">
+            <label>
+              {t('audit.filterAction')}
+              <input
+                value={filters.action}
+                onChange={e => setFilters({ ...filters, action: e.target.value })}
+                placeholder="login.failure"
+              />
+            </label>
+            <label>
+              {t('audit.filterOutcome')}
+              <select value={filters.outcome} onChange={e => setFilters({ ...filters, outcome: e.target.value })}>
+                <option value="">{t('audit.any')}</option>
+                <option value="success">{t('audit.outcomeSuccess')}</option>
+                <option value="denied">{t('audit.outcomeDenied')}</option>
+                <option value="error">{t('audit.outcomeError')}</option>
+              </select>
+            </label>
+            <label>
+              {t('audit.filterActor')}
+              <input
+                value={filters.actorEmail}
+                onChange={e => setFilters({ ...filters, actorEmail: e.target.value })}
+                placeholder="alice@corp.local"
+              />
+            </label>
+            <label>
+              {t('audit.filterFrom')}
+              <input type="date" value={filters.from} onChange={e => setFilters({ ...filters, from: e.target.value })} />
+            </label>
+            <label>
+              {t('audit.filterTo')}
+              <input type="date" value={filters.to} onChange={e => setFilters({ ...filters, to: e.target.value })} />
+            </label>
+          </div>
+          <div className="form-actions">
+            <button className="primary-button" type="button" onClick={() => load(0)} disabled={loading}>
+              {t('audit.apply')}
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => { setFilters({ action: '', outcome: '', actorEmail: '', from: '', to: '' }); setTimeout(() => load(0), 0) }}
+              disabled={loading}
+            >
+              {t('audit.clear')}
+            </button>
+            <button className="secondary-button" type="button" onClick={exportCsv} disabled={loading || !rows.length}>
+              {t('audit.export')}
+            </button>
+          </div>
+        </section>
+
+        {loading && <p className="guide-note">{t('common.loading')}</p>}
+
+        {!loading && !rows.length && <p className="guide-note">{t('audit.empty')}</p>}
+
+        {!loading && rows.length > 0 && (
+          <>
+            <div className="table-wrap">
+              <table className="data-table audit-table">
+                <thead>
+                  <tr>
+                    <th>{t('audit.colWhen')}</th>
+                    <th>{t('audit.colAction')}</th>
+                    <th>{t('audit.colActor')}</th>
+                    <th>{t('audit.colTarget')}</th>
+                    <th>{t('audit.colWhere')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map(row => (
+                    <tr key={row.id}>
+                      <td className="nowrap">{row.createdAt ? new Date(row.createdAt * 1000).toLocaleString() : '—'}</td>
+                      <td>
+                        <code>{row.action}</code>{' '}
+                        <span className={`pill pill-${outcomeTone(row.outcome)}`}>{outcomeLabel(row.outcome)}</span>
+                        {row.detail && <div className="audit-detail">{row.detail}</div>}
+                      </td>
+                      <td>{row.actorEmail || <span className="muted">{t('audit.anonymous')}</span>}</td>
+                      <td>{row.targetType ? `${row.targetType}${row.targetId ? ` · ${row.targetId}` : ''}` : '—'}</td>
+                      <td className="nowrap">
+                        {row.clientIp || '—'}
+                        {row.userAgent && <div className="audit-detail" title={row.userAgent}>{row.userAgent.slice(0, 40)}</div>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="form-actions">
+              <button className="secondary-button" type="button" onClick={() => load(Math.max(0, offset - pageSize))} disabled={offset === 0 || loading}>
+                {t('audit.prev')}
+              </button>
+              <span className="guide-note">
+                {t('audit.range', { from: offset + 1, to: offset + rows.length, total })}
+              </span>
+              <button className="secondary-button" type="button" onClick={() => load(offset + pageSize)} disabled={offset + rows.length >= total || loading}>
+                {t('audit.next')}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </PageFrame>
+  )
+}
+
+function BackupPage({ onToast }) {
+  const t = useT()
+  const { runElevated, stepUpPending, confirmStepUp, cancelStepUp } = useStepUp()
+  const [sections, setSections] = useState([])
+  const [selected, setSelected] = useState([])
+  const [passphrase, setPassphrase] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const [file, setFile] = useState(null)          // { name, base64 }
+  const [manifest, setManifest] = useState(null)  // preview result
+  const [restorePass, setRestorePass] = useState('')
+  const [mode, setMode] = useState('replace')
+  const [result, setResult] = useState(null)
+
+  const load = async () => {
+    try {
+      const res = await apiRequest('/api/backup/sections')
+      const list = resultOf(res) || []
+      setSections(list)
+      setSelected(list.filter(s => s.count > 0).map(s => s.id))
+    } catch (err) { setError(err.message) }
+  }
+  useEffect(() => { load() }, [])
+
+  const toggle = id => setSelected(cur => cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id])
+
+  const doExport = async event => {
+    event.preventDefault()
+    setBusy(true); setError('')
+    try {
+      // Export is step-up gated: the wrapper re-runs this request once the operator
+      // has re-authenticated, so the passphrase they typed is not lost.
+      const res = await runElevated(() => apiRequest('/api/backup/export', {
+        method: 'POST',
+        body: { sections: selected, passphrase }
+      }))
+      const out = resultOf(res) || {}
+      // Hand the file straight to the browser; it never touches disk server-side.
+      const bytes = atob(out.dataBase64 || '')
+      const buf = new Uint8Array(bytes.length)
+      for (let i = 0; i < bytes.length; i += 1) buf[i] = bytes.charCodeAt(i)
+      const url = URL.createObjectURL(new Blob([buf], { type: 'application/octet-stream' }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = out.filename || 'myidsan-backup.idbackup'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      setPassphrase('')
+      onToast?.(t('backup.exported'), 'success')
+    } catch (err) { setError(err.message); onToast?.(err.message, 'error') } finally { setBusy(false) }
+  }
+
+  const pickFile = async event => {
+    const picked = event.target.files && event.target.files[0]
+    setManifest(null); setResult(null); setError('')
+    if (!picked) { setFile(null); return }
+    const buf = await picked.arrayBuffer()
+    let binary = ''
+    const bytes = new Uint8Array(buf)
+    for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i])
+    setFile({ name: picked.name, base64: btoa(binary) })
+  }
+
+  const doPreview = async () => {
+    if (!file) return
+    setBusy(true); setError('')
+    try {
+      const res = await apiRequest('/api/backup/preview', {
+        method: 'POST',
+        body: { dataBase64: file.base64, passphrase: restorePass }
+      })
+      setManifest(resultOf(res))
+    } catch (err) { setError(err.message); onToast?.(err.message, 'error') } finally { setBusy(false) }
+  }
+
+  const doRestore = async () => {
+    if (!file || !manifest) return
+    if (!window.confirm(t('backup.confirmRestore'))) return
+    setBusy(true); setError('')
+    try {
+      const res = await runElevated(() => apiRequest('/api/backup/restore', {
+        method: 'POST',
+        body: { dataBase64: file.base64, passphrase: restorePass, mode }
+      }))
+      setResult(resultOf(res))
+      // Every session was just dropped, this one included. Say so rather than letting
+      // the next request fail with a confusing 401.
+      onToast?.(t('backup.restoredSignOut'), 'success')
+    } catch (err) { setError(err.message); onToast?.(err.message, 'error') } finally { setBusy(false) }
+  }
+
+  return (
+    <PageFrame title={t('backup.title')} subtitle={t('backup.subtitle')}>
+      <StepUpPrompt open={stepUpPending} onConfirm={confirmStepUp} onCancel={cancelStepUp} />
+      <div className="app-detail">
+        {error && <div className="message danger">{error}</div>}
+
+        <section className="guide-block">
+          <h2>{t('backup.exportHeading')}</h2>
+          <p className="guide-note">{t('backup.exportIntro')}</p>
+          <form onSubmit={doExport} className="record-form">
+            <div className="backup-sections">
+              {sections.map(s => (
+                <label key={s.id} className="guide-check">
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(s.id)}
+                    onChange={() => toggle(s.id)}
+                    disabled={busy}
+                  />
+                  <span>{t(`backup.section.${s.id}`)} <em>({s.count})</em></span>
+                </label>
+              ))}
+            </div>
+            <GuideField id="backup-pass" label={t('backup.passphrase')} hint={t('backup.passphraseHint')}>
+              <input
+                id="backup-pass"
+                type="password"
+                autoComplete="new-password"
+                value={passphrase}
+                onChange={e => setPassphrase(e.target.value)}
+                placeholder={t('backup.passphrasePlaceholder')}
+              />
+            </GuideField>
+            <button className="primary-button" type="submit" disabled={busy || !selected.length || passphrase.length < 12}>
+              {t('backup.exportButton')}
+            </button>
+          </form>
+        </section>
+
+        <section className="guide-block">
+          <h2>{t('backup.restoreHeading')}</h2>
+          <p className="guide-note warn">{t('backup.restoreWarning')}</p>
+
+          <GuideField id="backup-file" label={t('backup.file')} hint={t('backup.fileHint')}>
+            <input id="backup-file" type="file" accept=".idbackup" onChange={pickFile} disabled={busy} />
+          </GuideField>
+
+          {file && (
+            <>
+              <GuideField id="restore-pass" label={t('backup.passphrase')} hint={t('backup.restorePassHint')}>
+                <input
+                  id="restore-pass"
+                  type="password"
+                  autoComplete="off"
+                  value={restorePass}
+                  onChange={e => setRestorePass(e.target.value)}
+                />
+              </GuideField>
+              <button className="secondary-button" type="button" onClick={doPreview} disabled={busy || !restorePass}>
+                {t('backup.previewButton')}
+              </button>
+            </>
+          )}
+
+          {manifest && (
+            <div className="backup-manifest">
+              <h3>{t('backup.manifestHeading')}</h3>
+              <dl>
+                <dt>{t('backup.manifestVersion')}</dt><dd>{manifest.appVersion}</dd>
+                <dt>{t('backup.manifestCreated')}</dt>
+                <dd>{manifest.createdAt ? new Date(manifest.createdAt * 1000).toLocaleString() : '—'}</dd>
+                <dt>{t('backup.manifestContents')}</dt>
+                <dd>
+                  {(manifest.sections || []).map(s => (
+                    <span key={s} className="pill">{t(`backup.section.${s}`)} ({(manifest.counts || {})[s] || 0})</span>
+                  ))}
+                </dd>
+              </dl>
+
+              <GuideField id="restore-mode" label={t('backup.mode')} hint={t('backup.modeHint')}>
+                <select id="restore-mode" value={mode} onChange={e => setMode(e.target.value)} disabled={busy}>
+                  <option value="replace">{t('backup.modeReplace')}</option>
+                  <option value="merge">{t('backup.modeMerge')}</option>
+                </select>
+              </GuideField>
+
+              <button className="primary-button danger" type="button" onClick={doRestore} disabled={busy}>
+                {t('backup.restoreButton')}
+              </button>
+            </div>
+          )}
+
+          {result && (
+            <div className="message success">
+              <strong>{t('backup.restoreDone')}</strong>
+              <ul>
+                {Object.entries(result.restored || {}).map(([k, v]) => (
+                  <li key={k}>{t(`backup.section.${k}`)}: {v}</li>
+                ))}
+              </ul>
+              {Object.keys(result.skipped || {}).length > 0 && (
+                <p className="guide-note warn">
+                  {t('backup.skippedNote')} {Object.entries(result.skipped).map(([k, v]) => `${t(`backup.section.${k}`)}: ${v}`).join(', ')}
+                </p>
+              )}
+              {result.schemaWarning && <p className="guide-note warn">{result.schemaWarning}</p>}
+              <p className="guide-note">{t('backup.restoredSignOut')}</p>
+            </div>
+          )}
+        </section>
+      </div>
+    </PageFrame>
+  )
+}
+
+
+// useStepUp wraps an action that the server may refuse until the operator re-proves their
+// credential. On the sentinel it opens a prompt, re-authenticates, then re-runs the SAME
+// action — so the person never loses the work they were mid-way through, which is what
+// makes a re-authentication gate tolerable rather than something people route around.
+function useStepUp() {
+  const [pending, setPending] = useState(null) // { run, resolve, reject }
+
+  const runElevated = useCallback(action => new Promise((resolve, reject) => {
+    const attempt = async () => {
+      try {
+        resolve(await action())
+      } catch (err) {
+        if (err && err.stepUpRequired) {
+          setPending({ run: action, resolve, reject })
+          return
+        }
+        reject(err)
+      }
+    }
+    attempt()
+  }), [])
+
+  const cancel = () => {
+    if (pending) pending.reject(new Error('cancelled'))
+    setPending(null)
+  }
+
+  const confirm = async (password, code) => {
+    // Let the caller see the credential error rather than swallowing it: a mistyped
+    // password must keep the prompt open, not silently drop the action.
+    await apiRequest('/api/step-up', { method: 'POST', body: { password, code } })
+    const current = pending
+    setPending(null)
+    try {
+      current.resolve(await current.run())
+    } catch (err) {
+      current.reject(err)
+    }
+  }
+
+  return { runElevated, stepUpPending: Boolean(pending), confirmStepUp: confirm, cancelStepUp: cancel }
+}
+
+// StepUpPrompt asks for the password (and a code when a factor is enrolled) before a
+// sensitive action proceeds.
+function StepUpPrompt({ open, onConfirm, onCancel }) {
+  const t = useT()
+  const [password, setPassword] = useState('')
+  const [code, setCode] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (open) { setPassword(''); setCode(''); setError('') }
+  }, [open])
+
+  if (!open) return null
+
+  const submit = async event => {
+    event.preventDefault()
+    setBusy(true); setError('')
+    try {
+      await onConfirm(password, code)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="modal-layer">
+      {/* Matches the EditorModal structure: .modal-layer centres, .modal-backdrop dims.
+          The backdrop deliberately does NOT dismiss on click — losing a half-typed
+          password to a stray click, and silently dropping the action behind it, is worse
+          than requiring the explicit Cancel. */}
+      <div className="modal-backdrop" />
+      <section className="stepup-modal" role="dialog" aria-modal="true" aria-label={t('stepup.title')}>
+        <h2>{t('stepup.title')}</h2>
+        <p className="guide-note">{t('stepup.body')}</p>
+        {error && <div className="message danger">{error}</div>}
+        <form className="record-form" onSubmit={submit}>
+          <label>
+            {t('auth.password')}
+            <input type="password" autoComplete="current-password" autoFocus value={password} onChange={e => setPassword(e.target.value)} />
+          </label>
+          <label>
+            {t('stepup.code')}
+            <input inputMode="numeric" autoComplete="one-time-code" value={code} onChange={e => setCode(e.target.value)} placeholder={t('stepup.codeHint')} />
+          </label>
+          <div className="form-actions">
+            <button className="primary-button" type="submit" disabled={busy || !password}>{busy ? t('auth.working') : t('stepup.confirm')}</button>
+            <button className="secondary-button" type="button" onClick={onCancel} disabled={busy}>{t('common.cancel')}</button>
+          </div>
+        </form>
+      </section>
+    </div>
   )
 }
 

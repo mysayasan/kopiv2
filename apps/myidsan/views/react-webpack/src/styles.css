@@ -2829,3 +2829,286 @@ button .btn-icon {
   align-items: center;
   gap: 6px;
 }
+
+/* Backup & restore ------------------------------------------------------- */
+
+/* A titled block on the Backup page. Export and restore are two distinct,
+   consequential operations, so each gets its own bordered region rather than
+   running together as one long form. */
+.guide-block {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 20px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.guide-block h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.guide-block h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.guide-note {
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.55;
+  color: var(--muted);
+  max-width: 78ch;
+}
+
+/* The restore warning has to be read, not skimmed past: a replace-mode restore
+   removes every account on the server, including the operator's own. */
+.guide-note.warn {
+  color: var(--amber);
+  font-weight: 600;
+}
+
+.backup-sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 8px 18px;
+}
+
+.backup-sections .guide-check em {
+  font-style: normal;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.backup-manifest {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  background: var(--surface-alt);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.backup-manifest dl {
+  display: grid;
+  grid-template-columns: minmax(0, 160px) minmax(0, 1fr);
+  gap: 6px 16px;
+  margin: 0;
+  font-size: 0.88rem;
+}
+
+.backup-manifest dt {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.backup-manifest dd {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+/* Restore is destructive, so its confirm button reads as destructive even though
+   it is the primary action of that block. */
+.primary-button.danger {
+  background: var(--red);
+  border-color: var(--red);
+}
+
+.primary-button.danger:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+@media (max-width: 640px) {
+  .backup-manifest dl {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* An inline text button that reads as a link — used for the setup wizard's
+   "restore from a backup instead" affordance, which is a secondary path off the
+   welcome step rather than a third primary action. */
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--blue);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  color: var(--blue-dark);
+}
+
+.setup-restore {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  text-align: left;
+}
+
+.setup-restore h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.setup-restore label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+/* Audit log ------------------------------------------------------------- */
+
+.audit-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px 16px;
+}
+
+.audit-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* The trail is dense and scanned rather than read, so rows stay compact and the
+   secondary lines (detail, user agent) recede rather than compete. */
+.audit-table td {
+  vertical-align: top;
+  font-size: 0.86rem;
+}
+
+.audit-detail {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 2px;
+  word-break: break-word;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.pill-ok {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.pill-danger {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.pill-warn {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+/* Sessions -------------------------------------------------------------- */
+
+.session-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.session-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+/* An ended session stays listed as history but must not look actionable. */
+.session-row.ended {
+  opacity: 0.6;
+}
+
+.session-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.session-device {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  word-break: break-word;
+}
+
+.session-meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+@media (max-width: 640px) {
+  .session-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+/* Step-up re-authentication prompt. Narrower than the CRUD editor: it asks for two
+   fields, not a record. */
+.stepup-modal {
+  position: relative;
+  z-index: 1;
+  width: min(420px, 100%);
+  padding: 22px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.stepup-modal h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+}

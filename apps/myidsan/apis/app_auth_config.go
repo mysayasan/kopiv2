@@ -18,40 +18,40 @@ type appAuthConfigApi struct {
 	repo dbsql.IGenericRepo[entities.AppAuthConfig]
 }
 
+// RefreshTokenTTLSeconds, RequirePKCE and AllowRefreshToken are deliberately absent from
+// both the payload and the view. The columns still exist on entities.AppAuthConfig, but
+// nothing in the authorize/token path has ever read them — code_challenge is not parsed
+// and grant_type=refresh_token is rejected outright — so accepting and echoing them told
+// operators a security control was configured when it was not. They come back, enforced,
+// with OIDC conformance (docs/MYIDSAN_PRODUCTIZATION_PLAN.md phases 5.3 and 5.4).
 type appAuthConfigPayload struct {
-	Id                     int64  `json:"id"`
-	AppRegistryId          int64  `json:"appRegistryId"`
-	ClientId               string `json:"clientId"`
-	ClientSecret           string `json:"clientSecret"`
-	AuthCodeTTLSeconds     int64  `json:"authCodeTtlSeconds"`
-	AccessTokenTTLSeconds  int64  `json:"accessTokenTtlSeconds"`
-	SessionTTLSeconds      int64  `json:"sessionTtlSeconds"`
-	RefreshTokenTTLSeconds int64  `json:"refreshTokenTtlSeconds"`
-	RequirePKCE            bool   `json:"requirePkce"`
-	AllowRefreshToken      bool   `json:"allowRefreshToken"`
-	IsActive               bool   `json:"isActive"`
-	CreatedBy              int64  `json:"createdBy"`
-	CreatedAt              int64  `json:"createdAt"`
-	UpdatedBy              int64  `json:"updatedBy"`
-	UpdatedAt              int64  `json:"updatedAt"`
+	Id                    int64  `json:"id"`
+	AppRegistryId         int64  `json:"appRegistryId"`
+	ClientId              string `json:"clientId"`
+	ClientSecret          string `json:"clientSecret"`
+	AuthCodeTTLSeconds    int64  `json:"authCodeTtlSeconds"`
+	AccessTokenTTLSeconds int64  `json:"accessTokenTtlSeconds"`
+	SessionTTLSeconds     int64  `json:"sessionTtlSeconds"`
+	IsActive              bool   `json:"isActive"`
+	CreatedBy             int64  `json:"createdBy"`
+	CreatedAt             int64  `json:"createdAt"`
+	UpdatedBy             int64  `json:"updatedBy"`
+	UpdatedAt             int64  `json:"updatedAt"`
 }
 
 type appAuthConfigView struct {
-	Id                     int64  `json:"id"`
-	AppRegistryId          int64  `json:"appRegistryId"`
-	ClientId               string `json:"clientId"`
-	HasClientSecret        bool   `json:"hasClientSecret"`
-	AuthCodeTTLSeconds     int64  `json:"authCodeTtlSeconds"`
-	AccessTokenTTLSeconds  int64  `json:"accessTokenTtlSeconds"`
-	SessionTTLSeconds      int64  `json:"sessionTtlSeconds"`
-	RefreshTokenTTLSeconds int64  `json:"refreshTokenTtlSeconds"`
-	RequirePKCE            bool   `json:"requirePkce"`
-	AllowRefreshToken      bool   `json:"allowRefreshToken"`
-	IsActive               bool   `json:"isActive"`
-	CreatedBy              int64  `json:"createdBy"`
-	CreatedAt              int64  `json:"createdAt"`
-	UpdatedBy              int64  `json:"updatedBy"`
-	UpdatedAt              int64  `json:"updatedAt"`
+	Id                    int64  `json:"id"`
+	AppRegistryId         int64  `json:"appRegistryId"`
+	ClientId              string `json:"clientId"`
+	HasClientSecret       bool   `json:"hasClientSecret"`
+	AuthCodeTTLSeconds    int64  `json:"authCodeTtlSeconds"`
+	AccessTokenTTLSeconds int64  `json:"accessTokenTtlSeconds"`
+	SessionTTLSeconds     int64  `json:"sessionTtlSeconds"`
+	IsActive              bool   `json:"isActive"`
+	CreatedBy             int64  `json:"createdBy"`
+	CreatedAt             int64  `json:"createdAt"`
+	UpdatedBy             int64  `json:"updatedBy"`
+	UpdatedAt             int64  `json:"updatedAt"`
 }
 
 func NewAppAuthConfigApi(router *mux.Router, auth middlewares.AuthMidware, access *middlewares.AccessSessionMidware, repo dbsql.IGenericRepo[entities.AppAuthConfig]) {
@@ -137,22 +137,22 @@ func (m *appAuthConfigApi) delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func appAuthConfigPayloadToEntity(payload appAuthConfigPayload, secretHash string) entities.AppAuthConfig {
+	// The refresh/PKCE columns are left at their zero values: they are unread by the
+	// authorize and token paths, and writing an operator-supplied value would reintroduce
+	// the impression that they do something. See the type comment above.
 	return entities.AppAuthConfig{
-		Id:                     payload.Id,
-		AppRegistryId:          payload.AppRegistryId,
-		ClientId:               payload.ClientId,
-		ClientSecretHash:       secretHash,
-		AuthCodeTTLSeconds:     payload.AuthCodeTTLSeconds,
-		AccessTokenTTLSeconds:  payload.AccessTokenTTLSeconds,
-		SessionTTLSeconds:      payload.SessionTTLSeconds,
-		RefreshTokenTTLSeconds: payload.RefreshTokenTTLSeconds,
-		RequirePKCE:            payload.RequirePKCE,
-		AllowRefreshToken:      payload.AllowRefreshToken,
-		IsActive:               payload.IsActive,
-		CreatedBy:              payload.CreatedBy,
-		CreatedAt:              payload.CreatedAt,
-		UpdatedBy:              payload.UpdatedBy,
-		UpdatedAt:              payload.UpdatedAt,
+		Id:                    payload.Id,
+		AppRegistryId:         payload.AppRegistryId,
+		ClientId:              payload.ClientId,
+		ClientSecretHash:      secretHash,
+		AuthCodeTTLSeconds:    payload.AuthCodeTTLSeconds,
+		AccessTokenTTLSeconds: payload.AccessTokenTTLSeconds,
+		SessionTTLSeconds:     payload.SessionTTLSeconds,
+		IsActive:              payload.IsActive,
+		CreatedBy:             payload.CreatedBy,
+		CreatedAt:             payload.CreatedAt,
+		UpdatedBy:             payload.UpdatedBy,
+		UpdatedAt:             payload.UpdatedAt,
 	}
 }
 
@@ -161,20 +161,17 @@ func appAuthConfigToView(row *entities.AppAuthConfig) appAuthConfigView {
 		return appAuthConfigView{}
 	}
 	return appAuthConfigView{
-		Id:                     row.Id,
-		AppRegistryId:          row.AppRegistryId,
-		ClientId:               row.ClientId,
-		HasClientSecret:        strings.TrimSpace(row.ClientSecretHash) != "",
-		AuthCodeTTLSeconds:     row.AuthCodeTTLSeconds,
-		AccessTokenTTLSeconds:  row.AccessTokenTTLSeconds,
-		SessionTTLSeconds:      row.SessionTTLSeconds,
-		RefreshTokenTTLSeconds: row.RefreshTokenTTLSeconds,
-		RequirePKCE:            row.RequirePKCE,
-		AllowRefreshToken:      row.AllowRefreshToken,
-		IsActive:               row.IsActive,
-		CreatedBy:              row.CreatedBy,
-		CreatedAt:              row.CreatedAt,
-		UpdatedBy:              row.UpdatedBy,
-		UpdatedAt:              row.UpdatedAt,
+		Id:                    row.Id,
+		AppRegistryId:         row.AppRegistryId,
+		ClientId:              row.ClientId,
+		HasClientSecret:       strings.TrimSpace(row.ClientSecretHash) != "",
+		AuthCodeTTLSeconds:    row.AuthCodeTTLSeconds,
+		AccessTokenTTLSeconds: row.AccessTokenTTLSeconds,
+		SessionTTLSeconds:     row.SessionTTLSeconds,
+		IsActive:              row.IsActive,
+		CreatedBy:             row.CreatedBy,
+		CreatedAt:             row.CreatedAt,
+		UpdatedBy:             row.UpdatedBy,
+		UpdatedAt:             row.UpdatedAt,
 	}
 }

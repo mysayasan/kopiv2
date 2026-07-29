@@ -930,12 +930,25 @@ func decodeTokenRequest(w http.ResponseWriter, r *http.Request) (tokenRequest, e
 	return body, dec.Decode(&body)
 }
 
+// cleanContinuePath reduces a caller-supplied post-login destination to a same-origin
+// path, falling back to "/" for anything else. It guards the OAuth continue cookie and
+// the Kerberos failure redirect, so a bypass here is an open redirect on the login flow —
+// the classic phishing primitive against an identity provider.
+//
+// Backslashes are rejected outright rather than parsed. Browsers normalise "\" to "/" in
+// the authority position, so "/\evil.com" survives both checks below — url.Parse reports
+// IsAbs() false and it does not start with "//" — and then navigates to
+// //evil.com as a protocol-relative URL. Encoded forms (%5C) are covered because the
+// value is decoded by the time it reaches here.
 func cleanContinuePath(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return "/"
 	}
-	if parsed, err := url.Parse(value); err == nil && parsed.IsAbs() {
+	if strings.ContainsAny(value, "\\") {
+		return "/"
+	}
+	if parsed, err := url.Parse(value); err != nil || parsed.IsAbs() || parsed.Host != "" {
 		return "/"
 	}
 	if !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") {

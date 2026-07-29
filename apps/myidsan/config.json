@@ -1,6 +1,6 @@
 {
   "jwt": {
-    "secret": "Y-p5slztLZpMkafYwJg-WVMQwHx8iHEibCnJEepdGjw"
+    "secret": ""
   },
   "sso": {
     "issuer": "myidsan",
@@ -9,12 +9,12 @@
     "authCodeTtlSeconds": 300,
     "accessTokenTtlSeconds": 900,
     "policyCacheTtlSeconds": 30,
-    "internalToken": "change-me-in-production"
+    "internalToken": ""
   },
   "localAuth": {
     "enabled": true,
     "username": "admin",
-    "password": "admin123"
+    "password": ""
   },
   "kerberos": {
     "enabled": false,
@@ -25,7 +25,7 @@
   },
   "login": {
     "google": {
-      "client_id": "323260460700-kmbhjcg7leflb390vh8stsqi5iqgqac0.apps.googleusercontent.com",
+      "client_id": "",
       "client_secret": "",
       "redirect_url": "https://localhost:3001/api/callback/google",
       "scopes": [

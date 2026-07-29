@@ -1,6 +1,7 @@
 package apis
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -74,15 +75,26 @@ func (m *ssoApi) introspect(w http.ResponseWriter, r *http.Request) {
 	controllers.SendResult(w, introspectionFromClaims(claims, ""))
 }
 
+// authorizeInternal gates /api/sso/introspect on the shared internal token. Both header
+// forms are compared in constant time: a plain == on a secret leaks its length and a
+// prefix of its content through timing, and this endpoint answers "is this token valid"
+// for any relying app that cannot share the session cache.
 func (m *ssoApi) authorizeInternal(r *http.Request) bool {
 	if m.internalToken == "" {
 		return false
 	}
-	if strings.TrimSpace(r.Header.Get("X-Myidsan-Internal-Token")) == m.internalToken {
+	if constantTimeMatch(r.Header.Get("X-Myidsan-Internal-Token"), m.internalToken) {
 		return true
 	}
 	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
-	return strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer ")) == m.internalToken
+	return constantTimeMatch(strings.TrimPrefix(authHeader, "Bearer "), m.internalToken)
+}
+
+func constantTimeMatch(presented, expected string) bool {
+	return subtle.ConstantTimeCompare(
+		[]byte(strings.TrimSpace(presented)),
+		[]byte(expected),
+	) == 1
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {

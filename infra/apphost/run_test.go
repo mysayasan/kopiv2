@@ -130,7 +130,11 @@ func TestBuildCacheStoreDefaultProviderUsesInMemory(t *testing.T) {
 	}
 }
 
-func TestApplySensitiveConfigRequiresOAuthSecretsWhenProviderConfigured(t *testing.T) {
+// A provider block carrying a client id but no secret is half-configured. It must be
+// disabled with a warning rather than refusing to boot: a mis-set social provider should
+// never take the whole identity service down, and a button that redirects to
+// accounts.google.com with no client_id is worse than no button at all.
+func TestApplySensitiveConfigDisablesHalfConfiguredOAuthProvider(t *testing.T) {
 	t.Setenv("JWT_SECRET", "")
 	t.Setenv("GOOGLE_CLIENT_SECRET", "")
 
@@ -145,8 +149,36 @@ func TestApplySensitiveConfigRequiresOAuthSecretsWhenProviderConfigured(t *testi
 	}
 	cfg.Jwt.Secret = "unit-test-secret"
 
-	if err := applySensitiveConfig(cfg, ""); err == nil {
-		t.Fatalf("expected configured oauth provider to require oauth secret")
+	if err := applySensitiveConfig(cfg, ""); err != nil {
+		t.Fatalf("half-configured provider must not fail startup, got: %v", err)
+	}
+	if cfg.Login.Google != nil {
+		t.Fatalf("expected google provider to be disabled when the client secret is absent")
+	}
+}
+
+// The mirror of the above: both halves present means the provider stays enabled.
+func TestApplySensitiveConfigKeepsFullyConfiguredOAuthProvider(t *testing.T) {
+	t.Setenv("JWT_SECRET", "")
+	t.Setenv("GOOGLE_CLIENT_SECRET", "")
+
+	cfg := &config.AppConfigModel{
+		Login: &login.OAuthProvidersConfigModel{
+			Google: &login.OAuth2ConfigModel{
+				ClientId:     "google-client",
+				ClientSecret: "google-secret",
+				RedirectUrl:  "http://localhost/callback",
+				Scopes:       []string{"profile"},
+			},
+		},
+	}
+	cfg.Jwt.Secret = "unit-test-secret"
+
+	if err := applySensitiveConfig(cfg, ""); err != nil {
+		t.Fatalf("fully configured provider must survive, got: %v", err)
+	}
+	if cfg.Login.Google == nil {
+		t.Fatalf("expected google provider to stay enabled when id and secret are both set")
 	}
 }
 
@@ -197,5 +229,50 @@ func TestApplySensitiveConfigKeepsEnvJWTSecret(t *testing.T) {
 	}
 	if cfg.Jwt.Secret != "an-explicitly-strong-env-secret" {
 		t.Fatalf("env secret not applied: %q", cfg.Jwt.Secret)
+	}
+}
+
+// sso.internalToken shipped as the literal "change-me-in-production" and had no guard, so
+// an untouched install accepted a value anyone could read out of the repo to call
+// /api/sso/introspect. Carrying it forward is worse than disabling the endpoint.
+func TestApplySSOConfigFromEnvDropsPlaceholderInternalToken(t *testing.T) {
+	t.Setenv("SSO_INTERNAL_TOKEN", "")
+
+	cfg := &config.AppConfigModel{}
+	cfg.SSO.InternalToken = "change-me-in-production"
+
+	applySSOConfigFromEnv(cfg)
+
+	if cfg.SSO.InternalToken != "" {
+		t.Fatalf("placeholder internal token survived: %q", cfg.SSO.InternalToken)
+	}
+}
+
+func TestApplySSOConfigFromEnvKeepsRealInternalToken(t *testing.T) {
+	t.Setenv("SSO_INTERNAL_TOKEN", "")
+
+	const real = "PBTHc0Nn0h0OaVJ7yq3jqIZ1s0mS7lC2"
+	cfg := &config.AppConfigModel{}
+	cfg.SSO.InternalToken = real
+
+	applySSOConfigFromEnv(cfg)
+
+	if cfg.SSO.InternalToken != real {
+		t.Fatalf("operator-set internal token was altered: %q", cfg.SSO.InternalToken)
+	}
+}
+
+// The env override must win over a placeholder in config.json, not be discarded with it.
+func TestApplySSOConfigFromEnvOverridesPlaceholderWithEnv(t *testing.T) {
+	const fromEnv = "iaHc5Nn0h0OaVJ7yq3jqIZ1s0mS7lC2x"
+	t.Setenv("SSO_INTERNAL_TOKEN", fromEnv)
+
+	cfg := &config.AppConfigModel{}
+	cfg.SSO.InternalToken = "change-me-in-production"
+
+	applySSOConfigFromEnv(cfg)
+
+	if cfg.SSO.InternalToken != fromEnv {
+		t.Fatalf("env token should replace the placeholder, got %q", cfg.SSO.InternalToken)
 	}
 }

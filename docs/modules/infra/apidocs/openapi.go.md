@@ -7,6 +7,7 @@ Provides a shared runtime OpenAPI/Swagger implementation for all app modules.
 ## Responsibilities
 
 - Exposes Swagger UI at `/swagger`.
+- Serves the Swagger UI assets themselves from `GET /swagger/assets/{file}` — `swagger-ui-bundle.js` and `swagger-ui.css` are read from the vendored `//go:embed swaggerui/*` bundle (`swagger-ui-dist@5.32.11`, see `swaggerui_test.go.md`); `swagger-init.js` is served from an in-binary constant (`swaggerInitJS`) rather than embedded, since it is the small `SwaggerUIBundle({...})` call, not a vendored library file. All three get `Cache-Control: public, max-age=86400` since the asset path is build-pinned, not query-string-versioned.
 - Exposes generated OpenAPI JSON at `/swagger/openapi.json`.
 - Walks Gorilla Mux routes to auto-discover endpoint paths and methods.
 - Converts discovered routes into OpenAPI 3.0 path operations.
@@ -42,4 +43,4 @@ Provides a shared runtime OpenAPI/Swagger implementation for all app modules.
 - Operation job responses use `OperationJobOutputDto` and `DefaultOperationJobResponse`.
 - Legacy `*Payload` component names remain as aliases for now while shared endpoints reference DTO-named components.
 - App modules can improve endpoint summaries/descriptions by implementing `APIDocs()`.
-- The Swagger UI is loaded from CDN assets and reads the local `/swagger/openapi.json` document.
+- The Swagger UI is now fully self-hosted: it previously loaded `swagger-ui.css`/`swagger-ui-bundle.js` from `cdn.jsdelivr.net` and had its init call inlined in a `<script>` tag, which broke `/swagger` twice over — an air-gapped or egress-filtered install (e.g. `myseliasan`) rendered a blank page, and the inline `<script>` violated the apps' own shipped `script-src 'self'` Content-Security-Policy even when the CDN was reachable. The page still reads the local `/swagger/openapi.json` document; only the UI library and its bootstrap script moved on-box. The page's small inline `<style>` block is unaffected — the shipped CSP allows `style-src 'unsafe-inline'`.

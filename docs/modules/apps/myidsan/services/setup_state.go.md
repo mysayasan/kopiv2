@@ -25,3 +25,6 @@ Tracks whether the first-run setup wizard has been completed, mirroring
 - See `docs/modules/apps/myidsan/apis/setup.go.md` for the HTTP surface.
 - See `docs/modules/apps/myidsan/app/app.go.md` for where `RuntimeSetting` is
   registered as a bootstrap entity and the service is constructed.
+- The same instance is also handed to `services.NewBackupService`
+  (`services/backup.go.md`): a successful restore calls `Complete` so a rebuilt instance
+  never re-shows the first-run wizard.

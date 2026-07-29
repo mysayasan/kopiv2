@@ -15,7 +15,43 @@ identity provider (`infra/login.Registry`, see `infra/login/provider.go.md`).
 - Sets HttpOnly JWT session cookies for successful local/LDAP/Kerberos login/register and federated callbacks.
 - Sets a readable CSRF cookie that clients echo in `X-CSRF-Token` for unsafe authenticated requests.
 - Clears session cookies through logout.
-- `NewLoginApi` builds the provider registry via `login.BuildRegistry(oAuth2Conf)` (Google/GitHub register only when both `ClientId` and `ClientSecret` are present) and **returns it**, so `apps/myidsan/app/app.go` can thread the same registry into `NewFederatedAuthApi` — one registry, one provider list, shared by the server-rendered login page, the SPA, and the OAuth routes. `NewLoginApi`'s remaining parameters are now collected into a `LoginApiOptions` struct (`Directory services.IDirectoryService`, `Kerberos *login.KerberosAuthenticator`, `KerberosLabel string`, `Guard *sharedapis.LoginGuard`, `Metrics telemetry.Metrics`, `Mfa services.IMfaService`, `Store cache.Store`, `Reset services.IPasswordResetService`) — every field may be zero (tests pass the empty struct; LDAP/Kerberos disabled / lockout off / metrics not wired / MFA not armed / reset request endpoint a no-op). `KerberosLabel` defaults to `"Windows (SSO)"` when blank and `Kerberos` is non-nil. `Mfa` and `Store` must both be set together to arm the second-factor challenge (see "Second-Factor (MFA) Login Challenge" below); either absent leaves password-only behaviour unchanged. `Reset` (nil-safe) enables `POST /api/login/forgot` (see "Account Recovery (Forgot Password)" below).
+- `NewLoginApi` builds the provider registry via `login.BuildRegistry(oAuth2Conf)` (Google/GitHub register only when both `ClientId` and `ClientSecret` are present) and **returns it**, so `apps/myidsan/app/app.go` can thread the same registry into `NewFederatedAuthApi` — one registry, one provider list, shared by the server-rendered login page, the SPA, and the OAuth routes. `NewLoginApi`'s remaining parameters are now collected into a `LoginApiOptions` struct (`Directory services.IDirectoryService`, `Kerberos *login.KerberosAuthenticator`, `KerberosLabel string`, `Guard *sharedapis.LoginGuard`, `Metrics telemetry.Metrics`, `Mfa services.IMfaService`, `Store cache.Store`, `Reset services.IPasswordResetService`, `Audit services.IAuditService`, `Sessions services.ISessionService`, `TrustedProxies []string`) — every field may be zero (tests pass the empty struct; LDAP/Kerberos disabled / lockout off / metrics not wired / MFA not armed / reset request endpoint a no-op / audit+session recording a no-op). `KerberosLabel` defaults to `"Windows (SSO)"` when blank and `Kerberos` is non-nil. `Mfa` and `Store` must both be set together to arm the second-factor challenge (see "Second-Factor (MFA) Login Challenge" below); either absent leaves password-only behaviour unchanged. `Reset` (nil-safe) enables `POST /api/login/forgot` (see "Account Recovery (Forgot Password)" below). `TrustedProxies` is parsed once via `middlewares.ParseTrustedProxies` and stored on the api so every audit/session-recording call resolves the same client address.
+
+## Login/Session Auditing (Phase 2)
+
+Every credential surface in this file now records to `services.IAuditService` (nil-safe —
+`recordAudit` is a no-op when `m.audit == nil`, so tests and minimal wiring are unaffected):
+
+- `recordLoginFailure(w, r, attempted, method, reason)` — replaces the old parameterless
+  `recordLoginFailure(w, r)`. Records `services.ActionLoginFailure` with `ActorEmail`/
+  `TargetId` set to the ATTEMPTED identifier (not resolved to a real account — resolving it
+  would turn the trail into its own account-existence oracle) and `Metadata: {method}`.
+  When the failure trips the lockout, also records `services.ActionLoginLockout`. Called
+  from `defaultLogin` (attempted username, `MethodLocal`), `ldapLogin` (attempted username,
+  `MethodDirectory`), and `mfaLogin` on a bad second-factor code (empty identifier — the
+  password already verified to reach this point, so only the challenge token, not a
+  username, was presented).
+- `recordLoginSuccess(r, user, method)` — called once a session has actually been issued
+  (`issueLocalSession`, `kerberosLogin`, `providerCallback`, `mfaLogin`'s completion), never
+  when a password merely verified — a password-correct login that stops at the MFA
+  challenge has not signed anyone in. Records `services.ActionLoginSuccess` with the actor
+  from the resolved `*entities.UserLogin` and `Metadata: {method}`.
+- `loginMethodForUser(user)` derives the sign-in method (`local`/`ldap`/`kerberos`/`oidc`/
+  `social`) from the account's `SsoProvider` binding, used where the original request that
+  started an MFA challenge is long gone — labelling a directory user's MFA completion as
+  `local` would misreport how they authenticate.
+- `defaultLogout` records `services.ActionLogout` by reading claims straight off the cookie
+  via `m.auth.ClaimsFromRequest(r)` rather than the request context — logout is a public
+  route (must work even with an expired session) that never passes through the auth
+  middleware, so the context carries no claims. Recorded before `ClearAuthCookies`, while
+  there is still an identity to attribute the event to.
+- `issueSessionCookies` now also **pre-generates the session id** (`newFederatedOpaqueToken`)
+  when `m.sessions != nil`, so this app can index the session it is about to issue —
+  `AuthMidware.IssueAuthCookies` mints one only when the field is empty and never reports
+  it back, so without this the caller could not know which session it just created,
+  meaning an unindexed session no administrator could list or revoke. After the cookies are
+  set, `recordSession` calls `ISessionService.Record` with the resolved client IP/user
+  agent and the claim's `ExpiresAt`.
 - One generic route pair serves every registered redirect provider: `GET /api/login/{provider}` (`providerLogin`) and `GET /api/callback/{provider}` (`providerCallback`), matched by `mux` against `{provider:[a-z][a-z0-9_.:-]*}` — registered *after* the fixed `/default*`/`/ldap`/`/kerberos`/`/providers` routes so those still win the match. An unregistered provider key 404s with `ErrLimitedAccess` (`"<key> login is not configured"`).
 - Prevents local credential takeover of third-party-managed accounts.
 - Exposes `GET /api/login/providers` (`listProviders`) — public, no auth — returning the registry's authoritative `list: [{key, displayName, kind}]` (render order) plus legacy `{"google": bool, "github": bool}` booleans for older SPA builds that have not switched to reading `list`. `kind` is `"redirect"` for every registry provider, `"form"` for the directory option, and `"redirect"` again for Kerberos (`login.KerberosProviderKey`, `resp["kerberos"] = true`, displayed as `m.kerbLabel`) — a redirect kind because, unlike LDAP, the SPNEGO 401/Negotiate exchange happens transparently on browser navigation, with no credential form. The directory entry (`{key: login.LdapProviderKey, displayName: <configured label>, kind: "form"}`, plus `resp["ldap"] = true`) is added only when `directory.LoginOption(ctx)` reports it enabled, and the Kerberos entry only when `m.kerberos != nil` — so a disabled directory/Kerberos config renders neither a button nor a dead account-type choice on either login surface.

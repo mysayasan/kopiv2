@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -47,7 +48,7 @@ func ScanModbus(ctx context.Context, hosts []string, port int, transport string,
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			addr := fmt.Sprintf("%s:%d", h, port)
+			addr := net.JoinHostPort(h, strconv.Itoa(port))
 			// Gentle: skip a full unit walk unless the port is even open.
 			conn, err := net.DialTimeout("tcp", addr, perOp)
 			if err != nil {

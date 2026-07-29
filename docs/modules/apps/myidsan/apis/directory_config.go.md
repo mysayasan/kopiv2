@@ -19,3 +19,12 @@ and the federated group→role mappings — backs the Federation → Directory a
 
 - Both route groups use MyIDSan auth and `AccessSessionMidware`. The surface is **RBAC-matrix governed** (not granted by default; a superadmin must explicitly grant the role permission in the matrix to delegate access) — the same pattern as `app_auth_config.go.md`. This is safe to delegate because the bind password is never exposed by any read response.
 - `actorId(r)` reads the acting admin's user id off the request's JWT claims for `Save`'s audit columns; falls back to `0` if the claims are somehow absent.
+
+## Auditing (Phase 2)
+
+`put` records `services.ActionDirectoryUpdate` (`apis/audit.go.md`) after a successful save
+— host, port, `useStartTls`, base DN, `enabled`, and `authoritative`, since repointing the
+directory changes who can sign in and what role they land on. The bind password is
+deliberately **not** included in the recorded metadata — this table is readable by every
+superadmin and exported to CSV. `directoryConfigApi` embeds `auditRecorder`; `NewDirectoryConfigApi`
+now also takes `services.IAuditService` and `trustedProxies []string` parameters.
