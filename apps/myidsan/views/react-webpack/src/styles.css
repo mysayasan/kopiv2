@@ -638,6 +638,45 @@ button:disabled {
 .side-nav nav {
   display: grid;
   gap: 18px;
+  /* The rail is a 100vh flex column of brand / nav / foot. The nav is the only part that
+     grows without bound — every new section adds an item — so it is the part that has to
+     scroll, rather than letting the list run out past the bottom of the panel.
+     min-height:0 is what actually makes that work: a flex item defaults to
+     min-height:auto, which refuses to shrink below its content, so overflow-y alone would
+     never engage and the list would still overflow. */
+  min-height: 0;
+  overflow-y: auto;
+  /* Keep a wheel over the nav from chaining to the page behind it once the list ends. */
+  overscroll-behavior: contain;
+  /* Thin, and only as visible as it needs to be: this is a dark chrome rail, not content.
+     Firefox/standards. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--nav-line) transparent;
+}
+
+/* WebKit/Blink equivalent of the two scrollbar properties above. */
+.side-nav nav::-webkit-scrollbar {
+  width: 6px;
+}
+
+.side-nav nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.side-nav nav::-webkit-scrollbar-thumb {
+  background: var(--nav-line);
+  border-radius: 999px;
+}
+
+.side-nav nav:hover::-webkit-scrollbar-thumb {
+  background: var(--nav-label);
+}
+
+/* The brand block and the foot (theme, logout, session line) must keep their size when
+   the nav scrolls — without this they are the flex items that get squeezed instead. */
+.side-brand,
+.side-nav-foot {
+  flex-shrink: 0;
 }
 
 .nav-group {
