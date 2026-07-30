@@ -335,8 +335,9 @@ Logging config contract (`logging` in app config):
 - `enabled`: writes runtime log entries to the configured file when true.
 - `path`: log base path. Relative paths are resolved from the selected app directory and dated daily files are derived from this name.
 - `maxLineBytes`: maximum size retained for one listed log message.
+- `maxFileSizeMb`: caps a single dated log file; once reached the logger rolls to `<name>-<date>.<n>.log` for the rest of that day. `0` (or negative, or omitted) means uncapped — the historic day-only rotation. Shipped `deploy/dist/*-config.json` set `100`; existing configs that predate this field keep the uncapped default. Sequence-0 keeps the plain `<name>-<date>.log` filename, so this is a no-op for anyone who never sets it.
 - `cleanup.enabled`: starts the runtime log cleanup scheduler when true.
-- `cleanup.maxRetentionDays`: scheduled cleanup deletes dated files older than this many days.
+- `cleanup.maxRetentionDays`: scheduled cleanup deletes dated files older than this many days, including any `maxFileSizeMb`-rotated `<name>-<date>.<n>.log` siblings — retention's file discovery and its date parser both recognise the sequenced shape, or a rotated file would never be deleted (see `infra/logging/logger.go.md`).
 - `cleanup.frequencyMinutes`: scheduler check interval. Defaults to `60` minutes when omitted or invalid.
 - Manual month deletion rejects the current month at service level.
 

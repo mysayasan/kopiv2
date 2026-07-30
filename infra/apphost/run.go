@@ -1325,9 +1325,10 @@ func buildRuntimeLogger(appName string, baseDir string, appConfig *config.AppCon
 	}
 
 	return applog.NewFileLogger(applog.Config{
-		Enabled:      appConfig.Logging.Enabled,
-		Path:         appConfig.Logging.Path,
-		MaxLineBytes: appConfig.Logging.MaxLineBytes,
+		Enabled:       appConfig.Logging.Enabled,
+		Path:          appConfig.Logging.Path,
+		MaxLineBytes:  appConfig.Logging.MaxLineBytes,
+		MaxFileSizeMb: appConfig.Logging.MaxFileSizeMb,
 	})
 }
 

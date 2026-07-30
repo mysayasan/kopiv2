@@ -137,6 +137,7 @@ const SECTIONS = [
       { path: 'logging.enabled', k: 'enabled', type: 'checkbox' },
       { path: 'logging.path', k: 'path', type: 'text', browse: 'file' },
       { path: 'logging.maxLineBytes', k: 'maxLineBytes', type: 'number' },
+      { path: 'logging.maxFileSizeMb', k: 'maxFileSizeMb', type: 'number' },
       { path: 'logging.cleanup.enabled', k: 'cleanupEnabled', type: 'checkbox' },
       { path: 'logging.cleanup.maxRetentionDays', k: 'maxRetentionDays', type: 'number' },
       { path: 'logging.cleanup.frequencyMinutes', k: 'frequencyMinutes', type: 'number' },

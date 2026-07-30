@@ -96,6 +96,7 @@ What stayed here is anything a second app already uses or obviously will: `Secur
 - `fileStorage.cleanup.batchSize` controls the maximum expired rows removed per scheduler run and defaults to 100 in apphost.
 - `logging.path` is used as the base filename for dated daily log files.
 - `logging.maxLineBytes` bounds each listed log line to avoid oversized API responses.
+- `logging.maxFileSizeMb` caps a single log file, rolling to `<name>-<date>.<n>.log` once reached; zero (the default, and the value in any pre-existing config) means uncapped, matching the historic day-only rotation. This closes the gap where a chatty or hostile day could fill the disk long before `cleanup.maxRetentionDays` — which only deletes whole days — became relevant. See `infra/logging/logger.go.md`.
 - `logging.cleanup.enabled` starts the runtime log cleanup scheduler.
 - `logging.cleanup.maxRetentionDays` controls the retention cutoff.
 - `logging.cleanup.frequencyMinutes` controls scheduler check frequency and defaults to 60 minutes in apphost.

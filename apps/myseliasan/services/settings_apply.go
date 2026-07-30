@@ -61,6 +61,9 @@ func validateSection(section string, data map[string]any) error {
 		if g.i("logging.maxLineBytes") < 0 {
 			return fmt.Errorf("max log line bytes cannot be negative")
 		}
+		if g.i("logging.maxFileSizeMb") < 0 {
+			return fmt.Errorf("max log file size cannot be negative (use 0 for uncapped)")
+		}
 		if mp := strings.TrimSpace(g.s("telemetry.prometheus.metricsPath")); mp != "" && !strings.HasPrefix(mp, "/") {
 			return fmt.Errorf("metrics path must start with '/'")
 		}
@@ -131,6 +134,7 @@ func applyToConfig(cfg *config.AppConfigModel, section string, data map[string]a
 		cfg.Logging.Enabled = g.b("logging.enabled")
 		cfg.Logging.Path = g.s("logging.path")
 		cfg.Logging.MaxLineBytes = g.i("logging.maxLineBytes")
+		cfg.Logging.MaxFileSizeMb = g.i("logging.maxFileSizeMb")
 		cfg.Logging.Cleanup.Enabled = g.b("logging.cleanup.enabled")
 		cfg.Logging.Cleanup.MaxRetentionDays = g.i("logging.cleanup.maxRetentionDays")
 		cfg.Logging.Cleanup.FrequencyMinutes = g.i("logging.cleanup.frequencyMinutes")
