@@ -5,6 +5,7 @@
 #   ./scan.sh [baseline|api|full] [--yes]              # mymatasan (default)
 #   ./scan.sh --app myseliasan [baseline|api|full] [--yes]
 #   ./scan.sh --app myiotsan [baseline|api|full] [--yes]
+#   ./scan.sh --app myidsan [baseline|api|full] [--yes]
 #
 # Config is read from config/<app>.env (copy from the matching .example).
 # Env overrides: APP, TARGET, ZAP_AUTH_USER, ZAP_AUTH_PASS, ZAP_IMAGE
@@ -26,7 +27,7 @@ case "$(uname -s 2>/dev/null)" in
 esac
 
 # Positional args in any order: mode (baseline|api|full), --yes, and
-# --app <mymatasan|myseliasan|myiotsan> (or APP env var).
+# --app <mymatasan|myseliasan|myiotsan|myidsan> (or APP env var).
 app="${APP:-mymatasan}"
 mode=""
 yes=""
@@ -40,7 +41,7 @@ while [ $# -gt 0 ]; do
 done
 mode="${mode:-baseline}"
 
-case "$app" in mymatasan|myseliasan|myiotsan) ;; *) echo "App must be mymatasan|myseliasan|myiotsan"; exit 1;; esac
+case "$app" in mymatasan|myseliasan|myiotsan|myidsan) ;; *) echo "App must be mymatasan|myseliasan|myiotsan|myidsan"; exit 1;; esac
 case "$mode" in baseline|api|full) ;; *) echo "Mode must be baseline|api|full"; exit 1;; esac
 
 # Per-app wiring: config file, plan file, default port, report prefix.
@@ -49,6 +50,14 @@ if [ "$app" = "myseliasan" ]; then
   plan_file="myseliasan-$mode.yaml"
   default_target="https://host.docker.internal:3002"
   report_prefix="myseliasan-$mode"
+elif [ "$app" = "myidsan" ]; then
+  # JSON login + cookie session like myseliasan, but on myidsan's own login path
+  # (/api/login/default) and WITH the CSRF double-submit token, so the active plans
+  # load the same csrf-doublesubmit.js script.
+  envname="myidsan.target.env"
+  plan_file="myidsan-$mode.yaml"
+  default_target="https://host.docker.internal:3001"
+  report_prefix="myidsan-$mode"
 elif [ "$app" = "myiotsan" ]; then
   envname="myiotsan.target.env"
   plan_file="myiotsan-$mode.yaml"

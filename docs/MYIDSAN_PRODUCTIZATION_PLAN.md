@@ -546,7 +546,7 @@ a gauge. Both are worth having — a CA that expires takes the whole fleet down 
 no warning, which is the definition of a silent failure — but they need instrumentation
 inside the directory client and the CA service rather than at a handler boundary.
 
-### 4.5 ZAP scan and k6 load profile — *port, M*
+### 4.5 ZAP scan and k6 load profile — *port, M* — **DONE**
 
 Both tools already have per-app plans for the other three apps and **none for myidsan** —
 no `myidsan-*.yaml` in `tools/zaproxy/plans/`, no `myidsan-*.js` in `tools/k6/scripts/`.
@@ -558,6 +558,38 @@ Known gotchas from [[myseliasan-zap-hardening]] and [[k6-load-testing-tool]]: di
 rate limiter during a scan, the full ZAP plan OOMs Docker, swagger paths need
 `{id:[0-9]+}`, k6 resets the cookie jar per iteration, and a must-change-password state
 blocks reads.
+
+**DONE.** Three ZAP plans (`myidsan-{baseline,api,full}.yaml`), three k6 scripts
+(`myidsan-{smoke,load,stress}.js`), both drivers wired for `-App myidsan`, and a
+`.target.env.example` for each tool. All the recorded gotchas are carried into the files
+themselves rather than left in memory.
+
+Two things are specific to scanning and loading an **identity provider**, and neither has
+an analogue in the other three apps:
+
+*Exclusions have to cover "would break the scanner itself", not just "destructive".*
+myidsan can revoke the scanner's own session, clear its MFA, change its password, disable
+its account, or mutate the permission matrix out from under it — after which the rest of
+the run is a wall of 401s that looks like coverage and is not. Those are excluded
+alongside the genuinely destructive ones (rotating a client secret breaks **every relying
+app's** logins; regenerating the SSO CA breaks fleet trust). What stays firmly in scope is
+the part worth attacking: `/api/auth/authorize` and `/api/auth/token`, the login
+endpoints, and MFA verification.
+
+*There are two load ceilings and they are nowhere near each other.* The read ceiling
+(TLS + JSON + the DB read path) is what the other apps' scripts measure, because each VU
+bcrypts once at login and then rides a cookie session. But **"the IdP fell over on Monday
+morning" is a login storm, not a read storm** — everybody signs in inside the same ten
+minutes, and every one of those pays a full bcrypt, which is deliberately slow. So the
+stress script takes `MODE=login` (backed by a new `loginFresh` helper in the shared k6
+lib) to measure sign-in throughput separately. Sizing a box from the read number alone
+would be wrong by a large factor.
+
+Also carried into the configs: the failed-login **lockout** must be off on the throwaway
+target, not just the rate limiter. myidsan locks out per IP *and* per account, so a
+scanner or load generator hammering the login endpoint is exactly the pattern it exists to
+stop — leave it on and the run measures the lockout rather than the app. Both are security
+features working correctly, which is why turning them off is only ever for a throwaway.
 
 ### 4.6 Reverse-proxy guidance — *S* — **DONE (docs); one code fix deferred, see below**
 
