@@ -73,6 +73,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-07-30 — myidsan 1.36.0 (f5f16c4)
+
+### Added
+
+- **myidsan**: Closes §4.4 (IdP metrics) of the myidsan productization plan: myidsan had only two app-specific Prometheus series and was the only one of the four apps absent from docs/HOWTO.md's metrics catalogue. Four new metrics follow the suite's rule of instrumenting what fails silently, which for an identity provider mostly means failures somebody else experiences. myidsan_token_exchange_total{outcome} counts every authorization-code redemption at POST /api/auth/token across a closed set of nine outcomes (success, bad_request, unsupported_grant, client_unknown, secret_invalid, redirect_invalid, code_invalid, code_mismatch, server_error); a non-success is a relying app that just failed to sign a user in, and nothing on the myidsan side otherwise raises anything an operator would notice. myidsan_audit_write_failures_total counts audit entries that could not be persisted -- the audit service swallows that write error on purpose so it can never fail the action being audited, which means a trail that has stopped recording has no other symptom. myidsan_audit_retention_purged_total counts rows removed by the existing age-based retention purge, so trail shrinkage is attributable. myidsan_sessions_active is a gauge, polled once a minute by a new scheduler task rather than incremented at issue/revoke time (a session can also end on its own via cache expiry, which a hand-maintained counter would never notice), backed by a new ISessionService.CountActive that is verified against a real SQLite database rather than the package's fake repo because it filters on a boolean column that the query builder renders as a quoted literal. Wiring: federatedAuthApi.token records the new token-exchange counter on every path out of the handler; auditService gained an optional WithMetrics(...) attach point used from app.go; NewFederatedAuthApi gained a trailing metrics parameter. Updated docs/HOWTO.md's metrics catalogue, docs/MYIDSAN_PRODUCTIZATION_PLAN.md §4.4 (marked DONE, with upstream LDAP/OIDC latency and SSO CA expiry explicitly left for later), docs/TECHNICAL_SPEC.md's Application Metrics Principle section, the root README's Telemetry section, and added a Runtime Metrics section to apps/myidsan/README.md matching the other three apps.
 ## 2026-07-29 — myidsan 1.35.1, myiotsan 0.22.0, mymatasan 1.112.0, myseliasan 1.47.0, core 1.69.0 (bcc3e0d)
 
 ### Added
