@@ -65,6 +65,23 @@ Implements the `myidsan` app module for the shared runtime host.
   `myidsan_sessions_active` polling task. `apis.NewFederatedAuthApi`'s call site gained a
   trailing `deps.Metrics` argument so `POST /api/auth/token` can record
   `MetricTokenExchangeTotal{outcome}` — see `apis/federated_auth.go.md`.
+- Wires up the **in-app Settings editor, backend/API only** (`docs/MYIDSAN_PRODUCTIZATION_PLAN.md`
+  §4.1, ported from myseliasan's pattern — see `services/settings.go.md`,
+  `services/settings_apply.go.md`, `services/settings_materialize.go.md`,
+  `apis/settings.go.md`): builds `services.NewSettingsService(deps.Config, deps.ConfigPath,
+  deps.Db, secretCipher, logf)` and mounts `apis.NewSettingsApi(api, *deps.Auth, deps.Access,
+  settingsService, auditService, deps.Config.RateLimit.TrustedProxies)` right after
+  `apis.NewIdentityStatusApi`. Covers a safe subset of `config.json` — `localAuth`, `sso`,
+  `security`, `storage`, `logging` — via `GET /api/settings`, `GET`/`PUT
+  /api/settings/{section}`, `POST /api/settings/{section}/reset`,
+  `POST /api/settings/cache/test`, gated by superadmin **middleware** on the whole route
+  group (matching audit/backup/mfa-admin/session-admin) rather than myseliasan's per-handler
+  wrapper. Deliberately excludes `audit.retention` (the trail's only removal path is
+  config-file-only on purpose), `kerberos`, and `login.oidc[]`/social providers, and — unlike
+  myseliasan — has no server-side file-browse endpoint, since myidsan is the identity
+  provider. Seeds a `Settings` menu row (`Id: "settings"`, group `System`, order 90,
+  `AccessTier: DevOnly`, no `SeedRbac`). **The React frontend page is not part of this
+  change** — the API is reachable but there is no in-app form to drive it yet.
 - `moduleAppVersion(m)` — a small helper factored out of `APIDocs()` (below) so both the OpenAPI metadata and the backup manifest read this app's released version from the shared version manifest the same way, falling back to `"1.0.0"` when the manifest is unreadable.
 - Provides OpenAPI metadata and descriptions for the identity and RBAC administration surface.
 

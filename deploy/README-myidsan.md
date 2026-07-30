@@ -223,7 +223,11 @@ session issued a moment earlier would still carry pre-restore authority. Sign in
 an account from the backup — its password, role and second factor are exactly as they were.
 
 `config.json` is not restored, so re-apply any host settings by hand: listener ports, TLS
-paths, SMTP, Kerberos and any `login.oidc[]` providers.
+paths, SMTP, Kerberos and any `login.oidc[]` providers. A superadmin-only `GET`/`PUT
+/api/settings/{section}` API now covers a safe subset of that file (`localAuth`, `sso`,
+`security`, `storage`, `logging`; each save still requires a restart) — but there is no
+Settings *page* for it yet, so today it is reachable only by direct API call, not from the
+UI.
 
 ### Verify a backup before you need it
 

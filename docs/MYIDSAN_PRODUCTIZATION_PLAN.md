@@ -446,7 +446,7 @@ four are not. Enables login-CSRF and forced reset submission.
 
 ## Phase 4 — Operability
 
-### 4.1 Settings UI — *port, M*
+### 4.1 Settings UI — *port, M* — **BACKEND/API DONE, REACT UI OUTSTANDING**
 
 myidsan is the **only** app in the suite without one: `apis/settings.go` exists in
 myseliasan, mymatasan, and myiotsan. SMTP, lockout thresholds, session TTL, Kerberos, and
@@ -457,6 +457,67 @@ Port myseliasan's pattern, including its `settings_apply.go` / `settings_materia
 edits-to-`config.json`-plus-restart seam — see [[myseliasan-settings-feature]]. Keep the
 same safe-subset exclusions (db, server, bootstrap). Add a "send test email" action for
 SMTP; there is no way to verify mail configuration today.
+
+**DONE, backend/API only — there is still no Settings *page*.** The server side of the
+port landed: `services.ISettingsService` (`Sections`/`Get`/`GetAll`/`Save`/`Reset`/
+`TestCache`) over the `localAuth`, `sso`, `security`, `storage`, `logging` sections, the
+same `settings_apply.go` (validate + apply-to-live-config) / `settings_materialize.go`
+(surgical config.json write-back, untouched blocks preserved byte-for-byte) split, and
+`GET /api/settings`, `GET|PUT /api/settings/{section}`, `POST /api/settings/{section}/reset`,
+`POST /api/settings/cache/test`, seeded with a "Settings" nav item in the System group. A
+save always reports `needsRestart: true`, matching myseliasan — myidsan's host also reads
+these infra blocks exactly once at boot. **The React frontend page is deliberately not part
+of this change**; the API exists and is superadmin-reachable, but there is no in-app form
+yet to drive it — that remains outstanding work.
+
+The SMTP "send test email" action from this section's original scope is **not** included —
+`smtp` is not one of the five editable sections in this pass.
+
+Four things differ from a straight port of myseliasan's pattern, each earning its own
+mention because each is a deliberate narrowing, not an oversight:
+
+1. **`audit.retention` is deliberately not exposed**, on top of the db/server/bootstrap
+   blocks myseliasan also withholds. The audit trail's only removal path is
+   config-file-only *on purpose*: trimming it must require filesystem access to the server
+   rather than a session on it, so the superadmin whose own actions the trail records
+   cannot reach for it from inside the product. Two tests
+   (`TestAuditRetentionIsNotReachableFromTheSettingsEditor`,
+   `TestSavingAuditRetentionIsRefused`) guard both that it is unreachable and that it
+   cannot be smuggled in through the payload of a section that *is* editable. `kerberos`
+   (needs a keytab on disk regardless of what this editor could set) and
+   `login.oidc[]`/social providers (per-provider secrets, better served by the dedicated
+   Federation/Apps screens) are excluded too, and commented as such in the code.
+2. **No server-side file-browse endpoint**, unlike myseliasan. That endpoint enumerates
+   host directories, and myidsan is the identity provider — the highest-value target in
+   the suite. The two host paths an operator can set here (log file, file-storage root)
+   are chosen once at install and can be typed.
+3. **`security` surfaces the three identity policies** — `loginSecurity` (lockout),
+   `passwordPolicy`, `mfa` — read through their `Effective*()` resolvers rather than the
+   raw config struct. This is the section that makes the page matter more here than
+   elsewhere: those blocks are absent from the shipped `config.json` and resolve through
+   defaults, so today an operator cannot even see that the lockout is on, what the
+   password floor is, or what the MFA policy resolves to; reading the zero-valued raw
+   struct would look like the lockout was off. Validation floors what it accepts:
+   `maxAttempts >= 2` once the lockout is enabled (0 or 1 locks an account out on its
+   first attempt), `passwordPolicy.minLength >= 8`, and `mfa.policy` restricted to the
+   three known values.
+4. **`sso` exposes only the provider side.** The shared SSO config block carries both
+   sides of a federation; `providerBaseUrl`/`clientId`/`clientSecret`/`redirectBaseUrl`/
+   `redirectPath` describe a relying app pointing *at* an IdP and are meaningless on the
+   IdP itself, so they are omitted here. `internalToken` is masked like any other secret.
+   `authCodeTtlSeconds` is capped at 600s: an authorization code lives in a redirect URL,
+   and therefore in browser history, proxy logs, and Referer headers.
+
+Also ported with an adaptation rather than a straight copy: superadmin is enforced as
+**middleware** on the whole `/settings` route group (`auth.Middleware` +
+`access.Middleware` + `access.RequireSuperadmin`), matching how myidsan already gates
+audit/backup/mfa-admin/session-admin, rather than myseliasan's per-handler
+`requireSuper` wrapper. Saves and resets are recorded through myidsan's existing
+`auditService` as `settings.save`/`settings.reset` — which section and by whom, never the
+values, since a section can carry the JWT secret, the SSO internal token, or a Redis
+password. `NewSettingsService` is nil-`db`-tolerant: a nil database only disables the
+first-run defaults snapshot (and therefore `Reset`), so the service is constructible and
+unit-testable without one.
 
 ### 4.2 The HA boundary — *S, mostly documentation* — **DONE**
 
