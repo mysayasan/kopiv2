@@ -141,6 +141,7 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{AppCode: "myidsan", Title: "Sessions", Description: "self-service session listing and revocation", Path: "/api/session", AccessTier: apiaccessenums.AuthOnly},
 		{AppCode: "myidsan", Title: "Session Administration", Description: "cross-account session listing and revocation", Path: "/api/session-admin", AccessTier: apiaccessenums.DevOnly},
 		{AppCode: "myidsan", Title: "Audit Log", Description: "append-only security event trail", Path: "/api/audit", Metadata: menuMetadata(menuItem{Enabled: true, Id: "audit", Label: "Audit log", Group: "System", Order: 5, Summary: "Who signed in, what changed, and from where — exportable for compliance review.", Tone: "steel"}), AccessTier: apiaccessenums.DevOnly},
+		{AppCode: "myidsan", Title: "Settings", Description: "in-app editor for the safe config.json subset", Path: "/api/settings", Metadata: menuMetadata(menuItem{Enabled: true, Id: "settings", Label: "Settings", Group: "System", Order: 90, Summary: "Sign-in policy, SSO token lifetimes, storage and logging — applied on restart.", Tone: "steel"}), AccessTier: apiaccessenums.DevOnly},
 		{AppCode: "myidsan", Title: "Backup & Restore", Description: "encrypted identity-store export and disaster recovery", Path: "/api/backup", Metadata: menuMetadata(menuItem{Enabled: true, Id: "backup", Label: "Backup & restore", Group: "System", Order: 10, Summary: "Export an encrypted copy of users, roles and SSO clients — or rebuild this server from one.", Tone: "amber"}), AccessTier: apiaccessenums.DevOnly},
 		{AppCode: "myidsan", Title: "User Credential", Description: "user login and role access", Path: "/api/user-credential", Metadata: menuMetadata(
 			menuItem{Enabled: true, Id: "users", Label: "Users", Group: "Identity", Order: 10, Summary: "Maintain credentials, profile details, and role assignment.", Tone: "blue"},
@@ -429,6 +430,17 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// Superadmin-handoff status drives the "disable the stock superadmin" banner. The
 	// stock account's email is the configured localAuth.username.
 	apis.NewIdentityStatusApi(api, *deps.Auth, deps.Access, userLoginRepo, deps.AccessRoles, deps.Config.LocalAuth.Username)
+
+	// In-app config editor over a SAFE SUBSET of config.json. myidsan was the only app in
+	// the suite without one, which mattered more here than elsewhere: the lockout, password
+	// policy and MFA policy are absent from the shipped config and resolve through
+	// Effective*() defaults, so an operator had no way to even SEE what was in force.
+	// Edits are written back to config.json and take effect on the next restart — the host
+	// reads these infra blocks once at boot, so there is no seam for a DB value to override
+	// them. Deliberately NOT editable: audit.retention (see services/settings.go for why).
+	settingsService := services.NewSettingsService(deps.Config, deps.ConfigPath, deps.Db, secretCipher,
+		func(f string, a ...any) { log.Printf("myidsan.settings: "+f, a...) })
+	apis.NewSettingsApi(api, *deps.Auth, deps.Access, settingsService, auditService, deps.Config.RateLimit.TrustedProxies)
 	return nil, nil
 }
 
