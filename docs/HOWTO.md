@@ -955,6 +955,8 @@ curl -X DELETE -b cookies.txt -H "X-CSRF-Token: $CSRF_TOKEN" \
 
 The log base path is configured by `logging.path` or `LOG_PATH`. Relative paths resolve from the selected app directory and work across Linux, Windows, and macOS. A base path such as `./logs/mymatasan.log` writes dated files like `mymatasan-2026-06-07.log`.
 
+`logging.maxFileSizeMb` caps that dated file's size (shipped configs default to `100`; `0` or omitted is uncapped, the historic behaviour). Once a day's file reaches the cap, further lines go to `mymatasan-2026-06-07.1.log`, then `.2.log`, and so on — the first file keeps its original name, so nothing changes for anyone who never sets the cap. Scheduled/manual deletion covers these sequenced siblings the same as the plain dated file.
+
 Current-month deletion is blocked in the runtime log service. Scheduled cleanup can be enabled with `logging.cleanup.enabled`, `logging.cleanup.maxRetentionDays`, and `logging.cleanup.frequencyMinutes`; the frequency defaults to `60` minutes when omitted.
 
 ## MyIDSan Audit Log Retention

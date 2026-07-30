@@ -341,6 +341,10 @@ func (s *settingsService) read(section string) (map[string]any, error) {
 				"enabled":      s.cfg.Logging.Enabled,
 				"path":         s.cfg.Logging.Path,
 				"maxLineBytes": s.cfg.Logging.MaxLineBytes,
+				// 0 = uncapped. Exposed because the allow-list here is field-level, so a
+				// config knob absent from this map is unreachable from the only in-app
+				// config editor in the suite.
+				"maxFileSizeMb": s.cfg.Logging.MaxFileSizeMb,
 				"cleanup": map[string]any{
 					"enabled":          s.cfg.Logging.Cleanup.Enabled,
 					"maxRetentionDays": s.cfg.Logging.Cleanup.MaxRetentionDays,

@@ -171,6 +171,7 @@
     "enabled": true,
     "path": "./logs/mymatasan.log",
     "maxLineBytes": 8192,
+    "maxFileSizeMb": 100,
     "cleanup": {
       "enabled": true,
       "maxRetentionDays": 90,

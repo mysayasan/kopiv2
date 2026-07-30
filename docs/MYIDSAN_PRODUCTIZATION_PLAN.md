@@ -482,7 +482,7 @@ than one instance, since that is the only reason to pay for one. A distributed l
 per-process session cache is therefore a self-inconsistent configuration, and saying so is a
 fact about the config rather than a hunch about the topology.
 
-### 4.3 Resource limits — *S* — **connection pool DONE; log size cap OUTSTANDING**
+### 4.3 Resource limits — *S* — **DONE**
 
 - ~~`SetMaxOpenConns` is set only for SQLite. Postgres and MariaDB use Go's default —
   unlimited — and will exhaust a customer's connection budget under load.~~ **DONE.**
@@ -507,6 +507,30 @@ fact about the config rather than a hunch about the topology.
   functions to recognise it would leave the extra files **undeletable forever**, causing
   exactly the disk exhaustion the cap was added to prevent. Any implementation must change
   the parser and the writer together, with a test that a sequenced file is still pruned.
+
+  **DONE, and the trap was real.** `logging.maxFileSizeMb` (0 = uncapped, the historic
+  behaviour) rolls the active file to `<name>-<date>.<n>.log` when the cap is hit. Both
+  parsers were changed in the same commit: `logFiles()` gained a second glob for the
+  sequenced shape, and `dateValueFromPath()` now strips an **all-digit** suffix before
+  parsing the date — digits only, so a `…-<date>.bak.log` is still rejected rather than
+  being treated as a log file and deleted.
+
+  `TestSizeRotatedFilesAreStillPruned` is the guard. It was mutation-tested: reverting just
+  the parser change (as if the writer had been changed alone) makes it delete **1 of 3**
+  files instead of 3 — exactly the undeletable-file bug, caught. A restart also resumes at
+  the highest unfilled sequence rather than reopening a file that is already at the cap,
+  and the shipped `deploy/dist/*-config.json` now set a 100 MB cap, since an uncapped
+  default is what created this gap in the first place.
+
+  **Found while doing it, unrelated to the cap:** `List` ordered newest-first by
+  string-comparing the RFC3339 `Time` field on a timestamp tie. Go trims trailing zeros
+  from the fraction, so `.1Z` vs `.1000001Z` compares as `.1 > .1000001` — backwards. And
+  on Windows the clock is coarse enough (~0.5–15 ms) that two adjacent writes get a
+  byte-identical `Time`, leaving the tie unresolved and the stable sort returning entries
+  **oldest** first. `TestFileLoggerWritesAndListsNewestFirst` was therefore failing ~90% of
+  the time on Windows (37/40 runs) while passing on Linux CI, which is why nobody noticed.
+  Now ordered by read order, which is already chronological and needs no clock: 0/40
+  failures.
 
 ### 4.4 IdP metrics — *S* — **DONE**
 

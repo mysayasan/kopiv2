@@ -195,6 +195,11 @@ type AppConfigModel struct {
 		Enabled      bool   `json:"enabled"`
 		Path         string `json:"path"`
 		MaxLineBytes int    `json:"maxLineBytes"`
+		// MaxFileSizeMb caps a single log FILE, rolling to `<name>-<date>.<n>.log` when
+		// reached. Rotation is otherwise by calendar day only, so one chatty or hostile
+		// day can fill the disk long before `cleanup.maxRetentionDays` — which deletes
+		// whole days — becomes relevant. Zero means uncapped, the historic behaviour.
+		MaxFileSizeMb int `json:"maxFileSizeMb"`
 		Cleanup      struct {
 			Enabled          bool `json:"enabled"`
 			MaxRetentionDays int  `json:"maxRetentionDays"`
