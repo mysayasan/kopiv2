@@ -31,6 +31,26 @@ Session administration: `ISessionService` records, lists, and revokes SSO sessio
   leave a row claiming "revoked" while the session still worked.
 - `RevokeAllForUser(ctx, userId, exceptSessionId)` lists, then revokes every currently-live
   session except the one named (used for "sign out everywhere else"), returning a count.
+- `CountActive(ctx)` counts rows the INDEX still marks active (an `IsActive = true` filter
+  on the repo), backing the `myidsan_sessions_active` gauge (`services/metrics.go.md`). It
+  reads the table, not the cache — the cache remains the authority on whether any one
+  session is valid, but it cannot be enumerated, so a fleet-wide count has to come from the
+  table. The two can differ briefly (a cache entry that expired on its own leaves its row
+  still marked active until something reconciles it), which makes this a capacity/anomaly
+  signal rather than an exact live count. Covered against a real bootstrapped SQLite
+  database, not just the package's hand-written fake repo
+  (`services/session_sqlite_test.go`): the filter is on a **boolean** column, and the query
+  builder renders bool filter values as quoted literals, which a fake repo — comparing Go
+  values, so it agrees with whatever was assumed — cannot catch a mismatch on. A mismatch
+  there would make the gauge read a permanent zero indistinguishable from "no sessions".
+- Package-level `PublishActiveSessions(ctx, sessions ISessionService, m telemetry.Metrics)`
+  sets the gauge from one `CountActive` call; nil-safe on either argument. Kept separate
+  from `CountActive` so the scheduler task that calls it (`startSessionGauge`,
+  `app/audit_retention.go.md`) is a one-liner and the count stays testable without a
+  metrics recorder. Polled on a timer rather than incremented at `Record`/`Revoke` call
+  sites, because sessions also end without anyone calling `Revoke` — a cache entry simply
+  expires — so a hand-maintained counter would drift from the truth and never recover; a
+  periodic read of the index cannot drift, it is at worst one interval stale.
 
 ## Notes
 

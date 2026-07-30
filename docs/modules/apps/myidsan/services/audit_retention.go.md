@@ -32,7 +32,10 @@ lack of a delete path.
      Any failure before the rename (paging error, disk full, permissions) returns early
      having deleted nothing — a failed run costs a retention cycle, never history. A failure
      in `Delete` itself is also surfaced (the error names the archive path) rather than
-     swallowed, since the archive is already durable and the caller may want to retry.
+     swallowed, since the archive is already durable and the caller may want to retry. On a
+     successful delete, adds the deleted count to `MetricAuditRetentionPurgedTotal` (when a
+     metrics recorder is attached, and only when it deleted at least one row) — see
+     `services/metrics.go.md`.
   6. On a successful delete, calls `s.Record` with `ActionAuditPurge`, `Outcome: success`,
      and `Metadata: {cutoff, maxRetentionDays, archived, deleted, archiveFile, highestId}`.
      This entry is newer than the cutoff it just computed, so it always survives the run

@@ -55,6 +55,16 @@ Implements the `myidsan` app module for the shared runtime host.
   auditService)` (`app/audit_retention.go.md`, `docs/MYIDSAN_PRODUCTIZATION_PLAN.md` Phase 4)
   — a no-op unless `config.audit.retention.enabled` is set, in which case it schedules the
   age-based, archive-first trim of the trail as a periodic `deps.Scheduler` task.
+- Wires up **IdP metrics** (`docs/MYIDSAN_PRODUCTIZATION_PLAN.md` §4.4, `services/metrics.go.md`):
+  calls `services.DescribeMetrics(deps.Metrics)` before constructing `auditService`; attaches
+  `deps.Metrics` to it via a type-asserted `WithMetrics` call (so `auditService`'s package-private
+  concrete type does not have to be exported just to hand back the same `IAuditService`) right
+  after construction, so `MetricAuditWriteFailuresTotal` is live before anything can call
+  `Record`; and calls `startSessionGauge(deps, sessionService)`
+  (`app/audit_retention.go.md`) right after `sessionService` is built, registering the
+  `myidsan_sessions_active` polling task. `apis.NewFederatedAuthApi`'s call site gained a
+  trailing `deps.Metrics` argument so `POST /api/auth/token` can record
+  `MetricTokenExchangeTotal{outcome}` — see `apis/federated_auth.go.md`.
 - `moduleAppVersion(m)` — a small helper factored out of `APIDocs()` (below) so both the OpenAPI metadata and the backup manifest read this app's released version from the shared version manifest the same way, falling back to `"1.0.0"` when the manifest is unreadable.
 - Provides OpenAPI metadata and descriptions for the identity and RBAC administration surface.
 

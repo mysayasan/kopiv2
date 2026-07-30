@@ -28,9 +28,12 @@ edited from inside the product by the same superadmin whose actions it records (
   `TargetId`, and an inclusive `From`/`To` unix-second `CreatedAt` range). Zero values mean
   no filter on that field.
 - `Record(ctx, e)` persists one entry and is **best-effort by design**: a write failure is
-  logged (via the injected `logf`) but never returned, so auditing can never block or fail
-  the action being audited — refusing a login because the audit table is full would be
-  worse than a gap in the trail. Every free-text field is length-truncated before insert
+  counted (`MetricAuditWriteFailuresTotal`, when a metrics recorder is attached) and logged
+  (via the injected `logf`) but never returned, so auditing can never block or fail the
+  action being audited — refusing a login because the audit table is full would be worse
+  than a gap in the trail. The counter exists because that swallowed error is otherwise the
+  ONLY trace: every other signal stays green while the trail quietly stops recording (see
+  `services/metrics.go.md`). Every free-text field is length-truncated before insert
   (`truncate`, e.g. 1024 bytes for `Detail`, 320 for `ActorEmail`) so a hostile identifier
   (a huge "username" on a failed login) cannot bloat the table.
 - `List(ctx, limit, offset, f)` applies `AuditFilter` as `Equal`/range filters and sorts
@@ -53,5 +56,10 @@ edited from inside the product by the same superadmin whose actions it records (
 - `NewAuditService(repo, logf)` takes a plain `dbsql.IGenericRepo[entities.AuditLog]` and a
   `func(format string, args ...any)` diagnostics sink (may be `nil`), so a silently-failing
   trail is still visible somewhere.
+- `WithMetrics(m telemetry.Metrics) IAuditService` attaches a recorder after construction
+  and returns the same service (chainable), so the one existing construction site in
+  `app/app.go.md` only needed a follow-up call, not a new constructor parameter. `metrics`
+  is optional and nil-safe — `Record`/`PurgeOlderThan` work identically without it, just
+  without the counters.
 - Constructed once in `app/app.go.md` and passed by value into every handler that performs
   a sensitive action, rather than reached through a global.

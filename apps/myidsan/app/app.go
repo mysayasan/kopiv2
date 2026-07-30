@@ -26,6 +26,7 @@ import (
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	logininfra "github.com/mysayasan/kopiv2/infra/login"
 	"github.com/mysayasan/kopiv2/infra/mailer"
+	"github.com/mysayasan/kopiv2/infra/telemetry"
 	"github.com/mysayasan/kopiv2/infra/versioning"
 )
 
@@ -328,10 +329,18 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// Append-only security trail. Constructed before the login API because authentication
 	// events are the bulk of what it records, and it is passed by value into every handler
 	// that performs a sensitive action rather than being reached through a global.
+	services.DescribeMetrics(deps.Metrics)
 	auditService := services.NewAuditService(
 		dbsql.NewGenericRepo[myidsanentities.AuditLog](deps.Db),
 		log.Printf,
 	)
+	// The audit trail swallows its own write errors on purpose, so the counter is the
+	// only way a broken trail becomes visible.
+	if withMetrics, ok := auditService.(interface {
+		WithMetrics(telemetry.Metrics) services.IAuditService
+	}); ok {
+		auditService = withMetrics.WithMetrics(deps.Metrics)
+	}
 	startAuditRetention(deps, auditService)
 
 	// Session index. The cache entry remains the authority on whether a session is valid;
@@ -341,6 +350,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		deps.Cache,
 		log.Printf,
 	)
+	startSessionGauge(deps, sessionService)
 
 	providerRegistry := apis.NewLoginApi(api, deps.Config.Login, *deps.Auth, userLoginService, apis.LoginApiOptions{
 		Directory:     directoryService,
@@ -364,7 +374,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// Role + permission management is the shared accessrbac surface (/api/access-rbac),
 	// mounted by apphost. The old per-app user_role admin endpoint is retired.
 	apis.NewSSOApi(api, deps.Config, deps.Auth)
-	apis.NewFederatedAuthApi(api, deps.Config, deps.Auth, providerRegistry, directoryService, kerberosLabel, loginGuard, userLoginService, appRegistryRepo, appAuthConfigRepo, appRedirectUriRepo, deps.Cache, mfaService, passwordResetService)
+	apis.NewFederatedAuthApi(api, deps.Config, deps.Auth, providerRegistry, directoryService, kerberosLabel, loginGuard, userLoginService, appRegistryRepo, appAuthConfigRepo, appRedirectUriRepo, deps.Cache, mfaService, passwordResetService, deps.Metrics)
 	apis.NewDirectoryConfigApi(api, *deps.Auth, deps.Access, directoryService, groupMappingRepo, auditService, deps.Config.RateLimit.TrustedProxies)
 	apis.NewAppAuthConfigApi(api, *deps.Auth, deps.Access, appAuthConfigRepo)
 	apis.NewAppRedirectUriApi(api, *deps.Auth, deps.Access, appRedirectUriRepo)

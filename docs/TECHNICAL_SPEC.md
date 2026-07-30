@@ -451,6 +451,14 @@ falling value means for the operator to act on.
 - `mymatasan` was already instrumented before this round (vision frames/inference/alerts, camera
   health, disk, and recording's segment-finalize outcomes / ffmpeg restarts —
   `docs/modules/infra/recording/types.go.md`); it is not a gap this round closed.
+- `myidsan` (an identity provider, so most of its failures are experienced by somebody
+  else): a failed token exchange is seen only by the relying app, which shows its own user
+  its own error, while myidsan itself raises nothing an operator would notice; the audit
+  trail swallows its own write errors by design, so a trail that has stopped recording has
+  no other symptom. Went from two app metrics to six and closed the gap in
+  `docs/HOWTO.md`'s catalogue — it had been the only one of the four apps missing from it.
+  See `docs/modules/apps/myidsan/services/metrics.go.md`,
+  `docs/MYIDSAN_PRODUCTIZATION_PLAN.md` §4.4.
 
 ## Non-Goals
 

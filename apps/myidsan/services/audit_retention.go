@@ -152,6 +152,9 @@ func (s *auditService) PurgeOlderThan(ctx context.Context, maxRetentionDays int,
 		return res, fmt.Errorf("audit retention: deleting archived rows (archive kept at %s): %w", finalPath, err)
 	}
 	res.Deleted = deleted
+	if s.metrics != nil && deleted > 0 {
+		s.metrics.Add(MetricAuditRetentionPurgedTotal, nil, float64(deleted))
+	}
 
 	// Record the trim inside the trail it trimmed. This entry is younger than the cutoff,
 	// so it survives this run and every later one.

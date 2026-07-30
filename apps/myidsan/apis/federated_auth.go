@@ -30,6 +30,7 @@ import (
 	"github.com/mysayasan/kopiv2/infra/config"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/login"
+	"github.com/mysayasan/kopiv2/infra/telemetry"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -57,6 +58,20 @@ type federatedAuthApi struct {
 	authCodeTTL      time.Duration
 	accessTokenTTL   time.Duration
 	defaultSessionTL time.Duration
+	metrics          telemetry.Metrics
+}
+
+// recordTokenExchange counts one authorization-code redemption by outcome.
+//
+// Every failure below is returned to a RELYING APP, which shows its own user its own
+// error; nothing on this side raises anything an operator would see. Without this counter
+// "every login to the payroll app has been broken since its secret was rotated" is
+// invisible here until somebody phones.
+func (m *federatedAuthApi) recordTokenExchange(outcome string) {
+	if m.metrics == nil {
+		return
+	}
+	m.metrics.Inc(services.MetricTokenExchangeTotal, telemetry.Labels{"outcome": outcome})
 }
 
 type authCodeCacheEntry struct {
@@ -115,6 +130,7 @@ func NewFederatedAuthApi(
 	store cache.Store,
 	mfaService services.IMfaService,
 	resetService services.IPasswordResetService,
+	metrics telemetry.Metrics,
 ) {
 	var challenger *mfaChallenger
 	if mfaService != nil && store != nil {
@@ -137,6 +153,7 @@ func NewFederatedAuthApi(
 		authCodeTTL:      secondsDuration(configInt(cfg, "authCode"), defaultAuthCodeTTLSeconds),
 		accessTokenTTL:   secondsDuration(configInt(cfg, "accessToken"), defaultAccessTokenTTLSeconds),
 		defaultSessionTL: secondsDuration(configInt(cfg, "session"), defaultFederatedSessionTTL),
+		metrics:          metrics,
 	}
 
 	group := router.PathPrefix("/auth").Subrouter()
@@ -791,21 +808,25 @@ func continueQuery(continueTo string) string {
 func (m *federatedAuthApi) token(w http.ResponseWriter, r *http.Request) {
 	body, err := decodeTokenRequest(w, r)
 	if err != nil {
+		m.recordTokenExchange(services.TokenExchangeBadRequest)
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
 		return
 	}
 	if body.GrantType != "" && body.GrantType != "authorization_code" {
+		m.recordTokenExchange(services.TokenExchangeBadGrant)
 		controllers.SendError(w, controllers.ErrBadRequest, "unsupported grant_type")
 		return
 	}
 
 	client, app, err := m.loadClient(r.Context(), body.ClientID)
 	if err != nil {
+		m.recordTokenExchange(services.TokenExchangeClientUnknown)
 		controllers.SendError(w, controllers.ErrLimitedAccess, err.Error())
 		return
 	}
 	secretOK, needsRehash := secretMatches(client.ClientSecretHash, body.ClientSecret)
 	if !secretOK {
+		m.recordTokenExchange(services.TokenExchangeSecretInvalid)
 		controllers.SendError(w, controllers.ErrLimitedAccess, "client secret not valid")
 		return
 	}
@@ -823,6 +844,7 @@ func (m *federatedAuthApi) token(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := m.validateRedirectURI(r.Context(), client.Id, body.RedirectURI); err != nil {
+		m.recordTokenExchange(services.TokenExchangeRedirectBad)
 		controllers.SendError(w, controllers.ErrLimitedAccess, err.Error())
 		return
 	}
@@ -830,16 +852,19 @@ func (m *federatedAuthApi) token(w http.ResponseWriter, r *http.Request) {
 	var entry authCodeCacheEntry
 	found, err := m.store.Get(r.Context(), authCodeCacheKey(body.Code), &entry)
 	if err != nil {
+		m.recordTokenExchange(services.TokenExchangeServerError)
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
 	if !found || entry.Code == "" || time.Now().UTC().After(entry.ExpiresAt) {
+		m.recordTokenExchange(services.TokenExchangeCodeInvalid)
 		controllers.SendError(w, controllers.ErrLimitedAccess, "authorization code not valid")
 		return
 	}
 	_ = m.store.Delete(r.Context(), authCodeCacheKey(body.Code))
 
 	if entry.ClientID != client.ClientId || entry.RedirectURI != body.RedirectURI {
+		m.recordTokenExchange(services.TokenExchangeCodeMismatch)
 		controllers.SendError(w, controllers.ErrLimitedAccess, "authorization code does not match client")
 		return
 	}
@@ -874,10 +899,12 @@ func (m *federatedAuthApi) token(w http.ResponseWriter, r *http.Request) {
 	}
 	token, err := m.auth.JwtToken(claims)
 	if err != nil {
+		m.recordTokenExchange(services.TokenExchangeServerError)
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
 
+	m.recordTokenExchange(services.TokenExchangeSuccess)
 	controllers.SendResult(w, tokenResponse{
 		AccessToken:   token,
 		TokenType:     "Bearer",

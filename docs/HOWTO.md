@@ -367,6 +367,39 @@ myiotsan_devices_offline
 myiotsan_commands_total{outcome}  # confirmed | failed | refused
 ```
 
+`myidsan`:
+
+```text
+myidsan_federated_login_total{provider,result}
+myidsan_mfa_challenge_total
+myidsan_token_exchange_total{outcome}     # success | bad_request | unsupported_grant |
+                                          # client_unknown | secret_invalid |
+                                          # redirect_invalid | code_invalid |
+                                          # code_mismatch | server_error
+myidsan_audit_write_failures_total        # security trail has gaps — alert on any increase
+myidsan_audit_retention_purged_total
+myidsan_sessions_active
+```
+
+An identity provider is unusual in that most of its failures are experienced by somebody
+else, which is what these are for:
+
+- `myidsan_token_exchange_total{outcome!="success"}` — every one of these is a **relying
+  app that just failed to sign a user in**. The app shows its own user its own error;
+  nothing on the myidsan side raises anything an operator would notice. Without this,
+  "every login to the payroll app has been broken since its client secret was rotated"
+  stays invisible until somebody phones. A low rate of `code_invalid` is normal (a user
+  who took too long, a double-submitted callback); `secret_invalid` and `code_mismatch`
+  are not, and mean a misconfigured client or someone probing.
+- `myidsan_audit_write_failures_total` — **alert on any increase.** Auditing is
+  best-effort by design so it can never block a login, which means a trail that has
+  stopped recording has no other symptom: every other signal stays green while the
+  security history develops a hole. This is the metric that exists precisely because the
+  failure it reports is silent.
+- `myidsan_audit_retention_purged_total` — pairs with the trail's own
+  `audit.retention_purge` entry so shrinkage is attributable. Rows disappearing *without*
+  this moving did not come from retention.
+
 `myseliasan`:
 
 ```text

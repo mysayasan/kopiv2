@@ -167,3 +167,29 @@ The webpack dev server runs on `https://localhost:4001` when the app cert files 
 Authorization decisions (who can call what API) are enforced locally by each app's shared accessrbac middleware — `myidsan` no longer issues RBAC policy decisions.
 
 Browser relying apps such as `myseliasan` use the authorization-code routes under `/api/auth`. MyIDSan validates the registered client, exact callback URL, and requested audience before issuing a one-time code. During callback, the relying app exchanges that code at `POST /api/auth/token`; when this happens over local HTTPS, the relying app must trust the MyIDSan certificate through the OS trust store or its own `sso.caCertPath` setting.
+
+## Runtime Metrics
+
+Prometheus is enabled by default (see root `README.md` → Telemetry) and scraped from `/metrics`.
+`myidsan` had only two app-specific series before this (`myidsan_federated_login_total`,
+`myidsan_mfa_challenge_total`) and was the only one of the four apps missing from
+`docs/HOWTO.md`'s metrics catalogue. An identity provider has an unusual share of failures that
+are experienced by somebody *other* than an operator watching myidsan itself: a failed token
+exchange is seen by the relying app, which shows its own user its own error, and the audit trail
+swallows its own write errors by design (auditing must never fail the action being audited), so
+a trail that has stopped recording has no other symptom.
+
+| Metric | Type | Labels | What it tells you |
+|---|---|---|---|
+| `myidsan_token_exchange_total` | counter | `outcome` (`success`/`bad_request`/`unsupported_grant`/`client_unknown`/`secret_invalid`/`redirect_invalid`/`code_invalid`/`code_mismatch`/`server_error`) | Authorization-code redemptions at `POST /api/auth/token`. Every non-success is a relying app that just failed to sign a user in, with nothing else on myidsan raising it. `code_invalid` at a low rate is a normal race (a slow user, a double-submitted callback); `secret_invalid`/`code_mismatch` are not, and mean a misconfigured client or someone probing. |
+| `myidsan_audit_write_failures_total` | counter | — | Audit entries that could not be persisted. Alert on any increase — this is the metric that exists precisely because the failure it reports is otherwise silent. |
+| `myidsan_audit_retention_purged_total` | counter | — | Audit rows removed by age-based retention. Pairs with the trail's own `audit.retention_purge` entry so shrinkage is attributable — rows vanishing without this moving did not come from retention. |
+| `myidsan_sessions_active` | gauge | — | Live sessions the session index currently marks active. Watch the level for capacity and to confirm a revocation took effect, and sudden jumps for anomalies. Polled once a minute rather than incremented at issue/revoke time, since a session can also end on its own (cache expiry) with no call to revoke it. |
+| `myidsan_task_panics_total` | counter | `task` | Recovered panics in `infra/safego`-supervised background tasks. A supervised task restarts automatically, but that alone leaves no other trace than one log line. |
+
+What's worth alerting on:
+- Any increase in `myidsan_audit_write_failures_total` — the security trail has gaps.
+- A rising `myidsan_token_exchange_total{outcome="secret_invalid"}` or `{outcome="code_mismatch"}`
+  — a misconfigured relying-app client, or someone probing the token endpoint.
+- `myidsan_sessions_active` dropping to (or staying at) zero when it shouldn't — the session index
+  did not see the sign-ins the rest of the fleet is reporting.
