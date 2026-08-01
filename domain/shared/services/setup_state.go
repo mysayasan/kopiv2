@@ -5,15 +5,18 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
+	"github.com/mysayasan/kopiv2/domain/entities"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
 
-const setupStateKey = "setup.state"
+// SetupStateKey is the RuntimeSetting key every app stores its first-run flag
+// under. It is exported because restore paths write the same row directly to
+// stop the wizard reappearing after a restore.
+const SetupStateKey = "setup.state"
 
 // SetupState tracks whether the first-run setup wizard has been completed. It is
 // persisted as a single key-value row so it survives restarts and is shared
-// across browsers.
+// across browsers rather than living in one browser's localStorage.
 type SetupState struct {
 	Completed   bool  `json:"completed"`
 	CompletedAt int64 `json:"completedAt"`
@@ -36,7 +39,7 @@ func NewSetupStateService(repo dbsql.IGenericRepo[entities.RuntimeSetting]) ISet
 }
 
 func (s *setupStateService) Get(ctx context.Context) (SetupState, error) {
-	row, err := s.repo.GetByUnique(ctx, "", "key", setupStateKey)
+	row, err := s.repo.GetByUnique(ctx, "", "key", SetupStateKey)
 	if err != nil {
 		if isNoResultFoundErr(err) {
 			return SetupState{}, nil
@@ -61,18 +64,17 @@ func (s *setupStateService) Complete(ctx context.Context) (SetupState, error) {
 	if err != nil {
 		return SetupState{}, err
 	}
-	row, err := s.repo.GetByUnique(ctx, "", "key", setupStateKey)
+	row, err := s.repo.GetByUnique(ctx, "", "key", SetupStateKey)
 	if err != nil {
 		if isNoResultFoundErr(err) {
-			_, cerr := s.repo.Create(ctx, "", entities.RuntimeSetting{
-				Key:       setupStateKey,
-				Value:     string(payload),
-				CreatedAt: state.CompletedAt,
-				UpdatedAt: state.CompletedAt,
-			})
-			return state, cerr
+			return state, s.insert(ctx, string(payload), state.CompletedAt)
 		}
 		return SetupState{}, err
+	}
+	// A repo that signals "missing" by returning a zero row rather than an error
+	// would otherwise UPDATE id 0 and silently persist nothing.
+	if row == nil || row.Id == 0 {
+		return state, s.insert(ctx, string(payload), state.CompletedAt)
 	}
 	row.Value = string(payload)
 	row.UpdatedAt = state.CompletedAt
@@ -80,4 +82,14 @@ func (s *setupStateService) Complete(ctx context.Context) (SetupState, error) {
 		return SetupState{}, err
 	}
 	return state, nil
+}
+
+func (s *setupStateService) insert(ctx context.Context, payload string, ts int64) error {
+	_, err := s.repo.Create(ctx, "", entities.RuntimeSetting{
+		Key:       SetupStateKey,
+		Value:     payload,
+		CreatedAt: ts,
+		UpdatedAt: ts,
+	})
+	return err
 }

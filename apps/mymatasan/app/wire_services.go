@@ -51,7 +51,7 @@ type wiring struct {
 	observation    *services.ObservationService
 	metadata       *services.MetadataRecorder
 	localUser      services.ILocalUserService
-	setupState     services.ISetupStateService
+	setupState     sharedservices.ISetupStateService
 	pairing        services.IPairingService
 
 	// Settings services.

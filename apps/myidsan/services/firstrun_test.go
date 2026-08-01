@@ -2,12 +2,8 @@ package services
 
 import (
 	"context"
-	"strings"
 	"testing"
 
-	"github.com/mysayasan/kopiv2/domain/entities"
-	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
-	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -87,62 +83,3 @@ func TestResetStockSuperadmin_ForcesRecovery(t *testing.T) {
 		t.Fatalf("reset did not restore the account: %+v", after)
 	}
 }
-
-// fakeRuntimeSettingRepo backs the setup-state service with an in-memory row.
-type fakeRuntimeSettingRepo struct {
-	dbsql.IGenericRepo[entities.RuntimeSetting]
-	row *entities.RuntimeSetting
-}
-
-func (f *fakeRuntimeSettingRepo) GetByUnique(_ context.Context, _ string, keyGroup string, uids ...any) (*entities.RuntimeSetting, error) {
-	if f.row == nil {
-		return nil, errNoResult{}
-	}
-	copy := *f.row
-	return &copy, nil
-}
-
-func (f *fakeRuntimeSettingRepo) Create(_ context.Context, _ string, model entities.RuntimeSetting) (uint64, error) {
-	model.Id = 1
-	f.row = &model
-	return 1, nil
-}
-
-func (f *fakeRuntimeSettingRepo) UpdateById(_ context.Context, _ string, model entities.RuntimeSetting) (uint64, error) {
-	f.row = &model
-	return 1, nil
-}
-
-type errNoResult struct{}
-
-func (errNoResult) Error() string { return "select by unique failed: no result found" }
-
-func TestSetupState_CompleteRoundTrip(t *testing.T) {
-	repo := &fakeRuntimeSettingRepo{}
-	svc := NewSetupStateService(repo)
-
-	state, err := svc.Get(context.Background())
-	if err != nil || state.Completed {
-		t.Fatalf("fresh state = %+v err = %v, want not completed", state, err)
-	}
-
-	done, err := svc.Complete(context.Background())
-	if err != nil || !done.Completed || done.CompletedAt == 0 {
-		t.Fatalf("complete = %+v err = %v", done, err)
-	}
-	if repo.row == nil || !strings.Contains(repo.row.Value, `"completed":true`) {
-		t.Fatalf("row not persisted: %+v", repo.row)
-	}
-
-	state, err = svc.Get(context.Background())
-	if err != nil || !state.Completed {
-		t.Fatalf("reload = %+v err = %v, want completed", state, err)
-	}
-
-	// Completing again just refreshes the row (idempotent).
-	if _, err := svc.Complete(context.Background()); err != nil {
-		t.Fatalf("re-complete: %v", err)
-	}
-}
-
-var _ = sqldataenums.Equal // keep the import stable alongside sibling test fakes
