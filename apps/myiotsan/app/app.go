@@ -153,6 +153,7 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Discovery", Description: "enrollment window and device adoption", Path: "/api/discovery", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Settings", Description: "users and roles", Path: "/api/settings", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Knowledge base", Description: "shipped setup guides", Path: "/api/kb", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Setup Wizard", Description: "first-run setup state and completion", Path: "/api/setup", AccessTier: apiaccessenums.AuthOnly},
 	}
 
 	statements := make([]string, 0, len(endpoints)*2)
@@ -264,6 +265,12 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// System controls for the Settings > System tab: a restart (needed to apply the storage/broker
 	// settings, which are read once at boot). Version/health are already served by the host runtime.
 	apis.NewSystemApi(protected, deps.Restarter)
+
+	// First-run wizard completion flag, in the same shared runtime-setting row the rest of
+	// the suite uses. Previously a localStorage key, which made dismissal per-browser
+	// rather than per-install.
+	setupStateService := sharedservices.NewSetupStateService(dbsql.NewGenericRepo[sharedentities.RuntimeSetting](deps.Db))
+	apis.NewSetupApi(protected, setupStateService)
 
 	// --- the ingest spine -------------------------------------------------------------
 	//

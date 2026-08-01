@@ -820,6 +820,10 @@ export default {
   'wiz.ready.s1': 'Open an enrollment window on the Discovery page and copy the key.',
   'wiz.ready.s2': 'Point your first device at this hub with that key, then adopt it from the candidate list — the hub will suggest what it is from the fields it publishes, and adopting it mints its real, permanent credential.',
   'wiz.ready.s3': 'Give it a device type so its readings can be decoded, then write a rule so it can tell you something.',
+  'wiz.enrol.stateOpen': 'A window is open on this hub right now — it closes at {time}.',
+  'wiz.enrol.stateClosed': 'No enrollment window is open right now, so nothing new can reach the broker.',
+  'wiz.ready.waiting': '{n} already waiting in quarantine — adopt them from Discovery to start storing what they publish.',
+  'wiz.ready.waitingNone': 'Nothing is waiting in quarantine yet.',
   // Actuation: commands, the device twin, the audit trail.
   //
   // Every string below obeys one rule: "sent" is NOT "done". A command is confirmed only when

@@ -13,10 +13,6 @@ import { enBundle, loadLocaleDict } from './i18n';
 
 const THEME_KEY = 'myiotsan_theme';
 const NAV_PIN_KEY = 'myiotsan_nav_pinned';
-// WIZARD_KEY remembers that the first-run path has been finished or skipped. The wizard is
-// gated on the estate being genuinely empty as well, so this only stops it reappearing for
-// an admin who chose to onboard their first device some other way.
-const WIZARD_KEY = 'myiotsan_wizard_done';
 
 function AppInner({ lang, onLangChange }) {
   const [theme, setTheme] = useState(() => {
@@ -87,23 +83,32 @@ function AppInner({ lang, onLangChange }) {
   //
   // It asks the server how many devices exist rather than assuming; an empty answer is the
   // only thing that opens it.
-  const [wizardDismissed, setWizardDismissed] = useState(() => {
-    try { return localStorage.getItem(WIZARD_KEY) === '1'; } catch (_) { return false; }
-  });
+  // Dismissal is a property of the INSTALL, not of a browser, so it lives server-side in
+  // the shared `setup.state` row (the same contract the other three apps use). It used to
+  // be a localStorage key, which meant the same admin met the wizard again from a second
+  // machine — or after clearing site data — on a hub that had been running for months.
+  const [wizardDismissed, setWizardDismissed] = useState(true);
   const [estateEmpty, setEstateEmpty] = useState(false);
   useEffect(() => {
-    if (authState !== 'ready' || !session?.isAdmin || wizardDismissed) return;
+    if (authState !== 'ready' || !session?.isAdmin) return undefined;
     let cancelled = false;
     (async () => {
-      const r = await api('/api/devices?limit=1');
-      if (!cancelled && r.ok) setEstateEmpty((r.body?.total || 0) === 0);
+      const [state, devices] = await Promise.all([
+        api('/api/setup/state').catch(() => ({ ok: false })),
+        api('/api/devices?limit=1').catch(() => ({ ok: false })),
+      ]);
+      if (cancelled) return;
+      // A failed probe leaves the wizard dismissed: an unreachable endpoint must not
+      // start throwing a first-run dialog at an established hub.
+      setWizardDismissed(!state.ok || !!state.body?.completed);
+      if (devices.ok) setEstateEmpty((devices.body?.total || 0) === 0);
     })();
     return () => { cancelled = true; };
-  }, [authState, session, wizardDismissed]);
+  }, [authState, session]);
 
-  function dismissWizard() {
+  async function dismissWizard() {
     setWizardDismissed(true);
-    try { localStorage.setItem(WIZARD_KEY, '1'); } catch (_) {}
+    await api('/api/setup/complete', { method: 'POST' }).catch(() => {});
   }
   const showWizard = authState === 'ready' && !!session?.isAdmin && estateEmpty && !wizardDismissed;
 

@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Ico, useT } from '@shared';
 import { Modal } from './ui';
+import { api } from '../lib/helpers';
 
 // FirstRunWizard is the short, honest path a brand-new hub offers an admin on their first
 // sign-in — and only then: it appears when the estate is genuinely empty and disappears for
@@ -14,6 +15,12 @@ import { Modal } from './ui';
 //
 // There are three steps and all three are real. None of them fakes progress, none of them
 // pretends to configure something it has not, and every one of them can be skipped.
+//
+// The last two steps also REPORT the hub's live state — whether a window is open right now,
+// and what is already sitting in quarantine — rather than describing the mechanism in the
+// abstract. That is the honest way to make them real without moving the security act into
+// the dialog: an admin who left a window open, or who has candidates waiting they never
+// noticed, finds that out here instead of being told what would happen in principle.
 const STEPS = ['what', 'enrol', 'ready'];
 
 export function FirstRunWizard({ onGoDiscovery, onDismiss }) {
@@ -21,6 +28,28 @@ export function FirstRunWizard({ onGoDiscovery, onDismiss }) {
   const [step, setStep] = useState(0);
   const id = STEPS[step];
   const last = step === STEPS.length - 1;
+
+  // Live hub state: null until known, so a failed or in-flight probe renders nothing
+  // rather than asserting "no window is open" about a hub it could not reach.
+  const [window_, setWindow] = useState(null);
+  const [waiting, setWaiting] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [w, c] = await Promise.all([
+        api('/api/discovery/window').catch(() => ({ ok: false })),
+        api('/api/discovery/candidates').catch(() => ({ ok: false })),
+      ]);
+      if (cancelled) return;
+      if (w.ok && w.body) setWindow(w.body);
+      if (c.ok && c.body) setWaiting((c.body.items || []).length);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const windowExpiry = window_ && window_.expiresAt
+    ? new Date(window_.expiresAt * 1000).toLocaleTimeString()
+    : '';
 
   return (
     <Modal title={t('wiz.title')} onClose={onDismiss} wide>
@@ -42,6 +71,13 @@ export function FirstRunWizard({ onGoDiscovery, onDismiss }) {
             <p className="iot-wiz-quarantine">
               <Ico n="lock" sz={14} /> <span>{t('wiz.enrol.quarantine')}</span>
             </p>
+            {window_ ? (
+              <p className="settings-hint">
+                {window_.open
+                  ? <><Ico n="key" sz={13} /> {t('wiz.enrol.stateOpen', { time: windowExpiry })}</>
+                  : <><Ico n="lock" sz={13} /> {t('wiz.enrol.stateClosed')}</>}
+              </p>
+            ) : null}
           </>
         ) : null}
 
@@ -54,6 +90,13 @@ export function FirstRunWizard({ onGoDiscovery, onDismiss }) {
               <li>{t('wiz.ready.s2')}</li>
               <li>{t('wiz.ready.s3')}</li>
             </ol>
+            {waiting !== null ? (
+              <p className="settings-hint">
+                {waiting > 0
+                  ? <><Ico n="info" sz={13} /> {t('wiz.ready.waiting', { n: waiting })}</>
+                  : <><Ico n="info" sz={13} /> {t('wiz.ready.waitingNone')}</>}
+              </p>
+            ) : null}
           </>
         ) : null}
       </div>
