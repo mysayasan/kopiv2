@@ -27,6 +27,7 @@ import { AuditLogPage } from './components/audit_log';
 import { ReportsPage } from './components/reports';
 import { SettingsPage } from './components/settings';
 import { LoginScreen, ChangePasswordScreen, PendingClearanceScreen } from './components/auth_screens';
+import { SetupWizard } from './components/setup';
 import { api, sessionCanGet, apiBase } from './lib/helpers';
 import { enBundle, loadLocaleDict } from './i18n';
 
@@ -146,6 +147,22 @@ function AppInner({ lang, onLangChange }) {
     setToasts((list) => [{ id, text, kind }, ...list].slice(0, 5));
   }
 
+  // First-run wizard gate: 'unknown' | 'needed' | 'done'. The flag is SERVER-side, so a
+  // dismissal sticks per install rather than per browser. Only fetched for a superadmin
+  // — they are the only role that can complete it, and nobody else should be held at a
+  // loading screen waiting for the answer.
+  const [setupState, setSetupState] = useState('unknown');
+  useEffect(() => {
+    if (authState !== 'ready' || !session?.isSuperadmin) { setSetupState('done'); return undefined; }
+    let alive = true;
+    api('/api/setup/state', { noRedirect: true })
+      .then((r) => { if (alive) setSetupState(r.ok && r.body && r.body.completed ? 'done' : 'needed'); })
+      // A failed probe must never lock an operator out of their own control plane, so
+      // an unreachable/erroring endpoint falls through to the app rather than the wizard.
+      .catch(() => { if (alive) setSetupState('done'); });
+    return () => { alive = false; };
+  }, [authState, session]);
+
   async function loadSession() {
     const r = await api('/api/session/me', { noRedirect: true }).catch(() => ({ ok: false }));
     if (r.ok && r.body) {
@@ -179,6 +196,23 @@ function AppInner({ lang, onLangChange }) {
   // clearance screen until a superadmin grants a role.
   if (session?.pending && !session?.isSuperadmin) {
     return <PendingClearanceScreen email={session?.email} onRefresh={loadSession} onLogout={logout} lang={lang} onLangChange={onLangChange} />;
+  }
+  // Cleared to use the app, but this install has never been set up. Runs LAST of the
+  // pre-app gates so the wizard is only ever reached by a signed-in, password-changed,
+  // role-bearing superadmin.
+  if (setupState === 'unknown') {
+    return <main className="boot-screen"><FormBusyOverlay busy /></main>;
+  }
+  if (setupState === 'needed') {
+    return (
+      <SetupWizard
+        session={session}
+        lang={lang}
+        onLangChange={onLangChange}
+        onToast={pushToast}
+        onDone={() => setSetupState('done')}
+      />
+    );
   }
 
   // Demote to the dashboard if the active tab is no longer permitted (e.g. after a
