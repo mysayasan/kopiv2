@@ -647,8 +647,14 @@ the resulting per-node debug values). **Help** is a new nav entry: a read-only, 
 Markdown-rendered setup guide (`GET /api/kb`), covering every solar/Modbus profile, gateway/
 transport choices, and how to verify a control register before enabling actuation — visible to
 every role, since it is reference content with nothing to misuse. A first-run onboarding wizard
-leads a new install straight to opening its first enrollment window. All four locales — en, ms,
-zh, ar.
+leads a new install straight to opening its first enrollment window; its enrol/ready steps now
+also read live hub state (`GET /api/discovery/window`, `GET /api/discovery/candidates`) so they
+report whether a window is open right now and how many candidates are already waiting, instead
+of describing the mechanism in the abstract. Dismissal used to be a `localStorage` key, which
+made it per-**browser** — the same admin met the wizard again from a second machine, or after
+clearing site data, on a hub that had been running for months. It is now the same server-side
+`setup.state` flag (`GET/POST /api/setup/state`, `/complete`) the rest of the suite uses, so
+dismissal sticks per install. All four locales — en, ms, zh, ar.
 
 Two things on the Dashboard deserve an operator's attention:
 
