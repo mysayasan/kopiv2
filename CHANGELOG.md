@@ -76,6 +76,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-02 — myidsan 1.39.0, myiotsan 0.24.0, mymatasan 1.114.0, myseliasan 1.49.0, core 1.71.0 (bc0a2ad)
+
+### Added
+
+- **core,shared,mymatasan,myidsan,myseliasan,myiotsan**: Extracted the first-run setup-wizard completion flag (previously near-identical copy-pasted services in mymatasan and myidsan) into one canonical domain/shared/services.ISetupStateService and domain/shared/apis.SetupHandlers pair, then used that seam to bring every app in the suite up to wizard parity: myseliasan gained a first-run wizard it never had (welcome, import a myidsan SSO bundle and save it, first site, adopt a node, handover to a real superadmin, done), myiotsan's onboarding wizard was promoted off a per-browser localStorage flag onto the same server-side setup.state row so dismissal now sticks per install rather than per browser (and its enrol/ready steps now show live enrollment-window and quarantine-candidate state instead of describing them abstractly), and myidsan's wizard gained a 4th step, "Where sessions live", that reads, live-tests, and saves the storage.cache settings section in place. The shared service also picked up myidsan's stricter insert guard (row == nil || row.Id == 0) as the canonical behavior, since mymatasan's original copy lacked it and would have silently persisted nothing against a repo that signals "missing" via a zero-value row rather than an error.
 ## 2026-07-30 — myidsan 1.38.0, myiotsan 0.23.0, mymatasan 1.113.0, myseliasan 1.48.0, core 1.70.0 (75f7245)
 
 ### Added
