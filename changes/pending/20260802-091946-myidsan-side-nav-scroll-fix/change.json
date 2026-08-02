@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "myidsan",
+  "summary": "Fixes the side-nav rail overflowing the viewport once the Settings menu item was added: the nav is a 100vh flex column of brand/nav/foot, and the nav list had no overflow handling, so the extra item pushed the bottom entries (and the Theme toggle / Sign out / session line in the foot) off-panel and unreachable — the page grew a document scrollbar instead, which never helped because the rail is position:sticky at 100vh. The nav now scrolls internally (flex: 1 1 auto + min-height: 0 + overflow-y: auto, with the brand and foot pinned via flex-shrink: 0) with a slim overlay-style scrollbar that stays invisible until hovered/focused. A same-day follow-up commit corrected the fix's own claim that the other three apps lacked this rule — they already had a more complete version of it that a shallow grep missed — and instead brought myidsan's styles.css into line with the shared rbac-standard.css treatment (same --nav-scroll/--nav-scroll-hover tokens, same overlay-scrollbar shape) rather than leaving a third variant of the rule in the codebase.",
+  "compatibility": "Presentation only — no API routes, config keys, or data change. Pure CSS fix to apps/myidsan/views/react-webpack/src/styles.css (plus the rebuilt static bundle); no migration or operator action needed."
+}
