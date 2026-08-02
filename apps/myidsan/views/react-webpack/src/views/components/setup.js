@@ -7,7 +7,7 @@ import { useT } from '@shared'
 // capability, and every step is skippable (the same work can always be done later
 // from the regular admin pages). Completion is a single server-side flag
 // (POST /api/setup/complete), mirroring mymatasan's wizard contract.
-const STEP_KEYS = ['welcome', 'app', 'signin', 'admin', 'done']
+const STEP_KEYS = ['welcome', 'app', 'signin', 'scale', 'admin', 'done']
 
 function randomSecret() {
   const raw = new Uint8Array(24)
@@ -30,7 +30,18 @@ export default function SetupWizard({ isSuperadmin, onDone, onToast }) {
   const [dirForm, setDirForm] = useState({ enabled: false, host: '', port: 636, useStartTls: false, bindDn: '', bindPassword: '', baseDn: '', displayLabel: '' })
   const [dirDone, setDirDone] = useState(false)
 
-  // Step 4 state: personal superadmin account.
+  // Step 4 state: where sessions live. This step exists because myidsan is the identity
+  // server for EVERY other app — with the in-process cache, one restart signs everybody out
+  // of everything, and a second instance behind a load balancer signs them out on every
+  // switch. It is the one deployment decision worth making before an IdP carries real
+  // traffic, and it only became answerable from inside the product when the in-app settings
+  // editor landed. Skipping it leaves the single-instance default, which is a fine answer.
+  const [scaleForm, setScaleForm] = useState(null) // null until the section is read
+  const [scaleRedis, setScaleRedis] = useState({ address: '', password: '' })
+  const [scaleDone, setScaleDone] = useState(false)
+  const [scaleTest, setScaleTest] = useState({ status: 'idle', msg: '' })
+
+  // Step 5 state: personal superadmin account.
   const [roles, setRoles] = useState([])
   const [adminForm, setAdminForm] = useState({ firstName: '', lastName: '', email: '', password: '' })
   const [adminDone, setAdminDone] = useState(false)
@@ -48,7 +59,20 @@ export default function SetupWizard({ isSuperadmin, onDone, onToast }) {
   useEffect(() => {
     apiRequest('/api/access-rbac/roles')
       .then(payload => setRoles(resultOf(payload) || []))
-      .catch(() => { /* step 4 shows a hint when the role list is unavailable */ })
+      .catch(() => { /* the admin step shows a hint when the role list is unavailable */ })
+  }, [])
+
+  // Read the live storage section once, so the scale step reports what this install is
+  // ACTUALLY doing rather than assuming the shipped default.
+  useEffect(() => {
+    apiRequest('/api/settings/storage')
+      .then(payload => {
+        const section = resultOf(payload)
+        if (!section || !section.cache) return
+        setScaleForm(section)
+        setScaleRedis({ address: section.cache.redis?.address || '', password: '' })
+      })
+      .catch(() => { /* the pane falls back to an explanation with no live state */ })
   }, [])
 
   const step = STEP_KEYS[stepIndex]
@@ -182,6 +206,51 @@ export default function SetupWizard({ isSuperadmin, onDone, onToast }) {
       })
       setDirDone(true)
       onToast?.(t('setup.dirSaved'), 'success')
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Ping Redis with what is in the form before committing to it. A blank password falls
+  // back to the stored one, resolved server-side — same contract the Settings page uses.
+  const testRedis = async () => {
+    setScaleTest({ status: 'testing', msg: '' })
+    try {
+      await apiRequest('/api/settings/cache/test', {
+        method: 'POST',
+        body: { ...(scaleForm?.cache?.redis || {}), address: scaleRedis.address.trim(), password: scaleRedis.password }
+      })
+      setScaleTest({ status: 'ok', msg: '' })
+    } catch (err) {
+      setScaleTest({ status: 'fail', msg: err.message })
+    }
+  }
+
+  const saveScale = async event => {
+    event.preventDefault()
+    if (!scaleForm) return
+    if (!scaleRedis.address.trim()) {
+      setError(t('setup.scaleNeedsAddress'))
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      // PUT replaces the whole section, so the live payload is merged rather than rebuilt —
+      // fileStorage lives in this same section and must survive untouched.
+      const next = JSON.parse(JSON.stringify(scaleForm))
+      next.cache = next.cache || {}
+      next.cache.provider = 'redis'
+      next.cache.redis = { ...(next.cache.redis || {}), address: scaleRedis.address.trim() }
+      // A blank password means "keep the stored one" (the section masks secrets on read),
+      // so only send it when the operator actually typed something.
+      if (scaleRedis.password) next.cache.redis.password = scaleRedis.password
+      await apiRequest('/api/settings/storage', { method: 'PUT', body: next })
+      setScaleForm(next)
+      setScaleDone(true)
+      onToast?.(t('setup.scaleSaved'), 'success')
     } catch (err) {
       setError(err.message)
     } finally {
@@ -430,6 +499,66 @@ export default function SetupWizard({ isSuperadmin, onDone, onToast }) {
           </div>
         )}
 
+        {step === 'scale' && (
+          <div className="setup-step">
+            <h2>{t('setup.scaleTitle')}</h2>
+            <p>{t('setup.scaleBody')}</p>
+            {scaleDone || scaleForm?.cache?.provider === 'redis' ? (
+              <div className="message success">
+                <div>{t('setup.scaleRedisActive')}</div>
+                <div className="cert-hint">{t('setup.scaleRestartHint')}</div>
+              </div>
+            ) : (
+              <>
+                <div className="message">
+                  <div>{t('setup.scaleCurrentSingle')}</div>
+                  <div className="cert-hint">{t('setup.scaleSingleFine')}</div>
+                </div>
+                <form className="record-form" onSubmit={saveScale}>
+                  <div className="two-col">
+                    <label>
+                      {t('setup.scaleAddress')}
+                      <input
+                        value={scaleRedis.address}
+                        onChange={event => { setScaleRedis({ ...scaleRedis, address: event.target.value }); setScaleTest({ status: 'idle', msg: '' }) }}
+                        placeholder="localhost:6379"
+                      />
+                    </label>
+                    <label>
+                      {t('setup.scalePassword')}
+                      <input
+                        type="password"
+                        autoComplete="off"
+                        value={scaleRedis.password}
+                        onChange={event => { setScaleRedis({ ...scaleRedis, password: event.target.value }); setScaleTest({ status: 'idle', msg: '' }) }}
+                      />
+                    </label>
+                  </div>
+                  {scaleTest.status === 'ok' && <div className="message success">{t('setup.scaleTestOk')}</div>}
+                  {scaleTest.status === 'fail' && <div className="message danger">{t('setup.scaleTestFail', { msg: scaleTest.msg })}</div>}
+                  <div className="form-actions">
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={testRedis}
+                      disabled={busy || !scaleRedis.address.trim() || scaleTest.status === 'testing'}
+                    >
+                      {scaleTest.status === 'testing' ? t('setup.scaleTesting') : t('setup.scaleTest')}
+                    </button>
+                    <button className="primary-button" type="submit" disabled={busy || !scaleForm}>
+                      {t('setup.scaleUse')}
+                    </button>
+                  </div>
+                </form>
+              </>
+            )}
+            <div className="form-actions">
+              <button className="secondary-button" type="button" onClick={back}>{t('setup.back')}</button>
+              <button className="primary-button" type="button" onClick={next}>{scaleDone ? t('setup.next') : t('setup.skip')}</button>
+            </div>
+          </div>
+        )}
+
         {step === 'admin' && (
           <div className="setup-step">
             <h2>{t('setup.adminTitle')}</h2>
@@ -476,6 +605,7 @@ export default function SetupWizard({ isSuperadmin, onDone, onToast }) {
             <ul className="setup-summary">
               <li>{appDone ? '✓' : '·'} {t('setup.sumApp')}</li>
               <li>{dirDone ? '✓' : '·'} {t('setup.sumDir')}</li>
+              <li>{scaleDone || scaleForm?.cache?.provider === 'redis' ? '✓' : '·'} {t('setup.sumScale')}</li>
               <li>{adminDone ? '✓' : '·'} {t('setup.sumAdmin')}</li>
             </ul>
             <div className="form-actions">

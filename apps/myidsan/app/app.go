@@ -242,7 +242,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	// First-run setup wizard completion flag (shared runtime-setting row).
 	runtimeSettingRepo := dbsql.NewGenericRepo[sharedentities.RuntimeSetting](deps.Db)
-	setupStateService := services.NewSetupStateService(runtimeSettingRepo)
+	setupStateService := sharedservices.NewSetupStateService(runtimeSettingRepo)
 	apis.NewSetupApi(api, *deps.Auth, deps.Access, setupStateService)
 
 	// Directory (LDAP/AD) login: the bind password is encrypted at rest, so the

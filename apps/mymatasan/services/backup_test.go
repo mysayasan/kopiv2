@@ -8,6 +8,7 @@ import (
 
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
+	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
 
@@ -184,7 +185,7 @@ func TestBackupRoundTripRemapsIDsAndKeepsSecrets(t *testing.T) {
 	if !res.SetupCompleted {
 		t.Fatalf("restore should mark setup complete: %#v", res)
 	}
-	if row, err := dst.settings.GetByUnique(ctx, "", "key", setupStateKey); err != nil || !strings.Contains(row.Value, "\"completed\":true") {
+	if row, err := dst.settings.GetByUnique(ctx, "", "key", sharedservices.SetupStateKey); err != nil || !strings.Contains(row.Value, "\"completed\":true") {
 		t.Fatalf("setup.state not persisted as completed: %v %#v", err, row)
 	}
 

@@ -62,8 +62,9 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
 - `Seeders(...)` seeds the endpoint catalog for rate limiting/runtime metadata, now including
   `/api/devices`, `/api/profiles`, `/api/rules`, `/api/alerts`, `/api/notifications`, (P3)
   `/api/discovery` (auth-only), (P4) `/api/settings` (auth-only — users and roles; see the
-  gap this closes below), and `/api/kb` (auth-only — the shipped setup guides, see below),
-  alongside the original `/api/health`, `/api/version` (public), `/api/auth/login` (public),
+  gap this closes below), `/api/kb` (auth-only — the shipped setup guides, see below), and
+  `/api/setup` (auth-only — first-run setup state and completion, see below), alongside the
+  original `/api/health`, `/api/version` (public), `/api/auth/login` (public),
   `/api/auth` (auth-only).
 - `RegisterAppRoutes(api, deps)`:
   1. Builds `sharedservices.NewLocalUserService` on a `LocalUser` repo bound to `deps.Db`.
@@ -96,7 +97,12 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
      notification delivery and telemetry/broker settings. See `apis/settings.go.md`. Immediately
      after, `apis.NewSystemApi(protected, deps.Restarter)` registers `POST /api/system/restart` —
      the Settings > System tab's restart, needed because the telemetry settings below are read
-     once at boot (see `apis/system.go.md`).
+     once at boot (see `apis/system.go.md`). Immediately after that,
+     `sharedservices.NewSetupStateService(dbsql.NewGenericRepo[sharedentities.RuntimeSetting](deps.Db))`
+     and `apis.NewSetupApi(protected, setupStateService)` register the first-run wizard's
+     completion flag — promoted off a `localStorage` key onto the same shared `setup.state`
+     seam mymatasan/myidsan/myseliasan use, so dismissal is per-install rather than
+     per-browser (see `apis/setup.go.md`, `domain/shared/services/setup_state.go.md`).
   8a. **Wires the two new runtime-editable settings stores, before the ingest spine is built**
      (so their effective values can feed it): `services.NewNotificationSettingsService(deps.Db,
      notificationService)`, then immediately `notificationSettings.Sync(ctx)` — applies any

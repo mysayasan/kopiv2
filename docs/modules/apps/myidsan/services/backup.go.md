@@ -87,7 +87,7 @@ encrypted with the operator's passphrase via `atrest.EncryptWithPassphrase`) and
   export/wipe.
 - `NewBackupService` takes every repo the six sections touch, the `*atrest.Cipher` (nil
   when at-rest encryption is disabled — sealed columns are then already plaintext and
-  pass through unchanged), `cache.Store` (for session invalidation), `ISetupStateService`,
+  pass through unchanged), `cache.Store` (for session invalidation), `sharedservices.ISetupStateService`,
   and the app version string (see `apps/myidsan/app/app.go.md`'s `moduleAppVersion`).
 - Wired in `apps/myidsan/app/app.go`'s `RegisterAppRoutes` and mounted via
   `apis.NewBackupApi` (`apis/backup.go.md`).

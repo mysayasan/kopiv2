@@ -3,14 +3,15 @@ package services
 import (
 	"context"
 	"errors"
-	"testing"
 
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
 
 // fakeRuntimeSettingRepo is a minimal in-memory IGenericRepo for the key-value
-// methods SetupStateService touches.
+// methods the settings, backup and setup-state paths touch. It is keyed by Key
+// rather than by the generic accessors fakeEntityRepo uses, because every caller
+// here looks rows up by their unique key.
 type fakeRuntimeSettingRepo struct {
 	dbsql.IGenericRepo[entities.RuntimeSetting]
 	rows   []*entities.RuntimeSetting
@@ -44,45 +45,4 @@ func (f *fakeRuntimeSettingRepo) UpdateById(_ context.Context, _ string, model e
 		}
 	}
 	return 0, nil
-}
-
-func TestSetupStateLifecycle(t *testing.T) {
-	repo := &fakeRuntimeSettingRepo{}
-	svc := NewSetupStateService(repo)
-	ctx := context.Background()
-
-	// Fresh install: not completed.
-	state, err := svc.Get(ctx)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if state.Completed {
-		t.Fatal("fresh install should not be completed")
-	}
-
-	// Complete persists the flag.
-	done, err := svc.Complete(ctx)
-	if err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
-	if !done.Completed || done.CompletedAt == 0 {
-		t.Fatalf("Complete returned %#v", done)
-	}
-
-	// Re-read sees it completed.
-	state, err = svc.Get(ctx)
-	if err != nil {
-		t.Fatalf("Get after complete: %v", err)
-	}
-	if !state.Completed {
-		t.Fatal("should be completed after Complete")
-	}
-
-	// Idempotent: completing again updates in place (one row).
-	if _, err := svc.Complete(ctx); err != nil {
-		t.Fatalf("second Complete: %v", err)
-	}
-	if len(repo.rows) != 1 {
-		t.Fatalf("expected a single persisted row, got %d", len(repo.rows))
-	}
 }

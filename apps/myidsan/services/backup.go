@@ -11,6 +11,7 @@ import (
 
 	myidsanentities "github.com/mysayasan/kopiv2/apps/myidsan/entities"
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
+	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/cache"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
@@ -202,7 +203,7 @@ type backupService struct {
 	cipher *atrest.Cipher
 	// store is the session cache, wiped after a restore.
 	store      cache.Store
-	setup      ISetupStateService
+	setup      sharedservices.ISetupStateService
 	appVersion string
 }
 
@@ -222,7 +223,7 @@ func NewBackupService(
 	ssoCa dbsql.IGenericRepo[myidsanentities.SsoCa],
 	cipher *atrest.Cipher,
 	store cache.Store,
-	setup ISetupStateService,
+	setup sharedservices.ISetupStateService,
 	appVersion string,
 ) IBackupService {
 	return &backupService{

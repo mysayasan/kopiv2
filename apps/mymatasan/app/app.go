@@ -19,6 +19,7 @@ import (
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
 	apiaccessenums "github.com/mysayasan/kopiv2/domain/enums/apiaccess"
 	"github.com/mysayasan/kopiv2/domain/notification"
+	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/infra/apidocs"
 	"github.com/mysayasan/kopiv2/infra/apphost"
 	"github.com/mysayasan/kopiv2/infra/config"
@@ -299,7 +300,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		func(f string, a ...any) { deps.Logger.Infof("mymatasan.faces", f, a...) })
 
 	settingsService := services.NewRuntimeSettingsService(repo.RuntimeSetting, runtimeSettingsFromAppConfig(appCfg))
-	setupStateService := services.NewSetupStateService(repo.RuntimeSetting)
+	setupStateService := sharedservices.NewSetupStateService(repo.RuntimeSetting)
 	pairingService := services.NewPairingService(repo.RuntimeSetting, atrestCipher, "", "")
 	localUserService := services.NewLocalUserService(repo.LocalUser, deps.AccessRoles)
 	shredPasses := resolveShredPasses(appCfg)

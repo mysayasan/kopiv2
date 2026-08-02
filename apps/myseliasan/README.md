@@ -339,6 +339,24 @@ A **Restore defaults** button per section (`POST /api/settings/{section}/reset`)
 
 The **Single Sign-On** section's hero carries an extra **Import from myidsan** button: it loads the `<app-code>-sso.json` bundle myidsan's Apps page exports (see that app's README), checks the file's `kind` and refuses a `version` newer than this build understands, then fills the section's form fields — issuer, audience, client ID, secret, provider base URL, redirect base URL/path, session TTL — client-side, entirely in the browser. It deliberately does not save: the operator still reviews the filled-in fields and presses the section's own **Save**, since this setting decides who can log in, and nothing is sent to the server until then (no new endpoint or permission is needed). A field the bundle omits is left untouched rather than blanked, so a partial file cannot wipe working config; in particular a bundle exported without a client secret (myidsan only ever exports the plaintext right after generating it) leaves the stored secret in place, per the same "blank = keep current" semantics the rest of this page uses for secret fields.
 
+## Setup Wizard
+
+`myseliasan` previously had **no first-run wizard at all** — every other app in the suite
+did. A signed-in superadmin who has cleared the mustchange/pending-clearance gates and has
+not yet completed setup (`GET /api/setup/state`) now sees a 6-step wizard before the normal
+app shell: welcome, sign-in (import a myidsan `<code>-sso.json` bundle via the same
+client-side import the Settings page's SSO section uses, and actually **save** it here,
+unlike Settings' review-first import), first site, adopt a node, handover (elevate a real
+account to superadmin so the install stops running on the stock one), done. Every step is
+skippable; completion is `POST /api/setup/complete`, a single server-side flag
+(`sharedservices.ISetupStateService`, the same `domain/shared` seam mymatasan, myidsan and
+myiotsan use) shared across browsers, so the wizard never reappears once finished or an
+unreachable probe never blocks the operator out of their own control plane.
+
+Deliberately **not** offered, unlike mymatasan's and myidsan's wizards: an alerts step
+(myseliasan has no notification-destination API to configure yet) and a restore-from-backup
+step (myseliasan has no backup/restore capability at all). See `apis/setup.go.md`.
+
 ## Reports
 
 A **Reports** page (its own nav item alongside **Notifications** under the **System** group) generates printable PDF reports of the fleet on demand, rendered entirely pure-Go on the control plane (`domain/report` over `github.com/go-pdf/fpdf`, see `domain/report/doc.go.md`) — no headless browser, so it keeps working on an air-gapped install. Four reports are available, each a `GET /api/reports/*.pdf` under `apis/reports.go`:

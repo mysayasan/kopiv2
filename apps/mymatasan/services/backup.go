@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
+	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/infra/atrest"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
@@ -423,12 +424,12 @@ func (s *backupService) Restore(ctx context.Context, data []byte, req RestoreReq
 // markSetupComplete records first-run setup as done (the same shape setup_state.go
 // writes) so the wizard doesn't reappear after a restore.
 func (s *backupService) markSetupComplete(ctx context.Context) error {
-	state := SetupState{Completed: true, CompletedAt: time.Now().UTC().Unix()}
+	state := sharedservices.SetupState{Completed: true, CompletedAt: time.Now().UTC().Unix()}
 	payload, err := json.Marshal(state)
 	if err != nil {
 		return err
 	}
-	return s.upsertSetting(ctx, setupStateKey, string(payload), state.CompletedAt)
+	return s.upsertSetting(ctx, sharedservices.SetupStateKey, string(payload), state.CompletedAt)
 }
 
 func (s *backupService) restoreCameras(ctx context.Context, file *backupFile, mode string, idMap map[int64]int64, res *RestoreResult) error {

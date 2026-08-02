@@ -20,6 +20,7 @@ import (
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
 	apiaccessenums "github.com/mysayasan/kopiv2/domain/enums/apiaccess"
 	"github.com/mysayasan/kopiv2/domain/notification"
+	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/infra/apidocs"
 	"github.com/mysayasan/kopiv2/infra/apphost"
 	"github.com/mysayasan/kopiv2/infra/atrest"
@@ -637,6 +638,10 @@ func (m *module) Entities() []any {
 		sharedentities.Notification{},
 		appentities.ManagedNode{},
 		appentities.ControlSetting{},
+		// Shared key-value row the rest of the suite already carries; the first-run
+		// wizard's completion flag lives here. ControlSetting is deliberately left
+		// alone — it holds the fleet key and is the node-adoption path's table.
+		sharedentities.RuntimeSetting{},
 		appentities.NodeAccessGrant{},
 		appentities.ControlUser{},
 		appentities.AuditLog{},
@@ -679,6 +684,7 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Node Floorplan", Description: "floor plans holding a node camera markers (geo-map drill-down)", Path: "/api/node-floorplan", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Settings", Description: "in-app editor for the safe subset of config.json (superadmin-gated)", Path: "/api/settings", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "System", Description: "process restart to apply settings changes (superadmin-gated)", Path: "/api/system", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Setup Wizard", Description: "first-run setup state and completion", Path: "/api/setup", AccessTier: apiaccessenums.AuthOnly},
 	}
 
 	statements := make([]string, 0, len(endpoints)*2)
@@ -844,6 +850,12 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		func(f string, a ...any) { deps.Logger.Warnf("myseliasan.settings", f, a...) })
 	apis.NewSettingsApi(api, *deps.Auth, controlSession, settingsService, auditService, []string{deps.DataDir, deps.HomeDir})
 	apis.NewSystemApi(api, *deps.Auth, controlSession, deps.Restarter)
+
+	// First-run setup wizard completion flag (shared runtime-setting row, the same
+	// contract mymatasan and myidsan use).
+	runtimeSettingRepo := dbsql.NewGenericRepo[sharedentities.RuntimeSetting](deps.Db)
+	setupStateService := sharedservices.NewSetupStateService(runtimeSettingRepo)
+	apis.NewSetupApi(api, *deps.Auth, controlSession, setupStateService)
 
 	// Control channel server: a dedicated fleet-mTLS listener accepting the
 	// persistent, node-dialed bi-directional channel. Connection presence bumps a
