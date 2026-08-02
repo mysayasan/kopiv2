@@ -77,6 +77,7 @@ type backupHarness struct {
 	directory   *fakeBackupRepo[myidsanentities.DirectoryConfig]
 	groupMaps   *fakeBackupRepo[myidsanentities.FederatedGroupMapping]
 	ssoCa       *fakeBackupRepo[myidsanentities.SsoCa]
+	webauthn    *fakeBackupRepo[myidsanentities.UserWebauthnCredential]
 	svc         IBackupService
 }
 
@@ -90,6 +91,7 @@ func newBackupHarness(t *testing.T, cipher *atrest.Cipher) *backupHarness {
 		avatars:     newRepo(func(a *myidsanentities.UserAvatar) int64 { return a.Id }, func(a *myidsanentities.UserAvatar, id int64) { a.Id = id }),
 		mfaFactors:  newRepo(func(f *myidsanentities.UserMfaFactor) int64 { return f.Id }, func(f *myidsanentities.UserMfaFactor, id int64) { f.Id = id }),
 		mfaCodes:    newRepo(func(c *myidsanentities.UserMfaRecoveryCode) int64 { return c.Id }, func(c *myidsanentities.UserMfaRecoveryCode, id int64) { c.Id = id }),
+		webauthn:    newRepo(func(c *myidsanentities.UserWebauthnCredential) int64 { return c.Id }, func(c *myidsanentities.UserWebauthnCredential, id int64) { c.Id = id }),
 		appRegistry: newRepo(func(a *sharedentities.AppRegistry) int64 { return a.Id }, func(a *sharedentities.AppRegistry, id int64) { a.Id = id }),
 		appAuth:     newRepo(func(a *sharedentities.AppAuthConfig) int64 { return a.Id }, func(a *sharedentities.AppAuthConfig, id int64) { a.Id = id }),
 		appRedirect: newRepo(func(u *sharedentities.AppRedirectUri) int64 { return u.Id }, func(u *sharedentities.AppRedirectUri, id int64) { u.Id = id }),
@@ -98,7 +100,7 @@ func newBackupHarness(t *testing.T, cipher *atrest.Cipher) *backupHarness {
 		ssoCa:       newRepo(func(c *myidsanentities.SsoCa) int64 { return c.Id }, func(c *myidsanentities.SsoCa, id int64) { c.Id = id }),
 	}
 	h.svc = NewBackupService(
-		h.roles, h.permissions, h.users, h.groups, h.avatars, h.mfaFactors, h.mfaCodes,
+		h.roles, h.permissions, h.users, h.groups, h.avatars, h.mfaFactors, h.mfaCodes, h.webauthn,
 		h.appRegistry, h.appAuth, h.appRedirect, h.directory, h.groupMaps, h.ssoCa,
 		cipher, nil, nil, "test-1.0.0",
 	)
@@ -149,6 +151,21 @@ func seedSource(t *testing.T, h *backupHarness, cipher *atrest.Cipher) {
 	if _, err := h.avatars.Create(ctx, "", myidsanentities.UserAvatar{UserLoginId: userID, ContentType: "image/jpeg", DataB64: "AAAA"}); err != nil {
 		t.Fatal(err)
 	}
+	// A security key alongside the TOTP factor. Nothing here is sealed — a WebAuthn
+	// credential is a public key — so this row is the control case proving the backup does
+	// NOT re-seal indiscriminately.
+	if _, err := h.webauthn.Create(ctx, "", myidsanentities.UserWebauthnCredential{
+		UserLoginId:  userID,
+		CredentialId: testWebAuthnCredentialId,
+		PublicKey:    testWebAuthnPublicKey,
+		Aaguid:       "AAAAAAAAAAAAAAAAAAAAAA==",
+		Label:        "YubiKey 5 — desk drawer",
+		Transports:   "usb,nfc",
+		SignCount:    9,
+		BackedUp:     true,
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := h.appRegistry.Create(ctx, "", sharedentities.AppRegistry{Code: "myseliasan", Audience: "myseliasan", IsActive: true}); err != nil {
 		t.Fatal(err)
@@ -178,6 +195,16 @@ func seedSource(t *testing.T, h *backupHarness, cipher *atrest.Cipher) {
 }
 
 const testPassphrase = "a-sufficiently-long-passphrase"
+
+// The credential handle and public key of the seeded security key. Both must survive a
+// round trip byte-for-byte: the handle is what the browser presents to say which key it is
+// using, and the public key is the only thing that can verify its signatures. Either one
+// altered and the key is dead — the browser would not offer it, or the assertion would not
+// verify.
+const (
+	testWebAuthnCredentialId = "Q3JlZGVudGlhbEhhbmRsZUJ5dGVz"
+	testWebAuthnPublicKey    = "pQECAyYgASFYIGNvc2UtcHVibGljLWtleS1ieXRlcy14LWNvb3Jk"
+)
 
 // THE test for this feature. A backup restored onto a host with a DIFFERENT at-rest key
 // must yield a usable TOTP secret and LDAP bind password. Carrying the sealed bytes would
@@ -489,5 +516,252 @@ func TestBackupWorksWithEncryptionDisabled(t *testing.T) {
 	}
 	if got := dst.mfaFactors.rows[0].SecretEnc; got != "JBSWY3DPEHPK3PXP" {
 		t.Errorf("plaintext secret round-trip got %q", got)
+	}
+}
+
+// Security keys must survive the round trip and land on the destination's user id. A
+// credential is only usable if BOTH halves of that hold: the foreign key must point at the
+// restored account (the whole point of the remap — the destination assigns fresh ids, so a
+// carried id would attach the key to whatever user happens to occupy that number), and the
+// credential handle and public key must arrive byte-for-byte, since they are what identifies
+// and verifies the authenticator.
+func TestRestoreCarriesSecurityKeysAndRemapsTheirOwner(t *testing.T) {
+	ctx := context.Background()
+	cipher := testCipher(t)
+	src := newBackupHarness(t, cipher)
+	seedSource(t, src, cipher)
+
+	blob, err := src.svc.Export(ctx, BackupRequest{Passphrase: testPassphrase})
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+
+	dst := newBackupHarness(t, cipher)
+	// Offset the destination's ids so a credential whose UserLoginId was carried rather than
+	// remapped would point at a filler account instead of failing loudly.
+	for i := 0; i < 5; i++ {
+		if _, err := dst.users.Create(ctx, "", sharedentities.UserLogin{Email: "filler"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := dst.roles.Create(ctx, "", sharedentities.AccessRole{Name: "filler"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	res, err := dst.svc.Restore(ctx, blob, RestoreRequest{Passphrase: testPassphrase, Mode: RestoreModeReplace})
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	if len(dst.webauthn.rows) != 1 {
+		t.Fatalf("expected 1 restored security key, got %d", len(dst.webauthn.rows))
+	}
+	got := dst.webauthn.rows[0]
+
+	newUserID := dst.users.rows[0].Id
+	if got.UserLoginId != newUserID {
+		t.Errorf("credential user id = %d, want the remapped %d", got.UserLoginId, newUserID)
+	}
+	// And specifically not the source id, which is what a missing remap would leave behind.
+	if newUserID != src.users.rows[0].Id && got.UserLoginId == src.users.rows[0].Id {
+		t.Error("credential carried the source user id verbatim")
+	}
+
+	if got.CredentialId != testWebAuthnCredentialId {
+		t.Errorf("credentialId = %q, want %q carried verbatim", got.CredentialId, testWebAuthnCredentialId)
+	}
+	// PublicKey is asserted separately, in TestBackupCarriesSecurityKeyPublicKey — it does
+	// not currently survive the archive. See that test for the detail.
+
+	// The descriptive fields are what makes a key revocable months later; losing the label
+	// leaves an operator with an unidentifiable row they dare not delete.
+	if got.Label != "YubiKey 5 — desk drawer" {
+		t.Errorf("label = %q", got.Label)
+	}
+	if got.Transports != "usb,nfc" {
+		t.Errorf("transports = %q", got.Transports)
+	}
+	if got.SignCount != 9 {
+		t.Errorf("signCount = %d, want 9 — a reset counter would raise a false clone warning", got.SignCount)
+	}
+	if !got.BackedUp {
+		t.Error("BackedUp was lost; a synced passkey and a single hardware key have very different loss profiles")
+	}
+	if got.Id == 0 {
+		t.Error("restored credential has no id")
+	}
+
+	if res.Restored[BackupSectionMfa] < 1 {
+		t.Errorf("restored security keys should be counted under %q, got %d", BackupSectionMfa, res.Restored[BackupSectionMfa])
+	}
+}
+
+// The security key must actually be IN the archive, checked independently of the restore leg.
+// If the export silently dropped it, a restore onto an empty destination would look like a
+// faithful "no keys were enrolled" — and the operator would only find out when the user
+// holding the key could not log in.
+func TestExportIncludesSecurityKeys(t *testing.T) {
+	ctx := context.Background()
+	cipher := testCipher(t)
+	src := newBackupHarness(t, cipher)
+	seedSource(t, src, cipher)
+
+	blob, err := src.svc.Export(ctx, BackupRequest{Passphrase: testPassphrase})
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+
+	// Reach into the decoded payload rather than inferring from a restore, so a failure
+	// points at the export leg specifically.
+	file, err := src.svc.(*backupService).decode(blob, testPassphrase)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(file.WebAuthnCreds) != 1 {
+		t.Fatalf("archive contains %d security keys, want 1", len(file.WebAuthnCreds))
+	}
+	if got := file.WebAuthnCreds[0].CredentialId; got != testWebAuthnCredentialId {
+		t.Errorf("archived credentialId = %q, want %q", got, testWebAuthnCredentialId)
+	}
+	// PublicKey is asserted separately — see TestBackupCarriesSecurityKeyPublicKey.
+
+	// The count the operator is shown must include security keys, so a user holding ONLY a
+	// key is not reported as having no second factor — which would read as "nothing to lose"
+	// on the confirmation screen.
+	manifest, err := src.svc.Preview(ctx, blob, testPassphrase)
+	if err != nil {
+		t.Fatalf("Preview: %v", err)
+	}
+	if manifest.Counts[BackupSectionMfa] != 2 {
+		t.Errorf("mfa count = %d, want 2 (one TOTP factor + one security key)", manifest.Counts[BackupSectionMfa])
+	}
+}
+
+// The public key is the ONLY thing that can verify an assertion, so a backup that loses it
+// restores a credential the browser will still offer and the server can never accept: the
+// user's key stops working and nothing says why until they try to log in. That is the same
+// failure mode the TOTP re-sealing exists to prevent, arriving by a different route.
+//
+// This is a REGRESSION test for a bug that shipped in the first draft of the WebAuthn backup
+// leg and was caught here: UserWebauthnCredential.PublicKey is tagged json:"-" on the entity
+// (correctly — it must not leak through the REST surface), so holding the RAW entity in
+// backupFile.WebAuthnCreds dropped the key on json.Marshal. A restore then reported success,
+// the browser still offered the key because the credential id survived, and every assertion
+// failed signature verification — a silent lockout for anyone whose only second factor was a
+// security key.
+//
+// The fix is backupWebAuthnCredential, matching the wrapper every other json:"-" field
+// already had (backupAvatar.DataB64, backupRecoveryCode.CodeHash, backupMfaFactor.Secret).
+// Note the wrapper is about MARSHALLING, not sealing: a public key needs no re-sealing, and
+// reasoning from "nothing to seal" to "no wrapper needed" is what produced the bug.
+func TestBackupCarriesSecurityKeyPublicKey(t *testing.T) {
+	ctx := context.Background()
+	cipher := testCipher(t)
+	src := newBackupHarness(t, cipher)
+	seedSource(t, src, cipher)
+
+	blob, err := src.svc.Export(ctx, BackupRequest{Passphrase: testPassphrase})
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+
+	// Export leg: the key must be in the archive at all.
+	file, err := src.svc.(*backupService).decode(blob, testPassphrase)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(file.WebAuthnCreds) != 1 {
+		t.Fatalf("archive contains %d security keys, want 1", len(file.WebAuthnCreds))
+	}
+	if got := file.WebAuthnCreds[0].PublicKey; got != testWebAuthnPublicKey {
+		t.Fatalf("archived publicKey = %q, want %q", got, testWebAuthnPublicKey)
+	}
+
+	// Restore leg: and it must reach the destination row byte-for-byte. No re-sealing —
+	// a public key is not bound to the exporting host's at-rest key.
+	dst := newBackupHarness(t, cipher)
+	if _, err := dst.svc.Restore(ctx, blob, RestoreRequest{Passphrase: testPassphrase, Mode: RestoreModeReplace}); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if len(dst.webauthn.rows) != 1 {
+		t.Fatalf("restored %d security keys, want 1", len(dst.webauthn.rows))
+	}
+	if got := dst.webauthn.rows[0].PublicKey; got != testWebAuthnPublicKey {
+		t.Fatalf("restored publicKey = %q, want %q carried verbatim", got, testWebAuthnPublicKey)
+	}
+}
+
+// A credential whose owning account was not restored must be SKIPPED, not written with a
+// dangling foreign key. Two reasons this matters more than it looks: an orphaned row still
+// occupies the globally-unique CredentialId, so the physical key could never be re-enrolled
+// by anyone; and a row pointing at a user id that later gets reused would attach a stranger's
+// authenticator to that account.
+func TestRestoreSkipsSecurityKeysWhoseUserIsAbsent(t *testing.T) {
+	ctx := context.Background()
+	cipher := testCipher(t)
+	src := newBackupHarness(t, cipher)
+	seedSource(t, src, cipher)
+
+	blob, err := src.svc.Export(ctx, BackupRequest{Passphrase: testPassphrase})
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+
+	dst := newBackupHarness(t, cipher)
+	// Restore the MFA section ALONE: identity is not restored, so no user id is in the remap
+	// table and every second-factor row is an orphan.
+	res, err := dst.svc.Restore(ctx, blob, RestoreRequest{
+		Passphrase: testPassphrase,
+		Sections:   []string{BackupSectionMfa},
+	})
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	if len(dst.webauthn.rows) != 0 {
+		t.Errorf("a security key was restored for a user that does not exist: %+v", *dst.webauthn.rows[0])
+	}
+	// Skipped, not silently dropped — the operator has to be able to see that a factor did
+	// not come across.
+	if res.Skipped[BackupSectionMfa] < 2 {
+		t.Errorf("skipped %d MFA rows, want at least 2 (the TOTP factor and the security key)", res.Skipped[BackupSectionMfa])
+	}
+	if res.Restored[BackupSectionMfa] != 0 {
+		t.Errorf("restored count = %d, want 0 — nothing could legitimately be restored", res.Restored[BackupSectionMfa])
+	}
+}
+
+// Replace mode must clear the destination's existing keys before writing the archive's, or a
+// restore would leave a stale authenticator able to satisfy a factor for an account the
+// backup never knew about.
+func TestRestoreReplaceModeWipesExistingSecurityKeys(t *testing.T) {
+	ctx := context.Background()
+	cipher := testCipher(t)
+	src := newBackupHarness(t, cipher)
+	seedSource(t, src, cipher)
+
+	blob, err := src.svc.Export(ctx, BackupRequest{Passphrase: testPassphrase})
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+
+	const stale = "stale-key-from-before-the-restore"
+	dst := newBackupHarness(t, cipher)
+	if _, err := dst.webauthn.Create(ctx, "", myidsanentities.UserWebauthnCredential{
+		UserLoginId:  99,
+		CredentialId: stale,
+		Label:        "a key belonging to nobody in this backup",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := dst.svc.Restore(ctx, blob, RestoreRequest{Passphrase: testPassphrase, Mode: RestoreModeReplace}); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	for _, row := range dst.webauthn.rows {
+		if row.CredentialId == stale {
+			t.Fatal("replace mode left a pre-existing security key in place")
+		}
 	}
 }

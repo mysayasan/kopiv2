@@ -1,8 +1,10 @@
 # myidsan MFA Plan (TOTP + recovery codes)
 
-**Status: SHIPPED (P0–P3).** Prerequisite work (enterprise SSO P0–P3) is built
+**Status: SHIPPED (P0–P4).** Prerequisite work (enterprise SSO P0–P3) is built
 and live-benched — see `docs/MYIDSAN_ENTERPRISE_SSO_PLAN.md`. WebAuthn/passkeys
-(P4) remain unbuilt — see §8.
+(P4) have since shipped too, as a **separate table** (`UserWebauthnCredential`)
+rather than a second `UserMfaFactor.Kind` — see §8 and
+`docs/modules/apps/myidsan/services/webauthn.go.md`.
 
 Built as designed below, with the following deviations from this plan, both intentional:
 
@@ -47,10 +49,11 @@ single door to NVR footage (mymatasan), fleet control (myseliasan) and IoT actua
 (myiotsan) — lamps, blinds, breakers. Password-only is the weakest link in the whole
 product line.
 
-Non-goals: SMS/email OTP (needs egress; violates [[myseliasan-intranet-airgap]] and is
-phishable anyway), WebAuthn/passkeys (Phase 4 — real, but bigger: needs HTTPS origin
-binding and a credential store), MFA for upstream-federated logins (Kerberos/OIDC — the
-IdP owns that; see §5).
+Non-goals at the time this was written: SMS/email OTP (needs egress; violates
+[[myseliasan-intranet-airgap]] and is phishable anyway); WebAuthn/passkeys was scoped as
+Phase 4 rather than in-scope here because it needed HTTPS origin binding and a credential
+store — it has since shipped (see §8); MFA for upstream-federated logins (Kerberos/OIDC —
+the IdP owns that; see §5) remains a non-goal.
 
 ---
 
@@ -240,8 +243,17 @@ entire suite is unadministrable. Mitigations, all three:
   per [[tier3-metrics]]). **Shipped.** Policy settings (`mfa.policy`/`mfa.requiredRoleIds`/
   `mfa.applyToDirectory`) were deferred at the time this note was written and have since
   shipped in Productization Phase 3 — see the deviations note at the top.
-- **P4** — WebAuthn/passkeys as a second `Kind`, reusing the whole §2 exchange. **Not
-  built.**
+- **P4** — WebAuthn/passkeys. **Shipped**, but not as originally scoped here (a second
+  `UserMfaFactor.Kind`): it landed as its own table (`UserWebauthnCredential`, many rows
+  per user) and its own service (`IWebAuthnService`), combined with TOTP only at the login
+  gate (`apis/mfa_challenge.go.md`'s `mfaChallenger`, which ORs both and reports
+  `mfaMethods`), because the two verification shapes — a code comparison against one row vs.
+  an origin-bound signature check against many — diverged enough that folding a second kind
+  into the existing table stopped making sense. The §2 pre-session exchange **is** reused:
+  the same `mfaToken`, just two new legs (`POST /api/login/mfa/webauthn/{begin,finish}`)
+  alongside the existing `POST /api/login/mfa`. See
+  `docs/modules/apps/myidsan/services/webauthn.go.md`,
+  `docs/modules/infra/webauthn/webauthn.go.md`.
 
 ## 9. Downstream impact: none
 

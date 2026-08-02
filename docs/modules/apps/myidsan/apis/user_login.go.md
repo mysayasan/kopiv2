@@ -65,3 +65,26 @@ services.IAuditService`, `trusted []*net.IPNet` (parsed from the shared
 `trustedProxies` config via `middlewares.ParseTrustedProxies`), and (Productization
 Phase 3) `policy config.EffectivePasswordPolicy`; `NewUserLoginApi`'s signature gained
 matching trailing parameters, `policy` inserted before `trustedProxies`.
+
+## Second-Factor Cleanup on Delete
+
+`NewUserLoginApi` gained two more trailing parameters, `mfa services.IMfaService` and
+`webauthn services.IWebAuthnService` (both optional — a nil one simply skips that factor
+kind), used **only** by `removeFactorsFor(r, userId)`, called from `delete` right after
+`endSessionsFor`:
+
+- `mfa.Disable(ctx, userId)` removes the account's TOTP factor + recovery codes. For TOTP
+  an orphaned row would have been harmless (lookups are always by `UserLoginId`), so this
+  closes a smaller gap than the one below — mostly hygiene.
+- `webauthn.DeleteAllForUser(ctx, userId)` removes every enrolled security key. This one
+  **is** load-bearing: `UserWebauthnCredential.CredentialId` is unique across the **whole**
+  table, not per user (see `entities/user_webauthn_credential.go.md`), so an orphaned row
+  left behind by a deleted account would silently refuse to let that same physical key be
+  re-enrolled later — a re-created account (or the same physical person, re-onboarded)
+  would find their own hardware key rejected with no visible reason.
+
+Both calls are **best-effort and logged, not fatal**: the account row is already gone by
+the time `removeFactorsFor` runs, so failing the HTTP response over a factor-cleanup error
+would report a failure for a deletion that already succeeded. Deliberately **not** called
+from `put`'s disable path (`!body.IsActive`) — a disabled account still exists and may be
+re-enabled, and it would need its factors again if it is.

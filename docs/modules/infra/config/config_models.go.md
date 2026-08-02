@@ -90,6 +90,31 @@ What stayed here is anything a second app already uses or obviously will: `Secur
   login outright would lock out every existing administrator the moment the policy is
   switched on. See `docs/MYIDSAN_MFA_PLAN.md` §6 and
   `docs/MYIDSAN_PRODUCTIZATION_PLAN.md` Phase 3.
+- `webauthn` (`WebAuthnConfigModel`, myidsan) configures FIDO2 / WebAuthn security keys as
+  a second factor alongside TOTP. Read only through `Effective() EffectiveWebAuthn`.
+  `enabled` (`*bool`) defaults **ON** when absent — safe here in a way it would not be for
+  a policy block, because enrolment is per-user opt-in: "on" only means a user *may*
+  enrol a key, and an account with none behaves exactly as before. `relyingPartyId` scopes
+  every credential this install issues; left empty it is derived from the request host
+  (port stripped) each time, which is what makes the feature work with zero configuration
+  on both `localhost` and a real deployment — set it explicitly to the registrable domain
+  when the same install answers on several hostnames, or when a disaster-recovery restore
+  onto a differently-named host must keep existing keys working (see
+  `apps/myidsan/services/backup.go.md`). Changing this value (or the host, when derived)
+  silently invalidates every key already enrolled, since a credential is bound to the RP ID
+  it was created under and the browser refuses to use it from any other origin.
+  `relyingPartyName` is what the authenticator shows the user when prompting (defaults
+  `"MyIDSan"`). `relyingPartyOrigins` allow-lists the exact origins an assertion may come
+  from; empty accepts the request's own derived origin — a deployment behind a
+  TLS-terminating reverse proxy must set this explicitly, since the proxy's inside leg is
+  plain HTTP and the derived `http://` origin would never match what the browser actually
+  sent. `userVerification` is `"preferred"` (default)/`"required"`/`"discouraged"`; an
+  unrecognised value resolves to `"preferred"` rather than silently strengthening to
+  `"required"` (which could refuse a key with no PIN/biometric) or weakening to
+  `"discouraged"`. `timeoutMs` bounds how long the browser prompt stays open (default
+  `60000`). See `infra/webauthn/webauthn.go.md` for how these resolve into the underlying
+  ceremony library, and `apps/myidsan/app/app.go.md` for where the `*webauthn.Authority` is
+  built and threaded through.
 - `fileStorage.path` is app-relative unless absolute.
 - `fileStorage.cleanup.enabled` starts the expired file cleanup scheduler.
 - `fileStorage.cleanup.frequencySeconds` controls scheduler check frequency and defaults to 60 seconds in apphost.

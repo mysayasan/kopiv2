@@ -50,7 +50,12 @@ const (
 	// collected and applied in, and later sections depend on ids remapped by earlier ones.
 	BackupSectionAccess     = "access"     // access_role + access_role_permission
 	BackupSectionIdentity   = "identity"   // user_login (password hashes) + user_group + user_avatar
-	BackupSectionMfa        = "mfa"        // user_mfa_factor (TOTP secrets) + recovery codes
+	// BackupSectionMfa covers EVERY second factor, not only TOTP: user_mfa_factor (sealed
+	// secrets) + recovery codes + user_webauthn_credential (security keys). Security keys
+	// ride in this section rather than one of their own because an operator selecting "mfa"
+	// means "the second factors", and leaving keys out would restore an account whose only
+	// factor had silently vanished — a lockout under a required-MFA policy.
+	BackupSectionMfa        = "mfa"
 	BackupSectionApps       = "apps"       // app_registry + app_auth_config + app_redirect_uri
 	BackupSectionFederation = "federation" // directory_config (bind password) + federated_group_mapping
 	BackupSectionSsoCa      = "ssoca"      // sso_ca (CA certificate AND private key)
@@ -120,6 +125,22 @@ type backupRecoveryCode struct {
 	CodeHash string `json:"codeHash"`
 }
 
+// backupWebauthnCredential re-exposes UserWebauthnCredential.PublicKey, which is json:"-"
+// on the entity so it never rides along in a REST projection.
+//
+// The wrapper is needed for MARSHALLING, not for sealing — a distinction worth stating
+// because conflating the two is exactly how this was got wrong once already. A WebAuthn
+// public key needs no unseal/re-seal (it is not a secret and is not bound to a host key),
+// and that correctly means no cipher work — but it does NOT mean the field survives
+// json.Marshal. Without this wrapper the archive carried the credential id and dropped the
+// key, so a restore reported success, the browser still offered the key, and every
+// assertion then failed signature verification: the precise lockout the re-sealing logic
+// exists to prevent, arriving by a different route.
+type backupWebauthnCredential struct {
+	myidsanentities.UserWebauthnCredential
+	PublicKey string `json:"publicKey"`
+}
+
 // backupDirectoryConfig carries the LDAP bind password in plaintext for the same reason
 // as the TOTP secret.
 type backupDirectoryConfig struct {
@@ -137,6 +158,16 @@ type backupFile struct {
 	Avatars     []backupAvatar                          `json:"avatars,omitempty"`
 	MfaFactors  []backupMfaFactor                       `json:"mfaFactors,omitempty"`
 	MfaCodes    []backupRecoveryCode                    `json:"mfaCodes,omitempty"`
+	// WebAuthnCreds needs no unseal/re-seal dance, unlike MfaFactors above: a WebAuthn
+	// credential is a PUBLIC key, so nothing in it is bound to the exporting host's at-rest
+	// key. It DOES need the wrapper, because the public key is json:"-" on the entity — see
+	// backupWebauthnCredential.
+	//
+	// It carries one host-coupling of a different kind: a credential is bound to the
+	// Relying Party ID it was created under. Restored onto a host answering on a different
+	// name (with webauthn.relyingPartyId left to derive), the browser will refuse these keys
+	// — set relyingPartyId explicitly if a DR host will not share the original hostname.
+	WebAuthnCreds []backupWebauthnCredential `json:"webauthnCreds,omitempty"`
 	AppRegistry []sharedentities.AppRegistry            `json:"appRegistry,omitempty"`
 	AppAuth     []sharedentities.AppAuthConfig          `json:"appAuth,omitempty"`
 	AppRedirect []sharedentities.AppRedirectUri         `json:"appRedirect,omitempty"`
@@ -191,6 +222,7 @@ type backupService struct {
 	avatars     dbsql.IGenericRepo[myidsanentities.UserAvatar]
 	mfaFactors  dbsql.IGenericRepo[myidsanentities.UserMfaFactor]
 	mfaCodes    dbsql.IGenericRepo[myidsanentities.UserMfaRecoveryCode]
+	webauthn    dbsql.IGenericRepo[myidsanentities.UserWebauthnCredential]
 	appRegistry dbsql.IGenericRepo[sharedentities.AppRegistry]
 	appAuth     dbsql.IGenericRepo[sharedentities.AppAuthConfig]
 	appRedirect dbsql.IGenericRepo[sharedentities.AppRedirectUri]
@@ -215,6 +247,7 @@ func NewBackupService(
 	avatars dbsql.IGenericRepo[myidsanentities.UserAvatar],
 	mfaFactors dbsql.IGenericRepo[myidsanentities.UserMfaFactor],
 	mfaCodes dbsql.IGenericRepo[myidsanentities.UserMfaRecoveryCode],
+	webauthnCreds dbsql.IGenericRepo[myidsanentities.UserWebauthnCredential],
 	appRegistry dbsql.IGenericRepo[sharedentities.AppRegistry],
 	appAuth dbsql.IGenericRepo[sharedentities.AppAuthConfig],
 	appRedirect dbsql.IGenericRepo[sharedentities.AppRedirectUri],
@@ -228,7 +261,7 @@ func NewBackupService(
 ) IBackupService {
 	return &backupService{
 		roles: roles, permissions: permissions, users: users, groups: groups,
-		avatars: avatars, mfaFactors: mfaFactors, mfaCodes: mfaCodes,
+		avatars: avatars, mfaFactors: mfaFactors, mfaCodes: mfaCodes, webauthn: webauthnCreds,
 		appRegistry: appRegistry, appAuth: appAuth, appRedirect: appRedirect,
 		directory: directory, groupMaps: groupMaps, ssoCa: ssoCa,
 		cipher: cipher, store: store, setup: setup, appVersion: appVersion,
@@ -363,7 +396,25 @@ func (s *backupService) collect(ctx context.Context, file *backupFile, section s
 		for _, c := range codes {
 			file.MfaCodes = append(file.MfaCodes, backupRecoveryCode{UserMfaRecoveryCode: c, CodeHash: c.CodeHash})
 		}
-		file.Manifest.Counts[section] = len(factors)
+		// Security keys travel verbatim — public keys, nothing to unseal. The public key is
+		// re-exposed through the wrapper because it is json:"-" on the entity and would
+		// otherwise be silently dropped by json.Marshal, leaving a credential that restores
+		// but can never verify.
+		if s.webauthn != nil {
+			creds, err := allRows(ctx, s.webauthn)
+			if err != nil {
+				return err
+			}
+			for _, c := range creds {
+				file.WebAuthnCreds = append(file.WebAuthnCreds, backupWebauthnCredential{
+					UserWebauthnCredential: c,
+					PublicKey:              c.PublicKey,
+				})
+			}
+		}
+		// The count reported to the operator is every second factor in the archive, so a
+		// user holding only a security key is not reported as zero.
+		file.Manifest.Counts[section] = len(factors) + len(file.WebAuthnCreds)
 
 	case BackupSectionApps:
 		reg, err := allRows(ctx, s.appRegistry)
@@ -644,6 +695,11 @@ func (s *backupService) restoreMfa(ctx context.Context, file *backupFile, mode s
 		if err := wipeAll(ctx, s.mfaFactors, func(f *myidsanentities.UserMfaFactor) int64 { return f.Id }); err != nil {
 			return err
 		}
+		if s.webauthn != nil {
+			if err := wipeAll(ctx, s.webauthn, func(c *myidsanentities.UserWebauthnCredential) int64 { return c.Id }); err != nil {
+				return err
+			}
+		}
 	}
 
 	for _, bf := range file.MfaFactors {
@@ -680,6 +736,31 @@ func (s *backupService) restoreMfa(ctx context.Context, file *backupFile, mode s
 		row.CodeHash = bc.CodeHash
 		if _, err := s.mfaCodes.Create(ctx, "", row); err != nil {
 			return err
+		}
+	}
+
+	// Security keys. Restored verbatim apart from the foreign-key remap — no re-sealing,
+	// because the stored public key is not sealed to begin with.
+	if s.webauthn != nil {
+		for _, cred := range file.WebAuthnCreds {
+			newUserID, ok := userIDs[cred.UserLoginId]
+			if !ok {
+				// An orphaned credential would still occupy its globally-unique
+				// CredentialId, which would then refuse to re-enrol that physical key.
+				res.Skipped[BackupSectionMfa]++
+				continue
+			}
+			row := cred.UserWebauthnCredential
+			row.Id = 0
+			row.UserLoginId = newUserID
+			// Restore the public key from the WRAPPER field: unmarshalling the embedded
+			// entity leaves PublicKey empty (json:"-"), and a credential without its key
+			// verifies nothing.
+			row.PublicKey = cred.PublicKey
+			if _, err := s.webauthn.Create(ctx, "", row); err != nil {
+				return err
+			}
+			res.Restored[BackupSectionMfa]++
 		}
 	}
 	return nil

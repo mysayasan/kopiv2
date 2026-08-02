@@ -612,6 +612,66 @@ design (self-service enrollment on the **Profile** page — reached from the acc
 chip in the side rail, not a nav item — alongside change-password and the profile
 picture, gated local + LDAP password logins, Kerberos/OIDC ungated).
 
+### Security keys (WebAuthn / FIDO2)
+
+A second factor kind alongside TOTP above, not a replacement for it — a user may hold
+either or both, and the login gate accepts whichever is presented. On by default: the
+`webauthn` config block's `enabled` is a pointer, so an absent block resolves to **on**,
+which is safe because enrolment is per-user opt-in (an account with no key enrolled
+behaves exactly as it did before this feature existed):
+
+```json
+"webauthn": {
+  "enabled": true,
+  "relyingPartyId": "",
+  "relyingPartyName": "MyIDSan",
+  "relyingPartyOrigins": [],
+  "userVerification": "preferred",
+  "timeoutMs": 60000
+}
+```
+
+Leave `relyingPartyId` empty for the common single-hostname deployment — it is derived
+from the request host on every ceremony, which is what makes the feature work on both
+`localhost` and a real domain with zero configuration. Set it explicitly (to the
+registrable domain) when the same install answers on more than one hostname, or ahead of
+a disaster-recovery restore onto a host that will **not** share the original hostname —
+see the RP-ID caveat under "Restoring onto a rebuilt server" in `deploy/README-myidsan.md`.
+**Changing this value (or the host, when derived) silently invalidates every key already
+enrolled**, since a credential is cryptographically bound to the RP ID it was created
+under and the browser refuses to use it from any other origin. Behind a TLS-terminating
+reverse proxy, set `relyingPartyOrigins` explicitly too — the proxy's inside leg is plain
+HTTP, so the derived `http://host` origin would never match the `https://host` the
+browser actually used, and every assertion would be refused (a loud, immediate failure,
+not a silent weakening). `userVerification: "required"` forces a PIN/biometric on the key
+itself, making it genuinely two-factor on its own; the default `"preferred"` also accepts
+a key that only proves possession.
+
+Enrol from the **Profile** page's "Security keys" card (reached from the account chip in
+the side rail, same place as TOTP and the profile picture) — several keys per account are
+expected: registering a second one and keeping it elsewhere is the whole recovery story
+for a lost one. Requires a secure context (HTTPS, or `localhost`); the card is simply
+unavailable over plain HTTP on any other host, and the browser prompt itself needs a
+platform authenticator or an inserted/NFC/USB hardware key.
+
+**Clone detection is recorded, not enforced.** A signature counter that fails to advance
+is the spec's clone signal, but most platform authenticators and every synced passkey
+legitimately report `0` forever, so an assertion like that is **accepted**, flagged on the
+credential, and written to the audit trail (`webauthn.clone_warning`) rather than refused
+— refusing would lock users out of working hardware on a signal the spec itself calls
+ambiguous. Look for that action in the **Audit log** if a key starts behaving oddly.
+
+A superadmin can clear another user's keys entirely (lost-device recovery, mirroring the
+TOTP `DELETE /api/mfa-admin/{id}` above) via `DELETE /api/mfa-admin/{id}/webauthn`, gated
+behind step-up re-authentication the same way. Rename and Delete work on your own keys even
+when `webauthn.enabled` is switched off server-wide — turning the feature off is exactly
+what an operator does right after a key is reported lost, and being unable to revoke it at
+that moment would be the wrong failure.
+
+Not yet exercised: the sign-counter/clone-warning branch against real hardware (it was
+verified using Chrome's CDP virtual authenticator, which always advances its counter
+normally) and Active Directory / Samba AD account interplay specifically.
+
 ### Account recovery ("Forgot your password?")
 
 An ordinary local-account user (not the stock superadmin lockout above) who forgot

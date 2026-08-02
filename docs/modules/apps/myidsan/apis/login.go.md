@@ -16,7 +16,7 @@ identity provider (`infra/login.Registry`, see `infra/login/provider.go.md`).
 - Sets HttpOnly JWT session cookies for successful local/LDAP/Kerberos login/register and federated callbacks.
 - Sets a readable CSRF cookie that clients echo in `X-CSRF-Token` for unsafe authenticated requests.
 - Clears session cookies through logout.
-- `NewLoginApi` builds the provider registry via `login.BuildRegistry(oAuth2Conf)` (Google/GitHub register only when both `ClientId` and `ClientSecret` are present) and **returns it**, so `apps/myidsan/app/app.go` can thread the same registry into `NewFederatedAuthApi` — one registry, one provider list, shared by the server-rendered login page, the SPA, and the OAuth routes. `NewLoginApi`'s remaining parameters are now collected into a `LoginApiOptions` struct (`Directory services.IDirectoryService`, `Kerberos *login.KerberosAuthenticator`, `KerberosLabel string`, `Guard *sharedapis.LoginGuard`, `Metrics telemetry.Metrics`, `Mfa services.IMfaService`, `Store cache.Store`, `Reset services.IPasswordResetService`, `Audit services.IAuditService`, `Sessions services.ISessionService`, `TrustedProxies []string`, `PasswordPolicy config.EffectivePasswordPolicy`) — every field may be zero (tests pass the empty struct; LDAP/Kerberos disabled / lockout off / metrics not wired / MFA not armed / reset request endpoint a no-op / audit+session recording a no-op). `KerberosLabel` defaults to `"Windows (SSO)"` when blank and `Kerberos` is non-nil. `Mfa` and `Store` must both be set together to arm the second-factor challenge (see "Second-Factor (MFA) Login Challenge" below); either absent leaves password-only behaviour unchanged. `Reset` (nil-safe) enables `POST /api/login/forgot` (see "Account Recovery (Forgot Password)" below). `TrustedProxies` is parsed once via `middlewares.ParseTrustedProxies` and stored on the api so every audit/session-recording call resolves the same client address.
+- `NewLoginApi` builds the provider registry via `login.BuildRegistry(oAuth2Conf)` (Google/GitHub register only when both `ClientId` and `ClientSecret` are present) and **returns it**, so `apps/myidsan/app/app.go` can thread the same registry into `NewFederatedAuthApi` — one registry, one provider list, shared by the server-rendered login page, the SPA, and the OAuth routes. `NewLoginApi`'s remaining parameters are now collected into a `LoginApiOptions` struct (`Directory services.IDirectoryService`, `Kerberos *login.KerberosAuthenticator`, `KerberosLabel string`, `Guard *sharedapis.LoginGuard`, `Metrics telemetry.Metrics`, `Mfa services.IMfaService`, `Store cache.Store`, `WebAuthn services.IWebAuthnService`, `Reset services.IPasswordResetService`, `Audit services.IAuditService`, `Sessions services.ISessionService`, `TrustedProxies []string`, `PasswordPolicy config.EffectivePasswordPolicy`) — every field may be zero (tests pass the empty struct; LDAP/Kerberos disabled / lockout off / metrics not wired / MFA not armed / reset request endpoint a no-op / audit+session recording a no-op). `KerberosLabel` defaults to `"Windows (SSO)"` when blank and `Kerberos` is non-nil. `Store` plus either `Mfa` or `WebAuthn` arms the `*mfaChallenger` (see "Second-Factor (MFA) Login Challenge" below); all absent leaves password-only behaviour unchanged. `WebAuthn` is held both on the challenger (for the "does this account owe a second factor" question) and directly on `loginApi` (the two pre-session security-key legs run the ceremony itself, which the challenger has no business knowing how to do). `Reset` (nil-safe) enables `POST /api/login/forgot` (see "Account Recovery (Forgot Password)" below). `TrustedProxies` is parsed once via `middlewares.ParseTrustedProxies` and stored on the api so every audit/session-recording call resolves the same client address.
 
 ## Login/Session Auditing (Phase 2)
 
@@ -150,7 +150,12 @@ credential check — `defaultLogin` and `ldapLogin` — routes through
 - A confirmed factor exists → **no session cookie is set**. A challenge token is
   minted (`mfaChallenger.issue`), the `issued` outcome is recorded
   (`recordMfaChallenge`), and the response is `{ mfaRequired: true, mfaToken:
-  "<opaque>" }`.
+  "<opaque>", mfaMethods: [...] }`. `mfaMethods` (`mfaChallenger.methods`, see
+  `apis/mfa_challenge.go.md`) lists which factor kinds this specific account can present
+  (`"webauthn"` before `"totp"` — a key is both stronger and quicker than typing a code),
+  so the client can prompt for a code, ask for a key, or offer a choice, instead of always
+  assuming TOTP and stranding a user whose only factor is a security key. An older client
+  that ignores the field keeps working unchanged — the TOTP leg's behaviour did not move.
 
 `POST /api/login/mfa` (`mfaLogin`, public — there is no session yet, the token
 itself is the short-lived, single-use, client-bound authorization to complete this
@@ -171,6 +176,39 @@ login) redeems `{mfaToken, code}` via `mfaChallenger.redeem`:
 `ldapLogin`. Kerberos SPNEGO SSO and OAuth/OIDC callbacks deliberately do **not**
 route through `completeLoginOrChallenge` — their upstream IdP owns factor policy
 (see `docs/MYIDSAN_MFA_PLAN.md` §5).
+
+## Second-Factor Login: Security Keys (WebAuthn)
+
+The security-key twin of the TOTP leg above, added alongside it rather than replacing it —
+an account may hold either or both, and whichever it holds is what `mfaMethods` (above)
+advertises. Two legs, because the ceremony needs a server-issued challenge before an
+authenticator can sign anything:
+
+- `POST /api/login/mfa/webauthn/begin` (`webauthnLoginBegin`, public) — body
+  `{mfaToken}`. **Peeks** the pending challenge (`mfaChallenger.peek`) rather than
+  consuming it: the token must survive to the `finish` leg, since the security-key
+  ceremony is two round trips against the same login attempt. Peeking still re-checks the
+  client fingerprint, so a token lifted from one browser cannot be driven from another.
+  Returns the assertion options from `services.IWebAuthnService.BeginAssert`, keyed by
+  `webauthnLoginStateKey(mfaToken)` (`"login:" + mfaToken`) so two concurrent sign-in
+  attempts for the same account cannot consume each other's ceremony state.
+- `POST /api/login/mfa/webauthn/finish` (`webauthnLoginFinish`, public) — body
+  `{mfaToken, credential}`. Peeks the same token again, verifies the assertion via
+  `IWebAuthnService.FinishAssert`, and only **now** spends the challenge token
+  (`mfaChallenger.consume`) — the same single-use guarantee the TOTP path's `redeem`
+  gives, just deferred to the leg that actually proves the factor. A non-advancing
+  signature counter (`note != ""` — the library's clone signal, but ambiguous because most
+  platform authenticators and every synced passkey legitimately report `0` forever) does
+  **not** refuse the sign-in; it records `services.ActionWebAuthnClone` against the account
+  so an investigator has a durable trace. On success, calls `guardSuccess`,
+  `recordMfaChallenge("success")`, and `issueLocalSession` — the session
+  `completeLoginOrChallenge` withheld, exactly like `mfaLogin`'s completion.
+
+Both legs check `guardLocked` first (same lockout `defaultLogin`/`ldapLogin`/`mfaLogin`
+share) and 401 with a generic "your verification session expired" on any ceremony failure,
+never distinguishing an unknown/expired token from a rejected assertion — the same
+anti-oracle reasoning as the TOTP path. Requires `LoginApiOptions.WebAuthn` to be set and
+`Enabled()`; either absent answers `ErrLimitedAccess` ("security keys are not configured").
 
 ## Account Recovery (Forgot Password)
 

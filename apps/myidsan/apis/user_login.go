@@ -33,6 +33,10 @@ type userLoginApi struct {
 	// applying a human-password policy there would make the seed subject to rules that add
 	// nothing to a 16-character CSPRNG credential.
 	policy config.EffectivePasswordPolicy
+	// mfa and webauthn are used ONLY to clean up an account's second factors when it is
+	// deleted. Both are optional — a nil one simply skips that factor kind.
+	mfa      services.IMfaService
+	webauthn services.IWebAuthnService
 }
 
 // endSessionsFor terminates every live session belonging to a user. Called when an account
@@ -70,6 +74,28 @@ func (m *userLoginApi) endSessionsFor(r *http.Request, userId int64, reason stri
 	m.audit.Record(r.Context(), entry)
 }
 
+// removeFactorsFor deletes an account's enrolled second factors. Called on DELETE only —
+// never on disable, where the account (and the factors it will need again on re-enable)
+// still exists.
+//
+// Best-effort and logged rather than fatal: the account row is already gone by this point,
+// so failing the response would report an error for a deletion that did happen.
+func (m *userLoginApi) removeFactorsFor(r *http.Request, userId int64) {
+	if userId <= 0 {
+		return
+	}
+	if m.mfa != nil {
+		if err := m.mfa.Disable(r.Context(), userId); err != nil {
+			log.Printf("failed to remove second factor for deleted user %d: %v", userId, err)
+		}
+	}
+	if m.webauthn != nil {
+		if err := m.webauthn.DeleteAllForUser(r.Context(), userId); err != nil {
+			log.Printf("failed to remove security keys for deleted user %d: %v", userId, err)
+		}
+	}
+}
+
 // Create UserLoginApi
 //
 // User-account management (listing, role assignment, enable/disable, deletion) is
@@ -85,7 +111,9 @@ func NewUserLoginApi(
 	sessions services.ISessionService,
 	audit services.IAuditService,
 	policy config.EffectivePasswordPolicy,
-	trustedProxies []string) {
+	trustedProxies []string,
+	mfa services.IMfaService,
+	webauthn services.IWebAuthnService) {
 	handler := &userLoginApi{
 		auth:     auth,
 		serv:     serv,
@@ -93,6 +121,8 @@ func NewUserLoginApi(
 		audit:    audit,
 		trusted:  middlewares.ParseTrustedProxies(trustedProxies),
 		policy:   policy,
+		mfa:      mfa,
+		webauthn: webauthn,
 	}
 
 	// Create api sub-router — the whole user-account surface is superadmin-only.
@@ -239,6 +269,11 @@ func (m *userLoginApi) delete(w http.ResponseWriter, r *http.Request) {
 	// A deleted account's sessions would otherwise keep working until they expired,
 	// authenticating a user row that no longer exists.
 	m.endSessionsFor(r, int64(id), "deleted")
+	// Its second factors would otherwise outlive it. For TOTP an orphan is inert (lookups
+	// are by user id), but a WebAuthn credential id is unique across the WHOLE table, so an
+	// orphaned row silently refuses to re-enrol that same physical key later — someone whose
+	// account is recreated would find their security key rejected with no way to see why.
+	m.removeFactorsFor(r, int64(id))
 	m.recordUserAudit(r, services.ActionUserDelete, int64(id), "", nil)
 
 	controllers.SendResult(w, res, "succeed")

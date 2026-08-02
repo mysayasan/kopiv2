@@ -1372,6 +1372,25 @@ textarea {
   background: var(--surface);
 }
 
+/* ...but a checkbox or radio is not a text field. The block above sizes things you TYPE
+   into, and letting a tick-box inherit it produces a full-width, 40px-tall bordered control
+   — which is what the RBAC permission matrix and the backup section list were rendering,
+   since neither wrapper set an explicit size.
+
+   Written with :where() so this reset carries ZERO specificity: it beats the bare `input`
+   rule above (same specificity, later in the file) while losing to every scoped rule such as
+   `.checkbox-field input` or `.select-col input`, whose deliberate 18px sizing must still
+   win regardless of file order. Fixing it here rather than per-wrapper means the next
+   checkbox someone adds inherits sane defaults instead of repeating the bug. */
+input:where([type="checkbox"], [type="radio"]) {
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
 textarea {
   min-height: 132px;
   resize: vertical;
@@ -3168,4 +3187,84 @@ button .btn-icon {
   margin: 0;
   font-size: 1.05rem;
   font-weight: 700;
+}
+
+/* --- Security keys (WebAuthn) on the Profile page --------------------------
+   A list rather than a single on/off row, because holding more than one key IS the
+   recovery story for losing one — the layout has to make a second key look normal. */
+.webauthn-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.webauthn-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-alt);
+}
+.webauthn-row-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--row-active);
+  color: var(--blue);
+  flex: 0 0 auto;
+}
+.webauthn-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.webauthn-row-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.webauthn-row-meta {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.webauthn-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+.webauthn-tag {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--blue);
+  background: var(--row-active);
+}
+.webauthn-tag.danger {
+  color: var(--red);
+  background: rgba(214, 69, 69, 0.13);
+}
+
+@media (max-width: 640px) {
+  .webauthn-row {
+    flex-wrap: wrap;
+  }
+  .webauthn-row-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
 }

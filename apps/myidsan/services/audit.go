@@ -33,6 +33,19 @@ const (
 	ActionMfaRecovery   = "mfa.recovery_used"
 	ActionMfaRegenerate = "mfa.recovery_regenerate"
 
+	// Security keys (WebAuthn/FIDO2). Separate actions from the TOTP ones above because
+	// they answer different questions in an investigation: "which key was added, and from
+	// where" is per-credential, not per-account.
+	ActionWebAuthnEnroll = "webauthn.enroll"
+	ActionWebAuthnRemove = "webauthn.remove"
+	ActionWebAuthnRename = "webauthn.rename"
+	// ActionWebAuthnAdminReset is an administrator clearing SOMEONE ELSE's keys.
+	ActionWebAuthnAdminReset = "webauthn.admin_reset"
+	// ActionWebAuthnClone records an assertion whose signature counter did not advance.
+	// The sign-in is still allowed (see services/webauthn.go for why that ambiguity is not
+	// treated as proof), so this entry is the only durable trace that it happened.
+	ActionWebAuthnClone = "webauthn.clone_warning"
+
 	// Accounts and authorization.
 	ActionUserCreate     = "user.create"
 	ActionUserUpdate     = "user.update"

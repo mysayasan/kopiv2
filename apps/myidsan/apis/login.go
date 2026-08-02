@@ -1,6 +1,7 @@
 package apis
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -46,10 +47,14 @@ type loginApi struct {
 	guard       *sharedapis.LoginGuard
 	metrics     telemetry.Metrics
 	mfa         *mfaChallenger
-	reset       services.IPasswordResetService
-	audit       services.IAuditService
-	sessions    services.ISessionService
-	policy      config.EffectivePasswordPolicy
+	// webauthn is held directly as well as through the challenger: the two pre-session
+	// security-key legs run the ceremony themselves, which the challenger (whose job is the
+	// challenge TOKEN) has no business knowing how to do.
+	webauthn services.IWebAuthnService
+	reset    services.IPasswordResetService
+	audit    services.IAuditService
+	sessions services.ISessionService
+	policy   config.EffectivePasswordPolicy
 	// trustedProxies decides whether a forwarded client address may be believed when an
 	// event is recorded. Empty means "trust nothing but the peer", which is correct for a
 	// directly-exposed instance — an audit trail whose source IP the caller can choose is
@@ -94,6 +99,9 @@ type LoginApiOptions struct {
 	TrustedProxies []string
 	// PasswordPolicy is published at /api/login/password-policy for the UI hints.
 	PasswordPolicy config.EffectivePasswordPolicy
+	// WebAuthn (optional) lets a security key satisfy the second factor instead of a
+	// TOTP code. Additive: with it absent the challenge behaves exactly as before.
+	WebAuthn services.IWebAuthnService
 }
 
 // Create LoginApi. Returns the identity-provider registry so the server-rendered
@@ -108,9 +116,12 @@ func NewLoginApi(
 	if kerbLabel == "" {
 		kerbLabel = "Windows (SSO)"
 	}
+	// The challenger exists when EITHER factor kind can gate a login: TOTP needs
+	// opts.Mfa, security keys need opts.WebAuthn, and both need the shared store for the
+	// pre-session challenge token.
 	var challenger *mfaChallenger
-	if opts.Mfa != nil && opts.Store != nil {
-		challenger = newMfaChallenger(opts.Store, opts.Mfa)
+	if opts.Store != nil && (opts.Mfa != nil || opts.WebAuthn != nil) {
+		challenger = newMfaChallenger(opts.Store, opts.Mfa).withWebAuthn(opts.WebAuthn)
 	}
 	handler := &loginApi{
 		auth:        auth,
@@ -122,6 +133,7 @@ func NewLoginApi(
 		guard:          opts.Guard,
 		metrics:        opts.Metrics,
 		mfa:            challenger,
+		webauthn:       opts.WebAuthn,
 		reset:          opts.Reset,
 		audit:          opts.Audit,
 		sessions:       opts.Sessions,
@@ -148,6 +160,12 @@ func NewLoginApi(
 	// session cookies. PUBLIC (there is no session yet) — the token itself is the
 	// short-lived, single-use, client-bound authorization to complete this login.
 	loginGroup.HandleFunc("/mfa", handler.mfaLogin).Methods("POST")
+	// The security-key twin of the above, in two legs because the ceremony needs a
+	// server-issued challenge before the authenticator can sign anything. PUBLIC for the
+	// same reason: no session exists yet, and the challenge token is the whole
+	// authorization to complete this one login.
+	loginGroup.HandleFunc("/mfa/webauthn/begin", handler.webauthnLoginBegin).Methods("POST")
+	loginGroup.HandleFunc("/mfa/webauthn/finish", handler.webauthnLoginFinish).Methods("POST")
 	// Public account-recovery request. PUBLIC and deliberately non-committal: it
 	// always returns the same generic result whether or not the identifier matches,
 	// so it is not an account-enumeration oracle.
@@ -727,7 +745,15 @@ func (m *loginApi) completeLoginOrChallenge(w http.ResponseWriter, r *http.Reque
 				return
 			}
 			m.recordMfaChallenge("issued")
-			controllers.SendResult(w, map[string]any{"mfaRequired": true, "mfaToken": token})
+			// mfaMethods tells the client which factors this account can actually present,
+			// so it prompts for a code, asks for a key, or offers a choice — rather than
+			// assuming TOTP and stranding a user whose only factor is a security key.
+			// Older clients ignore the field and keep working: the TOTP leg is unchanged.
+			controllers.SendResult(w, map[string]any{
+				"mfaRequired": true,
+				"mfaToken":    token,
+				"mfaMethods":  m.mfa.methods(r.Context(), user.Id),
+			})
 			return
 		}
 	}
@@ -788,6 +814,129 @@ func (m *loginApi) mfaLogin(w http.ResponseWriter, r *http.Request) {
 	guardSuccess(m.guard, r, "")
 	m.recordMfaChallenge("success")
 	m.issueLocalSession(w, r, user, loginMethodForUser(user))
+}
+
+// webauthnLoginBegin hands back an assertion challenge for a login already holding a
+// pre-session MFA token. The token is PEEKED, not spent: the security-key ceremony needs two
+// round trips against the same login attempt, so it is only consumed once the assertion
+// actually verifies (webauthnLoginFinish). Peeking still re-checks the client binding, so a
+// token lifted from one browser cannot be driven from another.
+func (m *loginApi) webauthnLoginBegin(w http.ResponseWriter, r *http.Request) {
+	if m.mfa == nil || m.webauthn == nil || !m.webauthn.Enabled() {
+		controllers.SendError(w, controllers.ErrLimitedAccess, "security keys are not configured")
+		return
+	}
+	if locked, retry := guardLocked(m.guard, r, ""); locked {
+		writeLoginLockout(w, retry)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 65536)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	body := struct {
+		MfaToken string `json:"mfaToken"`
+	}{}
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+
+	userId, err := m.mfa.peek(r.Context(), r, body.MfaToken)
+	if err != nil {
+		m.recordMfaChallenge("expired")
+		controllers.SendError(w, controllers.ErrAuthFailed, "your verification session expired — sign in again")
+		return
+	}
+	user, err := m.loadActiveUser(r.Context(), userId)
+	if err != nil || user == nil {
+		controllers.SendError(w, controllers.ErrAuthFailed, "account is not available")
+		return
+	}
+
+	assertion, err := m.webauthn.BeginAssert(r.Context(), r, webauthnLoginStateKey(body.MfaToken), userId, user.Email, user.Email)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, assertion)
+}
+
+// webauthnLoginFinish verifies a security-key assertion and, on success, issues the session
+// completeLoginOrChallenge withheld. This is the security-key twin of mfaLogin, and it keeps
+// the same invariant: no kopiv2_access cookie exists until a second factor is proven.
+func (m *loginApi) webauthnLoginFinish(w http.ResponseWriter, r *http.Request) {
+	if m.mfa == nil || m.webauthn == nil || !m.webauthn.Enabled() {
+		controllers.SendError(w, controllers.ErrLimitedAccess, "security keys are not configured")
+		return
+	}
+	if locked, retry := guardLocked(m.guard, r, ""); locked {
+		writeLoginLockout(w, retry)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxWebAuthnBody)
+	body := struct {
+		MfaToken   string          `json:"mfaToken"`
+		Credential json.RawMessage `json:"credential"`
+	}{}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	if len(body.Credential) == 0 {
+		controllers.SendError(w, controllers.ErrBadRequest, "credential is required")
+		return
+	}
+
+	userId, err := m.mfa.peek(r.Context(), r, body.MfaToken)
+	if err != nil {
+		m.recordMfaChallenge("expired")
+		controllers.SendError(w, controllers.ErrAuthFailed, "your verification session expired — sign in again")
+		return
+	}
+	user, err := m.loadActiveUser(r.Context(), userId)
+	if err != nil || user == nil {
+		controllers.SendError(w, controllers.ErrAuthFailed, "account is not available")
+		return
+	}
+
+	ok, note, err := m.webauthn.FinishAssert(r.Context(), r, webauthnLoginStateKey(body.MfaToken),
+		userId, user.Email, user.Email, bytes.NewReader(body.Credential))
+	if err != nil || !ok {
+		m.recordMfaChallenge("failed")
+		// The password already verified to reach here, so the identifier is withheld for
+		// the same reason the TOTP path withholds it.
+		m.recordLoginFailure(w, r, "", services.MethodLocal, "security-key assertion refused")
+		controllers.SendError(w, controllers.ErrAuthFailed, "that security key could not be verified")
+		return
+	}
+
+	// A non-advancing signature counter is the clone signal. The sign-in is allowed (see
+	// services/webauthn.go for why that is not treated as proof), so this entry is the only
+	// durable trace — record it against the account that just used the key.
+	if note != "" {
+		m.recordAudit(r, services.AuditEntry{
+			ActorId:    user.Id,
+			ActorEmail: user.Email,
+			Action:     services.ActionWebAuthnClone,
+			Outcome:    services.OutcomeSuccess,
+			TargetType: "user",
+			TargetId:   strconv.FormatInt(user.Id, 10),
+			Detail:     note,
+		})
+	}
+
+	// Spend the challenge token only now that the factor is proven.
+	m.mfa.consume(r.Context(), body.MfaToken)
+	guardSuccess(m.guard, r, "")
+	m.recordMfaChallenge("success")
+	m.issueLocalSession(w, r, user, loginMethodForUser(user))
+}
+
+// webauthnLoginStateKey namespaces the in-flight assertion to ONE login attempt. Keying on
+// the challenge token (never on the user id) means two concurrent sign-in attempts for the
+// same account cannot consume each other's challenge.
+func webauthnLoginStateKey(mfaToken string) string {
+	return "login:" + mfaToken
 }
 
 // loadActiveUser fetches an account by id and returns it only if still active.

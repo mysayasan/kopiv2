@@ -22,6 +22,20 @@ encrypted with the operator's passphrase via `atrest.EncryptWithPassphrase`) and
 **re-sealed with the destination host's own key on restore** (`encodeSecret`/
 `decodeSecret`). The at-rest key itself is never included in the archive.
 
+A WebAuthn credential's public key needs **none** of this — it is a public key, not a
+symmetric secret, so nothing about it is bound to the exporting host's at-rest key. It
+does need a wrapper for a different reason, though: `UserWebauthnCredential.PublicKey` is
+`json:"-"` on the entity (so it never rides along in an ordinary REST projection), and
+without re-exposing it explicitly for the backup, `json.Marshal` silently drops it —
+the archive would then carry a credential id with no key, restore without error, and fail
+every assertion signature check afterwards. See `backupWebauthnCredential` below;
+`TestBackupCarriesSecurityKeyPublicKey` covers exactly this. A credential carries one
+host-coupling of its own kind that the backup **cannot** paper over: it is bound to the
+Relying Party ID it was created under, so restoring it onto a host answering on a
+different hostname (with `webauthn.relyingPartyId` left to derive) makes the browser
+refuse it; set `relyingPartyId` explicitly first if a DR host will not share the
+original hostname.
+
 ## File format
 
 - Magic `IDBK` (`backupMagic`) + one format-version byte (`backupFormatVersion`) +
@@ -34,8 +48,12 @@ encrypted with the operator's passphrase via `atrest.EncryptWithPassphrase`) and
 - Six logical, user-selectable sections, in a fixed dependency order (later sections'
   foreign keys are remapped using ids produced by earlier ones): `access` (roles +
   permissions), `identity` (users, groups, avatars), `mfa` (TOTP factors + recovery
-  codes), `apps` (app registry + auth config + redirect URIs), `federation` (directory
-  config + group mappings), `ssoca` (the SSO CA cert and private key).
+  codes **+ WebAuthn/security-key credentials**), `apps` (app registry + auth config +
+  redirect URIs), `federation` (directory config + group mappings), `ssoca` (the SSO CA
+  cert and private key). Security keys ride inside the existing `mfa` section rather than
+  getting one of their own, because an operator selecting "mfa" means "the second
+  factors" — leaving keys out would silently restore an account whose only factor had
+  vanished, a lockout under a `required` MFA policy.
 - Deliberately excluded (host-local state): `config.json`, TLS certificates, the at-rest
   key, `api_log`/`runtime_log`, `password_reset_request` (a transient operator queue —
   restoring stale requests would hand out temporary passwords nobody asked for), and
@@ -65,16 +83,17 @@ encrypted with the operator's passphrase via `atrest.EncryptWithPassphrase`) and
     (counted in `RestoreResult.Skipped`), never restored with a dangling or
     reinterpreted foreign key — e.g. a permission whose role wasn't in the backup, a
     user whose role wasn't restored (lands role-less rather than silently inheriting
-    whatever role now occupies that id on the new host), an MFA factor whose user
-    wasn't restored, a redirect URI whose auth config wasn't restored, a group mapping
-    whose role wasn't restored.
+    whatever role now occupies that id on the new host), an MFA factor (or a WebAuthn
+    credential) whose user wasn't restored, a redirect URI whose auth config wasn't
+    restored, a group mapping whose role wasn't restored.
   - After every section is applied, every live session is dropped
     (`cache.Store.DeleteByPrefix("sso:session:")`) — a session token issued a moment
     earlier would still resolve to ids/roles that may no longer mean what they did,
     so `RestoreResult.SessionsInvalidated` is set and the caller is expected to sign the
     operator out immediately.
-  - First-run setup is marked complete (`ISetupStateService.Complete`) best-effort, so a
-    restored instance never re-shows the first-run wizard.
+  - First-run setup is marked complete (`sharedservices.ISetupStateService.Complete`,
+    `domain/shared/services`) best-effort, so a restored instance never re-shows the
+    first-run wizard.
   - A `SchemaVersion` mismatch produces a non-fatal `RestoreResult.SchemaWarning` — the
     restore still proceeds best-effort.
 
@@ -85,9 +104,15 @@ encrypted with the operator's passphrase via `atrest.EncryptWithPassphrase`) and
 - `backupPageLimit = 100000` bounds each section's `repo.Get` page size — generous
   enough that a real deployment's row counts fit in one page, avoiding paging logic in
   export/wipe.
-- `NewBackupService` takes every repo the six sections touch, the `*atrest.Cipher` (nil
-  when at-rest encryption is disabled — sealed columns are then already plaintext and
-  pass through unchanged), `cache.Store` (for session invalidation), `sharedservices.ISetupStateService`,
-  and the app version string (see `apps/myidsan/app/app.go.md`'s `moduleAppVersion`).
+- `NewBackupService` takes every repo the six sections touch — including
+  `dbsql.IGenericRepo[myidsanentities.UserWebauthnCredential]`, added alongside the
+  existing MFA-factor/recovery-code repos in the `mfa` section's dependency slot — the
+  `*atrest.Cipher` (nil when at-rest encryption is disabled — sealed columns are then
+  already plaintext and pass through unchanged; WebAuthn credentials pass through this
+  parameter's absence entirely, since they were never sealed to begin with),
+  `cache.Store` (for session invalidation), `sharedservices.ISetupStateService`
+  (`domain/shared/services` — the suite-wide seam this app used to carry its own copy
+  of, see `domain/shared/services/setup_state.go.md`), and the app version string (see
+  `apps/myidsan/app/app.go.md`'s `moduleAppVersion`).
 - Wired in `apps/myidsan/app/app.go`'s `RegisterAppRoutes` and mounted via
   `apis.NewBackupApi` (`apis/backup.go.md`).

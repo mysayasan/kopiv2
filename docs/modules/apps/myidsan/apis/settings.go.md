@@ -4,9 +4,10 @@
 
 HTTP surface for the in-app editor over the safe subset of `config.json`
 (`services.ISettingsService`, `services/settings.go.md`). Ported from myseliasan's pattern
-(`docs/MYIDSAN_PRODUCTIZATION_PLAN.md` §4.1). **This is the backend/API only — there is no
-Settings page in the React frontend yet**; the routes below are reachable but nothing in the
-SPA drives them.
+(`docs/MYIDSAN_PRODUCTIZATION_PLAN.md` §4.1). Backed by the SPA's **Settings** page
+(`views/react-webpack/src/views/components/settings.js`) — a tabbed editor over these
+routes with per-field (i) info tips, masked secrets, and a "restart required" banner wired
+to `apis/system.go.md`'s `POST /api/system/restart`.
 
 ## Endpoints
 
@@ -61,8 +62,9 @@ connectivity check) and are not audited.
   /api/settings`, `AccessTier: DevOnly`, with menu metadata placing it in the System group)
   for rate-limiting/runtime metadata and nav — the superadmin gate itself is enforced by the
   route-group middleware above, not by this seed row.
-- Applying a saved/reset change requires a restart. There is currently no in-app restart
-  action wired to this response on myidsan (unlike myseliasan's `POST /api/system/restart` +
-  banner) — an operator restarts the process the normal way.
+- Applying a saved/reset change requires a restart. myidsan now has an in-app restart
+  action too — `POST /api/system/restart` (`apis/system.go.md`, mounted right after this
+  API in `app.go`), the same pattern myseliasan uses — so the Settings page's
+  `needsRestart` banner has a Restart button rather than only naming the requirement.
 - `testCache` is purely diagnostic from the API's perspective — it can never write a file,
   read file contents, or change the live config; see `services/settings.go.md`'s `TestCache`.

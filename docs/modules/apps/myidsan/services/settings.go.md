@@ -4,10 +4,10 @@
 
 Implements `ISettingsService`, an in-app, superadmin-gated editor over a SAFE SUBSET of
 `myidsan`'s `config.json` — the first in-app settings surface myidsan has had; ported from
-`myseliasan`'s pattern (`docs/MYIDSAN_PRODUCTIZATION_PLAN.md` §4.1). **This is the
-backend/API only — there is no Settings page in the React frontend yet.** The scope
-deliberately excludes the blocks that would take the app offline if mis-set (`db`, `server`,
-`bootstrap`): those stay file-only.
+`myseliasan`'s pattern (`docs/MYIDSAN_PRODUCTIZATION_PLAN.md` §4.1), now with its own React
+frontend (`views/react-webpack/src/views/components/settings.js`, `apis/settings.go.md`).
+The scope deliberately excludes the blocks that would take the app offline if mis-set
+(`db`, `server`, `bootstrap`): those stay file-only.
 
 ## Persistence model
 
@@ -51,6 +51,10 @@ Beyond the `db`/`server`/`bootstrap` blocks myseliasan also withholds:
   already a filesystem-level setup step.
 - **`login.oidc[]` and the social providers.** These carry per-provider client secrets and
   are better handled by the dedicated Apps/Federation screens than a generic settings form.
+- **`webauthn`.** Not yet one of the editable sections (`sectionOrder` above predates it) —
+  `webauthn.relyingPartyId` in particular still needs a direct `config.json` edit today,
+  including ahead of a disaster-recovery restore onto a differently-named host (see
+  `apps/myidsan/services/backup.go.md` and `entities/user_webauthn_credential.go.md`).
 
 `sso` also differs from a straight port: myidsan is the SSO **provider**, so only the
 issuing side of the shared config block is exposed. `providerBaseUrl`/`clientId`/

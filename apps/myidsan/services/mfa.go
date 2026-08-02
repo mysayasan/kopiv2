@@ -22,9 +22,11 @@ var (
 	ErrMfaBadCode         = errors.New("invalid verification code")
 )
 
-// mfaFactorKind is the only factor kind today. A second kind (webauthn) would be a
-// separate row per user, which is why lookups filter on (UserLoginId, Kind) and
-// never assume a single row.
+// mfaFactorKind is the only kind this table holds. Security keys were once expected to
+// arrive as a second Kind here; they did not — they are MANY-per-user and carry an entirely
+// different shape (public key, signature counter, transports), so they live in their own
+// table and their own service (services/webauthn.go). The Kind filter on every lookup
+// remains correct and cheap regardless, and does not assume a single row.
 const mfaFactorKind = "totp"
 
 // MfaStatus is the non-sensitive projection returned to the owning user and to the

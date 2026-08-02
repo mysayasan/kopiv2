@@ -104,6 +104,11 @@ type AppConfigModel struct {
 	// Mfa decides who is REQUIRED to hold a second factor. Enrolment is self-service
 	// either way; this only controls who cannot skip it.
 	Mfa MfaPolicyConfigModel `json:"mfa"`
+	// WebAuthn configures FIDO2 security keys / platform authenticators as a second
+	// factor alongside TOTP. Read through Effective(); an omitted block resolves to ON,
+	// which is safe because enrolment is per-user opt-in — an account with no key
+	// enrolled behaves exactly as before.
+	WebAuthn WebAuthnConfigModel `json:"webauthn"`
 	// Pairing configures LAN discovery + single-parent adoption between a
 	// mymatasan node and a myseliasan control plane. When enabled (default), an
 	// unpaired node answers authenticated discovery probes on the multicast group
@@ -498,6 +503,88 @@ func (p EffectiveMfaPolicy) RequiresFactor(roleId int64, isDirectoryAccount bool
 		}
 	}
 	return false
+}
+
+// WebAuthnConfigModel configures FIDO2 / WebAuthn security keys as a second factor.
+//
+// Enabled is a pointer for the same reason LoginSecurityConfigModel.Enabled is: an absent
+// block must be distinguishable from an explicit "enabled": false. An absent block resolves
+// to ON, which is safe here in a way it would not be for a policy — WebAuthn is per-user
+// opt-in, so "on" only means "a user MAY enrol a key", and an account with none behaves
+// exactly as it did before.
+//
+// RelyingPartyId is the load-bearing field. A credential is bound to the RP ID it was
+// created under, and a browser will refuse to use it from any other origin — so CHANGING
+// this value (or the host, when it is derived) silently invalidates every key already
+// enrolled. Left empty it is derived from the request host, which is what makes the feature
+// work with no configuration on both localhost and a real deployment; set it explicitly to
+// the registrable domain when the same install answers on several hostnames, so a key
+// enrolled on one keeps working on the others.
+type WebAuthnConfigModel struct {
+	Enabled *bool `json:"enabled"`
+	// RelyingPartyId scopes credentials. Empty = derive from the request host (port
+	// stripped). Must be the host itself or a registrable suffix of it.
+	RelyingPartyId string `json:"relyingPartyId"`
+	// RelyingPartyName is what the authenticator shows the user when prompting.
+	RelyingPartyName string `json:"relyingPartyName"`
+	// RelyingPartyOrigins allow-lists the exact origins an assertion may come from.
+	// Empty = accept the request's own origin, derived per request.
+	RelyingPartyOrigins []string `json:"relyingPartyOrigins"`
+	// UserVerification is "preferred" (default), "required" or "discouraged". "required"
+	// forces a PIN/biometric on the key itself, making it genuinely two-factor on its own;
+	// "preferred" accepts a key that only proves possession.
+	UserVerification string `json:"userVerification"`
+	// TimeoutMs bounds how long the browser prompt stays open. Default 60000.
+	TimeoutMs int `json:"timeoutMs"`
+}
+
+// WebAuthn user-verification values.
+const (
+	WebAuthnUvPreferred   = "preferred"
+	WebAuthnUvRequired    = "required"
+	WebAuthnUvDiscouraged = "discouraged"
+)
+
+const (
+	defaultWebAuthnRpName    = "MyIDSan"
+	defaultWebAuthnTimeoutMs = 60000
+)
+
+// EffectiveWebAuthn is WebAuthnConfigModel with defaults resolved.
+type EffectiveWebAuthn struct {
+	Enabled          bool
+	RelyingPartyId   string
+	RelyingPartyName string
+	Origins          []string
+	UserVerification string
+	TimeoutMs        int
+}
+
+// Effective resolves the block. An unrecognised UserVerification becomes "preferred"
+// rather than "required": a typo must not lock out every key that cannot do user
+// verification, nor silently weaken to "discouraged".
+func (w WebAuthnConfigModel) Effective() EffectiveWebAuthn {
+	uv := strings.ToLower(strings.TrimSpace(w.UserVerification))
+	switch uv {
+	case WebAuthnUvRequired, WebAuthnUvDiscouraged:
+	default:
+		uv = WebAuthnUvPreferred
+	}
+	eff := EffectiveWebAuthn{
+		Enabled:          w.Enabled == nil || *w.Enabled,
+		RelyingPartyId:   strings.TrimSpace(w.RelyingPartyId),
+		RelyingPartyName: strings.TrimSpace(w.RelyingPartyName),
+		Origins:          append([]string(nil), w.RelyingPartyOrigins...),
+		UserVerification: uv,
+		TimeoutMs:        w.TimeoutMs,
+	}
+	if eff.RelyingPartyName == "" {
+		eff.RelyingPartyName = defaultWebAuthnRpName
+	}
+	if eff.TimeoutMs <= 0 {
+		eff.TimeoutMs = defaultWebAuthnTimeoutMs
+	}
+	return eff
 }
 
 // LoginSecurityConfigModel is the failed-login lockout block.
