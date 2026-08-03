@@ -50,9 +50,10 @@ assertion arriving with a counter at or below the stored value is the spec's doc
 clone signal. It is also legal for an authenticator to never implement counters and report
 `0` forever (true of most platform authenticators and every synced passkey), which makes
 that signal ambiguous rather than proof. `services/webauthn.go.md`'s `FinishAssert`
-therefore **accepts** the assertion anyway, sets `CloneWarning`, and records
-`services.ActionWebAuthnClone` in the audit trail — refusing would lock users out of
-working hardware on a signal the spec itself calls ambiguous.
+therefore **accepts** the assertion anyway and sets `CloneWarning` on the row, returning a
+non-fatal `note` that the caller (`apis/login.go.md`'s `webauthnLoginFinish`) writes to the
+audit trail as `services.ActionWebAuthnClone` — refusing would lock users out of working
+hardware on a signal the spec itself calls ambiguous.
 
 ## Notes
 

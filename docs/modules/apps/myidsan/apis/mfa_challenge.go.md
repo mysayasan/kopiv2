@@ -18,8 +18,11 @@ a `services.IMfaService`, and (optionally) a `services.IWebAuthnService`, and is
 nil-safe: when every dependency is absent (minimal wiring, tests) it behaves as "no MFA
 configured" rather than panicking. `webauthn` is attached via `withWebAuthn(w)` rather than
 a constructor parameter, so every existing call site and test keeps working unchanged and
-opts in to the security-key factor explicitly (`apis/login.go.md`'s `NewLoginApi` is the
-one caller that does).
+opts in to the security-key factor explicitly. Both password login surfaces now do:
+`apis/login.go.md`'s `NewLoginApi` and `apis/federated_auth.go.md`'s `NewFederatedAuthApi`
+— the latter closed a real MFA bypass, since the server-rendered page is where a relying
+app's SSO hop lands and an account whose only factor was a security key would otherwise
+have cleared the gate with none checked at all.
 
 - `required(ctx, userId)` — reports whether the account must clear a second factor,
   now asking **either** factor kind: a confirmed TOTP factor (`mfa.HasConfirmedFactor`)
@@ -81,4 +84,9 @@ one caller that does).
   `federated_auth.go`'s `loginPost`/`mfaPost` (server-rendered) — see those docs
   for the two HTTP surfaces built on top of this shared primitive. `login.go`'s
   `webauthnLoginBegin`/`webauthnLoginFinish` are the third consumer, added for security
-  keys — the only two callers of `peek`/`consume`/`methods`.
+  keys. `peek`/`methods` are also called from `federated_auth.go`'s
+  `renderMfaChallenge` — resolved there rather than passed in, so every render path
+  (including a re-render after a bad code) offers the security-key option without
+  threading the user id through — but `consume` is only ever called from
+  `webauthnLoginFinish`, once an assertion actually verifies; the TOTP path still spends
+  its token through `redeem`.

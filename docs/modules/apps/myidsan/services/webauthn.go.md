@@ -32,9 +32,10 @@ preferring a key over TOTP.
   the office", bounded so the exclusion list sent to the browser cannot grow without limit.
   `FinishEnroll` verifies the attestation response and persists a new
   `UserWebauthnCredential` row (`entities/user_webauthn_credential.go.md`).
-- `BeginAssert`/`FinishAssert` — the per-login assertion ceremony, used both by the
-  self-service Profile flow is not part of this (assertion is login-only) and by the
-  pre-session login legs (`apis/login.go.md`'s `webauthnLoginBegin`/`webauthnLoginFinish`).
+- `BeginAssert`/`FinishAssert` — the per-login assertion ceremony, used only by the
+  pre-session login legs (`apis/login.go.md`'s `webauthnLoginBegin`/`webauthnLoginFinish`);
+  the self-service Profile flow (`apis/webauthn.go.md`) never calls it, since assertion is
+  login-only — that surface only enrolls, lists, renames, and deletes keys.
   `FinishAssert` returns `(proven bool, note string, err error)`: `note` is a non-fatal
   anomaly (today, only a non-advancing signature counter) the caller should audit rather
   than a reason to refuse — see "Clone detection" below.
