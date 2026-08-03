@@ -174,7 +174,9 @@ The app can redirect to the setup page when bootstrap mode is active.
    - **sqlite** — deletes the database file and its `-wal` / `-shm` / `-journal` sidecars, via `removeWithRetry` (a few short retries on a lingering Windows "file in use" error, since the OS can take a moment to release handles after the caller closes its connection pool).
 2. **Re-runs `Ensure()`** with the create/migrate/seed flags forced on, recreating the schema and re-seeding stock data from a clean slate.
 
-The caller stops anything holding a connection/file handle first and restarts the process afterwards (the live connection pool is invalid once the database is dropped). In `mymatasan` this is orchestrated by `services.SystemResetService` (shred media → close its own DB pool via `SystemResetConfig.CloseDatabase`, now implemented by all three `IDbCrud` engines — required on sqlite/Windows, where the file can't otherwise be deleted while the process holds it open → `Reset` → restart via `apphost.Restarter`) behind `POST /api/system/reset`; a `ResetGate` middleware 503s other requests while `InProgress()`, since the DB pool is already closed at that point. The reset is best-effort: a wipe error is reported as a warning and the process still restarts, which re-runs bootstrap and can complete an interrupted rebuild.
+The caller stops anything holding a connection/file handle first and restarts the process afterwards (the live connection pool is invalid once the database is dropped). In `mymatasan` this is orchestrated by `apps/mymatasan/services.SystemResetService` (shred media → close its own DB pool via `SystemResetConfig.CloseDatabase`, now implemented by all three `IDbCrud` engines — required on sqlite/Windows, where the file can't otherwise be deleted while the process holds it open → `Reset` → restart via `apphost.Restarter`) behind `POST /api/system/reset`; a `ResetGate` middleware 503s other requests while `InProgress()`, since the DB pool is already closed at that point. The reset is best-effort: a wipe error is reported as a warning and the process still restarts, which re-runs bootstrap and can complete an interrupted rebuild.
+
+`myseliasan`, `myidsan`, and `myiotsan` — which previously had no factory reset at all — share a simpler sibling orchestrator instead of each growing its own: `domain/shared/services.SystemResetService` (`docs/modules/domain/shared/services/system_reset.go.md`), with `domain/shared/apis.NewResetGate`/`NewSystemResetHandlers` (`docs/modules/domain/shared/apis/system_reset.go.md`) providing the same `POST /api/system/reset` + `GET .../state` + `GET .../progress` contract and the same "503 the rest, serve progress itself" gate. It omits mymatasan's shred/TRIM/free-space-scrub stages — none of these three apps holds a large media library — but drives through the identical `bootstrap.Reset` call, so the baselining trap below applies to it exactly the same way. `ResetBootstrapOptions` is the helper that builds each app's `bootstrap.Options` for the reset call site.
 
 ## Versioned Migrations (Tier 2 phase M)
 
@@ -259,7 +261,10 @@ rebuild still saves a manifest (so the very next boot reads as "not fresh"), and
 empty migration table on record, every migration would then be replayed against a brand-new
 schema and fail: **a factory reset would leave the app unable to start.** `mymatasan`'s
 reset call site (`apps/mymatasan/app/app.go`) passes `Migrations: m.Migrations()` for exactly
-this reason.
+this reason; `myseliasan`'s does the same via `sharedservices.ResetBootstrapOptions(...,
+m.Migrations(), ...)`. `myidsan` and `myiotsan` genuinely have no migrations to baseline
+(neither module declares any), so their reset call sites correctly pass `nil` — an
+intentional absence, not an oversight.
 
 ### Atomicity and the MariaDB caveat
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/gorilla/mux"
 	sharedapis "github.com/mysayasan/kopiv2/domain/shared/apis"
+	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 )
 
@@ -22,10 +23,37 @@ type systemApi struct {
 // already served by the host runtime (GET /api/version, /api/health, /api/ready); the only thing
 // missing was a way to RESTART the appliance — needed to apply the storage/broker settings, which
 // are read once at boot. Admin-only (see services.Policy).
-func NewSystemApi(router *mux.Router, r restarter) {
+//	POST /system/restart        — relaunch so boot-read settings take effect
+//	GET  /system/reset/state    — whether factory reset is available, and the phrase to type
+//	POST /system/reset          — start a factory reset (body: {"confirm": "<phrase>"})
+//	GET  /system/reset/progress — in-memory progress of a running reset
+//
+// The reset routes carry the same in-handler admin check the settings surface uses, on top
+// of the matrix, and the POST additionally requires the typed confirmation server-side.
+func NewSystemApi(router *mux.Router, r restarter, reset *sharedservices.SystemResetService) {
 	h := &systemApi{restarter: r}
 	g := router.PathPrefix("/system").Subrouter()
 	g.HandleFunc("/restart", h.restart).Methods("POST")
+
+	if reset != nil {
+		rh := sharedapis.NewSystemResetHandlers(reset)
+		g.HandleFunc("/reset/state", requireAdmin(rh.State)).Methods("GET")
+		g.HandleFunc("/reset/progress", requireAdmin(rh.Progress)).Methods("GET")
+		g.HandleFunc("/reset", requireAdmin(rh.Start)).Methods("POST")
+	}
+}
+
+// requireAdmin is a self-gate on top of the permission matrix, mirroring apis/settings.go:
+// defence in depth on the one route that can erase the whole hub.
+func requireAdmin(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, ok := sharedapis.LocalUserFromContext(r.Context())
+		if !ok || !user.IsAdmin {
+			controllers.SendError(w, controllers.ErrLimitedAccess, "administrators only")
+			return
+		}
+		next(w, r)
+	}
 }
 
 func (a *systemApi) restart(w http.ResponseWriter, r *http.Request) {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { DataTable, Ico, PasswordField, Tabs, useT } from '@shared';
+import { DataTable, FactoryResetSection, Ico, PasswordField, Tabs, useT } from '@shared';
 import { api, defaultDestination, errorMessage, notificationCategories, notificationSeverityOptions, roleLabel } from '../lib/helpers';
 import { AccordionItem, AccordionList, ConfirmModal, CopyButton, Field, Modal, Panel } from './ui';
 
@@ -610,6 +610,10 @@ function SystemPanel({ onToast }) {
           </button>
         </div>
       </Panel>
+
+      {/* Factory reset. Renders nothing unless bootstrap.allowReset is on, so an install
+          that never opted in shows no button at all. */}
+      <FactoryResetSection api={api} appLabel="MyIotSan" onToast={onToast} />
 
       {confirmRestart ? (
         <ConfirmModal title={t('st.restartTitle')} body={t('st.restartBody')} confirmLabel={t('st.restart')} onCancel={() => setConfirmRestart(false)} onConfirm={restart} />

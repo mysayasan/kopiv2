@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Ico, useT, Tabs } from '@shared';
+import { FactoryResetSection, Ico, useT, Tabs } from '@shared';
 import { api, apiBase } from '../lib/helpers';
 import '../styles/settings.css';
 
@@ -276,7 +276,7 @@ export function SettingsPage({ session, onToast }) {
       {loading ? (
         <div className="settings-loading"><Ico n="reload" sz={18} /><span>{t('common.loading')}</span></div>
       ) : active === 'system' ? (
-        <SystemTab t={t} onRestart={restart} restarting={restarting} />
+        <SystemTab t={t} onRestart={restart} restarting={restarting} onToast={onToast} />
       ) : !form ? (
         <p className="settings-hint settings-hint--error">{t('settings.loadFailed')}</p>
       ) : (
@@ -662,7 +662,7 @@ function FileBrowserModal({ mode, initialPath, onSelect, onClose, t }) {
 // SystemTab shows the running build and live service health by polling the public
 // version/health/liveness/readiness endpoints (mirrors mymatasan's System panel), plus the
 // process-restart control. Read-only except for Restart.
-function SystemTab({ t, onRestart, restarting }) {
+function SystemTab({ t, onRestart, restarting, onToast }) {
   const [ver, setVer] = useState(null);       // /api/version body, or null
   const [api200, setApi200] = useState(null); // /api/health reachable
   const [live, setLive] = useState(null);     // /health liveness
@@ -747,6 +747,10 @@ function SystemTab({ t, onRestart, restarting }) {
             <span>{restarting ? t('settings.restarting') : t('settings.restartNow')}</span>
           </button>
         </section>
+
+        {/* Factory reset. Renders nothing unless bootstrap.allowReset is on, which
+            myseliasan ships false, so an install that never opted in shows no button. */}
+        <FactoryResetSection api={api} appLabel="MySeliaSan" onToast={onToast} />
       </div>
     </div>
   );

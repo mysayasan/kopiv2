@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
 	apiaccessenums "github.com/mysayasan/kopiv2/domain/enums/apiaccess"
 	"github.com/mysayasan/kopiv2/domain/notification"
+	sharedapis "github.com/mysayasan/kopiv2/domain/shared/apis"
 	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/infra/apidocs"
 	"github.com/mysayasan/kopiv2/infra/apphost"
@@ -790,7 +792,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// AES-256-GCM encrypted (infra/atrest) with a master key stored OUTSIDE the DB.
 	// Reads transparently pass through legacy plaintext, so enabling it needs no
 	// migration; public certs and the revocation list stay plaintext.
-	secretCipher, secErr := openFleetSecretCipher(deps)
+	secretCipher, secretKeyStore, secErr := openFleetSecretCipher(deps)
 	if secErr != nil {
 		return nil, secErr
 	}
@@ -849,7 +851,50 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	settingsService := services.NewSettingsService(deps.Config, deps.ConfigPath, deps.Db, secretCipher,
 		func(f string, a ...any) { deps.Logger.Warnf("myseliasan.settings", f, a...) })
 	apis.NewSettingsApi(api, *deps.Auth, controlSession, settingsService, auditService, []string{deps.DataDir, deps.HomeDir})
-	apis.NewSystemApi(api, *deps.Auth, controlSession, deps.Restarter)
+	// Factory reset. Wipes the control plane back to first-run: the database (which holds
+	// the fleet, its users, sites and every runtime setting) is dropped and reseeded, the
+	// uploaded floor plans and cached basemaps are erased, and the fleet secret key is
+	// crypto-erased so the encrypted CA key and PSK it protected are unrecoverable.
+	//
+	// ADOPTED NODES ARE NOT TOLD. Dropping the fleet here does not reach out to them, so
+	// every node keeps running with a certificate this control plane no longer recognises
+	// and has to be re-adopted. That is the honest behaviour for a local wipe -- a reset
+	// that tried to notify nodes would hang on unreachable ones -- but it is why the
+	// confirmation names the app and the UI spells the consequence out.
+	//
+	// Hidden unless bootstrap.allowReset is true, which myseliasan ships false.
+	systemResetService := sharedservices.NewSystemResetService(sharedservices.SystemResetConfig{
+		ConfirmPhrase: m.Name(),
+		CollectDataPaths: func(context.Context) []string {
+			return []string{
+				planDir,
+				apis.ResolveBasemapDir(deps.DataDir, ""),
+				strings.TrimSpace(deps.Config.FileStorage.Path),
+			}
+		},
+		BootstrapOpts: sharedservices.ResetBootstrapOptions(
+			m.Name(), deps.Config, m.Entities(), m.Migrations(), m.Seeders(deps.Config.Bootstrap.SeedStatements)),
+		Restarter: deps.Restarter,
+		KeyStore:  secretKeyStore,
+		StopServices: func() {
+			// Stop the pollers and the node-facing listeners before the wipe so nothing
+			// writes to the database or re-enrols a node while it is being dropped.
+			stopBackground()
+		},
+		CloseDatabase: func() error {
+			if c, ok := deps.Db.(io.Closer); ok {
+				return c.Close()
+			}
+			return nil
+		},
+		Logf: func(f string, a ...any) { deps.Logger.Infof("myseliasan.reset", f, a...) },
+	})
+	// Shed load with a clean 503 while the reset runs: it closes the database pool before
+	// restarting, so every DB-backed request would otherwise return a raw 500 and the
+	// SPA's overlay would look like a crash. The reset's own routes stay reachable.
+	api.Use(sharedapis.NewResetGate(systemResetService))
+
+	apis.NewSystemApi(api, *deps.Auth, controlSession, deps.Restarter, systemResetService)
 
 	// First-run setup wizard completion flag (shared runtime-setting row, the same
 	// contract mymatasan and myidsan use).
@@ -1349,9 +1394,12 @@ func publishFleetEvent(svc *notification.Service, e services.FleetEvent) {
 // CLOSED — refusing to boot rather than minting a new key and silently orphaning the
 // encrypted CA key/PSK (which would reset the whole fleet's trust); restore the key
 // file or configure security.recoveryPath and restart.
-func openFleetSecretCipher(deps apphost.Dependencies) (*atrest.Cipher, error) {
+// The KeyStore is returned alongside the cipher so the factory reset can crypto-erase
+// the key. Destroying it also clears the init marker, so the next boot reads as a clean
+// first run and mints a fresh key rather than hitting the recovery gate above.
+func openFleetSecretCipher(deps apphost.Dependencies) (*atrest.Cipher, *atrest.KeyStore, error) {
 	if !boolValue(deps.Config.Security.EncryptAtRest, true) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	keyPath := strings.TrimSpace(deps.Config.Security.KeyPath)
 	if keyPath == "" {
@@ -1369,13 +1417,13 @@ func openFleetSecretCipher(deps apphost.Dependencies) (*atrest.Cipher, error) {
 	}
 	outcome, err := atrest.OpenForStartup(keyPath, recoveryPath, protectorCfg)
 	if err != nil {
-		return nil, fmt.Errorf("fleet-secret encryption key: %w", err)
+		return nil, nil, fmt.Errorf("fleet-secret encryption key: %w", err)
 	}
 	if outcome.Mode == atrest.ModeRecoveryPending {
-		return nil, fmt.Errorf("fleet-secret encryption key missing (id %s): restore %s or set security.recoveryPath, then restart — refusing to reset fleet trust", outcome.KeyId, keyPath)
+		return nil, nil, fmt.Errorf("fleet-secret encryption key missing (id %s): restore %s or set security.recoveryPath, then restart — refusing to reset fleet trust", outcome.KeyId, keyPath)
 	}
 	deps.Logger.Infof("myseliasan.security", "fleet-secret encryption enabled (key %s, mode %s, id %s)", keyPath, outcome.Mode, outcome.KeyId)
-	return outcome.KeyStore.Cipher(), nil
+	return outcome.KeyStore.Cipher(), outcome.KeyStore, nil
 }
 
 // boolValue dereferences an optional bool config flag, using fallback when unset.
