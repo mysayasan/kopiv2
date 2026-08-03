@@ -69,6 +69,7 @@ Edit `config.json`:
 | `kerberos` | Optional SPNEGO single sign-on for domain-joined machines — see the runbook below. |
 | `passwordPolicy` | Password-strength rules for every human-chosen password. `minLength` defaults to `12` (was a hard-coded 8). `requireUpper`/`requireLower`/`requireDigit`/`requireSymbol` default off. `blockCommon` (embedded denylist) defaults on. Leave the block out of `config.json` entirely to take all the defaults. |
 | `mfa` | MFA enforcement policy. `policy`: `off` \| `optional` (default) \| `required`. `requiredRoleIds`: narrow `required` to specific roles; empty = every role. `applyToDirectory`: also require it for LDAP-bound accounts (default `false`). See "MFA-required rollout" below before setting `policy` to `required`. |
+| `webauthn` | Security-key (FIDO2) second factor, alongside TOTP. Defaults **on** (per-user opt-in, so it changes nothing for an account with no key). `relyingPartyId` empty = derive from the request host — set it explicitly for a multi-hostname deployment, or before a DR restore onto a host that won't share the original hostname (see "What is and is not in the file" below). |
 | `db` | Defaults to SQLite (`./data/myidsan.db`), fine for a single identity server. Postgres and MariaDB are also supported. |
 
 **LDAP / Active Directory** login is configured in the UI (Federation → Directory), not
@@ -189,8 +190,8 @@ enrolled.
 ### What is and is not in the file
 
 Included: accounts and groups, roles and permissions, two-factor enrolments and recovery
-codes, registered apps with their client configuration and redirect URIs, the directory
-configuration and its group→role mappings, and the SSO CA.
+codes **and enrolled security keys**, registered apps with their client configuration and
+redirect URIs, the directory configuration and its group→role mappings, and the SSO CA.
 
 Deliberately excluded: `config.json`, TLS certificates, `secret/atrest.key`, the API and
 runtime logs, pending password-reset requests, live sessions, and the **audit log**. Those
@@ -206,6 +207,17 @@ written and re-sealed with the destination host's own key when it is restored.**
 what lets a backup restore onto a brand-new machine and still have everyone's authenticator
 app work. Carrying the sealed bytes instead would produce a file that restores without
 error and then fails every second-factor check.
+
+**Security keys travel differently, and need one manual step of their own on a rename of
+host.** A WebAuthn credential is a public key — there is nothing to unseal or re-seal, so it
+restores verbatim. But it *is* cryptographically bound to the Relying Party ID it was
+created under, and that binding is not the at-rest key's job to fix. If `webauthn.relyingPartyId`
+is left empty (the default — derived from the request host on every ceremony) and the DR
+host answers on a **different** hostname than the one that was backed up, every browser
+will refuse to use the restored keys — they are not corrupted, the browser is correctly
+enforcing the binding it was given at enrolment. Set `relyingPartyId` explicitly to a
+hostname the new host will actually answer on **before** anyone tries to sign in with a
+restored key, or plan on those users re-enrolling.
 
 ### Restoring onto a rebuilt server
 
@@ -223,11 +235,14 @@ session issued a moment earlier would still carry pre-restore authority. Sign in
 an account from the backup — its password, role and second factor are exactly as they were.
 
 `config.json` is not restored, so re-apply any host settings by hand: listener ports, TLS
-paths, SMTP, Kerberos and any `login.oidc[]` providers. A superadmin-only `GET`/`PUT
-/api/settings/{section}` API now covers a safe subset of that file (`localAuth`, `sso`,
-`security`, `storage`, `logging`; each save still requires a restart) — but there is no
-Settings *page* for it yet, so today it is reachable only by direct API call, not from the
-UI.
+paths, SMTP, Kerberos and any `login.oidc[]` providers. The **Settings** page (superadmin
+only, `System` group in the nav) covers a safe subset of that file — `localAuth`, `sso`,
+`security`, `storage`, `logging` — and its **System** tab's Restart button is the fastest
+way to apply a save; each save still requires a restart to take effect, same as editing
+`config.json` by hand. **`webauthn` is not one of the sections the Settings page edits** —
+if the new host will not answer on the same hostname as the one that was backed up, set
+`webauthn.relyingPartyId` directly in `config.json` before anyone signs in with a restored
+security key — see the RP-ID caveat above.
 
 ### Verify a backup before you need it
 

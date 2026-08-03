@@ -16,6 +16,9 @@ import {
 import { Ico, DataTable as ClientDataTable, ToastStack, SideNav, LangProvider, LanguageDropdown, AppFooter, BrandLogo, normalizeLang, useT } from '@shared'
 import { enBundle, loadLocaleDict } from './i18n'
 import SetupWizard from './components/setup'
+import { SettingsPage } from './components/settings'
+import { WebAuthnKeys } from './components/webauthn_keys'
+import { getAssertion, describeCeremonyError, webauthnSupported } from '../lib/webauthn'
 
 const ACTIVE_SECTION_COOKIE = 'myidsan_active_section'
 const STOCK_SUPERADMIN_EMAIL = 'superadmin'
@@ -57,6 +60,10 @@ const routeCatalog = [
   // from where, and on an identity server it also reveals which usernames exist.
   { id: 'audit', label: 'Audit log', group: 'System', order: 55, tone: 'steel', code: 'AU', icon: 'list', paths: ['/api/audit'], summary: 'Who signed in, what changed, and from where.', superadminOnly: true },
   { id: 'backup', label: 'Backup & restore', group: 'System', order: 60, tone: 'amber', code: 'BK', icon: 'folder', paths: ['/api/backup'], summary: 'Export an encrypted copy of this server, or rebuild it from one.', superadminOnly: true },
+  // Settings is superadminOnly for the same reason its API is: the editable subset includes
+  // the JWT secret, the SSO token lifetimes and the sign-in policy — values that can take
+  // the whole control plane offline, so they are never delegated through the matrix.
+  { id: 'settings', label: 'Settings', group: 'System', order: 90, tone: 'steel', code: 'SE', icon: 'shield', paths: ['/api/settings'], summary: 'Sign-in policy, SSO token lifetimes, storage and logging — applied on restart.', superadminOnly: true },
   // Profile is self-service (change password + second factor). It is NOT a nav item —
   // it is reached from the account chip in the side rail (chipOnly), so it never shows
   // in the nav or the dashboard, but it is still a "known + allowed" active section.
@@ -507,6 +514,7 @@ function AppInner({ lang, onLangChange }) {
         {active === 'resetRequests' && sectionAllowedById('resetRequests', accessList, isSuperadmin) && <ResetRequestsPage onToast={pushToast} />}
         {active === 'audit' && sectionAllowedById('audit', accessList, isSuperadmin) && <AuditPage onToast={pushToast} />}
         {active === 'backup' && sectionAllowedById('backup', accessList, isSuperadmin) && <BackupPage onToast={pushToast} />}
+        {active === 'settings' && sectionAllowedById('settings', accessList, isSuperadmin) && <SettingsPage isSuperadmin={isSuperadmin} onToast={pushToast} />}
         <AppFooter appName="MyIDSan" apiBase={apiBase} />
       </main>
     </div>
@@ -807,8 +815,22 @@ function AuthScreen({ onAuthed, sessionError }) {
       const outcome = resultOf(res) || {}
       if (outcome.mfaRequired && outcome.mfaToken) {
         // Password verified, but a second factor is required. No session was issued;
-        // switch the card to the code step and hold the one-time challenge token.
-        setMfa({ token: outcome.mfaToken })
+        // switch the card to the factor step and hold the one-time challenge token.
+        //
+        // mfaMethods says which factors this account actually holds. An older server
+        // omits it, so absent means TOTP — the behaviour before security keys existed.
+        // A browser that cannot do WebAuthn has 'webauthn' filtered out here rather than
+        // being offered a button that throws.
+        const offered = Array.isArray(outcome.mfaMethods) && outcome.mfaMethods.length
+          ? outcome.mfaMethods.filter(m => m !== 'webauthn' || webauthnSupported())
+          : ['totp']
+        setMfa({
+          token: outcome.mfaToken,
+          methods: offered,
+          // Pick automatically when there is only one way in; otherwise let the user
+          // choose, since we cannot know which factor they have to hand.
+          method: offered.length === 1 ? offered[0] : null
+        })
         setCode('')
         setBusy(false)
         return
@@ -841,6 +863,36 @@ function AuthScreen({ onAuthed, sessionError }) {
     }
   }
 
+  // submitWebauthn completes a challenged login with a security key. Two legs, because the
+  // authenticator can only sign a challenge the server issued: fetch it, sign it, return it.
+  // The challenge token is spent server-side only once the assertion verifies, so a
+  // cancelled or failed attempt leaves the user able to try again (or switch to a code).
+  const submitWebauthn = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      const options = resultOf(await apiRequest('/api/login/mfa/webauthn/begin', {
+        method: 'POST',
+        body: { mfaToken: mfa.token }
+      }))
+      const credential = await getAssertion(options)
+      await apiRequest('/api/login/mfa/webauthn/finish', {
+        method: 'POST',
+        body: { mfaToken: mfa.token, credential }
+      })
+      onAuthed()
+    } catch (err) {
+      setError(err?.name ? describeCeremonyError(err, t) : err.message)
+      // An expired challenge token cannot be retried — send them back to the password form
+      // rather than leaving a key prompt that can no longer succeed.
+      if (err.status === 401 && /expired/i.test(err.message || '')) {
+        setMfa(null)
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
   // submitForgot posts an account-recovery request. The response is deliberately
   // generic (no account-enumeration oracle); `mailEnabled` only reflects whether the
   // deployment has an SMTP relay, so we can tailor the confirmation wording.
@@ -865,7 +917,40 @@ function AuthScreen({ onAuthed, sessionError }) {
     <div className="auth-layout">
       <section className="auth-panel">
         <LoginBrand subtitle={t('auth.subAdmin')} />
-        {mfa ? (
+        {mfa && !mfa.method ? (
+          // Both factor kinds are enrolled and we cannot know which one the user has to
+          // hand, so ask. Only reached when there is a genuine choice — a single available
+          // method is selected automatically.
+          <div className="auth-form">
+            <p className="message warning">{t('mfa.choosePrompt')}</p>
+            {error && <div className="message danger">{error}</div>}
+            {mfa.methods.includes('webauthn') && (
+              <button className="primary-button" type="button" onClick={() => { setError(''); setMfa({ ...mfa, method: 'webauthn' }) }}>
+                <span className="btn-icon"><Ico n="key" sz={15} /> {t('mfa.useKey')}</span>
+              </button>
+            )}
+            {mfa.methods.includes('totp') && (
+              <button className="secondary-button" type="button" onClick={() => { setError(''); setMfa({ ...mfa, method: 'totp' }) }}>
+                {t('mfa.useCode')}
+              </button>
+            )}
+            <button className="quiet-link" type="button" onClick={() => { setMfa(null); setError(''); setCode('') }}>{t('mfa.backToLogin')}</button>
+          </div>
+        ) : mfa && mfa.method === 'webauthn' ? (
+          <div className="auth-form">
+            <p className="message warning">{t('mfa.keyPrompt')}</p>
+            {error && <div className="message danger">{error}</div>}
+            <button className="primary-button" disabled={busy} type="button" onClick={submitWebauthn}>
+              {busy ? t('webauthn.waiting') : t('mfa.useKey')}
+            </button>
+            {mfa.methods.includes('totp') && (
+              <button className="quiet-link" type="button" onClick={() => { setError(''); setMfa({ ...mfa, method: 'totp' }) }}>
+                {t('mfa.useCodeInstead')}
+              </button>
+            )}
+            <button className="quiet-link" type="button" onClick={() => { setMfa(null); setError(''); setCode('') }}>{t('mfa.backToLogin')}</button>
+          </div>
+        ) : mfa ? (
           <form className="auth-form" onSubmit={submitMfa}>
             <p className="message warning">{t('mfa.challengePrompt')}</p>
             {error && <div className="message danger">{error}</div>}
@@ -874,6 +959,11 @@ function AuthScreen({ onAuthed, sessionError }) {
               <input autoComplete="one-time-code" inputMode="numeric" autoFocus value={code} placeholder="123456" onChange={event => setCode(event.target.value)} />
             </label>
             <button className="primary-button" disabled={busy} type="submit">{busy ? t('auth.working') : t('mfa.verify')}</button>
+            {mfa.methods?.includes('webauthn') && (
+              <button className="quiet-link" type="button" onClick={() => { setError(''); setMfa({ ...mfa, method: 'webauthn' }) }}>
+                {t('mfa.useKeyInstead')}
+              </button>
+            )}
             <button className="quiet-link" type="button" onClick={() => { setMfa(null); setError(''); setCode('') }}>{t('mfa.backToLogin')}</button>
           </form>
         ) : showForgot ? (
@@ -3272,7 +3362,8 @@ function ProfilePage({ currentEmail, roleLabel, onToast }) {
         </section>
 
         <section className="profile-card">
-          <div className="profile-card-head"><span className="profile-card-icon"><Ico n="key" sz={16} /></span><h2>{t('cpw.change')}</h2></div>
+          {/* A password is a lock; the key glyph belongs to the Security keys card below. */}
+          <div className="profile-card-head"><span className="profile-card-icon"><Ico n="lock" sz={16} /></span><h2>{t('cpw.change')}</h2></div>
           <form className="record-form" onSubmit={changePassword}>
             {pwError && <div className="message danger">{pwError}</div>}
             <label>
@@ -3368,6 +3459,8 @@ function ProfilePage({ currentEmail, roleLabel, onToast }) {
           </div>
         )}
         </section>
+
+        <WebAuthnKeys onToast={onToast} />
 
         <SessionList onToast={onToast} />
       </div>

@@ -16,28 +16,57 @@ Implements MyIDSan browser-facing authorization-code login for relying apps.
 
 ## Second-Factor (MFA) Login Challenge
 
-`NewFederatedAuthApi` now also takes an `mfaService services.IMfaService` parameter
-(may be `nil` — tests and minimal wiring pass `nil` explicitly, see
-`federated_auth_test.go`'s calls); when both it and `store` (the existing `cache.Store`
-parameter) are non-nil, the handler builds the same kind of `*mfaChallenger` that
-`apis/login.go` builds (see `apis/mfa_challenge.go.md`) — a separate instance, but
-backed by the same underlying `cache.Store` and `IMfaService`, so a challenge token
-issued by one login surface can, in principle, be redeemed by the other.
+`NewFederatedAuthApi` now also takes `mfaService services.IMfaService` and
+`webauthnService services.IWebAuthnService` parameters (either may be `nil` — tests and
+minimal wiring pass `nil` explicitly, see `federated_auth_test.go`'s calls); when `store`
+(the existing `cache.Store` parameter) is non-nil and at least one of them is set, the
+handler builds the same kind of `*mfaChallenger` that `apis/login.go` builds (see
+`apis/mfa_challenge.go.md`) — a separate instance, but backed by the same underlying
+`cache.Store`/`IMfaService`/`IWebAuthnService`, so a challenge token issued by one login
+surface can, in principle, be redeemed by the other.
+
+**Security fix, found and closed alongside adding security keys: `webauthnService` was
+initially left out of this constructor call entirely.** This page is where a relying
+app's SSO hop lands (`myseliasan` included), so an account whose *only* enrolled second
+factor is a security key would have had `mfaChallenger.required` answer `false` — no
+TOTP factor, and the challenger did not yet know to ask about WebAuthn — and would have
+been handed a session with **no** second factor checked at all, on every relying app in
+the suite. Fixed by threading `webauthnService` through from `apps/myidsan/app/app.go`
+the same way `apis/login.go` does; see that file's "Second-Factor Login: Security Keys"
+section for the twin PUBLIC JSON endpoints this page's inline JS calls.
 
 - `loginPost`, after a successful local/LDAP credential check and *before* calling
-  `issueProviderSession`, checks `m.mfa.required`. If the account has a confirmed
-  factor, it mints a challenge token (`m.mfa.issue`) and calls `renderMfaChallenge`
-  instead of setting any cookie or redirecting — the same pre-session ordering the
-  SPA uses. No `kopiv2_access` cookie exists until the code is verified.
-- `renderMfaChallenge(w, r, status, continueTo, token, errMsg)` draws a minimal
-  single-field code form (reusing the login card chrome, self-hosted assets only)
-  posting back to `/api/auth/mfa` with the opaque token and the pending `continue`
-  target as hidden fields.
-- `mfaPost` parses the form, validates the CSRF double-submit token (re-rendering the
-  challenge with "that form expired" on a mismatch), checks `guardLocked` — source-IP
-  key only, since this step presents a challenge token rather than a username
-  (rendering the challenge again with a `429` "too many failed attempts" message if
-  locked) — then calls `m.mfa.redeem(ctx, r, token, code)`:
+  `issueProviderSession`, checks `m.mfa.required`. If the account owes a second factor
+  (TOTP confirmed, a security key enrolled, or both), it mints a challenge token
+  (`m.mfa.issue`) and calls `renderMfaChallenge` instead of setting any cookie or
+  redirecting — the same pre-session ordering the SPA uses. No `kopiv2_access` cookie
+  exists until a factor is verified.
+- `renderMfaChallenge(w, r, status, continueTo, token, errMsg)` resolves which factor
+  kinds this specific account can present — `m.mfa.peek(ctx, r, token)` (re-checks the
+  client fingerprint, does **not** spend the token) followed by `m.mfa.methods` — and
+  renders accordingly:
+  - The TOTP code form renders only when `"totp"` is offered (or when `methods` came
+    back empty, e.g. an older-shaped challenger — the code form is the fall-back), so a
+    key-only account is never shown a field it can never fill.
+  - A **"Use a security key"** block renders only when `"webauthn"` is offered: a
+    button plus inline vanilla JS (`navigator.credentials.get`, base64url ↔
+    `ArrayBuffer` helpers hand-rolled here rather than imported, since this page has no
+    build step) that calls the exact same public JSON endpoints the SPA uses —
+    `POST /api/login/mfa/webauthn/{begin,finish}` — and on success navigates to
+    `continueTo` itself. Built with a `strings.Replacer` (`jsString`), never `Sprintf`,
+    for the embedded script: a `Sprintf` here would still format-scan every `%` the
+    inline JavaScript's base64 padding math needs, and getting that escaping wrong
+    would emit a syntax error into the page — reachable only in the browser, and only
+    for a key-only account, so easy to ship unnoticed.
+  - Both blocks can render together when an account holds both factor kinds, giving the
+    user a choice; the page never claims a factor exists that the account does not
+    actually hold.
+- `mfaPost` (the TOTP form's target — the WebAuthn block posts to the JSON endpoints
+  above instead, not to this handler) parses the form, validates the CSRF double-submit
+  token (re-rendering the challenge with "that form expired" on a mismatch), checks
+  `guardLocked` — source-IP key only, since this step presents a challenge token rather
+  than a username (rendering the challenge again with a `429` "too many failed
+  attempts" message if locked) — then calls `m.mfa.redeem(ctx, r, token, code)`:
   - `services.ErrMfaBadCode` → sleeps the guard's failure delay, records the
     failure, and re-renders the challenge (`401`) with "That code did not match" —
     the token survives so the user can retry until it hits its attempt cap or TTL.
@@ -49,6 +78,9 @@ issued by one login surface can, in principle, be redeemed by the other.
     `continueTo` — the session `loginPost` withheld.
 - `continueQuery(continueTo)` is a small helper that renders `&continue=<escaped>`
   for the `sso_failed` redirect, omitted for the root path.
+- `jsString(value string) string` renders a Go string as a JSON literal safe to embed in
+  an inline `<script>` — `json.Marshal` plus `<`/`>`/`&` escaping, since a literal
+  `</script>` inside an embedded JSON string would otherwise end the script block early.
 
 ## Account Recovery (Forgot Password)
 
@@ -157,7 +189,11 @@ into a local variable *before* `w.WriteHeader(status)` — `http.SetCookie` only
 the response's header map, and a cookie set from inside the `fmt.Fprintf` argument list
 (after the status line has already been written) is silently discarded, leaving a form
 whose token has no matching cookie and every genuine submission failing. See
-`apps/myidsan/apis/auth_form_csrf.go.md`.
+`apps/myidsan/apis/auth_form_csrf.go.md`. In `renderMfaChallenge`, the mint now happens
+inside `codeFormHTML`'s construction (still before `WriteHeader`) and is skipped
+entirely for a key-only account — the TOTP form is the only thing on this page that
+posts back with a hidden CSRF field; the WebAuthn block's inline JS calls the public
+JSON ceremony endpoints directly and needs no CSRF token of its own.
 
 ## `socialButtonsHTML`
 
@@ -200,7 +236,7 @@ now exercised through `login.BuildRegistry`) and `TestLoginPageHasNoExternalRefe
   update handlers) now returns `(string, error)` for the same reason.
 - Login resume paths (`cleanContinuePath`, guarding the OAuth `continue` cookie and the Kerberos failure redirect) reject absolute external URLs, any value carrying a host (`parsed.Host != ""`, catching `//evil.example` even though it isn't scheme-absolute), and any value containing a backslash. The backslash check is load-bearing on its own: browsers normalise `\` to `/` in the authority position, so `/\evil.example` used to pass both the `IsAbs()` check and the `strings.HasPrefix(value, "//")` check and then navigate off-origin as a protocol-relative URL — an open redirect on the login flow, the classic phishing primitive against an identity provider. Covered by `TestCleanContinuePathRejectsBackslashBypass` and `TestCleanContinuePathRejectsEmbeddedHost` in `federated_auth_test.go`.
 - The rendered login page loads no external host (no CDN, no Google Fonts) — every asset is a same-origin path, verified by `federated_auth_login_test.go`.
-- `NewFederatedAuthApi` now also takes `directory services.IDirectoryService`, `kerberosLabel string`, `guard *sharedapis.LoginGuard`, `mfaService services.IMfaService`, `resetService services.IPasswordResetService`, and a trailing `metrics telemetry.Metrics` (directory/guard/mfaService/resetService/metrics may be nil — directory login off / lockout off / MFA not armed / recovery pages a no-op / token-exchange outcomes not counted; `kerberosLabel` empty means Kerberos is not offered on this page); LDAP credential checks go through `directory.AuthenticateLdap`, never a hand-rolled bind here. Kerberos itself is never invoked from this file — SPNEGO verification only ever happens on `apps/myidsan/apis/login.go`'s dedicated `GET /api/login/kerberos` route; this file only decides whether to render the button and whether to show the `sso_failed` inline error.
+- `NewFederatedAuthApi` now also takes `directory services.IDirectoryService`, `kerberosLabel string`, `guard *sharedapis.LoginGuard`, `mfaService services.IMfaService`, `resetService services.IPasswordResetService`, `metrics telemetry.Metrics`, and a trailing `webauthnService services.IWebAuthnService` (directory/guard/mfaService/resetService/metrics/webauthnService may be nil — directory login off / lockout off / TOTP not armed / recovery pages a no-op / token-exchange outcomes not counted / security keys not offered on this page; `kerberosLabel` empty means Kerberos is not offered on this page); LDAP credential checks go through `directory.AuthenticateLdap`, never a hand-rolled bind here. Kerberos itself is never invoked from this file — SPNEGO verification only ever happens on `apps/myidsan/apis/login.go`'s dedicated `GET /api/login/kerberos` route; this file only decides whether to render the button and whether to show the `sso_failed` inline error.
 - `token` (`POST /api/auth/token`) records `MetricTokenExchangeTotal{outcome}` on every
   path out of the handler via the `recordTokenExchange` helper (nil-safe when `metrics` is
   nil) — bad request, unsupported grant type, unknown client, invalid secret, invalid

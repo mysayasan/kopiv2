@@ -446,7 +446,7 @@ four are not. Enables login-CSRF and forced reset submission.
 
 ## Phase 4 — Operability
 
-### 4.1 Settings UI — *port, M* — **BACKEND/API DONE, REACT UI OUTSTANDING**
+### 4.1 Settings UI — *port, M* — **DONE**
 
 myidsan is the **only** app in the suite without one: `apis/settings.go` exists in
 myseliasan, mymatasan, and myiotsan. SMTP, lockout thresholds, session TTL, Kerberos, and
@@ -458,17 +458,23 @@ edits-to-`config.json`-plus-restart seam — see [[myseliasan-settings-feature]]
 same safe-subset exclusions (db, server, bootstrap). Add a "send test email" action for
 SMTP; there is no way to verify mail configuration today.
 
-**DONE, backend/API only — there is still no Settings *page*.** The server side of the
-port landed: `services.ISettingsService` (`Sections`/`Get`/`GetAll`/`Save`/`Reset`/
-`TestCache`) over the `localAuth`, `sso`, `security`, `storage`, `logging` sections, the
-same `settings_apply.go` (validate + apply-to-live-config) / `settings_materialize.go`
-(surgical config.json write-back, untouched blocks preserved byte-for-byte) split, and
-`GET /api/settings`, `GET|PUT /api/settings/{section}`, `POST /api/settings/{section}/reset`,
+**DONE, backend and frontend.** The server side of the port landed first:
+`services.ISettingsService` (`Sections`/`Get`/`GetAll`/`Save`/`Reset`/`TestCache`) over the
+`localAuth`, `sso`, `security`, `storage`, `logging` sections, the same `settings_apply.go`
+(validate + apply-to-live-config) / `settings_materialize.go` (surgical config.json
+write-back, untouched blocks preserved byte-for-byte) split, and `GET /api/settings`,
+`GET|PUT /api/settings/{section}`, `POST /api/settings/{section}/reset`,
 `POST /api/settings/cache/test`, seeded with a "Settings" nav item in the System group. A
 save always reports `needsRestart: true`, matching myseliasan — myidsan's host also reads
-these infra blocks exactly once at boot. **The React frontend page is deliberately not part
-of this change**; the API exists and is superadmin-reachable, but there is no in-app form
-yet to drive it — that remains outstanding work.
+these infra blocks exactly once at boot. **The React frontend page has since shipped**
+(`views/react-webpack/src/views/components/settings.js`): a tabbed editor (one tab per
+section plus a System tab) of grouped cards, each field carrying an (i) info tip, secrets
+masked with a keep-blank-to-preserve convention, Save gated on a genuine diff, and a
+per-section Restore-defaults action. A companion `POST /api/system/restart` (see
+`apis/system.go.md`) gives the page's `needsRestart` banner an actual Restart button — the
+same pattern myseliasan uses — instead of only naming a required action, and the System tab
+also shows the live build/health snapshot (`/api/version`, `/api/health`, `/health`,
+`/ready`).
 
 The SMTP "send test email" action from this section's original scope is **not** included —
 `smtp` is not one of the five editable sections in this pass.

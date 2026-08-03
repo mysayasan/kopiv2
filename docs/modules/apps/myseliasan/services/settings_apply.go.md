@@ -21,8 +21,8 @@ bad value would break boot or security:
   `tls.certPath`/`tls.keyPath` are required; every rate-limit tier's `requests`/`windowSeconds`
   must be non-negative.
 - `storage` — `fileStorage.path` is required; `cache.ttlSeconds` cannot be negative.
-- `logging` — `logging.maxLineBytes` cannot be negative; a non-empty
-  `telemetry.prometheus.metricsPath` must start with `/`.
+- `logging` — `logging.maxLineBytes`/`maxFileSizeMb` cannot be negative (`maxFileSizeMb`
+  0 = uncapped); a non-empty `telemetry.prometheus.metricsPath` must start with `/`.
 - Unknown section — error.
 
 ## `applyToConfig(cfg *config.AppConfigModel, section string, data map[string]any) error`

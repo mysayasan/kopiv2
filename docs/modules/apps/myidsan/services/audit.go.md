@@ -12,6 +12,8 @@ edited from inside the product by the same superadmin whose actions it records (
 - `Action*` constants (`ActionLoginSuccess`, `ActionLoginFailure`, `ActionLoginLockout`,
   `ActionLogout`, `ActionMfaChallenge`, `ActionPasswordReset`, `ActionMfaEnroll`,
   `ActionMfaDisable`, `ActionMfaAdminReset`, `ActionMfaRecovery`, `ActionMfaRegenerate`,
+  `ActionWebAuthnEnroll`, `ActionWebAuthnRemove`, `ActionWebAuthnRename`,
+  `ActionWebAuthnAdminReset`, `ActionWebAuthnClone`,
   `ActionUserCreate`, `ActionUserUpdate`, `ActionUserDelete`, `ActionUserRoleChange`,
   `ActionPasswordChange`, `ActionRoleCreate/Update/Delete`, `ActionPermissionSet`,
   `ActionAppCreate/Update/Delete`, `ActionAppSecretRotate`, `ActionAppRedirectSet`,
@@ -22,6 +24,14 @@ edited from inside the product by the same superadmin whose actions it records (
   action names drift is one nobody can query. `Outcome*` constants (`success`/`denied`/
   `error`) and `Method*` sign-in-method constants (`local`/`ldap`/`kerberos`/`oidc`/
   `social`/`recovery_code`) live alongside them.
+  The five `ActionWebAuthn*` constants are separate from the `ActionMfa*` (TOTP) ones above
+  them because they answer different investigative questions: "which key was added, and
+  from where" is per-**credential**, not per-account. `ActionWebAuthnAdminReset` is an
+  administrator clearing SOMEONE ELSE's keys (see `apis/webauthn.go.md`'s
+  `adminResetAll`). `ActionWebAuthnClone` is written when an assertion's signature counter
+  fails to advance — the sign-in is still allowed (see `services/webauthn.go.md` for why
+  that ambiguity is not treated as proof), so this entry is the only durable trace that it
+  happened.
 - `AuditEntry` is the caller-facing shape for recording an event; the service fills in
   `CreatedAt`, marshals `Metadata`, and defaults `Outcome` to `success`.
 - `AuditFilter` narrows a listing (`Action`, `Outcome`, `ActorEmail`, `TargetType`,

@@ -27,6 +27,8 @@
   --nav-sub: #66718a;
   --nav-hover: rgba(37, 99, 235, 0.10);
   --nav-line: #d5dbe5;
+  --nav-scroll: rgba(30, 45, 70, 0.26);
+  --nav-scroll-hover: rgba(30, 45, 70, 0.48);
   --nav-fill: rgba(20, 30, 50, 0.05);
   --nav-code: #3a4660;
   color-scheme: light;
@@ -66,6 +68,8 @@
   --nav-sub: #a7b3c4;
   --nav-hover: rgba(255, 255, 255, 0.12);
   --nav-line: rgba(255, 255, 255, 0.14);
+  --nav-scroll: rgba(255, 255, 255, 0.20);
+  --nav-scroll-hover: rgba(255, 255, 255, 0.40);
   --nav-fill: rgba(255, 255, 255, 0.08);
   --nav-code: #d7e2f2;
   color-scheme: dark;
@@ -638,6 +642,59 @@ button:disabled {
 .side-nav nav {
   display: grid;
   gap: 18px;
+  /* Take the space left under the brand block and scroll internally when the menu is
+     taller than the viewport, so items never spill out of the nav panel. min-height:0
+     is required for a flex child to be allowed to shrink and scroll. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Slim, overlay-style scrollbar that stays invisible until you interact with the
+     rail, so it never crowds the menu. Theme-aware via the nav palette. Firefox uses
+     the standard properties; WebKit uses the pseudo-elements below. */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.25s ease;
+}
+
+.side-nav nav:hover,
+.side-nav nav:focus-within {
+  scrollbar-color: var(--nav-scroll) transparent;
+}
+
+.side-nav nav::-webkit-scrollbar {
+  width: 8px;
+}
+
+.side-nav nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.side-nav nav::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+  /* Inset the pill with a transparent border so it reads as a thin floating bar with
+     breathing room on both sides rather than a chunky edge-to-edge block. */
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background-color 0.25s ease;
+}
+
+.side-nav nav:hover::-webkit-scrollbar-thumb,
+.side-nav nav:focus-within::-webkit-scrollbar-thumb {
+  background-color: var(--nav-scroll);
+}
+
+.side-nav nav::-webkit-scrollbar-thumb:hover,
+.side-nav nav::-webkit-scrollbar-thumb:active {
+  background-color: var(--nav-scroll-hover);
+}
+
+/* The brand block and the foot keep their size when the nav scrolls; without this they
+   are the flex items that get squeezed instead. */
+.side-brand,
+.side-nav-foot {
+  flex-shrink: 0;
 }
 
 .nav-group {
@@ -1313,6 +1370,25 @@ textarea {
   padding: 8px 10px;
   color: var(--text);
   background: var(--surface);
+}
+
+/* ...but a checkbox or radio is not a text field. The block above sizes things you TYPE
+   into, and letting a tick-box inherit it produces a full-width, 40px-tall bordered control
+   — which is what the RBAC permission matrix and the backup section list were rendering,
+   since neither wrapper set an explicit size.
+
+   Written with :where() so this reset carries ZERO specificity: it beats the bare `input`
+   rule above (same specificity, later in the file) while losing to every scoped rule such as
+   `.checkbox-field input` or `.select-col input`, whose deliberate 18px sizing must still
+   win regardless of file order. Fixing it here rather than per-wrapper means the next
+   checkbox someone adds inherits sane defaults instead of repeating the bug. */
+input:where([type="checkbox"], [type="radio"]) {
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
 }
 
 textarea {
@@ -3111,4 +3187,84 @@ button .btn-icon {
   margin: 0;
   font-size: 1.05rem;
   font-weight: 700;
+}
+
+/* --- Security keys (WebAuthn) on the Profile page --------------------------
+   A list rather than a single on/off row, because holding more than one key IS the
+   recovery story for losing one — the layout has to make a second key look normal. */
+.webauthn-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.webauthn-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-alt);
+}
+.webauthn-row-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--row-active);
+  color: var(--blue);
+  flex: 0 0 auto;
+}
+.webauthn-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.webauthn-row-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.webauthn-row-meta {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.webauthn-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+.webauthn-tag {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--blue);
+  background: var(--row-active);
+}
+.webauthn-tag.danger {
+  color: var(--red);
+  background: rgba(214, 69, 69, 0.13);
+}
+
+@media (max-width: 640px) {
+  .webauthn-row {
+    flex-wrap: wrap;
+  }
+  .webauthn-row-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
 }

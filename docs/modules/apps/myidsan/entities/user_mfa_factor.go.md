@@ -14,7 +14,7 @@ the password hash out of user listings.
 |---|---|
 | `Id` | Primary key. |
 | `UserLoginId` | FK to the owning account. |
-| `Kind` | `"totp"` today; `"webauthn"` reserved for later. A user may hold one factor per kind. |
+| `Kind` | `"totp"` — the only value this table holds, and in practice the only one it ever will. WebAuthn security keys were the anticipated second kind but landed in their own table (`UserWebauthnCredential`) instead, since they are many-per-user and carry a different shape (public key, signature counter, transports) than a shared secret + time-step. The column stays because queries filter on it and a future kind shaped like a shared secret would fit here. |
 | `SecretEnc` | `json:"-"` — the `infra/atrest`-sealed, base64-wrapped TOTP shared secret. Never returned by any API, not even to the owning user after enrollment completes. |
 | `Label` | The device name the user typed at enrollment ("Pixel 8"). |
 | `ConfirmedAt` | 0 until the user proves one code. An unconfirmed factor never gates a login and is overwritten wholesale by a fresh `BeginEnroll`. |
@@ -26,9 +26,8 @@ the password hash out of user listings.
 ## Notes
 
 - Lookups filter on `UserLoginId` with an `Equal` filter (`Get`), never
-  `dbsql.GetByForeign` — that generic helper silently returns only one child row,
-  which would break once a second `Kind` (WebAuthn) is added per user
-  ([[getbyforeign-limit1-bug]]).
+  `dbsql.GetByForeign` — that generic helper silently returns only one child row
+  and is avoided suite-wide regardless of cardinality ([[getbyforeign-limit1-bug]]).
 - Registered in `apps/myidsan/app/app.go`'s `Entities()` for bootstrap schema
   generation, alongside `UserMfaRecoveryCode`.
 - Owned exclusively by `apps/myidsan/services/mfa.go` (`IMfaService`); no other

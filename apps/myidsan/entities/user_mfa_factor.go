@@ -12,7 +12,12 @@ package entities
 type UserMfaFactor struct {
 	Id          int64  `json:"id" form:"id" query:"id" params:"id" skipWhenInsert:"true" pkey:"true" validate:"required"`
 	UserLoginId int64  `json:"userLoginId" form:"userLoginId" query:"userLoginId" validate:"required"`
-	// Kind is "totp" today; "webauthn" later. A user may hold one factor per kind.
+	// Kind is "totp" — the only value this table holds, and in practice the only one it
+	// ever will. Security keys were the anticipated second kind, but they landed in their
+	// own table (UserWebauthnCredential) instead: they are MANY-per-user where this is one,
+	// and they carry a public key, a signature counter and transport hints where this
+	// carries a sealed shared secret and a time-step. The column stays because the queries
+	// filter on it and a future kind that IS shaped like a shared secret would fit here.
 	Kind string `json:"kind" form:"kind" query:"kind" validate:"required"`
 	// SecretEnc is the atrest-sealed, base64-wrapped TOTP shared secret. It is NEVER
 	// returned by any API — not even to the owning user after enrollment completes.

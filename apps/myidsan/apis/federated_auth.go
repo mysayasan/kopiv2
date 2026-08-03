@@ -131,10 +131,15 @@ func NewFederatedAuthApi(
 	mfaService services.IMfaService,
 	resetService services.IPasswordResetService,
 	metrics telemetry.Metrics,
+	webauthnService services.IWebAuthnService,
 ) {
+	// The challenger must see BOTH factor kinds. Wiring only TOTP here was an MFA bypass:
+	// this server-rendered page is where a relying app's SSO hop lands, and an account whose
+	// only second factor is a security key would have had required() answer false and been
+	// handed a session with no factor checked at all.
 	var challenger *mfaChallenger
-	if mfaService != nil && store != nil {
-		challenger = newMfaChallenger(store, mfaService)
+	if store != nil && (mfaService != nil || webauthnService != nil) {
+		challenger = newMfaChallenger(store, mfaService).withWebAuthn(webauthnService)
 	}
 	handler := &federatedAuthApi{
 		cfg:              cfg,
@@ -379,11 +384,139 @@ func (m *federatedAuthApi) renderMfaChallenge(w http.ResponseWriter, r *http.Req
 	if errMsg != "" {
 		errHTML = fmt.Sprintf(`<p class="status-line" role="alert">%s</p>`, html.EscapeString(errMsg))
 	}
-	// Minted BEFORE WriteHeader: http.SetCookie appends to the header map, and once the
-	// status line is written the headers are already flushed, so a cookie set from inside
-	// the Fprintf argument list is silently discarded — the form then carries a token with
-	// no cookie to match it, and every genuine submission is rejected.
-	csrfField := authFormCSRFInput(issueAuthFormCSRF(w, r))
+	// Which factors this account can present is resolved HERE rather than passed in, so every
+	// call site (including the re-render-after-a-bad-code paths) keeps the security-key option
+	// without having to thread the user id through. peek re-checks the client binding and
+	// does not spend the token.
+	keyOffered, codeOffered := false, true
+	if m.mfa != nil {
+		if userId, err := m.mfa.peek(r.Context(), r, token); err == nil {
+			methods := m.mfa.methods(r.Context(), userId)
+			if len(methods) > 0 {
+				keyOffered, codeOffered = false, false
+				for _, meth := range methods {
+					switch meth {
+					case "webauthn":
+						keyOffered = true
+					case "totp":
+						codeOffered = true
+					}
+				}
+			}
+		}
+	}
+	// The code form is hidden when the account holds no TOTP factor, so a key-only user is
+	// not shown a field they can never fill.
+	codeFormHTML := ""
+	if codeOffered {
+		codeFormHTML = fmt.Sprintf(`<form method="post" action="/api/auth/mfa">
+        %s
+        <input type="hidden" name="continue" value="%s">
+        <input type="hidden" name="mfaToken" value="%s">
+        <label>Verification code<input name="code" inputmode="numeric" autocomplete="one-time-code" autofocus required
+          placeholder="123456"></label>
+        <button type="submit">Verify</button>
+      </form>
+      <p class="hint">Enter the 6-digit code from your authenticator app, or a recovery code.</p>`,
+			authFormCSRFInput(issueAuthFormCSRF(w, r)), html.EscapeString(continueTo), html.EscapeString(token))
+	}
+	// The security-key leg reuses the SAME public endpoints the SPA uses
+	// (/api/login/mfa/webauthn/{begin,finish}); they take the challenge token and set the
+	// session cookies themselves, so this page only has to run the browser ceremony and then
+	// follow the pending continue target.
+	keyHTML := ""
+	if keyOffered {
+		// Built with a Replacer rather than Sprintf ON PURPOSE. This blob is later passed as
+		// an ARGUMENT to the page's Fprintf, so it is not format-scanned again — but a
+		// Sprintf here would still reduce every '%' in the JavaScript, and the modulo in the
+		// base64url padding needs one. Getting that escaping wrong emits a syntax error into
+		// the page, which fails only in the browser and only for key-only accounts. A
+		// Replacer has no format semantics, so the hazard cannot recur.
+		keyHTML = strings.NewReplacer(
+			"__TOKEN__", jsString(token),
+			"__CONTINUE__", jsString(continueTo),
+		).Replace(`<div id="wa-block">
+        <button type="button" id="wa-btn">Use a security key</button>
+        <p class="hint" id="wa-hint">Touch your security key, or follow your device's prompt.</p>
+      </div>
+      <script>
+      (function () {
+        var btn = document.getElementById('wa-btn'), hint = document.getElementById('wa-hint');
+        var token = __TOKEN__, cont = __CONTINUE__;
+        if (!window.PublicKeyCredential) {
+          hint.textContent = 'This browser cannot use security keys.';
+          btn.disabled = true;
+          return;
+        }
+        function b64uToBytes(v) {
+          var s = String(v || '').replace(/-/g, '+').replace(/_/g, '/');
+          s += '='.repeat((4 - (s.length % 4)) % 4);
+          var raw = atob(s), out = new Uint8Array(raw.length);
+          for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+          return out;
+        }
+        function bytesToB64u(buf) {
+          var b = new Uint8Array(buf), raw = '';
+          for (var i = 0; i < b.length; i++) raw += String.fromCharCode(b[i]);
+          return btoa(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+        }
+        btn.addEventListener('click', function () {
+          btn.disabled = true;
+          hint.textContent = 'Waiting for your security key...';
+          fetch('/api/login/mfa/webauthn/begin', {
+            method: 'POST', credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mfaToken: token })
+          }).then(function (res) {
+            if (!res.ok) throw new Error('That verification session expired. Sign in again.');
+            return res.json();
+          }).then(function (payload) {
+            var pk = (payload.result && payload.result.publicKey) || payload.publicKey;
+            pk = Object.assign({}, pk);
+            pk.challenge = b64uToBytes(pk.challenge);
+            if (pk.allowCredentials) {
+              pk.allowCredentials = pk.allowCredentials.map(function (c) {
+                return Object.assign({}, c, { id: b64uToBytes(c.id) });
+              });
+            }
+            return navigator.credentials.get({ publicKey: pk });
+          }).then(function (a) {
+            return fetch('/api/login/mfa/webauthn/finish', {
+              method: 'POST', credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                mfaToken: token,
+                credential: {
+                  id: a.id, rawId: bytesToB64u(a.rawId), type: a.type,
+                  clientExtensionResults: a.getClientExtensionResults ? a.getClientExtensionResults() : {},
+                  response: {
+                    clientDataJSON: bytesToB64u(a.response.clientDataJSON),
+                    authenticatorData: bytesToB64u(a.response.authenticatorData),
+                    signature: bytesToB64u(a.response.signature),
+                    userHandle: a.response.userHandle ? bytesToB64u(a.response.userHandle) : ''
+                  }
+                }
+              })
+            });
+          }).then(function (res) {
+            if (!res.ok) throw new Error('That security key could not be verified.');
+            window.location = cont || '/';
+          }).catch(function (err) {
+            // NotAllowedError covers both a cancellation and a timeout by design.
+            hint.textContent = (err && err.name === 'NotAllowedError')
+              ? 'No key was used. Try again and touch your key when it lights up.'
+              : (err && err.message) || 'The security key could not be used.';
+            btn.disabled = false;
+          });
+        });
+      })();
+      </script>`)
+	}
+	// NOTE on ordering: the auth-form CSRF cookie is minted inside codeFormHTML above, which
+	// runs BEFORE WriteHeader. That matters — http.SetCookie appends to the header map, and
+	// once the status line is written the headers are already flushed, so a cookie set after
+	// this point is silently discarded, leaving a form whose token has no cookie to match and
+	// every genuine submission rejected.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	fmt.Fprintf(w, `<!doctype html>
@@ -411,9 +544,11 @@ func (m *federatedAuthApi) renderMfaChallenge(w http.ResponseWriter, r *http.Req
       border: 1px solid #c7d1dc; border-radius: 6px; background: #fff; color: #18212f; }
     button { width: 100%%; min-height: 38px; padding: 0 14px; font: inherit; font-weight: 650; cursor: pointer;
       border: 1px solid #2d6cdf; border-radius: 6px; background: #2d6cdf; color: #fff; }
+    button:disabled { opacity: .6; cursor: default; }
     .status-line { margin: 0; padding: 10px 12px; font-size: 13px;
       border-left: 4px solid #d28d1f; background: #fff8e9; color: #64450d; }
     .hint { margin: 0; color: #6a7888; font-size: 12px; }
+    #wa-block { display: grid; gap: 8px; }
   </style>
 </head>
 <body>
@@ -424,19 +559,27 @@ func (m *federatedAuthApi) renderMfaChallenge(w http.ResponseWriter, r *http.Req
         <p>Two-step verification</p>
       </div>
       %s
-      <form method="post" action="/api/auth/mfa">
-        %s
-        <input type="hidden" name="continue" value="%s">
-        <input type="hidden" name="mfaToken" value="%s">
-        <label>Verification code<input name="code" inputmode="numeric" autocomplete="one-time-code" autofocus required
-          placeholder="123456"></label>
-        <button type="submit">Verify</button>
-      </form>
-      <p class="hint">Enter the 6-digit code from your authenticator app, or a recovery code.</p>
+      %s
+      %s
     </section>
   </main>
 </body>
-</html>`, errHTML, csrfField, html.EscapeString(continueTo), html.EscapeString(token))
+</html>`, errHTML, keyHTML, codeFormHTML)
+}
+
+// jsString renders a Go string as a JSON literal safe to embed in an inline <script>. The
+// extra </script and HTML-comment escaping matters because a JSON string is not automatically
+// safe inside a script element: a literal "</script>" in the value would end the block early.
+func jsString(value string) string {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return `""`
+	}
+	out := string(encoded)
+	out = strings.ReplaceAll(out, "<", `<`)
+	out = strings.ReplaceAll(out, ">", `>`)
+	out = strings.ReplaceAll(out, "&", `&`)
+	return out
 }
 
 // authPageShell wraps inner card content in the shared branded chrome used by the

@@ -1,0 +1,556 @@
+/* In-app config editor. Ported from myseliasan's Settings page and re-tokenized onto
+   myidsan's palette (--text / --muted / --line / --surface / --blue / --row-active), so it
+   themes with light, dark AND high-contrast like the rest of this SPA.
+
+   Layout: a tinted section hero, then grouped cards of labeled fields.
+
+   Deliberately ABSENT from this port: the server-side file/folder picker styles
+   (.settings-browse, .settings-fb-*). myidsan has no /api/settings/fs/browse endpoint —
+   it is the identity provider, and a directory-enumeration surface is not worth it here
+   (see apis/settings.go). Paths are typed. */
+
+.settings-panel .settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.settings-panel .settings-header h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 650;
+  color: var(--text);
+}
+.settings-hint {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.settings-hint--error { color: var(--red); font-weight: 600; }
+
+.settings-body {
+  display: grid;
+  gap: 16px;
+  margin-top: 6px;
+}
+
+/* --- Section hero ------------------------------------------------------------ */
+.settings-hero {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 15px 16px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--blue);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+}
+.settings-hero-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 11px;
+  background: var(--row-active);
+  color: var(--blue);
+  flex: 0 0 auto;
+}
+.settings-hero-text h3 {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 650;
+  color: var(--text);
+}
+.settings-hero-text p {
+  margin: 3px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* Tone accents (side-nav palette). Each tints the hero's left bar + icon chip. */
+.settings-hero.tone-steel  { border-left-color: #2b6cb0; }
+.settings-hero.tone-teal   { border-left-color: #2c9c94; }
+.settings-hero.tone-amber  { border-left-color: #c98a1a; }
+.settings-hero.tone-violet { border-left-color: #7857c8; }
+.settings-hero.tone-blue   { border-left-color: #2f6fed; }
+.settings-hero.tone-steel  .settings-hero-ico { color: #2b6cb0; background: rgba(43, 108, 176, 0.12); }
+.settings-hero.tone-teal   .settings-hero-ico { color: #2c9c94; background: rgba(44, 156, 148, 0.12); }
+.settings-hero.tone-amber  .settings-hero-ico { color: #c98a1a; background: rgba(201, 138, 26, 0.14); }
+.settings-hero.tone-violet .settings-hero-ico { color: #7857c8; background: rgba(120, 87, 200, 0.14); }
+.settings-hero.tone-blue   .settings-hero-ico { color: #2f6fed; background: rgba(47, 111, 237, 0.12); }
+
+/* --- Cards ------------------------------------------------------------------- */
+.settings-cards {
+  display: grid;
+  gap: 14px;
+}
+.settings-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  padding: 16px 18px 18px;
+}
+.settings-card-title {
+  margin: 0 0 14px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px 20px;
+  align-items: end;
+}
+
+/* Card head with an inline action (e.g. Refresh or Test next to the title). */
+.settings-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.settings-card-title--flush {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+/* --- Effective-policy callout ------------------------------------------------
+   myidsan-specific. The lockout, password and MFA policy blocks are absent from the
+   shipped config.json and resolve through Effective*() defaults, so the form shows the
+   values IN FORCE rather than raw config. Without saying so, an operator reads a
+   populated form and assumes someone configured it. */
+.settings-policy-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--blue);
+  border-radius: 9px;
+  background: var(--row-active);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.settings-policy-note svg { flex: 0 0 auto; color: var(--blue); margin-top: 1px; }
+
+/* --- Fields ------------------------------------------------------------------ */
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text);
+  min-width: 0;
+}
+/* Fixed-height label row so a one-line and a wrapping label leave inputs on the same
+   baseline — the grid bottom-aligns, so uniform label height == aligned inputs. */
+.settings-field-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 16px;
+}
+.settings-field-label-text {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--muted);
+}
+.settings-field-wide {
+  grid-column: 1 / -1;
+}
+.settings-field-note {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+/* --- Info tooltip ((i) affordance) ------------------------------------------ */
+.settings-info {
+  position: relative;
+  display: inline-flex;
+}
+.settings-info-btn {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: none;
+  cursor: help;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  color: var(--muted);
+  opacity: 0.75;
+  transition: color 0.12s ease, opacity 0.12s ease;
+}
+.settings-info-btn:hover,
+.settings-info-btn:focus-visible {
+  color: var(--blue);
+  opacity: 1;
+  outline: none;
+}
+.settings-info-bubble {
+  position: absolute;
+  bottom: calc(100% + 9px);
+  left: 50%;
+  z-index: 30;
+  width: max-content;
+  max-width: 260px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: #1f2937;
+  color: #f3f6fb;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.45;
+  text-align: left;
+  white-space: normal;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(-50%) translateY(4px);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+  pointer-events: none;
+}
+.settings-info-bubble::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: #1f2937;
+}
+.settings-info:hover .settings-info-bubble,
+.settings-info:focus-within .settings-info-bubble {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+.settings-field input,
+.settings-field textarea,
+.settings-field select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.settings-field select {
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2359687a' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  padding-right: 32px;
+}
+.settings-field textarea {
+  resize: vertical;
+  min-height: 72px;
+  line-height: 1.5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.settings-field input:hover,
+.settings-field textarea:hover,
+.settings-field select:hover {
+  border-color: var(--control-border);
+}
+.settings-field input:focus,
+.settings-field textarea:focus,
+.settings-field select:focus {
+  outline: none;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+/* Redis connection Test button + result pill, inline in the card head. */
+.settings-cache-test {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* --- Toggle switch (checkbox fields) ---------------------------------------- */
+.settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+  align-self: end;
+  padding-bottom: 6px;
+}
+.settings-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.settings-toggle-track {
+  position: relative;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--line-strong);
+  transition: background 0.15s ease;
+}
+.settings-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  transition: transform 0.15s ease;
+}
+.settings-toggle.on .settings-toggle-track {
+  background: var(--blue);
+}
+.settings-toggle.on .settings-toggle-thumb {
+  transform: translateX(16px);
+}
+.settings-toggle input:focus-visible + .settings-toggle-track {
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+.settings-toggle-label {
+  font-weight: 550;
+}
+
+/* --- Actions ----------------------------------------------------------------- */
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 4px;
+}
+.settings-dirty {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--amber);
+}
+.settings-dirty::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.settings-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 16px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, transform 0.05s ease;
+}
+.settings-btn:hover:not(:disabled) { border-color: var(--blue); }
+.settings-btn:active:not(:disabled) { transform: translateY(1px); }
+.settings-btn:disabled { opacity: 0.55; cursor: default; }
+.settings-btn-primary {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+}
+.settings-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+  border-color: var(--blue);
+}
+.settings-btn-quiet {
+  padding: 6px 11px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* --- Restart banner ---------------------------------------------------------- */
+.settings-restart-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(201, 138, 26, 0.55);
+  border-left: 3px solid var(--amber);
+  background: rgba(201, 138, 26, 0.1);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 550;
+}
+.settings-restart-banner > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--amber);
+}
+
+/* --- Loading ----------------------------------------------------------------- */
+.settings-loading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 18px 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.settings-loading svg { animation: settings-spin 0.9s linear infinite; }
+@keyframes settings-spin { to { transform: rotate(360deg); } }
+
+/* --- System tab -------------------------------------------------------------- */
+.settings-system-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.settings-system-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.settings-system-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--row-active);
+  color: var(--blue);
+  flex: 0 0 auto;
+}
+.settings-system-label {
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+/* Version metric tiles. */
+.settings-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+}
+.settings-metric {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 13px;
+  background: var(--row-active);
+}
+.settings-metric-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.settings-metric-value {
+  margin-top: 5px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  word-break: break-word;
+}
+.settings-metric-value.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 14px;
+}
+.settings-metric-sub {
+  margin-top: 3px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--blue);
+}
+.settings-checked-at {
+  margin-top: 12px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Service-health rows with status pills. */
+.settings-health {
+  display: grid;
+  gap: 2px;
+}
+.settings-health-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 2px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.settings-health-row:last-child { border-bottom: 0; }
+.settings-health-label {
+  font-weight: 600;
+  color: var(--text);
+  text-transform: capitalize;
+}
+.settings-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 650;
+}
+.settings-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.settings-status-pill.ok {
+  color: var(--green);
+  background: rgba(31, 157, 85, 0.13);
+}
+.settings-status-pill.bad {
+  color: var(--red);
+  background: rgba(214, 69, 69, 0.13);
+}
+
+@media (max-width: 640px) {
+  .settings-system-row { flex-direction: column; align-items: stretch; }
+}

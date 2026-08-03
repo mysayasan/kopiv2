@@ -7,11 +7,11 @@ Implements the `myidsan` app module for the shared runtime host.
 ## Responsibilities
 
 - Provides app identity and base directory.
-- Registers identity, app-registry, app-auth-config, app-redirect-uri, user-session, endpoint, log, file-storage, operation-job, the shared `AccessRole`/`AccessRolePermission`/`RuntimeSetting` entities, `SsoCa`, the `DirectoryConfig`/`FederatedGroupMapping` entities (LDAP/AD login, see `entities/directory_config.go.md`, `entities/federated_group_mapping.go.md`), the `UserMfaFactor`/`UserMfaRecoveryCode` entities (TOTP second factor, see `entities/user_mfa_factor.go.md`, `entities/user_mfa_recovery_code.go.md`), the `PasswordResetRequest` entity (account-recovery request queue, see `entities/password_reset_request.go.md`), the `UserAvatar` entity (profile picture, one row per account, see `entities/user_avatar.go.md`), and the `AuditLog` entity (append-only security trail, see `entities/audit_log.go.md`) for bootstrap schema generation. `RuntimeSetting` is new — it backs the first-run setup-wizard completion flag (see `services/setup_state.go.md`).
+- Registers identity, app-registry, app-auth-config, app-redirect-uri, user-session, endpoint, log, file-storage, operation-job, the shared `AccessRole`/`AccessRolePermission`/`RuntimeSetting` entities, `SsoCa`, the `DirectoryConfig`/`FederatedGroupMapping` entities (LDAP/AD login, see `entities/directory_config.go.md`, `entities/federated_group_mapping.go.md`), the `UserMfaFactor`/`UserMfaRecoveryCode` entities (TOTP second factor, see `entities/user_mfa_factor.go.md`, `entities/user_mfa_recovery_code.go.md`), the `UserWebauthnCredential` entity (FIDO2 security keys, many rows per user — see `entities/user_webauthn_credential.go.md`), the `PasswordResetRequest` entity (account-recovery request queue, see `entities/password_reset_request.go.md`), the `UserAvatar` entity (profile picture, one row per account, see `entities/user_avatar.go.md`), and the `AuditLog` entity (append-only security trail, see `entities/audit_log.go.md`) for bootstrap schema generation. `RuntimeSetting` is new — it backs the first-run setup-wizard completion flag (see `domain/shared/services/setup_state.go.md`).
 - Registers built-in identity seeders and config-driven seed statements, including new menu-metadata seed rows for `/api/directory-config` (Federation → Directory, order 45), `/api/federated-group-mapping` (no menu of its own — managed inline from the Directory page), and `/api/setup` (first-run setup state, `DevOnly`, no menu — the wizard is not a navigable page).
 - Seeds the default `system` group. The stock superadmin account is no longer seeded via SQL; it is created/refreshed from `localAuth.username`/`localAuth.password` at startup by `EnsureStockSuperadmin` (see services/user_login.go.md), with `MustChangePassword = true`.
 - **First-run/lock-out-recovery sequencing** (`RegisterAppRoutes`, see `app/firstrun.go.md`): before seeding, `consumeAdminResetMarker` checks for a `RESET_ADMIN` marker file in the data dir and, if present, deletes it and calls `ResetStockSuperadmin` instead of the normal `EnsureStockSuperadmin` path. Either way, when the resulting `StockSeedResult.Seeded` is true (a fresh account, or a reset), `announceFirstRunAdmin` prints a console banner and writes `INITIAL_ADMIN_LOGIN.txt` to the data dir.
-- Constructs `services.NewSetupStateService` over a `dbsql.NewGenericRepo[sharedentities.RuntimeSetting]` and wires it into `apis.NewSetupApi(api, *deps.Auth, deps.Access, ...)`, mounting `GET /api/setup/state` and `POST /api/setup/complete` (see `apis/setup.go.md`).
+- Constructs `sharedservices.NewSetupStateService` (`domain/shared/services`, the suite-wide seam extracted from what used to be a myidsan-local `services.NewSetupStateService` copy) over a `dbsql.NewGenericRepo[sharedentities.RuntimeSetting]` and wires it into `apis.NewSetupApi(api, *deps.Auth, deps.Access, ...)`, mounting `GET /api/setup/state` and `POST /api/setup/complete` (see `apis/setup.go.md`, `domain/shared/services/setup_state.go.md`). The wizard itself (`views/react-webpack/src/views/components/setup.js`) gained a 4th step, "Where sessions live" (`STEP_KEYS` 5 → 6), that reads `GET /api/settings/storage`, offers a live Redis connectivity test (`POST /api/settings/cache/test`), and saves via `PUT /api/settings/storage` by merging its `cache` block onto the live section payload — a naive rebuild would wipe the co-located `fileStorage` block.
 - Endpoint catalog is now app-local: myidsan no longer seeds endpoint rows for other apps. Legacy cross-app rows (`app_code <> 'myidsan'`) are deleted from `api_endpoint` on startup.
 - **Relying apps are NOT auto-registered.** Following the standard OAuth / Google-console model, `myidsan`, `mymatasan`, `myseliasan`, and any other app can only obtain an authorization code once an operator has explicitly registered it under "Apps": an `app_registry` row, an `app_auth_config` (client ID + client secret), and at least one `app_redirect_uri`. Until then the federated auth flow rejects it with "client is not registered" (see `federated_auth.go` `loadClient`/`validateRedirectURI`). This is deliberate — auto-seeding these rows would let an unregistered app keep working after a database drop, closing a security hole. Previous behavior (auto-seeding `myidsan`/`mymatasan`/`myseliasan` app rows, SSO client, and redirect URIs on every startup) has been removed.
 - Seeds wildcard-host app-scoped endpoint rows for the identity-management and RBAC-management APIs, including the shared `/api/access-rbac` prefix seeded as `DevOnly`.
@@ -65,7 +65,7 @@ Implements the `myidsan` app module for the shared runtime host.
   `myidsan_sessions_active` polling task. `apis.NewFederatedAuthApi`'s call site gained a
   trailing `deps.Metrics` argument so `POST /api/auth/token` can record
   `MetricTokenExchangeTotal{outcome}` — see `apis/federated_auth.go.md`.
-- Wires up the **in-app Settings editor, backend/API only** (`docs/MYIDSAN_PRODUCTIZATION_PLAN.md`
+- Wires up the **in-app Settings editor** (`docs/MYIDSAN_PRODUCTIZATION_PLAN.md`
   §4.1, ported from myseliasan's pattern — see `services/settings.go.md`,
   `services/settings_apply.go.md`, `services/settings_materialize.go.md`,
   `apis/settings.go.md`): builds `services.NewSettingsService(deps.Config, deps.ConfigPath,
@@ -80,8 +80,47 @@ Implements the `myidsan` app module for the shared runtime host.
   config-file-only on purpose), `kerberos`, and `login.oidc[]`/social providers, and — unlike
   myseliasan — has no server-side file-browse endpoint, since myidsan is the identity
   provider. Seeds a `Settings` menu row (`Id: "settings"`, group `System`, order 90,
-  `AccessTier: DevOnly`, no `SeedRbac`). **The React frontend page is not part of this
-  change** — the API is reachable but there is no in-app form to drive it yet.
+  `AccessTier: DevOnly`, no `SeedRbac`). **The React frontend page has since shipped**
+  (`apps/myidsan/views/react-webpack/src/views/components/settings.js`) — a tabbed editor
+  (one tab per section plus a System tab) with per-field (i) info tips, masked secret fields
+  (a blank submission keeps the stored value), Save gated on a genuine diff, per-section
+  Restore-defaults, and a "restart required" banner wired to the `system` API below.
+- Mounts `apis.NewSystemApi(api, *deps.Auth, deps.Access, deps.Restarter)` (`/api/system`,
+  see `apis/system.go.md`) right after the Settings API, superadmin-gated as middleware and
+  never delegated through the matrix. It exists so the Settings editor's `needsRestart:
+  true` has somewhere to send the operator: without it the page could report a restart was
+  required and offer no way to perform one. Seeds an `/api/system` endpoint row
+  (`AccessTier: AuthOnly`, no menu — reached only from inside the Settings page).
+- Wires up **WebAuthn / FIDO2 security keys** as a second factor kind alongside TOTP (a user
+  may hold either or both; the login gate accepts whichever is presented): resolves
+  `deps.Config.WebAuthn.Effective()` and builds `services.NewWebAuthnService` over a
+  `dbsql.NewGenericRepo[myidsanentities.UserWebauthnCredential]`, `deps.Cache` (ceremony
+  state — a cache entry, not a table, mirroring the pre-session MFA challenge), and a
+  `webauthninfra.Authority` (`infra/webauthn`, see `infra/webauthn/webauthn.go.md`) built
+  from that policy. **No at-rest cipher is passed to the service, and that is not an
+  omission** — a WebAuthn credential is a public key, so there is nothing to seal, unlike
+  the sealed `UserMfaFactor.SecretEnc` next to it. Logs the resolved Relying Party ID (or
+  `"(derived from the request host)"` when left empty) and the user-verification setting
+  once at boot when the feature is enabled. `webauthnService` is threaded into
+  `apis.NewLoginApi` (`LoginApiOptions.WebAuthn`, arming the two pre-session legs
+  `POST /api/login/mfa/webauthn/{begin,finish}` alongside the existing TOTP challenge — see
+  `apis/login.go.md`, `apis/mfa_challenge.go.md`), **`apis.NewFederatedAuthApi`'s new
+  trailing `webauthnService` parameter** — this one closed a real MFA bypass found while
+  wiring it up: the server-rendered `/api/auth/login` page (where every relying app's SSO
+  hop lands, `myseliasan` included) had its `*mfaChallenger` built from `mfaService` alone,
+  so an account whose *only* factor was a security key would have cleared that page's
+  gate with **no factor checked at all**; see `apis/federated_auth.go.md`'s "Second-Factor
+  (MFA) Login Challenge" section — `apis.NewUserLoginApi` (so deleting an
+  account also removes its keys — an orphaned credential id would block re-enrolling that
+  physical key, since `CredentialId` is unique across the whole table), `backupService`
+  (below), and mounted for self-service + admin management via
+  `apis.NewWebAuthnApi(api, *deps.Auth, deps.Access, webauthnService, userLoginService,
+  mfaService, auditService, stepUpService, deps.Config.RateLimit.TrustedProxies)`
+  (`/api/mfa/webauthn`, `/api/mfa-admin/{id}/webauthn` — see `apis/webauthn.go.md`,
+  `services/webauthn.go.md`). Also registers `myidsanentities.UserWebauthnCredential{}` for
+  bootstrap schema generation (see `entities/user_webauthn_credential.go.md`) and includes
+  its repo in `services.NewBackupService`'s section-3 (`mfa`) wiring — see
+  `services/backup.go.md`.
 - `moduleAppVersion(m)` — a small helper factored out of `APIDocs()` (below) so both the OpenAPI metadata and the backup manifest read this app's released version from the shared version manifest the same way, falling back to `"1.0.0"` when the manifest is unreadable.
 - Provides OpenAPI metadata and descriptions for the identity and RBAC administration surface.
 

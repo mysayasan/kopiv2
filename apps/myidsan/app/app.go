@@ -28,6 +28,7 @@ import (
 	"github.com/mysayasan/kopiv2/infra/mailer"
 	"github.com/mysayasan/kopiv2/infra/telemetry"
 	"github.com/mysayasan/kopiv2/infra/versioning"
+	webauthninfra "github.com/mysayasan/kopiv2/infra/webauthn"
 )
 
 type module struct{}
@@ -64,6 +65,7 @@ func (m *module) Entities() []any {
 		myidsanentities.FederatedGroupMapping{},
 		myidsanentities.UserMfaFactor{},
 		myidsanentities.UserMfaRecoveryCode{},
+		myidsanentities.UserWebauthnCredential{},
 		myidsanentities.PasswordResetRequest{},
 		myidsanentities.UserAvatar{},
 		myidsanentities.AuditLog{},
@@ -142,6 +144,10 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{AppCode: "myidsan", Title: "Session Administration", Description: "cross-account session listing and revocation", Path: "/api/session-admin", AccessTier: apiaccessenums.DevOnly},
 		{AppCode: "myidsan", Title: "Audit Log", Description: "append-only security event trail", Path: "/api/audit", Metadata: menuMetadata(menuItem{Enabled: true, Id: "audit", Label: "Audit log", Group: "System", Order: 5, Summary: "Who signed in, what changed, and from where — exportable for compliance review.", Tone: "steel"}), AccessTier: apiaccessenums.DevOnly},
 		{AppCode: "myidsan", Title: "Settings", Description: "in-app editor for the safe config.json subset", Path: "/api/settings", Metadata: menuMetadata(menuItem{Enabled: true, Id: "settings", Label: "Settings", Group: "System", Order: 90, Summary: "Sign-in policy, SSO token lifetimes, storage and logging — applied on restart.", Tone: "steel"}), AccessTier: apiaccessenums.DevOnly},
+		// Paired with Settings: every editable block is read only at boot, so the editor
+		// reports needsRestart and this is the endpoint that applies it. Superadmin-gated in
+		// the API regardless of the matrix (see apis/system.go).
+		{AppCode: "myidsan", Title: "System", Description: "process restart to apply settings changes (superadmin-gated)", Path: "/api/system", AccessTier: apiaccessenums.AuthOnly},
 		{AppCode: "myidsan", Title: "Backup & Restore", Description: "encrypted identity-store export and disaster recovery", Path: "/api/backup", Metadata: menuMetadata(menuItem{Enabled: true, Id: "backup", Label: "Backup & restore", Group: "System", Order: 10, Summary: "Export an encrypted copy of users, roles and SSO clients — or rebuild this server from one.", Tone: "amber"}), AccessTier: apiaccessenums.DevOnly},
 		{AppCode: "myidsan", Title: "User Credential", Description: "user login and role access", Path: "/api/user-credential", Metadata: menuMetadata(
 			menuItem{Enabled: true, Id: "users", Label: "Users", Group: "Identity", Order: 10, Summary: "Maintain credentials, profile details, and role assignment.", Tone: "blue"},
@@ -262,6 +268,35 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	mfaFactorRepo := dbsql.NewGenericRepo[myidsanentities.UserMfaFactor](deps.Db)
 	mfaRecoveryRepo := dbsql.NewGenericRepo[myidsanentities.UserMfaRecoveryCode](deps.Db)
 	mfaService := services.NewMfaService(mfaFactorRepo, mfaRecoveryRepo, secretCipher, "myidsan")
+
+	// Security keys (FIDO2/WebAuthn) as a SECOND factor kind alongside TOTP. Enabled by
+	// default because enrolment is per-user opt-in: an account with no key behaves exactly
+	// as it did before, so "on" only means a user MAY add one.
+	//
+	// No at-rest cipher is passed, and that is not an omission — a WebAuthn credential is a
+	// PUBLIC key, so there is nothing here to seal. That asymmetry against the sealed TOTP
+	// secret above is the security argument for preferring a key.
+	webauthnPolicy := deps.Config.WebAuthn.Effective()
+	webauthnService := services.NewWebAuthnService(
+		dbsql.NewGenericRepo[myidsanentities.UserWebauthnCredential](deps.Db),
+		deps.Cache,
+		webauthninfra.New(webauthninfra.Settings{
+			Enabled:          webauthnPolicy.Enabled,
+			RelyingPartyId:   webauthnPolicy.RelyingPartyId,
+			RelyingPartyName: webauthnPolicy.RelyingPartyName,
+			Origins:          webauthnPolicy.Origins,
+			UserVerification: webauthnPolicy.UserVerification,
+			Timeout:          time.Duration(webauthnPolicy.TimeoutMs) * time.Millisecond,
+		}),
+		time.Duration(webauthnPolicy.TimeoutMs)*time.Millisecond,
+	)
+	if webauthnService.Enabled() {
+		rp := webauthnPolicy.RelyingPartyId
+		if rp == "" {
+			rp = "(derived from the request host)"
+		}
+		log.Printf("myidsan security keys enabled (rp %s, user verification %s)", rp, webauthnPolicy.UserVerification)
+	}
 	// Set here rather than earlier: the resolver needs the MFA service to decide whether
 	// an account owes a factor, and the access middleware consults it on every request.
 	deps.Access.SetResolver(&userLoginResolver{
@@ -365,17 +400,25 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		Audit:         auditService,
 		Sessions:      sessionService,
 		PasswordPolicy: deps.Config.PasswordPolicy.Effective(),
+		WebAuthn:       webauthnService,
 		// Only a configured reverse proxy may declare the client address recorded
 		// against an event; otherwise the peer address is used. Sharing the rate
 		// limiter's list keeps one answer to "who is the caller".
 		TrustedProxies: deps.Config.RateLimit.TrustedProxies,
 	})
-	apis.NewUserLoginApi(api, *deps.Auth, deps.Access, userLoginDtoService, sessionService, auditService, deps.Config.PasswordPolicy.Effective(), deps.Config.RateLimit.TrustedProxies)
+	// mfaService/webauthnService are passed only so DELETE of an account also removes its
+	// second factors — an orphaned WebAuthn credential id would block re-enrolling that
+	// physical key, since credential ids are unique across the whole table.
+	apis.NewUserLoginApi(api, *deps.Auth, deps.Access, userLoginDtoService, sessionService, auditService, deps.Config.PasswordPolicy.Effective(), deps.Config.RateLimit.TrustedProxies, mfaService, webauthnService)
 	apis.NewUserGroupApi(api, *deps.Auth, deps.Access, userGroupDtoService)
 	// Role + permission management is the shared accessrbac surface (/api/access-rbac),
 	// mounted by apphost. The old per-app user_role admin endpoint is retired.
 	apis.NewSSOApi(api, deps.Config, deps.Auth)
-	apis.NewFederatedAuthApi(api, deps.Config, deps.Auth, providerRegistry, directoryService, kerberosLabel, loginGuard, userLoginService, appRegistryRepo, appAuthConfigRepo, appRedirectUriRepo, deps.Cache, mfaService, passwordResetService, deps.Metrics)
+	// webauthnService is passed so the SERVER-RENDERED login page honours security keys too.
+	// Without it an account whose only second factor is a key would clear this page's gate
+	// with no factor checked — and this is the page a relying app's SSO hop lands on, so the
+	// bypass would have been reachable from every app in the suite.
+	apis.NewFederatedAuthApi(api, deps.Config, deps.Auth, providerRegistry, directoryService, kerberosLabel, loginGuard, userLoginService, appRegistryRepo, appAuthConfigRepo, appRedirectUriRepo, deps.Cache, mfaService, passwordResetService, deps.Metrics, webauthnService)
 	apis.NewDirectoryConfigApi(api, *deps.Auth, deps.Access, directoryService, groupMappingRepo, auditService, deps.Config.RateLimit.TrustedProxies)
 	apis.NewAppAuthConfigApi(api, *deps.Auth, deps.Access, appAuthConfigRepo)
 	apis.NewAppRedirectUriApi(api, *deps.Auth, deps.Access, appRedirectUriRepo)
@@ -399,6 +442,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		avatarRepo,
 		mfaFactorRepo,
 		mfaRecoveryRepo,
+		dbsql.NewGenericRepo[myidsanentities.UserWebauthnCredential](deps.Db),
 		appRegistryRepo,
 		appAuthConfigRepo,
 		appRedirectUriRepo,
@@ -421,6 +465,10 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// Self-service + admin MFA management surface. The login-time challenge is wired
 	// into the login/federated-auth APIs above via the same mfaService.
 	apis.NewMfaApi(api, *deps.Auth, deps.Access, mfaService, userLoginService, deps.Metrics, auditService, stepUpService, deps.Config.RateLimit.TrustedProxies)
+	// Security-key management: self-service on your own keys, plus a superadmin
+	// lost-device reset behind step-up (same gate as clearing a TOTP factor). The
+	// pre-session login legs are on the login API above, not here.
+	apis.NewWebAuthnApi(api, *deps.Auth, deps.Access, webauthnService, userLoginService, mfaService, auditService, stepUpService, deps.Config.RateLimit.TrustedProxies)
 	// Superadmin account-recovery queue (the public request endpoint is on the login
 	// API; the self-service email flow is on the federated-auth API).
 	apis.NewPasswordResetApi(api, *deps.Auth, deps.Access, passwordResetService, auditService, stepUpService, deps.Config.RateLimit.TrustedProxies)
@@ -441,6 +489,9 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	settingsService := services.NewSettingsService(deps.Config, deps.ConfigPath, deps.Db, secretCipher,
 		func(f string, a ...any) { log.Printf("myidsan.settings: "+f, a...) })
 	apis.NewSettingsApi(api, *deps.Auth, deps.Access, settingsService, auditService, deps.Config.RateLimit.TrustedProxies)
+	// Process restart, the other half of the settings editor: a save can only report
+	// needsRestart, so without this the page would name a required action it cannot perform.
+	apis.NewSystemApi(api, *deps.Auth, deps.Access, deps.Restarter)
 	return nil, nil
 }
 

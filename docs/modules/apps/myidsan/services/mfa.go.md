@@ -68,7 +68,7 @@ parameter may be `nil` — the secret is then stored as-is, matching the suite-w
 
 | Constant | Value |
 |---|---|
-| `mfaFactorKind` | `"totp"` — the only factor kind today; a second kind (`"webauthn"`) would be a separate row per user. |
+| `mfaFactorKind` | `"totp"` — the only kind this table holds. WebAuthn security keys are a second MFA factor kind, but they are many-per-user with a different shape (public key, signature counter, transports), so they live in their own table/service (`entities/user_webauthn_credential.go`, `services/webauthn.go`) rather than a second `Kind` row here. |
 | `issuer` (constructor param) | Defaults to `"myidsan"` when blank; used in `infra/mfa.OtpauthURI`. |
 
 ## Errors
