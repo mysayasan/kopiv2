@@ -78,6 +78,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-03 — myidsan 1.42.0, myiotsan 0.25.0, myseliasan 1.50.0, core 1.72.0 (e536200)
+
+### Added
+
+- **shared,myseliasan,myidsan,myiotsan**: Added a factory reset ("Reset to factory settings") to myseliasan, myidsan and myiotsan, none of which had one before (mymatasan already did). A new shared domain/shared/services.SystemResetService + domain/shared/apis.SystemResetHandlers/NewResetGate seam gives all three a GitHub-style typed-confirmation reset: stop background services, crypto-erase the at-rest key, erase the app's data directories, close the DB pool, drop/rebuild/reseed the database (bootstrap.Reset), then restart into first-run setup. The confirmation phrase (the app's own name) is verified server-side, not just in the browser, and a live run showed the progress endpoint going unreachable the moment the DB pool closed, so NewResetGate now also serves /system/reset/progress itself (no secrets in that payload) while 503-ing everything else during a reset. Per app: myseliasan erases floor plans/basemap/file storage and crypto-erases the fleet secret key (adopted nodes are not notified and must be re-adopted); myidsan erases uploads and crypto-erases its secret key (wiping it signs every relying app's sessions out, and those apps are not notified); myiotsan erases file storage and the whole at-rest key directory rather than going through KeyStore, since its cipher only exists inside the fleet/pairing block (removing the directory takes the key's .init marker with it, which is what makes the next boot read as a clean first run instead of tripping the fail-closed recovery gate). A shared frontend/shared/src/FactoryReset.js (Danger Zone section + typed-confirmation dialog + blocking progress overlay) is mounted in each app's Settings > System tab, with 21 new reset.* keys added to the shared i18n dictionary in all four locales (en/ms/zh/ar).
 ## 2026-08-03 — myidsan 1.41.1 (ba757e8)
 
 ### Added
