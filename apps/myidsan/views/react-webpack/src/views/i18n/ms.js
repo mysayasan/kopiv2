@@ -620,6 +620,7 @@ export default {
 
   // --- Settings (in-app config editor) --------------------------------------
   'nav.settings': 'Tetapan',
+  'sum.settings': 'Dasar log masuk, jangka hayat token SSO, storan dan pengelogan — berkuat kuasa apabila dimulakan semula.',
   'settings.title': 'Tetapan',
   'settings.hint': 'Suntingan ditulis ke config.json dan berkuat kuasa apabila pelayan dimulakan semula — nilai di sini dibaca sekali semasa but. Rahsia tidak pernah dipaparkan; biarkan medan rahsia kosong untuk mengekalkan nilai yang tersimpan.',
   'settings.superadminOnly': 'Tetapan hanya tersedia untuk akaun superadmin.',

@@ -639,6 +639,7 @@ export default {
 
   // --- Settings (in-app config editor) --------------------------------------
   'nav.settings': 'Settings',
+  'sum.settings': 'Sign-in policy, SSO token lifetimes, storage and logging — applied on restart.',
   'settings.title': 'Settings',
   'settings.hint': 'Edits are written to config.json and take effect when the server restarts — the values here are read once at boot. Secrets are never displayed; leave a secret field blank to keep the stored value.',
   'settings.superadminOnly': 'Settings are available to superadmin accounts only.',

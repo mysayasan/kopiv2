@@ -620,6 +620,7 @@ export default {
 
   // --- Settings (in-app config editor) --------------------------------------
   'nav.settings': '设置',
+  'sum.settings': '登录策略、SSO 令牌有效期、存储和日志——重启后生效。',
   'settings.title': '设置',
   'settings.hint': '编辑内容会写入 config.json，并在服务器重启后生效——此处的值仅在启动时读取一次。密钥永远不会显示；将密钥字段留空以保留已存储的值。',
   'settings.superadminOnly': '设置仅对超级管理员账户开放。',
@@ -748,9 +749,9 @@ export default {
   'settings.info.passwordPolicy.minLength': '适用于每一个设置人工选择密码的路径。下限为 8：一个允许更短密码的策略看似尽职调查，实则默许了它表面上禁止的做法。',
   'settings.info.passwordPolicy.requireSymbol': '字符类别规则默认关闭是故意的——它们会促使人们采用可预测的替换方式。长度加上常见密码黑名单是更强的组合。',
   'settings.info.passwordPolicy.blockCommon': '检查内置的黑名单。不进行外部泄露语料库查询，因此适用于气隙（air-gapped）安装环境。',
-  'settings.info.mfa.policy': '在"必需"策略下，没有第二因素的用户仍可登录，但会被固定在注册界面——彻底拒绝登录会在您切换此项的瞬间将每一位管理员锁在外面。选择此项前请确认已有一名管理员完成注册。',
+  'settings.info.mfa.policy': '在“必需”策略下，没有第二因素的用户仍可登录，但会被固定在注册界面——彻底拒绝登录会在您切换此项的瞬间将每一位管理员锁在外面。选择此项前请确认已有一名管理员完成注册。',
   'settings.info.mfa.applyToDirectory': '默认关闭：目录账户的因素策略通常属于其自身域，而非此服务器。',
-  'settings.info.mfa.requiredRoleIds': '将"必需"缩小到特定角色。仅在 config.json 中设置——此页面不会写入它，因此此处仅作参考展示，不可编辑。',
+  'settings.info.mfa.requiredRoleIds': '将“必需”缩小到特定角色。仅在 config.json 中设置——此页面不会写入它，因此此处仅作参考展示，不可编辑。',
   'settings.info.fileStorage.path': '采用手动输入而非选择：此服务器故意没有目录浏览端点，因为它一旦被攻破将波及其他所有应用。',
   'settings.info.cache.provider': 'Redis 让依赖方应用可以直接共享会话状态。使用内存缓存时，它们必须改为依赖令牌自省。',
   'settings.info.logging.maxFileSizeMb': '使用 0 表示不设上限。',
