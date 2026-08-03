@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	sharedapis "github.com/mysayasan/kopiv2/domain/shared/apis"
+	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 )
@@ -17,6 +19,7 @@ type restarter interface {
 type systemApi struct {
 	session   *middlewares.AccessSessionMidware
 	restarter restarter
+	reset     *sharedservices.SystemResetService
 }
 
 // NewSystemApi mounts system-level operations under /system. The restart POST is
@@ -24,13 +27,26 @@ type systemApi struct {
 // block requires (the shared host reads them only at boot). restarter may be nil if the
 // host did not provide one, in which case restart reports unavailable.
 //
-//	POST /api/system/restart  — relaunch the process so pending config changes take effect
-func NewSystemApi(router *mux.Router, auth middlewares.AuthMidware, session *middlewares.AccessSessionMidware, restart restarter) {
-	h := &systemApi{session: session, restarter: restart}
+//	POST /api/system/restart        — relaunch the process so pending config changes take effect
+//	GET  /api/system/reset/state    — whether factory reset is available, and the phrase to type
+//	POST /api/system/reset          — start a factory reset (body: {"confirm": "<phrase>"})
+//	GET  /api/system/reset/progress — in-memory progress of a running reset
+//
+// Every reset route is superadmin-gated like the restart, and the POST additionally
+// requires the typed confirmation to match server-side.
+func NewSystemApi(router *mux.Router, auth middlewares.AuthMidware, session *middlewares.AccessSessionMidware, restart restarter, reset *sharedservices.SystemResetService) {
+	h := &systemApi{session: session, restarter: restart, reset: reset}
 	g := router.PathPrefix("/system").Subrouter()
 	g.Use(auth.Middleware)
 	g.Use(session.Middleware)
 	g.HandleFunc("/restart", h.requireSuper(h.restart)).Methods("POST")
+
+	if reset != nil {
+		rh := sharedapis.NewSystemResetHandlers(reset)
+		g.HandleFunc("/reset/state", h.requireSuper(rh.State)).Methods("GET")
+		g.HandleFunc("/reset/progress", h.requireSuper(rh.Progress)).Methods("GET")
+		g.HandleFunc("/reset", h.requireSuper(rh.Start)).Methods("POST")
+	}
 }
 
 func (a *systemApi) requireSuper(next http.HandlerFunc) http.HandlerFunc {

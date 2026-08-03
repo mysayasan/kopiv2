@@ -1,0 +1,215 @@
+/* Shared factory-reset UI (frontend/shared/src/FactoryReset.js).
+   Styled on the --ui-* tokens so the Danger Zone, the typed-confirmation dialog and the
+   progress overlay read identically in myseliasan, myidsan and myiotsan. */
+
+.fr-zone {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid var(--ui-danger-border, #f0b4b4);
+  border-radius: 10px;
+  background: var(--ui-danger-bg, rgba(220, 53, 69, 0.05));
+}
+
+.fr-zone-head h3 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--ui-danger, #c0392b);
+}
+
+.fr-zone-body {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ui-text-muted, #5c6773);
+}
+
+.fr-danger-btn {
+  border: 1px solid var(--ui-danger, #c0392b);
+  border-radius: 8px;
+  background: var(--ui-danger, #c0392b);
+  color: #fff;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+.fr-danger-btn:hover:not(:disabled) { filter: brightness(1.08); }
+
+.fr-danger-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.fr-quiet {
+  border: 1px solid var(--ui-border, #d5dde5);
+  border-radius: 8px;
+  background: var(--ui-surface, #fff);
+  color: var(--ui-text, #1f2933);
+  font-size: 13px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+/* --- confirmation dialog --------------------------------------------------- */
+
+.fr-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 32, 0.55);
+}
+
+.fr-card {
+  width: min(100%, 520px);
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  display: grid;
+  gap: 12px;
+  padding: 22px;
+  border-radius: 12px;
+  border: 1px solid var(--ui-danger-border, #f0b4b4);
+  background: var(--ui-surface, #fff);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.3);
+}
+
+.fr-card h2 {
+  margin: 0;
+  font-size: 18px;
+  color: var(--ui-danger, #c0392b);
+}
+
+.fr-card p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ui-text, #1f2933);
+}
+
+.fr-losses {
+  margin: 0;
+  padding-inline-start: 20px;
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ui-text-muted, #5c6773);
+}
+
+.fr-irreversible {
+  font-weight: 700;
+  color: var(--ui-danger, #c0392b) !important;
+}
+
+.fr-field {
+  display: grid;
+  gap: 6px;
+  margin: 4px 0 14px;
+  font-size: 13px;
+}
+
+.fr-field code {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--ui-code-bg, rgba(120, 134, 148, 0.16));
+  font-weight: 700;
+}
+
+.fr-field input {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--ui-border, #d5dde5);
+  border-radius: 8px;
+  background: var(--ui-surface, #fff);
+  color: var(--ui-text, #1f2933);
+  font-family: inherit;
+  font-size: 14px;
+}
+
+.fr-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+/* --- progress overlay ------------------------------------------------------ */
+
+.fr-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: var(--ui-bg, #f4f7fa);
+}
+
+.fr-overlay-card {
+  width: min(100%, 460px);
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  text-align: center;
+  padding: 26px;
+  border-radius: 12px;
+  border: 1px solid var(--ui-border, #d5dde5);
+  background: var(--ui-surface, #fff);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.12);
+}
+
+.fr-overlay-card h2 {
+  margin: 0;
+  font-size: 18px;
+  color: var(--ui-text, #1f2933);
+}
+
+/* Flex rather than a plain block so the fill is anchored to the INLINE start and grows
+   in the reading direction: a bare `width: X%` div always grows left-to-right, which
+   runs backwards under dir="rtl" (Arabic). */
+.fr-bar {
+  display: flex;
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--ui-track, rgba(120, 134, 148, 0.2));
+}
+
+.fr-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--ui-danger, #c0392b);
+  transition: width 0.4s ease;
+}
+
+.fr-pct {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--ui-text, #1f2933);
+}
+
+.fr-msg {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ui-text-muted, #5c6773);
+}
+
+.fr-hint,
+.fr-warning,
+.fr-error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.fr-hint { color: var(--ui-text-faint, #8d99a6); }
+.fr-warning { color: var(--ui-warning, #b7791f); }
+.fr-error { color: var(--ui-danger, #c0392b); }

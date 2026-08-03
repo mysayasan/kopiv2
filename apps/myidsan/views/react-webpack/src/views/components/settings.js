@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { Ico, useT, Tabs } from '@shared'
+import { FactoryResetSection, Ico, useT, Tabs } from '@shared'
 import { apiRequest, resultOf, apiBase } from '../../lib/api'
 import '../styles/settings.css'
 
@@ -305,7 +305,7 @@ export function SettingsPage({ isSuperadmin, onToast }) {
       {loading ? (
         <div className="settings-loading"><Ico n="reload" sz={18} /><span>{t('common.loading')}</span></div>
       ) : active === 'system' ? (
-        <SystemTab t={t} onRestart={restart} restarting={restarting} />
+        <SystemTab t={t} onRestart={restart} restarting={restarting} onToast={onToast} />
       ) : !form ? (
         <p className="settings-hint settings-hint--error">{t('settings.loadFailed')}</p>
       ) : (
@@ -534,7 +534,11 @@ function Field({ field, form, setForm, t }) {
 // SystemTab shows the running build and live service health by polling the public
 // version/health/liveness/readiness endpoints, plus the process-restart control.
 // Read-only except for Restart.
-function SystemTab({ t, onRestart, restarting }) {
+function SystemTab({ t, onRestart, restarting, onToast }) {
+  const resetApi = useCallback(
+    (path, opts) => call(path, opts && typeof opts.body === 'string' ? { ...opts, body: JSON.parse(opts.body) } : opts),
+    [],
+  )
   const [ver, setVer] = useState(null)       // /api/version body, or null
   const [api200, setApi200] = useState(null) // /api/health reachable
   const [live, setLive] = useState(null)     // /health liveness
@@ -620,6 +624,13 @@ function SystemTab({ t, onRestart, restarting }) {
             <span>{restarting ? t('settings.restarting') : t('settings.restartNow')}</span>
           </button>
         </section>
+
+        {/* Factory reset. Renders nothing unless bootstrap.allowReset is on, which
+            myidsan ships false. resetApi exists because the shared component sends the
+            fetch contract -- a JSON STRING body -- while myidsan's apiRequest stringifies
+            whatever it is handed, which would double-encode it into a quoted string the
+            server cannot decode. */}
+        <FactoryResetSection api={resetApi} appLabel="MyIDSan" onToast={onToast} />
       </div>
     </div>
   )

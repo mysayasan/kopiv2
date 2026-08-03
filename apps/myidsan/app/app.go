@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"path/filepath"
 	"strings"
@@ -254,7 +255,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// Directory (LDAP/AD) login: the bind password is encrypted at rest, so the
 	// secret cipher must resolve before the service exists. Recovery-pending fails
 	// closed like myseliasan's fleet secrets.
-	secretCipher, err := openSecretCipher(deps)
+	secretCipher, secretKeyStore, err := openSecretCipher(deps)
 	if err != nil {
 		return nil, err
 	}
@@ -491,7 +492,41 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewSettingsApi(api, *deps.Auth, deps.Access, settingsService, auditService, deps.Config.RateLimit.TrustedProxies)
 	// Process restart, the other half of the settings editor: a save can only report
 	// needsRestart, so without this the page would name a required action it cannot perform.
-	apis.NewSystemApi(api, *deps.Auth, deps.Access, deps.Restarter)
+	// Factory reset. This is the most destructive action in the suite: myidsan holds every
+	// account, role, registered SSO client, the SSO CA private key, all TOTP secrets and
+	// every security key, so wiping it signs everyone out of EVERY app that trusts it and
+	// leaves those apps pointing at an identity provider that no longer knows anyone.
+	// Relying apps are not notified — nothing here reaches out to them.
+	//
+	// Crypto-erasing the key first makes the sealed columns unrecoverable immediately, so
+	// a restored database dump without the key is inert rather than a way back in.
+	//
+	// Hidden unless bootstrap.allowReset is true, which myidsan ships false.
+	systemResetService := sharedservices.NewSystemResetService(sharedservices.SystemResetConfig{
+		ConfirmPhrase: m.Name(),
+		CollectDataPaths: func(context.Context) []string {
+			// Uploaded avatars. The SSO CA key and every other secret live in the
+			// database, so the drop covers them.
+			return []string{strings.TrimSpace(deps.Config.FileStorage.Path)}
+		},
+		BootstrapOpts: sharedservices.ResetBootstrapOptions(
+			// myidsan declares no migrations (its module has no Migrations method), so the
+			// rebuild has nothing to baseline.
+			m.Name(), deps.Config, m.Entities(), nil, m.Seeders(deps.Config.Bootstrap.SeedStatements)),
+		Restarter: deps.Restarter,
+		KeyStore:  secretKeyStore,
+		CloseDatabase: func() error {
+			if c, ok := deps.Db.(io.Closer); ok {
+				return c.Close()
+			}
+			return nil
+		},
+		Logf: func(f string, a ...any) { log.Printf("myidsan.reset: "+f, a...) },
+	})
+	// Clean 503s instead of raw 500s once the pool closes, so the SPA overlay survives.
+	api.Use(sharedapis.NewResetGate(systemResetService))
+
+	apis.NewSystemApi(api, *deps.Auth, deps.Access, deps.Restarter, systemResetService)
 	return nil, nil
 }
 
@@ -500,13 +535,16 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 // Returns nil (no encryption) when the feature is disabled. A key that existed here
 // before but is now missing FAILS CLOSED — refusing to boot rather than minting a
 // fresh key and silently orphaning the encrypted secrets.
-func openSecretCipher(deps apphost.Dependencies) (*atrest.Cipher, error) {
+// The KeyStore is returned alongside the cipher so the factory reset can crypto-erase
+// the key. Destroying it also clears the init marker, so the next boot reads as a clean
+// first run and mints a fresh key rather than hitting the recovery gate below.
+func openSecretCipher(deps apphost.Dependencies) (*atrest.Cipher, *atrest.KeyStore, error) {
 	enabled := true
 	if deps.Config.Security.EncryptAtRest != nil {
 		enabled = *deps.Config.Security.EncryptAtRest
 	}
 	if !enabled {
-		return nil, nil
+		return nil, nil, nil
 	}
 	keyPath := strings.TrimSpace(deps.Config.Security.KeyPath)
 	if keyPath == "" {
@@ -524,13 +562,13 @@ func openSecretCipher(deps apphost.Dependencies) (*atrest.Cipher, error) {
 	}
 	outcome, err := atrest.OpenForStartup(keyPath, recoveryPath, protectorCfg)
 	if err != nil {
-		return nil, fmt.Errorf("secret encryption key: %w", err)
+		return nil, nil, fmt.Errorf("secret encryption key: %w", err)
 	}
 	if outcome.Mode == atrest.ModeRecoveryPending {
-		return nil, fmt.Errorf("secret encryption key missing (id %s): restore %s or set security.recoveryPath, then restart", outcome.KeyId, keyPath)
+		return nil, nil, fmt.Errorf("secret encryption key missing (id %s): restore %s or set security.recoveryPath, then restart", outcome.KeyId, keyPath)
 	}
 	log.Printf("myidsan secret encryption enabled (key %s, mode %s, id %s)", keyPath, outcome.Mode, outcome.KeyId)
-	return outcome.KeyStore.Cipher(), nil
+	return outcome.KeyStore.Cipher(), outcome.KeyStore, nil
 }
 
 // loginGuardConfig maps the shared LoginSecurity config block onto the login guard.

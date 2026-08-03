@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -264,7 +265,47 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewSettingsApi(protected, localUser, deps.AccessRoles, notificationSettings, telemetrySettings)
 	// System controls for the Settings > System tab: a restart (needed to apply the storage/broker
 	// settings, which are read once at boot). Version/health are already served by the host runtime.
-	apis.NewSystemApi(protected, deps.Restarter)
+	// Factory reset. Wipes the hub back to first-run: the database (devices, profiles,
+	// rules, scenes, schedules, flows, telemetry and every runtime setting) is dropped and
+	// reseeded, uploads are erased, and the at-rest key directory is removed.
+	//
+	// ENROLLED DEVICES ARE NOT TOLD, and nothing revokes their broker credentials from the
+	// device side: each one keeps its provisioned password and will reconnect to a hub that
+	// no longer knows it, landing back in quarantine as a candidate. If this hub is itself
+	// adopted by a control plane, the reset also drops its fleet enrollment.
+	//
+	// The key directory is erased wholesale rather than crypto-erased through the KeyStore
+	// because myiotsan only builds its cipher inside the fleet block, when pairing is on.
+	// Removing the directory takes the init marker with the key, which is what makes the
+	// next boot a clean first run: leaving the marker behind would trip the fail-closed
+	// recovery gate and the hub would refuse to start after its own factory reset.
+	systemResetService := sharedservices.NewSystemResetService(sharedservices.SystemResetConfig{
+		ConfirmPhrase: m.Name(),
+		CollectDataPaths: func(context.Context) []string {
+			keyPath := strings.TrimSpace(deps.Config.Security.KeyPath)
+			if keyPath == "" {
+				keyPath, _ = filepath.Abs(apphost.ResolveWritablePath(deps.DataDir, filepath.Join("secret", "atrest.key")))
+			}
+			return []string{
+				strings.TrimSpace(deps.Config.FileStorage.Path),
+				filepath.Dir(keyPath),
+			}
+		},
+		BootstrapOpts: sharedservices.ResetBootstrapOptions(
+			m.Name(), deps.Config, m.Entities(), nil, m.Seeders(deps.Config.Bootstrap.SeedStatements)),
+		Restarter: deps.Restarter,
+		CloseDatabase: func() error {
+			if c, ok := deps.Db.(io.Closer); ok {
+				return c.Close()
+			}
+			return nil
+		},
+		Logf: func(f string, a ...any) { deps.Logger.Infof("myiotsan.reset", f, a...) },
+	})
+	// Clean 503s instead of raw 500s once the pool closes, so the SPA overlay survives.
+	api.Use(sharedapis.NewResetGate(systemResetService))
+
+	apis.NewSystemApi(protected, deps.Restarter, systemResetService)
 
 	// First-run wizard completion flag, in the same shared runtime-setting row the rest of
 	// the suite uses. Previously a localStorage key, which made dismissal per-browser

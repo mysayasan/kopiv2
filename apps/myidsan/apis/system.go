@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	sharedapis "github.com/mysayasan/kopiv2/domain/shared/apis"
+	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 )
@@ -28,11 +30,18 @@ type systemApi struct {
 // permission matrix: it drops every in-flight request on the identity provider the rest of
 // the suite authenticates against.
 //
-//	POST /api/system/restart  — relaunch the process so pending config changes take effect
+//	POST /api/system/restart        — relaunch the process so pending config changes take effect
+//	GET  /api/system/reset/state    — whether factory reset is available, and the phrase to type
+//	POST /api/system/reset          — start a factory reset (body: {"confirm": "<phrase>"})
+//	GET  /api/system/reset/progress — in-memory progress of a running reset
+//
+// The reset inherits the same superadmin gate, and the POST additionally requires the
+// typed confirmation to match server-side — on the identity provider especially, an
+// endpoint that erases every account should not be one stray authenticated request away.
 //
 // restart may be nil when the host provided no restarter, in which case the endpoint
 // reports unavailable rather than silently doing nothing.
-func NewSystemApi(router *mux.Router, auth middlewares.AuthMidware, access *middlewares.AccessSessionMidware, restart restarter) {
+func NewSystemApi(router *mux.Router, auth middlewares.AuthMidware, access *middlewares.AccessSessionMidware, restart restarter, reset *sharedservices.SystemResetService) {
 	h := &systemApi{restarter: restart}
 
 	g := router.PathPrefix("/system").Subrouter()
@@ -41,6 +50,13 @@ func NewSystemApi(router *mux.Router, auth middlewares.AuthMidware, access *midd
 	g.Use(access.RequireSuperadmin)
 
 	g.HandleFunc("/restart", h.restart).Methods("POST")
+
+	if reset != nil {
+		rh := sharedapis.NewSystemResetHandlers(reset)
+		g.HandleFunc("/reset/state", rh.State).Methods("GET")
+		g.HandleFunc("/reset/progress", rh.Progress).Methods("GET")
+		g.HandleFunc("/reset", rh.Start).Methods("POST")
+	}
 }
 
 // restart relaunches the process so changes that are only read at startup take effect. The
