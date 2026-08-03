@@ -85,12 +85,26 @@ Implements the `myidsan` app module for the shared runtime host.
   (one tab per section plus a System tab) with per-field (i) info tips, masked secret fields
   (a blank submission keeps the stored value), Save gated on a genuine diff, per-section
   Restore-defaults, and a "restart required" banner wired to the `system` API below.
-- Mounts `apis.NewSystemApi(api, *deps.Auth, deps.Access, deps.Restarter)` (`/api/system`,
-  see `apis/system.go.md`) right after the Settings API, superadmin-gated as middleware and
-  never delegated through the matrix. It exists so the Settings editor's `needsRestart:
-  true` has somewhere to send the operator: without it the page could report a restart was
-  required and offer no way to perform one. Seeds an `/api/system` endpoint row
-  (`AccessTier: AuthOnly`, no menu — reached only from inside the Settings page).
+- Builds a **factory reset** (`sharedservices.NewSystemResetService`, the shared
+  `domain/shared/services/system_reset.go` orchestrator — see that doc) and mounts it via
+  `apis.NewSystemApi(api, *deps.Auth, deps.Access, deps.Restarter, systemResetService)`
+  (`/api/system`, see `apis/system.go.md`) right after the Settings API, superadmin-gated
+  as middleware and never delegated through the matrix. It exists so the Settings editor's
+  `needsRestart: true` has somewhere to send the operator: without it the page could report
+  a restart was required and offer no way to perform one. Seeds an `/api/system` endpoint
+  row (`AccessTier: AuthOnly`, no menu — reached only from inside the Settings page).
+  `ConfirmPhrase: m.Name()`; `CollectDataPaths` returns only the uploaded-avatars
+  `FileStorage.Path` — every other secret (accounts, roles, registered SSO clients, the SSO
+  CA private key, TOTP secrets, security keys) lives in the database the reset drops, so
+  the directory list needs nothing else. `BootstrapOpts` passes `nil` for migrations, since
+  myidsan's module declares none. `KeyStore: secretKeyStore` (see the updated
+  `openSecretCipher` below) crypto-erases the secret key first. **This is the most
+  destructive action in the suite**: wiping the identity provider signs everyone out of
+  every relying app that trusts it, and none of those apps are notified — nothing here
+  reaches out to them. `api.Use(sharedapis.NewResetGate(systemResetService))` is
+  registered right after, so a request against the closed DB pool gets a clean `503`
+  instead of a raw `500` once a reset starts. Hidden unless `bootstrap.allowReset` is
+  true, which myidsan ships **false**.
 - Wires up **WebAuthn / FIDO2 security keys** as a second factor kind alongside TOTP (a user
   may hold either or both; the login gate accepts whichever is presented): resolves
   `deps.Config.WebAuthn.Effective()` and builds `services.NewWebAuthnService` over a
@@ -137,6 +151,12 @@ now missing **fails closed** — `RegisterAppRoutes` returns an error and myidsa
 refuses to boot, rather than minting a fresh key and silently orphaning the encrypted
 bind password. This is new: myidsan had no at-rest-encrypted secret before the
 directory bind password.
+
+Now returns `(*atrest.Cipher, *atrest.KeyStore, error)` — the `*atrest.KeyStore` is the
+new second value, returned alongside the cipher purely so the factory reset above can
+call `KeyStore.Destroy()`. Destroying the key also removes its init marker, so the next
+boot after a reset reads as a clean first run and mints a fresh key instead of hitting
+the `ModeRecoveryPending` fail-closed path described above.
 
 ## `loginGuardConfig`
 

@@ -505,7 +505,22 @@ gated admin-only server-side too (`services.Policy()`).
   unpair.
 - **System** — app/core version, health, and `POST /api/system/restart` (responds first, then
   restarts ~500ms later so the browser can show a "restarting…" overlay). This is also the tab an
-  operator uses after editing Telemetry settings, since those need a restart to take effect.
+  operator uses after editing Telemetry settings, since those need a restart to take effect. A
+  **Danger zone** on the same tab offers **Reset to factory settings** (`GET
+  /api/system/reset/state`, `POST /api/system/reset`, `GET /api/system/reset/progress`, built on
+  the shared `domain/shared/services.SystemResetService`) — myiotsan previously had no factory
+  reset at all. Confirmation is GitHub-style: type `myiotsan` exactly before the button enables,
+  and the server independently re-checks the typed phrase rather than trusting the dialog. A
+  confirmed reset erases file storage and the entire at-rest key **directory** (not just the key
+  file — myiotsan's cipher is only built inside the fleet/pairing block, so removing the whole
+  directory, marker included, is what makes the next boot read as a clean first run rather than
+  tripping the fail-closed recovery gate), drops and rebuilds the database, and restarts into
+  first-run setup behind a blocking progress overlay. **Enrolled devices are not told** — each
+  keeps its provisioned broker password and reconnects to a hub that no longer knows it, landing
+  back in quarantine as a candidate; if this hub is itself adopted by a control plane, the reset
+  also drops its fleet enrollment. Unlike myseliasan/myidsan, myiotsan ships `bootstrap.allowReset:
+  true` by default, so this panel is visible out of the box. See
+  `docs/modules/domain/shared/services/system_reset.go.md`.
 
 ## Fleet
 

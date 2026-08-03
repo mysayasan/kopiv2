@@ -95,9 +95,28 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
      existed since then, but nothing served them — viewer and operator were UNASSIGNABLE, and the
      appliance was effectively single-admin), plus, new with the tabbed Settings page, outbound
      notification delivery and telemetry/broker settings. See `apis/settings.go.md`. Immediately
-     after, `apis.NewSystemApi(protected, deps.Restarter)` registers `POST /api/system/restart` —
-     the Settings > System tab's restart, needed because the telemetry settings below are read
-     once at boot (see `apis/system.go.md`). Immediately after that,
+     after, builds myiotsan's **factory reset** (`sharedservices.NewSystemResetService`, the
+     shared `domain/shared/services/system_reset.go` orchestrator): `ConfirmPhrase: m.Name()`;
+     `CollectDataPaths` returns `deps.Config.FileStorage.Path` and, notably, `filepath.Dir(keyPath)`
+     — the **whole at-rest key directory**, not just the key file through `KeyStore.Destroy` the
+     way myseliasan/myidsan do it, because myiotsan's cipher (`openFleetSecretCipher`, below) is
+     only built inside the fleet/pairing block, so no `KeyStore` is available here unconditionally.
+     Removing the directory takes the key's `.init` marker with it, which is what makes the next
+     boot read as a clean first run — leaving the marker behind would trip the fail-closed
+     recovery gate and the hub would refuse to start after its own reset. `BootstrapOpts` passes
+     `nil` for migrations (myiotsan's module declares none). Enrolled devices are **not** told:
+     each keeps its provisioned broker password and reconnects to a hub that no longer knows it,
+     landing back in quarantine as a candidate; if this hub is itself adopted by a control plane,
+     the reset also drops its fleet enrollment. `api.Use(sharedapis.NewResetGate(systemResetService))`
+     is registered right after, so a request against the closed DB pool gets a clean `503` instead
+     of a raw `500` once a reset starts. Then `apis.NewSystemApi(protected, deps.Restarter,
+     systemResetService)` registers `POST /api/system/restart` — the Settings > System tab's
+     restart, needed because the telemetry settings below are read once at boot — plus the three
+     reset routes (see `apis/system.go.md`). **Unlike myseliasan/myidsan, myiotsan ships
+     `bootstrap.allowReset: true`** in its shipped `config.json`, so the Danger Zone panel is
+     visible out of the box rather than opt-in. See
+     `docs/modules/domain/shared/services/system_reset.go.md`,
+     `docs/modules/domain/shared/apis/system_reset.go.md`. Immediately after that,
      `sharedservices.NewSetupStateService(dbsql.NewGenericRepo[sharedentities.RuntimeSetting](deps.Db))`
      and `apis.NewSetupApi(protected, setupStateService)` register the first-run wizard's
      completion flag — promoted off a `localStorage` key onto the same shared `setup.state`
