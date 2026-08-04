@@ -12,9 +12,13 @@ runtime and the only consumer of the bus's event channel. It also owns lockdown,
 - `Store` — everything the controller reads (readers, doors, credentials, holders, grants,
   schedules, holidays, and `RecordEvent`), as an interface so the SAME controller can run
   against a live database or an offline cached replica — "works offline" is then a property of
-  which `Store` is plugged in, not a second code path that can drift from the first. **Only an
-  in-memory test implementation of `Store` exists today** (`controller_test.go`); there is no
-  database-backed implementation.
+  which `Store` is plugged in, not a second code path that can drift from the first. Two
+  implementations exist: the in-memory test fake (`controller_test.go`'s `memStore`) and the
+  database-backed `SQLStore` (`store_sql.go.md`), built on the shared `dbsql` generic repo. Both
+  are exercised against the identical end-to-end scenario (`newRigWithStore` in
+  `controller_test.go`), which is what proves them interchangeable. **Neither is wired into a
+  running app yet** — there is still no `apps/mypintusan/app/` composition root that calls
+  `NewSQLStore`/`bootstrap.Ensure` outside of tests.
 - `Actuator.Unlock(ctx, door, seconds, ev)` — the ONE actuation chokepoint. Every unlock (badge,
   operator override, schedule, flow, API) is meant to funnel through one audited implementation,
   exactly as `myiotsan` funnels all actuation through `CommandService.Issue`, so "who opened
@@ -76,7 +80,8 @@ runtime and the only consumer of the bus's event channel. It also owns lockdown,
 
 - **No app wiring.** There is no `apps/mypintusan/apis`, no `app/` composition root, no
   `config.json`, no firstrun/setup wizard, no frontend — `Controller` cannot be started as a
-  running service today; it is exercised only by `controller_test.go` against the real
-  `infra/access/osdp` driver and a simulated reader.
+  running service today; it is exercised only by `controller_test.go` (in-memory store) and
+  `store_sql_test.go`'s `TestEndToEndThroughSQLite` (real SQLite via `SQLStore`), both against the
+  real `infra/access/osdp` driver and a simulated reader.
 - `Snapshot.AntiPassbackViolation` is never computed by anything in this file — anti-passback
   detection (comparing the last in/out passage) does not exist yet; it is a P3 feature.

@@ -1,14 +1,18 @@
 # MyPintuSan — Door & Credential Data Model
 
-Status: **P1 PARTIALLY BUILT — logic layer only, not a runnable app.** All the entities below
-(`Holder`, `Credential`, `Door`, `Reader`/`ReaderProfile`, `AccessGroup`/`Grant`/`Schedule`/
-`ScheduleWindow`/`Holiday`, `AccessEvent`) now exist as Go structs in `apps/mypintusan/entities`,
-and the decision path (§5), the door state machine (§4), and Wiegand decode/encode are built and
-tested in `apps/mypintusan/services` (87.3% coverage). What is **not** there yet: **no database
-layer** — `Store` is an interface with only an in-memory test implementation, nothing persists
-across a restart, and there is no repository, migration, or dbsql entity registration; **no
-`apps/mypintusan/apis`, no `app/` composition root, no `config.json`, no firstrun/setup wizard,
-no frontend** — the app cannot be started, it is a library. `Controller.ContactChanged` exists
+Status: **P1 PARTIALLY BUILT — logic + persistence layers, still not a runnable app.** All the
+entities below (`Holder`, `Credential`, `Door`, `Reader`/`ReaderProfile`, `AccessGroup`/`Grant`/
+`Schedule`/`ScheduleWindow`/`Holiday`, `AccessEvent`) now exist as Go structs in
+`apps/mypintusan/entities`, and the decision path (§5), the door state machine (§4), and Wiegand
+decode/encode are built and tested in `apps/mypintusan/services` (87.3% coverage). A
+database-backed `Store` now exists too: `SQLStore` (`apps/mypintusan/services/store_sql.go`), built
+on the shared `dbsql.NewGenericRepo[T]`, one repo per entity — the same `Controller` and decision
+path run unchanged against it or against the in-memory test fake, proven by running the identical
+end-to-end badge scenario over both (`store_sql_test.go`'s `TestEndToEndThroughSQLite`). What is
+**not** there yet: **no app wiring** — no `apps/mypintusan/apis`, no `app/` composition root, no
+`config.json`, no firstrun/setup wizard, no frontend, and nothing outside tests calls
+`bootstrap.Ensure` — the app cannot be started, it is a library with a persistence layer.
+`Controller.ContactChanged` exists
 as a seam but nothing calls it (no myiotsan door-contact binding wired in),
 `Door.RelayDeviceKey` → myiotsan `CommandService.Issue` is not implemented (the only shipped
 `Actuator` drives the reader's own output), PIN pairing is PIN-then-card only, and
@@ -349,7 +353,7 @@ Needs both `ReaderInId` and `ReaderOutId` populated. Two modes:
 
 | Phase | Scope |
 | --- | --- |
-| **P1** | `Holder`, `Credential` (card + PIN), `Door`, `Reader`, `Grant`/`Schedule`, `AccessEvent`, the state machine, offline cache. One door, one reader, working end to end. **Entities, the decision path, Wiegand decode/encode, the door state machine, and the offline-policy logic are built and tested** (`apps/mypintusan/entities`, `apps/mypintusan/services`). **Not done:** persistence (no `Store` implementation but the in-memory test fake), `apps/mypintusan/apis`/`app`/`config.json`/firstrun (no runnable app), the myiotsan relay-actuation and door-contact bindings (`RelayDeviceKey`/`ContactChanged` are unwired seams), and card-then-PIN pairing (PIN-then-card only today). |
+| **P1** | `Holder`, `Credential` (card + PIN), `Door`, `Reader`, `Grant`/`Schedule`, `AccessEvent`, the state machine, offline cache. One door, one reader, working end to end. **Entities, the decision path, Wiegand decode/encode, the door state machine, the offline-policy logic, and a database-backed `Store` (`SQLStore`, over a real SQLite schema) are built and tested** (`apps/mypintusan/entities`, `apps/mypintusan/services`), including an end-to-end test that badges through the real OSDP driver into a real SQLite access log. **Not done:** `apps/mypintusan/apis`/`app` composition root/`config.json`/firstrun (no runnable app — nothing outside tests calls `bootstrap.Ensure`), `myseliasan`/fleet adoption, the myiotsan relay-actuation and door-contact bindings (`RelayDeviceKey`/`ContactChanged` are unwired seams), and card-then-PIN pairing (PIN-then-card only today). |
 | **P2** | Holiday calendar, free-access + first-person-in, lockdown, duress, door-forced/held-open alerts, `myseliasan` adoption so doors appear on the fleet map. Holiday calendar, free-access/first-person-in, lockdown, and duress are already implemented in the P1 decision/state-machine code above; what remains here is wiring them to a real deployment (persistence, myiotsan bindings) plus `myseliasan` adoption. |
 | **P3** | Plate and face credentials via `mymatasan`, anti-passback, two-person rule on `critical` doors, visitor management (pre-registration, QR pass, host notification, on-site roster, **evacuation list**). |
 

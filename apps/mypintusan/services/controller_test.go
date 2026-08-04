@@ -206,11 +206,23 @@ const testPort = "tcp://sim"
 
 func newRig(t *testing.T, cfg ControllerConfig) *rig {
 	t.Helper()
+	store := newStore()
+	r := newRigWithStore(t, store, cfg)
+	r.store = store
+	r.seedDefaults()
+	return r
+}
+
+// newRigWithStore builds the same rig over ANY Store, so the identical end-to-end scenario can be
+// run against the in-memory fake and against real SQLite. That the two agree is the evidence that
+// the offline replica and the live database really are one code path.
+func newRigWithStore(t *testing.T, data Store, cfg ControllerConfig) *rig {
+	t.Helper()
 
 	pd := osdp.NewPD(1)
 	cpEnd, pdEnd := net.Pipe()
 
-	r := &rig{t: t, store: newStore(), pd: pd, act: &recordingActuator{}, alarm: newAlarm()}
+	r := &rig{t: t, pd: pd, act: &recordingActuator{}, alarm: newAlarm()}
 
 	// The PD side of the wire — the same shape the simulator binary uses.
 	go func() {
@@ -248,7 +260,7 @@ func newRig(t *testing.T, cfg ControllerConfig) *rig {
 		cfg.Now = func() time.Time { return time.Date(2026, 8, 4, 10, 0, 0, 0, kl) }
 	}
 	r.act.inner = BusActuator{Bus: r.bus, Output: 0, Address: func(entities.Door) uint8 { return 1 }}
-	r.ctrl = NewController(r.store, r.bus, r.act, r.alarm, testPIN, cfg)
+	r.ctrl = NewController(data, r.bus, r.act, r.alarm, testPIN, cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	busDone, ctrlDone := make(chan struct{}), make(chan struct{})
@@ -262,7 +274,12 @@ func newRig(t *testing.T, cfg ControllerConfig) *rig {
 		<-ctrlDone
 	})
 
-	// A door with one reader, enrolled and granted 24/7 unless a test says otherwise.
+	return r
+}
+
+// seedDefaults plants one door, one reader and one holder granted 24/7, unless a test says
+// otherwise. Only meaningful for the in-memory store; the SQLite path seeds through real inserts.
+func (r *rig) seedDefaults() {
 	r.store.doors[1] = &entities.Door{
 		Id: 1, Name: "Front", Class: entities.ClassInterior, LockKind: entities.LockFailSecure,
 		UnlockSeconds: 5, ExtendedUnlockSeconds: 15, HeldOpenSeconds: 30, Enabled: true,
@@ -284,8 +301,6 @@ func newRig(t *testing.T, cfg ControllerConfig) *rig {
 	}
 	r.store.grants[20] = []entities.Grant{{Id: 1, GroupId: 5, DoorId: 1, ScheduleId: 100}}
 	r.store.schedules[100] = entities.Schedule{Id: 100, Name: "Always", Always: true}
-
-	return r
 }
 
 // waitOnline blocks until the controller has seen the reader come up, so a badge is not presented
