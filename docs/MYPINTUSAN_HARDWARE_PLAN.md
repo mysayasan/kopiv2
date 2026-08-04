@@ -1,13 +1,23 @@
 # MyPintuSan — Hardware Compatibility & Reference Kit
 
-Status: **DRAFT — design only, nothing built.** This document covers *only* the hardware
-seam: how a reader model is described (`ReaderProfile`), how much a given profile is
-trusted, and the reference bill of materials the app is tested against. None of that —
-`ReaderProfile`, the trust-rule enforcement, the reference kit — is implemented, and there is
-still no `apps/mypintusan`. The app-level plan (credential store, door state machine, schedules,
-anti-passback, lockdown, visitor management) is not yet written. What *is* now built, one layer
-down, is the OSDP wire protocol this hardware plan assumes: `infra/access/osdp` (CP driver) and
-`tools/osdp-sim` (PD simulator), covering build order steps 1–4 of 6 in
+Status: **DRAFT for trust-rule enforcement — the `ReaderProfile` struct itself is now built.**
+This document covers *only* the hardware seam: how a reader model is described
+(`ReaderProfile`), how much a given profile is trusted, and the reference bill of materials the
+app is tested against. `ReaderProfile` (fields: `Transport`, `Verification`, `VerifiedFirmware`,
+`ShipsWithDefaultSCBK`, capability flags, `Builtin`, ...) and the sibling `Reader` instance type
+now exist as Go structs in `apps/mypintusan/entities` (see
+`docs/modules/apps/mypintusan/entities/reader.go.md`) — but the TRUST-RULE ENFORCEMENT this
+document specifies (capping an unverified or SCBK-D reader at `interior`, checking `PDID`
+against `VerifiedFirmware`) is not implemented anywhere in `apps/mypintusan/services`, there is
+no seeded builtin profile catalog, and neither is persisted (no repository, no dbsql
+registration). `apps/mypintusan` now exists as a Go package — the decision path, door state
+machine, and Wiegand decoding are built and tested (see
+[`MYPINTUSAN_DATA_MODEL.md`](MYPINTUSAN_DATA_MODEL.md)) — but it has no entrypoint, no
+`apis`/`app`/`config.json`, and cannot be started; the app-level plan below (credential store,
+door state machine, schedules, anti-passback, lockdown, visitor management) is otherwise as
+written except where `MYPINTUSAN_DATA_MODEL.md` §6 now says P1 logic is built. What *is* now
+built, one layer down, is the OSDP wire protocol this hardware plan assumes: `infra/access/osdp`
+(CP driver) and `tools/osdp-sim` (PD simulator), covering build order steps 1–4 of 6 in
 [`MYPINTUSAN_OSDP_PLAN.md`](MYPINTUSAN_OSDP_PLAN.md) §5. Steps 5–6 (serial transport, a real
 reader on the bench) still need hardware, so nothing in this document has been validated against
 an actual reader.

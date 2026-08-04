@@ -6,11 +6,16 @@ OSDP driver: `crc.go`, `codes.go`, `frame.go`, `pd.go`, `cp.go`, `bus.go`, `tran
 fault-injection scenarios) exist and are covered by unit tests. Steps 5–6 — serial transport and
 a real reader on the bench, confirming the CRC byte order (§2.1) and Secure Channel's crypto
 constants (§2.3, and see `securechannel.go`'s header comment) — are **not done and need
-hardware**. There is still **no `apps/mypintusan`** — zero application code; this document and
-its two companions remain design-only for anything above the driver layer. Companion to
+hardware**. `apps/mypintusan` now exists — entities, the decision path, the door state machine
+and Wiegand decode/encode are built and tested (`apps/mypintusan/entities`,
+`apps/mypintusan/services`) — but it is a library only: no persistence, no
+`apis`/`app`/`config.json`, no entrypoint, nothing that can be started as a running app. This
+document itself, the OSDP wire protocol, is unaffected by that: it remains the driver layer
+underneath, consumed by `services.Controller`. Companion to
 [`MYPINTUSAN_HARDWARE_PLAN.md`](MYPINTUSAN_HARDWARE_PLAN.md) (reader profiles, trust tiers,
-reference kit) and [`MYPINTUSAN_DATA_MODEL.md`](MYPINTUSAN_DATA_MODEL.md) (doors,
-credentials, decision path) — both still DRAFT, design only.
+reference kit — trust-rule enforcement still design-only) and
+[`MYPINTUSAN_DATA_MODEL.md`](MYPINTUSAN_DATA_MODEL.md) (doors, credentials, decision path — now
+P1 partially built; see its Status line).
 
 Covers the OSDP driver in **CP (Control Panel) mode** — `mypintusan` polls readers, readers
 reply — plus the simulator that must be written **first**.
