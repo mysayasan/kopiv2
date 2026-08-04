@@ -162,6 +162,17 @@ func TestPayloadEncryptionRoundTrip(t *testing.T) {
 		if len(plain) > 0 && bytes.Equal(ct, plain) {
 			t.Errorf("payload of %d bytes was not encrypted", len(plain))
 		}
+		// The end-of-message marker is appended UNCONDITIONALLY, so a block-aligned payload grows
+		// by a whole block. This is the case that was wrong until the implementation was checked
+		// against libosdp: reusing the MAC's conditional padding left a 16-byte payload unpadded,
+		// which round-tripped perfectly here and would have been rejected by a real reader.
+		if n := len(plain); n > 0 {
+			want := (n + 16) &^ 15
+			if len(ct) != want {
+				t.Errorf("payload of %d bytes encrypted to %d, want %d "+
+					"(the 0x80 marker is always appended, even when block-aligned)", n, len(ct), want)
+			}
+		}
 		got, err := decryptPayload(sEnc, mac, ct)
 		if err != nil {
 			t.Fatalf("decrypt %d bytes: %v", len(plain), err)

@@ -76,9 +76,9 @@ and the [command/reply reference](https://doc.osdp.dev/protocol/commands-and-rep
   the Modbus CRC at [`crc.go:15`](../infra/iot/modbus/crc.go#L15) (reflected `0xA001`,
   init `0xFFFF`) — new code, no reuse.
 
-> ⚠️ **Confirm on the bench:** the CRC *byte order* on the wire (LSB-first per spec) could
-> not be confirmed from the libosdp excerpt. Verify against a real reader or
-> [OSDP Bench](https://osdpworld.com/osdp-bench/) before trusting the decoder.
+> ✅ **Confirmed 2026-08-04** against libosdp's `osdp_phy.c`, which appends the CRC with
+> `bwrite_u16_le(crc16, buf, &len)` — **little-endian, LSB first**, as implemented in
+> [`crc.go`](../infra/access/osdp/crc.go). This closes what was previously an open bench item.
 
 ### 2.2 Codes we need for P1
 
@@ -213,7 +213,10 @@ Steps 1–4 need **no hardware at all**. That is the entire argument for the ord
 
 ## 6. Open items
 
-1. **CRC byte order** on the wire — confirm against a real reader or OSDP Bench (§2.1).
+1. ~~**CRC byte order** on the wire~~ — **RESOLVED 2026-08-04** against libosdp `osdp_phy.c`
+   (little-endian, §2.1). The Secure Channel constructions were verified against `osdp_sc.c` at the
+   same time; that review found and fixed one divergence (payload padding always appends the 0x80
+   marker, even when block-aligned). Hardware *interop* remains unproven until step 5.
 2. **Poll cadence vs bus size.** 100–200 ms per PD is fine for 2–4 readers; a 16-reader bus
    at 9600 baud will not sustain it. Needs a measured budget, and probably a
    documented max-readers-per-bus figure at each baud rate for the compatibility page.

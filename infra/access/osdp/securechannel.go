@@ -11,29 +11,39 @@ import (
 
 // OSDP Secure Channel: AES-128 session establishment, per-packet MAC, and payload encryption.
 //
-// ─── READ THIS BEFORE TRUSTING IT AGAINST REAL HARDWARE ───────────────────────────────────────
+// ─── VERIFICATION STATUS ──────────────────────────────────────────────────────────────────────
 //
-// The PROTOCOL STRUCTURE here (handshake order, SCB layout, which SCS type goes on which packet,
-// fail-closed enforcement) follows MYPINTUSAN_OSDP_PLAN.md §2.3, which was written against the
-// spec and libosdp. The CRYPTOGRAPHIC CONSTRUCTIONS — the session-key derivation constants, the
-// cryptogram operand order, the MAC chaining rule and the CBC IV — were reconstructed from
-// libosdp's osdp_sc.c WITHOUT the source at hand, and are NOT independently verified.
+// The cryptographic constructions below were CHECKED LINE BY LINE against libosdp's osdp_sc.c and
+// osdp_phy.c (goToMain/libosdp, master, read 2026-08-04). Confirmed identical:
 //
-// That matters more than usual because this package contains BOTH sides. cp.go and pd.go share
-// these primitives, so a handshake test passes whenever the two halves agree with each other —
-// including when both are wrong. Green tests here are evidence of self-consistency, not of
-// interoperability. This is exactly the "simulator agrees with itself and disagrees with the wire"
-// trap the OSDP plan warns about, and no test in this package can escape it.
+//   - SCBK-D                     0x30…0x3F
+//   - session-key derivation     0x01,{0x82|0x01|0x02} ‖ RND.A[0:6], zero-filled, AES-ECB(SCBK)
+//   - client (PD) cryptogram     ENC(S-ENC, RND.A ‖ RND.B)
+//   - server (CP) cryptogram     ENC(S-ENC, RND.B ‖ RND.A)   — operands reversed, deliberately
+//   - initial R-MAC              ENC(S-MAC2, ENC(S-MAC1, server cryptogram))
+//   - payload CBC IV             bitwise complement of the opposite direction's chaining MAC
+//   - MAC                        CBC-MAC, S-MAC1 for all blocks but the last, S-MAC2 for the last
+//   - MAC placement              4 bytes after the payload, before the CRC, computed over
+//                                everything preceding it
+//   - CRC byte order             little-endian on the wire (bwrite_u16_le)
 //
-// Before a real reader is trusted, someone must confirm the constants in this file against
-// libosdp's osdp_sc.c / osdp_phy.c or a known-answer vector from OSDP Bench, and update
-// securechannel_test.go's pinned vectors with values from that authority rather than from us.
-// Until then, treat Secure Channel as STRUCTURALLY complete and CRYPTOGRAPHICALLY unconfirmed.
+// That check found ONE divergence, now fixed: payload padding. See padPayload — libosdp appends
+// the 0x80 marker UNCONDITIONALLY before encrypting, while the MAC path appends it only when the
+// input is not block-aligned. This file had used the MAC rule for both, so a payload whose length
+// was an exact multiple of 16 went out unpadded. Both halves of this package agreed with each
+// other, so every round-trip test passed, and a real reader would have rejected the frame.
 //
-// The good news is the failure mode is loud: wrong constants mean the PD rejects our cryptogram
-// and the session never establishes, which — because this implementation is fail-closed — takes
-// the reader out of service rather than quietly downgrading it. A wrong guess here cannot produce
-// a door that opens insecurely; it produces a door that does not open at all.
+// WHAT IS STILL UNVERIFIED: interoperability with actual hardware. Reading the reference
+// implementation removes the guesswork, not the firmware quirks, and no test in this package can
+// prove interop — cp.go and pd.go share these primitives, so they pass whenever the two halves
+// agree, including if both are wrong the same way. Build-order step 5 (a reader on the bench) is
+// what closes that, and TestKnownAnswerVectors' pinned values remain self-generated until someone
+// replaces them with an OSDP Bench capture.
+//
+// The failure mode remains loud, not silent: wrong constants mean the peer rejects our cryptogram
+// and the session never establishes, which — because everything here is fail-closed — takes the
+// reader out of service rather than quietly downgrading it. This cannot produce a door that opens
+// insecurely; it produces a door that does not open at all.
 // ──────────────────────────────────────────────────────────────────────────────────────────────
 
 // SCBK is a 16-byte AES-128 Secure Channel Base Key.
@@ -183,32 +193,58 @@ func DiversifySCBK(master SCBK, info PDInfo) SCBK {
 	return SCBK(ecb(master, b))
 }
 
-// pad appends ISO/IEC 9797-1 padding method 2 (a 0x80 byte, then zeros) to reach a block boundary.
-// Applied unconditionally when the length is not already a multiple of 16.
-func pad(data []byte) []byte {
+// eomMarker is OSDP's end-of-message byte, the 0x80 that terminates a padded block.
+const eomMarker = 0x80
+
+// padMAC pads a MAC input to a block boundary with ISO/IEC 9797-1 method 2 — but ONLY when the
+// input is not already block-aligned. A block-aligned MAC input is MAC'd as-is.
+//
+// This differs from padPayload below, and the asymmetry is libosdp's, not ours: osdp_compute_mac
+// appends 0x80 only when `rem != 0`, while osdp_encrypt_data appends it unconditionally. Using one
+// rule for both is the natural mistake and it silently corrupts exactly one case.
+func padMAC(data []byte) []byte {
 	if len(data)%16 == 0 {
 		return append([]byte(nil), data...)
 	}
 	out := make([]byte, len(data)+16-len(data)%16)
 	copy(out, data)
-	out[len(data)] = 0x80
+	out[len(data)] = eomMarker
 	return out
 }
 
-// unpad removes that padding. It tolerates an unpadded block-aligned payload, because a payload
-// that happened to be a multiple of 16 was never padded in the first place.
-func unpad(data []byte) []byte {
-	for i := len(data) - 1; i >= 0 && i >= len(data)-16; i-- {
-		switch data[i] {
-		case 0x00:
-			continue
-		case 0x80:
-			return data[:i]
-		default:
-			return data // block-aligned, never padded
-		}
+// padPayload pads plaintext for encryption. The 0x80 marker is ALWAYS appended, even when the
+// payload is already a multiple of 16, and the result is then zero-filled to the next boundary.
+//
+// Verified against libosdp's osdp_encrypt_data, which does `data[length] = OSDP_SC_EOM_MARKER`
+// before computing `AES_PAD_LEN(length + 1)` — unconditionally. A 16-byte payload therefore
+// encrypts to 32 bytes, not 16.
+//
+// This was WRONG here until it was checked against the source: the encrypt path reused the
+// conditional MAC padding, so a payload whose length happened to be a multiple of 16 was left
+// unpadded. Both ends of this package agreed with each other, so every round-trip test passed —
+// and a real reader would have rejected the frame. It is the single concrete reason the "our tests
+// only prove we agree with ourselves" warning was worth acting on rather than merely writing down.
+func padPayload(data []byte) []byte {
+	out := make([]byte, (len(data)+16)&^15)
+	copy(out, data)
+	out[len(data)] = eomMarker
+	return out
+}
+
+// unpadPayload strips that padding: trailing zeros, then the mandatory marker.
+//
+// The marker is REQUIRED. Its absence means the plaintext is not what the peer sent — a wrong key,
+// a desynchronised MAC chain, or tampering — so this reports an error rather than guessing, and the
+// caller fails the session closed.
+func unpadPayload(data []byte) ([]byte, error) {
+	i := len(data) - 1
+	for i >= 0 && data[i] == 0x00 {
+		i--
 	}
-	return data
+	if i < 0 || data[i] != eomMarker {
+		return nil, fmt.Errorf("%w: decrypted payload has no end-of-message marker", ErrSecureChannelBroken)
+	}
+	return data[:i], nil
 }
 
 // computeMAC produces the rolling packet MAC over data.
@@ -217,7 +253,7 @@ func unpad(data []byte) []byte {
 // and the IV is the OTHER direction's last MAC. That cross-direction chaining is what makes a
 // replayed packet fail — its MAC was correct when first sent, but the chain has moved on.
 func computeMAC(sMac1, sMac2, iv [16]byte, data []byte) [16]byte {
-	buf := pad(data)
+	buf := padMAC(data)
 	if len(buf) == 0 {
 		buf = make([]byte, 16)
 	}
@@ -252,7 +288,7 @@ func encryptPayload(sEnc, mac [16]byte, plain []byte) []byte {
 	if len(plain) == 0 {
 		return nil
 	}
-	buf := pad(plain)
+	buf := padPayload(plain)
 	iv := cryptIV(mac)
 	c, _ := aes.NewCipher(sEnc[:])
 	cipher.NewCBCEncrypter(c, iv[:]).CryptBlocks(buf, buf)
@@ -270,7 +306,7 @@ func decryptPayload(sEnc, mac [16]byte, ct []byte) ([]byte, error) {
 	iv := cryptIV(mac)
 	c, _ := aes.NewCipher(sEnc[:])
 	cipher.NewCBCDecrypter(c, iv[:]).CryptBlocks(buf, buf)
-	return unpad(buf), nil
+	return unpadPayload(buf)
 }
 
 // --- handshake, CP side ---------------------------------------------------------------------
