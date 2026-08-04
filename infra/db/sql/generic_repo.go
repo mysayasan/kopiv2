@@ -88,7 +88,12 @@ func (m *genericRepo[T]) GetById(ctx context.Context, datasrc string, id uint64)
 	if err != nil {
 		return nil, fmt.Errorf("select by id failed: %w", err)
 	}
-	// Not found → nil (not a zero-value struct), so `x == nil` checks work.
+	// NOTE: in practice a missing row does NOT reach this branch. SelectById's underlying Select
+	// treats zero rows as an error ("no result found") rather than returning a nil map, so that
+	// error is returned above and this nil check never fires for the not-found case. Unlike
+	// GetByUnique below (where SelectByUnique genuinely returns a nil map, and this check is live),
+	// callers of GetById must not rely on `res == nil`; they must check the returned error instead
+	// (see apps/mypintusan/services/store_sql.go's isNotFound for one such caller-side workaround).
 	if res == nil {
 		return nil, nil
 	}
