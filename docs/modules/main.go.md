@@ -10,7 +10,7 @@ Root launcher for selecting which app module to run.
 - Resolves app module from an in-process registry map.
 - Runs selected module via `infra/apphost.Run`.
 - Prints available app names and exits with non-zero code when app name is unknown.
-- Currently registers `mymatasan`, `myidsan`, `myseliasan`, and `myiotsan`.
+- Currently registers `mymatasan`, `myidsan`, `myseliasan`, `myiotsan`, and `mypintusan`.
 
 ## Notes
 

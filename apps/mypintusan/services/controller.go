@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -236,6 +237,83 @@ func (c *Controller) SetLockdown(ctx context.Context, on bool) {
 	for id, m := range ms {
 		c.emitDoorEvents(ctx, id, m.SetLockdown(now, on))
 	}
+}
+
+// ErrUnknownDoor means this controller does not own the door.
+var ErrUnknownDoor = errors.New("mypintusan: door is not on this bus")
+
+// IsUnknownDoor reports whether an error means the door belongs to another bus, so a caller holding
+// several controllers can try the next one.
+func IsUnknownDoor(err error) bool { return errors.Is(err, ErrUnknownDoor) }
+
+// OperatorUnlock opens a door from an operator action rather than a badge.
+//
+// It goes through the SAME actuator and writes the SAME access-event row as a badge, deliberately.
+// A remote unlock is the most abusable capability in this application — it opens a door with no
+// credential at all — so the one thing that must never happen is for it to bypass the audit trail.
+// "Who opened door 3 at 02:14, and through what path" has to be answerable identically whether the
+// answer is a card or a person clicking a button.
+func (c *Controller) OperatorUnlock(ctx context.Context, door entities.Door, actor int64, actorName string) error {
+	if !c.ownsDoor(ctx, door.Id) {
+		return ErrUnknownDoor
+	}
+
+	c.mu.RLock()
+	lockdown := c.lockdown
+	c.mu.RUnlock()
+
+	now := c.cfg.Now()
+	ev := entities.AccessEvent{
+		At: now.Unix(), DoorId: door.Id, HolderId: actor, HolderName: actorName,
+		RawCredential: "operator", Decision: entities.DecisionDenied, Offline: c.cfg.Offline,
+	}
+
+	// Lockdown outranks an operator too. Someone who can lift lockdown can open the door; someone
+	// who cannot must not be able to route around it with the unlock button.
+	if lockdown {
+		ev.Reason = entities.ReasonLockdown
+		ev.Detail = "remote unlock refused: the site is in lockdown"
+		c.record(ctx, ev)
+		return fmt.Errorf("the site is in lockdown")
+	}
+	if !door.Enabled {
+		ev.Reason = entities.ReasonDoorDisabled
+		ev.Detail = "remote unlock refused: the door is disabled"
+		c.record(ctx, ev)
+		return fmt.Errorf("the door is disabled")
+	}
+
+	seconds := door.StrikeSeconds(false)
+	ev.Reason = entities.ReasonOK
+	ev.Decision = entities.DecisionGranted
+	ev.Detail = "remote unlock by " + actorName
+
+	if err := c.act.Unlock(ctx, door, seconds, ev); err != nil {
+		ev.Decision = entities.DecisionDenied
+		ev.Detail = "remote unlock failed: " + err.Error()
+		c.record(ctx, ev)
+		return err
+	}
+	if m, mErr := c.Machine(ctx, door.Id); mErr == nil {
+		// Tell the state machine the door is legitimately open, or the person walking through the
+		// unlock they were just given trips a forced-door alarm.
+		c.emitDoorEvents(ctx, door.Id, m.Grant(now, seconds))
+	}
+	c.record(ctx, ev)
+	return nil
+}
+
+// ownsDoor reports whether this controller is responsible for a door: either it already tracks it,
+// or a reader on this bus is bound to it.
+func (c *Controller) ownsDoor(ctx context.Context, doorId int64) bool {
+	c.mu.RLock()
+	_, tracked := c.machines[doorId]
+	c.mu.RUnlock()
+	if tracked {
+		return true
+	}
+	d, err := c.store.Door(ctx, doorId)
+	return err == nil && d != nil
 }
 
 // Lockdown reports the current state.
@@ -526,25 +604,41 @@ func (c *Controller) raise(ctx context.Context, kind string, addr uint8, detail 
 	c.alarm.Raise(ctx, kind, ev, detail)
 }
 
+// DoorStrike says which OSDP address and which output on it fire a door's strike.
+//
+// The two are DIFFERENT NUMBERS and conflating them is easy: Address is the reader's PD address on
+// the RS-485 segment, Output is the relay channel on that device. An early version of this actuator
+// used Door.RelayChannel as the PD address, which meant every unlock was addressed to a PD that did
+// not exist — the decision granted, the audit row said `ok`, and the door never opened. It was
+// caught only by booting the app and reading the access log.
+type DoorStrike struct {
+	Address uint8
+	Output  byte
+}
+
+// StrikeResolver maps a door to the strike that opens it. It is a function rather than a table
+// because the binding lives in the database and can change while the process is running.
+type StrikeResolver func(ctx context.Context, door entities.Door) (DoorStrike, error)
+
 // BusActuator drives the strike through the OSDP reader's own output.
 //
 // It is the DRIVER-level actuator, used when the strike is wired to the reader rather than to a
-// myiotsan relay. Either way it is the single implementation of Actuator that the controller calls,
-// so the audit trail is complete regardless of which one a door uses.
+// myiotsan relay. Either way it is the single implementation of Actuator the controller calls, so
+// the audit trail is complete regardless of which one a door uses.
 type BusActuator struct {
-	Bus *osdp.Bus
-	// Output is the reader output channel the strike is wired to.
-	Output byte
-	// Address is the PD address to drive. A door's strike is normally on its ENTRY reader.
-	Address func(door entities.Door) uint8
+	Bus     *osdp.Bus
+	Resolve StrikeResolver
 }
 
 func (a BusActuator) Unlock(ctx context.Context, door entities.Door, seconds int, _ entities.AccessEvent) error {
-	addr := uint8(0)
-	if a.Address != nil {
-		addr = a.Address(door)
+	if a.Resolve == nil {
+		return fmt.Errorf("no strike binding resolver configured")
+	}
+	strike, err := a.Resolve(ctx, door)
+	if err != nil {
+		return err
 	}
 	// A TIMED unlock, not a permanent one: if this process dies mid-unlock the reader re-locks on
-	// its own timer rather than leaving the door open until someone notices.
-	return a.Bus.Output(ctx, addr, a.Output, true, time.Duration(seconds)*time.Second)
+	// its own timer rather than leaving the door open until somebody notices.
+	return a.Bus.Output(ctx, strike.Address, strike.Output, true, time.Duration(seconds)*time.Second)
 }

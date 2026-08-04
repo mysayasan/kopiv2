@@ -34,6 +34,10 @@ type Bus struct {
 	frames chan []byte
 	events chan Event
 	cmds   chan *cmdReq
+	// portErr carries the first error that made the port unusable, so Run can return instead of
+	// polling a dead wire forever. See failPort.
+	portErr  chan error
+	portOnce sync.Once
 
 	dropped uint64 // events discarded because the consumer stalled
 }
@@ -123,14 +127,34 @@ var (
 func NewBus(port Transport, opts Options) *Bus {
 	opts = opts.Defaults()
 	return &Bus{
-		port:   port,
-		opts:   opts,
-		pds:    map[uint8]*pdState{},
-		reader: &countingReader{r: port},
-		frames: make(chan []byte, 16),
-		events: make(chan Event, opts.EventBuffer),
-		cmds:   make(chan *cmdReq, 32),
+		port:    port,
+		opts:    opts,
+		pds:     map[uint8]*pdState{},
+		reader:  &countingReader{r: port},
+		frames:  make(chan []byte, 16),
+		events:  make(chan Event, opts.EventBuffer),
+		cmds:    make(chan *cmdReq, 32),
+		portErr: make(chan error, 1),
 	}
+}
+
+// failPort records that the transport itself is unusable and wakes Run.
+//
+// This exists because a dead port is NOT the same as a dead reader, and treating it as one is a
+// production outage waiting to happen. Without it, a CP whose USB-RS485 adapter is unplugged — or
+// whose serial-to-Ethernet gateway reboots — keeps polling a wire nobody is listening to, marks
+// every reader offline, and stays that way until somebody restarts the process. Every door on the
+// segment is dead, silently, and the logs say only "reader offline".
+//
+// Returning instead lets the owner re-dial. It is deliberately one-shot: the first failure is the
+// diagnosis, and the hundred that follow it are noise.
+func (b *Bus) failPort(err error) {
+	b.portOnce.Do(func() {
+		select {
+		case b.portErr <- err:
+		default:
+		}
+	})
 }
 
 // PDConfig describes one reader on the bus.
@@ -295,6 +319,14 @@ func (b *Bus) Run(ctx context.Context) error {
 			b.failPending(ErrBusClosed)
 			return ctx.Err()
 		}
+		// A dead transport ends the run so the owner can re-dial. Polling on is pointless: every
+		// reader would go offline and stay offline until the process restarted.
+		select {
+		case err := <-b.portErr:
+			b.failPending(err)
+			return err
+		default:
+		}
 		b.drainCommands()
 
 		pd := b.nextPD()
@@ -334,9 +366,16 @@ func (b *Bus) readLoop(ctx context.Context) {
 	// A read error here is normal shutdown (Run closed the port) or a genuinely broken port. Only
 	// the second is worth reporting, and the caller learns of it anyway when every reader goes
 	// offline — so log it rather than trying to distinguish the two.
-	if err := sc.Err(); err != nil && ctx.Err() == nil {
-		b.logf("port read ended: %v", err)
+	if ctx.Err() != nil {
+		return // ordinary shutdown
 	}
+	err := sc.Err()
+	if err == nil {
+		// A clean EOF is still the end of the port: the peer closed the connection.
+		err = errors.New("osdp: port closed by the peer")
+	}
+	b.logf("port read ended: %v", err)
+	b.failPort(err)
 }
 
 // drainCommands moves queued commands onto their target reader without blocking.
@@ -446,6 +485,7 @@ func (b *Bus) transact(ctx context.Context, pd *pdState) {
 
 	if _, err := b.port.Write(raw); err != nil {
 		b.fail(pd, fmt.Sprintf("write: %v", err))
+		b.failPort(fmt.Errorf("osdp: port write failed: %w", err))
 		b.completePending(pd, nil, err)
 		return
 	}

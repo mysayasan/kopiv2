@@ -1,28 +1,48 @@
 # MyPintuSan — Door & Credential Data Model
 
-Status: **P1 PARTIALLY BUILT — logic + persistence layers, still not a runnable app.** All the
-entities below (`Holder`, `Credential`, `Door`, `Reader`/`ReaderProfile`, `AccessGroup`/`Grant`/
-`Schedule`/`ScheduleWindow`/`Holiday`, `AccessEvent`) now exist as Go structs in
-`apps/mypintusan/entities`, and the decision path (§5), the door state machine (§4), and Wiegand
-decode/encode are built and tested in `apps/mypintusan/services` (87.3% coverage). A
-database-backed `Store` now exists too: `SQLStore` (`apps/mypintusan/services/store_sql.go`), built
-on the shared `dbsql.NewGenericRepo[T]`, one repo per entity — the same `Controller` and decision
-path run unchanged against it or against the in-memory test fake, proven by running the identical
-end-to-end badge scenario over both (`store_sql_test.go`'s `TestEndToEndThroughSQLite`). What is
-**not** there yet: **no app wiring** — no `apps/mypintusan/apis`, no `app/` composition root, no
-`config.json`, no firstrun/setup wizard, no frontend, and nothing outside tests calls
-`bootstrap.Ensure` — the app cannot be started, it is a library with a persistence layer.
-`Controller.ContactChanged` exists
-as a seam but nothing calls it (no myiotsan door-contact binding wired in),
-`Door.RelayDeviceKey` → myiotsan `CommandService.Issue` is not implemented (the only shipped
-`Actuator` drives the reader's own output), PIN pairing is PIN-then-card only, and
-`Snapshot.AntiPassbackViolation` is an input nothing computes (P3 anyway). See
+Status: **P1 BUILT AND RUNNABLE (API only, no frontend).** All the entities below (`Holder`,
+`Credential`, `Door`, `Reader`/`ReaderProfile`, `AccessGroup`/`Grant`/`Schedule`/`ScheduleWindow`/
+`Holiday`, `AccessEvent`) exist as Go structs in `apps/mypintusan/entities`, and the decision path
+(§5), the door state machine (§4), and Wiegand decode/encode are built and tested in
+`apps/mypintusan/services`. A database-backed `Store` exists too: `SQLStore`
+(`apps/mypintusan/services/store_sql.go`), built on the shared `dbsql.NewGenericRepo[T]`, one repo
+per entity — the same `Controller` and decision path run unchanged against it or against the
+in-memory test fake, proven by running the identical end-to-end badge scenario over both
+(`store_sql_test.go`'s `TestEndToEndThroughSQLite`). **As of this change, the app is wired and
+boots**: `apps/mypintusan/app/app.go` (the composition root — identity, RBAC role seeding, the
+SQLStore, the alarm sink, the HTTP API) and `apps/mypintusan/app/runtime.go` (supervises one OSDP
+bus per configured segment, re-dialling with 1s→30s backoff when the transport dies — see
+`MYPINTUSAN_OSDP_PLAN.md` §5 for the driver-side half of that fix), plus `apps/mypintusan/apis`
+(doors/readers, holders/credentials, the access log, lockdown, setup), `apps/mypintusan/config`,
+`apps/mypintusan/config.json`, and `cmd/mypintusan/main.go`, registered in the root `-app`
+launcher. Live-verified against `tools/osdp-sim`: 23 tables created, roles + admin seeded, a bus
+dialled, 191 granted badge events, a strike fired; the full HTTP surface (login, doors, readers,
+holders, events, unlock, lockdown) exercised; an operator unlock landed in the same access log as
+a badge (`RawCredential = "operator"`); an unlock attempted during lockdown was refused and
+logged. A second, independent bug was found by the same live boot and fixed alongside the
+reconnect issue: `BusActuator` had been driving the OSDP PD address off `Door.RelayChannel`
+(the relay *output* channel, a different number) — the decision granted, the audit row said `ok`,
+and the door never opened; fixed by routing strike resolution through a `StrikeResolver`
+(`SQLStore.StrikeFor`, resolving the address from the door's entry reader). See
+`docs/modules/apps/mypintusan/app/app.go.md` for the full wiring writeup.
+
+**Still not there**: **no frontend** — this app serves an API only, no `views/`, no `static/`, no
+SPA, no setup-wizard UI (the `/api/setup` endpoints exist but nothing calls them yet).
+`Controller.ContactChanged` exists as a seam but nothing calls it (no myiotsan door-contact
+binding wired in), `Door.RelayDeviceKey` → myiotsan `CommandService.Issue` is not implemented (the
+only shipped `Actuator` drives the reader's own output, via `StrikeResolver`), PIN pairing is
+PIN-then-card only, `Snapshot.AntiPassbackViolation` is an input nothing computes (P3 anyway), and
+serial transport is not implemented — only `tcp://host:port` buses (the simulator, or a
+serial-to-Ethernet gateway) actually dial (`MYPINTUSAN_OSDP_PLAN.md` §5 build-order step 5). There
+is also no `myseliasan` fleet adoption (P2) — it needs a new `fleetnode` node kind;
+`domain/shared/fleetnode` currently declares only `KindCamera` and `KindIot`. See
 `docs/modules/apps/mypintusan/entities/` and `docs/modules/apps/mypintusan/services/` for the
 per-file detail. Companion to
 [`MYPINTUSAN_HARDWARE_PLAN.md`](MYPINTUSAN_HARDWARE_PLAN.md) (reader profiles, trust tiers,
 reference kit — still design only above the `ReaderProfile` struct itself) and
 [`MYPINTUSAN_OSDP_PLAN.md`](MYPINTUSAN_OSDP_PLAN.md) (the driver, built — build order steps 1–4
-of 6: `infra/access/osdp` + `tools/osdp-sim` — though steps 5–6, real hardware, are not).
+of 6: `infra/access/osdp` + `tools/osdp-sim`, plus the reconnect-on-dead-port fix above — though
+steps 5–6, real hardware, are not).
 
 This document settles the two questions §7 of the hardware plan left open — **where
 credentials live** and **what happens offline** — then specifies the entities, the door
@@ -353,7 +373,7 @@ Needs both `ReaderInId` and `ReaderOutId` populated. Two modes:
 
 | Phase | Scope |
 | --- | --- |
-| **P1** | `Holder`, `Credential` (card + PIN), `Door`, `Reader`, `Grant`/`Schedule`, `AccessEvent`, the state machine, offline cache. One door, one reader, working end to end. **Entities, the decision path, Wiegand decode/encode, the door state machine, the offline-policy logic, and a database-backed `Store` (`SQLStore`, over a real SQLite schema) are built and tested** (`apps/mypintusan/entities`, `apps/mypintusan/services`), including an end-to-end test that badges through the real OSDP driver into a real SQLite access log. **Not done:** `apps/mypintusan/apis`/`app` composition root/`config.json`/firstrun (no runnable app — nothing outside tests calls `bootstrap.Ensure`), `myseliasan`/fleet adoption, the myiotsan relay-actuation and door-contact bindings (`RelayDeviceKey`/`ContactChanged` are unwired seams), and card-then-PIN pairing (PIN-then-card only today). |
+| **P1** | `Holder`, `Credential` (card + PIN), `Door`, `Reader`, `Grant`/`Schedule`, `AccessEvent`, the state machine, offline cache. One door, one reader, working end to end. **Entities, the decision path, Wiegand decode/encode, the door state machine, the offline-policy logic, and a database-backed `Store` (`SQLStore`, over a real SQLite schema) are built and tested** (`apps/mypintusan/entities`, `apps/mypintusan/services`), including an end-to-end test that badges through the real OSDP driver into a real SQLite access log. **The app is now wired and runnable**: `apps/mypintusan/app` (composition root + OSDP bus supervisor with reconnect), `apps/mypintusan/apis`, `apps/mypintusan/config`/`config.json`, `cmd/mypintusan`, live-verified against `tools/osdp-sim`. **Not done:** a frontend (API only — no setup-wizard UI), `myseliasan`/fleet adoption (needs a new `fleetnode` kind), the myiotsan relay-actuation and door-contact bindings (`RelayDeviceKey`/`ContactChanged` are unwired seams), serial bus transport (only `tcp://` dials), and card-then-PIN pairing (PIN-then-card only today). |
 | **P2** | Holiday calendar, free-access + first-person-in, lockdown, duress, door-forced/held-open alerts, `myseliasan` adoption so doors appear on the fleet map. Holiday calendar, free-access/first-person-in, lockdown, and duress are already implemented in the P1 decision/state-machine code above; what remains here is wiring them to a real deployment (persistence, myiotsan bindings) plus `myseliasan` adoption. |
 | **P3** | Plate and face credentials via `mymatasan`, anti-passback, two-person rule on `critical` doors, visitor management (pre-registration, QR pass, host notification, on-site roster, **evacuation list**). |
 

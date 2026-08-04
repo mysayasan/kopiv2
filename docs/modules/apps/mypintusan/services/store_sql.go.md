@@ -14,7 +14,7 @@ first. `var _ Store = (*SQLStore)(nil)` pins that interchangeability at compile 
 - `NewSQLStore(db dbsql.IDbCrud)` — wires one `IGenericRepo[T]` per entity (`readers`, `doors`,
   `creds`, `holders`, `members`, `grants`, `schedules`, `windows`, `holidays`, `events`, `groups`).
   `ReaderProfile` has no repo here — nothing in the decision path queries it directly — but it is
-  still part of the schema list (`store_sql_test.go`'s `Entities()`).
+  still part of the schema list (`services/schema.go.md`'s `Entities()`).
 - `maxRows` (5000) — the explicit ceiling passed to every list query in place of an "unbounded"
   option the generic repo does not offer. An access group with more members than this is a
   data-modelling problem to be raised, not silently truncated on the badge path.
@@ -31,6 +31,14 @@ first. `var _ Store = (*SQLStore)(nil)` pins that interchangeability at compile 
 - `ReaderByBus(ctx, busPort, address)` — resolves the reader enrolled at a bus/address pair; two
   readers sharing one address is treated as an enrolment error (fails closed) rather than binding a
   door to whichever row sorted first.
+- `StrikeFor(ctx, door)` — resolves the `services.DoorStrike` (PD address + output channel) that
+  opens a door: the address comes from the door's **entry reader** (`door.ReaderInId` →
+  `Reader.OsdpAddress`), never from `door.RelayChannel`, which is the output on that same device
+  — the two are different numbers, and an earlier version of `BusActuator` conflated them (see
+  `controller.go.md`'s Notes for the shipped bug this fixes). Missing `ReaderInId` or a reader
+  row that does not exist both fail closed with a descriptive error rather than defaulting to
+  address 0. This is the `services.StrikeResolver` `apps/mypintusan/app/runtime.go.md` passes
+  into `BusActuator.Resolve` for every controller it builds.
 - `Door(ctx, id)` — `GetById`, never `GetByUnique(..., "id", ...)`: a unique-key lookup whose key
   group matches no declared `ukey` falls through to an unfiltered select and returns the first row
   in the table — the bug that once made everyone a superadmin elsewhere in the suite. Missing door
@@ -70,11 +78,11 @@ first. `var _ Store = (*SQLStore)(nil)` pins that interchangeability at compile 
   rather than a denial with a precise reason. `isNotFound` in this file is the workaround;
   `TestMissingRowsAreNotErrors` in `store_sql_test.go` is the regression test. See
   `infra/db/sql/generic_repo.go.md` for the data-layer side of this.
-- Not wired to anything yet: there is still no `apps/mypintusan/app/` composition root that calls
-  `NewSQLStore`/`bootstrap.Ensure` outside of tests (see `controller.go.md`'s Notes). `Entities()`
-  — the 12-struct schema list this app owns — lives in `store_sql_test.go` rather than here, because
-  today only tests call `bootstrap.Ensure`; a future composition root should reuse that function
-  rather than re-deriving the list.
+- **Now wired**: `apps/mypintusan/app/app.go.md`'s `RegisterAppRoutes` calls `NewSQLStore(deps.Db)`
+  directly, and `apps/mypintusan/app/runtime.go.md` passes it into every `Controller` it builds
+  (one per configured OSDP bus). `Entities()` — the 12-struct schema list this app owns — has
+  moved out of `store_sql_test.go` into its own file, `services/schema.go.md`, since it is now
+  production code the composition root calls rather than a test-only helper.
 - `groupsRepo()` exposes the `AccessGroup` repository for administrative writes (creating groups),
   which is not part of the `Store` interface the decision path uses — the decision path only ever
   reads grants and memberships, never groups directly.

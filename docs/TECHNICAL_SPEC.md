@@ -30,7 +30,10 @@ The runtime now uses a reusable multi-app launcher pattern:
 - App selection:
   - runtime selection via `go run . -app <name>`
   - compile selection via `go build ./cmd/<name>`
-  - currently registered apps: `mymatasan`, `myidsan`, `myseliasan`, `myiotsan`
+  - currently registered apps: `mymatasan`, `myidsan`, `myseliasan`, `myiotsan`, `mypintusan`
+    (mypintusan is API-only — no frontend/static assets yet — and has no
+    `infra/versioning/version.json` app entry, so it is runnable via `-app mypintusan` but not
+    yet part of the release/version-bump machinery)
 - **Shared frontend module** (`frontend/shared/`): plain ESM, no build step; consumed by both myidsan and myseliasan via a `@shared` webpack alias + `resolve.modules` entry in each app's `webpack.config.js`. Exports: `DataTable`, `Toast`/`ToastStack`, `SideNav` (brand/footer slots + bespoke item injection via a `render` hook — myseliasan injects its Nodes tree), and `icons` (`Ico` + `icoSvg` union). Theming via `--ui-*` design tokens each app maps to its own palette. Per-app copies (`data_table.js`, `icons.js`) have been deleted from both apps. Three themes are supported in both SPAs: Light, Dark, and **High contrast** (black surfaces, white text, bright accents, strong borders). Side-nav colors follow the active theme via `--nav-*` tokens.
 - HTTP server defaults:
   - Read header timeout: `5s`

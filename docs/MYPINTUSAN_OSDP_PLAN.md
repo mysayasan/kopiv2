@@ -1,21 +1,23 @@
 # MyPintuSan — `infra/access/osdp` and the PD Simulator
 
-Status: **PARTIALLY BUILT — build order §5 steps 1–4 of 6 done.** `infra/access/osdp` (CP-mode
-OSDP driver: `crc.go`, `codes.go`, `frame.go`, `pd.go`, `cp.go`, `bus.go`, `transport.go`,
-`securechannel.go`, all with tests) and `tools/osdp-sim` (the TCP PD simulator, 17
-fault-injection scenarios) exist and are covered by unit tests. Steps 5–6 — serial transport and
-a real reader on the bench, confirming the CRC byte order (§2.1) and Secure Channel's crypto
-constants (§2.3, and see `securechannel.go`'s header comment) — are **not done and need
-hardware**. `apps/mypintusan` now exists — entities, the decision path, the door state machine
-and Wiegand decode/encode are built and tested (`apps/mypintusan/entities`,
-`apps/mypintusan/services`) — but it is a library only: no persistence, no
-`apis`/`app`/`config.json`, no entrypoint, nothing that can be started as a running app. This
-document itself, the OSDP wire protocol, is unaffected by that: it remains the driver layer
-underneath, consumed by `services.Controller`. Companion to
+Status: **PARTIALLY BUILT — build order §5 steps 1–4 of 6 done, and now supervised in a real
+process.** `infra/access/osdp` (CP-mode OSDP driver: `crc.go`, `codes.go`, `frame.go`, `pd.go`,
+`cp.go`, `bus.go`, `transport.go`, `securechannel.go`, all with tests) and `tools/osdp-sim` (the
+TCP PD simulator, 17 fault-injection scenarios) exist and are covered by unit tests. Steps 5–6 —
+serial transport and a real reader on the bench, confirming the CRC byte order (§2.1) and Secure
+Channel's crypto constants (§2.3, and see `securechannel.go`'s header comment) — are **not done
+and need hardware**. `apps/mypintusan` is now a runnable app (API only, no frontend): entities,
+the decision path, the door state machine, Wiegand decode/encode, a SQLite-backed `Store`, and —
+new — the composition root (`apps/mypintusan/app/app.go`) and the OSDP bus supervisor
+(`apps/mypintusan/app/runtime.go`) that keeps `bus.Run` alive across a dead transport (see the new
+§7 below) are all built and tested. This document itself, the OSDP wire protocol, is
+correspondingly no longer only a library dependency: `bus.go`'s `Run` now has a supervised owner
+in a real process, verified live against `tools/osdp-sim` (191 granted badge events over one bus).
+Companion to
 [`MYPINTUSAN_HARDWARE_PLAN.md`](MYPINTUSAN_HARDWARE_PLAN.md) (reader profiles, trust tiers,
 reference kit — trust-rule enforcement still design-only) and
 [`MYPINTUSAN_DATA_MODEL.md`](MYPINTUSAN_DATA_MODEL.md) (doors, credentials, decision path — now
-P1 partially built; see its Status line).
+P1 built and runnable; see its Status line).
 
 Covers the OSDP driver in **CP (Control Panel) mode** — `mypintusan` polls readers, readers
 reply — plus the simulator that must be written **first**.
@@ -200,8 +202,14 @@ exercised before real hardware exists.
 2. ✅ **Done.** `pd.go` + `tools/osdp-sim` over TCP — a PD that answers `POLL`/`ID`/`CAP` (plus
    the full 17-scenario fault matrix from §4.1).
 3. ✅ **Done.** `bus.go` + `cp.go` — polling loop, sequence state, online/offline supervision.
-   **The driver can be built against the simulator now** — there is still no application code
-   above it.
+   **The driver is now consumed by application code** — `apps/mypintusan/app/runtime.go`'s
+   `superviseBus` re-dials a fresh `Bus`/transport (1s→30s backoff) whenever `bus.go`'s `Run`
+   returns, whether from `ctx` cancellation or a dead port (`failPort`, see §7 below). This closed
+   a real gap `Run`'s original contract didn't cover: **online/offline supervision is per-reader**
+   (§4.1's fault matrix), but nothing previously supervised the **port itself** — a CP whose
+   transport died kept polling a dead wire, marking every reader offline and staying that way
+   until the process restarted. Found by booting the app against the simulator and killing it, not
+   by any test.
 4. ✅ **Done, cryptographically unconfirmed.** `securechannel.go` — handshake, fail-closed
    enforcement tests from §4.1. The protocol structure is implemented and tested; the
    cryptographic constants are reconstructed from libosdp without the source at hand and are
@@ -216,7 +224,33 @@ Steps 1–4 need **no hardware at all**. That is the entire argument for the ord
 
 ---
 
-## 6. Open items
+## 7. Port supervision (added 2026-08-04)
+
+`bus.go`'s `Run(ctx)` previously returned only on `ctx` cancellation or `ErrBusClosed`; any other
+transport failure (a write erroring, the peer closing the connection, a read erroring) was logged
+and polling continued — against a port that could never again produce a valid reply. Fixed with a
+`sync.Once`-guarded `failPort(err)` that records the failure on a buffered `portErr` channel;
+`Run` checks it non-blockingly each poll iteration and, if set, fails every pending command and
+**returns the error**. `failPort` is called from `readLoop` (any read failure, including a clean
+EOF, which is treated as "port closed by the peer" rather than silently swallowed) and from
+`transact` (a write failure).
+
+Returning is the point, not a side effect: it hands control back to an owner that can re-dial.
+`apps/mypintusan/app/runtime.go`'s `superviseBus` is that owner — a fresh `Bus` and
+`services.Controller` are built on every attempt, deliberately, since the per-PD sequence number
+and any established Secure Channel session belong to the dead session and must not be resumed
+against a possibly power-cycled or swapped reader. See
+`docs/modules/infra/access/osdp/bus.go.md` and `docs/modules/apps/mypintusan/app/runtime.go.md`
+for the full writeup, and `bus_test.go`'s `TestBusRunReturnsWhenThePortDies` for the regression
+coverage (peer-closes-the-pipe and every-write-fails, both asserting `Run` returns within 2s).
+
+This is currently exercised by exactly one consumer, `mypintusan`. Any future second consumer of
+`infra/access/osdp` must re-dial on this return the same way, or it will silently stop polling on
+its first port failure.
+
+---
+
+## 8. Open items
 
 1. ~~**CRC byte order** on the wire~~ — **RESOLVED 2026-08-04** against libosdp `osdp_phy.c`
    (little-endian, §2.1). The Secure Channel constructions were verified against `osdp_sc.c` at the

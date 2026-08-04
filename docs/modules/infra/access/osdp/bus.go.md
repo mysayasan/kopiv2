@@ -45,13 +45,30 @@ establishes a session and immediately loses it), `EventBuffer` (256).
   `myiotsan` uses for `CommandService.Issue`. A queued command jumps the round-robin so it is
   serviced in that reader's next slot, since badge-to-strike latency is what matters.
 - `Run(ctx) error` — owns the port for its lifetime; the only goroutine that writes to it. Spawns
-  `readLoop`, then loops: drain queued commands, pick the next PD (queued-command readers first,
-  else round-robin), `transact`, sleep out the remainder of `SlotInterval`. Closing the port on the
-  way out is what actually stops `readLoop`, since a blocked `Read` does not observe context
-  cancellation.
+  `readLoop`, then loops: check `portErr` (below) for a dead transport, drain queued commands,
+  pick the next PD (queued-command readers first, else round-robin), `transact`, sleep out the
+  remainder of `SlotInterval`. Closing the port on the way out is what actually stops `readLoop`,
+  since a blocked `Read` does not observe context cancellation.
+- `failPort(err)` / `portErr` — **records that the transport itself is unusable and makes `Run`
+  return**, added because a dead port is not the same as a dead reader and treating it as one was
+  a production outage: before this, a CP whose USB-RS485 adapter was unplugged — or whose
+  serial-to-Ethernet gateway rebooted — kept polling a wire nobody was listening to, marked every
+  reader offline (via `OfflineAfter`), and stayed that way until the process was restarted. Found
+  by booting `mypintusan` against `tools/osdp-sim` and killing the simulator, not by any unit test
+  (the suite's own recorded lesson: "boot & exercise, don't trust green" — see
+  `apps/mypintusan/app/runtime.go.md`, whose `superviseBus` re-dials on exactly this return).
+  `failPort` is `sync.Once`-guarded (one-shot: the first failure is the diagnosis, the hundred
+  that would follow are noise) and is called from two places: `readLoop` on any read failure
+  (including a clean EOF, treated as "port closed by the peer" rather than silently swallowed),
+  and `transact` on a write failure. `Run` checks the `portErr` channel non-blockingly at the top
+  of each poll iteration and, if set, fails every pending command and returns the error —
+  **`Run` returning is the whole point**: it is what lets the owner re-dial a fresh transport
+  rather than polling a corpse forever.
 - `readLoop` — the sole reader of the port, via `bufio.Scanner` + `ScanFrames` (`frame.go.md`),
   running continuously (not driven by the poll loop) so a late reply is still decoded and
-  attributed instead of desynchronising the stream for every later transaction.
+  attributed instead of desynchronising the stream for every later transaction. On exit (and only
+  if not an ordinary shutdown, i.e. `ctx.Err() == nil`), logs the read error (defaulting to a
+  synthetic "port closed by the peer" on a clean EOF) and calls `failPort`.
 - `transact(ctx, pd)` — one command/reply exchange: builds the Secure Channel handshake frame if
   one is in flight or due (`pdState.wantsSecureChannel`), else the next ordinary command; seals it
   if a session is established; writes it; `awaitReply`s; unseals the reply if secure; hands the
@@ -87,4 +104,13 @@ establishes a session and immediately loses it), `EventBuffer` (256).
 - `Status`/`Stats`/`Secure`/`Dropped` are read-only snapshots for callers/UI.
 - Depends on `frame.go` (framing), `cp.go` (`pdState`, parsers), `transport.go` (`Transport`,
   `countingReader`, `sleepCtx`), `securechannel.go` (session establishment/seal/unseal).
-- Covered by `bus_test.go`.
+- Covered by `bus_test.go`, including `TestBusRunReturnsWhenThePortDies` — the regression test
+  for the reconnect fix above, exercised two ways: the peer closing its end of a `net.Pipe`, and
+  a transport whose every `Write` fails (`deadTransport`). Both assert `Run` returns a non-nil
+  error within 2s rather than hanging, since the earlier behaviour was to keep polling forever.
+- **This is currently shared infra used only by `mypintusan`.** The reconnect behaviour above is
+  a behaviour change to `Bus.Run`'s contract (it can now return while `ctx` is still live, which
+  it previously never did outside `ErrBusClosed`/`ctx.Err()`); any future second consumer of this
+  package needs to re-dial on a non-context-cancellation error the same way
+  `apps/mypintusan/app/runtime.go.md`'s `superviseBus` does, or it will silently stop polling on
+  its first port failure.

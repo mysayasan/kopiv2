@@ -16,15 +16,15 @@ runtime and the only consumer of the bus's event channel. It also owns lockdown,
   implementations exist: the in-memory test fake (`controller_test.go`'s `memStore`) and the
   database-backed `SQLStore` (`store_sql.go.md`), built on the shared `dbsql` generic repo. Both
   are exercised against the identical end-to-end scenario (`newRigWithStore` in
-  `controller_test.go`), which is what proves them interchangeable. **Neither is wired into a
-  running app yet** — there is still no `apps/mypintusan/app/` composition root that calls
-  `NewSQLStore`/`bootstrap.Ensure` outside of tests.
+  `controller_test.go`), which is what proves them interchangeable. `SQLStore` is now the one
+  `apps/mypintusan/app/runtime.go.md` wires into a running process, one `Controller` per
+  configured OSDP bus.
 - `Actuator.Unlock(ctx, door, seconds, ev)` — the ONE actuation chokepoint. Every unlock (badge,
   operator override, schedule, flow, API) is meant to funnel through one audited implementation,
   exactly as `myiotsan` funnels all actuation through `CommandService.Issue`, so "who opened
   door 3 at 02:14, and through what" stays answerable. The only implementation shipped is
-  `BusActuator` (below), which drives the reader's own relay output; **the `Door.
-  RelayDeviceKey` → myiotsan `CommandService.Issue` path is not implemented.**
+  `BusActuator` (below), which drives the reader's own relay output via a `StrikeResolver`; **the
+  `Door.RelayDeviceKey` → myiotsan `CommandService.Issue` path is not implemented.**
 - `Alarmer.Raise(ctx, kind, ev, detail)` — alarms that are not access decisions (duress, tamper,
   a reader going out of service, door-forced, door-held-open — the `Alarm*` constants), routed
   separately from the access log because these need to reach a human now.
@@ -44,6 +44,21 @@ runtime and the only consumer of the bus's event channel. It also owns lockdown,
   `DoorMachine` and turn its returned `DoorEvent`s into alarms/audit rows via `emitDoorEvents`.
   `SetLockdown` seals every door already being tracked, not just future decisions, because a
   door standing open on a free-access schedule would otherwise stay open through a lockdown.
+- `ErrUnknownDoor` / `IsUnknownDoor(err)` — the sentinel a caller holding several controllers
+  (one per bus, `apps/mypintusan/app/runtime.go.md`) uses to try the next one when a door is not
+  on this bus.
+- `OperatorUnlock(ctx, door, actor, actorName)` — opens a door from an operator action rather
+  than a badge, through the **same** `Actuator` and the **same** `AccessEvent` row shape as a
+  badge (`RawCredential: "operator"`), deliberately: a remote unlock is the most abusable
+  capability in this application — it opens a door with no credential at all — so it must never
+  bypass the audit trail. Checks `ownsDoor` first (`ErrUnknownDoor` if not), then lockdown
+  (lockdown outranks an operator — someone who can lift it may open the door, someone who cannot
+  must not route around it with the unlock button) and `door.Enabled`, before calling
+  `Actuator.Unlock` and telling the `DoorMachine` a legitimate open is coming, exactly like
+  `handleCard`'s grant path. Called by `apps/mypintusan/app/runtime.go.md`'s `Unlock`, which in
+  turn backs `apis.doorApi.unlock`'s `POST /doors/{id}/unlock`.
+- `ownsDoor(ctx, doorId)` — true if the door is already tracked (a `DoorMachine` exists for it)
+  or `Store.Door` resolves it; used only by `OperatorUnlock`.
 - `Run(ctx)` — drains `bus.Events()` until cancelled (the bus drops events if not drained, and a
   dropped event is a badge that never opened a door) and ticks every `DoorMachine` on
   `TickInterval`, on the same goroutine as event handling so a relock and a badge can never race.
@@ -72,16 +87,34 @@ runtime and the only consumer of the bus's event channel. It also owns lockdown,
 - `record` — writes the `AccessEvent`; a `Store.RecordEvent` failure is itself raised as
   `AlarmTamper` ("FAILED TO RECORD ACCESS EVENT"), since losing the log is an incident, not
   merely an error to swallow.
-- `BusActuator` — the shipped `Actuator`: drives a TIMED unlock (`Bus.Output`) on the reader's
-  own output channel, so a process death mid-unlock re-locks on the reader's own timer rather
-  than leaving the door open until someone notices.
+- `DoorStrike{Address uint8, Output byte}` / `StrikeResolver func(ctx, door) (DoorStrike, error)`
+  — replace what used to be `BusActuator`'s bare `Output byte` + `Address func(door) uint8`
+  fields. `Address` is the reader's OSDP PD address on the RS-485 segment; `Output` is the relay
+  channel on that device — **different numbers**, and conflating them was a real, shipped bug
+  (see Notes).
+- `BusActuator{Bus, Resolve}` — the shipped `Actuator`: resolves the door's strike via `Resolve`
+  (in production, `SQLStore.StrikeFor`, `store_sql.go.md`), then drives a TIMED unlock
+  (`Bus.Output`) on that address/channel, so a process death mid-unlock re-locks on the reader's
+  own timer rather than leaving the door open until somebody notices.
 
 ## Notes
 
-- **No app wiring.** There is no `apps/mypintusan/apis`, no `app/` composition root, no
-  `config.json`, no firstrun/setup wizard, no frontend — `Controller` cannot be started as a
-  running service today; it is exercised only by `controller_test.go` (in-memory store) and
-  `store_sql_test.go`'s `TestEndToEndThroughSQLite` (real SQLite via `SQLStore`), both against the
-  real `infra/access/osdp` driver and a simulated reader.
+- **App wiring now exists.** `apps/mypintusan/app/app.go.md` + `apps/mypintusan/app/runtime.go.md`
+  are the composition root: one `Controller` per configured OSDP bus, rebuilt on every
+  reconnect, run against the real `SQLStore`. This app is now bootable and was live-verified
+  against `tools/osdp-sim` (see `app/app.go.md`'s Notes). `Controller` itself is still also
+  exercised directly by `controller_test.go` (in-memory store) and `store_sql_test.go`'s
+  `TestEndToEndThroughSQLite` (real SQLite via `SQLStore`).
+- **`BusActuator`'s previous shape shipped a bug, found only by booting the app**: it took
+  `Output byte` and an `Address func(door) uint8` directly, and the one caller outside tests
+  passed `door.RelayChannel` as the address — the relay channel and the PD address are different
+  numbers. A badge decision granted, the audit row said `ok`, and the door never opened, with
+  nothing in the test suite catching it because the test rig supplied its own (correct)
+  `Address` func. Fixed by replacing both fields with a single `StrikeResolver` — see
+  `store_sql.go.md`'s `StrikeFor` for the production resolution logic (entry reader → PD
+  address, `Door.RelayChannel` → output).
+- `Controller.ContactChanged` is still a seam **nothing calls** — there is no myiotsan
+  door-contact binding wired in, so forced/held-open logic works in `doorstate_test.go` but not
+  against a real deployment.
 - `Snapshot.AntiPassbackViolation` is never computed by anything in this file — anti-passback
   detection (comparing the last in/out passage) does not exist yet; it is a P3 feature.

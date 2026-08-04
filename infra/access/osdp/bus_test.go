@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"strings"
@@ -552,6 +553,65 @@ func TestBusRunReturnsOnCancel(t *testing.T) {
 		t.Fatal("Run did not return after cancellation")
 	}
 }
+
+// TestBusRunReturnsWhenThePortDies is the regression test for a production outage found by booting
+// the app rather than by any unit test.
+//
+// A dead transport is NOT a dead reader. Before this, a CP whose port went away — a USB-RS485
+// adapter unplugged, a serial-to-Ethernet gateway rebooting — kept polling a wire nobody was
+// listening to, marked every reader offline, and stayed that way until the process was restarted.
+// Every door on the segment was dead, silently, and the only clue was "reader offline".
+//
+// Run must RETURN so its owner can re-dial. The tests all used an in-memory pipe that was never
+// torn down mid-run, which is exactly why none of them saw it.
+func TestBusRunReturnsWhenThePortDies(t *testing.T) {
+	t.Run("peer closes the connection", func(t *testing.T) {
+		cpEnd, pdEnd := net.Pipe()
+		bus := NewBus(cpEnd, fastOpts())
+		_ = bus.Add(1)
+
+		go io.Copy(io.Discard, pdEnd) // absorb polls, answer nothing
+
+		done := make(chan error, 1)
+		go func() { done <- bus.Run(context.Background()) }()
+
+		time.Sleep(20 * time.Millisecond)
+		pdEnd.Close() // the far end goes away
+
+		select {
+		case err := <-done:
+			if err == nil {
+				t.Error("Run returned nil after the port died; the owner cannot tell it must re-dial")
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("Run kept polling a dead port — every door on this bus would stay dead until restart")
+		}
+	})
+
+	t.Run("writes start failing", func(t *testing.T) {
+		bus := NewBus(deadTransport{}, fastOpts())
+		_ = bus.Add(1)
+
+		done := make(chan error, 1)
+		go func() { done <- bus.Run(context.Background()) }()
+
+		select {
+		case err := <-done:
+			if err == nil {
+				t.Error("Run returned nil despite a port that cannot be written to")
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("Run ignored a permanently failing port")
+		}
+	})
+}
+
+// deadTransport fails every write, like a serial handle whose device has been removed.
+type deadTransport struct{}
+
+func (deadTransport) Read(p []byte) (int, error)  { select {} }
+func (deadTransport) Write(p []byte) (int, error) { return 0, errors.New("device not configured") }
+func (deadTransport) Close() error                { return nil }
 
 // TestBusAddValidatesAddress keeps operator data from reaching the wire as a malformed frame.
 func TestBusAddValidatesAddress(t *testing.T) {

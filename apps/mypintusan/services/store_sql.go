@@ -115,6 +115,26 @@ func (s *SQLStore) ReaderByBus(ctx context.Context, busPort string, address int)
 	return first(rows), nil
 }
 
+// StrikeFor resolves which reader address and output channel open a door.
+//
+// The PD address comes from the door's ENTRY READER — not from RelayChannel, which is the output on
+// that device. Getting those two the wrong way round produces an unlock addressed to a PD that does
+// not exist: the decision grants, the audit row says `ok`, and the door stays shut.
+func (s *SQLStore) StrikeFor(ctx context.Context, door entities.Door) (DoorStrike, error) {
+	if door.ReaderInId <= 0 {
+		return DoorStrike{}, fmt.Errorf("door %q has no entry reader bound", door.Name)
+	}
+	reader, err := s.readers.GetById(ctx, "", uint64(door.ReaderInId))
+	if isNotFound(err) || (err == nil && reader == nil) {
+		return DoorStrike{}, fmt.Errorf("door %q is bound to reader %d, which does not exist",
+			door.Name, door.ReaderInId)
+	}
+	if err != nil {
+		return DoorStrike{}, fmt.Errorf("resolve strike for door %q: %w", door.Name, err)
+	}
+	return DoorStrike{Address: uint8(reader.OsdpAddress), Output: byte(door.RelayChannel)}, nil
+}
+
 func (s *SQLStore) Door(ctx context.Context, id int64) (*entities.Door, error) {
 	if id <= 0 {
 		return nil, nil

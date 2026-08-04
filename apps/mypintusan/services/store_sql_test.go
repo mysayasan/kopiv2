@@ -20,25 +20,6 @@ import (
 // invisible to a mock because a mock answers whatever it was told to. Only a real schema, real
 // snake_case column mapping and the real generic repo can show them.
 
-// Entities is the schema this app owns. It is also what an app/ composition root will hand to
-// bootstrap.Ensure once one exists, so keeping it here means the list cannot drift from the store.
-func Entities() []any {
-	return []any{
-		entities.Holder{},
-		entities.Credential{},
-		entities.Door{},
-		entities.Reader{},
-		entities.ReaderProfile{},
-		entities.AccessGroup{},
-		entities.AccessGroupMember{},
-		entities.Schedule{},
-		entities.ScheduleWindow{},
-		entities.Holiday{},
-		entities.Grant{},
-		entities.AccessEvent{},
-	}
-}
-
 // newSQLiteStore stands up a throwaway database with this app's schema.
 func newSQLiteStore(t *testing.T) *SQLStore {
 	t.Helper()

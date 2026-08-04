@@ -259,7 +259,9 @@ func newRigWithStore(t *testing.T, data Store, cfg ControllerConfig) *rig {
 	if cfg.Now == nil {
 		cfg.Now = func() time.Time { return time.Date(2026, 8, 4, 10, 0, 0, 0, kl) }
 	}
-	r.act.inner = BusActuator{Bus: r.bus, Output: 0, Address: func(entities.Door) uint8 { return 1 }}
+	r.act.inner = BusActuator{Bus: r.bus, Resolve: func(context.Context, entities.Door) (DoorStrike, error) {
+		return DoorStrike{Address: 1, Output: 0}, nil
+	}}
 	r.ctrl = NewController(data, r.bus, r.act, r.alarm, testPIN, cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
