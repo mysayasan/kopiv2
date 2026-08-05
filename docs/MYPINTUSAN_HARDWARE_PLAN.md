@@ -12,8 +12,9 @@ against `VerifiedFirmware`) is not implemented anywhere in `apps/mypintusan/serv
 no seeded builtin profile catalog, and neither is persisted (no repository, no dbsql
 registration). `apps/mypintusan` now exists as a Go package — the decision path, door state
 machine, and Wiegand decoding are built and tested (see
-[`MYPINTUSAN_DATA_MODEL.md`](MYPINTUSAN_DATA_MODEL.md)) — but it has no entrypoint, no
-`apis`/`app`/`config.json`, and cannot be started; the app-level plan below (credential store,
+[`MYPINTUSAN_DATA_MODEL.md`](MYPINTUSAN_DATA_MODEL.md)), and the app now boots and serves a UI
+(`app/`, `apis/`, `config.json`, and a React SPA with a first-run wizard). The app-level plan below
+(credential store,
 door state machine, schedules, anti-passback, lockdown, visitor management) is otherwise as
 written except where `MYPINTUSAN_DATA_MODEL.md` §6 now says P1 logic is built. What *is* now
 built, one layer down, is the OSDP wire protocol this hardware plan assumes: `infra/access/osdp`

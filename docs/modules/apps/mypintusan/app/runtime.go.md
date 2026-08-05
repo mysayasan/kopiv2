@@ -4,16 +4,23 @@
 
 `runtime` owns the OSDP buses and their controllers, and — the reason this file exists — keeps
 them alive. One `runtime` per process; one supervised goroutine per configured bus
-(`config/config.go.md`'s `pintuconfig.BusConfig`). It also holds the site's lockdown state
-outside any single controller, and is the seam `apis.NewDoorApi`/`apis.NewLockdownApi`
+(`services/runtime_settings.go.md`'s `services.BusSettings`). It also holds the site's lockdown
+state outside any single controller, and is the seam `apis.NewDoorApi`/`apis.NewLockdownApi`
 (`apis/doors.go.md`) call through for an operator-initiated unlock or a lockdown toggle.
+
+`cfg` was `*pintuconfig.Config` (`config/config.go.md`) and `BusConfig`/`ReaderConfig` throughout;
+it is now `services.AccessSettings` and `services.BusSettings`/`ReaderSettings`
+(`services/runtime_settings.go.md`). `app/app.go.md`'s `RegisterAppRoutes` builds this value from
+the **database-backed** access settings, not `config.json` directly — `config.json` only seeds the
+first boot. Nothing about the bus-supervision behaviour itself changed; only where the values that
+drive it come from.
 
 ## Key Type: runtime
 
 ```go
 type runtime struct {
     deps     apphost.Dependencies
-    cfg      *pintuconfig.Config
+    cfg      services.AccessSettings
     location *time.Location
     store    services.Store
     alarms   services.Alarmer

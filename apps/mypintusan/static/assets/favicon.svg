@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <rect width="64" height="64" rx="14" fill="#0f1a14"/>
+  <!-- shield (filled) -->
+  <path fill="#6f4d9d" d="M19 13.5 H45 Q50 13.5 50 18 V33 Q50 45 32 54 Q14 45 14 33 V18 Q14 13.5 19 13.5 Z"/>
+  <!-- eye white almond -->
+  <path fill="#f0eaf6" d="M20 30 Q31 21 42 30 Q31 39 20 30 Z"/>
+  <!-- iris + highlight -->
+  <circle cx="31" cy="30" r="5" fill="#0f1a14"/>
+  <circle cx="29.4" cy="28.4" r="1.4" fill="#f0eaf6"/>
+  <!-- checkmark (bold, light) -->
+  <path fill="none" stroke="#f0eaf6" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round"
+        d="M23.5 41 L31 48.5 L46.5 29.5"/>
+</svg>

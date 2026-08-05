@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/mypintusan/entities"
@@ -48,6 +50,7 @@ func NewDoorApi(router *mux.Router, store *services.SQLStore, rt Unlocker, db db
 
 	g := router.PathPrefix("/doors").Subrouter()
 	g.HandleFunc("", a.list).Methods("GET")
+	g.HandleFunc("", a.create).Methods("POST")
 	g.HandleFunc("/{id:[0-9]+}", a.get).Methods("GET")
 	// The unlock path is its OWN matrix entry, separate from /api/doors, because seeing a door and
 	// opening it are different powers held by different people.
@@ -83,6 +86,142 @@ func (a *doorApi) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	controllers.SendResult(w, door)
+}
+
+// createDoorRequest is a door and the reader that serves it, created together.
+//
+// They are ONE call on purpose. A door with no reader is inert — nothing can badge at it — and a
+// reader with no door drives nothing. Creating them separately invites a half-configured state that
+// looks fine in two list screens and does nothing at the wall, which is exactly the confusion this
+// product is meant to spare a non-technical installer.
+type createDoorRequest struct {
+	Name          string `json:"name"`
+	Class         string `json:"class"`
+	UnlockSeconds int    `json:"unlockSeconds"`
+	// BusPort and OsdpAddress place the entry reader on a cable.
+	BusPort     string `json:"busPort"`
+	OsdpAddress int    `json:"osdpAddress"`
+	ReaderName  string `json:"readerName"`
+	// RequireSecureChannel is the door's policy, not the reader's capability.
+	RequireSecureChannel bool `json:"requireSecureChannel"`
+	// RelayChannel is the output on the reader that fires the strike.
+	RelayChannel int `json:"relayChannel"`
+	// ContactDeviceKey binds a door-position contact. Empty means forced-open and held-open
+	// cannot be detected — a capability gap the UI surfaces rather than hiding.
+	ContactDeviceKey string `json:"contactDeviceKey"`
+	HeldOpenSeconds  int    `json:"heldOpenSeconds"`
+}
+
+// create adds a door and its entry reader.
+//
+// Admin-only on top of the matrix: door hardware bindings decide which relay fires and which
+// contact is believed. A wrong value here does not produce a bad reading, it produces a door that
+// opens for the wrong person or an alarm that never comes.
+func (a *doorApi) create(w http.ResponseWriter, r *http.Request) {
+	user, ok := sharedapis.LocalUserFromContext(r.Context())
+	if !ok || !user.IsAdmin {
+		controllers.SendError(w, controllers.ErrLimitedAccess, "administrators only")
+		return
+	}
+
+	var body createDoorRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	body.Name = strings.TrimSpace(body.Name)
+	body.BusPort = strings.TrimSpace(body.BusPort)
+	if body.Name == "" {
+		controllers.SendError(w, controllers.ErrBadRequest, "the door needs a name")
+		return
+	}
+	if body.BusPort == "" {
+		controllers.SendError(w, controllers.ErrBadRequest, "the door needs a reader cable")
+		return
+	}
+	if body.OsdpAddress < 0 || body.OsdpAddress > 0x7F {
+		controllers.SendError(w, controllers.ErrBadRequest, "the reader address must be between 0 and 127")
+		return
+	}
+	switch body.Class {
+	case entities.ClassInterior, entities.ClassPerimeter, entities.ClassCritical:
+	default:
+		body.Class = entities.ClassInterior
+	}
+
+	ctx := r.Context()
+
+	// Refuse a reader address already in use on that cable. Two readers at one address is the
+	// out-of-box collision — they ship set to 0 — and catching it here is far kinder than letting
+	// the installer discover it as a door that never responds.
+	if existing, err := a.store.ReaderByBus(ctx, body.BusPort, body.OsdpAddress); err != nil {
+		controllers.SendError(w, controllers.ErrConflict, err.Error())
+		return
+	} else if existing != nil {
+		controllers.SendError(w, controllers.ErrConflict,
+			"another reader is already at that address on this cable; give this one its own address")
+		return
+	}
+
+	now := time.Now().Unix()
+	door := entities.Door{
+		Name: body.Name, Class: body.Class,
+		LockKind:      entities.LockFailSecure,
+		UnlockSeconds: orDefault(body.UnlockSeconds, 5),
+		// The accessibility extension defaults to roughly triple the normal time; an operator can
+		// tune it per door later.
+		ExtendedUnlockSeconds: orDefault(body.UnlockSeconds, 5) * 3,
+		HeldOpenSeconds:       orDefault(body.HeldOpenSeconds, 30),
+		RelayChannel:          body.RelayChannel,
+		ContactDeviceKey:      strings.TrimSpace(body.ContactDeviceKey),
+		RequireSecureChannel:  body.RequireSecureChannel,
+		OfflinePolicy:         entities.OfflineCached,
+		AntiPassback:          entities.APBOff,
+		Enabled:               true,
+		CreatedBy:             user.Id, CreatedAt: now, UpdatedBy: user.Id, UpdatedAt: now,
+	}
+	doorId, err := a.doors.Create(ctx, "", door)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrConflict, err.Error())
+		return
+	}
+	door.Id = int64(doorId)
+
+	readerName := strings.TrimSpace(body.ReaderName)
+	if readerName == "" {
+		readerName = body.Name
+	}
+	readerId, err := a.reader.Create(ctx, "", entities.Reader{
+		Name: readerName, DoorId: door.Id, Direction: entities.DirectionIn,
+		BusPort: body.BusPort, OsdpAddress: body.OsdpAddress,
+		ScbkState: entities.ScbkDefault, TamperState: entities.TamperOK, Enabled: true,
+		CreatedBy: user.Id, CreatedAt: now, UpdatedBy: user.Id, UpdatedAt: now,
+	})
+	if err != nil {
+		// Roll the door back rather than leaving one that can never be opened. A half-created door
+		// would sit in the list looking real and refuse every badge, with nothing explaining why.
+		_, _ = a.doors.DeleteById(ctx, "", uint64(door.Id))
+		controllers.SendError(w, controllers.ErrConflict, "could not create the reader: "+err.Error())
+		return
+	}
+
+	// Point the door at its reader. This is what StrikeFor resolves to find the PD address, so a
+	// door whose ReaderInId is 0 would grant and then fail to open.
+	door.ReaderInId = int64(readerId)
+	if _, err := a.doors.UpdateById(ctx, "", door); err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError,
+			"the door and reader were created but could not be linked: "+err.Error())
+		return
+	}
+
+	controllers.SendResult(w, door)
+}
+
+func orDefault(v, def int) int {
+	if v > 0 {
+		return v
+	}
+	return def
 }
 
 func (a *doorApi) listReaders(w http.ResponseWriter, r *http.Request) {

@@ -12,9 +12,17 @@ first. `var _ Store = (*SQLStore)(nil)` pins that interchangeability at compile 
 ## Responsibilities
 
 - `NewSQLStore(db dbsql.IDbCrud)` — wires one `IGenericRepo[T]` per entity (`readers`, `doors`,
-  `creds`, `holders`, `members`, `grants`, `schedules`, `windows`, `holidays`, `events`, `groups`).
+  `creds`, `holders`, `members`, `grants`, `schedules`, `windows`, `holidays`, `events`, `groups`),
+  plus `settings`, a repo over the **shared** `sharedentities.RuntimeSetting` table (not part of
+  this app's own 12-struct schema — see `schema.go.md` — since the table is registered by the app
+  module's shared appliance block, `app/app.go.md`'s `Entities()`).
   `ReaderProfile` has no repo here — nothing in the decision path queries it directly — but it is
   still part of the schema list (`services/schema.go.md`'s `Entities()`).
+- `SettingsRepo()` — exposes the `RuntimeSetting` repo to `services.NewAccessSettingsService`
+  (`runtime_settings.go.md`), which `app/app.go.md`'s `RegisterAppRoutes` builds it from. Not part
+  of the `Store` interface the decision path uses; access settings (timezone, tick, PIN window,
+  offline, the bus/reader/SCBK inventory) are an operator-facing concern, not something a badge
+  decision reads through this store.
 - `maxRows` (5000) — the explicit ceiling passed to every list query in place of an "unbounded"
   option the generic repo does not offer. An access group with more members than this is a
   data-modelling problem to be raised, not silently truncated on the badge path.

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/mysayasan/kopiv2/apps/mypintusan/entities"
+	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
 	"github.com/mysayasan/kopiv2/infra/db/bootstrap"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/db/sql/sqlite"
@@ -33,7 +34,10 @@ func newSQLiteStore(t *testing.T) *SQLStore {
 		Bootstrap: bootstrap.BootstrapConfig{
 			Enabled: true, AutoCreateDatabase: true, AutoCreateSchema: true, AutoMigrate: true,
 		},
-		Entities: Entities(),
+		// The shared runtime_setting table is registered by the app module, not by this app's
+		// Entities(), but the settings service needs it — so add it here rather than polluting the
+		// app-owned schema list.
+		Entities: append(Entities(), sharedentities.RuntimeSetting{}),
 	})
 	if err != nil {
 		t.Fatalf("bootstrap.Ensure: %v", err)

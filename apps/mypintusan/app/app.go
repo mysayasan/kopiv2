@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"time"
 
@@ -140,13 +141,6 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	ctx := context.Background()
 	cfg := m.appConfig()
 
-	// Resolve the site timezone FIRST and refuse to start if it is wrong. Schedules and holidays
-	// are local concepts; a silent fall back to UTC would shift every schedule on the site.
-	location, err := cfg.Location()
-	if err != nil {
-		return nil, err
-	}
-
 	userRepo := dbsql.NewGenericRepo[sharedentities.LocalUser](deps.Db)
 	localUser := sharedservices.NewLocalUserService(userRepo, deps.AccessRoles)
 
@@ -168,9 +162,24 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	store := services.NewSQLStore(deps.Db)
 	alarms := services.NewNotificationAlarmer(notifications, deps.Logger)
 
+	// config.json SEEDS the first run; the database owns these values afterwards. This is
+	// mymatasan's pattern, and it is what makes the app configurable by a facilities manager
+	// rather than by somebody editing JSON over SSH.
+	settings := services.NewAccessSettingsService(store.SettingsRepo(), settingsFromConfig(cfg))
+	live, err := settings.Get(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load access settings: %w", err)
+	}
+	// Refuse to start on a bad timezone rather than falling back to UTC, which would silently shift
+	// every schedule on the site.
+	location, err := live.Location()
+	if err != nil {
+		return nil, fmt.Errorf("access settings timezone %q: %w", live.Timezone, err)
+	}
+
 	// One controller per RS-485 bus. Each owns its port for the life of the process — a CP holds
 	// the port open and polls continuously, unlike the open/poll/close of the Modbus driver.
-	runtime := newRuntime(deps, cfg, location, store, alarms, store.StrikeFor)
+	runtime := newRuntime(deps, live, location, store, alarms, store.StrikeFor)
 	if err := runtime.start(ctx); err != nil {
 		return nil, err
 	}
@@ -206,6 +215,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	sharedapis.NewLocalAuthApi(protected, authCfg, localUser)
 
+	apis.NewSettingsApi(protected, settings)
 	apis.NewDoorApi(protected, store, runtime, deps.Db)
 	apis.NewHolderApi(protected, deps.Db)
 	apis.NewEventApi(protected, deps.Db)
@@ -229,6 +239,24 @@ func announceFirstRunAdmin(deps apphost.Dependencies, seed sharedservices.AdminS
 		seed.Username, seed.Password)
 }
 
+// RegisterWebRoutes serves the SPA shell.
+//
+// Resolved against deps.HomeDir, NOT BaseDir(): BaseDir() is the CWD-relative dev path, so a
+// packaged install — binary and static/ side by side, working directory elsewhere — would 404 on
+// "/". apphost's SPA catch-all uses HomeDir, and this has to match it.
+func (m *module) RegisterWebRoutes(router *mux.Router, deps apphost.Dependencies) error {
+	staticIndex := filepath.Join(deps.HomeDir, "static", "index.html")
+	serveIndex := func(w http.ResponseWriter, r *http.Request) {
+		// index.html points at content-hashed chunks, so it must never be cached: a stale index
+		// keeps a browser on an old bundle even after the app has been upgraded.
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		http.ServeFile(w, r, staticIndex)
+	}
+	router.HandleFunc("/", serveIndex).Methods("GET")
+	router.HandleFunc("/index.html", serveIndex).Methods("GET")
+	return nil
+}
+
 // loginGuardConfig translates the shared login-security block into the guard's shape.
 func loginGuardConfig(deps apphost.Dependencies) sharedapis.LoginGuardConfig {
 	ls := deps.Config.LoginSecurity.Effective()
@@ -240,4 +268,30 @@ func loginGuardConfig(deps apphost.Dependencies) sharedapis.LoginGuardConfig {
 		MaxLockout:  time.Duration(ls.LockoutMaxSeconds) * time.Second,
 		FailedDelay: time.Duration(ls.FailedDelayMs) * time.Millisecond,
 	}
+}
+
+// settingsFromConfig converts the config.json block into the first-run seed.
+//
+// After that first boot this function's output is never used again — the runtime_setting row wins.
+// It stays as the RESET target, so a settings edit that stops the controller booting can be undone
+// from the UI instead of from the database.
+func settingsFromConfig(cfg *pintuconfig.Config) services.AccessSettings {
+	out := services.AccessSettings{
+		Timezone:         cfg.Access.Timezone,
+		TickSeconds:      cfg.Access.TickSeconds,
+		PINWindowSeconds: cfg.Access.PINWindowSeconds,
+		Offline:          cfg.Access.Offline,
+	}
+	for _, b := range cfg.Buses {
+		bus := services.BusSettings{
+			Port: b.Port, SlotMillis: b.SlotMillis, ReplyTimeoutMillis: b.ReplyTimeoutMillis,
+		}
+		for _, r := range b.Readers {
+			bus.Readers = append(bus.Readers, services.ReaderSettings{
+				Address: r.Address, SCBK: r.SCBK, RequireSecureChannel: r.RequireSecureChannel,
+			})
+		}
+		out.Buses = append(out.Buses, bus)
+	}
+	return out
 }

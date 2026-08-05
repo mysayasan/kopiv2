@@ -46,38 +46,65 @@ then carry.
   `/api/version`, `/api/auth/login`, `/api/auth` endpoint catalog rows, the same
   insert-if-absent / repair-app_code-and-tier SQL pattern the other appliances use.
 - `RegisterAppRoutes(api, deps)`:
-  1. Resolves the site timezone **first**, via `cfg.Location()`, and refuses to start if it is
-     wrong (`config/config.go.md`) — schedules and holidays are local concepts, and a silent
-     fall back to UTC would shift every schedule on the site.
-  2. `services.EnsureRoles` seeds the three appliance roles **before** the admin is seeded — the
+  1. Builds `services.NewAccessSettingsService(store.SettingsRepo(), settingsFromConfig(cfg))` and
+     calls `settings.Get(ctx)` — `config.json` **seeds** this call's first-ever write to the
+     `runtime_setting` table; every call after that reads the database row and ignores
+     `config.json` entirely (`services/runtime_settings.go.md`). This is mymatasan's
+     seed-then-database-owns pattern, and it is what makes the app configurable by a facilities
+     manager rather than by somebody editing JSON over SSH.
+  2. Resolves the site timezone from the **live settings**, via `live.Location()`, and refuses to
+     start if it is wrong — schedules and holidays are local concepts, and a silent fall back to
+     UTC would shift every schedule on the site. This replaced a call to `cfg.Location()`
+     (`config/config.go.md`) directly on `config.json`; see that file's Notes for why the source of
+     truth moved.
+  3. `services.EnsureRoles` seeds the three appliance roles **before** the admin is seeded — the
      bootstrap admin has to be given the superadmin role, and the role has to exist to be given.
-  3. `localUser.EnsureDefaultAdmin`; on `Seeded`, `announceFirstRunAdmin` prints the bootstrap
+  4. `localUser.EnsureDefaultAdmin`; on `Seeded`, `announceFirstRunAdmin` prints the bootstrap
      credential to the log — on a fresh install this console banner is the only place a
      CLI/Docker/systemd operator learns it.
-  4. Builds the notification service and `services.NewSQLStore(deps.Db)` /
+  5. Builds the notification service and `services.NewSQLStore(deps.Db)` /
      `services.NewNotificationAlarmer` (`services/alarm.go.md`) — door alarms (duress, tamper,
      forced/held-open, reader offline) land in the same feed an operator already watches.
-  5. Builds and starts the runtime (`newRuntime` / `runtime.start`, `app/runtime.go.md`) — one
-     supervised goroutine per configured OSDP bus. A boot with zero configured buses is not an
-     error: the API comes up so a fresh install can be configured before any reader is wired.
-  6. Registers `sharedapis.NewLocalLoginApi` on the **public** router (must be mounted before
+  6. Builds and starts the runtime (`newRuntime(deps, live, location, ...)` / `runtime.start`,
+     `app/runtime.go.md`) — one supervised goroutine per configured OSDP bus, now driven by the
+     live `services.AccessSettings`/`BusSettings`, not `*pintuconfig.Config`/`BusConfig`. A boot
+     with zero configured buses is not an error: the API comes up so a fresh install can be
+     configured before any reader is wired.
+  7. Registers `sharedapis.NewLocalLoginApi` on the **public** router (must be mounted before
      the protected subrouter or the auth middleware swallows it), then mounts `protected` with,
      in order, `NewLocalBasicAuth` then `NewRequireRolePermission` — auth before authorization,
      since the matrix needs a principal in context to decide against.
-  7. Registers `apis.NewDoorApi`, `apis.NewHolderApi`, `apis.NewEventApi`,
+  8. Registers `apis.NewSettingsApi`, `apis.NewDoorApi`, `apis.NewHolderApi`, `apis.NewEventApi`,
      `apis.NewLockdownApi`, `apis.NewSetupApi` on `protected`.
-  8. The returned shutdown func calls `runtime.stop()` — cancels every bus supervisor.
+  9. The returned shutdown func calls `runtime.stop()` — cancels every bus supervisor.
+- `RegisterWebRoutes(router, deps)` — **new**: serves the SPA shell (`GET /` and `GET /index.html`
+  → `<HomeDir>/static/index.html`, `Cache-Control: no-cache, no-store, must-revalidate` on both,
+  since `index.html` points at content-hashed chunks and a cached copy would keep a browser on an
+  old bundle after an upgrade). Resolved against `deps.HomeDir`, **not** `BaseDir()` — `BaseDir()`
+  is the CWD-relative dev path, so a packaged install (binary and `static/` side by side, working
+  directory elsewhere) would 404 on `/` if this used it instead; `apphost`'s SPA catch-all uses
+  `HomeDir`, and this has to match it. This is the first frontend the app has ever served — see the
+  Notes below.
+- `settingsFromConfig(cfg)` — converts `config/config.go.md`'s `pintuconfig.Config` into the
+  `services.AccessSettings` first-boot seed. Its output is never read again after that first boot;
+  it stays as the **reset target** — see `services/runtime_settings.go.md`'s `Reset` — so a settings
+  edit that stops the controller from starting can be undone from the UI instead of the database.
 
 ## Notes
 
 - **Shipped so far** (per the file's own header comment): the OSDP driver and simulator
   (`infra/access/osdp`, `tools/osdp-sim`), the decision path, the door state machine, SQLite
-  persistence, and — as of this file — the app wiring that makes all of it bootable.
-- **What remains**: no frontend (this app serves an API only — no `views/`, no `static/`, no
-  SPA, no firstrun wizard UI), no myiotsan bindings for door contacts/relay actuation
-  (`Controller.ContactChanged` is a seam nothing calls), and no `myseliasan` fleet adoption
-  (needs a `fleetnode` node kind that does not exist yet — `domain/shared/fleetnode` declares
-  only `KindCamera` and `KindIot`).
+  persistence, the app wiring that makes all of it bootable, and — as of this change — a React
+  SPA (`views/react-webpack/`, building to `static/`, served by `RegisterWebRoutes`) with a
+  first-run wizard, plus database-backed runtime settings replacing `config.json` as the source of
+  truth after first boot.
+- **What remains**: no groups/schedules/grants screens or APIs — after setup an operator can badge
+  and issue credentials, but choosing **which doors** somebody reaches still needs direct database
+  access; no reader onboarding beyond the wizard's single reader (no bus discovery, no SCBK rekey
+  from the UI); no myiotsan bindings for door contacts/relay actuation
+  (`Controller.ContactChanged` is a seam nothing calls); no serial bus transport (only `tcp://`
+  dials); and no `myseliasan` fleet adoption (needs a `fleetnode` node kind that does not exist yet
+  — `domain/shared/fleetnode` declares only `KindCamera` and `KindIot`).
 - `loginGuardConfig(deps)` maps `deps.Config.LoginSecurity.Effective()` onto
   `sharedapis.LoginGuardConfig` — identical shape to the other appliances' own mapping; reading
   through `.Effective()` is what makes an absent `loginSecurity` block resolve to the guard being
@@ -93,3 +120,13 @@ then carry.
   through `POST /api/doors/{id}/unlock` appears in the same access log as a badge, with
   `RawCredential = "operator"`; an unlock attempted during lockdown was refused and logged. See
   `docs/MYPINTUSAN_DATA_MODEL.md` and `docs/MYPINTUSAN_OSDP_PLAN.md` for the wider phase status.
+- The SPA and its first-run wizard (`views/react-webpack/src/views/Wizard.js`, gated on
+  `GET /api/setup/state` and `user.isAdmin`) were driven live in a real browser, not just unit
+  tested, and that surfaced three bugs — none in this file, all in the SPA it now serves: (1) the
+  shared `lib/api.js`'s `apiRequest` already `JSON.stringify`s `options.body`, and the app's own
+  `send()` helper stringified it a second time, so every write in the SPA failed
+  ("cannot unmarshal string into Go value of type ..."); (2) the wizard renders **instead of** the
+  app shell, so `ToastStack` was never mounted while it was up and every error inside it was
+  invisible — an inline error banner was added, which is what exposed bug (1); (3) the shared
+  `DataTable`'s columns are `{key, label, render}` with `render(value, row)`, not `title`/
+  `render(row)` — getting that wrong threw during render and unmounted the whole app mid-session.
