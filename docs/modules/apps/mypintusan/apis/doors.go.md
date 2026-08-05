@@ -2,8 +2,8 @@
 
 ## Purpose
 
-The estate-and-actuation surface: `GET /doors`, `GET /doors/{id}`, `GET /readers`, plus the two
-powers a receptionist and a security desk actually need — `POST /doors/{id}/unlock` and
+The estate-and-actuation surface: `GET`/`POST /doors`, `GET /doors/{id}`, `GET /readers`, plus
+the two powers a receptionist and a security desk actually need — `POST /doors/{id}/unlock` and
 `GET`/`POST /lockdown`. Every route here is authorized by the shared accessrbac matrix declared
 in `services.Policy()` (`services/rbac.go.md`), which is deny-by-default.
 
@@ -36,6 +36,22 @@ an interface specifically so the HTTP layer cannot reach an `osdp.Bus` or a
 - `list` / `get` — door and reader listing/lookup; `get` goes through `store.Door` (the
   `SQLStore` method, `services/store_sql.go.md`) rather than the raw repo, so a missing door
   reads as a clean 404 rather than the `GetById` not-found trap documented there.
+- `create` (`POST /doors`) — creates a door **and its entry reader in one call**. A door with no
+  reader is inert (nothing can badge at it) and a reader with no door drives nothing, so the two
+  are never created separately: that would invite a half-configured state that looks fine in two
+  list screens and does nothing at the wall — exactly the confusion a non-technical installer
+  must be spared. Admin-only (`user.IsAdmin`), on top of the matrix, for the same reason
+  `lockdown.set` is: a wrong hardware binding here does not produce a bad reading, it produces a
+  door that opens for the wrong person or an alarm that never comes. Validates the name, the bus
+  port, and the OSDP address range (0–127); refuses a reader address already claimed on that
+  cable via `store.ReaderByBus` (readers ship at address 0, so a second reader left at the
+  factory default is the out-of-box collision this catches). Creates the `Door` row first, then
+  the `Reader` row pointed at it; if the reader insert fails the door is rolled back
+  (`DeleteById`) rather than left as a door nobody can ever open. On success, updates the door's
+  `ReaderInId` to the new reader — this is what `StrikeFor` (`services/store_sql.go.md`) resolves
+  to find the PD address, so a door left with `ReaderInId == 0` would grant a badge and then fail
+  to open. This is the first-door step in the SPA's first-run wizard
+  (`views/react-webpack/src/views/Wizard.js`).
 - `unlock` — reads the acting `LocalUser` from context (never from the request body — an
   attacker-supplied actor name in the audit log next to a door opening would be worse than no
   name at all, it would be a forged record), resolves the door, then calls `rt.Unlock`. A
@@ -57,3 +73,7 @@ an interface specifically so the HTTP layer cannot reach an `osdp.Bus` or a
 - Live-verified alongside the rest of the API surface: `GET /doors`, `GET /doors/{id}`,
   `GET /readers`, `POST /doors/{id}/unlock` (both while live and refused during lockdown),
   `GET`/`POST /lockdown` all exercised against a booted app with `tools/osdp-sim`.
+- `POST /doors` was exercised the same way, driven through the wizard's door step
+  (`views/react-webpack/src/views/Wizard.js`) rather than by a direct API call. That path is what
+  first exposed the shared SPA's request-double-encoding bug (`lib/api.js` — every write in the
+  SPA failed to unmarshal until fixed), since it was the first write the wizard performs.

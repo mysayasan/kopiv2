@@ -61,6 +61,16 @@ type Config struct {
 
 ## Notes
 
-- Consumed by `apps/mypintusan/app/app.go.md` (`DecodeAppConfig`/`appConfig`) and
-  `apps/mypintusan/app/runtime.go.md` (every `BusConfig`/`ReaderConfig` field, plus `Location`/
-  `Tick`/`PINWindow`).
+- **Now a first-boot seed only, not the runtime source of truth.** `apps/mypintusan/app/app.go.md`
+  (`DecodeAppConfig`/`appConfig`) still decodes this file, but `RegisterAppRoutes` immediately
+  converts it (`settingsFromConfig`) into `services.AccessSettings` and hands it to
+  `services.NewAccessSettingsService`, which writes it into the `runtime_setting` table on first
+  boot only — every later boot reads the database row and this file is never consulted again. It
+  is also that service's `Reset()` target, so `settingsFromConfig`'s output stays reachable as the
+  recovery value. `apps/mypintusan/app/runtime.go.md` no longer reads `*Config`/`BusConfig`/
+  `ReaderConfig` at all — it takes `services.AccessSettings`/`BusSettings`/`ReaderSettings`
+  (`services/runtime_settings.go.md`) instead, which mirror this file's shape field-for-field but
+  live in the database. `Location`/`Tick`/`PINWindow` on this type are consequently only exercised
+  during that one first-boot conversion; the equivalent methods an operator's edits actually go
+  through are `AccessSettings.Location()` and the inlined `time.Duration(...)` conversions in
+  `app/runtime.go.md`.

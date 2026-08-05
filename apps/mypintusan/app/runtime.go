@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	pintuconfig "github.com/mysayasan/kopiv2/apps/mypintusan/config"
 	appentities "github.com/mysayasan/kopiv2/apps/mypintusan/entities"
 	"github.com/mysayasan/kopiv2/apps/mypintusan/services"
 	"github.com/mysayasan/kopiv2/infra/access/osdp"
@@ -19,7 +18,7 @@ import (
 // runtime owns the OSDP buses and their controllers, and keeps them alive.
 type runtime struct {
 	deps     apphost.Dependencies
-	cfg      *pintuconfig.Config
+	cfg      services.AccessSettings
 	location *time.Location
 	store    services.Store
 	alarms   services.Alarmer
@@ -36,7 +35,7 @@ type runtime struct {
 	live map[string]*services.Controller
 }
 
-func newRuntime(deps apphost.Dependencies, cfg *pintuconfig.Config, loc *time.Location,
+func newRuntime(deps apphost.Dependencies, cfg services.AccessSettings, loc *time.Location,
 	store services.Store, alarms services.Alarmer, strikes services.StrikeResolver) *runtime {
 	return &runtime{
 		deps: deps, cfg: cfg, location: loc, store: store, alarms: alarms, strikes: strikes,
@@ -81,7 +80,7 @@ func (r *runtime) start(ctx context.Context) error {
 // A fresh Bus and Controller are built on each attempt: Bus closes its port on exit, and the per-PD
 // sequence and Secure Channel state belong to the dead session. Lockdown is re-applied from the
 // runtime, deliberately — a reconnect must never become a way to unseal a building.
-func (r *runtime) superviseBus(ctx context.Context, cfg pintuconfig.BusConfig) {
+func (r *runtime) superviseBus(ctx context.Context, cfg services.BusSettings) {
 	const (
 		minBackoff = time.Second
 		maxBackoff = 30 * time.Second
@@ -111,7 +110,7 @@ func (r *runtime) superviseBus(ctx context.Context, cfg pintuconfig.BusConfig) {
 }
 
 // runBus dials, runs one session, and returns when it ends.
-func (r *runtime) runBus(ctx context.Context, cfg pintuconfig.BusConfig) error {
+func (r *runtime) runBus(ctx context.Context, cfg services.BusSettings) error {
 	transport, err := dialBus(ctx, cfg.Port)
 	if err != nil {
 		return err
@@ -162,9 +161,9 @@ func (r *runtime) runBus(ctx context.Context, cfg pintuconfig.BusConfig) error {
 	}, r.alarms, services.BcryptPIN, services.ControllerConfig{
 		BusPort:      cfg.Port,
 		Location:     r.location,
-		Offline:      r.cfg.Access.Offline,
-		TickInterval: r.cfg.Tick(),
-		PINWindow:    r.cfg.PINWindow(),
+		Offline:      r.cfg.Offline,
+		TickInterval: time.Duration(r.cfg.TickSeconds) * time.Second,
+		PINWindow:    time.Duration(r.cfg.PINWindowSeconds) * time.Second,
 	})
 
 	busCtx, cancel := context.WithCancel(ctx)

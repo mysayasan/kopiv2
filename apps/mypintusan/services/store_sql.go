@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/mysayasan/kopiv2/apps/mypintusan/entities"
+	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
@@ -34,6 +35,7 @@ type SQLStore struct {
 	holidays  dbsql.IGenericRepo[entities.Holiday]
 	events    dbsql.IGenericRepo[entities.AccessEvent]
 	groups    dbsql.IGenericRepo[entities.AccessGroup]
+	settings  dbsql.IGenericRepo[sharedentities.RuntimeSetting]
 }
 
 // SQLStore must stay interchangeable with the in-memory fake the controller tests use, or the live
@@ -42,6 +44,17 @@ var _ Store = (*SQLStore)(nil)
 
 // groupsRepo exposes the access-group repository for administrative writes.
 func (s *SQLStore) groupsRepo() dbsql.IGenericRepo[entities.AccessGroup] { return s.groups }
+
+// SettingsRepo exposes the shared runtime-setting table, which is where the access settings live
+// once config.json has seeded them.
+func (s *SQLStore) SettingsRepo() dbsql.IGenericRepo[sharedentities.RuntimeSetting] {
+	return s.settings
+}
+
+// settingsRepo is the unexported alias the tests use.
+func (s *SQLStore) settingsRepo() dbsql.IGenericRepo[sharedentities.RuntimeSetting] {
+	return s.settings
+}
 
 // NewSQLStore wires a store from one database handle.
 func NewSQLStore(db dbsql.IDbCrud) *SQLStore {
@@ -57,6 +70,7 @@ func NewSQLStore(db dbsql.IDbCrud) *SQLStore {
 		holidays:  dbsql.NewGenericRepo[entities.Holiday](db),
 		events:    dbsql.NewGenericRepo[entities.AccessEvent](db),
 		groups:    dbsql.NewGenericRepo[entities.AccessGroup](db),
+		settings:  dbsql.NewGenericRepo[sharedentities.RuntimeSetting](db),
 	}
 }
 

@@ -6,7 +6,8 @@ process.** `infra/access/osdp` (CP-mode OSDP driver: `crc.go`, `codes.go`, `fram
 TCP PD simulator, 17 fault-injection scenarios) exist and are covered by unit tests. Steps 5–6 —
 serial transport and a real reader on the bench, confirming the CRC byte order (§2.1) and Secure
 Channel's crypto constants (§2.3, and see `securechannel.go`'s header comment) — are **not done
-and need hardware**. `apps/mypintusan` is now a runnable app (API only, no frontend): entities,
+and need hardware**. `apps/mypintusan` is now a runnable app, with a React SPA and a first-run
+wizard on top of it (`docs/MYPINTUSAN_DATA_MODEL.md`'s Status line): entities,
 the decision path, the door state machine, Wiegand decode/encode, a SQLite-backed `Store`, and —
 new — the composition root (`apps/mypintusan/app/app.go`) and the OSDP bus supervisor
 (`apps/mypintusan/app/runtime.go`) that keeps `bus.Run` alive across a dead transport (see the new
