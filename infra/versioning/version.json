@@ -10,12 +10,12 @@
       "version": "0.25.0"
     },
     "mymatasan": {
-      "version": "1.114.0"
+      "version": "1.115.0"
     },
     "myseliasan": {
-      "version": "1.51.0"
+      "version": "1.52.0"
     }
   },
-  "commit": "8cf8680ae84ef25ef2f0e9b405e466e495ee7e3c",
-  "updatedAt": "2026-08-06T01:43:41Z"
+  "commit": "7bb3532afec1c435385a0a59b5d9c531f36d73c0",
+  "updatedAt": "2026-08-06T09:46:32Z"
 }

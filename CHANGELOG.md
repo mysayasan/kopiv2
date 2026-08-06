@@ -82,6 +82,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-06 — mymatasan 1.115.0, myseliasan 1.52.0 (7bb3532)
+
+### Changed
+
+- **myseliasan,mymatasan**: Phase 2 of the myseliasan fleet AI agent (phase 1: PR #158). Adds an OPTIONAL weekly digest cadence (agent.digest.weeklyEnabled, default false; agent.digest.weekday, default Monday) that runs alongside the daily one on its own persisted guard and always uses a fixed 7-day findings window regardless of the configured daily look-back. The Fleet Health and range-scoped Incident PDF reports now open with an AI Executive Summary built from the same deterministic narrator as the digest (plus an optional English-only LLM paragraph, since the report renderer cannot show non-Latin glyphs) via a new DigestService.GenerateBriefing that persists nothing; a briefing failure or a disabled/unreachable model costs only the section. A fired fleet rule's notification now carries a second, deterministic line of recurrence context ("also fired N times in the last 7 days") computed under a hard 2-second timeout inside the alert path itself (Correlator.SetEnricher) -- never an LLM call. The digest gained a new agent-suggested-rule finding: recurring after-hours activity (22:00-06:00, >=2 events/night on >=3 distinct nights) from one node+category that no existing fleet rule covers surfaces with a "Create rule" button that pre-fills (never auto-saves) the Fleet Rules editor. The events-over-time expected-activity band (GET /api/notifications/baseline) can now narrow to one node's own learned baseline via ?nodeId=, backing new node_baseline_spike/node_baseline_quiet digest findings, via a new Source column folded into the shared notification_rollup table (mymatasan and myseliasan both fold rollups). "Ask the fleet" chat can now drill into exactly one named adopted node's own recent events over the control tunnel (5s cap; an offline node answers honestly as unreachable rather than stalling the reply) instead of central-only grounding. The sidecar LLM gained a "large" model tier (Qwen2.5-7B-Instruct Q4_K_M, ~4.7GB) alongside the existing 1.5B default, selectable per-install via POST /api/agent/llm/install/model {tier}, with the operator's choice persisted across restarts via an on-disk marker.
 ## 2026-08-06 — myseliasan 1.51.0 (8cf8680)
 
 ### Changed
