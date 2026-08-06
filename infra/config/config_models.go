@@ -390,6 +390,11 @@ type AgentDigestConfigModel struct {
 	WindowHours int `json:"windowHours"`
 	// RetentionDays prunes stored digests older than this (default 180; 0 keeps all).
 	RetentionDays int `json:"retentionDays"`
+	// WeeklyEnabled adds a weekly digest (168h window) on Weekday at LocalHour,
+	// alongside the daily one — the management-cadence summary. Default false.
+	WeeklyEnabled *bool `json:"weeklyEnabled"`
+	// Weekday is the weekly digest's day (0=Sunday … 6=Saturday; default 1, Monday).
+	Weekday int `json:"weekday"`
 	// Language is the language the OPTIONAL LLM narrative is written in
 	// (en|ms|zh|ar, default en). The structured findings are language-neutral and
 	// localized by the UI regardless.

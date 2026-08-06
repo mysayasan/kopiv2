@@ -146,7 +146,7 @@ func (a *notificationApi) baseline(w http.ResponseWriter, r *http.Request) {
 		tzOffsetMin = 0
 	}
 
-	result, err := a.serv.Baseline(r.Context(), from, to, bucketSeconds, tzOffsetMin*60, cameraId)
+	result, err := a.serv.Baseline(r.Context(), from, to, bucketSeconds, tzOffsetMin*60, cameraId, "")
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return

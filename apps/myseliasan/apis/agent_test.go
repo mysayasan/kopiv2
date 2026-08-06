@@ -18,7 +18,7 @@ import (
 // nil sources safely because ChatService nil-guards its optional dependencies.
 func newAgentTestApi(llmCfg config.AgentLLMConfigModel) (*agentApi, *recordingAudit) {
 	mgr := services.NewLLMManager(llmCfg, nil)
-	chat := services.NewChatService(nil, nil, nil, nil, mgr, nil, nil)
+	chat := services.NewChatService(nil, nil, nil, nil, nil, mgr, nil, nil)
 	audit := &recordingAudit{}
 	return &agentApi{
 		chat:  chat,

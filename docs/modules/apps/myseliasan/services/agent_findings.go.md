@@ -28,17 +28,26 @@ the finding in clickable records.
 
 ### Finding codes (the taxonomy)
 
-`volume_delta`, `critical_events`, `baseline_spike`, `baseline_quiet`, `source_anomaly`,
-`top_source`, `noisy_source`, `node_offline`, `cert_expiring`, `cert_expired`, `fleet_rule_fired`,
-`feed_growth`, `audit_highlight`, `all_quiet`. **Adding a code means adding its i18n key to all
-four frontend dictionaries** — see `apps/myseliasan/views/react-webpack/src/views/i18n/*.js`
+`volume_delta`, `critical_events`, `baseline_spike`, `baseline_quiet`, `node_baseline_spike`,
+`node_baseline_quiet`, `source_anomaly`, `top_source`, `noisy_source`, `node_offline`,
+`cert_expiring`, `cert_expired`, `fleet_rule_fired`, `feed_growth`, `audit_highlight`,
+`suggested_rule`, `all_quiet`. **Adding a code means adding its i18n key to all four frontend
+dictionaries** — see `apps/myseliasan/views/react-webpack/src/views/i18n/*.js`
 (`agent.finding.*`).
+
+- `node_baseline_spike`/`node_baseline_quiet` are the **per-node** counterparts of
+  `baseline_spike`/`baseline_quiet`: the same robust-band math, but against one source's own
+  learned band (`sourceBaselineFindings`, below) instead of the fleet-wide envelope.
+- `suggested_rule` is the agent-suggested fleet-rule finding (`suggestedRuleFindings`, below) —
+  an `Info`-severity nudge, never an alert.
 
 ## `CollectFindings(ctx, in FindingsInput, notif, fleet, audit) ([]Finding, error)`
 
 Computes the digest findings for the window ending at `in.Now` (`in.WindowHours`, default 24).
-Each section collector degrades independently — a failing baseline query costs only the baseline
-findings, not the whole digest:
+`in.RuleFor func(nodeId, category string) bool` (optional, wired from `Correlator.HasRuleFor` via
+`DigestService.SetRuleChecker`) lets the suggested-rule detector skip patterns an existing fleet
+rule already covers; `nil` = no dedup. Each section collector degrades independently — a failing
+baseline query costs only the baseline findings, not the whole digest:
 
 - **Rows first** (`fetchWindowRows`, pages the feed newest-first up to `windowRowsFetchCap`=2000):
   also supplies `adjustedSeverityCounts`, the digest-exclusion-corrected severity tally the volume
@@ -52,6 +61,14 @@ findings, not the whole digest:
 - `baselineFindings` — flags chart buckets whose actual total breached the fleet-wide expected
   band (`notification.Baseline`, the same rollup-backed substrate `apis/notifications.go`'s
   `baseline` endpoint serves); learning buckets never flag.
+- `sourceBaselineFindings` — the per-node counterpart: for each of the top node sources
+  (`stats.BySource`, capped `topSourcesReported`/`perCodeCap`), fetches that source's own band
+  (`notif.Baseline(..., source)`, the rollup's `Source` dimension) and compares it against that
+  source's **actual** per-hour counts computed straight from the already-fetched window rows (not
+  a second DB round trip). A bucket with no rows for that source is a genuine zero — exactly how a
+  dead camera looks, so it is not treated as missing data. Learning buckets never flag, which is
+  why a per-node band stays silent until enough source-split rollup history accumulates after the
+  upgrade (see `domain/entities/notification_rollup.go.md`).
 - `rowFindings` — from the single window fetch: critical-severity ids, fleet-rule firings
   (`Source == "fleet-rule"`), and **noisy sources** (high volume, ≥80% unread — an alert nobody
   reads is noise, and noise is what gets a whole feed ignored).
@@ -69,6 +86,29 @@ Findings are capped at `findingsMaxTotal`=30 and sorted by `sortFindings` (sever
 fixed `codeOrder` taxonomy order within a tier). `MaxFindingSeverity` returns the highest severity
 present (`"info"` floor) — this becomes `AgentDigest.Severity`.
 
+## `suggestedRuleFindings(rows, now, ruleFor) []Finding`
+
+Detects recurring **after-hours** activity from one `(source, category)` pair that no existing
+fleet rule covers, and proposes a starting-shape correlation rule. Always evaluated over a
+**7-day** window regardless of the digest's own `in.WindowHours` — three qualifying nights cannot
+be seen in a 24h window, so `CollectFindings` re-fetches a 168h row set specifically for this
+detector when the digest window is shorter.
+
+- "After-hours" is `22:00–06:00` local (`suggestNightStartHour`/`suggestNightEndHour`); a night
+  that straddles midnight (23:50 and the following 00:10) is attributed to **one** night, the
+  evening it began, not two — small-hours events are shifted back a calendar day before bucketing.
+- Qualifies at ≥`suggestNights` (3) distinct nights with ≥`suggestPerNight` (2) events each; the
+  thresholds are deliberately conservative ("a bad suggestion teaches the operator to ignore the
+  good ones").
+- `ruleFor(nodeId, category)` (nil-safe) skips a pair an existing rule already covers.
+- Emits `Info`-severity findings (never higher — this is a nudge, not an alert), capped
+  `suggestCap`=3, sorted by event count descending. `Params` include `suggestedName`,
+  `windowSeconds`(120), `graceSeconds`(5), `cooldownSeconds`(300), `nodeId`, `category`, `nights`,
+  `count` — a sane starting shape the frontend's "Create rule" hand-off pre-fills into the fleet
+  rules editor (`apps/myseliasan/views/react-webpack/src/views/components/insight.js`'s
+  `FindingList`, `App.js`'s `suggestRule`, `fleet_rules.js`'s `prefill`). **The agent never creates
+  a rule itself** — the operator must open the editor and press Save.
+
 ## `digestOwnSource`
 
 `const digestOwnSource = "ai-digest"` — the `Source` the digest publishes its own feed entry
@@ -82,7 +122,8 @@ reason (see `services/correlate.go.md`). Every row-scanning collector (`adjusted
 ## Interfaces
 
 - `digestNotifSource` — the sliver of `*notification.Service` the narrator reads (`Stats`,
-  `Baseline`, `List`); satisfied by the real service, faked in tests.
+  `Baseline` — now taking a trailing `source string` param, `""` = fleet-wide — and `List`);
+  satisfied by the real service, faked in tests.
 - `digestFleetSource` — the sliver of the node registry read (`List`, `FleetStatus`).
 
 ## Notes

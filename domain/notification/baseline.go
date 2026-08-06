@@ -52,7 +52,11 @@ type Baseline struct {
 // camera when cameraId > 0. The band is robust (median ± k·1.4826·MAD) with a
 // Poisson-style floor for sparse slots where MAD collapses to zero, so quiet hours
 // don't produce a razor-thin band that flags every nonzero count.
-func (s *Service) Baseline(ctx context.Context, from, to, bucketSeconds, tzOffsetSec, cameraId int64) (*Baseline, error) {
+// source, when non-empty, narrows the band to one notification source (e.g.
+// "node:<id>" on a control plane) — the per-node baseline. "" = all sources
+// summed, which includes rows folded before the source dimension existed, so
+// fleet-wide bands keep their full history across the upgrade.
+func (s *Service) Baseline(ctx context.Context, from, to, bucketSeconds, tzOffsetSec, cameraId int64, source string) (*Baseline, error) {
 	out := &Baseline{From: from, To: to, K: baselineK, LookbackWeeks: baselineLookbackWeeks}
 	if bucketSeconds == 3600 {
 		out.Bucket = "hour"
@@ -75,6 +79,9 @@ func (s *Service) Baseline(ctx context.Context, from, to, bucketSeconds, tzOffse
 	}
 	if cameraId > 0 {
 		filters = append(filters, sqldataenums.Filter{FieldName: "CameraId", Compare: sqldataenums.Equal, Value: cameraId})
+	}
+	if source != "" {
+		filters = append(filters, sqldataenums.Filter{FieldName: "Source", Compare: sqldataenums.Equal, Value: source})
 	}
 
 	// Collapse the rollup to one total per occurrence (a distinct local hour or day),

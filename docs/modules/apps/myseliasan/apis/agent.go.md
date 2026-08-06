@@ -15,10 +15,10 @@ ask-the-fleet chat, which burn real CPU) is its own curated feature toggle (`ACC
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/api/agent/status` | LLM mode/readiness (`AgentLLMStatus`) + digest schedule state (`enabled`, `localHour`, `windowHours`, `lastRunDate`) + download availability (`allowed`, `supported`). Matrix-gated read. |
+| `GET` | `/api/agent/status` | LLM mode/readiness (`AgentLLMStatus`) + digest schedule state (`AgentDigestStatus`: `enabled`, `localHour`, `windowHours`, `lastRunDate`, plus `weeklyEnabled`/`weekday`/`lastWeeklyRunDate` for the weekly cadence) + download availability (`allowed`, `supported`). Matrix-gated read. |
 | `GET` | `/api/agent/digests` | Stored digests, newest-first. `?limit=&offset=` (default 20). Returns `{items: []digestDTO, total}`. |
 | `GET` | `/api/agent/digests/latest` | The most recent digest, or `null` when none exist yet. |
-| `POST` | `/api/agent/digests/generate` | Generate a digest now (`kind: "manual"`, actor = caller). Matrix-gated write. Write deadline extended to 3 minutes (`extendWriteDeadline`) — the narrator is instant but the LLM polish is not. Audited (`agent.digest.generate`). |
+| `POST` | `/api/agent/digests/generate` | Generate a digest now, actor = caller. `?kind=weekly` produces the 7-day management-cadence digest (`kind: "weekly"`); anything else is the default 24h operational one (`kind: "manual"`) — `"daily"` is deliberately not accepted here, that kind belongs only to the scheduler. Matrix-gated write. Write deadline extended to 3 minutes (`extendWriteDeadline`) — the narrator is instant but the LLM polish is not. Audited (`agent.digest.generate`). |
 | `POST` | `/api/agent/chat` | Ask-the-fleet. Default is a Server-Sent-Events stream (`event: meta/delta/done/error`); `?stream=false` returns one JSON `{answer, usage}` object for tests/curl. Pre-flight failures (bad request, LLM disabled/not-ready) map to `400`/`409`/`503` **before** any stream starts. Write deadline extended to 10 minutes. Audited (`agent.chat`, question truncated to 200 chars). |
 
 Superadmin-only management (self-gated in-handler, like the settings editor):
@@ -27,7 +27,7 @@ Superadmin-only management (self-gated in-handler, like the settings editor):
 |---|---|---|
 | `POST` | `/api/agent/llm/test` | Probes a submitted `{endpoint, apiKey, model}` before saving it. |
 | `POST` | `/api/agent/llm/install/binary` | Starts the pinned llama.cpp release download in the background. |
-| `POST` | `/api/agent/llm/install/model` | Starts the pinned default-model download in the background. |
+| `POST` | `/api/agent/llm/install/model` | Starts a pinned model download in the background. Body `{tier: "default"|"large"}` (empty/omitted = `"default"`, the 1.5B model; `"large"` is the 7B quality upgrade — `services/llm_catalog.go.md`). Audit detail records `download:<tier>`. |
 | `GET` | `/api/agent/llm/install/status` | Install progress for both artifacts (UI polls ~1.5s during an install). |
 | `POST` | `/api/agent/llm/import` | Installs an operator-picked file: `{kind: "binary"|"model", path}`. |
 | `POST` | `/api/agent/llm/sidecar/restart` | Pause+Resume — kills a wedged child and nudges an immediate relaunch. |
@@ -52,12 +52,15 @@ return, not an error event — nobody is listening. `?stream=false` instead call
 
 `NewAgentApi(router, auth, session, digests *services.DigestService, chat *services.ChatService,
 llmMgr *services.LLMManager, installer *services.LLMInstaller, sidecar *services.LLMSidecar,
-audit services.IAuditService, digestCfg func() (enabled bool, localHour, windowHours int,
-lastRunDate string))` — `digestCfg` is resolved by the app wiring (which owns the config and the
-schedule state), not the API package, so `status` never has to reach into `app.go`'s internals
-directly. Registered in `app.go`'s `RegisterAppRoutes` right after the digest/chat services and
-the LLM sidecar/installer are built; `digestCfg`'s closure reads `deps.Config.Agent.Digest` and
-the persisted `agent.digest.lastRun` runtime setting.
+audit services.IAuditService, digestCfg func() AgentDigestStatus)` — `digestCfg` is resolved by
+the app wiring (which owns the config and the schedule state), not the API package, so `status`
+never has to reach into `app.go`'s internals directly. `AgentDigestStatus` (exported — was the
+unexported `agentDigestStatus`, since `app.go` now builds the whole struct itself rather than
+returning a tuple the API package wrapped) is `{Enabled, LocalHour, WindowHours, LastRunDate,
+WeeklyEnabled, Weekday, LastWeeklyRunDate}`. Registered in `app.go`'s `RegisterAppRoutes` right
+after the digest/chat services and the LLM sidecar/installer are built; `digestCfg`'s closure
+reads `deps.Config.Agent.Digest` and both persisted runtime-setting rows
+(`agent.digest.lastRun`/`agent.digest.lastWeeklyRun`) via `runtimeSettingRepo.GetByUnique`.
 
 ## Audit trail
 

@@ -34,7 +34,13 @@ type DigestService struct {
 	cfg       func() config.AgentConfigModel
 	metrics   telemetry.Metrics
 	logf      func(format string, args ...any)
+	// ruleFor lets the suggested-rule detector skip patterns an existing fleet
+	// rule already covers. Wired post-construction (the correlator is built later).
+	ruleFor func(nodeId, category string) bool
 }
+
+// SetRuleChecker wires the correlator's rule-coverage oracle. Optional.
+func (d *DigestService) SetRuleChecker(fn func(nodeId, category string) bool) { d.ruleFor = fn }
 
 // digestPublisher is the sliver of the notification service the digest writes to.
 type digestPublisher interface {
@@ -82,8 +88,13 @@ func (d *DigestService) Generate(ctx context.Context, kind string, actor int64) 
 	if windowHours <= 0 {
 		windowHours = 24
 	}
+	if kind == "weekly" {
+		// The weekly digest is the management-cadence summary: a fixed 7-day
+		// window regardless of the daily digest's configured look-back.
+		windowHours = 168
+	}
 
-	findings, err := CollectFindings(ctx, FindingsInput{Now: started, WindowHours: windowHours},
+	findings, err := CollectFindings(ctx, FindingsInput{Now: started, WindowHours: windowHours, RuleFor: d.ruleFor},
 		d.notif, d.fleet, d.audit)
 	if err != nil {
 		d.count("failed", "none")
@@ -245,6 +256,10 @@ func findingEnglish(f Finding) string {
 		return fmt.Sprintf("Activity spike at %s: %v events where up to %v is normal.", ts("bucketStart"), p("count"), p("expectedHi"))
 	case FindingBaselineQuiet:
 		return fmt.Sprintf("Unusual quiet at %s: %v events where at least %v is normal.", ts("bucketStart"), p("count"), p("expectedLo"))
+	case FindingNodeBaselineSpike:
+		return fmt.Sprintf("%v spiked at %s: %v events where its own normal tops out at %v.", p("source"), ts("bucketStart"), p("count"), p("expectedHi"))
+	case FindingNodeBaselineQuiet:
+		return fmt.Sprintf("%v went unusually quiet at %s: %v events where it normally produces at least %v.", p("source"), ts("bucketStart"), p("count"), p("expectedLo"))
 	case FindingSourceAnomaly:
 		return fmt.Sprintf("Sharp volume change from %v: %v events vs %v in the previous window.", p("source"), p("count"), p("prevCount"))
 	case FindingTopSource:
@@ -263,6 +278,9 @@ func findingEnglish(f Finding) string {
 		return fmt.Sprintf("The notification feed holds %v rows with retention disabled.", p("tableTotal"))
 	case FindingAuditActivity:
 		return fmt.Sprintf("Sensitive action %q occurred %v time(s).", p("action"), p("count"))
+	case FindingSuggestedRule:
+		return fmt.Sprintf("Recurring after-hours %v activity from %v (%v events on %v nights) — consider a fleet correlation rule.",
+			p("category"), p("source"), p("count"), p("nights"))
 	case FindingAllQuiet:
 		return fmt.Sprintf("All quiet: nothing unusual in the last %vh.", p("windowHours"))
 	}
@@ -277,6 +295,45 @@ func digestLanguage(cfg config.AgentConfigModel) string {
 		return cfg.Digest.Language
 	}
 	return "en"
+}
+
+// Briefing is the report-facing summary: findings over an arbitrary window plus
+// the optional LLM narrative. Reports render in cp1252 (Latin only), so the
+// prose is always requested in English here regardless of the digest language —
+// the PDF cannot carry zh/ar glyphs yet, and silent blank text is worse than
+// English. Never returns an error for LLM trouble; Lines always renders.
+type Briefing struct {
+	Findings []Finding
+	// Lines are the deterministic English sentences (one per finding).
+	Lines []string
+	// Narrative is the optional LLM prose ("" when off/failed); Model wrote it.
+	Narrative string
+	Model     string
+}
+
+// GenerateBriefing runs the narrator (and optional English polish) without
+// persisting anything — the report is the artifact, not a digest row.
+func (d *DigestService) GenerateBriefing(ctx context.Context, windowHours int) (Briefing, error) {
+	findings, err := CollectFindings(ctx, FindingsInput{Now: time.Now(), WindowHours: windowHours, RuleFor: d.ruleFor},
+		d.notif, d.fleet, d.audit)
+	if err != nil {
+		return Briefing{}, err
+	}
+	out := Briefing{Findings: findings}
+	for _, f := range findings {
+		out.Lines = append(out.Lines, findingEnglish(f))
+	}
+	var cfg config.AgentConfigModel
+	if d.cfg != nil {
+		cfg = d.cfg()
+	}
+	cfg.Digest.Language = "en" // cp1252 PDF: English prose only
+	narrative, model, source := d.polish(ctx, findings, cfg)
+	if source == "llm" {
+		out.Narrative = narrative
+		out.Model = model
+	}
+	return out, nil
 }
 
 // List returns stored digests newest-first.

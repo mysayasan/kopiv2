@@ -155,7 +155,39 @@ func newTestReportService() *reportService {
 	perms := &fakePerms{byRole: map[int64][]*sharedentities.AccessRolePermission{
 		2: {{RoleId: 2, Path: "/api/nodes", CanGet: true}, {RoleId: 2, Path: "/api/sites", CanGet: true}},
 	}}
-	return NewReportService(reg, sites, nil, audit, users, roles, perms).(*reportService).withNotif(notif)
+	return NewReportService(reg, sites, nil, audit, users, roles, perms, nil).(*reportService).withNotif(notif)
+}
+
+type fakeBriefer struct{ b Briefing }
+
+func (f *fakeBriefer) GenerateBriefing(context.Context, int) (Briefing, error) { return f.b, nil }
+
+// The executive summary must appear on the range reports when a briefer is
+// wired, and its absence (nil briefer) must leave the report exactly as before.
+func TestFleetHealthExecutiveSummary(t *testing.T) {
+	svc := newTestReportService()
+	svc.briefer = &fakeBriefer{b: Briefing{
+		Lines:     []string{"1 critical event(s) in the last 168h.", "Node Gate cam (gate) is lost; last seen 2026-08-01 10:00."},
+		Narrative: "One critical event and one lost node need attention.",
+		Model:     "test-model",
+	}}
+	rep, err := svc.FleetHealth(context.Background(), time.Date(2026, 8, 6, 8, 0, 0, 0, time.UTC), 7)
+	if err != nil {
+		t.Fatalf("FleetHealth: %v", err)
+	}
+	if len(rep.Data) == 0 || string(rep.Data[:5]) != "%PDF-" {
+		t.Fatal("not a PDF")
+	}
+	// A PDF's text is compressed, so assert behavior instead: the summary version
+	// must be LARGER than the no-briefer version of the same report.
+	svc.briefer = nil
+	plain, err := svc.FleetHealth(context.Background(), time.Date(2026, 8, 6, 8, 0, 0, 0, time.UTC), 7)
+	if err != nil {
+		t.Fatalf("FleetHealth plain: %v", err)
+	}
+	if len(rep.Data) <= len(plain.Data) {
+		t.Fatalf("summary report (%d bytes) should exceed plain report (%d bytes)", len(rep.Data), len(plain.Data))
+	}
 }
 
 // withNotif swaps in a fake notification lister for the test (the constructor takes the

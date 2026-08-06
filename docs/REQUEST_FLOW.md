@@ -188,7 +188,11 @@ control channel, can correlate across them.
    `LastTriggeredAt` is persisted (so `CooldownSeconds` survives a restart), and a
    `notification.Notification` is published into the same unified feed step 2 writes to — the
    correlator's conclusion lands in the same place the raw node events did, distinguishable by
-   `Source: "fleet-rule"`.
+   `Source: "fleet-rule"`. When an enricher is wired (`Correlator.SetEnricher`,
+   `apps/myseliasan/services/correlate_enrich.go`), the notification body gains a second,
+   deterministic line of recurrence context ("also fired N times in the last 7 days") before
+   publishing — a bounded, DB-reads-only lookup under a hard timeout, never an LLM call, since
+   this step is still inside the alert path.
 
 **Data path summary:** node event → control channel → `myseliasan` `onNodeEvent` → (a)
 notification feed (deduped via `RelayDedup`), (b) `Correlator.Observe` → arm → `Sweep` (grace

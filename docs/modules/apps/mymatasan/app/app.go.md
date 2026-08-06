@@ -30,13 +30,18 @@ sequencing, and the helpers that don't belong to any one subsystem.
   (phase C).
 - Provides app identity (`Name() = "mymatasan"`) and base directory.
 - `(*module) Migrations() []bootstrap.Migration` implements `apphost.Migrator`
-  (`infra/apphost/types.go.md`, Tier 2 phase M): returns `nil`, which is the normal state —
-  an additive field change needs no migration, only a rename/drop/type-change/data-transform
-  does. `infra/apphost/run.go` passes the result into the shared bootstrap `Options`. The
-  factory-reset path in `RegisterAppRoutes` (below) passes the same `m.Migrations()` into its
-  own `bootstrap.Options` too — omitting it there would leave a rebuilt database unable to
-  baseline, and every migration would replay against a brand-new schema and fail. See
-  `docs/modules/infra/db/bootstrap/migration.go.md`.
+  (`infra/apphost/types.go.md`, Tier 2 phase M): previously returned `nil` (the normal
+  state — an additive field change needs no migration, only a rename/drop/type-change/
+  data-transform does); now returns one entry,
+  `20260806-01-notification-rollup-source` (`domain/notification.MigrateRollupSourceColumn`,
+  `docs/modules/domain/notification/rollup_migrate.go.md`) — shared with `myseliasan`, it adds
+  `notification_rollup.source` (the per-source baseline dimension,
+  `docs/modules/domain/entities/notification_rollup.go.md`) to an existing table and rebuilds its
+  unique slot index to include it. `infra/apphost/run.go` passes the result into the shared
+  bootstrap `Options`. The factory-reset path in `RegisterAppRoutes` (below) passes the same
+  `m.Migrations()` into its own `bootstrap.Options` too — omitting it there would leave a rebuilt
+  database unable to baseline, and every migration would replay against a brand-new schema and
+  fail. See `docs/modules/infra/db/bootstrap/migration.go.md`.
 - `ReadinessStatus` contributes machine and camera health (captured on the `module` struct
   during `RegisterAppRoutes`) to the shared `/ready` payload — advisory only, never flips
   the ready/not-ready verdict.

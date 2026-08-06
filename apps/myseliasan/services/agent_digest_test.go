@@ -163,6 +163,47 @@ func TestNextDigestRunMath(t *testing.T) {
 	}
 }
 
+func TestNextWeeklyRunMath(t *testing.T) {
+	loc := time.Local
+	// Wed 2026-08-05. Weekly on Monday at 07:00 → next Monday 2026-08-10.
+	wed := time.Date(2026, 8, 5, 10, 0, 0, 0, loc)
+	next := nextWeeklyRun(wed, 7, time.Monday, "")
+	if !next.Equal(time.Date(2026, 8, 10, 7, 0, 0, 0, loc)) {
+		t.Fatalf("next = %s, want Mon Aug 10 07:00", next)
+	}
+	// Monday 05:00, not yet run → today 07:00.
+	mon := time.Date(2026, 8, 10, 5, 0, 0, 0, loc)
+	next = nextWeeklyRun(mon, 7, time.Monday, "")
+	if !next.Equal(time.Date(2026, 8, 10, 7, 0, 0, 0, loc)) {
+		t.Fatalf("next = %s, want today 07:00", next)
+	}
+	// Monday 05:00 but this week's ALREADY ran (restart just after) → next Monday.
+	next = nextWeeklyRun(mon, 7, time.Monday, "2026-08-10")
+	if !next.Equal(time.Date(2026, 8, 17, 7, 0, 0, 0, loc)) {
+		t.Fatalf("next = %s, want Mon Aug 17 (already ran)", next)
+	}
+	// Monday 09:00 (slot passed) → next Monday.
+	next = nextWeeklyRun(time.Date(2026, 8, 10, 9, 0, 0, 0, loc), 7, time.Monday, "")
+	if !next.Equal(time.Date(2026, 8, 17, 7, 0, 0, 0, loc)) {
+		t.Fatalf("next = %s, want Mon Aug 17 (slot passed)", next)
+	}
+}
+
+func TestWeeklyDigestUsesFixedWindow(t *testing.T) {
+	repo := &fakeDigestRepo{}
+	d := newTestDigestService(repo, NewLLMManager(config.AgentLLMConfigModel{Mode: "off"}, nil))
+	digest, err := d.Generate(context.Background(), "weekly", 0)
+	if err != nil {
+		t.Fatalf("Generate weekly: %v", err)
+	}
+	if got := digest.PeriodEnd - digest.PeriodStart; got != 168*3600 {
+		t.Fatalf("weekly window = %ds, want 168h", got)
+	}
+	if digest.Kind != "weekly" {
+		t.Fatalf("kind = %q", digest.Kind)
+	}
+}
+
 func TestDigestListAndLatest(t *testing.T) {
 	repo := &fakeDigestRepo{}
 	d := newTestDigestService(repo, NewLLMManager(config.AgentLLMConfigModel{Mode: "off"}, nil))

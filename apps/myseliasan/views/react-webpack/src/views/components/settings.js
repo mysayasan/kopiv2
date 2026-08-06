@@ -85,6 +85,16 @@ const SECTIONS = [
       { path: 'agent.digest.localHour', k: 'digestHour', type: 'number', suggest: [7] },
       { path: 'agent.digest.windowHours', k: 'digestWindow', type: 'number', suggest: [24] },
       { path: 'agent.digest.retentionDays', k: 'digestRetention', type: 'number', suggest: [180] },
+      { path: 'agent.digest.weeklyEnabled', k: 'digestWeeklyEnabled', type: 'checkbox' },
+      { path: 'agent.digest.weekday', k: 'digestWeekday', type: 'select', numeric: true, options: [
+        { v: 1, labelKey: 'settings.opt.weekday.1' },
+        { v: 2, labelKey: 'settings.opt.weekday.2' },
+        { v: 3, labelKey: 'settings.opt.weekday.3' },
+        { v: 4, labelKey: 'settings.opt.weekday.4' },
+        { v: 5, labelKey: 'settings.opt.weekday.5' },
+        { v: 6, labelKey: 'settings.opt.weekday.6' },
+        { v: 0, labelKey: 'settings.opt.weekday.0' },
+      ] },
       { path: 'agent.digest.language', k: 'digestLanguage', type: 'select', options: [
         { v: 'en', label: 'English' },
         { v: 'ms', label: 'Bahasa Melayu' },
@@ -551,9 +561,9 @@ function AgentSidecarControl({ t, onToast }) {
     return () => window.clearInterval(id);
   }, [refresh, running]);
 
-  async function post(path, okMsg) {
+  async function post(path, okMsg, body = '{}') {
     setBusy(true);
-    const r = await api(path, { method: 'POST', body: '{}', noRedirect: true }).catch(() => ({ ok: false }));
+    const r = await api(path, { method: 'POST', body, noRedirect: true }).catch(() => ({ ok: false }));
     setBusy(false);
     if (r.ok) { if (okMsg) onToast && onToast(okMsg, 'info'); refresh(); }
     else onToast && onToast(r.message || t('settings.saveFailed'), 'error');
@@ -591,8 +601,12 @@ function AgentSidecarControl({ t, onToast }) {
               <Ico n="download" sz={14} /><span>{t('agent.install.downloadBinary')}</span>
             </button>
             <button type="button" className="settings-btn settings-btn-quiet" disabled={busy || running}
-              onClick={() => post('/api/agent/llm/install/model', t('agent.install.started'))}>
+              onClick={() => post('/api/agent/llm/install/model', t('agent.install.started'), '{"tier":"default"}')}>
               <Ico n="download" sz={14} /><span>{t('agent.install.downloadModel')}</span>
+            </button>
+            <button type="button" className="settings-btn settings-btn-quiet" disabled={busy || running}
+              onClick={() => post('/api/agent/llm/install/model', t('agent.install.started'), '{"tier":"large"}')}>
+              <Ico n="download" sz={14} /><span>{t('agent.install.downloadModelLarge')}</span>
             </button>
           </>
         ) : (

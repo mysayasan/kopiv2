@@ -12,9 +12,21 @@ server assembles one grounding bundle (`BuildGrounding`) — fleet status, windo
 anomalies, the latest digest's findings, recent high-severity events — and the model gets exactly
 one completion over it, under a system prompt that forbids answering from anything else.
 
-**Grounding is central-only this release**: everything comes from the control plane's own tables.
-Fanning out to nodes over the control tunnel could stall a reply behind a 30s-per-node timeout;
-per-node drill-down is a documented follow-up, not built.
+**Grounding is central-first, with a single-node exception**: everything comes from the control
+plane's own tables, EXCEPT that a question naming exactly one adopted node also pulls that node's
+own recent events over the control tunnel (`chatNodeSender`, below). Fanning out to a whole fleet
+is still deliberately not done — that could stall a reply behind a 30s-per-node timeout — but one
+node, under a 5s cap, is safe: an offline/failed node yields `Unreachable: true` (an honest fact
+the model can state) rather than blocking the answer.
+
+## Timestamps in the grounding bundle are always pre-formatted strings
+
+`GroundingBundle.GeneratedAt`, `GroundWindow.From`/`To`, `GroundNode.LastSeenAt`, and
+`GroundNotif.CreatedAt` are `"2006-01-02 15:04"` strings (`groundTime`), never raw unix integers.
+A live bench had a 7B model "convert" a raw epoch and report a 2026-07-26 sighting as
+"2023-12-01" — small models cheerfully mangle timestamp arithmetic, and a confidently wrong date
+in a security answer is worse than no date at all. `groundTime(0)` (or any `<= 0`) renders `""`
+("never"/unknown), not `"1970-01-01"`.
 
 ## `ChatRequestBody`
 
@@ -42,6 +54,11 @@ LatestDigest, Recent, Truncated}`:
   titles capped `chatTitleCap`=80, ids included so the model can cite `[notif <id>]`. Skips
   `digestOwnSource` — the digest's own feed entries are conclusions, not evidence, for the exact
   reason documented in `agent_findings.go.md`.
+- **NodeDetail** (new) — the single-node drill-down (`*GroundNodeDetail{NodeId, Name,
+  Unreachable, Recent}`), populated only when `matchNodeInQuestion` (below) finds exactly one
+  adopted node named in the question and `c.sender` is wired. Its own `Recent` events carry
+  `Id: 0` (node-local rows have no central feed id, so the model is steered to cite the node
+  rather than a misleading `[notif N]`) and `Source: "node:<id>"`.
 
 **Size enforcement**: `chatMaxBundleBytes`=8KiB (≈2.3k tokens at ~4 bytes/token — fits an 8k
 context with prompt+history+completion room to spare) is enforced by dropping sections in reverse
@@ -64,11 +81,36 @@ system prompt) — small models weight the final instruction heaviest and routin
 reply-language rule buried earlier (live-bench observed). Records
 `MetricAgentChatRequestsTotal{outcome}` and `MetricAgentLLMRequestsTotal{purpose:"chat"}`.
 
+## Single-node drill-down
+
+`matchNodeInQuestion(question, nodes) *entities.ManagedNode` — case-insensitive substring match of
+the question against every adopted node's `Name` and `NodeId`; names/ids shorter than 3 characters
+never match (too many false hits on short ids), and when both a name and an id match, the
+**longest** match wins (so `"gate camera 2"` beats a shorter `"gate"` match on a different node).
+Deterministic, no ambiguity resolution beyond "longest wins" — a genuinely ambiguous question (two
+nodes both named things the question contains) picks whichever match is longer, not both.
+
+`fetchNodeDetail(ctx, node) *GroundNodeDetail` — when `c.connected(node.NodeId)` is false, returns
+`{Unreachable: true}` immediately, no tunnel call. Otherwise sends `GET
+/api/notifications?limit=25` over the control tunnel (`chatNodeSender.SendRequest`, `Role:
+"viewer"`, `Actor: "control-plane:agent-chat"`) under `chatNodeFetchTimeout` (5s — deliberately far
+under the tunnel's own 30s default, since a slow node must cost only the drill-down section, never
+the whole answer). A non-2xx status, a transport error, or an unparseable body all degrade to
+`Unreachable: true` — never an error surfaced to the caller. The response envelope is tolerated in
+either shape a node might return (`{result:{items}}` or `{data:{result:{items}}}`), capped at the
+first 10 items, titles capped `chatTitleCap`.
+
+`chatNodeSender` is the one-method sliver of the control server this needs (`SendRequest`),
+satisfied by `*services.ControlServer` itself — `app.go` passes `controlServer` directly as the
+`sender` constructor argument.
+
 ## Constructor
 
-`NewChatService(notif, fleet, digests *DigestService, connected func(nodeID string) bool, llmMgr
-*LLMManager, metrics, logf)` — `connected` is the control channel's liveness oracle
-(`ControlServer.IsConnected`), nil-safe.
+`NewChatService(notif, fleet, digests *DigestService, connected func(nodeID string) bool, sender
+chatNodeSender, llmMgr *LLMManager, metrics, logf)` — `connected` is the control channel's
+liveness oracle (`ControlServer.IsConnected`), nil-safe. `sender` is new: nil disables the
+single-node drill-down entirely (grounding stays central-only, the prior behavior); `app.go` wires
+it to the same `*services.ControlServer` as `connected`.
 
 ## Notes
 

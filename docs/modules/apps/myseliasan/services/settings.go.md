@@ -40,12 +40,15 @@ section (mirrors `infra/config`'s `LocalAuth`/`SSO`/`Pairing`/`AgentConfigModel`
 `SecurityHeaders`/`RateLimit`/`FileStorage`/`Cache`/`Logging`/`ApiLog`/`Telemetry` models).
 
 The `agent` section (new) exposes the fleet AI agent's config: `digest.{enabled, localHour,
-windowHours, retentionDays, language}` and `llm.{mode, endpoint, apiKey, model, timeoutSeconds,
-maxTokens, sidecar.{port, ctxSize, threads, binaryPath, modelPath}}` plus a top-level
-`allowDownloads`. `boolValue`/`intValue` resolve the pointer fields (`Digest.Enabled`,
+windowHours, retentionDays, language, weeklyEnabled, weekday}` and `llm.{mode, endpoint, apiKey,
+model, timeoutSeconds, maxTokens, sidecar.{port, ctxSize, threads, binaryPath, modelPath}}` plus a
+top-level `allowDownloads`. `boolValue`/`intValue` resolve the pointer fields (`Digest.Enabled`,
 `Digest.LocalHour`, `AllowDownloads`) to their documented defaults (`true`, `7`, `true`) when the
 config omits them — see `infra/config/config_models.go.md`'s `AgentConfigModel` for why those
-three are pointers. `llm.apiKey` is the section's one secret leaf (`sectionSecrets["agent"]`).
+three are pointers. `digest.weeklyEnabled` resolves the same way (`boolValue(...,
+false)` — the weekly cadence is opt-in) and `digest.weekday` is a plain int (`0`=Sunday…`6`
+=Saturday, default `1`/Monday resolved at read time by the scheduler, not here). `llm.apiKey` is
+the section's one secret leaf (`sectionSecrets["agent"]`).
 
 ## ISettingsService
 

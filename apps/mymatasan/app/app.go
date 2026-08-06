@@ -114,7 +114,17 @@ func (m *module) SharedAPIs() apphost.SharedAPIConfig {
 //
 // See infra/db/bootstrap/migration.go.
 func (m *module) Migrations() []bootstrap.Migration {
-	return nil
+	return []bootstrap.Migration{
+		{
+			// The rollup gained a per-source dimension; existing tables need the source
+			// column added and the old slot unique index dropped (the auto-migrator then
+			// recreates it including source). Without this, the maintainer's first
+			// source-split insert violates the stale index and rollups stop advancing.
+			ID:   "20260806-01-notification-rollup-source",
+			Name: "add source to notification_rollup and rebuild the slot index",
+			Exec: notification.MigrateRollupSourceColumn,
+		},
+	}
 }
 
 func (m *module) Entities() []any {

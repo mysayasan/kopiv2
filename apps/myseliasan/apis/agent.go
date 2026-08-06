@@ -29,16 +29,20 @@ type agentApi struct {
 	installer *services.LLMInstaller
 	sidecar   *services.LLMSidecar
 	audit     services.IAuditService
-	digestCfg func() agentDigestStatus
+	digestCfg func() AgentDigestStatus
 }
 
-// agentDigestStatus is the digest half of GET /status, resolved by the app wiring
+// AgentDigestStatus is the digest half of GET /status, resolved by the app wiring
 // (which owns the config and the schedule state).
-type agentDigestStatus struct {
+type AgentDigestStatus struct {
 	Enabled     bool   `json:"enabled"`
 	LocalHour   int    `json:"localHour"`
 	WindowHours int    `json:"windowHours"`
 	LastRunDate string `json:"lastRunDate,omitempty"`
+	// The weekly cadence runs alongside the daily one on its own guard.
+	WeeklyEnabled     bool   `json:"weeklyEnabled"`
+	Weekday           int    `json:"weekday"`
+	LastWeeklyRunDate string `json:"lastWeeklyRunDate,omitempty"`
 }
 
 // NewAgentApi mounts the fleet AI agent:
@@ -46,7 +50,7 @@ type agentDigestStatus struct {
 //	GET  /api/agent/status            — LLM/digest state (matrix-gated read)
 //	GET  /api/agent/digests           — stored digests, newest-first (?limit=&offset=)
 //	GET  /api/agent/digests/latest    — the most recent digest
-//	POST /api/agent/digests/generate  — generate a digest now (matrix-gated write)
+//	POST /api/agent/digests/generate  — generate a digest now (?kind=weekly for the 7-day one)
 //	POST /api/agent/chat              — ask-the-fleet; SSE stream (?stream=false for JSON)
 //
 // Superadmin-only management (self-gated, like the settings editor):
@@ -67,15 +71,12 @@ func NewAgentApi(
 	installer *services.LLMInstaller,
 	sidecar *services.LLMSidecar,
 	audit services.IAuditService,
-	digestCfg func() (enabled bool, localHour, windowHours int, lastRunDate string),
+	digestCfg func() AgentDigestStatus,
 ) {
 	h := &agentApi{
 		session: session, digests: digests, chat: chat,
 		llm: llmMgr, installer: installer, sidecar: sidecar, audit: audit,
-		digestCfg: func() agentDigestStatus {
-			enabled, hour, window, last := digestCfg()
-			return agentDigestStatus{Enabled: enabled, LocalHour: hour, WindowHours: window, LastRunDate: last}
-		},
+		digestCfg: digestCfg,
 	}
 	g := router.PathPrefix("/agent").Subrouter()
 	g.Use(auth.Middleware)
@@ -171,9 +172,17 @@ func extendWriteDeadline(w http.ResponseWriter, d time.Duration) {
 	_ = rc.SetWriteDeadline(time.Now().Add(d))
 }
 
+// generateDigest runs a digest now. ?kind=weekly produces the 7-day management
+// summary on demand; anything else is the default 24h operational one. "daily"
+// is deliberately NOT accepted — that kind belongs to the scheduler, and letting
+// a manual run claim it would muddy which digests were actually scheduled.
 func (a *agentApi) generateDigest(w http.ResponseWriter, r *http.Request) {
 	extendWriteDeadline(w, 3*time.Minute) // narrator is instant; the LLM polish is not
-	d, err := a.digests.Generate(r.Context(), "manual", operatorUserId(r))
+	kind := "manual"
+	if strings.EqualFold(r.URL.Query().Get("kind"), "weekly") {
+		kind = "weekly"
+	}
+	d, err := a.digests.Generate(r.Context(), kind, operatorUserId(r))
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
@@ -304,13 +313,28 @@ func (a *agentApi) installBinary(w http.ResponseWriter, r *http.Request) {
 	controllers.SendResult(w, map[string]any{"started": true}, "succeed")
 }
 
+// installModel starts a pinned model download; body {tier:"default"|"large"}
+// (empty = default). The large tier is the quality upgrade for hosts with RAM.
 func (a *agentApi) installModel(w http.ResponseWriter, r *http.Request) {
-	if err := a.installer.StartModelDownload(context.Background()); err != nil {
+	var req struct {
+		Tier string `json:"tier"`
+	}
+	if body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxAgentBody)); err == nil && len(body) > 0 {
+		_ = json.Unmarshal(body, &req)
+	}
+	if err := a.installer.StartModelDownload(context.Background(), req.Tier); err != nil {
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
 	}
-	a.record(r, "agent.llm.install.model", "download", nil)
+	a.record(r, "agent.llm.install.model", "download:"+defaultStrA(req.Tier, "default"), nil)
 	controllers.SendResult(w, map[string]any{"started": true}, "succeed")
+}
+
+func defaultStrA(s, def string) string {
+	if strings.TrimSpace(s) == "" {
+		return def
+	}
+	return s
 }
 
 func (a *agentApi) installStatus(w http.ResponseWriter, r *http.Request) {

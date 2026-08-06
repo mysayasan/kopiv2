@@ -31,12 +31,27 @@ import path only, which works everywhere llama.cpp itself builds.
 
 ## Start*/Import* entry points
 
-- `StartBinaryDownload(ctx)` / `StartModelDownload(ctx)` — background downloads; errors that
-  prevent **starting** are returned directly, progress/failure after that is polled via `Status()`.
+- `StartBinaryDownload(ctx)` — background download; errors that prevent **starting** are returned
+  directly, progress/failure after that is polled via `Status()`.
+- `StartModelDownload(ctx, tier string)` — `tier` is `""`/`"default"` (Qwen2.5-1.5B) or `"large"`
+  (Qwen2.5-7B, `llm_catalog.go.md`); any other value errors immediately without starting anything.
+  `apis/agent.go`'s `POST /api/agent/llm/install/model` passes the request body's `{tier}` through
+  unchanged.
 - `ImportBinaryArchive(ctx, path)` / `ImportModel(ctx, path)` — synchronous (local extraction/copy
   is fast); return the installed path.
 - `Status() map[string]LLMInstallState` — both artifacts' `{Running, Status, Log, Path}`, polled
   by the settings UI roughly every 1.5s while an install runs.
+
+## `publishModel` and the active-model marker
+
+`publishModel(st, path)` — called after every successful download/import — now does two things,
+not one: it calls `sidecar.SetPaths("", path)` as before, **and** it writes `path`'s base name
+into `<llmDir>/models/active.txt` (`writeActiveModelMarker`, `services/llm_sidecar.go.md`). The
+marker is what makes the operator's tier choice (default vs. large, or an imported model) survive
+a restart — without it, `resolveSidecarModel` would fall back to the pinned default file on next
+boot even though the operator just installed something else. A marker-write failure only logs a
+warning to the install log; it never fails the install itself (the sidecar is already pointed at
+the right file for the current process).
 
 ## Install mechanics
 
