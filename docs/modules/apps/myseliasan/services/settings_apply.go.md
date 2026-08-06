@@ -19,9 +19,10 @@ bad value would break boot or security:
   a non-empty multicast address must be `host:port`.
 - `agent` — `llm.mode` must be `off`/`external`/`sidecar`; `external` mode additionally requires
   a non-empty `llm.endpoint` starting `http://`/`https://`. `digest.localHour` must be `0..23`;
-  `digest.windowHours` `0..168`; `digest.retentionDays` cannot be negative; `digest.language`
-  (when set) must be `en`/`ms`/`zh`/`ar`. `llm.timeoutSeconds` must be `0..600`;
-  `llm.maxTokens` cannot be negative; `llm.sidecar.port` must be `0` (unset) or `1..65535`.
+  `digest.windowHours` `0..168`; `digest.retentionDays` cannot be negative; `digest.weekday` must
+  be `0..6` (Sunday..Saturday); `digest.language` (when set) must be `en`/`ms`/`zh`/`ar`.
+  `llm.timeoutSeconds` must be `0..600`; `llm.maxTokens` cannot be negative; `llm.sidecar.port`
+  must be `0` (unset) or `1..65535`.
 - `security` — `jwt.secret` must be at least 16 characters; `allowOrigins` cannot be empty;
   `tls.certPath`/`tls.keyPath` are required; every rate-limit tier's `requests`/`windowSeconds`
   must be non-negative.
@@ -38,7 +39,9 @@ the host still needs a restart (`apis/system.go`) to consume them. `pairing.enab
 as a `*bool` (`config.PairingConfigModel.Enabled`) so a config that omits the key keeps
 defaulting to enabled; `applyToConfig` always sets it explicitly once the section is saved. The
 `agent` case is the same shape: `Digest.Enabled`/`Digest.LocalHour`/`AllowDownloads` are also
-written as explicit `*bool`/`*int` pointers on every save, same reasoning.
+written as explicit `*bool`/`*int` pointers on every save, same reasoning; `Digest.WeeklyEnabled`
+gets the identical `*bool` treatment (always set explicitly), and `Digest.Weekday` is a plain
+`int`.
 
 ## `getters` — nested-map accessor
 

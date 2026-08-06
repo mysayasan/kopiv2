@@ -83,6 +83,13 @@ rows `NULL`, immediately backfills them to the entity's zero value — the non-p
   per camera kept), before adding the index. A fresh install (empty `node_placement` table) is a
   no-op here; the auto-migrator creates the table with the index already in place. Uses the same
   index name the auto-migrator derives, so whichever of the two runs second is a no-op.
+- `20260806-01-notification-rollup-source` — shared with `mymatasan`
+  (`domain/notification.MigrateRollupSourceColumn`, `docs/modules/domain/notification/
+  rollup_migrate.go.md`): adds `notification_rollup.source` (the per-node-baseline dimension,
+  `docs/modules/domain/entities/notification_rollup.go.md`) to an existing table, backfills `''`,
+  and drops the old `ux_notification_rollup_slot` unique index so the auto-migrator rebuilds it
+  **with** `source` included — without the drop, the rollup maintainer's first source-split insert
+  violates the stale index and folding stops advancing.
 
 `geoColumnType(base, engine)` maps a base SQL type (`DOUBLE PRECISION`/`BOOLEAN`) to the exact
 per-engine concrete type the auto-migrator itself generates (mirroring
@@ -153,17 +160,33 @@ postgres/mariadb, `pragma_table_info` on sqlite).
 
 ## Fleet AI agent
 
-New capability: a deterministic daily "fleet digest" (always on, pure Go — `services/agent_digest.go.md` + `services/agent_findings.go.md`) plus an OPTIONAL language-model layer behind it (digest prose + an "ask the fleet" chat, `services/agent_chat.go.md`). **The LLM is never in a critical path**: with `agent.llm.mode` `"off"` (the default) or the model unreachable/crashed/timing out, the digest still generates from the narrator and every alerting path is untouched. Wired near the end of `RegisterAppRoutes`, after the reverse command tunnel and node-access APIs:
+A deterministic daily (and now optionally weekly) "fleet digest" (always on, pure Go —
+`services/agent_digest.go.md` + `services/agent_findings.go.md`) plus an OPTIONAL language-model
+layer behind it (digest prose, report executive summaries, an "ask the fleet" chat with
+single-node drill-down, `services/agent_chat.go.md`). **The LLM is never in a critical path**:
+with `agent.llm.mode` `"off"` (the default) or the model unreachable/crashed/timing out, the
+digest still generates from the narrator and every alerting path is untouched. Wired in **two
+parts**, since part 1's `digestService` is needed by the report builder (constructed shortly
+after) and part 2's `chatService` needs the control server's connectivity oracle (constructed
+later still):
+
+**Part 1 — LLM runtime + digest service** (before `NewReportService`):
 
 - `llmDir := apphost.ResolveWritablePath(deps.DataDir, "llm")` — where the sidecar's binaries/model live; also passed into the factory reset's `CollectDataPaths` (above) so a reset erases them too.
 - `llmSidecar := services.NewLLMSidecar(...)` (`services/llm_sidecar.go.md`) — the supervised `llama-server` child process, `Enabled` only when `agent.llm.mode == "sidecar"`; `SetOnRestart` wires `MetricAgentSidecarRestartsTotal`; `Start(bgCtx)`.
 - `llmManager := services.NewLLMManager(agentCfg.LLM, llmSidecar)` (`services/llm_manager.go.md`) — the one façade `DigestService`/`ChatService`/`apis.NewAgentApi` see for "which client, if any."
-- `llmInstaller := services.NewLLMInstaller(llmDir, llmSidecar, func() bool { return agentCfg.AllowDownloads == nil || *agentCfg.AllowDownloads }, logf)` (`services/llm_install.go.md`) — download (pinned + SHA-256-verified, `services/llm_catalog.go.md`) or operator-import routes for the sidecar's two artifacts; `SetOnResult` wires `MetricAgentInstallTotal`.
+- `llmInstaller := services.NewLLMInstaller(llmDir, llmSidecar, func() bool { return agentCfg.AllowDownloads == nil || *agentCfg.AllowDownloads }, logf)` (`services/llm_install.go.md`) — download (pinned + SHA-256-verified, `services/llm_catalog.go.md`, either the `"default"` or `"large"` model tier) or operator-import routes for the sidecar's two artifacts; `SetOnResult` wires `MetricAgentInstallTotal`.
 - `digestService := services.NewDigestService(deps.Db, notificationService, registry, auditService, llmManager, func() config.AgentConfigModel { return deps.Config.Agent }, deps.Metrics, logf)` (`services/agent_digest.go.md`) — `cfg` is a getter (not a captured value) so every generation reads the live config block.
-- `chatService := services.NewChatService(notificationService, registry, digestService, controlServer.IsConnected, llmManager, deps.Metrics, logf)` (`services/agent_chat.go.md`) — `controlServer.IsConnected` is the grounding bundle's per-node liveness oracle.
-- `apis.NewAgentApi(api, *deps.Auth, controlSession, digestService, chatService, llmManager, llmInstaller, llmSidecar, auditService, digestCfg)` (`apis/agent.go.md`) — `digestCfg` is a closure owned by `app.go` (not the API package) that resolves the current `enabled`/`localHour`/`windowHours` from `deps.Config.Agent.Digest` and the persisted `agent.digest.lastRun` runtime-setting row (via `runtimeSettingRepo.GetByUnique`), for `GET /api/agent/status`.
-- `services.RunDigestSchedule(bgCtx, digestService, runtimeSettingRepo, func() config.AgentConfigModel { return deps.Config.Agent }, logf)` (`services/agent_schedule.go.md`) — the sleep-until-HH:00-local, fire-once, repeat scheduler; default hour 07:00.
-- `periodic(bgCtx, "myseliasan.purge.digests", 24*time.Hour, ...)` — daily stored-digest retention (`agent.digest.retentionDays`, default 180 when `0`) via `digestService.PurgeOld`.
+- `reportService := services.NewReportService(registry, siteService, notificationService, auditService, userService, roleService, deps.AccessPerms, digestService)` (`services/reports.go.md`) — `digestService` is passed as the report builder's `briefer`, so `FleetHealth`/`Incident` gain an AI executive-summary section built from `digestService.GenerateBriefing`.
+
+**Part 2 — chat service + `/api/agent` surface** (after the reverse command tunnel, once `controlServer` exists):
+
+- `correlator.SetEnricher(services.NewFleetRuleEnricher(notificationService))` (`services/correlate_enrich.go.md`) — right after the correlator is constructed, before `Reload`: appends deterministic recurrence context ("also fired N times this week") to a fired fleet rule's notification.
+- `digestService.SetRuleChecker(correlator.HasRuleFor)` — wires the suggested-rule detector's dedup oracle (`services/agent_findings.go.md`'s `suggestedRuleFindings`) once the correlator exists.
+- `chatService := services.NewChatService(notificationService, registry, digestService, controlServer.IsConnected, controlServer, llmManager, deps.Metrics, logf)` (`services/agent_chat.go.md`) — `controlServer.IsConnected` is the grounding bundle's per-node liveness oracle; `controlServer` itself (new param, satisfying `chatNodeSender`) is what lets a question naming one adopted node pull that node's own recent events over the control tunnel.
+- `apis.NewAgentApi(api, *deps.Auth, controlSession, digestService, chatService, llmManager, llmInstaller, llmSidecar, auditService, digestCfg)` (`apis/agent.go.md`) — `digestCfg` is a closure owned by `app.go` (not the API package) that now builds the whole `apis.AgentDigestStatus{Enabled, LocalHour, WindowHours, LastRunDate, WeeklyEnabled, Weekday, LastWeeklyRunDate}` from `deps.Config.Agent.Digest` and **both** persisted runtime-setting rows (`agent.digest.lastRun`/`agent.digest.lastWeeklyRun`, via `runtimeSettingRepo.GetByUnique`), for `GET /api/agent/status`.
+- `services.RunDigestSchedule(bgCtx, digestService, runtimeSettingRepo, func() config.AgentConfigModel { return deps.Config.Agent }, logf)` (`services/agent_schedule.go.md`) — the sleep-until-HH:00-local, fire-once, repeat scheduler for **both** cadences; default hour 07:00, weekly opt-in and defaulting to Monday.
+- `periodic(bgCtx, "myseliasan.purge.digests", 24*time.Hour, ...)` — daily stored-digest retention (`agent.digest.retentionDays`, default 180 when `0`) via `digestService.PurgeOld` (applies to both daily and weekly digest rows alike).
 
 See `docs/modules/infra/llm/client.go.md` for the OpenAI-compatible chat-completions client both the sidecar and external modes use, and `apps/myseliasan/README.md`'s "AI Agent" section for the operator-facing feature description (grounding bundle contract, air-gap/download posture, `MYSELIASAN_AI_DOWNLOADS` env lock).
 

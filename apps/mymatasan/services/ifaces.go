@@ -608,7 +608,7 @@ type INotificationService interface {
 	ListSince(ctx context.Context, since int64, limit uint64) ([]*sharedentities.Notification, uint64, error)
 	Stats(ctx context.Context, from, to, bucketSeconds, tzOffsetSec int64) (*notification.Stats, error)
 	Heatmap(ctx context.Context, from, to, cameraId, tzOffsetSec int64) (*notification.Heatmap, error)
-	Baseline(ctx context.Context, from, to, bucketSeconds, tzOffsetSec, cameraId int64) (*notification.Baseline, error)
+	Baseline(ctx context.Context, from, to, bucketSeconds, tzOffsetSec, cameraId int64, source string) (*notification.Baseline, error)
 	CameraReliability(ctx context.Context, from, to int64) (*notification.Reliability, error)
 	NoisyCameras(ctx context.Context, from, to int64, limit int) (*notification.Noise, error)
 	MarkRead(ctx context.Context, id uint64, userId int64) (*sharedentities.Notification, error)

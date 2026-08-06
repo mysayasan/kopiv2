@@ -142,6 +142,14 @@ function AppInner({ lang, onLangChange }) {
     setActiveTab(id);
   }
 
+  // Agent-suggested fleet rule hand-off: the Insight page proposes a draft, the
+  // Fleet Rules page opens its editor pre-filled. Nothing saves without the operator.
+  const [rulePrefill, setRulePrefill] = useState(null);
+  function suggestRule(prefill) {
+    setRulePrefill(prefill);
+    setActiveTab('fleetrules');
+  }
+
   function pushToast(text, kind = 'info') {
     if (!text) return;
     const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -261,7 +269,7 @@ function AppInner({ lang, onLangChange }) {
         <ToastStack toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((t) => t.id !== id))} />
 
         {activeTab === 'dashboard' ? <DashboardTab nodes={nodes} /> : null}
-        {activeTab === 'insight' && canAgent ? <AIInsightPage session={session} onToast={pushToast} /> : null}
+        {activeTab === 'insight' && canAgent ? <AIInsightPage session={session} onToast={pushToast} onSuggestRule={session?.isSuperadmin ? suggestRule : null} /> : null}
         {activeTab === 'map' ? (
           <Suspense fallback={<div className="map-loading">{t('common.loading')}</div>}>
             <MapPage nodes={nodes} reloadNodes={loadNodes} onToast={pushToast} onOpenNode={selectNode} />
@@ -270,7 +278,7 @@ function AppInner({ lang, onLangChange }) {
         {activeTab === 'liveviews' && canNodes ? <LiveViewsPage nodes={nodes} /> : null}
         {activeTab === 'objects' && canNodes ? <ObjectsPage nodes={nodes} onToast={pushToast} /> : null}
         {activeTab === 'teach' && canNodes ? <TeachPage nodes={nodes} onToast={pushToast} /> : null}
-        {activeTab === 'fleetrules' && canFleetRules ? <FleetRulesPage nodes={nodes} session={session} onToast={pushToast} /> : null}
+        {activeTab === 'fleetrules' && canFleetRules ? <FleetRulesPage nodes={nodes} session={session} onToast={pushToast} prefill={rulePrefill} onPrefillConsumed={() => setRulePrefill(null)} /> : null}
         {activeTab === 'notifications' ? <NotificationsPage nodes={nodes} refreshSignal={notifVersion} onChanged={loadNotifUnread} /> : null}
         {activeTab === 'nodes' && canNodes ? (
           <NodesTab

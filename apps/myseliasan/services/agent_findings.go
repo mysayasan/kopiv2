@@ -48,6 +48,10 @@ const (
 	FindingCritical      = "critical_events"
 	FindingBaselineSpike = "baseline_spike"
 	FindingBaselineQuiet = "baseline_quiet"
+	// Per-node variants, computed against that source's OWN learned band (the
+	// rollup's source dimension) rather than the fleet-wide envelope.
+	FindingNodeBaselineSpike = "node_baseline_spike"
+	FindingNodeBaselineQuiet = "node_baseline_quiet"
 	FindingSourceAnomaly = "source_anomaly"
 	FindingTopSource     = "top_source"
 	FindingNoisySource   = "noisy_source"
@@ -57,6 +61,7 @@ const (
 	FindingFleetRule     = "fleet_rule_fired"
 	FindingFeedGrowth    = "feed_growth"
 	FindingAuditActivity = "audit_highlight"
+	FindingSuggestedRule = "suggested_rule"
 	FindingAllQuiet      = "all_quiet"
 )
 
@@ -65,6 +70,9 @@ type FindingsInput struct {
 	Now         time.Time
 	WindowHours int
 	TZOffsetSec int64
+	// RuleFor reports whether a fleet rule already covers (nodeId, category) —
+	// the suggested-rule detector skips those. nil = no dedup (suggest anyway).
+	RuleFor func(nodeId, category string) bool
 }
 
 // Tuning thresholds. Deliberately conservative: a digest that cries wolf daily
@@ -103,7 +111,7 @@ var sensitiveAuditActions = map[string]bool{
 // *notification.Service satisfies it; tests use a fake.
 type digestNotifSource interface {
 	Stats(ctx context.Context, from, to, bucketSeconds, tzOffsetSec int64) (*notification.Stats, error)
-	Baseline(ctx context.Context, from, to, bucketSeconds, tzOffsetSec, cameraId int64) (*notification.Baseline, error)
+	Baseline(ctx context.Context, from, to, bucketSeconds, tzOffsetSec, cameraId int64, source string) (*notification.Baseline, error)
 	List(ctx context.Context, limit, offset uint64, cameraId int64, unreadOnly bool, category, source string) ([]*sharedentities.Notification, uint64, error)
 }
 
@@ -144,8 +152,11 @@ func CollectFindings(ctx context.Context, in FindingsInput,
 		findings = append(findings, sourceAnomalyFindings(ctx, notif, stats, from, to, in.TZOffsetSec)...)
 	}
 
-	if baseline, err := notif.Baseline(ctx, from, to, 3600, in.TZOffsetSec, 0); err == nil && stats != nil {
+	if baseline, err := notif.Baseline(ctx, from, to, 3600, in.TZOffsetSec, 0, ""); err == nil && stats != nil {
 		findings = append(findings, baselineFindings(stats, baseline)...)
+	}
+	if stats != nil {
+		findings = append(findings, sourceBaselineFindings(ctx, notif, stats, rows, from, to, in.TZOffsetSec)...)
 	}
 
 	findings = append(findings, rowFindings(rows, in.WindowHours)...)
@@ -157,6 +168,14 @@ func CollectFindings(ctx context.Context, in FindingsInput,
 	if audit != nil {
 		findings = append(findings, auditFindings(ctx, audit, from)...)
 	}
+
+	// Suggested rules always look at a 7-day pattern regardless of the digest
+	// window (three nights of after-hours activity cannot be seen in 24h).
+	suggestRows := rows
+	if in.WindowHours < 168 {
+		suggestRows, _ = fetchWindowRows(ctx, notif, to-168*3600)
+	}
+	findings = append(findings, suggestedRuleFindings(suggestRows, now, in.RuleFor)...)
 
 	if len(findings) == 0 {
 		findings = append(findings, Finding{
@@ -361,6 +380,77 @@ func baselineFindings(stats *notification.Stats, baseline *notification.Baseline
 		}
 		if len(out) >= perCodeCap {
 			break
+		}
+	}
+	return out
+}
+
+// sourceBaselineFindings checks each top node source's CURRENT window against
+// that source's OWN learned band (the rollup's per-source dimension). Actual
+// per-source hourly counts come from the already-fetched window rows; a bucket
+// with no rows is a real zero — which is exactly how a dead camera looks.
+// Learning buckets never flag, so this stays silent until enough source-split
+// history accumulates after the upgrade.
+func sourceBaselineFindings(ctx context.Context, notif digestNotifSource,
+	stats *notification.Stats, rows []*sharedentities.Notification, from, to, tzOffsetSec int64) []Finding {
+
+	// Per-source actual counts per hour bucket, from the window rows.
+	actuals := map[string]map[int64]int64{}
+	for _, n := range rows {
+		if !strings.HasPrefix(n.Source, "node:") {
+			continue
+		}
+		bucket := n.CreatedAt - n.CreatedAt%3600
+		if actuals[n.Source] == nil {
+			actuals[n.Source] = map[int64]int64{}
+		}
+		actuals[n.Source][bucket]++
+	}
+
+	var out []Finding
+	checked := 0
+	for _, item := range stats.BySource {
+		if !strings.HasPrefix(item.Key, "node:") {
+			continue
+		}
+		if checked >= topSourcesReported || len(out) >= perCodeCap {
+			break
+		}
+		checked++
+		band, err := notif.Baseline(ctx, from, to, 3600, tzOffsetSec, 0, item.Key)
+		if err != nil || band == nil {
+			continue
+		}
+		src := actuals[item.Key]
+		for _, b := range band.Buckets {
+			if b.Learning {
+				continue
+			}
+			count := src[b.Start] // absent = genuine zero
+			if float64(count) > b.Hi && count > 0 {
+				out = append(out, Finding{
+					Code:     FindingNodeBaselineSpike,
+					Severity: string(notification.Warning),
+					Params: map[string]any{
+						"source": item.Key, "bucketStart": b.Start, "count": count,
+						"expectedHi": int64(b.Hi), "expectedMid": int64(b.Mid),
+					},
+					NodeIds: nodeIdOf(item.Key),
+				})
+			} else if float64(count) < b.Lo && b.Mid > 0 {
+				out = append(out, Finding{
+					Code:     FindingNodeBaselineQuiet,
+					Severity: string(notification.Warning),
+					Params: map[string]any{
+						"source": item.Key, "bucketStart": b.Start, "count": count,
+						"expectedLo": int64(b.Lo), "expectedMid": int64(b.Mid),
+					},
+					NodeIds: nodeIdOf(item.Key),
+				})
+			}
+			if len(out) >= perCodeCap {
+				break
+			}
 		}
 	}
 	return out
@@ -606,6 +696,96 @@ func auditFindings(ctx context.Context, audit IAuditService, from int64) []Findi
 	return out
 }
 
+// --- suggested rules ---------------------------------------------------------
+
+// Suggested-rule thresholds: after-hours events from one (source, category) on
+// at least suggestNights distinct nights, with at least suggestPerNight events
+// each night. Conservative on purpose — a bad suggestion teaches the operator
+// to ignore the good ones.
+const (
+	suggestNightStartHour = 22
+	suggestNightEndHour   = 6
+	suggestNights         = 3
+	suggestPerNight       = 2
+	suggestCap            = 3
+)
+
+// suggestedRuleFindings detects recurring after-hours activity that has no
+// covering fleet rule and proposes one. Emitted as an info finding whose params
+// pre-fill the rule editor; the agent NEVER creates rules itself.
+func suggestedRuleFindings(rows []*sharedentities.Notification, now time.Time, ruleFor func(nodeId, category string) bool) []Finding {
+	if len(rows) == 0 {
+		return nil
+	}
+	type key struct{ source, category string }
+	// nights[key][localDate] = events that night
+	nights := map[key]map[string]int{}
+	totals := map[key]int{}
+	for _, n := range rows {
+		if !strings.HasPrefix(n.Source, "node:") || n.Category == "" {
+			continue
+		}
+		at := time.Unix(n.CreatedAt, 0).In(now.Location())
+		h := at.Hour()
+		if h < suggestNightStartHour && h >= suggestNightEndHour {
+			continue // daytime
+		}
+		// Attribute the small hours to the night that began the evening before,
+		// so 23:50 and 00:10 count as ONE night, not two.
+		night := at
+		if h < suggestNightEndHour {
+			night = at.AddDate(0, 0, -1)
+		}
+		k := key{source: n.Source, category: n.Category}
+		if nights[k] == nil {
+			nights[k] = map[string]int{}
+		}
+		nights[k][localDate(night)]++
+		totals[k]++
+	}
+
+	var out []Finding
+	for k, perNight := range nights {
+		qualifying := 0
+		for _, c := range perNight {
+			if c >= suggestPerNight {
+				qualifying++
+			}
+		}
+		if qualifying < suggestNights {
+			continue
+		}
+		nodeId := strings.TrimPrefix(k.source, "node:")
+		if ruleFor != nil && ruleFor(nodeId, k.category) {
+			continue // the operator already covers this
+		}
+		out = append(out, Finding{
+			Code:     FindingSuggestedRule,
+			Severity: string(notification.Info),
+			Params: map[string]any{
+				"source":   k.source,
+				"nodeId":   nodeId,
+				"category": k.category,
+				"nights":   qualifying,
+				"count":    totals[k],
+				// Editor prefill: a sane starting shape the operator refines.
+				"suggestedName":    fmt.Sprintf("After-hours %s on %s", k.category, nodeId),
+				"windowSeconds":    120,
+				"graceSeconds":     5,
+				"cooldownSeconds":  300,
+			},
+			NodeIds: []string{nodeId},
+		})
+		if len(out) >= suggestCap {
+			break
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return i64(out[i].Params["count"]) > i64(out[j].Params["count"])
+	})
+	return out
+}
+
 // --- ordering helpers -------------------------------------------------------
 
 // codeOrder is the taxonomy display order within one severity tier.
@@ -614,16 +794,19 @@ var codeOrder = map[string]int{
 	FindingCertExpired:   1,
 	FindingFleetRule:     2,
 	FindingNodeOffline:   3,
-	FindingBaselineSpike: 4,
-	FindingBaselineQuiet: 5,
-	FindingSourceAnomaly: 6,
-	FindingCertExpiring:  7,
-	FindingNoisySource:   8,
-	FindingFeedGrowth:    9,
-	FindingVolumeDelta:   10,
-	FindingTopSource:     11,
-	FindingAuditActivity: 12,
-	FindingAllQuiet:      13,
+	FindingBaselineSpike:     4,
+	FindingBaselineQuiet:     5,
+	FindingNodeBaselineSpike: 6,
+	FindingNodeBaselineQuiet: 7,
+	FindingSourceAnomaly:     8,
+	FindingCertExpiring:      9,
+	FindingNoisySource:       10,
+	FindingFeedGrowth:        11,
+	FindingVolumeDelta:       12,
+	FindingTopSource:         13,
+	FindingAuditActivity:     14,
+	FindingSuggestedRule:     15,
+	FindingAllQuiet:          16,
 }
 
 func sortFindings(findings []Finding) {

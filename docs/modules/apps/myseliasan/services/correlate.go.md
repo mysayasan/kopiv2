@@ -57,6 +57,30 @@ A setter, not a constructor argument — the ten existing tests in `correlate_te
 correlator with none wired still works, `fire` nil-guards it. `app.go` calls it once, right after
 construction, before `Reload`.
 
+### `SetEnricher` / `HasRuleFor`
+
+```go
+func (c *Correlator) SetEnricher(fn func(ctx context.Context, ruleName string) string)
+func (c *Correlator) HasRuleFor(nodeId, category string) bool
+```
+
+`SetEnricher` wires an optional string provider appended to a fired rule's notification body
+(`fire`, below) — `apps/myseliasan/services/correlate_enrich.go.md`'s `NewFleetRuleEnricher`
+appends deterministic recurrence context ("this rule also fired 3 times in the last 7 days, most
+recently …"). The contract is strict because this sits in the **alert path**: the enricher must be
+deterministic (DB reads only, never an LLM — the digest is where language lives, an alert is
+where facts live), bounded by `enrichTimeout` (2s, `context.WithTimeout` wraps every call), and
+any failure or timeout costs only the extra sentence, never the alert itself. Optional: `nil`
+(the default) means `fire` publishes exactly the `explain` body, unchanged from before.
+
+`HasRuleFor` reports whether any cached rule already carries a `"required"` clause matching this
+`(nodeId, category)` pair — the digest's suggested-rule detector
+(`services/agent_findings.go.md`'s `suggestedRuleFindings`, wired via
+`DigestService.SetRuleChecker(correlator.HasRuleFor)` in `app.go`) uses it to avoid proposing a
+rule the operator already wrote. Advisory only: it reads the same `cached` rule set `Observe`/
+`Sweep` use, so its freshness is exactly `Reload`'s — good enough for a suggestion, not a
+guarantee.
+
 ### `NodeEvent`
 
 The flattened shape a rule matches on: `NodeId`, `Kind`, `Category`, `Title`, `Body`, `At`.
@@ -92,7 +116,9 @@ and publishes a `notification.Notification`
 `explain` — the sentence an operator reads at 03:00. It names what DID happen and what did
 NOT, because "correlation rule 4 fired" tells nobody anything and the absence is half the
 finding (e.g. `"Person detected on cam-3, and Front door opened on node-7 — with no Badge
-swipe (within 30s)"`).
+swipe (within 30s)"`). When `c.enrich` is wired (`SetEnricher`, above), its output — when
+non-empty — is appended as a second line under a hard `enrichTimeout`; a slow or failing enricher
+never delays or drops the alert itself.
 
 ## `clauseMatches`
 

@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mysayasan/kopiv2/apps/myseliasan/entities"
 	"github.com/mysayasan/kopiv2/domain/notification"
+	"github.com/mysayasan/kopiv2/infra/control"
 	"github.com/mysayasan/kopiv2/infra/llm"
 	"github.com/mysayasan/kopiv2/infra/telemetry"
 )
@@ -24,9 +26,11 @@ import (
 // exactly one completion over it, under a system prompt that forbids answering
 // from anything else.
 //
-// Grounding is CENTRAL-ONLY this release: everything comes from the control
-// plane's own tables. Fanning out to nodes over the control tunnel could stall
-// a reply behind a 30s-per-node timeout; per-node drill-down is a follow-up.
+// Grounding is central-first: everything comes from the control plane's own
+// tables, EXCEPT that a question naming exactly one adopted node also pulls
+// that node's own recent events over the control tunnel. One node, a 5s cap,
+// and an offline node yields "unreachable" rather than a stall — fanning out to
+// a whole fleet would put every dead node's timeout in the answer's path.
 
 // ChatRequestBody is the POST /api/agent/chat payload.
 type ChatRequestBody struct {
@@ -61,8 +65,13 @@ const (
 )
 
 // GroundingBundle is the single document the model may answer from.
+//
+// EVERY TIME IN THIS DOCUMENT IS A PRE-FORMATTED STRING, never a unix integer.
+// Small models cheerfully "convert" a raw epoch and get it wrong — a live bench
+// had a 7B report a 2026-07-26 sighting as "2023-12-01" — and a confidently
+// wrong date in a security answer is worse than no date at all.
 type GroundingBundle struct {
-	GeneratedAt int64        `json:"generatedAt"`
+	GeneratedAt string       `json:"generatedAt"`
 	Window      GroundWindow `json:"window"`
 	// Fleet is every adopted node's live state (capped; count noted when trimmed).
 	Fleet        []GroundNode    `json:"fleet"`
@@ -73,15 +82,26 @@ type GroundingBundle struct {
 	// Recent is the newest warning/critical events, ids included so the model
 	// can cite them.
 	Recent []GroundNotif `json:"recentEvents,omitempty"`
+	// NodeDetail is the single-node drill-down: when the question names one
+	// adopted node, its own recent events are pulled over the control tunnel.
+	NodeDetail *GroundNodeDetail `json:"nodeDetail,omitempty"`
 	// Truncated lists sections that were dropped/trimmed to fit the size cap, so
 	// the model can say "I only see part of the data" instead of guessing.
 	Truncated []string `json:"truncated,omitempty"`
 }
 
 type GroundWindow struct {
-	From int64 `json:"from"`
-	To   int64 `json:"to"`
-	Days int   `json:"days"`
+	From string `json:"from"`
+	To   string `json:"to"`
+	Days int    `json:"days"`
+}
+
+// groundTime formats a unix timestamp for the bundle. Empty for "never".
+func groundTime(unix int64) string {
+	if unix <= 0 {
+		return ""
+	}
+	return time.Unix(unix, 0).Format("2006-01-02 15:04")
 }
 
 type GroundNode struct {
@@ -91,7 +111,7 @@ type GroundNode struct {
 	Status       string `json:"status"`
 	Connected    bool   `json:"connected"`
 	CertDaysLeft *int   `json:"certDaysLeft,omitempty"`
-	LastSeenAt   int64  `json:"lastSeenAt,omitempty"`
+	LastSeenAt   string `json:"lastSeenAt,omitempty"`
 }
 
 type GroundStats struct {
@@ -112,11 +132,31 @@ type GroundAnomaly struct {
 
 type GroundNotif struct {
 	Id        int64  `json:"id"`
-	CreatedAt int64  `json:"createdAt"`
+	CreatedAt string `json:"createdAt"`
 	Severity  string `json:"severity"`
 	Source    string `json:"source"`
 	Title     string `json:"title"`
 }
+
+// GroundNodeDetail is one node's own view, fetched over the control tunnel when
+// the question names it. Unreachable is honest data: "the node did not answer"
+// is itself an answer worth grounding.
+type GroundNodeDetail struct {
+	NodeId      string        `json:"nodeId"`
+	Name        string        `json:"name,omitempty"`
+	Unreachable bool          `json:"unreachable,omitempty"`
+	Recent      []GroundNotif `json:"recentEvents,omitempty"`
+}
+
+// chatNodeSender is the sliver of the control server the drill-down uses.
+type chatNodeSender interface {
+	SendRequest(ctx context.Context, nodeID string, req control.Request) (control.Response, error)
+}
+
+// chatNodeFetchTimeout bounds the single-node tunnel fetch. Deliberately far
+// under the tunnel's own 30s default: a slow node costs the drill-down section,
+// never the whole answer.
+const chatNodeFetchTimeout = 5 * time.Second
 
 // ChatService runs grounded completions.
 type ChatService struct {
@@ -125,9 +165,11 @@ type ChatService struct {
 	digests *DigestService
 	// connected is the control channel's liveness oracle (nil-safe).
 	connected func(nodeID string) bool
-	llm       *LLMManager
-	metrics   telemetry.Metrics
-	logf      func(format string, args ...any)
+	// sender reaches ONE named node over the control tunnel (nil = no drill-down).
+	sender  chatNodeSender
+	llm     *LLMManager
+	metrics telemetry.Metrics
+	logf    func(format string, args ...any)
 }
 
 // NewChatService wires the chat layer.
@@ -136,6 +178,7 @@ func NewChatService(
 	fleet digestFleetSource,
 	digests *DigestService,
 	connected func(nodeID string) bool,
+	sender chatNodeSender,
 	llmMgr *LLMManager,
 	metrics telemetry.Metrics,
 	logf func(string, ...any),
@@ -145,7 +188,7 @@ func NewChatService(
 	}
 	return &ChatService{
 		notif: notif, fleet: fleet, digests: digests,
-		connected: connected, llm: llmMgr, metrics: metrics, logf: logf,
+		connected: connected, sender: sender, llm: llmMgr, metrics: metrics, logf: logf,
 	}
 }
 
@@ -198,13 +241,15 @@ func (c *ChatService) BuildGrounding(ctx context.Context, req ChatRequestBody) (
 	tzOffsetSec := int64(req.TZOffsetMin) * 60
 
 	bundle := GroundingBundle{
-		GeneratedAt: to,
-		Window:      GroundWindow{From: from, To: to, Days: req.WindowDays},
+		GeneratedAt: groundTime(to),
+		Window:      GroundWindow{From: groundTime(from), To: groundTime(to), Days: req.WindowDays},
 	}
 
 	// Fleet.
+	var nodes []*entities.ManagedNode
 	if c.fleet != nil {
-		nodes, err := c.fleet.List(ctx)
+		var err error
+		nodes, err = c.fleet.List(ctx)
 		if err == nil {
 			bundle.FleetTotal = len(nodes)
 			for i, n := range nodes {
@@ -214,7 +259,7 @@ func (c *ChatService) BuildGrounding(ctx context.Context, req ChatRequestBody) (
 				}
 				gn := GroundNode{
 					NodeId: n.NodeId, Name: n.Name, Kind: n.Kind,
-					Status: n.Status, LastSeenAt: n.LastSeenAt,
+					Status: n.Status, LastSeenAt: groundTime(n.LastSeenAt),
 				}
 				if c.connected != nil {
 					gn.Connected = c.connected(n.NodeId)
@@ -252,6 +297,15 @@ func (c *ChatService) BuildGrounding(ctx context.Context, req ChatRequestBody) (
 		bundle.Recent = c.recentSevere(ctx, from)
 	}
 
+	// Single-node drill-down: when the question names one adopted node, pull
+	// that node's own recent events over the control tunnel. Deterministic
+	// routing (name/id substring match), one node, hard timeout — never a loop.
+	if c.sender != nil {
+		if target := matchNodeInQuestion(req.Question, nodes); target != nil {
+			bundle.NodeDetail = c.fetchNodeDetail(ctx, target)
+		}
+	}
+
 	// Latest digest findings (codes + params only — the narrative is prose and
 	// would double-spend tokens).
 	if c.digests != nil {
@@ -283,6 +337,94 @@ func (c *ChatService) BuildGrounding(ctx context.Context, req ChatRequestBody) (
 	return bundle, nil
 }
 
+// matchNodeInQuestion finds the adopted node a question names, by display name
+// or node id (case-insensitive substring, longest name wins so "gate camera 2"
+// beats "gate"). Names shorter than 3 chars never match — too many false hits.
+func matchNodeInQuestion(question string, nodes []*entities.ManagedNode) *entities.ManagedNode {
+	q := strings.ToLower(question)
+	var best *entities.ManagedNode
+	bestLen := 0
+	for _, n := range nodes {
+		name := strings.ToLower(strings.TrimSpace(n.Name))
+		if len(name) >= 3 && strings.Contains(q, name) && len(name) > bestLen {
+			best, bestLen = n, len(name)
+		}
+		id := strings.ToLower(strings.TrimSpace(n.NodeId))
+		if len(id) >= 3 && strings.Contains(q, id) && len(id) > bestLen {
+			best, bestLen = n, len(id)
+		}
+	}
+	return best
+}
+
+// fetchNodeDetail pulls one node's recent notifications over the control tunnel
+// (read-only viewer role, hard timeout). Failures degrade to Unreachable — an
+// honest fact the model can state, not an error.
+func (c *ChatService) fetchNodeDetail(ctx context.Context, node *entities.ManagedNode) *GroundNodeDetail {
+	out := &GroundNodeDetail{NodeId: node.NodeId, Name: node.Name}
+	if c.connected != nil && !c.connected(node.NodeId) {
+		out.Unreachable = true
+		return out
+	}
+	fetchCtx, cancel := context.WithTimeout(ctx, chatNodeFetchTimeout)
+	defer cancel()
+	resp, err := c.sender.SendRequest(fetchCtx, node.NodeId, control.Request{
+		Method: "GET",
+		Path:   "/api/notifications?limit=25",
+		Role:   "viewer",
+		Actor:  "control-plane:agent-chat",
+	})
+	if err != nil || resp.Status < 200 || resp.Status >= 300 {
+		out.Unreachable = true
+		return out
+	}
+	// Envelope-tolerant: {result:{items}} or {data:{result:{items}}}.
+	var env struct {
+		Result *struct {
+			Items []struct {
+				Severity  string `json:"severity"`
+				Title     string `json:"title"`
+				CreatedAt int64  `json:"createdAt"`
+			} `json:"items"`
+		} `json:"result"`
+		Data *struct {
+			Result struct {
+				Items []struct {
+					Severity  string `json:"severity"`
+					Title     string `json:"title"`
+					CreatedAt int64  `json:"createdAt"`
+				} `json:"items"`
+			} `json:"result"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body, &env); err != nil {
+		return out
+	}
+	items := env.Result
+	if items == nil && env.Data != nil {
+		items = &env.Data.Result
+	}
+	if items == nil {
+		return out
+	}
+	for i, it := range items.Items {
+		if i >= 10 {
+			break
+		}
+		title := it.Title
+		if len(title) > chatTitleCap {
+			title = title[:chatTitleCap]
+		}
+		// Node-local rows carry no central feed id; Id stays 0 so the model
+		// cites the node instead of a misleading [notif N].
+		out.Recent = append(out.Recent, GroundNotif{
+			CreatedAt: groundTime(it.CreatedAt), Severity: strings.ToLower(it.Severity),
+			Source: "node:" + node.NodeId, Title: title,
+		})
+	}
+	return out
+}
+
 // recentSevere pages the feed newest-first for warning/critical rows in-window.
 func (c *ChatService) recentSevere(ctx context.Context, from int64) []GroundNotif {
 	var out []GroundNotif
@@ -308,7 +450,7 @@ func (c *ChatService) recentSevere(ctx context.Context, from int64) []GroundNoti
 				title = title[:chatTitleCap]
 			}
 			out = append(out, GroundNotif{
-				Id: n.Id, CreatedAt: n.CreatedAt, Severity: sev, Source: n.Source, Title: title,
+				Id: n.Id, CreatedAt: groundTime(n.CreatedAt), Severity: sev, Source: n.Source, Title: title,
 			})
 			if len(out) >= chatRecentCap {
 				return out

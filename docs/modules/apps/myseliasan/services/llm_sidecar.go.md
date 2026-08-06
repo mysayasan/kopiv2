@@ -57,11 +57,24 @@ kill a wedged child and nudge an immediate relaunch.
 
 `ResolvedPaths()`/`resolveSidecarBinary`/`resolveSidecarModel` fall back to the default install
 layout under `<llmDir>/bin` (searched recursively — `findFileUnder` — since the Linux release
-archive nests everything under a `llama-<tag>/` directory) and `<llmDir>/models` (the pinned
-`defaultModelFile`, else the single `.gguf` present — **multiple `.gguf` files with none
-configured refuse to guess** rather than picking one). `SetPaths` (called by the installer after a
-successful install/import) updates the config and nudges the supervisor, so pointing at a freshly
-installed artifact doesn't need a full app restart.
+archive nests everything under a `llama-<tag>/` directory) and `<llmDir>/models`. `SetPaths`
+(called by the installer after a successful install/import) updates the config and nudges the
+supervisor, so pointing at a freshly installed artifact doesn't need a full app restart.
+
+`resolveSidecarModel`'s precedence, in order:
+
+1. **Configured path** (`agent.llm.sidecar.modelPath`) — wins outright when set.
+2. **The active-model marker** — `<llmDir>/models/active.txt` (`readActiveModelMarker`, a bare
+   file name), written by `llm_install.go`'s `publishModel` after the last successful
+   install/import. This is what lets an operator's tier choice (default vs. large) or an imported
+   model survive a restart; without it step 3 below would always win back to the 1.5B default.
+3. **The pinned default model file** (`defaultModelFile`).
+4. **A single `.gguf`** under `<llmDir>/models` — **multiple `.gguf` files with no marker and none
+   configured refuse to guess** rather than picking one.
+
+`writeActiveModelMarker`/`readActiveModelMarker` live in this file alongside the resolver they
+feed; the marker sits inside the models directory specifically so a factory reset (which erases
+`<dataDir>/llm` wholesale) wipes the choice along with the model files themselves.
 
 ## Notes
 

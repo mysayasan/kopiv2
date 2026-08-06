@@ -35,7 +35,7 @@ function severityDot(sev) {
   return <span className={`notif-sev notif-sev--${sev || 'info'}`} aria-hidden="true" />;
 }
 
-export function AIInsightPage({ session, onToast }) {
+export function AIInsightPage({ session, onToast, onSuggestRule }) {
   const t = useT();
   const findingText = useFindingText();
   const canPost = sessionCanPost(session, '/api/agent');
@@ -71,9 +71,10 @@ export function AIInsightPage({ session, onToast }) {
   }, []);
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  async function generateNow() {
+  async function generateNow(kind) {
     setGenerating(true);
-    const r = await api('/api/agent/digests/generate', { method: 'POST', noRedirect: true }).catch(() => ({ ok: false }));
+    const q = kind === 'weekly' ? '?kind=weekly' : '';
+    const r = await api(`/api/agent/digests/generate${q}`, { method: 'POST', noRedirect: true }).catch(() => ({ ok: false }));
     setGenerating(false);
     if (r.ok) {
       onToast?.(t('agent.generated'), 'info');
@@ -97,10 +98,15 @@ export function AIInsightPage({ session, onToast }) {
           <p className="camera-tab-sub">{t('agent.subtitle')}</p>
         </div>
         {canPost ? (
-          <button type="button" className="insight-generate" onClick={generateNow} disabled={generating}>
-            <Ico n="zap" sz={15} />
-            {generating ? t('agent.generating') : t('agent.generateNow')}
-          </button>
+          <div className="insight-generate-group">
+            <button type="button" className="insight-generate" onClick={() => generateNow('manual')} disabled={generating}>
+              <Ico n="zap" sz={15} />
+              {generating ? t('agent.generating') : t('agent.generateNow')}
+            </button>
+            <button type="button" className="insight-generate insight-generate--quiet" onClick={() => generateNow('weekly')} disabled={generating}>
+              {t('agent.generateWeekly')}
+            </button>
+          </div>
         ) : null}
       </header>
 
@@ -121,7 +127,12 @@ export function AIInsightPage({ session, onToast }) {
             label={t('agent.kpiNextDigest')}
             value={status?.digest?.enabled ? `${String(status.digest.localHour).padStart(2, '0')}:00` : t('common.disabled')}
             icon="bell"
-            hint={status?.digest?.lastRunDate ? t('agent.lastRun', { date: status.digest.lastRunDate }) : undefined}
+            hint={[
+              status?.digest?.weeklyEnabled
+                ? t('agent.weeklyOn', { day: t(`settings.opt.weekday.${status.digest.weekday || 0}`) })
+                : '',
+              status?.digest?.lastRunDate ? t('agent.lastRun', { date: status.digest.lastRunDate }) : '',
+            ].filter(Boolean).join(' · ') || undefined}
           />
         </div>
 
@@ -135,7 +146,7 @@ export function AIInsightPage({ session, onToast }) {
           />
         </ChartCard>
 
-        <DigestCard digest={latest} status={status} findingText={findingText} className="insight-span-2" />
+        <DigestCard digest={latest} status={status} findingText={findingText} onSuggestRule={onSuggestRule} className="insight-span-2" />
 
         {llmReady && canPost ? (
           <FleetChat model={status?.llm?.model} className="insight-span-2" />
@@ -186,7 +197,7 @@ export function AIInsightPage({ session, onToast }) {
 
 // DigestCard renders the latest digest: header chips, optional LLM narrative,
 // and the localized findings list.
-function DigestCard({ digest, status, findingText, className }) {
+function DigestCard({ digest, status, findingText, onSuggestRule, className }) {
   const t = useT();
   if (!digest) {
     return (
@@ -213,13 +224,13 @@ function DigestCard({ digest, status, findingText, className }) {
       )}
     >
       {digest.narrative ? <p className="insight-narrative">{digest.narrative}</p> : null}
-      <FindingList findings={digest.findings} findingText={findingText} />
+      <FindingList findings={digest.findings} findingText={findingText} onSuggestRule={onSuggestRule} />
       {status?.digest?.enabled === false ? <p className="insight-note">{t('agent.scheduleOff')}</p> : null}
     </ChartCard>
   );
 }
 
-function FindingList({ findings, findingText }) {
+function FindingList({ findings, findingText, onSuggestRule }) {
   const t = useT();
   if (!Array.isArray(findings) || findings.length === 0) {
     return <p className="insight-note">{t('agent.noFindings')}</p>;
@@ -230,6 +241,22 @@ function FindingList({ findings, findingText }) {
         <li key={`${f.code}-${i}`} className={f.severity === 'critical' ? 'is-high' : (f.severity === 'warning' ? 'is-low' : '')}>
           {severityDot(f.severity)}
           <span className="insight-finding-text">{findingText(f)}</span>
+          {f.code === 'suggested_rule' && onSuggestRule ? (
+            <button
+              type="button"
+              className="insight-suggest-btn"
+              onClick={() => onSuggestRule({
+                name: f.params?.suggestedName || '',
+                nodeId: f.params?.nodeId || '',
+                category: f.params?.category || '',
+                windowSeconds: Number(f.params?.windowSeconds) || 120,
+                graceSeconds: Number(f.params?.graceSeconds) || 5,
+                cooldownSeconds: Number(f.params?.cooldownSeconds) || 300,
+              })}
+            >
+              <Ico n="git-branch" sz={13} /> {t('agent.createRule')}
+            </button>
+          ) : null}
         </li>
       ))}
     </ul>

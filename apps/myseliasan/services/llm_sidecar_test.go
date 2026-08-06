@@ -64,6 +64,38 @@ func TestResolveSidecarModelFallbacks(t *testing.T) {
 	}
 }
 
+func TestResolveSidecarModelMarkerBeatsDefault(t *testing.T) {
+	llmDir := t.TempDir()
+	models := llmDirModels(llmDir)
+	os.MkdirAll(models, 0o755)
+	def := filepath.Join(models, defaultModelFile)
+	large := filepath.Join(models, largeModelFile)
+	os.WriteFile(def, []byte("g"), 0o644)
+	os.WriteFile(large, []byte("g"), 0o644)
+
+	// Without a marker the default wins among many.
+	if got := resolveSidecarModel("", llmDir); got != def {
+		t.Fatalf("default should win without a marker, got %q", got)
+	}
+	// The marker (written by an install of the large tier) flips the choice —
+	// and must survive what a restart sees (pure file state).
+	if err := writeActiveModelMarker(llmDir, largeModelFile); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveSidecarModel("", llmDir); got != large {
+		t.Fatalf("marker must beat the default, got %q", got)
+	}
+	// A stale marker (file deleted) falls back to the default instead of failing.
+	os.Remove(large)
+	if got := resolveSidecarModel("", llmDir); got != def {
+		t.Fatalf("stale marker must fall back, got %q", got)
+	}
+	// Explicit configuration still beats everything.
+	if got := resolveSidecarModel("C:\\x\\y.gguf", llmDir); got != "C:\\x\\y.gguf" {
+		t.Fatalf("configured path must win, got %q", got)
+	}
+}
+
 func TestSidecarDisabledStaysOff(t *testing.T) {
 	s := NewLLMSidecar(SidecarConfig{Enabled: false}, t.TempDir(), nil)
 	state, _ := s.Status()

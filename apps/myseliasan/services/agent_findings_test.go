@@ -26,7 +26,7 @@ func (f *fakeNotifSource) Stats(_ context.Context, from, _, _, _ int64) (*notifi
 	return &notification.Stats{}, nil
 }
 
-func (f *fakeNotifSource) Baseline(_ context.Context, _, _, _, _, _ int64) (*notification.Baseline, error) {
+func (f *fakeNotifSource) Baseline(_ context.Context, _, _, _, _, _ int64, _ string) (*notification.Baseline, error) {
 	if f.baseline == nil {
 		return &notification.Baseline{}, nil
 	}
@@ -231,6 +231,44 @@ func TestCollectFindingsIgnoresOwnDigestNotifications(t *testing.T) {
 	}
 	if len(findingsByCode(findings)[FindingCritical]) != 0 {
 		t.Fatal("a digest's own critical feed entry must never count as a critical event")
+	}
+}
+
+func TestSuggestedRuleDetector(t *testing.T) {
+	now := time.Date(2026, 8, 6, 7, 0, 0, 0, time.Local)
+	mk := func(daysAgo int, hour int, source, category string) *sharedentities.Notification {
+		at := time.Date(2026, 8, 6-daysAgo, hour, 30, 0, 0, time.Local)
+		return &sharedentities.Notification{Source: source, Category: category, Severity: "warning", CreatedAt: at.Unix()}
+	}
+	var rows []*sharedentities.Notification
+	// Three nights (2 events each, 23:xx + 00:xx straddle counts as ONE night) on cam-yard.
+	for d := 1; d <= 3; d++ {
+		rows = append(rows, mk(d, 23, "node:cam-yard", "vision.alert"))
+		rows = append(rows, mk(d-1, 0, "node:cam-yard", "vision.alert")) // small hours of same night
+	}
+	// Daytime noise on another node: never suggested.
+	for d := 1; d <= 5; d++ {
+		rows = append(rows, mk(d, 14, "node:cam-lobby", "vision.alert"))
+	}
+
+	got := suggestedRuleFindings(rows, now, nil)
+	if len(got) != 1 {
+		t.Fatalf("want 1 suggestion, got %d (%+v)", len(got), got)
+	}
+	s := got[0]
+	if s.Params["nodeId"] != "cam-yard" || s.Params["category"] != "vision.alert" {
+		t.Fatalf("wrong target: %+v", s.Params)
+	}
+	if s.Params["nights"].(int) != 3 {
+		t.Fatalf("nights = %v (straddling midnight must count once per night)", s.Params["nights"])
+	}
+
+	// A covering rule suppresses the suggestion.
+	got = suggestedRuleFindings(rows, now, func(nodeId, category string) bool {
+		return nodeId == "cam-yard" && category == "vision.alert"
+	})
+	if len(got) != 0 {
+		t.Fatalf("covered pattern must not be suggested, got %+v", got)
 	}
 }
 

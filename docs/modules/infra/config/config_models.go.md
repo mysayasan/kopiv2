@@ -125,18 +125,25 @@ What stayed here is anything a second app already uses or obviously will: `Secur
   24) and `digest.retentionDays` (default 180, `0` keeps every digest forever) are plain ints.
   `digest.language` (`en`/`ms`/`zh`/`ar`, default `en`) is the OPTIONAL LLM narrative's language
   only — the structured findings themselves are language-neutral and localized client-side
-  regardless (see `apps/myseliasan/services/agent_findings.go.md`). `llm.mode` is `"off"` |
-  `"external"` (an operator-run OpenAI-compatible endpoint — `llama-server`, Ollama, vLLM) |
-  `"sidecar"` (a llama.cpp `llama-server` child process this app supervises on loopback, default
-  port 49540). `llm.endpoint`/`apiKey`/`model` configure external mode (`apiKey` masked in the
-  settings UI); `llm.timeoutSeconds` (default 60) and `llm.maxTokens` (default 768) bound every
+  regardless (see `apps/myseliasan/services/agent_findings.go.md`). `digest.weeklyEnabled`
+  (`*bool`, default **false** — opt-in) adds a second, weekly cadence alongside the daily one: a
+  fixed 168h-window management-cadence digest fired on `digest.weekday` (`0`=Sunday…`6`=Saturday,
+  default `1`/Monday) at `digest.localHour`, guarded by its own persisted last-run date so it never
+  collides with the daily guard (`apps/myseliasan/services/agent_schedule.go.md`). `llm.mode` is
+  `"off"` | `"external"` (an operator-run OpenAI-compatible endpoint — `llama-server`, Ollama,
+  vLLM) | `"sidecar"` (a llama.cpp `llama-server` child process this app supervises on loopback,
+  default port 49540). `llm.endpoint`/`apiKey`/`model` configure external mode (`apiKey` masked in
+  the settings UI); `llm.timeoutSeconds` (default 60) and `llm.maxTokens` (default 768) bound every
   completion. `llm.sidecar.port`/`ctxSize`/`threads`/`binaryPath`/`modelPath` shape the supervised
   child; `binaryPath`/`modelPath` are filled by the in-app installer/import and default to the
-  layout under `<dataDir>/llm` when empty. `allowDownloads` (`*bool`, default **true**) gates the
-  two operator-triggered internet downloads (the pinned llama.cpp release archive and the pinned
-  default GGUF model, `apps/myseliasan/services/llm_catalog.go.md`); air-gapped sites use the
-  file-picker import path instead, and `MYSELIASAN_AI_DOWNLOADS=off` hard-locks downloads off
-  regardless of this flag — the same env-lock contract as the basemap downloader
+  layout under `<dataDir>/llm` when empty — resolution now also checks an on-disk active-model
+  marker between the configured path and the pinned default file, so an installed/imported
+  non-default model survives a restart (`apps/myseliasan/services/llm_sidecar.go.md`'s
+  `resolveSidecarModel`). `allowDownloads` (`*bool`, default **true**) gates the operator-triggered
+  internet downloads — the pinned llama.cpp release archive and either pinned GGUF model tier,
+  `"default"` (1.5B) or `"large"` (7B, `apps/myseliasan/services/llm_catalog.go.md`); air-gapped
+  sites use the file-picker import path instead, and `MYSELIASAN_AI_DOWNLOADS=off` hard-locks
+  downloads off regardless of this flag — the same env-lock contract as the basemap downloader
   (`apis/basemap.go.md`), myseliasan's other deliberate internet feature. See
   `apps/myseliasan/services/llm_manager.go.md`, `llm_sidecar.go.md`, `llm_install.go.md`,
   `agent_digest.go.md`, `agent_chat.go.md`, and `apps/myseliasan/apis/agent.go.md`.

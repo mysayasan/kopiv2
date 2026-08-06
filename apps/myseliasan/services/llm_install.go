@@ -149,14 +149,24 @@ func (i *LLMInstaller) StartBinaryDownload(ctx context.Context) error {
 	}, "download")
 }
 
-// StartModelDownload begins the pinned default-model download in the background.
-func (i *LLMInstaller) StartModelDownload(ctx context.Context) error {
+// StartModelDownload begins a pinned model download in the background. tier is
+// "default" (Qwen2.5-1.5B, runs on any host) or "large" (Qwen2.5-7B, better
+// prose and multilingual answers, needs ~6 GB free RAM).
+func (i *LLMInstaller) StartModelDownload(ctx context.Context, tier string) error {
+	file, url, sha := defaultModelFile, defaultModelURL, defaultModelSHA
+	switch strings.ToLower(strings.TrimSpace(tier)) {
+	case "", "default":
+	case "large":
+		file, url, sha = largeModelFile, largeModelURL, largeModelSHA
+	default:
+		return fmt.Errorf("unknown model tier %q (default|large)", tier)
+	}
 	return i.start(llmArtifactModel, func(st *llmInstallState) error {
-		dest := filepath.Join(llmDirModels(i.llmDir), defaultModelFile)
+		dest := filepath.Join(llmDirModels(i.llmDir), file)
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return err
 		}
-		got, err := i.downloadTo(ctx, st, defaultModelURL, dest, defaultModelSHA, maxModelBytes)
+		got, err := i.downloadTo(ctx, st, url, dest, sha, maxModelBytes)
 		if err != nil {
 			return err
 		}
@@ -338,12 +348,18 @@ func (i *LLMInstaller) downloadTo(ctx context.Context, st *llmInstallState, url,
 	return dest, nil
 }
 
-// publishModel points the sidecar at a freshly installed model.
+// publishModel points the sidecar at a freshly installed model AND persists the
+// choice in the active-model marker, so the selection survives restarts.
+// Without the marker, resolveSidecarModel would fall back to the default file
+// on next boot even though the operator just installed a different one.
 func (i *LLMInstaller) publishModel(st *llmInstallState, path string) {
+	if err := writeActiveModelMarker(i.llmDir, filepath.Base(path)); err != nil {
+		i.appendLog(st, "warning: could not persist model choice: "+err.Error())
+	}
 	if i.sidecar != nil {
 		i.sidecar.SetPaths("", path)
 	}
-	i.appendLog(st, "model installed at "+path)
+	i.appendLog(st, "model installed at "+path+" (now the active model)")
 }
 
 // --- state bookkeeping -----------------------------------------------------

@@ -57,6 +57,7 @@ type Correlator struct {
 	nodes   func(ctx context.Context, nodeId string) string // node id -> kind
 	metrics telemetry.Metrics
 	logf    func(format string, args ...any)
+	enrich  func(ctx context.Context, ruleName string) string
 
 	mu     sync.Mutex
 	cached []*ruleWithClauses
@@ -102,6 +103,39 @@ func NewCorrelator(
 // construct one directly. A separate setter rather than a constructor arg so the ten tests that
 // call NewCorrelator do not all have to grow a nil.
 func (c *Correlator) SetMetrics(m telemetry.Metrics) { c.metrics = m }
+
+// SetEnricher wires an optional context provider appended to a fired rule's
+// notification body — e.g. "this rule fired 3 times in the last 7 days". The
+// contract is strict because this sits in the ALERT PATH: the enricher must be
+// deterministic (DB reads only, never an LLM), it runs under a hard timeout,
+// and any failure or overrun costs only the extra sentence, never the alert.
+func (c *Correlator) SetEnricher(fn func(ctx context.Context, ruleName string) string) { c.enrich = fn }
+
+// enrichTimeout bounds the enricher. An alert that waits on anything slower
+// than a couple of indexed queries is an alert somebody stopped trusting.
+const enrichTimeout = 2 * time.Second
+
+// HasRuleFor reports whether any cached rule already carries a REQUIRED clause
+// matching this node+category — the digest's suggested-rule detector uses it to
+// avoid proposing a rule the operator already wrote. Advisory (cache freshness
+// = last Reload), which is exactly good enough for a suggestion.
+func (c *Correlator) HasRuleFor(nodeId, category string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, rw := range c.cached {
+		for _, cl := range rw.clauses {
+			if !strings.EqualFold(cl.Mode, "required") {
+				continue
+			}
+			nodeMatch := cl.NodeId == "" || strings.EqualFold(cl.NodeId, nodeId)
+			catMatch := cl.Category == "" || strings.EqualFold(cl.Category, category)
+			if nodeMatch && catMatch && (cl.NodeId != "" || cl.Category != "") {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // Reload refreshes the rule cache.
 func (c *Correlator) Reload(ctx context.Context) error {
@@ -272,6 +306,13 @@ func (c *Correlator) fire(ctx context.Context, rw *ruleWithClauses, armedAt time
 	c.mu.Unlock()
 
 	body := c.explain(rw, armedAt)
+	if c.enrich != nil {
+		enrichCtx, cancel := context.WithTimeout(ctx, enrichTimeout)
+		if extra := c.enrich(enrichCtx, rule.Name); extra != "" {
+			body += "\n" + extra
+		}
+		cancel()
+	}
 	c.logf("FLEET RULE FIRED: %s", rule.Name)
 
 	if c.metrics != nil {

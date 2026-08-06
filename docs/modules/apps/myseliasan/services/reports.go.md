@@ -10,7 +10,7 @@ Data}`.
 
 ## Constructor
 
-`NewReportService(registry, sites, notif, audit, users, roles, perms)`:
+`NewReportService(registry, sites, notif, audit, users, roles, perms, briefer)`:
 
 | Param | Type | Used for |
 |---|---|---|
@@ -21,9 +21,32 @@ Data}`.
 | `users` | `IControlUserService` | `Security`'s user roster. |
 | `roles` | `sharedservices.IAccessRoleService` | `Security`'s role list + permission-matrix section. |
 | `perms` | `sharedservices.IAccessPermissionService` | `Security`'s per-role endpoint grants. |
+| `briefer` | `reportBriefer` (may be `nil`) | `executiveSummary`'s AI briefing section on `FleetHealth` and range-scoped `Incident`. |
 
 `now time.Time` is a parameter on every builder (never read from the clock), so the header
 stamp and every `rangeDays` calculation are deterministic and unit-testable.
+
+## `reportBriefer` and `executiveSummary` — the AI briefing section
+
+`reportBriefer` is the one-method sliver of the fleet AI agent the reports use:
+`GenerateBriefing(ctx, windowHours) (Briefing, error)` (`services/agent_digest.go.md`). `app.go`
+wires the real `*DigestService` in; `nil` disables the section entirely and every report renders
+exactly as it did before this existed — `briefer == nil` is the fast, explicit early return in
+`executiveSummary`.
+
+`executiveSummary(ctx, doc, rangeDays)` is called at the top of `FleetHealth` (always) and
+`Incident` (only when `notificationID == 0` — the range-scoped report; a single-event incident
+report's own detail section already **is** the summary, so it is skipped there). It renders an
+`H1 "Executive Summary"`: the LLM `Narrative` (when the briefing reached a model) followed by a
+`Note` naming the model and stressing that every number below is computed deterministically, then
+an `H2 "Findings"` bulleted list of the deterministic `Lines` regardless of whether a narrative
+rendered. A briefing error, or a briefing with nothing to say, skips the whole section silently —
+best-effort, same invariant as the digest itself: a briefing failure costs the section, never the
+report.
+
+**The narrative is requested in English** even when the digest's own configured language is
+`ms`/`zh`/`ar` — `GenerateBriefing` fixes this, not `reportService`, since `domain/report` renders
+cp1252/Helvetica text and cannot carry non-Latin glyphs (see `services/agent_digest.go.md`).
 
 ## `IReportService`
 
@@ -75,6 +98,7 @@ floor-plan images, and the audit trail's append-only, tamper-evident nature.
 
 ## Incident
 
+The executive summary (above) renders only when `notificationID == 0` — the ranged report.
 `H1 "Events"`; with `notificationID > 0`, filters to that single event, else to
 `CreatedAt >= from` over the trailing `rangeDays`, from the same 500-row feed read as Fleet
 Health's alert summary. Each event gets an `H2` (`"#<id>  <title-or-category>"`), a

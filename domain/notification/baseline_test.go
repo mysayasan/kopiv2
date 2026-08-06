@@ -35,7 +35,7 @@ func TestBaselineRobustToOutlier(t *testing.T) {
 	// Chart window = just the 4th Sunday (one daily bucket).
 	from := sunday0 + 3*weekS
 	to := from + dayS
-	b, err := s.Baseline(context.Background(), from, to, dayS, 0, 0)
+	b, err := s.Baseline(context.Background(), from, to, dayS, 0, 0, "")
 	if err != nil {
 		t.Fatalf("Baseline: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestBaselinePoissonFloorAndColdStart(t *testing.T) {
 	// A Monday bucket: MAD is 0, so the band must fall back to a Poisson σ (√4 = 2)
 	// rather than collapsing to a zero-width band that flags any deviation.
 	mFrom := monday0 + 2*weekS
-	mon, err := s.Baseline(context.Background(), mFrom, mFrom+dayS, dayS, 0, 0)
+	mon, err := s.Baseline(context.Background(), mFrom, mFrom+dayS, dayS, 0, 0, "")
 	if err != nil {
 		t.Fatalf("Baseline monday: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestBaselinePoissonFloorAndColdStart(t *testing.T) {
 
 	// A Tuesday bucket has only one historical sample → learning, no band.
 	tFrom := tuesday0
-	tue, err := s.Baseline(context.Background(), tFrom, tFrom+dayS, dayS, 0, 0)
+	tue, err := s.Baseline(context.Background(), tFrom, tFrom+dayS, dayS, 0, 0, "")
 	if err != nil {
 		t.Fatalf("Baseline tuesday: %v", err)
 	}

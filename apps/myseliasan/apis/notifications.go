@@ -68,10 +68,11 @@ func (a *notificationApi) stats(w http.ResponseWriter, r *http.Request) {
 }
 
 // baseline returns the expected-activity band for each bucket of the events-over-time
-// chart, matching its granularity (bucket "hour" or "day"). Fleet-wide only: the control
-// plane's feed keys events by source node, and origin camera ids collide across nodes,
-// so the per-camera narrowing mymatasan offers would silently merge unrelated cameras
-// here. Requires the rollup substrate (empty result until the first sweep lands).
+// chart, matching its granularity (bucket "hour" or "day"). ?nodeId= narrows the band
+// to one node's events (per-SOURCE, not per-camera: origin camera ids collide across
+// nodes, so per-camera narrowing would silently merge unrelated cameras here). A node
+// band stays "learning" until enough source-split rollup history accumulates — rows
+// folded before the source dimension existed count only toward the fleet-wide band.
 func (a *notificationApi) baseline(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Unix()
 	to := queryInt64(r, "to", 0)
@@ -91,7 +92,12 @@ func (a *notificationApi) baseline(w http.ResponseWriter, r *http.Request) {
 		tzOffsetMin = 0
 	}
 
-	result, err := a.serv.Baseline(r.Context(), from, to, bucketSeconds, tzOffsetMin*60, 0)
+	source := ""
+	if nodeID := strings.TrimSpace(r.URL.Query().Get("nodeId")); nodeID != "" {
+		source = "node:" + nodeID
+	}
+
+	result, err := a.serv.Baseline(r.Context(), from, to, bucketSeconds, tzOffsetMin*60, 0, source)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return

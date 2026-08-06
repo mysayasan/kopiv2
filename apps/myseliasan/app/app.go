@@ -413,6 +413,14 @@ WHERE id NOT IN (
 				return nil
 			},
 		},
+		{
+			// The rollup gained a per-source dimension (per-node baselines); existing
+			// tables need the source column added and the old slot unique index dropped
+			// so the auto-migrator recreates it including source. Shared with mymatasan.
+			ID:   "20260806-01-notification-rollup-source",
+			Name: "add source to notification_rollup and rebuild the slot index",
+			Exec: notification.MigrateRollupSourceColumn,
+		},
 	}
 }
 
@@ -911,8 +919,40 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// access, incident detail). Rendered pure-Go (domain/report) so generation needs no
 	// headless browser — the control plane runs air-gapped. The security report is
 	// superadmin-gated inside the API; every generation is written to the audit trail.
+	// Fleet AI agent, part 1: the LLM runtime and the digest service. Built before
+	// the reports so their executive-summary section can use the same narrator +
+	// optional model. (The chat service and /api/agent routes follow the control
+	// server below — chat needs its connectivity oracle; these do not.)
+	llmDir := apphost.ResolveWritablePath(deps.DataDir, "llm")
+	agentCfg := deps.Config.Agent
+	llmSidecar := services.NewLLMSidecar(services.SidecarConfig{
+		Enabled:    strings.EqualFold(strings.TrimSpace(agentCfg.LLM.Mode), "sidecar"),
+		Port:       agentCfg.LLM.Sidecar.Port,
+		CtxSize:    agentCfg.LLM.Sidecar.CtxSize,
+		Threads:    agentCfg.LLM.Sidecar.Threads,
+		BinaryPath: agentCfg.LLM.Sidecar.BinaryPath,
+		ModelPath:  agentCfg.LLM.Sidecar.ModelPath,
+	}, llmDir, func(f string, a ...any) { deps.Logger.Infof("myseliasan.agent", f, a...) })
+	llmSidecar.SetOnRestart(func() { deps.Metrics.Inc(services.MetricAgentSidecarRestartsTotal, nil) })
+	llmSidecar.Start(bgCtx)
+	llmManager := services.NewLLMManager(agentCfg.LLM, llmSidecar)
+	llmInstaller := services.NewLLMInstaller(llmDir, llmSidecar,
+		func() bool { return agentCfg.AllowDownloads == nil || *agentCfg.AllowDownloads },
+		func(f string, a ...any) { deps.Logger.Warnf("myseliasan.agent", f, a...) })
+	llmInstaller.SetOnResult(func(artifact, method string, ok bool) {
+		outcome := "ok"
+		if !ok {
+			outcome = "failed"
+		}
+		deps.Metrics.Inc(services.MetricAgentInstallTotal,
+			telemetry.Labels{"artifact": artifact, "method": method, "outcome": outcome})
+	})
+	digestService := services.NewDigestService(deps.Db, notificationService, registry,
+		auditService, llmManager, func() config.AgentConfigModel { return deps.Config.Agent },
+		deps.Metrics, func(f string, a ...any) { deps.Logger.Infof("myseliasan.agent", f, a...) })
+
 	reportService := services.NewReportService(registry, siteService, notificationService,
-		auditService, userService, roleService, deps.AccessPerms)
+		auditService, userService, roleService, deps.AccessPerms, digestService)
 	apis.NewReportsApi(api, *deps.Auth, controlSession, reportService, auditService)
 
 	// In-app editor for the safe subset of config.json (localAuth, SSO, pairing, security,
@@ -1014,6 +1054,11 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		},
 		func(f string, a ...any) { deps.Logger.Infof("myseliasan.correlate", f, a...) })
 	correlator.SetMetrics(deps.Metrics)
+	// Recurrence context on fired rules ("also fired 3 times this week") —
+	// deterministic feed queries under the correlator's hard enrich timeout.
+	correlator.SetEnricher(services.NewFleetRuleEnricher(notificationService))
+	// The digest's suggested-rule detector skips patterns an existing rule covers.
+	digestService.SetRuleChecker(correlator.HasRuleFor)
 	if err := correlator.Reload(context.Background()); err != nil {
 		stopBackground()
 		return nil, fmt.Errorf("load fleet rules: %w", err)
@@ -1128,47 +1173,18 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		}
 	}()
 
-	// Fleet AI agent: the deterministic daily digest (always on) and the OPTIONAL
-	// language layer behind it (digest prose + ask-the-fleet chat). The LLM is never
-	// in a critical path — with mode "off" (the default) or the model down, the
-	// digest still generates from the narrator and every alerting path is untouched.
-	// The sidecar's binaries/models live under <dataDir>/llm, which the factory
-	// reset erases along with everything else.
-	llmDir := apphost.ResolveWritablePath(deps.DataDir, "llm")
-	agentCfg := deps.Config.Agent
-	llmSidecar := services.NewLLMSidecar(services.SidecarConfig{
-		Enabled:    strings.EqualFold(strings.TrimSpace(agentCfg.LLM.Mode), "sidecar"),
-		Port:       agentCfg.LLM.Sidecar.Port,
-		CtxSize:    agentCfg.LLM.Sidecar.CtxSize,
-		Threads:    agentCfg.LLM.Sidecar.Threads,
-		BinaryPath: agentCfg.LLM.Sidecar.BinaryPath,
-		ModelPath:  agentCfg.LLM.Sidecar.ModelPath,
-	}, llmDir, func(f string, a ...any) { deps.Logger.Infof("myseliasan.agent", f, a...) })
-	llmSidecar.SetOnRestart(func() { deps.Metrics.Inc(services.MetricAgentSidecarRestartsTotal, nil) })
-	llmSidecar.Start(bgCtx)
-	llmManager := services.NewLLMManager(agentCfg.LLM, llmSidecar)
-	llmInstaller := services.NewLLMInstaller(llmDir, llmSidecar,
-		func() bool { return agentCfg.AllowDownloads == nil || *agentCfg.AllowDownloads },
-		func(f string, a ...any) { deps.Logger.Warnf("myseliasan.agent", f, a...) })
-	llmInstaller.SetOnResult(func(artifact, method string, ok bool) {
-		outcome := "ok"
-		if !ok {
-			outcome = "failed"
-		}
-		deps.Metrics.Inc(services.MetricAgentInstallTotal,
-			telemetry.Labels{"artifact": artifact, "method": method, "outcome": outcome})
-	})
-	digestService := services.NewDigestService(deps.Db, notificationService, registry,
-		auditService, llmManager, func() config.AgentConfigModel { return deps.Config.Agent },
-		deps.Metrics, func(f string, a ...any) { deps.Logger.Infof("myseliasan.agent", f, a...) })
+	// Fleet AI agent, part 2: the chat service (needs the control server's
+	// connectivity oracle) and the /api/agent surface. The LLM runtime and digest
+	// service were built earlier, before the reports that reuse them; the invariant
+	// stands — the LLM is never in a critical path, and with mode "off" (default)
+	// or the model down the digest still generates from the narrator.
 	chatService := services.NewChatService(notificationService, registry, digestService,
-		controlServer.IsConnected, llmManager, deps.Metrics,
+		controlServer.IsConnected, controlServer, llmManager, deps.Metrics,
 		func(f string, a ...any) { deps.Logger.Warnf("myseliasan.agent", f, a...) })
 	apis.NewAgentApi(api, *deps.Auth, controlSession, digestService, chatService,
 		llmManager, llmInstaller, llmSidecar, auditService,
-		func() (bool, int, int, string) {
+		func() apis.AgentDigestStatus {
 			c := deps.Config.Agent.Digest
-			enabled := c.Enabled == nil || *c.Enabled
 			hour := 7
 			if c.LocalHour != nil && *c.LocalHour >= 0 && *c.LocalHour <= 23 {
 				hour = *c.LocalHour
@@ -1177,11 +1193,21 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 			if window <= 0 {
 				window = 24
 			}
-			last := ""
-			if row, err := runtimeSettingRepo.GetByUnique(context.Background(), "", "key", "agent.digest.lastRun"); err == nil && row != nil {
-				last = row.Value
+			lastRun := func(key string) string {
+				if row, err := runtimeSettingRepo.GetByUnique(context.Background(), "", "key", key); err == nil && row != nil {
+					return row.Value
+				}
+				return ""
 			}
-			return enabled, hour, window, last
+			return apis.AgentDigestStatus{
+				Enabled:           c.Enabled == nil || *c.Enabled,
+				LocalHour:         hour,
+				WindowHours:       window,
+				LastRunDate:       lastRun("agent.digest.lastRun"),
+				WeeklyEnabled:     c.WeeklyEnabled != nil && *c.WeeklyEnabled,
+				Weekday:           c.Weekday,
+				LastWeeklyRunDate: lastRun("agent.digest.lastWeeklyRun"),
+			}
 		})
 	services.RunDigestSchedule(bgCtx, digestService, runtimeSettingRepo,
 		func() config.AgentConfigModel { return deps.Config.Agent },

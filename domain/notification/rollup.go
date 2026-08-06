@@ -86,6 +86,7 @@ type rollupKey struct {
 	category    string
 	severity    string
 	label       string
+	source      string
 }
 
 // Sweep folds every notification past the cursor into the rollup table, advancing
@@ -149,6 +150,7 @@ func (m *RollupMaintainer) flush(ctx context.Context, deltas map[rollupKey]int64
 			{FieldName: "Severity", Compare: sqldataenums.Equal, Value: key.severity},
 			{FieldName: "RuleId", Compare: sqldataenums.Equal, Value: key.ruleID},
 			{FieldName: "Label", Compare: sqldataenums.Equal, Value: key.label},
+			{FieldName: "Source", Compare: sqldataenums.Equal, Value: key.source},
 		}
 		existing, _, err := m.rollups.Get(ctx, "", 1, 0, filters, nil)
 		if err != nil {
@@ -170,6 +172,7 @@ func (m *RollupMaintainer) flush(ctx context.Context, deltas map[rollupKey]int64
 			Severity:    key.severity,
 			RuleId:      key.ruleID,
 			Label:       key.label,
+			Source:      key.source,
 			Count:       delta,
 			UpdatedAt:   now,
 		}); err != nil {
@@ -199,6 +202,7 @@ func rollupKeyFor(n *entities.Notification) rollupKey {
 		category:    cat,
 		severity:    sev,
 		label:       labelFromNotification(n),
+		source:      strings.TrimSpace(n.Source),
 	}
 }
 

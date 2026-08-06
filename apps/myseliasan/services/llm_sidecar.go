@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -435,14 +436,41 @@ func resolveSidecarBinary(configured, llmDir string) string {
 	return findFileUnder(llmDirBin(llmDir), llamaServerExeName())
 }
 
-// resolveSidecarModel resolves the configured model path, falling back to the
-// default model file, then to any single .gguf under <llmDir>/models.
+// activeModelMarkerFile records the operator's model choice inside the models
+// dir (a bare file name). Config beats it; it beats the default; it lives with
+// the models so a factory reset wipes the choice along with the files.
+const activeModelMarkerFile = "active.txt"
+
+func writeActiveModelMarker(llmDir, modelFileName string) error {
+	dir := llmDirModels(llmDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, activeModelMarkerFile), []byte(modelFileName+"\n"), 0o644)
+}
+
+func readActiveModelMarker(llmDir string) string {
+	raw, err := os.ReadFile(filepath.Join(llmDirModels(llmDir), activeModelMarkerFile))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
+}
+
+// resolveSidecarModel resolves the model to serve: explicit configuration wins,
+// then the active-model marker (the last install/import), then the default
+// model file, then any single .gguf under <llmDir>/models.
 func resolveSidecarModel(configured, llmDir string) string {
 	if p := strings.TrimSpace(configured); p != "" {
 		return p
 	}
 	dir := llmDirModels(llmDir)
-	if def := dir + string(os.PathSeparator) + defaultModelFile; fileExists(def) {
+	if marker := readActiveModelMarker(llmDir); marker != "" {
+		if p := filepath.Join(dir, filepath.Base(marker)); fileExists(p) {
+			return p
+		}
+	}
+	if def := filepath.Join(dir, defaultModelFile); fileExists(def) {
 		return def
 	}
 	entries, err := os.ReadDir(dir)
@@ -455,9 +483,9 @@ func resolveSidecarModel(configured, llmDir string) string {
 			continue
 		}
 		if only != "" {
-			return "" // multiple models and none configured: refuse to guess
+			return "" // multiple models, no marker, none configured: refuse to guess
 		}
-		only = dir + string(os.PathSeparator) + e.Name()
+		only = filepath.Join(dir, e.Name())
 	}
 	return only
 }

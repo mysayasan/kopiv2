@@ -58,6 +58,9 @@ func validateSection(section string, data map[string]any) error {
 		if g.i("agent.digest.retentionDays") < 0 {
 			return fmt.Errorf("digest retention cannot be negative")
 		}
+		if wd := g.i("agent.digest.weekday"); wd < 0 || wd > 6 {
+			return fmt.Errorf("digest weekday must be between 0 (Sunday) and 6 (Saturday)")
+		}
 		if lang := strings.ToLower(strings.TrimSpace(g.s("agent.digest.language"))); lang != "" &&
 			lang != "en" && lang != "ms" && lang != "zh" && lang != "ar" {
 			return fmt.Errorf("digest language must be en, ms, zh, or ar")
@@ -149,6 +152,9 @@ func applyToConfig(cfg *config.AppConfigModel, section string, data map[string]a
 		cfg.Agent.Digest.WindowHours = g.i("agent.digest.windowHours")
 		cfg.Agent.Digest.RetentionDays = g.i("agent.digest.retentionDays")
 		cfg.Agent.Digest.Language = strings.ToLower(strings.TrimSpace(g.s("agent.digest.language")))
+		weeklyEnabled := g.b("agent.digest.weeklyEnabled")
+		cfg.Agent.Digest.WeeklyEnabled = &weeklyEnabled
+		cfg.Agent.Digest.Weekday = g.i("agent.digest.weekday")
 		cfg.Agent.LLM.Mode = strings.ToLower(strings.TrimSpace(g.s("agent.llm.mode")))
 		cfg.Agent.LLM.Endpoint = strings.TrimSpace(g.s("agent.llm.endpoint"))
 		cfg.Agent.LLM.APIKey = g.s("agent.llm.apiKey")

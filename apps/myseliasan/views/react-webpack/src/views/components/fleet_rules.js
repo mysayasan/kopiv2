@@ -336,7 +336,11 @@ function RuleEditor({ initial, nodes, busy, error, onCancel, onSave }) {
   );
 }
 
-export function FleetRulesPage({ nodes = [], session, onToast }) {
+// prefill, when set, opens the editor with an agent-suggested draft (the AI
+// Insight page's "Create rule" hand-off). It is a SUGGESTION: nothing is saved
+// until the operator presses Save; onPrefillConsumed clears the hand-off state
+// so leaving and returning shows the normal list.
+export function FleetRulesPage({ nodes = [], session, onToast, prefill = null, onPrefillConsumed }) {
   const t = useT();
   const kindLabel = useKindLabel();
   const [items, setItems] = useState([]);
@@ -360,6 +364,26 @@ export function FleetRulesPage({ nodes = [], session, onToast }) {
     else if (onToast) onToast(r.message || t('fr.loadFailed'), 'error');
   }, [onToast, t]);
   useEffect(() => { load(); }, [load]);
+
+  // An agent-suggested draft opens the editor pre-filled (superadmin only —
+  // rule writes are superadmin-gated server-side anyway).
+  useEffect(() => {
+    if (!prefill || !canWrite) return;
+    setError('');
+    setEditing({
+      ...blankRule(),
+      name: prefill.name || '',
+      windowSeconds: prefill.windowSeconds || 120,
+      graceSeconds: prefill.graceSeconds || 5,
+      cooldownSeconds: prefill.cooldownSeconds || 300,
+      clauses: [
+        { ...blankClause('required'), nodeId: prefill.nodeId || '', category: prefill.category || '' },
+        blankClause('absent'),
+      ],
+    });
+    onPrefillConsumed && onPrefillConsumed();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill, canWrite]);
 
   // save posts the whole rule: clauses are replaced wholesale, so an edit either lands or does
   // not — a correlation rule that half-applied would be worse than one that never saved.

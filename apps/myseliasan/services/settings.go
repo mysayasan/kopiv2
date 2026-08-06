@@ -294,24 +294,32 @@ func (s *settingsService) read(section string) (map[string]any, error) {
 			"parentBaseUrl":            s.cfg.Pairing.ParentBaseURL,
 		}}, nil
 	case "agent":
+		// Zero means "use the built-in default" everywhere in this block, so the
+		// editor shows the EFFECTIVE value rather than a bare 0 — an operator
+		// reads "0" as disabled/unbounded, which is the opposite of the truth
+		// (0 look-back is really 24h, 0 timeout is really 60s). Saving then
+		// writes the value explicitly, which is also the clearer config.json.
+		// Threads is the one honest 0: llama-server's own "pick for me".
 		return map[string]any{"agent": map[string]any{
 			"digest": map[string]any{
 				"enabled":       boolValue(s.cfg.Agent.Digest.Enabled, true),
 				"localHour":     intValue(s.cfg.Agent.Digest.LocalHour, 7),
-				"windowHours":   s.cfg.Agent.Digest.WindowHours,
-				"retentionDays": s.cfg.Agent.Digest.RetentionDays,
-				"language":      s.cfg.Agent.Digest.Language,
+				"windowHours":   orDefault(s.cfg.Agent.Digest.WindowHours, 24),
+				"retentionDays": orDefault(s.cfg.Agent.Digest.RetentionDays, 180),
+				"language":      defaultStr(s.cfg.Agent.Digest.Language, "en"),
+				"weeklyEnabled": boolValue(s.cfg.Agent.Digest.WeeklyEnabled, false),
+				"weekday":       s.cfg.Agent.Digest.Weekday,
 			},
 			"llm": map[string]any{
-				"mode":           s.cfg.Agent.LLM.Mode,
+				"mode":           defaultStr(s.cfg.Agent.LLM.Mode, "off"),
 				"endpoint":       s.cfg.Agent.LLM.Endpoint,
 				"apiKey":         s.cfg.Agent.LLM.APIKey,
 				"model":          s.cfg.Agent.LLM.Model,
-				"timeoutSeconds": s.cfg.Agent.LLM.TimeoutSeconds,
-				"maxTokens":      s.cfg.Agent.LLM.MaxTokens,
+				"timeoutSeconds": orDefault(s.cfg.Agent.LLM.TimeoutSeconds, 60),
+				"maxTokens":      orDefault(s.cfg.Agent.LLM.MaxTokens, 768),
 				"sidecar": map[string]any{
-					"port":       s.cfg.Agent.LLM.Sidecar.Port,
-					"ctxSize":    s.cfg.Agent.LLM.Sidecar.CtxSize,
+					"port":       orDefault(s.cfg.Agent.LLM.Sidecar.Port, 49540),
+					"ctxSize":    orDefault(s.cfg.Agent.LLM.Sidecar.CtxSize, 8192),
 					"threads":    s.cfg.Agent.LLM.Sidecar.Threads,
 					"binaryPath": s.cfg.Agent.LLM.Sidecar.BinaryPath,
 					"modelPath":  s.cfg.Agent.LLM.Sidecar.ModelPath,
@@ -570,4 +578,13 @@ func intValue(p *int, def int) int {
 		return def
 	}
 	return *p
+}
+
+// orDefault substitutes the effective default for a zero-valued int, so the
+// settings editor never shows a bare "0" for a knob the code treats as "unset".
+func orDefault(v, def int) int {
+	if v <= 0 {
+		return def
+	}
+	return v
 }

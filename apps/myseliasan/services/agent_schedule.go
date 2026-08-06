@@ -21,6 +21,10 @@ import (
 // with time.Date in the local zone rather than adding 24h.
 const digestLastRunKey = "agent.digest.lastRun"
 
+// digestLastWeeklyKey guards the weekly digest the same way (its own key: the
+// two cadences fire independently, possibly on the same morning).
+const digestLastWeeklyKey = "agent.digest.lastWeeklyRun"
+
 // digestScheduleRetry is how long the loop waits after a failed generation
 // before retrying (within the same day).
 const digestScheduleRetry = 30 * time.Minute
@@ -59,7 +63,9 @@ type digestSchedule struct {
 func (s *digestSchedule) run(ctx context.Context) {
 	for ctx.Err() == nil {
 		cfg := s.cfg()
-		if !digestEnabled(cfg) {
+		daily := digestEnabled(cfg)
+		weekly := weeklyDigestEnabled(cfg)
+		if !daily && !weekly {
 			// Disabled: idle, re-checking occasionally (a settings change lands
 			// after a restart, so this is belt-and-braces, not the main path).
 			if !sleepCtx(ctx, time.Hour) {
@@ -68,27 +74,57 @@ func (s *digestSchedule) run(ctx context.Context) {
 			continue
 		}
 		now := s.now()
-		next := nextDigestRun(now, digestHour(cfg), s.lastRunDate(ctx))
-		wait := next.Sub(now)
-		s.logf("agent digest: next daily run at %s", next.Format("2006-01-02 15:04"))
-		if !sleepCtx(ctx, wait) {
+		hour := digestHour(cfg)
+
+		// The next occurrence of whichever cadence is due first.
+		var next time.Time
+		var kind string
+		if daily {
+			next = nextDigestRun(now, hour, s.lastDate(ctx, digestLastRunKey))
+			kind = "daily"
+		}
+		if weekly {
+			wn := nextWeeklyRun(now, hour, digestWeekday(cfg), s.lastDate(ctx, digestLastWeeklyKey))
+			if next.IsZero() || wn.Before(next) {
+				next = wn
+				kind = "weekly"
+			}
+		}
+		s.logf("agent digest: next %s run at %s", kind, next.Format("2006-01-02 15:04"))
+		if !sleepCtx(ctx, next.Sub(now)) {
 			return
 		}
 
 		now = s.now()
 		today := localDate(now)
-		if s.lastRunDate(ctx) == today {
-			continue // another instance (pre-restart) already ran today's digest
+		guardKey := digestLastRunKey
+		if kind == "weekly" {
+			guardKey = digestLastWeeklyKey
 		}
-		if _, err := s.digests.Generate(ctx, "daily", 0); err != nil {
-			s.logf("agent digest: daily generation failed: %v — retrying in %s", err, digestScheduleRetry)
+		if s.lastDate(ctx, guardKey) == today {
+			continue // another instance (pre-restart) already ran this one today
+		}
+		if _, err := s.digests.Generate(ctx, kind, 0); err != nil {
+			s.logf("agent digest: %s generation failed: %v — retrying in %s", kind, err, digestScheduleRetry)
 			if !sleepCtx(ctx, digestScheduleRetry) {
 				return
 			}
 			continue
 		}
-		s.setLastRunDate(ctx, today)
+		s.setLastDate(ctx, guardKey, today)
 	}
+}
+
+// nextWeeklyRun computes the next Weekday-at-localHour occurrence, skipping
+// today's slot when this week's weekly digest already ran.
+func nextWeeklyRun(now time.Time, localHour int, weekday time.Weekday, lastRunDate string) time.Time {
+	daysAhead := (int(weekday) - int(now.Weekday()) + 7) % 7
+	candidate := time.Date(now.Year(), now.Month(), now.Day(), localHour, 0, 0, 0, now.Location()).
+		AddDate(0, 0, daysAhead)
+	if !candidate.After(now) || (daysAhead == 0 && lastRunDate == localDate(now)) {
+		candidate = candidate.AddDate(0, 0, 7)
+	}
+	return candidate
 }
 
 // nextDigestRun computes when the next daily digest should fire: today at
@@ -110,6 +146,18 @@ func digestEnabled(cfg config.AgentConfigModel) bool {
 	return cfg.Digest.Enabled == nil || *cfg.Digest.Enabled
 }
 
+// weeklyDigestEnabled defaults OFF — the weekly cadence is opt-in.
+func weeklyDigestEnabled(cfg config.AgentConfigModel) bool {
+	return cfg.Digest.WeeklyEnabled != nil && *cfg.Digest.WeeklyEnabled
+}
+
+func digestWeekday(cfg config.AgentConfigModel) time.Weekday {
+	if wd := cfg.Digest.Weekday; wd >= 0 && wd <= 6 {
+		return time.Weekday(wd)
+	}
+	return time.Monday
+}
+
 func digestHour(cfg config.AgentConfigModel) int {
 	if cfg.Digest.LocalHour != nil && *cfg.Digest.LocalHour >= 0 && *cfg.Digest.LocalHour <= 23 {
 		return *cfg.Digest.LocalHour
@@ -117,36 +165,36 @@ func digestHour(cfg config.AgentConfigModel) int {
 	return 7 // unset: a morning digest, not a midnight one
 }
 
-func (s *digestSchedule) lastRunDate(ctx context.Context) string {
+func (s *digestSchedule) lastDate(ctx context.Context, key string) string {
 	if s.settings == nil {
 		return ""
 	}
-	row, err := s.settings.GetByUnique(ctx, "", "key", digestLastRunKey)
+	row, err := s.settings.GetByUnique(ctx, "", "key", key)
 	if err != nil || row == nil {
 		return ""
 	}
 	return row.Value
 }
 
-func (s *digestSchedule) setLastRunDate(ctx context.Context, date string) {
+func (s *digestSchedule) setLastDate(ctx context.Context, key, date string) {
 	if s.settings == nil {
 		return
 	}
 	now := time.Now().UTC().Unix()
-	row, err := s.settings.GetByUnique(ctx, "", "key", digestLastRunKey)
+	row, err := s.settings.GetByUnique(ctx, "", "key", key)
 	if err != nil || row == nil {
 		_, cerr := s.settings.Create(ctx, "", sharedentities.RuntimeSetting{
-			Key: digestLastRunKey, Value: date, CreatedAt: now, UpdatedAt: now,
+			Key: key, Value: date, CreatedAt: now, UpdatedAt: now,
 		})
 		if cerr != nil {
-			s.logf("agent digest: persist last-run: %v", cerr)
+			s.logf("agent digest: persist last-run (%s): %v", key, cerr)
 		}
 		return
 	}
 	row.Value = date
 	row.UpdatedAt = now
 	if _, err := s.settings.UpdateById(ctx, "", *row); err != nil {
-		s.logf("agent digest: persist last-run: %v", err)
+		s.logf("agent digest: persist last-run (%s): %v", key, err)
 	}
 }
 

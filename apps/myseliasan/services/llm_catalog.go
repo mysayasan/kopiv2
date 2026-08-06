@@ -33,6 +33,15 @@ const (
 	defaultModelURL  = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/" + defaultModelFile
 	defaultModelSHA  = "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e"
 
+	// The larger tier: Qwen2.5-7B-Instruct Q4_K_M (~4.7 GB, needs ~6 GB free RAM).
+	// Noticeably better prose and instruction-following — including the Arabic
+	// replies the 1.5B routinely answers in English. From bartowski's repack
+	// because the official Qwen 7B GGUF repo ships the file SPLIT in two parts,
+	// which the single-file installer/resolver deliberately does not handle.
+	largeModelFile = "Qwen2.5-7B-Instruct-Q4_K_M.gguf"
+	largeModelURL  = "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/" + largeModelFile
+	largeModelSHA  = "65b8fcd92af6b4fefa935c625d1ac27ea29dcb6ee14589c55a8f115ceaaa1423"
+
 	// Size caps for downloads/imports (io.LimitReader guards, not exact sizes).
 	maxBinaryArchiveBytes = 512 << 20 // the b10289 archives are ~18 MB
 	maxModelBytes         = 8 << 30   // q4 models up to ~8 GB importable
