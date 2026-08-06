@@ -25,18 +25,27 @@ localAuth) — there is no seam for a DB value to override them at startup:
   backs `Reset`, so "restore defaults" still works after `config.json` has been hand-edited or
   overwritten since.
 
-Secrets (`localAuth.password`, `sso.clientSecret`, `jwt.secret`, `cache.redis.password`) are
-never returned by `Get`/`GetAll`: the leaf is blanked and a sibling `"<field>Set"` boolean is
-added so the UI can show whether a value exists without exposing it. `Save` treats a blank (or
-omitted) incoming secret as "keep the current value" rather than clearing it.
+Secrets (`localAuth.password`, `sso.clientSecret`, `agent.llm.apiKey`, `jwt.secret`,
+`cache.redis.password`) are never returned by `Get`/`GetAll`: the leaf is blanked and a sibling
+`"<field>Set"` boolean is added so the UI can show whether a value exists without exposing it.
+`Save` treats a blank (or omitted) incoming secret as "keep the current value" rather than
+clearing it.
 
 ## Sections
 
-`sectionOrder` (also the display/tab order): `localAuth`, `sso`, `pairing`, `security`,
+`sectionOrder` (also the display/tab order): `localAuth`, `sso`, `pairing`, `agent`, `security`,
 `storage`, `logging`. `read(section)` builds each section's root-relative nested map straight
 from `*config.AppConfigModel` — see the switch in `settings.go` for the exact field list per
-section (mirrors `infra/config`'s `LocalAuth`/`SSO`/`Pairing`/`Jwt`/`Tls`/`SecurityHeaders`/
-`RateLimit`/`FileStorage`/`Cache`/`Logging`/`ApiLog`/`Telemetry` models).
+section (mirrors `infra/config`'s `LocalAuth`/`SSO`/`Pairing`/`AgentConfigModel`/`Jwt`/`Tls`/
+`SecurityHeaders`/`RateLimit`/`FileStorage`/`Cache`/`Logging`/`ApiLog`/`Telemetry` models).
+
+The `agent` section (new) exposes the fleet AI agent's config: `digest.{enabled, localHour,
+windowHours, retentionDays, language}` and `llm.{mode, endpoint, apiKey, model, timeoutSeconds,
+maxTokens, sidecar.{port, ctxSize, threads, binaryPath, modelPath}}` plus a top-level
+`allowDownloads`. `boolValue`/`intValue` resolve the pointer fields (`Digest.Enabled`,
+`Digest.LocalHour`, `AllowDownloads`) to their documented defaults (`true`, `7`, `true`) when the
+config omits them — see `infra/config/config_models.go.md`'s `AgentConfigModel` for why those
+three are pointers. `llm.apiKey` is the section's one secret leaf (`sectionSecrets["agent"]`).
 
 ## ISettingsService
 

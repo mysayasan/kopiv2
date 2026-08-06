@@ -17,6 +17,11 @@ bad value would break boot or security:
 - `sso` — session/policy-cache TTLs cannot be negative.
 - `pairing` — `mtlsPort`/`controlPort`/`mediaPort` must each be `0` (unset) or in `1..65535`;
   a non-empty multicast address must be `host:port`.
+- `agent` — `llm.mode` must be `off`/`external`/`sidecar`; `external` mode additionally requires
+  a non-empty `llm.endpoint` starting `http://`/`https://`. `digest.localHour` must be `0..23`;
+  `digest.windowHours` `0..168`; `digest.retentionDays` cannot be negative; `digest.language`
+  (when set) must be `en`/`ms`/`zh`/`ar`. `llm.timeoutSeconds` must be `0..600`;
+  `llm.maxTokens` cannot be negative; `llm.sidecar.port` must be `0` (unset) or `1..65535`.
 - `security` — `jwt.secret` must be at least 16 characters; `allowOrigins` cannot be empty;
   `tls.certPath`/`tls.keyPath` are required; every rate-limit tier's `requests`/`windowSeconds`
   must be non-negative.
@@ -31,7 +36,9 @@ Writes a validated section's values onto the live config model field-by-field (m
 `settings.go`'s `read()` shape in reverse), so the UI reflects the pending change immediately —
 the host still needs a restart (`apis/system.go`) to consume them. `pairing.enabled` is stored
 as a `*bool` (`config.PairingConfigModel.Enabled`) so a config that omits the key keeps
-defaulting to enabled; `applyToConfig` always sets it explicitly once the section is saved.
+defaulting to enabled; `applyToConfig` always sets it explicitly once the section is saved. The
+`agent` case is the same shape: `Digest.Enabled`/`Digest.LocalHour`/`AllowDownloads` are also
+written as explicit `*bool`/`*int` pointers on every save, same reasoning.
 
 ## `getters` — nested-map accessor
 

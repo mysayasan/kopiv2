@@ -12,8 +12,9 @@ config: see "Per-app config seam" below.
 - Model server listener hostnames and explicit TLS/non-TLS ports.
 - Model bootstrap, JWT, SSO, local app auth, notification startup defaults, login-lockout
   security, password strength policy, MFA enforcement policy, encryption-at-rest,
-  pairing/fleet, file storage, cache, rate limiting, transaction coordination, logging,
-  API log cleanup, audit-log retention, telemetry, TLS, and DB settings.
+  pairing/fleet, the fleet AI agent (digest + optional LLM layer), file storage, cache,
+  rate limiting, transaction coordination, logging, API log cleanup, audit-log retention,
+  telemetry, TLS, and DB settings.
 - Retain the raw config document (`raw []byte`, unexported/untagged) that
   `LoadAppConfiguration` (`app_config.go.md`) decoded it from, exposed via `Raw()`, so an app
   that owns config blocks of its own can decode them from the same bytes. See "Per-app
@@ -115,6 +116,30 @@ What stayed here is anything a second app already uses or obviously will: `Secur
   `60000`). See `infra/webauthn/webauthn.go.md` for how these resolve into the underlying
   ceremony library, and `apps/myidsan/app/app.go.md` for where the `*webauthn.Authority` is
   built and threaded through.
+- `agent` (`AgentConfigModel`, `myseliasan`) configures the fleet AI agent: the always-on
+  deterministic daily digest and the OPTIONAL LLM layer behind it. **The LLM is never in a
+  critical path** — with `llm.mode` `"off"` (the default) or the model unreachable, the digest
+  still generates from the narrator and every alerting path is untouched. `digest.enabled`
+  (`*bool`, default **true**) and `digest.localHour` (`*int` 0-23, default **7**) are pointers so
+  an absent value is distinguishable from an explicit `0`/`false`. `digest.windowHours` (default
+  24) and `digest.retentionDays` (default 180, `0` keeps every digest forever) are plain ints.
+  `digest.language` (`en`/`ms`/`zh`/`ar`, default `en`) is the OPTIONAL LLM narrative's language
+  only — the structured findings themselves are language-neutral and localized client-side
+  regardless (see `apps/myseliasan/services/agent_findings.go.md`). `llm.mode` is `"off"` |
+  `"external"` (an operator-run OpenAI-compatible endpoint — `llama-server`, Ollama, vLLM) |
+  `"sidecar"` (a llama.cpp `llama-server` child process this app supervises on loopback, default
+  port 49540). `llm.endpoint`/`apiKey`/`model` configure external mode (`apiKey` masked in the
+  settings UI); `llm.timeoutSeconds` (default 60) and `llm.maxTokens` (default 768) bound every
+  completion. `llm.sidecar.port`/`ctxSize`/`threads`/`binaryPath`/`modelPath` shape the supervised
+  child; `binaryPath`/`modelPath` are filled by the in-app installer/import and default to the
+  layout under `<dataDir>/llm` when empty. `allowDownloads` (`*bool`, default **true**) gates the
+  two operator-triggered internet downloads (the pinned llama.cpp release archive and the pinned
+  default GGUF model, `apps/myseliasan/services/llm_catalog.go.md`); air-gapped sites use the
+  file-picker import path instead, and `MYSELIASAN_AI_DOWNLOADS=off` hard-locks downloads off
+  regardless of this flag — the same env-lock contract as the basemap downloader
+  (`apis/basemap.go.md`), myseliasan's other deliberate internet feature. See
+  `apps/myseliasan/services/llm_manager.go.md`, `llm_sidecar.go.md`, `llm_install.go.md`,
+  `agent_digest.go.md`, `agent_chat.go.md`, and `apps/myseliasan/apis/agent.go.md`.
 - `fileStorage.path` is app-relative unless absolute.
 - `fileStorage.cleanup.enabled` starts the expired file cleanup scheduler.
 - `fileStorage.cleanup.frequencySeconds` controls scheduler check frequency and defaults to 60 seconds in apphost.

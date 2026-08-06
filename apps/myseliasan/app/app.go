@@ -26,10 +26,12 @@ import (
 	"github.com/mysayasan/kopiv2/infra/apidocs"
 	"github.com/mysayasan/kopiv2/infra/apphost"
 	"github.com/mysayasan/kopiv2/infra/atrest"
+	"github.com/mysayasan/kopiv2/infra/config"
 	"github.com/mysayasan/kopiv2/infra/control"
 	"github.com/mysayasan/kopiv2/infra/db/bootstrap"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/mediarelay"
+	"github.com/mysayasan/kopiv2/infra/safego"
 	"github.com/mysayasan/kopiv2/infra/stream"
 	"github.com/mysayasan/kopiv2/infra/telemetry"
 	"github.com/mysayasan/kopiv2/infra/versioning"
@@ -68,6 +70,37 @@ func upDown(up bool) string {
 		return "up"
 	}
 	return "down"
+}
+
+// periodic runs fn once immediately, then every interval, until ctx is cancelled.
+//
+// It is supervised: a panic inside fn restarts the loop with backoff instead of killing
+// the process. That matters more than it looks — these loops are the retention purges,
+// and a dead purge loop is invisible. Nothing re-creates it, so the disk simply fills
+// until every write fails, the database included. (Same contract as mymatasan's helper.)
+func periodic(ctx context.Context, name string, interval time.Duration, fn func(context.Context)) {
+	safego.Supervise(ctx, name, func(ctx context.Context) {
+		fn(ctx)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				fn(ctx)
+			case <-ctx.Done():
+				return
+			}
+		}
+	})
+}
+
+// purgeInterval turns the configured purge cadence (hours) into a duration,
+// defaulting to every 6 hours when unset.
+func purgeInterval(hours int) time.Duration {
+	if d := time.Duration(hours) * time.Hour; d > 0 {
+		return d
+	}
+	return 6 * time.Hour
 }
 
 func (m *module) Name() string {
@@ -638,6 +671,10 @@ func (m *module) Entities() []any {
 		sharedentities.ApiLog{},
 		sharedentities.UserSession{},
 		sharedentities.Notification{},
+		// Hourly rollup of the notification feed: the substrate the heatmap/baseline
+		// analytics and the AI digest's anomaly findings read. Folded by the
+		// RollupMaintainer started in RegisterAppRoutes.
+		sharedentities.NotificationRollup{},
 		appentities.ManagedNode{},
 		appentities.ControlSetting{},
 		// Shared key-value row the rest of the suite already carries; the first-run
@@ -658,6 +695,8 @@ func (m *module) Entities() []any {
 		appentities.NodePlacement{},
 		// Dedup ledger for node-relayed notifications (reconnect replay idempotency).
 		appentities.RelayedNotif{},
+		// Fleet AI agent: stored digests (structured findings + optional LLM narrative).
+		appentities.AgentDigest{},
 	}
 }
 
@@ -684,6 +723,7 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Floors", Description: "floor-plan images and node/camera placements", Path: "/api/floors", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Placements", Description: "list, reposition and remove node/camera markers on floor plans", Path: "/api/placements", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Node Floorplan", Description: "floor plans holding a node camera markers (geo-map drill-down)", Path: "/api/node-floorplan", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "AI Agent", Description: "fleet digest, ask-the-fleet chat, and LLM sidecar management", Path: "/api/agent", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Settings", Description: "in-app editor for the safe subset of config.json (superadmin-gated)", Path: "/api/settings", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "System", Description: "process restart to apply settings changes (superadmin-gated)", Path: "/api/system", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Setup Wizard", Description: "first-run setup state and completion", Path: "/api/setup", AccessTier: apiaccessenums.AuthOnly},
@@ -827,13 +867,45 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	bgCtx, stopBackground := context.WithCancel(context.Background())
 
+	// Shared key-value runtime settings (first-run wizard flag, rollup cursor, digest
+	// schedule watermark). Built here because the notification rollup needs it; the
+	// setup-wizard API below reuses the same repo.
+	runtimeSettingRepo := dbsql.NewGenericRepo[sharedentities.RuntimeSetting](deps.Db)
+
 	// Unified notification feed for the control plane: events nodes push up their
 	// control channels (alerts, health, system, going-offline) land here so an
 	// operator sees fleet activity in one place. Reuses the shared notification
 	// engine (persist + log + live SSE).
 	notificationRepo := dbsql.NewGenericRepo[sharedentities.Notification](deps.Db)
-	notificationService := notification.NewService(notificationRepo, notification.Options{Logger: deps.Logger})
+	rollupRepo := dbsql.NewGenericRepo[sharedentities.NotificationRollup](deps.Db)
+	notificationService := notification.NewService(notificationRepo,
+		notification.Options{Logger: deps.Logger, Metrics: deps.Metrics}).
+		WithRollups(rollupRepo)
 	apis.NewNotificationApi(api, *deps.Auth, controlSession, notificationService)
+
+	// Fold the feed into hourly rollups (the heatmap/baseline substrate). The first
+	// sweep backfills every historical row past the persisted cursor, so fleets that
+	// upgraded onto this build get their history scored, not just new events.
+	rollupMaintainer := notification.NewRollupMaintainer(notificationRepo, rollupRepo,
+		services.NewRollupCursor(runtimeSettingRepo), 0, 0)
+	rollupMaintainer.Start(bgCtx)
+
+	// Retention purge for the feed. Without it the control plane's notifications table
+	// grows unbounded (every node event lands here forever). Retention is config-driven
+	// (notification.retentionDays; 0 keeps everything) and the loop is supervised — a
+	// dead purge loop is invisible until the disk fills.
+	periodic(bgCtx, "myseliasan.purge.notifications", purgeInterval(deps.Config.Notification.PurgeIntervalHours), func(ctx context.Context) {
+		days := deps.Config.Notification.RetentionDays
+		if days <= 0 {
+			return
+		}
+		if deleted, err := notificationService.PurgeOlderThanDays(ctx, days, deps.Config.Notification.PurgeReadOnly); err != nil {
+			deps.Logger.Warnf("myseliasan.notification", "notification purge failed: %v", err)
+		} else if deleted > 0 {
+			deps.Metrics.Add(services.MetricNotificationsPurgedTotal, nil, float64(deleted))
+			deps.Logger.Infof("myseliasan.notification", "purged %d expired notifications", deleted)
+		}
+	})
 
 	// On-demand printable PDF reports (fleet health, site/asset inventory, security &
 	// access, incident detail). Rendered pure-Go (domain/report) so generation needs no
@@ -870,6 +942,9 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 				planDir,
 				apis.ResolveBasemapDir(deps.DataDir, ""),
 				strings.TrimSpace(deps.Config.FileStorage.Path),
+				// The AI sidecar's binaries and model files (<dataDir>/llm) — a
+				// factory-reset control plane must not keep a 1 GB model around.
+				apphost.ResolveWritablePath(deps.DataDir, "llm"),
 			}
 		},
 		BootstrapOpts: sharedservices.ResetBootstrapOptions(
@@ -898,7 +973,6 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	// First-run setup wizard completion flag (shared runtime-setting row, the same
 	// contract mymatasan and myidsan use).
-	runtimeSettingRepo := dbsql.NewGenericRepo[sharedentities.RuntimeSetting](deps.Db)
 	setupStateService := sharedservices.NewSetupStateService(runtimeSettingRepo)
 	apis.NewSetupApi(api, *deps.Auth, controlSession, setupStateService)
 
@@ -1053,6 +1127,77 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 			}
 		}
 	}()
+
+	// Fleet AI agent: the deterministic daily digest (always on) and the OPTIONAL
+	// language layer behind it (digest prose + ask-the-fleet chat). The LLM is never
+	// in a critical path — with mode "off" (the default) or the model down, the
+	// digest still generates from the narrator and every alerting path is untouched.
+	// The sidecar's binaries/models live under <dataDir>/llm, which the factory
+	// reset erases along with everything else.
+	llmDir := apphost.ResolveWritablePath(deps.DataDir, "llm")
+	agentCfg := deps.Config.Agent
+	llmSidecar := services.NewLLMSidecar(services.SidecarConfig{
+		Enabled:    strings.EqualFold(strings.TrimSpace(agentCfg.LLM.Mode), "sidecar"),
+		Port:       agentCfg.LLM.Sidecar.Port,
+		CtxSize:    agentCfg.LLM.Sidecar.CtxSize,
+		Threads:    agentCfg.LLM.Sidecar.Threads,
+		BinaryPath: agentCfg.LLM.Sidecar.BinaryPath,
+		ModelPath:  agentCfg.LLM.Sidecar.ModelPath,
+	}, llmDir, func(f string, a ...any) { deps.Logger.Infof("myseliasan.agent", f, a...) })
+	llmSidecar.SetOnRestart(func() { deps.Metrics.Inc(services.MetricAgentSidecarRestartsTotal, nil) })
+	llmSidecar.Start(bgCtx)
+	llmManager := services.NewLLMManager(agentCfg.LLM, llmSidecar)
+	llmInstaller := services.NewLLMInstaller(llmDir, llmSidecar,
+		func() bool { return agentCfg.AllowDownloads == nil || *agentCfg.AllowDownloads },
+		func(f string, a ...any) { deps.Logger.Warnf("myseliasan.agent", f, a...) })
+	llmInstaller.SetOnResult(func(artifact, method string, ok bool) {
+		outcome := "ok"
+		if !ok {
+			outcome = "failed"
+		}
+		deps.Metrics.Inc(services.MetricAgentInstallTotal,
+			telemetry.Labels{"artifact": artifact, "method": method, "outcome": outcome})
+	})
+	digestService := services.NewDigestService(deps.Db, notificationService, registry,
+		auditService, llmManager, func() config.AgentConfigModel { return deps.Config.Agent },
+		deps.Metrics, func(f string, a ...any) { deps.Logger.Infof("myseliasan.agent", f, a...) })
+	chatService := services.NewChatService(notificationService, registry, digestService,
+		controlServer.IsConnected, llmManager, deps.Metrics,
+		func(f string, a ...any) { deps.Logger.Warnf("myseliasan.agent", f, a...) })
+	apis.NewAgentApi(api, *deps.Auth, controlSession, digestService, chatService,
+		llmManager, llmInstaller, llmSidecar, auditService,
+		func() (bool, int, int, string) {
+			c := deps.Config.Agent.Digest
+			enabled := c.Enabled == nil || *c.Enabled
+			hour := 7
+			if c.LocalHour != nil && *c.LocalHour >= 0 && *c.LocalHour <= 23 {
+				hour = *c.LocalHour
+			}
+			window := c.WindowHours
+			if window <= 0 {
+				window = 24
+			}
+			last := ""
+			if row, err := runtimeSettingRepo.GetByUnique(context.Background(), "", "key", "agent.digest.lastRun"); err == nil && row != nil {
+				last = row.Value
+			}
+			return enabled, hour, window, last
+		})
+	services.RunDigestSchedule(bgCtx, digestService, runtimeSettingRepo,
+		func() config.AgentConfigModel { return deps.Config.Agent },
+		func(f string, a ...any) { deps.Logger.Infof("myseliasan.agent", f, a...) })
+	// Stored-digest retention, daily.
+	periodic(bgCtx, "myseliasan.purge.digests", 24*time.Hour, func(ctx context.Context) {
+		days := deps.Config.Agent.Digest.RetentionDays
+		if days == 0 {
+			days = 180
+		}
+		if deleted, err := digestService.PurgeOld(ctx, days); err != nil {
+			deps.Logger.Warnf("myseliasan.agent", "digest retention purge failed: %v", err)
+		} else if deleted > 0 {
+			deps.Logger.Infof("myseliasan.agent", "purged %d expired digests", deleted)
+		}
+	})
 
 	// Per-node access: a role gets full access to nodes it adopted (owner role) and
 	// whatever explicit grants it has elsewhere. Drives the tunnel's viewer/admin

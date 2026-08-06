@@ -35,6 +35,42 @@ func validateSection(section string, data map[string]any) error {
 		if addr := strings.TrimSpace(g.s("pairing.multicastAddr")); addr != "" && !strings.Contains(addr, ":") {
 			return fmt.Errorf("multicast address must be host:port")
 		}
+	case "agent":
+		mode := strings.ToLower(strings.TrimSpace(g.s("agent.llm.mode")))
+		if mode != "" && mode != "off" && mode != "external" && mode != "sidecar" {
+			return fmt.Errorf("LLM mode must be off, external, or sidecar")
+		}
+		if mode == "external" {
+			ep := strings.TrimSpace(g.s("agent.llm.endpoint"))
+			if ep == "" {
+				return fmt.Errorf("an endpoint URL is required for external LLM mode")
+			}
+			if !strings.HasPrefix(ep, "http://") && !strings.HasPrefix(ep, "https://") {
+				return fmt.Errorf("LLM endpoint must be an http(s) URL")
+			}
+		}
+		if h := g.i("agent.digest.localHour"); h < 0 || h > 23 {
+			return fmt.Errorf("digest hour must be between 0 and 23")
+		}
+		if wh := g.i("agent.digest.windowHours"); wh < 0 || wh > 168 {
+			return fmt.Errorf("digest window must be between 1 and 168 hours (0 uses the default)")
+		}
+		if g.i("agent.digest.retentionDays") < 0 {
+			return fmt.Errorf("digest retention cannot be negative")
+		}
+		if lang := strings.ToLower(strings.TrimSpace(g.s("agent.digest.language"))); lang != "" &&
+			lang != "en" && lang != "ms" && lang != "zh" && lang != "ar" {
+			return fmt.Errorf("digest language must be en, ms, zh, or ar")
+		}
+		if ts := g.i("agent.llm.timeoutSeconds"); ts < 0 || ts > 600 {
+			return fmt.Errorf("LLM timeout must be between 0 and 600 seconds")
+		}
+		if g.i("agent.llm.maxTokens") < 0 {
+			return fmt.Errorf("LLM max tokens cannot be negative")
+		}
+		if p := g.i("agent.llm.sidecar.port"); p != 0 && (p < 1 || p > 65535) {
+			return fmt.Errorf("sidecar port must be between 1 and 65535")
+		}
 	case "security":
 		if len(strings.TrimSpace(g.s("jwt.secret"))) < 16 {
 			return fmt.Errorf("JWT secret must be at least 16 characters")
@@ -105,6 +141,27 @@ func applyToConfig(cfg *config.AppConfigModel, section string, data map[string]a
 		cfg.Pairing.RenewBeforeHours = g.i("pairing.renewBeforeHours")
 		cfg.Pairing.HeartbeatIntervalSeconds = g.i("pairing.heartbeatIntervalSeconds")
 		cfg.Pairing.ParentBaseURL = g.s("pairing.parentBaseUrl")
+	case "agent":
+		digestEnabled := g.b("agent.digest.enabled")
+		cfg.Agent.Digest.Enabled = &digestEnabled
+		digestHour := g.i("agent.digest.localHour")
+		cfg.Agent.Digest.LocalHour = &digestHour
+		cfg.Agent.Digest.WindowHours = g.i("agent.digest.windowHours")
+		cfg.Agent.Digest.RetentionDays = g.i("agent.digest.retentionDays")
+		cfg.Agent.Digest.Language = strings.ToLower(strings.TrimSpace(g.s("agent.digest.language")))
+		cfg.Agent.LLM.Mode = strings.ToLower(strings.TrimSpace(g.s("agent.llm.mode")))
+		cfg.Agent.LLM.Endpoint = strings.TrimSpace(g.s("agent.llm.endpoint"))
+		cfg.Agent.LLM.APIKey = g.s("agent.llm.apiKey")
+		cfg.Agent.LLM.Model = strings.TrimSpace(g.s("agent.llm.model"))
+		cfg.Agent.LLM.TimeoutSeconds = g.i("agent.llm.timeoutSeconds")
+		cfg.Agent.LLM.MaxTokens = g.i("agent.llm.maxTokens")
+		cfg.Agent.LLM.Sidecar.Port = g.i("agent.llm.sidecar.port")
+		cfg.Agent.LLM.Sidecar.CtxSize = g.i("agent.llm.sidecar.ctxSize")
+		cfg.Agent.LLM.Sidecar.Threads = g.i("agent.llm.sidecar.threads")
+		cfg.Agent.LLM.Sidecar.BinaryPath = strings.TrimSpace(g.s("agent.llm.sidecar.binaryPath"))
+		cfg.Agent.LLM.Sidecar.ModelPath = strings.TrimSpace(g.s("agent.llm.sidecar.modelPath"))
+		allowDownloads := g.b("agent.allowDownloads")
+		cfg.Agent.AllowDownloads = &allowDownloads
 	case "security":
 		cfg.Jwt.Secret = g.s("jwt.secret")
 		cfg.AllowOrigin = g.s("allowOrigins")

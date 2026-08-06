@@ -76,13 +76,14 @@ type settingsService struct {
 }
 
 // sectionOrder is the canonical display + iteration order.
-var sectionOrder = []string{"localAuth", "sso", "pairing", "security", "storage", "logging"}
+var sectionOrder = []string{"localAuth", "sso", "pairing", "agent", "security", "storage", "logging"}
 
 // sectionSecrets maps each section to the dotted (root-relative) leaf paths that are
 // secret, so masking and keep-if-blank are data-driven.
 var sectionSecrets = map[string][]string{
 	"localAuth": {"localAuth.password"},
 	"sso":       {"sso.clientSecret"},
+	"agent":     {"agent.llm.apiKey"},
 	"security":  {"jwt.secret"},
 	"storage":   {"cache.redis.password"},
 }
@@ -291,6 +292,32 @@ func (s *settingsService) read(section string) (map[string]any, error) {
 			"renewBeforeHours":         s.cfg.Pairing.RenewBeforeHours,
 			"heartbeatIntervalSeconds": s.cfg.Pairing.HeartbeatIntervalSeconds,
 			"parentBaseUrl":            s.cfg.Pairing.ParentBaseURL,
+		}}, nil
+	case "agent":
+		return map[string]any{"agent": map[string]any{
+			"digest": map[string]any{
+				"enabled":       boolValue(s.cfg.Agent.Digest.Enabled, true),
+				"localHour":     intValue(s.cfg.Agent.Digest.LocalHour, 7),
+				"windowHours":   s.cfg.Agent.Digest.WindowHours,
+				"retentionDays": s.cfg.Agent.Digest.RetentionDays,
+				"language":      s.cfg.Agent.Digest.Language,
+			},
+			"llm": map[string]any{
+				"mode":           s.cfg.Agent.LLM.Mode,
+				"endpoint":       s.cfg.Agent.LLM.Endpoint,
+				"apiKey":         s.cfg.Agent.LLM.APIKey,
+				"model":          s.cfg.Agent.LLM.Model,
+				"timeoutSeconds": s.cfg.Agent.LLM.TimeoutSeconds,
+				"maxTokens":      s.cfg.Agent.LLM.MaxTokens,
+				"sidecar": map[string]any{
+					"port":       s.cfg.Agent.LLM.Sidecar.Port,
+					"ctxSize":    s.cfg.Agent.LLM.Sidecar.CtxSize,
+					"threads":    s.cfg.Agent.LLM.Sidecar.Threads,
+					"binaryPath": s.cfg.Agent.LLM.Sidecar.BinaryPath,
+					"modelPath":  s.cfg.Agent.LLM.Sidecar.ModelPath,
+				},
+			},
+			"allowDownloads": boolValue(s.cfg.Agent.AllowDownloads, true),
 		}}, nil
 	case "security":
 		return map[string]any{
@@ -532,6 +559,13 @@ func setLeaf(m map[string]any, path string, value any) {
 }
 
 func boolValue(p *bool, def bool) bool {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+
+func intValue(p *int, def int) int {
 	if p == nil {
 		return def
 	}
