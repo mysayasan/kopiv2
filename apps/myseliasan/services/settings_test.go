@@ -255,6 +255,94 @@ func TestSettingsSaveRejectsInvalid(t *testing.T) {
 	}
 }
 
+func TestSettingsAgentSaveRoundtripAndNewBlock(t *testing.T) {
+	s, path := newTestSettings(t)
+	// The test config.json has NO "agent" block — a save must create it (deployed
+	// configs predate the agent feature).
+	body := []byte(`{"agent":{
+		"digest":{"enabled":true,"localHour":6,"windowHours":24,"retentionDays":90,"language":"ms"},
+		"llm":{"mode":"external","endpoint":"http://127.0.0.1:11434/v1","apiKey":"sk-test","model":"qwen2.5","timeoutSeconds":60,"maxTokens":512,
+			"sidecar":{"port":49540,"ctxSize":8192,"threads":0,"binaryPath":"","modelPath":""}},
+		"allowDownloads":false}}`)
+	if _, err := s.Save(context.Background(), "agent", body); err != nil {
+		t.Fatalf("Save agent: %v", err)
+	}
+	if s.cfg.Agent.LLM.Mode != "external" || s.cfg.Agent.LLM.Endpoint != "http://127.0.0.1:11434/v1" {
+		t.Fatalf("llm settings not applied: %+v", s.cfg.Agent.LLM)
+	}
+	if intValue(s.cfg.Agent.Digest.LocalHour, -1) != 6 || s.cfg.Agent.Digest.Language != "ms" {
+		t.Fatalf("digest settings not applied: %+v", s.cfg.Agent.Digest)
+	}
+	if s.cfg.Agent.AllowDownloads == nil || *s.cfg.Agent.AllowDownloads {
+		t.Fatalf("allowDownloads=false not applied: %+v", s.cfg.Agent.AllowDownloads)
+	}
+	raw, _ := os.ReadFile(path)
+	var parsed map[string]any
+	_ = json.Unmarshal(raw, &parsed)
+	if v, _ := leafAny(parsed, "agent.llm.endpoint"); v != "http://127.0.0.1:11434/v1" {
+		t.Fatalf("agent block not materialized into config.json: %v", v)
+	}
+	// Untouched blocks must survive verbatim.
+	if !strings.Contains(string(raw), `"engine": "postgres"`) {
+		t.Fatalf("untouched db block lost:\n%s", raw)
+	}
+}
+
+func TestSettingsAgentApiKeyMaskAndKeepBlank(t *testing.T) {
+	s, _ := newTestSettings(t)
+	seed := []byte(`{"agent":{
+		"digest":{"enabled":true,"localHour":7,"windowHours":24,"retentionDays":180,"language":"en"},
+		"llm":{"mode":"external","endpoint":"http://127.0.0.1:8080/v1","apiKey":"sk-secret","model":"m","timeoutSeconds":60,"maxTokens":768,
+			"sidecar":{"port":49540,"ctxSize":8192,"threads":0,"binaryPath":"","modelPath":""}},
+		"allowDownloads":true}}`)
+	if _, err := s.Save(context.Background(), "agent", seed); err != nil {
+		t.Fatalf("seed Save: %v", err)
+	}
+	got, err := s.Get("agent")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if v, _ := leafAny(got, "agent.llm.apiKey"); v != "" {
+		t.Fatalf("apiKey should be masked, got %v", v)
+	}
+	if v, _ := leafAny(got, "agent.llm.apiKeySet"); v != true {
+		t.Fatalf("apiKeySet should be true, got %v", v)
+	}
+	// Saving with a blank apiKey keeps the stored one.
+	update := []byte(`{"agent":{
+		"digest":{"enabled":true,"localHour":8,"windowHours":24,"retentionDays":180,"language":"en"},
+		"llm":{"mode":"external","endpoint":"http://127.0.0.1:8080/v1","apiKey":"","model":"m","timeoutSeconds":60,"maxTokens":768,
+			"sidecar":{"port":49540,"ctxSize":8192,"threads":0,"binaryPath":"","modelPath":""}},
+		"allowDownloads":true}}`)
+	if _, err := s.Save(context.Background(), "agent", update); err != nil {
+		t.Fatalf("update Save: %v", err)
+	}
+	if s.cfg.Agent.LLM.APIKey != "sk-secret" {
+		t.Fatalf("blank apiKey should keep the stored secret, got %q", s.cfg.Agent.LLM.APIKey)
+	}
+	if intValue(s.cfg.Agent.Digest.LocalHour, -1) != 8 {
+		t.Fatalf("non-secret change alongside blank secret not applied: %v", s.cfg.Agent.Digest.LocalHour)
+	}
+}
+
+func TestSettingsAgentRejectsInvalid(t *testing.T) {
+	s, _ := newTestSettings(t)
+	cases := []struct{ name, body string }{
+		{"bad mode", `{"agent":{"llm":{"mode":"cloud"}}}`},
+		{"external without endpoint", `{"agent":{"llm":{"mode":"external","endpoint":""}}}`},
+		{"non-http endpoint", `{"agent":{"llm":{"mode":"external","endpoint":"ftp://x"}}}`},
+		{"hour out of range", `{"agent":{"digest":{"localHour":24}}}`},
+		{"window too long", `{"agent":{"digest":{"windowHours":200}}}`},
+		{"bad language", `{"agent":{"digest":{"language":"fr"}}}`},
+		{"bad sidecar port", `{"agent":{"llm":{"mode":"off","sidecar":{"port":70000}}}}`},
+	}
+	for _, tc := range cases {
+		if _, err := s.Save(context.Background(), "agent", []byte(tc.body)); err == nil {
+			t.Errorf("%s: expected validation error", tc.name)
+		}
+	}
+}
+
 func TestSettingsTestCacheRequiresAddress(t *testing.T) {
 	s, _ := newTestSettings(t)
 	// No address in the request and none stored -> a clear error, without attempting a dial.

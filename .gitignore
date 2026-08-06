@@ -84,6 +84,10 @@ secret/atrest.key.init
 # committed: ensureSelfSignedCert (infra/apphost/run.go) generates a keypair on first boot
 # whenever a TLS listener is configured and the files are missing.
 apps/*/certs/
+
+# AI agent sidecar runtime artifacts (llama-server binaries + GGUF models, up to
+# gigabytes). Acquired at runtime by the in-app installer/import — never committed.
+apps/*/llm/
 *.atrestkey.applied
 
 # GitHub CLI local machine state (device-id etc.); not project data

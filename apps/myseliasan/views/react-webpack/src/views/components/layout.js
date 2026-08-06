@@ -295,7 +295,16 @@ export function SideNav({ activeTab, busy, onTab, onLogout, session, nodes, mana
     ),
   };
   const groups = [
-    { label: t('group.workspace'), items: [navItem('dashboard', t('nav.dashboard'), 'monitor', 'steel'), navItem('map', t('nav.map'), 'map', 'teal')] },
+    {
+      label: t('group.workspace'),
+      items: [
+        navItem('dashboard', t('nav.dashboard'), 'monitor', 'steel'),
+        // AI Insight follows the /api/agent matrix path (viewers get read by default;
+        // generate/chat need the POST grant, checked inside the page).
+        ...(sessionCanGet(session, '/api/agent') ? [navItem('insight', t('nav.insight'), 'zap', 'violet')] : []),
+        navItem('map', t('nav.map'), 'map', 'teal'),
+      ],
+    },
     {
       label: t('group.fleet'),
       // Live Views sits above the Nodes tree; the Nodes entry is a bespoke tree injected via

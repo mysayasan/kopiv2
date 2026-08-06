@@ -28,8 +28,33 @@ surface.
   correlation rules firing (`services/correlate.go`'s `fire`). Low-volume by nature (an intrusion
   is rare); a spike is either a real incident or a rule mistuned into crying wolf, and both are
   worth seeing.
-- `DescribeMyseliasanMetrics(m telemetry.Metrics)` registers help text for all five; called once
-  at startup (`app.go`).
+- `MetricNotificationsPurgedTotal` = `myseliasan_notifications_purged_total` — feed rows removed
+  by the retention purge (`app.go`'s `periodic(..., "myseliasan.purge.notifications", ...)`).
+  Flat at zero with retention configured means the purge loop is dead — and a dead purge loop is
+  invisible until the disk fills. Part of the same rollup/retention analytics substrate mymatasan
+  already had, now wired onto myseliasan (see `apis/notifications.go.md`).
+
+### Fleet AI agent
+
+- `MetricAgentDigestRunsTotal` = `myseliasan_agent_digest_runs_total` ({outcome, narrative}) —
+  digest generations by outcome (`ok`/`failed`) and whether the LLM narrative made it in
+  (`narrative=llm|none`). `outcome=ok` with `narrative=none` while a model is configured means the
+  LLM is quietly failing — the digest degrades silently by design (`services/agent_digest.go.md`),
+  so this label combination is where the degradation actually shows up.
+- `MetricAgentDigestDurationMs` = `myseliasan_agent_digest_duration_ms` — the last digest
+  generation's wall time (gauge, includes any LLM polish call).
+- `MetricAgentChatRequestsTotal` = `myseliasan_agent_chat_requests_total` ({outcome}) —
+  ask-the-fleet requests by outcome (`ok`/`llm_unavailable`/`llm_error`/`timeout`/`bad_request`).
+- `MetricAgentLLMRequestsTotal` = `myseliasan_agent_llm_requests_total` ({purpose, outcome}) —
+  raw LLM completions by purpose (`digest`/`chat`/`probe`) and outcome (`ok`/`error`/`timeout`).
+- `MetricAgentSidecarRestartsTotal` = `myseliasan_agent_sidecar_restarts_total` — llama-server
+  crash-restarts (`services/llm_sidecar.go.md`'s `SetOnRestart`). A climbing value is a model that
+  does not fit the host (OOM) or a corrupt binary/model file.
+- `MetricAgentInstallTotal` = `myseliasan_agent_install_total` ({artifact, method, outcome}) —
+  sidecar artifact installs by artifact (`binary`/`model`), method (`download`/`import`) and
+  outcome (`ok`/`failed`).
+- `DescribeMyseliasanMetrics(m telemetry.Metrics)` registers help text for every series above;
+  called once at startup (`app.go`).
 
 ## Sampling the fleet gauges
 

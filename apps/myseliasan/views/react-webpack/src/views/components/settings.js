@@ -78,6 +78,44 @@ const SECTIONS = [
     ],
   },
   {
+    id: 'agent', icon: 'zap', tone: 'violet',
+    fields: [
+      { type: 'group', g: 'digest' },
+      { path: 'agent.digest.enabled', k: 'digestEnabled', type: 'checkbox' },
+      { path: 'agent.digest.localHour', k: 'digestHour', type: 'number', suggest: [7] },
+      { path: 'agent.digest.windowHours', k: 'digestWindow', type: 'number', suggest: [24] },
+      { path: 'agent.digest.retentionDays', k: 'digestRetention', type: 'number', suggest: [180] },
+      { path: 'agent.digest.language', k: 'digestLanguage', type: 'select', options: [
+        { v: 'en', label: 'English' },
+        { v: 'ms', label: 'Bahasa Melayu' },
+        { v: 'zh', label: '中文' },
+        { v: 'ar', label: 'العربية' },
+      ] },
+      { type: 'group', g: 'llm' },
+      { path: 'agent.llm.mode', k: 'llmMode', type: 'select', options: [
+        { v: 'off', labelKey: 'settings.opt.llmMode.off' },
+        { v: 'external', labelKey: 'settings.opt.llmMode.external' },
+        { v: 'sidecar', labelKey: 'settings.opt.llmMode.sidecar' },
+      ] },
+      { path: 'agent.llm.timeoutSeconds', k: 'llmTimeout', type: 'number', suggest: [60] },
+      { path: 'agent.llm.maxTokens', k: 'llmMaxTokens', type: 'number', suggest: [768] },
+      // External endpoint fields only matter in external mode; the card carries a live Test.
+      { type: 'group', g: 'llmExternal', when: (f) => getAt(f, 'agent.llm.mode') === 'external', action: 'testLlm' },
+      { path: 'agent.llm.endpoint', k: 'llmEndpoint', type: 'text', suggest: ['http://127.0.0.1:11434/v1', 'http://127.0.0.1:8080/v1'] },
+      { path: 'agent.llm.apiKey', k: 'llmApiKey', type: 'password' },
+      { path: 'agent.llm.model', k: 'llmModel', type: 'text', suggest: ['qwen2.5:1.5b-instruct'] },
+      // The managed llama-server card: install/import controls + live state.
+      { type: 'group', g: 'llmSidecar', when: (f) => getAt(f, 'agent.llm.mode') === 'sidecar', action: 'sidecar' },
+      { path: 'agent.llm.sidecar.port', k: 'sidecarPort', type: 'number', suggest: [49540] },
+      { path: 'agent.llm.sidecar.ctxSize', k: 'sidecarCtx', type: 'number', suggest: [8192] },
+      { path: 'agent.llm.sidecar.threads', k: 'sidecarThreads', type: 'number' },
+      { path: 'agent.llm.sidecar.binaryPath', k: 'sidecarBinary', type: 'text', browse: 'file' },
+      { path: 'agent.llm.sidecar.modelPath', k: 'sidecarModel', type: 'text', browse: 'file' },
+      { type: 'group', g: 'llmDownloads' },
+      { path: 'agent.allowDownloads', k: 'allowDownloads', type: 'checkbox' },
+    ],
+  },
+  {
     id: 'security', icon: 'shield', tone: 'amber',
     fields: [
       { path: 'jwt.secret', k: 'jwtSecret', type: 'password' },
@@ -291,15 +329,18 @@ export function SettingsPage({ session, onToast }) {
           <div className="settings-cards">
             {toGroups(activeSection.fields, t).filter((g) => !g.when || g.when(form)).map((g, i) => (
               <section key={g.title || `g${i}`} className="settings-card">
-                {g.action === 'testCache' ? (
+                {g.action === 'testCache' || g.action === 'testLlm' ? (
                   <div className="settings-card-head">
                     <h3 className="settings-card-title settings-card-title--flush">{g.title}</h3>
-                    <CacheTestButton form={form} t={t} onToast={onToast} />
+                    {g.action === 'testCache'
+                      ? <CacheTestButton form={form} t={t} onToast={onToast} />
+                      : <LlmTestButton form={form} t={t} onToast={onToast} />}
                   </div>
                 ) : g.title ? <h3 className="settings-card-title">{g.title}</h3> : null}
                 <div className="settings-grid">
                   {g.fields.map((f) => <Field key={f.path} field={f} form={form} setForm={setForm} t={t} />)}
                 </div>
+                {g.action === 'sidecar' ? <AgentSidecarControl t={t} onToast={onToast} /> : null}
               </section>
             ))}
           </div>
@@ -439,6 +480,147 @@ function CacheTestButton({ form, t, onToast }) {
         <Ico n={state.status === 'testing' ? 'reload' : 'zap'} sz={14} />
         <span>{state.status === 'testing' ? t('settings.cacheTest.testing') : t('settings.cacheTest.test')}</span>
       </button>
+    </div>
+  );
+}
+
+// LlmTestButton probes the endpoint currently IN THE FORM (unsaved values), so an
+// operator verifies before pressing Save — the CacheTestButton contract. A blank
+// apiKey falls back server-side to the stored one, mirroring keep-if-blank.
+function LlmTestButton({ form, t, onToast }) {
+  const [state, setState] = useState({ status: 'idle', msg: '' });
+  const run = useCallback(async () => {
+    setState({ status: 'testing', msg: '' });
+    const body = {
+      endpoint: getAt(form, 'agent.llm.endpoint') || '',
+      apiKey: getAt(form, 'agent.llm.apiKey') || '',
+      model: getAt(form, 'agent.llm.model') || '',
+    };
+    const r = await api('/api/agent/llm/test', { method: 'POST', body: JSON.stringify(body), noRedirect: true })
+      .catch(() => ({ ok: false }));
+    if (r.ok) {
+      setState({ status: 'ok', msg: '' });
+      onToast && onToast(t('settings.llmTest.okToast'), 'success');
+    } else {
+      const msg = r.message || t('settings.llmTest.fail');
+      setState({ status: 'fail', msg });
+      onToast && onToast(t('settings.llmTest.failToast', { msg }), 'error');
+    }
+  }, [form, onToast, t]);
+
+  return (
+    <div className="settings-cache-test">
+      {state.status === 'ok' ? (
+        <span className="settings-status-pill ok"><span className="settings-status-dot" />{t('settings.llmTest.ok')}</span>
+      ) : null}
+      {state.status === 'fail' ? (
+        <span className="settings-status-pill bad" title={state.msg}><span className="settings-status-dot" />{t('settings.llmTest.fail')}</span>
+      ) : null}
+      <button type="button" className="settings-btn settings-btn-quiet" onClick={run} disabled={state.status === 'testing'}>
+        <Ico n={state.status === 'testing' ? 'reload' : 'zap'} sz={14} />
+        <span>{state.status === 'testing' ? t('settings.llmTest.testing') : t('settings.llmTest.test')}</span>
+      </button>
+    </div>
+  );
+}
+
+// AgentSidecarControl manages the llama-server sidecar's artifacts: live state,
+// pinned downloads (hidden when downloads are config/env-locked — air-gap sites
+// use Import instead), operator imports via the server-side file picker, the
+// install log, and a restart nudge. Poll cadence follows the ffmpeg installer:
+// 1.5s while an install runs, else a slow 5s status refresh.
+function AgentSidecarControl({ t, onToast }) {
+  const [status, setStatus] = useState(null);    // /api/agent/status body
+  const [installs, setInstalls] = useState(null); // /api/agent/llm/install/status body
+  const [importOpen, setImportOpen] = useState(null); // null | 'binary' | 'model'
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(async () => {
+    const [st, inst] = await Promise.all([
+      api('/api/agent/status', { noRedirect: true }).catch(() => ({ ok: false })),
+      api('/api/agent/llm/install/status', { noRedirect: true }).catch(() => ({ ok: false })),
+    ]);
+    if (st.ok) setStatus(st.body || null);
+    if (inst.ok) setInstalls(inst.body || null);
+  }, []);
+
+  const running = !!(installs && (installs.binary?.running || installs.model?.running));
+  useEffect(() => {
+    refresh();
+    const id = window.setInterval(refresh, running ? 1500 : 5000);
+    return () => window.clearInterval(id);
+  }, [refresh, running]);
+
+  async function post(path, okMsg) {
+    setBusy(true);
+    const r = await api(path, { method: 'POST', body: '{}', noRedirect: true }).catch(() => ({ ok: false }));
+    setBusy(false);
+    if (r.ok) { if (okMsg) onToast && onToast(okMsg, 'info'); refresh(); }
+    else onToast && onToast(r.message || t('settings.saveFailed'), 'error');
+  }
+
+  async function importPath(kind, path) {
+    setImportOpen(null);
+    setBusy(true);
+    const r = await api('/api/agent/llm/import', {
+      method: 'POST', body: JSON.stringify({ kind, path }), noRedirect: true,
+    }).catch(() => ({ ok: false }));
+    setBusy(false);
+    if (r.ok) { onToast && onToast(t('agent.install.imported'), 'success'); refresh(); }
+    else onToast && onToast(r.message || t('agent.install.importFailed'), 'error');
+  }
+
+  const sidecarState = status?.llm?.sidecarState || 'off';
+  const canDownload = !!status?.downloads?.allowed && !!status?.downloads?.supported;
+  const logs = [installs?.binary?.log, installs?.model?.log].filter(Boolean).join('\n');
+
+  return (
+    <div className="settings-sidecar">
+      <div className="settings-health-row">
+        <span className={`settings-status-pill ${sidecarState === 'ready' ? 'ok' : (sidecarState === 'failed' ? 'bad' : '')}`}>
+          <span className="settings-status-dot" />
+          {t(`agent.sidecar.${sidecarState}`)}
+        </span>
+        {status?.llm?.lastError ? <span className="settings-field-note" title={status.llm.lastError}>{status.llm.lastError}</span> : null}
+      </div>
+      <div className="settings-sidecar-actions">
+        {canDownload ? (
+          <>
+            <button type="button" className="settings-btn settings-btn-quiet" disabled={busy || running}
+              onClick={() => post('/api/agent/llm/install/binary', t('agent.install.started'))}>
+              <Ico n="download" sz={14} /><span>{t('agent.install.downloadBinary')}</span>
+            </button>
+            <button type="button" className="settings-btn settings-btn-quiet" disabled={busy || running}
+              onClick={() => post('/api/agent/llm/install/model', t('agent.install.started'))}>
+              <Ico n="download" sz={14} /><span>{t('agent.install.downloadModel')}</span>
+            </button>
+          </>
+        ) : (
+          <span className="settings-field-note">{t('agent.install.downloadsOff')}</span>
+        )}
+        <button type="button" className="settings-btn settings-btn-quiet" disabled={busy || running}
+          onClick={() => setImportOpen('binary')}>
+          <Ico n="upload" sz={14} /><span>{t('agent.install.importBinary')}</span>
+        </button>
+        <button type="button" className="settings-btn settings-btn-quiet" disabled={busy || running}
+          onClick={() => setImportOpen('model')}>
+          <Ico n="upload" sz={14} /><span>{t('agent.install.importModel')}</span>
+        </button>
+        <button type="button" className="settings-btn settings-btn-quiet" disabled={busy}
+          onClick={() => post('/api/agent/llm/sidecar/restart', t('agent.install.restarted'))}>
+          <Ico n="refresh" sz={14} /><span>{t('agent.install.restartSidecar')}</span>
+        </button>
+      </div>
+      {logs ? <textarea className="settings-sidecar-log" readOnly rows={6} value={logs} /> : null}
+      {importOpen ? (
+        <FileBrowserModal
+          mode="file"
+          initialPath=""
+          t={t}
+          onSelect={(p) => importPath(importOpen, p)}
+          onClose={() => setImportOpen(null)}
+        />
+      ) : null}
     </div>
   );
 }

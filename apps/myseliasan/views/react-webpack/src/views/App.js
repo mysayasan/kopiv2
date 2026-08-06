@@ -17,6 +17,7 @@ import { DashboardTab } from './components/dashboard';
 // when an operator actually opens the Map tab, keeping the initial bundle lean.
 const MapPage = lazy(() => import('./components/map_page').then((m) => ({ default: m.MapPage })));
 import { NodesTab } from './components/nodes';
+import { AIInsightPage } from './components/insight';
 import { FleetRulesPage } from './components/fleet_rules';
 import { LiveViewsPage } from './components/live_views';
 import { ObjectsPage } from './components/objects';
@@ -221,10 +222,14 @@ function AppInner({ lang, onLangChange }) {
   // Reading correlation rules follows the permission matrix (the API is behind it); WRITING
   // them is superadmin-only and enforced server-side.
   const canFleetRules = sessionCanGet(session, '/api/fleet-rules');
+  // The AI Insight page (digest + ask-the-fleet) follows the matrix on /api/agent:
+  // GET shows the digest; POST (generate/chat) is checked inside the page itself.
+  const canAgent = sessionCanGet(session, '/api/agent');
   const adminTabs = ['users', 'roles', 'audit', 'settings'];
   if (adminTabs.includes(activeTab) && !session?.isSuperadmin) setActiveTab('dashboard');
   if ((activeTab === 'nodes' || activeTab === 'liveviews' || activeTab === 'objects' || activeTab === 'teach') && !canNodes) setActiveTab('dashboard');
   if (activeTab === 'fleetrules' && !canFleetRules) setActiveTab('dashboard');
+  if (activeTab === 'insight' && !canAgent) setActiveTab('dashboard');
 
   return (
     <div className={`app-shell${navPinned ? '' : ' nav-autohide'}`}>
@@ -256,6 +261,7 @@ function AppInner({ lang, onLangChange }) {
         <ToastStack toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((t) => t.id !== id))} />
 
         {activeTab === 'dashboard' ? <DashboardTab nodes={nodes} /> : null}
+        {activeTab === 'insight' && canAgent ? <AIInsightPage session={session} onToast={pushToast} /> : null}
         {activeTab === 'map' ? (
           <Suspense fallback={<div className="map-loading">{t('common.loading')}</div>}>
             <MapPage nodes={nodes} reloadNodes={loadNodes} onToast={pushToast} onOpenNode={selectNode} />

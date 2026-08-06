@@ -36,6 +36,32 @@ const (
 	// nature (an intrusion is rare); a SPIKE is either a real incident or a rule mistuned into
 	// crying wolf, and both are worth seeing.
 	MetricFleetRuleFiredTotal = "myseliasan_fleet_rule_fired_total"
+	// MetricNotificationsPurgedTotal counts feed rows removed by the retention purge. Flat at
+	// zero with retention configured means the purge loop is dead — and a dead purge loop is
+	// invisible until the disk fills.
+	MetricNotificationsPurgedTotal = "myseliasan_notifications_purged_total"
+
+	// -- fleet AI agent -------------------------------------------------------------------
+
+	// MetricAgentDigestRunsTotal counts digest generations by outcome and whether the LLM
+	// narrative made it in (narrative=llm|none). outcome=ok with narrative=none while a
+	// model is configured means the LLM is quietly failing — the digest degrades silently
+	// by design, so this label is where the degradation shows.
+	MetricAgentDigestRunsTotal = "myseliasan_agent_digest_runs_total"
+	// MetricAgentDigestDurationMs is the last digest generation's wall time.
+	MetricAgentDigestDurationMs = "myseliasan_agent_digest_duration_ms"
+	// MetricAgentChatRequestsTotal counts ask-the-fleet requests by outcome
+	// (ok|llm_unavailable|llm_error|timeout|bad_request).
+	MetricAgentChatRequestsTotal = "myseliasan_agent_chat_requests_total"
+	// MetricAgentLLMRequestsTotal counts completions by purpose (digest|chat|probe) and
+	// outcome (ok|error|timeout).
+	MetricAgentLLMRequestsTotal = "myseliasan_agent_llm_requests_total"
+	// MetricAgentSidecarRestartsTotal counts llama-server crash-restarts. A climbing value
+	// is a model that does not fit the host (OOM) or a corrupt binary/model file.
+	MetricAgentSidecarRestartsTotal = "myseliasan_agent_sidecar_restarts_total"
+	// MetricAgentInstallTotal counts sidecar artifact installs by artifact (binary|model),
+	// method (download|import) and outcome (ok|failed).
+	MetricAgentInstallTotal = "myseliasan_agent_install_total"
 )
 
 // DescribeMyseliasanMetrics attaches help text. Call once at startup.
@@ -48,6 +74,13 @@ func DescribeMyseliasanMetrics(m telemetry.Metrics) {
 	m.Describe(MetricControlChannelUp, "1 while the control-channel listener is serving. 0 means no node can reach the control plane.")
 	m.Describe(MetricFleetEventsTotal, "Fleet-health transitions by kind (node_lost|node_recovered|cert_expiring).")
 	m.Describe(MetricFleetRuleFiredTotal, "Cross-domain correlation rules firing. A spike is a real incident or a mistuned rule.")
+	m.Describe(MetricNotificationsPurgedTotal, "Notification feed rows removed by the retention purge.")
+	m.Describe(MetricAgentDigestRunsTotal, "Fleet digest generations by outcome and narrative source (llm|none).")
+	m.Describe(MetricAgentDigestDurationMs, "Last fleet digest generation wall time in ms.")
+	m.Describe(MetricAgentChatRequestsTotal, "Ask-the-fleet chat requests by outcome.")
+	m.Describe(MetricAgentLLMRequestsTotal, "LLM completions by purpose (digest|chat|probe) and outcome.")
+	m.Describe(MetricAgentSidecarRestartsTotal, "llama-server sidecar crash-restarts.")
+	m.Describe(MetricAgentInstallTotal, "Sidecar artifact installs by artifact, method, and outcome.")
 }
 
 // connectionSource is the narrow slice of the control server the sampler reads.

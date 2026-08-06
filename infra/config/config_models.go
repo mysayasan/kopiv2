@@ -120,6 +120,12 @@ type AppConfigModel struct {
 	// iceServers (STUN/TURN) when the parent is behind NAT.
 	NodeStream   NodeStreamConfigModel   `json:"nodeStream"`
 	Notification NotificationConfigModel `json:"notification"`
+	// Agent (control-plane only) configures the fleet AI agent: the deterministic
+	// daily digest (always available, pure Go) and the OPTIONAL LLM layer behind it
+	// (digest prose + ask-the-fleet chat). The LLM is never in a critical path — with
+	// mode "off" (the default) or the model unreachable, the digest still generates
+	// and every alerting path is untouched.
+	Agent AgentConfigModel `json:"agent"`
 	// Security configures encryption-at-rest. When enabled (default), recordings,
 	// snapshots, alert images, and training/uploaded files are encrypted on disk with
 	// a master key, so a factory reset can crypto-erase them by destroying the key.
@@ -354,6 +360,77 @@ type NotificationTelegramConfigModel struct {
 	ChatId      string `json:"chatId"`
 	MinSeverity string `json:"minSeverity"`
 	QueueSize   int    `json:"queueSize"`
+}
+
+// AgentConfigModel configures the control plane's fleet AI agent. The digest block
+// drives the always-on deterministic narrator; the llm block is the optional language
+// layer. Pointer booleans distinguish "omitted" from "false" so an absent block keeps
+// the safe defaults (digest on, LLM off, downloads allowed but operator-triggered).
+type AgentConfigModel struct {
+	Digest AgentDigestConfigModel `json:"digest"`
+	LLM    AgentLLMConfigModel    `json:"llm"`
+	// AllowDownloads gates the two operator-triggered internet downloads (the
+	// llama.cpp release archive and the default GGUF model). Air-gapped sites use
+	// the import path instead; setting MYSELIASAN_AI_DOWNLOADS=off hard-locks
+	// downloads off regardless of this flag (same env-lock contract as the basemap
+	// downloader, the suite's other deliberate internet feature).
+	AllowDownloads *bool `json:"allowDownloads"`
+}
+
+// AgentDigestConfigModel schedules and shapes the daily fleet digest.
+type AgentDigestConfigModel struct {
+	// Enabled turns the scheduled daily digest on (default true). Manual
+	// generation from the UI works either way.
+	Enabled *bool `json:"enabled"`
+	// LocalHour is the local wall-clock hour (0-23) the daily digest runs at.
+	// Pointer so an explicit midnight (0) is distinguishable from "unset";
+	// nil defaults to 7 — on the operator's desk before the morning shift.
+	LocalHour *int `json:"localHour"`
+	// WindowHours is how far back the digest looks (default 24).
+	WindowHours int `json:"windowHours"`
+	// RetentionDays prunes stored digests older than this (default 180; 0 keeps all).
+	RetentionDays int `json:"retentionDays"`
+	// Language is the language the OPTIONAL LLM narrative is written in
+	// (en|ms|zh|ar, default en). The structured findings are language-neutral and
+	// localized by the UI regardless.
+	Language string `json:"language"`
+}
+
+// AgentLLMConfigModel selects and bounds the optional language model.
+type AgentLLMConfigModel struct {
+	// Mode: "off" (default) — no LLM anywhere; "external" — an operator-run
+	// OpenAI-compatible endpoint (llama-server, Ollama, vLLM); "sidecar" — a
+	// llama.cpp llama-server child process this app supervises on loopback.
+	Mode string `json:"mode"`
+	// Endpoint is the external mode's OpenAI-compatible base URL, e.g.
+	// "http://127.0.0.1:11434/v1".
+	Endpoint string `json:"endpoint"`
+	// APIKey is sent as a Bearer token when set (external mode; llama-server and
+	// Ollama typically need none). Secret-masked in the settings UI.
+	APIKey string `json:"apiKey"`
+	// Model is the model name sent in requests (external mode; informational for
+	// the sidecar, which serves exactly one model file).
+	Model string `json:"model"`
+	// TimeoutSeconds bounds every chat completion (default 60).
+	TimeoutSeconds int `json:"timeoutSeconds"`
+	// MaxTokens caps each completion (default 768).
+	MaxTokens int                     `json:"maxTokens"`
+	Sidecar   AgentSidecarConfigModel `json:"sidecar"`
+}
+
+// AgentSidecarConfigModel shapes the supervised llama-server child process.
+type AgentSidecarConfigModel struct {
+	// Port is the loopback port llama-server listens on (default 49540).
+	Port int `json:"port"`
+	// CtxSize is the prompt context size (default 8192).
+	CtxSize int `json:"ctxSize"`
+	// Threads caps CPU threads (0 = llama-server's own default).
+	Threads int `json:"threads"`
+	// BinaryPath / ModelPath point at the llama-server executable and the GGUF
+	// model. Filled by the in-app installer/import; empty means "not installed"
+	// unless files already exist under <dataDir>/llm.
+	BinaryPath string `json:"binaryPath"`
+	ModelPath  string `json:"modelPath"`
 }
 
 type RateLimitTierConfigModel struct {

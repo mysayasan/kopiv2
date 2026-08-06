@@ -134,6 +134,11 @@ const ACCESS_FEATURES = [
   { key: 'nodesView', labelKey: 'rb.featNodesView', hintKey: 'rb.featNodesViewHint', path: '/api/nodes', verbs: ['canGet'] },
   { key: 'nodesManage', labelKey: 'rb.featNodesManage', hintKey: 'rb.featNodesManageHint', path: '/api/nodes', verbs: ['canPost', 'canPut', 'canDelete'] },
   { key: 'notifications', labelKey: 'rb.featNotifications', hintKey: 'rb.featNotificationsHint', path: '/api/notifications', verbs: ['canGet', 'canPost'] },
+  // AI agent: GET = read the digest (in the viewer default); the POST grant here adds
+  // generate-now + ask-the-fleet chat, which burn real CPU on the control plane — so it
+  // is a deliberate toggle rather than part of the read default. LLM install/settings
+  // stay superadmin-only server-side regardless.
+  { key: 'agent', labelKey: 'rb.featAgent', hintKey: 'rb.featAgentHint', path: '/api/agent', verbs: ['canGet', 'canPost'] },
 ];
 
 // "Viewer" default seeded onto every brand-new role: read-only on the operational
@@ -142,7 +147,7 @@ const ACCESS_FEATURES = [
 // re-expose the superadmin-gated admin surfaces the shared viewer role was hardened
 // against (see EnsureViewerDefaults). Node grants are a snapshot; nodes adopted later
 // are granted per-role manually in the matrix below.
-const VIEWER_DEFAULT_PATHS = ['/api/nodes', '/api/notifications'];
+const VIEWER_DEFAULT_PATHS = ['/api/nodes', '/api/notifications', '/api/agent'];
 
 // RolesAccessPage consolidates what used to be two separate admin pages — a Roles list
 // and the RBAC permission matrix — into one surface. Adding a role immediately seeds it

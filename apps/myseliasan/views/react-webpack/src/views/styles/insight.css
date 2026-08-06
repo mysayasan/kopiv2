@@ -1,0 +1,166 @@
+/* AI Insight page: digest + findings + ask-the-fleet chat. Reuses the dashboard
+   grid rhythm (.dashboard-grid in node-dashboard.css) and the shared --ui-* tokens;
+   only the insight-specific pieces live here. */
+
+.insight-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.insight-generate {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border: 1px solid var(--ui-accent);
+  border-radius: 8px;
+  background: var(--ui-accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.insight-generate:disabled { opacity: 0.6; cursor: default; }
+
+.insight-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+.insight-kpis {
+  grid-column: span 2;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+.insight-span-2 { grid-column: span 2; }
+@media (max-width: 1100px) {
+  .insight-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Digest */
+.insight-chip {
+  font-size: 11.5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--ui-border);
+  color: var(--ui-muted);
+  white-space: nowrap;
+}
+.insight-chip--llm {
+  border-color: var(--ui-accent);
+  color: var(--ui-accent);
+}
+.insight-narrative {
+  margin: 4px 0 12px;
+  padding: 12px 14px;
+  border-inline-start: 3px solid var(--ui-accent);
+  background: var(--ui-accent-soft);
+  border-radius: 0 8px 8px 0;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.insight-findings { margin-top: 4px; }
+.insight-findings li { display: flex; align-items: flex-start; gap: 9px; }
+.insight-findings .notif-sev { margin-top: 5px; flex: none; }
+.insight-finding-text { line-height: 1.45; }
+.insight-note { color: var(--ui-muted); font-size: 12.5px; margin: 8px 0 0; }
+
+/* History */
+.insight-history { list-style: none; margin: 0; padding: 0; }
+.insight-history > li { border-bottom: 1px solid var(--ui-border); }
+.insight-history > li:last-child { border-bottom: 0; }
+.insight-history-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 4px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: start;
+}
+.insight-history-when { font-weight: 600; }
+.insight-history-kind { color: var(--ui-muted); font-size: 12.5px; }
+.insight-history-n { margin-inline-start: auto; color: var(--ui-muted); font-size: 12.5px; }
+.insight-history-body { padding: 2px 4px 12px; }
+
+/* Chat */
+.insight-chat {
+  min-height: 180px;
+  max-height: 340px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 2px 10px;
+}
+.insight-msg {
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.insight-msg--user {
+  align-self: flex-end;
+  background: var(--ui-accent);
+  color: #fff;
+  border-end-end-radius: 4px;
+}
+.insight-msg--assistant {
+  align-self: flex-start;
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  border-end-start-radius: 4px;
+}
+.insight-msg--error {
+  border-color: var(--ui-danger);
+  color: var(--ui-danger);
+}
+.insight-chat-hint p { margin: 4px 0; }
+.insight-chat-form {
+  display: flex;
+  gap: 8px;
+  border-top: 1px solid var(--ui-border);
+  padding-top: 10px;
+}
+.insight-chat-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
+  background: var(--ui-surface);
+  color: inherit;
+  font: inherit;
+}
+.insight-chat-form button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  border: 1px solid var(--ui-accent);
+  border-radius: 8px;
+  background: var(--ui-accent);
+  color: #fff;
+  cursor: pointer;
+}
+.insight-chat-form button:disabled { opacity: 0.5; cursor: default; }
+
+.insight-chat-off {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 6px;
+  color: var(--ui-muted);
+}
+.insight-chat-off p { margin: 0; line-height: 1.5; }

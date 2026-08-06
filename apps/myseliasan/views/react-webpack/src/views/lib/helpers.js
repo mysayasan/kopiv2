@@ -100,3 +100,12 @@ export function sessionCanGet(session, path) {
   const perms = Array.isArray(session.permissions) ? session.permissions : [];
   return perms.some((p) => p && p.canGet && pathMatches(p.path, path));
 }
+
+// sessionCanPost mirrors sessionCanGet for POST — used where a page shows write
+// actions (e.g. the AI agent's Generate/chat) only to roles the matrix lets write.
+export function sessionCanPost(session, path) {
+  if (!session) return false;
+  if (session.isSuperadmin) return true;
+  const perms = Array.isArray(session.permissions) ? session.permissions : [];
+  return perms.some((p) => p && p.canPost && pathMatches(p.path, path));
+}
