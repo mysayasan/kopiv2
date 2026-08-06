@@ -19,6 +19,7 @@ type notificationApi struct {
 // NewNotificationApi mounts the control plane's unified feed of node-pushed events:
 //
 //	GET  /api/notifications           — list (paged; ?nodeId= scopes to one node, ?unread=true)
+//	GET  /api/notifications/baseline  — fleet-wide expected-activity band (rollup-backed)
 //	GET  /api/notifications/stream    — live Server-Sent Events feed
 //	POST /api/notifications/{id}/read — mark one notification read (clears the unread badge)
 func NewNotificationApi(router *mux.Router, auth middlewares.AuthMidware, session *middlewares.AccessSessionMidware, serv *notification.Service) {
@@ -28,6 +29,7 @@ func NewNotificationApi(router *mux.Router, auth middlewares.AuthMidware, sessio
 	g.Use(session.Middleware)
 	g.HandleFunc("", h.list).Methods("GET")
 	g.HandleFunc("/stats", h.stats).Methods("GET")
+	g.HandleFunc("/baseline", h.baseline).Methods("GET")
 	g.HandleFunc("/tally", h.tally).Methods("GET")
 	g.HandleFunc("/stream", h.stream).Methods("GET")
 	g.HandleFunc("/{id:[0-9]+}/read", h.markRead).Methods("POST")
@@ -58,6 +60,38 @@ func (a *notificationApi) stats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := a.serv.Stats(r.Context(), from, to, bucketSeconds, tzOffsetMin*60)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, result, "succeed")
+}
+
+// baseline returns the expected-activity band for each bucket of the events-over-time
+// chart, matching its granularity (bucket "hour" or "day"). Fleet-wide only: the control
+// plane's feed keys events by source node, and origin camera ids collide across nodes,
+// so the per-camera narrowing mymatasan offers would silently merge unrelated cameras
+// here. Requires the rollup substrate (empty result until the first sweep lands).
+func (a *notificationApi) baseline(w http.ResponseWriter, r *http.Request) {
+	now := time.Now().UTC().Unix()
+	to := queryInt64(r, "to", 0)
+	if to <= 0 {
+		to = now
+	}
+	from := queryInt64(r, "from", 0)
+	if from <= 0 {
+		from = to - 7*86400
+	}
+	bucketSeconds := int64(86400)
+	if strings.EqualFold(r.URL.Query().Get("bucket"), "hour") {
+		bucketSeconds = 3600
+	}
+	tzOffsetMin := queryInt64(r, "tzOffset", 0)
+	if tzOffsetMin < -840 || tzOffsetMin > 840 {
+		tzOffsetMin = 0
+	}
+
+	result, err := a.serv.Baseline(r.Context(), from, to, bucketSeconds, tzOffsetMin*60, 0)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
