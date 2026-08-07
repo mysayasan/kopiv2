@@ -143,9 +143,6 @@ WHERE NOT EXISTS (SELECT 1 FROM api_endpoint WHERE app_code = 'mypintusan' AND h
 // RegisterAppRoutes wires the app: identity, the access store, the OSDP buses, and the HTTP API.
 func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (apphost.ShutdownFunc, error) {
 	ctx := context.Background()
-	// bgCtx bounds the fleet workers (discovery responder, enrollment, control channel); the OSDP
-	// runtime keeps its own cancel because it predates them and owns its bus supervisors.
-	bgCtx, stopBackground := context.WithCancel(context.Background())
 	cfg := m.appConfig()
 
 	userRepo := dbsql.NewGenericRepo[sharedentities.LocalUser](deps.Db)
@@ -190,9 +187,14 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// the fleet control plane correlates across nodes once this node is adopted.
 	runtime := newRuntime(deps, live, location, store, alarms, alarms.Decision, store.StrikeFor)
 	if err := runtime.start(ctx); err != nil {
-		stopBackground()
 		return nil, err
 	}
+
+	// bgCtx bounds the fleet workers (discovery responder, enrollment, control channel); the OSDP
+	// runtime keeps its own cancel because it predates them and owns its bus supervisors. Created
+	// HERE, after the last early setup-error return, so every path from this point either cancels
+	// it (the fleet-cipher failure below) or hands it to the ShutdownFunc.
+	bgCtx, stopBackground := context.WithCancel(context.Background())
 
 	setupState := sharedservices.NewSetupStateService(dbsql.NewGenericRepo[sharedentities.RuntimeSetting](deps.Db))
 
