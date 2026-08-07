@@ -9,11 +9,13 @@ channel, and pushes its events up.
 ## Responsibilities
 
 - Documents why the package exists here rather than under `apps/mymatasan`: it was never
-  camera-specific. `mymatasan` grew it first; `myiotsan` needs exactly the same thing. A
-  second copy of a pairing/enrollment stack would be a second copy of a SECURITY PROTOCOL,
-  and the two would drift the first time one of them was fixed.
+  camera-specific. `mymatasan` grew it first; `myiotsan` needed exactly the same thing, and
+  `mypintusan` now uses it too (`apps/mypintusan/app/wire_fleet.go.md`). A second copy of a
+  pairing/enrollment stack would be a second copy of a SECURITY PROTOCOL, and the copies would
+  drift the first time one of them was fixed.
 - States what stays per-app: only the app's NAME and its KIND (`fleetnode.KindCamera` /
-  `fleetnode.KindIot`) — what the node reports so the control plane knows what it adopted.
+  `fleetnode.KindIot` / `fleetnode.KindDoor`) — what the node reports so the control plane knows
+  what it adopted.
 - `isNoResultFoundErr(err)` — shared sentinel-message check ("no result found" /
   "total affected: 0") used across the package's repo lookups, since the generic repo signals
   "row not present" by message rather than a typed error.
@@ -30,9 +32,10 @@ channel, and pushes its events up.
 
 ## Notes
 
-- Both `mymatasan` and `myiotsan` consume this package directly (`myiotsan`) or through thin
-  same-named aliases that preserve existing call sites (`mymatasan`, see
-  `apps/mymatasan/services/fleetnode.go.md`).
+- `mymatasan`, `myiotsan` and `mypintusan` all consume this package directly — `mymatasan`
+  through thin same-named aliases that preserve existing call sites (see
+  `apps/mymatasan/services/fleetnode.go.md`); `myiotsan` and `mypintusan` call it straight
+  (`apps/myiotsan/app/wire_fleet.go.md`, `apps/mypintusan/app/wire_fleet.go.md`).
 - The one thing that is NOT shared here is what a node's events actually **mean** —
   `myseliasan`'s cross-domain correlator (`apps/myseliasan/services/correlate.go.md`) is what
   turns events pushed by this package into a fleet-wide conclusion; this package only gets

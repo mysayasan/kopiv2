@@ -42,9 +42,10 @@ then carry.
   `Notification`, `LocalUser`, `AccessRole`, `AccessRolePermission`, `RuntimeSetting`) plus
   `services.Entities()` — the 12-table access-control schema (`services/schema.go.md`).
 - `Seeders(seedStatements)` — seeds the `/api/doors`, `/api/readers`, `/api/holders`,
-  `/api/events`, `/api/lockdown`, `/api/settings`, `/api/setup`, plus `/api/health`,
-  `/api/version`, `/api/auth/login`, `/api/auth` endpoint catalog rows, the same
-  insert-if-absent / repair-app_code-and-tier SQL pattern the other appliances use.
+  `/api/events`, `/api/lockdown`, `/api/settings`, `/api/setup`, `/api/notifications` (the unified
+  event feed: alarms, badge decisions, security events), plus `/api/health`, `/api/version`,
+  `/api/auth/login`, `/api/auth` endpoint catalog rows, the same insert-if-absent /
+  repair-app_code-and-tier SQL pattern the other appliances use.
 - `RegisterAppRoutes(api, deps)`:
   1. Builds `services.NewAccessSettingsService(store.SettingsRepo(), settingsFromConfig(cfg))` and
      calls `settings.Get(ctx)` — `config.json` **seeds** this call's first-ever write to the
@@ -65,18 +66,32 @@ then carry.
   5. Builds the notification service and `services.NewSQLStore(deps.Db)` /
      `services.NewNotificationAlarmer` (`services/alarm.go.md`) — door alarms (duress, tamper,
      forced/held-open, reader offline) land in the same feed an operator already watches.
-  6. Builds and starts the runtime (`newRuntime(deps, live, location, ...)` / `runtime.start`,
-     `app/runtime.go.md`) — one supervised goroutine per configured OSDP bus, now driven by the
-     live `services.AccessSettings`/`BusSettings`, not `*pintuconfig.Config`/`BusConfig`. A boot
-     with zero configured buses is not an error: the API comes up so a fresh install can be
-     configured before any reader is wired.
+  6. Builds and starts the runtime (`newRuntime(deps, live, location, store, alarms,
+     alarms.Decision, store.StrikeFor)` / `runtime.start`, `app/runtime.go.md`) — one supervised
+     goroutine per configured OSDP bus, now driven by the live
+     `services.AccessSettings`/`BusSettings`, not `*pintuconfig.Config`/`BusConfig`. A boot with
+     zero configured buses is not an error: the API comes up so a fresh install can be configured
+     before any reader is wired. `alarms.Decision` (`services/alarm.go.md`) is the new fifth
+     argument — every access decision the runtime's controllers make now also reaches the
+     notification feed, not just alarms.
   7. Registers `sharedapis.NewLocalLoginApi` on the **public** router (must be mounted before
      the protected subrouter or the auth middleware swallows it), then mounts `protected` with,
      in order, `NewLocalBasicAuth` then `NewRequireRolePermission` — auth before authorization,
      since the matrix needs a principal in context to decide against.
   8. Registers `apis.NewSettingsApi`, `apis.NewDoorApi`, `apis.NewHolderApi`, `apis.NewEventApi`,
-     `apis.NewLockdownApi`, `apis.NewSetupApi` on `protected`.
-  9. The returned shutdown func calls `runtime.stop()` — cancels every bus supervisor.
+     `apis.NewLockdownApi`, `apis.NewSetupApi`, `apis.NewNotificationsApi` on `protected`.
+  9. **Wires the fleet**, gated on `boolValue(deps.Config.Pairing.Enabled, true)`: resolves
+     `openFleetSecretCipher(deps)` (fails closed — see `app/wire_fleet.go.md`), builds the fleet
+     via `buildFleet(api, deps, appVersion(m), fleetCipher, notifications)`
+     (`app/wire_fleet.go.md`), registers the PUBLIC pairing routes (`sharedapis.NewPairingPublicApi`)
+     on the **unauthenticated** router — before the protected subrouter, or the auth middleware
+     would swallow the adopt call and the node could never be adopted — and the protected pairing
+     routes (`sharedapis.NewPairingApi`) on `protected`, then calls `f.start(bgCtx, deps)`.
+     `bgCtx` (a fresh `context.WithCancel(context.Background())` created at the top of
+     `RegisterAppRoutes`) bounds the fleet workers; the OSDP runtime keeps its own cancel because
+     it predates them and owns its bus supervisors.
+  10. The returned shutdown func cancels `bgCtx` then calls `runtime.stop()` — cancels every bus
+      supervisor.
 - `RegisterWebRoutes(router, deps)` — **new**: serves the SPA shell (`GET /` and `GET /index.html`
   → `<HomeDir>/static/index.html`, `Cache-Control: no-cache, no-store, must-revalidate` on both,
   since `index.html` points at content-hashed chunks and a cached copy would keep a browser on an
@@ -90,6 +105,28 @@ then carry.
   it stays as the **reset target** — see `services/runtime_settings.go.md`'s `Reset` — so a settings
   edit that stops the controller from starting can be undone from the UI instead of the database.
 
+## Fleet adoption
+
+`mypintusan` is adopted by `myseliasan` exactly as `mymatasan` and `myiotsan` are, on the same
+shared node stack (`domain/shared/fleetnode`). It reports `fleetnode.KindDoor`
+(`docs/modules/domain/shared/fleetnode/pairing.go.md`), so the control plane's fleet UI and its
+correlator both know a door controller is neither a camera node nor a sensor hub — see
+`docs/modules/apps/myseliasan/entities/managed_node.go.md` and
+`docs/modules/apps/myseliasan/services/correlate.go.md`.
+
+The event sink `buildFleet` registers (`app/wire_fleet.go.md`) is what makes the fifth app a
+fleet citizen: every alarm AND every access **decision** this node raises (`services/alarm.go.md`'s
+`NotificationAlarmer.Decision`) also lands in the control plane's unified feed via the
+node-dialed control channel, correlatable against camera and sensor events — motion on a camera
+AND a door contact opening AND no badge accepted. Neither node can see that alone.
+
+Live-bench verified end-to-end on one machine: UDP discovery (kind hint `"door"` in the unsigned
+announce), claim-code adopt (authoritative `KindDoor` in the signed adopt reply), mTLS enrollment
++ cert issuance, the control channel, the embedded management UI over the tunnel, a badge
+decision reaching the parent's unified feed tagged `node:<id>`, a fleet rule with door-kind
+clauses arming→grace→firing Critical, replay-on-reconnect (5 events missed, zero duplicates), and
+a remote unlock issued through the tunnel audited on the node as `"cp:admin"`.
+
 ## Notes
 
 - **Shipped so far** (per the file's own header comment): the OSDP driver and simulator
@@ -102,9 +139,9 @@ then carry.
   and issue credentials, but choosing **which doors** somebody reaches still needs direct database
   access; no reader onboarding beyond the wizard's single reader (no bus discovery, no SCBK rekey
   from the UI); no myiotsan bindings for door contacts/relay actuation
-  (`Controller.ContactChanged` is a seam nothing calls); no serial bus transport (only `tcp://`
-  dials); and no `myseliasan` fleet adoption (needs a `fleetnode` node kind that does not exist yet
-  — `domain/shared/fleetnode` declares only `KindCamera` and `KindIot`).
+  (`Controller.ContactChanged` is a seam nothing calls); and no serial bus transport (only `tcp://`
+  dials). `myseliasan` fleet adoption is now wired (see "Fleet adoption" above) — doors as
+  placeable floor-plan assets and a `myiotsan` `RelayDeviceKey` binding remain out of scope.
 - `loginGuardConfig(deps)` maps `deps.Config.LoginSecurity.Effective()` onto
   `sharedapis.LoginGuardConfig` — identical shape to the other appliances' own mapping; reading
   through `.Effective()` is what makes an absent `loginSecurity` block resolve to the guard being

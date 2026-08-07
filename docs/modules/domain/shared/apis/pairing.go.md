@@ -41,4 +41,4 @@ When an admin calls `POST /api/pairing/unpair`, the handler fires `notifyParentS
 - `NewPairingPublicApi` must be registered before the local-session subrouter so the public paths match first.
 - Request bodies are capped at 64 KiB and parsed with `DisallowUnknownFields`.
 - The JSON body size limit and field strictness are shared with `decodeJSON` used elsewhere in the `apis` package.
-- The `AdoptResult.Kind` this endpoint returns is the fleet's AUTHORITATIVE kind for this node — set from `fleetnode.NewPairingService`'s configured `NodeKind` (`KindCamera` for mymatasan, `KindIot` for myiotsan) — as opposed to the unsigned hint carried in the discovery announce (see `docs/modules/infra/pairing/packet.go.md`).
+- The `AdoptResult.Kind` this endpoint returns is the fleet's AUTHORITATIVE kind for this node — set from `fleetnode.NewPairingService`'s configured `NodeKind` (`KindCamera` for mymatasan, `KindIot` for myiotsan, `KindDoor` for mypintusan) — as opposed to the unsigned hint carried in the discovery announce (see `docs/modules/infra/pairing/packet.go.md`).

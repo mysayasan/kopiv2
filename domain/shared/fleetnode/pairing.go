@@ -151,9 +151,10 @@ type pairingService struct {
 
 // NewPairingService builds the node pairing service. name defaults to the host
 // name when empty; cipher (may be nil) encrypts the fleet key at rest.
-// NodeKind is what a node IS, which the control plane needs to know because it manages two
+// NodeKind is what a node IS, which the control plane needs to know because it manages
 // different sorts of appliance and they are not interchangeable — a camera node has recordings
-// and live views; a sensor node has telemetry and relays.
+// and live views; a sensor node has telemetry and relays; a door node has doors, badge
+// decisions, and an access log.
 type NodeKind = string
 
 const (
@@ -161,6 +162,8 @@ const (
 	KindCamera NodeKind = "camera"
 	// KindIot is a myiotsan node.
 	KindIot NodeKind = "iot"
+	// KindDoor is a mypintusan node.
+	KindDoor NodeKind = "door"
 )
 
 func NewPairingService(repo dbsql.IGenericRepo[entities.RuntimeSetting], cipher *atrest.Cipher, appName, name, version string, kind NodeKind) IPairingService {

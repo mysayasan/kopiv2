@@ -36,18 +36,22 @@ func Policy() []PolicyRule
 
 - Everyone signed in: `/api/auth/change-password`.
 - **Watching the estate** (viewer + operator, `read`): `/api/doors`, `/api/readers`,
-  `/api/events`.
+  `/api/events`, `/api/notifications` (the unified feed: alarms, badge decisions, security
+  events).
 - **Running the building** (operator, `write`; viewer `none`): `/api/doors/unlock` (opening a
   door remotely — a receptionist's daily act, instantaneous, and every use lands in the same log
   as a badge), `/api/holders` (issuing/revoking a badge — the routine, reversible half of access
-  control).
+  control), `/api/notifications/*/read` (marking a feed entry read — viewer gets no write here,
+  same shape as the other appliances).
 - **Changing the rules** (operator `read` only, viewer `none` — admin-only to write, expressed
   by the absence of a `write` grant below admin): `/api/groups`, `/api/grants`,
   `/api/schedules`.
 - **The building's safety posture** (admin-only, listed with no grants so the catalog stays a
   complete description of the surface): `/api/lockdown`, `/api/settings` (users, roles, door
   hardware and system settings — wrong values here do not produce a bad reading, they produce a
-  door that opens for the wrong person or an alarm that never comes), `/api/setup`.
+  door that opens for the wrong person or an alarm that never comes), `/api/setup`, `/api/pairing`
+  (fleet pairing with a `myseliasan` control plane — admin-only because joining or leaving a
+  fleet changes who can manage this building's doors remotely).
 
 Every area that grows an API **must** be added here, including the admin-only ones — a route
 missing from this catalog is a route nobody can see they are not granting. `admin` is absent by

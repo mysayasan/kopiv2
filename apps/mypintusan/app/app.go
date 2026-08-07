@@ -32,9 +32,9 @@ import (
 // Shipped so far: the OSDP driver and simulator (infra/access/osdp, tools/osdp-sim), the decision
 // path, the door state machine, and SQLite persistence. This file is what makes those bootable.
 //
-// What remains: a frontend (this app currently serves an API only), the myiotsan bindings for door
-// contacts and relay actuation, and fleet adoption by myseliasan — which additionally needs a node
-// kind that does not exist yet, since domain/shared/fleetnode declares only KindCamera and KindIot.
+// What remains: the myiotsan bindings for door contacts and relay actuation. Fleet adoption by
+// myseliasan is wired (wire_fleet.go, KindDoor) on the same shared node stack the other
+// appliances use.
 type module struct {
 	cfg *pintuconfig.Config
 }
@@ -115,6 +115,7 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Lockdown", Description: "seal the site", Path: "/api/lockdown", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Settings", Description: "users and roles", Path: "/api/settings", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Setup Wizard", Description: "first-run setup state and completion", Path: "/api/setup", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Notifications", Description: "unified event feed: alarms, badge decisions, security events", Path: "/api/notifications", AccessTier: apiaccessenums.AuthOnly},
 	}
 
 	statements := make([]string, 0, len(endpoints)*2)
@@ -139,6 +140,9 @@ WHERE NOT EXISTS (SELECT 1 FROM api_endpoint WHERE app_code = 'mypintusan' AND h
 // RegisterAppRoutes wires the app: identity, the access store, the OSDP buses, and the HTTP API.
 func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (apphost.ShutdownFunc, error) {
 	ctx := context.Background()
+	// bgCtx bounds the fleet workers (discovery responder, enrollment, control channel); the OSDP
+	// runtime keeps its own cancel because it predates them and owns its bus supervisors.
+	bgCtx, stopBackground := context.WithCancel(context.Background())
 	cfg := m.appConfig()
 
 	userRepo := dbsql.NewGenericRepo[sharedentities.LocalUser](deps.Db)
@@ -179,8 +183,11 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	// One controller per RS-485 bus. Each owns its port for the life of the process — a CP holds
 	// the port open and polls continuously, unlike the open/poll/close of the Modbus driver.
-	runtime := newRuntime(deps, live, location, store, alarms, store.StrikeFor)
+	// Badge decisions flow into the notification feed alongside the alarms — that stream is what
+	// the fleet control plane correlates across nodes once this node is adopted.
+	runtime := newRuntime(deps, live, location, store, alarms, alarms.Decision, store.StrikeFor)
 	if err := runtime.start(ctx); err != nil {
+		stopBackground()
 		return nil, err
 	}
 
@@ -221,8 +228,39 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewEventApi(protected, deps.Db)
 	apis.NewLockdownApi(protected, runtime)
 	apis.NewSetupApi(protected, setupState)
+	apis.NewNotificationsApi(protected, notifications)
+
+	// --- the fleet -------------------------------------------------------------------
+	//
+	// mypintusan is adopted by myseliasan exactly as the other appliances are, on the same shared
+	// node stack. It reports KindDoor, so the control plane knows a door controller is neither a
+	// camera nor a sensor hub.
+	//
+	// The event sink registered inside buildFleet is what makes the fifth app a fleet citizen:
+	// every alarm AND every badge decision this node raises also lands in the control plane's
+	// unified feed, where it can be correlated with camera and sensor events — motion AND a door
+	// opening AND no badge accepted.
+	if boolValue(deps.Config.Pairing.Enabled, true) {
+		fleetCipher, cerr := openFleetSecretCipher(deps)
+		if cerr != nil {
+			stopBackground()
+			runtime.stop()
+			return nil, cerr
+		}
+		f := buildFleet(api, deps, appVersion(m), fleetCipher, notifications)
+
+		// The PUBLIC pairing routes (adopt / release / self-drop) authenticate with the FLEET KEY,
+		// not a user session — a control plane adopting a node has no user behind it. They must be
+		// registered on the unauthenticated router, before the protected subrouter, or the auth
+		// middleware swallows the adopt call and the node can never be adopted at all.
+		sharedapis.NewPairingPublicApi(api, f.pairing, f.enrollment.Kick)
+		sharedapis.NewPairingApi(protected, f.pairing)
+
+		f.start(bgCtx, deps)
+	}
 
 	return func(ctx context.Context) error {
+		stopBackground()
 		runtime.stop()
 		return nil
 	}, nil

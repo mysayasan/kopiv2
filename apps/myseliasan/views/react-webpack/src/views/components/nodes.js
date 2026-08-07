@@ -3,20 +3,27 @@ import { Ico, useT } from '@shared';
 import { FormBusyOverlay, IconDropdown } from './ui';
 import { NodeManager } from './node_manager';
 import { NodeSettingsDialog } from './node_settings_dialog';
-import { isSensorNode, nodeFallbackIcon } from './layout';
+import { nodeKindOf, nodeFallbackIcon } from './layout';
 import { api, formatTimestamp } from '../lib/helpers';
 
-// NodeKindPill names what a node IS. The control plane now adopts two kinds — a mymatasan
-// camera NVR and a myiotsan sensor hub — and they are not interchangeable: a clause that says
-// "a door contact" belongs on the hub, and one that says "motion" belongs on the NVR. An empty
-// kind is a camera node (every node adopted before the field existed is one).
+// NodeKindPill names what a node IS. The control plane adopts three kinds — a mymatasan camera
+// NVR, a myiotsan sensor hub, and a mypintusan door controller — and they are not
+// interchangeable: a clause that says "a door contact" belongs on the hub, "motion" belongs on
+// the NVR, and "badge accepted" belongs on the door controller. An empty kind is a camera node
+// (every node adopted before the field existed is one).
+const KIND_PILLS = {
+  camera: { icon: 'video', labelKey: 'node.kindCamera' },
+  iot: { icon: 'cpu', labelKey: 'node.kindIot' },
+  door: { icon: 'door', labelKey: 'node.kindDoor' },
+};
 function NodeKindPill({ node }) {
   const t = useT();
-  const sensor = isSensorNode(node);
+  const kind = nodeKindOf(node);
+  const pill = KIND_PILLS[kind] || KIND_PILLS.camera;
   return (
-    <span className={`node-kind-pill node-kind-pill--${sensor ? 'iot' : 'camera'}`}>
-      <Ico n={sensor ? 'cpu' : 'video'} sz={12} />
-      {sensor ? t('node.kindIot') : t('node.kindCamera')}
+    <span className={`node-kind-pill node-kind-pill--${kind}`}>
+      <Ico n={pill.icon} sz={12} />
+      {t(pill.labelKey)}
     </span>
   );
 }

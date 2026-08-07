@@ -17,7 +17,7 @@ import { api, formatTimestamp } from '../lib/helpers';
 // enforces it (403). The controls below are hidden for everyone else, which is UX, not security.
 
 const SEVERITIES = ['info', 'warning', 'critical'];
-const KINDS = ['', 'camera', 'iot'];
+const KINDS = ['', 'camera', 'iot', 'door'];
 
 // Every fleet-rules call passes noRedirect: a 403 here means "not a superadmin" or "this role
 // cannot read rules" — both are things to say in place, not a reason to bounce to the SSO login.
@@ -37,6 +37,13 @@ function Toggle({ checked, disabled, onChange, label, ariaLabel }) {
 }
 
 const blankClause = (mode) => ({ mode, nodeId: '', kind: '', category: '', match: '' });
+
+// normKind collapses a node's stored kind to one of the clause kinds. Empty/unknown = camera:
+// every node adopted before the field existed is a mymatasan NVR.
+const normKind = (kind) => {
+  const k = String(kind || 'camera').toLowerCase();
+  return k === 'iot' || k === 'door' ? k : 'camera';
+};
 
 // A new rule starts enabled, critical, with a 120s window and a 5s grace — the grace default
 // mirrors the server's (graceOf falls back to 5s), so a rule left alone still tolerates a slow
@@ -74,7 +81,13 @@ const toRequest = (detail) => ({
 // every node adopted before the field existed is a mymatasan NVR.
 function useKindLabel() {
   const t = useT();
-  return useCallback((kind) => (String(kind || '').toLowerCase() === 'iot' ? t('fr.kindSensor') : t('fr.kindCamera')), [t]);
+  return useCallback((kind) => {
+    switch (String(kind || '').toLowerCase()) {
+      case 'iot': return t('fr.kindSensor');
+      case 'door': return t('fr.kindDoor');
+      default: return t('fr.kindCamera');
+    }
+  }, [t]);
 }
 
 // ClausePhrase renders one condition as plain English: what to look for, and where.
@@ -82,13 +95,16 @@ function useKindLabel() {
 function ClausePhrase({ clause, nodeName }) {
   const t = useT();
   const what = clause.match ? `“${clause.match}”` : (clause.category ? clause.category : t('fr.anyEvent'));
+  const kind = String(clause.kind || '').toLowerCase();
   const where = clause.nodeId
     ? t('fr.onNode', { name: nodeName || clause.nodeId })
-    : String(clause.kind || '').toLowerCase() === 'iot'
+    : kind === 'iot'
       ? t('fr.onSensorNode')
-      : String(clause.kind || '').toLowerCase() === 'camera'
+      : kind === 'camera'
         ? t('fr.onCameraNode')
-        : t('fr.onAnyNode');
+        : kind === 'door'
+          ? t('fr.onDoorNode')
+          : t('fr.onAnyNode');
   const cat = clause.match && clause.category ? ` ${t('fr.inCategory', { category: clause.category })}` : '';
   return <span className="fr-phrase"><strong>{what}</strong> {where}{cat}</span>;
 }
@@ -137,8 +153,7 @@ function ClauseRow({ index, clause, nodes, busy, onChange, onRemove }) {
   // stale selection so the clause can never say "a camera node — specifically, this sensor hub".
   const selectable = (nodes || []).filter((n) => {
     if (!clause.kind) return true;
-    const k = String(n.kind || 'camera').toLowerCase() === 'iot' ? 'iot' : 'camera';
-    return k === clause.kind;
+    return normKind(n.kind) === clause.kind;
   });
   return (
     <div className={`fr-clause${absent ? ' fr-clause--absent' : ''}`}>
@@ -170,8 +185,7 @@ function ClauseRow({ index, clause, nodes, busy, onChange, onRemove }) {
               const keep = !clause.nodeId || (nodes || []).some((n) => {
                 if (String(n.nodeId) !== String(clause.nodeId)) return false;
                 if (!kind) return true;
-                const k = String(n.kind || 'camera').toLowerCase() === 'iot' ? 'iot' : 'camera';
-                return k === kind;
+                return normKind(n.kind) === kind;
               });
               set({ kind, nodeId: keep ? clause.nodeId : '' });
             }}
@@ -544,10 +558,11 @@ export function FleetRulesPage({ nodes = [], session, onToast, prefill = null, o
         ) : (
           <div className="fr-node-chips">
             {(nodes || []).map((n) => {
-              const iot = String(n.kind || '').toLowerCase() === 'iot';
+              const k = normKind(n.kind);
+              const chipIcon = k === 'iot' ? 'cpu' : k === 'door' ? 'door' : 'video';
               return (
-                <span key={n.nodeId} className={`fr-node-chip fr-node-chip--${iot ? 'iot' : 'camera'}`}>
-                  <Ico n={iot ? 'cpu' : 'video'} sz={13} />
+                <span key={n.nodeId} className={`fr-node-chip fr-node-chip--${k}`}>
+                  <Ico n={chipIcon} sz={13} />
                   {n.name || n.nodeId}
                   <span className="fr-node-chip-kind">{kindLabel(n.kind)}</span>
                 </span>

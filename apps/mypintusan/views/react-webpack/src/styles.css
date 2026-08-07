@@ -168,6 +168,10 @@ body {
 .form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
 .form-error { color: #e08573; font-size: 13px; margin: 0; }
 
+.fleet-section { margin-top: 26px; padding-top: 14px; border-top: 1px solid var(--ui-border, #262b31); }
+.fleet-status { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.claim-code { font-size: 20px; letter-spacing: 3px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--ui-border, #262b31); background: var(--ui-surface-2, #1d2229); align-self: flex-start; }
+
 .bus-box { border: 1px solid var(--ui-border, #262b31); border-radius: 10px; padding: 12px 14px; margin: 0 0 12px; }
 .bus-box legend { padding: 0 6px; }
 .bus-port { min-width: 220px; }

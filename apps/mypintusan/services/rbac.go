@@ -69,6 +69,8 @@ func Policy() []PolicyRule {
 		{Path: "/api/doors", Description: "See doors and their live state", Viewer: read, Operator: read},
 		{Path: "/api/readers", Description: "See readers, their health and Secure Channel state", Viewer: read, Operator: read},
 		{Path: "/api/events", Description: "See the access log", Viewer: read, Operator: read},
+		{Path: "/api/notifications", Description: "See the unified event feed", Viewer: read, Operator: read},
+		{Path: "/api/notifications/*/read", Description: "Mark a feed entry read", Viewer: none, Operator: write},
 
 		// --- Running the building ---------------------------------------------------------
 		// Opening a door remotely is an operator power: it is what a receptionist does all day,
@@ -92,6 +94,8 @@ func Policy() []PolicyRule {
 		// person or an alarm that never comes.
 		{Path: "/api/settings", Description: "Users, roles, door hardware and system settings", Viewer: none, Operator: none},
 		{Path: "/api/setup", Description: "First-run setup wizard", Viewer: none, Operator: none},
+		// Joining or leaving a fleet changes who can manage this building's doors remotely.
+		{Path: "/api/pairing", Description: "Fleet pairing with a control plane", Viewer: none, Operator: none},
 	}
 }
 

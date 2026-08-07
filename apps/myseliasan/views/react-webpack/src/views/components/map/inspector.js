@@ -11,7 +11,9 @@ import { nodeToneKey } from '../../lib/fleet_status';
 
 const STATUS_ORDER = ['critical', 'warning', 'online', 'idle'];
 const SEV_RANK = { critical: 3, warning: 2, info: 1 };
-const KIND_ICON = { camera: 'video', iot: 'cpu' };
+const KIND_ICON = { camera: 'video', iot: 'cpu', door: 'door' };
+// kindSub names the appliance under its title. Empty/unknown kind = a recorder (legacy camera).
+const kindSubKey = (kind) => (kind === 'iot' ? 'mw.iotHub' : kind === 'door' ? 'mw.doorController' : 'mw.recorder');
 
 function shortAgo(sec) {
   if (!sec) return '';
@@ -90,7 +92,7 @@ function BuildingCard({ row, nodes, nodesById, plans, nowSec, editMode, onOpenBu
             <div className="mw-seclbl">{t('mw.appliancesHere')}</div>
             {residents.map((n) => (
               <div key={n.nodeId} className="mw-lrow static">
-                <span className={`mw-dot ${nodeToneKey(n, nowSec)}`} /><span className="nm">{n.name || n.nodeId}</span><span className="rt">{n.kind === 'iot' ? 'IoT' : t('map.layerNodes')}</span>
+                <span className={`mw-dot ${nodeToneKey(n, nowSec)}`} /><span className="nm">{n.name || n.nodeId}</span><span className="rt">{n.kind === 'iot' ? 'IoT' : n.kind === 'door' ? t('mw.doorController') : t('map.layerNodes')}</span>
               </div>
             ))}
           </>
@@ -177,11 +179,11 @@ function NodeCard({ node, allSites, floorplansByBuilding, onAssignBuilding, onOp
   const streamed = Object.values(floorplansByBuilding).flat().reduce((acc, fp) => acc + (fp.placements || []).filter((p) => p.nodeId === node.nodeId && p.cameraId).length, 0);
   return (
     <>
-      <Head glyph={KIND_ICON[node.kind] || 'cpu'} title={node.name || node.nodeId} sub={node.kind === 'iot' ? t('mw.iotHub') : t('mw.recorder')} status={nodeToneKey(node)} statusLabel={t(`map.legend.${nodeToneKey(node)}`)} />
+      <Head glyph={KIND_ICON[node.kind] || 'cpu'} title={node.name || node.nodeId} sub={t(kindSubKey(node.kind))} status={nodeToneKey(node)} statusLabel={t(`map.legend.${nodeToneKey(node)}`)} />
       <div className="mw-inspscroll">
         <div className="mw-kpis">
           <div className="mw-kpi"><div className="v">{streamed}</div><div className="l">{t('mw.camerasStreamed')}</div></div>
-          <div className="mw-kpi"><div className="v">{node.kind === 'iot' ? '—' : '✓'}</div><div className="l">{t('mw.cert')}</div></div>
+          <div className="mw-kpi"><div className="v">{node.kind === 'iot' || node.kind === 'door' ? '—' : '✓'}</div><div className="l">{t('mw.cert')}</div></div>
         </div>
         <div className="mw-field">
           <label>{t('map.residesIn')}</label>

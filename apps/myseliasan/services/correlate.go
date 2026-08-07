@@ -18,7 +18,8 @@ import (
 //
 //	Motion on Camera 3 (a mymatasan node)
 //	AND a door contact opening (a myiotsan node)
-//	AND no badge swipe (a myiotsan node)
+//	AND no badge accepted (a mypintusan door node, category access.granted;
+//	    or a badge reader wired through a myiotsan hub)
 //	-> intrusion
 //
 // mymatasan cannot see your door sensors. myiotsan cannot see your cameras. A cloud IoT platform
@@ -42,7 +43,7 @@ import (
 // NodeEvent is one node event, flattened to what a rule can match on.
 type NodeEvent struct {
 	NodeId   string
-	Kind     string // the node's kind: "camera" or "iot"
+	Kind     string // the node's kind: "camera", "iot" or "door"
 	Category string
 	Title    string
 	Body     string

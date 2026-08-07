@@ -23,6 +23,9 @@ type runtime struct {
 	store    services.Store
 	alarms   services.Alarmer
 	strikes  services.StrikeResolver
+	// decisions receives every access decision for the notification feed (and, through it, the
+	// fleet uplink). Nil when nothing consumes decisions.
+	decisions func(ctx context.Context, ev appentities.AccessEvent)
 
 	cancel context.CancelFunc
 
@@ -36,10 +39,13 @@ type runtime struct {
 }
 
 func newRuntime(deps apphost.Dependencies, cfg services.AccessSettings, loc *time.Location,
-	store services.Store, alarms services.Alarmer, strikes services.StrikeResolver) *runtime {
+	store services.Store, alarms services.Alarmer,
+	decisions func(ctx context.Context, ev appentities.AccessEvent),
+	strikes services.StrikeResolver) *runtime {
 	return &runtime{
-		deps: deps, cfg: cfg, location: loc, store: store, alarms: alarms, strikes: strikes,
-		live: map[string]*services.Controller{},
+		deps: deps, cfg: cfg, location: loc, store: store, alarms: alarms, decisions: decisions,
+		strikes: strikes,
+		live:    map[string]*services.Controller{},
 	}
 }
 
@@ -164,6 +170,7 @@ func (r *runtime) runBus(ctx context.Context, cfg services.BusSettings) error {
 		Offline:      r.cfg.Offline,
 		TickInterval: time.Duration(r.cfg.TickSeconds) * time.Second,
 		PINWindow:    time.Duration(r.cfg.PINWindowSeconds) * time.Second,
+		Decisions:    r.decisions,
 	})
 
 	busCtx, cancel := context.WithCancel(ctx)

@@ -39,7 +39,7 @@ One condition in a rule: an event that must be present, or one that must be abse
 | `RuleId` | Indexed FK (`idx:"rule"`) to the owning `FleetRule`. |
 | `Mode` | `"required"` (this must happen) or `"absent"` (this must NOT have happened). The absent clause is what lets a rule express INNOCENCE as well as guilt — without it, "the door opened at 03:00" is an alert every night a cleaner works late; with it, the rule says what everyone actually means: the door opened and nobody was authorised to open it. |
 | `NodeId` | Scopes the clause to one node. Empty means any node — what you want for "a badge swipe anywhere on this site". |
-| `Kind` | Scopes to a node TYPE (`"camera"` / `"iot"`). Empty means either. Resolved against `ManagedNode.Kind` (the adopted node's own record), never against anything an event body claims — see `correlate.go.md`. |
+| `Kind` | Scopes to a node TYPE (`"camera"` / `"iot"` / `"door"`). Empty means any. Resolved against `ManagedNode.Kind` (the adopted node's own record), never against anything an event body claims — see `correlate.go.md`. |
 | `Category` | Matches the event's notification category (`"vision.alert"`, `"device.alert"`, ...). |
 | `Match` | Case-insensitive substring matched against the event's title and body — in practice, the rule name that fired on the node ("Person detected", "Front door opened"). A substring rather than a structured field, because a node's alert IS its rule's name, and the operator who wrote that rule is the one writing this one; a required taxonomy would mean the feature is never used. |
 

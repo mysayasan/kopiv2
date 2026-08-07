@@ -124,6 +124,13 @@
    specificity instead of relying on which stylesheet happens to be appended last. */
 .nodeiot-embed.nodeiot-manage .workspace { padding-top: 0; }
 
+/* The door-controller embed (nodedoor) has the same doubled-workspace shape as the hub embed
+   above, and needs the same specificity-doubled fix for the same runtime-injection reason. */
+.nodedoor-embed.nodedoor-manage .workspace { padding-top: 0; }
+/* mypintusan's pages open with their own `.screen` root, which its stylesheet gives a page-level
+   min-height and padding; inside the manage surface the shell already provides both. */
+.nodedoor-embed.nodedoor-manage .screen { min-height: 0; padding: 0; }
+
 /* An error variant of the settings hint, used when a fleet load FAILS rather than returning an
    empty fleet — the two must look different, or an operator whose session lapsed thinks their
    nodes vanished. */

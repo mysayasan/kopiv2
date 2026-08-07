@@ -10,10 +10,11 @@ unchanged via a same-named alias in `apps/mymatasan/services/fleetnode.go`.
 
 ## Node Kind
 
-`NewPairingService` now takes a `kind NodeKind` (`KindCamera` | `KindIot`) — what the node IS,
-because the control plane manages two different sorts of appliance and they are not
+`NewPairingService` now takes a `kind NodeKind` (`KindCamera` | `KindIot` | `KindDoor`) — what the
+node IS, because the control plane manages several different sorts of appliance and they are not
 interchangeable: a camera node has recordings and live views; a sensor node has telemetry and
-relays.
+relays; a door node (`KindDoor`, added for `mypintusan`) has doors, badge decisions and an access
+log.
 
 - An empty `kind` defaults to `KindCamera` — every node that exists before this field shipped is
   a mymatasan node, and it must keep behaving exactly as it always did rather than appearing as

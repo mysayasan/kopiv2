@@ -309,9 +309,11 @@
 }
 .fr-node-chip--camera { border-color: rgba(45, 108, 223, 0.45); }
 .fr-node-chip--iot { border-color: rgba(13, 148, 136, 0.5); }
+.fr-node-chip--door { border-color: rgba(201, 138, 46, 0.5); }
 
-/* Node-kind pill, reused by the adopted-nodes table: a camera NVR and a sensor hub are not
-   interchangeable, and the control plane now manages both. */
+/* Node-kind pill, reused by the adopted-nodes table: a camera NVR, a sensor hub and a door
+   controller are not interchangeable, and the control plane manages all three. The door hue is
+   mypintusan's own brass accent, so the pill reads as that product. */
 .node-kind-pill {
   display: inline-flex;
   align-items: center;
@@ -334,6 +336,11 @@
   color: #0f766e;
   background: rgba(13, 148, 136, 0.11);
   border-color: rgba(13, 148, 136, 0.32);
+}
+.node-kind-pill--door {
+  color: #a16207;
+  background: rgba(201, 138, 46, 0.12);
+  border-color: rgba(201, 138, 46, 0.35);
 }
 
 @media (max-width: 720px) {

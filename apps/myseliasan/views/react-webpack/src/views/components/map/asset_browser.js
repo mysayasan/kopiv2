@@ -9,7 +9,7 @@ import { nodeToneKey } from '../../lib/fleet_status';
 // loaded for an expanded building; a building's own status is the worst of its owning nodes.
 
 const STATUS_ORDER = ['critical', 'warning', 'online', 'idle'];
-const KIND_ICON = { camera: 'video', iot: 'cpu' };
+const KIND_ICON = { camera: 'video', iot: 'cpu', door: 'door' };
 
 export function AssetBrowser({
   sites = [], nodes = [], nodesById = {}, floorplansByBuilding = {},

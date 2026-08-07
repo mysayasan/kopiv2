@@ -86,6 +86,16 @@ export const getSettings = () => get('/api/settings/access')
 export const saveSettings = settings => send('/api/settings/access', 'PUT', settings)
 export const resetSettings = () => send('/api/settings/access/reset', 'POST')
 
+// --- fleet pairing ------------------------------------------------------------------------------
+
+// Fleet pairing joins this controller to a myseliasan control plane. The fleet key comes from the
+// control plane's Nodes screen; the claim code is generated HERE and typed THERE, so adoption
+// always needs someone standing in both consoles.
+export const pairingStatus = () => get('/api/pairing/status')
+export const saveFleetKey = key => send('/api/pairing/fleet-key', 'PUT', { key })
+export const generateClaimCode = () => send('/api/pairing/claim-code', 'POST')
+export const unpairFleet = () => send('/api/pairing/unpair', 'POST')
+
 // --- setup wizard -------------------------------------------------------------------------------
 
 export const setupState = () => get('/api/setup/state')
