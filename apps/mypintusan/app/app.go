@@ -116,6 +116,9 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Settings", Description: "users and roles", Path: "/api/settings", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Setup Wizard", Description: "first-run setup state and completion", Path: "/api/setup", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Notifications", Description: "unified event feed: alarms, badge decisions, security events", Path: "/api/notifications", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Access groups", Description: "named sets of holders", Path: "/api/groups", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Grants", Description: "which groups reach which doors, on what schedule", Path: "/api/grants", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Schedules", Description: "time policies and the holiday calendar", Path: "/api/schedules", AccessTier: apiaccessenums.AuthOnly},
 	}
 
 	statements := make([]string, 0, len(endpoints)*2)
@@ -229,6 +232,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewLockdownApi(protected, runtime)
 	apis.NewSetupApi(protected, setupState)
 	apis.NewNotificationsApi(protected, notifications)
+	apis.NewAccessRulesApi(protected, deps.Db, notifications)
 
 	// --- the fleet -------------------------------------------------------------------
 	//

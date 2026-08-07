@@ -32,9 +32,12 @@ this door open?", and the boring one answers it in a single join.
 
 ## Notes
 
-- **Not yet persisted.** No repository, no dbsql registration, no migration exists for any of
-  these six entities; they are exercised only by in-memory test fakes (`services.Store` in
-  `controller_test.go`).
+- Persisted via the shared `dbsql.NewGenericRepo[T]` seam, one repo per entity — both in
+  `services/store_sql.go.md`'s `SQLStore` (the decision path's read side: `GrantsFor`,
+  `Schedules`, `HolidayOn`) and, as of `apis/access_rules.go.md`, the CRUD surface an operator
+  actually edits through (`/api/groups`, `/api/schedules`, `/api/schedules/holidays`,
+  `/api/grants`). Test fakes (`services.Store` in `controller_test.go`) still exercise the same
+  shape in-memory for the decision-path unit tests.
 - `services.Store.GrantsFor(holderId, doorId)` returns the caller-joined grant set for a
   holder's groups at one door; `services.Store.Schedules(ids)` and `HolidayOn(siteId, date)`
   resolve the rest — see `services/controller.go.md`'s `snapshot`.

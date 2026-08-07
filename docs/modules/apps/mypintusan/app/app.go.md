@@ -43,8 +43,9 @@ then carry.
   `services.Entities()` — the 12-table access-control schema (`services/schema.go.md`).
 - `Seeders(seedStatements)` — seeds the `/api/doors`, `/api/readers`, `/api/holders`,
   `/api/events`, `/api/lockdown`, `/api/settings`, `/api/setup`, `/api/notifications` (the unified
-  event feed: alarms, badge decisions, security events), plus `/api/health`, `/api/version`,
-  `/api/auth/login`, `/api/auth` endpoint catalog rows, the same insert-if-absent /
+  event feed: alarms, badge decisions, security events), `/api/groups`, `/api/grants`,
+  `/api/schedules` (the access-rules triple — `apis/access_rules.go.md`), plus `/api/health`,
+  `/api/version`, `/api/auth/login`, `/api/auth` endpoint catalog rows, the same insert-if-absent /
   repair-app_code-and-tier SQL pattern the other appliances use.
 - `RegisterAppRoutes(api, deps)`:
   1. Builds `services.NewAccessSettingsService(store.SettingsRepo(), settingsFromConfig(cfg))` and
@@ -79,7 +80,9 @@ then carry.
      in order, `NewLocalBasicAuth` then `NewRequireRolePermission` — auth before authorization,
      since the matrix needs a principal in context to decide against.
   8. Registers `apis.NewSettingsApi`, `apis.NewDoorApi`, `apis.NewHolderApi`, `apis.NewEventApi`,
-     `apis.NewLockdownApi`, `apis.NewSetupApi`, `apis.NewNotificationsApi` on `protected`.
+     `apis.NewLockdownApi`, `apis.NewSetupApi`, `apis.NewNotificationsApi`, `apis.NewAccessRulesApi`
+     (`apis/access_rules.go.md` — groups, schedules and grants, the surface that makes a wizard-issued
+     badge actually open a door) on `protected`.
   9. **Wires the fleet**, gated on `boolValue(deps.Config.Pairing.Enabled, true)`: resolves
      `openFleetSecretCipher(deps)` (fails closed — see `app/wire_fleet.go.md`), builds the fleet
      via `buildFleet(api, deps, appVersion(m), fleetCipher, notifications)`
@@ -135,13 +138,15 @@ a remote unlock issued through the tunnel audited on the node as `"cp:admin"`.
   SPA (`views/react-webpack/`, building to `static/`, served by `RegisterWebRoutes`) with a
   first-run wizard, plus database-backed runtime settings replacing `config.json` as the source of
   truth after first boot.
-- **What remains**: no groups/schedules/grants screens or APIs — after setup an operator can badge
-  and issue credentials, but choosing **which doors** somebody reaches still needs direct database
-  access; no reader onboarding beyond the wizard's single reader (no bus discovery, no SCBK rekey
-  from the UI); no myiotsan bindings for door contacts/relay actuation
+- **What remains**: no reader onboarding beyond the wizard's single reader (no bus discovery, no
+  SCBK rekey from the UI); no myiotsan bindings for door contacts/relay actuation
   (`Controller.ContactChanged` is a seam nothing calls); and no serial bus transport (only `tcp://`
   dials). `myseliasan` fleet adoption is now wired (see "Fleet adoption" above) — doors as
-  placeable floor-plan assets and a `myiotsan` `RelayDeviceKey` binding remain out of scope.
+  placeable floor-plan assets and a `myiotsan` `RelayDeviceKey` binding remain out of scope. The
+  groups/schedules/grants screens and APIs that used to be missing here now exist
+  (`apis/access_rules.go.md`) — choosing which doors somebody reaches no longer needs direct
+  database access, and the first-run wizard grants the person it just created onto the door it
+  just created, so a fresh install works end to end without an operator ever visiting that screen.
 - `loginGuardConfig(deps)` maps `deps.Config.LoginSecurity.Effective()` onto
   `sharedapis.LoginGuardConfig` — identical shape to the other appliances' own mapping; reading
   through `.Effective()` is what makes an absent `loginSecurity` block resolve to the guard being

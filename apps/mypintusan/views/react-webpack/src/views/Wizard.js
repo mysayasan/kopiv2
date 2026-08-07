@@ -26,6 +26,7 @@ export default function Wizard({ onFinished }) {
   const [site, setSite] = useState({ timezone: '' })
   const [cable, setCable] = useState({ port: '', address: 1, label: '' })
   const [door, setDoor] = useState({ name: '', class: 'interior', unlockSeconds: 5 })
+  const [doorId, setDoorId] = useState(0)
   const [person, setPerson] = useState({ name: '', ref: '', facilityCode: 0, cardNumber: '' })
 
   const name = STEPS[step]
@@ -90,7 +91,7 @@ export default function Wizard({ onFinished }) {
     setBusy(true)
     setError('')
     try {
-      await api.createDoor({
+      const created = await api.createDoor({
         name: door.name,
         class: door.class,
         unlockSeconds: Number(door.unlockSeconds) || 5,
@@ -98,12 +99,43 @@ export default function Wizard({ onFinished }) {
         osdpAddress: Number(cable.address) || 0,
         readerName: cable.label || door.name
       })
+      if (created && created.id) setDoorId(created.id)
       next()
     } catch (e) {
       setError(e && e.message ? e.message : t('common.error'))
     } finally {
       setBusy(false)
     }
+  }
+
+  // ensureDefaultAccess builds the smallest working rule set: an "Everyone" group, a 24/7
+  // schedule, the new person in the group, and a grant onto the door created a step ago.
+  //
+  // Without this, the wizard's proud last screen was a lie: it had created a door, a person and a
+  // badge that opened NOTHING, because the decision path (correctly, fail-closed) requires a
+  // grant and nothing had made one. The names are looked up before creating so a re-run of the
+  // wizard reuses rather than duplicates.
+  const ensureDefaultAccess = async holderId => {
+    if (!doorId) return
+    const groupName = t('wizard.person.defaultGroup')
+    const schedName = t('wizard.person.defaultSchedule')
+
+    let group = null
+    try {
+      const existing = await api.listGroups()
+      group = (existing && existing.items ? existing.items : []).find(g => g.name === groupName) || null
+    } catch { /* fall through to create */ }
+    if (!group) group = await api.createGroup({ name: groupName, description: t('wizard.person.defaultGroupDesc') })
+
+    let sched = null
+    try {
+      const existing = await api.listSchedules()
+      sched = (existing && existing.items ? existing.items : []).find(s => s.name === schedName) || null
+    } catch { /* fall through to create */ }
+    if (!sched) sched = await api.createSchedule({ name: schedName, always: true, windows: [] })
+
+    await api.addGroupMember(group.id, holderId)
+    await api.createGrant({ groupId: group.id, doorId, scheduleId: sched.id })
   }
 
   const savePerson = async () => {
@@ -118,6 +150,7 @@ export default function Wizard({ onFinished }) {
           cardNumber: person.cardNumber
         })
       }
+      await ensureDefaultAccess(holder.id)
       next()
     } catch (e) {
       setError(e && e.message ? e.message : t('common.error'))
@@ -288,8 +321,10 @@ export default function Wizard({ onFinished }) {
                 </label>
               </div>
               <small className="muted">{t('badge.facilityHint')}</small>
-              {/* Said before they wonder why the badge does not work: creating a person and a card
-                  does not grant access anywhere. That is the fail-closed default. */}
+              {/* Said before they wonder: this person IS granted the wizard's door, through the
+                  default Everyone group, so the badge works the moment setup ends. Ordinary
+                  person creation stays fail-closed; the wizard is the one place a working
+                  end-to-end setup outranks that default. */}
               <p className="wizard-note">
                 <Ico n="info" sz={14} /> {t('wizard.person.grantNote')}
               </p>

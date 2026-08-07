@@ -9,6 +9,7 @@ import Doors from './Doors'
 import People from './People'
 import Activity from './Activity'
 import Readers from './Readers'
+import Access from './Access'
 import Settings from './Settings'
 import Wizard from './Wizard'
 
@@ -17,6 +18,9 @@ const TABS = [
   { id: 'people', icon: 'user', label: 'nav.people', admin: false },
   { id: 'activity', icon: 'list', label: 'nav.activity', admin: false },
   { id: 'readers', icon: 'cpu', label: 'nav.readers', admin: false },
+  // Access rules are admin-only for the reason the RBAC catalog spells out: a grant edit changes
+  // who may enter every door in a group, silently and indefinitely.
+  { id: 'access', icon: 'lock', label: 'nav.access', admin: true },
   { id: 'settings', icon: 'sliders', label: 'nav.settings', admin: true }
 ]
 
@@ -115,7 +119,7 @@ function Shell({ lang, onLang }) {
     return <Wizard onFinished={() => setNeedsSetup(false)} />
   }
 
-  const Screen = { doors: Doors, people: People, activity: Activity, readers: Readers, settings: Settings }[tab] || Doors
+  const Screen = { doors: Doors, people: People, activity: Activity, readers: Readers, access: Access, settings: Settings }[tab] || Doors
 
   return (
     <div className="app-shell">

@@ -168,6 +168,14 @@ body {
 .form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
 .form-error { color: #e08573; font-size: 13px; margin: 0; }
 
+.access-section { margin-top: 8px; padding: 14px 0 6px; border-top: 1px solid var(--ui-border, #262b31); }
+.access-section:first-of-type { border-top: 0; padding-top: 0; }
+.access-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.access-section-head .section-head { margin: 8px 0; }
+.form-row-inline { flex-direction: row; align-items: center; gap: 8px; margin-bottom: 10px; }
+.form-row-inline input { flex: 1; }
+.row-actions { display: inline-flex; gap: 6px; }
+
 .fleet-section { margin-top: 26px; padding-top: 14px; border-top: 1px solid var(--ui-border, #262b31); }
 .fleet-status { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
 .claim-code { font-size: 20px; letter-spacing: 3px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--ui-border, #262b31); background: var(--ui-surface-2, #1d2229); align-self: flex-start; }

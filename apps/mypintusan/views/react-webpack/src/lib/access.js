@@ -61,6 +61,29 @@ export const issueCredential = (holderId, credential) =>
 export const revokeCredential = (holderId, credId, status, reason) =>
   send(`/api/holders/${holderId}/credentials/${credId}/revoke`, 'POST', { status, reason })
 
+// --- access rules: groups, schedules, grants ------------------------------------------------------
+
+// All writes here are admin-only on the server. Every grant and membership change also lands in
+// the notification feed naming the administrator — a grant edit must never look like nothing.
+export const listGroups = () => get('/api/groups')
+export const createGroup = group => send('/api/groups', 'POST', group)
+export const deleteGroup = id => send(`/api/groups/${id}`, 'DELETE')
+export const listGroupMembers = groupId => get(`/api/groups/${groupId}/members`)
+export const addGroupMember = (groupId, holderId) => send(`/api/groups/${groupId}/members`, 'POST', { holderId })
+export const removeGroupMember = (groupId, memberId) => send(`/api/groups/${groupId}/members/${memberId}`, 'DELETE')
+
+export const listSchedules = () => get('/api/schedules')
+export const createSchedule = schedule => send('/api/schedules', 'POST', schedule)
+export const deleteSchedule = id => send(`/api/schedules/${id}`, 'DELETE')
+
+export const listHolidays = () => get('/api/schedules/holidays')
+export const createHoliday = holiday => send('/api/schedules/holidays', 'POST', holiday)
+export const deleteHoliday = id => send(`/api/schedules/holidays/${id}`, 'DELETE')
+
+export const listGrants = () => get('/api/grants')
+export const createGrant = grant => send('/api/grants', 'POST', grant)
+export const deleteGrant = id => send(`/api/grants/${id}`, 'DELETE')
+
 // --- the access log -----------------------------------------------------------------------------
 
 // listEvents takes the same filters the server supports. Denials are never filtered out by
