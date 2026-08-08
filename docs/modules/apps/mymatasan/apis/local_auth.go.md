@@ -25,8 +25,9 @@ surfaces a lockout as a security event) — and re-exports the rest as thin wrap
 - `withLocalUser(ctx, user)` — re-exports `sharedapis.WithLocalUser`; this is the seam
   `apis/control_dispatch.go` uses to inject its synthetic tunneled-command principal (see
   `control_dispatch.go.md`).
-- `setLocalAuthCookie(w, user)` — re-exports `sharedapis.SetLocalAuthCookie` bound to
-  mymatasan's `localAuthConfig()`.
+- `setLocalAuthCookie(w, r, user)` — re-exports `sharedapis.SetLocalAuthCookie` bound to
+  mymatasan's `localAuthConfig()`; the `*http.Request` is forwarded so the shared
+  implementation can set the cookie's `Secure` flag from `middlewares.IsSecureRequest(r)`.
 - `NewRequireRolePermission(roles, perms)` — re-exports `sharedapis.NewRequireRolePermission`
   unchanged. This absorbed what used to be a separate file,
   `apps/mymatasan/apis/authorization.go` (now deleted — its content moved to

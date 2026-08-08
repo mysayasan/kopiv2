@@ -60,9 +60,17 @@ func NewLocalBasicAuth(cfg LocalAuthConfig, userService services.ILocalUserServi
 
 ## Notes
 
-- `WithLocalUser(ctx, user) context.Context` and `SetLocalAuthCookie(w, cfg, user)` are
+- `WithLocalUser(ctx, user) context.Context` and `SetLocalAuthCookie(w, r, cfg, user)` are
   exported specifically for an app's control-channel dispatcher and login API to use; the
   context key itself stays unexported so no network client can forge a principal.
+- `setLocalAuthCookie`/`SetLocalAuthCookie` take the inbound `*http.Request` and set the
+  cookie's `Secure` flag from `middlewares.IsSecureRequest(r)` — on whenever the request
+  arrived over TLS (directly or via a trusted proxy's `X-Forwarded-Proto`), off otherwise.
+  It is conditional, not hardcoded, because these appliances are legitimately deployed on a
+  LAN over plain HTTP (`server.nonTlsPorts`); hardcoding `Secure` would make the browser
+  silently drop the cookie there. `local_login_api.go`'s logout clears the cookie with the
+  same conditional flag, since a mismatched `Secure` attribute makes the browser treat the
+  clearing `Set-Cookie` as a different cookie and the session survives "logout".
 - `LocalUserFromContext(ctx)` is the read side of the same context key.
 - `clientIP` deliberately uses `RemoteAddr`, not `X-Forwarded-For`, so a client cannot spoof a
   header to dodge its own lockout — deployments behind a trusted proxy should terminate here.

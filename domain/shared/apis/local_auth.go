@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mysayasan/kopiv2/domain/shared/services"
+	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 )
 
 // LocalAuthConfig names the app this middleware guards. The cookie name and the Basic
@@ -137,7 +138,7 @@ func NewLocalBasicAuth(cfg LocalAuthConfig, userService services.ILocalUserServi
 					if loginAttempt {
 						guard.RecordSuccess(keys...)
 					}
-					setLocalAuthCookie(w, cfg, user)
+					setLocalAuthCookie(w, r, cfg, user)
 					serve(user)
 					return
 				}
@@ -271,12 +272,20 @@ func writeLoginLockout(w http.ResponseWriter, cfg LocalAuthConfig, retry time.Du
 // is a false sense of security about the other.
 //
 // HttpOnly keeps it away from any script; Path=/api keeps it off the static assets.
-func setLocalAuthCookie(w http.ResponseWriter, cfg LocalAuthConfig, user *services.AuthenticatedUser) {
+//
+// Secure is set whenever the request arrived over TLS (directly or via a trusted proxy's
+// X-Forwarded-Proto), so the session cookie can never be replayed over plaintext http://.
+// It is conditional rather than always-on because these appliances are legitimately
+// deployed on a LAN over plain HTTP (server.nonTlsPorts) — hardcoding Secure would make
+// the browser silently drop the cookie there and every sign-in would appear to succeed
+// and then immediately fail.
+func setLocalAuthCookie(w http.ResponseWriter, r *http.Request, cfg LocalAuthConfig, user *services.AuthenticatedUser) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     cfg.cookieName(),
 		Value:    localAuthCookieValue(user),
 		Path:     "/api",
 		HttpOnly: true,
+		Secure:   middlewares.IsSecureRequest(r),
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Now().Add(12 * time.Hour),
 		MaxAge:   int((12 * time.Hour).Seconds()),
@@ -312,6 +321,6 @@ func WithLocalUser(ctx context.Context, user *services.AuthenticatedUser) contex
 // SetLocalAuthCookie writes the session cookie for a signed-in user. The login API calls it
 // after it verifies a credential, so a browser that cannot send a Basic header (an <img> or
 // <video> tile) still authenticates.
-func SetLocalAuthCookie(w http.ResponseWriter, cfg LocalAuthConfig, user *services.AuthenticatedUser) {
-	setLocalAuthCookie(w, cfg, user)
+func SetLocalAuthCookie(w http.ResponseWriter, r *http.Request, cfg LocalAuthConfig, user *services.AuthenticatedUser) {
+	setLocalAuthCookie(w, r, cfg, user)
 }

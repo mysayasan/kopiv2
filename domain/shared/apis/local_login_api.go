@@ -9,6 +9,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
+	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 )
 
 // NewLocalLoginApi registers the PUBLIC sign-in routes: an explicit login endpoint that
@@ -88,7 +89,7 @@ func (a *localLoginApi) login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.guard.RecordSuccess(keys...)
-	setLocalAuthCookie(w, a.cfg, user)
+	setLocalAuthCookie(w, r, a.cfg, user)
 	controllers.SendResult(w, user, "succeed")
 }
 
@@ -100,6 +101,9 @@ func (a *localLoginApi) logout(w http.ResponseWriter, r *http.Request) {
 		Value:    "",
 		Path:     "/api",
 		HttpOnly: true,
+		// Must mirror the attributes setLocalAuthCookie used, or the browser treats
+		// this as a different cookie and the session cookie survives the logout.
+		Secure:   middlewares.IsSecureRequest(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})

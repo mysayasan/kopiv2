@@ -137,6 +137,30 @@ $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $plan = "/zap/wrk/plans/$planFile"
 $mount = ($here -replace '\\', '/')
 
+# ZAP's Automation Framework substitutes ${VAR} in job/context PARAMETERS, but NOT
+# in every nested block — and where it doesn't, it fails SILENTLY. Two plan fields
+# were bitten, each of which quietly destroyed a whole scan:
+#
+#   * the replacer job's `rules:` — ${ZAP_AUTH_HEADER} reached ZAP verbatim, so
+#     mymatasan's Authorization header was nonsense and every authenticated /api
+#     request 401'd. The scan covered only the public surface and still printed
+#     "plan succeeded".
+#   * authentication.verification.pollUrl — ${TARGET} reached ZAP verbatim, so the
+#     poll URL was not absolute, every re-auth poll threw URIException, and ZAP
+#     TERMINATED mid-plan (before activeScan and report). myseliasan/myidsan/myiotsan
+#     active scans therefore never ran an active scan at all.
+#
+# Render both ourselves into a temp plan. ${STAMP} is deliberately left for ZAP —
+# it is only used in report filenames, where substitution does work.
+$renderedPlan = $null
+$planPath = Join-Path $here "plans\$planFile"
+if (Select-String -Path $planPath -Pattern '\$\{(ZAP_AUTH_HEADER|TARGET)\}' -Quiet) {
+  $renderedPlan = Join-Path $here "plans\.rendered-$stamp-$planFile"
+  (Get-Content -Path $planPath -Raw).Replace('${ZAP_AUTH_HEADER}', $authHeader).Replace('${TARGET}', $Target) |
+    Out-File -FilePath $renderedPlan -Encoding utf8 -NoNewline
+  $plan = "/zap/wrk/plans/.rendered-$stamp-$planFile"
+}
+
 Write-Host "App    : $App"
 Write-Host "Target : $Target"
 Write-Host "Plan   : $planFile"
@@ -160,6 +184,7 @@ docker run --rm `
   zap.sh -cmd -autorun $plan
 
 $code = $LASTEXITCODE
+if ($renderedPlan -and (Test-Path $renderedPlan)) { Remove-Item $renderedPlan -Force }
 Write-Host ""
 if ($code -eq 0) {
   Write-Host "Scan complete. Open reports/$reportPrefix-$stamp.html" -ForegroundColor Green

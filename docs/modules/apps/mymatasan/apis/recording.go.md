@@ -109,7 +109,7 @@ Body or query: `cameraId`. The per-camera **"Purge now"** action (Recording tab)
 
 ### GET /api/recording/streams/{cameraId}
 
-Returns all ONVIF media profiles using the credentials already stored for the device. The response from `StreamOptions` includes profile token, name, encoding, resolution, and RTSP URI for each profile.
+Returns all ONVIF media profiles using the credentials already stored for the device. The response from `StreamOptions` includes profile token, name, encoding, resolution, and RTSP URI for each profile. `listCameraStreams` first confirms the camera exists via `camera.GetById` and returns `404` when it does not, rather than letting `StreamOptions`'s device-lookup miss surface as a `500` — previously probing an unknown `cameraId` answered "internal server error".
 
 ### POST /api/recording/streams/{cameraId}/live
 

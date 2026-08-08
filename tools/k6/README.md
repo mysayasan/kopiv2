@@ -30,7 +30,17 @@ does it fall over?"*.
 
 **mymatasan** authenticates with **HTTP Basic** — the SPA replays the credential
 on every request, so the scripts do the same (one `Authorization` header, from
-`config/target.env`). This makes **bcrypt-per-request the throughput ceiling**.
+`config/target.env`).
+
+> This used to say bcrypt-per-request was the throughput ceiling. **It is not.**
+> `domain/shared/services/local_user.go` keeps a 30-second verification cache
+> (`authCacheTTL`), keyed on the exact username+password and populated on success
+> only, precisely so a replayed Basic header doesn't pay a KDF every call. Measured
+> 2026-08-08: ~2ms median at 100 req/s and 0 errors at 300 VUs — nowhere near a
+> bcrypt-bound number. Two consequences when reading results: a steady-state run
+> measures the *cached* path, and a run whose VUs all share one credential is
+> cheaper than real-world sign-in traffic. To measure the real KDF cost you need
+> distinct credentials per VU (or a cache TTL shorter than the run).
 The initial admin login is in `apps/mymatasan/INITIAL_ADMIN_LOGIN.txt` (`admin` /
 `admin123`; **the first sign-in forces a password change**, so a brand-new
 install needs one `POST /api/auth/change-password` before load — see

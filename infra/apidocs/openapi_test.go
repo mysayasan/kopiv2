@@ -444,7 +444,10 @@ func TestBuildSpecIncludesRoutesAndProviderDocs(t *testing.T) {
 		t.Fatalf("unexpected request schema for /api/login/default/register: %v", loginRegisterRBSchema["$ref"])
 	}
 
-	providerLoginPath, ok := paths["/api/login/{provider:[a-z][a-z0-9_.:-]*}"].(map[string]any)
+	// The route is registered with a mux regex constraint
+	// (`{provider:[a-z][a-z0-9_.:-]*}`), but the emitted path must carry the bare
+	// `{provider}` — see TestBuildSpecStripsMuxRegexFromPathParameters.
+	providerLoginPath, ok := paths["/api/login/{provider}"].(map[string]any)
 	if !ok {
 		t.Fatalf("/api/login/{provider} path missing (got paths: %v)", pathKeys(paths))
 	}
@@ -503,5 +506,64 @@ func requireQueryParameters(t *testing.T, op map[string]any, names ...string) {
 		if !found[name] {
 			t.Fatalf("query parameter %q missing from operation", name)
 		}
+	}
+}
+
+// A Gorilla-mux route may constrain a path variable with a regex
+// (`/{id:[0-9]+}`). That constraint must not survive into the emitted OpenAPI
+// path: the document would then declare a parameter named `id` (extractPathParams
+// strips at the colon) for a segment literally named `id:[0-9]+`, leaving the
+// segment undefined and making the WHOLE spec invalid to strict consumers. OWASP
+// ZAP reacts by recording an error and aborting its automation plan before the
+// activeScan and report jobs run — so the security scan silently reports nothing,
+// which is how this shipped unnoticed.
+func TestBuildSpecStripsMuxRegexFromPathParameters(t *testing.T) {
+	router := mux.NewRouter()
+	api := router.PathPrefix("/api").Subrouter()
+	api.HandleFunc("/notifications/{id:[0-9]+}/read", func(http.ResponseWriter, *http.Request) {}).Methods("POST")
+
+	raw, err := buildSpec(router, "test", nil)
+	if err != nil {
+		t.Fatalf("buildSpec: %v", err)
+	}
+	var spec struct {
+		Paths map[string]map[string]struct {
+			Parameters []struct {
+				Name string `json:"name"`
+				In   string `json:"in"`
+			} `json:"parameters"`
+		} `json:"paths"`
+	}
+	if err := json.Unmarshal(raw, &spec); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	pathNames := make([]string, 0, len(spec.Paths))
+	for k := range spec.Paths {
+		pathNames = append(pathNames, k)
+	}
+
+	if _, ok := spec.Paths["/api/notifications/{id:[0-9]+}/read"]; ok {
+		t.Fatalf("emitted path still carries the mux regex constraint; paths=%v", pathNames)
+	}
+	op, ok := spec.Paths["/api/notifications/{id}/read"]
+	if !ok {
+		t.Fatalf("expected /api/notifications/{id}/read; paths=%v", pathNames)
+	}
+
+	// Every {name} in the path must have a matching declared path parameter —
+	// precisely the invariant the invalid spec violated.
+	post, ok := op["post"]
+	if !ok {
+		t.Fatalf("expected a post operation, got %v", op)
+	}
+	found := false
+	for _, p := range post.Parameters {
+		if p.In == "path" && p.Name == "id" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no declared path parameter named %q; got %+v", "id", post.Parameters)
 	}
 }

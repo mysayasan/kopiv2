@@ -56,10 +56,11 @@ env:
             username: "${ZAP_AUTH_USER}"
             password: "${ZAP_AUTH_PASS}"
   parameters:
-    # false: the OpenAPI import logs a non-fatal warning for myseliasan's spec
-    # (its swagger generator emits the Gorilla-mux path param `{id:[0-9]+}`,
-    # which isn't valid OpenAPI) — it still imports the other 26 endpoints. With
-    # failOnError:true that warning aborts the plan before activeScan/report.
+    # Kept false as a belt-and-braces guard. The spec itself is now valid — the
+    # generator used to emit the Gorilla-mux path param `{id:[0-9]+}`, which made
+    # the whole document invalid and aborted this plan before activeScan/report;
+    # infra/apidocs now strips the constraint (see its
+    # TestBuildSpecStripsMuxRegexFromPathParameters).
     failOnError: false
     progressToStdout: true
 

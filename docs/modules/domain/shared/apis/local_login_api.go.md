@@ -37,8 +37,11 @@ authenticates, so it cannot itself sit behind the auth middleware. Registers und
   is where credential guessing actually happens, now that a session-cookie login exists as a
   dedicated, always-hit endpoint (rather than being inferred from `GET /auth/session` as
   `local_auth.go`'s `isLoginAttemptPath` does for Basic-only appliances).
-- `POST /auth/logout` — clears the session cookie (`MaxAge: -1`). Does not require the caller
-  to be authenticated: signing out a session that is already gone is a success, not an error.
+- `POST /auth/logout` — clears the session cookie (`MaxAge: -1`), mirroring the same
+  conditional `Secure` flag (`middlewares.IsSecureRequest(r)`) `setLocalAuthCookie` used when
+  it set the cookie, so the clearing `Set-Cookie` matches and actually deletes it. Does not
+  require the caller to be authenticated: signing out a session that is already gone is a
+  success, not an error.
 
 ## Notes
 
