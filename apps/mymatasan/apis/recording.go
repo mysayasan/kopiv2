@@ -505,6 +505,15 @@ func (a *recordingApi) listCameraStreams(w http.ResponseWriter, r *http.Request)
 		controllers.SendResult(w, nil, "succeed")
 		return
 	}
+	// A camera that simply is not there is a 404, not a server fault. StreamOptions
+	// loads the device record first and returns a plain error when that lookup misses,
+	// which this handler used to map to 500 — so probing any unknown cameraId answered
+	// "internal server error". Separate the two so a 500 here once again means the ONVIF
+	// call itself failed.
+	if detail, err := a.camera.GetById(r.Context(), cameraId); err != nil || detail == nil {
+		controllers.SendError(w, controllers.ErrNotFound, "camera not found")
+		return
+	}
 	// Empty credentials → service falls back to credentials stored in the device record.
 	result, err := a.camera.StreamOptions(r.Context(), cameraId, onvif.Credentials{})
 	if err != nil {

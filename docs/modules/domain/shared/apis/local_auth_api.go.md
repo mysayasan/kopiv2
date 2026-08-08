@@ -22,7 +22,7 @@ Registers under `/auth` on the given router (the app's protected `/api` subroute
   failed-login lockout.
 - `POST /auth/change-password` — verifies the current password and sets a new one
   (`ILocalUserService.ChangePassword`), rotating the session cookie
-  (`setLocalAuthCookie(w, cfg, ...)`) so the old credential's session hash is invalidated.
+  (`setLocalAuthCookie(w, r, cfg, ...)`) so the old credential's session hash is invalidated.
   Body is capped at 64 KiB and decoded with `DisallowUnknownFields`.
 
 Both routes stay reachable while a user is gated by `NewLocalBasicAuth`'s forced-change check

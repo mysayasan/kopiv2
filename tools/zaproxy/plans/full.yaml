@@ -29,6 +29,14 @@ env:
         - ".*/skills/[0-9].*"
         - ".*/restore.*"
         - ".*/backup.*"
+        # Reachable only since the OpenAPI import below started seeding the full
+        # documented surface; the spider never found them, so they were never
+        # excluded before. Each one destroys footage or reconfigures hardware.
+        - ".*/cameras/[0-9].*"                    # DELETE camera (and its recordings)
+        - ".*/onvif-users/.*"                     # DELETE a user ON the physical camera
+        - ".*/faces/[0-9].*"                      # DELETE face identity
+        - ".*/faces/embeddings/.*"                # DELETE face embedding
+        - ".*/notification/destination/[0-9].*"   # DELETE notification destination
   parameters:
     failOnError: true
     progressToStdout: true
@@ -42,6 +50,24 @@ jobs:
         matchRegex: false
         replacementString: ${ZAP_AUTH_HEADER}
         tokenProcessing: false
+
+  # Auth preflight — see plans/api.yaml for why. A non-200 here means the
+  # replacer above did not take effect and the whole scan would silently cover
+  # only the public surface.
+  - type: requestor
+    requests:
+      - url: ${TARGET}/api/cameras
+        method: GET
+        responseCode: 200
+
+  # The AJAX spider below discovers whatever the UI happens to click, which is a
+  # subset of the API. Import the OpenAPI spec too so activeScan covers every
+  # documented operation rather than only the ones a browser walk stumbled into.
+  - type: openapi
+    parameters:
+      apiUrl: ${TARGET}/swagger/openapi.json
+      targetUrl: ${TARGET}
+      context: mymatasan
 
   - type: spider
     parameters:

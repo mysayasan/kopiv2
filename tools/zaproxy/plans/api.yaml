@@ -29,6 +29,14 @@ env:
         - ".*/skills/[0-9].*"
         - ".*/restore.*"
         - ".*/backup.*"
+        # Reachable only since the OpenAPI import below started seeding the full
+        # documented surface; the spider never found them, so they were never
+        # excluded before. Each one destroys footage or reconfigures hardware.
+        - ".*/cameras/[0-9].*"                    # DELETE camera (and its recordings)
+        - ".*/onvif-users/.*"                     # DELETE a user ON the physical camera
+        - ".*/faces/[0-9].*"                      # DELETE face identity
+        - ".*/faces/embeddings/.*"                # DELETE face embedding
+        - ".*/notification/destination/[0-9].*"   # DELETE notification destination
   parameters:
     failOnError: true
     progressToStdout: true
@@ -42,6 +50,30 @@ jobs:
         matchRegex: false
         replacementString: ${ZAP_AUTH_HEADER}
         tokenProcessing: false
+
+  # Auth preflight. Without this an auth misconfiguration is INVISIBLE: ZAP
+  # happily scans the public surface, finds nothing, and reports "plan
+  # succeeded" — which reads as "the app is clean" when it actually means
+  # "we never got past the login wall". /api/cameras requires a session, so a
+  # non-200 here means the replacer above did not take effect. Fail loudly.
+  - type: requestor
+    requests:
+      - url: ${TARGET}/api/cameras
+        method: GET
+        responseCode: 200
+
+  # mymatasan's SPA calls /api/* from JavaScript that ZAP's traditional spider
+  # cannot see, so on its own the spider finds ~6 URLs and activeScan attacks
+  # almost nothing. Import the OpenAPI spec so activeScan sees the REAL endpoint
+  # surface (213 documented operations), authenticated by the replacer above.
+  # This is where the active coverage actually comes from — same reasoning as
+  # myseliasan-api.yaml. Unlike myseliasan's, mymatasan's spec is valid OpenAPI
+  # (no Gorilla-mux `{id:[0-9]+}` params), so failOnError can stay true.
+  - type: openapi
+    parameters:
+      apiUrl: ${TARGET}/swagger/openapi.json
+      targetUrl: ${TARGET}
+      context: mymatasan
 
   - type: spider
     parameters:

@@ -7,3 +7,7 @@ config/myidsan.target.env
 # Scan output
 reports/*
 !reports/.gitkeep
+
+# Plans rendered per-run with the Basic-auth header baked in (see scan.sh).
+# Contain a live credential — never commit.
+plans/.rendered-*

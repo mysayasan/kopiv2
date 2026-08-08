@@ -867,9 +867,25 @@ func (a *cameraApi) liveMJPEG(w http.ResponseWriter, r *http.Request) {
 	controllers.SendError(w, controllers.ErrBadRequest, "snapshotUri or rtspUrl is required; resolve live view first")
 }
 
+// delete removes a camera and everything hanging off it.
+//
+// The {id} route carries no regex constraint, so `/api/cameras/any` reaches here just as
+// `/api/cameras/3` does. Discarding the ParseUint error used to turn every unparsable id
+// into id 0, which sailed past the service and into `DELETE ... WHERE id = 0`; the repo
+// layer reports an affected-row count below 1 as an error, and this handler mapped THAT to
+// a 500. So a malformed id — and equally a well-formed id for a camera that simply is not
+// there — answered "internal server error" and leaked the internal message. Validate the
+// id, then confirm the camera exists, so the two cases answer 400 and 404 respectively and
+// a genuine 500 once again means something is actually wrong with the server.
 func (a *cameraApi) delete(w http.ResponseWriter, r *http.Request) {
-	params := mux.Vars(r)
-	id, _ := strconv.ParseUint(params["id"], 10, 64)
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	if detail, err := a.serv.GetById(r.Context(), id); err != nil || detail == nil {
+		controllers.SendError(w, controllers.ErrNotFound, "camera not found")
+		return
+	}
 	res, err := a.serv.Delete(r.Context(), id)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())

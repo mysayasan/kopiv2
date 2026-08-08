@@ -60,8 +60,8 @@ func withLocalUser(ctx context.Context, user *services.AuthenticatedUser) contex
 }
 
 // setLocalAuthCookie writes mymatasan's session cookie after a verified sign-in.
-func setLocalAuthCookie(w http.ResponseWriter, user *services.AuthenticatedUser) {
-	sharedapis.SetLocalAuthCookie(w, localAuthConfig(), user)
+func setLocalAuthCookie(w http.ResponseWriter, r *http.Request, user *services.AuthenticatedUser) {
+	sharedapis.SetLocalAuthCookie(w, r, localAuthConfig(), user)
 }
 
 // NewRequireRolePermission authorizes every request against the signed-in user's role.

@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "mymatasan",
+  "summary": "Two mymatasan API handlers leaked an internal-error response for what is really a client-facing 'not found'. DELETE /api/cameras/{id} discarded the id's ParseUint error, so any non-numeric id silently became id 0, sailed past the service, and the repo layer's 'no rows affected' error for that nonexistent row surfaced as a 500 with an internal message; it now validates the id via the existing pathID() helper (400 on a bad id) and confirms the camera exists via GetById before deleting (404 when it does not). GET /api/recording/streams/{cameraId} (listCameraStreams) let StreamOptions's device-lookup miss propagate as a 500 for any unknown cameraId; it now checks camera existence first and returns 404. Found and verified against the OWASP ZAP scan plans in tools/zaproxy.",
+  "compatibility": "Backward compatible. Both endpoints already answered failure for these inputs -- only the HTTP status code and body changed (500-with-leaked-message -> clean 400/404), which is a strict improvement for any caller that already treats non-2xx as failure. No change for a valid, existing camera id."
+}

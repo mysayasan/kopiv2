@@ -58,6 +58,6 @@ func (a *localAuthApi) changePassword(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
 	}
-	setLocalAuthCookie(w, a.cfg, updated)
+	setLocalAuthCookie(w, r, a.cfg, updated)
 	controllers.SendResult(w, updated, "succeed")
 }

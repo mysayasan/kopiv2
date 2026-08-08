@@ -115,6 +115,34 @@ echo "Plan   : $plan_file"
 echo "Reports: reports/$report_prefix-$stamp.{html,json}"
 echo
 
+# ZAP's Automation Framework substitutes ${VAR} in job/context PARAMETERS, but NOT
+# in every nested block — and where it doesn't, it fails SILENTLY. Two plan fields
+# were bitten, each of which quietly destroyed a whole scan:
+#
+#   * the replacer job's `rules:` — `${ZAP_AUTH_HEADER}` reached ZAP verbatim, so
+#     mymatasan's Authorization header was nonsense and every authenticated /api
+#     request 401'd. The scan covered only the public surface and still printed
+#     "plan succeeded".
+#   * `authentication.verification.pollUrl` — `${TARGET}` reached ZAP verbatim, so
+#     the poll URL was not absolute, every re-auth poll threw URIException, and ZAP
+#     TERMINATED mid-plan (before activeScan and report). myseliasan/myidsan/myiotsan
+#     active scans therefore never ran an active scan at all.
+#
+# Render both ourselves into a temp plan. ${STAMP} is deliberately left for ZAP —
+# it is only used in report filenames, where substitution does work.
+run_plan="plans/$plan_file"
+rendered=""
+if grep -qE '\$\{(ZAP_AUTH_HEADER|TARGET)\}' "$here/plans/$plan_file"; then
+  rendered="$here/plans/.rendered-$stamp-$plan_file"
+  ZAP_RENDER_HEADER="$auth_header" ZAP_RENDER_TARGET="$TARGET" awk '{
+    gsub(/\$\{ZAP_AUTH_HEADER\}/, ENVIRON["ZAP_RENDER_HEADER"])
+    gsub(/\$\{TARGET\}/,          ENVIRON["ZAP_RENDER_TARGET"])
+    print
+  }' "$here/plans/$plan_file" > "$rendered"
+  run_plan="plans/$(basename "$rendered")"
+  trap 'rm -f "$rendered"' EXIT INT TERM
+fi
+
 docker run --rm \
   --add-host=host.docker.internal:host-gateway \
   -v "$mount_src:/zap/wrk:rw" \
@@ -124,7 +152,7 @@ docker run --rm \
   -e "ZAP_AUTH_PASS=$ZAP_AUTH_PASS" \
   -e "STAMP=$stamp" \
   "$ZAP_IMAGE" \
-  zap.sh -cmd -autorun "/zap/wrk/plans/$plan_file"
+  zap.sh -cmd -autorun "/zap/wrk/$run_plan"
 
 code=$?
 echo

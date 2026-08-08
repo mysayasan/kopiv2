@@ -172,13 +172,19 @@ scanners).
 > (Settings → Resources, ≥12 GB) or just run `api`, which reaches the same
 > authenticated `/api` surface without a browser.
 >
-> Note: myseliasan's swagger generator emits the Gorilla-mux path parameter
-> `/api/notifications/{id:[0-9]+}/read`, which isn't valid OpenAPI; ZAP logs a
-> non-fatal warning and imports the remaining endpoints. The active plans set
-> `failOnError: false` so that warning doesn't abort the run. Also note this is a
-> JSON API behind mandatory session + CSRF auth, so ZAP's classic active scanner
-> (which fuzzes URL query/form params) has few injection points — expect thin
-> activeScan results even with the endpoints imported.
+> Note: this is a JSON API behind mandatory session + CSRF auth, so ZAP's classic
+> active scanner (which fuzzes URL query/form params) has few injection points —
+> expect thin activeScan results even with the endpoints imported.
+>
+> Historical note, because the failure mode was invisible: myseliasan's swagger
+> generator used to emit the Gorilla-mux path parameter
+> `/api/notifications/{id:[0-9]+}/read`. That is not merely cosmetic — it made the
+> **whole document** invalid, ZAP recorded an error, and the automation framework
+> **terminated the run during `passiveScan-wait`, before `activeScan` and `report`
+> ever started**. `failOnError: false` did not prevent it. The scan produced no
+> report at all, which is easy to mistake for a flaky container. Fixed at source in
+> `infra/apidocs` (paths now emit bare `{id}`); guarded by
+> `TestBuildSpecStripsMuxRegexFromPathParameters`.
 
 > **Disable rate-limiting for active (`api`/`full`) myseliasan scans.** Unlike
 > mymatasan's replayed Basic header, ZAP re-authenticates myseliasan by POSTing
@@ -309,6 +315,31 @@ the Gorilla-mux `{id:[0-9]+}` path parameter, which is not valid OpenAPI and
 logs a non-fatal import warning); `full` carries the same AJAX-spider memory
 caveat, so prefer `api` unless Docker Desktop's memory is raised.
 
+## `${VAR}` substitution: the two silent-failure traps
+
+ZAP's Automation Framework substitutes `${VAR}` in job and context **parameters**,
+but **not in every nested block** — and where it doesn't, nothing warns you. Two
+plan fields were bitten, and each one silently destroyed a whole scan while still
+looking like a healthy run:
+
+| Field | What ZAP received | Symptom |
+|---|---|---|
+| `replacer` job's `rules:` → `${ZAP_AUTH_HEADER}` | the literal string | mymatasan's `Authorization` header was nonsense, **every authenticated `/api` request 401'd**, the scan covered only the public surface — and still printed "Automation plan succeeded!" |
+| `authentication.verification.pollUrl` → `${TARGET}` | the literal string | the poll URL wasn't absolute, every re-auth poll threw `URIException`, and **ZAP terminated mid-plan before `activeScan`/`report`** (myseliasan/myidsan/myiotsan) |
+
+`scan.sh`/`scan.ps1` therefore **render those two placeholders themselves** into a
+throwaway `plans/.rendered-<stamp>-<plan>.yaml` (git-ignored; it holds a live
+credential) and hand ZAP that file. `${STAMP}` is deliberately left to ZAP — it is
+only used in report filenames, where substitution does work.
+
+**The lesson worth keeping: "plan succeeded" is not evidence the scan was
+authenticated, and a missing report is not automatically a flaky container.** The
+mymatasan active plans now open with a `requestor` job that asserts
+`GET /api/cameras` returns 200, so a broken credential fails loudly and
+immediately instead of yielding a clean-looking, empty report. When adding a new
+app's plan, add the equivalent preflight, and confirm coverage by checking the
+target's own access log for 401s rather than trusting the ZAP summary.
+
 ## Known / accepted findings
 
 - **`CSP: style-src unsafe-inline` (Medium)** — kept intentionally. The React
@@ -325,6 +356,26 @@ caveat, so prefer `api` unless Docker Desktop's memory is raised.
   domains. First-party same-origin bundles are not flagged for SRI.
 - **"Modern Web Application" / "Re-examine Cache-Control" (Informational)** —
   not vulnerabilities; no action.
+- **"SQL Injection" (High) on `{id}` path segments** — **false positive**, verified
+  by hand on both apps (`/api/cameras/{id}/ptz/stop`, `/api/floors/{id}/image`).
+  ZAP infers injection from response similarity, but every one of these ids is
+  parsed with `ParseUint`/validated *before* any DB access, so `... AND 1=1 --`,
+  `... AND 1=2 --` and a plain non-numeric id all collapse to the identical
+  `400 invalid id`. Identical responses are exactly what the heuristic reads as a
+  successful injection. Re-verify the same way if it reappears: compare the `1=1`
+  and `1=2` bodies — if they are byte-identical and no SQL error surfaces, it is
+  this. Do not dismiss it without that check.
+- **"Exposed Secrets in Swagger/OpenAPI Path" (High) on myseliasan
+  `GET /api/settings`** — **false positive**. The endpoint returns every secret
+  field *empty* alongside a companion `…Set` boolean (`clientSecret: ""` +
+  `clientSecretSet: false`); ZAP matches on field *names*, not values. That
+  shadow-field pattern is the intended design — the check to run is that the
+  values are blank, which they are.
+- **myseliasan `__Host-kopiv2_csrf` "Cookie No HttpOnly Flag" (Low)** — by design.
+  Double-submit CSRF requires the front-end to *read* the cookie and echo it in
+  `X-CSRF-Token`; HttpOnly would break the defence it implements. The session
+  cookie beside it (`__Host-kopiv2_access`) is HttpOnly, which is the one that
+  matters.
 
 ## Tuning notes
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -313,6 +314,23 @@ func includePath(path string) bool {
 	return strings.HasPrefix(path, "/api") || path == "/health" || path == "/ready" || strings.HasPrefix(path, "/setup")
 }
 
+// muxPathParam matches a Gorilla-mux path variable, with or without the optional
+// regex constraint mux allows: {id} or {id:[0-9]+}.
+var muxPathParam = regexp.MustCompile(`\{([^{}:]+)(?::[^{}]*)?\}`)
+
+// stripPathParamPatterns rewrites `{id:[0-9]+}` to the bare `{id}` OpenAPI expects.
+//
+// Carrying mux's regex constraint through into the emitted path makes the whole
+// document INVALID: the path segment declares a parameter literally named
+// `id:[0-9]+` while the operation (see extractPathParams, which already strips at
+// the colon) declares one named `id`, so no path parameter is defined for the
+// segment. Strict consumers reject the entire spec, not just the offending path —
+// OWASP ZAP records an error and aborts its automation plan before the activeScan
+// and report jobs run, which is why the security scan silently produced nothing.
+func stripPathParamPatterns(path string) string {
+	return muxPathParam.ReplaceAllString(path, "{$1}")
+}
+
 func normalizePath(path string) string {
 	if path == "" {
 		return "/"
@@ -320,7 +338,7 @@ func normalizePath(path string) string {
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
-	return strings.ReplaceAll(path, "//", "/")
+	return stripPathParamPatterns(strings.ReplaceAll(path, "//", "/"))
 }
 
 func defaultDoc(method string, path string) EndpointDoc {
