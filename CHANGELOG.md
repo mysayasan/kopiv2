@@ -84,6 +84,17 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-08 — myidsan 1.42.1, myiotsan 0.26.0, mymatasan 1.116.1, myseliasan 1.53.1, core 1.80.0 (43f06f2)
+
+### Fixed
+
+- **infra,mymatasan,myidsan,myiotsan,myseliasan**: The shared runtime OpenAPI generator (infra/apidocs) carried a Gorilla-mux route's regex path-parameter constraint straight into the emitted document, e.g. `/api/notifications/{id:[0-9]+}/read` instead of `/api/notifications/{id}/read`. Because the operation's declared path parameter is already named without the constraint, the path segment and its parameter disagreed, which made the whole `/swagger/openapi.json` document invalid to strict consumers -- not just the offending path. OWASP ZAP is the concrete case that surfaced it: it recorded an import error and silently aborted its automation plan before activeScan/report ran, so security scans against any of the apps produced no report at all. `normalizePath` now strips the mux regex constraint via a new `stripPathParamPatterns`/`muxPathParam`, so every emitted path parameter is bare (`{id}`). This is shared infra code served by all five apps' `/swagger` endpoints.
+- **mymatasan**: Two mymatasan API handlers leaked an internal-error response for what is really a client-facing 'not found'. DELETE /api/cameras/{id} discarded the id's ParseUint error, so any non-numeric id silently became id 0, sailed past the service, and the repo layer's 'no rows affected' error for that nonexistent row surfaced as a 500 with an internal message; it now validates the id via the existing pathID() helper (400 on a bad id) and confirms the camera exists via GetById before deleting (404 when it does not). GET /api/recording/streams/{cameraId} (listCameraStreams) let StreamOptions's device-lookup miss propagate as a 500 for any unknown cameraId; it now checks camera existence first and returns 404. Found and verified against the OWASP ZAP scan plans in tools/zaproxy.
+
+### Security
+
+- **domain,mymatasan,myiotsan**: The appliance session cookie (`<app>_local_auth`, shared middleware in domain/shared/apis used by both mymatasan and myiotsan) never set the `Secure` cookie attribute, even when the request arrived over TLS. `setLocalAuthCookie`/`SetLocalAuthCookie` now take the inbound `*http.Request` and set `Secure` from the existing `middlewares.IsSecureRequest(r)` helper (true for direct TLS or a trusted proxy's `X-Forwarded-Proto`), so the session cookie can no longer be replayed over a plaintext http:// connection once TLS is in use. It stays conditional rather than always-on because both appliances are legitimately deployed on a LAN over plain HTTP (`server.nonTlsPorts`) -- hardcoding `Secure` would make the browser silently drop the cookie on those installs and every sign-in would appear to succeed and then immediately fail. `local_login_api.go`'s logout now clears the cookie with the same conditional flag so the deleting `Set-Cookie` still matches and actually removes it.
 ## 2026-08-08 — myseliasan 1.53.0, core 1.79.0 (529c1b8)
 
 ### Added
