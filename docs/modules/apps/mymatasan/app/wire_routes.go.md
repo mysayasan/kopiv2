@@ -13,7 +13,10 @@ previously just inline statements in the middle of an 800-line function.
   1. Mounts `apis.NewPairingPublicApi(api, w.pairing, w.enrollment.Kick)` on the **public**
      router first — adopt/release authenticate cryptographically (no local session) and
      must be registered before the session catch-all so requests match here rather than
-     being swallowed by auth.
+     being swallowed by auth. `apis.NewManualApi(api)` (`apis/manual.go.md`) is mounted
+     right after it, also on the public router and for a structural reason of its own: the
+     built-in manual must be readable from the sign-in screen and the first-run wizard,
+     both of which have no session either.
   2. Creates `protected := api.PathPrefix("").Subrouter()` and applies middleware in order:
      - `apis.NewResetGate(...)` — sheds load with a clean 503 while a factory reset is
        running. Runs FIRST, before auth, because the reset closes the DB pool and keeps

@@ -8,6 +8,7 @@ It is designed to run on small devices such as Raspberry Pi or Jetson-style micr
 
 - Standalone DB-backed local Basic Auth with a first-run admin account seeded from `localAuth.username`/`localAuth.password` in config (falls back to `admin` / `admin` when unset), **forced password change** on first login regardless of which credential seeded the account, **failed-login lockout** (escalating backoff + countdown), and **three-role access control** — `admin` (full control), `operator` (day-to-day: watch, review footage, acknowledge alerts, PTZ, talk-back — cannot delete/purge or reconfigure), and `viewer` (watch live and see that an alert fired only). See *Security & Access* below.
 - **First-run setup wizard** (password → capacity → add camera → recording + alerts) and a **camera-capacity estimator** (`/api/capacity`) that tells you how many cameras the host can handle.
+- **Built-in user manual** (Help nav item, contextual `?` help, public `/api/manual`): four-language markdown articles compiled into the binary, reachable even from the sign-in screen and the wizard, with no network access required. See *Built-in user manual* below.
 - **Encryption at rest** (default on): recordings, snapshots, and training images are AES-256-GCM encrypted on disk so the factory reset can **crypto-erase** them by destroying the key. The master key itself can be protected by an OS keystore (Windows DPAPI, Linux systemd-creds) or a portable passphrase (Docker), with an exportable/verifiable **recovery escrow** (Settings → Backup & Recovery) and an automatic or pre-login recovery flow if the key is ever lost.
 - **Configuration backup & restore** (Settings → Backup & Recovery): export a portable, passphrase-encrypted `.mmbackup` of your cameras (incl. saved credentials), AI detection, notifications, and app settings, then restore it on a fresh install — including a **"Restore from backup"** branch in the first-run wizard — so you never reconfigure by hand. Machine identity (the at-rest key, pairing, certificates) is deliberately excluded.
 - **Secure Wipe & Reset** (factory reset: crypto-erase key + erase media + drop/rebuild DB + TRIM/scrub + restart) behind `bootstrap.allowReset`, plus secure multi-pass **shredding** of deleted footage.
@@ -346,6 +347,23 @@ curl -u admin:Admin123 -X POST "http://localhost:3000/api/capacity/calibrate"  #
 ```
 
 The estimate and a **Run calibration** button are surfaced on the Settings → Machine Health card (and reused by the wizard).
+
+## Built-in user manual
+
+mymatasan ships a **built-in user manual** — markdown articles compiled into the binary, so the docs a reader sees always match the running software and work with no network access (phase 1 of a suite-wide manual; other apps adopt the same shared library later). Content lives under `apps/mymatasan/manual/{en,ms,zh,ar}/*.md` (`apps/mymatasan/manual/manual.go`); indexing, language fallback, search, and printing are generalized in `domain/shared/manual`, reused by any future app that embeds its own articles the same way.
+
+Served publicly (no auth) under `/api/manual`, deliberately mounted before the auth middleware and left off the RBAC permission matrix — the sign-in screen and the first-run wizard are exactly where a reader most needs help and least can authenticate:
+
+```bash
+curl "http://localhost:3000/api/manual?lang=ms"          # article index (metadata only)
+curl "http://localhost:3000/api/manual/bundle?lang=ms"   # whole book, bodies included (client search/print)
+curl "http://localhost:3000/api/manual/welcome"          # one article by slug (falls back to English lang if untranslated)
+curl "http://localhost:3000/api/manual/assets/<name>"    # a figure
+```
+
+In the UI, a **Help** nav entry (every role, including viewer) opens the full manual on its own page, a contextual **?** in the workspace header opens a slide-over scoped to the current tab, and the sign-in / change-password / recovery-gate screens plus every step of the first-run wizard carry their own help links — all backed by the shared `@shared/Manual` module (`frontend/shared/README.md`). "Print the whole manual" renders every article with a table of contents and calls the browser print dialog, so Save-as-PDF works in every language (a server-side PDF could not: `domain/report`'s pure-Go writer is cp1252-only).
+
+New articles must land in **all four** language folders (`en`/`ms`/`zh`/`ar`) — `apps/mymatasan/manual/manual_test.go` enforces language parity, cross-link resolution, and heading-anchor consistency via `domain/shared/manual/manualcheck`, and fails the build otherwise.
 
 ## Encryption at rest
 

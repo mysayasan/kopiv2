@@ -184,6 +184,9 @@ export default {
   'tab.recording': 'Recordings',
   'tab.notifications': 'Notifications',
   'tab.settings': 'Settings',
+  'tab.manual': 'Help',
+  'help.link': 'Help',
+  'help.forThisPage': 'Help for this page',
   // Side-nav groups + entries (shared-UI navigation rail).
   'group.workspace': 'Workspace',
   'group.surveillance': 'Surveillance',

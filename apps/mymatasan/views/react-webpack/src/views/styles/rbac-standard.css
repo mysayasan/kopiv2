@@ -690,6 +690,27 @@
   margin-bottom: 16px;
 }
 
+/* Contextual help sits first in the strip — before the language and theme pickers — because
+   it is the only control there that answers a question rather than changing a preference. */
+.workspace-header .workspace-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: 4px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.workspace-header .workspace-help:hover {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
 /* The theme picker sits just after the language switcher, sized to match it: plain
    text (no button chrome), 13px, with a pipe separator like the language options. */
 .workspace-header .theme-drop-wrap {

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Ico } from './icons';
 import { useT } from '@shared/i18n';
 import { LanguageDropdown } from '@shared/LanguageDropdown';
+import { useManual } from '@shared/Manual';
 import { BrandLogo, PasswordField } from './layout';
 import { Message, FormBusyOverlay } from './ui';
 import { cameraTitle, sameCamera, apiBase } from '../lib/helpers';
@@ -9,6 +10,9 @@ import { CapacityRetentionNote } from './settings';
 import { defaultDestination } from '../lib/constants';
 
 const STEP_KEYS = ['setup.stepWelcome', 'setup.stepSystem', 'setup.stepAi', 'setup.stepCapacity', 'setup.stepCameras', 'setup.stepRecording', 'setup.stepAlerts', 'setup.stepConnectivity', 'setup.stepDone'];
+// Index-aligned with STEP_KEYS: each entry is a hand-written `{#anchor}` in the setup-wizard
+// article. Kept beside the step list so the two cannot drift apart unnoticed.
+const STEP_HELP_ANCHORS = ['welcome', 'system', 'ai', 'capacity', 'cameras', 'recording', 'alerts', 'connectivity', 'done'];
 const capacityLimitKey = { cpu: 'setup.limitCpu', gpu: 'setup.limitGpu', disk: 'setup.limitDisk', memory: 'setup.limitMemory' };
 
 // SetupWizard is the first-run onboarding overlay: welcome/account, machine
@@ -65,6 +69,7 @@ export function SetupWizard({
     if (onRestart) onRestart();
   };
   const t = useT();
+  const manual = useManual();
   const [recordingDone, setRecordingDone] = useState(false);
   const [alertsDone, setAlertsDone] = useState(false);
   const cameraCount = (saved || []).length;
@@ -101,6 +106,16 @@ export function SetupWizard({
         <div className="setup-head">
           <BrandLogo size={44} />
           <div className="setup-head-actions">
+            {/* Per-step help. The wizard is where a first-time operator is most likely to be
+                stuck, and every step has a matching section of the manual. */}
+            <button
+              type="button"
+              className="login-help"
+              onClick={() => manual.openHelp('setup-wizard', STEP_HELP_ANCHORS[step])}
+            >
+              <Ico n="help" sz={15} />
+              <span>{t('help.link')}</span>
+            </button>
             <LanguageDropdown lang={lang} onLang={onLangChange} />
             <button type="button" className="quiet setup-skip" onClick={onFinish} disabled={busy}>
               {t('setup.skip')}
