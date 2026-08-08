@@ -7,6 +7,7 @@ import { BuildingFloorView, CameraWindow, MediaWindow } from './node_floor_view'
 import { AssetWizard, SiteDialog } from './asset_wizard';
 import { BuildingEditorDialog } from './building_editor_dialog';
 import { KIND_BUILDING, KIND_OUTDOOR, KIND_POINT, KIND_ORDER, normKind, hasPlans, siteGlyph } from './site_kinds';
+import { nodeKindOf } from './layout';
 
 // OpenLayers, driven directly through refs (no React wrapper — see the note in Phase 0).
 import Map from 'ol/Map.js';
@@ -284,6 +285,12 @@ function NodeCameraPopup({ node, nowSec, onOpenNode, onPlay, onOpenMedia, onLoca
   }, [node.nodeId, onAck]);
 
   useEffect(() => {
+    // Only a camera node serves /api/cameras. Asking a sensor hub or a door controller was a
+    // guaranteed 404 down the tunnel on every popup open — wasted round-trip, noisy node log.
+    if (nodeKindOf(node) !== 'camera') {
+      setCams({ loading: false, list: [], reachable: true });
+      return undefined;
+    }
     let live = true;
     setCams({ loading: true, list: [], reachable: true });
     api(`/api/nodes/${encodeURIComponent(node.nodeId)}/proxy/api/cameras?limit=200`, { noRedirect: true })
@@ -294,6 +301,7 @@ function NodeCameraPopup({ node, nowSec, onOpenNode, onPlay, onOpenMedia, onLoca
       })
       .catch(() => { if (live) setCams({ loading: false, list: [], reachable: false }); });
     return () => { live = false; };
+    // eslint-disable-next-line
   }, [node.nodeId]);
 
   // The node's recent events, ordered MOST CRITICAL FIRST (then newest).
@@ -317,7 +325,7 @@ function NodeCameraPopup({ node, nowSec, onOpenNode, onPlay, onOpenMedia, onLoca
   const toneKey = nodeToneKey(node, nowSec);
   const tone = nodeTone(node, nowSec);
   const pillClass = toneKey === 'online' ? 'online' : toneKey === 'critical' ? 'offline' : toneKey === 'warning' ? 'warn' : '';
-  const isCamera = (node.kind || 'camera') !== 'iot';
+  const isCamera = nodeKindOf(node) === 'camera';
   const unread = events.list.filter((e) => !e.isRead).length;
   const onlineCams = cams.list.filter((c) => (c.healthStatus || '').toLowerCase() === 'online').length;
 

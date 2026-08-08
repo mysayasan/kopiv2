@@ -1486,10 +1486,16 @@ func categoryForNodeKind(kind string) string {
 }
 
 // severityForNodeKind guesses an urgency for an unlabeled node event kind.
+//
+// Note this and categoryForNodeKind apply only to frames that are NOT full notifications — the
+// live path (republishNodeNotification) preserves the node-authored category and severity, so a
+// door node's duress alarm arrives Critical without any help from here. These heuristics are the
+// fallback bucket, extended with the door-alarm vocabulary so a bare frame still lands loudly.
 func severityForNodeKind(kind string) notification.Severity {
 	k := strings.ToLower(kind)
 	switch {
-	case strings.Contains(k, "alert"), strings.Contains(k, "full"), strings.Contains(k, "critical"), strings.Contains(k, "fail"):
+	case strings.Contains(k, "alert"), strings.Contains(k, "full"), strings.Contains(k, "critical"), strings.Contains(k, "fail"),
+		strings.Contains(k, "duress"), strings.Contains(k, "forced"), strings.Contains(k, "tamper"):
 		return notification.Critical
 	case strings.Contains(k, "health"), strings.Contains(k, "warn"), strings.Contains(k, "disk"):
 		return notification.Warning

@@ -58,7 +58,7 @@ type FleetRuleClause struct {
 	// NodeId scopes the clause to one node. Empty means any node — which is what you want for
 	// "a badge swipe anywhere on this site".
 	NodeId string `json:"nodeId" form:"nodeId" query:"nodeId"`
-	// Kind scopes to a node TYPE ("camera", "iot"). Empty means either.
+	// Kind scopes to a node TYPE ("camera", "iot", "door"). Empty means any.
 	Kind string `json:"kind" form:"kind" query:"kind"`
 	// Category matches the event's notification category ("vision.alert", "device.alert").
 	Category string `json:"category" form:"category" query:"category"`

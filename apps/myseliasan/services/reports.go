@@ -806,6 +806,8 @@ func nodeKindLabel(kind string) string {
 	switch kind {
 	case "iot":
 		return "Sensor hub"
+	case "door":
+		return "Door controller"
 	case "camera", "":
 		return "Camera node"
 	default:

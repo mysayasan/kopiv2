@@ -142,6 +142,80 @@ func TestCorrelate_NoBadgeMeansItFiresAfterTheGracePeriod(t *testing.T) {
 	}
 }
 
+// The flagship rule with a REAL access controller in the fleet: the "no badge" absence is scoped
+// to a mypintusan door node by CATEGORY rather than by title substring, because a door node's
+// decisions arrive as access.granted / access.denied — structured, not free-text.
+func doorIntrusionRule() *ruleWithClauses {
+	return &ruleWithClauses{
+		rule: entities.FleetRule{
+			Id: 2, Name: "Intrusion: door opened with no badge accepted", Enabled: true,
+			WindowSeconds: 60, GraceSeconds: 5, Severity: "critical",
+		},
+		clauses: []entities.FleetRuleClause{
+			{Id: 1, RuleId: 2, Mode: "required", Kind: "camera", Match: "person"},
+			{Id: 2, RuleId: 2, Mode: "required", Kind: "iot", Match: "door"},
+			{Id: 3, RuleId: 2, Mode: "absent", Kind: "door", Category: "access.granted"},
+		},
+	}
+}
+
+func evCat(kind, category, title string, at time.Time) NodeEvent {
+	return NodeEvent{NodeId: "n1", Kind: kind, Category: category, Title: title, At: at}
+}
+
+// A badge accepted on the DOOR node inside the grace period disarms the rule — this is the
+// three-node-kind version of the canonical legitimate-entry case.
+func TestCorrelate_DoorNodeBadgeAcceptedDisarms(t *testing.T) {
+	c := newTestCorrelator(doorIntrusionRule())
+	now := time.Now()
+
+	c.Observe(context.Background(), ev("camera", "Person detected", now))
+	c.Observe(context.Background(), ev("iot", "Front door opened", now))
+	if len(c.armed) != 1 {
+		t.Fatal("armed")
+	}
+
+	c.Observe(context.Background(), evCat("door", "access.granted", "Badge accepted: J. Smith", now.Add(2*time.Second)))
+
+	if len(c.armed) != 0 {
+		t.Fatal("a badge accepted by the door controller inside the grace period must DISARM the rule")
+	}
+}
+
+// A DENIED badge is not innocence. Somebody tried a card and the door refused them — the armed
+// rule must keep waiting, because the category ("access.denied") does not match the absence
+// clause ("access.granted").
+func TestCorrelate_DoorNodeBadgeDeniedDoesNotDisarm(t *testing.T) {
+	c := newTestCorrelator(doorIntrusionRule())
+	now := time.Now()
+
+	c.Observe(context.Background(), ev("camera", "Person detected", now))
+	c.Observe(context.Background(), ev("iot", "Front door opened", now))
+
+	c.Observe(context.Background(), evCat("door", "access.denied", "Badge denied", now.Add(2*time.Second)))
+
+	if len(c.armed) != 1 {
+		t.Fatal("a DENIED badge is not authorisation: the rule must stay armed")
+	}
+}
+
+// And a granted badge from the WRONG KIND of node must not disarm a door-scoped absence: an IoT
+// hub relaying a notification whose category happens to say access.granted is not the door
+// controller saying so.
+func TestCorrelate_DoorScopedAbsenceIgnoresOtherKinds(t *testing.T) {
+	c := newTestCorrelator(doorIntrusionRule())
+	now := time.Now()
+
+	c.Observe(context.Background(), ev("camera", "Person detected", now))
+	c.Observe(context.Background(), ev("iot", "Front door opened", now))
+
+	c.Observe(context.Background(), evCat("iot", "access.granted", "Badge accepted: J. Smith", now.Add(2*time.Second)))
+
+	if len(c.armed) != 1 {
+		t.Fatal("the absence clause is scoped to the door node kind; another kind must not satisfy it")
+	}
+}
+
 // Events too far apart are two separate things, not one event. A door that opened last Tuesday
 // and motion tonight is not a correlation.
 func TestCorrelate_EventsOutsideTheWindowDoNotArm(t *testing.T) {

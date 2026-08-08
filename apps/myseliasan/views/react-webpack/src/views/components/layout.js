@@ -15,12 +15,26 @@ const NODE_FILTER_THRESHOLD = 8;
 const NODE_FALLBACK_ICON = 'monitor';
 // A sensor hub (myiotsan) is not a camera NVR, and the rail should not pretend otherwise.
 const SENSOR_FALLBACK_ICON = 'cpu';
+const DOOR_FALLBACK_ICON = 'door';
 const CAMERA_ICON = 'video';
 
-// isSensorNode: the node's kind is "camera" or "iot"; an EMPTY kind is a camera node, because
-// every node adopted before the field existed is a mymatasan NVR.
-export const isSensorNode = (node) => String(node?.kind || '').toLowerCase() === 'iot';
-export const nodeFallbackIcon = (node) => (isSensorNode(node) ? SENSOR_FALLBACK_ICON : NODE_FALLBACK_ICON);
+// nodeKindOf resolves the node's kind to one of 'camera' | 'iot' | 'door'. An EMPTY (or unknown)
+// kind is a camera node, because every node adopted before the field existed is a mymatasan NVR
+// and must keep behaving exactly as it always did.
+export const nodeKindOf = (node) => {
+  const k = String(node?.kind || '').toLowerCase();
+  return k === 'iot' || k === 'door' ? k : 'camera';
+};
+export const isSensorNode = (node) => nodeKindOf(node) === 'iot';
+export const isDoorNode = (node) => nodeKindOf(node) === 'door';
+export const isCameraNode = (node) => nodeKindOf(node) === 'camera';
+export const nodeFallbackIcon = (node) => {
+  switch (nodeKindOf(node)) {
+    case 'iot': return SENSOR_FALLBACK_ICON;
+    case 'door': return DOOR_FALLBACK_ICON;
+    default: return NODE_FALLBACK_ICON;
+  }
+};
 
 // NodeTreeChild is one adopted node in the nav tree, now itself expandable into its
 // cameras. The node row navigates to that node's manage surface (all cameras); its
@@ -32,9 +46,9 @@ function NodeTreeChild({ node, onNodes, managingNodeId, managingCameraId, onSele
   const isManaged = onNodes && managingNodeId === node.nodeId;
   const nodeActive = isManaged && !managingCameraId;
   const status = node.status === 'online' ? 'online' : 'offline';
-  // A sensor hub has no cameras, so it gets no camera sub-branch (and no caret that would
-  // fetch /api/cameras from a node that does not serve it).
-  const sensor = isSensorNode(node);
+  // A sensor hub or a door controller has no cameras, so it gets no camera sub-branch (and no
+  // caret that would fetch /api/cameras from a node that does not serve it).
+  const sensor = !isCameraNode(node);
   const [open, setOpen] = useState(false);
   const [cams, setCams] = useState(null); // null = never loaded; [] = loaded, empty
   const [loading, setLoading] = useState(false);
@@ -108,7 +122,9 @@ function NodeTreeChild({ node, onNodes, managingNodeId, managingCameraId, onSele
           className={`nav-item tone-blue nav-tree-child nav-tree-main${nodeActive ? ' active' : ''}`}
           onClick={sensor ? () => onSelectNode(node.nodeId) : selectAndExpand}
           onDoubleClick={sensor ? undefined : toggle}
-          title={node.description ? undefined : `${node.name || node.nodeId} — ${sensor ? t('node.kindIot') : t('node.kindCamera')}`}
+          title={node.description ? undefined : `${node.name || node.nodeId} — ${
+            isSensorNode(node) ? t('node.kindIot') : isDoorNode(node) ? t('node.kindDoor') : t('node.kindCamera')
+          }`}
         >
           <span className="nav-tree-ico" data-status={status}>
             <Ico n={node.icon || nodeFallbackIcon(node)} sz={16} />

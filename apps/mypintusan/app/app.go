@@ -32,9 +32,9 @@ import (
 // Shipped so far: the OSDP driver and simulator (infra/access/osdp, tools/osdp-sim), the decision
 // path, the door state machine, and SQLite persistence. This file is what makes those bootable.
 //
-// What remains: a frontend (this app currently serves an API only), the myiotsan bindings for door
-// contacts and relay actuation, and fleet adoption by myseliasan — which additionally needs a node
-// kind that does not exist yet, since domain/shared/fleetnode declares only KindCamera and KindIot.
+// What remains: the myiotsan bindings for door contacts and relay actuation. Fleet adoption by
+// myseliasan is wired (wire_fleet.go, KindDoor) on the same shared node stack the other
+// appliances use.
 type module struct {
 	cfg *pintuconfig.Config
 }
@@ -115,6 +115,10 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Lockdown", Description: "seal the site", Path: "/api/lockdown", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Settings", Description: "users and roles", Path: "/api/settings", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Setup Wizard", Description: "first-run setup state and completion", Path: "/api/setup", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Notifications", Description: "unified event feed: alarms, badge decisions, security events", Path: "/api/notifications", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Access groups", Description: "named sets of holders", Path: "/api/groups", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Grants", Description: "which groups reach which doors, on what schedule", Path: "/api/grants", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Schedules", Description: "time policies and the holiday calendar", Path: "/api/schedules", AccessTier: apiaccessenums.AuthOnly},
 	}
 
 	statements := make([]string, 0, len(endpoints)*2)
@@ -179,10 +183,18 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	// One controller per RS-485 bus. Each owns its port for the life of the process — a CP holds
 	// the port open and polls continuously, unlike the open/poll/close of the Modbus driver.
-	runtime := newRuntime(deps, live, location, store, alarms, store.StrikeFor)
+	// Badge decisions flow into the notification feed alongside the alarms — that stream is what
+	// the fleet control plane correlates across nodes once this node is adopted.
+	runtime := newRuntime(deps, live, location, store, alarms, alarms.Decision, store.StrikeFor)
 	if err := runtime.start(ctx); err != nil {
 		return nil, err
 	}
+
+	// bgCtx bounds the fleet workers (discovery responder, enrollment, control channel); the OSDP
+	// runtime keeps its own cancel because it predates them and owns its bus supervisors. Created
+	// HERE, after the last early setup-error return, so every path from this point either cancels
+	// it (the fleet-cipher failure below) or hands it to the ShutdownFunc.
+	bgCtx, stopBackground := context.WithCancel(context.Background())
 
 	setupState := sharedservices.NewSetupStateService(dbsql.NewGenericRepo[sharedentities.RuntimeSetting](deps.Db))
 
@@ -221,8 +233,40 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewEventApi(protected, deps.Db)
 	apis.NewLockdownApi(protected, runtime)
 	apis.NewSetupApi(protected, setupState)
+	apis.NewNotificationsApi(protected, notifications)
+	apis.NewAccessRulesApi(protected, deps.Db, notifications)
+
+	// --- the fleet -------------------------------------------------------------------
+	//
+	// mypintusan is adopted by myseliasan exactly as the other appliances are, on the same shared
+	// node stack. It reports KindDoor, so the control plane knows a door controller is neither a
+	// camera nor a sensor hub.
+	//
+	// The event sink registered inside buildFleet is what makes the fifth app a fleet citizen:
+	// every alarm AND every badge decision this node raises also lands in the control plane's
+	// unified feed, where it can be correlated with camera and sensor events — motion AND a door
+	// opening AND no badge accepted.
+	if boolValue(deps.Config.Pairing.Enabled, true) {
+		fleetCipher, cerr := openFleetSecretCipher(deps)
+		if cerr != nil {
+			stopBackground()
+			runtime.stop()
+			return nil, cerr
+		}
+		f := buildFleet(api, deps, appVersion(m), fleetCipher, notifications)
+
+		// The PUBLIC pairing routes (adopt / release / self-drop) authenticate with the FLEET KEY,
+		// not a user session — a control plane adopting a node has no user behind it. They must be
+		// registered on the unauthenticated router, before the protected subrouter, or the auth
+		// middleware swallows the adopt call and the node can never be adopted at all.
+		sharedapis.NewPairingPublicApi(api, f.pairing, f.enrollment.Kick)
+		sharedapis.NewPairingApi(protected, f.pairing)
+
+		f.start(bgCtx, deps)
+	}
 
 	return func(ctx context.Context) error {
+		stopBackground()
 		runtime.stop()
 		return nil
 	}, nil

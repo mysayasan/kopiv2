@@ -12,12 +12,13 @@ type ManagedNode struct {
 	// Icon is the pre-installed glyph name shown for this node in the nav (e.g. "camera").
 	Icon    string `json:"icon" form:"icon" query:"icon"`
 	BaseUrl string `json:"baseUrl" form:"baseUrl" query:"baseUrl"`
-	// Kind is what this node IS: "camera" (a mymatasan NVR) or "iot" (a myiotsan sensor hub).
+	// Kind is what this node IS: "camera" (a mymatasan NVR), "iot" (a myiotsan sensor hub), or
+	// "door" (a mypintusan access controller).
 	//
-	// The control plane manages two sorts of appliance and they are NOT interchangeable — a
-	// camera node has recordings and live views; a sensor node has telemetry and relays. A fleet
-	// UI that cannot tell them apart is one that will offer to play back the footage from a door
-	// sensor.
+	// The control plane manages several sorts of appliance and they are NOT interchangeable — a
+	// camera node has recordings and live views; a sensor node has telemetry and relays; a door
+	// node has doors, badge decisions and an access log. A fleet UI that cannot tell them apart
+	// is one that will offer to play back the footage from a door.
 	//
 	// It is set from the node's own ADOPT REPLY, which is fleet-key-signed and claim-code-gated —
 	// not from the discovery announce, whose kind hint is unsigned and advisory (see

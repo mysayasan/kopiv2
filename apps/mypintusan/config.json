@@ -113,6 +113,16 @@
     "certPath": "./certs/cert.pem",
     "keyPath": "./certs/key.pem"
   },
+  "pairing": {
+    "enabled": true,
+    "multicastAddr": "239.255.90.21:49531",
+    "replayWindowSeconds": 30,
+    "mtlsPort": 39532,
+    "controlPort": 39533,
+    "certTtlHours": 168,
+    "renewBeforeHours": 48,
+    "heartbeatIntervalSeconds": 60
+  },
   "server": {
     "hostnames": [
       "*"
@@ -157,3 +167,4 @@
   },
   "buses": []
 }
+

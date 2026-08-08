@@ -44,17 +44,40 @@ own error toasts being invisible because it renders outside the toast-hosting ap
 `DataTable` prop-shape mismatch that crashed the whole app — recorded in
 `docs/modules/apps/mypintusan/app/app.go.md`'s Notes.
 
-**Still not there**: no groups/schedules/grants screens or APIs — after setup an operator can badge
-and issue credentials, but choosing **which doors** somebody reaches still needs direct database
-access. No reader onboarding beyond the wizard's single reader (no bus discovery, no SCBK rekey
-from the UI). `Controller.ContactChanged` exists as a seam but nothing calls it (no myiotsan
+**Now has groups/schedules/grants screens and APIs.** A new `GET`/`POST /api/groups` (+
+`/api/groups/{id}/members` add/remove), `GET`/`POST /api/schedules` (+
+`/api/schedules/holidays`), and `GET`/`POST /api/grants` surface
+(`apps/mypintusan/apis/access_rules.go`, admin-only writes, every grant/membership mutation
+publishing a named `access.rule-change` notification) closes the gap that used to mean a
+wizard-issued badge opened nothing: the decision path requires a grant, and until this change
+nothing served one. The first-run wizard now calls it directly — after creating the first person
+it builds (or reuses, by name) an "Everyone" group and an "Always" 24/7 schedule, adds the person,
+and grants the group the door the wizard just created, so a fresh install badges successfully the
+moment setup finishes. A new admin-only "Access rules" screen
+(`apps/mypintusan/views/react-webpack/src/views/Access.js`) lets an operator manage all three
+afterwards. See `docs/modules/apps/mypintusan/apis/access_rules.go.md` for the endpoint-level
+detail, including the validation rules (a schedule needs either `always` or ≥1 window; a window's
+`EndMin <= StartMin` is valid and means an overnight/night-shift wrap; deleting a group or
+schedule still in use by a grant is refused).
+
+**Still not there**: no reader onboarding beyond the wizard's single reader (no bus discovery, no
+SCBK rekey from the UI). `Controller.ContactChanged` exists as a seam but nothing calls it (no myiotsan
 door-contact binding wired in), `Door.RelayDeviceKey` → myiotsan `CommandService.Issue` is not
 implemented (the only shipped `Actuator` drives the reader's own output, via `StrikeResolver`), PIN
 pairing is PIN-then-card only, `Snapshot.AntiPassbackViolation` is an input nothing computes (P3
 anyway), and serial transport is not implemented — only `tcp://host:port` buses (the simulator, or
-a serial-to-Ethernet gateway) actually dial (`MYPINTUSAN_OSDP_PLAN.md` §5 build-order step 5). There
-is also no `myseliasan` fleet adoption (P2) — it needs a new `fleetnode` node kind;
-`domain/shared/fleetnode` currently declares only `KindCamera` and `KindIot`. See
+a serial-to-Ethernet gateway) actually dial (`MYPINTUSAN_OSDP_PLAN.md` §5 build-order step 5).
+**`myseliasan` fleet adoption (P2) is now wired**: `domain/shared/fleetnode` gained `KindDoor`,
+and `apps/mypintusan/app/wire_fleet.go` puts the node on the same shared pairing/enrollment/
+control-channel stack `mymatasan`/`myiotsan` use (two channels, no media — a door controller has
+no video). Every access decision (badge grant/deny, operator unlock) now also publishes to the
+node's own notification feed (`services/alarm.go`'s `NotificationAlarmer.Decision`, `Info`
+severity, duress normalised so it is invisible in that stream), which the control channel
+forwards to an adopted `myseliasan` — the flagship cross-domain rule (motion AND a door opening
+AND no badge accepted) is now literally evaluable across all three appliance kinds; see
+`docs/modules/apps/myseliasan/services/correlate.go.md`. Still outstanding on the fleet leg:
+doors as placeable floor-plan assets (needs a `NodePlacement` generalisation beyond cameras) and
+the `myiotsan` `RelayDeviceKey` binding mentioned above. See
 `docs/modules/apps/mypintusan/entities/` and `docs/modules/apps/mypintusan/services/` for the
 per-file detail. Companion to
 [`MYPINTUSAN_HARDWARE_PLAN.md`](MYPINTUSAN_HARDWARE_PLAN.md) (reader profiles, trust tiers,
@@ -392,8 +415,8 @@ Needs both `ReaderInId` and `ReaderOutId` populated. Two modes:
 
 | Phase | Scope |
 | --- | --- |
-| **P1** | `Holder`, `Credential` (card + PIN), `Door`, `Reader`, `Grant`/`Schedule`, `AccessEvent`, the state machine, offline cache. One door, one reader, working end to end. **Entities, the decision path, Wiegand decode/encode, the door state machine, the offline-policy logic, and a database-backed `Store` (`SQLStore`, over a real SQLite schema) are built and tested** (`apps/mypintusan/entities`, `apps/mypintusan/services`), including an end-to-end test that badges through the real OSDP driver into a real SQLite access log. **The app is now wired and runnable**: `apps/mypintusan/app` (composition root + OSDP bus supervisor with reconnect), `apps/mypintusan/apis`, `apps/mypintusan/config`/`config.json`, `cmd/mypintusan`, live-verified against `tools/osdp-sim`. **A frontend and first-run wizard now exist**: a React SPA on the shared `frontend/shared` module (`apps/mypintusan/views/react-webpack/`) covering Doors/People/Activity/Readers/Settings, plus a welcome→site/timezone→reader→door→first-person-and-badge→done wizard (`src/views/Wizard.js`), backed by a new `POST /api/doors` (door + entry reader created together) and database-backed runtime settings (`GET`/`PUT /api/settings/access`, `POST /api/settings/access/reset`) that make `config.json` a first-boot seed only. **Not done:** groups/schedules/grants screens or APIs (choosing which doors somebody reaches still needs direct database access), reader onboarding beyond the wizard's single reader (no bus discovery, no SCBK rekey from the UI), `myseliasan`/fleet adoption (needs a new `fleetnode` kind), the myiotsan relay-actuation and door-contact bindings (`RelayDeviceKey`/`ContactChanged` are unwired seams), serial bus transport (only `tcp://` dials), and card-then-PIN pairing (PIN-then-card only today). |
-| **P2** | Holiday calendar, free-access + first-person-in, lockdown, duress, door-forced/held-open alerts, `myseliasan` adoption so doors appear on the fleet map. Holiday calendar, free-access/first-person-in, lockdown, and duress are already implemented in the P1 decision/state-machine code above; what remains here is wiring them to a real deployment (persistence, myiotsan bindings) plus `myseliasan` adoption. |
+| **P1** | `Holder`, `Credential` (card + PIN), `Door`, `Reader`, `Grant`/`Schedule`, `AccessEvent`, the state machine, offline cache. One door, one reader, working end to end. **Entities, the decision path, Wiegand decode/encode, the door state machine, the offline-policy logic, and a database-backed `Store` (`SQLStore`, over a real SQLite schema) are built and tested** (`apps/mypintusan/entities`, `apps/mypintusan/services`), including an end-to-end test that badges through the real OSDP driver into a real SQLite access log. **The app is now wired and runnable**: `apps/mypintusan/app` (composition root + OSDP bus supervisor with reconnect), `apps/mypintusan/apis`, `apps/mypintusan/config`/`config.json`, `cmd/mypintusan`, live-verified against `tools/osdp-sim`. **A frontend and first-run wizard now exist**: a React SPA on the shared `frontend/shared` module (`apps/mypintusan/views/react-webpack/`) covering Doors/People/Activity/Readers/Settings, plus a welcome→site/timezone→reader→door→first-person-and-badge→done wizard (`src/views/Wizard.js`), backed by a new `POST /api/doors` (door + entry reader created together) and database-backed runtime settings (`GET`/`PUT /api/settings/access`, `POST /api/settings/access/reset`) that make `config.json` a first-boot seed only. **Groups/schedules/grants screens and APIs now exist** (`apps/mypintusan/apis/access_rules.go`, `apps/mypintusan/views/react-webpack/src/views/Access.js`) — choosing which doors somebody reaches no longer needs direct database access, and the first-run wizard grants the person and door it just created so a fresh install works end to end. **Not done:** reader onboarding beyond the wizard's single reader (no bus discovery, no SCBK rekey from the UI), the myiotsan relay-actuation and door-contact bindings (`RelayDeviceKey`/`ContactChanged` are unwired seams), serial bus transport (only `tcp://` dials), and card-then-PIN pairing (PIN-then-card only today). |
+| **P2** | Holiday calendar, free-access + first-person-in, lockdown, duress, door-forced/held-open alerts, `myseliasan` adoption so doors appear on the fleet map. Holiday calendar, free-access/first-person-in, lockdown, and duress are already implemented in the P1 decision/state-machine code above. **`myseliasan` adoption is now wired** (`fleetnode.KindDoor`, `apps/mypintusan/app/wire_fleet.go`, live-bench verified end-to-end: discovery, adopt, mTLS enrollment, control channel, embedded management UI, badge decisions in the unified feed, door-kind fleet rules, replay-on-reconnect); what remains is the myiotsan door-contact/relay bindings and doors as placeable floor-plan assets. |
 | **P3** | Plate and face credentials via `mymatasan`, anti-passback, two-person rule on `critical` doors, visitor management (pre-registration, QR pass, host notification, on-site roster, **evacuation list**). |
 
 The evacuation list in P3 is worth calling out as a sales item: an accurate live roster of

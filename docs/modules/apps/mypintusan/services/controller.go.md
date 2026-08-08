@@ -33,7 +33,9 @@ runtime and the only consumer of the bus's event channel. It also owns lockdown,
   `TickInterval` (default 1s — bounds how LATE a relock/held-open alarm can be, not whether it
   fires), `PINWindow` (default 15s — deliberately SHORT: a PIN left buffered indefinitely would
   be picked up by whoever badges next, misattributing a duress alarm or opening the door on a
-  credential that never authenticated).
+  credential that never authenticated), `Decisions` (**new**, nil-safe — when set, told about
+  every access decision after `record` writes it, feeding the notification stream the fleet
+  control plane correlates across nodes; see below).
 - `NewController` / `Machine(ctx, doorId)` — lazily creates and caches one `DoorMachine` per
   door, loaded from `Store.Door`.
 - `ContactChanged(ctx, doorId, open)` — the seam that turns "we energised the strike" into
@@ -86,7 +88,13 @@ runtime and the only consumer of the bus's event channel. It also owns lockdown,
   instant; resolving in UTC would shift it near midnight).
 - `record` — writes the `AccessEvent`; a `Store.RecordEvent` failure is itself raised as
   `AlarmTamper` ("FAILED TO RECORD ACCESS EVENT"), since losing the log is an incident, not
-  merely an error to swallow.
+  merely an error to swallow. **New**: after the write attempt, if `cfg.Decisions != nil` and the
+  row has a presented credential (`ev.RawCredential != ""`), it calls `cfg.Decisions(ctx, ev)` —
+  this covers badges AND operator unlocks (`RawCredential: "operator"`) but deliberately excludes
+  door-state audit rows (forced/held-open have no `RawCredential`; they already raise their own
+  alarms via `Alarmer.Raise`). Published even when the audit write above failed — the tamper
+  alarm has already surfaced that failure, and the correlator must still see the decision that
+  actually happened at the door.
 - `DoorStrike{Address uint8, Output byte}` / `StrikeResolver func(ctx, door) (DoorStrike, error)`
   — replace what used to be `BusActuator`'s bare `Output byte` + `Address func(door) uint8`
   fields. `Address` is the reader's OSDP PD address on the RS-485 segment; `Output` is the relay
@@ -118,3 +126,7 @@ runtime and the only consumer of the bus's event channel. It also owns lockdown,
   against a real deployment.
 - `Snapshot.AntiPassbackViolation` is never computed by anything in this file — anti-passback
   detection (comparing the last in/out passage) does not exist yet; it is a P3 feature.
+- `TestRecordPublishesDecisionsButNotDoorStateRows` (`controller_test.go`) pins the `Decisions`
+  boundary: a badge grant and an operator unlock are both published, a door-state row
+  (forced/held-open, no `RawCredential`) is not, and a `Store.RecordEvent` failure does not
+  suppress the publish.

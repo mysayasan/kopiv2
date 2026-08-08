@@ -2,19 +2,21 @@
 
 ## Purpose
 
-The cross-domain correlator. **This is the reason the fourth app (`myiotsan`) exists.**
+The cross-domain correlator. **This is the reason the fourth app (`myiotsan`) exists — and the
+fifth (`mypintusan`) makes the flagship example literally true.**
 
     motion on Camera 3 (a mymatasan node)
     AND a door contact opening (a myiotsan node)
-    AND no badge swipe (a myiotsan node)
+    AND no badge accepted (a mypintusan door node, category access.granted;
+        or a badge reader wired through a myiotsan hub)
     -> intrusion
 
-`mymatasan` cannot see your door sensors. `myiotsan` cannot see your cameras. A cloud IoT
-platform can see neither. Only the control plane — which already receives every node's events
-in one feed over the fleet control channel — is in a position to notice the conjunction. And
-the conjunction is where the signal is: a camera's motion alert at 03:00 is a moth; a door
-contact at 03:00 is a cleaner; the two together with no badge swipe is an intrusion.
-Correlation is how a fleet of noisy sensors becomes one trustworthy signal.
+`mymatasan` cannot see your door sensors. `myiotsan` cannot see your cameras. `mypintusan` cannot
+see either. A cloud IoT platform can see none of them. Only the control plane — which already
+receives every node's events in one feed over the fleet control channel — is in a position to
+notice the conjunction. And the conjunction is where the signal is: a camera's motion alert at
+03:00 is a moth; a door contact at 03:00 is a cleaner; the two together with no badge accepted is
+an intrusion. Correlation is how a fleet of noisy sensors becomes one trustworthy signal.
 
 ## The grace delay — the hard part
 
@@ -28,9 +30,16 @@ So `Correlator` **never fires on an event**. When a rule's required clauses are 
 it **ARMS** (`Observe`), waits out `GraceSeconds`, and only then (`Sweep`, on a 1-second ticker
 started in `app.go`) asks whether the absent clauses really held. A badge swipe arriving inside
 the grace period **DISARMS** it — that was an authorised entry and no alert may ever be raised.
-An absence you have not waited for is not an absence; it is a race with the badge reader. Ten
-tests in `correlate_test.go` pin this state machine; the late-arriving-badge-swipe test is the
-one that matters most.
+An absence you have not waited for is not an absence; it is a race with the badge reader.
+Thirteen tests in `correlate_test.go` pin this state machine; the late-arriving-badge-swipe test
+is the one that matters most. Three of them
+(`TestCorrelate_DoorNodeBadgeAcceptedDisarms`, `TestCorrelate_DoorNodeBadgeDeniedDoesNotDisarm`,
+`TestCorrelate_DoorScopedAbsenceIgnoresOtherKinds`) pin the identical state machine against a
+REAL `mypintusan` door node: a badge accepted on the door node (category `access.granted`)
+disarms within grace; a badge DENIED (`access.denied`) does not, because a denial is not
+authorisation; and a `door`-scoped absence clause is not satisfied by an `access.granted`-shaped
+event from a node of a DIFFERENT kind (e.g. an IoT hub relaying something that merely shares the
+category string).
 
 ## Type: `Correlator`
 
@@ -41,10 +50,10 @@ func NewCorrelator(db dbsql.IDbCrud, notify *notification.Service,
     nodeKind func(ctx context.Context, nodeId string) string, logf func(string, ...any)) *Correlator
 ```
 
-`nodeKind` resolves a node ID to its `"camera"`/`"iot"` kind. `apps/myseliasan/app/app.go` wires
-this to a closure over `registry.List` — i.e. **the ADOPTED NODE'S RECORD**, never anything
-carried in the event itself. Trusting a kind in the event body would let a door sensor claim to
-be a camera and satisfy a camera-scoped clause.
+`nodeKind` resolves a node ID to its `"camera"`/`"iot"`/`"door"` kind. `apps/myseliasan/app/app.go`
+wires this to a closure over `registry.List` — i.e. **the ADOPTED NODE'S RECORD**, never anything
+carried in the event itself. Trusting a kind in the event body would let any node claim to be a
+camera and satisfy a camera-scoped clause.
 
 ### `SetMetrics`
 

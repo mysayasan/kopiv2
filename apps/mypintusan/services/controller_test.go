@@ -743,6 +743,39 @@ func TestEndToEndOfflineCacheExpiry(t *testing.T) {
 	}
 }
 
+// TestRecordPublishesDecisionsButNotDoorStateRows pins the boundary of the decision feed: every
+// row with a presented credential (a badge, an operator unlock) is published, a door-state audit
+// row (forced, held-open — no credential) is not, and an audit-write failure does not suppress the
+// publish — the correlator must still see the decision that happened.
+func TestRecordPublishesDecisionsButNotDoorStateRows(t *testing.T) {
+	store := newStore()
+	var published []entities.AccessEvent
+	c := NewController(store, nil, nil, nil, nil, ControllerConfig{
+		Decisions: func(_ context.Context, ev entities.AccessEvent) { published = append(published, ev) },
+	})
+	ctx := context.Background()
+
+	c.record(ctx, entities.AccessEvent{
+		RawCredential: "83826900", Decision: entities.DecisionGranted, Reason: entities.ReasonOK,
+	})
+	c.record(ctx, entities.AccessEvent{
+		Decision: entities.DecisionDenied, Reason: entities.ReasonDoorForced,
+	})
+	if len(published) != 1 || published[0].Reason != entities.ReasonOK {
+		t.Fatalf("published %d decisions (%+v), want only the badge grant", len(published), published)
+	}
+
+	store.mu.Lock()
+	store.recErr = context.DeadlineExceeded
+	store.mu.Unlock()
+	c.record(ctx, entities.AccessEvent{
+		RawCredential: "operator", Decision: entities.DecisionGranted, Reason: entities.ReasonOK,
+	})
+	if len(published) != 2 {
+		t.Fatal("an audit-write failure suppressed the decision publish")
+	}
+}
+
 // TestEndToEndBadgeOnUnenrolledReaderIsLogged covers a device on the bus that nobody enrolled —
 // worth someone's attention rather than a silent drop.
 func TestEndToEndBadgeOnUnenrolledReaderIsLogged(t *testing.T) {

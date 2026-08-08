@@ -23,14 +23,17 @@ module.exports = {
   },
   resolve: {
     // '@shared' -> the in-repo shared UI module (frontend/shared/src).
-    // '@mymatasan' / '@myiotsan' -> the node apps' view source, so myseliasan can embed a
-    // node's real pages/CSS (scoped so it cannot leak into the shell) and follow the node
-    // app's design changes. A camera node (mymatasan) and a sensor hub (myiotsan) each get
-    // their own embed — nodecam/ and nodeiot/ — and each pulls ITS node app's stylesheet.
+    // '@mymatasan' / '@myiotsan' / '@mypintusan' -> the node apps' view source, so myseliasan
+    // can embed a node's real pages/CSS (scoped so it cannot leak into the shell) and follow
+    // the node app's design changes. A camera node (mymatasan), a sensor hub (myiotsan) and a
+    // door controller (mypintusan) each get their own embed — nodecam/, nodeiot/ and nodedoor/
+    // — and each pulls ITS node app's stylesheet. NOTE mypintusan keeps its stylesheet at
+    // src/styles.css (not src/views/styles/), so its alias points one level higher.
     alias: {
       '@shared': path.resolve(__dirname, '../../../../frontend/shared/src'),
       '@mymatasan': path.resolve(__dirname, '../../../mymatasan/views/react-webpack/src/views'),
       '@myiotsan': path.resolve(__dirname, '../../../myiotsan/views/react-webpack/src/views'),
+      '@mypintusan': path.resolve(__dirname, '../../../mypintusan/views/react-webpack/src'),
     },
     // Shared files do bare `import ... from 'react'`; resolve them from THIS app's
     // node_modules so there's a single React copy.

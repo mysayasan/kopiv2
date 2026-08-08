@@ -25,6 +25,9 @@ type runtime struct {
     store    services.Store
     alarms   services.Alarmer
     strikes  services.StrikeResolver
+    // decisions receives every access decision for the notification feed (and, through it, the
+    // fleet uplink). Nil when nothing consumes decisions.
+    decisions func(ctx context.Context, ev appentities.AccessEvent)
 
     cancel context.CancelFunc
 
@@ -55,8 +58,9 @@ replaced wholesale on each reconnect.
   every configured reader (refusing, per-reader rather than per-bus, a `RequireSecureChannel`
   reader with a missing or malformed SCBK — a mistyped key must never silently become a
   cleartext session on a door configured to require encryption), builds a fresh
-  `services.Controller` (`services.BusActuator{Bus: bus, Resolve: r.strikes}` — see
-  `services/controller.go.md`'s `DoorStrike`/`StrikeResolver`), records it in `r.live`, **carries
+  `services.Controller` (`services.BusActuator{Bus: bus, Resolve: r.strikes}`, with
+  `ControllerConfig.Decisions: r.decisions` — see `services/controller.go.md`'s
+  `DoorStrike`/`StrikeResolver`/`Decisions`), records it in `r.live`, **carries
   the site's current lockdown state into the new session before polling starts** (`ctrl.
   SetLockdown` ahead of `ctrl.Run`, closing the window in which a reconnected bus could honour a
   badge the site is currently refusing), then runs the controller and the bus concurrently until
@@ -84,6 +88,11 @@ replaced wholesale on each reconnect.
 - Not exported outside `app`; `apis.Unlocker` (`apis/doors.go.md`) is the narrow interface the
   HTTP layer actually depends on (`Unlock`/`SetLockdown`/`Lockdown`), so a handler cannot reach a
   bus or a controller directly.
+- `newRuntime` gained a new parameter, `decisions func(ctx context.Context, ev appentities.AccessEvent)`,
+  inserted between `alarms` and `strikes` — `apps/mypintusan/app/app.go.md`'s `RegisterAppRoutes`
+  passes `alarms.Decision` (`services/alarm.go.md`), so every controller this runtime builds
+  publishes badge decisions into the notification feed, which the fleet control channel then
+  forwards to an adopted `myseliasan` (`app/wire_fleet.go.md`).
 - Both bugs this app shipped with were found by booting the binary, not by a unit test: the bus
   never reconnecting (fixed by this file's supervise loop plus `infra/access/osdp/bus.go.md`'s
   `failPort`), and `BusActuator` addressing the wrong number (fixed in

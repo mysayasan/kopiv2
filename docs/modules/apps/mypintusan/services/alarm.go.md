@@ -43,10 +43,27 @@ The shipped `services.Alarmer` implementation, built via `NewNotificationAlarmer
   takes it out on the holder.
 - `alarmTitle(kind)` — the headline an operator sees, kept plain: read at 3am, on a phone, by
   somebody who was asleep.
+- `Decision(ctx, ev)` — **new**: publishes an access DECISION (a badge accepted or refused, an
+  operator unlock) into the feed at `Info` severity, category `"access.granted"` or
+  `"access.denied"`. `Raise` alarms tell a human something is wrong now; `Decision` is the
+  routine stream `myseliasan`'s correlator matches across nodes ("a door opened AND no badge was
+  accepted") — see `apps/myseliasan/services/correlate.go.md`. This is what the badge decisions
+  need to travel up the fleet control channel to a control plane once adopted
+  (`apps/mypintusan/app/wire_fleet.go.md`).
+  - **DURESS IS INVISIBLE IN THIS STREAM.** A duress grant's notification is byte-identical to a
+    normal grant's: the `Duress` flag is ignored, `Detail`/`RawCredential` are never included
+    (they can carry PIN phrasing), and `decisionReason(ev)` NORMALISES the reason — a granted
+    event always reads `"ok"` even though the audit row says `"duress"`, and a bad PIN or a
+    duress PIN both coarsen to `"credential-rejected"`. The separate `Critical` duress alarm
+    still goes out via `Raise` — worded for the operator — and stays untouched; `Decision` is
+    what anything with feed access (a dashboard, a webhook, a digest, the fleet control plane's
+    unified feed) could expose to the wrong eyes.
 
 ## Notes
 
 - Wired in `apps/mypintusan/app/app.go.md`'s `RegisterAppRoutes`, ahead of building the runtime,
   so every controller built by `app/runtime.go.md`'s `superviseBus` shares the one alarm sink.
-- A nil `*NotificationAlarmer` or nil `notify` makes `Raise` a no-op rather than a panic — safe
-  for tests that construct a `Controller` without a real notification service.
+  `alarms.Decision` is passed into `newRuntime` as the runtime's `decisions` hook and threaded
+  through to every `Controller` via `ControllerConfig.Decisions`.
+- A nil `*NotificationAlarmer` or nil `notify` makes `Raise` (and `Decision`) a no-op rather than
+  a panic — safe for tests that construct a `Controller` without a real notification service.

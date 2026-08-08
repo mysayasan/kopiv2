@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/mysayasan/kopiv2/apps/mypintusan/entities"
 	"github.com/mysayasan/kopiv2/domain/notification"
@@ -95,6 +96,75 @@ func (a *NotificationAlarmer) Raise(ctx context.Context, kind string, ev entitie
 			"reason":   ev.Reason,
 		},
 	})
+}
+
+// Decision publishes an access DECISION — a badge accepted or refused, an operator unlock — into
+// the notification feed at Info severity. Alarms tell a human something is wrong now; decisions are
+// the routine stream the fleet control plane correlates across nodes ("door opened AND no badge"),
+// which only works if a badge acceptance actually travels up the channel.
+//
+// DURESS MUST BE INVISIBLE HERE. A duress grant's notification is byte-identical to a normal
+// grant's: the Duress flag is ignored, Detail is never included (it can carry PIN phrasing), and
+// the reason is NORMALISED — a granted event always reads "ok" even though the audit row says
+// "duress", and a bad PIN is coarsened to "credential-rejected". The separate Critical duress
+// alarm still goes out via Raise; that one is worded for the operator, this one is what anything
+// with feed access — a dashboard, a webhook, a digest — could expose to the wrong eyes.
+func (a *NotificationAlarmer) Decision(ctx context.Context, ev entities.AccessEvent) {
+	if a == nil || a.notify == nil {
+		return
+	}
+	granted := ev.Decision == entities.DecisionGranted
+	operator := ev.RawCredential == "operator"
+
+	category, title := "access.denied", "Badge denied"
+	if granted {
+		category, title = "access.granted", "Badge accepted"
+	}
+	switch {
+	case operator && granted:
+		title = "Door unlocked by " + ev.HolderName
+	case operator:
+		title = "Remote unlock refused"
+	case ev.HolderName != "":
+		title += ": " + ev.HolderName
+	}
+
+	reason := decisionReason(ev)
+	body := "Access granted"
+	if !granted {
+		body = "Denied: " + strings.ReplaceAll(reason, "-", " ")
+	}
+
+	a.notify.Publish(ctx, notification.Notification{
+		Category: category,
+		Severity: notification.Info,
+		Title:    title,
+		Body:     body,
+		Source:   "mypintusan",
+		RefType:  "access_event",
+		RefId:    ev.Id,
+		Data: map[string]any{
+			"doorId":   ev.DoorId,
+			"readerId": ev.ReaderId,
+			"holderId": ev.HolderId,
+			"holder":   ev.HolderName,
+			"decision": ev.Decision,
+			"reason":   reason,
+		},
+	})
+}
+
+// decisionReason is the reason as the FEED may see it, not as the audit log records it. A granted
+// event is always "ok" — the audit row's "duress" must never leave the building through this path —
+// and PIN-shaped denials are collapsed so the feed cannot say whether a door even uses PINs.
+func decisionReason(ev entities.AccessEvent) string {
+	if ev.Decision == entities.DecisionGranted {
+		return entities.ReasonOK
+	}
+	if ev.Reason == entities.ReasonBadPin || ev.Reason == entities.ReasonDuress {
+		return "credential-rejected"
+	}
+	return ev.Reason
 }
 
 // alarmTitle is the headline an operator sees. Deliberately plain: an alarm headline is read at

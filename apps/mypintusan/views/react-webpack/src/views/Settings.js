@@ -185,6 +185,123 @@ export default function Settings({ toast }) {
           <button type="submit" className="btn btn-primary" disabled={saving}>{t('common.save')}</button>
         </div>
       </form>
+
+      <FleetSection toast={toast} />
     </div>
+  )
+}
+
+// FleetSection joins this controller to a myseliasan control plane. It renders nothing when the
+// pairing API is unreachable — fleet support disabled in config, or a signed-in user without the
+// admin role — because a panel full of buttons that all fail is worse than no panel.
+function FleetSection({ toast }) {
+  const t = useT()
+  const [status, setStatus] = useState(null)
+  const [hidden, setHidden] = useState(false)
+  const [fleetKey, setFleetKey] = useState('')
+  const [claim, setClaim] = useState(null)
+
+  const load = useCallback(async () => {
+    try {
+      setStatus(await api.pairingStatus())
+    } catch {
+      setHidden(true)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  if (hidden || !status) return null
+
+  const saveKey = async e => {
+    e.preventDefault()
+    try {
+      await api.saveFleetKey(fleetKey)
+      setFleetKey('')
+      toast(t('settings.fleetKeySaved'), 'ok')
+      load()
+    } catch (err) {
+      toast(err && err.message ? err.message : t('common.error'), 'error')
+    }
+  }
+
+  const genClaim = async () => {
+    try {
+      setClaim(await api.generateClaimCode())
+      load()
+    } catch (err) {
+      toast(err && err.message ? err.message : t('common.error'), 'error')
+    }
+  }
+
+  const unpair = async () => {
+    if (!window.confirm(t('settings.unpairConfirm'))) return
+    try {
+      await api.unpairFleet()
+      setClaim(null)
+      toast(t('settings.unpaired'), 'ok')
+      load()
+    } catch (err) {
+      toast(err && err.message ? err.message : t('common.error'), 'error')
+    }
+  }
+
+  return (
+    <section className="form fleet-section">
+      <h2 className="section-head">{t('settings.fleet')}</h2>
+      <p className="muted small">{t('settings.fleetHint')}</p>
+
+      <div className="fleet-status">
+        <span className={status.paired ? 'pill pill-ok' : 'pill pill-warn'}>
+          {status.paired ? t('settings.fleetPaired') : t('settings.fleetNotPaired')}
+        </span>
+        {status.paired && (
+          <span className="muted">{t('settings.fleetParent')}: {status.parentName || status.parentId}</span>
+        )}
+        {!status.paired && (
+          <span className="muted">
+            {status.fleetKeySet ? t('settings.fleetKeySet') : t('settings.fleetKeyNotSet')}
+          </span>
+        )}
+      </div>
+
+      {!status.paired ? (
+        <>
+          <form onSubmit={saveKey}>
+            <label>
+              <span>{t('settings.fleetKey')}</span>
+              <input
+                type="password" autoComplete="off"
+                value={fleetKey}
+                onChange={e => setFleetKey(e.target.value)}
+              />
+              <small className="muted">{t('settings.fleetKeyHint')}</small>
+            </label>
+            <div className="form-actions">
+              <button type="submit" className="btn btn-quiet" disabled={!fleetKey.trim()}>
+                {t('settings.saveFleetKey')}
+              </button>
+            </div>
+          </form>
+
+          <label>
+            <span>{t('settings.claimCode')}</span>
+            {claim && claim.code ? <code className="claim-code">{claim.code}</code> : null}
+            <small className="muted">{t('settings.claimHint')}</small>
+          </label>
+          <div className="form-actions">
+            <button type="button" className="btn btn-quiet" onClick={genClaim} disabled={!status.fleetKeySet}>
+              {t('settings.genClaim')}
+            </button>
+          </div>
+        </>
+      ) : (
+        <div className="form-actions">
+          <button type="button" className="btn btn-danger" onClick={unpair}>
+            {t('settings.unpair')}
+          </button>
+        </div>
+      )}
+    </section>
   )
 }

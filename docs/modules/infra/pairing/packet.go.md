@@ -32,7 +32,7 @@ The adoption HTTPS call uses `SignAssertion`/`VerifyAssertion` with `(parentId, 
 
 ## `Announce.Kind` / `AnnounceInfo.Kind` — advisory, deliberately unsigned
 
-`Kind` (`"camera"` | `"iot"`, `json:"kind,omitempty"`) is what a node claims to be, carried in
+`Kind` (`"camera"` | `"iot"` | `"door"`, `json:"kind,omitempty"`) is what a node claims to be, carried in
 the announce for display purposes only (an icon in `myseliasan`'s discovery/scan list). It is
 **deliberately excluded from the HMAC's signing parts** (`Announce.signingParts()` is
 unchanged by this field). Two reasons:

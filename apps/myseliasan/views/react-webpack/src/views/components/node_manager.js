@@ -3,7 +3,8 @@ import { CameraHero, Ico, Tabs, statusTone, useT } from '@shared';
 import { FormBusyOverlay } from './ui';
 import { NodeDashboard } from './node_dashboard';
 import { NodeIotManager } from './node_iot_manager';
-import { isSensorNode } from './layout';
+import { NodeDoorManager } from './node_door_manager';
+import { isSensorNode, isDoorNode } from './layout';
 import { NodeEmbed } from './node_embed';
 import { NodeDetectionTab } from './node_detection';
 import { NodeSettingsTab } from './node_settings';
@@ -22,15 +23,19 @@ installProxyCsrf(csrfToken);
 // dashboard and selecting a camera shows that camera's page — the same surfaces the
 // operator sees on the node itself, driven over the control tunnel.
 //
-// The control plane manages two sorts of appliance, and they are NOT interchangeable. A camera
-// node has cameras, recordings and a live wall; a SENSOR HUB has devices, telemetry and relays,
-// and none of the camera surfaces below mean anything on it. So a hub is routed to its own
-// manage surface — the nodeiot embed — and never to this one. (`focusCameraId` cannot be set for
-// a hub: the nav tree gives it no camera branch. Even so, the kind decides first, because a
-// stale deep link must not open a camera page on a door sensor.)
+// The control plane manages several sorts of appliance, and they are NOT interchangeable. A
+// camera node has cameras, recordings and a live wall; a SENSOR HUB has devices, telemetry and
+// relays; a DOOR CONTROLLER has doors, badges and an access log — and none of the camera
+// surfaces below mean anything on either of the last two. So each is routed to its own manage
+// surface — the nodeiot / nodedoor embeds — and never to this one. (`focusCameraId` cannot be
+// set for them: the nav tree gives them no camera branch. Even so, the kind decides first,
+// because a stale deep link must not open a camera page on a door controller.)
 export function NodeManager({ node, onToast, focusCameraId, onClearFocus, onBack }) {
   if (isSensorNode(node)) {
     return <NodeIotManager node={node} onToast={onToast} />;
+  }
+  if (isDoorNode(node)) {
+    return <NodeDoorManager node={node} onToast={onToast} />;
   }
   if (focusCameraId != null) {
     return (

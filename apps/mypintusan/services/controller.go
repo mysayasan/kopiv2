@@ -80,6 +80,11 @@ type ControllerConfig struct {
 	// which on a duress PIN means an alarm attributed to the wrong person, and on a normal one
 	// means a door opening for a credential that never authenticated.
 	PINWindow time.Duration
+	// Decisions, when set, is told about every access DECISION — badge grants and denials, operator
+	// unlocks — after it is recorded. It feeds the notification stream the fleet control plane
+	// correlates across nodes; door-state audit rows (forced, held-open) are NOT decisions and do
+	// not pass through here — they raise their own alarms. Nil-safe: standalone tests leave it unset.
+	Decisions func(ctx context.Context, ev entities.AccessEvent)
 }
 
 // Controller drives one bus.
@@ -590,6 +595,13 @@ func (c *Controller) record(ctx context.Context, ev entities.AccessEvent) {
 		// Losing an access event is itself an incident: the log is the product. Surfacing it as an
 		// alarm is the only way anyone finds out before an audit does.
 		c.alarm.Raise(ctx, AlarmTamper, ev, "FAILED TO RECORD ACCESS EVENT: "+err.Error())
+	}
+	// Every row with a presented credential is a decision worth publishing — that includes operator
+	// unlocks ("operator") but excludes door-state rows (forced/held-open have no RawCredential),
+	// which already raise their own alarms. Published even when the audit write above failed: the
+	// tamper alarm has surfaced that, and the correlator must still see the decision that happened.
+	if c.cfg.Decisions != nil && ev.RawCredential != "" {
+		c.cfg.Decisions(ctx, ev)
 	}
 }
 

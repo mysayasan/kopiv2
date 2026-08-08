@@ -116,7 +116,9 @@ recording node and are not fetched here.
   "by category"/"noisiest sources" breakdowns.
 - `kindLabel`/`nodeKindLabel`/`statusLabel`/`yesNo`/`tsFmt`/`orDash`/`tick` are small
   operator-facing label formatters shared across all four builders, kept in this file rather
-  than duplicated per report.
+  than duplicated per report. `nodeKindLabel` maps `"iot"` → "Sensor hub", `"door"` → "Door
+  controller" (`mypintusan`), and `"camera"`/empty → "Camera node" (the empty case covers a node
+  adopted before the `Kind` field existed).
 - Every builder's final step is `doc.Output()`; the returned `*Report`'s `Filename` embeds
   `now.Format("20060102")` (e.g. `fleet-health-20260726.pdf`), matching what `apis/
   reports.go`'s `deliver` sets as the `Content-Disposition` filename.

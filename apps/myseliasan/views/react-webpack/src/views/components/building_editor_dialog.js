@@ -6,6 +6,7 @@ import { nodeTone } from '../lib/fleet_status';
 import { FloorEditor } from './floor_editor';
 import { SiteDialog } from './asset_wizard';
 import { multiPlan, normKind, siteGlyph } from './site_kinds';
+import { nodeKindOf } from './layout';
 
 // BuildingEditorDialog is the authoring surface for ONE building, opened as a modal over the
 // geographic map: pick an area (floor) along the top, drag a node or camera off the palette, and
@@ -356,7 +357,7 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
             <ul className="palette-list">
               {nodes.length === 0 ? <li className="palette-cam muted">{t('bld.noNodes')}</li> : null}
               {nodes.map((n) => {
-                const isCamera = (n.kind || 'camera') !== 'iot';
+                const isCamera = nodeKindOf(n) === 'camera';
                 const cams = camsByNode[n.nodeId];
                 const nodeWhere = placedAt(n.nodeId, '');
                 return (
