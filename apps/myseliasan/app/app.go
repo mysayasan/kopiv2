@@ -735,6 +735,7 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Settings", Description: "in-app editor for the safe subset of config.json (superadmin-gated)", Path: "/api/settings", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "System", Description: "process restart to apply settings changes (superadmin-gated)", Path: "/api/system", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Setup Wizard", Description: "first-run setup state and completion", Path: "/api/setup", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "User Manual", Description: "the built-in manual; public so help works on the sign-in screen and in the first-run wizard", Path: "/api/manual", AccessTier: apiaccessenums.Public},
 	}
 
 	statements := make([]string, 0, len(endpoints)*2)
@@ -1015,6 +1016,9 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// contract mymatasan and myidsan use).
 	setupStateService := sharedservices.NewSetupStateService(runtimeSettingRepo)
 	apis.NewSetupApi(api, *deps.Auth, controlSession, setupStateService)
+	// The built-in manual. No auth middleware, deliberately — it has to be readable from the
+	// sign-in screen and the first-run wizard. See apis.NewManualApi.
+	apis.NewManualApi(api)
 
 	// Control channel server: a dedicated fleet-mTLS listener accepting the
 	// persistent, node-dialed bi-directional channel. Connection presence bumps a

@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Ico, SideNav as SharedSideNav, useT, BrandLogo as SharedBrandLogo } from '@shared';
+import { Ico, SideNav as SharedSideNav, useT, BrandLogo as SharedBrandLogo, LanguageDropdown } from '@shared';
+import { useManual } from '@shared/Manual';
+import { ThemeDropdown } from './ui';
 import { api, sessionCanGet } from '../lib/helpers';
 
 // The mark (shield + eye + check) is the suite's, shared verbatim with mymatasan and
@@ -363,6 +365,9 @@ export function SideNav({ activeTab, busy, onTab, onLogout, session, nodes, mana
         notificationsItem,
         navItem('reports', t('nav.reports'), 'copy', 'steel'),
         ...(session?.isSuperadmin ? [navItem('settings', t('nav.settings'), 'sliders', 'steel')] : []),
+        // Ungated on purpose: the manual is the one entry every role needs, and a viewer
+        // who cannot find out why their menu is short is the exact person it is written for.
+        navItem('manual', t('nav.manual'), 'book', 'steel'),
       ],
     },
   ];
@@ -395,4 +400,59 @@ export function SideNav({ activeTab, busy, onTab, onLogout, session, nodes, mana
   );
 
   return <SharedSideNav brand={brand} groups={groups} footer={null} />;
+}
+
+// TAB_HELP maps each workspace tab onto the manual article that explains it, so the header's
+// "?" lands on the relevant page rather than the front of the book. Anything not listed falls
+// back to the tour, which is the right answer for "where am I".
+//
+// The values are article SLUGS (the manual's stable ids), not titles — they survive a rename
+// and are identical in every language. A test scans this file and fails if one stops resolving;
+// see apps/myseliasan/manual/manual_test.go.
+const TAB_HELP = {
+  dashboard: ['workspace-tour', 'side-rail'],
+  nodes: ['adopting-nodes', ''],
+  notifications: ['workspace-tour', 'overlays'],
+  roles: ['workspace-tour', 'menu-differences'],
+  users: ['workspace-tour', 'menu-differences'],
+  manual: ['using-this-manual', ''],
+};
+
+// WorkspaceHeader is the slim strip above the workspace: contextual help, then the language
+// and theme pickers. It replaces the bare .shared-lang-bar so the "?" sits with the other
+// two per-browser controls rather than being bolted onto each page.
+export function WorkspaceHeader({ lang, onLangChange, theme, onThemeChange, activeTab }) {
+  const t = useT();
+  const manual = useManual();
+  const [slug, anchor] = TAB_HELP[activeTab] || ['workspace-tour', ''];
+  return (
+    <div className="shared-lang-bar">
+      <button
+        type="button"
+        className="workspace-help"
+        onClick={() => manual.openHelp(slug, anchor)}
+        title={t('help.forThisPage')}
+        aria-label={t('help.forThisPage')}
+      >
+        <Ico n="help" sz={16} />
+      </button>
+      <LanguageDropdown lang={lang} onLang={onLangChange} />
+      <ThemeDropdown theme={theme} onThemeChange={onThemeChange} />
+    </div>
+  );
+}
+
+// LoginHelpLink is the manual link on the pre-session screens. The manual is served publicly
+// for exactly this: the questions someone has while staring at a sign-in screen — where the
+// bootstrap password is, why an account has no role — are the ones they cannot sign in to
+// answer.
+export function LoginHelpLink({ slug, anchor }) {
+  const t = useT();
+  const manual = useManual();
+  return (
+    <button type="button" className="login-help" onClick={() => manual.openHelp(slug, anchor)}>
+      <Ico n="help" sz={15} />
+      <span>{t('help.link')}</span>
+    </button>
+  );
 }

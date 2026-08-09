@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Ico, useT, PasswordField, LanguageDropdown } from '@shared';
-import { BrandLogo } from './layout';
+import { BrandLogo, LoginHelpLink } from './layout';
 import { FormBusyOverlay, Message } from './ui';
 import { api } from '../lib/helpers';
 
@@ -8,7 +8,10 @@ import { api } from '../lib/helpers';
 // wear the same chrome as mymatasan's login: a centered .login-panel card under the
 // large brand mark, with the language switcher pinned to the top corner so a user can
 // pick their language before they can read anything else. AuthShell is that chrome.
-function AuthShell({ subtitle, hint, lang, onLangChange, busy, message, children }) {
+// `help` is a <LoginHelpLink> rendered under the card. It is a prop rather than something
+// AuthShell picks, because each pre-session screen raises a different question and the whole
+// point of a help link here is that it answers the one in front of you.
+function AuthShell({ subtitle, hint, lang, onLangChange, busy, message, help, children }) {
   return (
     <main className="login-screen">
       {onLangChange ? (
@@ -24,6 +27,7 @@ function AuthShell({ subtitle, hint, lang, onLangChange, busy, message, children
         {hint ? <p className="login-note">{hint}</p> : null}
         {children}
         <Message value={message} />
+        {help || null}
         <FormBusyOverlay busy={busy} />
       </section>
     </main>
@@ -65,7 +69,14 @@ export function LoginScreen({ onLoggedIn, lang, onLangChange }) {
   }
 
   return (
-    <AuthShell subtitle={t('auth.subSignin')} lang={lang} onLangChange={onLangChange} busy={busy} message={err}>
+    <AuthShell
+      subtitle={t('auth.subSignin')}
+      lang={lang}
+      onLangChange={onLangChange}
+      busy={busy}
+      message={err}
+      help={<LoginHelpLink slug="first-sign-in" anchor="bootstrap" />}
+    >
       {ssoEnabled ? (
         <>
           <button type="button" className="login-sso" onClick={() => { window.location.href = '/api/auth/start'; }} disabled={busy}>
@@ -123,6 +134,7 @@ export function ChangePasswordScreen({ onDone, onToast, onLogout, lang, onLangCh
       onLangChange={onLangChange}
       busy={busy}
       message={err}
+      help={<LoginHelpLink slug="first-sign-in" anchor="bootstrap" />}
     >
       <form className="login-form" onSubmit={submit}>
         <label>
@@ -163,6 +175,7 @@ export function PendingClearanceScreen({ email, onRefresh, onLogout, lang, onLan
       lang={lang}
       onLangChange={onLangChange}
       busy={busy}
+      help={<LoginHelpLink slug="first-sign-in" anchor="troubleshooting" />}
     >
       <div className="login-form">
         <button type="button" disabled={busy} onClick={recheck}>

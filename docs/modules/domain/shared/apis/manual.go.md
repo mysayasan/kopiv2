@@ -35,7 +35,8 @@ roles.
 - **Route registration is deliberately left to each app**, not shared, the same way
   `SetupHandlers` (`apis/setup.go.md`) does it — the apps differ in where the manual sits
   in their middleware chain.
-- `apps/mymatasan/apis/manual.go` (`apps/mymatasan/apis/manual.go.md`) mounts this set on
-  the **public** router, before the auth middleware, because the sign-in screen and the
-  first-run wizard — two of the places a reader most needs the manual — are places they
-  either cannot authenticate yet or are stuck trying to.
+- `apps/mymatasan/apis/manual.go` (`apps/mymatasan/apis/manual.go.md`) and
+  `apps/myseliasan/apis/manual.go` (`apps/myseliasan/apis/manual.go.md`) both mount this
+  set on the **public**/bare router, before any auth middleware, because the sign-in
+  screen and the first-run wizard — two of the places a reader most needs the manual —
+  are places they either cannot authenticate yet or are stuck trying to.

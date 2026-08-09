@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Ico, useT } from '@shared';
+import { HelpButton } from '@shared/Manual';
 import { FormBusyOverlay, IconDropdown } from './ui';
 import { NodeManager } from './node_manager';
 import { NodeSettingsDialog } from './node_settings_dialog';
@@ -83,7 +84,7 @@ function AdoptDialog({ initial, busy, onClose, onAdopt }) {
     <div className="modal-backdrop">
       <form className="modal-card node-adopt-dialog" role="dialog" aria-modal="true" onSubmit={submit}>
         <header className="node-settings-head">
-          <h2><span className="btn-icon"><Ico n="plus" /> {t('node.adoptTitle')}</span></h2>
+          <h2><span className="btn-icon"><Ico n="plus" /> {t('node.adoptTitle')}</span><HelpButton slug="adopting-nodes" anchor="claim-code" /></h2>
           <button type="button" className="icon-button" onClick={onClose} aria-label={t('nset.close')}><Ico n="x" sz={16} /></button>
         </header>
         <div className="node-adopt-body">
@@ -299,7 +300,7 @@ export function NodesTab({ onToast, nodes, nodesLoad, reloadNodes, managingNodeI
 
       <section className="settings-panel span-two">
         <header>
-          <h2><span className="btn-icon"><Ico n="key" /> {t('node.fleetKey')}</span></h2>
+          <h2><span className="btn-icon"><Ico n="key" /> {t('node.fleetKey')}</span><HelpButton slug="adopting-nodes" anchor="fleet-key" /></h2>
         </header>
         <p className="settings-hint">{t('node.fleetKeyHint')}</p>
         <div className="node-key-row">
@@ -325,7 +326,7 @@ export function NodesTab({ onToast, nodes, nodesLoad, reloadNodes, managingNodeI
 
       <section className="settings-panel span-two">
         <header>
-          <h2><span className="btn-icon"><Ico n="search" /> {t('node.discover')}</span></h2>
+          <h2><span className="btn-icon"><Ico n="search" /> {t('node.discover')}</span><HelpButton slug="adopting-nodes" anchor="troubleshooting" /></h2>
           <div className="settings-header-actions">
             <button type="button" className="quiet" onClick={openManualAdopt}>
               <span className="btn-icon"><Ico n="plus" /> {t('node.adoptManual')}</span>
@@ -401,7 +402,7 @@ export function NodesTab({ onToast, nodes, nodesLoad, reloadNodes, managingNodeI
 
       <section className="settings-panel span-two">
         <header>
-          <h2><span className="btn-icon"><Ico n="shield" /> {t('node.adoptedNodes')}</span></h2>
+          <h2><span className="btn-icon"><Ico n="shield" /> {t('node.adoptedNodes')}</span><HelpButton slug="adopting-nodes" anchor="releasing" /></h2>
           <div className="settings-header-actions">
             <button type="button" className="quiet" onClick={reloadNodes} disabled={busy}>
               <span className="btn-icon"><Ico n="reload" /> {t('node.refresh')}</span>
