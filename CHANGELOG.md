@@ -86,6 +86,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-09 — myseliasan 1.54.0, core 1.85.0 (ed743f7)
+
+### Added
+
+- **core,myseliasan**: myseliasan (the fleet control plane) adopts the shared, suite-wide built-in user manual that shipped for mymatasan: 6 articles per language (24 files across en/ms/zh/ar) covering what MySeliaSan is, signing in for the first time, the first-run setup wizard, a tour of the workspace, using and printing the manual, and adopting a node -- compiled into the binary so help is always in sync with the running control plane and works with no network access, the posture the whole app (and its myidsan SSO hop) already requires. Served publicly under GET /api/manual, /api/manual/bundle, /api/manual/{slug}, /api/manual/assets/{name}, mounted on the bare router before any auth middleware and deliberately left off the RBAC permission matrix, since the sign-in screen and the first-run wizard are exactly where an operator most needs help and least can authenticate. In the SPA: an ungated Help nav entry (every role that reaches the workspace, since a short menu is exactly the thing a restricted role needs explained) opens the full manual as a workspace tab; a new WorkspaceHeader replaces the bare language/theme strip with a contextual '?' first (TAB_HELP maps the active tab to an article/anchor, falling back to the workspace tour); the sign-in, forced-password-change, and pending-clearance screens each carry a LoginHelpLink; the setup wizard gets a per-step '?' (SETUP_STEP_HELP, one anchor per step); and the Nodes page gets four HelpButtons (fleet key, discovery troubleshooting, releasing, and the claim code inside the adopt dialog). A new manualcheck.UIReferences-driven test (apps/myseliasan/manual/manual_test.go's TestManualUIReferences, currently 19 targets) scans the frontend source and fails the build if a help target names an article slug or heading anchor that does not exist in the shipped manual, catching a renamed-article/dropped-anchor deep-link break before it ships silently.
 ## 2026-08-09 — mymatasan 1.120.0, core 1.84.0 (1db06e8)
 
 ### Added
