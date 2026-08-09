@@ -242,7 +242,7 @@ Local auth endpoints:
 Standalone MyMataSan auth:
 
 - `mymatasan` app-specific ONVIF, Settings, and Vision APIs use standalone DB-backed HTTP Basic Auth (plus a session cookie for media elements).
-- On first startup, `mymatasan` seeds `admin` / `Admin123` when no local users exist, and **forces a password change on first login** (set `LOCAL_ADMIN_PASSWORD` to provision a strong password and skip the prompt).
+- On first startup, `mymatasan` seeds an `admin` account with a **password generated for that install** when no local users exist, and **forces a password change on first login**. The generated password is printed in the startup banner and written to `INITIAL_ADMIN_LOGIN.txt` in the data directory. Set `LOCAL_ADMIN_PASSWORD` (or `localAuth` in `config.json`) before first run to provision your own and skip the generation. There is no shipped default password: `Admin123` is a *legacy* value retained only so an older install still using it is force-flagged must-change.
 - Failed logins are **rate-limited per source IP** with escalating backoff (`loginSecurity` config); **role-based access** makes admins full-control while non-admin local users are view-only + acknowledge.
 - User management lives under the `Settings` page and `/api/settings/users`.
 
