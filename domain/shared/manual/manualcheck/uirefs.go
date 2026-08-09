@@ -12,7 +12,7 @@ import (
 	"github.com/mysayasan/kopiv2/domain/shared/manual"
 )
 
-// The three shapes a contextual help target takes in an app's frontend. Keeping the recognized
+// The four shapes a contextual help target takes in an app's frontend. Keeping the recognized
 // forms narrow is deliberate: a new shape should fail this check loudly rather than be silently
 // skipped, which is the failure mode that lets a dead deep link ship.
 var (

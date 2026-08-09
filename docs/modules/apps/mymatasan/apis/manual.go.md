@@ -25,10 +25,18 @@ Registers mymatasan's built-in user manual (`apps/mymatasan/manual.Library`,
   exposes is shipped, read-only documentation compiled into the binary: no runtime state,
   no per-user data, no configuration values, nothing an operator has typed — the same
   posture as the already-unauthenticated sign-in page that names the product.
-- **Deliberately kept off the RBAC matrix.** `EnsureApplianceRoles` seeds a role's
-  permissions only when that role has none, so a permission rule added to the policy
-  catalog today never reaches an install that already has its matrix. A manual gated
-  behind the matrix would be readable on new installs and quietly denied to every viewer on
-  every upgraded one.
+- **Deliberately kept off the RBAC matrix.** Primarily because the sign-in screen and the
+  first-run wizard — where the manual is most needed — have no session to check a matrix
+  against, regardless of how the matrix is seeded. There was also a second, narrower
+  benefit at the time this was written: `EnsureApplianceRoles` skipped seeding a role
+  wholesale once it had any permission rows, so a rule gating the manual would have reached
+  only brand-new installs. That gap was closed by the additive-backfill fix in
+  `domain/shared/services/appliance_rbac.go` (`appliance_rbac.go.md`) — a catalog rule now
+  reaches an already-seeded role on its next boot — so this is no longer a reason to keep
+  the manual public, but the pre-auth reachability requirement above still is.
+- Note: the code comment on `NewManualApi` still states the pre-backfill reasoning
+  ("`EnsureApplianceRoles` seeds a role's permissions only when that role has none"); it
+  describes behavior that changed under it and is worth a follow-up comment update, though
+  the routing decision itself (public, off the matrix) is unaffected.
 - Endpoint metadata seed row: `{Title: "User Manual", Path: "/api/manual", AccessTier:
   apiaccessenums.Public}` in `apps/mymatasan/app/app.go` (`app/app.go.md`).

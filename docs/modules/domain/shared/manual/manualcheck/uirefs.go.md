@@ -50,9 +50,10 @@ that never catches anything again.
 
 ## Notes
 
-- The three "shapes" are recognized narrowly on purpose (see the doc comment on the regex
-  vars): a shape this scanner doesn't know about must fail loudly, not be skipped, because a
-  silently-skipped shape is exactly how a dead deep link ships.
+- The four shapes above are recognized narrowly on purpose (see the doc comment on the regex
+  vars — note the comment itself undercounts them as "three"): a shape this scanner doesn't
+  know about must fail loudly, not be skipped, because a silently-skipped shape is exactly
+  how a dead deep link ships.
 - Reuses `articleAnchors` from `check.go` (same package) rather than re-deriving anchors, so
   `Library`'s `Anchors` check and this check can never disagree about what counts as a valid
   anchor.

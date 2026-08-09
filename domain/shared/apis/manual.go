@@ -34,6 +34,7 @@ func NewManualHandlers(lib *manual.Library) *ManualHandlers {
 // language that would silently render as English.
 func (h *ManualHandlers) List(w http.ResponseWriter, r *http.Request) {
 	lang := h.lib.Language(language(r))
+	cacheable(w)
 	controllers.SendResult(w, map[string]any{
 		"language":  lang,
 		"languages": h.lib.Languages(),
@@ -46,6 +47,7 @@ func (h *ManualHandlers) List(w http.ResponseWriter, r *http.Request) {
 // in step with the content.
 func (h *ManualHandlers) Bundle(w http.ResponseWriter, r *http.Request) {
 	lang := h.lib.Language(language(r))
+	cacheable(w)
 	controllers.SendResult(w, map[string]any{
 		"language":  lang,
 		"languages": h.lib.Languages(),
@@ -90,4 +92,15 @@ func (h *ManualHandlers) Asset(w http.ResponseWriter, r *http.Request, name stri
 // to English inside the library, so no validation is needed here.
 func language(r *http.Request) string {
 	return strings.ToLower(strings.TrimSpace(r.URL.Query().Get("lang")))
+}
+
+// cacheable marks a manual response as safe to cache for a while.
+//
+// The content is compiled into the binary, so it cannot change until the binary does — and the
+// SPA's own cache-busted bundle is what pulls in a new manual after an upgrade. This matters
+// more than it looks: these routes are UNAUTHENTICATED, and the bundle is a few hundred
+// kilobytes, so without it a client (or a bored network peer) re-fetches the whole book on every
+// navigation. The shared rate limiter bounds abuse; this removes the ordinary case.
+func cacheable(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "public, max-age=3600")
 }

@@ -20,10 +20,10 @@ import (
 // per-user data, no configuration values, nothing an operator has typed. The same appliance
 // already serves an unauthenticated sign-in page that names the product.
 //
-// Keeping it off the matrix has a second benefit worth stating: EnsureApplianceRoles seeds a
-// role's permissions only when that role has none, so a rule added to the policy catalog today
-// never reaches an install that already has its matrix. A manual behind the matrix would be
-// readable on new installs and quietly denied to every viewer on every upgraded one.
+// (This once carried a second argument — that EnsureApplianceRoles skipped any role which
+// already had permission rows, so a matrix-gated manual would have been readable on new installs
+// and denied on upgraded ones. That behaviour was a bug in its own right and now backfills, so
+// the argument no longer holds. The reason above stands on its own.)
 func NewManualApi(router *mux.Router) {
 	h := sharedapis.NewManualHandlers(manual.Library)
 	g := router.PathPrefix("/manual").Subrouter()

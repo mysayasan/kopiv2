@@ -129,6 +129,15 @@ func RolePermissions(roleId int64, roleName string, policy []PolicyRule) []entit
 // all-false rows that carve a narrower denial out of a broader grant (settings readable,
 // settings/users not). It cannot revoke a verb a site granted, because it never edits a row
 // that exists.
+//
+// CAVEAT for whoever adds a matrix editor. Backfill treats an ABSENT row as "never seeded" and
+// restores it. If a site could DELETE a row to revoke access, that deletion would be undone on
+// the next boot — silently, and in the permissive direction. Today that is unreachable: the
+// three apps that call this (mymatasan, myiotsan, mypintusan) expose no way to delete a
+// permission row, and the app that does expose one (myidsan, via /api/access-rbac) does not call
+// this function. Before shipping an editor that can delete, revocation must be expressible as an
+// explicit all-false row rather than an absent one — otherwise this backfill will quietly hand
+// the access back.
 func EnsureApplianceRoles(
 	ctx context.Context,
 	roles IAccessRoleService,
