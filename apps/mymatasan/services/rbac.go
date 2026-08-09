@@ -105,6 +105,12 @@ func Policy() []PolicyRule {
 		// The admin UI renders this list, so an area missing from it is an area nobody can see
 		// they are not granting.
 		{Path: "/api/onvif", Description: "Discover cameras on the network", Viewer: none, Operator: none},
+		// Face recognition was governed by nothing at all: absent from this catalog, it was
+		// denied by default (correct) but invisible in the admin UI that renders this list — an
+		// area nobody could see they were not granting, which is the exact failure this
+		// catalog's completeness rule exists to prevent. Found by the page-catalog test that
+		// asserts every page grant names a path Policy() governs.
+		{Path: "/api/faces", Description: "Enroll people for face recognition (biometric data)", Viewer: none, Operator: none},
 		{Path: "/api/training", Description: "Train custom detection models", Viewer: none, Operator: none},
 		{Path: "/api/teach", Description: "Teach a camera a new skill", Viewer: none, Operator: none},
 		{Path: "/api/anomaly", Description: "Configure the anomaly monitor", Viewer: none, Operator: none},

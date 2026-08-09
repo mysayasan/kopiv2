@@ -58,9 +58,18 @@ Returns the full catalog, grouped by what it governs: read-your-own-session and
 change-own-password (everyone), watching live, seeing that something happened
 (alerts/notifications/capacity/settings/setup reads), reviewing recorded footage (operator and
 up — the evidentiary line), operating (acknowledge/PTZ/talk, operator only), and admin-only
-areas (onvif, training, teach, anomaly, pairing, system, user/role management) listed with **no
-grants** so the catalog stays a complete description of the API surface — an area missing from
-it is an area nobody can see they aren't granting, and the admin UI renders this list.
+areas (onvif, **faces**, training, teach, anomaly, pairing, system, user/role management) listed
+with **no grants** so the catalog stays a complete description of the API surface — an area
+missing from it is an area nobody can see they aren't granting, and the admin UI renders this
+list.
+
+`{Path: "/api/faces", ...}` (no grants) was added after the page-catalog test in
+`apps/mymatasan/services/pages_test.go` (`TestPages_GrantOnlyPathsThePolicyGoverns`) found face
+recognition governed by no rule at all: absent from this catalog, it was denied by default
+(correct, since deny-by-default already refuses an ungoverned path) but invisible in the admin
+UI that renders this list — an area nobody could see they were not granting, the exact failure
+this catalog's completeness rule exists to prevent. See `apps/mymatasan/services/pages.go.md`
+for the `people` page (`AdminOnly`) that now names it.
 
 `{Path: "/api/auth/session", ..., Viewer: read, Operator: read}` is the first rule in the
 catalog and is load-bearing in a way most rules are not: it is what the SPA calls first, before
