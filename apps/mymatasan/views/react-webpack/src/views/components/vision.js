@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Ico } from './icons';
 import { useT } from '@shared/i18n';
 import { DataTable } from '@shared/DataTable';
+import { HelpButton } from '@shared/Manual';
 import { FormBusyOverlay } from './ui';
 import { useSnapshotBlob } from '../hooks';
 import { scheduleDayOptions } from '../lib/constants';
@@ -349,7 +350,12 @@ export function CameraAiPanel({
     <section className="camera-ai-panel">
       <div className="toolbar">
         <div>
-          <h2 className="section-title">{t('vi.aiDetection')}</h2>
+          <h2 className="section-title">
+            {t('vi.aiDetection')}
+            {/* Rules are where most people first get stuck: mode, zone and threshold all
+                interact. The manual's rule article is one click from the editor. */}
+            <HelpButton slug="detection-rules" anchor="modes" />
+          </h2>
           <p className="section-subtitle">{t('vi.subRules')}</p>
         </div>
         <button type="button" className="quiet" onClick={onReload} disabled={busy}>

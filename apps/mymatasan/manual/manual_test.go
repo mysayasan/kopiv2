@@ -14,3 +14,11 @@ import (
 func TestManual(t *testing.T) {
 	manualcheck.Library(t, manual.Library)
 }
+
+// TestManualUIReferences checks the other direction: every article slug and heading anchor that a
+// contextual "?" button in the SPA points at must actually exist. Renaming an article or dropping
+// a `{#anchor}` breaks nothing at build or run time — the button just opens the wrong page — so
+// this is the only thing that catches it.
+func TestManualUIReferences(t *testing.T) {
+	manualcheck.UIReferences(t, manual.Library, "../views/react-webpack/src/views")
+}

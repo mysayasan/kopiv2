@@ -10,9 +10,16 @@ import { CapacityRetentionNote } from './settings';
 import { defaultDestination } from '../lib/constants';
 
 const STEP_KEYS = ['setup.stepWelcome', 'setup.stepSystem', 'setup.stepAi', 'setup.stepCapacity', 'setup.stepCameras', 'setup.stepRecording', 'setup.stepAlerts', 'setup.stepConnectivity', 'setup.stepDone'];
-// Index-aligned with STEP_KEYS: each entry is a hand-written `{#anchor}` in the setup-wizard
-// article. Kept beside the step list so the two cannot drift apart unnoticed.
-const STEP_HELP_ANCHORS = ['welcome', 'system', 'ai', 'capacity', 'cameras', 'recording', 'alerts', 'connectivity', 'done'];
+// Per-step contextual help. `anchors` is index-aligned with STEP_KEYS, and each entry is a
+// hand-written `{#anchor}` in the setup-wizard article.
+//
+// The shape is declared rather than inlined so apps/mymatasan/manual's TestManualUIReferences can
+// find and verify it — a dynamic `STEP_HELP_ANCHORS[step]` is invisible to a source scan, and an
+// unverified deep link is one that breaks the day somebody renames a heading.
+const STEP_HELP = {
+  slug: 'setup-wizard',
+  anchors: ['welcome', 'system', 'ai', 'capacity', 'cameras', 'recording', 'alerts', 'connectivity', 'done'],
+};
 const capacityLimitKey = { cpu: 'setup.limitCpu', gpu: 'setup.limitGpu', disk: 'setup.limitDisk', memory: 'setup.limitMemory' };
 
 // SetupWizard is the first-run onboarding overlay: welcome/account, machine
@@ -111,7 +118,7 @@ export function SetupWizard({
             <button
               type="button"
               className="login-help"
-              onClick={() => manual.openHelp('setup-wizard', STEP_HELP_ANCHORS[step])}
+              onClick={() => manual.openHelp(STEP_HELP.slug, STEP_HELP.anchors[step])}
             >
               <Ico n="help" sz={15} />
               <span>{t('help.link')}</span>

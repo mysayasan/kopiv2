@@ -420,6 +420,31 @@ label {
   gap: 0;
 }
 
+/* Contextual "?" buttons sit inside section headings, so they must not inherit the heading's
+   weight or size — they are an affordance beside the title, not part of it. */
+h1 > .manual-help-btn,
+h2 > .manual-help-btn,
+h3 > .manual-help-btn,
+.settings-tab-head > .manual-help-btn {
+  margin-inline-start: 8px;
+  font-size: 13px;
+  font-weight: 400;
+  vertical-align: middle;
+}
+
+/* The Settings header band is a row; push its "?" to the far end rather than letting it crowd
+   the tab description. */
+.settings-tab-head > .manual-help-btn {
+  margin-inline-start: auto;
+  align-self: flex-start;
+}
+
+/* Objects has no header band of its own — float the "?" above the tab bar. */
+.objects-help {
+  display: flex;
+  justify-content: flex-end;
+}
+
 /* margin:auto inside a flex container centers the panel when there's room and
    lets it scroll from the top when the viewport is too short — so username,
    password, and Sign In are always reachable (no clipped, unscrollable form). */

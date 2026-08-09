@@ -51,3 +51,7 @@ make every other check meaningless. Otherwise runs four subtests:
   lang`) — the whole point when checking for a *missing* translation.
 - First consumer: `apps/mymatasan/manual/manual_test.go`
   (`apps/mymatasan/manual/manual_test.go.md`).
+- `uirefs.go` (`uirefs.go.md`), same package, is the complementary check that runs in the
+  other direction: instead of the manual checking itself, it checks that the app's frontend
+  contextual-help wiring still points at real articles/anchors in this manual. It reuses
+  `articleAnchors` defined here.

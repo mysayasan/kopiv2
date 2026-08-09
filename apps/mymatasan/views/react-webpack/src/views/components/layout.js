@@ -409,10 +409,14 @@ export function RecoveryGatePage({ keyId, busy, restarting, message, onSubmit, l
 // The values are article SLUGS (the manual's stable ids), not titles — they do not change when
 // an article is renamed or translated.
 const TAB_HELP = {
-  dashboard: ['workspace-tour', 'side-rail'],
-  views: ['workspace-tour', 'side-rail'],
-  notifications: ['welcome', 'concepts'],
-  settings: ['workspace-tour', 'header'],
+  dashboard: ['dashboard', ''],
+  views: ['live-views', ''],
+  cameras: ['camera-properties', ''],
+  teach: ['teach-mode', ''],
+  faces: ['people', 'consent'],
+  objects: ['object-search', ''],
+  notifications: ['notifications', ''],
+  settings: ['settings-reference', ''],
   manual: ['using-this-manual', ''],
 };
 

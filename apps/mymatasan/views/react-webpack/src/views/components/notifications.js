@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Ico } from './icons';
 import { useT } from '@shared/i18n';
+import { HelpButton } from '@shared/Manual';
 import { useSnapshotBlob } from '../hooks';
 import {
   apiBase,
@@ -225,7 +226,7 @@ export function NotificationsTab({
     <section className="panel notifications-page">
       <header className="notifications-head">
         <div className="notifications-headings">
-          <h2><span className="btn-icon"><Ico n="bell" /> {t('notif.title')}</span></h2>
+          <h2><span className="btn-icon"><Ico n="bell" /> {t('notif.title')}</span><HelpButton slug="notifications" anchor="reading" /></h2>
           <p className="notifications-desc">{t('notif.desc')}</p>
         </div>
         <div className="notifications-toolbar">
