@@ -257,3 +257,38 @@ func TestPolicy_CatalogPathsAreWellFormed(t *testing.T) {
 		seen[rule.Path] = true
 	}
 }
+
+// THE regression test for the bug that made the whole three-role model a fiction: neither
+// viewer nor operator could sign in AT ALL.
+//
+// The SPA walks a fixed path before it can render anything — probe the session, load runtime
+// settings, list the cameras. Deny any step and sign-in fails with "you do not have permission
+// for this action" AFTER the password was accepted, which reads like a broken account rather
+// than a missing catalog rule. Only superadmin ever worked, because superadmin bypasses the
+// matrix and so never exercised the path these tests now cover.
+//
+// Every other test in this file asserts what a role must NOT do. This one asserts the floor:
+// that the role can get through the door at all.
+func TestPolicy_NonAdminRolesCanCompleteSignIn(t *testing.T) {
+	perms, viewer, operator := buildMatrix(t)
+	ctx := context.Background()
+
+	// In the order App.js calls them.
+	signIn := []struct{ method, path, why string }{
+		{"GET", "/api/auth/session", "the probe that reveals the role and the must-change flag"},
+		{"GET", "/api/settings/runtime", "runtime settings, loaded before the shell renders"},
+		{"GET", "/api/cameras", "the camera list the landing view is built from"},
+		{"POST", "/api/auth/change-password", "the forced first-login change, if pending"},
+	}
+
+	for _, role := range []struct {
+		name string
+		id   int64
+	}{{"viewer", viewer}, {"operator", operator}} {
+		for _, c := range signIn {
+			if ok, _ := perms.Authorize(ctx, role.id, c.path, c.method); !ok {
+				t.Errorf("%s cannot sign in: %s %s is denied (%s)", role.name, c.method, c.path, c.why)
+			}
+		}
+	}
+}

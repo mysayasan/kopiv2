@@ -59,6 +59,13 @@ const operatorDescription = "Day-to-day security operator: watch, review, acknow
 func Policy() []PolicyRule {
 	return []PolicyRule{
 		// --- Everyone signed in ---------------------------------------------------------
+		// The session probe is what the SPA calls FIRST, before it renders anything: it reads
+		// who you are and whether you must change your password. Leaving it out of this catalog
+		// meant deny-by-default refused it, and neither viewer nor operator could sign in AT
+		// ALL — the sign-in form accepted the password and then showed "you do not have
+		// permission for this action". Only superadmin worked, because superadmin bypasses the
+		// matrix entirely and so never exercised this path.
+		{Path: "/api/auth/session", Description: "Read your own session (who you are, must-change flag)", Viewer: read, Operator: read},
 		{Path: "/api/auth/change-password", Description: "Change your own password", Viewer: write, Operator: write},
 
 		// --- Watching live ----------------------------------------------------------------

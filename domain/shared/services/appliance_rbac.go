@@ -111,10 +111,24 @@ func RolePermissions(roleId int64, roleName string, policy []PolicyRule) []entit
 // EnsureApplianceRoles creates the built-in roles and seeds their permissions from the
 // app's catalog. operatorDescription describes the app's operator role to a human.
 //
-// Defaults are applied ONLY to a role that has no permissions at all — so an operator who
-// has been retuned by the site admin is never silently reset on the next boot. The
-// consequence is that a role stripped to zero permissions gets its defaults back, which is
-// the right outcome: a role with no permissions cannot sign anyone in to anything.
+// A role with NO permissions is seeded in full — so a role stripped to zero gets its defaults
+// back, which is the right outcome: a role with no permissions cannot sign anyone in to
+// anything.
+//
+// A role that already has permissions is BACKFILLED, not reset: rows are added only for
+// catalog paths the role has no row for at all, and an existing row's verbs are never
+// touched. That distinction is the whole point — a site that has retuned its operator keeps
+// that tuning across upgrades, while a rule ADDED to the catalog still reaches the install.
+//
+// Without the backfill, a new catalog entry only ever reached brand-new installs. That is not
+// a hypothetical: the appliance shipped without a rule for the SPA's session probe, and the
+// fix would have been invisible to every existing install — the roles already had rows, so
+// the corrected catalog would have been skipped and viewers would have stayed locked out.
+//
+// Adding a row can only ever match the catalog's stated intent, including the deliberately
+// all-false rows that carve a narrower denial out of a broader grant (settings readable,
+// settings/users not). It cannot revoke a verb a site granted, because it never edits a row
+// that exists.
 func EnsureApplianceRoles(
 	ctx context.Context,
 	roles IAccessRoleService,
@@ -152,10 +166,17 @@ func EnsureApplianceRoles(
 		if err != nil {
 			return fmt.Errorf("list permissions for %s: %w", role.Name, err)
 		}
-		if len(existing) > 0 {
-			continue // already configured — never clobber a site's tuning
+		havePath := make(map[string]bool, len(existing))
+		for _, row := range existing {
+			if row != nil {
+				havePath[row.Path] = true
+			}
 		}
 		for _, row := range RolePermissions(role.Id, role.Name, policy) {
+			// Configured role: add only what is missing, and never touch what is there.
+			if len(existing) > 0 && havePath[row.Path] {
+				continue
+			}
 			if _, err := perms.Set(ctx, row); err != nil {
 				return fmt.Errorf("seed permission %s for %s: %w", row.Path, role.Name, err)
 			}
