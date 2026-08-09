@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Ico, useT, LanguageDropdown } from '@shared';
+import { useManual } from '@shared/Manual';
 import { BrandLogo } from './layout';
 import { FormBusyOverlay, Message } from './ui';
 import { api } from '../lib/helpers';
@@ -23,6 +24,14 @@ import { KIND_ORDER, KIND_ICO, normKind, defaultIconFor, hasPlans, multiPlan } f
 //     feed is a live relay of node-pushed events. A form over nothing would be a lie.
 const STEP_KEYS = ['setup.stepWelcome', 'setup.stepSignin', 'setup.stepSite', 'setup.stepNode', 'setup.stepHandoff', 'setup.stepDone'];
 
+// The manual article behind the wizard's "?", with one anchor per step, positionally
+// aligned with STEP_KEYS above. Written out as a literal list rather than derived, so a
+// source scan can find and verify every deep link — see apps/myseliasan/manual/manual_test.go.
+const SETUP_STEP_HELP = {
+  slug: 'setup-wizard',
+  anchors: ['welcome', 'signin', 'site', 'node', 'handoff', 'done'],
+};
+
 const SSO_BUNDLE_KIND = 'myidsan.sso.client';
 const SSO_BUNDLE_MAX_VERSION = 1;
 // Bundle leaf -> the leaf's name inside the settings API's `sso` section payload.
@@ -35,6 +44,7 @@ const SSO_BUNDLE_FIELDS = [
 
 export function SetupWizard({ session, lang, onLangChange, onToast, onDone }) {
   const t = useT();
+  const manual = useManual();
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -64,6 +74,14 @@ export function SetupWizard({ session, lang, onLangChange, onToast, onDone }) {
         <div className="setup-head">
           <BrandLogo size={44} />
           <div className="setup-head-actions">
+            <button
+              type="button"
+              className="login-help"
+              onClick={() => manual.openHelp(SETUP_STEP_HELP.slug, SETUP_STEP_HELP.anchors[step])}
+            >
+              <Ico n="help" sz={15} />
+              <span>{t('help.link')}</span>
+            </button>
             <LanguageDropdown lang={lang} onLang={onLangChange} />
             <button type="button" className="quiet setup-skip" onClick={finish} disabled={busy}>
               {t('setup.skip')}

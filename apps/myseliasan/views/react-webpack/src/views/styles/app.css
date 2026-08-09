@@ -5183,3 +5183,70 @@ button .btn-icon {
   overflow: auto;
   margin-top: 6px;
 }
+
+/* --------------------------------------------------------------------------------------
+   Manual / contextual help
+   -------------------------------------------------------------------------------------- */
+
+/* Help link on the pre-session screens (sign-in, forced password change, pending clearance)
+   and in the setup wizard's header. Quiet by default — it must not compete with the sign-in
+   button — but always present, because the manual is served publicly precisely so it can be
+   reached from here. */
+.login-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 0;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.login-help:hover {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+/* The manual page owns its own two-column layout (index rail + article), so the workspace
+   must not add a row gap above it. */
+.manual-workspace {
+  gap: 0;
+}
+
+/* The workspace strip's "?" sits at the far left of the strip, opposite the language and
+   theme pickers: a round icon button with no chrome until hover. */
+.shared-lang-bar .workspace-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  margin-inline-end: auto;
+  padding: 4px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.shared-lang-bar .workspace-help:hover {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+/* Contextual "?" buttons sit inside section headings, so they must not inherit the heading's
+   weight or size — they are an affordance beside the title, not part of it. */
+h1 > .manual-help-btn,
+h2 > .manual-help-btn,
+h3 > .manual-help-btn {
+  margin-inline-start: 8px;
+  font-size: 13px;
+  font-weight: 400;
+  vertical-align: middle;
+}

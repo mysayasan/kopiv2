@@ -9,9 +9,10 @@ import './styles/teach.css';
 import './styles/notifications.css';
 import './styles/node-settings.css';
 import './styles/fleet-rules.css';
-import { SideNav } from './components/layout';
-import { ToastStack, LangProvider, normalizeLang, useT, LanguageDropdown, AppFooter } from '@shared';
-import { FormBusyOverlay, ThemeDropdown } from './components/ui';
+import { SideNav, WorkspaceHeader } from './components/layout';
+import { ToastStack, LangProvider, normalizeLang, useT, AppFooter } from '@shared';
+import { ManualProvider, ManualLibrary } from '@shared/Manual';
+import { FormBusyOverlay } from './components/ui';
 import { DashboardTab } from './components/dashboard';
 // The Map page pulls in OpenLayers (~110KB gz). Lazy-load it so that weight is fetched only
 // when an operator actually opens the Map tab, keeping the initial bundle lean.
@@ -256,10 +257,13 @@ function AppInner({ lang, onLangChange }) {
         onTogglePinned={toggleNavPinned}
       />
       <main className="main-workspace">
-        <div className="shared-lang-bar">
-          <LanguageDropdown lang={lang} onLang={onLangChange} />
-          <ThemeDropdown theme={theme} onThemeChange={changeTheme} />
-        </div>
+        <WorkspaceHeader
+          lang={lang}
+          onLangChange={onLangChange}
+          theme={theme}
+          onThemeChange={changeTheme}
+          activeTab={activeTab}
+        />
         {session?.superadminHandoffPending ? (
           <div className="handoff-banner" role="alert">
             <span className="handoff-banner-text">{t('handoff.text')}</span>
@@ -300,6 +304,11 @@ function AppInner({ lang, onLangChange }) {
         {activeTab === 'audit' && session?.isSuperadmin ? <AuditLogPage onToast={pushToast} /> : null}
         {activeTab === 'reports' ? <ReportsPage session={session} onToast={pushToast} /> : null}
         {activeTab === 'settings' && session?.isSuperadmin ? <SettingsPage session={session} onToast={pushToast} /> : null}
+        {activeTab === 'manual' ? (
+          <section className="workspace manual-workspace">
+            <ManualLibrary />
+          </section>
+        ) : null}
         <AppFooter appName="MySeliaSan" apiBase={apiBase()} />
       </main>
     </div>
@@ -355,7 +364,11 @@ export default function App() {
   }
   return (
     <LangProvider lang={lang} messages={appMessages}>
-      <AppInner lang={lang} onLangChange={changeLang} />
+      {/* Outside AppInner deliberately: the manual has to be readable from the sign-in screen
+          and the first-run wizard, both of which render instead of the workspace. */}
+      <ManualProvider apiBase={apiBase()} lang={lang} appName="MySeliaSan">
+        <AppInner lang={lang} onLangChange={changeLang} />
+      </ManualProvider>
     </LangProvider>
   );
 }
