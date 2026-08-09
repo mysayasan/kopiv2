@@ -126,6 +126,19 @@ const en = {
   'foot.core': 'core v{v}',
   'foot.commit': 'commit',
   'foot.tagline': 'An r450k product — showing how human engineering and AI complete each other.',
+  'manual.title': 'Manual',
+  'manual.contents': 'Contents',
+  'manual.searchPlaceholder': 'Search the manual',
+  'manual.searchAria': 'Search the manual',
+  'manual.results': '{n} results',
+  'manual.noResults': 'Nothing matched.',
+  'manual.printPage': 'Print this page',
+  'manual.printAll': 'Print the whole manual',
+  'manual.helpFor': 'Help for this section',
+  'manual.untranslated': 'This page is not translated into your language yet, so it is shown in English.',
+  'manual.loadFailed': 'The manual could not be loaded.',
+  'manual.missing': 'That page is not in this manual.',
+  'manual.empty': 'This manual is empty.',
 };
 
 // Malay (Bahasa Melayu) — Malaysia's national language.
@@ -238,6 +251,19 @@ const ms = {
   'foot.core': 'teras v{v}',
   'foot.commit': 'commit',
   'foot.tagline': 'Produk r450k — menunjukkan bagaimana kejuruteraan manusia dan AI saling melengkapi.',
+  'manual.title': 'Manual',
+  'manual.contents': 'Kandungan',
+  'manual.searchPlaceholder': 'Cari dalam manual',
+  'manual.searchAria': 'Cari dalam manual',
+  'manual.results': '{n} hasil',
+  'manual.noResults': 'Tiada padanan.',
+  'manual.printPage': 'Cetak halaman ini',
+  'manual.printAll': 'Cetak seluruh manual',
+  'manual.helpFor': 'Bantuan untuk bahagian ini',
+  'manual.untranslated': 'Halaman ini belum diterjemahkan ke bahasa anda, jadi ia dipaparkan dalam bahasa Inggeris.',
+  'manual.loadFailed': 'Manual tidak dapat dimuatkan.',
+  'manual.missing': 'Halaman itu tiada dalam manual ini.',
+  'manual.empty': 'Manual ini kosong.',
 };
 
 // Chinese (Simplified).
@@ -350,6 +376,19 @@ const zh = {
   'foot.core': '核心 v{v}',
   'foot.commit': '提交',
   'foot.tagline': 'r450k 产品 — 展示人类工程与 AI 如何相辅相成。',
+  'manual.title': '手册',
+  'manual.contents': '目录',
+  'manual.searchPlaceholder': '搜索手册',
+  'manual.searchAria': '搜索手册',
+  'manual.results': '{n} 条结果',
+  'manual.noResults': '没有匹配项。',
+  'manual.printPage': '打印本页',
+  'manual.printAll': '打印整本手册',
+  'manual.helpFor': '本节帮助',
+  'manual.untranslated': '此页尚未翻译成您的语言，因此以英文显示。',
+  'manual.loadFailed': '无法加载手册。',
+  'manual.missing': '本手册中没有该页面。',
+  'manual.empty': '本手册为空。',
 };
 
 // Arabic (العربية) — right-to-left.
@@ -462,6 +501,19 @@ const ar = {
   'foot.core': 'النواة v{v}',
   'foot.commit': 'الإصدار',
   'foot.tagline': 'منتج r450k — يُظهر كيف تُكمّل الهندسة البشرية والذكاء الاصطناعي بعضهما البعض.',
+  'manual.title': 'الدليل',
+  'manual.contents': 'المحتويات',
+  'manual.searchPlaceholder': 'ابحث في الدليل',
+  'manual.searchAria': 'ابحث في الدليل',
+  'manual.results': '{n} نتيجة',
+  'manual.noResults': 'لا توجد مطابقات.',
+  'manual.printPage': 'اطبع هذه الصفحة',
+  'manual.printAll': 'اطبع الدليل كاملًا',
+  'manual.helpFor': 'مساعدة لهذا القسم',
+  'manual.untranslated': 'لم تُترجم هذه الصفحة إلى لغتك بعد، لذا تُعرض بالإنجليزية.',
+  'manual.loadFailed': 'تعذّر تحميل الدليل.',
+  'manual.missing': 'هذه الصفحة ليست في هذا الدليل.',
+  'manual.empty': 'هذا الدليل فارغ.',
 };
 
 const DICTS = { en, ms, zh, ar };

@@ -59,6 +59,13 @@ const operatorDescription = "Day-to-day security operator: watch, review, acknow
 func Policy() []PolicyRule {
 	return []PolicyRule{
 		// --- Everyone signed in ---------------------------------------------------------
+		// The session probe is what the SPA calls FIRST, before it renders anything: it reads
+		// who you are and whether you must change your password. Leaving it out of this catalog
+		// meant deny-by-default refused it, and neither viewer nor operator could sign in AT
+		// ALL — the sign-in form accepted the password and then showed "you do not have
+		// permission for this action". Only superadmin worked, because superadmin bypasses the
+		// matrix entirely and so never exercised this path.
+		{Path: "/api/auth/session", Description: "Read your own session (who you are, must-change flag)", Viewer: read, Operator: read},
 		{Path: "/api/auth/change-password", Description: "Change your own password", Viewer: write, Operator: write},
 
 		// --- Watching live ----------------------------------------------------------------
@@ -98,6 +105,12 @@ func Policy() []PolicyRule {
 		// The admin UI renders this list, so an area missing from it is an area nobody can see
 		// they are not granting.
 		{Path: "/api/onvif", Description: "Discover cameras on the network", Viewer: none, Operator: none},
+		// Face recognition was governed by nothing at all: absent from this catalog, it was
+		// denied by default (correct) but invisible in the admin UI that renders this list — an
+		// area nobody could see they were not granting, which is the exact failure this
+		// catalog's completeness rule exists to prevent. Found by the page-catalog test that
+		// asserts every page grant names a path Policy() governs.
+		{Path: "/api/faces", Description: "Enroll people for face recognition (biometric data)", Viewer: none, Operator: none},
 		{Path: "/api/training", Description: "Train custom detection models", Viewer: none, Operator: none},
 		{Path: "/api/teach", Description: "Teach a camera a new skill", Viewer: none, Operator: none},
 		{Path: "/api/anomaly", Description: "Configure the anomaly monitor", Viewer: none, Operator: none},

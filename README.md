@@ -32,7 +32,7 @@ make down
 
 This repository contains modular backend applications:
 
-- `apps/mymatasan`: standalone camera, ONVIF discovery, WebRTC live stream, and video intelligence app for small devices.
+- `apps/mymatasan`: standalone camera, ONVIF discovery, WebRTC live stream, and video intelligence app for small devices. Now also ships a **built-in, four-language user manual** compiled into the binary and served publicly under `/api/manual` (no network access needed, reachable from the sign-in screen and the first-run wizard) — phase 1 of a suite-wide manual built on the new shared `domain/shared/manual` library, see `apps/mymatasan/README.md`.
 - `apps/myidsan`: identity, user management, and RBAC administration app.
 - `apps/myseliasan`: relying control-plane app for `mymatasan`, authenticated through `myidsan`.
 - `apps/myiotsan`: on-prem IoT device hub appliance ("the NVR, but for sensors"). **P0-P4 shipped** — boots, authenticates, ingests telemetry from real devices over an embedded MQTT broker (port 1883), evaluates alert rules, raises alerts into a unified notification feed, onboards unknown devices through a time-boxed enrollment window or an active LAN scan (Modbus/mDNS/SSDP/EtherNet-IP/BACnet — both feed the same quarantined candidate list, see `docs/DISCOVERY_SCANNING.md`), and (for the one profile that declares it, `smart-relay`) can command a device — read-only by default, admin-only, only what the device's profile declares, server-side bounds, rate-limited, fully audited, and never auto-retried. Industrial protocols and fleet adoption land in later phases, see `docs/MYIOTSAN_PLAN.md`.

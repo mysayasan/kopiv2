@@ -3,6 +3,7 @@ import { Ico } from './icons';
 import { Tabs } from '@shared/Tabs';
 import { CameraHero, statusTone } from '@shared/CameraHero';
 import { useT } from '@shared/i18n';
+import { HelpButton } from '@shared/Manual';
 import { FormBusyOverlay, InfoButton, Tracks, LayoutDropdown } from './ui';
 import { CameraAiPanel } from './vision';
 import { defaultDeviceCredentials } from '../lib/constants';
@@ -1239,7 +1240,7 @@ export function SavedCameraRow({
       </div>
 
       <section className="settings-box">
-        <header><h3>{t('cam.tabDetails')}</h3></header>
+        <header><h3>{t('cam.tabDetails')}<HelpButton slug="camera-properties" anchor="details" /></h3></header>
         <div className="settings-box-body">
           <DeviceDescription device={device} />
           <DeviceMeta device={device} />
@@ -1282,7 +1283,7 @@ export function SavedCameraRow({
       </section>
 
       <section className="settings-box">
-        <header><h3>{t('cam.tabAccess')}</h3></header>
+        <header><h3>{t('cam.tabAccess')}<HelpButton slug="camera-properties" anchor="access" /></h3></header>
         <div className="settings-box-body">
           <FormBusyOverlay busy={busy} />
           <div className="credential-row">
@@ -1321,7 +1322,7 @@ export function SavedCameraRow({
       </section>
 
       <section className="settings-box">
-        <header><h3>{t('cam.tabStream')}</h3></header>
+        <header><h3>{t('cam.tabStream')}<HelpButton slug="camera-properties" anchor="stream" /></h3></header>
         <div className="settings-box-body">
           <dl className="stream-meta">
             <div>
@@ -1395,7 +1396,7 @@ export function SavedCameraRow({
       </section>
 
       <section className="settings-box">
-        <header><h3>{t('cam.tabRecording')}</h3></header>
+        <header><h3>{t('cam.tabRecording')}<HelpButton slug="recording-configuration" anchor="enabling" /></h3></header>
         <div className="settings-box-body">
           <CameraRecordingConfig
             device={device}
@@ -1411,7 +1412,7 @@ export function SavedCameraRow({
 
       {isOnvif ? (
         <section className="settings-box">
-          <header><h3>{t('cam.tabOnvif')}</h3></header>
+          <header><h3>{t('cam.tabOnvif')}<HelpButton slug="onvif-management" anchor="identity" /></h3></header>
           <div className="settings-box-body">
             <CameraCapabilities caps={caps} loading={capsLoading} error={capsError} onRefresh={loadCaps} busy={busy} />
             <OnvifDetails device={device} />

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useT } from '@shared/i18n';
+import { HelpButton } from '@shared/Manual';
 import { StatCard, DonutChart, BarChart, TimeSeriesChart, Heatmap, ChartCard } from '@shared/charts';
 import { Ico } from './icons';
 import {
@@ -468,7 +469,7 @@ export function DashboardTab({ authHeader, saved, refreshSignal, onMessage }) {
 
           {anomalyCfg ? (
             <ChartCard
-              title={<>{t('dash.anomalyTitle')} <InfoTip text={t('dash.anomalyInfo')} /></>}
+              title={<>{t('dash.anomalyTitle')} <InfoTip text={t('dash.anomalyInfo')} /> <HelpButton slug="dashboard" anchor="anomaly" /></>}
               subtitle={t('dash.anomalySub')}
               className="dashboard-span-2 anomaly-card"
               actions={(

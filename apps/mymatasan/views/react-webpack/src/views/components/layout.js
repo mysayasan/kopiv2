@@ -4,6 +4,7 @@ import { SideNav as SharedSideNav } from '@shared/SideNav';
 import { useT } from '@shared/i18n';
 import { ThemeDropdown, FormBusyOverlay, Message } from './ui';
 import { LanguageDropdown } from '@shared/LanguageDropdown';
+import { useManual } from '@shared/Manual';
 import { BrandLogo as SharedBrandLogo } from '@shared/BrandLogo';
 import { PasswordField } from '@shared/PasswordField';
 import {cameraTitle,cameraDescription,orderedSavedCameras } from '../lib/helpers';
@@ -43,6 +44,25 @@ function formatCountdown(totalSeconds) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+// LoginHelpLink is the manual link on the pre-session screens. It exists because the manual is
+// served publicly for exactly this: the questions someone has while staring at a sign-in screen —
+// where the first password is, why they are locked out, what the recovery key screen wants — are
+// the ones they cannot sign in to answer.
+function LoginHelpLink({ slug, anchor }) {
+  const t = useT();
+  const manual = useManual();
+  return (
+    <button
+      type="button"
+      className="login-help"
+      onClick={() => manual.openHelp(slug, anchor)}
+    >
+      <Ico n="help" sz={15} />
+      <span>{t('help.link')}</span>
+    </button>
+  );
+}
+
 export function LoginPage({ credentials, busy, message, lockoutUntil, onChange, onSubmit, lang, onLangChange }) {
   const t = useT();
   const lockRemaining = useCountdown(lockoutUntil || 0);
@@ -51,6 +71,7 @@ export function LoginPage({ credentials, busy, message, lockoutUntil, onChange, 
     <main className="login-screen">
       {onLangChange ? (
         <div className="login-lang-switch">
+          <LoginHelpLink slug="first-sign-in" />
           <LanguageDropdown lang={lang} onLang={onLangChange} />
         </div>
       ) : null}
@@ -257,6 +278,7 @@ export function ChangePasswordPage({ busy, message, onSubmit, onCancel, lang, on
     <main className="login-screen">
       {onLangChange ? (
         <div className="login-lang-switch">
+          <LoginHelpLink slug="first-sign-in" anchor="change-password" />
           <LanguageDropdown lang={lang} onLang={onLangChange} />
         </div>
       ) : null}
@@ -343,6 +365,7 @@ export function RecoveryGatePage({ keyId, busy, restarting, message, onSubmit, l
     <main className="login-screen">
       {onLangChange ? (
         <div className="login-lang-switch">
+          <LoginHelpLink slug="first-sign-in" anchor="recovery-gate" />
           <LanguageDropdown lang={lang} onLang={onLangChange} />
         </div>
       ) : null}
@@ -379,12 +402,42 @@ export function RecoveryGatePage({ keyId, busy, restarting, message, onSubmit, l
   );
 }
 
+// TAB_HELP maps each workspace tab onto the manual article that explains it, so the header's
+// "?" is contextual rather than a link to the front page. Anything not listed falls back to the
+// tour, which is the right answer for "where am I".
+//
+// The values are article SLUGS (the manual's stable ids), not titles — they do not change when
+// an article is renamed or translated.
+const TAB_HELP = {
+  dashboard: ['dashboard', ''],
+  views: ['live-views', ''],
+  cameras: ['camera-properties', ''],
+  teach: ['teach-mode', ''],
+  faces: ['people', 'consent'],
+  objects: ['object-search', ''],
+  notifications: ['notifications', ''],
+  settings: ['settings-reference', ''],
+  manual: ['using-this-manual', ''],
+};
+
 // WorkspaceHeader is the slim action strip at the top of the main workspace: the
-// language switcher plus the compact theme picker sitting just after it (top-right).
-// Primary navigation and the account/logout block live in the side rail (SideNav).
-export function WorkspaceHeader({ lang, onLangChange, theme, onThemeChange }) {
+// contextual help button, the language switcher, and the compact theme picker
+// (top-right). Primary navigation and the account/logout block live in the side rail.
+export function WorkspaceHeader({ lang, onLangChange, theme, onThemeChange, activeTab }) {
+  const t = useT();
+  const manual = useManual();
+  const [slug, anchor] = TAB_HELP[activeTab] || ['workspace-tour', ''];
   return (
     <div className="workspace-header">
+      <button
+        type="button"
+        className="workspace-help"
+        onClick={() => manual.openHelp(slug, anchor)}
+        title={t('help.forThisPage')}
+        aria-label={t('help.forThisPage')}
+      >
+        <Ico n="help" sz={16} />
+      </button>
       <LanguageDropdown lang={lang} onLang={onLangChange} />
       <ThemeDropdown theme={theme} onThemeChange={onThemeChange} />
     </div>
@@ -593,6 +646,9 @@ export function SideNav({ activeTab, isAdmin, busy, cameras, managingCameraId, t
       items: [
         notificationsItem,
         isAdmin ? navItem('settings', t('tab.settings'), 'sliders', 'blue') : null,
+        // Not gated on isAdmin: the manual is the one entry every role needs, and a viewer
+        // who cannot find out what the product does is a viewer who asks an administrator.
+        navItem('manual', t('tab.manual'), 'book', 'steel'),
       ],
     },
   ];

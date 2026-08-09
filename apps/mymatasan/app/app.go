@@ -180,6 +180,7 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Anomaly Detection", Description: "statistical anomaly monitor settings and on-demand scan access", Path: "/api/anomaly", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Object Observations", Description: "object metadata recorder search (what objects a camera saw) access", Path: "/api/observations", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Pairing", Description: "control-plane discovery and adoption (adopt/release are crypto-authenticated)", Path: "/api/pairing", AccessTier: apiaccessenums.Public},
+		{Title: "User Manual", Description: "the built-in manual; public so help works on the sign-in screen and in the first-run wizard", Path: "/api/manual", AccessTier: apiaccessenums.Public},
 	}
 
 	coreRbac := make([]string, 0, len(endpoints)*2)

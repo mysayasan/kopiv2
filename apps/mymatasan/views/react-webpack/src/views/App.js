@@ -4,6 +4,7 @@ import './styles/rbac-standard.css';
 import { ToastStack } from './components/ui';
 import { LangProvider, normalizeLang, useT } from '@shared/i18n';
 import { AppFooter } from '@shared/AppFooter';
+import { ManualProvider, ManualLibrary } from '@shared/Manual';
 import { enBundle, loadLocaleDict } from './i18n';
 import { THEMES, emptyLogin, defaultStreamConfig, defaultRuntimeSettings, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings, defaultVisionThreshold, defaultVisionMinFrames } from './lib/constants';
 import {readLiveViewsCookie,saveLiveViewsCookie,bestLiveViewLayout,unwrap,errorMessage,apiBase,parseMetadata,cameraTitle,normalizeScanDevice,orderedSavedCameras,isActionableVisionAlert,latestAlertsByCamera,sameCamera,liveSource,normalizeRuntimeSettings,normalizeMachineHealthSettings,defaultZonePolygon,isLineDetectionType,defaultLineRuleConfig,lineRuleConfigText,defaultVisionRuleDraft,playAlertSound,hasH264VideoTrack,isVisionAlertNotification } from './lib/helpers';
@@ -2580,6 +2581,7 @@ function AppInner({ lang, onLangChange }) {
           onLangChange={onLangChange}
           theme={theme}
           onThemeChange={changeTheme}
+          activeTab={activeTab}
         />
         <ToastStack toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((t) => t.id !== id))} />
 
@@ -2826,6 +2828,12 @@ function AppInner({ lang, onLangChange }) {
         />
       ) : null}
 
+      {activeTab === 'manual' ? (
+        <section className="workspace manual-workspace">
+          <ManualLibrary />
+        </section>
+      ) : null}
+
         <AppFooter appName="MyMataSan" apiBase={apiBase()} authHeader={authHeader} />
       </main>
     </div>
@@ -2879,7 +2887,11 @@ export default function App() {
   }
   return (
     <LangProvider lang={lang} messages={appMessages}>
-      <AppInner lang={lang} onLangChange={changeLang} />
+      {/* Outside AppInner deliberately: the manual has to be readable from the sign-in screen
+          and the first-run wizard, both of which render instead of the workspace. */}
+      <ManualProvider apiBase={apiBase()} lang={lang} appName="MyMataSan">
+        <AppInner lang={lang} onLangChange={changeLang} />
+      </ManualProvider>
     </LangProvider>
   );
 }

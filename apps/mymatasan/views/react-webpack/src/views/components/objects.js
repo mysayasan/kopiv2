@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Tabs } from '@shared/Tabs';
 import { useT } from '@shared/i18n';
+import { HelpButton } from '@shared/Manual';
 import { CameraObjectSearchPanel } from './recording';
 import { ObjectClassesPanel } from './vision';
 
@@ -16,6 +17,9 @@ export function ObjectsPage({ authHeader, busy, isAdmin, classes, labelCatalog, 
   const [tab, setTab] = useState('search');
   return (
     <section className="workspace objects-page">
+      <div className="objects-help">
+        <HelpButton slug="object-search" anchor="enabling" />
+      </div>
       <Tabs
         ariaLabel={t('obj.tabsAria')}
         active={tab}

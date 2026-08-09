@@ -81,3 +81,8 @@ action is more specific than one that wildcards it.
 - Both services are constructed once in `infra/apphost` and passed to apps via `deps.AccessRoles` / `deps.AccessPerms`.
 - The enforcement middleware is `domain/utils/middlewares.AccessSessionMidware`.
 - The management API surface is `domain/shared/apis/access_rbac.go`.
+- `page_access.go` and `role_page.go` (same package) add a page-level model that DERIVES rows
+  for `accessPermissionService.Set` from what pages a role holds, rather than an admin editing
+  `AccessRolePermission` rows directly. `Authorize`/`Set`/`ListForRole` above are unchanged and
+  are exactly what a page-derived row is still enforced through — see `page_access.go.md` and
+  `role_page.go.md`. Nothing calls the page-level services outside their own tests yet.

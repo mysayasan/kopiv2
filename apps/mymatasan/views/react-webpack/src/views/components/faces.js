@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiBase } from '../lib/helpers';
 import { useT } from '@shared/i18n';
+import { HelpButton } from '@shared/Manual';
 
 // FacesTab is the face-recognition enrollment surface: a GLOBAL roster of people the system should
 // recognize, plus a per-camera switch to turn recognition on. Enrolling a person is instant (no
@@ -125,7 +126,12 @@ export function FacesTab({ authHeader, cameras = [], onMessage }) {
     return (
       <div className="page faces-page">
         <div className="faces-consent">
-          <h2>{t('faces.consentTitle')}</h2>
+          {/* The consent gate is precisely where somebody should be able to read what they are
+              agreeing to, so the help link lives here as well as on the roster behind it. */}
+          <h2>
+            {t('faces.consentTitle')}
+            <HelpButton slug="people" anchor="consent" />
+          </h2>
           <p>{withBold(t('faces.consentP1'))}</p>
           <p>{t('faces.consentP2')}</p>
           <button type="button" onClick={() => { localStorage.setItem(CONSENT_KEY, '1'); setConsented(true); }}>
@@ -139,7 +145,12 @@ export function FacesTab({ authHeader, cameras = [], onMessage }) {
   return (
     <div className="page faces-page">
       <div className="page-head">
-        <h1>{t('faces.title')}</h1>
+        <h1>
+          {t('faces.title')}
+          {/* Points at the consent section, not the top of the article: enrolling somebody
+              stores biometric data, and that is the part an operator needs to have read. */}
+          <HelpButton slug="people" anchor="consent" />
+        </h1>
         <p className="page-sub">{t('faces.subtitle')}</p>
       </div>
 

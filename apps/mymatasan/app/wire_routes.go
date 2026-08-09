@@ -28,6 +28,10 @@ func registerRoutes(api *mux.Router, w *wiring) *mux.Router {
 	// registered before the session catch-all so requests match here rather than being
 	// swallowed by auth.
 	apis.NewPairingPublicApi(api, w.pairing, w.enrollment.Kick)
+	// The built-in manual is public for the same structural reason: it must be readable from
+	// the sign-in screen and the first-run wizard, which are precisely where a reader has no
+	// session. It serves only shipped, read-only documentation. See apis.NewManualApi.
+	apis.NewManualApi(api)
 
 	protected := api.PathPrefix("").Subrouter()
 	// w.systemReset is nil at this point — it is built last, because it needs the monitors

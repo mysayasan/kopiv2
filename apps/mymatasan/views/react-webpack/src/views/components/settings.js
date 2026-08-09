@@ -3,24 +3,27 @@ import { Ico } from './icons';
 import { Tabs } from '@shared/Tabs';
 import { DataTable } from '@shared/DataTable';
 import { useT } from '@shared/i18n';
+import { HelpButton } from '@shared/Manual';
 import { FormBusyOverlay, FieldTitle, AccordionList, AccordionItem } from './ui';
 import { ConsoleLog } from './console';
 import { PasswordField } from './layout';
 import { defaultYoloConfig, bestYoloDefaults, defaultCaptureConfig, captureModeOptions, defaultAlertNotificationConfig, alertNotificationFields, alertFieldDataKeys, builtinPayloadKeys, notificationCategories, notificationTemplateTokens, defaultDestination, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings } from '../lib/constants';
 import {iceUrlsText,textToIceUrls,decoderTransportOptions,decoderHWAccelOptions,apiBase } from '../lib/helpers';
 
-// SETTINGS_TABS drives the top tab bar: order, icon, label, and the contextual
-// one-line description shown in the header band under the active tab.
+// SETTINGS_TABS drives the top tab bar: order, icon, label, the contextual one-line description
+// shown in the header band under the active tab, and `help` — the manual article and hand-written
+// {#anchor} the tab's "?" opens. Anchors here must exist in the article in ALL four languages;
+// apps/mymatasan/manual's conformance test is what keeps that true.
 const SETTINGS_TABS = [
-  { id: 'runtime', labelKey: 'st.navRuntime', descKey: 'st.tabDesc.runtime', icon: 'sliders' },
-  { id: 'ai', labelKey: 'st.navAi', descKey: 'st.tabDesc.ai', icon: 'cpu' },
-  { id: 'notifications', labelKey: 'st.navNotifications', descKey: 'st.tabDesc.notifications', icon: 'bell' },
-  { id: 'health', labelKey: 'st.navCameraHealth', descKey: 'st.tabDesc.health', icon: 'wifi' },
-  { id: 'machine', labelKey: 'st.navMachineHealth', descKey: 'st.tabDesc.machine', icon: 'cpu' },
-  { id: 'users', labelKey: 'st.navUsers', descKey: 'st.tabDesc.users', icon: 'user' },
-  { id: 'pairing', labelKey: 'st.navConnectivity', descKey: 'st.tabDesc.pairing', icon: 'shield' },
-  { id: 'backup', labelKey: 'st.navBackup', descKey: 'st.tabDesc.backup', icon: 'key' },
-  { id: 'system', labelKey: 'st.navVersionHealth', descKey: 'st.tabDesc.system', icon: 'monitor' },
+  { id: 'runtime', labelKey: 'st.navRuntime', descKey: 'st.tabDesc.runtime', icon: 'sliders', help: ['settings-reference', 'runtime'] },
+  { id: 'ai', labelKey: 'st.navAi', descKey: 'st.tabDesc.ai', icon: 'cpu', help: ['how-detection-works', 'models'] },
+  { id: 'notifications', labelKey: 'st.navNotifications', descKey: 'st.tabDesc.notifications', icon: 'bell', help: ['notification-destinations', 'channels'] },
+  { id: 'health', labelKey: 'st.navCameraHealth', descKey: 'st.tabDesc.health', icon: 'wifi', help: ['camera-health', 'monitoring'] },
+  { id: 'machine', labelKey: 'st.navMachineHealth', descKey: 'st.tabDesc.machine', icon: 'cpu', help: ['machine-health', 'watched'] },
+  { id: 'users', labelKey: 'st.navUsers', descKey: 'st.tabDesc.users', icon: 'user', help: ['users-and-roles', 'roles'] },
+  { id: 'pairing', labelKey: 'st.navConnectivity', descKey: 'st.tabDesc.pairing', icon: 'shield', help: ['control-plane', 'fleet-key'] },
+  { id: 'backup', labelKey: 'st.navBackup', descKey: 'st.tabDesc.backup', icon: 'key', help: ['backup-and-restore', 'sections'] },
+  { id: 'system', labelKey: 'st.navVersionHealth', descKey: 'st.tabDesc.system', icon: 'monitor', help: ['updates-and-restart', 'updating'] },
 ];
 
 // stockModelHints describes the speed/accuracy trade-off of each base model.
@@ -1800,6 +1803,10 @@ export function SettingsTab({
           <h2>{t(activeTab.labelKey)}</h2>
           <p>{t(activeTab.descKey)}</p>
         </div>
+        {/* Each Settings tab deep-links into the manual section that explains it, rather than
+            the manual's front page — the reader is already looking at the thing they need
+            explained. */}
+        <HelpButton slug={activeTab.help[0]} anchor={activeTab.help[1]} />
       </header>
 
       <div className="settings-content">

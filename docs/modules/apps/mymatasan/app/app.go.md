@@ -58,7 +58,11 @@ sequencing, and the helpers that don't belong to any one subsystem.
 - Registers built-in and config-driven seeders: RBAC endpoint metadata, the
   `is_diagnostic`/camera-health/`recording_config` metadata NULL-backfills for columns
   added via `ALTER TABLE`, and `CREATE INDEX IF NOT EXISTS` secondary indexes for the
-  object-observation search.
+  object-observation search. The endpoint metadata list includes a `"User Manual"` row for
+  `/api/manual` with `AccessTier: apiaccessenums.Public`, matching where the route is
+  actually mounted (`wire_routes.go.md`) — kept off the RBAC permission matrix
+  deliberately, since a matrix-gated manual would be readable on new installs but silently
+  denied to every viewer on an upgraded one (`apis/manual.go.md`).
 - `APIDocs()` provides API docs metadata and endpoint descriptions for shared
   Swagger/OpenAPI output, using the embedded app version as the OpenAPI info version when
   available.

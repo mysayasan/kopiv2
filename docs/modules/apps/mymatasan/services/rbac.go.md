@@ -8,7 +8,8 @@ than rows an installer clicks into a grid, because a policy you can review in a 
 policy somebody actually reviews.
 
 The role/catalog **mechanics** — creating the built-in roles, rendering a catalog into
-permission rows, only seeding a role that has zero rows — moved to
+permission rows, seeding a fresh role in full and backfilling a catalog addition into an
+already-configured one without touching what a site tuned — moved to
 `domain/shared/services/appliance_rbac.go` (`EnsureApplianceRoles`/`RolePermissions`) so
 myiotsan runs the same machinery instead of a second copy. What stays here, and is genuinely
 mymatasan's, is the **catalog itself** — `Policy()`, which says what a camera NVR's viewer and
@@ -53,13 +54,33 @@ deletable, because delete is never granted anywhere in the catalog.
 func Policy() []PolicyRule
 ```
 
-Returns the full catalog, grouped by what it governs: change-own-password (everyone),
-watching live, seeing that something happened (alerts/notifications/capacity/settings/setup
-reads), reviewing recorded footage (operator and up — the evidentiary line), operating
-(acknowledge/PTZ/talk, operator only), and admin-only areas (onvif, training, teach, anomaly,
-pairing, system, user/role management) listed with **no grants** so the catalog stays a
-complete description of the API surface — an area missing from it is an area nobody can see
-they aren't granting, and the admin UI renders this list.
+Returns the full catalog, grouped by what it governs: read-your-own-session and
+change-own-password (everyone), watching live, seeing that something happened
+(alerts/notifications/capacity/settings/setup reads), reviewing recorded footage (operator and
+up — the evidentiary line), operating (acknowledge/PTZ/talk, operator only), and admin-only
+areas (onvif, **faces**, training, teach, anomaly, pairing, system, user/role management) listed
+with **no grants** so the catalog stays a complete description of the API surface — an area
+missing from it is an area nobody can see they aren't granting, and the admin UI renders this
+list.
+
+`{Path: "/api/faces", ...}` (no grants) was added after the page-catalog test in
+`apps/mymatasan/services/pages_test.go` (`TestPages_GrantOnlyPathsThePolicyGoverns`) found face
+recognition governed by no rule at all: absent from this catalog, it was denied by default
+(correct, since deny-by-default already refuses an ungoverned path) but invisible in the admin
+UI that renders this list — an area nobody could see they were not granting, the exact failure
+this catalog's completeness rule exists to prevent. See `apps/mymatasan/services/pages.go.md`
+for the `people` page (`AdminOnly`) that now names it.
+
+`{Path: "/api/auth/session", ..., Viewer: read, Operator: read}` is the first rule in the
+catalog and is load-bearing in a way most rules are not: it is what the SPA calls first, before
+it renders anything, to learn who is signed in and whether they must change their password. Its
+absence from the catalog was a real bug — deny-by-default refused it, so `viewer` and
+`operator` accepted the password and then hit "you do not have permission for this action"
+before ever reaching the UI; only `admin`/`superadmin` worked, because superadmin bypasses the
+matrix and never exercises this path. Fixed by adding the row here, and (for every install that
+had already seeded its roles before the fix) by `EnsureApplianceRoles` backfilling missing
+catalog rows into existing roles instead of skipping a role that has any rows at all — see
+`domain/shared/services/appliance_rbac.go.md`.
 
 `admin` is absent from the catalog by design (see above).
 
@@ -71,7 +92,7 @@ func EnsureRoles(ctx context.Context, roles sharedservices.IAccessRoleService, p
 }
 ```
 
-A thin wrapper: all the seeding mechanics (builtins, the `operator` role, only-seed-when-empty)
+A thin wrapper: all the seeding mechanics (builtins, the `operator` role, seed-in-full-or-backfill)
 now live in `sharedservices.EnsureApplianceRoles` — see
 `domain/shared/services/appliance_rbac.go.md`. This function's only job is to supply
 mymatasan's own `Policy()` and `operatorDescription`.
@@ -94,3 +115,8 @@ Called from `app.go`'s `RegisterAppRoutes`, before the default admin is seeded a
   service and matcher, then asserts every boundary — nobody below admin can destroy evidence
   or reconfigure, viewer can watch live and nothing else, operator can do the job, an unknown
   route is denied, a roleless user is denied, and the catalog is well-formed.
+  `TestPolicy_NonAdminRolesCanCompleteSignIn` is the regression test for the `/api/auth/session`
+  bug above: it walks the exact sequence App.js calls before it can render
+  (`GET /api/auth/session`, `GET /api/settings/runtime`, `GET /api/cameras`,
+  `POST /api/auth/change-password`) and asserts viewer and operator are allowed every step —
+  every other test in the file asserts what a role must NOT do, this one asserts the floor.

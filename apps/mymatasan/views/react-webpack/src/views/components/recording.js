@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Ico } from './icons';
 import { useT } from '@shared/i18n';
 import { DataTable } from '@shared/DataTable';
+import { HelpButton } from '@shared/Manual';
 import {formatFileSize,segmentDuration,segmentFilename,detectionTypeLabel,todayDateString,apiBase,formatTimestamp } from '../lib/helpers';
 
 // hevcPlaybackSupported reports whether this browser can decode HEVC in a plain
@@ -453,7 +454,10 @@ export function CameraRecordingsPanel({ camera, canManage = true, busy, authHead
       ) : null}
       <div className="toolbar">
         <div>
-          <h2 className="section-title">{t('rec.title')}</h2>
+          <h2 className="section-title">
+            {t('rec.title')}
+            <HelpButton slug="recordings" anchor="finding" />
+          </h2>
           <p className="section-subtitle">{t('rec.subtitle')}</p>
         </div>
         <div className="toolbar-actions">
