@@ -65,21 +65,49 @@ context with prompt+history+completion room to spare) is enforced by dropping se
 priority — `recentEvents` → `anomalies` → `latestDigestFindings` → trim `fleet` to 10 — recording
 each drop in `Truncated` so the model (and the UI) can say "I only see part of the data."
 
-## `SystemPrompt(lang)`
+## The second grounding source: the manual
+
+`ChatService.docs` (`*DocsService`, nil-safe — see `services/agent_docs.go.md`) retrieves sections
+from the built-in manuals of **both** myseliasan and mymatasan on every question. Retrieval is
+local, deterministic and sub-millisecond, so there is no mode to configure and nothing to fail: it
+simply returns nothing when the manual has no answer, which is the common case for a pure
+fleet-status question.
+
+The excerpt block is appended to the system message after the bundle. **Combined ceiling** is the
+fleet bundle's 8 KiB plus the excerpt block's 2.5 KiB ≈ 2.7k tokens, which still leaves an 8k
+context room for the prompt, four history turns and a 768-token completion — so `BuildGrounding`'s
+own cap is unchanged.
+
+## `SystemPrompt(lang, withDocs bool)`
 
 The strict-grounding instruction: answer only from FLEET DATA; cite `[notif <id>]`/`[node <id>]`
 when referencing a record; every number must appear verbatim in FLEET DATA — never invented;
 mention when a section was truncated; ≤8 sentences; reply in the requested language.
 
-## `Stream(ctx, req, emit func(delta string) error) (llm.ChatResult, error)`
+`withDocs` swaps in the two-source rules, and is **false when retrieval found nothing** — an
+unused rule about a section that is not in the prompt is one more thing for a 1.5B model to
+misapply. The added rule that matters states the separation before anything else: FLEET DATA is
+what *this* fleet is doing now; MANUAL EXCERPTS are product documentation, possibly for a
+different product in the suite; never state something from an excerpt as an observation about this
+fleet, and never answer a current-state question from an excerpt. This is the specific way a
+documentation-grounded answer goes wrong — the manual is written in the present tense about the
+product, and a model that forgets what it is reading reports it as a fact about the installation.
+
+## `Stream(ctx, req, emit) (llm.ChatResult, []DocExcerpt, error)`
 
 `Validate` → `llm.Client()` (typed `ErrLLMDisabled`/`ErrLLMNotReady` on failure, mapped to
-409/503 by `apis/agent.go`) → `BuildGrounding` → one `client.ChatStream` call with the system
-prompt (grounding bundle inlined as `FLEET DATA:`) + history + the question. For a non-English
-`Lang`, the language instruction is **repeated right next to the question** (not just in the
-system prompt) — small models weight the final instruction heaviest and routinely ignore a
-reply-language rule buried earlier (live-bench observed). Records
-`MetricAgentChatRequestsTotal{outcome}` and `MetricAgentLLMRequestsTotal{purpose:"chat"}`.
+409/503 by `apis/agent.go`) → `BuildGrounding` → `docs.Ground` → one `client.ChatStream` call with
+the system prompt (grounding bundle inlined as `FLEET DATA:`, excerpts appended as `MANUAL
+EXCERPTS`) + history + the question. For a non-English `Lang`, the language instruction is
+**repeated right next to the question** (not just in the system prompt) — small models weight the
+final instruction heaviest and routinely ignore a reply-language rule buried earlier (live-bench
+observed). Records `MetricAgentChatRequestsTotal{outcome}` and
+`MetricAgentLLMRequestsTotal{purpose:"chat"}`.
+
+The returned `[]DocExcerpt` is the excerpts offered to the model, each flagged with whether the
+finished answer actually cited it (`MarkCited`). It is a **return value rather than a callback**
+because that flag cannot exist until the answer does — including a partial answer cut short by a
+timeout, where what it cited before it stopped is still what it cited.
 
 ## Single-node drill-down
 
@@ -107,10 +135,11 @@ satisfied by `*services.ControlServer` itself — `app.go` passes `controlServer
 ## Constructor
 
 `NewChatService(notif, fleet, digests *DigestService, connected func(nodeID string) bool, sender
-chatNodeSender, llmMgr *LLMManager, metrics, logf)` — `connected` is the control channel's
-liveness oracle (`ControlServer.IsConnected`), nil-safe. `sender` is new: nil disables the
-single-node drill-down entirely (grounding stays central-only, the prior behavior); `app.go` wires
-it to the same `*services.ControlServer` as `connected`.
+chatNodeSender, docs *DocsService, llmMgr *LLMManager, metrics, logf)` — `connected` is the control
+channel's liveness oracle (`ControlServer.IsConnected`), nil-safe. `sender` nil disables the
+single-node drill-down entirely (grounding stays central-only); `app.go` wires it to the same
+`*services.ControlServer` as `connected`. `docs` is the manual retriever (see above); nil-safe —
+`docs.Ground` on a nil `*DocsService` simply returns no excerpts.
 
 ## Notes
 
