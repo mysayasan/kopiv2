@@ -1182,10 +1182,14 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// service were built earlier, before the reports that reuse them; the invariant
 	// stands — the LLM is never in a critical path, and with mode "off" (default)
 	// or the model down the digest still generates from the narrator.
+	// The manual retriever is the chat's second grounding source and the docs endpoint's only
+	// one. It reads embedded text and indexes lazily, so it costs nothing until a question is
+	// asked and works with the LLM off.
+	docsService := services.NewDocsService()
 	chatService := services.NewChatService(notificationService, registry, digestService,
-		controlServer.IsConnected, controlServer, llmManager, deps.Metrics,
+		controlServer.IsConnected, controlServer, docsService, llmManager, deps.Metrics,
 		func(f string, a ...any) { deps.Logger.Warnf("myseliasan.agent", f, a...) })
-	apis.NewAgentApi(api, *deps.Auth, controlSession, digestService, chatService,
+	apis.NewAgentApi(api, *deps.Auth, controlSession, digestService, chatService, docsService,
 		llmManager, llmInstaller, llmSidecar, auditService,
 		func() apis.AgentDigestStatus {
 			c := deps.Config.Agent.Digest

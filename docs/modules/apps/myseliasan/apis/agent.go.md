@@ -19,7 +19,8 @@ ask-the-fleet chat, which burn real CPU) is its own curated feature toggle (`ACC
 | `GET` | `/api/agent/digests` | Stored digests, newest-first. `?limit=&offset=` (default 20). Returns `{items: []digestDTO, total}`. |
 | `GET` | `/api/agent/digests/latest` | The most recent digest, or `null` when none exist yet. |
 | `POST` | `/api/agent/digests/generate` | Generate a digest now, actor = caller. `?kind=weekly` produces the 7-day management-cadence digest (`kind: "weekly"`); anything else is the default 24h operational one (`kind: "manual"`) — `"daily"` is deliberately not accepted here, that kind belongs only to the scheduler. Matrix-gated write. Write deadline extended to 3 minutes (`extendWriteDeadline`) — the narrator is instant but the LLM polish is not. Audited (`agent.digest.generate`). |
-| `POST` | `/api/agent/chat` | Ask-the-fleet. Default is a Server-Sent-Events stream (`event: meta/delta/done/error`); `?stream=false` returns one JSON `{answer, usage}` object for tests/curl. Pre-flight failures (bad request, LLM disabled/not-ready) map to `400`/`409`/`503` **before** any stream starts. Write deadline extended to 10 minutes. Audited (`agent.chat`, question truncated to 200 chars). |
+| `POST` | `/api/agent/chat` | Ask-the-fleet. Default is a Server-Sent-Events stream (`event: meta/delta/sources/done/error`); `?stream=false` returns one JSON `{answer, usage, sources}` object for tests/curl. Pre-flight failures (bad request, LLM disabled/not-ready) map to `400`/`409`/`503` **before** any stream starts. Write deadline extended to 10 minutes. Audited (`agent.chat`, question truncated to 200 chars). |
+| `GET` | `/api/agent/docs` | Manual sections matching `?q=` (`&lang=`, `&limit=` 1..10, default 5). Returns `{items: []DocExcerpt}` with display snippets. Matrix-gated read. **Needs no language model** — see below. `q` is capped at `maxDocsQuery`=500 chars (a cap on wasted work, not a security control: retrieval is over embedded read-only text). |
 
 Superadmin-only management (self-gated in-handler, like the settings editor):
 
@@ -35,10 +36,23 @@ Superadmin-only management (self-gated in-handler, like the settings editor):
 ## SSE chat wire format
 
 `chatHandler` streams `event: meta` (model name + window) once, then `event: delta` per token
-batch (`{text}`), then either `event: done` (`{usage, chars}`) or `event: error` (`{code,
+batch (`{text}`), then — when the answer was grounded in the manual — `event: sources`
+(`{items: []DocExcerpt}`), then either `event: done` (`{usage, chars}`) or `event: error` (`{code,
 message}`). A client disconnect mid-stream (`ctx.Err()` after the browser leaves) is a silent
 return, not an error event — nobody is listening. `?stream=false` instead calls
 `ChatService.Stream` synchronously and returns one JSON object.
+
+**Sources come after the answer, not before it.** The list carries which excerpts the answer
+actually cited (`services.MarkCited`), and that is not knowable until the last token has been
+written. The SPA attaches them to the message already on screen rather than gating its render.
+
+## `GET /api/agent/docs` — the assistant without a model
+
+`searchDocs` exists so the help half of the agent survives the language model being **absent**,
+which is the default state of a shipped appliance: no model configured, no sidecar installed.
+Retrieval needs neither, so a reader who asks a question with the LLM off still gets the sections
+that answer it and can open them — a worse answer than prose, and an enormously better one than
+"no language model is enabled on this control plane".
 
 ## Authorization
 
@@ -51,8 +65,9 @@ return, not an error event — nobody is listening. `?stream=false` instead call
 ## Constructor
 
 `NewAgentApi(router, auth, session, digests *services.DigestService, chat *services.ChatService,
-llmMgr *services.LLMManager, installer *services.LLMInstaller, sidecar *services.LLMSidecar,
-audit services.IAuditService, digestCfg func() AgentDigestStatus)` — `digestCfg` is resolved by
+docs *services.DocsService, llmMgr *services.LLMManager, installer *services.LLMInstaller,
+sidecar *services.LLMSidecar, audit services.IAuditService,
+digestCfg func() AgentDigestStatus)` — `digestCfg` is resolved by
 the app wiring (which owns the config and the schedule state), not the API package, so `status`
 never has to reach into `app.go`'s internals directly. `AgentDigestStatus` (exported — was the
 unexported `agentDigestStatus`, since `app.go` now builds the whole struct itself rather than

@@ -20,8 +20,11 @@ import (
 	"github.com/mysayasan/kopiv2/infra/llm"
 )
 
+// newTestChatService wires a chat service with NO manual retriever, so these tests keep asserting
+// the fleet-grounding path on its own. The documentation half is covered by agent_docs_test.go
+// and by TestChatStreamGroundsInTheManual below.
 func newTestChatService(notif *fakeNotifSource, fleet *fakeFleetSource, llmMgr *LLMManager) *ChatService {
-	return NewChatService(notif, fleet, nil, func(string) bool { return true }, nil, llmMgr, nil, nil)
+	return NewChatService(notif, fleet, nil, func(string) bool { return true }, nil, nil, llmMgr, nil, nil)
 }
 
 func TestChatValidate(t *testing.T) {
@@ -139,7 +142,7 @@ func TestChatStreamGroundedHappyPath(t *testing.T) {
 		externalLLM(srv.URL))
 
 	var deltas []string
-	res, err := c.Stream(context.Background(), ChatRequestBody{Question: "which node is down?", Lang: "en"},
+	res, _, err := c.Stream(context.Background(), ChatRequestBody{Question: "which node is down?", Lang: "en"},
 		func(d string) error { deltas = append(deltas, d); return nil })
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
@@ -159,7 +162,7 @@ func TestChatStreamGroundedHappyPath(t *testing.T) {
 func TestChatStreamLLMOff(t *testing.T) {
 	c := newTestChatService(&fakeNotifSource{stats: map[int64]*notification.Stats{}}, &fakeFleetSource{},
 		NewLLMManager(config.AgentLLMConfigModel{Mode: "off"}, nil))
-	_, err := c.Stream(context.Background(), ChatRequestBody{Question: "hi"}, nil)
+	_, _, err := c.Stream(context.Background(), ChatRequestBody{Question: "hi"}, nil)
 	if !errors.Is(err, ErrLLMDisabled) {
 		t.Fatalf("expected ErrLLMDisabled, got %v", err)
 	}
@@ -169,7 +172,7 @@ func TestChatStreamSidecarNotReady(t *testing.T) {
 	sidecar := NewLLMSidecar(SidecarConfig{Enabled: true}, t.TempDir(), nil)
 	c := newTestChatService(&fakeNotifSource{stats: map[int64]*notification.Stats{}}, &fakeFleetSource{},
 		NewLLMManager(config.AgentLLMConfigModel{Mode: "sidecar"}, sidecar))
-	_, err := c.Stream(context.Background(), ChatRequestBody{Question: "hi"}, nil)
+	_, _, err := c.Stream(context.Background(), ChatRequestBody{Question: "hi"}, nil)
 	if !errors.Is(err, ErrLLMNotReady) {
 		t.Fatalf("expected ErrLLMNotReady, got %v", err)
 	}
@@ -213,7 +216,7 @@ func TestChatNodeDrillDown(t *testing.T) {
 		{"severity":"critical","title":"Person detected","createdAt":1785970000},
 		{"severity":"info","title":"Health check ok","createdAt":1785960000}]}}`}
 	c := NewChatService(&fakeNotifSource{stats: map[int64]*notification.Stats{}}, fleet, nil,
-		func(string) bool { return true }, sender, nil, nil, nil)
+		func(string) bool { return true }, sender, nil, nil, nil, nil)
 
 	req := ChatRequestBody{Question: "what did yard cam see today?"}
 	if err := c.Validate(&req); err != nil {
@@ -238,7 +241,7 @@ func TestChatNodeDrillDown(t *testing.T) {
 
 	// Disconnected node → honest Unreachable, no tunnel call needed.
 	c2 := NewChatService(&fakeNotifSource{stats: map[int64]*notification.Stats{}}, fleet, nil,
-		func(string) bool { return false }, sender, nil, nil, nil)
+		func(string) bool { return false }, sender, nil, nil, nil, nil)
 	bundle, _ = c2.BuildGrounding(context.Background(), req)
 	if bundle.NodeDetail == nil || !bundle.NodeDetail.Unreachable {
 		t.Fatalf("offline node must be marked unreachable: %+v", bundle.NodeDetail)
@@ -285,8 +288,70 @@ func TestSystemPromptLanguages(t *testing.T) {
 	for lang, want := range map[string]string{
 		"en": "English", "ms": "Malay", "zh": "Chinese", "ar": "Arabic",
 	} {
-		if p := SystemPrompt(lang); !strings.Contains(p, want) {
+		if p := SystemPrompt(lang, false); !strings.Contains(p, want) {
 			t.Errorf("SystemPrompt(%s) missing %q", lang, want)
+		}
+	}
+}
+
+// The manual rules must appear only when excerpts do. A rule about a section that is not in the
+// prompt is one more thing for a 1.5B model to misapply.
+func TestSystemPromptDocsRules(t *testing.T) {
+	without := SystemPrompt("en", false)
+	if strings.Contains(without, "MANUAL EXCERPTS") {
+		t.Error("manual rules leaked into the fleet-only prompt")
+	}
+	with := SystemPrompt("en", true)
+	for _, want := range []string{"MANUAL EXCERPTS", "product documentation", "[M1]"} {
+		if !strings.Contains(with, want) {
+			t.Errorf("docs prompt missing %q", want)
+		}
+	}
+	if !strings.Contains(with, "Answer ONLY from FLEET DATA") {
+		t.Error("the grounding rule must survive the docs variant")
+	}
+}
+
+// The chat's documentation half, end to end: a how-to question must put manual excerpts in the
+// prompt, and the returned sources must reflect what the answer cited.
+func TestChatStreamGroundsInTheManual(t *testing.T) {
+	var gotSystem string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct{ Role, Content string } `json:"messages"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		if len(body.Messages) > 0 {
+			gotSystem = body.Messages[0].Content
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl := w.(http.Flusher)
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Use the discovery scan [M1].\"}}]}\n\n")
+		fl.Flush()
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	c := NewChatService(&fakeNotifSource{stats: map[int64]*notification.Stats{}}, &fakeFleetSource{}, nil,
+		func(string) bool { return true }, nil, NewDocsService(), externalLLM(srv.URL), nil, nil)
+
+	_, sources, err := c.Stream(context.Background(),
+		ChatRequestBody{Question: "how do I add a camera to a node?", Lang: "en"}, nil)
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if !strings.Contains(gotSystem, "MANUAL EXCERPTS") || !strings.Contains(gotSystem, "[M1]") {
+		t.Fatalf("manual excerpts missing from the prompt: %.400s", gotSystem)
+	}
+	if len(sources) == 0 {
+		t.Fatal("no sources returned for a documentation question")
+	}
+	if !sources[0].Cited {
+		t.Errorf("the answer cited [M1] but source 1 is not marked cited: %+v", sources[0])
+	}
+	for _, s := range sources[1:] {
+		if s.Cited {
+			t.Errorf("%s was not cited by the answer but is marked cited", s.Ref)
 		}
 	}
 }
