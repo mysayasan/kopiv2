@@ -89,6 +89,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-11 — core 1.87.1 (95710fb)
+
+### Changed
+
+- **core**: Repositioned the r450k marketing site from a single camera product to the full five-app suite: rewrote meta/hero/features/how-it-works/tiers/showcase/use-cases/apps/downloads/final-CTA/footer copy in the canonical en.js and kept ms.js/zh.js/ar.js in full parity, added five new feature cards (myiotsan sensors/actuation, mypintusan door access, myseliasan cross-domain correlation, the myseliasan AI agent, myidsan enterprise identity/MFA/audit) plus a new 'Access-controlled facilities' use case and a fifth (not-yet-downloadable) mypintusan entry in the apps section, added matching door/sensor/sparkle/network icons, updated index.html meta tags, and corrected a stale worker/index.js comment about release tag namespaces. Also repaired the root README.md, whose title/intro/first half of the table of contents had been corrupted (a stray 'etry](#telemetry)' fragment) — rebuilt with a five-app summary table, a complete Contents list, a new Mermaid suite-architecture diagram, and refreshed Project Structure/Configuration/Versioning/Docker sections to name all five apps (myseliasan and mypintusan were previously missing or described only as three/four apps).
 ## 2026-08-11 — myidsan 1.43.0, myiotsan 0.27.0, mymatasan 1.121.0, myseliasan 1.60.0 (3c73c0b)
 
 ### Added
