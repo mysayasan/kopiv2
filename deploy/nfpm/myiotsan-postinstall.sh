@@ -51,6 +51,10 @@ is allowed through the host firewall, e.g.:
 A device that is not in the inventory cannot connect at all — onboard devices through
 the time-boxed enrollment window in the UI (Discovery), not by editing config.
 
+To uninstall later:  myiotsan-uninstall
+  Your telemetry history, devices and rules under /opt/myiotsan are KEPT by default.
+  Add --purge-data to erase them too (a clean wipe; add -y for unattended).
+
 EOF
 
 exit 0

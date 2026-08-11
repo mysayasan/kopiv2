@@ -46,6 +46,10 @@ First-run superadmin login (fresh install only):
 Locked out? Create an empty file /opt/myidsan/RESET_ADMIN and restart the
 service — the bootstrap login is force-reset and announced again.
 
+To uninstall later:  myidsan-uninstall
+  Your users, roles and registered apps under /opt/myidsan are KEPT by default.
+  Add --purge-data to erase them too (a clean wipe; add -y for unattended).
+
 EOF
 
 exit 0

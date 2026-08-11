@@ -102,3 +102,44 @@ re-adopting every node.
 - **Portable archive** — stop the service, replace the binary and `static/`, restart.
   Keep your `config.json`, `data/`, `certs/` and `secret/`.
 - **Docker** — pull the new tag; keep the `/data` volume.
+
+## Uninstalling — keep your data, or wipe it
+
+Removing MySeliaSan **keeps `/opt/myseliasan` by default** on every path. That is
+deliberate: `secret/atrest.key` encrypts the fleet CA key and the pairing PSK, so
+erasing it orphans every adopted node (see *Back up `secret/atrest.key`* above). You
+have to ask for the clean wipe.
+
+**Linux (deb/rpm).**
+
+```sh
+sudo myseliasan-uninstall                # remove the package, KEEP /opt/myseliasan
+sudo myseliasan-uninstall --purge-data   # remove it and ERASE /opt/myseliasan
+sudo myseliasan-uninstall --purge-data -y   # same, unattended (no prompt)
+sudo myseliasan-uninstall --purge-data -n   # dry run: print, change nothing
+```
+
+`myseliasan-uninstall` is installed to `/usr/sbin` by the package. It calls
+`apt`/`dnf` for you, so you never need to remember which. Interactively, `--purge-data`
+makes you type `ERASE` before it does anything.
+
+If you'd rather drive the package manager yourself, the same wipe is one variable:
+
+```sh
+sudo KOPIV2_PURGE_DATA=1 apt-get purge myseliasan     # or: dnf remove
+sudo apt-get purge myseliasan                         # without it, data is kept
+```
+
+**Windows.** Uninstall from Add/Remove Programs (or the Start Menu) and answer the
+prompt — it asks whether to also delete `C:\ProgramData\MySeliaSan`, defaulting to
+**No**. For a scripted uninstall:
+
+```bat
+set KOPIV2_PURGE_DATA=1 & "C:\Program Files\MySeliaSan\unins000.exe" /VERYSILENT
+"C:\Program Files\MySeliaSan\unins000.exe" /VERYSILENT /CLEANDATA
+"C:\Program Files\MySeliaSan\unins000.exe" /VERYSILENT /KEEPDATA
+```
+
+A silent uninstall with no instruction keeps the data, and `KEEPDATA` beats
+`CLEANDATA` if both are given — an unattended run should never destroy a fleet by
+accident.

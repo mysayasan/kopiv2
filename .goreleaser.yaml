@@ -101,6 +101,14 @@ nfpms:
         type: "config|noreplace"
       - src: deploy/nfpm/mymatasan.service
         dst: /etc/systemd/system/mymatasan.service
+      # One-command uninstaller. `apt-get remove` keeps /opt/mymatasan (an accidental
+      # remove must never destroy footage), so this is the front door for the other
+      # outcome: `mymatasan-uninstall --purge-data` erases it. Shared script, named per
+      # package — it resolves the product from argv[0].
+      - src: deploy/nfpm/uninstall.sh
+        dst: /usr/sbin/mymatasan-uninstall
+        file_info:
+          mode: 0755
     scripts:
       postinstall: deploy/nfpm/postinstall.sh
       preremove: deploy/nfpm/preremove.sh

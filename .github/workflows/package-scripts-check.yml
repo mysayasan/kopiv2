@@ -1,0 +1,53 @@
+# Exercise the .deb/.rpm maintainer scripts on PRs that touch them.
+#
+# These scripts decide whether an operator's data survives an uninstall, and they are the
+# least-run code we ship: nobody exercises them until the day they matter, and by then a
+# mistake means either destroyed recordings / an orphaned fleet, or a box that cannot be
+# decommissioned cleanly. The failure modes are quiet and asymmetric, so they get a real
+# test rather than review.
+#
+# Each app gets a throwaway package built around its OWN maintainer scripts (a placeholder
+# stands in for the binary — what is under test is the scripts, not the app), then real
+# dpkg/apt and rpm/dnf drive it through upgrade, keep, wipe, env-var and dry-run paths, plus
+# the interactive confirmation on a real pty. No Go build is needed, so this stays fast.
+#
+# The Windows half of the same feature is covered by installer-check.yml, which compiles
+# every packaging/windows/*.iss.
+name: Package scripts check
+
+on:
+  pull_request:
+    paths:
+      - 'deploy/nfpm/**'
+      - '.goreleaser*.yaml'
+      - '.github/workflows/package-scripts-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The maintainer scripts run as root during install/removal, so an unquoted
+      # expansion here is a different class of bug than it is in a build script.
+      - name: ShellCheck the maintainer scripts
+        run: shellcheck deploy/nfpm/*.sh deploy/nfpm/tests/*.sh
+
+  uninstall-behaviour:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [mymatasan, myseliasan, myiotsan, myidsan]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Same entry point developers run locally, so a failure here is reproducible with
+      # one command: deploy/nfpm/tests/run.sh <app>
+      - name: Uninstall behaviour (deb, rpm, interactive)
+        run: deploy/nfpm/tests/run.sh ${{ matrix.app }}
