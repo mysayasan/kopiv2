@@ -4,18 +4,18 @@
   },
   "apps": {
     "myidsan": {
-      "version": "1.42.1"
+      "version": "1.43.0"
     },
     "myiotsan": {
-      "version": "0.26.0"
+      "version": "0.27.0"
     },
     "mymatasan": {
-      "version": "1.120.0"
+      "version": "1.121.0"
     },
     "myseliasan": {
-      "version": "1.59.0"
+      "version": "1.60.0"
     }
   },
-  "commit": "05bc63019df8dc9a9d18f20e3541b32269fc7eef",
-  "updatedAt": "2026-08-10T04:35:38Z"
+  "commit": "3c73c0b7c1168ccf64512a7e205dd7e19d4d4680",
+  "updatedAt": "2026-08-11T11:41:30Z"
 }

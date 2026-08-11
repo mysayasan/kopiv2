@@ -88,6 +88,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-11 — myidsan 1.43.0, myiotsan 0.27.0, mymatasan 1.121.0, myseliasan 1.60.0 (3c73c0b)
+
+### Added
+
+- **mymatasan,myseliasan,myidsan,myiotsan**: Uninstalling now offers a clean wipe on every packaged path, not just an interactive Windows prompt. Linux gained an automated uninstaller: the .deb/.rpm packages install /usr/sbin/<app>-uninstall (one shared script, resolved per package from argv[0]), which drives apt/dnf for you and takes --purge-data to erase /opt/<app>, plus --yes for unattended runs and --dry-run to preview. Underneath it, the postremove scriptlets honour KOPIV2_PURGE_DATA=1, so `sudo KOPIV2_PURGE_DATA=1 apt-get purge <app>` performs the same wipe for config-managed hosts with no helper involved; a wipe also drops the service account. On Windows the uninstaller learned /CLEANDATA and /KEEPDATA switches and the same KOPIV2_PURGE_DATA variable, so a silent uninstall can finally erase the data dir instead of always keeping it. The behaviour is now regression-tested: deploy/nfpm/tests/ builds a throwaway package around each app's real maintainer scripts and drives it through real dpkg/apt, rpm/dnf and a pty, and a new Package scripts check workflow runs that plus ShellCheck on PRs touching deploy/nfpm or the goreleaser configs.
 ## 2026-08-10 — myseliasan 1.59.0, core 1.87.0 (05bc630)
 
 ### Added
