@@ -16,7 +16,8 @@ fail=0
 say()  { echo; echo "---- $* ----"; }
 check() { d=$1; shift; if "$@" >/dev/null 2>&1; then echo "  PASS: $d"; else echo "  FAIL: $d"; fail=1; fi; }
 checknot() { d=$1; shift; if "$@" >/dev/null 2>&1; then echo "  FAIL: $d"; fail=1; else echo "  PASS: $d"; fi; }
-# shellcheck disable=SC2329  # invoked indirectly, as the command passed to check/checknot
+# shellcheck disable=SC2317,SC2329  # invoked indirectly, as the command passed to check/checknot
+# (SC2317 on ShellCheck <= 0.9 as shipped on the runners, SC2329 on newer builds)
 installed() { dpkg-query -W -f='${Status}' "$app" 2>/dev/null | grep -q 'ok installed'; }
 seed() { mkdir -p "$data/data"; echo db > "$data/data/app.db"; }
 drive() { timeout 180 python3 /w/drive-pty.py "$app" "$@" >/dev/null 2>&1; }
