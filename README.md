@@ -1,3 +1,16 @@
+# kopiv2 — a private, on-prem security & automation suite
+
+`kopiv2` is a single Go monorepo that builds **five separate applications**, each installable on its own, all sharing one runtime host, one domain layer, and one frontend module. Together they cover cameras, sensors, doors, fleet management and identity — and they are designed to run entirely inside your own network, with no cloud dependency and no required egress.
+
+| App | Role | Runs where |
+|---|---|---|
+| `mymatasan` | Edge **camera** node — ONVIF discovery, on-device AI detection, NVR recording, WebRTC live view | One per site |
+| `myiotsan` | Edge **sensor** hub — embedded MQTT broker, Modbus/SunSpec, rules, scenes, flow engine, safe actuation | One per site |
+| `mypintusan` | Edge **door** controller — OSDP badge readers, grants/schedules/lockdown, audited strike | One per site |
+| `myseliasan` | **Fleet control plane** — adopts and manages all three node kinds, maps them, correlates events across them | One per fleet |
+| `myidsan` | **Identity / SSO** — local, LDAP/AD, Kerberos, OIDC, MFA, RBAC, audit | One per fleet |
+
+The marketing site for the suite lives in [`r450k/`](r450k/) and is published at **r450k.com**.
 
 ## License
 
@@ -5,8 +18,28 @@
 
 - **Noncommercial use is free** under the [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0): personal use (study, hobby, private/home use, experiment and testing) and use by charitable, educational, public-research, public-safety/health, environmental, and government organizations.
 - **Commercial use requires a paid commercial license** — any use in or for a for-profit business, providing a paid product/service, hosting it as a service for third parties, or reselling/sublicensing/repackaging the software. Contact **mysayasan@gmail.com** for a commercial license.
-etry](#telemetry)
+
+## Contents
+
+- [License](#license)
+- [Quickstart](#quickstart)
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Documentation](#documentation)
+- [Project Structure](#project-structure)
+- [Requirements](#requirements)
+- [Configuration](#configuration)
+- [Makefile Commands](#makefile-commands)
+- [Run Locally](#run-locally)
+- [Run with Docker](#run-with-docker)
+- [Run with Docker Compose](#run-with-docker-compose)
+- [Linux systemd Deployment](#linux-systemd-deployment)
+- [API Health Endpoints](#api-health-endpoints)
+- [Versioning](#versioning)
+- [Telemetry](#telemetry)
+- [Cache Admin Endpoints](#cache-admin-endpoints)
 - [API Documentation (Swagger)](#api-documentation-swagger)
+- [Identity and SSO Direction](#identity-and-sso-direction)
 - [Testing](#testing)
 - [Production Checklist](#production-checklist)
 - [Operational Hardening Included](#operational-hardening-included)
@@ -46,6 +79,50 @@ Primary goals:
 - Secure API path with authentication and authorization controls.
 
 ## Architecture
+
+### How the five apps fit together
+
+Two **fleet-level** apps (identity and the control plane) and three **edge appliance** kinds (cameras, sensors, doors). Every arrow below stays inside your own network — the suite has no cloud component and needs no outbound connectivity to function.
+
+```mermaid
+flowchart TB
+  subgraph net["Your network — on-prem, no cloud, no required egress"]
+    op(["Operator's browser"])
+
+    subgraph fleet["Fleet level — one of each per deployment"]
+      idsan["<b>myidsan</b><br/>identity / SSO<br/>local · LDAP/AD · Kerberos<br/>OIDC · TOTP · WebAuthn · audit"]
+      selia["<b>myseliasan</b><br/>fleet control plane<br/>adoption · maps & floor plans<br/>cross-node rules · digest · reports"]
+    end
+
+    subgraph edge["Edge appliances — one install per site"]
+      mata["<b>mymatasan</b><br/>camera node<br/>ONVIF · YOLO · NVR · WebRTC"]
+      iot["<b>myiotsan</b><br/>sensor hub<br/>MQTT · Modbus/SunSpec · flows"]
+      pintu["<b>mypintusan</b><br/>door controller<br/>OSDP · grants · lockdown"]
+    end
+
+    cams(["IP cameras"])
+    sens(["Sensors, meters, inverters"])
+    rdrs(["Badge readers & door strikes"])
+  end
+
+  op -->|"sign in once"| idsan
+  op -->|"one console for the whole fleet"| selia
+  selia -.->|"SSO: authorization code + token exchange"| idsan
+  selia <==>|"node-dialed mTLS control channel"| mata
+  selia <==>|"node-dialed mTLS control channel"| iot
+  selia <==>|"node-dialed mTLS control channel"| pintu
+  mata --- cams
+  iot --- sens
+  pintu --- rdrs
+```
+
+Three properties are worth reading off that picture:
+
+1. **Every edge appliance is standalone.** `mymatasan`, `myiotsan` and `mypintusan` each run, decide and record on their own — a badge is granted, a rule fires, footage is written even with the control plane unreachable. Adoption adds oversight, never a dependency.
+2. **Nodes dial out, the control plane never dials in.** The mTLS management channel is opened *by* the node, so an edge site needs no inbound port, no port-forward and no cloud broker; the browser never connects to a node directly, it reaches node pages relayed through `myseliasan`.
+3. **Correlation is the reason the control plane exists.** No single appliance can express *motion on a camera AND a door opening AND no badge accepted, in the same window at the same site* — only `myseliasan`, which sees all three event streams, can.
+
+### Request flow inside one app
 
 High-level flow:
 
@@ -93,17 +170,26 @@ Relevant top-level layout:
 
 ```text
 .
-|- apps/mymatasan/         # Camera, WebRTC stream, and video intelligence app
-|- apps/myidsan/           # Identity, user management, and RBAC administration app
-|- apps/myiotsan/          # On-prem IoT device hub appliance (P0-P4, P6, P7 shipped; installable product)
+|- apps/mymatasan/         # Camera, WebRTC stream, and video intelligence app (edge node)
+|- apps/myiotsan/          # On-prem IoT device hub appliance (edge node; installable product)
+|- apps/mypintusan/        # Physical access control / OSDP door controller (edge node; no release pipeline yet)
+|- apps/myseliasan/        # Fleet control plane: adopts and manages all three edge node kinds
+|- apps/myidsan/           # Identity, user management, and RBAC administration app (SSO provider)
 |- domain/                 # Domain entities, enums, shared APIs/services
 |- infra/                  # Config, DB, auth login providers, camera adapters
+|- frontend/shared/        # Shared, build-step-free frontend module (@shared) used by every app's SPA
 |- deploy/linux/           # systemd templates
+|- packaging/              # Archive staging + Windows installer resources per app
 |- r450k/                  # Marketing site (React + Vite on Cloudflare Workers at r450k.com); auto-deployed by .github/workflows/deploy-r450k.yml, Download page reads the GitHub Releases API
 |- Dockerfile              # Production image build
 |- docker-compose.yml      # App + PostgreSQL compose stack
 |- go.mod
 ```
+
+Release pipelines exist for four of the five apps — `.goreleaser.yaml` (mymatasan) plus
+`.goreleaser.{myseliasan,myiotsan,myidsan}.yaml`, each with its own
+`.github/workflows/release-*.yml`. `mypintusan` has none yet, so it is not downloadable and is
+absent from `infra/versioning/version.json` and from the marketing site's Downloads section.
 
 ## Requirements
 
@@ -125,6 +211,9 @@ Base config files:
 - `apps/myidsan/config.dev.json`
 - `apps/myiotsan/config.json`
 - `apps/myiotsan/config.dev.json`
+- `apps/myseliasan/config.json`
+- `apps/myseliasan/config.dev.json`
+- `apps/mypintusan/config.json` (no `config.dev.json`; its `access`/`bus` settings are a first-boot seed only — an operator edits them afterwards through `GET`/`PUT /api/settings/access`)
 
 Environment selection:
 
@@ -326,7 +415,7 @@ Rate limiting is controlled by `rateLimit` in config:
 - `enabled`: enables sliding-window limits for `/api` routes.
 - `endpointCacheTtlSeconds`: caches endpoint access-tier metadata.
 - `defaultWindowSeconds`: fallback window for tier configs.
-- `trustedProxies`: IPs/CIDRs of reverse proxies allowed to supply the client's real address via `X-Forwarded-For`/`X-Real-IP`. Empty (default) trusts none — the direct TCP peer is used, so a directly-exposed instance can't have its rate-limit bucket (or the shared login-lockout keying) spoofed by a forged header. Set this to your proxy's address(es) when deploying behind a reverse proxy. See `deploy/reverse-proxy/` for sample nginx/Caddy configs and the full `X-Forwarded-*` trust model (written for MyIDSan, but the rules apply to any of the four apps).
+- `trustedProxies`: IPs/CIDRs of reverse proxies allowed to supply the client's real address via `X-Forwarded-For`/`X-Real-IP`. Empty (default) trusts none — the direct TCP peer is used, so a directly-exposed instance can't have its rate-limit bucket (or the shared login-lockout keying) spoofed by a forged header. Set this to your proxy's address(es) when deploying behind a reverse proxy. See `deploy/reverse-proxy/` for sample nginx/Caddy configs and the full `X-Forwarded-*` trust model (written for MyIDSan, but the rules apply to any app in the suite).
 - `devOnly`, `authOnly`, `public`: per-tier `enabled`, `requests`, and `windowSeconds`.
 - Redis cache is recommended for production multi-instance deployments so counters are shared.
 
@@ -460,7 +549,7 @@ docker run --rm -p 3000:3000 \
   kopiv2:latest
 ```
 
-For a prebuilt multi-arch release image with no local Go toolchain (`ghcr.io/mysayasan/mymatasan`) or `.deb`/`.rpm`/archive installers, see [`deploy/README.md`](deploy/README.md) — these are built by GoReleaser (`.goreleaser.yaml`) from `apps/mymatasan` and split a read-only app home directory from a writable data directory (`MYMATASAN_HOME`/`MYMATASAN_DATA`). `myiotsan` has its own equivalent release pipeline (`.goreleaser.myiotsan.yaml`, `ghcr.io/mysayasan/myiotsan`, `.deb`/`.rpm`/archives/Windows installer) — see [`deploy/README-myiotsan.md`](deploy/README-myiotsan.md). `myidsan` has the same again (`.goreleaser.myidsan.yaml`, `ghcr.io/mysayasan/myidsan`) — see [`deploy/README-myidsan.md`](deploy/README-myidsan.md). Their releases publish under their own `myiotsan-v<ver>`/`myidsan-v<ver>` tag namespaces with `--latest=false` so they never become GitHub's "latest" release and starve mymatasan's in-app updater, which reads `releases/latest`.
+For a prebuilt multi-arch release image with no local Go toolchain (`ghcr.io/mysayasan/mymatasan`) or `.deb`/`.rpm`/archive installers, see [`deploy/README.md`](deploy/README.md) — these are built by GoReleaser (`.goreleaser.yaml`) from `apps/mymatasan` and split a read-only app home directory from a writable data directory (`MYMATASAN_HOME`/`MYMATASAN_DATA`). `myiotsan` has its own equivalent release pipeline (`.goreleaser.myiotsan.yaml`, `ghcr.io/mysayasan/myiotsan`, `.deb`/`.rpm`/archives/Windows installer) — see [`deploy/README-myiotsan.md`](deploy/README-myiotsan.md). `myidsan` has the same again (`.goreleaser.myidsan.yaml`, `ghcr.io/mysayasan/myidsan`) — see [`deploy/README-myidsan.md`](deploy/README-myidsan.md) — and so does `myseliasan` (`.goreleaser.myseliasan.yaml`, `ghcr.io/mysayasan/myseliasan`), see [`deploy/README-myseliasan.md`](deploy/README-myseliasan.md). Their releases publish under their own `myseliasan-v<ver>`/`myiotsan-v<ver>`/`myidsan-v<ver>` tag namespaces with `--latest=false` so they never become GitHub's "latest" release and starve mymatasan's in-app updater, which reads `releases/latest`. **`mypintusan` has no release pipeline yet** — there is no `.goreleaser.mypintusan.yaml` and no `release-mypintusan.yml`, so it is built and run from source only.
 
 ## Run with Docker Compose
 
@@ -519,10 +608,14 @@ Runtime versioning uses standard SemVer with separate core and app versions:
 
 - `core.version` tracks shared framework/runtime code (`infra`, `domain`, shared APIs/services).
 - `apps.<name>.version` tracks one app module, such as `mymatasan`.
-- `myidsan` is included as its own app version entry.
-- `myiotsan` is included as its own app version entry (`0.1.0` as of its P0 scaffolding); a
-  pending changelog entry scoped `"myiotsan"` fails validation until its manifest entry
-  exists.
+- `myidsan`, `myseliasan`, and `myiotsan` each have their own app version entry alongside `mymatasan`.
+- A pending changelog entry scoped to an app name fails validation until that app has a manifest
+  entry. **`mypintusan` has no entry yet**, so a change touching it must currently be scoped to
+  `core` (or to another app) — add `apps.mypintusan` to `infra/versioning/version.json` before
+  scoping anything to it.
+- Scope choice decides whether a release happens at all: a change scoped `"core"` bumps only the
+  core version and produces **no app tag and therefore no release**. Shipping new downloads for the
+  marketing site requires bumping the relevant *app*, not just core.
 
 The public endpoint only returns the running app version and the shared core version:
 
