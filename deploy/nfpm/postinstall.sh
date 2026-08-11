@@ -42,6 +42,10 @@ First-run admin login (fresh install only):
   - View the log:  journalctl -u mymatasan --no-pager | grep -A6 'MyMataSan is ready'
   - You will be asked to set your own password on first sign-in.
 
+To uninstall later:  mymatasan-uninstall
+  Your recordings, database and settings under /opt/mymatasan are KEPT by default.
+  Add --purge-data to erase them too (a clean wipe; add -y for unattended).
+
 EOF
 
 exit 0

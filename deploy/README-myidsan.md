@@ -310,3 +310,47 @@ confirm afterwards that a restore actually happened and who ran it.
 - **Portable archive** — stop the service, replace the binary and `static/`, restart.
   Keep your `config.json`, `data/`, `certs/` and `secret/`.
 - **Docker** — pull the new tag; keep the `/data` volume.
+
+## Uninstalling — keep your data, or wipe it
+
+Removing MyIDSan **keeps `/opt/myidsan` by default** on every path. That is deliberate:
+every relying app in the suite authenticates against this database, so erasing it means
+re-registering every app and locking users out of all of them. You have to ask for the
+clean wipe.
+
+**Linux (deb/rpm).**
+
+```sh
+sudo myidsan-uninstall                # remove the package, KEEP /opt/myidsan
+sudo myidsan-uninstall --purge-data   # remove it and ERASE /opt/myidsan
+sudo myidsan-uninstall --purge-data -y   # same, unattended (no prompt)
+sudo myidsan-uninstall --purge-data -n   # dry run: print, change nothing
+```
+
+`myidsan-uninstall` is installed to `/usr/sbin` by the package. It calls `apt`/`dnf`
+for you, so you never need to remember which. Interactively, `--purge-data` makes you
+type `ERASE` before it does anything.
+
+If you'd rather drive the package manager yourself, the same wipe is one variable:
+
+```sh
+sudo KOPIV2_PURGE_DATA=1 apt-get purge myidsan     # or: dnf remove
+sudo apt-get purge myidsan                         # without it, data is kept
+```
+
+Take a `.idbackup` first (see *Backup and disaster recovery*) if there is any chance you
+will want this IdP back.
+
+**Windows.** Uninstall from Add/Remove Programs (or the Start Menu) and answer the
+prompt — it asks whether to also delete `C:\ProgramData\MyIDSan`, defaulting to **No**.
+For a scripted uninstall:
+
+```bat
+set KOPIV2_PURGE_DATA=1 & "C:\Program Files\MyIDSan\unins000.exe" /VERYSILENT
+"C:\Program Files\MyIDSan\unins000.exe" /VERYSILENT /CLEANDATA
+"C:\Program Files\MyIDSan\unins000.exe" /VERYSILENT /KEEPDATA
+```
+
+A silent uninstall with no instruction keeps the data, and `KEEPDATA` beats `CLEANDATA`
+if both are given — an unattended run should never take down every app's login by
+accident.
