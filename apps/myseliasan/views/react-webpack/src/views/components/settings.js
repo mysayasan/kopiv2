@@ -1,5 +1,9 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { FactoryResetSection, Ico, useT, Tabs } from '@shared';
+import { FactoryResetSection, DeploymentPanel, Ico, useT, Tabs } from '@shared';
+// The operator checklist and caveats are myseliasan-specific facts (its ports, its
+// uploads directory, which of its features are not yet cluster-safe), so they are
+// defined once beside the wizard step and reused here rather than duplicated.
+import { deploymentOperatorSteps, deploymentCaveats } from './setup';
 import { api, apiBase } from '../lib/helpers';
 import '../styles/settings.css';
 
@@ -942,6 +946,23 @@ function SystemTab({ t, onRestart, restarting, onToast }) {
             <Ico n={restarting ? 'reload' : 'refresh'} sz={15} />
             <span>{restarting ? t('settings.restarting') : t('settings.restartNow')}</span>
           </button>
+        </section>
+
+        {/* Deployment shape + cluster-readiness checklist. Reachable here as well as in
+            the first-run wizard, because the answer changes long after setup — an install
+            grows into a second instance — and because the checklist is the only place the
+            at-rest key fingerprint is shown, which an operator compares between machines. */}
+        <section className="settings-section">
+          <h3>{t('settings.deploymentTitle')}</h3>
+          <p className="settings-hint">{t('settings.deploymentHint')}</p>
+          <DeploymentPanel
+            api={api}
+            appLabel="MySeliaSan"
+            operatorSteps={deploymentOperatorSteps(t)}
+            caveats={deploymentCaveats(t)}
+            labels={{ llmMode: 'setup.deployCheckLlm' }}
+            onToast={onToast}
+          />
         </section>
 
         {/* Factory reset. Renders nothing unless bootstrap.allowReset is on, which

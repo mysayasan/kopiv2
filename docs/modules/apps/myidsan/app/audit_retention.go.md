@@ -22,7 +22,15 @@ Wires the audit-log retention purge (`services/audit_retention.go.md`) into the 
   - Registers `deps.Scheduler.StartPeriodic("myidsan-audit-retention",
     cfg.FrequencyHours*time.Hour, ...)`. The scheduler fires the first tick after one
     interval, not at boot, so a restart loop cannot turn into a purge loop.
-  - The task callback calls `auditService.PurgeOlderThan(taskCtx, cfg.MaxRetentionDays,
+  - **Leader-gated (deployment mode / Phase 1 multi-instance safety):** the task callback checks
+    `deps.Leader.IsLeader()` FIRST, per tick (not once at registration, so a change of leadership
+    takes effect without restarting any instance) and returns `nil` when not the leader. This one
+    both DELETES rows and writes the archive of what it deleted to a LOCAL directory, so several
+    instances running it concurrently would race on the delete and each write its own partial
+    archive to its own disk — leaving the security trail split across hosts with gaps in each
+    copy, discovered only when somebody needed it for an investigation. Standalone (the default
+    per-process lock provider), this instance always holds the lease, so nothing changes.
+  - The task callback then calls `auditService.PurgeOlderThan(taskCtx, cfg.MaxRetentionDays,
     archiveDir)`; a returned error is propagated to the scheduler (logged, retried next tick)
     rather than escalated — a retention failure must never take the identity server down.
     A run that actually deleted rows (`res.Deleted > 0`) logs a one-line summary
@@ -42,6 +50,11 @@ Wires the audit-log retention purge (`services/audit_retention.go.md`) into the 
     that a revocation shows up on a dashboard while an operator is still looking at it,
     rare enough that it costs one trivial `COUNT` per minute rather than being a load
     source of its own.
+  - **Deliberately NOT leader-gated**, unlike the retention purge above (deployment mode / Phase 1
+    multi-instance safety): this task only READS and publishes a number, and every instance is
+    its own Prometheus scrape target, so gating it would leave a follower's series stale or absent
+    and make a dashboard read as though that instance had no sessions. Exclusivity matters for
+    work that CHANGES something, not for observing it.
 
 ## Notes
 

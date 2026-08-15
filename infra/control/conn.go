@@ -75,6 +75,12 @@ func (c *Conn) RemoteAddr() string {
 }
 
 // Close tears down the underlying socket.
+// Close is safe on a nil or zero-valued Conn. Teardown paths close whatever they were
+// handed, often in a defer and often more than once, and a Close that panics on an
+// unstarted connection turns an ordinary cleanup into a lost goroutine.
 func (c *Conn) Close() error {
+	if c == nil || c.ws == nil {
+		return nil
+	}
 	return c.ws.Close()
 }

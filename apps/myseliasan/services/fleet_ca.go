@@ -16,11 +16,11 @@ import (
 )
 
 const (
-	caCertKey      = "pairing.caCert"
-	caKeyKey       = "pairing.caKey"
-	parentCertKey  = "pairing.parentCert"
-	parentKeyKey   = "pairing.parentKey"
-	revokedKey     = "pairing.revoked"
+	caCertKey     = "pairing.caCert"
+	caKeyKey      = "pairing.caKey"
+	parentCertKey = "pairing.parentCert"
+	parentKeyKey  = "pairing.parentKey"
+	revokedKey    = "pairing.revoked"
 	caValidFor    = 10 * 365 * 24 * time.Hour
 	parentCertTTL = 90 * 24 * time.Hour
 	parentRenewAt = 7 * 24 * time.Hour
@@ -147,15 +147,35 @@ func (f *fleetCA) ParentServerTLS(ctx context.Context) (*tls.Config, error) {
 func (f *fleetCA) parentCert(ctx context.Context, ca *fleetca.CA) (certPEM, keyPEM []byte, err error) {
 	cert, _ := f.read(ctx, parentCertKey)
 	key, _ := f.readSecret(ctx, parentKeyKey)
+	// The stored pair is VALIDATED, not just checked for presence.
+	//
+	// The certificate and the private key live in two separate rows, so two instances
+	// issuing at the same moment can interleave their writes and leave one instance's
+	// certificate beside the other's key. Nothing detects that at write time, and the
+	// result is stored forever: on every later boot both rows are non-empty and not near
+	// expiry, so this returned them unexamined and the fleet's mTLS listener failed to
+	// start with "private key does not match public key" — every node dark, permanently,
+	// until somebody cleared the rows by hand.
+	//
+	// Re-issuing on a mismatch makes that self-healing: the pair is checked, and a broken
+	// one is replaced rather than served. Both certificates were signed by the same CA, so
+	// whichever pair wins is equally valid to every node.
 	if cert != "" && key != "" && !certNearExpiry([]byte(cert), parentRenewAt) {
-		return []byte(cert), []byte(key), nil
+		if _, perr := tls.X509KeyPair([]byte(cert), []byte(key)); perr == nil {
+			return []byte(cert), []byte(key), nil
+		}
+		// Fall through and re-issue.
 	}
 	c, k, err := ca.IssueLeaf(f.parentID, parentCertTTL, nil)
 	if err != nil {
 		return nil, nil, err
 	}
-	_ = f.write(ctx, parentCertKey, string(c))
+	// Key first, then certificate. A reader that arrives mid-write then sees either the
+	// old pair (still matching) or a key with no certificate yet — never a certificate
+	// that appears current beside a key that does not belong to it, which is the state
+	// that used to persist.
 	_ = f.writeSecret(ctx, parentKeyKey, string(k))
+	_ = f.write(ctx, parentCertKey, string(c))
 	return c, k, nil
 }
 

@@ -12,4 +12,5 @@ export { LangProvider, useT, LANGUAGES, normalizeLang } from './i18n';
 export { LanguageDropdown } from './LanguageDropdown';
 export { AppFooter } from './AppFooter';
 export { FactoryResetSection, FactoryResetDialog, FactoryResetOverlay } from './FactoryReset';
+export { DeploymentPanel } from './Deployment';
 export { ManualProvider, ManualLibrary, ManualDrawer, HelpButton, useManual, renderManualMarkdown } from './Manual';

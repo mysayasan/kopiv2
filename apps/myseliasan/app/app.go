@@ -28,8 +28,10 @@ import (
 	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/config"
 	"github.com/mysayasan/kopiv2/infra/control"
+	"github.com/mysayasan/kopiv2/infra/coordination"
 	"github.com/mysayasan/kopiv2/infra/db/bootstrap"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	"github.com/mysayasan/kopiv2/infra/eventbus"
 	"github.com/mysayasan/kopiv2/infra/mediarelay"
 	"github.com/mysayasan/kopiv2/infra/safego"
 	"github.com/mysayasan/kopiv2/infra/stream"
@@ -92,6 +94,47 @@ func periodic(ctx context.Context, name string, interval time.Duration, fn func(
 			}
 		}
 	})
+}
+
+// leaderOnly wraps a task so it runs only on the instance holding the background-work
+// lease.
+//
+// Everything it is applied to below is work that must happen once for the DEPLOYMENT,
+// not once per process: retention purges, the notification rollup, the daily digest,
+// heartbeat reconciliation. Standalone, the single instance always holds the lease, so
+// wrapping changes nothing — which is the point, because the guard has to be safe
+// enough to apply everywhere without a second behaviour to reason about.
+//
+// The check is INSIDE the task rather than around its registration: leadership moves
+// while the process runs, and a loop that decided at startup would either never start
+// working when it is promoted, or never stop when it is demoted.
+func leaderOnly(leader *coordination.Leader, fn func(context.Context)) func(context.Context) {
+	return func(ctx context.Context) {
+		if !leader.IsLeader() {
+			return
+		}
+		fn(ctx)
+	}
+}
+
+// leaderTicker runs fn on an interval, but only while this instance holds the lease.
+// The ticker keeps running for followers so a promoted instance picks the work up
+// without a restart.
+func leaderTicker(ctx context.Context, leader *coordination.Leader, interval time.Duration, fn func(context.Context)) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if leader.IsLeader() {
+					fn(ctx)
+				}
+			}
+		}
+	}()
 }
 
 // purgeInterval turns the configured purge cadence (hours) into a duration,
@@ -425,7 +468,7 @@ WHERE id NOT IN (
 }
 
 // ensureFloor3DColumns adds the 3D layout columns to floor_plan if absent and backfills NULLs
-// (grid to '', the float columns to 0 — the entity's non-pointer fields cannot scan a NULL left
+// (grid to ”, the float columns to 0 — the entity's non-pointer fields cannot scan a NULL left
 // by a defaultless ADD COLUMN). Mirrors ensureFloorDesignColumn + ensurePlacementFovColumns.
 // Idempotent.
 func ensureFloor3DColumns(ctx context.Context, tx *sql.Tx, engine string) error {
@@ -894,15 +937,21 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// Fold the feed into hourly rollups (the heatmap/baseline substrate). The first
 	// sweep backfills every historical row past the persisted cursor, so fleets that
 	// upgraded onto this build get their history scored, not just new events.
+	// Leader-gated: the sweep is a read-cursor → page → increment → write-cursor cycle
+	// with no locking, so two instances sweeping the same database fold the same page
+	// twice and every bucket is quietly overcounted. These buckets ARE the heatmap, the
+	// baselines and the anomaly detection, so the corruption would only surface as
+	// numbers somebody eventually stopped trusting.
 	rollupMaintainer := notification.NewRollupMaintainer(notificationRepo, rollupRepo,
-		services.NewRollupCursor(runtimeSettingRepo), 0, 0)
+		services.NewRollupCursor(runtimeSettingRepo), 0, 0).
+		WithGate(deps.Leader.IsLeader)
 	rollupMaintainer.Start(bgCtx)
 
 	// Retention purge for the feed. Without it the control plane's notifications table
 	// grows unbounded (every node event lands here forever). Retention is config-driven
 	// (notification.retentionDays; 0 keeps everything) and the loop is supervised — a
 	// dead purge loop is invisible until the disk fills.
-	periodic(bgCtx, "myseliasan.purge.notifications", purgeInterval(deps.Config.Notification.PurgeIntervalHours), func(ctx context.Context) {
+	periodic(bgCtx, "myseliasan.purge.notifications", purgeInterval(deps.Config.Notification.PurgeIntervalHours), leaderOnly(deps.Leader, func(ctx context.Context) {
 		days := deps.Config.Notification.RetentionDays
 		if days <= 0 {
 			return
@@ -913,7 +962,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 			deps.Metrics.Add(services.MetricNotificationsPurgedTotal, nil, float64(deleted))
 			deps.Logger.Infof("myseliasan.notification", "purged %d expired notifications", deleted)
 		}
-	})
+	}))
 
 	// On-demand printable PDF reports (fleet health, site/asset inventory, security &
 	// access, incident detail). Rendered pure-Go (domain/report) so generation needs no
@@ -1016,6 +1065,33 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	setupStateService := sharedservices.NewSetupStateService(runtimeSettingRepo)
 	apis.NewSetupApi(api, *deps.Auth, controlSession, setupStateService)
 
+	// Deployment mode + cluster-readiness checklist. myseliasan is one of the two apps
+	// in the suite that can genuinely run behind a load balancer (it is stateless over
+	// its database); the checklist reports what this instance still needs, including the
+	// parts only an operator can do. The env is rebuilt per request rather than captured
+	// so the settings editor changing cache.provider is reflected without a restart.
+	deploymentModeService := sharedservices.NewDeploymentModeService(runtimeSettingRepo)
+	apis.NewDeploymentApi(api, *deps.Auth, controlSession, deploymentModeService,
+		func() sharedservices.DeploymentEnv {
+			return sharedservices.DeploymentEnv{
+				DbEngine:           deps.Config.Db.Engine,
+				CacheProvider:      deps.Config.Cache.Provider,
+				LockProvider:       deps.Config.Transaction.LockProvider,
+				JwtSecret:          deps.Config.Jwt.Secret,
+				JwtSecretGenerated: deps.JwtSecretGenerated,
+				MaxOpenConns:       deps.Config.Db.Pool.MaxOpenConns,
+				// The fleet CA key and PSK are sealed with this key. Two instances holding
+				// different ones look healthy until one reads the other's rows, at which
+				// point the fleet's trust is simply gone — so the fingerprint is surfaced
+				// for an operator to compare between instances.
+				AtRestEnabled:     secretKeyStore.Enabled(),
+				AtRestFingerprint: secretKeyStore.Fingerprint(),
+				CachePing:         sharedservices.PingFunc(deps.Cache),
+				LockPing:          sharedservices.PingFunc(deps.Locker),
+				ExtraChecks:       llmSidecarDeploymentCheck(deps),
+			}
+		})
+
 	// Control channel server: a dedicated fleet-mTLS listener accepting the
 	// persistent, node-dialed bi-directional channel. Connection presence bumps a
 	// node online (stronger liveness than the heartbeat poll, which still runs as a
@@ -1065,25 +1141,92 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	}
 	apis.NewFleetRulesApi(api, *deps.Auth, controlSession, correlator)
 
+	// observeIfLeader feeds the correlator only on the instance that will actually fire.
+	//
+	// Arming and firing have to live on the SAME instance. Observing everywhere while
+	// sweeping only on the leader looked harmless — every instance would keep warm state —
+	// but the sweep is also what CLEARS an armed rule once its grace window passes. A
+	// follower therefore accumulated armed rules that were never swept, and the moment it
+	// was promoted it fired a backlog of correlations whose evidence was long gone.
+	//
+	// A promoted instance now starts with an empty armed set and rebuilds it from live
+	// events, so the worst case is a correlation spanning the exact moment of a leadership
+	// change being missed — far better than a burst of stale alerts.
+	observeIfLeader := func(nodeID, kind string, body []byte) {
+		if !deps.Leader.IsLeader() {
+			return
+		}
+		observeForCorrelation(context.Background(), correlator, nodeID, kind, body)
+	}
+
 	// The sweep is what makes an ABSENCE decidable: nothing arrives to tell you the badge was
 	// never swiped, so the passage of time has to.
-	go func() {
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-bgCtx.Done():
-				return
-			case <-ticker.C:
-				correlator.Sweep(bgCtx)
-			}
-		}
-	}()
+	//
+	// Leader-gated so an armed rule fires ONCE rather than once per instance — a fleet rule
+	// firing raises an alert and can actuate, so duplicates are not cosmetic.
+	//
+	// KNOWN GAP, not fixed by this guard: each instance only ever sees events from the nodes
+	// whose control channels terminate on it, and the armed set is in process memory. A rule
+	// whose clauses span nodes attached to DIFFERENT instances therefore never arms at all —
+	// it goes quiet rather than firing twice, which is the more dangerous direction. Closing
+	// it needs every ingested node event on a shared bus (Phase 3); until then a multi-instance
+	// deployment should be treated as unable to correlate across instance boundaries.
+	leaderTicker(bgCtx, deps.Leader, time.Second, func(ctx context.Context) {
+		correlator.Sweep(ctx)
+	})
 
 	// Dedup ledger for node-relayed notifications: keys each ingested node event by the node's
 	// stable engine id so the reconnect replay (below) never re-publishes one already delivered
 	// live or by an earlier replay.
 	relayDedup := services.NewRelayDedup(deps.Db)
+
+	// Cross-instance event fan-out. A node's events reach only the instance holding its
+	// control channel; every other instance is serving browsers (whose bell would never
+	// move) and running the same fleet rules (which would never see the other half of a
+	// condition). The bus carries each event to all of them. With the in-process provider —
+	// the single-instance default — publisher and subscriber are the same process, so this
+	// wiring runs unchanged and costs nothing.
+	nodeEventBus, busProvider, busErr := eventbus.New(eventbus.Config{
+		Provider:       deps.Config.Cluster.EventBusProvider(deps.Config.Cache.Provider),
+		KeyPrefix:      deps.Config.Cache.KeyPrefix,
+		AppName:        m.Name(),
+		RedisAddress:   deps.Config.Cache.Redis.Address,
+		RedisPassword:  deps.Config.Cache.Redis.Password,
+		RedisDB:        deps.Config.Cache.Redis.DB,
+		RedisUseTLS:    deps.Config.Cache.Redis.UseTLS,
+		ConnectTimeout: time.Duration(deps.Config.Cache.Redis.ConnectTimeoutMs) * time.Millisecond,
+		CommandTimeout: time.Duration(deps.Config.Cache.Redis.OperationTimeoutMs) * time.Millisecond,
+	})
+	if busErr != nil {
+		stopBackground()
+		return nil, fmt.Errorf("event bus: %w", busErr)
+	}
+	if nodeEventBus.Distributed() {
+		if err := nodeEventBus.Ping(context.Background()); err != nil {
+			stopBackground()
+			return nil, fmt.Errorf("event bus provider %s not reachable: %w", busProvider, err)
+		}
+		deps.Logger.Infof("myseliasan.cluster", "node-event bus provider=%s — the live feed and fleet rules span every instance", busProvider)
+	}
+
+	// instanceID marks who published an event, so an instance can ignore the echo of its
+	// own message. Without it every event would be handled twice at its origin: once
+	// locally and once off the bus.
+	instanceID := services.NewInstanceID(deps.Config.Cluster.AdvertiseURL)
+
+	busLog := func(f string, a ...any) { deps.Logger.Warnf("myseliasan.cluster", f, a...) }
+
+	// Every notification this instance publishes — a node's, a node-lost alert the heartbeat
+	// raised, an anomaly, the morning digest — is relayed to the other instances' live feeds.
+	// Registered as a hub channel because the hub already invokes every channel on every
+	// publish, which is exactly the set that should be relayed.
+	notificationService.Register(services.NewNotificationRelayChannel(nodeEventBus, instanceID, busLog))
+	services.SubscribeNotifications(bgCtx, nodeEventBus, instanceID,
+		func(n notification.Notification) {
+			// Stream only, never persist: the origin already wrote the row, and writing it
+			// again would duplicate the feed and double-count the rollups.
+			notificationService.RelayToStream(context.Background(), n)
+		}, busLog)
 
 	onNodeEvent := func(nodeID, kind string, body []byte) {
 		ingestNodeEvent(notificationService, relayDedup, nodeID, kind, body)
@@ -1091,41 +1234,92 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		// than the control plane's own re-published notification: correlating on our own output
 		// would let a fleet rule's alert satisfy another fleet rule's clause, and two rules could
 		// then trigger each other forever.
-		observeForCorrelation(context.Background(), correlator, nodeID, kind, body)
+		observeIfLeader(nodeID, kind, body)
+		// And to the other instances' correlators, so a rule whose conditions span nodes
+		// attached to different instances can finally see them together. Notifications travel
+		// separately, on their own topic, via the relay channel registered above.
+		services.PublishNodeEvent(context.Background(), nodeEventBus, instanceID, nodeID, kind, body, busLog)
 	}
+
+	// The receiving half for correlation: raw events from OTHER instances.
+	services.SubscribeNodeEvents(bgCtx, nodeEventBus, instanceID,
+		func(ev services.NodeEventMessage) {
+			observeIfLeader(ev.NodeID, ev.Kind, ev.Body)
+		}, busLog)
+
+	// Rule edits land on whichever instance the operator's browser reached, while the LEADER
+	// is the instance that actually fires rules. Without this a new rule could sit unused,
+	// and a disabled one keep firing, until something restarted — with nothing wrong on the
+	// screen where the edit was made.
+	correlator.SetOnRulesChanged(func() {
+		services.PublishRulesChanged(context.Background(), nodeEventBus, instanceID, busLog)
+	})
+	services.SubscribeRulesChanged(bgCtx, nodeEventBus, instanceID, func() {
+		if err := correlator.Reload(context.Background()); err != nil {
+			deps.Logger.Warnf("myseliasan.cluster", "reloading fleet rules after another instance's edit failed: %v", err)
+		}
+	}, busLog)
 	controlServer := services.NewControlServer(registry, p.ControlPort, onNodeEvent,
 		func(format string, args ...any) { deps.Logger.Infof("myseliasan.control", format, args...) })
 	// Replay-on-reconnect: the live push (above) drops any notification a node publishes while
 	// its control channel is down, and nothing backfills it — so the control plane's feed could
 	// undercount a busy node. When a node (re)connects, pull the notifications it created within
 	// the replay window and ingest the ones we're missing (relayDedup makes this idempotent).
+	// Which instance holds each node's control channel. Backed by the shared cache, so with
+	// the single-instance default it is an in-process map (this instance owns everything it
+	// is connected to, and there is nobody to forward to) and behind a load balancer it is
+	// the deployment-wide answer every instance reads.
+	clusterCfg := deps.Config.Cluster
+	nodeOwners := services.NewNodeOwnerRegistry(deps.Cache, clusterCfg.AdvertiseURL,
+		time.Duration(clusterCfg.OwnershipTTLSeconds)*time.Second,
+		func(f string, a ...any) { deps.Logger.Warnf("myseliasan.cluster", f, a...) })
+	nodeOwners.StartRenewal(bgCtx)
+
+	// One client for every instance-to-instance hop — node commands, recording playback and
+	// camera negotiation all present the same derived credential to the same peers.
+	var clusterPeer *services.PeerClient
+	if nodeOwners.Enabled() {
+		clusterPeer = services.NewPeerClient(deps.Config.Jwt.Secret,
+			time.Duration(clusterCfg.ForwardTimeoutSeconds)*time.Second, clusterCfg.InsecureSkipVerify)
+		deps.Logger.Infof("myseliasan.cluster", "instance-to-instance node forwarding enabled; this instance advertises %s", clusterCfg.AdvertiseURL)
+	}
+
 	controlServer.SetOnConnect(func(nodeID string) {
+		// Claimed before the replay: from this moment the node's commands can be served
+		// here, and the other instances need to know that as early as possible.
+		nodeOwners.Claim(context.Background(), nodeID)
 		replayNodeNotifications(controlServer, notificationService, relayDedup, nodeID,
 			func(f string, a ...any) { deps.Logger.Infof("myseliasan.notif-replay", f, a...) })
 	})
+	// Withdraw the claim as soon as the channel drops, so another instance can take the node
+	// over immediately instead of waiting out the ownership lease.
+	controlServer.SetOnDisconnect(func(nodeID string) {
+		nodeOwners.Release(context.Background(), nodeID)
+	})
 	// Keep the dedup ledger bounded: prune markers older than twice the replay window — a
-	// windowed pull can never re-offer them, so they are dead weight.
-	go func() {
-		ticker := time.NewTicker(time.Hour)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-bgCtx.Done():
-				return
-			case <-ticker.C:
-				cutoff := time.Now().Add(-2 * notifReplayWindow).Unix()
-				if _, err := relayDedup.Prune(bgCtx, cutoff); err != nil {
-					deps.Logger.Warnf("myseliasan.notif-replay", "prune dedup ledger: %v", err)
-				}
-			}
+	// windowed pull can never re-offer them, so they are dead weight. Leader-gated: it is a
+	// whole-table cleanup, and N instances deleting the same rows only multiplies the work.
+	leaderTicker(bgCtx, deps.Leader, time.Hour, func(ctx context.Context) {
+		cutoff := time.Now().Add(-2 * notifReplayWindow).Unix()
+		if _, err := relayDedup.Prune(ctx, cutoff); err != nil {
+			deps.Logger.Warnf("myseliasan.notif-replay", "prune dedup ledger: %v", err)
 		}
-	}()
+	})
 	// The persistent node-dialed control channel is the authoritative liveness signal:
 	// a node holding a live connection is online even when the parent cannot reach its
 	// mTLS port directly. Wire its presence into the heartbeat reconciler so the mTLS
 	// poll becomes a fallback that can no longer flap a control-connected node offline.
 	m.controlServer = controlServer
-	registry.SetControlPresence(controlServer.IsConnected)
+	// Presence is asked of the OWNER REGISTRY, not of this instance's connection map.
+	//
+	// That is the whole point of the registry. Asking locally means the heartbeat sees only
+	// its own nodes, falls back to the mTLS probe for everyone else, and — where that probe
+	// cannot reach them — marks perfectly healthy nodes attached to another instance "lost"
+	// and raises an operator alert for each one. Standalone the two answers are identical,
+	// because everything this instance is connected to is everything there is.
+	registry.SetControlPresence(func(nodeID string) bool {
+		return nodeOwners.ConnectedAnywhere(context.Background(), nodeID)
+	})
 	// Surface nodes the control channel refuses (stranded: valid cert, no record) so an
 	// operator can see and block them. Wired now that the control server exists.
 	nodesApi.SetRejectTracker(controlServer)
@@ -1160,18 +1354,23 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// control-channel presence first, then the mTLS poll as a fallback — converging the
 	// registry after self-drops and bounded by a grace window so brief reconnects don't
 	// show offline.
-	go func() {
-		ticker := time.NewTicker(hbInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-bgCtx.Done():
-				return
-			case <-ticker.C:
-				registry.Heartbeat(bgCtx)
-			}
-		}
-	}()
+	//
+	// Leader-gated so there is a SINGLE writer of node status. Unguarded, every instance
+	// reconciles the same rows from its own partial view and they overwrite each other,
+	// so a node's status flaps and the lost/recovered transitions — which raise operator
+	// alerts — fire once per instance.
+	//
+	// KNOWN GAP, not fixed by this guard: control-channel presence is an in-process map,
+	// so the leader sees only the nodes whose channels terminate on ITSELF. Nodes attached
+	// to another instance fall through to the mTLS probe, and where that cannot reach them
+	// (NAT, firewall) the leader will eventually mark a healthy node "lost" and alert on it.
+	// The guard makes that deterministic rather than flapping; it does not make it correct.
+	// Correctness needs the node-owner registry (Phase 2), which turns presence into a
+	// deployment-wide lookup. Until then, treat a multi-instance fleet's liveness as
+	// reliable only for nodes attached to the leader.
+	leaderTicker(bgCtx, deps.Leader, hbInterval, func(ctx context.Context) {
+		registry.Heartbeat(ctx)
+	})
 
 	// Fleet AI agent, part 2: the chat service (needs the control server's
 	// connectivity oracle) and the /api/agent surface. The LLM runtime and digest
@@ -1211,9 +1410,10 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		})
 	services.RunDigestSchedule(bgCtx, digestService, runtimeSettingRepo,
 		func() config.AgentConfigModel { return deps.Config.Agent },
+		deps.Leader.IsLeader,
 		func(f string, a ...any) { deps.Logger.Infof("myseliasan.agent", f, a...) })
 	// Stored-digest retention, daily.
-	periodic(bgCtx, "myseliasan.purge.digests", 24*time.Hour, func(ctx context.Context) {
+	periodic(bgCtx, "myseliasan.purge.digests", 24*time.Hour, leaderOnly(deps.Leader, func(ctx context.Context) {
 		days := deps.Config.Agent.Digest.RetentionDays
 		if days == 0 {
 			days = 180
@@ -1223,7 +1423,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		} else if deleted > 0 {
 			deps.Logger.Infof("myseliasan.agent", "purged %d expired digests", deleted)
 		}
-	})
+	}))
 
 	// Per-node access: a role gets full access to nodes it adopted (owner role) and
 	// whatever explicit grants it has elsewhere. Drives the tunnel's viewer/admin
@@ -1272,8 +1472,42 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 			deps.Logger.Warnf("myseliasan.media", "media server stopped: %v", rerr)
 		}
 	}()
+	// Which instance holds each node's MEDIA channel. Tracked separately from the control
+	// channel: a node opens both, and nothing guarantees they land on the same instance.
+	mediaOwners := services.NewMediaOwnerRegistry(deps.Cache, clusterCfg.AdvertiseURL,
+		time.Duration(clusterCfg.OwnershipTTLSeconds)*time.Second,
+		func(f string, a ...any) { deps.Logger.Warnf("myseliasan.cluster", f, a...) })
+	mediaOwners.StartRenewal(bgCtx)
+	mediaHub.SetOwnershipHooks(
+		func(nodeID string) { mediaOwners.Claim(context.Background(), nodeID) },
+		func(nodeID string) { mediaOwners.Release(context.Background(), nodeID) },
+	)
+
+	// Forward a browser's WebRTC offer to the instance holding the node's media channel.
+	// Only the NEGOTIATION crosses instances — the answer carries the owning instance's own
+	// ICE candidates, so the browser then peers with it directly and the video never
+	// traverses the load balancer or a second instance. Nil when clustering is off.
+	var mediaForward func(context.Context, services.MediaOfferRequest) (services.MediaOfferReply, error)
+	if mediaOwners.Enabled() && clusterPeer != nil {
+		mediaForward = func(ctx context.Context, req services.MediaOfferRequest) (services.MediaOfferReply, error) {
+			owner, isLocal := mediaOwners.OwnerOf(ctx, req.NodeID)
+			if owner == "" || isLocal {
+				return services.MediaOfferReply{}, services.ErrMediaNotConnected
+			}
+			deps.Logger.Infof("myseliasan.cluster", "forwarding camera offer for node %s to %s", req.NodeID, owner)
+			return clusterPeer.ForwardMediaOffer(ctx, owner, req)
+		}
+	}
+
 	// Registered before the proxy catch-all so the specific media-offer path wins.
-	apis.NewNodeMediaApi(api, *deps.Auth, mediaHub, accessService, mediaEngine, mediaICE, controlSession)
+	mediaApi := apis.NewNodeMediaApi(api, *deps.Auth, mediaHub, accessService, mediaEngine, mediaICE, controlSession, mediaForward)
+	if mediaOwners.Enabled() {
+		// The receiving half: answer offers other instances forward here, using this
+		// instance's own media connection and WebRTC engine.
+		api.Handle(services.PeerMediaOfferPath,
+			services.NewPeerMediaOfferHandler(deps.Config.Jwt.Secret, mediaApi.AnswerLocalOffer,
+				func(f string, a ...any) { deps.Logger.Warnf("myseliasan.cluster", f, a...) })).Methods("POST")
+	}
 
 	// Reverse command tunnel: /api/nodes/{id}/proxy/<node-path> forwards over the
 	// control channel to the node's own API, giving the commander the node's exact
@@ -1283,8 +1517,28 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// Range-capable recording playback over the tunnel (chunks each byte range under the
 	// control-channel message cap). Registered before the generic proxy so its specific
 	// /nodes/{id}/recording-stream/{segId} route wins.
-	apis.NewRecordingStreamApi(api, *deps.Auth, controlServer, accessService, controlSession)
-	apis.NewNodeProxyApi(api, *deps.Auth, controlServer, accessService, controlSession, auditService)
+	// Cluster-aware delivery. Both surfaces below already depend on the narrow
+	// ControlSender interface, so wrapping it once teaches them to reach a node attached to
+	// ANOTHER instance without either of them learning that instances exist. Standalone the
+	// wrapper is a pass-through: everything is owned locally or owned nowhere.
+	//
+	// Live camera video is handled separately (see the media-owner registry above), because
+	// the media channel is its own connection and only the NEGOTIATION is forwarded — the
+	// video itself goes browser-to-owning-instance directly.
+	nodeSender := services.ControlSender(controlServer)
+	if nodeOwners.Enabled() && clusterPeer != nil {
+		nodeSender = services.NewForwardingSender(controlServer, nodeOwners, clusterPeer,
+			func(f string, a ...any) { deps.Logger.Infof("myseliasan.cluster", f, a...) })
+		// The receiving half. Given the LOCAL sender on purpose — an instance named as the
+		// owner either holds the connection or the claim is stale, and forwarding onward
+		// from here would let a stale claim bounce a request between instances.
+		peerHandler := services.NewPeerForwardHandler(deps.Config.Jwt.Secret, controlServer,
+			func(f string, a ...any) { deps.Logger.Warnf("myseliasan.cluster", f, a...) })
+		api.Handle(services.PeerForwardPath, peerHandler).Methods("POST")
+	}
+
+	apis.NewRecordingStreamApi(api, *deps.Auth, nodeSender, accessService, controlSession)
+	apis.NewNodeProxyApi(api, *deps.Auth, nodeSender, accessService, controlSession, auditService)
 
 	return func(context.Context) error { stopBackground(); return nil }, nil
 }
@@ -1296,23 +1550,26 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 // disk-full, alert, system, …) is surfaced rather than dropped: the frame is parsed
 // as a notification when it carries one, otherwise wrapped in a generic message
 // tagged with the raw kind — so a node reporting trouble is never silently lost.
-func ingestNodeEvent(svc *notification.Service, dedup *services.RelayDedup, nodeID, kind string, body []byte) {
+// It returns the notification it published (if any) so a multi-instance deployment can
+// relay that exact row to the other instances' live feeds. A false second return means
+// nothing was published and nothing should be relayed.
+func ingestNodeEvent(svc *notification.Service, dedup *services.RelayDedup, nodeID, kind string, body []byte) (notification.Notification, bool) {
 	switch kind {
 	case "notification":
 		var n notification.Notification
 		if err := json.Unmarshal(body, &n); err != nil {
-			return
+			return notification.Notification{}, false
 		}
-		republishNodeNotification(svc, dedup, nodeID, n)
+		return republishNodeNotification(svc, dedup, nodeID, n)
 	case "going-offline":
-		svc.Publish(context.Background(), notification.Notification{
+		return svc.Publish(context.Background(), notification.Notification{
 			Category: notification.CategorySystem,
 			Severity: notification.Warning,
 			Title:    "Node going offline",
 			Body:     "Node " + nodeID + " reported it is going offline.",
 			Source:   "node:" + nodeID,
 			Data:     map[string]any{"nodeId": nodeID},
-		})
+		}), true
 	default:
 		// Unknown-but-present frame: prefer a structured notification payload, else
 		// wrap the raw body so the operator still sees that the node reported something.
@@ -1324,17 +1581,16 @@ func ingestNodeEvent(svc *notification.Service, dedup *services.RelayDedup, node
 			if n.Severity == "" {
 				n.Severity = severityForNodeKind(kind)
 			}
-			republishNodeNotification(svc, dedup, nodeID, n)
-			return
+			return republishNodeNotification(svc, dedup, nodeID, n)
 		}
-		svc.Publish(context.Background(), notification.Notification{
+		return svc.Publish(context.Background(), notification.Notification{
 			Category: categoryForNodeKind(kind),
 			Severity: severityForNodeKind(kind),
 			Title:    "Node " + kind + " event",
 			Body:     truncateBody(string(body), 500),
 			Source:   "node:" + nodeID,
 			Data:     map[string]any{"nodeId": nodeID, "kind": kind},
-		})
+		}), true
 	}
 }
 
@@ -1344,10 +1600,16 @@ func ingestNodeEvent(svc *notification.Service, dedup *services.RelayDedup, node
 // id (n.ID, which is the same value on both paths): once a given node event has been ingested it
 // is never published again, which is what makes replaying a disconnect window idempotent.
 // It returns true when the notification was published, false when dedup suppressed it.
-func republishNodeNotification(svc *notification.Service, dedup *services.RelayDedup, nodeID string, n notification.Notification) bool {
+// It returns the notification as PUBLISHED (carrying the id this control plane assigned),
+// so a multi-instance deployment can relay that exact row to the other instances' live
+// feeds — see RelayToStream. A false second return means nothing was published, either
+// because the dedup ledger had already seen it or because there was nothing to publish;
+// nothing should be relayed in that case, or a peer's bell would show an event this
+// instance deliberately dropped.
+func republishNodeNotification(svc *notification.Service, dedup *services.RelayDedup, nodeID string, n notification.Notification) (notification.Notification, bool) {
 	originID := n.ID // the node's engine id; identical on the live push and a pulled row's __oid
 	if dedup != nil && dedup.SeenOrRecord(context.Background(), nodeID, originID, n.CreatedAt) {
-		return false // already ingested (live or a prior replay)
+		return notification.Notification{}, false // already ingested (live or a prior replay)
 	}
 	n.ID = "" // parent assigns its own id in its own feed
 	n.Source = "node:" + nodeID
@@ -1355,8 +1617,7 @@ func republishNodeNotification(svc *notification.Service, dedup *services.RelayD
 		n.Data = map[string]any{}
 	}
 	n.Data["nodeId"] = nodeID
-	svc.Publish(context.Background(), n)
-	return true
+	return svc.Publish(context.Background(), n), true
 }
 
 // notifReplayWindow bounds how far back a reconnect replay pulls a node's notifications. It must
@@ -1454,7 +1715,7 @@ func replayNodeNotifications(sender services.ControlSender, svc *notification.Se
 		}
 		maxTs := cursor
 		for _, row := range rows {
-			if republishNodeNotification(svc, dedup, nodeID, nodeRowToNotification(row)) {
+			if _, published := republishNodeNotification(svc, dedup, nodeID, nodeRowToNotification(row)); published {
 				ingested++
 			}
 			if row.CreatedAt > maxTs {
@@ -1562,6 +1823,30 @@ func publishFleetEvent(svc *notification.Service, e services.FleetEvent) {
 			Source:   source,
 			Data:     data,
 		})
+	}
+}
+
+// llmSidecarDeploymentCheck contributes myseliasan's one app-specific preflight row.
+//
+// In sidecar mode every instance starts its OWN llama.cpp and loads its own copy of the
+// model, so N instances cost N times the memory for one logical capability — and each
+// downloads the model separately, which on a metered or air-gapped link is the part that
+// actually hurts. External mode points them all at one inference endpoint.
+//
+// It is a warning, not a blocker: the deployment works, it is just wasteful, and an
+// operator who genuinely wants a model per instance is entitled to that.
+func llmSidecarDeploymentCheck(deps apphost.Dependencies) func(context.Context) []sharedservices.PreflightCheck {
+	return func(context.Context) []sharedservices.PreflightCheck {
+		mode := strings.ToLower(strings.TrimSpace(deps.Config.Agent.LLM.Mode))
+		if mode == "" {
+			mode = "off"
+		}
+		return []sharedservices.PreflightCheck{{
+			Id:       "llmMode",
+			Severity: sharedservices.SeverityWarning,
+			Ok:       mode != "sidecar",
+			Detail:   mode,
+		}}
 	}
 }
 
@@ -1681,6 +1966,43 @@ func (m *module) APIDocs() apidocs.SpecConfig {
 				Summary:     "Current session",
 				Description: "Returns current authenticated user claims for the dashboard.",
 				Tags:        []string{"session"},
+			},
+			"GET /api/deployment/preflight": {
+				Summary: "Deployment readiness checklist",
+				Description: "Reports what this instance can verify from the inside about running behind a load balancer: " +
+					"database engine, shared cache and distributed lock (pinged, not merely name-checked), the at-rest " +
+					"encryption key's fingerprint, whether the JWT signing secret was configured or self-generated, and the " +
+					"per-instance database connection budget. The at-rest fingerprint and the pool budget are meant to be " +
+					"COMPARED between instances — two instances reporting different key fingerprints cannot read what the " +
+					"other sealed. Says nothing about what only an operator can check (TLS termination, shared storage).",
+				Tags: []string{"deployment"},
+			},
+			"GET /api/deployment/mode": {
+				Summary:     "Read the declared deployment mode",
+				Description: "Returns the persisted `standalone` / `clustered` declaration and whether its caveats were acknowledged. A process cannot detect that it is one of several replicas, so this is a stated fact rather than an inference.",
+				Tags:        []string{"deployment"},
+			},
+			"POST /api/deployment/mode": {
+				Summary:     "Declare the deployment mode",
+				Description: "Persists the deployment-mode declaration. Declaring `clustered` requires acknowledging the caveats that are not yet cluster-safe; the declaration is what turns the boot-time shared-state warning from a heuristic into a definite one.",
+				Tags:        []string{"deployment"},
+			},
+			"POST /api/internal/cluster/node-forward": {
+				Summary: "Instance-to-instance command forward (internal)",
+				Description: "NOT a public API and not called by browsers. A node holds its control channel open to exactly one instance, " +
+					"so an instance that receives a command for a node it does not own forwards it here, to the owning instance. " +
+					"Authenticated by a token derived one-way from the shared `jwt.secret`, NOT by a user session — every " +
+					"instance therefore already shares the credential. Only mounted when `cluster.advertiseUrl` is set.",
+				Tags: []string{"cluster-internal"},
+			},
+			"POST /api/internal/cluster/media-offer": {
+				Summary: "Instance-to-instance WebRTC offer forward (internal)",
+				Description: "NOT a public API and not called by browsers. A node's media channel and its control channel are " +
+					"independent connections that need not land on the same instance, so a WebRTC offer for a camera is forwarded " +
+					"to whichever instance holds that node's media channel. Only the negotiation is forwarded — the media itself " +
+					"flows directly between the browser and the owning instance, outside the load balancer. Same derived-token " +
+					"authentication as node-forward; only mounted when `cluster.advertiseUrl` is set.",
+				Tags: []string{"cluster-internal"},
 			},
 		},
 	}

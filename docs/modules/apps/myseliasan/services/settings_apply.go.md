@@ -26,7 +26,12 @@ bad value would break boot or security:
 - `security` — `jwt.secret` must be at least 16 characters; `allowOrigins` cannot be empty;
   `tls.certPath`/`tls.keyPath` are required; every rate-limit tier's `requests`/`windowSeconds`
   must be non-negative.
-- `storage` — `fileStorage.path` is required; `cache.ttlSeconds` cannot be negative.
+- `storage` — `fileStorage.path` is required; `cache.ttlSeconds` cannot be negative;
+  `transaction.lockProvider` (deployment mode / Phase 1 multi-instance safety), when non-empty,
+  must be one of `memory`/`inmemory`/`redis`/`rediscluster`/`redis-cluster`/`default` — refused
+  rather than silently defaulted, since an unrecognised provider would make the host fail to build
+  a locker and abort the boot, and discovering that from a settings save is far kinder than
+  discovering it from a process that will not come back up.
 - `logging` — `logging.maxLineBytes`/`maxFileSizeMb` cannot be negative (`maxFileSizeMb`
   0 = uncapped); a non-empty `telemetry.prometheus.metricsPath` must start with `/`.
 - Unknown section — error.
@@ -35,7 +40,9 @@ bad value would break boot or security:
 
 Writes a validated section's values onto the live config model field-by-field (mirroring
 `settings.go`'s `read()` shape in reverse), so the UI reflects the pending change immediately —
-the host still needs a restart (`apis/system.go`) to consume them. `pairing.enabled` is stored
+the host still needs a restart (`apis/system.go`) to consume them. The `storage` case now also
+writes `cfg.Transaction.LockProvider = g.s("transaction.lockProvider")` beside the cache fields.
+`pairing.enabled` is stored
 as a `*bool` (`config.PairingConfigModel.Enabled`) so a config that omits the key keeps
 defaulting to enabled; `applyToConfig` always sets it explicitly once the section is saved. The
 `agent` case is the same shape: `Digest.Enabled`/`Digest.LocalHour`/`AllowDownloads` are also

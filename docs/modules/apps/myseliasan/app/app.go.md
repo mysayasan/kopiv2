@@ -20,6 +20,42 @@ Each field is only added once its backing listener has been wired (nil-guarded),
 
 **These are advisory only** — per the `apphost.ReadinessReporter` contract (see `docs/modules/infra/apphost/run.go.md` / `types.go`), they never flip the process's `ok`/HTTP status, which stays gated on db + cache alone. A dead control-channel or media listener alone does not make `/ready` return 503; it surfaces as `"down"` for an operator/monitor to notice. This closes the gap where a dead fleet listener still reported the process fully ready, without touching the core readiness contract — actually gating readiness on the fleet listeners would be a separate, core-scoped decision affecting every app and was deliberately not done here.
 
+## `leaderOnly` / `leaderTicker` (deployment mode / Phase 1 multi-instance safety)
+
+Two small package-level helpers that gate a background task on `deps.Leader.IsLeader()`
+(`infra/coordination/leader.go.md`), used throughout `RegisterAppRoutes` to make myseliasan's
+scheduled singletons — retention purges, the notification rollup, correlator sweep, dedup-ledger
+prune, heartbeat reconciliation, digest generation/purge — run once for the DEPLOYMENT rather than
+once per process:
+
+- `leaderOnly(leader *coordination.Leader, fn func(context.Context)) func(context.Context)` —
+  wraps `fn` so a call is a no-op unless `leader.IsLeader()` at the moment it runs. Used with
+  `periodic` (below) for interval-ticker tasks.
+- `leaderTicker(ctx, leader, interval, fn func(context.Context))` — its own ticker goroutine that
+  checks `leader.IsLeader()` on every tick before calling `fn`. Used for the tasks that previously
+  ran their own inline `for { select { ...; case <-ticker.C: ... } }` loop (correlator sweep, dedup
+  prune, heartbeat), now folded into this one helper.
+
+Both check leadership **inside** the task body / on every tick, never once at registration or
+loop start — leadership moves while the process runs, and a loop that decided once would either
+never start working when promoted, or never stop when demoted. The ticker itself keeps running for
+a follower (only the `fn` call is skipped), so a promoted instance picks the work up on its next
+tick with no restart. Standalone (the default per-process lock provider), the single instance
+always holds the lease, so wrapping a task with either helper changes nothing — deliberately, since
+the guard has to be safe enough to apply everywhere without a second behavior to reason about.
+
+## `llmSidecarDeploymentCheck` (deployment mode / Phase 1 multi-instance safety)
+
+`llmSidecarDeploymentCheck(deps) func(context.Context) []sharedservices.PreflightCheck` —
+myseliasan's one app-specific row in the deployment-mode readiness checklist (`domain/shared/services/deployment.go.md`),
+passed as `DeploymentEnv.ExtraChecks` (below). Reports `agent.llm.mode == "sidecar"` as a
+`SeverityWarning`, not a blocker: in sidecar mode every instance starts its OWN `llama.cpp` and
+loads its own copy of the model, so N instances cost N× the memory for one logical capability, and
+each downloads the model separately — on a metered or air-gapped link, the part that actually
+hurts. External mode points every instance at one shared inference endpoint instead. It is a
+warning because the deployment still works; an operator who genuinely wants a model per instance is
+entitled to that.
+
 ## `Migrations` (implements `apphost.Migrator`)
 
 Returns a fixed list of `bootstrap.Migration`s that run **before** the auto-migrator and
@@ -114,22 +150,22 @@ postgres/mariadb, `pragma_table_info` on sqlite).
 - Immediately after building the registry, calls `registry.BackfillAutoRenew(context.Background())` once at startup — this one-time pass turns on the new per-node certificate auto-renew gate (`ManagedNode.AutoRenew`) for every already-enrolled node, so upgrading an existing fleet (which was renewing automatically before this gate existed) does not silently start expiring certificates; a failure only logs a warning (`myseliasan.nodes`) rather than blocking boot. New adoptions after this point still start with `AutoRenew` off. See `services/node_registry.go.md`.
 - Registers the offline vector basemap for the fleet map (`NewBasemapApi`, `apis/basemap.go.md`), resolving the basemap **directory** (may hold several `.pmtiles` region archives) via `apis.ResolveBasemapDir(deps.DataDir, "")` — an empty/absent directory is a supported state (the map renders without cartography), so this never blocks boot. Also passes `os.Getenv("MYSELIASAN_BASEMAP_SOURCE")` and `os.Getenv("MYSELIASAN_PMTILES_BIN")` through: when the source env var is set, an operator can download a new region on demand (the one action here that reaches the internet); both are empty/unset by default, keeping the app fully offline.
 - Registers node-management routes (`NewNodesApi`, now passed a `logf` closure so a failed adopt logs its raw cause server-side even though the client gets a friendlier message), which now also exposes `PUT /api/nodes/{id}/position` for the geographic map, `PUT /api/nodes/{id}/building` for the digital-twin building assignment, and `GET /api/nodes/unrecognized` + `POST /api/nodes/{id}/block`/`forget` for stranded-node visibility (see `apis/nodes.go.md`).
-- Starts the control channel server (`ControlServer`) on a dedicated fleet-mTLS port (`pairing.controlPort`, default `49533`). After the server is built, wires `ControlServer.IsConnected` into the registry via `SetControlPresence` so the heartbeat treats a live control connection as the authoritative online signal (mTLS poll becomes a fallback); also stashes the server on the module (`m.controlServer`) for `ReadinessStatus`.
-- Starts a background heartbeat goroutine (after `SetControlPresence` is wired) to reconcile node liveness with grace-window flap protection.
+- Starts the control channel server (`ControlServer`) on a dedicated fleet-mTLS port (`pairing.controlPort`, default `49533`). After the server is built, wires the registry's `SetControlPresence` (see "Node-owner registry + instance forwarding (Phase 2)" below) so the heartbeat treats a control-connected node — anywhere in the deployment, not just on this instance — as the authoritative online signal (mTLS poll becomes a fallback); also stashes the server on the module (`m.controlServer`) for `ReadinessStatus`.
+- Starts the background heartbeat reconciler (after `SetControlPresence` is wired) via `leaderTicker(bgCtx, deps.Leader, hbInterval, func(ctx) { registry.Heartbeat(ctx) })` (replacing a previous inline ticker goroutine) to reconcile node liveness with grace-window flap protection. **Leader-gated (deployment mode / Phase 1 multi-instance safety)** so there is a SINGLE writer of node status — unguarded, every instance would reconcile the same rows from its own partial view and overwrite each other, flapping a node's status and firing the lost/recovered operator alerts once per instance. **Phase 1 known gap now CLOSED by Phase 2**: control-channel presence used to be an in-process map, so the leader saw only nodes whose channels terminated on ITSELF, and a node attached to another instance could be falsely marked `lost`. `SetControlPresence` is now wired to the node-owner registry's `ConnectedAnywhere` (below), a deployment-wide lookup, so the leader correctly sees a node as online regardless of which instance its control channel terminates on. See "Deployment mode / Phase 1+2+3 multi-instance safety" below.
 - Wires proactive fleet-health alerting: before registering the sink, calls `services.DescribeMyseliasanMetrics(deps.Metrics)`. `registry.SetFleetEventSink` is set (before the heartbeat loop starts) to a closure that calls `publishFleetEvent`, so a node going online→lost, a lost node recovering, or a certificate nearing expiry (per `CertWarnBefore`, derived from `pairing.renewBeforeHours`) is surfaced in the unified notification feed instead of failing silently — the same closure also increments `MetricFleetEventsTotal` (`myseliasan_fleet_events_total{kind}`) via the package-level `fleetEventKind(e.Kind)` helper, so a burst of lost/recovered transitions or a trickle of cert-expiring warnings is visible on `/metrics` even if nobody is watching the notification feed at the time.
 - After the control server starts, runs `services.RunFleetMetricsSampler(bgCtx, deps.Metrics, controlServer, <closure over registry.List>, 10*time.Second)` — samples `myseliasan_control_channel_up`, `myseliasan_nodes_connected`, and `myseliasan_nodes_adopted` off the control server every 10s, keeping the control-channel accept path free of a metrics lock. See `services/metrics.go.md`.
-- Builds the unified notification service and registers `NewNotificationApi`. Node-pushed events are ingested into the notification feed via `ingestNodeEvent`. Builds `services.NewRelayDedup(deps.Db)` and wires it into `ingestNodeEvent`/`republishNodeNotification`, and wires `controlServer.SetOnConnect` to `replayNodeNotifications` — see "Replay on reconnect" below.
-- **Notification rollups and retention purge** — the analytics substrate mymatasan already had, wired onto myseliasan for the first time (previously the notifications table just grew forever with no baseline/heatmap analytics behind it). `notificationService` is now built `.WithRollups(rollupRepo)` (`dbsql.NewGenericRepo[sharedentities.NotificationRollup]`), and a `notification.RollupMaintainer` (`notification.NewRollupMaintainer(notificationRepo, rollupRepo, services.NewRollupCursor(runtimeSettingRepo), 0, 0)`, `services/rollup_cursor.go.md`) is `Start`ed on `bgCtx` right after `NewNotificationApi` — the maintainer's first sweep backfills every historical row past the persisted cursor (starts at `0` on a fresh upgrade), so an existing fleet's history gets scored, not just new events. `runtimeSettingRepo` (`dbsql.NewGenericRepo[sharedentities.RuntimeSetting]`) is now built earlier in `RegisterAppRoutes` than before (it used to be built just for the setup wizard) specifically so the rollup cursor can use it. Separately, `periodic(bgCtx, "myseliasan.purge.notifications", purgeInterval(deps.Config.Notification.PurgeIntervalHours), ...)` runs the config-driven retention purge (`notification.retentionDays`, `0` keeps everything; `notification.purgeReadOnly` keeps unread rows regardless of age) via `notificationService.PurgeOlderThanDays`, incrementing `services.MetricNotificationsPurgedTotal` on every run that actually deletes rows. See `apis/notifications.go.md`'s new `GET /api/notifications/baseline` (the HTTP surface this substrate backs) and `services/metrics.go.md`.
+- Builds the unified notification service and registers `NewNotificationApi`. Node-pushed events are ingested into the notification feed via `ingestNodeEvent`. Builds `services.NewRelayDedup(deps.Db)` and wires it into `ingestNodeEvent`/`republishNodeNotification`, and wires `controlServer.SetOnConnect` to claim node ownership (below) then `replayNodeNotifications` — see "Replay on reconnect" below.
+- **Notification rollups and retention purge** — the analytics substrate mymatasan already had, wired onto myseliasan for the first time (previously the notifications table just grew forever with no baseline/heatmap analytics behind it). `notificationService` is now built `.WithRollups(rollupRepo)` (`dbsql.NewGenericRepo[sharedentities.NotificationRollup]`), and a `notification.RollupMaintainer` (`notification.NewRollupMaintainer(notificationRepo, rollupRepo, services.NewRollupCursor(runtimeSettingRepo), 0, 0).WithGate(deps.Leader.IsLeader)`, `services/rollup_cursor.go.md`) is `Start`ed on `bgCtx` right after `NewNotificationApi` — the maintainer's first sweep backfills every historical row past the persisted cursor (starts at `0` on a fresh upgrade), so an existing fleet's history gets scored, not just new events. **`.WithGate(deps.Leader.IsLeader)` is new (deployment mode / Phase 1 multi-instance safety)**: the sweep is a read-cursor → page → increment → write-cursor cycle with no locking of its own, so two instances sweeping concurrently can both read the cursor before either writes it, both fold the same page, and every bucket gets incremented twice — a RACE (two SEQUENTIAL sweeps are harmless; the cursor already makes the second one a no-op), which is exactly why it would surface late, as numbers on the heatmap/baseline/anomaly-detection substrate that someone eventually stopped trusting. Standalone, the gate is a no-op. `runtimeSettingRepo` (`dbsql.NewGenericRepo[sharedentities.RuntimeSetting]`) is now built earlier in `RegisterAppRoutes` than before (it used to be built just for the setup wizard) specifically so the rollup cursor can use it. Separately, `periodic(bgCtx, "myseliasan.purge.notifications", purgeInterval(deps.Config.Notification.PurgeIntervalHours), leaderOnly(deps.Leader, ...))` runs the config-driven retention purge (`notification.retentionDays`, `0` keeps everything; `notification.purgeReadOnly` keeps unread rows regardless of age) via `notificationService.PurgeOlderThanDays`, incrementing `services.MetricNotificationsPurgedTotal` on every run that actually deletes rows. **Now `leaderOnly`-wrapped** (deployment mode / Phase 1 multi-instance safety) — a whole-table delete run concurrently by several instances is wasted, duplicate work, not corruption, but still work with no reason to run more than once. See `apis/notifications.go.md`'s new `GET /api/notifications/baseline` (the HTTP surface this substrate backs), `services/metrics.go.md`, and `domain/notification/rollup.go`'s `RollupMaintainer.WithGate` doc comment for the exact race.
 - `periodic(ctx, name, interval, fn)` (package-level helper, new) runs `fn` once immediately then every `interval` until `ctx` is cancelled, `safego.Supervise`d under `name` so a panic inside `fn` restarts the loop with backoff instead of killing the process — "these loops are the retention purges, and a dead purge loop is invisible" (same contract as mymatasan's equivalent helper). `purgeInterval(hours)` turns a configured purge cadence into a `time.Duration`, defaulting to 6 hours when unset. Both the notification purge above and the digest retention purge (below) go through `periodic`.
 - Registers the on-demand printable PDF report surface (`NewReportsApi` at `/api/reports/*`, built right after the notification service): `reportService := services.NewReportService(registry, siteService, notificationService, auditService, userService, roleService, deps.AccessPerms)` gathers Fleet Health / Site & Asset Inventory / Security & Access / Incident Detail from the existing fleet services and renders each through the shared, pure-Go `domain/report` builder (`domain/report/doc.go.md`) — no headless browser, so generation works air-gapped. The security report is superadmin-gated inside the API (`apis/reports.go`'s `requireSuper`), not by the endpoint catalog (no `api_endpoint` row is seeded for `/reports`, unlike `Audit`/`Notifications`); every generation, on every route, is written to the audit trail. See `apis/reports.go.md` and `services/reports.go.md`.
 - **Builds the cross-domain correlator** (`services.NewCorrelator`, `services/correlate.go.md`) — THIS is the reason the fourth app exists: `motion on Camera 3 (mymatasan) AND a door contact opening (myiotsan) AND no badge swipe (myiotsan) -> intrusion`. No single node can see that; only the control plane, which already receives every node's events in one feed, is in a position to notice the conjunction. The `nodeKind` resolver passed in is a closure over `registry.List` — the node's kind is always resolved from the **adopted node's own record**, never from anything an event body claims, so a door sensor cannot assert it is a camera and satisfy a camera-scoped clause. Calls `correlator.SetMetrics(deps.Metrics)` right after construction, then `Reload`s the rule cache once at startup (fails boot on error) and registers `apis.NewFleetRulesApi(api, *deps.Auth, controlSession, correlator)`.
-- Starts a 1-second-ticker goroutine that calls `correlator.Sweep(bgCtx)` — this is what makes an ABSENCE decidable, since nothing ever arrives to say "the badge was never swiped"; the passage of time has to.
-- `onNodeEvent` (passed to `NewControlServer`) now does two things per node-pushed frame: `ingestNodeEvent` (unified feed, as before) AND `observeForCorrelation` (`app/correlate_bridge.go.md`) — the correlator is fed the **node's own event**, deliberately never the control plane's own re-published copy of it, because correlating on our own output would let one fleet rule's alert satisfy another fleet rule's clause and let two rules trigger each other forever.
+- Starts the correlator sweep via `leaderTicker(bgCtx, deps.Leader, time.Second, func(ctx) { correlator.Sweep(ctx) })` (replacing the previous inline 1-second-ticker goroutine) — this is what makes an ABSENCE decidable, since nothing ever arrives to say "the badge was never swiped"; the passage of time has to. **Leader-gated (deployment mode / Phase 1 multi-instance safety)** so an armed rule fires ONCE rather than once per instance — a fired fleet rule raises an alert and can actuate, so a duplicate is not cosmetic. **Phase 1 gap now CLOSED by Phase 3**: each instance used to see events only from the nodes whose control channels terminate on IT, with the armed set living in process memory, so a rule whose clauses spanned nodes attached to DIFFERENT instances never armed at all. The cross-instance event bus (below) now feeds every instance's correlator the SAME raw node events regardless of origin, so the armed set converges across the deployment. See "Cross-instance event bus (Phase 3)" and "Deployment mode / Phase 1+2+3 multi-instance safety" below.
+- `onNodeEvent` (passed to `NewControlServer`) now does THREE things per node-pushed frame: `ingestNodeEvent` (unified feed, as before), `observeForCorrelation` (`app/correlate_bridge.go.md`) — the correlator is fed the **node's own event**, deliberately never the control plane's own re-published copy of it, because correlating on our own output would let one fleet rule's alert satisfy another fleet rule's clause and let two rules trigger each other forever — and, new in Phase 3, `services.PublishNodeEvent` to put the same raw event on the shared bus for every OTHER instance's correlator (`services/node_events.go.md`).
 - Registers sites + floor plans for the indoor map (`NewSitesApi`, `apis/sites.go.md`), built with `services.NewSiteService(deps.Db, secretCipher, planDir)` where `planDir` is `<dataDir>/floorplans` — floor-plan images are encrypted at rest with the same fleet cipher that protects the CA key/PSK. `NewSitesApi` also now exposes `GET /api/sites/overview` (per-site rollup) and `PUT /api/sites/{id}/position` (drag a site's marker) for the geographic map's digital-twin layer, `GET /api/sites/{id}/floorplans` (multi-node building/outdoor-area drill-down), `POST /api/sites/{id}/areas` (create a floor with a server-generated blank canvas — the asset wizard's per-area step and the building editor's "add an area" button), `PUT /api/floors/{id}/model` (autosave a floor's 3D layout: painted grid + scale + wall height + elevation), and `GET /api/placements` (fleet-wide "what is placed, and where" index the floor editor's palette uses to grey out an already-placed camera — placement is now exclusive, see `entities/node_placement.go.md`). `CreateSite`/`UpdateSite` now also take a `kind` (`building`/`outdoor`/`point`, `entities/site.go.md`'s "Site kinds") that decides how many plans the site can hold and what its map marker looks like.
 - `SetRejectTracker` wires the `ControlServer` (once built, further down) into the already-registered `nodesApi` as its `rejectTracker` — the control server exposes `Unrecognized()`/`ForgetRejected()` for stranded (row-less or revoked) node connections, and `NewNodesApi` now returns the handler so this later wiring is possible. See `apis/nodes.go.md` and `services/control_server.go.md`.
 - Registers per-node access-grant management (`NewNodeAccessApi`). The node access service is constructed with the roles service (`NewNodeAccessService(db, roleService)`) so superadmin roles receive implicit full node access. All three node APIs (`NewNodeAccessApi`, `NewNodeMediaApi`, `NewNodeProxyApi`) now accept the `controlSession *AccessSessionMidware` so they resolve the caller's live role on every request.
 - Starts the node camera media relay: builds a `stream.WebRTCEngine` (from `nodeStream.publicIps` / `nodeStream.udpPort`; nil for same-LAN), starts a `mediarelay.Server` on `pairing.mediaPort` (default `49534`) using the fleet-CA mTLS server config, registers `NewNodeMediaApi` (`POST /api/nodes/{id}/cameras/{cam}/webrtc/offer`, `GET /api/node-stream/config`). The listener goroutine flips `m.mediaListening` (an `*atomic.Bool`) true around `srv.Run(bgCtx)` so `ReadinessStatus` can report `mediaRelay` up/down.
-- Registers the reverse command tunnel proxy (`NewNodeProxyApi` at `/api/nodes/{id}/proxy/...`).
+- Registers the reverse command tunnel proxy (`NewNodeProxyApi` at `/api/nodes/{id}/proxy/...`) and, right beside it, `NewRecordingStreamApi` (`/api/nodes/{id}/recording-stream/{segId}`, registered first so its more specific route wins over the proxy's catch-all). Both are constructed at the very end of `RegisterAppRoutes`, once `nodeSender` — the possibly-`ForwardingSender`-wrapped `ControlSender` — exists; see "Node-owner registry + instance forwarding (Phase 2)" below.
 - Registers the in-app settings editor (`NewSettingsApi` at `/api/settings/*`) over a SAFE SUBSET of `config.json` (`localAuth`, `sso`, `pairing`, `agent` (new — the fleet AI agent's digest schedule and LLM mode/endpoint/sidecar config, see "Fleet AI agent" below), `security`, `storage`, `logging`; `db`/`server`/`bootstrap` are never exposed) — `myseliasan`'s first in-app settings surface. `settingsService := services.NewSettingsService(deps.Config, deps.ConfigPath, deps.Db, secretCipher, logf)` reads/writes the live `*config.AppConfigModel` + `config.json` directly, since these are infra blocks the shared apphost reads only once at boot; a save/reset always reports `needsRestart: true`. `NewSettingsApi(api, *deps.Auth, controlSession, settingsService, auditService, []string{deps.DataDir, deps.HomeDir})` also passes `browseRoots` — the extra directories (data dir, home dir) the whitelisted server-side file/folder picker (`GET /api/settings/fs/browse`, `services/filesystem_browse.go.md`) may browse beyond its built-in roots, so an operator's `./certs`/`./uploads`/`./logs` under the data dir are reachable from the picker. Also exposes `POST /api/settings/cache/test` (`services.ISettingsService.TestCache`), a live Redis ping against the settings in the request body (blank password/address falls back to the stored value) so an operator can verify Redis connectivity before saving.
 - Builds myseliasan's **factory reset** (`sharedservices.NewSystemResetService`, the shared
   `domain/shared/services/system_reset.go` orchestrator — see that doc), right before
@@ -155,7 +191,8 @@ postgres/mariadb, `pragma_table_info` on sqlite).
   `services/settings.go.md`, `services/filesystem_browse.go.md`,
   `docs/modules/domain/shared/services/system_reset.go.md`,
   `docs/modules/domain/shared/apis/system_reset.go.md`.
-- Registers the **first-run setup wizard** — a capability myseliasan previously had none of — via `sharedservices.NewSetupStateService(dbsql.NewGenericRepo[sharedentities.RuntimeSetting](deps.Db))` and `apis.NewSetupApi(api, *deps.Auth, controlSession, setupStateService)`, right after `NewSystemApi`. Same shared `setup.state` contract mymatasan and myidsan use (`domain/shared/services/setup_state.go.md`, `domain/shared/apis/setup.go.md`). See `apis/setup.go.md` for the route gating and the new `views/components/setup.js` wizard (welcome, sign-in, first site, adopt a node, handover, done).
+- Registers the **first-run setup wizard** — a capability myseliasan previously had none of — via `sharedservices.NewSetupStateService(dbsql.NewGenericRepo[sharedentities.RuntimeSetting](deps.Db))` and `apis.NewSetupApi(api, *deps.Auth, controlSession, setupStateService)`, right after `NewSystemApi`. Same shared `setup.state` contract mymatasan and myidsan use (`domain/shared/services/setup_state.go.md`, `domain/shared/apis/setup.go.md`). See `apis/setup.go.md` for the route gating and the new `views/components/setup.js` wizard (welcome, **deployment mode**, sign-in, first site, adopt a node, handover, done — `STEP_KEYS` gained `setup.stepDeployment` at index 1).
+- Wires the **deployment-mode + cluster-readiness checklist** (deployment mode / Phase 1 multi-instance safety): `deploymentModeService := sharedservices.NewDeploymentModeService(runtimeSettingRepo)` and `apis.NewDeploymentApi(api, *deps.Auth, controlSession, deploymentModeService, envFn)`. myseliasan is one of the two apps in the suite (with `myidsan`) genuinely stateless enough to be clustered. `envFn` is rebuilt per request, not captured, so a live Settings-editor change to `cache.provider`/`transaction.lockProvider` is reflected without a restart; `AtRestFingerprint` reports the fleet CA key/PSK's fingerprint (two instances holding different keys look healthy right up until one reads the other's sealed rows, at which point the fleet's trust is simply gone); `ExtraChecks: llmSidecarDeploymentCheck(deps)` appends the LLM-sidecar-memory row (above). See `domain/shared/services/deployment.go.md`, `apis/deployment.go.md`.
 - The `ShutdownFunc` cancels the background context (stops heartbeat, control server, and media relay server).
 
 ## Fleet AI agent
@@ -185,8 +222,8 @@ later still):
 - `digestService.SetRuleChecker(correlator.HasRuleFor)` — wires the suggested-rule detector's dedup oracle (`services/agent_findings.go.md`'s `suggestedRuleFindings`) once the correlator exists.
 - `chatService := services.NewChatService(notificationService, registry, digestService, controlServer.IsConnected, controlServer, llmManager, deps.Metrics, logf)` (`services/agent_chat.go.md`) — `controlServer.IsConnected` is the grounding bundle's per-node liveness oracle; `controlServer` itself (new param, satisfying `chatNodeSender`) is what lets a question naming one adopted node pull that node's own recent events over the control tunnel.
 - `apis.NewAgentApi(api, *deps.Auth, controlSession, digestService, chatService, llmManager, llmInstaller, llmSidecar, auditService, digestCfg)` (`apis/agent.go.md`) — `digestCfg` is a closure owned by `app.go` (not the API package) that now builds the whole `apis.AgentDigestStatus{Enabled, LocalHour, WindowHours, LastRunDate, WeeklyEnabled, Weekday, LastWeeklyRunDate}` from `deps.Config.Agent.Digest` and **both** persisted runtime-setting rows (`agent.digest.lastRun`/`agent.digest.lastWeeklyRun`, via `runtimeSettingRepo.GetByUnique`), for `GET /api/agent/status`.
-- `services.RunDigestSchedule(bgCtx, digestService, runtimeSettingRepo, func() config.AgentConfigModel { return deps.Config.Agent }, logf)` (`services/agent_schedule.go.md`) — the sleep-until-HH:00-local, fire-once, repeat scheduler for **both** cadences; default hour 07:00, weekly opt-in and defaulting to Monday.
-- `periodic(bgCtx, "myseliasan.purge.digests", 24*time.Hour, ...)` — daily stored-digest retention (`agent.digest.retentionDays`, default 180 when `0`) via `digestService.PurgeOld` (applies to both daily and weekly digest rows alike).
+- `services.RunDigestSchedule(bgCtx, digestService, runtimeSettingRepo, func() config.AgentConfigModel { return deps.Config.Agent }, deps.Leader.IsLeader, logf)` (`services/agent_schedule.go.md`) — the sleep-until-HH:00-local, fire-once, repeat scheduler for **both** cadences; default hour 07:00, weekly opt-in and defaulting to Monday. **`deps.Leader.IsLeader` is a new trailing gate parameter** (deployment mode / Phase 1 multi-instance safety): the existing per-cadence date-watermark guard (`agent.digest.lastRun`/`lastWeeklyRun`) is a read-then-write with no lock, so two instances waking in the same second both read "not run today" and both generate — and a digest is an LLM call plus an operator-visible artefact, so a duplicate costs real money and real confusion, not just wasted work. Checked at the moment of generating (after the sleep), not at loop start, since the wait is hours long and leadership can move during it.
+- `periodic(bgCtx, "myseliasan.purge.digests", 24*time.Hour, leaderOnly(deps.Leader, ...))` — daily stored-digest retention (`agent.digest.retentionDays`, default 180 when `0`) via `digestService.PurgeOld` (applies to both daily and weekly digest rows alike). **Now `leaderOnly`-wrapped** for the same reason as the notification purge above.
 
 See `docs/modules/infra/llm/client.go.md` for the OpenAI-compatible chat-completions client both the sidecar and external modes use, and `apps/myseliasan/README.md`'s "AI Agent" section for the operator-facing feature description (grounding bundle contract, air-gap/download posture, `MYSELIASAN_AI_DOWNLOADS` env lock).
 
@@ -210,9 +247,191 @@ The live push above only carries a notification while the node's control channel
 - `parseNodeNotifRows` tolerates both the plain `{result:{items}}` envelope and a wrapped `{data:{result:{items}}}` response.
 - `nodeRowToNotification` rebuilds an in-memory `notification.Notification` from a pulled row, restoring the node's engine id out of the row's `metadata.__oid` (`domain/notification.OriginIDKey`) as `n.ID` — this is what lets a pulled row dedup against a live-pushed one via the identical `RelayDedup` check in `republishNodeNotification`, which every replayed row is routed back through.
 - A node offline or with nothing new in the window is a cheap no-op (first `SendRequest` fails or returns zero rows). A non-2xx response or transport error aborts the pull for that reconnect; it will be retried on the node's next reconnect.
-- An hourly background goroutine (`app.go`, started alongside the control server) prunes `RelayDedup` markers older than `2 * notifReplayWindow` — a windowed pull can never reach back that far, so an older marker is dead weight. See `services/relay_dedup.go.md`.
+- An hourly background task (`leaderTicker(bgCtx, deps.Leader, time.Hour, ...)`, `app.go`, started alongside the control server, replacing a previous inline ticker goroutine) prunes `RelayDedup` markers older than `2 * notifReplayWindow` — a windowed pull can never reach back that far, so an older marker is dead weight. **Leader-gated (deployment mode / Phase 1 multi-instance safety)**: it is a whole-table cleanup, and N instances deleting the same rows only multiplies the work; standalone the gate is a no-op. See `services/relay_dedup.go.md`.
 
 This requires the node's own `GET /api/notifications` to accept the replay pull — see `apps/mymatasan/apis/notification.go`'s `since=` handling and `INotificationService.ListSince` (`apps/mymatasan/services/ifaces.go.md`), and the equivalent `since=` param on `myiotsan` (`apps/myiotsan/apis/notifications.go`, `docs/modules/apps/myiotsan/apis/notifications.go.md`); a node build that predates the `since=` param ignores the query param and returns its normal newest-first page, so the replay pull would ingest the wrong window from an old node — deploying both halves together is required (see the versioning entry for this feature).
+
+## Node-owner registry + instance forwarding (Phase 2)
+
+Phase 1 (above) made N myseliasan instances SAFE; it left two documented gaps (see "Deployment
+mode / Phase 1+2+3 multi-instance safety" below). Phase 2 closes the first one and half of the
+second: node liveness is now correct across instances, and node COMMANDS (a node's own screens,
+its settings, recording playback) reach the node regardless of which instance the browser request
+landed on. Phase 3 (below, "Cross-instance event bus") closes the rest of the second gap (fleet
+rules) and, incidentally, the live notification feed.
+
+- `clusterCfg := deps.Config.Cluster` (`ClusterConfigModel`, `infra/config/config_models.go.md`).
+  `nodeOwners := services.NewNodeOwnerRegistry(deps.Cache, clusterCfg.AdvertiseURL,
+  time.Duration(clusterCfg.OwnershipTTLSeconds)*time.Second, logf)` — built unconditionally
+  (`services/node_owner.go.md`); with an empty `advertiseUrl` (the default) it is disabled and
+  every method behaves as "only local connections exist," so this is a no-op for a standalone
+  install. `nodeOwners.StartRenewal(bgCtx)` runs regardless (also a no-op when disabled). An
+  `Infof` line is logged once at boot when enabled, naming the advertised URL.
+- `controlServer.SetOnConnect` now claims ownership (`nodeOwners.Claim`) **before** the reconnect
+  replay pull, so from the moment a node connects its commands can be served here and the rest of
+  the deployment learns that as early as possible.
+- `controlServer.SetOnDisconnect(func(nodeID) { nodeOwners.Release(...) })` (new — see
+  `services/control_server.go.md`) withdraws the claim the instant a connection tears down, so
+  another instance can take the node over immediately instead of waiting out the ownership lease.
+- `registry.SetControlPresence(func(nodeID) bool { return nodeOwners.ConnectedAnywhere(ctx, nodeID) })`
+  — **the false-lost fix**. Previously this was `controlServer.IsConnected`, a purely local answer;
+  the heartbeat reconciler (leader-gated, above) now sees a node as online if ANY instance holds its
+  control channel, not just the leader. Standalone the two answers are identical.
+- `nodeSender := services.ControlSender(controlServer)` by default; when `nodeOwners.Enabled()`, it
+  is replaced with `services.NewForwardingSender(controlServer, nodeOwners, peerClient, logf)`
+  (`services/node_peer.go.md`), where `peerClient := services.NewPeerClient(deps.Config.Jwt.Secret,
+  time.Duration(clusterCfg.ForwardTimeoutSeconds)*time.Second, clusterCfg.InsecureSkipVerify)`. Both
+  `apis.NewRecordingStreamApi` and `apis.NewNodeProxyApi` (registered at the very end of
+  `RegisterAppRoutes`) are now passed `nodeSender` instead of the bare `controlServer` — since both
+  already depended only on the narrow `ControlSender` interface, this one decorator makes both
+  cluster-aware without either learning that instances exist.
+- When `nodeOwners.Enabled()`, also builds `peerHandler := services.NewPeerForwardHandler(deps.Config.Jwt.Secret, controlServer, logf)`
+  (given the **local** `controlServer`, never `nodeSender` — see `node_peer.go.md`'s "terminal hop"
+  note) and mounts it at `api.Handle(services.PeerForwardPath, peerHandler).Methods("POST")`
+  (`POST /api/internal/cluster/node-forward`) — deliberately outside the session-auth middleware,
+  since its caller is a peer instance authenticating with a derived token, not a signed-in user.
+  This route only exists when clustering is configured.
+- **Not covered by this section**: live camera video (`NewNodeMediaApi`) does not use
+  `nodeSender`/`ForwardingSender` at all — the media channel is a separate connection from the
+  control channel, tracked by its own `MediaOwnerRegistry`, and forwarded by a parallel hop. See
+  "Cross-instance media forwarding (Phase 4)" below; at the time Phase 2 shipped this WAS a real
+  gap (viewing a camera on a node attached to another instance failed), and the note here has been
+  corrected now that Phase 4 closes it.
+
+## Cross-instance event bus (Phase 3)
+
+Phase 2 made node liveness and node COMMANDS correct across instances. Phase 3 closes the
+remaining Phase 1 gap — fleet rules whose clauses span nodes on different instances — and,
+as a side effect of the same wiring, makes the live notification feed (SSE) span every
+instance too, not just the one a browser happens to be connected to.
+
+- Built right after `relayDedup`, before `onNodeEvent` is defined: `nodeEventBus,
+  busProvider, busErr := eventbus.New(eventbus.Config{...})`
+  (`infra/eventbus/bus.go.md`), with `Provider:
+  deps.Config.Cluster.EventBusProvider(deps.Config.Cache.Provider)` — the bus follows the
+  cache provider by default (`infra/config/config_models.go.md`'s
+  `ClusterConfigModel.EventBusProvider`) — and the rest of the fields mirrored from
+  `deps.Config.Cache.Redis`. `busErr != nil` fails boot (an unrecognised provider name is
+  an error, never a silent fall-back to in-process — see `bus.go.md`'s `New`). When
+  `nodeEventBus.Distributed()`, `Ping` is called once and a failure also fails boot (an
+  unreachable configured Redis must not boot into a cluster that looks configured but
+  delivers to nobody); an `Infof` line names the resolved provider on success.
+- `instanceID := services.NewInstanceID(deps.Config.Cluster.AdvertiseURL)` — this
+  instance's publisher identity, reused from the same `cluster.advertiseUrl` Phase 2 already
+  requires an operator to set per instance, so there is no new value to configure for this
+  half of clustering either.
+- `notificationService.Register(services.NewNotificationRelayChannel(nodeEventBus,
+  instanceID, busLog))` — every notification this instance publishes (a node's, a node-lost
+  alert the heartbeat raised, an anomaly, the morning digest — the hub already invokes every
+  registered channel on every publish, which is exactly the set that should be relayed) is
+  now also put on the bus's `notifications` topic for the other instances.
+- `services.SubscribeNotifications(bgCtx, nodeEventBus, instanceID, func(n) {
+  notificationService.RelayToStream(context.Background(), n) }, busLog)` — the receiving
+  half: a notification relayed from another instance is pushed straight to THIS instance's
+  live SSE subscribers via `domain/notification.Service.RelayToStream`
+  (`docs/modules/domain/notification/service.go.md`), deliberately never persisted again
+  (the origin already wrote the row) and never re-published through the hub (which would
+  loop it back onto the bus). **This is what makes the SSE feed span the deployment**: a
+  browser subscribed to any instance now sees every notification any instance raises, not
+  just the ones its own instance happened to ingest.
+- `onNodeEvent` additionally calls `services.PublishNodeEvent(context.Background(),
+  nodeEventBus, instanceID, nodeID, kind, body, busLog)` after `observeIfLeader` — the
+  raw node event, never the control plane's own re-published notification (see the
+  correlator-sweep note above for why), goes onto the bus's separate `node-events` topic.
+- `services.SubscribeNodeEvents(bgCtx, nodeEventBus, instanceID, func(ev) {
+  observeIfLeader(ev.NodeID, ev.Kind, ev.Body) }, busLog)` — the receiving half for
+  correlation: a raw event published by ANOTHER instance is fed into THIS instance's
+  correlator exactly as if it had arrived on this instance's own control channel. This is
+  what lets a fleet rule whose clauses span nodes attached to different instances finally
+  arm.
+- **`observeIfLeader` (review-round fix, both call sites above) wraps `observeForCorrelation`
+  with `deps.Leader.IsLeader()` and returns without observing when false.** Arming and firing
+  must live on the SAME instance: the sweep is what both arms a rule's absent-clause timer
+  AND clears it once the grace window passes, and that sweep is already leader-gated (see the
+  correlator-sweep note above), so a follower that kept observing would accumulate `armed`
+  state it could never sweep — and fire a backlog of stale correlations the moment it was
+  promoted. A promoted instance now starts with an empty `armed` set and rebuilds it from live
+  events; the worst case is a correlation spanning the exact moment of a leadership change
+  being missed, not a burst of stale alerts. Standalone, the gate is a no-op (the single
+  instance is always leader).
+- Standalone (the default in-process `MemoryBus`), `Distributed()` is `false`, so every
+  publish/subscribe call above is a no-op — this wiring costs nothing and changes nothing
+  for a single instance. See `services/node_events.go.md` for the message shapes and echo
+  suppression (`Origin == instanceID` is dropped, or every event/notification would be
+  handled twice at its origin).
+
+## Cross-instance media forwarding (Phase 4)
+
+Phase 2 made node COMMANDS (settings, recording playback) cluster-aware; live camera video was
+explicitly left uncovered because a node's camera RTP arrives on a SEPARATE connection — the media
+channel — which, like the control channel, terminates on exactly one instance. Phase 4 closes that
+gap by forwarding the WebRTC NEGOTIATION (not the media itself) to whichever instance holds it.
+
+- `mediaOwners := services.NewMediaOwnerRegistry(deps.Cache, clusterCfg.AdvertiseURL,
+  time.Duration(clusterCfg.OwnershipTTLSeconds)*time.Second, logf)` (`services/node_owner.go.md`)
+  — built right after the media listener goroutine starts, reusing the same `cluster.*` settings
+  Phase 2 already requires (`ownershipTtlSeconds`), so there is nothing new to configure.
+  `mediaOwners.StartRenewal(bgCtx)` runs regardless (no-op when disabled).
+- `mediaHub.SetOwnershipHooks(func(nodeID) { mediaOwners.Claim(...) }, func(nodeID) {
+  mediaOwners.Release(...) })` (`services/media_relay.go.md`) — claims/releases the media-channel
+  ownership the same way `controlServer.SetOnConnect`/`SetOnDisconnect` already do for the control
+  channel, under a SEPARATE cache-key namespace (`node_owner.go.md`'s `mediaOwnerKeyPrefix`) so a
+  node's two channels are tracked independently.
+- `clusterPeer` (`services.PeerClient`, built once earlier alongside `nodeOwners` — see Phase 2
+  above, and now explicitly shared by both hops) is reused for the media hop too: one derived
+  token, one HTTP client, for every instance-to-instance call this app makes.
+- `mediaForward func(ctx, services.MediaOfferRequest) (services.MediaOfferReply, error)` — built
+  only when `mediaOwners.Enabled() && clusterPeer != nil`; resolves the node's media owner and
+  calls `clusterPeer.ForwardMediaOffer` (`services/media_peer.go.md`). `nil` on a standalone
+  install or when clustering is off, exactly like Phase 2's `nodeSender` decorator.
+- `apis.NewNodeMediaApi(...)` now takes `mediaForward` as its last argument and returns the built
+  `*nodeMediaApi` (`apis/node_media.go.md`) — needed so its `AnswerLocalOffer` method can be handed
+  to the receiving side below.
+- When `mediaOwners.Enabled()`: `api.Handle(services.PeerMediaOfferPath,
+  services.NewPeerMediaOfferHandler(deps.Config.Jwt.Secret, mediaApi.AnswerLocalOffer, logf))`
+  mounts `POST /api/internal/cluster/media-offer` — outside session auth, same convention as
+  Phase 2's `PeerForwardPath`. This is the receiving half: another instance's forwarded offer is
+  negotiated here using THIS instance's own `mediaHub`/`mediaEngine`, and authorization is
+  deliberately not repeated (the forwarding instance already resolved it against the operator's
+  live session).
+- **The video itself never crosses this hop.** Only the SDP offer/answer negotiation is forwarded;
+  the answer carries the owning instance's own ICE candidates, so the browser's WebRTC peer
+  connects DIRECTLY to that instance. This is why the operator checklist (setup wizard, Settings
+  Deployment panel) has always required each instance to have its own reachable address and UDP
+  port for live video — that requirement predates this change and Phase 4 is what makes it
+  actually necessary rather than aspirational.
+
+### Fleet-rule reload propagation
+
+Separately from the media hop, this section of `app.go` also wires
+`correlator.SetOnRulesChanged(func() { services.PublishRulesChanged(...) })` and
+`services.SubscribeRulesChanged(bgCtx, nodeEventBus, instanceID, func() { correlator.Reload(...)
+}, busLog)` (`services/node_events.go.md`'s `RulesChangedTopic`), so an operator's fleet rule edit
+— which lands on and reloads only the instance that served the request — also tells every other
+instance to reload its own rule cache. `Correlator.Save`/`Delete` (`services/correlate_crud.go.md`)
+each call `announceRulesChanged` right after their own `Reload` succeeds, so this is reachable
+end-to-end: editing or deleting a rule on any instance reloads every other instance's cache too,
+not just the one that served the request. This is unrelated to, and complements, Phase 3's
+fleet-rule fix (a rule whose CLAUSES span nodes on different instances arming correctly via the
+`node-events` topic) — that fix is about event correlation; this one is about the rule DEFINITION
+itself staying in sync after an edit.
+
+Guarded by a source-level regression test (`correlate_announce_test.go`,
+`services/correlate_crud.go.md`) rather than a behavioral one, because of how this exact call went
+missing once already during development: it compiled, every other test passed, and the feature
+was silently absent, because Go does not flag an unused method. Worth keeping in mind generally —
+"wired up" (a callback registered, a subscriber listening) is not the same as "called", and where
+a feature's failure mode is silence rather than an error, a test has to assert on the call site
+itself, not just on some effect that happens to be observable downstream.
+
+### Verification status
+
+Unit-tested at the media hop's own seam (`media_peer_test.go`, 8 cases — forwarding + answer
+round-trip, 401 on missing/wrong token, not-connected propagation, payload validation, unreachable
+owner, and that control-channel and media-channel ownership are tracked and released
+independently). **Not exercised end-to-end with real cameras**: the live two-instance bench used a
+`mypintusan` door controller, which has no cameras, so cross-instance live video has not been
+watched in an actual browser.
 
 ## `publishFleetEvent`
 
@@ -227,6 +446,65 @@ Maps a `services.FleetEventKind` to a stable, low-cardinality metric label:
 `FleetEventNodeLost` → `"node_lost"`, `FleetEventNodeRecovered` → `"node_recovered"`,
 `FleetEventCertExpiring` → `"cert_expiring"`, anything else → `"other"`. Used only by the
 `MetricFleetEventsTotal` increment inside the fleet-event sink above.
+
+## Deployment mode / Phase 1-4 multi-instance safety — what is actually safe now, and what is not yet
+
+Phase 1 made N myseliasan instances SAFE (no double-counted rollups, no duplicate purges/digests, a
+single writer of node status). Phase 2 then made two of the fleet legs CORRECT across instances too:
+node liveness and node commands. Phase 3 closes the remaining Phase 1 gap and, as a side effect of
+the same event bus, fixes the live notification feed too. Phase 4 (above) closes the last
+documented gap, live camera video:
+
+1. ~~**Heartbeat/liveness**~~ — **FIXED in Phase 2.** `registry.SetControlPresence` now consults the
+   node-owner registry's `ConnectedAnywhere` (a deployment-wide lookup), not a local connection map,
+   so a node attached to another instance is correctly reported online rather than eventually marked
+   `lost`.
+2. ~~**Fleet rules**~~ (correlator.Sweep) — **FIXED in Phase 3.** Every ingested node event is now
+   published to every instance over the shared event bus (`services/node_events.go.md`) and fed into
+   each instance's own correlator, so a rule whose clauses span nodes attached to different instances
+   arms and fires correctly instead of going quiet. The leader-only guard (Phase 1) still ensures it
+   fires once, not once per instance. (Phase 4, above, separately closes the related gap of a rule
+   EDIT/DELETE announcing itself cross-instance — see "Fleet-rule reload propagation" under Phase 4
+   above; that one is about keeping the rule DEFINITION in sync, not event correlation.)
+3. ~~**Live notification feed (SSE)**~~ — **FIXED in Phase 3, incidentally.** The same event bus
+   carries every notification an instance publishes to the others' live SSE streams
+   (`domain/notification.Service.RelayToStream`), so a browser subscribed to any instance now sees
+   an event ingested by another, not just its own.
+4. ~~**Live camera video**~~ — **FIXED in Phase 4.** A browser's WebRTC offer for a node attached to
+   another instance is forwarded to the instance holding its media channel, which negotiates the
+   answer and returns it verbatim; the video itself still flows browser-to-owning-instance directly,
+   never through the forwarding instance or the load balancer. See "Cross-instance media forwarding
+   (Phase 4)" above — including its "verification status" note (unit-tested, not yet bench-verified
+   with a real camera).
+
+Still open:
+
+- **The Settings editor** (`apis/settings.go.md`) writes THIS instance's `config.json` and restarts
+  only THIS instance — an operator changing a setting on a clustered install must repeat it (or ship
+  it) on every instance.
+
+What Phase 2 fixed: the node proxy (`/api/nodes/{id}/proxy/...`) and recording-stream playback no
+longer require the request to land on the instance a node's control channel happens to be connected
+to — see "Node-owner registry + instance forwarding (Phase 2)" above. This requires
+`cluster.advertiseUrl` to be set on every instance; with it empty (the default) this section's
+behavior is unchanged from Phase 1.
+
+What Phase 3 fixed: fleet-rule correlation and the live SSE feed both now span every instance,
+regardless of which node/browser reaches which instance — see "Cross-instance event bus (Phase 3)"
+above. This requires the event bus provider (`cluster.eventBusProvider`, defaulting to
+`cache.provider`) to actually reach every instance, i.e. Redis in production; with the default
+in-process provider (correct for one instance) this section's behavior is unchanged.
+
+What Phase 4 fixed: live camera video across instances, and fleet-rule edits announcing themselves
+across instances — see "Cross-instance media forwarding (Phase 4)" and "Fleet-rule reload
+propagation" above. Both require the same `cluster.advertiseUrl`/`clusterPeer` setup Phase 2
+already needs; with clustering off this section's behavior is unchanged.
+
+Standalone behavior is unchanged throughout: with the per-process (memory) lock provider, the
+single instance always holds the leader lease and every `leaderOnly`/`leaderTicker`/`WithGate`
+guard above is a no-op; with an empty `cluster.advertiseUrl`, the node-owner/media-owner registries
+and `ForwardingSender`/`mediaForward` are both no-ops too; with the default in-process event bus,
+every Phase 3/4 publish/subscribe call is a no-op too.
 
 ## Notes
 

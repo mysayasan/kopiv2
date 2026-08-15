@@ -1,6 +1,22 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useT, Ico } from '@shared'
+import { useT, Ico, DeploymentPanel } from '@shared'
 import * as api from '../lib/access'
+import { apiRequest } from '../lib/api'
+
+// The shared panel speaks the fetch contract — a resolved {ok, body} rather than a throw —
+// while this app's helpers unwrap and rethrow. Only the read is ever used here: mypintusan
+// is an appliance, so the panel renders a reason and offers nothing to save.
+async function deploymentApi(path, options) {
+  try {
+    const res = await apiRequest(path, options)
+    const body = (res && res.data && res.data.result !== undefined)
+      ? res.data.result
+      : (res && res.result !== undefined ? res.result : res)
+    return { ok: true, body }
+  } catch (err) {
+    return { ok: false, message: err.message }
+  }
+}
 
 // The settings screen is the reason config.json only seeds the first boot: after that, everything
 // here is editable by a facilities manager rather than by somebody with SSH and a text editor.
@@ -248,6 +264,12 @@ function FleetSection({ toast }) {
 
   return (
     <section className="form fleet-section">
+      {/* Deployment answer. Fixed for this app — the OSDP bus opens its serial port once
+          and holds it for the life of the bus, and a serial port belongs to exactly one
+          process on one machine — so the panel renders a reason rather than a choice.
+          Shown because an operator who does not know that keeps looking for the setting. */}
+      <DeploymentPanel api={deploymentApi} appLabel="MyPintuSan" onToast={toast} />
+
       <h2 className="section-head">{t('settings.fleet')}</h2>
       <p className="muted small">{t('settings.fleetHint')}</p>
 

@@ -31,14 +31,29 @@ type Cursor interface {
 // notification with an id past the cursor into its (hour, camera, category,
 // severity, rule, label) bucket. Paging by ascending id makes the sweep
 // exactly-once and offset-free; the first sweep on an existing database backfills
-// all history. A single goroutine owns the sweep, so a bucket's read-modify-write
-// needs no cross-process locking on this single-node app.
+// all history.
+//
+// EXACTLY ONE sweeper may run against a database, and the danger is narrower and
+// nastier than "two sweepers double everything". The cursor makes a SEQUENTIAL second
+// sweep harmless — it reads the advanced cursor and finds nothing to do. What corrupts
+// the table is two sweeps that OVERLAP: both read the cursor before either writes it,
+// both fold the same page, and every bucket in it is incremented twice. Two instances
+// on independent timers reach that interleaving on their own eventually.
+//
+// So it is a race rather than a certainty, which is precisely why it would be found
+// late: the counts are right until one day they quietly are not, and these buckets are
+// what the heatmap, the median-MAD baselines and the anomaly detection are computed
+// from. On a single-instance app none of this can arise. Where an app can be
+// replicated, set a gate so only the leader sweeps.
 type RollupMaintainer struct {
 	notifs   dbsql.IGenericRepo[entities.Notification]
 	rollups  dbsql.IGenericRepo[entities.NotificationRollup]
 	cursor   Cursor
 	interval time.Duration
 	pageSize uint64
+	// gate reports whether THIS process should sweep. nil means "always", which is
+	// correct for an app that cannot be replicated.
+	gate func() bool
 }
 
 // NewRollupMaintainer builds a maintainer. interval defaults to 60s and pageSize
@@ -59,20 +74,45 @@ func NewRollupMaintainer(
 	return &RollupMaintainer{notifs: notifs, rollups: rollups, cursor: cursor, interval: interval, pageSize: pageSize}
 }
 
+// WithGate restricts sweeping to the processes for which gate returns true — in a
+// replicated deployment, the one holding the background-work lease. Returns the
+// maintainer for chaining. A nil gate leaves the default "always sweep".
+//
+// The gate is consulted per tick rather than once at startup, so leadership can move
+// between instances without restarting any of them.
+func (m *RollupMaintainer) WithGate(gate func() bool) *RollupMaintainer {
+	m.gate = gate
+	return m
+}
+
+// shouldSweep reports whether this process is the one that should fold the next page.
+func (m *RollupMaintainer) shouldSweep() bool {
+	return m.gate == nil || m.gate()
+}
+
 // Start runs the sweep loop until ctx is cancelled. The first tick fires a few
 // seconds after start so a fresh process backfills without waiting a full
 // interval.
 func (m *RollupMaintainer) Start(ctx context.Context) { go m.run(ctx) }
 
+// firstTickDelay is how long the loop waits before its first sweep: long enough to
+// stay out of the way of the rest of startup, short enough that a fresh process
+// backfills without waiting a whole interval.
+const firstTickDelay = 3 * time.Second
+
 func (m *RollupMaintainer) run(ctx context.Context) {
-	timer := time.NewTimer(3 * time.Second)
+	timer := time.NewTimer(firstTickDelay)
 	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-timer.C:
-			_, _ = m.Sweep(ctx)
+			// Followers keep ticking rather than exiting: leadership can move to this
+			// instance at any point, and a loop that returned would never notice.
+			if m.shouldSweep() {
+				_, _ = m.Sweep(ctx)
+			}
 			timer.Reset(m.interval)
 		}
 	}

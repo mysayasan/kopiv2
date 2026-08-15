@@ -59,6 +59,8 @@ func registerRoutes(api *mux.Router, w *wiring) *mux.Router {
 	apis.NewAnomalyApi(protected, w.anomalySettings, w.notification, w.camera)
 	apis.NewCapacityApi(protected, w.camera, w.settings, w.machineHealth, w.recording, w.objectBackend)
 	apis.NewSetupApi(protected, w.setupState)
+	// Single-instance by design (local recordings + host-pinned capture/GPU).
+	apis.NewDeploymentApi(protected)
 	apis.NewPairingApi(protected, w.pairing)
 
 	return protected

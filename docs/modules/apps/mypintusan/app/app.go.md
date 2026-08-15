@@ -80,7 +80,12 @@ then carry.
      in order, `NewLocalBasicAuth` then `NewRequireRolePermission` — auth before authorization,
      since the matrix needs a principal in context to decide against.
   8. Registers `apis.NewSettingsApi`, `apis.NewDoorApi`, `apis.NewHolderApi`, `apis.NewEventApi`,
-     `apis.NewLockdownApi`, `apis.NewSetupApi`, `apis.NewNotificationsApi`, `apis.NewAccessRulesApi`
+     `apis.NewLockdownApi`, `apis.NewSetupApi`, `apis.NewDeploymentApi` (deployment mode / Phase 1
+     multi-instance safety — a fixed, read-only `GET /api/deployment/preflight` answering
+     `Appliance: true, ApplianceReason: sharedservices.ApplianceSerialBus`: the `osdp.Bus` opens
+     its serial port once and holds it for the bus's lifetime, so a second instance cannot share
+     it; no `POST /api/deployment/mode` route exists — see `apis/deployment.go.md`),
+     `apis.NewNotificationsApi`, `apis.NewAccessRulesApi`
      (`apis/access_rules.go.md` — groups, schedules and grants, the surface that makes a wizard-issued
      badge actually open a door) on `protected`.
   9. **Wires the fleet**, gated on `boolValue(deps.Config.Pairing.Enabled, true)`: resolves

@@ -42,7 +42,12 @@ previously just inline statements in the middle of an 800-line function.
      `w.appCfg.Decoder.BrowseRoots` — both off mymatasan's own config since Tier 2 phase C,
      previously `deps.Config` — and `w.accessRoles`, which backs `GET /api/settings/roles`),
      `NewRecordingApi`, `NewObservationApi`, `NewNotificationApi`, `NewAnomalyApi`,
-     `NewCapacityApi`, `NewSetupApi`, `NewPairingApi`.
+     `NewCapacityApi`, `NewSetupApi`, `NewDeploymentApi` (deployment mode / Phase 1 multi-instance
+     safety — a fixed, read-only `GET /api/deployment/preflight` answering `Appliance: true,
+     ApplianceReason: sharedservices.ApplianceLocalMedia`: mymatasan owns capture pipelines,
+     writes recordings to local disk, and pins detection to this host's GPU, so a second instance
+     would not share that work, it would open its own streams against the same cameras; no
+     `POST /api/deployment/mode` route exists — see `apis/deployment.go.md`), `NewPairingApi`.
   4. Returns `protected` — a few API groups (system reset, self-update, backup) are built
      LAST in `RegisterAppRoutes` (they need the monitors and recorder to exist so they can
      quiesce them) and must still mount behind this same middleware chain, so the caller

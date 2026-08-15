@@ -72,14 +72,14 @@ This flow is for a browser live-viewing a camera attached to an adopted `mymatas
 1. The node dials the parent's media channel (`wss://parentHost:mediaPort/media`) over fleet mTLS and maintains a persistent connection (`MediaChannelManager.Run`).
 2. The browser calls `GET /api/node-stream/config` to obtain the ICE server list (STUN/TURN) configured for the parent's WebRTC leg.
 3. The browser creates a local WebRTC peer, generates an SDP offer, and POSTs it to `POST /api/nodes/{id}/cameras/{cam}/webrtc/offer`.
-4. The API handler verifies the caller has at least viewer access to the node, confirms the node's media channel is connected, and builds a per-request `stream.Manager` backed by `MediaRelayHub.Connector(nodeID)`.
+4. The API handler verifies the caller has at least viewer access to the node (against the operator's live session, on the instance the browser reached). **On a clustered deployment**, if this instance is not holding the node's media channel, it forwards the decoded offer to the instance that is (`POST /api/internal/cluster/media-offer`, authenticated by a token derived from `jwt.secret`) and returns that instance's answer verbatim to the browser — skip to step 8, since the negotiation in steps 4-7 below then happens on the OWNING instance instead, and the video flows browser-to-owning-instance directly rather than through this one. Otherwise it confirms the node's media channel is connected here and builds a per-request `stream.Manager` backed by `MediaRelayHub.Connector(nodeID)`.
 5. `CreateWebRTCAnswerWithOptions` calls `relayConnector.Subscribe(source)`, which allocates a `streamID`, sends `FrameStart` down the media channel to the node, and waits for `FrameMeta` (codec info, up to 15 s timeout).
 6. The node receives `FrameStart`, subscribes the camera's RTSP stream, sends `FrameMeta`, replays the GOP backlog (`FrameBacklog`), then pumps live RTP as `FrameVideoRTP` / `FrameAudioRTP` frames.
-7. The API handler builds H264 video and optional audio tracks, answers the SDP offer, and starts pumping the relayed RTP packets into the browser's WebRTC peer. The SDP answer is returned to the browser.
-8. The browser's WebRTC peer connects (using the configured ICE/TURN if needed) and renders live video.
+7. The API handler builds H264 video and optional audio tracks, answers the SDP offer, and starts pumping the relayed RTP packets into the browser's WebRTC peer. The SDP answer is returned to the browser (directly, or relayed back through the forwarding instance from step 4).
+8. The browser's WebRTC peer connects (using the configured ICE/TURN if needed) — to the OWNING instance's advertised address when forwarded, so the media itself never traverses a second instance or the load balancer — and renders live video.
 9. When the browser disconnects, `Subscription.Close` triggers `relayConnector`'s `stopStream`, which sends `FrameStop` to the node and stops the RTSP subscription.
 
-**Data path summary:** camera → RTSP → mymatasan (RTP) → media channel (binary WebSocket, fleet mTLS) → myseliasan (MediaRelayHub) → WebRTC (pion) → browser.
+**Data path summary:** camera → RTSP → mymatasan (RTP) → media channel (binary WebSocket, fleet mTLS) → myseliasan (MediaRelayHub) → WebRTC (pion) → browser. See `docs/modules/apps/myseliasan/services/media_peer.go.md` and `docs/HOWTO.md`'s "Live camera video across instances (myseliasan, Phase 4)" for the cross-instance forwarding hop; standalone or single-instance deployments are unaffected (the forwarding branch in step 4 never triggers).
 
 ## Recording Playback over the Control Tunnel Flow (myseliasan → mymatasan)
 

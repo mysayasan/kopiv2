@@ -350,6 +350,22 @@ curl -u admin:Admin123 -X POST "http://localhost:3000/api/capacity/calibrate"  #
 
 The estimate and a **Run calibration** button are surfaced on the Settings → Machine Health card (and reused by the wizard).
 
+## Deployment shape (single instance by design)
+
+mymatasan runs as **one instance**, and Settings → System says so rather than leaving an
+operator hunting for a setting that does not exist. It owns its camera capture pipelines,
+writes recordings to local disk and pins detection to this host's GPU, so a second copy
+would not share that work — it would open its own streams against the same cameras and
+write a second, divergent set of recordings. Availability here is a redundancy question (a
+spare recorder, redundant storage, regular backups), not a load-balancer one.
+
+The notice is the shared `DeploymentPanel` (`frontend/shared/src/Deployment.js`) rendering
+its appliance branch, driven by `GET /api/deployment/preflight`, which reports
+`clusterable: false` with the reason code `local-media`. There is deliberately no
+`POST /api/deployment/mode` on this app — the mode is not a choice. See
+`docs/HOWTO.md` → *Which apps can actually be clustered* for the suite-wide picture;
+`myseliasan` and `myidsan` are the two apps that can genuinely run behind a load balancer.
+
 ## Built-in user manual
 
 mymatasan ships a **built-in user manual** — markdown articles compiled into the binary, so the docs a reader sees always match the running software and work with no network access (phase 1 of a suite-wide manual; other apps adopt the same shared library later). Content lives under `apps/mymatasan/manual/{en,ms,zh,ar}/*.md` (`apps/mymatasan/manual/manual.go`); indexing, language fallback, search, and printing are generalized in `domain/shared/manual`, reused by any future app that embeds its own articles the same way.

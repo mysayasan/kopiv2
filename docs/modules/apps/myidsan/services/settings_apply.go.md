@@ -27,7 +27,12 @@ bad value would break boot or security:
   `passwordPolicy.minLength` must be **at least 8** (floored, not merely non-negative — a
   policy admitting a 4-character password reads as due diligence while permitting exactly
   what it appears to forbid); `mfa.policy` must be one of `off`/`optional`/`required`.
-- `storage` — `fileStorage.path` is required; `cache.ttlSeconds` cannot be negative.
+- `storage` — `fileStorage.path` is required; `cache.ttlSeconds` cannot be negative;
+  `transaction.lockProvider` (deployment mode / Phase 1 multi-instance safety), when non-empty,
+  must be one of `memory`/`inmemory`/`redis`/`rediscluster`/`redis-cluster`/`default` — refused
+  rather than silently defaulted, since an unrecognised provider would make the host fail to build
+  a locker and abort the boot, and discovering that from a settings save is far kinder than
+  discovering it from a process that will not come back up.
 - `logging` — `logging.maxLineBytes`/`maxFileSizeMb` cannot be negative (0 = uncapped); a
   non-empty `telemetry.prometheus.metricsPath` must start with `/`.
 - Unknown section — error.
@@ -36,7 +41,8 @@ bad value would break boot or security:
 
 Writes a validated section's values onto the live config model field-by-field (mirroring
 `settings.go`'s `read()` shape in reverse), so the in-memory config reflects the pending
-change immediately — the host still needs a restart to consume it.
+change immediately — the host still needs a restart to consume it. The `storage` case now also
+writes `cfg.Transaction.LockProvider = g.s("transaction.lockProvider")` beside the cache fields.
 
 `loginSecurity.enabled` and `passwordPolicy.blockCommon` are pointer-valued
 (`*bool`) on `config.AppConfigModel`, because the pointer is what distinguishes "absent

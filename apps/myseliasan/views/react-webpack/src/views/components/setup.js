@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Ico, useT, LanguageDropdown } from '@shared';
+import { Ico, useT, LanguageDropdown, DeploymentPanel } from '@shared';
 import { BrandLogo } from './layout';
 import { FormBusyOverlay, Message } from './ui';
 import { api } from '../lib/helpers';
@@ -21,7 +21,44 @@ import { KIND_ORDER, KIND_ICO, normKind, defaultIconFor, hasPlans, multiPlan } f
 //     .mmbackup and myidsan's .idbackup exist). Separate gap, not folded in.
 //   - an alerting step: there is no notification-destination API in this app yet; the
 //     feed is a live relay of node-pushed events. A form over nothing would be a lie.
-const STEP_KEYS = ['setup.stepWelcome', 'setup.stepSignin', 'setup.stepSite', 'setup.stepNode', 'setup.stepHandoff', 'setup.stepDone'];
+const STEP_KEYS = ['setup.stepWelcome', 'setup.stepDeployment', 'setup.stepSignin', 'setup.stepSite', 'setup.stepNode', 'setup.stepHandoff', 'setup.stepDone'];
+
+// Deployment is asked SECOND, before sign-in and before adopting a node, because the
+// answer changes both of those. In a clustered install the SSO redirect URL and the
+// address a node dials back on must be the load balancer's, not this machine's — and a
+// hostname baked in during setup is not something anyone revisits until the second
+// instance is added and nothing works.
+//
+// The operator checklist and the caveats live HERE rather than in the shared component
+// because they are facts about myseliasan specifically: its listener ports, its uploads
+// directory, its pairing URL, and which of its own features are not yet cluster-safe.
+export function deploymentOperatorSteps(t) {
+  return [
+    t('setup.deployLbHttps'),
+    t('setup.deployLbPassthrough'),
+    t('setup.deployKeyFile'),
+    t('setup.deployFloorplans'),
+    t('setup.deployMediaIps'),
+    t('setup.deployVipUrls'),
+  ];
+}
+
+// What is not yet safe to replicate. Every one of these fails SILENTLY — wrong numbers on
+// a chart, an alert that never arrives, a picture that never loads — so they are spelled
+// out and acknowledged rather than left in a release note nobody reads at 2am.
+//
+// This list has to SHRINK as the gaps close, and shrink promptly. A caveat that is no
+// longer true is worse than no caveat at all: it teaches an operator that the warnings
+// here are stale, and the next time one of them matters they will skim past it.
+//
+// Removed as each gap closed: node liveness and node-screen access (the owner registry and
+// instance forwarding, node_owner.go / node_peer.go); the live notification bell and
+// cross-instance fleet rules (the event bus, node_events.go); live camera video (media
+// offer forwarding, media_peer.go). What is left is the one thing still genuinely
+// per-instance.
+export function deploymentCaveats(t) {
+  return [t('setup.deployCaveatSettings')];
+}
 
 const SSO_BUNDLE_KIND = 'myidsan.sso.client';
 const SSO_BUNDLE_MAX_VERSION = 1;
@@ -40,6 +77,9 @@ export function SetupWizard({ session, lang, onLangChange, onToast, onDone }) {
   const [message, setMessage] = useState('');
 
   // Per-step "this actually got done" flags, summarised on the final pane.
+  // deployMode is also read by the later steps: a clustered install needs the load
+  // balancer's address in the SSO redirect and the node's dial-back URL, not this host's.
+  const [deployMode, setDeployMode] = useState('standalone');
   const [ssoDone, setSsoDone] = useState(false);
   const [ssoRestartNeeded, setSsoRestartNeeded] = useState(false);
   const [siteDone, setSiteDone] = useState('');
@@ -82,25 +122,28 @@ export function SetupWizard({ session, lang, onLangChange, onToast, onDone }) {
 
         <div className="setup-body">
           {step === 0 ? <WelcomeStep session={session} /> : null}
-          {step === 1 ? (
+          {step === 1 ? <DeploymentStep onToast={onToast} mode={deployMode} setMode={setDeployMode} /> : null}
+          {step === 2 ? (
             <SigninStep
               busy={busy} setBusy={setBusy} setMessage={setMessage} onToast={onToast}
               done={ssoDone} setDone={setSsoDone} setRestartNeeded={setSsoRestartNeeded}
+              clustered={deployMode === 'clustered'}
             />
           ) : null}
-          {step === 2 ? (
+          {step === 3 ? (
             <SiteStep busy={busy} setBusy={setBusy} setMessage={setMessage} onToast={onToast} done={siteDone} setDone={setSiteDone} />
           ) : null}
-          {step === 3 ? (
-            <NodeStep busy={busy} setBusy={setBusy} setMessage={setMessage} onToast={onToast} done={nodeDone} setDone={setNodeDone} />
-          ) : null}
           {step === 4 ? (
-            <HandoffStep busy={busy} setBusy={setBusy} setMessage={setMessage} onToast={onToast} session={session} done={handoffDone} setDone={setHandoffDone} />
+            <NodeStep busy={busy} setBusy={setBusy} setMessage={setMessage} onToast={onToast} done={nodeDone} setDone={setNodeDone} clustered={deployMode === 'clustered'} />
           ) : null}
           {step === 5 ? (
+            <HandoffStep busy={busy} setBusy={setBusy} setMessage={setMessage} onToast={onToast} session={session} done={handoffDone} setDone={setHandoffDone} />
+          ) : null}
+          {step === 6 ? (
             <DoneStep
               ssoDone={ssoDone} ssoRestartNeeded={ssoRestartNeeded}
               siteDone={siteDone} nodeDone={nodeDone} handoffDone={handoffDone}
+              deployMode={deployMode}
             />
           ) : null}
         </div>
@@ -152,12 +195,39 @@ function WelcomeStep({ session }) {
   );
 }
 
-// Step 2 — sign-in. myidsan's Apps page exports the client it just registered as a
+// Step 2 — deployment shape. The one question in this wizard whose answer is mostly
+// about the world OUTSIDE the application: a load balancer's configuration, where the
+// encryption key file lives, which addresses the nodes will dial. The panel reports what
+// the server can actually verify from in here and states plainly what it cannot.
+//
+// Skippable like every other step, and it defaults to single instance — which is what
+// every install was before this existed.
+function DeploymentStep({ onToast, mode, setMode }) {
+  const t = useT();
+  return (
+    <div className="setup-pane">
+      <h2>{t('setup.deploymentTitle')}</h2>
+      <p>{t('setup.deploymentBody')}</p>
+      <DeploymentPanel
+        api={api}
+        appLabel="MySeliaSan"
+        operatorSteps={deploymentOperatorSteps(t)}
+        caveats={deploymentCaveats(t)}
+        labels={{ llmMode: 'setup.deployCheckLlm' }}
+        onToast={onToast}
+        onSaved={setMode}
+      />
+      {mode === 'clustered' ? <p className="field-hint">{t('setup.deploymentNextHint')}</p> : null}
+    </div>
+  );
+}
+
+// Step 3 — sign-in. myidsan's Apps page exports the client it just registered as a
 // small JSON file; every value in it has to match here byte-for-byte, and retyping it
 // across two consoles is exactly where operators slip. Unlike the Settings page (which
 // only FILLS the form and waits for a Save), the wizard saves — that is the whole point
 // of being here — and then reports that the change needs a restart.
-function SigninStep({ busy, setBusy, setMessage, onToast, done, setDone, setRestartNeeded }) {
+function SigninStep({ busy, setBusy, setMessage, onToast, done, setDone, setRestartNeeded, clustered }) {
   const t = useT();
 
   const applyBundle = async (file) => {
@@ -219,6 +289,10 @@ function SigninStep({ busy, setBusy, setMessage, onToast, done, setDone, setRest
           <input type="file" accept=".json" disabled={busy} onChange={(e) => applyBundle(e.target.files && e.target.files[0])} />
         </label>
       )}
+      {/* A clustered install must send users back to the load balancer, not to whichever
+          instance happened to serve the wizard — a per-instance redirect URL works
+          perfectly until the second instance exists. */}
+      {clustered ? <p className="field-hint"><Ico n="info" sz={15} /> {t('setup.signinClusterHint')}</p> : null}
       <p className="field-hint">{t('setup.signinLocalHint')}</p>
     </div>
   );
@@ -298,7 +372,7 @@ function SiteStep({ busy, setBusy, setMessage, onToast, done, setDone }) {
 // Step 4 — adopt the first node. The fleet key has to be on the node before it will
 // answer, so it is shown FIRST and the scan comes after; a node that was never given
 // the key simply will not appear, and saying so here saves a support round-trip.
-function NodeStep({ busy, setBusy, setMessage, onToast, done, setDone }) {
+function NodeStep({ busy, setBusy, setMessage, onToast, done, setDone, clustered }) {
   const t = useT();
   const [fleetKey, setFleetKey] = useState(null);
   const [found, setFound] = useState(null);
@@ -364,6 +438,11 @@ function NodeStep({ busy, setBusy, setMessage, onToast, done, setDone }) {
       ) : (
         <p className="field-hint">{t('setup.nodeNoFleetKey')}</p>
       )}
+
+      {/* A node dials the parent back and holds that connection open. Pointed at one
+          instance it stays pinned to it; pointed at the load balancer it can reconnect
+          to whichever instance is alive. */}
+      {clustered ? <p className="field-hint"><Ico n="info" sz={15} /> {t('setup.nodeClusterHint')}</p> : null}
 
       {done ? (
         <span className="field-hint good"><Ico n="check-ok" sz={16} /> {t('setup.nodeAdoptedName', { name: done })}</span>
@@ -509,19 +588,24 @@ function HandoffStep({ busy, setBusy, setMessage, onToast, session, done, setDon
   );
 }
 
-function DoneStep({ ssoDone, ssoRestartNeeded, siteDone, nodeDone, handoffDone }) {
+function DoneStep({ ssoDone, ssoRestartNeeded, siteDone, nodeDone, handoffDone, deployMode }) {
   const t = useT();
+  const clustered = deployMode === 'clustered';
   return (
     <div className="setup-pane setup-done">
       <Ico n="check-ok" sz={40} />
       <h2>{t('setup.doneTitle')}</h2>
       <p>{t('setup.doneBody')}</p>
       <ul className="setup-summary">
+        <li>{clustered ? '✓' : '·'} {clustered ? t('setup.sumDeployClustered') : t('setup.sumDeployStandalone')}</li>
         <li>{ssoDone ? '✓' : '·'} {t('setup.sumSignin')}</li>
         <li>{siteDone ? '✓' : '·'} {t('setup.sumSite')}</li>
         <li>{nodeDone ? '✓' : '·'} {t('setup.sumNode')}</li>
         <li>{handoffDone ? '✓' : '·'} {t('setup.sumHandoff')}</li>
       </ul>
+      {/* The remaining work for a clustered install is on the OTHER instances, and it is
+          the step most likely to be forgotten once this one looks finished. */}
+      {clustered ? <p className="field-hint">{t('setup.doneClusterHint')}</p> : null}
       {ssoRestartNeeded ? <p className="field-hint">{t('setup.doneRestartHint')}</p> : null}
     </div>
   );

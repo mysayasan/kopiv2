@@ -3,6 +3,7 @@ import { Ico } from './icons';
 import { Tabs } from '@shared/Tabs';
 import { DataTable } from '@shared/DataTable';
 import { useT } from '@shared/i18n';
+import { DeploymentPanel } from '@shared/Deployment';
 import { HelpButton } from '@shared/Manual';
 import { FormBusyOverlay, FieldTitle, AccordionList, AccordionItem } from './ui';
 import { ConsoleLog } from './console';
@@ -1259,6 +1260,21 @@ function UpdatePanel({ authHeader, onRestart }) {
 //   GET /ready        — service readiness        {"ok", "db", "cache", ...advisory}
 function SystemStatusPanel({ authHeader, onRestart }) {
   const t = useT();
+  // The shared panel takes its own request function because each app's helper differs.
+  // Read-only here: mymatasan is an appliance, so the panel offers nothing to save.
+  const deploymentApi = useCallback(async (path) => {
+    const headers = {};
+    if (authHeader) headers.Authorization = authHeader;
+    try {
+      const resp = await fetch(`${apiBase()}${path}`, { credentials: 'include', headers });
+      const text = await resp.text();
+      let payload = null;
+      if (text) { try { payload = JSON.parse(text); } catch (_) { payload = { message: text }; } }
+      return { ok: resp.ok, body: payload?.data?.result ?? payload?.result ?? payload };
+    } catch (err) {
+      return { ok: false, message: err.message };
+    }
+  }, [authHeader]);
   const [restarting, setRestarting] = useState(false);
   const [version, setVersion] = useState(null);
   const [apiHealth, setApiHealth] = useState(null);
@@ -1382,6 +1398,15 @@ function SystemStatusPanel({ authHeader, onRestart }) {
             </div>
           ))}
         </div>
+      </section>
+
+      {/* Deployment answer. Fixed for this app — it owns its capture pipelines, writes
+          recordings to local disk and uses this machine's graphics card — so the panel
+          renders a reason rather than a choice, and points at redundancy instead. An NVR
+          is the app somebody is most likely to try to put behind a load balancer, and the
+          reason it cannot go there is not obvious from the outside. */}
+      <section className="settings-panel span-two">
+        <DeploymentPanel api={deploymentApi} appLabel="MyMataSan" />
       </section>
     </div>
   );

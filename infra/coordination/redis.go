@@ -131,6 +131,39 @@ func (r *RedisLocker) Lock(ctx context.Context, resource string) (Lock, error) {
 	}
 }
 
+// TryLock takes the resource if it is free right now, and reports ErrNotAcquired
+// otherwise. It bypasses the FIFO queue entirely: a caller that loses wants to skip
+// this round, not to be handed the lock later when the winner is finished.
+//
+// The lease is renewed for as long as the returned Lock is held, so a holder that
+// keeps it (a leadership lease) stays owner while it is alive, and a holder that
+// dies has its lease expire within LeaseTTL and lets somebody else take over.
+func (r *RedisLocker) TryLock(ctx context.Context, resource string) (Lock, error) {
+	start := time.Now()
+	token := uuid.NewString()
+
+	ctx, cancel := context.WithTimeout(ctx, r.cfg.CommandTimeout)
+	defer cancel()
+
+	acquired, err := r.client.SetNX(ctx, r.lockKey(resource), token, r.cfg.LeaseTTL).Result()
+	if err != nil {
+		r.record(resource, "error", start)
+		return nil, err
+	}
+	if !acquired {
+		r.record(resource, "not-acquired", start)
+		return nil, ErrNotAcquired
+	}
+
+	lock := &redisLock{parent: r, resource: resource, token: token, done: make(chan struct{})}
+	lock.startRenewal()
+	// Deliberately no monitor() — see the MemoryLocker.TryLock comment: a leadership
+	// lease is held for the life of the process by design, and reporting that as
+	// "stuck" would be a false alarm.
+	r.record(resource, "acquired", start)
+	return lock, nil
+}
+
 func (r *RedisLocker) Close() error {
 	if r == nil || r.client == nil {
 		return nil
@@ -200,12 +233,27 @@ func (r *RedisLocker) waitKey(resource string, token string) string {
 	return r.key("wait:" + resource + ":" + token)
 }
 
+// key namespaces a lock by BOTH the configured key prefix and the app name.
+//
+// The app name matters more than it looks. Every app in the suite ships the same
+// cache.keyPrefix ("kopiv2"), so without it two different apps pointed at one Redis share
+// a lock the moment they use the same resource name — and they do: every app's background
+// leader asks for "leader". The loser then silently stops all of its scheduled work
+// (retention purges, rollups, digests, reconciliation) because another APPLICATION holds
+// the lease. Nothing logs an error; the work just never runs.
 func (r *RedisLocker) key(value string) string {
 	prefix := strings.TrimSpace(r.cfg.KeyPrefix)
-	if prefix == "" {
+	app := strings.TrimSpace(r.cfg.AppName)
+	switch {
+	case prefix == "" && app == "":
 		return "tx:" + value
+	case prefix == "":
+		return app + ":tx:" + value
+	case app == "":
+		return prefix + ":tx:" + value
+	default:
+		return prefix + ":" + app + ":tx:" + value
 	}
-	return prefix + ":tx:" + value
 }
 
 func (l *redisLock) Resource() string {
@@ -214,6 +262,31 @@ func (l *redisLock) Resource() string {
 
 func (l *redisLock) Token() string {
 	return l.token
+}
+
+// Valid reports whether Redis still records this holder as the owner.
+//
+// This is the check that keeps a lease honest. Renewal runs on a timer, so a
+// process that stalls past LeaseTTL — a long GC pause, a suspended VM, a network
+// partition — can have its key expire and be taken by somebody else while it goes
+// on believing it is the owner. A holder that never re-checks becomes a silent
+// second writer, which is the exact failure the lock existed to prevent.
+func (l *redisLock) Valid(ctx context.Context) bool {
+	select {
+	case <-l.done:
+		return false
+	default:
+	}
+	ctx, cancel := context.WithTimeout(ctx, l.parent.cfg.CommandTimeout)
+	defer cancel()
+	owner, err := l.parent.client.Get(ctx, l.parent.lockKey(l.resource)).Result()
+	if err != nil {
+		// Unreachable Redis is reported as NOT held. Failing closed costs a skipped
+		// round of work; failing open would let every instance decide it is the one
+		// in charge during exactly the partition where that does the most damage.
+		return false
+	}
+	return owner == l.token
 }
 
 func (l *redisLock) Release(ctx context.Context) error {

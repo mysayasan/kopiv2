@@ -505,7 +505,12 @@ gated admin-only server-side too (`services.Policy()`).
   unpair.
 - **System** — app/core version, health, and `POST /api/system/restart` (responds first, then
   restarts ~500ms later so the browser can show a "restarting…" overlay). This is also the tab an
-  operator uses after editing Telemetry settings, since those need a restart to take effect. A
+  operator uses after editing Telemetry settings, since those need a restart to take effect. The
+  tab also renders the shared **Deployment** panel (deployment mode / Phase 1 multi-instance
+  safety), fixed here: `GET /api/deployment/preflight` answers `Appliance: true` because the
+  Modbus RTU pollers hold serial ports (`COM3`, `/dev/ttyUSB0`) that only one process on one
+  machine can open — the panel states the reason rather than offering a choice, since an operator
+  who does not know that would otherwise go looking for the setting and find nothing. A
   **Danger zone** on the same tab offers **Reset to factory settings** (`GET
   /api/system/reset/state`, `POST /api/system/reset`, `GET /api/system/reset/progress`, built on
   the shared `domain/shared/services.SystemResetService`) — myiotsan previously had no factory

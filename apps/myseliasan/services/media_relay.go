@@ -34,9 +34,22 @@ const (
 type MediaRelayHub struct {
 	logf func(string, ...any)
 
+	// onConnect/onDisconnect publish and withdraw this instance's claim on a node's MEDIA
+	// channel. Behind a load balancer a browser's video request lands on an arbitrary
+	// instance, and only the one holding this connection can answer it. Optional.
+	onConnect    func(nodeID string)
+	onDisconnect func(nodeID string)
+
 	mu           sync.Mutex
 	nodes        map[string]*relayNodeConn
 	nextStreamID uint64
+}
+
+// SetOwnershipHooks registers callbacks fired (each in its own goroutine) when a node's
+// media connection is accepted and when it is torn down. Set once at startup.
+func (h *MediaRelayHub) SetOwnershipHooks(onConnect, onDisconnect func(nodeID string)) {
+	h.onConnect = onConnect
+	h.onDisconnect = onDisconnect
 }
 
 type relayNodeConn struct {
@@ -81,6 +94,9 @@ func (h *MediaRelayHub) HandleConn(nodeID string, conn *mediarelay.Conn) {
 		_ = old.conn.Close()
 	}
 	h.logf("media: node %s connected", nodeID)
+	if h.onConnect != nil {
+		go h.onConnect(nodeID)
+	}
 
 	pingCtx, stopPing := context.WithCancel(context.Background())
 	go relayPingLoop(pingCtx, conn)
@@ -88,13 +104,27 @@ func (h *MediaRelayHub) HandleConn(nodeID string, conn *mediarelay.Conn) {
 	defer func() {
 		stopPing()
 		h.mu.Lock()
-		if h.nodes[nodeID] == nc {
+		// Was this still the CURRENT connection? A node that reconnected has already
+		// replaced the entry, and this teardown belongs to the old one.
+		wasCurrent := h.nodes[nodeID] == nc
+		if wasCurrent {
 			delete(h.nodes, nodeID)
 		}
 		h.mu.Unlock()
 		nc.closeAll()
 		_ = conn.Close()
+		if !wasCurrent {
+			h.logf("media: node %s stale connection closed (already reconnected)", nodeID)
+			return
+		}
 		h.logf("media: node %s disconnected", nodeID)
+		// After the connection is removed, so a peer reacting to this can never observe it
+		// as still held here. Guarded by wasCurrent: announcing a stale teardown would
+		// withdraw the ownership claim of a LIVE media channel, and every other instance
+		// would then report "media channel is not connected" for a streaming camera.
+		if h.onDisconnect != nil {
+			go h.onDisconnect(nodeID)
+		}
 	}()
 
 	for {

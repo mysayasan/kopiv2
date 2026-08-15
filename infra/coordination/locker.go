@@ -2,14 +2,30 @@ package coordination
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/mysayasan/kopiv2/infra/telemetry"
 )
 
+// ErrNotAcquired is returned by TryLock when the resource is already held.
+// It is an ordinary outcome, not a failure: the caller was asking whether it is
+// the one to do the work, and the answer was no.
+var ErrNotAcquired = errors.New("coordination: resource is already locked")
+
 // Locker serializes work for one resource key.
 type Locker interface {
+	// Lock waits its turn in a FIFO queue and returns once the resource is held,
+	// or fails after WaitTimeout. Use it for work that MUST eventually happen.
 	Lock(ctx context.Context, resource string) (Lock, error)
+	// TryLock attempts the resource once and returns ErrNotAcquired immediately if
+	// somebody else holds it. Use it for work that must happen at most ONCE across
+	// the deployment, where a loser should skip rather than wait.
+	//
+	// Lock is deliberately unsuitable there: it queues, so a loser would block for
+	// WaitTimeout and then acquire the moment the winner released — running exactly
+	// the job the lock was meant to deduplicate, only later.
+	TryLock(ctx context.Context, resource string) (Lock, error)
 	Ping(ctx context.Context) error
 	Close() error
 }
@@ -18,6 +34,11 @@ type Locker interface {
 type Lock interface {
 	Resource() string
 	Token() string
+	// Valid reports whether this lock is still held by this holder. A lease can be
+	// lost without anybody being told — the process stalls past the TTL, or the
+	// backing store drops the key — and a holder that assumes otherwise becomes a
+	// second writer. Long-lived holders should re-check rather than assume.
+	Valid(ctx context.Context) bool
 	Release(ctx context.Context) error
 }
 

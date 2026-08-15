@@ -68,6 +68,9 @@ type Correlator struct {
 	// armed holds rules whose required clauses are all satisfied and which are waiting out their
 	// grace period before deciding whether the absent clauses really are absent.
 	armed map[int64]time.Time
+
+	// onRulesChanged, when set, is called after a local rule save or delete.
+	onRulesChanged func()
 }
 
 type clauseKey struct {
@@ -136,6 +139,18 @@ func (c *Correlator) HasRuleFor(nodeId, category string) bool {
 		}
 	}
 	return false
+}
+
+// SetOnRulesChanged registers a callback fired after this instance changes the rule set.
+// It exists so a multi-instance deployment can tell the other instances to reload — the
+// instance that served the edit is rarely the one that fires rules.
+func (c *Correlator) SetOnRulesChanged(fn func()) { c.onRulesChanged = fn }
+
+// announceRulesChanged notifies any listener that the rule set moved.
+func (c *Correlator) announceRulesChanged() {
+	if c.onRulesChanged != nil {
+		go c.onRulesChanged()
+	}
 }
 
 // Reload refreshes the rule cache.

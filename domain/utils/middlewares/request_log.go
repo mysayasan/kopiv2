@@ -47,6 +47,18 @@ func (w *statusWriter) Flush() {
 	}
 }
 
+// Unwrap exposes the writer this one wraps, which is how http.ResponseController
+// reaches the real connection.
+//
+// The same class of bug as Flush above, and it bit the same feature. Without it,
+// ResponseController.SetWriteDeadline cannot see past this wrapper and returns
+// "not supported", so the notification stream keeps the server's 30-second
+// WriteTimeout as its lifetime and is cut every 30 seconds. A browser's EventSource
+// reconnects silently, so nothing looks broken — but every notification that lands
+// in a reconnect gap is lost with nothing logged. Any wrapper added here in future
+// needs this method for the same reason.
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 func (w *statusWriter) RequestDurationMs() int64 {
 	if w == nil || w.start.IsZero() {
 		return 0

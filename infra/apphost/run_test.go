@@ -149,8 +149,14 @@ func TestApplySensitiveConfigDisablesHalfConfiguredOAuthProvider(t *testing.T) {
 	}
 	cfg.Jwt.Secret = "unit-test-secret"
 
-	if err := applySensitiveConfig(cfg, ""); err != nil {
+	jwtGenerated, err := applySensitiveConfig(cfg, "")
+	if err != nil {
 		t.Fatalf("half-configured provider must not fail startup, got: %v", err)
+	}
+	// A secret the operator supplied must NOT be reported as generated, or the
+	// deployment preflight would fail a correctly configured cluster.
+	if jwtGenerated {
+		t.Fatal("a configured secret must not be reported as generated")
 	}
 	if cfg.Login.Google != nil {
 		t.Fatalf("expected google provider to be disabled when the client secret is absent")
@@ -174,7 +180,7 @@ func TestApplySensitiveConfigKeepsFullyConfiguredOAuthProvider(t *testing.T) {
 	}
 	cfg.Jwt.Secret = "unit-test-secret"
 
-	if err := applySensitiveConfig(cfg, ""); err != nil {
+	if _, err := applySensitiveConfig(cfg, ""); err != nil {
 		t.Fatalf("fully configured provider must survive, got: %v", err)
 	}
 	if cfg.Login.Google == nil {
@@ -195,11 +201,18 @@ func TestApplySensitiveConfigReplacesWeakJWTSecret(t *testing.T) {
 	cfg := &config.AppConfigModel{}
 	cfg.Jwt.Secret = "standalone-change-me"
 
-	if err := applySensitiveConfig(cfg, configPath); err != nil {
+	jwtGenerated, err := applySensitiveConfig(cfg, configPath)
+	if err != nil {
 		t.Fatalf("applySensitiveConfig: %v", err)
 	}
 	if isWeakJWTSecret(cfg.Jwt.Secret) {
 		t.Fatalf("secret still weak after hardening: %q", cfg.Jwt.Secret)
+	}
+	// The generated secret is written back to the config file, so afterwards it is
+	// indistinguishable from one the operator set. Reporting it is the only way the
+	// deployment preflight can warn that every replica will invent a DIFFERENT one.
+	if !jwtGenerated {
+		t.Fatal("a generated secret must be reported as generated")
 	}
 
 	saved, err := os.ReadFile(configPath)
@@ -224,7 +237,7 @@ func TestApplySensitiveConfigKeepsEnvJWTSecret(t *testing.T) {
 	cfg := &config.AppConfigModel{}
 	cfg.Jwt.Secret = "standalone-change-me"
 
-	if err := applySensitiveConfig(cfg, ""); err != nil {
+	if _, err := applySensitiveConfig(cfg, ""); err != nil {
 		t.Fatalf("applySensitiveConfig: %v", err)
 	}
 	if cfg.Jwt.Secret != "an-explicitly-strong-env-secret" {

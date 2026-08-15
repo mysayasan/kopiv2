@@ -429,6 +429,251 @@ A distributed `lockProvider` only works as a true multi-instance deployment if `
 
 For single-process development only, `lockProvider` can be `memory` or `inmemory`.
 
+Several apps may share one Redis: lock keys are namespaced per application, as
+`<keyPrefix>:<appName>:tx:<resource>` (for example `kopiv2:myseliasan:tx:lock:leader`). Before
+this namespacing existed the key was `<keyPrefix>:tx:<resource>`, so two apps pointed at the same
+Redis contended for a single `kopiv2:tx:lock:leader` — only one of them could hold leadership, and
+the other silently ran none of its scheduled background work. If you monitor or script against
+these keys, match on the newer form. The old keys are TTL leases that are never read again after
+an upgrade, so they expire on their own; no cleanup is needed. During a rolling upgrade of one
+app, an old and a new instance briefly use different key names and can both act as leader, so
+prefer restarting an app's instances together.
+
+### Which apps can actually be clustered
+
+Not every app in the suite is a candidate. The tiering is a design decision, not a configuration
+gap to be worked around:
+
+- **Tier A, genuinely clusterable** — `myseliasan` and `myidsan`: stateless over Postgres, so
+  the guidance above (shared cache + shared lock + `db.pool.maxOpenConns` per instance) is the
+  whole story once you also point every instance at the same database and, for `myseliasan`, the
+  same `security.keyPath`/at-rest key (see below).
+- **Tier B, single-instance by design** — `mymatasan`, `myiotsan`, `mypintusan`: each owns
+  hardware a second process cannot share (mymatasan's capture pipelines/local recordings/GPU;
+  myiotsan's Modbus RTU pollers and mypintusan's `osdp.Bus`, both of which hold a serial port open
+  for the process's whole lifetime — a serial port belongs to exactly one process on exactly one
+  host). These apps expose only a read-only `GET /api/deployment/preflight` (no `POST
+  /api/deployment/mode`); availability for them is a redundancy question (a second recorder, a
+  spare host), not a load-balancer one.
+
+Every app exposes `GET /api/deployment/preflight`, a readiness checklist (db engine, shared
+cache/lock — pinged, not just name-checked, so an unreachable Redis fails the check rather than
+passing on the provider name alone — the at-rest encryption key's fingerprint, the JWT secret's
+provenance, and the per-instance DB connection pool budget). Tier A apps also expose `GET`/`POST
+/api/deployment/mode` to DECLARE the deployment as `standalone` (default) or `clustered`; declaring
+it changes the boot-time shared-state warning from an inference to a stated fact (a declared
+`clustered` install with a per-process cache or lock is now a hard `WARNING`, not a maybe). The
+setup wizard (myseliasan: a dedicated Deployment step, before sign-in and node adoption; myidsan:
+folded into the existing "Where sessions live" step) and the Settings panel (both apps, `storage`
+section) both render this checklist and record the declaration.
+
+**The at-rest encryption key must also be the SAME key on every instance.** Two instances holding
+different keys look completely healthy until one reads a sealed column the other wrote — for
+myseliasan that is the fleet CA private key and PSK (the whole fleet's trust); for
+mymatasan/myidsan it is recordings/snapshots or the LDAP bind password. Compare the fingerprint the
+preflight checklist reports (`atrestKey`) between instances, not the key file's install marker
+(`KeyId`) — copying `atrest.key` to a second host without its `.init` marker produces two different
+marker ids for one identical key, which would read as a mismatch that does not exist.
+
+### Leader election and the migration lock
+
+Scheduled singleton work — retention purges, the notification rollup, the AI digest, heartbeat
+reconciliation — must run once for the DEPLOYMENT, not once per process. Every app now campaigns
+for a background-work leader lease (`infra/coordination/leader.go.md`) using the same
+`transaction.lockProvider`; the instance holding it runs these tasks, and losing instances skip
+them rather than queueing behind the winner. With the default per-process (`memory`) lock provider
+the single instance always holds the lease immediately, so standalone behavior is completely
+unchanged — this is not a new thing to configure for a single-process install. Schema bootstrap
+(the one startup step several instances starting together can genuinely corrupt for each other) is
+separately serialized by a deployment-wide migration lock held only for the seconds bootstrap
+takes; a per-process lock provider makes this a no-op too, and an unreachable coordination store
+during the acquire logs and proceeds rather than refusing to boot.
+
+### Instance-to-instance node forwarding (myseliasan, Phase 2)
+
+A node dials IN and holds its control channel open to exactly ONE instance, so behind a load
+balancer a browser request lands on the right instance only 1-in-N times. `cluster` (control plane
+only — `myseliasan`) configures how one instance reaches another to close that gap:
+
+```json
+"cluster": {
+  "advertiseUrl": "https://10.0.0.11:3002",
+  "ownershipTtlSeconds": 30,
+  "forwardTimeoutSeconds": 30,
+  "insecureSkipVerify": true
+}
+```
+
+- `advertiseUrl` — how OTHER instances reach THIS one. Must be this instance's own directly
+  reachable address, **not** the load balancer's — forwarding through the balancer would land back
+  on an arbitrary instance and could bounce indefinitely. **Empty (the default) disables forwarding
+  entirely** and leaves single-instance behavior identical to before this feature; this is the only
+  field that has to be set per instance for clustering to take effect.
+- `ownershipTtlSeconds` (default `30`) — how long a node-ownership claim survives without renewal
+  (renewed automatically at a third of the TTL); bounds how long a dead instance keeps appearing to
+  own its nodes.
+- `forwardTimeoutSeconds` (default `30`) — bounds one forwarded request.
+- `insecureSkipVerify` — skip TLS verification on the peer-to-peer hop; instances default to
+  self-signed certs, so a fresh cluster typically needs this until a shared CA is installed. The
+  peer request is still authenticated by a token derived from `jwt.secret` regardless, so this
+  trades transport privacy between instances, not admission — no separate cluster secret is
+  configured or shared; every instance derives the same token from the same signing secret it
+  already needs to share for sessions to work.
+
+Set `cluster.advertiseUrl` to each instance's OWN address (a different value per instance) to
+enable it. Each instance publishes which nodes' control channels it holds to the shared cache (a
+lease, renewed on a timer, that expires on its own if the instance dies) and reads the others' — so
+every instance can answer "which instance holds this node right now," and forward a node command to
+it over `POST /api/internal/cluster/node-forward` (mounted only when clustering is configured, and
+outside the session-auth middleware — its caller is a peer instance with a derived token, not a
+signed-in user).
+
+This fixes both of Phase 1's documented gaps for node liveness and node commands:
+
+- **Heartbeat/liveness** — the reconciler now asks "is this node connected anywhere in the
+  deployment," not "is it connected to me." A healthy node attached to another instance is no
+  longer falsely marked `lost`.
+- **Node commands** — the node proxy (`/api/nodes/{id}/proxy/...`) and recording-stream playback now
+  reach a node regardless of which instance its control channel terminates on: the receiving
+  instance forwards the request to the owning one and returns its reply.
+
+**Not fixed here — live camera video.** A node's camera stream negotiates WebRTC per viewer with
+media flowing outside the load balancer; at this point in the phased rollout, viewing a camera on
+a node attached to another instance still failed. This is a separate design problem from the
+control-channel forwarding above, closed by Phase 4 below.
+
+### Cross-instance event bus (myseliasan, Phase 3)
+
+Phase 2 fixed node liveness and node commands. Two things still didn't span the deployment: a fleet
+rule whose clauses touch nodes attached to different instances never armed at all (it went quiet
+instead of firing twice — the more dangerous direction), and the live notification feed (SSE) only
+ever showed what the instance a browser happened to be connected to had itself ingested. Phase 3
+closes both with one mechanism: a fire-and-forget event bus (`infra/eventbus`) that fans a message
+out to every instance of one app.
+
+```json
+"cluster": {
+  "advertiseUrl": "https://10.0.0.11:3002",
+  "eventBusProvider": ""
+}
+```
+
+- **No new required setting.** `eventBusProvider` (empty, the default) follows `cache.provider` —
+  the two questions ("is there somewhere shared for instances to meet?") have the same answer, and a
+  deployment that already pointed the cache at Redis has already made the decision. Set
+  `eventBusProvider` explicitly only to split the event bus onto a different Redis than the one
+  backing the cache/lock.
+- Every ingested node event is published to every instance's correlator (`node-events` topic), so a
+  fleet rule with clauses spanning nodes on different instances now arms and fires correctly — the
+  raw node event is what crosses the bus, never the control plane's own re-published notification,
+  so one rule's alert can never satisfy another rule's clause and cause a feedback loop.
+- Every notification an instance publishes — a node's, a node-lost alert the heartbeat raised, a
+  certificate-expiry warning, an anomaly, the daily digest — is relayed to every other instance's
+  live SSE feed (`notifications` topic), pushed straight to connected browsers without being
+  persisted or logged again (the origin already did that). A browser subscribed to any instance now
+  sees everything the deployment raises, not just what its own instance ingested.
+- With the default in-process provider (correct for a single instance — publisher and subscriber
+  are the same process), every publish/subscribe call above is a no-op and standalone behavior is
+  completely unchanged. An unrecognised `eventBusProvider` value fails boot rather than silently
+  degrading to in-process, since that would leave a clustered deployment with a dark bell and rules
+  that never fire while looking fully configured.
+
+See `docs/modules/infra/eventbus/bus.go.md`, `docs/modules/apps/myseliasan/services/node_events.go.md`,
+and `docs/modules/apps/myseliasan/app/app.go.md`'s "Cross-instance event bus (Phase 3)" section.
+
+### Two pre-existing bugs found and fixed while benching Phase 3
+
+**The live notification feed (SSE) died 30 seconds after opening — every install, including
+standalone.** `http.Server.WriteTimeout` (30s here) is an ABSOLUTE deadline from the start of a
+request that never resets as more is written, so every SSE stream was silently cut 30 seconds after
+it opened, no matter how much traffic it carried. The symptom was close to invisible: a browser's
+`EventSource` reconnects on its own, so the bell kept appearing to work while every notification
+landing in the reconnect gap was lost, forever, with nothing logged. Fixed by extending the
+response's write deadline (`http.NewResponseController(w).SetWriteDeadline(...)`) before every
+write and on a 20s heartbeat tick, so the stream lives as long as it is being consumed — a rolling
+deadline, not a cleared one, so a peer that vanishes without closing still fails a write and is
+reaped instead of holding its subscriber slot for the life of the process. The heartbeat comment
+also reaps clients that vanished without closing and keeps proxies from idling the connection out.
+This had nothing to do with clustering — it affects every myseliasan install that has ever opened
+the notification feed for more than 30 seconds. See
+`docs/modules/infra/notification/sse_channel.go.md` and
+`docs/modules/domain/utils/middlewares/request_log.go.md` (the deadline fix initially did nothing
+because the request-logging middleware's `ResponseWriter` wrapper had no `Unwrap()`, which is what
+`http.ResponseController` needs to reach the real connection through it).
+
+**The fleet parent certificate could be permanently broken by two instances starting together.** The
+certificate and its private key are stored in two separate rows with no locking; two instances
+issuing at the same moment could interleave their writes and leave one instance's certificate beside
+the other's key. Nothing detected this at write time, and it persisted forever: every later boot
+found both rows non-empty and not near expiry, handed them straight to the TLS listener, which then
+refused to start with "private key does not match public key" — every adopted node dark,
+permanently, until an operator cleared the rows by hand. Fixed by validating the stored pair
+(`tls.X509KeyPair`) on every read and re-issuing on a mismatch — which makes an install **already
+broken** by this bug self-heal on its next read, no manual intervention needed — and by writing the
+key before the certificate, so a concurrent reader sees either the old matching pair or a key with no
+certificate yet, never a certificate that looks current beside a key that does not belong to it. See
+`docs/modules/apps/myseliasan/services/fleet_ca.go.md`.
+
+### Live camera video across instances (myseliasan, Phase 4)
+
+A node opens a SECOND, independent connection to the control plane for camera RTP — the media
+channel — separate from the control channel Phase 2 made forwardable, and nothing guarantees the
+two land on the same instance. Only the instance holding the media channel could answer a
+browser's WebRTC offer for one of its cameras, so behind a load balancer a viewer had a 1-in-N
+chance of landing somewhere that could serve them, and otherwise got "node media channel is not
+connected" for a camera that was streaming perfectly well. Phase 4 closes this, the last
+documented gap from Phase 1.
+
+**The fix forwards the NEGOTIATION, not the media.** The browser's SDP offer is passed to the
+instance holding the node's media channel, which builds the answer with its own WebRTC engine; the
+answer carries THAT instance's own ICE candidates, so the browser's WebRTC peer then connects
+DIRECTLY to it — the video itself never crosses the load balancer or a second instance. Relaying
+the RTP itself would have doubled bandwidth and added a hop of latency to every frame, to move
+bytes that were already designed to go peer-to-peer. This is exactly why every operator checklist
+for clustering (setup wizard, Settings Deployment panel) has required each instance to have its
+own reachable address and UDP port for live video since deployment mode was introduced — Phase 4
+is what makes that requirement actually load-bearing rather than aspirational.
+
+No new configuration: this reuses the same `cluster.advertiseUrl`/`ownershipTtlSeconds`/
+`forwardTimeoutSeconds`/`insecureSkipVerify` block Phase 2 already requires, plus a second,
+independently-namespaced ownership registry (media channel, not control channel) built from the
+same shared cache. A node's media-channel ownership claim and its control-channel ownership claim
+for the same node are tracked and released completely independently — see
+`docs/modules/apps/myseliasan/services/node_owner.go.md`.
+
+See `docs/modules/apps/myseliasan/services/media_peer.go.md`,
+`docs/modules/apps/myseliasan/apis/node_media.go.md`, and
+`docs/modules/apps/myseliasan/app/app.go.md`'s "Cross-instance media forwarding (Phase 4)" section.
+
+**Verification status — read this before relying on it.** The media-forwarding hop is
+unit-tested at its own seam (8 test cases: forwarding + answer round-trip, 401 on missing/wrong
+peer token, not-connected propagation, payload validation, unreachable owner, and that
+control-channel and media-channel ownership are tracked and released independently). It has **not**
+been exercised end-to-end with real cameras — the live two-instance bench used a `mypintusan` door
+controller, which has no cameras, so cross-instance live video has not actually been watched in a
+browser yet.
+
+**Also part of Phase 4 — fleet-rule edits now announce themselves cross-instance.** An operator
+editing or deleting a fleet rule reloads the rule cache on the instance that served the request
+(as it always has) and now also tells every other instance to reload its own
+(`correlator.SetOnRulesChanged` → `services.PublishRulesChanged` → `services.SubscribeRulesChanged`,
+over the same event bus Phase 3 introduced, wired end-to-end in `app.go`). This is unrelated to
+Phase 3's fleet-rule fix (a rule whose CLAUSES span nodes on different instances correctly arms via
+the shared event bus — a different mechanism, about event correlation, not rule-definition sync).
+See `docs/modules/apps/myseliasan/services/correlate.go.md`'s "Cross-instance rule reload
+(Phase 4)" note — including a lesson worth keeping in mind generally: this exact call was, briefly
+during development, wired everywhere (the callback registered, the subscriber listening, the topic
+defined) except actually invoked from the edit path, and because Go does not flag an unused
+method, that state compiled and passed every other test while doing nothing. It is now guarded by
+a source-level (go/ast) regression test (`correlate_announce_test.go`) that asserts the call sites
+exist, because a feature whose failure mode is silence needs a test that checks the call was made,
+not just that some downstream effect happens to be observable.
+
+### Remaining known gaps (read before relying on this for production)
+
+1. **The Settings editor** writes and restarts only the instance you are talking to — a config
+   change on a clustered install must be repeated (or shipped) on every instance.
+
 Queue file-storage work through the durable backend worker:
 
 ```bash

@@ -311,6 +311,26 @@ func (s *Service) Publish(ctx context.Context, n Notification) Notification {
 	return s.hub.Publish(ctx, n)
 }
 
+// RelayToStream pushes an ALREADY-PERSISTED notification to this process's live SSE
+// subscribers, without persisting it, logging it, or sending it anywhere outbound.
+//
+// It exists for multi-instance deployments. A node's events reach exactly one instance —
+// the one holding its control channel — and that instance persists them and pushes them to
+// its own browsers. Every other instance is serving browsers too, and to them the bell
+// would simply never move. Those instances receive the persisted notification over the
+// event bus and hand it here.
+//
+// Persisting is deliberately NOT repeated: the origin instance already wrote the row, and
+// a second write would duplicate it in the feed and double-count it in the rollups. The
+// notification passed here therefore keeps the id it was assigned at the origin, so a
+// browser sees the same identity whichever instance happens to be serving it.
+func (s *Service) RelayToStream(ctx context.Context, n Notification) {
+	if s == nil || s.sse == nil {
+		return
+	}
+	_ = s.sse.Send(ctx, n)
+}
+
 // Register adds an extra delivery channel (e.g. email, push) at runtime.
 func (s *Service) Register(channel Channel, filters ...Filter) {
 	s.hub.Register(channel, filters...)

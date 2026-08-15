@@ -19,6 +19,18 @@ The browser talks only to `myseliasan`; the node→parent leg is the binary RTP 
 | `HandleConn(nodeID, conn)` | `mediarelay.ConnectHandler` — runs for the connection lifetime. Closes any stale connection for the same node before registering the new one. Dispatches inbound frames to active subscriptions. |
 | `IsConnected(nodeID) bool` | Reports whether a node currently holds a live media connection (used by `nodeMediaApi` to return 404 rather than start a WebRTC session with no relay). |
 | `Connector(nodeID) stream.Connector` | Returns a `relayConnector` bound to `nodeID`, pluggable into `stream.NewManagerWithConnectorEngine` so the WebRTC layer treats relayed RTP exactly as it treats a local camera RTP subscription. |
+| `SetOwnershipHooks(onConnect, onDisconnect func(nodeID string))` | Registers callbacks fired (each in its own goroutine) when a node's media connection is accepted and when it is torn down. Set once at startup, before the media listener starts accepting. |
+
+### Ownership hooks (Phase 4 — live camera video across instances)
+
+`onConnect`/`onDisconnect` are what let another instance find out which instance currently holds a
+node's media channel: `app.go` wires them to a `MediaOwnerRegistry.Claim`/`Release`
+(`node_owner.go.md`), the same lease-in-shared-cache mechanism the control channel already uses
+for command forwarding (`node_peer.go.md`). `HandleConn` calls `onConnect` right after registering
+the new connection (closing any stale one first) and calls `onDisconnect` **after** the connection
+has already been removed from `nodes` and every subscription closed — so a peer instance reacting
+to the disconnect can never observe this instance as still holding the channel. Both hooks are
+optional (`nil`-checked); a hub with none set behaves exactly as it did before Phase 4.
 
 ### Subscription Lifecycle
 
@@ -46,3 +58,8 @@ Implements `stream.Connector`. `Subscribe(source)` parses the camera id from `so
 - On node disconnect, `closeAll` closes every active `relaySub` so `pumpRTP` goroutines in the WebRTC layer exit cleanly (channel close is the termination signal).
 - `relaySub.close()` is idempotent (guarded by `closed bool + sync.Mutex`).
 - `nextStreamID` is an atomic counter, incremented for each new subscription regardless of node or camera, so IDs are globally unique on the hub.
+- On a clustered deployment, `IsConnected` and `Connector` are only ever called with a `nodeID`
+  this instance actually holds — a browser offer for a node held elsewhere is forwarded to the
+  owning instance before it reaches this hub at all (`apis/node_media.go.md`,
+  `services/media_peer.go.md`); this file itself has no cluster awareness beyond the ownership
+  hooks above.

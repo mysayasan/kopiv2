@@ -106,6 +106,25 @@ forever).
 | `Reload(ctx)` | Refreshes the in-memory rule+clause cache from the DB (up to 200 rules / 50 clauses per rule). Called at startup and after every `Save`/`Delete`. |
 | `Observe(ctx, e NodeEvent)` | Advances every cached rule against one event: records which clauses it satisfies (`seen`), disarms a pending rule if it satisfies one of that rule's `"absent"` clauses within the window, and arms a rule (starts its grace timer) once every `"required"` clause has been seen within `WindowSeconds`. Never fires here. |
 | `Sweep(ctx)` | Runs on a ticker (`app.go`, every 1s). Fires every rule whose grace period has elapsed with its absent conditions still holding, subject to `CooldownSeconds`/`LastTriggeredAt`. This is what makes an ABSENCE decidable — nothing ever arrives to say "the badge was never swiped", so the passage of time has to. |
+| `SetOnRulesChanged(fn func())` | Registers a callback fired (in its own goroutine, via `announceRulesChanged`) after this instance changes the rule set. It exists so a multi-instance deployment can tell the OTHER instances to reload their own cache — an operator's edit lands on whichever instance the browser reached, while the LEADER is the instance that actually fires rules; without this, a new rule could sit unused, and a disabled one keep firing, until something restarted. `app.go` wires it to `services.PublishRulesChanged` (`node_events.go.md`), which puts the change on the shared event bus. |
+
+## Cross-instance rule reload (Phase 4)
+
+`SetOnRulesChanged`/`announceRulesChanged` are wired all the way to the event bus in `app.go`
+(`services.PublishRulesChanged` / `services.SubscribeRulesChanged`, `node_events.go.md`), and
+`Save`/`Delete` (`correlate_crud.go.md`) each call `c.announceRulesChanged()` right after their own
+`Reload` succeeds. So an operator's rule edit or delete reloads the editing instance's cache (as it
+always has) **and** announces the change to the rest of the deployment, which reload their own
+cache in response — a new rule no longer sits unused, and a disabled one no longer keeps firing,
+on the instance that actually evaluates it (the leader) until something restarts.
+
+This call was, briefly during development, wired everywhere except actually made — `Save`/`Delete`
+called `Reload` and returned without ever invoking the callback `SetOnRulesChanged` registered, and
+because Go does not complain about an unused method, that compiled and every other test passed
+while the feature did nothing. See `correlate_crud.go.md`'s note on `correlate_announce_test.go`,
+the source-level regression test added specifically because a behavioral test could not have
+caught this: the failure mode is silence, not an error, so the guard has to assert the call SITE
+exists, not just that some downstream effect happens to be observable.
 
 ## `requiredSatisfied` — the anti-nothing-rule guard
 

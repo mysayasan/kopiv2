@@ -8,6 +8,7 @@ import (
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 	"github.com/mysayasan/kopiv2/infra/cache"
 	"github.com/mysayasan/kopiv2/infra/config"
+	"github.com/mysayasan/kopiv2/infra/coordination"
 	"github.com/mysayasan/kopiv2/infra/db/bootstrap"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	applog "github.com/mysayasan/kopiv2/infra/logging"
@@ -41,7 +42,22 @@ type Dependencies struct {
 	DataDir string
 	Db      dbsql.IDbCrud
 	Cache   cache.Store
-	Auth    *middlewares.AuthMidware
+	// Locker is the process's transaction lock, shared (Redis) or per-process
+	// (memory) per transaction.lockProvider. Apps use it to serialize work that must
+	// happen ONCE across the whole deployment rather than once per instance — the
+	// scheduled purges, rollups and digests — and to prove reachability on the
+	// deployment preflight. With the memory provider it grants every lock
+	// immediately, so a single instance behaves exactly as it always has.
+	Locker coordination.Locker
+	// Leader answers "is this the instance that should run background work?".
+	//
+	// Scheduled work — retention purges, rollups, digests, reconciliation — must
+	// happen once for the DEPLOYMENT, not once per process. Ask it inside the task
+	// body rather than around registration, so a change of leadership takes effect
+	// without a restart. With a per-process lock (the standalone default) the single
+	// instance always leads, so guarding a task changes nothing for it.
+	Leader *coordination.Leader
+	Auth   *middlewares.AuthMidware
 	// Access is the shared accessrbac authorization middleware (single-app, no
 	// app_code). apphost builds it with a settable resolver; the app binds its own
 	// user store via deps.Access.SetResolver(...) during RegisterAppRoutes. AccessRoles
@@ -59,6 +75,13 @@ type Dependencies struct {
 	Metrics telemetry.Metrics
 	// Restarter gracefully restarts the process (factory reset, future self-update).
 	Restarter Restarter
+	// JwtSecretGenerated reports that no usable jwt.secret was configured, so the host
+	// generated one for this instance and saved it to this instance's config file.
+	// Harmless alone; fatal in a multi-instance deployment, where every replica invents
+	// a different signing key and each rejects the others' tokens. Config alone cannot
+	// reveal this after the fact — the generated value is written back and then looks
+	// exactly like a configured one — so the host has to report it.
+	JwtSecretGenerated bool
 }
 
 // SharedAPIConfig controls which shared route groups the host mounts for an app.

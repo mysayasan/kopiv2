@@ -197,6 +197,16 @@ func (k *KeyStore) Cipher() *Cipher {
 // Enabled reports whether a usable key is present.
 func (k *KeyStore) Enabled() bool { return k != nil && k.cipher != nil }
 
+// Fingerprint returns the non-secret identifier of the key this store holds, for
+// comparing two instances of an app that must share one key. Empty when no key is
+// present. See Cipher.Fingerprint for why this is not the install marker's KeyId.
+func (k *KeyStore) Fingerprint() string {
+	if k == nil {
+		return ""
+	}
+	return k.cipher.Fingerprint()
+}
+
 // KeyPath returns the on-disk key file path.
 func (k *KeyStore) KeyPath() string {
 	if k == nil {

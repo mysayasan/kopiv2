@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { FactoryResetSection, Ico, useT, Tabs } from '@shared'
+import { FactoryResetSection, DeploymentPanel, Ico, useT, Tabs } from '@shared'
 import { apiRequest, resultOf, apiBase } from '../../lib/api'
 import '../styles/settings.css'
 
@@ -173,6 +173,19 @@ const SECTIONS = [
 // {result: …} envelope, while the probes on the System tab (/api/version, /health, /ready)
 // are host-level handlers that answer a bare object — and /health may not be JSON at all,
 // in which case apiRequest yields null and ok-ness is the whole signal.
+// The operator checklist for myidsan: short, because this app is a database, a Redis and
+// however many stateless copies you like — no fleet listeners to pass through, no uploads
+// to share. Duplicated from setup.js rather than imported to keep the wizard and the
+// settings page from importing each other.
+function settingsDeploymentSteps(t) {
+  return [
+    t('setup.deployLbHttps'),
+    t('setup.deployKeyFile'),
+    t('setup.deployVipUrls'),
+    t('setup.deploySameConfig'),
+  ]
+}
+
 async function call(path, options) {
   try {
     const payload = await apiRequest(path, options)
@@ -623,6 +636,21 @@ function SystemTab({ t, onRestart, restarting, onToast }) {
             <Ico n={restarting ? 'reload' : 'refresh'} sz={15} />
             <span>{restarting ? t('settings.restarting') : t('settings.restartNow')}</span>
           </button>
+        </section>
+
+        {/* Deployment shape + cluster-readiness checklist. Reachable here as well as in
+            the first-run wizard, because an install grows into a second instance long
+            after setup, and because this is the only place the encryption key fingerprint
+            is shown — the value an operator compares between machines. */}
+        <section className="settings-section">
+          <h3>{t('settings.deploymentTitle')}</h3>
+          <p className="settings-hint">{t('settings.deploymentHint')}</p>
+          <DeploymentPanel
+            api={resetApi}
+            appLabel="MyIDSan"
+            operatorSteps={settingsDeploymentSteps(t)}
+            onToast={onToast}
+          />
         </section>
 
         {/* Factory reset. Renders nothing unless bootstrap.allowReset is on, which

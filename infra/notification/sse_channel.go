@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 )
 
 // SSEChannel delivers notifications to connected browsers over Server-Sent
@@ -74,16 +75,56 @@ func (c *SSEChannel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
+
+	// This response needs a ROLLING write deadline, not the server's fixed one and not none
+	// at all.
+	//
+	// The server sets WriteTimeout (30s by default) as an ABSOLUTE deadline from the start
+	// of the request, and it does not reset when more is written. A stream is therefore
+	// killed 30 seconds after it opens no matter how much traffic it carries — and the
+	// symptom is close to invisible, because a browser's EventSource silently reconnects:
+	// the bell keeps working, while every notification that happens to land in a reconnect
+	// gap is lost, forever, with nothing logged.
+	//
+	// Clearing the deadline outright fixes that but trades it for a worse failure: a peer
+	// that vanished without closing (a laptop lid, a dropped VPN) leaves a write blocked
+	// forever once the socket buffer fills, holding this goroutine and its subscriber slot
+	// for the life of the process. So the deadline is PUSHED FORWARD before each write
+	// instead — the stream lives as long as it is being consumed, and a peer that stopped
+	// consuming fails a write and is reaped.
+	rc := http.NewResponseController(w)
+	extendDeadline := func() bool {
+		// A ResponseWriter that cannot carry a deadline (an older or unwrapping middleware)
+		// leaves the server's own timeout in force. The stream still works; it just ends
+		// when that expires, which is the behaviour this had before.
+		_ = rc.SetWriteDeadline(time.Now().Add(sseWriteTimeout))
+		return true
+	}
+	extendDeadline()
+
 	w.WriteHeader(http.StatusOK)
 	// Prime the stream so proxies flush headers immediately.
 	fmt.Fprintf(w, ": connected\n\n")
 	flusher.Flush()
+
+	// A comment line on a timer. Nothing consumes it — its job is to make a dead peer
+	// FAIL a write, so a client that vanished without closing (a laptop lid, a dropped
+	// VPN) is reaped instead of holding a subscriber slot forever, and so intermediaries
+	// that idle out a quiet connection see traffic.
+	heartbeat := time.NewTicker(sseHeartbeatInterval)
+	defer heartbeat.Stop()
 
 	ctx := r.Context()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-heartbeat.C:
+			extendDeadline()
+			if _, err := fmt.Fprintf(w, ": ping\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
 		case n, ok := <-ch:
 			if !ok {
 				return
@@ -92,11 +133,24 @@ func (c *SSEChannel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				continue
 			}
-			fmt.Fprintf(w, "event: notification\ndata: %s\n\n", payload)
+			extendDeadline()
+			if _, err := fmt.Fprintf(w, "event: notification\ndata: %s\n\n", payload); err != nil {
+				return
+			}
 			flusher.Flush()
 		}
 	}
 }
+
+// sseHeartbeatInterval is comfortably under the idle timeouts a proxy or load balancer
+// typically applies (60s is common), while staying rare enough to be free.
+const sseHeartbeatInterval = 20 * time.Second
+
+// sseWriteTimeout bounds a SINGLE write to one client, refreshed before each. It must
+// exceed the heartbeat interval — otherwise a healthy but quiet stream would expire
+// between beats — while still being short enough that a peer which stopped reading is
+// reaped in seconds rather than held for the life of the process.
+const sseWriteTimeout = 2 * sseHeartbeatInterval
 
 func (c *SSEChannel) subscribe() (int, chan Notification, bool) {
 	c.mu.Lock()
