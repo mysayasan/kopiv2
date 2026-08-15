@@ -132,3 +132,47 @@ building network.
 
 Releases are published under the **`myiotsan-v<ver>`** tag namespace on GitHub (never as
 the repo's "latest" release — that belongs to MyMataSan, whose updater reads it).
+
+## Uninstalling — keep your data, or wipe it
+
+Removing MyIotSan **keeps `/opt/myiotsan` by default** on every path. That is
+deliberate: it holds your telemetry history — which exists nowhere else — and
+`secret/atrest.key`, which encrypts the fleet key and device credentials (see *Back up
+`secret/atrest.key`* above). You have to ask for the clean wipe.
+
+**Linux (deb/rpm).**
+
+```sh
+sudo myiotsan-uninstall                # remove the package, KEEP /opt/myiotsan
+sudo myiotsan-uninstall --purge-data   # remove it and ERASE /opt/myiotsan
+sudo myiotsan-uninstall --purge-data -y   # same, unattended (no prompt)
+sudo myiotsan-uninstall --purge-data -n   # dry run: print, change nothing
+```
+
+`myiotsan-uninstall` is installed to `/usr/sbin` by the package. It calls `apt`/`dnf`
+for you, so you never need to remember which. Interactively, `--purge-data` makes you
+type `ERASE` before it does anything.
+
+If you'd rather drive the package manager yourself, the same wipe is one variable:
+
+```sh
+sudo KOPIV2_PURGE_DATA=1 apt-get purge myiotsan     # or: dnf remove
+sudo apt-get purge myiotsan                         # without it, data is kept
+```
+
+Erasing the data means every device must be re-provisioned and this node re-adopted
+into its control plane.
+
+**Windows.** Uninstall from Add/Remove Programs (or the Start Menu) and answer the
+prompt — it asks whether to also delete `C:\ProgramData\MyIotSan`, defaulting to **No**.
+For a scripted uninstall:
+
+```bat
+set KOPIV2_PURGE_DATA=1 & "C:\Program Files\MyIotSan\unins000.exe" /VERYSILENT
+"C:\Program Files\MyIotSan\unins000.exe" /VERYSILENT /CLEANDATA
+"C:\Program Files\MyIotSan\unins000.exe" /VERYSILENT /KEEPDATA
+```
+
+A silent uninstall with no instruction keeps the data, and `KEEPDATA` beats `CLEANDATA`
+if both are given — an unattended run should never destroy a telemetry history by
+accident.

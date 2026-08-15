@@ -109,4 +109,7 @@ closing delimiter, degrades to "the whole file is the body" rather than erroring
   here, so this package stays free of `testing` as a shipped dependency.
 - `domain/shared/apis/manual.go` (`apis/manual.go.md`) is the HTTP handler layer built on
   top of this package; `apps/mymatasan/manual/manual.go` (`apps/mymatasan/manual/manual.go.md`)
-  is the first app to embed content and wire it up.
+  is the first app to embed content and wire it up, and
+  `apps/myseliasan/manual/manual.go` (`apps/myseliasan/manual/manual.go.md`) is the second
+  — a smaller, fleet-scoped set of articles rather than the whole 36-article book, proving
+  the library scales down as well as up.

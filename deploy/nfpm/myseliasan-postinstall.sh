@@ -47,6 +47,11 @@ pairing.parentBaseUrl to a LAN-reachable URL for THIS host (e.g.
 https://192.168.1.10:3002) — adopted nodes store it and dial back to it, so
 leaving it as localhost silently breaks adoption from other machines.
 
+To uninstall later:  myseliasan-uninstall
+  Your database, settings and the fleet encryption key under /opt/myseliasan are KEPT
+  by default. Add --purge-data to erase them too — that orphans every adopted node,
+  so they must be re-adopted. Add -y for unattended.
+
 EOF
 
 exit 0

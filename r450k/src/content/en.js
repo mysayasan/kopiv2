@@ -3,13 +3,13 @@
 // override only the translatable strings — so non-text data lives in one place.
 const en = {
   meta: {
-    title: 'r450k — Private edge AI camera intelligence',
+    title: 'r450k — Private on-prem security & automation suite',
     description:
-      'On-prem AI camera intelligence: ONVIF discovery, YOLO detection, NVR recording, WebRTC live view, and encryption at rest — running on hardware as small as a Raspberry Pi.',
+      'On-prem AI cameras, sensors and door access control with one fleet control plane and single sign-on: ONVIF discovery, YOLO detection, NVR recording, WebRTC live view, OSDP badge readers, MQTT telemetry, and encryption at rest — running on hardware as small as a Raspberry Pi.',
   },
   brand: {
     name: 'r450k',
-    tagline: 'Private edge AI camera intelligence',
+    tagline: 'Private on-prem security intelligence',
   },
   nav: [
     { label: 'Features', href: '#features' },
@@ -24,23 +24,23 @@ const en = {
   navCta: 'Explore apps',
   hero: {
     eyebrow: 'On-prem · Edge AI · No cloud required',
-    titleLead: 'AI camera intelligence that runs',
+    titleLead: 'Security intelligence that runs',
     rotate: ['at the edge.', 'on your network.', 'on a Raspberry Pi.', 'without the cloud.'],
     subtitle:
-      'r450k discovers your ONVIF cameras, detects what matters with on-device AI, records continuously, and streams live to the browser. It scales with your hardware — from a single Raspberry Pi watching a couple of cameras to a GPU server running real-time AI across dozens. Your footage never leaves your network.',
+      'r450k is a suite of apps that install on hardware you already own: AI cameras, building sensors and badge readers at the edge, one control plane that adopts them all and correlates events across them, and single sign-on tying it together. It scales from a single Raspberry Pi watching a couple of cameras to a GPU server running real-time AI across dozens. Your footage — and everything else — never leaves your network.',
     primaryCta: { label: 'See the features', href: '#features' },
     secondaryCta: { label: 'How it works', href: '#how' },
     stats: [
-      { value: 'Raspberry Pi', label: 'Starts on a Pi 4 — scales to GPU servers' },
+      { value: '5 apps', label: 'Cameras, sensors, doors, identity, fleet' },
       { value: '100%', label: 'On-prem, private by default' },
-      { value: 'WebRTC', label: 'Low-latency live view' },
+      { value: 'Raspberry Pi', label: 'Starts on a Pi 4 — scales to GPU servers' },
     ],
-    note: 'Entry tier runs on a Raspberry Pi 4 (a couple of cameras with motion or nano-model AI). Real-time, multi-camera detection and teaching the camera your own skills scale up to mini-PCs and NVIDIA GPUs.',
+    note: 'Entry tier runs on a Raspberry Pi 4 (a couple of cameras with motion or nano-model AI). Real-time, multi-camera detection and teaching the camera your own skills scale up to mini-PCs and NVIDIA GPUs. The sensor hub, door controller, identity broker and control plane are single pure-Go binaries and need far less.',
   },
   features: {
     kicker: 'Capabilities',
-    title: 'Everything an edge AI camera node needs.',
-    lead: 'Detection, recording, live view, security, and fleet management — built to run on small devices, entirely on your own network.',
+    title: 'Everything a private, on-prem estate needs.',
+    lead: 'Cameras, sensors, doors, identity and fleet management — built to run on small devices, entirely on your own network.',
     items: [
       {
         icon: 'eye',
@@ -68,6 +68,21 @@ const en = {
         body: 'Direct H.264 RTP-to-WebRTC live view with MJPEG fallback and live sound on any camera codec (G.711 pass-through, AAC→Opus transcoding). Two-way audio talk-back and press-and-hold PTZ let operators respond, not just watch — across paged grids from 1×1 to 4×4.',
       },
       {
+        icon: 'sensor',
+        title: 'Sensors, telemetry & safe actuation',
+        body: 'The same idea as the NVR, but for everything that is not a camera: door contacts, motion, temperature, smoke, leaks, power meters and Modbus/SunSpec inverters, over an embedded MQTT broker — plus an opt-in, read-only LAN scan that finds what is already on the network. A deadbanded store keeps history small, threshold and correlation rules raise alerts, and scenes, schedules and a visual flow canvas automate the response. Every command back to a device is forced through one bounded, rate-limited, fully audited chokepoint.',
+      },
+      {
+        icon: 'door',
+        title: 'Access control at the door',
+        body: 'Badge readers speak OSDP over RS-485 or IP, and every badge-in is decided on the appliance itself against people, groups, schedules and holidays — so a cut uplink never means a door that will not open. Site-wide lockdown, a duress PIN that opens the door while silently raising the alarm, and an append-only activity log come as standard, and the strike only ever fires through one audited chokepoint.',
+      },
+      {
+        icon: 'network',
+        title: 'Correlate cameras, sensors and doors',
+        body: 'The rule no single appliance can write on its own: motion on a camera AND a door opening AND no badge accepted, inside the same window, at the same site. The control plane arms on the first signal, waits out a grace period for the innocent explanation, and only then raises one correlated incident instead of three unrelated alerts.',
+      },
+      {
         icon: 'lock',
         title: 'Encryption, backup & recovery',
         body: 'Recordings, snapshots, and training images are AES-256-GCM encrypted on disk; factory reset crypto-erases by destroying the key and multi-pass shreds deleted footage. The key is wrapped by an OS keystore (DPAPI / systemd-creds) or a portable passphrase with an exportable recovery escrow — and a passphrase-encrypted .mmbackup moves cameras, rules, and settings between hosts.',
@@ -93,6 +108,11 @@ const en = {
         body: 'The control plane puts your whole estate on a map — sites and buildings pinned by location, with every edge node and its cameras layered on top. Drop into a building to design its floor plan in-app, place each camera on the plan with a field-of-view coverage cone, and see one building’s cameras aggregated across several nodes. Click any camera to locate it or open its live view straight from the map.',
       },
       {
+        icon: 'sparkle',
+        title: 'An analyst that reads the fleet for you',
+        body: 'A daily — and optionally weekly — digest reads the whole estate and reports what changed: event-volume swings, a node breaking its own learned baseline, outages, expiring certificates, noisy sources, sensitive audit activity, even a suggested rule for after-hours activity nothing covers yet. Every number is computed in plain Go, so a digest finding is never a hallucination. An optional language model — your own endpoint, or a supervised sidecar you can carry in on a USB stick — adds an "ask the fleet" chat that cites the records it used and answers "how do I…" straight from the built-in manuals. It runs on your hardware or not at all.',
+      },
+      {
         icon: 'chart',
         title: 'Analytics dashboard',
         body: 'The unified event feed becomes insight — KPI tiles, detections over time, and per-category, per-camera breakdowns with a range selector and auto-refresh. It goes past charts: an activity heatmap by hour and weekday, an expected-range band that flags when a camera breaks its own normal pattern, spike and "unusual silence" anomaly alerts, a per-camera reliability scorecard, and a notification noise ratio. Aggregation runs server-side, so it works on SQLite or a full database engine.',
@@ -103,26 +123,31 @@ const en = {
         body: 'Search your footage by what the cameras actually saw. Every detection is coalesced onto a searchable timeline — filter by camera, date range, one or more object types at once, and confidence, then jump straight to the exact moment in the recording, with the object boxed on a preview thumbnail. Export the results to CSV or PDF. It taps the live detector\'s own output, so there is no second video pass.',
       },
       {
+        icon: 'shield',
+        title: 'Enterprise identity, MFA & audit',
+        body: 'One sign-on across every app, from a single pure-Go binary that never leaves your intranet. Local accounts alongside LDAP / Active Directory, Kerberos SPNEGO desktop SSO and generic OIDC providers, with group-to-role mapping and per-app, per-page access control. TOTP and WebAuthn security keys, password policy, lockout and step-up re-authentication guard the front door; an immutable audit trail, live session administration and passphrase-encrypted backup/restore keep it accountable.',
+      },
+      {
         icon: 'activity',
         title: 'Deploys and runs itself',
-        body: 'A first-run wizard walks setup end to end, a capacity estimator sizes your host, and machine-health monitoring self-heals — overwriting the oldest footage before the disk fills. ffmpeg, the Python AI runtime, and app updates all install from inside the app.',
+        body: 'A first-run wizard walks setup end to end in every app, a capacity estimator sizes your host, and machine-health monitoring self-heals — overwriting the oldest footage before the disk fills. Each app also carries its own printable four-language user manual compiled into the binary, readable offline from the sign-in screen. ffmpeg, the Python AI runtime, and app updates all install from inside the app.',
       },
     ],
   },
   how: {
     kicker: 'How it works',
-    title: 'From bare cameras to actionable alerts in four steps.',
+    title: 'From bare devices to actionable alerts in four steps.',
     steps: [
-      { n: '01', title: 'Discover', body: 'Authenticated ONVIF discovery and manual probe find cameras on your LAN; saved devices persist in a local SQLite database.' },
-      { n: '02', title: 'Detect', body: 'On-device YOLO inference runs your detection rules — presence, crowd, intrusion, line crossing, or plate recognition — against the live frames.' },
-      { n: '03', title: 'Record', body: 'Continuous NVR recording rolls in the background and extracts an MP4 clip the moment a rule fires, encrypted on disk.' },
-      { n: '04', title: 'Notify', body: 'Alerts land in the unified feed with an annotated snapshot and clip, and fan out to webhook, Telegram, or MQTT destinations you choose.' },
+      { n: '01', title: 'Discover', body: 'Authenticated ONVIF discovery and manual probe find cameras on your LAN, an enrollment window or read-only network scan finds sensors, and OSDP readers announce themselves on the bus. Saved devices persist in a local SQLite database.' },
+      { n: '02', title: 'Detect', body: 'On-device YOLO inference runs your detection rules — presence, crowd, intrusion, line crossing, or plate recognition — against the live frames, while sensor thresholds and badge decisions are evaluated on the appliance itself.' },
+      { n: '03', title: 'Record', body: 'Continuous NVR recording rolls in the background and extracts an MP4 clip the moment a rule fires, encrypted on disk; telemetry and every access decision land in their own append-only history.' },
+      { n: '04', title: 'Notify', body: 'Alerts land in the unified feed with an annotated snapshot and clip, correlate across cameras, sensors and doors at the control plane, and fan out to webhook, Telegram, or MQTT destinations you choose.' },
     ],
   },
   tiers: {
     kicker: 'Hardware',
     title: 'Scales with your hardware.',
-    lead: 'The same app runs from a pocket-sized appliance to a GPU server — you choose the tier. (Camera counts are rough; the built-in capacity estimator measures the real number for your host.)',
+    lead: 'The camera node is the hungry one: it runs from a pocket-sized appliance to a GPU server, and you choose the tier. The sensor hub, door controller, identity broker and control plane are single pure-Go binaries that fit comfortably alongside it. (Camera counts are rough; the built-in capacity estimator measures the real number for your host.)',
     recommended: 'Recommended',
     items: [
       { name: 'Minimal', spec: 'Raspberry Pi 4/5 · 4 cores · 2–4 GB', load: '~1–4 cameras', detail: 'Live view + recording for a couple of cameras; AI is native motion or YOLO-nano at a relaxed interval. SQLite, CPU software decode, no GPU.' },
@@ -133,7 +158,7 @@ const en = {
   showcase: {
     kicker: 'See it in action',
     title: 'A console built for operators, not just admins.',
-    lead: 'Live multi-camera grids, detection rules drawn on the real frame, guided camera teaching with no ML jargon, continuous NVR recordings, event analytics, encrypted backups, and version & health — every screen in the browser, in four languages.',
+    lead: 'These screens are MyMataSan, the camera node: live multi-camera grids, detection rules drawn on the real frame, guided camera teaching with no ML jargon, continuous NVR recordings, event analytics, encrypted backups, and version & health. Every app in the suite shares the same shell — in the browser, in four languages.',
     tabs: { live: 'Live view', detection: 'AI detection', teach: 'Teach', recordings: 'Recordings', objectsearch: 'Object search', dashboard: 'Dashboard', heatmap: 'Activity heatmap', backup: 'Backup & recovery', health: 'Version & health' },
     shots: [
       { key: 'live', src: '/screenshots/live_views.png', alt: 'Live multi-camera grid in a 3×2 layout, with on-frame “Presence detected (person)” AI badges on two of the feeds', url: 'mymatasan.local/live' },
@@ -149,35 +174,37 @@ const en = {
   },
   useCases: {
     kicker: 'Use cases',
-    title: 'Built for places that can’t send video to the cloud.',
+    title: 'Built for places that can’t send their data to the cloud.',
     items: [
       { title: 'Manufacturing & QA', body: 'Train a custom model to flag product defects, missing parts, or PPE gaps on the line — private, on-prem, with no per-seat AI fees.' },
       { title: 'Retail & forecourts', body: 'Crowd and intrusion alerts, plus license-plate recognition for forecourt and drive-through monitoring.' },
       { title: 'Warehouse & logistics', body: 'Watch loading docks and yards — vehicle and person detection with line-crossing at gates, all on edge hardware.' },
       { title: 'Property & perimeter', body: 'After-hours intrusion detection with secure, encrypted recording that stays on-site.' },
+      { title: 'Access-controlled facilities', body: 'Badge readers, access schedules and site lockdown decided on-site, with the camera that watched the door and the sensor that felt it open reporting into the same timeline.' },
       { title: 'Agriculture & remote sites', body: 'Spot animals or intruders across land with poor or no connectivity; detection and recording run entirely locally.' },
       { title: 'Care homes & clinics', body: 'After-hours movement and fall-style alerts with footage that never leaves the building — privacy by default.' },
       { title: 'Industrial & utilities', body: 'Zone and line-crossing rules for restricted areas and equipment, on rugged hardware where uplinks are unreliable.' },
-      { title: 'Multi-site fleets', body: 'A control plane adopts many edge nodes over the LAN, maps every site and building, and relays live view back to operators — with per-building floor plans that place each camera and its coverage.' },
+      { title: 'Multi-site fleets', body: 'A control plane adopts many edge nodes over the LAN — cameras, sensors and door controllers alike — maps every site and building, and relays live view back to operators, with per-building floor plans that place each camera and its coverage.' },
     ],
   },
   apps: {
     kicker: 'The platform',
-    title: 'One platform, four apps.',
-    subtitle: 'r450k is a modular platform. mymatasan is the edge camera node and myiotsan is the edge sensor hub; the control plane adopts both and correlates across them, and shared identity ties it together.',
+    title: 'One platform, five apps.',
+    subtitle: 'r450k is a modular platform. mymatasan is the edge camera node, myiotsan the edge sensor hub, and mypintusan the door controller; the control plane adopts all three and correlates events across them, and shared identity ties it together.',
     available: 'Available',
     platform: 'Platform',
     items: [
       { name: 'mymatasan', status: 'Flagship · in active development', available: true, body: 'The standalone edge camera & video-intelligence node: ONVIF, AI detection, NVR, WebRTC live view, encryption, and LAN pairing.' },
-      { name: 'myiotsan', status: 'Sensor hub · available now', available: true, body: 'The NVR, but for sensors: door contacts, motion, temperature, smoke, leaks, power and access readers over an embedded MQTT broker — with rules, alerts, safe actuation, and telemetry history.' },
-      { name: 'myseliasan', status: 'Control plane · available now', available: true, body: 'The fleet control plane that discovers, adopts, and manages both camera and sensor nodes — mapping every site, building, and node with per-building floor plans and camera coverage — and correlates events across them: motion on a camera AND a door opening AND no badge swipe.' },
-      { name: 'myidsan', status: 'Identity · available now', available: true, body: 'The single sign-on front door: one federated identity across every app, with local accounts, enterprise LDAP / Active Directory, Kerberos SPNEGO desktop SSO, and generic OIDC providers — plus group-to-role mapping and per-app role-based access control. A single pure-Go binary that runs fully on your intranet, no egress.' },
+      { name: 'myiotsan', status: 'Sensor hub · available now', available: true, body: 'The NVR, but for sensors: door contacts, motion, temperature, smoke, leaks, power meters and Modbus/SunSpec inverters over an embedded MQTT broker — with rules, alerts, scenes and schedules, a visual flow canvas, safe actuation, and telemetry history.' },
+      { name: 'mypintusan', status: 'Access control · in development', available: false, body: 'The door controller: OSDP badge readers over RS-485 or IP, with people, groups, schedules, holidays, site lockdown and a duress PIN all decided on the appliance itself, so a cut uplink never means a door that will not open. Adoptable into the fleet like any other node — not yet available to download.' },
+      { name: 'myseliasan', status: 'Control plane · available now', available: true, body: 'The fleet control plane that discovers, adopts, and manages camera, sensor and door nodes alike — mapping every site, building, and node with per-building floor plans and camera coverage — and correlates events across them: motion on a camera AND a door opening AND no badge accepted. It also writes the daily fleet digest, answers questions about the fleet, and renders printable PDF reports.' },
+      { name: 'myidsan', status: 'Identity · available now', available: true, body: 'The single sign-on front door: one federated identity across every app, with local accounts, enterprise LDAP / Active Directory, Kerberos SPNEGO desktop SSO, and generic OIDC providers — plus TOTP and WebAuthn multi-factor, group-to-role mapping, per-app access control, and an immutable audit trail. A single pure-Go binary that runs fully on your intranet, no egress.' },
     ],
   },
   downloads: {
     kicker: 'Get the apps',
     title: 'Download & self-host.',
-    subtitle: 'Run one node at a single site, or a whole fleet from one control plane. Both are a single install with the web UI and a default config bundled.',
+    subtitle: 'Run one node at a single site, or a whole fleet from one control plane. Each is a single install with the web UI and a default config bundled. (mypintusan, the door controller, is still in development and not downloadable yet.)',
     license: 'Free for personal and non-commercial use — individuals, non-profits, education, and research. Commercial or in-business use, and any reselling, needs a commercial license.',
     latest: 'Latest release',
     windows: 'Windows',
@@ -224,7 +251,7 @@ const en = {
         name: 'Personal',
         price: 'Free',
         period: 'non-commercial',
-        features: ['Every feature, unlimited cameras', 'On-device AI, NVR, encryption, backups', 'Personal, hobby, non-profit & education', 'Community support'],
+        features: ['Every app, every feature, unlimited devices', 'On-device AI, NVR, encryption, backups', 'Personal, hobby, non-profit & education', 'Community support'],
         cta: 'Download',
         href: '#download',
       },
@@ -233,7 +260,7 @@ const en = {
         price: '$149',
         period: '/ site · year',
         featured: true,
-        features: ['Commercial license for one server / site', 'Unlimited cameras on that server', 'All updates for the licensed term', 'Priority email support'],
+        features: ['Commercial license for one server / site', 'Unlimited cameras and devices on that server', 'All updates for the licensed term', 'Priority email support'],
         cta: 'Get a license',
         tallyForm: 'https://tally.so/r/rjWKeN',
       },
@@ -253,7 +280,7 @@ const en = {
   },
   finalCta: {
     title: 'Keep your video — and your intelligence — on your own network.',
-    body: 'r450k brings cloud-grade camera AI to hardware you already own, with privacy as the default rather than an upgrade.',
+    body: 'r450k brings cloud-grade camera AI, sensor automation and access control to hardware you already own, with privacy as the default rather than an upgrade.',
     cta: { label: 'Explore the features', href: '#features' },
   },
   contact: {
@@ -277,8 +304,8 @@ const en = {
     supportUrl: 'https://buymeacoffee.com/mysayasan',
   },
   footer: {
-    tagline: 'r450k · Private edge AI camera intelligence',
-    note: 'Runs on-prem. Your footage never leaves your network.',
+    tagline: 'r450k · Private on-prem security intelligence',
+    note: 'Runs on-prem. Your data never leaves your network.',
     rights: 'All rights reserved.',
     columns: [
       {

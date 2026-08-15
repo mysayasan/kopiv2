@@ -778,6 +778,7 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Settings", Description: "in-app editor for the safe subset of config.json (superadmin-gated)", Path: "/api/settings", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "System", Description: "process restart to apply settings changes (superadmin-gated)", Path: "/api/system", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Setup Wizard", Description: "first-run setup state and completion", Path: "/api/setup", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "User Manual", Description: "the built-in manual; public so help works on the sign-in screen and in the first-run wizard", Path: "/api/manual", AccessTier: apiaccessenums.Public},
 	}
 
 	statements := make([]string, 0, len(endpoints)*2)
@@ -1064,6 +1065,9 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// contract mymatasan and myidsan use).
 	setupStateService := sharedservices.NewSetupStateService(runtimeSettingRepo)
 	apis.NewSetupApi(api, *deps.Auth, controlSession, setupStateService)
+	// The built-in manual. No auth middleware, deliberately — it has to be readable from the
+	// sign-in screen and the first-run wizard. See apis.NewManualApi.
+	apis.NewManualApi(api)
 
 	// Deployment mode + cluster-readiness checklist. myseliasan is one of the two apps
 	// in the suite that can genuinely run behind a load balancer (it is stateless over
@@ -1377,10 +1381,14 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// service were built earlier, before the reports that reuse them; the invariant
 	// stands — the LLM is never in a critical path, and with mode "off" (default)
 	// or the model down the digest still generates from the narrator.
+	// The manual retriever is the chat's second grounding source and the docs endpoint's only
+	// one. It reads embedded text and indexes lazily, so it costs nothing until a question is
+	// asked and works with the LLM off.
+	docsService := services.NewDocsService()
 	chatService := services.NewChatService(notificationService, registry, digestService,
-		controlServer.IsConnected, controlServer, llmManager, deps.Metrics,
+		controlServer.IsConnected, controlServer, docsService, llmManager, deps.Metrics,
 		func(f string, a ...any) { deps.Logger.Warnf("myseliasan.agent", f, a...) })
-	apis.NewAgentApi(api, *deps.Auth, controlSession, digestService, chatService,
+	apis.NewAgentApi(api, *deps.Auth, controlSession, digestService, chatService, docsService,
 		llmManager, llmInstaller, llmSidecar, auditService,
 		func() apis.AgentDigestStatus {
 			c := deps.Config.Agent.Digest

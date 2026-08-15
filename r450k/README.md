@@ -1,5 +1,12 @@
 # r450k — product site
 
+> **What the site sells.** r450k is positioned as a *private on-prem security & automation suite*,
+> not a camera product alone: five apps — `mymatasan` (edge camera node), `myiotsan` (edge sensor
+> hub), `mypintusan` (door access control), `myseliasan` (fleet control plane) and `myidsan`
+> (identity / SSO). Only four have release pipelines, so the **Downloads** section and the Worker's
+> `PRODUCTS` list carry four; `mypintusan` appears in the **Apps** section as an in-development card
+> (`available: false`) until it ships a `mypintusan-v<ver>` release. Keep those two facts in sync.
+
 Standalone static marketing site for the **r450k** platform, built with React + Vite and
 deployed to **Cloudflare Workers (Static Assets)**. It is decoupled from the Go backend; it
 ships a static `dist/` bundle served by a tiny Worker that also handles the contact endpoint.
@@ -66,6 +73,15 @@ The site supports four languages with prerendered, per-locale static pages that 
 **Language switcher**: `src/components/LangDropdown.jsx` renders `English | Melayu | 中文 | العربية` as real `<a href>` links pointing at the per-locale paths (crawlable and functional without JS), with a JS intercept for instant no-reload switching via `window.history.pushState`. Selecting Arabic flips `<html dir>` to `rtl`.
 
 **Adding or editing copy**: edit the English source file (`src/content/en.js`) for structure and English text; update the corresponding key in `ms.js`, `zh.js`, and `ar.js` for the other locales. Rebuild (`npm run build`) to regenerate all prerendered pages.
+
+> **Watch the positional arrays.** The non-English files translate list content through
+> index-keyed arrays (`F` features, `H` how-it-works steps, `T` hardware tiers, `U` use cases,
+> `A` apps, `SHOT_ALT`, `NAV`) that are `map`ped over the English items — `en.features.items.map((it, i) => ({ ...it, title: F[i].t }))`.
+> **Inserting an item in `en.js` without inserting at the same index in all three locale files
+> silently yields `undefined` titles** (or a hard crash) on that locale only, which the English
+> build never catches. After any list change, add/remove at the matching index in `ms.js`,
+> `zh.js` and `ar.js`, then confirm each locale's prerendered page in `dist/{,ms/,zh/,ar/}index.html`
+> actually contains the new copy.
 
 **RTL support**: `src/styles.css` includes `[dir="rtl"]` overrides for layout properties (flex-direction, text-align, padding/margin asymmetries) so the full page mirrors correctly in Arabic without per-component changes.
 

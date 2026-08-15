@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Ico, useT } from '@shared';
+import { useManual } from '@shared/Manual';
 import { StatCard, ChartCard, TimeSeriesChart } from '@shared/charts';
 import { api, apiBase, csrfToken, formatTimestamp, sessionCanPost } from '../lib/helpers';
 import '../styles/insight.css';
@@ -159,6 +160,10 @@ export function AIInsightPage({ session, onToast, onSuggestRule }) {
                 {session?.isSuperadmin && canPost ? ` ${t('agent.chat.llmOffHintAdmin')}` : ''}
               </p>
             </div>
+            {/* No model does not mean no answers. Searching the built-in manuals needs no
+                inference at all, so the half of the assistant that explains the product still
+                works on an appliance that has never been given a model. */}
+            <ManualSearch />
           </ChartCard>
         )}
 
@@ -263,6 +268,120 @@ function FindingList({ findings, findingText, onSuggestRule }) {
   );
 }
 
+// SourceChip is one cited manual section.
+//
+// A section from THIS app's manual opens in the help drawer; one from another product in the
+// suite is labelled and inert, because this SPA can only render the manual its own server
+// serves. Showing it anyway is deliberate — "MyMataSan manual › Adding cameras" tells the reader
+// which product and which page to go to, which is most of the value of a citation.
+function SourceChip({ source }) {
+  const manual = useManual();
+  const label = source.heading || source.title;
+  if (source.local) {
+    return (
+      <button
+        type="button"
+        className="insight-source insight-source--local"
+        onClick={() => manual.openHelp(source.slug, source.anchor)}
+        title={source.path}
+      >
+        <Ico n="book" sz={12} />
+        {label}
+      </button>
+    );
+  }
+  return (
+    <span className="insight-source" title={source.path}>
+      <Ico n="book" sz={12} />
+      <span className="insight-source-app">{source.appTitle}</span>
+      {label}
+    </span>
+  );
+}
+
+// SourceList shows what the answer was grounded in.
+//
+// Cited sections lead; the rest are offered separately as further reading. The distinction is
+// the server's — it marks which refs the finished answer actually referenced — and keeping it
+// visible is what stops a source list from implying the answer rests on a page the model never
+// used.
+function SourceList({ sources }) {
+  const t = useT();
+  const cited = sources.filter((s) => s.cited);
+  const related = sources.filter((s) => !s.cited);
+  return (
+    <div className="insight-sources">
+      {cited.length ? (
+        <div className="insight-sources-row">
+          <span className="insight-sources-label">{t('agent.chat.sources')}</span>
+          {cited.map((s) => <SourceChip key={s.ref} source={s} />)}
+        </div>
+      ) : null}
+      {related.length ? (
+        <div className="insight-sources-row">
+          <span className="insight-sources-label">{t('agent.chat.sourcesRelated')}</span>
+          {related.map((s) => <SourceChip key={s.ref} source={s} />)}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ManualSearch is the retrieval half of the assistant on its own, for when no language model is
+// available. It answers with the sections that match rather than with prose.
+function ManualSearch() {
+  const t = useT();
+  const lang = document.documentElement.lang || 'en';
+  const [question, setQuestion] = useState('');
+  const [items, setItems] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  async function search(e) {
+    e?.preventDefault();
+    const q = question.trim();
+    if (!q || busy) return;
+    setBusy(true);
+    const res = await api(
+      `/api/agent/docs?q=${encodeURIComponent(q)}&lang=${encodeURIComponent(lang)}`,
+      { noRedirect: true },
+    ).catch(() => ({ ok: false }));
+    setBusy(false);
+    setItems(res.ok && Array.isArray(res.body?.items) ? res.body.items : []);
+  }
+
+  return (
+    <div className="insight-docs">
+      <form className="insight-chat-form" onSubmit={search}>
+        <input
+          type="text"
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          placeholder={t('agent.docs.placeholder')}
+          maxLength={500}
+          aria-label={t('agent.docs.search')}
+        />
+        <button type="submit" disabled={busy || !question.trim()} aria-label={t('agent.docs.search')}>
+          <Ico n="search" sz={15} />
+        </button>
+      </form>
+      {items === null ? (
+        <p className="insight-note">{t('agent.docs.hint')}</p>
+      ) : items.length === 0 ? (
+        <p className="insight-note">{t('agent.docs.none')}</p>
+      ) : (
+        <ul className="insight-docs-list">
+          {items.map((s) => (
+            <li key={s.ref}>
+              <SourceChip source={s} />
+              {s.snippet ? <p className="insight-docs-snippet">{s.snippet}</p> : null}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 // FleetChat is the streaming ask-the-fleet box. One in-flight question at a
 // time; a new question aborts the previous stream.
 function FleetChat({ model, className }) {
@@ -302,6 +421,13 @@ function FleetChat({ model, className }) {
       const last = { ...next[next.length - 1] };
       last.content += text;
       next[next.length - 1] = last;
+      return next;
+    });
+    // Sources arrive AFTER the answer (they carry which excerpts it actually cited), so they
+    // attach to the message that is already on screen rather than gating its render.
+    const attachSources = (sources) => setTranscript((tr) => {
+      const next = tr.slice();
+      next[next.length - 1] = { ...next[next.length - 1], sources };
       return next;
     });
     const failLast = (message) => setTranscript((tr) => {
@@ -358,6 +484,7 @@ function FleetChat({ model, className }) {
           let payload = null;
           try { payload = JSON.parse(data); } catch (_) { continue; }
           if (event === 'delta' && payload.text) appendDelta(payload.text);
+          else if (event === 'sources' && Array.isArray(payload.items)) attachSources(payload.items);
           else if (event === 'error') failLast(payload.message || t('agent.chat.failed'));
         }
       }
@@ -393,6 +520,7 @@ function FleetChat({ model, className }) {
         ) : transcript.map((m, i) => (
           <div key={i} className={`insight-msg insight-msg--${m.role}${m.error ? ' insight-msg--error' : ''}`}>
             {m.content || (busy && i === transcript.length - 1 ? t('agent.chat.thinking') : '')}
+            {m.sources?.length ? <SourceList sources={m.sources} /> : null}
           </div>
         ))}
       </div>

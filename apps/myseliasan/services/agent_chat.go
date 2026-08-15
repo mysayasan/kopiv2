@@ -166,7 +166,9 @@ type ChatService struct {
 	// connected is the control channel's liveness oracle (nil-safe).
 	connected func(nodeID string) bool
 	// sender reaches ONE named node over the control tunnel (nil = no drill-down).
-	sender  chatNodeSender
+	sender chatNodeSender
+	// docs is the second grounding source: the built-in manuals (nil = fleet data only).
+	docs    *DocsService
 	llm     *LLMManager
 	metrics telemetry.Metrics
 	logf    func(format string, args ...any)
@@ -179,6 +181,7 @@ func NewChatService(
 	digests *DigestService,
 	connected func(nodeID string) bool,
 	sender chatNodeSender,
+	docs *DocsService,
 	llmMgr *LLMManager,
 	metrics telemetry.Metrics,
 	logf func(string, ...any),
@@ -188,7 +191,8 @@ func NewChatService(
 	}
 	return &ChatService{
 		notif: notif, fleet: fleet, digests: digests,
-		connected: connected, sender: sender, llm: llmMgr, metrics: metrics, logf: logf,
+		connected: connected, sender: sender, docs: docs,
+		llm: llmMgr, metrics: metrics, logf: logf,
 	}
 }
 
@@ -463,25 +467,49 @@ func (c *ChatService) recentSevere(ctx context.Context, from int64) []GroundNoti
 	return out
 }
 
-// SystemPrompt is the strict-grounding instruction, parameterized by language.
-func SystemPrompt(lang string) string {
-	return "You are the fleet assistant for a MySeliaSan physical-security control plane. " +
-		"You will receive one JSON document (FLEET DATA) and a question about the fleet. Rules:\n" +
-		"1. Answer ONLY from FLEET DATA. If the answer is not in it, say you do not have that data. Never guess.\n" +
-		"2. When you reference an event or node, cite its id in brackets, e.g. [notif 4211] or [node cam-lobby].\n" +
-		"3. Every number must appear verbatim in FLEET DATA. Never invent counts, times, or names.\n" +
-		"4. If FLEET DATA lists truncated sections, mention that your view may be partial when relevant.\n" +
+// SystemPrompt is the strict-grounding instruction, parameterized by language. withDocs adds the
+// rules for the manual excerpts, and is false when retrieval found nothing — an unused rule about
+// a section that is not in the prompt is one more thing for a small model to get confused by.
+func SystemPrompt(lang string, withDocs bool) string {
+	p := "You are the fleet assistant for a MySeliaSan physical-security control plane. " +
+		"You will receive one JSON document (FLEET DATA)"
+	if withDocs {
+		p += ", some MANUAL EXCERPTS,"
+	}
+	p += " and a question. Rules:\n"
+	if withDocs {
+		// The separation, stated before anything else, because conflating the two sources is the
+		// specific way a documentation-grounded answer goes wrong: the manual is written in the
+		// present tense about the product ("recordings are kept for 14 days"), and a model that
+		// forgets what it is reading will report that as a fact about THIS installation.
+		p += "1. Answer ONLY from FLEET DATA and MANUAL EXCERPTS. If the answer is in neither, say so. Never guess.\n" +
+			"2. FLEET DATA is what THIS fleet is doing now. MANUAL EXCERPTS are product documentation — how the " +
+			"software works in general, possibly for a different product in the suite. Never state something from " +
+			"an excerpt as an observation about this fleet, and never answer a question about current state from an excerpt.\n" +
+			"3. Cite what you use: [notif 4211], [node cam-lobby], or an excerpt's label such as [M1]. " +
+			"Each excerpt names the product it documents — say which product when it is not this one.\n"
+	} else {
+		p += "1. Answer ONLY from FLEET DATA. If the answer is not in it, say you do not have that data. Never guess.\n" +
+			"2. When you reference an event or node, cite its id in brackets, e.g. [notif 4211] or [node cam-lobby].\n" +
+			"3. Every number must appear verbatim in FLEET DATA. Never invent counts, times, or names.\n"
+	}
+	p += "4. If FLEET DATA lists truncated sections, mention that your view may be partial when relevant.\n" +
 		"5. Be concise: at most 8 sentences, or a short list.\n" +
 		"6. Reply in " + languageName(lang) + "."
+	return p
 }
 
 // Stream runs one grounded completion, forwarding deltas to emit. Errors before
 // any delta are returned directly (the API maps them to status codes); after
 // the first delta the caller surfaces them as a stream error event.
-func (c *ChatService) Stream(ctx context.Context, req ChatRequestBody, emit func(delta string) error) (llm.ChatResult, error) {
+//
+// The returned excerpts are the manual sections offered to the model, flagged with whether the
+// finished answer actually cited each one. They are a return value rather than a callback
+// because that flag cannot exist until the answer does.
+func (c *ChatService) Stream(ctx context.Context, req ChatRequestBody, emit func(delta string) error) (llm.ChatResult, []DocExcerpt, error) {
 	if err := c.Validate(&req); err != nil {
 		c.countChat("bad_request")
-		return llm.ChatResult{}, err
+		return llm.ChatResult{}, nil, err
 	}
 	client, err := c.llm.Client()
 	if err != nil {
@@ -490,25 +518,34 @@ func (c *ChatService) Stream(ctx context.Context, req ChatRequestBody, emit func
 		} else {
 			c.countChat("llm_unavailable")
 		}
-		return llm.ChatResult{}, err
+		return llm.ChatResult{}, nil, err
 	}
 
 	bundle, err := c.BuildGrounding(ctx, req)
 	if err != nil {
 		c.countChat("llm_error")
-		return llm.ChatResult{}, fmt.Errorf("build grounding: %w", err)
+		return llm.ChatResult{}, nil, fmt.Errorf("build grounding: %w", err)
 	}
 	bundleJSON, err := json.Marshal(bundle)
 	if err != nil {
 		c.countChat("llm_error")
-		return llm.ChatResult{}, fmt.Errorf("encode grounding: %w", err)
+		return llm.ChatResult{}, nil, fmt.Errorf("encode grounding: %w", err)
+	}
+
+	// The manual half. Retrieval is local, deterministic and sub-millisecond, so it runs on every
+	// question and simply returns nothing when the manual has no answer — there is no mode to
+	// configure and nothing to fail. Combined ceiling is the fleet bundle's 8 KiB plus the
+	// excerpt block's 2.5 KiB ≈ 2.7k tokens, which leaves room in an 8k context for the prompt,
+	// four history turns and a 768-token completion.
+	excerpts, docsBlock := c.docs.Ground(req.Lang, req.Question)
+
+	system := SystemPrompt(req.Lang, docsBlock != "") + "\nFLEET DATA:\n" + string(bundleJSON)
+	if docsBlock != "" {
+		system += "\n\n" + docsBlock
 	}
 
 	messages := make([]llm.Message, 0, len(req.History)+2)
-	messages = append(messages, llm.Message{
-		Role:    "system",
-		Content: SystemPrompt(req.Lang) + "\nFLEET DATA:\n" + string(bundleJSON),
-	})
+	messages = append(messages, llm.Message{Role: "system", Content: system})
 	messages = append(messages, req.History...)
 	question := req.Question
 	if req.Lang != "en" {
@@ -536,7 +573,9 @@ func (c *ChatService) Stream(ctx context.Context, req ChatRequestBody, emit func
 		c.countChat("llm_error")
 		c.countLLM("chat", err)
 	}
-	return res, err
+	// Marked against whatever text arrived, including a partial answer cut short by a timeout —
+	// what it cited before it stopped is still what it cited.
+	return res, MarkCited(excerpts, res.Content), err
 }
 
 func (c *ChatService) countChat(outcome string) {

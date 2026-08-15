@@ -72,14 +72,20 @@ async function handleContact(request, env) {
 // marketing site's Download section always shows the current builds without a
 // redeploy (and without hammering GitHub's rate limit). ------------------------
 //
-// Both products ship out of the same repo but under separate tag namespaces:
+// Every product ships out of the same repo but under its own tag namespace:
 //
 //   mymatasan   v<ver>              (the repo's "latest" release)
 //   myseliasan  myseliasan-v<ver>   (published with --latest=false)
+//   myiotsan    myiotsan-v<ver>     (published with --latest=false)
+//   myidsan     myidsan-v<ver>      (published with --latest=false)
 //
 // So we cannot use /releases/latest — that only ever returns mymatasan's. We list
 // releases once and pick the newest one per tag prefix. (GitHub returns them newest
 // first, so the first match per product wins.)
+//
+// mypintusan (the door controller) has no release pipeline yet, so it is deliberately
+// absent here; the site shows it as an in-development app card instead. When it ships,
+// add it below with a `mypintusan-v<ver>` namespace.
 
 const RELEASES_REPO = 'mysayasan/kopiv2';
 const RELEASES_PER_PAGE = 100; // GitHub's maximum

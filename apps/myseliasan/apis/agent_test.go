@@ -18,13 +18,67 @@ import (
 // nil sources safely because ChatService nil-guards its optional dependencies.
 func newAgentTestApi(llmCfg config.AgentLLMConfigModel) (*agentApi, *recordingAudit) {
 	mgr := services.NewLLMManager(llmCfg, nil)
-	chat := services.NewChatService(nil, nil, nil, nil, nil, mgr, nil, nil)
+	chat := services.NewChatService(nil, nil, nil, nil, nil, nil, mgr, nil, nil)
 	audit := &recordingAudit{}
 	return &agentApi{
 		chat:  chat,
 		llm:   mgr,
 		audit: audit,
 	}, audit
+}
+
+// The docs endpoint must work with the LLM in its default "off" state — that is the entire point
+// of having it, so it is asserted against an api built with no model at all.
+func TestSearchDocsWithoutAnyModel(t *testing.T) {
+	h, _ := newAgentTestApi(config.AgentLLMConfigModel{Mode: "off"})
+	h.docs = services.NewDocsService()
+
+	w := httptest.NewRecorder()
+	h.searchDocs(w, httptest.NewRequest("GET", "/api/agent/docs?q=how+do+I+add+a+camera&lang=en", nil))
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Result().StatusCode)
+	}
+	var body struct {
+		Result struct {
+			Items []services.DocExcerpt `json:"items"`
+		} `json:"result"`
+		Data struct {
+			Result struct {
+				Items []services.DocExcerpt `json:"items"`
+			} `json:"result"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v (%s)", err, w.Body.String())
+	}
+	items := body.Result.Items
+	if len(items) == 0 {
+		items = body.Data.Result.Items
+	}
+	if len(items) == 0 {
+		t.Fatalf("no manual sections returned: %s", w.Body.String())
+	}
+	for _, it := range items {
+		if it.Slug == "" || it.Title == "" || it.AppTitle == "" || it.Ref == "" {
+			t.Errorf("incomplete excerpt (a citation needs all four): %+v", it)
+		}
+		if it.Snippet == "" {
+			t.Errorf("%s has no snippet — the reader has nothing to read", it.Ref)
+		}
+	}
+}
+
+func TestSearchDocsEmptyQuery(t *testing.T) {
+	h, _ := newAgentTestApi(config.AgentLLMConfigModel{Mode: "off"})
+	h.docs = services.NewDocsService()
+	w := httptest.NewRecorder()
+	h.searchDocs(w, httptest.NewRequest("GET", "/api/agent/docs", nil))
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("an empty query is not an error; status = %d", w.Result().StatusCode)
+	}
+	if strings.Contains(w.Body.String(), `"items":null`) {
+		t.Error("empty result must serialize as [] so the client can iterate it")
+	}
 }
 
 func TestChatHandlerLLMOff(t *testing.T) {

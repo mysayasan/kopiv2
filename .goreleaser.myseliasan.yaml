@@ -109,6 +109,14 @@ nfpms:
         type: "config|noreplace"
       - src: deploy/nfpm/myseliasan.service
         dst: /etc/systemd/system/myseliasan.service
+      # One-command uninstaller. `apt-get remove` keeps /opt/myseliasan (erasing the fleet
+      # CA key orphans every adopted node), so this is the front door for the other
+      # outcome: `myseliasan-uninstall --purge-data` erases it. Shared script, named per
+      # package — it resolves the product from argv[0].
+      - src: deploy/nfpm/uninstall.sh
+        dst: /usr/sbin/myseliasan-uninstall
+        file_info:
+          mode: 0755
     scripts:
       postinstall: deploy/nfpm/myseliasan-postinstall.sh
       preremove: deploy/nfpm/myseliasan-preremove.sh

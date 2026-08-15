@@ -114,6 +114,14 @@ nfpms:
         type: "config|noreplace"
       - src: deploy/nfpm/myiotsan.service
         dst: /etc/systemd/system/myiotsan.service
+      # One-command uninstaller. `dnf remove` keeps /opt/myiotsan (the telemetry history
+      # and the key that encrypts device credentials live there), so this is the front
+      # door for the other outcome: `myiotsan-uninstall --purge-data` erases it. Shared
+      # script, named per package — it resolves the product from argv[0].
+      - src: deploy/nfpm/uninstall.sh
+        dst: /usr/sbin/myiotsan-uninstall
+        file_info:
+          mode: 0755
     scripts:
       postinstall: deploy/nfpm/myiotsan-postinstall.sh
       preremove: deploy/nfpm/myiotsan-preremove.sh

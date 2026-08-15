@@ -378,25 +378,85 @@ end;
 // and device credentials, so destroying it means re-provisioning every device — and the
 // database IS the telemetry history, which exists nowhere else. A tester wanting a clean
 // first-run experience just answers Yes.
+// UninstallHasFlag reports whether a switch was passed on the uninstaller's command
+// line (case-insensitive). Inno exposes no helper for this on the uninstall side, so
+// the parameters are walked directly. The uninstaller re-launches itself for its
+// second phase and carries its original command line across, so a flag survives.
+function UninstallHasFlag(const Flag: string): Boolean;
+var
+  i: Integer;
+begin
+  Result := False;
+  for i := 1 to ParamCount do
+    if CompareText(ParamStr(i), Flag) = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+end;
+
+// WantsCleanData / WantsKeepData read the operator's intent from two places:
+//
+//   1. A switch on the uninstaller's command line: /CLEANDATA or /KEEPDATA.
+//   2. The KOPIV2_PURGE_DATA environment variable: "1" wipe, "0" keep.
+//
+// Both exist for a reason. The uninstaller copies itself to %TEMP% and relaunches for
+// its second phase, and THIS code runs in that second process — the environment is
+// inherited by a child process whatever else happens, while forwarding a custom switch
+// across the relaunch is Inno's business, not ours. So the variable is the dependable
+// path for scripted uninstalls and the switch is the convenient one for a human.
+//
+// KOPIV2_PURGE_DATA is deliberately the same knob the Linux packages read
+// (deploy/nfpm/myiotsan-postremove.sh), so one variable means the same thing on both
+// platforms.
+function WantsCleanData(): Boolean;
+begin
+  Result := UninstallHasFlag('/CLEANDATA') or (GetEnv('KOPIV2_PURGE_DATA') = '1');
+end;
+
+function WantsKeepData(): Boolean;
+begin
+  Result := UninstallHasFlag('/KEEPDATA') or (GetEnv('KOPIV2_PURGE_DATA') = '0');
+end;
+
+// An explicit request makes the keep-or-wipe choice without asking, so an unattended
+// uninstall (MDM, imaging, a CI rig) can pick either outcome instead of only keeping:
+//
+//   set KOPIV2_PURGE_DATA=1 & unins000.exe /VERYSILENT     erase everything
+//   unins000.exe /VERYSILENT /CLEANDATA                    same, via a switch
+//   unins000.exe /VERYSILENT /KEEPDATA                     keep (today's default)
+//
+// Keep wins over clean: if both somehow arrive, the non-destructive reading is the
+// safe one. Uninstalling from Add/Remove Programs sets neither, so that path still
+// prompts. Mirrors `myiotsan-uninstall --purge-data` on Linux.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   dataDir: string;
+  wipe: Boolean;
 begin
   if CurUninstallStep = usPostUninstall then
   begin
     dataDir := ExpandConstant('{commonappdata}\MyIotSan');
     if not DirExists(dataDir) then
       Exit;
-    // Silent/unattended uninstall (e.g. scripted): keep data, never prompt.
-    if UninstallSilent then
+    if WantsKeepData() then
       Exit;
-    if MsgBox('Also delete all MyIotSan data — the database, your telemetry history, devices,' + #13#10 +
-              'rules, users and the encryption key — under' + #13#10 + dataDir + '?' + #13#10 + #13#10 +
-              'The encryption key protects the fleet key and device credentials: deleting it' + #13#10 +
-              'means every device must be re-provisioned. Your telemetry history is not stored' + #13#10 +
-              'anywhere else.' + #13#10 + #13#10 +
-              'Choose No to keep your data for a future reinstall. This cannot be undone.',
-              mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+    wipe := WantsCleanData();
+    // No explicit instruction: a silent/unattended uninstall keeps data and never
+    // prompts; an interactive one asks, defaulting to No.
+    if not wipe then
+    begin
+      if UninstallSilent then
+        Exit;
+      wipe := MsgBox('Also delete all MyIotSan data — the database, your telemetry history, devices,' + #13#10 +
+                     'rules, users and the encryption key — under' + #13#10 + dataDir + '?' + #13#10 + #13#10 +
+                     'The encryption key protects the fleet key and device credentials: deleting it' + #13#10 +
+                     'means every device must be re-provisioned. Your telemetry history is not stored' + #13#10 +
+                     'anywhere else.' + #13#10 + #13#10 +
+                     'Choose No to keep your data for a future reinstall. This cannot be undone.',
+                     mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES;
+    end;
+    if wipe then
       DelTree(dataDir, True, True, True);
   end;
 end;

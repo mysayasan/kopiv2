@@ -95,8 +95,8 @@ repo's assets):
   `services.msc`, and Uninstall. **Uninstalling** removes the app and service and then
   *asks* whether to also delete the data dir (`C:\ProgramData\MyMataSan` — recordings,
   database, settings, encryption key), defaulting to **No** so footage/config survive a
-  reinstall; answer **Yes** for a clean first-run slate. (A silent uninstall always keeps
-  the data.)
+  reinstall; answer **Yes** for a clean first-run slate. A **scripted** uninstall states
+  its intent instead of being asked — see *Uninstalling* below.
 - **Docker images** (`ghcr.io/mysayasan/mymatasan`, linux amd64+arm64, built from
   `deploy/Dockerfile.release`): a `debian:bookworm-slim` base with `ffmpeg` +
   `python3`/`venv` baked in. `MYMATASAN_HOME=/app` (read-only: binary, static
@@ -142,6 +142,56 @@ Local dry run without publishing (requires the web bundle built first —
 ```bash
 goreleaser release --snapshot --clean --skip=docker
 ```
+
+## Uninstalling — keep your data, or wipe it
+
+Every uninstall path **keeps your data by default**: an accidental `apt-get remove`, or
+an operator clicking through an uninstaller, must never destroy footage. A clean wipe is
+always something you ask for explicitly.
+
+**Linux (deb/rpm).** The package installs `/usr/sbin/mymatasan-uninstall`, which calls
+`apt`/`dnf` for you:
+
+```sh
+sudo mymatasan-uninstall                # remove the package, KEEP /opt/mymatasan
+sudo mymatasan-uninstall --purge-data   # remove it and ERASE /opt/mymatasan
+sudo mymatasan-uninstall --purge-data -y   # same, unattended (no prompt)
+sudo mymatasan-uninstall --purge-data -n   # dry run: print, change nothing
+```
+
+Interactively, `--purge-data` makes you type `ERASE` before it does anything. The same
+wipe is available straight from the package manager, for config-managed hosts:
+
+```sh
+sudo KOPIV2_PURGE_DATA=1 apt-get purge mymatasan     # or: dnf remove
+sudo apt-get purge mymatasan                         # without it, data is kept
+```
+
+`KOPIV2_PURGE_DATA=1` is read by the package's `postremove` scriptlet
+(`deploy/nfpm/postremove.sh`), so it works however the removal was triggered. Both
+routes also drop the `mymatasan` service account when they wipe.
+
+**Only `/opt/mymatasan` is erased.** Recordings you pointed at another disk are *not*
+touched — delete those yourself.
+
+**Windows.** Uninstalling from Add/Remove Programs or the Start Menu asks whether to
+delete `C:\ProgramData\MyMataSan`, defaulting to No. A scripted uninstall says what it
+wants instead:
+
+```bat
+set KOPIV2_PURGE_DATA=1 & "C:\Program Files\MyMataSan\unins000.exe" /VERYSILENT
+"C:\Program Files\MyMataSan\unins000.exe" /VERYSILENT /CLEANDATA
+"C:\Program Files\MyMataSan\unins000.exe" /VERYSILENT /KEEPDATA
+```
+
+The environment variable is the dependable form: the uninstaller relaunches itself from
+`%TEMP%` for its second phase (where the decision is made) and a child process always
+inherits the environment. A silent uninstall with no instruction keeps the data, and
+keep beats clean if both are given.
+
+**Wiping while keeping the machine.** If you want the data destroyed but MyMataSan still
+installed, use **Secure Wipe & Reset** in the app instead — it crypto-erases the at-rest
+key and shreds recordings, which a file delete does not.
 
 # TLS / HTTPS
 

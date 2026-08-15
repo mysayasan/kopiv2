@@ -240,10 +240,23 @@ python -m pip install -r apps/mymatasan/ai/requirements-yolo.txt
 
 MyMataSan keeps ML runtime files under `apps/mymatasan/ai` to avoid confusing them with Go/domain object models such as `domain/models`.
 
+<a id="api-credentials"></a>
+> **The `curl` examples below use `$ADMIN_PW`.** There is no shipped default password — a fresh
+> install generates one, prints it in the startup banner and writes it to
+> `INITIAL_ADMIN_LOGIN.txt` in the data directory. Export your admin password before running any
+> of them:
+>
+> ```bash
+> export ADMIN_PW='the-password-you-set'
+> ```
+>
+> (The examples previously hard-coded `Admin123`, which no new install has ever had. See the
+> built-in manual's *Signing in for the first time* for the full first-run flow.)
+
 Check whether the configured AI tool is ready without downloading anything:
 
 ```bash
-curl -u admin:Admin123 "http://localhost:3000/api/settings/vision/ai-tool/status"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/settings/vision/ai-tool/status"
 ```
 
 The Settings page exposes the same check. It reports the resolved command path, Python package readiness, worker script, model file, and whether native fallback is available. Users can skip AI downloads; semantic rules such as person, vehicle, animal, fire, and smoke will not produce object-label detections without an AI worker, while native motion and motion-based line crossing can still run.
@@ -311,7 +324,7 @@ The Settings → YOLO Inference Tuning section includes a **Best Calibration** b
 
 MyMataSan is an internet-of-things appliance, so the auth defaults are hardened:
 
-- **Forced first-login password change.** The default `admin` / `Admin123` cannot stay in use — the seeded admin (and an existing admin still on the default) is flagged `must change password`. Until it is changed, the user is gated to `GET /api/auth/session` and `POST /api/auth/change-password` (everything else returns `403 password_change_required`). Set `LOCAL_ADMIN_PASSWORD` before first run to provision a strong password and skip the prompt.
+- **Forced first-login password change.** There is no shipped default password: on a fresh install the seeded `admin` gets a password GENERATED for that install, printed in the startup banner and written to `INITIAL_ADMIN_LOGIN.txt` in the data dir. It — and an existing admin still on the legacy `Admin123` — is flagged `must change password`. Until it is changed, the user is gated to `GET /api/auth/session` and `POST /api/auth/change-password` (everything else returns `403 password_change_required`). Set `LOCAL_ADMIN_PASSWORD` before first run to provision a strong password and skip the prompt.
 - **Failed-login lockout.** After `loginSecurity.maxAttempts` failed sign-ins from one IP within `windowSeconds`, that IP is locked with an escalating (doubling) backoff up to `lockoutMaxSeconds`; locked requests return `429` + `Retry-After`, the login page shows a countdown, and a lockout trips a Critical notification. Only the interactive login probe (`GET /auth/session`) counts toward the lockout — a wrong credential on any other protected route is denied but never consumes the budget, so a client replaying a stale credential across a page load can't self-lock a legitimate user. Tunables live in the `loginSecurity` config block.
 - **"Magic word" easter egg (cosmetic only).** On the 3rd consecutive failed sign-in attempt (client-side counter, resets on success), the login page shows a full-screen green-CRT overlay with a wagging cartoon "big head" that speaks "Ah, ah, ah… You didn't say the magic word!" via the Web Speech API (a Jurassic Park/Dennis Nedry homage). It dismisses on click, `Escape`, or after ~6.5s. Purely presentational — it never affects the real lockout counter/backoff above and adds no server-side state.
 - **Role-based access — three roles.** Every request (not just writes) is checked against the signed-in user's role permission matrix, deny-by-default and enforced server-side:
@@ -330,10 +343,10 @@ MyMataSan is an internet-of-things appliance, so the auth defaults are hardened:
 
 ```bash
 # Who am I + must-change/role flags
-curl -u admin:Admin123 "http://localhost:3000/api/auth/session"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/auth/session"
 # Change your own password (clears the must-change flag, rotates the session cookie)
-curl -u admin:Admin123 -X POST -H "Content-Type: application/json" \
-  -d '{"currentPassword":"Admin123","newPassword":"a-strong-passphrase"}' \
+curl -u admin:"$ADMIN_PW" -X POST -H "Content-Type: application/json" \
+  -d '{"currentPassword":"'"$ADMIN_PW"'","newPassword":"a-strong-passphrase"}' \
   "http://localhost:3000/api/auth/change-password"
 ```
 
@@ -344,8 +357,8 @@ On a fresh install an admin is walked through a **setup wizard** (Welcome/passwo
 The **camera-capacity estimator** answers "how many cameras can this host handle?" It models AI inference (CPU/GPU), memory, and live-view decode, reports the limiting resource, and treats recording as a rolling buffer: rather than zeroing the camera count on a small disk (footage auto-purges), it caps cameras at a **~1-day minimum-retention floor** and reports the retention actually achievable at the recommended count — balancing cameras against retention. The AI figure sharpens through three tiers — a static spec-sheet model, a live extrapolation from real CPU load once cameras run, and a **calibrated** figure from a real detector benchmark:
 
 ```bash
-curl -u admin:Admin123 "http://localhost:3000/api/capacity"            # estimate
-curl -u admin:Admin123 -X POST "http://localhost:3000/api/capacity/calibrate"  # benchmark the detector (best run idle)
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/capacity"            # estimate
+curl -u admin:"$ADMIN_PW" -X POST "http://localhost:3000/api/capacity/calibrate"  # benchmark the detector (best run idle)
 ```
 
 The estimate and a **Run calibration** button are surfaced on the Settings → Machine Health card (and reused by the wizard).
@@ -403,10 +416,10 @@ Switching `keyProtector` re-wraps the same key on the next boot (a lossless migr
 Because a host-bound key can't be unwrapped after a hardware failure, reimage, or move, **Settings → Backup & Recovery** lets an admin export a passphrase-protected **recovery escrow** (a `.atrestkey` file) of the current key and later verify a saved copy still works and still matches the active key:
 
 ```bash
-curl -u admin:Admin123 -X POST -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -X POST -H "Content-Type: application/json" \
   -d '{"passphrase":"a strong passphrase"}' \
   "http://localhost:3000/api/system/recovery/export"   # downloads mymatasan-recovery-YYYYMMDD.atrestkey (base64 in the response)
-curl -u admin:Admin123 -X POST -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -X POST -H "Content-Type: application/json" \
   -d '{"passphrase":"a strong passphrase","keyBase64":"<file contents, base64>"}' \
   "http://localhost:3000/api/system/recovery/verify"
 ```
@@ -423,11 +436,11 @@ Distinct from the recovery escrow above (which protects the encryption key), the
 Because the file carries plaintext secrets the normal API never emits, it is always encrypted with your passphrase using a portable Argon2id + AES-256-GCM primitive that is **not** tied to this machine's at-rest key, so the file opens on any host. In Settings, restore previews the file's contents first, then applies it — **Replace** overwrites the selected sections, **Merge** appends — remapping foreign keys since primary keys are reassigned on insert. The first-run wizard's welcome step offers the same restore ("Restore from backup") but applies it directly in `replace` mode without a separate preview, letting a fresh install adopt an existing configuration; a restart afterwards is still needed for running services to pick it up. A restore also marks first-run setup complete, so the wizard does not reappear after the restart (the setup flag itself is not carried in the backup — it is set on restore because a restored machine is already configured).
 
 ```bash
-curl -u admin:Admin123 "http://localhost:3000/api/settings/backup/sections"   # row counts per section
-curl -u admin:Admin123 -X POST -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/settings/backup/sections"   # row counts per section
+curl -u admin:"$ADMIN_PW" -X POST -H "Content-Type: application/json" \
   -d '{"sections":["cameras","ai","notifications","settings"],"passphrase":"a strong passphrase"}' \
   "http://localhost:3000/api/settings/backup/export"   # returns {filename, dataBase64} — the .mmbackup bytes
-curl -u admin:Admin123 -X POST -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -X POST -H "Content-Type: application/json" \
   -d '{"dataBase64":"<file contents, base64>","passphrase":"a strong passphrase","mode":"replace"}' \
   "http://localhost:3000/api/settings/backup/restore"
 ```
@@ -441,9 +454,9 @@ A **factory reset** returns the appliance to a clean state. Ordered so the irrev
 As a security measure the wipe is **intentionally unstoppable and best-effort**: the Postgres drop uses `DROP DATABASE ... WITH (FORCE)` to evict any connection still holding the database, and the orchestrator records a stage problem (an un-erasable file, a failed key destroy, a database-wipe error) as a non-fatal *warning* rather than aborting — it always drives to a restart (which re-runs bootstrap and can finish an interrupted rebuild). The real wipe guarantees are the crypto-erase and the instant unlink; TRIM + free-space scrub are defense-in-depth (no overwrite reliably erases original cells on flash) and a missing TRIM privilege (no Administrator/root) is reported as a warning, not a failure, since it doesn't affect the real guarantees. On sqlite, the database file couldn't previously be deleted on Windows because this process still held it open — the reset now closes its own connection first so the drop actually succeeds. In the UI the button lives in a **Danger Zone** on Settings → Machine Health, behind a 10-second auto-proceed countdown (cancel to stop), then a full-screen progress overlay that polls progress and reloads once the restarted server's health recovers.
 
 ```bash
-curl -u admin:Admin123 "http://localhost:3000/api/system/reset/state"      # is reset allowed?
-curl -u admin:Admin123 -X POST "http://localhost:3000/api/system/reset"    # wipe + reset + restart
-curl -u admin:Admin123 "http://localhost:3000/api/system/reset/progress"   # in-flight progress
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/system/reset/state"      # is reset allowed?
+curl -u admin:"$ADMIN_PW" -X POST "http://localhost:3000/api/system/reset"    # wipe + reset + restart
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/system/reset/progress"   # in-flight progress
 ```
 
 Docker deployments need a restart policy so the post-reset relaunch comes back up; bare-metal relaunches itself.
@@ -453,9 +466,9 @@ Docker deployments need a restart policy so the post-reset relaunch comes back u
 Settings → Version & Health → **Updates** checks GitHub Releases for a newer `mymatasan` (on a 6-hour schedule, plus **Check now**) and shows current vs. latest version. On installs that own their files — the portable archive or the Windows service installer — an **Update to vX.Y.Z** button downloads the matching release archive, verifies its SHA-256 against the release's `checksums.txt`, swaps the binary and `static/`/`ai/` assets into place, and restarts (via the same `apphost.Restarter` the factory reset uses).
 
 ```bash
-curl -u admin:Admin123 "http://localhost:3000/api/system/update"          # cached status
-curl -u admin:Admin123 -X POST "http://localhost:3000/api/system/update/check"  # force a check
-curl -u admin:Admin123 -X POST "http://localhost:3000/api/system/update/apply"  # download + verify + swap + restart
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/system/update"          # cached status
+curl -u admin:"$ADMIN_PW" -X POST "http://localhost:3000/api/system/update/check"  # force a check
+curl -u admin:"$ADMIN_PW" -X POST "http://localhost:3000/api/system/update/apply"  # download + verify + swap + restart
 ```
 
 Self-update is intentionally unavailable — with in-panel guidance shown instead — on `.deb`/`.rpm` installs (`MYMATASAN_MANAGED=package`, set by `deploy/nfpm/mymatasan.service`: upgrade via `apt`/`dnf`) and Docker (`MYMATASAN_MANAGED=docker`, set by `deploy/Dockerfile.release`: pull the new image and recreate the container), and whenever the app's home directory isn't writable.
@@ -465,7 +478,7 @@ Self-update is intentionally unavailable — with in-panel guidance shown instea
 All app-specific ONVIF routes use HTTP Basic Auth backed by local users stored in SQLite.
 
 ```bash
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"timeoutMs":3000}' \
   "http://localhost:3000/api/onvif/discover"
 ```
@@ -477,7 +490,7 @@ Discovery upserts WS-Discovery matches into the local database by XAddr and retu
 Saving a discovered camera with credentials verifies the login before persisting — a camera that actively rejects the login (e.g. wrong password) is **not** saved and returns `400`; an unreachable camera is saved anyway (we simply couldn't verify):
 
 ```bash
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"xAddr":"http://192.168.1.40/onvif/device_service","username":"admin","password":"cameraPass"}' \
   "http://localhost:3000/api/cameras/discovered"
 ```
@@ -485,7 +498,7 @@ curl -u admin:Admin123 -H "Content-Type: application/json" \
 Check whether a saved camera's stored credentials still authenticate (used by the camera node's access gate to decide whether to prompt for new credentials):
 
 ```bash
-curl -u admin:Admin123 "http://localhost:3000/api/cameras/1/auth-check"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/cameras/1/auth-check"
 # {"status":"ok"}  |  {"status":"unauthorized"}  |  {"status":"unreachable"}
 ```
 
@@ -497,32 +510,32 @@ curl -u admin:Admin123 "http://localhost:3000/api/cameras/1/auth-check"
 
 ```bash
 # Which management operations this camera's firmware supports
-curl -u admin:Admin123 "http://localhost:3000/api/cameras/1/capabilities"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/cameras/1/capabilities"
 
 # Device identity for the Live View "Camera Information" panel
-curl -u admin:Admin123 "http://localhost:3000/api/cameras/1/device-info"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/cameras/1/device-info"
 
 # Local ONVIF user accounts
-curl -u admin:Admin123 "http://localhost:3000/api/cameras/1/onvif-users"
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/cameras/1/onvif-users"
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"username":"operator","password":"changeMe123","userLevel":"Operator"}' \
   "http://localhost:3000/api/cameras/1/onvif-users"
-curl -u admin:Admin123 -X DELETE "http://localhost:3000/api/cameras/1/onvif-users/operator"
+curl -u admin:"$ADMIN_PW" -X DELETE "http://localhost:3000/api/cameras/1/onvif-users/operator"
 
 # Reboot / factory default (hard wipes network config, soft keeps it)
-curl -u admin:Admin123 -X POST "http://localhost:3000/api/cameras/1/reboot"
-curl -u admin:Admin123 -X POST -H "Content-Type: application/json" -d '{"hard":false}' \
+curl -u admin:"$ADMIN_PW" -X POST "http://localhost:3000/api/cameras/1/reboot"
+curl -u admin:"$ADMIN_PW" -X POST -H "Content-Type: application/json" -d '{"hard":false}' \
   "http://localhost:3000/api/cameras/1/factory-default"
 
 # Clock: read, then set to NTP
-curl -u admin:Admin123 "http://localhost:3000/api/cameras/1/datetime"
-curl -u admin:Admin123 -X POST -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/cameras/1/datetime"
+curl -u admin:"$ADMIN_PW" -X POST -H "Content-Type: application/json" \
   -d '{"dateTimeType":"NTP","ntpServers":["pool.ntp.org"]}' \
   "http://localhost:3000/api/cameras/1/datetime"
 
 # Network: read, then set a static IPv4
-curl -u admin:Admin123 "http://localhost:3000/api/cameras/1/network"
-curl -u admin:Admin123 -X POST -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/cameras/1/network"
+curl -u admin:"$ADMIN_PW" -X POST -H "Content-Type: application/json" \
   -d '{"interfaceToken":"eth0","dhcp":false,"ipAddress":"192.168.1.40","prefixLength":24,"gateway":"192.168.1.1","dns":["1.1.1.1"]}' \
   "http://localhost:3000/api/cameras/1/network"
 ```
@@ -532,7 +545,7 @@ The Camera node's Settings tab only shows the boxes for operations `capabilities
 Manual probe:
 
 ```bash
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"address":"192.168.1.40"}' \
   "http://localhost:3000/api/onvif/probe"
 ```
@@ -540,25 +553,25 @@ curl -u admin:Admin123 -H "Content-Type: application/json" \
 List saved devices:
 
 ```bash
-curl -u admin:Admin123 "http://localhost:3000/api/onvif/devices?limit=50&offset=0"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/onvif/devices?limit=50&offset=0"
 ```
 
 Read live-view stream configuration:
 
 ```bash
-curl -u admin:Admin123 "http://localhost:3000/api/onvif/stream-config"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/onvif/stream-config"
 ```
 
 Read runtime settings:
 
 ```bash
-curl -u admin:Admin123 "http://localhost:3000/api/settings/runtime"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/settings/runtime"
 ```
 
 Update runtime settings:
 
 ```bash
-curl -u admin:Admin123 -X PUT -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -X PUT -H "Content-Type: application/json" \
   -d '{"decoder":{"mjpeg":{"ffmpegPath":"ffmpeg","quality":7,"threads":1},"ffmpeg":{"rtspTransport":"tcp","hwaccel":"none","hwaccelDevice":"","initHwDevice":"","videoDecoder":"","probeSize":1000000,"analyzeDuration":1000000,"lowDelay":true,"noBuffer":true}},"stream":{"webrtc":{"enabled":true,"iceServers":[]},"mjpegFallback":{"enabled":true}}}' \
   "http://localhost:3000/api/settings/runtime"
 ```
@@ -566,7 +579,7 @@ curl -u admin:Admin123 -X PUT -H "Content-Type: application/json" \
 Auto-tune decoder runtime settings from saved camera RTSP metadata and local ffmpeg capabilities:
 
 ```bash
-curl -u admin:Admin123 -X POST \
+curl -u admin:"$ADMIN_PW" -X POST \
   "http://localhost:3000/api/settings/runtime/auto-tune"
 ```
 
@@ -599,7 +612,7 @@ The Settings page also queries `GET /api/settings/runtime/gpu-devices` and popul
 List all ONVIF stream options exposed by a saved camera:
 
 ```bash
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"username":"camera-user","password":"camera-password"}' \
   "http://localhost:3000/api/onvif/devices/1/stream-options"
 ```
@@ -609,7 +622,7 @@ The response contains `options[]` with `profileToken`, name, encoding, resolutio
 Resolve a saved device to an RTSP URI. Omit `profileToken` to save the preferred profile, or pass a token returned by `stream-options` to pin a specific stream:
 
 ```bash
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"username":"camera-user","password":"camera-password","profileToken":"sub"}' \
   "http://localhost:3000/api/onvif/devices/1/stream-uri"
 ```
@@ -617,7 +630,7 @@ curl -u admin:Admin123 -H "Content-Type: application/json" \
 Probe the saved RTSP URI:
 
 ```bash
-curl -u admin:Admin123 -X POST "http://localhost:3000/api/onvif/devices/1/rtsp-test"
+curl -u admin:"$ADMIN_PW" -X POST "http://localhost:3000/api/onvif/devices/1/rtsp-test"
 ```
 
 If a camera returns `406 Not Acceptable` for an ONVIF-provided RTSP URL, stream selection and RTSP test try same-host stream paths derived from the selected profile. For TP-Link/VIGI-style main and sub profiles this means `/stream1` or `/stream2`. When a fallback succeeds, MyMataSan saves the working URL so live view and AI capture keep using it even after switching between stream1 and stream2.
@@ -627,7 +640,7 @@ If the RTSP test reports tracks but no H.264 video track, RTSP is reachable but 
 Change a camera-local ONVIF user password:
 
 ```bash
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"targetUsername":"camera-user","newPassword":"new-camera-password"}' \
   "http://localhost:3000/api/onvif/devices/1/camera-password"
 ```
@@ -635,7 +648,7 @@ curl -u admin:Admin123 -H "Content-Type: application/json" \
 Move a saved PTZ-capable camera:
 
 ```bash
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"direction":"left","speed":0.35,"durationMs":350}' \
   "http://localhost:3000/api/onvif/devices/1/ptz/move"
 ```
@@ -643,13 +656,13 @@ curl -u admin:Admin123 -H "Content-Type: application/json" \
 Stop PTZ movement:
 
 ```bash
-curl -u admin:Admin123 -X POST "http://localhost:3000/api/onvif/devices/1/ptz/stop"
+curl -u admin:"$ADMIN_PW" -X POST "http://localhost:3000/api/onvif/devices/1/ptz/stop"
 ```
 
 Prepare browser live view from the camera ONVIF media endpoints:
 
 ```bash
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"username":"camera-user","password":"camera-password"}' \
   "http://localhost:3000/api/onvif/devices/1/live-view"
 ```
@@ -657,7 +670,7 @@ curl -u admin:Admin123 -H "Content-Type: application/json" \
 Create a WebRTC answer for browser live view:
 
 ```bash
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"type":"offer","sdp":"..."}' \
   "http://localhost:3000/api/onvif/devices/1/webrtc/offer"
 ```
@@ -665,16 +678,16 @@ curl -u admin:Admin123 -H "Content-Type: application/json" \
 Check two-way audio (talk-back) capability and open a browser-mic session:
 
 ```bash
-curl -u admin:Admin123 "http://localhost:3000/api/cameras/1/talk"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/cameras/1/talk"
 # {"supported":true,"transport":"onvif","needsPassword":false,"hasPassword":false}
 # TP-Link Tapo example: {"supported":true,"transport":"tapo","needsPassword":true,"hasPassword":false}
 
 # TP-Link cameras only: save the cloud/speaker password before talk-back will connect.
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"password":"your-tplink-cloud-password"}' \
   "http://localhost:3000/api/cameras/1/talk/password"
 
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"type":"offer","sdp":"..."}' \
   "http://localhost:3000/api/cameras/1/talk/offer"
 ```
@@ -682,7 +695,7 @@ curl -u admin:Admin123 -H "Content-Type: application/json" \
 Open the multipart MJPEG fallback stream:
 
 ```bash
-curl -u admin:Admin123 "http://localhost:3000/api/onvif/devices/1/live.mjpeg?fps=2"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/onvif/devices/1/live.mjpeg?fps=2"
 ```
 
 Browser fallback requests add `preferSnapshot=1`, which tries the ONVIF snapshot URI first and then falls back to RTSP-to-MJPEG conversion when snapshots are unavailable. You can force snapshot-only output with `source=snapshot`.
@@ -724,13 +737,13 @@ Many budget cameras allow only one concurrent RTSP connection. If the recorder h
 Get the recording config for a camera (returns empty when not yet configured):
 
 ```bash
-curl -u admin:Admin123 "http://localhost:3000/api/recording/config/1"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/recording/config/1"
 ```
 
 Create or update a per-camera recording config:
 
 ```bash
-curl -u admin:Admin123 -X PUT -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -X PUT -H "Content-Type: application/json" \
   -d '{"cameraId":1,"enabled":true,"preRollSec":30,"postRollSec":10,"storagePath":"./recordings","retentionDays":7,"segmentMinutes":15,"streamUrl":"","fallbackStreamUrl":""}' \
   "http://localhost:3000/api/recording/config"
 ```
@@ -742,7 +755,7 @@ Config changes are applied **immediately** without a restart via hot-reload.
 List all recording configs:
 
 ```bash
-curl -u admin:Admin123 "http://localhost:3000/api/recording/config"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/recording/config"
 ```
 
 ### Recorder status
@@ -750,7 +763,7 @@ curl -u admin:Admin123 "http://localhost:3000/api/recording/config"
 Query the live state of all configured recorders:
 
 ```bash
-curl -u admin:Admin123 "http://localhost:3000/api/recording/status"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/recording/status"
 ```
 
 Each entry in the response array includes:
@@ -774,13 +787,13 @@ The Recording tab in the browser UI polls this endpoint every 10 seconds and sho
 List all ONVIF media profiles for a camera (uses stored credentials):
 
 ```bash
-curl -u admin:Admin123 "http://localhost:3000/api/recording/streams/1"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/recording/streams/1"
 ```
 
 Set the camera live-view stream URI to a specific RTSP URL:
 
 ```bash
-curl -u admin:Admin123 -X POST -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -X POST -H "Content-Type: application/json" \
   -d '{"rtspUrl":"rtsp://user:pass@192.168.1.10/stream1"}' \
   "http://localhost:3000/api/recording/streams/1/live"
 ```
@@ -792,32 +805,32 @@ The Recording tab exposes an **Auto-configure** button that reads ONVIF profiles
 List recorded clips (filterable by camera, alert, and time range):
 
 ```bash
-curl -u admin:Admin123 "http://localhost:3000/api/recording/segments?cameraId=1&limit=50&offset=0"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/recording/segments?cameraId=1&limit=50&offset=0"
 ```
 
 Filter clips by alert ID:
 
 ```bash
-curl -u admin:Admin123 "http://localhost:3000/api/recording/segments?alertId=42"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/recording/segments?alertId=42"
 ```
 
 Download a clip:
 
 ```bash
-curl -u admin:Admin123 -o clip.mp4 \
+curl -u admin:"$ADMIN_PW" -o clip.mp4 \
   "http://localhost:3000/api/recording/segments/1/download"
 ```
 
 Delete a clip (removes the DB row and the file on disk; the file is securely shredded when `recording.shred` is enabled):
 
 ```bash
-curl -u admin:Admin123 -X DELETE "http://localhost:3000/api/recording/segments/1"
+curl -u admin:"$ADMIN_PW" -X DELETE "http://localhost:3000/api/recording/segments/1"
 ```
 
 Purge expired clips on demand — deletes only segments already past each camera's `retentionDays` (the same safe sweep the disk-mitigation job runs automatically), returning the count removed. Retention applies as soon as `retentionDays > 0`, regardless of whether recording is currently enabled for that camera — turning recording off only stops new segments being written, it does not freeze existing footage on disk forever:
 
 ```bash
-curl -u admin:Admin123 -X POST "http://localhost:3000/api/recording/segments/purge"
+curl -u admin:"$ADMIN_PW" -X POST "http://localhost:3000/api/recording/segments/purge"
 ```
 
 The Recording tab in the browser UI shows the per-camera config form, the live recorder status panel, lists clips with inline download and delete buttons, and (for admins) a **Purge expired** button.
@@ -825,7 +838,7 @@ The Recording tab in the browser UI shows the per-camera config form, the live r
 **Purge now** (Recording tab, admins) deletes ALL footage and AI-event snapshots for the selected camera immediately, ignoring `retentionDays` entirely — for when an operator needs a camera's history gone right away rather than waiting on the retention sweep. It is gated behind a 5-second cancellable countdown confirmation, mirroring the factory-reset wipe, and only refreshes that panel's own segment list afterward (no full-page reload):
 
 ```bash
-curl -u admin:Admin123 -X POST "http://localhost:3000/api/recording/purge-camera?cameraId=1"
+curl -u admin:"$ADMIN_PW" -X POST "http://localhost:3000/api/recording/purge-camera?cameraId=1"
 # {"segments": 42, "snapshots": 7}
 ```
 
@@ -840,13 +853,13 @@ The AI page is organized by camera first. Select a saved camera, create or edit 
 List detection rules:
 
 ```bash
-curl -u admin:Admin123 "http://localhost:3000/api/vision/rules?limit=50&offset=0"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/vision/rules?limit=50&offset=0"
 ```
 
 Create or update a rule:
 
 ```bash
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"cameraId":1,"name":"Porch person after hours","detectionType":"person","zonePolygon":"[[0.1,0.1],[0.9,0.1],[0.9,0.8],[0.1,0.8]]","threshold":0.35,"minFrames":2,"cooldownSeconds":30,"soundEnabled":true,"isEnabled":true}' \
   "http://localhost:3000/api/vision/rules"
 ```
@@ -856,7 +869,7 @@ curl -u admin:Admin123 -H "Content-Type: application/json" \
 Line crossing rules use the same YOLO object candidates as person, vehicle, and animal rules. `line_crossing` triggers when a tracked object crosses any configured line. `multi_line_crossing` triggers only when the same tracked object crosses the configured lines in sequence, up to five lines:
 
 ```bash
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"cameraId":1,"name":"Entry sequence","detectionType":"multi_line_crossing","zonePolygon":"[[0,0],[1,0],[1,1],[0,1]]","ruleConfig":"{\"classes\":[\"person\",\"car\"],\"direction\":\"both\",\"maxSecondsBetweenLines\":20,\"lines\":[{\"id\":\"start\",\"points\":[[0.35,0.2],[0.35,0.8]]},{\"id\":\"end\",\"points\":[[0.65,0.2],[0.65,0.8]]}]}","threshold":0.55,"minFrames":1,"cooldownSeconds":10,"soundEnabled":true,"isEnabled":true}' \
   "http://localhost:3000/api/vision/rules"
 ```
@@ -899,13 +912,13 @@ Use `"mode":"deny"` to keep a rule active except during matching windows or date
 List alert events (newest first, all cameras, all dates):
 
 ```bash
-curl -u admin:Admin123 "http://localhost:3000/api/vision/alerts?limit=50&offset=0"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/vision/alerts?limit=50&offset=0"
 ```
 
 Filter alerts to a specific camera and date range using the generic `filters`/`sorters` query contract (DataTable-shaped JSON, validated against `AlertEvent` fields):
 
 ```bash
-curl -u admin:Admin123 -G \
+curl -u admin:"$ADMIN_PW" -G \
   --data-urlencode 'cameraId=1' \
   --data-urlencode 'filters=[{"fieldName":"createdAt","compare":5,"value":1749657600},{"fieldName":"createdAt","compare":6,"value":1749743999}]' \
   --data-urlencode 'sorters=[{"fieldName":"createdAt","sort":2}]' \
@@ -918,7 +931,7 @@ The Alert Log panel in the browser UI is a `@shared/DataTable` grid in server mo
 Acknowledge an alert:
 
 ```bash
-curl -u admin:Admin123 -X POST "http://localhost:3000/api/vision/alerts/1/ack"
+curl -u admin:"$ADMIN_PW" -X POST "http://localhost:3000/api/vision/alerts/1/ack"
 ```
 
 The monitor captures JPEG frames from the saved camera RTSP or snapshot source, applies the configured detector, then applies threshold/min-frame/cooldown settings before persisting alert events. When `vision.detector.mode` is `external`, `hybrid`, or `persistent`, object candidates from the configured detector process are matched to rule types, zone polygons, thresholds, min-frame counts, line-crossing state, and cooldowns before alert persistence.
@@ -936,10 +949,10 @@ The class registry decouples object classes from rule modes so trained/custom cl
 
 ```bash
 # List registry classes (built-in, trained, and groups)
-curl -u admin:Admin123 "http://localhost:3000/api/vision/classes"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/vision/classes"
 
 # Create a group
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"name":"delivery","displayName":"Delivery","kind":"group","members":["courier","van"]}' \
   "http://localhost:3000/api/vision/classes"
 ```
@@ -947,7 +960,7 @@ curl -u admin:Admin123 -H "Content-Type: application/json" \
 A presence rule that watches one or more registry classes stores them in `ruleConfig.classes` and uses `detectionType:"presence"`:
 
 ```bash
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"cameraId":1,"name":"Courier at gate","detectionType":"presence","zonePolygon":"[[0.1,0.1],[0.9,0.1],[0.9,0.9],[0.1,0.9]]","ruleConfig":"{\"classes\":[\"courier\"]}","threshold":0.4,"minFrames":2,"cooldownSeconds":30,"isEnabled":true}' \
   "http://localhost:3000/api/vision/rules"
 ```
@@ -955,7 +968,7 @@ curl -u admin:Admin123 -H "Content-Type: application/json" \
 A crowd rule fires when at least `minCount` people are in the zone in a single frame:
 
 ```bash
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"cameraId":1,"name":"Crowd in lobby","detectionType":"crowd","zonePolygon":"[[0,0],[1,0],[1,1],[0,1]]","ruleConfig":"{\"minCount\":3,\"classes\":[\"person\"]}","threshold":0.4,"minFrames":2,"cooldownSeconds":30,"isEnabled":true}' \
   "http://localhost:3000/api/vision/rules"
 ```
@@ -966,17 +979,17 @@ LPR rules use `detectionType:"lpr"` and a `ruleConfig` JSON object. They require
 
 ```bash
 # Fire on any readable plate
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"cameraId":1,"name":"Gate plate log","detectionType":"lpr","ruleConfig":"{\"matchMode\":\"any\"}","cooldownSeconds":10,"isEnabled":true}' \
   "http://localhost:3000/api/vision/rules"
 
 # Fire only on plates in the watchlist (VIP/fleet)
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"cameraId":1,"name":"VIP arrival","detectionType":"lpr","ruleConfig":"{\"matchMode\":\"include\",\"plates\":[\"WXY1234\",\"ABC999\"]}","cooldownSeconds":30,"isEnabled":true}' \
   "http://localhost:3000/api/vision/rules"
 
 # Fire on any plate NOT in the allowed list (unknown vehicle at gate)
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"cameraId":1,"name":"Unknown vehicle","detectionType":"lpr","ruleConfig":"{\"matchMode\":\"exclude\",\"plates\":[\"KnownCar1\",\"KnownCar2\"]}","cooldownSeconds":30,"isEnabled":true}' \
   "http://localhost:3000/api/vision/rules"
 ```
@@ -995,16 +1008,16 @@ LPR alert metadata includes `plate`, `vehicleType`, `color`, `ocrConfidence`, an
 Check whether the camera has sufficient resolution for LPR (requires an ONVIF camera; result is cached 15 min):
 
 ```bash
-curl -u admin:Admin123 "http://localhost:3000/api/cameras/1/lpr-capability"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/cameras/1/lpr-capability"
 ```
 
 Purge alert events (e.g. to clean up a backlog of diagnostic rows):
 
 ```bash
 # Purge only diagnostic alerts older than 7 days
-curl -u admin:Admin123 -X POST "http://localhost:3000/api/vision/alerts/purge?days=7&onlyDiagnostics=true"
+curl -u admin:"$ADMIN_PW" -X POST "http://localhost:3000/api/vision/alerts/purge?days=7&onlyDiagnostics=true"
 # Purge ALL alerts older than 30 days (real detections included)
-curl -u admin:Admin123 -X POST "http://localhost:3000/api/vision/alerts/purge?days=30"
+curl -u admin:"$ADMIN_PW" -X POST "http://localhost:3000/api/vision/alerts/purge?days=30"
 ```
 
 ## Teach wizard
@@ -1031,46 +1044,46 @@ The underlying workflow has three stages (mirrored by the API):
 
 ```bash
 # Datasets
-curl -u admin:Admin123 "http://localhost:3000/api/training/datasets"
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/training/datasets"
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"name":"Couriers","classes":["courier","van"]}' \
   "http://localhost:3000/api/training/datasets"
 
 # Add images: multipart upload, or import an existing alert snapshot (pre-labeled)
-curl -u admin:Admin123 -F "file=@frame.jpg" "http://localhost:3000/api/training/datasets/1/images/upload"
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -F "file=@frame.jpg" "http://localhost:3000/api/training/datasets/1/images/upload"
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"alertId":42}' "http://localhost:3000/api/training/datasets/1/images/from-alert"
 
 # Label: save boxes (normalized top-left x,y + w,h), or auto-label with the active model
-curl -u admin:Admin123 -X PUT -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -X PUT -H "Content-Type: application/json" \
   -d '{"annotations":[{"className":"courier","x":0.3,"y":0.25,"w":0.2,"h":0.4,"source":"manual"}]}' \
   "http://localhost:3000/api/training/images/7/annotations"
-curl -u admin:Admin123 -X POST "http://localhost:3000/api/training/images/7/autolabel"
+curl -u admin:"$ADMIN_PW" -X POST "http://localhost:3000/api/training/images/7/autolabel"
 
 # Export a YOLO dataset zip (data.yaml + images/labels train/val split) to train elsewhere
-curl -u admin:Admin123 -OJ "http://localhost:3000/api/training/datasets/1/export"
+curl -u admin:"$ADMIN_PW" -OJ "http://localhost:3000/api/training/datasets/1/export"
 
 # Check in-app training capability (Python / ultralytics / CUDA)
-curl -u admin:Admin123 "http://localhost:3000/api/training/capability"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/training/capability"
 
 # Stock (base) model — Settings → AI also exposes this as a dropdown
-curl -u admin:Admin123 "http://localhost:3000/api/training/stock-model"
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/training/stock-model"
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"model":"yolo11s.pt"}' "http://localhost:3000/api/training/stock-model"
 
 # Train in-app (background job; poll the models list for progress/status)
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"datasetId":1,"epochs":50,"imgsz":640}' "http://localhost:3000/api/training/models"
 
 # Import a best.pt trained offline
-curl -u admin:Admin123 -F "file=@best.pt" -F "name=Couriers v1" -F "classes=courier,van" \
+curl -u admin:"$ADMIN_PW" -F "file=@best.pt" -F "name=Couriers v1" -F "classes=courier,van" \
   "http://localhost:3000/api/training/models/import"
 
 # Activate a model — hot-swaps the live detector and registers its classes
-curl -u admin:Admin123 -X POST "http://localhost:3000/api/training/models/3/activate"
+curl -u admin:"$ADMIN_PW" -X POST "http://localhost:3000/api/training/models/3/activate"
 
 # Revert to the stock model (so the active custom model can be deleted)
-curl -u admin:Admin123 -X POST "http://localhost:3000/api/training/models/deactivate"
+curl -u admin:"$ADMIN_PW" -X POST "http://localhost:3000/api/training/models/deactivate"
 ```
 
 The active model cannot be deleted while in use — **Deactivate** first (reverts the worker to the bundled `yolo11n.pt`), then delete.
@@ -1094,25 +1107,25 @@ A **License Plate Model** card in **Settings → AI** manages the optional secon
 
 ```bash
 # Current plate model info + catalog + OCR readiness
-curl -u admin:Admin123 "http://localhost:3000/api/training/lpr-model"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/training/lpr-model"
 
 # Select a catalog model (downloads from Hugging Face, stores under <dataDir>/lpr/)
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"model":"yolo11n-license-plate"}' "http://localhost:3000/api/training/lpr-model"
 
 # Select by URL
-curl -u admin:Admin123 -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -H "Content-Type: application/json" \
   -d '{"model":"https://example.com/myplate.pt"}' "http://localhost:3000/api/training/lpr-model"
 
 # Upload a plate model file
-curl -u admin:Admin123 -F "file=@plate.pt" -F "name=myplate" \
+curl -u admin:"$ADMIN_PW" -F "file=@plate.pt" -F "name=myplate" \
   "http://localhost:3000/api/training/lpr-model/import"
 
 # Deactivate (disables the plate-localization + OCR stage)
-curl -u admin:Admin123 -X POST "http://localhost:3000/api/training/lpr-model/deactivate"
+curl -u admin:"$ADMIN_PW" -X POST "http://localhost:3000/api/training/lpr-model/deactivate"
 
 # Install OCR dependencies (poll GET /api/training/setup-deps/status for progress)
-curl -u admin:Admin123 -X POST "http://localhost:3000/api/training/lpr-model/install-deps"
+curl -u admin:"$ADMIN_PW" -X POST "http://localhost:3000/api/training/lpr-model/install-deps"
 ```
 
 The plate model path is written to `lpr_model.txt` (next to `active_model.txt`) and the YOLO worker reads it via `MYMATASAN_LPR_MODEL_FILE`. OCR readiness is probed with `importlib.util.find_spec('easyocr')` so the probe is fast (no torch import). A plate model can be active even when OCR deps are not yet installed — plates will be localized but not read until deps are present.
@@ -1122,14 +1135,14 @@ The plate model path is written to `lpr_model.txt` (next to `active_model.txt`) 
 Every source — AI detection, camera health, machine health, and login security — funnels into one persisted notification store. The **topbar bell** and a dedicated **Notifications page** read it via `GET /api/notifications`: the bell badge is server-truth unread, and clicking an entry opens the Notifications page focused on it. Besides the existing Unread/All and category-type chip filters, a **source-camera dropdown** (`meta.allCameras` default) narrows the feed to one camera by passing `cameraId` straight through to `GET /api/notifications` — server-side, so it never over-fetches and filters in the browser; only AI and camera-health rows carry a `cameraId`, so picking a camera naturally excludes machine-health/login-security rows. AI rows are rich — annotated event screenshot, detection fields, **Acknowledge**, and in-page **clip playback** when a recording segment exists; acknowledging an alert dismisses its notification at the source (`notifier.MarkReadByRef`). Diagnostics never become notifications, so the feed is inherently diagnostic-free.
 
 ```bash
-curl -u admin:Admin123 "http://localhost:3000/api/notifications?unread=true&limit=30"
-curl -u admin:Admin123 -X POST "http://localhost:3000/api/notifications/1/read"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/notifications?unread=true&limit=30"
+curl -u admin:"$ADMIN_PW" -X POST "http://localhost:3000/api/notifications/1/read"
 ```
 
 Old notifications are purged automatically on the configured **Retention** (Settings → Notifications: days, "only delete read", interval). The same purge can be run on demand — `olderThanDays` is required and `onlyRead=true` keeps unread entries — surfaced as a **Purge expired now** button in that settings panel:
 
 ```bash
-curl -u admin:Admin123 -X POST "http://localhost:3000/api/notifications/purge?olderThanDays=30&onlyRead=true"
+curl -u admin:"$ADMIN_PW" -X POST "http://localhost:3000/api/notifications/purge?olderThanDays=30&onlyRead=true"
 ```
 
 ### Dashboard Intelligence: heatmap, expected-activity band, anomaly alerts, reliability, noise
@@ -1138,9 +1151,9 @@ An hourly rollup table (`notification_rollup`), incrementally aggregated from th
 
 ```bash
 # Activity heatmap: local day-of-week x hour-of-day grid over the last 28 days (default)
-curl -u admin:Admin123 "http://localhost:3000/api/notifications/heatmap?tzOffset=-480"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/notifications/heatmap?tzOffset=-480"
 # Expected-activity band for the events-over-time chart (bucket=hour or day)
-curl -u admin:Admin123 "http://localhost:3000/api/notifications/baseline?bucket=hour&tzOffset=-480"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/notifications/baseline?bucket=hour&tzOffset=-480"
 ```
 
 `cameraId=` scopes either endpoint to one camera. The baseline is a robust median ± k·MAD band (Poisson floor for sparse slots) built from the trailing 8 weeks of the same weekday+hour (or day-of-week) slot; a bucket reports `learning: true` until it has at least 2 historical samples.
@@ -1151,17 +1164,17 @@ An **anomaly monitor** (Settings → AI / Dashboard card, **opt-in**) has two ti
 - **`manual`** compares the whole system's hourly event total against fixed `manualUpper`/`manualLower` thresholds instead (`0` disables a side) — no learning period, usable from day one; findings are site-wide (`cameraId: 0`), not per-camera.
 
 ```bash
-curl -u admin:Admin123 "http://localhost:3000/api/anomaly/settings"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/anomaly/settings"
 # Smart mode
-curl -u admin:Admin123 -X PUT -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -X PUT -H "Content-Type: application/json" \
   -d '{"enabled":true,"mode":"smart","sensitivity":3.0,"detectHigh":true,"detectLow":true,"minActivity":3,"requireConsecutive":1,"cooldownHours":6,"checkIntervalMs":300000}' \
   "http://localhost:3000/api/anomaly/settings"
 # Manual mode: alert when the whole system logs >500 or <5 events in an hour
-curl -u admin:Admin123 -X PUT -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -X PUT -H "Content-Type: application/json" \
   -d '{"enabled":true,"mode":"manual","manualUpper":500,"manualLower":5,"requireConsecutive":1,"cooldownHours":6}' \
   "http://localhost:3000/api/anomaly/settings"
 # Preview what would alert right now (runs whichever tier `mode` selects), without waiting for the background monitor or affecting its debounce/cooldown state
-curl -u admin:Admin123 "http://localhost:3000/api/anomaly/scan"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/anomaly/scan"
 ```
 
 `sensitivity` (k, 1.0–6.0, default 3.0 — lower is more sensitive, smart mode) sets the band half-width; `minActivity` keeps genuinely-quiet hours from being flagged as "unusual silence" (smart mode); `requireConsecutive` debounces one-off blips and `cooldownHours` prevents a sustained anomaly from alerting every hour (both modes).
@@ -1170,9 +1183,9 @@ Two further cards need no baseline/history at all:
 
 ```bash
 # Camera reliability scorecard: worst-uptime-first, last 7 days (from/to default)
-curl -u admin:Admin123 "http://localhost:3000/api/notifications/reliability"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/notifications/reliability"
 # Alert noise ratio: top cameras by AI-alert volume + unread count, last 7 days
-curl -u admin:Admin123 "http://localhost:3000/api/notifications/noise?limit=8"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/notifications/noise?limit=8"
 ```
 
 `reliability` derives per-camera uptime %, offline seconds, incident count, and whether it's currently offline by pairing the camera-health monitor's own offline/recovery notification events over the window (a still-open outage at the window's end is extended to `to` rather than dropped). `noise` surfaces which cameras are generating the most AI alerts and what fraction go unread — a camera firing constantly while being ignored is usually a tuning candidate (threshold, zone, or schedule).
@@ -1182,13 +1195,13 @@ curl -u admin:Admin123 "http://localhost:3000/api/notifications/noise?limit=8"
 A dedicated **Intelligence → Object Search** page: a searchable, cross-camera text log of "what each camera saw" — presence intervals coalesced from the same AI inference the detection rules already run (a metadata-only camera with no rules still gets exactly one inference pass per sample, no extra decode). Capture tracks the camera's recording `enabled` flag directly — there is no separate metadata on/off toggle, only the per-camera cooldown:
 
 ```bash
-curl -u admin:Admin123 -X PUT -H "Content-Type: application/json" \
+curl -u admin:"$ADMIN_PW" -X PUT -H "Content-Type: application/json" \
   -d '{"cameraId":1,"enabled":true,"metadataGapSeconds":5}' \
   "http://localhost:3000/api/recording/config"
-curl -u admin:Admin123 "http://localhost:3000/api/observations?cameraId=1&limit=50"
-curl -u admin:Admin123 "http://localhost:3000/api/observations/labels?cameraId=1"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/observations?cameraId=1&limit=50"
+curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/observations/labels?cameraId=1"
 # Multi-select object filter (any of "person"/"car") via the In compare operator (7)
-curl -u admin:Admin123 -G "http://localhost:3000/api/observations" \
+curl -u admin:"$ADMIN_PW" -G "http://localhost:3000/api/observations" \
   --data-urlencode 'filters=[{"fieldName":"Label","compare":7,"value":["person","car"]}]'
 ```
 

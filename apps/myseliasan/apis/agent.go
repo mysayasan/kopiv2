@@ -25,6 +25,7 @@ type agentApi struct {
 	session   *middlewares.AccessSessionMidware
 	digests   *services.DigestService
 	chat      *services.ChatService
+	docs      *services.DocsService
 	llm       *services.LLMManager
 	installer *services.LLMInstaller
 	sidecar   *services.LLMSidecar
@@ -52,6 +53,7 @@ type AgentDigestStatus struct {
 //	GET  /api/agent/digests/latest    — the most recent digest
 //	POST /api/agent/digests/generate  — generate a digest now (?kind=weekly for the 7-day one)
 //	POST /api/agent/chat              — ask-the-fleet; SSE stream (?stream=false for JSON)
+//	GET  /api/agent/docs              — manual sections matching ?q= (works with no LLM at all)
 //
 // Superadmin-only management (self-gated, like the settings editor):
 //
@@ -67,6 +69,7 @@ func NewAgentApi(
 	session *middlewares.AccessSessionMidware,
 	digests *services.DigestService,
 	chat *services.ChatService,
+	docs *services.DocsService,
 	llmMgr *services.LLMManager,
 	installer *services.LLMInstaller,
 	sidecar *services.LLMSidecar,
@@ -74,7 +77,7 @@ func NewAgentApi(
 	digestCfg func() AgentDigestStatus,
 ) {
 	h := &agentApi{
-		session: session, digests: digests, chat: chat,
+		session: session, digests: digests, chat: chat, docs: docs,
 		llm: llmMgr, installer: installer, sidecar: sidecar, audit: audit,
 		digestCfg: digestCfg,
 	}
@@ -86,6 +89,7 @@ func NewAgentApi(
 	g.HandleFunc("/digests/latest", h.latestDigest).Methods("GET")
 	g.HandleFunc("/digests/generate", h.generateDigest).Methods("POST")
 	g.HandleFunc("/chat", h.chatHandler).Methods("POST")
+	g.HandleFunc("/docs", h.searchDocs).Methods("GET")
 	g.HandleFunc("/llm/test", h.requireSuper(h.testLLM)).Methods("POST")
 	g.HandleFunc("/llm/install/binary", h.requireSuper(h.installBinary)).Methods("POST")
 	g.HandleFunc("/llm/install/model", h.requireSuper(h.installModel)).Methods("POST")
@@ -234,12 +238,14 @@ func (a *agentApi) chatHandler(w http.ResponseWriter, r *http.Request) {
 	extendWriteDeadline(w, 10*time.Minute)
 
 	if strings.EqualFold(r.URL.Query().Get("stream"), "false") {
-		res, err := a.chat.Stream(r.Context(), req, nil)
+		res, sources, err := a.chat.Stream(r.Context(), req, nil)
 		if err != nil {
 			httpJSONError(w, http.StatusBadGateway, "llm_error", err.Error())
 			return
 		}
-		controllers.SendResult(w, map[string]any{"answer": res.Content, "usage": res.Usage}, "succeed")
+		controllers.SendResult(w, map[string]any{
+			"answer": res.Content, "usage": res.Usage, "sources": sources,
+		}, "succeed")
 		return
 	}
 
@@ -263,7 +269,7 @@ func (a *agentApi) chatHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	sse("meta", map[string]any{"model": a.llm.ModelName(), "windowDays": req.WindowDays})
 
-	res, err := a.chat.Stream(r.Context(), req, func(delta string) error {
+	res, sources, err := a.chat.Stream(r.Context(), req, func(delta string) error {
 		sse("delta", map[string]string{"text": delta})
 		return nil
 	})
@@ -278,8 +284,46 @@ func (a *agentApi) chatHandler(w http.ResponseWriter, r *http.Request) {
 		sse("error", map[string]string{"code": code, "message": err.Error()})
 		return
 	}
+	// Sources come AFTER the answer, not before it: the list carries which excerpts the answer
+	// actually cited, and that is not knowable until the last token has been written.
+	if len(sources) > 0 {
+		sse("sources", map[string]any{"items": sources})
+	}
 	sse("done", map[string]any{"usage": res.Usage, "chars": len(res.Content)})
 }
+
+// --- manual search -----------------------------------------------------------
+
+// searchDocs returns the manual sections that match a question.
+//
+// It exists so the help half of the agent survives the language model being absent, which is the
+// DEFAULT state of a shipped appliance: no model configured, no sidecar installed. Retrieval
+// needs neither, so a reader who asks a question with the LLM off still gets the three sections
+// that answer it and can open them — a worse answer than prose, and an enormously better one
+// than "no language model is enabled on this control plane".
+func (a *agentApi) searchDocs(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		controllers.SendResult(w, map[string]any{"items": []services.DocExcerpt{}}, "succeed")
+		return
+	}
+	if len(q) > maxDocsQuery {
+		q = q[:maxDocsQuery]
+	}
+	limit := int(queryUint(r, "limit", 5))
+	if limit <= 0 || limit > 10 {
+		limit = 5
+	}
+	items := a.docs.Search(r.URL.Query().Get("lang"), q, limit)
+	if items == nil {
+		items = []services.DocExcerpt{}
+	}
+	controllers.SendResult(w, map[string]any{"items": items}, "succeed")
+}
+
+// maxDocsQuery bounds the search string. It is not a security control — retrieval is over
+// embedded, read-only text — just a cap on wasted work.
+const maxDocsQuery = 500
 
 // --- LLM management (superadmin) --------------------------------------------
 
