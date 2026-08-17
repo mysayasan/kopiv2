@@ -83,6 +83,16 @@ func validateSection(section string, data map[string]any) error {
 		if g.i("cache.ttlSeconds") < 0 {
 			return fmt.Errorf("cache TTL cannot be negative")
 		}
+		// An unrecognised provider is refused rather than defaulted: the host would fail
+		// to build a locker and abort the boot, and discovering that from a settings save
+		// is far kinder than discovering it from a process that will not come back up.
+		if lp := strings.ToLower(strings.TrimSpace(g.s("transaction.lockProvider"))); lp != "" {
+			switch lp {
+			case "memory", "inmemory", "redis", "rediscluster", "redis-cluster", "default":
+			default:
+				return fmt.Errorf("lock provider must be memory or redis")
+			}
+		}
 	case "logging":
 		if g.i("logging.maxLineBytes") < 0 {
 			return fmt.Errorf("max log line bytes cannot be negative")
@@ -161,6 +171,7 @@ func applyToConfig(cfg *config.AppConfigModel, section string, data map[string]a
 		cfg.Cache.Redis.UseTLS = g.b("cache.redis.useTls")
 		cfg.Cache.Redis.ConnectTimeoutMs = g.i("cache.redis.connectTimeoutMs")
 		cfg.Cache.Redis.OperationTimeoutMs = g.i("cache.redis.operationTimeoutMs")
+		cfg.Transaction.LockProvider = g.s("transaction.lockProvider")
 	case "logging":
 		cfg.Logging.Enabled = g.b("logging.enabled")
 		cfg.Logging.Path = g.s("logging.path")

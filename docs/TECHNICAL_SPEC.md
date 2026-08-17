@@ -102,7 +102,7 @@ The runtime now uses a reusable multi-app launcher pattern:
 - Cache abstraction is runtime-selected via configuration (`default`, `redis`, `inmemory`, or `memory`).
 - Primary shared cache backend for multi-instance deployments: Redis.
 - `default`, `inmemory`, and `memory` all select the local in-process memory cache.
-- Sessions are held in the cache, and the cache is the authority on session validity. Every boot logs a shared-state boundary statement (`infra/apphost.warnSharedStateBoundary`, `shared_state.go`): a shared (Redis) cache confirms the app can run behind a load balancer; a per-process (`inmemory`/`default`/`memory`) cache states plainly that this instance is single-instance only — a second instance behind a load balancer signs users out whenever it is moved, and a restart ends every session. A distributed transaction lock (`transaction.lockProvider=redis`) paired with a per-process cache logs a `WARNING` instead, since a distributed lock only makes sense with more than one instance.
+- Sessions are held in the cache, and the cache is the authority on session validity. Every boot logs a shared-state boundary statement (`infra/apphost.warnSharedStateBoundary`, `shared_state.go`) that now also reads the operator's DECLARED deployment mode (`deployment.mode` `RuntimeSetting`, `domain/shared/services/deployment.go.md`): a declared `clustered` deployment with a per-process cache or transaction lock is a hard `WARNING` stated as fact; a declared `standalone` deployment is stated plainly with no alarm even on a per-process cache; an UNDECLARED install (pre-wizard, or any app during first boot) falls back to the previous inference-only behavior — a shared (Redis) cache confirms the app can run behind a load balancer; a per-process (`inmemory`/`default`/`memory`) cache states plainly that this instance is single-instance only — a second instance behind a load balancer signs users out whenever it is moved, and a restart ends every session; a distributed transaction lock (`transaction.lockProvider=redis`) paired with a per-process cache logs a `WARNING` instead, since a distributed lock only makes sense with more than one instance. Only `myseliasan` and `myidsan` (Tier A — stateless over their database) can declare `clustered` at all; `mymatasan`/`myiotsan`/`mypintusan` (Tier B — bound to hardware a second process cannot share: local capture/recordings/GPU, or a serial bus held open for the process's lifetime) expose only a read-only `GET /api/deployment/preflight`. See `domain/shared/services/deployment.go.md` and `docs/HOWTO.md`'s "Which apps can actually be clustered".
 - SSO sessions are cached as `sso:session:<sid>`.
 - Readiness includes cache ping to ensure runtime dependencies are available.
 - Shared admin cache API is exposed under `/api/cache-service` for key listing and controlled wipe operations.
@@ -118,10 +118,15 @@ The runtime now uses a reusable multi-app launcher pattern:
 
 ## Transaction Coordination
 
-- Critical multi-step operations use an application-level FIFO lock before executing the DB/filesystem unit of work.
+- Critical multi-step operations use an application-level FIFO lock (`Locker.Lock`) before executing the DB/filesystem unit of work.
 - Production multi-instance deployments should use the Redis lock provider.
 - In-memory locking is available only for single-process development or tests.
 - Redis locks use owner tokens and renewable leases so stale owners cannot release another request's lock.
+- `Locker` also exposes `TryLock` (single-attempt, returns `ErrNotAcquired` immediately rather than queueing) and `Lock.Valid(ctx)` (re-verifies a held lease is still actually held, failing closed on an unreachable Redis) — see `infra/coordination/locker.go.md`. These are the primitives leader election (`infra/coordination/leader.go.md`) is built on: `Elect(ctx, locker, opts) *Leader` campaigns via `TryLock` and re-verifies via `Valid` on a retry timer, exposing `IsLeader()`. Every app wires one `*Leader` (`apphost.Dependencies.Leader`) and gates scheduled singleton work (retention purges, the notification rollup, the AI digest, heartbeat reconciliation) on it — see `docs/HOWTO.md`'s "Leader election and the migration lock". With the memory provider the lone process always wins immediately, so standalone behavior is unchanged.
+- Schema bootstrap is separately serialized by a deployment-wide **migration lock**
+  (`infra/apphost/migration_lock.go.md`) using the queueing `Lock` (not `TryLock` — a follower here
+  must wait for the leader's schema work and then find nothing left to do, not skip it), held only
+  for the duration of `bootstrap.Ensure`.
 - Wait timeout removes an abandoned waiter from the FIFO queue.
 - Stuck timeout emits telemetry when a lock is held longer than expected.
 - DB consistency still uses request-scoped `database/sql` transactions; the coordinator serializes access and prevents request races.

@@ -170,7 +170,8 @@ func runApp(app App) error {
 	}
 
 	sharedAPIConfig := sharedAPIConfigFor(app)
-	if err := applySensitiveConfig(appConfig, configFilePath(dataDir)); err != nil {
+	jwtSecretGenerated, err := applySensitiveConfig(appConfig, configFilePath(dataDir))
+	if err != nil {
 		return err
 	}
 	applyDbConfigFromEnv(appConfig)
@@ -204,22 +205,30 @@ func runApp(app App) error {
 	log.SetFlags(0)
 	log.SetOutput(runtimeLogger)
 
-	bootstrapStatus, err := bootstrap.Ensure(context.Background(), bootstrap.Options{
-		AppName: app.Name(),
-		Config:  appConfig.Db,
-		Bootstrap: bootstrap.BootstrapConfig{
-			Enabled:            appConfig.Bootstrap.Enabled,
-			AutoCreateDatabase: appConfig.Bootstrap.AutoCreateDatabase,
-			AutoCreateSchema:   appConfig.Bootstrap.AutoCreateSchema,
-			AutoMigrate:        appConfig.Bootstrap.AutoMigrate,
-			AutoSeed:           appConfig.Bootstrap.AutoSeed,
-			AllowReset:         appConfig.Bootstrap.AllowReset,
-			SetupPath:          appConfig.Bootstrap.SetupPath,
-			SeedStatements:     appConfig.Bootstrap.SeedStatements,
-		},
-		Entities:   app.Entities(),
-		Migrations: appMigrations(app),
-		Seeders:    app.Seeders(appConfig.Bootstrap.SeedStatements),
+	// Serialized across instances: concurrent DDL and seeding against one database is
+	// the single startup step replicas can genuinely corrupt for each other, and an
+	// orchestrator starts them together. A standalone install takes no lock at all.
+	var bootstrapStatus *bootstrap.Status
+	err = withMigrationLock(context.Background(), app.Name(), appConfig, func() error {
+		status, bErr := bootstrap.Ensure(context.Background(), bootstrap.Options{
+			AppName: app.Name(),
+			Config:  appConfig.Db,
+			Bootstrap: bootstrap.BootstrapConfig{
+				Enabled:            appConfig.Bootstrap.Enabled,
+				AutoCreateDatabase: appConfig.Bootstrap.AutoCreateDatabase,
+				AutoCreateSchema:   appConfig.Bootstrap.AutoCreateSchema,
+				AutoMigrate:        appConfig.Bootstrap.AutoMigrate,
+				AutoSeed:           appConfig.Bootstrap.AutoSeed,
+				AllowReset:         appConfig.Bootstrap.AllowReset,
+				SetupPath:          appConfig.Bootstrap.SetupPath,
+				SeedStatements:     appConfig.Bootstrap.SeedStatements,
+			},
+			Entities:   app.Entities(),
+			Migrations: appMigrations(app),
+			Seeders:    app.Seeders(appConfig.Bootstrap.SeedStatements),
+		})
+		bootstrapStatus = status
+		return bErr
 	})
 	if err != nil {
 		return err
@@ -300,7 +309,9 @@ func runApp(app App) error {
 	}
 	log.Printf("transaction lock provider=%s waitTimeoutMs=%d leaseMs=%d stuckTimeoutMs=%d", txLockProvider, transactionLockWaitTimeout(appConfig).Milliseconds(), transactionLockLease(appConfig).Milliseconds(), transactionStuckTimeout(appConfig).Milliseconds())
 
-	warnSharedStateBoundary(cacheProvider, txLockProvider)
+	declaredMode := declaredDeploymentMode(dbCrud)
+	warnSharedStateBoundary(cacheProvider, txLockProvider, declaredMode)
+	logSigningSecretFingerprint(appConfig.Jwt.Secret, cacheProvider, txLockProvider, declaredMode)
 
 	readyHolder := &readinessHolder{}
 	router.HandleFunc("/ready", readinessCheckHandler(dbCrud, cacheStore, readyHolder)).Methods("GET")
@@ -355,6 +366,19 @@ func runApp(app App) error {
 	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
 	defer schedulerCancel()
 	runtimeScheduler := scheduler.New(schedulerCtx, runtimeLogger)
+	// Campaign for the background-work lease. With a per-process lock — the standalone
+	// default — this instance simply wins, so nothing about a single deployment changes.
+	// Behind a load balancer it is what stops every replica running the same purge,
+	// rollup and digest concurrently.
+	backgroundLeader := coordination.Elect(schedulerCtx, txLocker, coordination.LeaderOptions{
+		OnChange: func(isLeader bool) {
+			if isLeader {
+				runtimeLogger.Infof("deployment", "this instance now runs the shared background work (leader lease held)")
+				return
+			}
+			runtimeLogger.Infof("deployment", "another instance now runs the shared background work (leader lease released)")
+		},
+	})
 	startRuntimeLogCleanupScheduler(runtimeScheduler, appConfig, runtimeLogger, runtimeLogService)
 	startApiLogCleanupScheduler(runtimeScheduler, appConfig, runtimeLogger, apiLogService)
 	startFileStorageCleanupScheduler(runtimeScheduler, appConfig, runtimeLogger, fileStorageService)
@@ -421,6 +445,8 @@ func runApp(app App) error {
 		DataDir:     dataDir,
 		Db:          dbCrud,
 		Cache:       cacheStore,
+		Locker:      txLocker,
+		Leader:      backgroundLeader,
 		Auth:        auth,
 		Access:      accessMidware,
 		AccessRoles: accessRoleService,
@@ -430,6 +456,10 @@ func runApp(app App) error {
 		Scheduler:   runtimeScheduler,
 		Restarter:   restarter,
 		Metrics:     telemetryRecorder,
+		// Reported so the deployment preflight can tell a configured signing secret from
+		// one this instance invented — indistinguishable from the config afterwards,
+		// because the generated value is written back to the config file.
+		JwtSecretGenerated: jwtSecretGenerated,
 	}
 
 	shutdownHook, err := app.RegisterAppRoutes(api, deps)
@@ -838,16 +868,21 @@ func sharedAPIConfigFor(app App) SharedAPIConfig {
 	return DefaultSharedAPIConfig()
 }
 
-func applySensitiveConfig(appConfig *config.AppConfigModel, configPath string) error {
+// applySensitiveConfig resolves secrets from the environment and, where none is
+// configured, generates them. jwtGenerated reports that the signing secret is one this
+// process invented rather than one the operator set — see Dependencies.JwtSecretGenerated
+// for why that distinction cannot be recovered from the config afterwards.
+func applySensitiveConfig(appConfig *config.AppConfigModel, configPath string) (jwtGenerated bool, err error) {
 	if jwtSecret := os.Getenv("JWT_SECRET"); jwtSecret != "" {
 		appConfig.Jwt.Secret = jwtSecret
 	} else if isWeakJWTSecret(appConfig.Jwt.Secret) {
+		jwtGenerated = true
 		// Refuse to run on an unset/placeholder secret. Generate a strong random
 		// one, persist it back to the config file so it survives restarts, and use
 		// it for this run regardless of whether the write succeeds.
 		generated, err := generateRandomSecret(32)
 		if err != nil {
-			return fmt.Errorf("generate jwt secret: %w", err)
+			return jwtGenerated, fmt.Errorf("generate jwt secret: %w", err)
 		}
 		old := strings.TrimSpace(appConfig.Jwt.Secret)
 		appConfig.Jwt.Secret = generated
@@ -859,7 +894,7 @@ func applySensitiveConfig(appConfig *config.AppConfigModel, configPath string) e
 	}
 
 	if appConfig.Jwt.Secret == "" {
-		return errors.New("JWT secret is required")
+		return jwtGenerated, errors.New("JWT secret is required")
 	}
 
 	if appConfig.Login != nil && appConfig.Login.Google != nil {
@@ -896,7 +931,7 @@ func applySensitiveConfig(appConfig *config.AppConfigModel, configPath string) e
 		}
 	}
 
-	return nil
+	return jwtGenerated, nil
 }
 
 // oidcEnvSegment maps an OIDC provider key to its env-variable segment:
@@ -1498,7 +1533,10 @@ func buildCacheStore(appConfig *config.AppConfigModel) (appcache.Store, string, 
 	}
 }
 
-func buildTransactionLocker(appName string, appConfig *config.AppConfigModel, recorder infraTelemetry.Recorder) (coordination.Locker, string, error) {
+// buildTransactionLocker builds the process's lock. waitOverride, when non-zero, replaces
+// the configured WaitTimeout — schema bootstrap needs to wait far longer for another
+// instance than an ordinary transaction ever should.
+func buildTransactionLocker(appName string, appConfig *config.AppConfigModel, recorder infraTelemetry.Recorder, waitOverride ...time.Duration) (coordination.Locker, string, error) {
 	provider := strings.TrimSpace(strings.ToLower(appConfig.Transaction.LockProvider))
 	if provider == "" {
 		provider = strings.TrimSpace(strings.ToLower(appConfig.Cache.Provider))
@@ -1520,6 +1558,9 @@ func buildTransactionLocker(appName string, appConfig *config.AppConfigModel, re
 		RedisUseTLS:    appConfig.Cache.Redis.UseTLS,
 		ConnectTimeout: time.Duration(appConfig.Cache.Redis.ConnectTimeoutMs) * time.Millisecond,
 		CommandTimeout: time.Duration(appConfig.Cache.Redis.OperationTimeoutMs) * time.Millisecond,
+	}
+	if len(waitOverride) > 0 && waitOverride[0] > 0 {
+		cfg.WaitTimeout = waitOverride[0]
 	}
 
 	switch provider {

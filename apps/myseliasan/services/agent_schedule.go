@@ -32,11 +32,15 @@ const digestScheduleRetry = 30 * time.Minute
 // RunDigestSchedule starts the daily-digest loop. Returns immediately; the loop
 // lives until ctx is cancelled. cfg is read each iteration so the enabled flag
 // and hour reflect the booted configuration.
+// gate, when set, reports whether THIS instance should generate. Pass the
+// background-work leader's IsLeader in a deployment that can be replicated; nil means
+// "always", which is correct for a single instance.
 func RunDigestSchedule(
 	ctx context.Context,
 	digests *DigestService,
 	runtimeSettings dbsql.IGenericRepo[sharedentities.RuntimeSetting],
 	cfg func() config.AgentConfigModel,
+	gate func() bool,
 	logf func(string, ...any),
 ) {
 	if logf == nil {
@@ -46,6 +50,7 @@ func RunDigestSchedule(
 		digests:  digests,
 		settings: runtimeSettings,
 		cfg:      cfg,
+		gate:     gate,
 		logf:     logf,
 		now:      time.Now,
 	}
@@ -56,8 +61,14 @@ type digestSchedule struct {
 	digests  *DigestService
 	settings dbsql.IGenericRepo[sharedentities.RuntimeSetting]
 	cfg      func() config.AgentConfigModel
+	gate     func() bool
 	logf     func(format string, args ...any)
 	now      func() time.Time
+}
+
+// shouldRun reports whether this instance is the one to generate the digest.
+func (s *digestSchedule) shouldRun() bool {
+	return s.gate == nil || s.gate()
 }
 
 func (s *digestSchedule) run(ctx context.Context) {
@@ -100,6 +111,17 @@ func (s *digestSchedule) run(ctx context.Context) {
 		guardKey := digestLastRunKey
 		if kind == "weekly" {
 			guardKey = digestLastWeeklyKey
+		}
+		// Checked HERE, after the sleep, rather than at the top of the loop: the wait is
+		// hours long and leadership can move during it, so the only moment worth asking
+		// about is the moment of generating.
+		//
+		// The date watermark below is not sufficient on its own. It is a read-then-write
+		// with no lock, so two instances waking in the same second both read "not run
+		// today" and both generate — and a digest is an LLM call and an operator-visible
+		// artefact, so duplicates cost real money and real confusion.
+		if !s.shouldRun() {
+			continue
 		}
 		if s.lastDate(ctx, guardKey) == today {
 			continue // another instance (pre-restart) already ran this one today

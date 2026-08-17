@@ -6,9 +6,54 @@ Reusable **encryption-at-rest** module that makes the Secure Wipe & Reset's wipe
 
 ## Files & responsibilities
 
-- `cipher.go` — `Cipher` built from a 32-byte key. AES-256-GCM **chunked streaming AEAD**: header `magic "ATR1" + version + 16-byte fileID`; a per-file subkey via stdlib `crypto/hkdf`; 64 KiB chunks; per-chunk nonce = counter; AAD = counter + final-flag to defeat truncation/reordering. `EncryptStream`/`DecryptStream`, `IsEncrypted([]byte)`, `HeaderLen`.
+- `cipher.go` — `Cipher` built from a 32-byte key. AES-256-GCM **chunked streaming AEAD**: header `magic "ATR1" + version + 16-byte fileID`; a per-file subkey via stdlib `crypto/hkdf`; 64 KiB chunks; per-chunk nonce = counter; AAD = counter + final-flag to defeat truncation/reordering. `EncryptStream`/`DecryptStream`, `IsEncrypted([]byte)`, `HeaderLen`. New: `Fingerprint() string` — a short, non-secret, one-way HKDF-SHA256 identifier of the key MATERIAL itself (domain-separated from the per-file subkey derivation by a dedicated info label, `fingerprintLen` = 8 bytes hex-encoded), for answering "do two processes hold the same master key?" — see "Fingerprint, not KeyId" below.
 - `files.go` — `EncryptBytes`/`DecryptBytes` (DecryptBytes passes legacy plaintext through), `EncryptFile`/`DecryptFile`, `EncryptFileInPlace` (temp + rename), `DecryptToTempFile` (for ffmpeg/exporters that need a real file), `MaybeDecryptingReader` (peeks the magic → decrypts or streams raw; used for HTTP serving — whole-file, no range requests).
-- `keystore.go` — `LoadOrCreate(path)` (backward-compatible plaintext/"file"-protector entry point), `LoadOrCreateWithConfig(path, cfg)` (loads or creates the key **wrapped** by a `KeyProtector` — see `protector.go.md` — and losslessly migrates it to a newly-configured protector, since the DEK itself never changes), `LoadOrCreateWithRecovery(keyPath, recoveryPath, cfg)` (bootstraps from a recovery escrow when no key exists yet), `Cipher()`/`Enabled()`/`KeyPath()`/`Protector()`, `ExportEscrow(passphrase)`/`VerifyEscrow(passphrase, data)` (recovery-escrow export/verify — see below), and `Destroy()` (overwrite 3× + remove = crypto-erase; also removes the startup init marker so a wiped host reads as first-run). The key lives **outside** the media roots so the reset destroys it explicitly. A present-but-unreadable/uncorrect key file is an error, never silently regenerated.
+- `keystore.go` — `LoadOrCreate(path)` (backward-compatible plaintext/"file"-protector entry point), `LoadOrCreateWithConfig(path, cfg)` (loads or creates the key **wrapped** by a `KeyProtector` — see `protector.go.md` — and losslessly migrates it to a newly-configured protector, since the DEK itself never changes), `LoadOrCreateWithRecovery(keyPath, recoveryPath, cfg)` (bootstraps from a recovery escrow when no key exists yet), `Cipher()`/`Enabled()`/`KeyPath()`/`Protector()`, `Fingerprint() string` (new — delegates to `Cipher().Fingerprint()`, empty when no key is present), `ExportEscrow(passphrase)`/`VerifyEscrow(passphrase, data)` (recovery-escrow export/verify — see below), and `Destroy()` (overwrite 3× + remove = crypto-erase; also removes the startup init marker so a wiped host reads as first-run). The key lives **outside** the media roots so the reset destroys it explicitly. A present-but-unreadable/uncorrect key file is an error, never silently regenerated.
+
+## Fingerprint, not KeyId (deployment-mode / Phase 1 multi-instance safety)
+
+Two instances that hold DIFFERENT at-rest keys look completely healthy until one reads a sealed
+column the other wrote — for `myseliasan` that column is the fleet CA private key and PSK, i.e.
+the whole fleet's trust; for `mymatasan`/`myidsan` it is recordings/snapshots or the LDAP bind
+password. Nothing else in the product answers "do we actually agree?", and getting it wrong is
+silent.
+
+`startup.go`'s `Outcome.KeyId` cannot answer this: it is a random id minted per key-FILE
+LOCATION (the `.init` marker, see `startup.go.md`), not derived from the key material — an
+operator who correctly copies `atrest.key` to a second host without also copying its `.init`
+marker sees two different ids for one identical key, and would wrongly conclude they have a
+mismatch they do not have.
+
+`Cipher.Fingerprint()`/`KeyStore.Fingerprint()` are a function of the key bytes alone, under a
+dedicated HKDF info label separate from the per-file encryption subkey derivation, so publishing
+it tells an attacker nothing about any subkey and identical keys ALWAYS agree while different keys
+never do. Surfaced (never the key itself) in the deployment-mode readiness checklist
+(`domain/shared/services/deployment.go.md`'s `checkAtRestKey`, `GET /api/deployment/preflight`)
+for an operator to compare between instances by eye — only a human comparing two screens can
+complete that check, so the row passes whenever a key exists and the detail carries the
+fingerprint to compare.
+
+`FingerprintSecret(secret string) string` is the same construction for an arbitrary secret
+STRING, under its own info label (`secretFingerprintInfo`) so the two can never collide. Empty
+in, empty out.
+
+It exists for the JWT signing secret, and WHERE it is published is the whole design. Every
+instance must hold the same `jwt.secret` or a token minted by one is rejected by the next —
+presenting as users randomly signed out rather than as a configuration error — and no process
+can tell from the inside, because when none is configured the host generates one and writes it
+back to that instance's own config file, after which a restart makes a self-invented secret
+look exactly like a deliberate one (`infra/apphost/run.go.md`'s `applySensitiveConfig`).
+Comparing fingerprints is the only check available.
+
+So the JWT fingerprint goes in the BOOT LOG (`infra/apphost/shared_state.go.md`'s
+`logSigningSecretFingerprint`) and deliberately NOT on `GET /api/deployment/preflight`: an
+operator-chosen JWT secret only has to clear a 16-character floor (`isWeakJWTSecret`), so
+publishing a fingerprint of a possibly-weak secret to every signed-in user would hand out an
+offline brute-force oracle for forging tokens. The at-rest key is always 32 random bytes, which
+is why that one is safe to show on the checklist and the JWT secret is not. Logs are already
+operator-only, and an operator comparing two instances is reading both hosts anyway. The
+checklist's own `jwtSecret` row therefore reports PROVENANCE (generated vs. configured), not a
+fingerprint — see `domain/shared/services/deployment.go.md`'s `checkJwtSecret`.
 - `protector.go` / `protector_windows.go` / `protector_linux.go` / `protector_other.go` — the `KeyProtector` abstraction (wrap/unwrap the DEK with a KEK) plus the file/passphrase/DPAPI/systemd-creds protectors and key-file framing. See `protector.go.md`.
 - `startup.go` — `OpenForStartup` boot-time key resolution (loaded / restored-from-recovery / recovery-pending / created) and the non-secret init marker that makes "key missing" recoverable rather than silently re-mintable. See `startup.go.md`.
 - `passphrase.go` — `EncryptWithPassphrase`/`DecryptWithPassphrase` for **arbitrary payloads** (Argon2id + AES-256-GCM, reusing the passphrase-protector parameters). Portable, not host-bound; the primitive behind the mymatasan configuration backup. See `passphrase.go.md`.

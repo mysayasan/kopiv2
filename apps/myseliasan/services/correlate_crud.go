@@ -155,6 +155,10 @@ func (c *Correlator) Save(ctx context.Context, req SaveFleetRuleRequest) (*Fleet
 	if err := c.Reload(ctx); err != nil {
 		return nil, err
 	}
+	// Reload above refreshed THIS instance. Behind a load balancer the edit landed on
+	// whichever instance the operator's browser reached, while the LEADER is the one that
+	// actually fires rules — so the others have to be told.
+	c.announceRulesChanged()
 	cls, _, _ := c.clauses.Get(ctx, "", 50, 0,
 		[]sqldataenums.Filter{{FieldName: "RuleId", Compare: sqldataenums.Equal, Value: rule.Id}}, nil)
 	saved, _ := c.rules.GetById(ctx, "", uint64(rule.Id))
@@ -172,7 +176,13 @@ func (c *Correlator) Delete(ctx context.Context, id int64) error {
 	c.mu.Lock()
 	delete(c.armed, id)
 	c.mu.Unlock()
-	return c.Reload(ctx)
+	if err := c.Reload(ctx); err != nil {
+		return err
+	}
+	// See Save: a deleted rule that only this instance forgot would keep firing from the
+	// leader, which is the more alarming direction of the two.
+	c.announceRulesChanged()
+	return nil
 }
 
 func defaultStr(v, fallback string) string {

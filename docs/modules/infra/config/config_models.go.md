@@ -12,8 +12,9 @@ config: see "Per-app config seam" below.
 - Model server listener hostnames and explicit TLS/non-TLS ports.
 - Model bootstrap, JWT, SSO, local app auth, notification startup defaults, login-lockout
   security, password strength policy, MFA enforcement policy, encryption-at-rest,
-  pairing/fleet, the fleet AI agent (digest + optional LLM layer), file storage, cache,
-  rate limiting, transaction coordination, logging, API log cleanup, audit-log retention,
+  pairing/fleet, instance-to-instance cluster forwarding + cross-instance event bus provider
+  selection, the fleet AI agent (digest + optional LLM layer), file storage, cache, rate
+  limiting, transaction coordination, logging, API log cleanup, audit-log retention,
   telemetry, TLS, and DB settings.
 - Retain the raw config document (`raw []byte`, unexported/untagged) that
   `LoadAppConfiguration` (`app_config.go.md`) decoded it from, exposed via `Raw()`, so an app
@@ -226,3 +227,40 @@ What stayed here is anything a second app already uses or obviously will: `Secur
 - `nodeStream.publicIps` lists the parent's externally reachable IPs, advertised as WebRTC host candidates (NAT 1:1) for cross-network browser-to-parent media. Leave empty for same-LAN/local dev.
 - `nodeStream.udpPort` binds a single shared WebRTC UDP port for all browser peers connecting to relayed node cameras (one firewall rule). `0` = pion's default ephemeral ports.
 - `nodeStream.iceServers` are STUN/TURN servers offered to the browser for the parent↔browser WebRTC leg of node camera relay. A TURN server is only needed when the parent is itself behind NAT. Omit or leave empty for same-LAN use.
+- `cluster` (`ClusterConfigModel`, control-plane only — `myseliasan`) configures instance-to-instance
+  forwarding: since a node dials in and holds its control channel open to exactly ONE instance, a
+  browser request that lands on any other instance behind a load balancer has to be forwarded to
+  the one that actually holds the connection (`apps/myseliasan/services/node_peer.go.md`). Read
+  only via `ClusterConfigModel.Enabled() bool` (`strings.TrimSpace(AdvertiseURL) != ""`), never
+  field-by-field.
+  - `cluster.advertiseUrl` — how OTHER instances reach THIS one, e.g. `"https://10.0.0.11:3002"`.
+    Must be this instance's own directly reachable address, **not** the load balancer's —
+    forwarding through the balancer would land back on an arbitrary instance and could bounce
+    indefinitely. Empty (the default) disables forwarding entirely: with nobody to forward to, this
+    instance's own connection map is the whole truth, which is the correct single-instance default.
+  - `cluster.ownershipTtlSeconds` — how long a node-ownership claim survives without renewal,
+    default `30`. Bounds how long a dead instance keeps appearing to own its nodes, and so is also
+    the worst-case delay before another instance can take them over.
+  - `cluster.forwardTimeoutSeconds` — bounds one forwarded request, default `30`, matching the
+    control channel's own request timeout (`controlRequestTimeout`) — a forwarded call should not
+    give up before the node it is waiting on would have.
+  - `cluster.insecureSkipVerify` — disables TLS verification on the peer-to-peer hop. Instances
+    default to self-signed certificates, so a fresh cluster cannot verify its peers until an
+    operator installs a shared CA; this makes accepting that a deliberate, visible operator choice
+    rather than a silent one. The peer request is still authenticated by a token derived from
+    `jwt.secret` regardless, so this weakens transport privacy between instances, not admission.
+  - `cluster.eventBusProvider` (`ClusterConfigModel.EventBusProviderOverride`, Phase 3) — selects
+    the provider that carries node events and relayed notifications between instances
+    (`infra/eventbus/bus.go.md`). Read only via `EventBusProvider(cacheProvider string) string`,
+    never the field directly: empty (the normal case) returns `cacheProvider` — i.e. it **defaults
+    to `cache.provider`** rather than needing its own setting. That default exists because the two
+    settings answer the same question ("is there somewhere shared for instances to meet?"), and a
+    deployment that already pointed `cache.provider` at Redis has already made the decision; leaving
+    the bus provider separate and required would create a way to run clustered with a shared cache
+    and a per-process bus, which looks fully configured and silently delivers a dark notification
+    bell and fleet rules that never fire on every instance but one. Set `eventBusProvider`
+    explicitly only for the rare deployment that wants the bus split from the cache (e.g. a
+    different Redis instance for pub/sub than for session/lock storage).
+  See `apps/myseliasan/services/node_owner.go.md`, `apps/myseliasan/services/node_peer.go.md`,
+  `apps/myseliasan/services/node_events.go.md`, `infra/eventbus/bus.go.md`, and `docs/HOWTO.md`'s
+  clustering section.

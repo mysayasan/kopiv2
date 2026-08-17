@@ -259,6 +259,26 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	if err != nil {
 		return nil, err
 	}
+	// Deployment mode + cluster-readiness checklist. Registered after the secret cipher
+	// because the checklist reports its key fingerprint — the value an operator compares
+	// between instances to confirm they can read each other's sealed columns.
+	deploymentModeService := sharedservices.NewDeploymentModeService(runtimeSettingRepo)
+	apis.NewDeploymentApi(api, *deps.Auth, deps.Access, deploymentModeService,
+		func() sharedservices.DeploymentEnv {
+			return sharedservices.DeploymentEnv{
+				DbEngine:          deps.Config.Db.Engine,
+				CacheProvider:     deps.Config.Cache.Provider,
+				LockProvider:      deps.Config.Transaction.LockProvider,
+				JwtSecret:          deps.Config.Jwt.Secret,
+				JwtSecretGenerated: deps.JwtSecretGenerated,
+				MaxOpenConns:       deps.Config.Db.Pool.MaxOpenConns,
+				AtRestEnabled:     secretKeyStore.Enabled(),
+				AtRestFingerprint: secretKeyStore.Fingerprint(),
+				CachePing:         sharedservices.PingFunc(deps.Cache),
+				LockPing:          sharedservices.PingFunc(deps.Locker),
+			}
+		})
+
 	directoryConfigRepo := dbsql.NewGenericRepo[myidsanentities.DirectoryConfig](deps.Db)
 	groupMappingRepo := dbsql.NewGenericRepo[myidsanentities.FederatedGroupMapping](deps.Db)
 	directoryService := services.NewDirectoryService(directoryConfigRepo, groupMappingRepo, userLoginService, secretCipher)
@@ -652,6 +672,26 @@ func (m *module) APIDocs() apidocs.SpecConfig {
 			Description: "Identity, user management, and RBAC administration app for kopiv2.",
 		},
 		Endpoints: map[string]apidocs.EndpointDoc{
+			"GET /api/deployment/preflight": {
+				Summary: "Deployment readiness checklist",
+				Description: "Reports what this instance can verify from the inside about running behind a load balancer: " +
+					"database engine, shared cache and distributed lock (pinged, not merely name-checked), the at-rest " +
+					"encryption key's fingerprint, whether the JWT signing secret was configured or self-generated, and the " +
+					"per-instance database connection budget. The at-rest fingerprint and the pool budget are meant to be " +
+					"COMPARED between instances. A self-generated JWT secret is the quiet failure here: each replica would " +
+					"invent its own, so a session minted on one is rejected by the next.",
+				Tags: []string{"deployment"},
+			},
+			"GET /api/deployment/mode": {
+				Summary:     "Read the declared deployment mode",
+				Description: "Returns the persisted `standalone` / `clustered` declaration and whether its caveats were acknowledged. A process cannot detect that it is one of several replicas, so this is a stated fact rather than an inference.",
+				Tags:        []string{"deployment"},
+			},
+			"POST /api/deployment/mode": {
+				Summary:     "Declare the deployment mode",
+				Description: "Persists the deployment-mode declaration, which is what turns the boot-time shared-state warning from a heuristic into a definite one.",
+				Tags:        []string{"deployment"},
+			},
 			"GET /health": {
 				Summary:     "Service liveness",
 				Description: "Returns service alive status.",

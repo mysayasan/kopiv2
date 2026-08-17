@@ -1,6 +1,7 @@
 package apis
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -22,12 +23,15 @@ type nodeMediaApi struct {
 	engine  *stream.WebRTCEngine
 	ice     []stream.ICEServer
 	session *middlewares.AccessSessionMidware
+	// forward negotiates this offer on the instance that holds the node's media channel.
+	// Nil for a single-instance deployment, where every connected node is connected HERE.
+	forward func(context.Context, services.MediaOfferRequest) (services.MediaOfferReply, error)
 }
 
 // NewNodeMediaApi registers POST /api/nodes/{id}/cameras/{cam}/webrtc/offer. Must be
 // registered before the proxy catch-all so its specific path wins.
-func NewNodeMediaApi(router *mux.Router, auth middlewares.AuthMidware, hub *services.MediaRelayHub, access services.INodeAccessService, engine *stream.WebRTCEngine, ice []stream.ICEServer, session *middlewares.AccessSessionMidware) {
-	a := &nodeMediaApi{hub: hub, access: access, engine: engine, ice: ice, session: session}
+func NewNodeMediaApi(router *mux.Router, auth middlewares.AuthMidware, hub *services.MediaRelayHub, access services.INodeAccessService, engine *stream.WebRTCEngine, ice []stream.ICEServer, session *middlewares.AccessSessionMidware, forward func(context.Context, services.MediaOfferRequest) (services.MediaOfferReply, error)) *nodeMediaApi {
+	a := &nodeMediaApi{hub: hub, access: access, engine: engine, ice: ice, session: session, forward: forward}
 	g := router.PathPrefix("/nodes").Subrouter()
 	g.Use(auth.Middleware)
 	g.HandleFunc("/{id}/cameras/{cam}/webrtc/offer", a.offer).Methods("POST")
@@ -37,6 +41,26 @@ func NewNodeMediaApi(router *mux.Router, auth middlewares.AuthMidware, hub *serv
 	cfg := router.PathPrefix("/node-stream").Subrouter()
 	cfg.Use(auth.Middleware)
 	cfg.HandleFunc("/config", a.streamConfig).Methods("GET")
+	return a
+}
+
+// AnswerLocalOffer negotiates an offer against THIS instance's media connection and WebRTC
+// engine. It is what the peer endpoint calls when another instance forwards an offer here:
+// the authorization already happened at the instance the browser talked to, against that
+// operator's live session.
+func (a *nodeMediaApi) AnswerLocalOffer(ctx context.Context, req services.MediaOfferRequest) (services.MediaOfferReply, error) {
+	if !a.hub.IsConnected(req.NodeID) {
+		return services.MediaOfferReply{}, services.ErrMediaNotConnected
+	}
+	manager := stream.NewManagerWithConnectorEngine(a.hub.Connector(req.NodeID), a.engine)
+	answer, err := manager.CreateWebRTCAnswerWithOptions(ctx,
+		stream.Source{ID: fmt.Sprintf("camera-%d", req.CameraID)},
+		stream.SessionDescription{Type: req.Type, SDP: req.SDP},
+		stream.Options{ICEServers: a.ice})
+	if err != nil {
+		return services.MediaOfferReply{}, err
+	}
+	return services.MediaOfferReply{Type: answer.Type, SDP: answer.SDP}, nil
 }
 
 // streamConfig returns the ICE servers the browser should use when peering with the
@@ -81,15 +105,32 @@ func (a *nodeMediaApi) offer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !a.hub.IsConnected(nodeID) {
-		controllers.SendError(w, controllers.ErrNotFound, "node media channel is not connected")
-		return
-	}
-
 	r.Body = http.MaxBytesReader(w, r.Body, 2*1024*1024)
 	var body webrtcOfferBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		controllers.SendError(w, controllers.ErrParseFailed, "invalid offer")
+		return
+	}
+
+	// The node's media channel terminates on exactly one instance, and only that instance
+	// can answer for its cameras. Behind a load balancer this request lands on an arbitrary
+	// one, so an offer for a node held elsewhere is negotiated THERE and its answer returned
+	// verbatim — the answer carries that instance's own ICE candidates, so the browser then
+	// peers with it directly and the video never crosses the balancer. Authorization has
+	// already happened above, on this instance, against the operator's live session.
+	if !a.hub.IsConnected(nodeID) {
+		if a.forward != nil {
+			answer, ferr := a.forward(r.Context(), services.MediaOfferRequest{
+				NodeID: nodeID, CameraID: camID, Type: body.Type, SDP: body.SDP,
+			})
+			if ferr == nil {
+				controllers.SendResult(w, map[string]any{"type": answer.Type, "sdp": answer.SDP}, "succeed")
+				return
+			}
+			// Fall through to the not-connected answer below: from here the camera is
+			// unreachable either way, and that is what the viewer needs to be told.
+		}
+		controllers.SendError(w, controllers.ErrNotFound, "node media channel is not connected")
 		return
 	}
 

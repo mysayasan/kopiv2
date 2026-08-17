@@ -118,7 +118,13 @@ type AppConfigModel struct {
 	// node camera streams to browsers. Empty = host candidates only (same-LAN/local
 	// dev). Set publicIps/udpPort for a remote parent with a reachable IP, and/or
 	// iceServers (STUN/TURN) when the parent is behind NAT.
-	NodeStream   NodeStreamConfigModel   `json:"nodeStream"`
+	NodeStream NodeStreamConfigModel `json:"nodeStream"`
+	// Cluster (control-plane only) configures how one instance reaches another when
+	// several run behind a load balancer. A node holds its control channel open to
+	// exactly ONE instance, so a browser request that lands anywhere else has to be
+	// forwarded to the instance that actually holds the connection. Empty = no
+	// forwarding, which is correct for the single-instance default.
+	Cluster      ClusterConfigModel      `json:"cluster"`
 	Notification NotificationConfigModel `json:"notification"`
 	// Agent (control-plane only) configures the fleet AI agent: the deterministic
 	// daily digest (always available, pure Go) and the OPTIONAL LLM layer behind it
@@ -211,7 +217,7 @@ type AppConfigModel struct {
 		// day can fill the disk long before `cleanup.maxRetentionDays` — which deletes
 		// whole days — becomes relevant. Zero means uncapped, the historic behaviour.
 		MaxFileSizeMb int `json:"maxFileSizeMb"`
-		Cleanup      struct {
+		Cleanup       struct {
 			Enabled          bool `json:"enabled"`
 			MaxRetentionDays int  `json:"maxRetentionDays"`
 			FrequencyMinutes int  `json:"frequencyMinutes"`
@@ -224,7 +230,7 @@ type AppConfigModel struct {
 			FrequencyMinutes int  `json:"frequencyMinutes"`
 		} `json:"cleanup"`
 	} `json:"apiLog"`
-	Audit AuditRetentionConfigModel `json:"audit"`
+	Audit     AuditRetentionConfigModel `json:"audit"`
 	Telemetry struct {
 		Enabled    bool `json:"enabled"`
 		Prometheus struct {
@@ -312,6 +318,59 @@ type PairingConfigModel struct {
 
 // NodeStreamConfigModel (control-plane only) configures how the parent re-broadcasts
 // relayed node camera RTP to browsers over WebRTC across networks.
+// ClusterConfigModel configures instance-to-instance forwarding for the control plane.
+//
+// It exists because of one stubborn fact: a node dials IN and holds that connection open,
+// so its commands can only be delivered by the instance holding it. Behind a load balancer
+// a browser request lands on an arbitrary instance, which is the right one only 1-in-N
+// times. Rather than push that problem onto the operator (sticky sessions cannot help — the
+// affinity is per NODE, not per browser), an instance that does not hold the connection
+// forwards the request to the one that does.
+type ClusterConfigModel struct {
+	// AdvertiseURL is how OTHER instances reach this one, e.g. "https://10.0.0.11:3002".
+	// It must be this instance's own directly reachable address, NOT the load balancer's —
+	// forwarding through the balancer would land back on an arbitrary instance and could
+	// bounce indefinitely. Empty disables forwarding entirely, which is the correct
+	// single-instance default: with nobody to forward to, the local connection map is the
+	// whole truth.
+	AdvertiseURL string `json:"advertiseUrl"`
+	// OwnershipTTLSeconds is how long a node-ownership claim survives without renewal.
+	// It bounds how long a dead instance keeps appearing to own its nodes, so it is also
+	// the worst-case delay before another instance can take them over. Default 30.
+	OwnershipTTLSeconds int `json:"ownershipTtlSeconds"`
+	// ForwardTimeoutSeconds bounds one forwarded request. Default 30, matching the
+	// control channel's own request timeout — a forwarded call should not give up before
+	// the node it is waiting on would have.
+	ForwardTimeoutSeconds int `json:"forwardTimeoutSeconds"`
+	// EventBusProviderOverride selects the provider that carries node events between
+	// instances. Empty (the normal case) follows cache.provider — see EventBusProvider.
+	EventBusProviderOverride string `json:"eventBusProvider"`
+	// InsecureSkipVerify disables TLS verification on the peer hop. Instances default to
+	// self-signed certificates, so a fresh cluster cannot verify its peers until an
+	// operator installs a shared CA; this exists so that is a deliberate, visible choice
+	// rather than a silent one. The peer request is still authenticated by a derived
+	// token, so this weakens transport privacy between instances, not admission.
+	InsecureSkipVerify bool `json:"insecureSkipVerify"`
+}
+
+// Enabled reports whether instance-to-instance forwarding is configured.
+func (c ClusterConfigModel) Enabled() bool { return strings.TrimSpace(c.AdvertiseURL) != "" }
+
+// EventBusProvider resolves which provider carries node events between instances.
+//
+// It defaults to the CACHE provider rather than needing its own setting, because the two
+// answer the same question — "is there somewhere shared for instances to meet?" — and a
+// deployment that has pointed its cache at Redis has already made that decision. Leaving
+// it separate would create a way to run clustered with a shared cache and a per-process
+// bus, which looks configured and silently delivers a dark notification bell and fleet
+// rules that never fire. `eventBusProvider` overrides it for the rare split deployment.
+func (c ClusterConfigModel) EventBusProvider(cacheProvider string) string {
+	if p := strings.TrimSpace(c.EventBusProviderOverride); p != "" {
+		return p
+	}
+	return cacheProvider
+}
+
 type NodeStreamConfigModel struct {
 	// PublicIPs are the parent's externally reachable IPs, advertised as host
 	// candidates (NAT 1:1) so a browser on another network reaches the parent directly.

@@ -1030,6 +1030,14 @@ func (m *module) APIDocs() apidocs.SpecConfig {
 			Description: "Runtime-generated OpenAPI docs for shared and app-specific endpoints.",
 		},
 		Endpoints: map[string]apidocs.EndpointDoc{
+			"GET /api/deployment/preflight": {
+				Summary: "Deployment answer (single instance by design)",
+				Description: "Read-only. Reports that mymatasan cannot be replicated behind a load balancer, with the reason: " +
+					"it owns capture pipelines, writes recordings to local disk, and is GPU-affine, so a second instance would " +
+					"not share that hardware — it would compete for it. There is no mode to set; the answer is fixed. Use " +
+					"active/passive with shared storage instead. The suite's clusterable apps are myseliasan and myidsan.",
+				Tags: []string{"deployment"},
+			},
 			"GET /health": {
 				Summary:     "Service liveness",
 				Description: "Returns service alive status.",

@@ -59,6 +59,13 @@ type ControlServer struct {
 	// the node was gone (e.g. replay notifications published during the disconnect). Optional.
 	onConnect func(nodeID string)
 
+	// onDisconnect, when set, is invoked (in its own goroutine) once a node's control
+	// connection has been torn down. Its counterpart to onConnect exists so ownership of
+	// the node can be withdrawn promptly — behind a load balancer another instance is
+	// waiting to take the node over, and without this it would have to wait out the
+	// ownership lease instead. Optional.
+	onDisconnect func(nodeID string)
+
 	mu    sync.Mutex
 	conns map[string]*control.Conn // nodeID -> current live connection
 
@@ -273,6 +280,10 @@ func (cs *ControlServer) IsListening() bool { return cs.running.Load() }
 // connection is accepted. Set once at startup, before Run. See the onConnect field.
 func (cs *ControlServer) SetOnConnect(fn func(nodeID string)) { cs.onConnect = fn }
 
+// SetOnDisconnect registers a callback invoked (in its own goroutine) once a node's control
+// connection has been torn down. Set once at startup, before Run. See the onDisconnect field.
+func (cs *ControlServer) SetOnDisconnect(fn func(nodeID string)) { cs.onDisconnect = fn }
+
 // ConnectedCount returns the number of nodes currently holding a live control channel.
 func (cs *ControlServer) ConnectedCount() int {
 	cs.mu.Lock()
@@ -300,8 +311,23 @@ func (cs *ControlServer) handleConn(nodeID string, conn *control.Conn) {
 		go cs.onConnect(nodeID)
 	}
 	defer func() {
-		cs.remove(nodeID, conn)
+		// Only announce a disconnect for the connection that was still CURRENT. A node
+		// that reconnected — to this same instance — has already replaced the entry, and
+		// the old goroutine's teardown arrives afterwards. Announcing it unconditionally
+		// withdrew the ownership claim of a live connection, after which nothing held the
+		// node: the heartbeat reads presence from that registry, so a perfectly healthy
+		// node was marked lost and alerted on, on a SINGLE instance as much as a cluster.
+		wasCurrent := cs.remove(nodeID, conn)
+		if !wasCurrent {
+			cs.logf("control: node %s stale connection closed (already reconnected)", nodeID)
+			return
+		}
 		cs.logf("control: node %s disconnected", nodeID)
+		// After remove, so a peer that reacts to this can never observe the connection as
+		// still held here. Off the read loop for the same reason as onConnect.
+		if cs.onDisconnect != nil {
+			go cs.onDisconnect(nodeID)
+		}
 	}()
 
 	pingCtx, stopPing := context.WithCancel(context.Background())
@@ -358,7 +384,10 @@ func (cs *ControlServer) add(nodeID string, conn *control.Conn) {
 
 // remove clears a node's connection if it is still the current one, and fails any
 // in-flight tunneled requests waiting on it so callers don't hang to the timeout.
-func (cs *ControlServer) remove(nodeID string, conn *control.Conn) {
+// It reports whether this connection was still the current one. A node that reconnected
+// meanwhile has already had its entry replaced, and the OLD connection's teardown must not
+// be mistaken for the node going away — see the caller.
+func (cs *ControlServer) remove(nodeID string, conn *control.Conn) bool {
 	cs.mu.Lock()
 	current := cs.conns[nodeID] == conn
 	if current {
@@ -369,6 +398,7 @@ func (cs *ControlServer) remove(nodeID string, conn *control.Conn) {
 		cs.failPending(nodeID)
 	}
 	_ = conn.Close()
+	return current
 }
 
 // pingLoop sends periodic keepalive pings until ctx is cancelled or a write fails.

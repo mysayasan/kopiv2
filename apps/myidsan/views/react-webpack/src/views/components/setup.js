@@ -1,6 +1,37 @@
 import React, { useEffect, useState } from 'react'
 import { apiRequest, resultOf } from '../../lib/api'
-import { useT } from '@shared'
+import { useT, DeploymentPanel } from '@shared'
+
+// The shared components speak the fetch contract — a resolved {ok, body, message} and a
+// JSON STRING body — while myidsan's apiRequest throws on failure and stringifies
+// whatever it is handed, which would double-encode a string body into something the
+// server cannot decode. Same adapter as settings.js uses for the factory reset.
+async function deploymentApi(path, options) {
+  const opts = options && typeof options.body === 'string'
+    ? { ...options, body: JSON.parse(options.body) }
+    : options
+  try {
+    const payload = await apiRequest(path, opts)
+    const body = (payload && payload.data && payload.data.result) ?? resultOf(payload) ?? payload
+    return { ok: true, body }
+  } catch (err) {
+    return { ok: false, message: err.message }
+  }
+}
+
+// What an operator must arrange outside myidsan for a multi-instance deployment. Shorter
+// than myseliasan's list: this app has no fleet listeners to pass through and no uploads
+// to share — it is a database, a Redis and however many stateless copies you like. The
+// identity provider is also the app where getting this right matters most, because when
+// it is unreachable every other app's sign-in is unreachable with it.
+function deploymentOperatorSteps(t) {
+  return [
+    t('setup.deployLbHttps'),
+    t('setup.deployKeyFile'),
+    t('setup.deployVipUrls'),
+    t('setup.deploySameConfig'),
+  ]
+}
 
 // First-run setup wizard for the identity server. Every step is a thin form over
 // APIs that already exist — the wizard adds sequence and explanation, not new
@@ -247,6 +278,13 @@ export default function SetupWizard({ isSuperadmin, onDone, onToast }) {
       // A blank password means "keep the stored one" (the section masks secrets on read),
       // so only send it when the operator actually typed something.
       if (scaleRedis.password) next.cache.redis.password = scaleRedis.password
+      // The coordination lock moves with the cache, to the same Redis. Setting only the
+      // cache buys a working shared sign-in and leaves every instance running the
+      // scheduled work at the same moment — for this app that means several copies
+      // trimming the audit trail together, each writing its own partial archive to its
+      // own disk. Nobody would choose that; they would only arrive at it by being asked
+      // about half the problem.
+      next.transaction = { ...(next.transaction || {}), lockProvider: 'redis' }
       await apiRequest('/api/settings/storage', { method: 'PUT', body: next })
       setScaleForm(next)
       setScaleDone(true)
@@ -552,6 +590,17 @@ export default function SetupWizard({ isSuperadmin, onDone, onToast }) {
                 </form>
               </>
             )}
+            {/* The Redis form above CHANGES the configuration; this panel reports whether
+                the instance is actually ready, including the parts no endpoint can check.
+                Kept in the same step rather than given its own, because "make it
+                multi-instance" and "is it multi-instance yet" are one question to an
+                operator, and two steps would invite answering only the first. */}
+            <DeploymentPanel
+              api={deploymentApi}
+              appLabel="MyIDSan"
+              operatorSteps={deploymentOperatorSteps(t)}
+              onToast={onToast}
+            />
             <div className="form-actions">
               <button className="secondary-button" type="button" onClick={back}>{t('setup.back')}</button>
               <button className="primary-button" type="button" onClick={next}>{scaleDone ? t('setup.next') : t('setup.skip')}</button>

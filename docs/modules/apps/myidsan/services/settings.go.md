@@ -34,6 +34,14 @@ added. `Save` treats a blank (or omitted) incoming secret as "keep the current v
 each section's root-relative nested map straight from `*config.AppConfigModel` — see the
 switch in `settings.go` for the exact field list per section.
 
+The `storage` section now also exposes `transaction.lockProvider` beside `cache` (deployment
+mode / Phase 1 multi-instance safety) — the two decide different halves of the same question:
+the cache decides whether SESSIONS are shared, the lock decides whether SCHEDULED WORK (today:
+the audit-retention purge, `app/audit_retention.go.md`) runs once for the deployment or once per
+instance. Offering only the cache would let an operator reach a half-clustered install — a
+working shared sign-in with every replica trimming the audit trail at the same moment, each
+writing its own partial archive to its own disk.
+
 ## Deliberately NOT editable here (the differences from a straight myseliasan port)
 
 Beyond the `db`/`server`/`bootstrap` blocks myseliasan also withholds:

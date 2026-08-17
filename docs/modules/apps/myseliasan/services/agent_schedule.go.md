@@ -7,11 +7,27 @@ cannot be expressed as a fixed-interval ticker (`app.go`'s `periodic` helper run
 immediate+interval), so this is a dedicated sleep-until, fire-once, repeat loop that runs **both
 cadences** from one goroutine.
 
-## `RunDigestSchedule(ctx, digests *DigestService, runtimeSettings, cfg func() config.AgentConfigModel, logf)`
+## `RunDigestSchedule(ctx, digests *DigestService, runtimeSettings, cfg func() config.AgentConfigModel, gate func() bool, logf)`
 
 Starts the loop under `safego.Supervise(ctx, "myseliasan.agent-digest", s.run)` and returns
 immediately. `cfg` is read every iteration so a config change (after a restart) is picked up
 without re-wiring the scheduler.
+
+`gate` is a new trailing parameter (deployment mode / Phase 1 multi-instance safety): reports
+whether THIS instance should generate. `app.go` passes `deps.Leader.IsLeader`; `nil` means
+"always", which is correct for a single instance and is what every caller passed before this
+existed. `digestSchedule.shouldRun()` returns `gate == nil || gate()`.
+
+## Leader gating vs. the date-watermark guard
+
+The existing `digestLastRunKey`/`digestLastWeeklyKey` guard (below) is a read-then-write with no
+lock: two instances waking in the same second both read "not run today" and both generate. Because
+a digest is an LLM call and an operator-visible artefact, a duplicate here costs real money and
+real confusion, not just wasted CPU — worse than the notification-rollup race this same Phase
+fixes elsewhere. `shouldRun()` is checked **after the sleep**, at the moment of generating, not at
+the top of the loop or once at startup: the wait between wake-ups is hours long, and leadership can
+move to or away from this instance during it, so the only moment worth asking about is the moment
+just before acting.
 
 ## Two cadences, two guard keys
 
@@ -35,8 +51,9 @@ nearer, then fires that one:
 - `nextWeeklyRun(now, localHour, weekday, lastRunDate)` — the next `weekday`-at-`localHour`
   occurrence; skips to next week when today is already past `localHour`, or when today *is*
   `weekday` and this week's weekly digest already ran (`lastRunDate == localDate(now)`).
-- On wake, a second guard-key check (against whichever cadence is about to fire) guards against a
-  concurrent/pre-restart instance having already generated it while this instance slept.
+- On wake, `shouldRun()` is checked first (see "Leader gating" above), then a second guard-key
+  check (against whichever cadence is about to fire) guards against a concurrent/pre-restart
+  instance having already generated it while this instance slept.
 - A failed generation retries after `digestScheduleRetry` (30 minutes) within the same day, rather
   than waiting until tomorrow.
 - `digestEnabled`/`digestHour` read the config pointers (`Digest.Enabled *bool`,

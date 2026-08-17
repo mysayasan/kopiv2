@@ -312,6 +312,9 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// rather than per-install.
 	setupStateService := sharedservices.NewSetupStateService(dbsql.NewGenericRepo[sharedentities.RuntimeSetting](deps.Db))
 	apis.NewSetupApi(protected, setupStateService)
+	// Single-instance by design (serial-bound field pollers) — the endpoint says so
+	// rather than leaving an operator to discover it by trying.
+	apis.NewDeploymentApi(protected)
 
 	// --- the ingest spine -------------------------------------------------------------
 	//
@@ -709,6 +712,14 @@ func (m *module) APIDocs() apidocs.SpecConfig {
 			Description: "On-prem IoT sensor hub: device inventory, telemetry, rules and alerts.",
 		},
 		Endpoints: map[string]apidocs.EndpointDoc{
+			"GET /api/deployment/preflight": {
+				Summary: "Deployment answer (single instance by design)",
+				Description: "Read-only. Reports that myiotsan cannot be replicated behind a load balancer, with the reason: " +
+					"Modbus RTU opens a serial port and its pollers hold device sessions for the life of the process, and a " +
+					"serial port cannot be shared between processes or hosts. There is no mode to set; the answer is fixed. " +
+					"The suite's clusterable apps are myseliasan and myidsan.",
+				Tags: []string{"deployment"},
+			},
 			"POST /api/auth/login": {
 				Summary:     "Sign in",
 				Description: "Exchanges a username and password for a session cookie.",

@@ -122,6 +122,12 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
      completion flag — promoted off a `localStorage` key onto the same shared `setup.state`
      seam mymatasan/myidsan/myseliasan use, so dismissal is per-install rather than
      per-browser (see `apis/setup.go.md`, `domain/shared/services/setup_state.go.md`).
+     Immediately after, `apis.NewDeploymentApi(protected)` (deployment mode / Phase 1
+     multi-instance safety) registers a fixed, read-only `GET /api/deployment/preflight`
+     answering `Appliance: true, ApplianceReason: sharedservices.ApplianceSerialBus` — myiotsan's
+     Modbus RTU pollers hold a serial port for the life of the process, so a second instance
+     cannot share it, and the endpoint says so rather than leaving an operator to discover it by
+     trying. No `POST /api/deployment/mode` route exists on this app. See `apis/deployment.go.md`.
   8a. **Wires the two new runtime-editable settings stores, before the ingest spine is built**
      (so their effective values can feed it): `services.NewNotificationSettingsService(deps.Db,
      notificationService)`, then immediately `notificationSettings.Sync(ctx)` — applies any

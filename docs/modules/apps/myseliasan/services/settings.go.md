@@ -39,6 +39,13 @@ from `*config.AppConfigModel` — see the switch in `settings.go` for the exact 
 section (mirrors `infra/config`'s `LocalAuth`/`SSO`/`Pairing`/`AgentConfigModel`/`Jwt`/`Tls`/
 `SecurityHeaders`/`RateLimit`/`FileStorage`/`Cache`/`Logging`/`ApiLog`/`Telemetry` models).
 
+The `storage` section now also exposes `transaction.lockProvider` beside `cache` (deployment mode
+/ Phase 1 multi-instance safety) — the two decide different halves of the same question: the
+cache decides whether SESSIONS are shared, the lock decides whether the scheduled work (rollups,
+retention purges, the AI digest, heartbeat reconciliation) runs once for the deployment or once
+per instance. Offering only the cache would let an operator reach a half-clustered install that
+signs users in correctly while quietly duplicating everything in the background.
+
 The `agent` section (new) exposes the fleet AI agent's config: `digest.{enabled, localHour,
 windowHours, retentionDays, language, weeklyEnabled, weekday}` and `llm.{mode, endpoint, apiKey,
 model, timeoutSeconds, maxTokens, sidecar.{port, ctxSize, threads, binaryPath, modelPath}}` plus a

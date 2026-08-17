@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { DataTable, FactoryResetSection, Ico, PasswordField, Tabs, useT } from '@shared';
+import { DataTable, DeploymentPanel, FactoryResetSection, Ico, PasswordField, Tabs, useT } from '@shared';
 import { api, defaultDestination, errorMessage, notificationCategories, notificationSeverityOptions, roleLabel } from '../lib/helpers';
 import { AccordionItem, AccordionList, ConfirmModal, CopyButton, Field, Modal, Panel } from './ui';
 
@@ -610,6 +610,12 @@ function SystemPanel({ onToast }) {
           </button>
         </div>
       </Panel>
+
+      {/* Deployment answer. Fixed for this app — its Modbus RTU pollers hold serial ports
+          that only one process on one machine can open — so the panel renders a reason
+          rather than a choice. It is here because an operator who does not know that will
+          go looking for the setting, and finding nothing reads as an oversight. */}
+      <DeploymentPanel api={api} appLabel="MyIotSan" onToast={onToast} />
 
       {/* Factory reset. Renders nothing unless bootstrap.allowReset is on, so an install
           that never opted in shows no button at all. */}

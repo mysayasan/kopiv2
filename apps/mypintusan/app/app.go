@@ -233,6 +233,8 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewEventApi(protected, deps.Db)
 	apis.NewLockdownApi(protected, runtime)
 	apis.NewSetupApi(protected, setupState)
+	// Single-instance by design (the OSDP bus owns its serial port).
+	apis.NewDeploymentApi(protected)
 	apis.NewNotificationsApi(protected, notifications)
 	apis.NewAccessRulesApi(protected, deps.Db, notifications)
 

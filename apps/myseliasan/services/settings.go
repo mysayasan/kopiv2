@@ -369,6 +369,15 @@ func (s *settingsService) read(section string) (map[string]any, error) {
 					"operationTimeoutMs": s.cfg.Cache.Redis.OperationTimeoutMs,
 				},
 			},
+			// Beside the cache because the two decide different halves of the same
+			// question: the cache decides whether SESSIONS are shared, the lock decides
+			// whether the scheduled work (rollups, purges, digests, heartbeat) runs once
+			// for the deployment or once per instance. Offering only the cache would let an
+			// operator reach a half-clustered install that signs users in correctly while
+			// quietly duplicating everything in the background.
+			"transaction": map[string]any{
+				"lockProvider": s.cfg.Transaction.LockProvider,
+			},
 		}, nil
 	case "logging":
 		return map[string]any{

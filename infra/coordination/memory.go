@@ -101,6 +101,46 @@ func (m *MemoryLocker) Lock(ctx context.Context, resource string) (Lock, error) 
 	}
 }
 
+// TryLock takes the resource if it is free right now, and reports ErrNotAcquired
+// otherwise. It never queues, so a caller that loses can get on with skipping.
+//
+// In a single process this is the whole of leader election: nobody else is running,
+// so the one process always wins and behaves exactly as it did before any of this
+// existed. That is why the memory provider needs no special case anywhere upstream.
+func (m *MemoryLocker) TryLock(_ context.Context, resource string) (Lock, error) {
+	start := time.Now()
+
+	m.mu.Lock()
+	queue := m.queue(resource)
+	if queue.owner != "" {
+		m.mu.Unlock()
+		observe(m.recorder, telemetry.CoordinationMetric{
+			AppName:  m.cfg.AppName,
+			Provider: m.cfg.Provider,
+			Resource: resource,
+			Outcome:  "not-acquired",
+			WaitMs:   time.Since(start).Milliseconds(),
+		})
+		return nil, ErrNotAcquired
+	}
+	token := uuid.NewString()
+	queue.owner = token
+	m.mu.Unlock()
+
+	observe(m.recorder, telemetry.CoordinationMetric{
+		AppName:  m.cfg.AppName,
+		Provider: m.cfg.Provider,
+		Resource: resource,
+		Outcome:  "acquired",
+		WaitMs:   time.Since(start).Milliseconds(),
+	})
+	// Deliberately no monitor(): the stuck-timeout metric describes work locks that
+	// are held too long, and a lock taken through TryLock may be held for the life of
+	// the process on purpose (a leadership lease). Reporting that as "stuck" every
+	// StuckTimeout would be a false alarm on a healthy deployment.
+	return &memoryLock{parent: m, resource: resource, token: token, done: make(chan struct{})}, nil
+}
+
 func (m *MemoryLocker) Close() error {
 	return nil
 }
@@ -137,6 +177,21 @@ func (l *memoryLock) Resource() string {
 
 func (l *memoryLock) Token() string {
 	return l.token
+}
+
+// Valid reports whether this in-process lock is still held. There is no lease to
+// expire and no store to lose the key, so the only way to stop holding it is to
+// release it.
+func (l *memoryLock) Valid(_ context.Context) bool {
+	select {
+	case <-l.done:
+		return false
+	default:
+	}
+	l.parent.mu.Lock()
+	defer l.parent.mu.Unlock()
+	queue := l.parent.queues[l.resource]
+	return queue != nil && queue.owner == l.token
 }
 
 func (l *memoryLock) Release(_ context.Context) error {

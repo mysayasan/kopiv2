@@ -358,6 +358,15 @@ func (s *settingsService) read(section string) (map[string]any, error) {
 					"operationTimeoutMs": s.cfg.Cache.Redis.OperationTimeoutMs,
 				},
 			},
+			// Exposed beside the cache because the two belong together: the cache decides
+			// whether SESSIONS are shared, the lock decides whether SCHEDULED WORK runs once
+			// for the deployment or once per instance. Moving only the cache to Redis buys a
+			// working sign-in and leaves every replica trimming the audit trail at the same
+			// moment, each writing its own partial archive — which is not a state anybody
+			// would choose on purpose, only one they could reach by not being offered the knob.
+			"transaction": map[string]any{
+				"lockProvider": s.cfg.Transaction.LockProvider,
+			},
 		}, nil
 	case "logging":
 		return map[string]any{
