@@ -634,6 +634,8 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		audit:        auditApi,
 		auditService: auditService,
 
+		continuitySettings: services.NewContinuitySettingsService(repo.RuntimeSetting),
+
 		ffmpegInstaller: services.NewFFmpegInstaller(ffmpegBinDir, settingsService),
 		pythonInstaller: services.NewPythonInstaller(deps.DataDir, deps.ConfigPath),
 	}

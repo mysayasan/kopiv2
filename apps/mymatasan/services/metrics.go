@@ -63,4 +63,8 @@ func DescribeMetrics(m telemetry.Metrics) {
 	m.Describe(MetricDiskUsedPercent, "Disk usage percent per mount.")
 	m.Describe(MetricRecordingPaused, "1 while the disk guard has recording paused (no footage is being written).")
 	m.Describe(MetricDiskMitigationTotal, "Disk guard actions taken (purge, overwrite, pause, resume).")
+	m.Describe(MetricRecordingCoveragePercent, "Percentage of the last scored hour that has footage on disk, per camera.")
+	m.Describe(MetricRecordingGapCameras, "Cameras currently alerting for missing footage.")
+	m.Describe(MetricAuditWriteFailuresTotal, "Audit entries that could not be persisted. The audit service swallows its own write errors, so this is the only symptom a trail that stopped recording produces.")
+	m.Describe(MetricAuditRetentionPurgedTotal, "Audit rows removed by age-based retention.")
 }

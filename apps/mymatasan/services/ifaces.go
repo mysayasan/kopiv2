@@ -470,6 +470,10 @@ type IRecordingService interface {
 	// startedAfter / startedBefore are unix timestamps; 0 means no bound.
 	GetSegments(ctx context.Context, limit, offset uint64, cameraId, alertId, startedAfter, startedBefore int64) ([]*entities.RecordingSegment, uint64, error)
 	GetSegmentById(ctx context.Context, id uint64) (*entities.RecordingSegment, error)
+	// Coverage reports how much of [from, to) actually has footage on disk, bucketed
+	// hourly or daily. It is the read model behind the coverage screen and the
+	// continuity monitor — see recording_coverage.go.
+	Coverage(ctx context.Context, cameraId, from, to int64, bucket string) (CoverageReport, error)
 	SaveSegment(ctx context.Context, seg recording.SegmentResult) error
 	DeleteSegment(ctx context.Context, id uint64) error
 	GetConfig(ctx context.Context, cameraId int64) (*entities.RecordingConfig, error)

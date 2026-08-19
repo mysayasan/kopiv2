@@ -16,7 +16,7 @@ lands the work.
 | **Phase 1 — Trust the system** |
 | W1-1 | myseliasan backup & restore (`.selbackup`) | F-01 | `feat/myseliasan-backup` | ● built, not benched |
 | W1-2 | Shared audit package + mymatasan audit log | F-02, F-22 | `feat/shared-audit` | ● built, not benched |
-| W1-3 | Recording continuity monitor + coverage report | F-03 | `feat/mymatasan-continuity` | ☐ not started |
+| W1-3 | Recording continuity monitor + coverage report | F-03 | `feat/mymatasan-continuity` | ● built, not benched |
 | W1-4 | Evidence export with integrity manifest | F-04 | `feat/mymatasan-evidence-export` | ☐ not started |
 | W1-5 | Tamper / video-loss detection | F-05 | `feat/mymatasan-tamper` | ☐ not started |
 | W1-6 | Nightly `-race` CI job | F-21 | `ci/race-nightly` | ✅ shipped |

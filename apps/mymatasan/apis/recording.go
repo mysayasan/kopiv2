@@ -57,6 +57,7 @@ func NewRecordingApi(router *mux.Router, serv services.IRecordingService, record
 	g.HandleFunc("/config/{cameraId}", h.getConfig).Methods("GET")
 	g.HandleFunc("/status", h.recorderStatus).Methods("GET")
 	g.HandleFunc("/storage/status", h.storageStatus).Methods("GET")
+	g.HandleFunc("/coverage", h.coverage).Methods("GET")
 	g.HandleFunc("/streams/{cameraId}", h.listCameraStreams).Methods("GET")
 	g.HandleFunc("/streams/{cameraId}/live", h.setLiveStream).Methods("POST")
 }
@@ -129,6 +130,59 @@ func (a *recordingApi) purgeCameraNow(w http.ResponseWriter, r *http.Request) {
 		map[string]any{"segments": segments, "snapshots": snapshots})
 	controllers.SendResult(w, map[string]int{"segments": segments, "snapshots": snapshots}, "succeed")
 }
+
+// coverage answers "was there actually footage" for a camera over a range, bucketed by
+// hour or day. It is the read model behind the coverage strip and the same one the
+// continuity monitor scores against, so the screen and the alert can never disagree.
+//
+//	GET /api/recording/coverage?cameraId=3&from=<unix>&to=<unix>&bucket=hour|day
+func (a *recordingApi) coverage(w http.ResponseWriter, r *http.Request) {
+	cameraId := parseInt64Query(r, "cameraId")
+	if cameraId <= 0 {
+		controllers.SendError(w, controllers.ErrBadRequest, "cameraId is required")
+		return
+	}
+	from := parseInt64Query(r, "from")
+	to := parseInt64Query(r, "to")
+	bucket := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("bucket")))
+	if bucket != "day" {
+		bucket = "hour"
+	}
+	if to <= 0 {
+		to = time.Now().UTC().Unix()
+	}
+	if from <= 0 {
+		// Default to the last day of hours, or the last month of days — the window each
+		// bucket size is actually read at.
+		if bucket == "day" {
+			from = to - 30*86400
+		} else {
+			from = to - 86400
+		}
+	}
+	if to <= from {
+		controllers.SendError(w, controllers.ErrBadRequest, "to must be after from")
+		return
+	}
+	// Bounded so one request cannot ask for a bucket per hour across a decade. The cap is
+	// stated rather than silently applied, because a truncated coverage report reads as
+	// "the footage is missing" when it only means "you asked for too much".
+	if maxSpan := int64(coverageMaxBuckets) * services.CoverageBucketSeconds(bucket); to-from > maxSpan {
+		controllers.SendError(w, controllers.ErrBadRequest,
+			fmt.Sprintf("range too large for %s buckets: ask for at most %d at a time", bucket, coverageMaxBuckets))
+		return
+	}
+
+	report, err := a.serv.Coverage(r.Context(), cameraId, from, to, bucket)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, report, "succeed")
+}
+
+// coverageMaxBuckets bounds one coverage request: a month of days, or ~a month of hours.
+const coverageMaxBuckets = 768
 
 func (a *recordingApi) deleteSegment(w http.ResponseWriter, r *http.Request) {
 	id, ok := readRecordingID(w, r)

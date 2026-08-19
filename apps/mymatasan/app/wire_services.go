@@ -90,6 +90,10 @@ type wiring struct {
 	audit        *apis.Auditor
 	auditService services.IAuditService
 
+	// continuitySettings backs the recording-continuity monitor, which answers "was there
+	// actually footage" rather than "is the camera reachable".
+	continuitySettings services.IContinuitySettingsService
+
 	// Installers.
 	ffmpegInstaller *services.FFmpegInstaller
 	pythonInstaller *services.PythonInstaller
@@ -148,6 +152,7 @@ func (w *wiring) validate() error {
 	check("loginGuard", w.loginGuard != nil)
 	check("accessRoles", w.accessRoles != nil)
 	check("audit", w.audit != nil)
+	check("continuitySettings", w.continuitySettings != nil)
 	check("accessPerms", w.accessPerms != nil)
 	check("ffmpegInstaller", w.ffmpegInstaller != nil)
 	check("pythonInstaller", w.pythonInstaller != nil)

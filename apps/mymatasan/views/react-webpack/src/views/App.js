@@ -2786,6 +2786,7 @@ function AppInner({ lang, onLangChange }) {
           onTestNotification={testNotificationChannel}
           onPurgeNotifications={purgeExpiredNotifications}
           healthSettings={healthSettings}
+          authHeader={authHeader}
           healthHasChanges={JSON.stringify(healthSettings) !== JSON.stringify(savedHealthSettings)}
           onHealthChange={setHealthSettings}
           onSaveHealth={saveHealthSettings}

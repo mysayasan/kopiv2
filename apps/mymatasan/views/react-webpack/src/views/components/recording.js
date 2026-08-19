@@ -219,6 +219,100 @@ function PurgeNowCountdown({ cameraName, seconds = 5, onCancel, onProceed }) {
   );
 }
 
+// CoverageStrip answers the question the recordings list cannot: was there actually
+// footage? A list of segments shows what IS there; it says nothing about the hours that
+// have nothing, which is precisely what an operator needs to know before they promise a
+// customer the incident is on tape.
+//
+// Backed by GET /api/recording/coverage — the same read model the continuity monitor
+// scores against, so the screen and the alert can never disagree.
+export function CoverageStrip({ cameraId, authHeader }) {
+  const t = useT();
+  const [report, setReport] = useState(null);
+  const [days, setDays] = useState(30);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!cameraId) { setReport(null); return undefined; }
+    let alive = true;
+    setLoading(true);
+    setError('');
+    const to = Math.floor(Date.now() / 1000);
+    const from = to - days * 86400;
+    const headers = authHeader ? { Authorization: authHeader } : {};
+    fetch(`${apiBase()}/api/recording/coverage?cameraId=${cameraId}&from=${from}&to=${to}&bucket=day`,
+      { credentials: 'include', headers })
+      .then((r) => r.json())
+      .then((payload) => {
+        if (!alive) return;
+        const body = payload?.data?.result ?? payload?.result ?? payload;
+        if (!body || !Array.isArray(body.buckets)) { setError(t('rec.coverageFailed')); return; }
+        setReport(body);
+      })
+      .catch(() => { if (alive) setError(t('rec.coverageFailed')); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [cameraId, days, authHeader, t]);
+
+  // Three bands, not a gradient. An operator needs to answer "is this day usable?" at a
+  // glance, and a continuous shade makes 40% and 60% look alike — which are very
+  // different answers to that question.
+  const band = (pct) => {
+    if (pct >= 95) return 'is-full';
+    if (pct >= 50) return 'is-partial';
+    if (pct > 0) return 'is-poor';
+    return 'is-empty';
+  };
+
+  const buckets = report?.buckets || [];
+  const overall = report?.overallPercent ?? 0;
+
+  return (
+    <section className="coverage-strip">
+      <header className="coverage-strip-head">
+        <h4>
+          <span className="btn-icon"><Ico n="calendar" /> {t('rec.coverageTitle')}</span>
+        </h4>
+        <select value={days} onChange={(e) => setDays(Number(e.target.value))} disabled={loading}>
+          <option value={7}>{t('rec.coverageDays', { n: 7 })}</option>
+          <option value={30}>{t('rec.coverageDays', { n: 30 })}</option>
+          <option value={90}>{t('rec.coverageDays', { n: 90 })}</option>
+        </select>
+      </header>
+      <p className="field-hint">{t('rec.coverageHint')}</p>
+
+      {error ? <p className="field-hint danger-text">{error}</p> : null}
+
+      {buckets.length ? (
+        <>
+          <div className="coverage-days" role="img" aria-label={t('rec.coverageAria', { percent: Math.round(overall) })}>
+            {buckets.map((b) => (
+              <span
+                key={b.from}
+                className={`coverage-day ${band(b.percent)}`}
+                title={t('rec.coverageDayTip', {
+                  date: new Date(b.from * 1000).toLocaleDateString(),
+                  percent: b.percent.toFixed(1),
+                })}
+              />
+            ))}
+          </div>
+          <div className="coverage-legend">
+            <span><i className="coverage-key is-full" /> {t('rec.coverageFull')}</span>
+            <span><i className="coverage-key is-partial" /> {t('rec.coveragePartial')}</span>
+            <span><i className="coverage-key is-poor" /> {t('rec.coveragePoor')}</span>
+            <span><i className="coverage-key is-empty" /> {t('rec.coverageNone')}</span>
+            <strong className="coverage-overall">{t('rec.coverageOverall', { percent: overall.toFixed(1) })}</strong>
+          </div>
+        </>
+      ) : (
+        <p className="field-hint">{loading ? t('common.loading') : t('rec.coverageEmpty')}</p>
+      )}
+    </section>
+  );
+}
+
 export function CameraRecordingsPanel({ camera, canManage = true, busy, authHeader, onDeleteSegment, onPurgeExpired, onPurgeNow, onReload, unacknowledgedAlertIds, onAcknowledgeAlert, alerts }) {
   const t = useT();
   const effectiveCameraId = Number(camera?.id) || 0;
@@ -452,6 +546,7 @@ export function CameraRecordingsPanel({ camera, canManage = true, busy, authHead
           }}
         />
       ) : null}
+      <CoverageStrip cameraId={effectiveCameraId} authHeader={authHeader} />
       <div className="toolbar">
         <div>
           <h2 className="section-title">
